@@ -55,7 +55,10 @@ import {
   isSuspendedInFundingOrg,
   membershipSuspendedResponse,
 } from "@/lib/enterprise/suspended-member-sessions";
-import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
+import {
+  LIVE_SLOT_WHERE,
+  resolveBookingRefundContext,
+} from "@/lib/booking/cancellation-scope";
 import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
 import {
   classSeriesLedgers,
@@ -598,6 +601,7 @@ export async function POST(
         // next undelivered session instead (#1006, cancellation-scope.ts) —
         // this row's earliest slot is the wrong answer for a subscription.
         occurrences: {
+          where: LIVE_SLOT_WHERE,
           take: 1,
           orderBy: { startsAt: "asc" },
           select: { startsAt: true },

@@ -44,6 +44,12 @@ import {
 /** Slots that still represent an undelivered session. */
 const LIVE_SLOT_STATUSES = ["SCHEDULED", "RESCHEDULED"] as const;
 
+/** The refund quote's "next session" set: undelivered slots, never a voided or settled one. */
+export const LIVE_SLOT_WHERE = {
+  deletedAt: null,
+  completionStatus: { in: [...LIVE_SLOT_STATUSES] },
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
 export type BookingRefundContext = {
   /** The single SUCCEEDED payment funding this booking (zero-amount credit-funded included), if any. */
   paidPayment: {
@@ -328,5 +334,3 @@ async function computeRescheduleNoticeFloorHours(
   );
   return validNotices.length > 0 ? Math.min(...validNotices) : null;
 }
-
-

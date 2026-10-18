@@ -40,6 +40,10 @@ The outcome is `LEARNER_ABSENT` and the session counts as held, so no money move
 
 A voided session's recording is empty or partial, so the idea of accepting it in place of a refund was dropped.
 
+### 9. A declared platform incident outranks every absence verdict
+
+A platform-wide outage leaves no presence evidence, which used to let the classifier read it as a learner absence (a forfeit) or a host absence. Ops now declare the failure window, and `classifySessionOutcome()` returns `PLATFORM_OUTAGE` for any session whose booked interval overlaps it at all, before any other rule, because ops chose the window. A declared window also keeps the no-show detector and the expert reliability count away: no refund-claiming cancel and no strike land inside it. The `settle-platform-incidents` sweep then voids what already ran and refunds each learner by product. The rules and the runbook are in [the booking state machines](../booking/18-state-machines.md#platform-incident-voiding) and [the money console](../payments/backoffice/01-money-console.md#platform-incidents).
+
 ## Consequences
 
 A session now shows `COMPLETED` up to an hour later than before, which the dashboards do not reveal because they read when the room closed. An earning is held while its booking owes a make-up or a refund, which turns what would have been a clawback into a hold. The attendance watchdog reports any session Stream saw people in while our rows recorded nobody, so a webhook outage like #1134 is no longer silent. The presence writer and the watchdog can only be proven on production after release, because Stream's single event hook delivers to production only.

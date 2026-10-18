@@ -181,15 +181,26 @@ WHERE u.email = 'testconsultee004@familiarise.com';
 -- Weekly: Mon-Fri 04:00-07:00 UTC (09:30-12:30 IST)
 INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
-  "consultantProfileId", "createdAt", "updatedAt"
+  "consultantProfileId", "createdAt", "updatedAt",
+  "utcOffsetMinutes", timezone, "localStartDay", "localStartMinutes", "localEndDay", "localEndMinutes"
 )
 VALUES
-  ('test-w004a-mon', 'MONDAY',    240, 'MONDAY',    420, 'test-consultant-profile-004a', NOW(), NOW()),
-  ('test-w004a-tue', 'TUESDAY',   240, 'TUESDAY',   420, 'test-consultant-profile-004a', NOW(), NOW()),
-  ('test-w004a-wed', 'WEDNESDAY', 240, 'WEDNESDAY', 420, 'test-consultant-profile-004a', NOW(), NOW()),
-  ('test-w004a-thu', 'THURSDAY',  240, 'THURSDAY',  420, 'test-consultant-profile-004a', NOW(), NOW()),
-  ('test-w004a-fri', 'FRIDAY',    240, 'FRIDAY',    420, 'test-consultant-profile-004a', NOW(), NOW())
-ON CONFLICT (id) DO NOTHING;
+  ('test-w004a-mon', 'MONDAY', 240, 'MONDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'MONDAY', 570, 'MONDAY', 750),
+  ('test-w004a-tue', 'TUESDAY', 240, 'TUESDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'TUESDAY', 570, 'TUESDAY', 750),
+  ('test-w004a-wed', 'WEDNESDAY', 240, 'WEDNESDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'WEDNESDAY', 570, 'WEDNESDAY', 750),
+  ('test-w004a-thu', 'THURSDAY', 240, 'THURSDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'THURSDAY', 570, 'THURSDAY', 750),
+  ('test-w004a-fri', 'FRIDAY', 240, 'FRIDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'FRIDAY', 570, 'FRIDAY', 750)
+ON CONFLICT (id) DO UPDATE SET
+  "startDay" = EXCLUDED."startDay",
+  "startTimeUtc" = EXCLUDED."startTimeUtc",
+  "endDay" = EXCLUDED."endDay",
+  "endTimeUtc" = EXCLUDED."endTimeUtc",
+  "utcOffsetMinutes" = EXCLUDED."utcOffsetMinutes",
+  timezone = EXCLUDED.timezone,
+  "localStartDay" = EXCLUDED."localStartDay",
+  "localStartMinutes" = EXCLUDED."localStartMinutes",
+  "localEndDay" = EXCLUDED."localEndDay",
+  "localEndMinutes" = EXCLUDED."localEndMinutes";
 
 -- Custom slot: next Saturday 04:30-10:30 UTC
 INSERT INTO "AvailabilityWindowCustom" (
@@ -212,13 +223,24 @@ ON CONFLICT (id) DO NOTHING;
 -- Weekly: Mon-Wed 08:30-11:30 UTC (14:00-17:00 IST)
 INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
-  "consultantProfileId", "createdAt", "updatedAt"
+  "consultantProfileId", "createdAt", "updatedAt",
+  "utcOffsetMinutes", timezone, "localStartDay", "localStartMinutes", "localEndDay", "localEndMinutes"
 )
 VALUES
-  ('test-w004b-mon', 'MONDAY',    510, 'MONDAY',    690, 'test-consultant-profile-004b', NOW(), NOW()),
-  ('test-w004b-tue', 'TUESDAY',   510, 'TUESDAY',   690, 'test-consultant-profile-004b', NOW(), NOW()),
-  ('test-w004b-wed', 'WEDNESDAY', 510, 'WEDNESDAY', 690, 'test-consultant-profile-004b', NOW(), NOW())
-ON CONFLICT (id) DO NOTHING;
+  ('test-w004b-mon', 'MONDAY', 510, 'MONDAY', 690, 'test-consultant-profile-004b', NOW(), NOW(), 330, 'Asia/Kolkata', 'MONDAY', 840, 'MONDAY', 1020),
+  ('test-w004b-tue', 'TUESDAY', 510, 'TUESDAY', 690, 'test-consultant-profile-004b', NOW(), NOW(), 330, 'Asia/Kolkata', 'TUESDAY', 840, 'TUESDAY', 1020),
+  ('test-w004b-wed', 'WEDNESDAY', 510, 'WEDNESDAY', 690, 'test-consultant-profile-004b', NOW(), NOW(), 330, 'Asia/Kolkata', 'WEDNESDAY', 840, 'WEDNESDAY', 1020)
+ON CONFLICT (id) DO UPDATE SET
+  "startDay" = EXCLUDED."startDay",
+  "startTimeUtc" = EXCLUDED."startTimeUtc",
+  "endDay" = EXCLUDED."endDay",
+  "endTimeUtc" = EXCLUDED."endTimeUtc",
+  "utcOffsetMinutes" = EXCLUDED."utcOffsetMinutes",
+  timezone = EXCLUDED.timezone,
+  "localStartDay" = EXCLUDED."localStartDay",
+  "localStartMinutes" = EXCLUDED."localStartMinutes",
+  "localEndDay" = EXCLUDED."localEndDay",
+  "localEndMinutes" = EXCLUDED."localEndMinutes";
 ```
 
 ### Step 0.7 — Plans for Consultant A Only
@@ -732,15 +754,26 @@ Then restore original slots:
 DELETE FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-004a';
 INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
-  "consultantProfileId", "createdAt", "updatedAt"
+  "consultantProfileId", "createdAt", "updatedAt",
+  "utcOffsetMinutes", timezone, "localStartDay", "localStartMinutes", "localEndDay", "localEndMinutes"
 )
 VALUES
-  ('test-w004a-mon', 'MONDAY',    240, 'MONDAY',    420, 'test-consultant-profile-004a', NOW(), NOW()),
-  ('test-w004a-tue', 'TUESDAY',   240, 'TUESDAY',   420, 'test-consultant-profile-004a', NOW(), NOW()),
-  ('test-w004a-wed', 'WEDNESDAY', 240, 'WEDNESDAY', 420, 'test-consultant-profile-004a', NOW(), NOW()),
-  ('test-w004a-thu', 'THURSDAY',  240, 'THURSDAY',  420, 'test-consultant-profile-004a', NOW(), NOW()),
-  ('test-w004a-fri', 'FRIDAY',    240, 'FRIDAY',    420, 'test-consultant-profile-004a', NOW(), NOW())
-ON CONFLICT (id) DO NOTHING;
+  ('test-w004a-mon', 'MONDAY', 240, 'MONDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'MONDAY', 570, 'MONDAY', 750),
+  ('test-w004a-tue', 'TUESDAY', 240, 'TUESDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'TUESDAY', 570, 'TUESDAY', 750),
+  ('test-w004a-wed', 'WEDNESDAY', 240, 'WEDNESDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'WEDNESDAY', 570, 'WEDNESDAY', 750),
+  ('test-w004a-thu', 'THURSDAY', 240, 'THURSDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'THURSDAY', 570, 'THURSDAY', 750),
+  ('test-w004a-fri', 'FRIDAY', 240, 'FRIDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'FRIDAY', 570, 'FRIDAY', 750)
+ON CONFLICT (id) DO UPDATE SET
+  "startDay" = EXCLUDED."startDay",
+  "startTimeUtc" = EXCLUDED."startTimeUtc",
+  "endDay" = EXCLUDED."endDay",
+  "endTimeUtc" = EXCLUDED."endTimeUtc",
+  "utcOffsetMinutes" = EXCLUDED."utcOffsetMinutes",
+  timezone = EXCLUDED.timezone,
+  "localStartDay" = EXCLUDED."localStartDay",
+  "localStartMinutes" = EXCLUDED."localStartMinutes",
+  "localEndDay" = EXCLUDED."localEndDay",
+  "localEndMinutes" = EXCLUDED."localEndMinutes";
 
 UPDATE "ConsultantProfile" SET description = 'Auth hardening test consultant A.'
 WHERE id = 'test-consultant-profile-004a';
@@ -1086,15 +1119,26 @@ Restore original slots after this test:
 DELETE FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-004a';
 INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
-  "consultantProfileId", "createdAt", "updatedAt"
+  "consultantProfileId", "createdAt", "updatedAt",
+  "utcOffsetMinutes", timezone, "localStartDay", "localStartMinutes", "localEndDay", "localEndMinutes"
 )
 VALUES
-  ('test-w004a-mon', 'MONDAY',    240, 'MONDAY',    420, 'test-consultant-profile-004a', NOW(), NOW()),
-  ('test-w004a-tue', 'TUESDAY',   240, 'TUESDAY',   420, 'test-consultant-profile-004a', NOW(), NOW()),
-  ('test-w004a-wed', 'WEDNESDAY', 240, 'WEDNESDAY', 420, 'test-consultant-profile-004a', NOW(), NOW()),
-  ('test-w004a-thu', 'THURSDAY',  240, 'THURSDAY',  420, 'test-consultant-profile-004a', NOW(), NOW()),
-  ('test-w004a-fri', 'FRIDAY',    240, 'FRIDAY',    420, 'test-consultant-profile-004a', NOW(), NOW())
-ON CONFLICT (id) DO NOTHING;
+  ('test-w004a-mon', 'MONDAY', 240, 'MONDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'MONDAY', 570, 'MONDAY', 750),
+  ('test-w004a-tue', 'TUESDAY', 240, 'TUESDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'TUESDAY', 570, 'TUESDAY', 750),
+  ('test-w004a-wed', 'WEDNESDAY', 240, 'WEDNESDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'WEDNESDAY', 570, 'WEDNESDAY', 750),
+  ('test-w004a-thu', 'THURSDAY', 240, 'THURSDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'THURSDAY', 570, 'THURSDAY', 750),
+  ('test-w004a-fri', 'FRIDAY', 240, 'FRIDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'FRIDAY', 570, 'FRIDAY', 750)
+ON CONFLICT (id) DO UPDATE SET
+  "startDay" = EXCLUDED."startDay",
+  "startTimeUtc" = EXCLUDED."startTimeUtc",
+  "endDay" = EXCLUDED."endDay",
+  "endTimeUtc" = EXCLUDED."endTimeUtc",
+  "utcOffsetMinutes" = EXCLUDED."utcOffsetMinutes",
+  timezone = EXCLUDED.timezone,
+  "localStartDay" = EXCLUDED."localStartDay",
+  "localStartMinutes" = EXCLUDED."localStartMinutes",
+  "localEndDay" = EXCLUDED."localEndDay",
+  "localEndMinutes" = EXCLUDED."localEndMinutes";
 ```
 
 ---

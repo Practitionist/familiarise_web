@@ -7,6 +7,7 @@
 
 import prisma from "@/lib/prisma";
 import { seatLedgerFrom, seriesLedgerFrom } from "@/lib/booking/class-series";
+import { INCIDENT_REFUND_KEY_PREFIX } from "@/lib/booking/incident-keys";
 import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import type { ClassSeriesView } from "./class-series-types";
 
@@ -143,7 +144,10 @@ async function readSeats(
           refunds: {
             where: {
               status: { in: ["SUCCEEDED", "PENDING"] },
-              dedupeKey: { startsWith: "occ:" },
+              OR: [
+                { dedupeKey: { startsWith: "occ:" } },
+                { dedupeKey: { startsWith: INCIDENT_REFUND_KEY_PREFIX } },
+              ],
             },
             select: { amountPaise: true },
           },

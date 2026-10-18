@@ -17,6 +17,7 @@ import {
   COMPLETION_FOR_OUTCOME,
   HOST_ATTRIBUTED_OUTCOMES,
 } from "@/lib/booking/session-outcome";
+import { INCIDENT_REFUND_KEY_PREFIX } from "@/lib/booking/incident-keys";
 import { NEEDS_HUMAN } from "@/lib/booking/misses";
 import {
   OCCURRENCE_COMPLETION_ALLOWED_FROM,
@@ -32,13 +33,22 @@ const DECIDED = new Set<OccurrenceCompletionStatus>([
 ]);
 
 /** A keyed refund for this occurrence that moved, or is moving, money. */
-async function voidRefundExists(tx: Tx, occurrenceId: string) {
+export async function voidRefundExists(
+  tx: Pick<Tx, "refund">,
+  occurrenceId: string,
+) {
   const row = await tx.refund.findFirst({
     where: {
       status: { notIn: ["FAILED", "CANCELLED"] },
       OR: [
         { dedupeKey: { startsWith: `occ:${occurrenceId}:` } },
         { dedupeKey: { startsWith: `void-unused:${occurrenceId}:` } },
+        {
+          dedupeKey: {
+            startsWith: INCIDENT_REFUND_KEY_PREFIX,
+            contains: `:${occurrenceId}:`,
+          },
+        },
       ],
     },
     select: { id: true },

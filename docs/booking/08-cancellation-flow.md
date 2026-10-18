@@ -31,7 +31,7 @@ This document is the definitive reference for how appointment cancellation works
 Cancellation is one of the most architecturally nuanced flows in the booking system. On the surface it seems simple -- "delete the appointment" -- but in practice it must coordinate across four concerns: database integrity, notification delivery, payment/refund tracking, and audit trail preservation. The cancellation endpoint is designed around three strict principles:
 
 1. **The cancellation itself must never fail because of a side effect.** If a notification or a refund fails, the user still gets a successful cancellation. This is the "fire-and-forget" philosophy, and it is why the refund runs after the cancellation transaction has already committed.
-2. **Nothing is deleted.** The appointment, its slots and its payment records are all preserved; the cancellation is a status change plus audit fields. `Payment.appointment` cascades on delete, so destroying an appointment would destroy the money trail with it.
+2. **Nothing is deleted.** The appointment, its slots and its payment records are all preserved; the cancellation is a status change plus audit fields. `Payment.appointment` is `onDelete: Restrict`, so the database refuses to delete an appointment a payment points at; the app never tries, and the trail stays intact.
 3. **Refunds are automatic and policy-driven.** The cancellation flow computes a refund from the tiers frozen onto the booking at checkout and drives it through the payment operations, without an admin in the loop.
 
 > **Refreshed 2026-08-15 (#1013).** This chapter previously described an earlier design in which cancellation deleted the appointment, required no authentication and never touched money. All three statements were false against the route, and the walkthrough, the diagrams and the record tables below have now been rewritten against it: soft-cancel under a compare-and-set guard, participant/privileged/org-admin authorization, and automatic policy-driven refunds including the whole-event fan-out for webinars and classes (#1003). Consultees leave group events via participant self-leave (#1005), not appointment cancel. The refund maths described here is the linear per-session proration that closed #1006.
@@ -686,7 +686,7 @@ Notice what remains:
 - The `ConsultationPlan`, profiles, and users -- **untouched**
 - The `Payment` record -- preserved, now with a `Refund` row and a balanced ledger reversal beside it
 
-**Why the appointment is never deleted**: `Payment.appointment` is declared `onDelete: Cascade`, so deleting the appointment would take the payment, its refunds and its dispute history down with it. That is not hypothetical — a trial cancellation once hard-deleted the appointment and destroyed the `Payment` row with it (#1074). The slot is freed by status alone, which is all that "freeing" ever required.
+**Why the appointment is never deleted**: `Payment.appointment` is declared `onDelete: Restrict`, so Postgres refuses to delete an appointment that a payment points at, and the money trail stays intact. The app never attempts it: a trial cancellation once hard-deleted the appointment under the older cascading rule and destroyed the `Payment` row with it (#1074), and the guard now rides inside the delete's `WHERE` clause. The slot is freed by status alone, which is all that "freeing" ever required.
 
 ---
 
@@ -902,18 +902,18 @@ Green marks a row that comes through untouched, amber a row whose status column 
 
 ### Record-by-Record Breakdown
 
-| Record                             | Before                                             | After                                                 | Why                                                                                            |
-| ---------------------------------- | -------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `Appointment`                      | Exists with type and foreign keys                  | **Preserved**, untouched                              | `Payment.appointment` cascades on delete, so removing it would destroy the money trail (#1074) |
-| `AppointmentOccurrence` (live)     | `completionStatus` is `SCHEDULED` or `RESCHEDULED` | `completionStatus = "CANCELLED"`                      | The time is released by status; the record of it having been held survives                     |
-| `AppointmentOccurrence` (terminal) | Already `COMPLETED`/`CANCELLED`/`UNVERIFIED`       | Untouched                                             | A delivered session is history, and the proration denominator counts it                        |
-| `RescheduleRequest` (open)         | `PENDING_REVIEW` or similar                        | `status = "DECLINED"`, `openForAppointmentId` cleared | An open proposal would reserve the appointment forever and feed the expiry cron                |
-| `Consultation` (if applicable)     | `status = "APPROVED"`                              | `status = "CANCELLED"` + audit fields                 | Preserved for refund decisions and analytics                                                   |
-| `Subscription` (if applicable)     | `status = "APPROVED"`                              | `status = "CANCELLED"` + audit fields                 | Same reasoning as consultation                                                                 |
-| `Webinar` (if applicable)          | `status = "PUBLISHED"`                             | `status = "CANCELLED"`                                | Preserved but with minimal state change                                                        |
-| `Class` (if applicable)            | `status = "PUBLISHED"`                             | `status = "CANCELLED"`                                | Same reasoning as webinar                                                                      |
-| `Payment` / `PaymentOrder`         | Various statuses                                   | Preserved; a `Refund` row is added when due           | The policy frozen at checkout decides the amount, not an admin                                 |
-| `Earning` / `PayoutItem`           | May exist if payment was captured                  | Refunded share incremented by the cascade             | Earnings reversal rides the same transaction as the refund                                     |
+| Record                             | Before                                             | After                                                 | Why                                                                                                            |
+| ---------------------------------- | -------------------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `Appointment`                      | Exists with type and foreign keys                  | **Preserved**, untouched                              | `Payment.appointment` is `onDelete: Restrict`, so Postgres refuses to remove it while a payment exists (#1074) |
+| `AppointmentOccurrence` (live)     | `completionStatus` is `SCHEDULED` or `RESCHEDULED` | `completionStatus = "CANCELLED"`                      | The time is released by status; the record of it having been held survives                                     |
+| `AppointmentOccurrence` (terminal) | Already `COMPLETED`/`CANCELLED`/`UNVERIFIED`       | Untouched                                             | A delivered session is history, and the proration denominator counts it                                        |
+| `RescheduleRequest` (open)         | `PENDING_REVIEW` or similar                        | `status = "DECLINED"`, `openForAppointmentId` cleared | An open proposal would reserve the appointment forever and feed the expiry cron                                |
+| `Consultation` (if applicable)     | `status = "APPROVED"`                              | `status = "CANCELLED"` + audit fields                 | Preserved for refund decisions and analytics                                                                   |
+| `Subscription` (if applicable)     | `status = "APPROVED"`                              | `status = "CANCELLED"` + audit fields                 | Same reasoning as consultation                                                                                 |
+| `Webinar` (if applicable)          | `status = "PUBLISHED"`                             | `status = "CANCELLED"`                                | Preserved but with minimal state change                                                                        |
+| `Class` (if applicable)            | `status = "PUBLISHED"`                             | `status = "CANCELLED"`                                | Same reasoning as webinar                                                                                      |
+| `Payment` / `PaymentOrder`         | Various statuses                                   | Preserved; a `Refund` row is added when due           | The policy frozen at checkout decides the amount, not an admin                                                 |
+| `Earning` / `PayoutItem`           | May exist if payment was captured                  | Refunded share incremented by the cascade             | Earnings reversal rides the same transaction as the refund                                                     |
 
 ### Why Nothing is Deleted
 
@@ -926,7 +926,7 @@ The event record (consultation, subscription, webinar, or class) is intentionall
 3. **Dispute resolution**: If a consultee disputes a charge, the cancelled event record is evidence of what happened.
 4. **Consultant dashboards**: Consultants may want to see their cancellation history.
 
-The appointment record is preserved for a harder reason than any of those, and it is worth being blunt about it. `Payment` declares `onDelete: Cascade` against `Appointment`, so deleting an appointment silently takes its payments, refunds and disputes with it. A trial cancellation once did exactly that and destroyed a real `Payment` row (#1074). An appointment is therefore never a candidate for deletion, whatever its status: the slot is freed by `completionStatus` alone, and reads of live availability filter dead rows rather than expecting them to be gone.
+The appointment record is preserved for a harder reason than any of those, and it is worth being blunt about it. `Payment` declares `onDelete: Restrict` against `Appointment`, so the database refuses to delete an appointment that has payments, and the refunds and disputes hanging off them stay readable. A trial cancellation once deleted the appointment under the older cascading rule and destroyed a real `Payment` row (#1074). A cancelled or payment-bearing appointment is therefore never a candidate for deletion, whatever its status (the allocator alone removes an empty appointment that has no occurrences left and no payment): the slot is freed by `completionStatus` alone, and reads of live availability filter dead rows rather than expecting them to be gone.
 
 The same reasoning extends to the slots. `Meeting` and `Recording` rows from Stream hang off slots, so deleting a slot would orphan or cascade into the session artefacts that prove a session took place. This is why reschedule flips replaced slots to `RESCHEDULED` and re-confirms them in place rather than deleting and re-creating them.
 
@@ -1369,17 +1369,7 @@ Consultation and subscription cancellations write a consultant-dashboard activit
 
 ## Refund Quote Binding and Durability
 
-This section separates what the cancel route does today from the design landing in Wave 0 (W0-3).
-
-**Current.** The refund percentage comes from `quoteBookingRefund` in `lib/payments/operations/cancellation-policy.ts`, the same function the cancel preview calls. The ladder is 100% at 24 hours or more of notice, 50% from 2 to under 24 hours, and 0% under 2 hours; an expert, admin or platform cancel and an expert no-show are 100%. A subscription is tiered per undelivered session. The route computes the quote after the booking transaction has committed and then calls `refundBookingPayment`. The request carries no refund amount, so the number the dialog displayed is not bound to the click, and a retry after a gateway timeout can answer `NOT_CANCELLABLE` instead of returning the committed result. A refund that fails after the commit is recorded as a system error for ops, not as a retryable obligation. Trial cancellation already enforces a quote check through `REFUND_QUOTE_CHANGED` in `lib/trials/cancellation.ts`.
-
-**Landing in Wave 0 (W0-3).**
-
-- The quote moves inside the cancel transaction. The request gains an optional `expectedRefundPaise` (plus `creditRestoresInFull` for the credits rail), checked before the status compare-and-swap, so a different server quote answers 409 `REFUND_QUOTE_CHANGED` with the current quote. The field is optional for one release for old clients.
-- The same transaction stamps the per-payment refund-owed marker, the door is called with `dedupeKey: "cancel:<appointmentId>"`, and `retry-auto-refunds` re-drives and clears it.
-- A replay after a 504 returns the committed result.
-- The four cancel callers send the displayed quote: `useEventActions.tsx`, `SubscriptionsPage.tsx`, `OrgActorDetail.tsx` and `useConsultantEventActions.ts`.
-- The gateway fee on any refund is absorbed by the platform, so the buyer receives exactly the quoted percentage.
+**Current.** The refund percentage comes from `quoteBookingRefund` in `lib/payments/operations/cancellation-policy.ts`, the same function the cancel preview calls. The ladder is 100% at 24 hours or more of notice, 50% from 2 to under 24 hours, and 0% under 2 hours; an expert, admin or platform cancel and an expert no-show are 100%. A subscription is tiered per undelivered session. The route computes the quote inside the cancel transaction and, when the request carries `expectedRefundPaise` (optional; an absent value is logged and unbound), checks it before the status compare-and-swap, so a different server quote answers 409 `REFUND_QUOTE_CHANGED` with the current quote (`assertQuoteMatchesClick`). The cancel dialogs send the displayed quote through `shownQuoteBody()` in `lib/appointments/cancel-requote.ts` (callers: `useEventActions.tsx`, `useConsultantEventActions.ts`, `OrgActorDetail.tsx` and `SubscriptionsPage.tsx`), and on a 409 they re-quote with `readRefundQuoteChanged()` and `applyRefundRequote()`. The same transaction stamps the per-payment refund-owed marker with `stampRefundOwed()`, the door is called under `dedupeKey: "cancel:<appointmentId>:<paymentId>"`, and `retry-auto-refunds` re-drives and clears the marker. The platform absorbs the gateway fee on any refund, so the buyer receives exactly the quoted percentage. Trial cancellation enforces the same check in `lib/trials/cancellation.ts`.
 
 See [the money HLD](../start-here/02-money-system-hld.md#10-refunds) and worked example 6 in [the machinery guide](../start-here/03-booking-and-money-machinery.md#example-6--cancelling-at-23-hours-while-the-dialog-showed-100-current-behaviour-then-the-d3-fix-landing-in-wave-0-w0-3).
 
@@ -1396,5 +1386,5 @@ See [the money HLD](../start-here/02-money-system-hld.md#10-refunds) and worked 
 
 ## Deprecated & Superseded Approaches
 
-1. **Computing the quote after the commit with no durable marker.** Replaced in Wave 0 by the in-transaction quote and the refund-owed marker.
+1. **Computing the quote after the commit with no durable marker.** Replaced by the in-transaction quote and the refund-owed marker.
 2. **Cancelling an event by `PUT` with `status: "CANCELLED"`.** That path wrote no refunds or history and is refused with `USE_CANCEL_ROUTE`; cancel through this route.

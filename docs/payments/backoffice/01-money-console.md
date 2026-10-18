@@ -18,14 +18,15 @@ shared `[tab]` page guards it, and both filter the list through
 is never visible to a role whose route guard would then turn it away. The
 table below lists every section with the surfaces that gate it.
 
-| Section   | Surface                     | What it is for                                                                               |
-| --------- | --------------------------- | -------------------------------------------------------------------------------------------- |
-| Payments  | `payments.read`             | Every payment, with its status and rail.                                                     |
-| Refunds   | `refunds.read` / `.manage`  | Refunds issued, pending and failed, plus the admin refund doors.                             |
-| Disputes  | `disputes.read` / `.manage` | Chargebacks and their evidence deadlines.                                                    |
-| Payouts   | `payouts.read` / `.manage`  | Consultant payouts waiting, in flight and paid, including the instant-payout approval queue. |
-| Earnings  | `payouts.manage`            | Consultant earnings, with hold and release.                                                  |
-| Reconcile | `payouts.manage`            | Runs the four reconcile jobs on demand and shows when each last ran.                         |
+| Section   | Surface                       | What it is for                                                                               |
+| --------- | ----------------------------- | -------------------------------------------------------------------------------------------- |
+| Payments  | `payments.read`               | Every payment, with its status and rail.                                                     |
+| Refunds   | `refunds.read` / `.manage`    | Refunds issued, pending and failed, plus the admin refund doors.                             |
+| Disputes  | `disputes.read` / `.manage`   | Chargebacks and their evidence deadlines.                                                    |
+| Payouts   | `payouts.read` / `.manage`    | Consultant payouts waiting, in flight and paid, including the instant-payout approval queue. |
+| Earnings  | `payouts.manage`              | Consultant earnings, with hold and release.                                                  |
+| Reconcile | `payouts.manage`              | Runs the four reconcile jobs on demand and shows when each last ran.                         |
+| Incidents | `incidents.read` / `.declare` | Declared platform outages, the sessions they voided and each learner's remedy.               |
 
 Staff hold `payouts.read`, so they see the Payouts section read-only: the
 list, the trend and the earnings view render, while the approve and reject
@@ -39,7 +40,7 @@ and release live, so it and the Reconcile section are gated by
 admin-only too, because the ledger reports expose cross-organisation
 aggregates. A support agent resolving a billing ticket can therefore see a
 payment, refund, dispute or payout without being able to move money.
-Approval Payments stays its own page rather than a money section, because
+Staff hold `incidents.read`, so they see the Incidents section and its suggestions; declaring an incident and running one now are `incidents.declare`, which only an admin holds. Approval Payments stays its own page rather than a money section, because
 it chases an unpaid pay-link rather than moving money once it lands.
 
 The four pages the hub replaced — `/dashboard/admin/{payments,refunds,
@@ -129,6 +130,53 @@ the earnings healer (`sync-payment-earnings`) — through
 (`withCronLock`), so a job already running answers a 409 "already running"
 instead of a second overlapping pass, and the tab shows each job's last run
 from the same heartbeat the scheduled invocation writes.
+
+## Platform incidents
+
+When the call platform or the app fails for everyone, no presence evidence exists, and the session-outcome classifier could read the silence as a learner absence, which forfeits the learner's money. The Incidents section lets an admin declare the failure window so that every eligible session it overlaps is voided as the platform's miss and each learner receives the remedy for their product. Sessions already cancelled or rescheduled, and voids that already carry a refund or are settled, are skipped. Voiding and refunding is done by the `settle-platform-incidents` sweep, not by the declare door, which only records the window.
+
+### The Incidents tab
+
+The tab (`components/dashboard/backoffice/money/IncidentsTab.tsx`, read through `GET /api/admin/incidents`) lists incidents newest first. Each row shows the window in the viewer's zone, the reason, who declared it, a status and the remedy counts. The status reads "Voiding sessions" until the retroactive pass has decided every overlapping session (`enumeratedAt`), "Remedies in progress" after that, and "Settled" once the ops report is staged and every remedy is finished (`settledAt`). The counts are remedies due, done, and "need a human", which are the dead-lettered rows described in the runbook below.
+
+### The declare door
+
+`POST /api/admin/incidents` is a `withOpsAction` door on the `incidents.declare` surface (admin only) with step-up authentication, so the admin must have re-verified their second factor recently. It writes an `OpsActionLog` row with action `incident.declare` and target kind `PlatformIncident`. The window is checked by `incidentWindowSchema()` in `lib/booking/platform-incidents.ts`, and a bad window answers 400 `INVALID_WINDOW` with a message:
+
+| Rule                         | Message                                               |
+| ---------------------------- | ----------------------------------------------------- |
+| Start before end             | The window must start before it ends.                 |
+| Already ended                | Only a window that has already ended can be declared. |
+| Ended within the last 7 days | The window must have ended within the last 7 days.    |
+| At most 24 hours long        | A window can be at most 24 hours long.                |
+
+An exact repeat of an earlier window returns the first incident with a 200 instead of a 201, because `PlatformIncident` has `@@unique([startsAt, endsAt])` and `declareIncident()` inserts with `skipDuplicates`. The repeat still writes an audit row. There is no edit and no delete door: a session that was voided by mistake is overturned through the existing `session.set-outcome` door, and the refund door re-checks under the appointment lock that the session is still `VOIDED`, so that overturn wins over a pending incident refund.
+
+### The suggestion panel
+
+Above the list, `readIncidentSuggestions()` (`lib/backoffice/incidents-read.ts`) buckets the last seven days by hour and counts three kinds of signal: sessions with a `PLATFORM_OUTAGE`, `INCONCLUSIVE`, `OFFLINE` or `NOBODY_JOINED` outcome, meetings that ended for an unexpected `Meeting.endedReason`, and webhook events that recorded an error. An hour is suggested when it has at least five signals and at least three times the hourly mean. The panel never declares anything: "Declare this window" only pre-fills the form for an admin to confirm. The Sentry ingest canary is deliberately not a signal, because it keeps no verdict history and it tests whether Sentry accepts events, not whether the app is serving.
+
+### Run now
+
+Each unsettled incident has a "Run now" button for an admin (`POST /api/admin/incidents/[incidentId]/settle`, surface `incidents.declare`, step-up, audit action `incident.settle`). It runs the same sweep under the same `settle-platform-incidents` cron lock, scoped to that incident, so it can never overlap the hourly run; if the lock is held it answers the usual 409 "already running". It refuses with 503 `MAINTENANCE` while maintenance is DEGRADED or OFFLINE, because it moves money. It does not bring forward the 48-hour wait for a consultation or paid-trial refund, and it does not retry a dead-lettered row.
+
+### Runbook: declaring and following an incident
+
+1. **Confirm the outage.** Check the suggestion panel and the status page for the hour. Pick a window that has ended, covers every affected session, and is no longer than 24 hours. A window that is too wide voids healthy sessions that overlap it, because any overlap counts.
+2. **Declare it.** In Money, Incidents, enter the start and end (shown in your own zone), write a reason of at least five characters and confirm with your second factor. For example, an outage from Sun 18 Oct 2026 00:30 to 02:30 IST is declared as that window; the audit log shows `incident.declare` against the new incident.
+3. **Know what each learner gets.** The sweep writes one remedy per live seat that held the session before it started:
+   - Consultation: 100% of the remaining balance, refunded 48 hours after the void.
+   - Paid trial: the same 48-hour refund, and the trial is cancelled in the same commit, which frees the expert pair.
+   - Free trial: cancelled straight away, which frees the pair.
+   - Subscription: the session goes back to the plan allowance and the plan end moves seven days later, straight away.
+   - Webinar: 100% of the seat, refunded straight away.
+   - Class: nothing beyond the void; the existing 14-day make-up window or the one-unit refund applies.
+
+   Each learner gets one `PLATFORM_INCIDENT_DIGEST` email per incident once their straight-away remedies are applied, and it does not wait for a 48-hour refund. Ops gets one report email when everything is finished.
+
+4. **Read the tab.** Within about an hour the status moves to "Remedies in progress". "Due" falls as the 48-hour refunds come due and the hourly run applies them, and the incident reaches "Settled" after the last one. A refund is visible in Refunds under the key `incident:<incident>:<occurrence>:<user>`.
+5. **Handle "need a human".** A remedy is dead-lettered after three counted failures, with `lastError` starting `dead-letter:`. The usual cause is a marker conflict: the payment already owes another door's refund under a different key, and the marker is never overwritten. Open the payment, let the other refund finish or fail, then refund the learner by hand with the Refunds section's "Issue refund" door. A dead-lettered refund leaves the session unsettled, so the day-14 `settle-cancelled-sessions` sweep also refunds it under its own `occ:` key, capped to the remaining balance, which means a manual refund and the sweep can never pay twice. A dead-lettered row counts as terminal, so it no longer holds the incident open.
+6. **Never retry by editing rows.** If a remedy looks stuck, "Run now" is the only supported lever.
 
 ## The audit log is the log's only reader
 

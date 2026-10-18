@@ -208,28 +208,50 @@ WHERE u.email = 'testconsultee006@familiarise.com';
 -- Consultant A: Mon-Fri 04:00-11:30 UTC (9:30-17:00 IST)
 INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
-  "consultantProfileId", "createdAt", "updatedAt"
+  "consultantProfileId", "createdAt", "updatedAt",
+  "utcOffsetMinutes", timezone, "localStartDay", "localStartMinutes", "localEndDay", "localEndMinutes"
 )
 VALUES
-  ('test-w006a-mon', 'MONDAY',    240, 'MONDAY',    690, 'test-consultant-profile-006a', NOW(), NOW()),
-  ('test-w006a-tue', 'TUESDAY',   240, 'TUESDAY',   690, 'test-consultant-profile-006a', NOW(), NOW()),
-  ('test-w006a-wed', 'WEDNESDAY', 240, 'WEDNESDAY', 690, 'test-consultant-profile-006a', NOW(), NOW()),
-  ('test-w006a-thu', 'THURSDAY',  240, 'THURSDAY',  690, 'test-consultant-profile-006a', NOW(), NOW()),
-  ('test-w006a-fri', 'FRIDAY',    240, 'FRIDAY',    690, 'test-consultant-profile-006a', NOW(), NOW())
-ON CONFLICT (id) DO NOTHING;
+  ('test-w006a-mon', 'MONDAY', 240, 'MONDAY', 690, 'test-consultant-profile-006a', NOW(), NOW(), 330, 'Asia/Kolkata', 'MONDAY', 570, 'MONDAY', 1020),
+  ('test-w006a-tue', 'TUESDAY', 240, 'TUESDAY', 690, 'test-consultant-profile-006a', NOW(), NOW(), 330, 'Asia/Kolkata', 'TUESDAY', 570, 'TUESDAY', 1020),
+  ('test-w006a-wed', 'WEDNESDAY', 240, 'WEDNESDAY', 690, 'test-consultant-profile-006a', NOW(), NOW(), 330, 'Asia/Kolkata', 'WEDNESDAY', 570, 'WEDNESDAY', 1020),
+  ('test-w006a-thu', 'THURSDAY', 240, 'THURSDAY', 690, 'test-consultant-profile-006a', NOW(), NOW(), 330, 'Asia/Kolkata', 'THURSDAY', 570, 'THURSDAY', 1020),
+  ('test-w006a-fri', 'FRIDAY', 240, 'FRIDAY', 690, 'test-consultant-profile-006a', NOW(), NOW(), 330, 'Asia/Kolkata', 'FRIDAY', 570, 'FRIDAY', 1020)
+ON CONFLICT (id) DO UPDATE SET
+  "startDay" = EXCLUDED."startDay",
+  "startTimeUtc" = EXCLUDED."startTimeUtc",
+  "endDay" = EXCLUDED."endDay",
+  "endTimeUtc" = EXCLUDED."endTimeUtc",
+  "utcOffsetMinutes" = EXCLUDED."utcOffsetMinutes",
+  timezone = EXCLUDED.timezone,
+  "localStartDay" = EXCLUDED."localStartDay",
+  "localStartMinutes" = EXCLUDED."localStartMinutes",
+  "localEndDay" = EXCLUDED."localEndDay",
+  "localEndMinutes" = EXCLUDED."localEndMinutes";
 
 -- Consultant B: IDENTICAL Mon-Fri 04:00-11:30 UTC
 INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
-  "consultantProfileId", "createdAt", "updatedAt"
+  "consultantProfileId", "createdAt", "updatedAt",
+  "utcOffsetMinutes", timezone, "localStartDay", "localStartMinutes", "localEndDay", "localEndMinutes"
 )
 VALUES
-  ('test-w006b-mon', 'MONDAY',    240, 'MONDAY',    690, 'test-consultant-profile-006b', NOW(), NOW()),
-  ('test-w006b-tue', 'TUESDAY',   240, 'TUESDAY',   690, 'test-consultant-profile-006b', NOW(), NOW()),
-  ('test-w006b-wed', 'WEDNESDAY', 240, 'WEDNESDAY', 690, 'test-consultant-profile-006b', NOW(), NOW()),
-  ('test-w006b-thu', 'THURSDAY',  240, 'THURSDAY',  690, 'test-consultant-profile-006b', NOW(), NOW()),
-  ('test-w006b-fri', 'FRIDAY',    240, 'FRIDAY',    690, 'test-consultant-profile-006b', NOW(), NOW())
-ON CONFLICT (id) DO NOTHING;
+  ('test-w006b-mon', 'MONDAY', 240, 'MONDAY', 690, 'test-consultant-profile-006b', NOW(), NOW(), 330, 'Asia/Kolkata', 'MONDAY', 570, 'MONDAY', 1020),
+  ('test-w006b-tue', 'TUESDAY', 240, 'TUESDAY', 690, 'test-consultant-profile-006b', NOW(), NOW(), 330, 'Asia/Kolkata', 'TUESDAY', 570, 'TUESDAY', 1020),
+  ('test-w006b-wed', 'WEDNESDAY', 240, 'WEDNESDAY', 690, 'test-consultant-profile-006b', NOW(), NOW(), 330, 'Asia/Kolkata', 'WEDNESDAY', 570, 'WEDNESDAY', 1020),
+  ('test-w006b-thu', 'THURSDAY', 240, 'THURSDAY', 690, 'test-consultant-profile-006b', NOW(), NOW(), 330, 'Asia/Kolkata', 'THURSDAY', 570, 'THURSDAY', 1020),
+  ('test-w006b-fri', 'FRIDAY', 240, 'FRIDAY', 690, 'test-consultant-profile-006b', NOW(), NOW(), 330, 'Asia/Kolkata', 'FRIDAY', 570, 'FRIDAY', 1020)
+ON CONFLICT (id) DO UPDATE SET
+  "startDay" = EXCLUDED."startDay",
+  "startTimeUtc" = EXCLUDED."startTimeUtc",
+  "endDay" = EXCLUDED."endDay",
+  "endTimeUtc" = EXCLUDED."endTimeUtc",
+  "utcOffsetMinutes" = EXCLUDED."utcOffsetMinutes",
+  timezone = EXCLUDED.timezone,
+  "localStartDay" = EXCLUDED."localStartDay",
+  "localStartMinutes" = EXCLUDED."localStartMinutes",
+  "localEndDay" = EXCLUDED."localEndDay",
+  "localEndMinutes" = EXCLUDED."localEndMinutes";
 ```
 
 ### Step 0.6 — Plans + Instances for Consultant A

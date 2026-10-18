@@ -1037,6 +1037,31 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to settle cancelled class sessions",
       }),
 
+    // @cleanup-twin settle-platform-incidents
+    "settle-platform-incidents": () =>
+      cleanupRoute({
+        job: "settle-platform-incidents",
+        run: async (req, { startedAt }) => {
+          const { settlePlatformIncidents } =
+            await import("@/scripts/appointments/settle-platform-incidents");
+          return settlePlatformIncidents({
+            limit: parseLimitParam(req),
+            startedAt,
+          });
+        },
+        summarize: (r) => ({
+          incidents: r.incidents,
+          voided: r.voided,
+          remediesCreated: r.remediesCreated,
+          remediesDone: r.remediesDone,
+          deadLettered: r.deadLettered,
+          digests: r.digests,
+          settled: r.settled,
+          errors: r.errors,
+        }),
+        failureMessage: "Failed to settle declared platform incidents",
+      }),
+
     // @cleanup-twin settle-invoice-accruals
     "settle-invoice-accruals": () =>
       cleanupRoute({

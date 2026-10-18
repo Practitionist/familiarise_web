@@ -89,6 +89,7 @@ jest.mock("../../lib/prisma", () => {
       create: jest.fn().mockResolvedValue({}),
     },
     maintenanceWindow: { findMany: jest.fn().mockResolvedValue([]) },
+    platformIncident: { findMany: jest.fn().mockResolvedValue([]) },
     // The claim writes the expert's reliability strike.
     systemEvent: { create: jest.fn().mockResolvedValue({}) },
     // The claim stamps the owed refund; the drive clears it by CAS.
@@ -325,6 +326,25 @@ describe("consultant no-show refunds", () => {
     );
     expect(result.refunded).toBe(0);
     expect(result.success).toBe(false);
+  });
+
+  it("neither claims nor strikes a session inside a declared incident", async () => {
+    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([
+      noShowCandidate({ id: "pay-1", amount: 150000 }),
+    ]);
+    (prisma.platformIncident.findMany as jest.Mock).mockResolvedValueOnce([
+      {
+        startsAt: new Date("2026-09-01T10:30:00Z"),
+        endsAt: new Date("2026-09-01T12:00:00Z"),
+      },
+    ]);
+
+    const result = await detectConsultantNoShows();
+
+    expect(result.detected).toBe(0);
+    expect(prisma.consultation.updateMany).not.toHaveBeenCalled();
+    expect(prisma.systemEvent.create).not.toHaveBeenCalled();
+    expect(refundBookingPayment).not.toHaveBeenCalled();
   });
 
   it("leaves a session the consultant actually attended alone", async () => {

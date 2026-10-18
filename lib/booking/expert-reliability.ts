@@ -4,6 +4,7 @@
  * class-series flag keeps its own `class-reliability:` one). No money moves.
  */
 import type { Prisma } from "@prisma/client";
+import { z } from "zod";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import {
@@ -48,7 +49,64 @@ export async function recordExpertStrike(
   return true;
 }
 
-type StrikeReader = { systemEvent: Pick<Tx["systemEvent"], "count"> };
+type StrikeReader = Pick<
+  Tx,
+  "systemEvent" | "platformIncident" | "appointmentOccurrence"
+>;
+
+/** Strike rows read per call; an expert past this many is flagged regardless. */
+const STRIKE_READ_CAP = 2_000;
+const INCIDENT_LOOKBACK_MS = 7 * 86_400_000;
+const strikeContextSchema = z.object({ appointmentId: z.string() });
+
+const appointmentIdOf = (context: Prisma.JsonValue): string | null => {
+  const parsed = strikeContextSchema.safeParse(context);
+  return parsed.success ? parsed.data.appointmentId : null;
+};
+
+/** Appointments with a session inside a declared incident: their strikes never count. */
+async function incidentAppointmentIds(
+  db: StrikeReader,
+  appointmentIds: string[],
+  since: Date,
+): Promise<Set<string>> {
+  if (appointmentIds.length === 0) return new Set();
+  const incidents = await db.platformIncident.findMany({
+    where: { endsAt: { gt: new Date(since.getTime() - INCIDENT_LOOKBACK_MS) } },
+    select: { startsAt: true, endsAt: true },
+    take: 200,
+  });
+  if (incidents.length === 0) return new Set();
+  const rows = await db.appointmentOccurrence.findMany({
+    where: {
+      appointmentId: { in: appointmentIds },
+      OR: incidents.map((w) => ({
+        startsAt: { lt: w.endsAt },
+        endsAt: { gt: w.startsAt },
+      })),
+    },
+    select: { appointmentId: true },
+    distinct: ["appointmentId"],
+  });
+  return new Set(rows.map((r) => r.appointmentId));
+}
+
+/** The strikes in the window, less those on a session a declared incident voided. */
+async function countableStrikes<R extends { context: Prisma.JsonValue }>(
+  db: StrikeReader,
+  rows: R[],
+  since: Date,
+): Promise<R[]> {
+  const ids = [
+    ...new Set(rows.flatMap((r) => appointmentIdOf(r.context) ?? [])),
+  ];
+  const covered = await incidentAppointmentIds(db, ids, since);
+  if (covered.size === 0) return rows;
+  return rows.filter((r) => {
+    const id = appointmentIdOf(r.context);
+    return !id || !covered.has(id);
+  });
+}
 
 export async function countExpertStrikes(
   consultantProfileId: string,
@@ -56,13 +114,17 @@ export async function countExpertStrikes(
   opts: { personalOnly?: boolean; db?: StrikeReader } = {},
 ): Promise<number> {
   const db = opts.db ?? prisma;
-  return db.systemEvent.count({
+  const rows = await db.systemEvent.findMany({
     where: {
       correlationId: expertReliabilityCorrelationId(consultantProfileId),
       createdAt: { gte: since },
       ...(opts.personalOnly ? { organizationId: null } : {}),
     },
+    select: { context: true },
+    take: STRIKE_READ_CAP,
   });
+  if (rows.length === 0) return 0;
+  return (await countableStrikes(db, rows, since)).length;
 }
 
 /** The ops review list: experts with strikes in the window, most first. */
@@ -70,36 +132,36 @@ export async function readExpertStrikeReview(
   now = new Date(),
   limit = 50,
 ): Promise<ExpertStrikeReviewRow[]> {
-  const where: Prisma.SystemEventWhereInput = {
-    correlationId: { startsWith: PREFIX },
-    createdAt: { gte: strikeWindowStart(now) },
-  };
-  const groups = await prisma.systemEvent.groupBy({
-    by: ["correlationId"],
-    where,
-    _count: { _all: true },
-    _max: { createdAt: true },
-    orderBy: { _count: { correlationId: "desc" } },
-    take: limit,
+  const since = strikeWindowStart(now);
+  const rows = await prisma.systemEvent.findMany({
+    where: {
+      correlationId: { startsWith: PREFIX },
+      createdAt: { gte: since },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { correlationId: true, createdAt: true, context: true },
+    take: STRIKE_READ_CAP,
   });
-  const ids = groups
-    .map((g) => g.correlationId?.slice(PREFIX.length))
-    .filter((id): id is string => !!id);
+  const byExpert = new Map<string, { strikes: number; lastStrikeAt: Date }>();
+  for (const row of await countableStrikes(prisma, rows, since)) {
+    const id = row.correlationId?.slice(PREFIX.length);
+    if (!id) continue;
+    const seen = byExpert.get(id);
+    if (seen) seen.strikes += 1;
+    else byExpert.set(id, { strikes: 1, lastStrikeAt: row.createdAt });
+  }
+  const top = [...byExpert.entries()]
+    .sort((a, b) => b[1].strikes - a[1].strikes)
+    .slice(0, limit);
   const profiles = await prisma.consultantProfile.findMany({
-    where: { id: { in: ids } },
+    where: { id: { in: top.map(([id]) => id) } },
     select: { id: true, user: { select: { name: true } } },
   });
   const nameOf = new Map(profiles.map((p) => [p.id, p.user?.name ?? null]));
-  return groups.flatMap((g) => {
-    const id = g.correlationId?.slice(PREFIX.length);
-    if (!id) return [];
-    return [
-      {
-        consultantProfileId: id,
-        name: nameOf.get(id) ?? null,
-        strikes: g._count._all,
-        lastStrikeAt: g._max.createdAt?.toISOString() ?? null,
-      },
-    ];
-  });
+  return top.map(([id, g]) => ({
+    consultantProfileId: id,
+    name: nameOf.get(id) ?? null,
+    strikes: g.strikes,
+    lastStrikeAt: g.lastStrikeAt.toISOString(),
+  }));
 }

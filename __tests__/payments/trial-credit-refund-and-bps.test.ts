@@ -442,3 +442,49 @@ describe("quoteTrialRefund — basis points, not floats (#1396)", () => {
     expect(result?.rail).toBe("GATEWAY");
   });
 });
+
+describe("quoteTrialRefund — a rebooked trial is quoted on its live session", () => {
+  it("never reads the voided original as the next session", async () => {
+    mockTermsFromPolicyRow.mockReturnValue(
+      terms([
+        { hoursBefore: 24, refundPct: 100 },
+        { hoursBefore: 0, refundPct: 0 },
+      ]),
+    );
+    givenPayment({
+      ...creditFundedTrial,
+      amount: BigInt(50_000),
+      paymentIntent: "pi_test",
+    });
+    const rows = [
+      { startsAt: new Date(Date.now() - 4 * 3_600_000), status: "VOIDED" },
+      { startsAt: new Date(Date.now() + 72 * 3_600_000), status: "SCHEDULED" },
+    ];
+    // The read applies its own where, as Postgres would.
+    mockAppointmentFindUnique.mockImplementation(
+      async (args: {
+        select: {
+          occurrences: { where?: { completionStatus?: { in: string[] } } };
+        };
+      }) => {
+        const allowed = args.select.occurrences.where?.completionStatus?.in;
+        return {
+          cancellationPolicy: null,
+          occurrences: rows
+            .filter((r) => !allowed || allowed.includes(r.status))
+            .slice(0, 1)
+            .map(({ startsAt }) => ({ startsAt })),
+        };
+      },
+    );
+
+    const quote = await quoteTrialRefund({
+      appointmentId: APPOINTMENT_ID,
+      paymentId: PAYMENT_ID,
+      isConsultantInitiated: false,
+    });
+
+    expect(quote?.refundPct).toBe(100);
+    expect(quote?.hoursUntilNextSession).toBeGreaterThan(71);
+  });
+});

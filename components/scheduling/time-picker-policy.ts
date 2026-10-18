@@ -16,7 +16,8 @@ export type TimePickerPolicyKind =
   | "ALLOCATE"
   | "RESCHEDULE_CONSULTEE"
   | "RESCHEDULE_CONSULTANT"
-  | "MANAGE_TIMINGS";
+  | "MANAGE_TIMINGS"
+  | "REBOOK_INCIDENT";
 
 /**
  * How the initiator would like the replacement placed when they name no time
@@ -208,6 +209,24 @@ export function rescheduleConsultantPolicy(
     // booked inside it, but merely being free is not consent to be moved.
     pickerHint:
       "Green means you are free. Whatever you propose is sent to the consultee to accept.",
+    ...handlers,
+  };
+}
+
+/** A learner rebooking an outage-voided 1:1 free; nothing is released and the time confirms at once. */
+export function rebookIncidentPolicy(
+  handlers: PolicyHandlers,
+): TimePickerPolicy {
+  return {
+    kind: "REBOOK_INCIDENT",
+    minLeadHours: 0,
+    showReleasedSlots: false,
+    submitLabel: "Rebook free",
+    allowReleaseWithoutTime: false,
+    calendarMode: "select",
+    appliesInitialAllocationGuard: false,
+    pickerHint:
+      "Green means your expert is free. Choosing a time confirms it straight away, at no charge.",
     ...handlers,
   };
 }
