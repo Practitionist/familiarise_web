@@ -176,15 +176,21 @@ describe("a business-coded refusal leaves POST /api/checkout as an answer", () =
     });
   });
 
-  it("counts a taken 1:1 slot as SLOT_TAKEN without adding a code to the body", async () => {
+  it("answers a taken 1:1 slot 409 SLOT_TAKEN, counted and never captured", async () => {
     handleCheckout.mockRejectedValue(new SlotTakenError());
 
-    const body = await (await POST(checkoutRequest())).json();
+    const res = await POST(checkoutRequest());
+    const body = await res.json();
 
     expect(metricsCount).toHaveBeenCalledWith("checkout.conflict", 1, {
       attributes: { reason: "SLOT_TAKEN" },
     });
-    expect(body.code).toBeUndefined();
+    expect(res.status).toBe(409);
+    expect(body).toMatchObject({
+      errorType: "AVAILABILITY_ERROR",
+      code: "SLOT_TAKEN",
+    });
+    expect(captureException).not.toHaveBeenCalled();
   });
 
   it("still captures an unrecognised failure at Sentry's default level", async () => {
