@@ -66,6 +66,7 @@ import {
   decideSlotOutcome,
   OUTCOME_SLOT_SELECT,
   readOutageWindows,
+  type OutcomeSlot,
   type SlotDecision,
 } from "@/lib/booking/session-outcome-sweep";
 import {
@@ -994,6 +995,27 @@ async function settleCycleBells(wrappers: Set<string>): Promise<void> {
   }
 }
 
+/** Decides one session and records what the bite's tail must settle. */
+async function decideOneSlot(
+  slot: OutcomeSlot,
+  ctx: Omit<Parameters<typeof decideSlotOutcome>[1], "onFeedGap">,
+  run: SlotRun,
+  settle: { wrappers: Set<string>; decidedHosts: Set<string> },
+): Promise<void> {
+  const decision = await decideSlotOutcome(slot, {
+    ...ctx,
+    onFeedGap: () => run.feedGaps++,
+  });
+  if (tallyDecision(run.tally, decision) && slot.appointment.subscriptionId) {
+    settle.wrappers.add(slot.appointmentId);
+  }
+  if (decision.kind === "written" && decision.moved) {
+    for (const id of sessionHostUserIds(slot.appointment)) {
+      settle.decidedHosts.add(id);
+    }
+  }
+}
+
 /** What the slot pass carries across its bites; reported once per run. */
 interface SlotRun {
   tally: SlotTally;
@@ -1049,22 +1071,10 @@ async function completeIndividualSlots(
     for (const slot of cohort) {
       if (pastDeadline()) break;
       try {
-        const decision = await decideSlotOutcome(slot, {
-          now,
-          outages,
-          onFeedGap: () => run.feedGaps++,
+        await decideOneSlot(slot, { now, outages }, run, {
+          wrappers,
+          decidedHosts,
         });
-        if (
-          tallyDecision(run.tally, decision) &&
-          slot.appointment.subscriptionId
-        ) {
-          wrappers.add(slot.appointmentId);
-        }
-        if (decision.kind === "written" && decision.moved) {
-          for (const id of sessionHostUserIds(slot.appointment)) {
-            decidedHosts.add(id);
-          }
-        }
       } catch (error) {
         errors.push(
           `Failed to decide session ${slot.id}: ${error instanceof Error ? error.message : String(error)}`,
