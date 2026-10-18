@@ -389,7 +389,9 @@ export default function ConsultationCheckoutPage({
       validatedSearchParams?.endsAt,
     ],
     enabled: !!consultantProfileId && !!validatedSearchParams,
-    staleTime: Infinity,
+    // Re-asked on every mount, never answered from an earlier visit's cache.
+    gcTime: 0,
+    refetchOnMount: "always",
     retry: false,
     refetchOnWindowFocus: false,
     queryFn: () =>
