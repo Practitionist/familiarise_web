@@ -78,9 +78,9 @@ function SponsorFinance({ orgId }: Readonly<{ orgId: string }>) {
           href={`${base}/billing`}
         />
         <Stat
-          label="This month"
-          value={formatCurrencyAmount(b.monthToDate.gross, "INR")}
-          hint={`${b.monthToDate.paymentCount} bookings`}
+          label="Spent (net of refunds)"
+          value={formatCurrencyAmount(b.monthToDate.net, "INR")}
+          hint={`${b.monthToDate.paymentCount} bookings this month`}
         />
         {b.pendingCharges && (
           <Stat

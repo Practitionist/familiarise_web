@@ -14,6 +14,9 @@ export const APPROVAL_PAYMENT_EXPIRATION_MS =
 /** #1703 D2 — the one reminder fires when this much of the window is left. */
 export const APPROVAL_PAYMENT_REMINDER_MS = APPROVAL_PAYMENT_EXPIRATION_MS / 2;
 
+/** A direct checkout's PENDING window; the slot frees when it lapses. */
+export const DIRECT_CHECKOUT_HOLD_MS = 30 * 60 * 1000;
+
 /** Minimum booking lead time in milliseconds (15 minutes) */
 export const MINIMUM_BOOKING_LEAD_TIME_MS = 15 * 60 * 1000;
 

@@ -13,11 +13,14 @@
  *     dunningSuspended: boolean,
  *     dunningSuspendedInvoiceNumber: string | null,
  *     fundingSource: FundingSource | null,
- *     monthToDate: { gross: number, paymentCount: number },
+ *     monthToDate: { net: number, paymentCount: number },
  *     outstanding: { amount: number, invoiceCount: number },
  *     pendingCharges: { amount: number, paymentCount: number } | null,
  *     paymentTermsDays: number,
  *   }
+ *
+ * `monthToDate` counts only the org's own rails (WALLET/INVOICE/LICENSE) — a
+ * member's card payment tagged to the org is not its spend — net of SUCCEEDED refunds.
  *
  * `pendingCharges` is non-null only for INVOICE-funded orgs (where
  * Payment rows accrue with `billableToOrgInvoiceId = null` until the
@@ -31,11 +34,13 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { isWalletFrozen } from "@/lib/payments/wallet-freeze";
 import { ENABLE_DUNNING_SUSPEND } from "@/lib/feature-flags";
+import { orgFundedPaymentWhere } from "@/lib/data/org-sponsored-seats";
 
 export async function GET(
   _req: NextRequest,
@@ -59,72 +64,83 @@ export async function GET(
   startOfMonth.setUTCDate(1);
   startOfMonth.setUTCHours(0, 0, 0, 0);
 
-  const [monthAgg, outstandingAgg, pendingAgg, licenseContract] =
-    await Promise.all([
-      prisma.payment.aggregate({
-        where: {
-          organizationId: orgId,
-          paymentStatus: "SUCCEEDED",
-          createdAt: { gte: startOfMonth },
-        },
-        _sum: { amount: true },
-        _count: { _all: true },
-      }),
-      prisma.organizationInvoice.aggregate({
-        where: {
-          organizationId: orgId,
-          status: { in: ["ISSUED", "OVERDUE"] },
-        },
-        _sum: { totalPaise: true },
-        _count: { _all: true },
-      }),
-      billingAccount?.fundingSource === "INVOICE"
-        ? prisma.payment.aggregate({
-            where: {
-              organizationId: orgId,
-              billingAccountId: billingAccount.id,
-              billableToOrgInvoiceId: null,
-              paymentStatus: "SUCCEEDED",
-            },
-            _sum: { amount: true },
-            _count: { _all: true },
-          })
-        : Promise.resolve(null),
-      // Surface the active LICENSE contract + its BillingSubscription for
-      // the Annual License panel on /billing. T5 (#756 GS-1) wires the
-      // contract create flow to atomically insert a BillingSubscription;
-      // this is the read side that displays it. We explicitly filter to
-      // contracts that HAVE a subscription — an org with multiple ACTIVE
-      // LICENSE contracts (e.g. older fee-less ones alongside a newer one
-      // that captured the fee) should show the one with the actual
-      // commercial value, not whichever has the most recent effectiveFrom.
-      billingAccount?.fundingSource === "LICENSE"
-        ? prisma.contract.findFirst({
-            where: {
-              organizationId: orgId,
-              status: "ACTIVE",
-              subscription: { isNot: null },
-            },
-            orderBy: { effectiveFrom: "desc" },
-            select: {
-              id: true,
-              effectiveFrom: true,
-              effectiveTo: true,
-              autoRenew: true,
-              subscription: {
-                select: {
-                  model: true,
-                  cycle: true,
-                  flatFeePaise: true,
-                  currentCycleStart: true,
-                  currentCycleEnd: true,
-                  nextInvoiceDate: true,
-                },
+  const monthOrgSpend = {
+    ...orgFundedPaymentWhere(orgId),
+    paymentStatus: "SUCCEEDED",
+    createdAt: { gte: startOfMonth },
+  } satisfies Prisma.PaymentWhereInput;
+
+  const [
+    monthAgg,
+    monthRefundAgg,
+    outstandingAgg,
+    pendingAgg,
+    licenseContract,
+  ] = await Promise.all([
+    prisma.payment.aggregate({
+      where: monthOrgSpend,
+      _sum: { amount: true },
+      _count: { _all: true },
+    }),
+    prisma.refund.aggregate({
+      where: { status: "SUCCEEDED", payment: monthOrgSpend },
+      _sum: { amountPaise: true },
+    }),
+    prisma.organizationInvoice.aggregate({
+      where: {
+        organizationId: orgId,
+        status: { in: ["ISSUED", "OVERDUE"] },
+      },
+      _sum: { totalPaise: true },
+      _count: { _all: true },
+    }),
+    billingAccount?.fundingSource === "INVOICE"
+      ? prisma.payment.aggregate({
+          where: {
+            organizationId: orgId,
+            billingAccountId: billingAccount.id,
+            billableToOrgInvoiceId: null,
+            paymentStatus: "SUCCEEDED",
+          },
+          _sum: { amount: true },
+          _count: { _all: true },
+        })
+      : Promise.resolve(null),
+    // Surface the active LICENSE contract + its BillingSubscription for
+    // the Annual License panel on /billing. T5 (#756 GS-1) wires the
+    // contract create flow to atomically insert a BillingSubscription;
+    // this is the read side that displays it. We explicitly filter to
+    // contracts that HAVE a subscription — an org with multiple ACTIVE
+    // LICENSE contracts (e.g. older fee-less ones alongside a newer one
+    // that captured the fee) should show the one with the actual
+    // commercial value, not whichever has the most recent effectiveFrom.
+    billingAccount?.fundingSource === "LICENSE"
+      ? prisma.contract.findFirst({
+          where: {
+            organizationId: orgId,
+            status: "ACTIVE",
+            subscription: { isNot: null },
+          },
+          orderBy: { effectiveFrom: "desc" },
+          select: {
+            id: true,
+            effectiveFrom: true,
+            effectiveTo: true,
+            autoRenew: true,
+            subscription: {
+              select: {
+                model: true,
+                cycle: true,
+                flatFeePaise: true,
+                currentCycleStart: true,
+                currentCycleEnd: true,
+                nextInvoiceDate: true,
               },
             },
-          })
-        : Promise.resolve(null),
-    ]);
+          },
+        })
+      : Promise.resolve(null),
+  ]);
 
   const org = await prisma.organization.findUnique({
     where: { id: orgId },
@@ -163,7 +179,9 @@ export async function GET(
     // null = unlimited (#777 §B credit-limit visibility).
     creditLimitPaise: billingAccount?.creditLimit ?? null,
     monthToDate: {
-      gross: sumPaise(monthAgg._sum.amount),
+      net:
+        sumPaise(monthAgg._sum.amount) -
+        sumPaise(monthRefundAgg._sum.amountPaise),
       paymentCount: monthAgg._count._all,
     },
     outstanding: {

@@ -22,6 +22,14 @@ export function isOrgFundedPaymentMethod(
   return ORG_FUNDED_METHODS.includes(method ?? "");
 }
 
+/** A payment the org's own money made: tagged to the org and on one of its rails. */
+export function orgFundedPaymentWhere(orgId: string): Prisma.PaymentWhereInput {
+  return {
+    organizationId: orgId,
+    paymentMethod: { in: ORG_FUNDED_METHODS },
+  };
+}
+
 /**
  * #1854 (ADR 19) — a webinar or class seat carries the org only when the
  * org's money paid for it; a personal purchase by a member carries none, so
@@ -41,10 +49,7 @@ export function sponsoredSeatsWhere(
     organizationId: orgId,
     role: "CONSULTEE",
     status: { in: LIVE_PARTICIPANT_STATUSES },
-    payment: {
-      organizationId: orgId,
-      paymentMethod: { in: ORG_FUNDED_METHODS },
-    },
+    payment: orgFundedPaymentWhere(orgId),
     // Its own members only, including one it has since suspended.
     user: {
       memberships: {
