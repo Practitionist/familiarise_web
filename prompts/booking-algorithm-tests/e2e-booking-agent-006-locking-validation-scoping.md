@@ -217,7 +217,17 @@ VALUES
   ('test-w006a-wed', 'WEDNESDAY', 240, 'WEDNESDAY', 690, 'test-consultant-profile-006a', NOW(), NOW(), 330, 'Asia/Kolkata', 'WEDNESDAY', 570, 'WEDNESDAY', 1020),
   ('test-w006a-thu', 'THURSDAY', 240, 'THURSDAY', 690, 'test-consultant-profile-006a', NOW(), NOW(), 330, 'Asia/Kolkata', 'THURSDAY', 570, 'THURSDAY', 1020),
   ('test-w006a-fri', 'FRIDAY', 240, 'FRIDAY', 690, 'test-consultant-profile-006a', NOW(), NOW(), 330, 'Asia/Kolkata', 'FRIDAY', 570, 'FRIDAY', 1020)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+  "startDay" = EXCLUDED."startDay",
+  "startTimeUtc" = EXCLUDED."startTimeUtc",
+  "endDay" = EXCLUDED."endDay",
+  "endTimeUtc" = EXCLUDED."endTimeUtc",
+  "utcOffsetMinutes" = EXCLUDED."utcOffsetMinutes",
+  timezone = EXCLUDED.timezone,
+  "localStartDay" = EXCLUDED."localStartDay",
+  "localStartMinutes" = EXCLUDED."localStartMinutes",
+  "localEndDay" = EXCLUDED."localEndDay",
+  "localEndMinutes" = EXCLUDED."localEndMinutes";
 
 -- Consultant B: IDENTICAL Mon-Fri 04:00-11:30 UTC
 INSERT INTO "AvailabilityWindowWeekly" (
@@ -231,7 +241,17 @@ VALUES
   ('test-w006b-wed', 'WEDNESDAY', 240, 'WEDNESDAY', 690, 'test-consultant-profile-006b', NOW(), NOW(), 330, 'Asia/Kolkata', 'WEDNESDAY', 570, 'WEDNESDAY', 1020),
   ('test-w006b-thu', 'THURSDAY', 240, 'THURSDAY', 690, 'test-consultant-profile-006b', NOW(), NOW(), 330, 'Asia/Kolkata', 'THURSDAY', 570, 'THURSDAY', 1020),
   ('test-w006b-fri', 'FRIDAY', 240, 'FRIDAY', 690, 'test-consultant-profile-006b', NOW(), NOW(), 330, 'Asia/Kolkata', 'FRIDAY', 570, 'FRIDAY', 1020)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+  "startDay" = EXCLUDED."startDay",
+  "startTimeUtc" = EXCLUDED."startTimeUtc",
+  "endDay" = EXCLUDED."endDay",
+  "endTimeUtc" = EXCLUDED."endTimeUtc",
+  "utcOffsetMinutes" = EXCLUDED."utcOffsetMinutes",
+  timezone = EXCLUDED.timezone,
+  "localStartDay" = EXCLUDED."localStartDay",
+  "localStartMinutes" = EXCLUDED."localStartMinutes",
+  "localEndDay" = EXCLUDED."localEndDay",
+  "localEndMinutes" = EXCLUDED."localEndMinutes";
 ```
 
 ### Step 0.6 — Plans + Instances for Consultant A

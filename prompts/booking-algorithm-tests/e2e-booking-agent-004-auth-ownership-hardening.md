@@ -190,7 +190,17 @@ VALUES
   ('test-w004a-wed', 'WEDNESDAY', 240, 'WEDNESDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'WEDNESDAY', 570, 'WEDNESDAY', 750),
   ('test-w004a-thu', 'THURSDAY', 240, 'THURSDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'THURSDAY', 570, 'THURSDAY', 750),
   ('test-w004a-fri', 'FRIDAY', 240, 'FRIDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'FRIDAY', 570, 'FRIDAY', 750)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+  "startDay" = EXCLUDED."startDay",
+  "startTimeUtc" = EXCLUDED."startTimeUtc",
+  "endDay" = EXCLUDED."endDay",
+  "endTimeUtc" = EXCLUDED."endTimeUtc",
+  "utcOffsetMinutes" = EXCLUDED."utcOffsetMinutes",
+  timezone = EXCLUDED.timezone,
+  "localStartDay" = EXCLUDED."localStartDay",
+  "localStartMinutes" = EXCLUDED."localStartMinutes",
+  "localEndDay" = EXCLUDED."localEndDay",
+  "localEndMinutes" = EXCLUDED."localEndMinutes";
 
 -- Custom slot: next Saturday 04:30-10:30 UTC
 INSERT INTO "AvailabilityWindowCustom" (
@@ -220,7 +230,17 @@ VALUES
   ('test-w004b-mon', 'MONDAY', 510, 'MONDAY', 690, 'test-consultant-profile-004b', NOW(), NOW(), 330, 'Asia/Kolkata', 'MONDAY', 840, 'MONDAY', 1020),
   ('test-w004b-tue', 'TUESDAY', 510, 'TUESDAY', 690, 'test-consultant-profile-004b', NOW(), NOW(), 330, 'Asia/Kolkata', 'TUESDAY', 840, 'TUESDAY', 1020),
   ('test-w004b-wed', 'WEDNESDAY', 510, 'WEDNESDAY', 690, 'test-consultant-profile-004b', NOW(), NOW(), 330, 'Asia/Kolkata', 'WEDNESDAY', 840, 'WEDNESDAY', 1020)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+  "startDay" = EXCLUDED."startDay",
+  "startTimeUtc" = EXCLUDED."startTimeUtc",
+  "endDay" = EXCLUDED."endDay",
+  "endTimeUtc" = EXCLUDED."endTimeUtc",
+  "utcOffsetMinutes" = EXCLUDED."utcOffsetMinutes",
+  timezone = EXCLUDED.timezone,
+  "localStartDay" = EXCLUDED."localStartDay",
+  "localStartMinutes" = EXCLUDED."localStartMinutes",
+  "localEndDay" = EXCLUDED."localEndDay",
+  "localEndMinutes" = EXCLUDED."localEndMinutes";
 ```
 
 ### Step 0.7 — Plans for Consultant A Only
@@ -743,7 +763,17 @@ VALUES
   ('test-w004a-wed', 'WEDNESDAY', 240, 'WEDNESDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'WEDNESDAY', 570, 'WEDNESDAY', 750),
   ('test-w004a-thu', 'THURSDAY', 240, 'THURSDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'THURSDAY', 570, 'THURSDAY', 750),
   ('test-w004a-fri', 'FRIDAY', 240, 'FRIDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'FRIDAY', 570, 'FRIDAY', 750)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+  "startDay" = EXCLUDED."startDay",
+  "startTimeUtc" = EXCLUDED."startTimeUtc",
+  "endDay" = EXCLUDED."endDay",
+  "endTimeUtc" = EXCLUDED."endTimeUtc",
+  "utcOffsetMinutes" = EXCLUDED."utcOffsetMinutes",
+  timezone = EXCLUDED.timezone,
+  "localStartDay" = EXCLUDED."localStartDay",
+  "localStartMinutes" = EXCLUDED."localStartMinutes",
+  "localEndDay" = EXCLUDED."localEndDay",
+  "localEndMinutes" = EXCLUDED."localEndMinutes";
 
 UPDATE "ConsultantProfile" SET description = 'Auth hardening test consultant A.'
 WHERE id = 'test-consultant-profile-004a';
@@ -1098,7 +1128,17 @@ VALUES
   ('test-w004a-wed', 'WEDNESDAY', 240, 'WEDNESDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'WEDNESDAY', 570, 'WEDNESDAY', 750),
   ('test-w004a-thu', 'THURSDAY', 240, 'THURSDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'THURSDAY', 570, 'THURSDAY', 750),
   ('test-w004a-fri', 'FRIDAY', 240, 'FRIDAY', 420, 'test-consultant-profile-004a', NOW(), NOW(), 330, 'Asia/Kolkata', 'FRIDAY', 570, 'FRIDAY', 750)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+  "startDay" = EXCLUDED."startDay",
+  "startTimeUtc" = EXCLUDED."startTimeUtc",
+  "endDay" = EXCLUDED."endDay",
+  "endTimeUtc" = EXCLUDED."endTimeUtc",
+  "utcOffsetMinutes" = EXCLUDED."utcOffsetMinutes",
+  timezone = EXCLUDED.timezone,
+  "localStartDay" = EXCLUDED."localStartDay",
+  "localStartMinutes" = EXCLUDED."localStartMinutes",
+  "localEndDay" = EXCLUDED."localEndDay",
+  "localEndMinutes" = EXCLUDED."localEndMinutes";
 ```
 
 ---

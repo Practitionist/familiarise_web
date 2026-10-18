@@ -261,7 +261,17 @@ VALUES
   ('test-weekly-slot-fri-am', 'FRIDAY', 270, 'FRIDAY', 450, 'test-consultant-profile-001', NOW(), NOW(), 330, 'Asia/Kolkata', 'FRIDAY', 600, 'FRIDAY', 780),
   -- Friday PM
   ('test-weekly-slot-fri-pm', 'FRIDAY', 510, 'FRIDAY', 690, 'test-consultant-profile-001', NOW(), NOW(), 330, 'Asia/Kolkata', 'FRIDAY', 840, 'FRIDAY', 1020)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+  "startDay" = EXCLUDED."startDay",
+  "startTimeUtc" = EXCLUDED."startTimeUtc",
+  "endDay" = EXCLUDED."endDay",
+  "endTimeUtc" = EXCLUDED."endTimeUtc",
+  "utcOffsetMinutes" = EXCLUDED."utcOffsetMinutes",
+  timezone = EXCLUDED.timezone,
+  "localStartDay" = EXCLUDED."localStartDay",
+  "localStartMinutes" = EXCLUDED."localStartMinutes",
+  "localEndDay" = EXCLUDED."localEndDay",
+  "localEndMinutes" = EXCLUDED."localEndMinutes";
 
 -- Also create one custom availability slot (for a specific date, e.g., next Saturday)
 -- Custom slots use actual timestamps (DateTime @db.Timestamptz), not minutes
@@ -1304,7 +1314,7 @@ WHERE id = '<CONSULTATION_ID>';
 -- The slots are SOFT-cancelled, not deleted. Payment.appointment is ON DELETE
 -- RESTRICT, so the database itself refuses to delete an appointment a Payment
 -- points at; the cancel route only moves completionStatus from
--- SCHEDULED/RESCHEDULED to CANCELLED.
+-- SCHEDULED/RESCHEDULED/UNVERIFIED to CANCELLED.
 SELECT COUNT(*) AS "remainingSlots",
        COUNT(*) FILTER (WHERE "completionStatus" = 'CANCELLED') AS "cancelledSlots"
 FROM "AppointmentOccurrence"

@@ -151,7 +151,17 @@ INSERT INTO "AvailabilityWindowWeekly" (
 )
 VALUES
   ('test-w005-mon-night', 'MONDAY', 1380, 'TUESDAY', 60, 'test-consultant-profile-005', NOW(), NOW(), 0, 'UTC', 'MONDAY', 1380, 'TUESDAY', 60)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+  "startDay" = EXCLUDED."startDay",
+  "startTimeUtc" = EXCLUDED."startTimeUtc",
+  "endDay" = EXCLUDED."endDay",
+  "endTimeUtc" = EXCLUDED."endTimeUtc",
+  "utcOffsetMinutes" = EXCLUDED."utcOffsetMinutes",
+  timezone = EXCLUDED.timezone,
+  "localStartDay" = EXCLUDED."localStartDay",
+  "localStartMinutes" = EXCLUDED."localStartMinutes",
+  "localEndDay" = EXCLUDED."localEndDay",
+  "localEndMinutes" = EXCLUDED."localEndMinutes";
 
 -- Same-day weekly slot: Wed 09:00-17:00 UTC
 -- startTimeUtc=540, endTimeUtc=1020
@@ -162,7 +172,17 @@ INSERT INTO "AvailabilityWindowWeekly" (
 )
 VALUES
   ('test-w005-wed-day', 'WEDNESDAY', 540, 'WEDNESDAY', 1020, 'test-consultant-profile-005', NOW(), NOW(), 0, 'UTC', 'WEDNESDAY', 540, 'WEDNESDAY', 1020)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+  "startDay" = EXCLUDED."startDay",
+  "startTimeUtc" = EXCLUDED."startTimeUtc",
+  "endDay" = EXCLUDED."endDay",
+  "endTimeUtc" = EXCLUDED."endTimeUtc",
+  "utcOffsetMinutes" = EXCLUDED."utcOffsetMinutes",
+  timezone = EXCLUDED.timezone,
+  "localStartDay" = EXCLUDED."localStartDay",
+  "localStartMinutes" = EXCLUDED."localStartMinutes",
+  "localEndDay" = EXCLUDED."localEndDay",
+  "localEndMinutes" = EXCLUDED."localEndMinutes";
 
 -- Custom overnight slot: next Friday 23:00 -> Saturday 02:00
 INSERT INTO "AvailabilityWindowCustom" (
@@ -707,7 +727,17 @@ INSERT INTO "AvailabilityWindowWeekly" (
 VALUES
   ('test-w005-mon-night', 'MONDAY', 1380, 'TUESDAY', 60, 'test-consultant-profile-005', NOW(), NOW(), 0, 'UTC', 'MONDAY', 1380, 'TUESDAY', 60),
   ('test-w005-wed-day', 'WEDNESDAY', 540, 'WEDNESDAY', 1020, 'test-consultant-profile-005', NOW(), NOW(), 0, 'UTC', 'WEDNESDAY', 540, 'WEDNESDAY', 1020)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+  "startDay" = EXCLUDED."startDay",
+  "startTimeUtc" = EXCLUDED."startTimeUtc",
+  "endDay" = EXCLUDED."endDay",
+  "endTimeUtc" = EXCLUDED."endTimeUtc",
+  "utcOffsetMinutes" = EXCLUDED."utcOffsetMinutes",
+  timezone = EXCLUDED.timezone,
+  "localStartDay" = EXCLUDED."localStartDay",
+  "localStartMinutes" = EXCLUDED."localStartMinutes",
+  "localEndDay" = EXCLUDED."localEndDay",
+  "localEndMinutes" = EXCLUDED."localEndMinutes";
 ```
 
 ---

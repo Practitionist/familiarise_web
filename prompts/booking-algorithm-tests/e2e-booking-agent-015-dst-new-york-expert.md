@@ -79,8 +79,9 @@ wall-clock 01:00 to 03:00 and the clocks fall back at 02:00 EDT on 2026-11-01.
 | 2026-11-08 | `06:00Z` to `08:00Z`                        | 4     | ordinary day, EST                                        |
 
 **Expected:** the grid shows 6 atoms on 2026-11-01 (a 2-hour wall-clock row is
-3 real hours that night), starting at `05:00Z`. A 1-hour booking at `06:00Z` to
-`07:00Z` on that Sunday spans the repeated hour and must be accepted.
+3 real hours that night), starting at `05:00Z`. A 1-hour booking at `05:30Z` to
+`06:30Z` on that Sunday crosses from the first 01:30 into the repeated hour and
+must be accepted; so must `06:00Z` to `07:00Z`, the repeated hour itself.
 
 ## Phase 3 — Booking across the change
 

@@ -160,7 +160,9 @@ the case (`status = 'FAILED'`, `failureReason = 'qa019 cleanup'`).
 
 ## Phase 6 — Cleanup
 
-Clear remaining `-019` markers (`refundOwed*` to NULL), make any synthetic
+Clear remaining `-019` markers (`refundOwed*` to NULL), including `<PAYMENT_4>`'s
+(the dashboard refund in Phase 4 settled that obligation by hand: record its
+Razorpay refund id), make any synthetic
 `WebhookEvent` terminal, delete QA rows in the order in the shared setup, and
 record the ids of the `Refund` and ledger rows you leave behind (append-only).
 

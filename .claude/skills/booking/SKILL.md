@@ -103,8 +103,9 @@ throws instead of destroying the Payment rows, the refund trail and the credit
 usage. That backstop exists because a trial cancellation once deleted the
 appointment (#1074). The app rule is mechanical and sits in front of it: **the
 payment guard rides inside the DELETE's WHERE clause**, never in an earlier
-read, so a lost race becomes a clean zero-row answer rather than a thrown
-foreign-key error.
+read, so a lost race becomes a clean zero-row answer. A payment that commits
+after the statement's snapshot can still hit the `Restrict` foreign key; treat
+that error as the same lost race, never as a reason to cascade.
 
 The allocator's form is `tx.appointment.deleteMany({ where: { id, payment:
 { none: {} } } })`. A count of zero means a Payment committed between the read
@@ -169,26 +170,29 @@ Compose filters with `scopeOrgId` and `scopeToWhereOrgId`, end every `buildWhere
 with `assertNeverScope` so an unhandled kind is a compile error instead of an
 unfiltered cross-tenant read, and never hand-roll an org filter.
 
-The `org` arm is **rows this org actually funded, and only while it is readable**.
-`lib/api/scope/list-appointments.ts` demands all three at once: the row's
-`organizationId` is this org, a `payment` on it carries this same
-`organizationId` **and** `paymentMethod ∈ {WALLET, INVOICE, LICENSE}` (the
-`sponsoredSeatsWhere` predicate, so the two surfaces answer "whose session is
-this" identically), and `organization.status` is in
-`ORG_SCOPE_READABLE_STATUSES`. SUSPENDED stays in that tuple on purpose — its
-OWNER has to be able to open the org to find whatever suspended it; DEACTIVATED
-is the one exclusion. The `all` arm is deliberately left unfiltered, because
-verifying a teardown means being able to read the dead org.
+The `org` arm is **rows this org owns, and only while it is readable**.
+`lib/api/scope/list-appointments.ts` pins `organizationId` to this org and
+`organization.status` to `ORG_SCOPE_READABLE_STATUSES`, then admits a row on any
+one of three grounds: it has no payment yet (a request or free trial awaiting
+payment), a payment on it carries this org's id on a `WALLET`, `INVOICE` or
+`LICENSE` rail (the `sponsoredSeatsWhere` predicate, so the two surfaces answer
+"whose session is this" identically), or the org owns the catalog plan being
+delivered (provider-side hosting, whatever rail the buyer paid on). SUSPENDED
+stays in the readable tuple on purpose — its OWNER has to be able to open the org
+to find whatever suspended it; DEACTIVATED is the one exclusion. The `all` arm is
+deliberately left unfiltered, because verifying a teardown means being able to
+read the dead org.
 
-Both clauses are load-bearing and they close different holes. #1166 ORG-8 removed
-the funded-elsewhere arm — `payment: { some: { organizationId } }` OR-ed beside
-the row's own `organizationId`, so the list offered rows the detail page 404s.
-What is back is narrower, not wider: the payment clause rides the ownership pin
-as an **AND**, so it cannot re-open that hole, and it adds the half the tag never
-established — checkout stamps `Appointment.organizationId` for ANY org in the
+The ownership pin and the grounds are both load-bearing and they close different
+holes. #1166 ORG-8 removed the funded-elsewhere arm — `payment: { some:
+{ organizationId } }` OR-ed beside the row's own `organizationId`, so the list
+offered rows the detail page 404s; the payment grounds now ride the ownership pin
+as an **AND**, so they cannot re-open that hole. They also close the half the tag
+never established — checkout stamps `Appointment.organizationId` for ANY org in the
 request body, including `fundingSource === "PERSONAL"`, so filtering on the tag
-alone published the amount of a member's personal purchase to every MANAGER+ in
-the "Everyone" feed. Cross-org funding visibility remains the money views' job.
+alone published the amount of a member's personal card purchase to every MANAGER+
+in the "Everyone" feed. A tagged, card-paid booking on a plan the org does not own
+is therefore excluded. Cross-org funding visibility remains the money views' job.
 Org lists stay metadata-only by design (ADR 20): an org sees that a session
 happened, never its content.
 
@@ -198,8 +202,10 @@ the parent `Appointment`, which is where a document's org lives) and
 pins). `resolveOrgScope`'s own `orgStatus` field is the other door:
 `app/api/collaborations/route.ts` passes the matched membership's
 `organization.status` and gates its org-hosted view on `ORG_SCOPE_READABLE_STATUSES`
-plus `catalog.manage`. Any other caller that omits `orgStatus` is not refused for
-a DEACTIVATED org by the resolver, so pass it or filter on the predicate.
+plus `catalog.manage`. The resolver refuses a DEACTIVATED org (403 `ORG_DEACTIVATED`) only when some
+status source is present (`ctx.orgStatus`, the membership's `orgStatus`, or its
+`organization.status`); a caller that supplies none is not checked, so pass one or
+filter on the predicate.
 
 ### 5. An approved request that was never paid has one outcome: EXPIRED
 

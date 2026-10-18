@@ -152,7 +152,17 @@ VALUES
   ('test-w002-wed-pm', 'WEDNESDAY', 510, 'WEDNESDAY', 690, 'test-consultant-profile-002', NOW(), NOW(), 330, 'Asia/Kolkata', 'WEDNESDAY', 840, 'WEDNESDAY', 1020),
   ('test-w002-thu-pm', 'THURSDAY', 510, 'THURSDAY', 690, 'test-consultant-profile-002', NOW(), NOW(), 330, 'Asia/Kolkata', 'THURSDAY', 840, 'THURSDAY', 1020),
   ('test-w002-fri-pm', 'FRIDAY', 510, 'FRIDAY', 690, 'test-consultant-profile-002', NOW(), NOW(), 330, 'Asia/Kolkata', 'FRIDAY', 840, 'FRIDAY', 1020)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+  "startDay" = EXCLUDED."startDay",
+  "startTimeUtc" = EXCLUDED."startTimeUtc",
+  "endDay" = EXCLUDED."endDay",
+  "endTimeUtc" = EXCLUDED."endTimeUtc",
+  "utcOffsetMinutes" = EXCLUDED."utcOffsetMinutes",
+  timezone = EXCLUDED.timezone,
+  "localStartDay" = EXCLUDED."localStartDay",
+  "localStartMinutes" = EXCLUDED."localStartMinutes",
+  "localEndDay" = EXCLUDED."localEndDay",
+  "localEndMinutes" = EXCLUDED."localEndMinutes";
 
 -- Custom slot: next Saturday 10:00–16:00 IST (04:30–10:30 UTC)
 -- Custom slots use actual timestamps (DateTime @db.Timestamptz), not minutes

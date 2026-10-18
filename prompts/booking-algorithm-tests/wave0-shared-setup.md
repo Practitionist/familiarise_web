@@ -82,10 +82,12 @@ SELECT id, "paymentStatus", "refundOwedKey", "refundOwedPaise",
 FROM "Payment" WHERE id = '<PAYMENT_ID>';
 ```
 
-**Cleanup order (QA-created rows only).** Refund and ledger rows your run created
-are append-only evidence: leave them and record their ids. Delete in this order:
-`BookingStatusHistory`, `AppointmentParticipant`, `AppointmentOccurrence`,
-`PaymentLeg`, `ConsultantEarnings`, `Payment`, then `Appointment`, then the
-`Consultation`/`Subscription`/plan rows, then profiles and users. If a delete is
+**Cleanup order (QA-created rows only).** Refund, ledger and `PaymentLeg` rows are
+append-only evidence: leave them and record their ids. A payment with any of them
+cannot be deleted, and neither can the chain it hangs from (its `Appointment`, the
+linked `Consultation` or `Subscription`, the plan and the `User`), so keep that
+whole chain and delete only rows outside it, in this order: `BookingStatusHistory`,
+`AppointmentParticipant`, `AppointmentOccurrence`, `ConsultantEarnings`, then
+payment-free appointments, requests, plans, profiles and users. If a delete is
 refused by a foreign key, a payment or refund still points at it: stop and leave
 the row, do not work around the constraint.

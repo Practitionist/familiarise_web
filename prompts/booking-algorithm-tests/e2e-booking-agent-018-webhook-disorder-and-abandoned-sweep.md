@@ -47,8 +47,10 @@ and a webinar `test-webinar-018` (capacity 5, ₹500). Pin `D` to the coming **M
    occurrence is no longer tentative.
 3. Post the **identical** delivery again (same event id, same bytes).
    **Expected:** `200`, absorbed by the `WebhookEvent` inbox; nothing changes.
-4. Post it a third time with a **new** event id (`qa-018-2`), as Razorpay does when
-   a delivery times out. **Expected:** `200`, handled as already confirmed.
+4. Post the same capture once more under a **new** event id (`qa-018-2`). Razorpay
+   retries a delivery under the same id, so this is a separate event-id
+   idempotency case: a second event naming an already-captured payment.
+   **Expected:** `200`, handled as already confirmed.
 
 ```sql
 SELECT (SELECT COUNT(*) FROM "LedgerTransaction" WHERE "idempotencyKey" = 'booking:<PAYMENT_ID>') AS journals,
@@ -162,7 +164,7 @@ ids you leave behind.
 
 | #   | Check                                          | Expected                                  |
 | --- | ---------------------------------------------- | ----------------------------------------- |
-| 1   | Same delivery twice / new event id             | one confirmation, one journal             |
+| 1   | Same delivery twice / a second event, same payment | one confirmation, one journal             |
 | 2   | `order.paid` before `payment.captured`; failure after success | one confirmation; stays SUCCEEDED |
 | 3   | Capture on a pre-mint row                      | adopted by order notes, confirmed         |
 | 4   | Wrong amount / unknown order                   | not adopted; retried, no phantom booking  |
