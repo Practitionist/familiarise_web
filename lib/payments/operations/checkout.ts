@@ -5,14 +5,10 @@
 
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { reportSentryError } from "@/lib/observability/report";
-import {
-  linkParticipantsToPayment,
-  transitionParticipant,
-} from "@/lib/booking/participants";
 import { PaymentError } from "@/lib/payments/core/types";
 import prisma from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
-import { PaymentGateway, PaymentStatus, Prisma } from "@prisma/client";
+import { PaymentGateway } from "@prisma/client";
 import {
   CHECKOUT_WAIT_RETRY_CONFIG,
   lockConsulteeBooking,
@@ -23,35 +19,14 @@ import {
   ApprovalLock,
 } from "@/utils/appointmentlock";
 import { DIRECT_CHECKOUT_HOLD_MS } from "@/lib/payments/constants";
-import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { getExchangeRates } from "@/lib/currency";
-import { applyCreditsToPayment, getUserCredits } from "@/lib/referrals/service";
 import { notifyCreditsAppliedBestEffort } from "@/lib/referrals/referral-notify";
 import { asWelcomeDiscountConflict } from "@/lib/referrals/attribution";
-import { recordReferralCaptureInSavepoint } from "@/lib/referrals/capture";
-import {
-  createEarningsFromPayment,
-  resolvePaymentForEarnings,
-} from "@/lib/payments/payouts";
-import { walletDebit } from "@/lib/api/organizations/wallet";
-import {
-  isWalletFrozen,
-  WalletFrozenError,
-} from "@/lib/payments/wallet-freeze";
-import {
-  recordBookingUtilization,
-  ProgramAssignmentLimitError,
-} from "@/lib/api/organizations/program-helpers";
-import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
-import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
-import {
-  recordOverageAtCheckout,
-  notifyOverageDueAfterCommit,
-  type PendingOverageNotification,
-} from "@/lib/payments/billing/overage-settlement";
+import { WalletFrozenError } from "@/lib/payments/wallet-freeze";
+import { ProgramAssignmentLimitError } from "@/lib/api/organizations/program-helpers";
+import { notifyOverageDueAfterCommit } from "@/lib/payments/billing/overage-settlement";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
-import { DiscountExhaustedError } from "@/lib/payments/pricing/discount-exhausted-error";
 import { savedCardCustomerId } from "@/lib/payments/core/saved-card-customer";
 import {
   notifyOrgProgramExhausted,
@@ -59,17 +34,11 @@ import {
 } from "@/lib/novu/org-workflows";
 import { sendOrgOperationalEmail } from "@/lib/email/senders/money";
 import { getAppUrl } from "@/lib/url";
-import {
-  ensurePlatformCancellationPolicy,
-  resolveCheckoutCancellationPolicyId,
-} from "@/lib/payments/operations/cancellation-policy-store";
+import { ensurePlatformCancellationPolicy } from "@/lib/payments/operations/cancellation-policy-store";
 import {
   type BusinessErrorCode,
   isBusinessErrorCode,
 } from "@/lib/errors/classification/payment-error-classification";
-import { BookingRuleError } from "@/lib/booking/booking-rule-error";
-import { seatPayerOrganizationId } from "@/lib/data/org-sponsored-seats";
-import { tombstonePriorIntent } from "@/lib/payments/operations/prior-intent-tombstone";
 import {
   releaseSupersededHolds,
   findReusablePendingOrderPayment,
@@ -81,25 +50,15 @@ import {
   releaseCheckoutLock,
   acquireCheckoutLock,
 } from "@/lib/payments/checkout/locks";
-import {
-  assertSeatRemintable,
-  asSeatPaymentConflict,
-  findPriorSeatPayment,
-  SEAT_CHECKOUT_OPEN_MESSAGE,
-} from "@/lib/payments/checkout/seats";
+import { asSeatPaymentConflict } from "@/lib/payments/checkout/seats";
 import { calculateAmountAndValidate } from "@/lib/payments/checkout/pricing";
-import { findSelfHoldAppointmentIds } from "@/lib/payments/checkout/self-hold";
-import { assertConsulteeHasNoOverlappingSession } from "@/lib/payments/checkout/occupancy-validate";
 import { revalidateInsideLock } from "@/lib/payments/checkout/revalidate";
-import { handleClassCheckout } from "@/lib/payments/checkout/handlers/class";
-import { handleWebinarCheckout } from "@/lib/payments/checkout/handlers/webinar";
-import { handleSubscriptionCheckout } from "@/lib/payments/checkout/handlers/subscription";
-import { handleConsultationCheckout } from "@/lib/payments/checkout/handlers/consultation";
 import {
   assertWithinInvoiceCreditLimit,
   readInvoiceExposurePaise,
 } from "@/lib/payments/checkout/org-funding";
 import { resolveOrgFunding } from "@/lib/payments/checkout/org-funding";
+import { commitCheckout } from "@/lib/payments/checkout/commit";
 
 // ============================================================================
 // Type Definitions
@@ -358,24 +317,7 @@ export async function handleCheckout(
 
   try {
     // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)
-    const {
-      amount,
-      originalAmount,
-      taxAmount,
-      currency,
-      discountCodeId,
-      consulteeProfileId,
-      consulteeBillingStateCode,
-      creditsApplied,
-      buyerCountry: detectedBuyerCountry,
-      isInternational,
-      classSessionsQuoted,
-      subscriptionSchedulingPeriod,
-      attributionSource,
-      attributionReferralId,
-      platformFeeBps,
-      welcomeDiscountPaise,
-    } = await calculateAmountAndValidate(
+    const priced = await calculateAmountAndValidate(
       validatedData,
       userId,
       buyerCountry,
@@ -387,6 +329,14 @@ export async function handleCheckout(
         orgFunded: fundingSource !== null && fundingSource !== "PERSONAL",
       },
     );
+    const {
+      amount,
+      originalAmount,
+      taxAmount,
+      currency,
+      creditsApplied,
+      subscriptionSchedulingPeriod,
+    } = priced;
 
     // INVOICE fundingSource: fast-fail on the credit limit before any lock is
     // taken. #1744 row 4 — the booking itself counts: `exposure >= limit` let
@@ -761,742 +711,30 @@ export async function handleCheckout(
       // connection deadlocks (#1435, see lib/prisma.ts).
       await ensurePlatformCancellationPolicy(prisma);
 
-      const result = await withSerializableRetry(async () => {
-        await renewOrAbort(perAttemptTtl);
-        return prisma.$transaction(
-          async (tx) => {
-            // #1435 — this attempt's bells, returned below and rung post-commit.
-            let capNearBell: {
-              programAssignmentId: string;
-              engagementsUsed: number;
-              cap: number;
-              usedPct: number;
-            } | null = null;
-            let overageBell: PendingOverageNotification | null = null;
-
-            // #785 B6 — re-check the INVOICE credit limit INSIDE the Serializable
-            // tx. The pre-lock check ran on the global client before this tx, so
-            // two concurrent disjoint-slot bookings (which take different per-slot
-            // locks) could both pass it. Reading the accrual set here — the same
-            // rows this tx is about to add to — makes SSI abort one of a racing
-            // pair; the retry then sees the sibling's committed accrual.
-            if (
-              isOrgInvoicedPayment &&
-              creditEffectiveLimit !== null &&
-              organizationId
-            ) {
-              const exposure = await readInvoiceExposurePaise(
-                tx,
-                organizationId,
-              );
-              // Same gate as the pre-lock check, re-run inside the tx so a
-              // concurrent sibling's just-committed accrual is visible — SSI then
-              // aborts the loser of a racing pair instead of both straddling the cap.
-              assertWithinInvoiceCreditLimit(
-                exposure,
-                amount,
-                creditEffectiveLimit,
-              );
-            }
-
-            let createdAppointment;
-            // Engagement count for enterprise cap (issue #710). One
-            // engagement = one Appointment row = one calendar occurrence.
-            //   - CONSULTATION/WEBINAR: 1 (single Appointment created here)
-            //   - CLASS: N (count of appointments the learner enrolled in,
-            //     all known at checkout because consultant pre-allocated)
-            //   - SUBSCRIPTION: null → SKIP recordBookingUtilization at
-            //     checkout. Slots are allocated lazily by the consultant;
-            //     debits land in SchedulingService.createAppointments,
-            //     1 per allocation batch.
-            let engagementsForCap: number | null = null;
-            let classEngagementIds: string[] = [];
-            let bookedPlan: {
-              consultantProfileId?: string | null;
-              organizationId?: string | null;
-            } | null = null;
-
-            const skipPayment =
-              isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment;
-
-            const cancellationPolicyId =
-              await resolveCheckoutCancellationPolicyId(tx, {
-                organizationId: isOrgSponsoredPayment ? organizationId : null,
-              });
-
-            // A PERSONAL-rail booking is paid by the member's own card, so
-            // Appointment.organizationId stays null (keeps the booking on the
-            // buyer's personal dashboard rather than vanishing from personal
-            // scope while Payment.organizationId retains the reporting tag).
-            const appointmentOrganizationId =
-              fundingSource === "PERSONAL" ? null : organizationId;
-
-            // Create appointment based on type (with isTentative flag)
-            switch (validatedData.appointmentType) {
-              case "CONSULTATION": {
-                if (validatedData.startsAt && validatedData.endsAt) {
-                  await assertConsulteeHasNoOverlappingSession(tx, {
-                    userId,
-                    startsAt: validatedData.startsAt!,
-                    endsAt: validatedData.endsAt!,
-                    selfHoldAppointmentIds: await findSelfHoldAppointmentIds(
-                      tx,
-                      {
-                        buyerUserId: userId,
-                        appointmentType: validatedData.appointmentType,
-                        planId: validatedData.planId,
-                        paymentGateway: validatedData.paymentGateway,
-                        organizationId,
-                        slotStart: new Date(validatedData.startsAt),
-                        slotEnd: new Date(validatedData.endsAt),
-                        now: new Date(),
-                      },
-                    ),
-                  });
-                }
-                const consultationResult = await handleConsultationCheckout(
-                  tx,
-                  validatedData,
-                  consulteeProfileId,
-                  userId,
-                  skipPayment,
-                  appointmentOrganizationId,
-                  cancellationPolicyId,
-                  organizationId,
-                );
-                createdAppointment = consultationResult.appointment;
-                bookedPlan = consultationResult.plan;
-                engagementsForCap = 1;
-                break;
-              }
-
-              case "SUBSCRIPTION": {
-                const subscriptionResult = await handleSubscriptionCheckout(
-                  tx,
-                  validatedData,
-                  consulteeProfileId,
-                  skipPayment,
-                  appointmentOrganizationId,
-                  cancellationPolicyId,
-                  subscriptionSchedulingPeriod,
-                );
-                createdAppointment = subscriptionResult.appointment;
-                bookedPlan = subscriptionResult.plan;
-                break;
-              }
-
-              case "WEBINAR": {
-                const webinarResult = await handleWebinarCheckout(
-                  tx,
-                  validatedData,
-                  userId,
-                  skipPayment,
-                  seatPayerOrganizationId(
-                    organizationId,
-                    isOrgSponsoredPayment,
-                  ),
-                );
-                for (const occ of webinarResult.appointment?.occurrences ??
-                  []) {
-                  if (
-                    occ.startsAt &&
-                    occ.endsAt &&
-                    !occ.deletedAt &&
-                    occ.completionStatus !== "CANCELLED"
-                  ) {
-                    await assertConsulteeHasNoOverlappingSession(tx, {
-                      userId,
-                      startsAt: occ.startsAt,
-                      endsAt: occ.endsAt,
-                      selfHoldAppointmentIds: webinarResult.appointment
-                        ? [webinarResult.appointment.id]
-                        : [],
-                    });
-                  }
-                }
-                createdAppointment = webinarResult.appointment;
-                bookedPlan = webinarResult.plan;
-                engagementsForCap = 1;
-                break;
-              }
-
-              case "CLASS": {
-                const classResult = await handleClassCheckout(
-                  tx,
-                  validatedData,
-                  userId,
-                  skipPayment,
-                  classSessionsQuoted,
-                  seatPayerOrganizationId(
-                    organizationId,
-                    isOrgSponsoredPayment,
-                  ),
-                );
-                for (const occ of classResult.appointment?.occurrences ?? []) {
-                  if (
-                    occ.startsAt &&
-                    occ.endsAt &&
-                    !occ.deletedAt &&
-                    occ.completionStatus !== "CANCELLED"
-                  ) {
-                    await assertConsulteeHasNoOverlappingSession(tx, {
-                      userId,
-                      startsAt: occ.startsAt,
-                      endsAt: occ.endsAt,
-                      selfHoldAppointmentIds: classResult.appointment
-                        ? [classResult.appointment.id]
-                        : [],
-                    });
-                  }
-                }
-                createdAppointment = classResult.appointment || null;
-                bookedPlan = classResult.plan;
-                engagementsForCap = classResult.engagementsConsumed;
-                classEngagementIds = classResult.engagementIds;
-                break;
-              }
-
-              default:
-                throw new Error(
-                  `Unsupported appointment type: ${validatedData.appointmentType}`,
-                );
-            }
-
-            let hostOrganizationId: string | null = null;
-            if (ENABLE_HOST_ORGS) {
-              const planOwnerOrgId = bookedPlan?.organizationId ?? null;
-              if (
-                bookedPlan?.consultantProfileId &&
-                typeof tx.membership?.findFirst === "function"
-              ) {
-                const ownerMembership = planOwnerOrgId
-                  ? await tx.membership.findFirst({
-                      where: {
-                        consultantProfileId: bookedPlan.consultantProfileId,
-                        role: "EXPERT",
-                        status: "ACTIVE",
-                        organizationId: planOwnerOrgId,
-                        organization: { canHost: true, status: "ACTIVE" },
-                      },
-                      select: { organizationId: true },
-                    })
-                  : null;
-                const hostMembership =
-                  ownerMembership ??
-                  (await tx.membership.findFirst({
-                    where: {
-                      consultantProfileId: bookedPlan.consultantProfileId,
-                      role: "EXPERT",
-                      status: "ACTIVE",
-                      organization: { canHost: true, status: "ACTIVE" },
-                    },
-                    orderBy: { createdAt: "asc" },
-                    select: { organizationId: true },
-                  }));
-                hostOrganizationId = hostMembership?.organizationId ?? null;
-              } else {
-                hostOrganizationId = planOwnerOrgId;
-              }
-            }
-
-            const paymentData = {
-              amount,
-              originalAmount,
-              // The licence invoice books the GST; a licensed booking books none.
-              taxAmount: isOrgLicensedPayment ? 0 : taxAmount,
-              currency,
-              paymentMethod: isOrgWalletPayment
-                ? "WALLET"
-                : isOrgInvoicedPayment
-                  ? "INVOICE"
-                  : isOrgLicensedPayment
-                    ? "LICENSE"
-                    : isZeroAmountPayment
-                      ? "CREDITS"
-                      : "CARD",
-              paymentIntent: mintedOrder.id,
-              clientIdempotencyKey:
-                validatedData.clientIdempotencyKey ??
-                globalThis.crypto.randomUUID(),
-              paymentGateway: validatedData.paymentGateway,
-              paymentStatus: skipPayment
-                ? PaymentStatus.SUCCEEDED
-                : PaymentStatus.PENDING,
-              isMockPayment:
-                isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment,
-              discountCodeId,
-              expiresAt: skipPayment ? null : holdExpiresAt,
-              buyerCountry: detectedBuyerCountry,
-              isInternational,
-              displayCurrencyAtCheckout,
-              exchangeRateAtCheckout,
-              consumerStateCode:
-                validatedData.consumerStateCode ??
-                consulteeBillingStateCode ??
-                null,
-              organizationId,
-              hostOrganizationId,
-              billingAccountId,
-              attributionSource,
-              attributionReferralId,
-              platformFeeBps,
-              welcomeDiscountPaise:
-                welcomeDiscountPaise > 0 ? welcomeDiscountPaise : null,
-            };
-
-            // Group events share one appointment, so a re-buy re-mints the buyer's dead row in place.
-            const isEventSeat =
-              validatedData.appointmentType === "WEBINAR" ||
-              validatedData.appointmentType === "CLASS";
-            const priorSeatPayment =
-              isEventSeat && createdAppointment
-                ? await findPriorSeatPayment(tx, userId, createdAppointment.id)
-                : null;
-            let payment: { id: string; amount: number; expiresAt: Date | null };
-            if (priorSeatPayment) {
-              assertSeatRemintable(
-                priorSeatPayment,
-                validatedData.appointmentType === "CLASS" ? "CLASS" : "WEBINAR",
-              );
-              // The old order's identity, kept apart from the row the CAS is about to rewrite.
-              const retiringIntent = { ...priorSeatPayment };
-              const reminted = await tx.payment.updateMany({
-                where: {
-                  id: priorSeatPayment.id,
-                  paymentStatus: {
-                    in: [PaymentStatus.EXPIRED, PaymentStatus.FAILED],
-                  },
-                },
-                data: {
-                  ...paymentData,
-                  gatewayPaymentId: null,
-                  capturedAt: null,
-                  deletedAt: null,
-                  description: null,
-                  receiptUrl: null,
-                  referralReleasedAt: null,
-                },
-              });
-              if (reminted.count !== 1) {
-                throw new BookingRuleError(
-                  "PAYMENT_ALREADY_EXISTS",
-                  SEAT_CHECKOUT_OPEN_MESSAGE,
-                );
-              }
-              await tombstonePriorIntent(
-                tx,
-                retiringIntent,
-                "seat re-bought after the earlier payment lapsed or failed",
-              );
-              payment = {
-                id: priorSeatPayment.id,
-                amount,
-                expiresAt: paymentData.expiresAt,
-              };
-            } else {
-              payment = await tx.payment.create({
-                data: {
-                  ...paymentData,
-                  userId: userId,
-                  appointmentId: createdAppointment?.id || null,
-                },
-                select: { id: true, amount: true, expiresAt: true },
-              });
-            }
-
-            if (
-              validatedData.consumerStateCode &&
-              validatedData.consumerStateCode !== consulteeBillingStateCode
-            ) {
-              await tx.consulteeProfile.updateMany({
-                where: { userId },
-                data: { billingStateCode: validatedData.consumerStateCode },
-              });
-            }
-
-            if (createdAppointment) {
-              const participantWhere =
-                validatedData.appointmentType === "CLASS" &&
-                validatedData.eventId
-                  ? { appointment: { classId: validatedData.eventId }, userId }
-                  : validatedData.appointmentType === "WEBINAR"
-                    ? { appointmentId: createdAppointment.id, userId }
-                    : { appointmentId: createdAppointment.id };
-              if (
-                validatedData.appointmentType === "CLASS" &&
-                validatedData.eventId
-              ) {
-                await tx.appointmentParticipant.updateMany({
-                  where: { ...participantWhere, paymentId: null },
-                  data: { paymentId: payment.id },
-                });
-              } else {
-                await linkParticipantsToPayment(
-                  tx,
-                  createdAppointment.id,
-                  payment.id,
-                  validatedData.appointmentType === "WEBINAR"
-                    ? userId
-                    : undefined,
-                );
-              }
-              if (skipPayment) {
-                await transitionParticipant(tx, participantWhere, "CONFIRMED");
-              }
-            }
-
-            if (isOrgWalletPayment && billingAccountId) {
-              if (await isWalletFrozen(tx, billingAccountId)) {
-                throw new WalletFrozenError(billingAccountId);
-              }
-              await walletDebit(tx, {
-                billingAccountId,
-                amountPaise: amount,
-                reason: "BOOKING",
-                paymentId: payment.id,
-                membershipId: callerMembershipId ?? undefined,
-              });
-            }
-
-            if (programAssignmentId && isOrgSponsoredPayment) {
-              await tx.paymentLeg.create({
-                data: {
-                  paymentId: payment.id,
-                  source: isOrgWalletPayment
-                    ? "WALLET"
-                    : isOrgLicensedPayment
-                      ? "LICENSE"
-                      : "INVOICE_ACCRUAL",
-                  amountPaise: isOrgLicensedPayment ? 0 : amount,
-                  sourceRef: programAssignmentId,
-                },
-              });
-            }
-
-            if (programAssignmentId && engagementsForCap !== null) {
-              let utilizationResult: Awaited<
-                ReturnType<typeof recordBookingUtilization>
-              > = {
-                wasOverage: false,
-                engagementsConsumedDelta: 0,
-                engagementsUsedAfter: 0,
-                cap: null,
-                programType: "LICENSED_SEAT",
-                consumedPaiseAfter: 0,
-                creditBudgetPaise: null,
-              };
-              try {
-                utilizationResult = await recordBookingUtilization(tx, {
-                  programAssignmentId,
-                  paymentId: payment.id,
-                  engagementsConsumed: engagementsForCap,
-                  priceAtBookingPaise: amount,
-                  // PR-1e (G3) — the helper's set-diff idempotency guard only
-                  // arms itself when the caller NAMES the appointments.
-                  // Omitting them left every checkout debit unguarded, so a
-                  // replay against the same Payment (retried webhook, resumed
-                  // order) incremented the meter a second time.
-                  // CONSULTATION/WEBINAR are one engagement on the appointment
-                  // just created; CLASS meters one per class session, which is
-                  // exactly the occurrence set handleClassCheckout counted.
-                  appointmentIds:
-                    validatedData.appointmentType === "CLASS"
-                      ? classEngagementIds
-                      : createdAppointment
-                        ? [createdAppointment.id]
-                        : [],
-                });
-              } catch (err) {
-                if (err instanceof ProgramAssignmentLimitError) {
-                  // The assignee + org operators are told the programme is
-                  // spent. This is the one bell that belongs on the ROLLBACK
-                  // path — the refusal IS the news — so it is rung from the
-                  // retry wrapper's catch rather than after a commit that
-                  // never happens.
-                  exhaustedBell.programAssignmentId = programAssignmentId;
-
-                  // #1458 — a stable code, because the message-preservation
-                  // list below never matched this sentence and the buyer got
-                  // "Failed to record payment information" for a cap they can
-                  // ask an admin to raise.
-                  throw Object.assign(
-                    new Error(
-                      "Your program has hit its session cap for this cycle. Ask your organization admin to upgrade the program or wait for the next cycle.",
-                    ),
-                    { httpStatus: 402, code: "PROGRAM_SESSION_CAP_REACHED" },
-                  );
-                }
-                throw err;
-              }
-
-              // #768 #22 — 80% cap-near early warning. Fire ONCE per cycle on
-              // the <80% → >=80% transition (not on every booking past 80%).
-              // Integer-only threshold cross: before/cap < 0.8 (before*5 <
-              // cap*4) AND after/cap >= 0.8 (after*5 >= cap*4). Skipped when
-              // cap is null (unlimited) or 0. Captured for post-commit
-              // delivery + same roster as the 100% event.
-              {
-                // #775 — LICENSED_SEAT meters in engagements, CREDIT_POOL in
-                // paise (consumedPaise vs creditBudgetPaise). The 80% transition
-                // math is unit-agnostic; the Novu payload reports credits for
-                // pools (÷100) and engagements for seats.
-                const isCredit =
-                  utilizationResult.programType === "CREDIT_POOL";
-                const capAfter = isCredit
-                  ? utilizationResult.creditBudgetPaise
-                  : utilizationResult.cap;
-                const after = isCredit
-                  ? utilizationResult.consumedPaiseAfter
-                  : utilizationResult.engagementsUsedAfter;
-                const before = isCredit
-                  ? after - amount
-                  : after - utilizationResult.engagementsConsumedDelta;
-                if (
-                  capAfter !== null &&
-                  capAfter !== undefined &&
-                  capAfter > 0 &&
-                  before * 5 < capAfter * 4 &&
-                  after * 5 >= capAfter * 4
-                ) {
-                  // #1169 PR 2 — the bell must ring once per booking, not once
-                  // per Serializable attempt. The slot is a local of this
-                  // attempt and only the committing attempt's is returned,
-                  // which is what enforces that now.
-                  capNearBell = {
-                    programAssignmentId,
-                    engagementsUsed: isCredit ? Math.round(after / 100) : after,
-                    cap: isCredit ? Math.round(capAfter / 100) : capAfter,
-                    usedPct: Math.round((after / capAfter) * 100),
-                  };
-                }
-              }
-
-              // C2: overage charging. recordBookingUtilization above flagged
-              // `wasOverage = true` if the increment crossed the cap (only
-              // possible when overageBehavior is CHARGE_MEMBER or CHARGE_ORG;
-              // BLOCK throws inside the helper). Branch on the program's
-              // configured behavior (#775):
-              //   - CHARGE_ORG: write an OVERAGE_INVOICE_ACCRUAL PaymentLeg +
-              //     OverageEvent(PENDING). The monthly invoice rollup picks it
-              //     up (→ ACCRUED) and the invoice-paid handler marks it CHARGED.
-              //   - CHARGE_MEMBER: the booking proceeds; the member owes the
-              //     marginal. Create a parent-linked PENDING side-Payment +
-              //     OverageEvent(PENDING). The member completes it via the
-              //     resume-checkout surface (order created there, not in this TX)
-              //     and the gateway webhook transitions it → CHARGED.
-              //   - BLOCK behavior: never reaches here (helper already threw).
-              //     The circuit-breaker veto is the only BLOCK decision here.
-              if (utilizationResult.wasOverage && isOrgSponsoredPayment) {
-                // #778 elegance — extracted to recordOverageAtCheckout (resolves
-                // the behaviour via computeOverage, enforces the circuit breaker,
-                // persists the OverageEvent + CHARGE_MEMBER side-Payment /
-                // CHARGE_ORG accrual leg). Throws PROGRAM_CAP_EXHAUSTED (402) on
-                // the breaker veto. PERSONAL-funded bookings already charge the
-                // member's gateway directly, so only org-sponsored payments run
-                // checkout overage settlement.
-                overageBell = await recordOverageAtCheckout({
-                  tx,
-                  programAssignmentId,
-                  utilization: {
-                    programType: utilizationResult.programType,
-                    engagementsConsumedDelta:
-                      utilizationResult.engagementsConsumedDelta,
-                    engagementsUsedAfter:
-                      utilizationResult.engagementsUsedAfter,
-                    consumedPaiseAfter: utilizationResult.consumedPaiseAfter,
-                    creditBudgetPaise: utilizationResult.creditBudgetPaise,
-                  },
-                  bookingPricePaise: amount,
-                  currency,
-                  paymentId: payment.id,
-                  userId,
-                  organizationId,
-                  paymentGateway: validatedData.paymentGateway,
-                });
-              }
-            }
-
-            // Enterprise: every successful Payment must have at least one
-            // PaymentLeg (`docs/enterprise/10-money-and-ledger/09-payment-legs.md`). For non-
-            // org-sponsored learner-pays-via-gateway flows that's the CARD
-            // leg, written here so the invariant holds whether or not the
-            // payment ever transitions to SUCCEEDED. We record the gateway
-            // payment-intent id in `sourceRef` so refund / reconciliation
-            // jobs can join back to the gateway txn without scanning the
-            // Payment table. `amount` is the post-credit gateway charge,
-            // mirroring the field-level comment on `Payment.amount`, so this
-            // one leg alone carries the funding identity: the REFERRAL_CREDIT
-            // leg `applyCreditsToPayment` writes further down in this same TX
-            // is excluded from the sum rather than added to it (#1347).
-            if (!isOrgSponsoredPayment && amount > 0) {
-              await tx.paymentLeg.create({
-                data: {
-                  paymentId: payment.id,
-                  source: "CARD",
-                  amountPaise: amount,
-                  sourceRef: mintedOrder.id,
-                },
-              });
-            }
-
-            // Increment discount code usage count atomically (only after payment is created)
-            // This ensures count only increases when payment is successfully created.
-            // Re-validate maxUses inside the Serializable TX: two concurrent checkouts could
-            // both pass the check in calculateAmountAndValidate (non-Serializable TX) and
-            // both reach here. The Serializable re-read ensures only one succeeds.
-            if (discountCodeId) {
-              const discountForIncrement = await tx.discountCode.findUnique({
-                where: { id: discountCodeId },
-                select: { maxUses: true, currentUses: true },
-              });
-
-              if (!discountForIncrement) {
-                throw new Error(
-                  "Discount code is no longer available. Please remove the code and try again.",
-                );
-              }
-
-              if (
-                discountForIncrement.maxUses !== null &&
-                discountForIncrement.currentUses >= discountForIncrement.maxUses
-              ) {
-                throw new DiscountExhaustedError(
-                  discountForIncrement.currentUses,
-                  discountForIncrement.maxUses,
-                );
-              }
-              await tx.discountCode.update({
-                where: { id: discountCodeId },
-                data: { currentUses: { increment: 1 } },
-              });
-            }
-
-            // FIX A3: Re-read credits inside the main transaction to prevent stale reads.
-            // creditsApplied was calculated in TX1 (calculateAmountAndValidate), but between
-            // TX1 and TX2, concurrent checkouts may have consumed the credits.
-            let actualCreditsApplied = 0;
-            let creditsRemainingAfter: number | null = null;
-            if (creditsApplied > 0) {
-              const { totalAvailable } = await getUserCredits(userId, tx);
-              // Both creditsApplied and totalAvailable are in paise — direct comparison
-              const actualCredits = Math.min(totalAvailable, creditsApplied);
-
-              if (actualCredits > 0) {
-                await applyCreditsToPayment(
-                  userId,
-                  actualCredits,
-                  tx,
-                  payment.id,
-                );
-                console.log(
-                  `🎁 Applied ${actualCredits} paise referral credits for user ${userId}` +
-                    (actualCredits !== creditsApplied
-                      ? ` (requested ${creditsApplied} paise, available ${totalAvailable} paise)`
-                      : ""),
-                );
-              }
-
-              // FIX #2: If fewer credits were available than expected (due to concurrent
-              // checkout consuming them between TX1 and TX2), abort the transaction.
-              // The payment intent was created with a reduced amount based on TX1's
-              // credit calculation, so proceeding would undercharge the user.
-              if (actualCredits < creditsApplied) {
-                // #1586 J32 — a modelled race, answered 409 + retryAfter.
-                throw Object.assign(
-                  new Error(
-                    `CREDIT_SHORTFALL: expected ${creditsApplied} paise credits but only ${actualCredits} available. ` +
-                      `Payment ${payment.id} amount is stale. Aborting for retry.`,
-                  ),
-                  { httpStatus: 409, code: "CREDIT_SHORTFALL", retryAfter: 2 },
-                );
-              }
-              actualCreditsApplied = creditsApplied; // In paise
-              // The balance the credits-applied bell states, read inside the
-              // transaction so a later checkout cannot change it first.
-              creditsRemainingAfter = (await getUserCredits(userId, tx))
-                .totalAvailable;
-            }
-
-            // Invariant sweep: every Payment should have legs that sum to
-            // `Payment.amount`, excluding REFERRAL_CREDIT, which is already
-            // netted out of it (#1347) —
-            // `docs/enterprise/10-money-and-ledger/09-payment-legs.md`. We
-            // log-only here rather than throw because the hot checkout
-            // path is the worst place to discover a leg-accounting drift
-            // — a surprise 500 blocks real bookings. A mismatch signals
-            // either (a) an org branch above wrote the wrong amount, or
-            // (b) a future PaymentLegSource was added without updating
-            // its write site. Reconciliation jobs + tests call the
-            // hard-throwing `assertPaymentLegsSumToAmount` instead.
-            if (!isMockPayment) {
-              const writtenLegs = await tx.paymentLeg.findMany({
-                where: { paymentId: payment.id },
-                select: { source: true, amountPaise: true },
-              });
-              const currentPayment =
-                typeof tx.payment?.findUnique === "function"
-                  ? await tx.payment.findUnique({
-                      where: { id: payment.id },
-                      select: { amount: true },
-                    })
-                  : null;
-              const legMismatch = checkPaymentLegsSumToAmount({
-                paymentAmountPaise: currentPayment?.amount ?? payment.amount,
-                legs: writtenLegs,
-              });
-              if (legMismatch) {
-                console.warn(
-                  JSON.stringify({
-                    event: "payment_leg_sum_mismatch",
-                    paymentId: payment.id,
-                    organizationId: validatedData.organizationId ?? null,
-                    appointmentType: validatedData.appointmentType,
-                    ...legMismatch,
-                  }),
-                );
-              }
-            }
-
-            // The synchronous rails confirm here, so their earnings and the
-            // booking:<paymentId> journal commit with the payment or not at all.
-            if (skipPayment) {
-              const resolvedEarnings = await resolvePaymentForEarnings(
-                { id: payment.id },
-                validatedData.appointmentType,
-                tx,
-              );
-              if (resolvedEarnings) {
-                await createEarningsFromPayment({
-                  payment: resolvedEarnings.paymentForEarnings,
-                  appointmentType: resolvedEarnings.earningsAppointmentType,
-                  tx,
-                });
-              }
-              await recordReferralCaptureInSavepoint(tx, {
-                paymentId: payment.id,
-                consultantProfileId: () =>
-                  Promise.resolve(resolvedEarnings?.consultantProfileId),
-              });
-            }
-
-            return {
-              appointmentId: createdAppointment?.id,
-              holdExpiresAt: payment.expiresAt,
-              creditsApplied: actualCreditsApplied,
-              creditsRemainingAfter,
-              capNearBell,
-              overageBell,
-            };
-          },
-          {
-            timeout: checkoutTxTimeoutMs,
-            // H6 FIX: Use Serializable isolation for booking transactions to prevent
-            // phantom reads on capacity-limited events (webinars, classes). The
-            // distributed lock serializes per-event, but Serializable adds DB-level
-            // safety for edge cases like lock expiry under high load.
-            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-          },
-        );
+      const result = await commitCheckout({
+        validatedData,
+        userId,
+        isMockPayment,
+        mintedOrder,
+        holdExpiresAt,
+        renewOrAbort,
+        perAttemptTtl,
+        checkoutTxTimeoutMs,
+        organizationId,
+        billingAccountId,
+        fundingSource,
+        programAssignmentId,
+        callerMembershipId,
+        creditEffectiveLimit,
+        isOrgWalletPayment,
+        isOrgInvoicedPayment,
+        isOrgLicensedPayment,
+        isOrgSponsoredPayment,
+        isZeroAmountPayment,
+        displayCurrencyAtCheckout,
+        exchangeRateAtCheckout,
+        exhaustedBell,
+        priced,
       }).catch(async (err) => {
         // #1435 — post-rollback delivery for the one bell whose news IS the
         // refusal. Nothing else below is reached when the transaction fails.

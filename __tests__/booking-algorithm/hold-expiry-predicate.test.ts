@@ -132,7 +132,7 @@ describe("lock budgets and names (source pins)", () => {
   });
 
   it("checkout renews the slot grant inside every Serializable attempt", () => {
-    const src = read("lib/payments/operations/checkout.ts");
+    const src = read("lib/payments/checkout/commit/index.ts");
     expect(src).toMatch(
       /withSerializableRetry\(async \(\) => \{\s*await renewOrAbort\(perAttemptTtl\);/,
     );
