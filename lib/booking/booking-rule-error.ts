@@ -29,7 +29,11 @@ export type BookingRuleCode =
   | "RETURN_CAP_REACHED"
   | "RETURN_RESCHEDULE_OPEN"
   | "SESSION_NOT_RETURNABLE"
-  | "DISPUTE_ACTIVE";
+  | "DISPUTE_ACTIVE"
+  | "INCIDENT_REMEDY_NOT_FOUND"
+  | "INCIDENT_REMEDY_CLOSED"
+  | "INCIDENT_REMEDY_WRONG_KIND"
+  | "INCIDENT_REBOOK_SLOT_UNAVAILABLE";
 
 export class BookingRuleError extends Error {
   constructor(

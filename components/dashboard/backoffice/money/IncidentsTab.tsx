@@ -176,7 +176,8 @@ export function IncidentsTab({
                     <p className="text-muted-foreground">{i.reason}</p>
                     <p className="text-muted-foreground">
                       Remedies: {i.remedies.due} due, {i.remedies.done} done,{" "}
-                      {i.remedies.failed} need a human
+                      {i.remedies.rebooked} rebooked free, {i.remedies.failed}{" "}
+                      need a human
                       {i.declaredBy ? ` · declared by ${i.declaredBy}` : ""}
                     </p>
                   </div>

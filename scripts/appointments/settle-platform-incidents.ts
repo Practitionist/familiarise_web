@@ -307,7 +307,13 @@ function applyInTx(remedy: DueRemedy): Promise<number> {
 }
 
 async function refundStep(remedy: DueRemedy): Promise<Step> {
-  // Re-read under the lock: an ops un-void that landed first wins.
+  // Re-read under the lock: a free rebook that committed first wins.
+  const current = await prisma.incidentRemedy.findUnique({
+    where: { id: remedy.id },
+    select: { doneAt: true },
+  });
+  if (current?.doneAt) return { kind: "applied", count: 0 };
+  // An ops un-void that landed first wins too.
   const occ = await prisma.appointmentOccurrence.findUnique({
     where: { id: remedy.occurrenceId },
     select: { completionStatus: true },
@@ -374,7 +380,11 @@ async function settleSessionIfLastSeat(
   });
   if (left > 0) return;
   await prisma.appointmentOccurrence.updateMany({
-    where: { id: occurrenceId, completionStatus: "VOIDED", seatsSettledAt: null },
+    where: {
+      id: occurrenceId,
+      completionStatus: "VOIDED",
+      seatsSettledAt: null,
+    },
     data: { seatsSettledAt: now },
   });
 }

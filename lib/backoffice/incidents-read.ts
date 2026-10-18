@@ -34,7 +34,7 @@ export interface IncidentListRow {
   enumeratedAt: string | null;
   reportedAt: string | null;
   settledAt: string | null;
-  remedies: { due: number; done: number; failed: number };
+  remedies: { due: number; done: number; rebooked: number; failed: number };
 }
 
 const countsBy = (
@@ -67,7 +67,12 @@ export async function readIncidents(limit = 50): Promise<IncidentListRow[]> {
   });
   const done = await prisma.incidentRemedy.groupBy({
     by: ["incidentId"],
-    where: { incidentId, doneAt: { not: null } },
+    where: { incidentId, doneAt: { not: null }, rebookedOccurrenceId: null },
+    _count: { _all: true },
+  });
+  const rebooked = await prisma.incidentRemedy.groupBy({
+    by: ["incidentId"],
+    where: { incidentId, rebookedOccurrenceId: { not: null } },
     _count: { _all: true },
   });
   const failed = await prisma.incidentRemedy.groupBy({
@@ -79,7 +84,12 @@ export async function readIncidents(limit = 50): Promise<IncidentListRow[]> {
     },
     _count: { _all: true },
   });
-  const [dueBy, doneBy, failedBy] = [due, done, failed].map(countsBy);
+  const [dueBy, doneBy, rebookedBy, failedBy] = [
+    due,
+    done,
+    rebooked,
+    failed,
+  ].map(countsBy);
   return incidents.map((i) => ({
     id: i.id,
     startsAt: i.startsAt.toISOString(),
@@ -93,6 +103,7 @@ export async function readIncidents(limit = 50): Promise<IncidentListRow[]> {
     remedies: {
       due: dueBy.get(i.id) ?? 0,
       done: doneBy.get(i.id) ?? 0,
+      rebooked: rebookedBy.get(i.id) ?? 0,
       failed: failedBy.get(i.id) ?? 0,
     },
   }));
