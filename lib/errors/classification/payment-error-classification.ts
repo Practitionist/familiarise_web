@@ -524,6 +524,11 @@ const BUSINESS_ERROR_ENTRIES = [
       // A refunded seat cannot be bought again yet; a paused expert takes no new booking.
       "SEAT_REBUY_UNSUPPORTED",
       "NOT_ACCEPTING_BOOKINGS",
+      // A subscription session going back to the plan.
+      "RETURN_WINDOW_CLOSED",
+      "RETURN_CAP_REACHED",
+      "RETURN_RESCHEDULE_OPEN",
+      "SESSION_NOT_RETURNABLE",
     ] as const
   ).map((code) => ({
     code,

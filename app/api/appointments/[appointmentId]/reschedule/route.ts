@@ -67,6 +67,11 @@ import {
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { holdHoursFor } from "@/lib/payments/payouts/earnings-hold";
+import {
+  MAX_CONSULTEE_RESCHEDULES,
+  MAX_EXPERT_RESCHEDULES,
+  priorReschedules as priorRescheduleCount,
+} from "@/lib/booking/reschedule-caps";
 import type { AppointmentType } from "@/lib/payments/payouts/constants";
 
 const MINIMUM_HOURS_BEFORE_RESCHEDULE = 24;
@@ -449,19 +454,53 @@ export async function POST(
             }
           }
 
+          // Counted from the release history, which survives the allocator's
+          // hard-delete of replaced occurrences and includes releases with no
+          // proposal row.
+          const consulteeUserId =
+            appointment.consultation?.requestedBy?.userId ??
+            appointment.subscription?.requestedBy?.userId ??
+            null;
+          const expertUserId =
+            appointment.consultation?.consultationPlan?.consultantProfile
+              ?.userId ??
+            appointment.subscription?.subscriptionPlan?.consultantProfile
+              ?.userId ??
+            null;
+          const partyUserId =
+            initiatorRole === "CONSULTEE" ? consulteeUserId : expertUserId;
+          const priorReschedules =
+            initiatorRole && !isPrivilegedUser
+              ? await priorRescheduleCount(tx, {
+                  appointmentId,
+                  role: initiatorRole,
+                  sideUserIds: [
+                    session.user.id,
+                    ...(partyUserId ? [partyUserId] : []),
+                  ],
+                })
+              : 0;
+          if (
+            initiatorRole === "CONSULTANT" &&
+            !isPrivilegedUser &&
+            priorReschedules >= MAX_EXPERT_RESCHEDULES
+          ) {
+            throw Object.assign(
+              new Error(
+                `You've already rescheduled this booking ${MAX_EXPERT_RESCHEDULES} times. ` +
+                  "If the time no longer works, cancel instead — the client gets a full refund.",
+              ),
+              { httpStatus: 409, code: "EXPERT_RESCHEDULE_CAP" },
+            );
+          }
           if (initiatorRole === "CONSULTEE" && !isPrivilegedUser) {
-            const MAX_CONSULTEE_RESCHEDULES = 2;
-            const historicalRescheduledOccurrences =
-              appointment.occurrences.filter(
-                (o) => o.completionStatus === "RESCHEDULED",
-              ).length;
             const baselineSessionCount = Math.max(
               1,
               slotsToReschedule.length,
               liveOccurrences.length,
             );
             if (
-              historicalRescheduledOccurrences >=
+              priorReschedules >=
               MAX_CONSULTEE_RESCHEDULES * baselineSessionCount
             ) {
               throw Object.assign(
@@ -492,6 +531,7 @@ export async function POST(
             actorUserId: session.user.id,
             reason: reason ?? null,
             organizationId: appointment.organizationId,
+            at: new Date(),
           };
           // Every slot flip below releases the row in place: RESCHEDULED plus
           // tentative, never a tombstone. The reschedule keeps these rows —

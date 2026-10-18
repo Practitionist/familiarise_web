@@ -78,6 +78,7 @@ import {
 import { readOutageWindows } from "@/lib/booking/session-outcome-sweep";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import { recordExpertStrike } from "@/lib/booking/expert-reliability";
 
 export interface NoShowResult {
   success: boolean;
@@ -181,6 +182,7 @@ function findNoShowCandidates(
       consultationPlan: {
         select: {
           title: true,
+          consultantProfileId: true,
           consultantProfile: {
             select: { userId: true, user: { select: { name: true } } },
           },
@@ -531,6 +533,7 @@ async function claimConsultantNoShow(
   consultationId: string,
   appointmentId: string,
   owed: RefundOwedMarker | null,
+  strike: { consultantProfileId: string; organizationId: string | null },
 ): Promise<boolean> {
   try {
     await prisma.$transaction(async (tx) => {
@@ -570,6 +573,11 @@ async function claimConsultantNoShow(
       });
       // The full refund the no-show owes commits with the claim.
       if (owed) await stampRefundOwed(tx, owed);
+      await recordExpertStrike(tx, {
+        ...strike,
+        cause: "CONSULTANT_NO_SHOW",
+        appointmentId,
+      });
     });
   } catch (error) {
     // Zero rows matched (parent or occurrences) means someone else moved it
@@ -778,6 +786,10 @@ async function handleNoShowCandidate(
       consultation.id,
       party.appointmentId,
       paid ? noShowRefundOwed(paid.id) : null,
+      {
+        consultantProfileId: consultation.consultationPlan.consultantProfileId,
+        organizationId: consultation.appointment?.organizationId ?? null,
+      },
     );
     if (!claimed) {
       console.log(`   ⏭️ Skipped — status changed since scan`);

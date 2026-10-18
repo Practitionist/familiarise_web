@@ -1227,3 +1227,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS "consultant_payout_one_tds_catch_up_per_fy"
   ON "ConsultantPayout" ("consultantProfileId", "tdsCatchUpFy")
   WHERE "tdsCatchUpFy" IS NOT NULL
     AND "status" IN ('PROCESSING', 'COMPLETED');
+
+-- SPLIT
+-- A subscription returns at most two sessions to its plan.
+ALTER TABLE "Subscription" DROP CONSTRAINT IF EXISTS "subscription_sessions_returned_range";
+-- SPLIT
+ALTER TABLE "Subscription" ADD CONSTRAINT "subscription_sessions_returned_range"
+  CHECK ("sessionsReturned" BETWEEN 0 AND 2);

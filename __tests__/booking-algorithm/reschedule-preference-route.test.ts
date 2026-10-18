@@ -148,7 +148,11 @@ function makeMockTx() {
       findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
+    bookingStatusHistory: {
+      create: jest.fn().mockResolvedValue({}),
+      // The reschedule caps count past release acts.
+      groupBy: jest.fn().mockResolvedValue([]),
+    },
     appointmentOccurrence: {
       findMany: jest.fn().mockResolvedValue([]),
       updateManyAndReturn: jest
@@ -156,6 +160,7 @@ function makeMockTx() {
         .mockResolvedValue([{ id: "slot-1" }, { id: "slot-2" }]),
     },
     rescheduleRequest: {
+      findMany: jest.fn().mockResolvedValue([]),
       create: jest.fn().mockImplementation(({ data }) => {
         createdData = data;
         return Promise.resolve({ id: "rr-1" });
