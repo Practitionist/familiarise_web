@@ -54,7 +54,7 @@ jest.mock("../../../lib/novu/stage-then-attempt", () => ({
 }));
 
 import { autoCompleteAppointments } from "../../../scripts/appointments/auto-complete-appointments";
-import { resetDouble } from "./checkout-harness/setup";
+import { calls, resetDouble } from "./checkout-harness/setup";
 
 beforeEach(() => {
   decided.length = 0;
@@ -96,5 +96,13 @@ describe("autoCompleteAppointments backlog", () => {
     });
 
     expect(decided).toHaveLength(12);
+  });
+
+  it("re-reads parents while the slot pass is still draining", async () => {
+    await autoCompleteAppointments({ maxParents: BITE, maxSlotOutcomes: BITE });
+
+    const webinarReads = calls.filter((c) => c.path === "webinar.findMany");
+    // Four full slot bites, then one short: the parent pass reads every round.
+    expect(webinarReads).toHaveLength(5);
   });
 });

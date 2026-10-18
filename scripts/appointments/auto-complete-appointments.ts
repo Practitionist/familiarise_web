@@ -1101,8 +1101,8 @@ type ParentPassState = (typeof PARENT_PASSES)[number] & {
 
 /**
  * One round is a bite of every pass still open, slots first so the parents
- * read decided rows; a pass closes once a bite reads a short cohort. Returns
- * the number of rounds run.
+ * read decided rows; a pass closes once a bite reads a short cohort (a parent
+ * pass only after the slot pass has closed). Returns the number of rounds run.
  */
 async function drainRounds(
   bites: {
@@ -1137,7 +1137,9 @@ async function drainRounds(
       allErrors.push(...bite.errors);
       pass.completed += bite.completed;
       pass.seen.push(...bite.read);
-      pass.open = bite.read.length === maxParents;
+      // A later slot bite can make more parents eligible, so a short parent
+      // cohort closes its pass only once the slot pass has closed.
+      pass.open = bite.read.length === maxParents || slotsOpen;
     }
   }
   return rounds;
