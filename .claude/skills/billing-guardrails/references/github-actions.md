@@ -18,7 +18,7 @@ The repository is `Practitionist/familiarise_web`, a private repository owned by
 - Scheduled workflows: `.github/workflows/cron-intra-day.yml` (`25,55 * * * *` plus three slower schedules), `.github/workflows/cron-daily.yml` (two slots), `.github/workflows/cron-weekly.yml` (seven schedules), `.github/workflows/cron-heartbeat.yml`, `.github/workflows/db-live-drift.yml`, `.github/workflows/security-audit.yml` and `.github/workflows/stream-webhook-drift.yml` (daily). The half-hourly intra-day schedule is the largest steady consumer. Per the Netlify ticker design, only daily and weekly batch jobs belong in Actions; latency-sensitive sweeps run on `netlify/functions/cron-tick.mts`.
 - Several scheduled jobs currently fail every run because the `CRON_SECRET` Actions secret is missing (issue #2145); a failing scheduled run still spends minutes.
 - Artifacts: `.github/workflows/load-gate.yml` keeps artifacts 90 days (`retention-days: 90`) and `.github/workflows/race-condition-tests.yml` 30 days; these count against artifact storage.
-- `.github/workflows/load-gate.yml`, `.github/workflows/load-test.yml` and `.github/workflows/race-condition-tests.yml` are `workflow_dispatch` only (the race workflow also runs on pushes to `prod`); keep them manual.
+- `.github/workflows/load-gate.yml` and `.github/workflows/load-test.yml` are `workflow_dispatch` only; keep them manual. `.github/workflows/race-condition-tests.yml` is manual plus automatic on pushes to `prod`.
 
 ## 4. Guardrails to set
 

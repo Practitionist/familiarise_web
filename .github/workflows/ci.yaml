@@ -235,7 +235,13 @@ jobs:
       - name: Unit Tests (changed since base)
         env:
           BASE_REF: ${{ github.base_ref }}
-        run: npx jest --changedSince="origin/${BASE_REF}" --passWithNoTests --coverage=false
+        # Inputs outside Jest's import graph (schema, config, lockfile) run the full suite.
+        run: |
+          if git diff --name-only "origin/${BASE_REF}...HEAD" | grep -Eq '^(prisma/|jest\.|package(-lock)?\.json$|tsconfig)'; then
+            npx jest --coverage=false
+          else
+            npx jest --changedSince="origin/${BASE_REF}" --passWithNoTests --coverage=false
+          fi
 
   # Pushes and pull requests into prod: the full suite, sharded.
   unit-tests:
