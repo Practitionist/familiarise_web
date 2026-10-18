@@ -730,13 +730,16 @@ async function completeTrials(
           },
         ],
       },
-      // A paid trial that was voided waits for ops.
+      // A paid trial that was voided waits for ops, or for its free rebook to settle the void.
       OR: [
         { paymentId: null },
         {
           appointment: {
             occurrences: {
-              none: { completionStatus: OccurrenceCompletionStatus.VOIDED },
+              none: {
+                completionStatus: OccurrenceCompletionStatus.VOIDED,
+                seatsSettledAt: null,
+              },
             },
           },
         },

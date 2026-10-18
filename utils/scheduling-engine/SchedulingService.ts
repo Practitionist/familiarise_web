@@ -140,6 +140,7 @@ import {
 import { notificationScope } from "@/lib/novu/workflows";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { notificationHref } from "@/lib/novu/resolve-href";
+import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
 
 type AppointmentWithSlots = Appointment & {
   occurrences: AppointmentOccurrence[];
@@ -408,8 +409,9 @@ export class SchedulingService {
             select: {
               id: true,
               organizationId: true,
+              // A rebooked consultation keeps its voided original; the notice names the live one.
               occurrences: {
-                where: { isTentative: false, deletedAt: null },
+                where: { ...LIVE_SLOT_WHERE, isTentative: false },
                 orderBy: { startsAt: "asc" },
                 take: 1,
                 select: { startsAt: true },

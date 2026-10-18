@@ -529,6 +529,10 @@ const BUSINESS_ERROR_ENTRIES = [
       "RETURN_CAP_REACHED",
       "RETURN_RESCHEDULE_OPEN",
       "SESSION_NOT_RETURNABLE",
+      // A free rebook of an incident-voided session, or its refund-now twin.
+      "INCIDENT_REMEDY_CLOSED",
+      "INCIDENT_REMEDY_WRONG_KIND",
+      "INCIDENT_REBOOK_SLOT_UNAVAILABLE",
     ] as const
   ).map((code) => ({
     code,
@@ -539,6 +543,11 @@ const BUSINESS_ERROR_ENTRIES = [
     code: "INVALID_RENEWAL_SOURCE",
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 400,
+  },
+  {
+    code: "INCIDENT_REMEDY_NOT_FOUND",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 404,
   },
   {
     code: "BACKUP_WINDOW_PAST",

@@ -1,10 +1,11 @@
 import * as React from "react";
-import { Button, Section, Text } from "react-email";
+import { Button, Link, Section, Text } from "react-email";
 import { EmailLayout } from "@/emails/components/EmailLayout";
 import {
   button,
   buttonContainer,
   heading,
+  link,
   paragraph,
 } from "@/emails/components/styles";
 
@@ -13,6 +14,8 @@ export interface PlatformIncidentEmailItem {
   startsAtText: string;
   /** What happens to this session, in one sentence. */
   remedyText: string;
+  /** The booking's page, where a voided 1:1 is rebooked free or refunded now. */
+  rebookUrl?: string;
 }
 
 export interface PlatformIncidentEmailProps {
@@ -44,6 +47,14 @@ export function PlatformIncidentEmail({
         <Text key={`${item.planTitle}-${item.startsAtText}`} style={paragraph}>
           <strong>{item.planTitle}</strong>, {item.startsAtText}:{" "}
           {item.remedyText}
+          {item.rebookUrl && (
+            <>
+              {" "}
+              <Link href={item.rebookUrl} style={link}>
+                Rebook free or get your refund now
+              </Link>
+            </>
+          )}
         </Text>
       ))}
       <Section style={buttonContainer}>

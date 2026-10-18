@@ -18,22 +18,40 @@ import {
 } from "@/lib/email/senders/incident";
 import { canaryAlertRecipient } from "@/lib/observability/ingest-alert";
 import { postOpsChat } from "@/lib/observability/ops-chat";
-import { DEAD_LETTER_PREFIX, MAX_REMEDY_ATTEMPTS } from "./incident-keys";
+import {
+  DEAD_LETTER_PREFIX,
+  MAX_REMEDY_ATTEMPTS,
+  REBOOKABLE_PARENT_STATUSES,
+} from "./incident-keys";
 
 const DIGEST_LEARNERS_PER_RUN = 500;
 const PLATFORM_INCIDENT_REPORT = "platform-incident-report";
 
 const TITLE = { select: { title: true } } as const;
 
+const EXPERT_NAME = {
+  consultantProfile: { select: { user: { select: { name: true } } } },
+} as const;
+
 const DIGEST_SELECT = {
   kind: true,
   dueAt: true,
+  doneAt: true,
+  rebookedOccurrence: { select: { startsAt: true } },
   occurrence: {
     select: {
       startsAt: true,
+      appointmentId: true,
       appointment: {
         select: {
-          consultation: { select: { consultationPlan: TITLE } },
+          consultation: {
+            select: {
+              status: true,
+              consultationPlan: {
+                select: { title: true, ...EXPERT_NAME },
+              },
+            },
+          },
           subscription: {
             select: {
               status: true,
@@ -41,7 +59,9 @@ const DIGEST_SELECT = {
               subscriptionPlan: TITLE,
             },
           },
-          trial: { select: { subscriptionPlan: TITLE } },
+          trial: {
+            select: { status: true, subscriptionPlan: TITLE, ...EXPERT_NAME },
+          },
           class: { select: { classPlan: TITLE } },
           webinar: { select: { webinarPlan: TITLE } },
         },
@@ -59,6 +79,19 @@ function digestItem(row: DigestRow): IncidentDigestItem {
   const sub = appt.subscription;
   return {
     kind: row.kind,
+    appointmentId: row.occurrence.appointmentId,
+    expertName:
+      (appt.consultation?.consultationPlan ?? appt.trial)?.consultantProfile
+        .user.name ?? null,
+    rebookedStartsAt: row.rebookedOccurrence?.startsAt ?? null,
+    // Offered only while the remedy is still open, as the rebook door requires.
+    rebookable:
+      row.kind === "REFUND_AT_DUE" &&
+      row.doneAt === null &&
+      row.dueAt > new Date() &&
+      REBOOKABLE_PARENT_STATUSES.has(
+        (appt.consultation ?? appt.trial)?.status ?? "",
+      ),
     planTitle:
       appt.consultation?.consultationPlan.title ??
       appt.trial?.subscriptionPlan.title ??

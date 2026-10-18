@@ -4,8 +4,8 @@
 
 /**
  * The settle sweep converges after a kill, applies a plan extension once,
- * rotates a refund-owed marker conflict and reports it once per run, and
- * dead-letters a row at the retire count.
+ * rotates a refund-owed marker conflict and reports it once per run,
+ * dead-letters a row at the retire count, and yields to a free rebook.
  */
 
 type Row = {
@@ -81,6 +81,10 @@ jest.mock("../../lib/prisma", () => {
       count: jest.fn(
         async ({ where }) => state.rows.filter((r) => matches(r, where)).length,
       ),
+      findUnique: jest.fn(async ({ where }) => {
+        const r = state.rows.find((x) => x.id === where.id);
+        return r ? { doneAt: r.doneAt } : null;
+      }),
     },
     appointmentOccurrence: {
       findUnique: jest.fn(async () => ({ completionStatus: "VOIDED" })),
@@ -93,8 +97,12 @@ jest.mock("../../lib/prisma", () => {
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_k: string, _o: unknown, fn: () => unknown) => fn(),
 }));
+const mockOnLock = jest.fn();
 jest.mock("../../utils/appointmentlock", () => ({
-  withAppointmentLock: (_id: string, fn: () => unknown) => fn(),
+  withAppointmentLock: (_id: string, fn: () => unknown) => {
+    mockOnLock();
+    return fn();
+  },
 }));
 const extendPlan = jest.fn(async () => true);
 jest.mock("../../lib/booking/platform-incidents", () => ({
@@ -218,4 +226,14 @@ it("skips the refund of a session ops un-voided, and stamps a replay done once",
   expect(refundIncidentSeat).toHaveBeenCalledTimes(1);
   expect(state.rows[0].lastError).toMatch(/no longer voided/);
   expect(state.rows.every((r) => r.doneAt)).toBe(true);
+});
+
+it("yields to a free rebook that committed while it waited for the lock", async () => {
+  state.rows = [remedy({})];
+  mockOnLock.mockImplementationOnce(() => {
+    state.rows[0].doneAt = new Date();
+  });
+  const result = await settlePlatformIncidents();
+  expect(refundIncidentSeat).not.toHaveBeenCalled();
+  expect(result).toMatchObject({ remediesDone: 0, errors: 0 });
 });

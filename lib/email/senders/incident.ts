@@ -21,11 +21,17 @@ export const PLATFORM_INCIDENT_DIGEST = "PLATFORM_INCIDENT_DIGEST";
 
 export interface IncidentDigestItem {
   kind: IncidentRemedyKind;
+  appointmentId: string;
   planTitle: string;
+  expertName: string | null;
   startsAt: Date;
   dueAt: Date;
   /** A subscription's plan end, when the plan is still live. */
   planEndsAt: Date | null;
+  /** The free session a 1:1 was already rebooked to. */
+  rebookedStartsAt: Date | null;
+  /** The booking can still take a free rebook. */
+  rebookable: boolean;
 }
 
 interface IncidentDigestArgs {
@@ -35,10 +41,18 @@ interface IncidentDigestArgs {
 }
 
 /** One sentence per remedy kind, in the reader's zone. */
-function incidentRemedyText(item: IncidentDigestItem, zone: string): string {
+export function incidentRemedyText(
+  item: IncidentDigestItem,
+  zone: string,
+): string {
   switch (item.kind) {
     case "REFUND_AT_DUE":
-      return `You get a full refund on ${dateText(item.dueAt, zone)}.`;
+      if (item.rebookedStartsAt) {
+        return `You rebooked this session free for ${whenText(item.rebookedStartsAt, zone)}.`;
+      }
+      return !item.rebookable
+        ? `You get a full refund on ${dateText(item.dueAt, zone)}.`
+        : `Rebook free with ${item.expertName ?? "your expert"} by ${whenText(item.dueAt, zone)}, or we refund 100 % on ${dateText(item.dueAt, zone)}.`;
     case "REFUND_NOW":
       return "You get a full refund now.";
     case "TRIAL_REOFFER":
@@ -74,6 +88,14 @@ export function stagePlatformIncidentDigest(
             planTitle: item.planTitle,
             startsAtText: whenText(item.startsAt, r.zone),
             remedyText: incidentRemedyText(item, r.zone),
+            rebookUrl:
+              item.kind === "REFUND_AT_DUE" &&
+              item.rebookable &&
+              !item.rebookedStartsAt
+                ? absolute(
+                    goHref("client", `appointments/${item.appointmentId}`),
+                  )
+                : undefined,
           })),
         }),
     },

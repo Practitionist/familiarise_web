@@ -73,6 +73,29 @@ export const RescheduleProposalSchema = z
 /** Returning one subscription session to the plan; the path names the session, so the body carries nothing. */
 export const SessionReturnSchema = z.object({}).strict();
 
+/** A free rebook of an incident-voided 1:1: the new start; its length is the voided session's. */
+export const IncidentRebookSchema = z
+  .object({ startsAt: z.string().datetime({ offset: true }) })
+  .strict();
+
+/** Bringing an incident refund forward; the path names the remedy, so the body carries nothing. */
+export const IncidentRefundNowSchema = z.object({}).strict();
+
+/** One voided 1:1 still open to a free rebook, as the consultee banner reads it. */
+export const OpenIncidentRemedySchema = z.object({
+  id: z.string(),
+  appointmentId: z.string(),
+  sessionStartsAt: z.string(),
+  sessionEndsAt: z.string(),
+  dueAt: z.string(),
+  title: z.string(),
+  expertName: z.string().nullable(),
+});
+
+export const OpenIncidentRemediesResponseSchema = z.object({
+  remedies: z.array(OpenIncidentRemedySchema),
+});
+
 /** A priced cancel quote from `GET /api/appointments/[id]/cancel/preview` or the trial twin. */
 const CancelRefundQuoteSchema = z.object({
   refundPct: z.number(),

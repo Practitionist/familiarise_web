@@ -5334,7 +5334,8 @@ model AppointmentOccurrence {
 
   supportCases SupportCase[] @relation("SupportCaseByOccurrence")
 
-  incidentRemedies IncidentRemedy[]
+  incidentRemedies IncidentRemedy[] @relation("IncidentRemedyVoided")
+  incidentRebook   IncidentRemedy?  @relation("IncidentRemedyRebooked")
 
   // No @@unique/@@index on (appointmentId, ordinal): the live-row unique is the
   // partial index appointment_occurrence_live_ordinal_key in prisma/sql (#1268).
@@ -7378,23 +7379,26 @@ model PlatformIncident {
 
 /// One learner's remedy for one incident-voided session; the settle sweep applies it at dueAt.
 model IncidentRemedy {
-  id           String                @id @default(uuid())
-  incident     PlatformIncident      @relation(fields: [incidentId], references: [id], onDelete: Cascade)
-  incidentId   String
-  occurrence   AppointmentOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
-  occurrenceId String
-  user         User                  @relation(fields: [userId], references: [id], onDelete: Restrict)
-  userId       String
-  payment      Payment?              @relation(fields: [paymentId], references: [id], onDelete: SetNull)
-  paymentId    String?
-  kind         IncidentRemedyKind
-  dueAt        DateTime              @db.Timestamptz
-  doneAt       DateTime?             @db.Timestamptz
-  notifiedAt   DateTime?             @db.Timestamptz
-  attempts     Int                   @default(0)
-  lastError    String?               @db.Text
-  createdAt    DateTime              @default(now()) @db.Timestamptz
-  updatedAt    DateTime              @updatedAt @db.Timestamptz
+  id                   String                 @id @default(uuid())
+  incident             PlatformIncident       @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  incidentId           String
+  occurrence           AppointmentOccurrence  @relation("IncidentRemedyVoided", fields: [occurrenceId], references: [id], onDelete: Cascade)
+  occurrenceId         String
+  user                 User                   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  userId               String
+  payment              Payment?               @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  paymentId            String?
+  kind                 IncidentRemedyKind
+  dueAt                DateTime               @db.Timestamptz
+  doneAt               DateTime?              @db.Timestamptz
+  notifiedAt           DateTime?              @db.Timestamptz
+  attempts             Int                    @default(0)
+  lastError            String?                @db.Text
+  /// The free session the learner rebooked instead of the refund; set with doneAt.
+  rebookedOccurrence   AppointmentOccurrence? @relation("IncidentRemedyRebooked", fields: [rebookedOccurrenceId], references: [id], onDelete: SetNull)
+  rebookedOccurrenceId String?                @unique
+  createdAt            DateTime               @default(now()) @db.Timestamptz
+  updatedAt            DateTime               @updatedAt @db.Timestamptz
 
   @@unique([incidentId, occurrenceId, userId])
   /// One remedy per seat and session, even where two declared windows overlap it.
