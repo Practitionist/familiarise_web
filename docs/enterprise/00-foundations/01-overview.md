@@ -682,7 +682,7 @@ flowchart TD
     Contract --> Program
     Program --> Assignment --> BookUtil
     Assignment --> Overage
-    BookUtil -.->|1:1 if over-cap| Overage
+    BookUtil -.->|one per over-cap batch| Overage
     Overage -.->|CHARGE_ORG| Invoice
     Org --> OrgEarn --> OrgPayout
     Pay --> OrgEarn

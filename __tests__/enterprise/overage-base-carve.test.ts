@@ -106,11 +106,23 @@ describe("restoreOverageBaseCarve", () => {
         payment: { parentPaymentId: "parent1" },
       },
     });
-    expect(held.earningsUpdateMany).not.toHaveBeenCalled();
+    // The held rows are locked before the count, and never released.
+    expect(held.earningsUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      held.eventCount.mock.invocationCallOrder[0],
+    );
+    expect(held.earningsUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { status: "PENDING", preDisputeStatus: null },
+      }),
+    );
 
     const last = mockTx();
     await restoreOverageBaseCarve(last.tx, { overageEventId: "ov1" });
-    expect(last.earningsUpdateMany).toHaveBeenCalled();
+    expect(last.earningsUpdateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: { status: "PENDING", preDisputeStatus: null },
+      }),
+    );
   });
 
   it("returns invoiced (no leg writes) when the guarded parent update matches no row", async () => {

@@ -282,8 +282,8 @@ function world(program: Program, parentLeg: "WALLET" | "LICENSE") {
           surchargePaise: 0,
         },
       })),
-      // (bookingUtilizationId, batchKey) is unique; a keyless row collides
-      // with any other keyless row on the same utilization.
+      // (bookingUtilizationId, batchKey) is unique. A keyless write stands in
+      // for the single-column unique this replaces, so base code collides.
       create: jest.fn(
         async ({ data }: { data: Event & { batchKey?: string | null } }) => {
           const key = data.batchKey ?? null;

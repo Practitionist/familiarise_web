@@ -55,6 +55,25 @@ export async function releaseOverageHeldParentEarnings(
   parentPaymentId: string,
   settledSidePaymentId: string,
 ): Promise<void> {
+  const held = {
+    paymentId: parentPaymentId,
+    status: "HELD" as const,
+    preDisputeStatus: "PENDING" as const,
+  };
+  // Lock the held rows before counting: a batch holding them concurrently is
+  // then either committed and counted, or forces this transaction to retry.
+  if (typeof tx.consultantEarnings?.updateMany === "function") {
+    await tx.consultantEarnings.updateMany({
+      where: held,
+      data: { status: "HELD" },
+    });
+  }
+  if (typeof tx.organizationEarnings?.updateMany === "function") {
+    await tx.organizationEarnings.updateMany({
+      where: held,
+      data: { status: "HELD" },
+    });
+  }
   const licenseLeg = await tx.paymentLeg.findUnique({
     where: {
       paymentId_source: { paymentId: parentPaymentId, source: "LICENSE" },
@@ -84,21 +103,13 @@ export async function releaseOverageHeldParentEarnings(
 
   if (typeof tx.consultantEarnings?.updateMany === "function") {
     await tx.consultantEarnings.updateMany({
-      where: {
-        paymentId: parentPaymentId,
-        status: "HELD",
-        preDisputeStatus: "PENDING",
-      },
+      where: held,
       data: { status: "PENDING", preDisputeStatus: null },
     });
   }
   if (typeof tx.organizationEarnings?.updateMany === "function") {
     await tx.organizationEarnings.updateMany({
-      where: {
-        paymentId: parentPaymentId,
-        status: "HELD",
-        preDisputeStatus: "PENDING",
-      },
+      where: held,
       data: { status: "PENDING", preDisputeStatus: null },
     });
   }

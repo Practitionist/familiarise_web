@@ -494,18 +494,25 @@ async function recordMemberOverageCharge(
     },
   });
 
-  // Hold any PENDING earnings on the parent payment until the member side-payment
-  // is captured or fails/times out (released in handleOverageMemberSuccess or
-  // restoreOverageBaseCarve).
+  // Hold the parent's earnings until every member overage on it settles
+  // (released by releaseOverageHeldParentEarnings). Rows an earlier batch
+  // already holds are written again, so a concurrent release waits for this one.
+  const holdable = {
+    paymentId,
+    OR: [
+      { status: "PENDING" as const },
+      { status: "HELD" as const, preDisputeStatus: "PENDING" as const },
+    ],
+  };
   if (typeof tx.consultantEarnings?.updateMany === "function") {
     await tx.consultantEarnings.updateMany({
-      where: { paymentId, status: "PENDING" },
+      where: holdable,
       data: { status: "HELD", preDisputeStatus: "PENDING" },
     });
   }
   if (typeof tx.organizationEarnings?.updateMany === "function") {
     await tx.organizationEarnings.updateMany({
-      where: { paymentId, status: "PENDING" },
+      where: holdable,
       data: { status: "HELD", preDisputeStatus: "PENDING" },
     });
   }
