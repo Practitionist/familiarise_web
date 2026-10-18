@@ -1,7 +1,5 @@
-/**
- * Checkout Operations
- * Handles the complete checkout flow for all appointment types
- */
+// The checkout flow: org gate, price, lock, in-lock revalidation, order reuse
+// or mint, the booking transaction, post-commit follow-ups, lock release.
 
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { reportSentryError } from "@/lib/observability/report";
@@ -28,12 +26,6 @@ import { ProgramAssignmentLimitError } from "@/lib/api/organizations/program-hel
 import { notifyOverageDueAfterCommit } from "@/lib/payments/billing/overage-settlement";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import { savedCardCustomerId } from "@/lib/payments/core/saved-card-customer";
-import {
-  notifyOrgProgramExhausted,
-  notifyOrgProgramCapNear,
-} from "@/lib/novu/org-workflows";
-import { sendOrgOperationalEmail } from "@/lib/email/senders/money";
-import { getAppUrl } from "@/lib/url";
 import { ensurePlatformCancellationPolicy } from "@/lib/payments/operations/cancellation-policy-store";
 import {
   type BusinessErrorCode,
@@ -59,16 +51,9 @@ import {
 } from "@/lib/payments/checkout/org-funding";
 import { resolveOrgFunding } from "@/lib/payments/checkout/org-funding";
 import { commitCheckout } from "@/lib/payments/checkout/commit";
+import { dispatchProgramBell } from "@/lib/payments/checkout/program-bell";
 
-// ============================================================================
-// Type Definitions
-// ============================================================================
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-const REFERRAL_CREDITS_DROPPED_NOTICE =
+export const REFERRAL_CREDITS_DROPPED_NOTICE =
   "Referral credits can't be used on organisation-funded bookings, so none were spent.";
 
 /**
@@ -77,7 +62,7 @@ const REFERRAL_CREDITS_DROPPED_NOTICE =
  * stay out on purpose: they mean a programme is configured in a shape we
  * cannot collect on and must keep paging.
  */
-const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<BusinessErrorCode> =
+export const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<BusinessErrorCode> =
   new Set<BusinessErrorCode>([
     "ORG_NOT_OPERATIONAL",
     "ORG_CANNOT_SPONSOR",
@@ -95,176 +80,6 @@ const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<BusinessErrorCode> =
     "SEAT_REBUY_UNSUPPORTED",
     "ALREADY_REGISTERED",
   ]);
-
-// ============================================================================
-// Open-Order Reuse (rec C, checkout dossier Q2)
-// ============================================================================
-
-// ============================================================================
-// Payment Intent Manager
-// ============================================================================
-
-// ============================================================================
-// Amount Calculation and Validation
-// ============================================================================
-
-// ============================================================================
-// Slot Availability Validation
-// ============================================================================
-
-// ============================================================================
-// Checkout Lock Management
-// ============================================================================
-
-// ============================================================================
-// Appointment Creation Handlers (Type-Specific)
-// ============================================================================
-
-// ============================================================================
-// Main Checkout Flows
-// ============================================================================
-
-/**
- * Ring one org-programme bell for a ProgramAssignment, after the checkout
- * transaction has settled.
- *
- * #1435 — both bells used to run this lookup on the global client from INSIDE
- * the Serializable transaction. Under PG_POOL_MAX=1 that query queues behind
- * the transaction's own connection and dies at the 3 s pg connect timeout, and
- * the .catch below swallowed it, so the bell was lost silently on Netlify.
- *
- * Fire-and-forget: a booking must not fail because a notification did not go
- * out. `Program.organizationId` lives on its parent Contract, not on Program
- * itself, so the select chain hops Program → Contract → Organization.
- */
-async function dispatchProgramBell(
-  programAssignmentId: string,
-  bell:
-    | { kind: "EXHAUSTED" }
-    | {
-        kind: "CAP_NEAR";
-        engagementsUsed: number;
-        cap: number;
-        usedPct: number;
-      },
-): Promise<void> {
-  const label =
-    bell.kind === "EXHAUSTED"
-      ? "notifyOrgProgramExhausted"
-      : "notifyOrgProgramCapNear";
-  await scheduleAfter(async () => {
-    try {
-      const ctx = await prisma.programAssignment.findUnique({
-        where: { id: programAssignmentId },
-        select: {
-          membership: {
-            select: {
-              userId: true,
-              user: { select: { name: true, email: true } },
-            },
-          },
-          program: {
-            select: {
-              name: true,
-              contract: {
-                select: {
-                  organizationId: true,
-                  organization: { select: { name: true } },
-                },
-              },
-            },
-          },
-        },
-      });
-      if (!ctx) return;
-      const orgId = ctx.program.contract.organizationId;
-      const orgName = ctx.program.contract.organization.name;
-      const programName = ctx.program.name;
-      const assigneeName =
-        ctx.membership.user.name ?? ctx.membership.user.email;
-      const dashboardUrl = `/dashboard/organization/${orgId}/programs`;
-      const actionUrl = `${getAppUrl()}${dashboardUrl}`;
-      const operatorRows = prisma.membership?.findMany
-        ? await prisma.membership.findMany({
-            where: {
-              organizationId: orgId,
-              status: "ACTIVE",
-              role: { in: ["OWNER", "MAINTAINER"] },
-            },
-            select: { userId: true },
-          })
-        : [];
-      const recipientUserIds = Array.from(
-        new Set([ctx.membership.userId, ...operatorRows.map((r) => r.userId)]),
-      );
-      const common = {
-        orgName,
-        programName,
-        assigneeName,
-        dashboardUrl,
-      };
-      const settled =
-        bell.kind === "EXHAUSTED"
-          ? await Promise.allSettled([
-              notifyOrgProgramExhausted(orgId, ctx.membership.userId, common),
-              sendOrgOperationalEmail({
-                recipientUserIds,
-                organizationId: orgId,
-                orgName,
-                kind: "PROGRAM_EXHAUSTED",
-                programName,
-                assigneeName,
-                actionUrl,
-              }),
-            ])
-          : await Promise.allSettled([
-              notifyOrgProgramCapNear(orgId, ctx.membership.userId, {
-                ...common,
-                engagementsUsed: bell.engagementsUsed,
-                cap: bell.cap,
-                usedPct: bell.usedPct,
-              }),
-              sendOrgOperationalEmail({
-                recipientUserIds,
-                organizationId: orgId,
-                orgName,
-                kind: "PROGRAM_CAP_NEAR",
-                programName,
-                assigneeName,
-                engagementsUsed: bell.engagementsUsed,
-                cap: bell.cap,
-                usedPct: bell.usedPct,
-                actionUrl,
-              }),
-            ]);
-      for (const outcome of settled) {
-        if (outcome.status === "rejected") {
-          console.error(
-            bell.kind === "EXHAUSTED"
-              ? "[notifyOrgProgramExhausted] failed:"
-              : "[notifyOrgProgramCapNear] failed:",
-            outcome.reason,
-          );
-          reportSentryError(outcome.reason, {
-            subsystem: "payments",
-            level: "warning",
-          });
-        }
-      }
-    } catch (notifyErr) {
-      console.error(
-        bell.kind === "EXHAUSTED"
-          ? "[notifyOrgProgramExhausted] failed:"
-          : "[notifyOrgProgramCapNear] failed:",
-        notifyErr,
-      );
-      reportSentryError(notifyErr, {
-        subsystem: "payments",
-        level: "warning",
-      });
-    }
-  }, label);
-}
 
 /**
  * Production checkout flow (real payments)

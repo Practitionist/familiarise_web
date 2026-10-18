@@ -33,7 +33,7 @@ const KNOWN_MINT_SITES = [
   "lib/payments/core/razorpay.ts",
   "lib/payments/index.ts",
   "lib/payments/operations/approval-payment.ts",
-  "lib/payments/operations/checkout.ts",
+  "lib/payments/checkout/orchestrate.ts",
 ];
 
 function sourceFiles(dir: string): string[] {

@@ -221,7 +221,7 @@ import {
   unlockConsulteeBooking,
   unlockEventCheckout,
 } from "../../utils/appointmentlock";
-import { handleCheckout } from "../../lib/payments/operations/checkout";
+import { handleCheckout } from "../../lib/payments/checkout";
 import {
   readInvoiceExposurePaise,
   assertWithinInvoiceCreditLimit,

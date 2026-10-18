@@ -20,7 +20,7 @@ jest.mock("../../../lib/payments/operations/cancellation-policy-store", () => ({
   resolveCheckoutCancellationPolicyId: jest.fn(async () => "policy-1"),
 }));
 
-import { handleCheckout } from "../../../lib/payments/operations/checkout";
+import { handleCheckout } from "../../../lib/payments/checkout";
 import { calls, overrides, resetDouble } from "./checkout-harness/setup";
 
 type Row = Record<string, unknown>;

@@ -23,7 +23,7 @@
  * 6. Verify: Only ONE payment record exists
  */
 
-import { handleCheckout } from "@/lib/payments/operations/checkout";
+import { handleCheckout } from "@/lib/payments/checkout";
 import prisma from "@/lib/prisma";
 import { CheckoutInput } from "@/schemas/checkout";
 import { PaymentStatus } from "@prisma/client";
@@ -101,7 +101,9 @@ async function testConcurrentCheckout() {
       const user = index === 0 ? "User A" : "User B";
       if (result.status === "fulfilled") {
         console.log(`✅ ${user}: SUCCESS`);
-        console.log(`   Payment Intent: ${result.value.paymentIntent?.id ?? "N/A"}`);
+        console.log(
+          `   Payment Intent: ${result.value.paymentIntent?.id ?? "N/A"}`,
+        );
       } else {
         console.log(`❌ ${user}: FAILED`);
         console.log(`   Error: ${result.reason.message}`);
@@ -178,9 +180,7 @@ async function testConcurrentCheckout() {
       {
         condition:
           appointments.length > 0 &&
-          appointments[0].occurrences.every(
-            (s) => s.isTentative === false,
-          ),
+          appointments[0].occurrences.every((s) => s.isTentative === false),
         message: `Appointment slots should be confirmed (isTentative=false)`,
       },
       {
