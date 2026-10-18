@@ -46,8 +46,8 @@ jest.mock("../../lib/enterprise/system-events", () => ({
   recordSystemErrorSafe: jest.fn().mockResolvedValue(undefined),
 }));
 const allocate = jest.fn();
-jest.mock("../../utils/scheduling-engine/SchedulingService", () => ({
-  SchedulingService: { allocate: (...a: unknown[]) => allocate(...a) },
+jest.mock("../../lib/booking/allocation", () => ({
+  allocate: (...a: unknown[]) => allocate(...a),
 }));
 
 import { NextRequest } from "next/server";

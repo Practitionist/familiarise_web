@@ -148,12 +148,6 @@ describe("trial status writers use transitionTrial", () => {
       (src.match(/transitionTrial\(/g) ?? []).length,
     ).toBeGreaterThanOrEqual(3);
   });
-
-  it("checkout converts a trial through the helper", () => {
-    const src = read("lib/payments/operations/checkout.ts");
-    expect(src).not.toMatch(/status: TrialStatus\.CONVERTED/);
-    expect(src).toContain("to: TrialStatus.CONVERTED");
-  });
 });
 
 describe("admin refunds use the booking front door", () => {

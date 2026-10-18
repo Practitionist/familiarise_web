@@ -45,7 +45,7 @@ User A                      User B                      Database
 
 **Protection Mechanism (Consultation/Subscription):**
 
-**File:** `/lib/payments/operations/checkout.ts` (lines 196-248)
+**File:** `/lib/payments/checkout/occupancy-validate.ts` (`validateSlotAvailability()`)
 
 ```typescript
 // Three-layer protection system
@@ -125,7 +125,7 @@ if (allPendingCount >= 3) {
 
 Even if two Serializable transactions race past all three application-layer checks, a PostgreSQL **exclusion constraint** on `AppointmentOccurrence` prevents two _confirmed_ (non-tentative) rows from overlapping the same `(consultantProfileId, startsAt, endsAt)` range. This is the last-resort guarantee that concurrent webhooks cannot double-confirm a slot.
 
-The DDL declares no `DEFERRABLE`, so the check is not deferred to `COMMIT`: it is enforced per statement, at the write that would create the overlap, which is why `replaceContiguousSlotRun` has to pre-flip its own confirmed rows to `isTentative` before shifting them (a run would otherwise 23P01 against itself mid-statement). A violation is SQLSTATE **23P01** (`exclusion_violation`) — not a unique violation, so it never arrives as `P2002` / `UniqueConstraintError`. Prisma does not model a constraint that lives in the raw-SQL sidecar (prisma/prisma#25562), so the error reaches the app as a `PrismaClientUnknownRequestError` with no `.code` and an undefined `.cause`; on a raw-query path it is a `P2010` carrying the SQLSTATE in `meta.code`. `isExclusionViolation` in `lib/db/pg-errors.ts` reads the structured SQLSTATE first and quarantines a narrow text probe behind it, because for this one constraint the message is the only signal Prisma leaves. Two call sites answer it: the payment webhook's legacy-capture arm re-stamps the payment `SUCCEEDED` outside the rolled-back transaction and runs the gateway refund cascade (the marker is what `retry-auto-refunds` re-drives), and `SchedulingService.classifyError` maps it to a 409 `LOCK_CONTENTION`.
+The DDL declares no `DEFERRABLE`, so the check is not deferred to `COMMIT`: it is enforced per statement, at the write that would create the overlap, which is why `replaceContiguousSlotRun` has to pre-flip its own confirmed rows to `isTentative` before shifting them (a run would otherwise 23P01 against itself mid-statement). A violation is SQLSTATE **23P01** (`exclusion_violation`) — not a unique violation, so it never arrives as `P2002` / `UniqueConstraintError`. Prisma does not model a constraint that lives in the raw-SQL sidecar (prisma/prisma#25562), so the error reaches the app as a `PrismaClientUnknownRequestError` with no `.code` and an undefined `.cause`; on a raw-query path it is a `P2010` carrying the SQLSTATE in `meta.code`. `isExclusionViolation` in `lib/db/pg-errors.ts` reads the structured SQLSTATE first and quarantines a narrow text probe behind it, because for this one constraint the message is the only signal Prisma leaves. Two call sites answer it: the payment webhook's legacy-capture arm re-stamps the payment `SUCCEEDED` outside the rolled-back transaction and runs the gateway refund cascade (the marker is what `retry-auto-refunds` re-drives), and `classifyError` (`lib/booking/allocation/classify.ts`) maps it to a 409 `LOCK_CONTENTION`.
 
 The predicate has three conditions, not one, and all three matter. A row with a NULL `consultantProfileId` is **outside the constraint entirely** — group-event rows that leave the column unset are unguarded, which is why the owner's profile is denormalized onto every webinar and class occurrence. Tombstones are exempt via `deletedAt IS NULL` (#1694): a cancel or a hold-release keeps the row (`CANCELLED` + `deletedAt`) and every reader already treats it as free, so without the exemption re-booking a cancelled time 409s at commit.
 
@@ -198,7 +198,7 @@ if (!payment) {
 
 **Protection Mechanism:**
 
-**File:** `/lib/payments/operations/checkout.ts` (lines 675-678)
+**File:** `/lib/payments/checkout/handlers/class.ts` and `/lib/payments/checkout/seats.ts`
 
 ```typescript
 // Check if user is already enrolled
@@ -775,7 +775,7 @@ sequenceDiagram
 
 **Current Implementation:**
 
-**File:** `/lib/payments/operations/checkout.ts` (lines 512-568)
+**File:** `/lib/payments/checkout/handlers/subscription.ts`
 
 ```typescript
 // Calculate total sessions
@@ -912,7 +912,7 @@ const zonedDate = utcToZonedTime(sessionStart, subscription.timezone);
 
 **Checkout Operations:**
 
-- `/lib/payments/operations/checkout.ts` - Main checkout logic for all event types
+- `/lib/payments/checkout/` - Main checkout logic for all event types (`orchestrate.ts` entry, `commit/index.ts` transaction, `handlers/` per type)
   - Lines 118-258: Consultation checkout
   - Lines 260-568: Subscription checkout
   - Lines 570-636: Webinar checkout
@@ -954,18 +954,18 @@ const zonedDate = utcToZonedTime(sessionStart, subscription.timezone);
 
 **Race Condition Protection:**
 
-- Consultation: `/lib/payments/operations/checkout.ts`
+- Consultation: `/lib/payments/checkout/handlers/consultation.ts`
 - Subscription: Same protection mechanism
-- Class enrollment check: `/lib/payments/operations/checkout.ts`
+- Class enrollment check: `/lib/payments/checkout/seats.ts` (`assertClassEnrolmentOpen`)
 
 **Capacity Counting:**
 
-- Webinar: `/lib/payments/operations/checkout.ts`
-- Class: `/lib/payments/operations/checkout.ts` (unique user counting)
+- Webinar: `/lib/payments/checkout/handlers/webinar.ts`
+- Class: `/lib/payments/checkout/handlers/class.ts` (unique user counting)
 
 **Session Calculations:**
 
-- Subscription: `/lib/payments/operations/checkout.ts`
+- Subscription: `/lib/payments/checkout/handlers/subscription.ts`
 - Class: `/app/api/bookings/classes/crud-with-plan/route.ts`
 
 **Error Handling:**
@@ -1144,7 +1144,7 @@ console.error(
    - **Issue:** Slots can be booked in the past
    - **Impact:** Invalid appointments created
    - **Fix:** Add Zod validation for future dates
-   - **Location:** `/lib/payments/operations/checkout.ts`
+   - **Location:** `/lib/payments/checkout/revalidate.ts`
 
 2. **Webhook Idempotency Key Missing**
    - **Issue:** Duplicate webhook processing possible if status check fails
@@ -1176,7 +1176,7 @@ console.error(
    - **Issue:** Race condition can allow booking beyond capacity
    - **Impact:** More participants than allowed
    - **Fix:** Use database constraint or atomic increment
-   - **Location:** `/lib/payments/operations/checkout.ts`
+   - **Location:** `/lib/payments/checkout/locks.ts`
 
 **🟢 LOW PRIORITY:**
 
@@ -1287,7 +1287,7 @@ console.error(
 3. **Code Duplication**
    - Extract common checkout logic
    - Share validation between event types
-   - Location: `/lib/payments/operations/checkout.ts`
+   - Location: `/lib/payments/checkout/`
 
 **Documentation:**
 

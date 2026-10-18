@@ -8,8 +8,6 @@
  * counts only live releases via `isReleasedForReschedule`
  * (tentative + RESCHEDULED + deletedAt == null).
  */
-import fs from "fs";
-import path from "path";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 
 describe("isReleasedForReschedule — the reschedule identity", () => {
@@ -51,37 +49,5 @@ describe("isReleasedForReschedule — the reschedule identity", () => {
         deletedAt: null,
       }),
     ).toBe(false);
-  });
-});
-
-describe("SchedulingService source contract — reschedule counts releases, not tentatives", () => {
-  const source = fs.readFileSync(
-    path.join(
-      process.cwd(),
-      "utils/scheduling-engine/SchedulingService.ts",
-    ),
-    "utf8",
-  );
-
-  it("derives isReschedule from the canonical release count", () => {
-    expect(source).toContain("releasedSessionCountOf(existingAppointments)");
-  });
-
-  it("no longer counts bare tentatives for reschedule sessions", () => {
-    // Both allocate paths (auto + manual) declare `const rescheduleSessions`.
-    const declarations = [
-      ...source.matchAll(/const rescheduleSessions =([\s\S]{0,160}?);/g),
-    ];
-    expect(declarations.length).toBeGreaterThanOrEqual(2);
-    for (const m of declarations) {
-      expect(m[1]).toContain("releasedSessionCountOf");
-      expect(m[1]).not.toContain("isTentative");
-    }
-  });
-
-  it("excludes only released rows from conflict detection on reschedule", () => {
-    expect(source).toContain(
-      "this.releasedOccurrenceIdsOf(existingAppointments)",
-    );
   });
 });

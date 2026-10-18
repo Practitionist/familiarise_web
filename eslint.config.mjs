@@ -160,6 +160,14 @@ export default [
     },
   },
 
+  // Server-only allocator: `useRequestedSlots` is an allocation mode, not a React hook.
+  {
+    files: ["lib/booking/allocation/**/*.ts"],
+    rules: {
+      "react-hooks/rules-of-hooks": "off",
+    },
+  },
+
   // k6 load scripts. These never run under Node or in a browser — the k6
   // runtime injects `__ENV`, `__VU` and `__ITER` as globals and resolves the
   // `k6/*` module specifiers itself. Without this block every script reports

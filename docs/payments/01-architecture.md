@@ -21,10 +21,10 @@
 
 The payment system uses **Razorpay** as the sole payment gateway. Stripe was removed from the code on 2026-10-04 and survives only as an enum label until the pre-MVP reset, and `DODO_PAYMENTS` exists in the `PaymentGateway` enum as a post-MVP placeholder with no implementation behind it. `UNIMPLEMENTED_GATEWAYS` in `lib/payments/constants.ts` lists the enum labels with no implementation, and `assertGatewayUsable` in `lib/payments/validation/gateway-guards.ts` refuses every gateway on that list (including `STRIPE`) at runtime.
 
-| Gateway           | Status                  | How it is gated                                                                                                                                                                                                                                                                                                             |
-| ----------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Razorpay**      | Live, primary           | No flag. `routeGateway` selects it for every buyer country, domestic directly and international over IBT.                                                                                                                                                                                                                   |
-| **Dodo Payments** | Schema placeholder      | Listed in `UNIMPLEMENTED_GATEWAYS`. Any use throws `UnsupportedGatewayError`.                                                                                                                                                                                                                                               |
+| Gateway           | Status             | How it is gated                                                                                           |
+| ----------------- | ------------------ | --------------------------------------------------------------------------------------------------------- |
+| **Razorpay**      | Live, primary      | No flag. `routeGateway` selects it for every buyer country, domestic directly and international over IBT. |
+| **Dodo Payments** | Schema placeholder | Listed in `UNIMPLEMENTED_GATEWAYS`. Any use throws `UnsupportedGatewayError`.                             |
 
 The system handles four appointment types:
 
@@ -182,15 +182,15 @@ AppointmentStatus:
 
 ### Checkout Files
 
-| File                                           | Purpose                       | Lines |
-| ---------------------------------------------- | ----------------------------- | ----- |
-| `lib/payments/operations/checkout.ts`          | Core checkout logic           | ~1445 |
-| `app/api/checkout/route.ts`                    | Checkout API endpoint         | ~150  |
-| `app/checkout/components/RazorpayCheckout.tsx` | Razorpay payment component    | ~140  |
-| `app/checkout/plans/utils.ts`                  | Checkout utilities & handlers | ~200  |
-| `schemas/checkout.ts`                          | Zod validation schemas        | ~180  |
-| `types/checkout.ts`                            | TypeScript interfaces         | ~100  |
-| `actions/checkout.action.ts`                   | Server action wrapper         | ~50   |
+| File                                           | Purpose                                                                               | Lines |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------- | ----- |
+| `lib/payments/checkout/`                       | Core checkout logic (25 files; entry `orchestrate.ts`, transaction `commit/index.ts`) | ~5900 |
+| `app/api/checkout/route.ts`                    | Checkout API endpoint                                                                 | ~150  |
+| `app/checkout/components/RazorpayCheckout.tsx` | Razorpay payment component                                                            | ~140  |
+| `app/checkout/plans/utils.ts`                  | Checkout utilities & handlers                                                         | ~200  |
+| `schemas/checkout.ts`                          | Zod validation schemas                                                                | ~180  |
+| `types/checkout.ts`                            | TypeScript interfaces                                                                 | ~100  |
+| `actions/checkout.action.ts`                   | Server action wrapper                                                                 | ~50   |
 
 ### Checkout Pages
 
@@ -204,57 +204,57 @@ AppointmentStatus:
 
 ### Webhook Files
 
-| File                                                     | Purpose                                                             | Lines |
-| -------------------------------------------------------- | ------------------------------------------------------------------- | ----- |
-| `app/api/webhooks/razorpay/route.ts`                     | Razorpay webhook endpoint                                           | ~147  |
-| `app/api/webhooks/utils.ts`                              | Shared webhook utilities & dispute/org handlers                     | ~2530 |
-| `lib/payments/webhooks/handlers.ts`                      | Payment success/failure state-machine handlers                      | ~1900 |
-| `lib/payments/webhooks/legacy-appointment-creation.ts`   | Legacy webhook fallback appointment creation & slot allocation      | ~810  |
-| `lib/payments/webhooks/staged-emails.ts`                 | Phase 1 transactional email outbox staging & notification context   | ~350  |
-| `schemas/webhooks/razorpay.ts`                           | Razorpay event schemas                                              | ~105  |
-| `schemas/webhooks/metadata.ts`                           | Appointment metadata validation                                     | ~115  |
+| File                                                   | Purpose                                                           | Lines |
+| ------------------------------------------------------ | ----------------------------------------------------------------- | ----- |
+| `app/api/webhooks/razorpay/route.ts`                   | Razorpay webhook endpoint                                         | ~147  |
+| `app/api/webhooks/utils.ts`                            | Shared webhook utilities & dispute/org handlers                   | ~2530 |
+| `lib/payments/webhooks/handlers.ts`                    | Payment success/failure state-machine handlers                    | ~1900 |
+| `lib/payments/webhooks/legacy-appointment-creation.ts` | Legacy webhook fallback appointment creation & slot allocation    | ~810  |
+| `lib/payments/webhooks/staged-emails.ts`               | Phase 1 transactional email outbox staging & notification context | ~350  |
+| `schemas/webhooks/razorpay.ts`                         | Razorpay event schemas                                            | ~105  |
+| `schemas/webhooks/metadata.ts`                         | Appointment metadata validation                                   | ~115  |
 
 ### Refund & Dispute Files
 
-| File                                          | Purpose                                                                 |
-| --------------------------------------------- | ----------------------------------------------------------------------- |
-| `lib/payments/operations/refund.ts`           | Core refund cascade (`applyRefundCascade`) & credit note minting        |
-| `lib/payments/operations/reversal-engine.ts`  | Unified reversal engine (wallet, unbilled/paid invoice, payout clawback)|
-| `app/api/payments/refunds/route.ts`           | Refund creation & listing                                               |
-| `app/api/payments/disputes/route.ts`          | Dispute listing & evidence submission                                   |
-| `app/api/admin/refunds/route.ts`              | Admin refund dashboard API                                              |
-| `app/api/admin/disputes/route.ts`             | Admin dispute dashboard API                                             |
-| `app/api/admin/disputes/[disputeId]/route.ts` | Dispute detail API                                                      |
+| File                                          | Purpose                                                                  |
+| --------------------------------------------- | ------------------------------------------------------------------------ |
+| `lib/payments/operations/refund.ts`           | Core refund cascade (`applyRefundCascade`) & credit note minting         |
+| `lib/payments/operations/reversal-engine.ts`  | Unified reversal engine (wallet, unbilled/paid invoice, payout clawback) |
+| `app/api/payments/refunds/route.ts`           | Refund creation & listing                                                |
+| `app/api/payments/disputes/route.ts`          | Dispute listing & evidence submission                                    |
+| `app/api/admin/refunds/route.ts`              | Admin refund dashboard API                                               |
+| `app/api/admin/disputes/route.ts`             | Admin dispute dashboard API                                              |
+| `app/api/admin/disputes/[disputeId]/route.ts` | Dispute detail API                                                       |
 
 ### Reconciliation & Cleanup Dispatcher
 
 All payment, refund, dispute, and payout cleanup/reconciliation jobs are registered in `lib/cron/cleanup-registry.ts` and exposed through a single dynamic route (`app/api/cleanup/[job]/route.ts`) protected by `CRON_SECRET` and serialized via Postgres leases (`lib/cron/with-cron-lock.ts`).
 
-| Job Slug (`lib/cron/cleanup-registry.ts`) | Implementation                          | Schedule                           |
-| ----------------------------------------- | --------------------------------------- | ---------------------------------- |
-| `abandoned-payments`                      | `scripts/appointments/cleanup-tentative-slots.ts` | Every 5 min (`cron-tick.mts`)      |
-| `approval-payments`                       | `scripts/appointments/cleanup-tentative-slots.ts` | Every 15 min (`cron-tick.mts`)     |
-| `reconcile-refunds`                       | `scripts/refunds/reconcile-refunds.ts`  | Every 15 min (`cron-tick.mts`) & 6h (`cron-intra-day.yml`) |
-| `reconcile-disputes`                      | `scripts/disputes/reconcile-disputes.ts`| Every 6 hours (`cron-intra-day.yml`)|
-| `reconcile-payment-status`                | `scripts/payments/reconcile-payment-status.ts` | Every 15 min (`cron-tick.mts`) & 2h (`cron-intra-day.yml`) |
-| `sync-payment-earnings`                   | `scripts/payments/sync-payment-earnings.ts` | Every 15 min (`cron-tick.mts`) & 4h (`cron-intra-day.yml`) |
-| `reconcile-payouts`                       | `scripts/payouts/reconcile-payouts.ts`  | Every 6 hours (`cron-intra-day.yml`)|
-| `reconcile-ledgers`                       | `scripts/reconcile/reconcile-ledgers.ts`| Daily (`cron-daily.yml`)           |
+| Job Slug (`lib/cron/cleanup-registry.ts`) | Implementation                                    | Schedule                                                   |
+| ----------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------- |
+| `abandoned-payments`                      | `scripts/appointments/cleanup-tentative-slots.ts` | Every 5 min (`cron-tick.mts`)                              |
+| `approval-payments`                       | `scripts/appointments/cleanup-tentative-slots.ts` | Every 15 min (`cron-tick.mts`)                             |
+| `reconcile-refunds`                       | `scripts/refunds/reconcile-refunds.ts`            | Every 15 min (`cron-tick.mts`) & 6h (`cron-intra-day.yml`) |
+| `reconcile-disputes`                      | `scripts/disputes/reconcile-disputes.ts`          | Every 6 hours (`cron-intra-day.yml`)                       |
+| `reconcile-payment-status`                | `scripts/payments/reconcile-payment-status.ts`    | Every 15 min (`cron-tick.mts`) & 2h (`cron-intra-day.yml`) |
+| `sync-payment-earnings`                   | `scripts/payments/sync-payment-earnings.ts`       | Every 15 min (`cron-tick.mts`) & 4h (`cron-intra-day.yml`) |
+| `reconcile-payouts`                       | `scripts/payouts/reconcile-payouts.ts`            | Every 6 hours (`cron-intra-day.yml`)                       |
+| `reconcile-ledgers`                       | `scripts/reconcile/reconcile-ledgers.ts`          | Daily (`cron-daily.yml`)                                   |
 
 ### Payment Core, Payouts & Ledger Files
 
-| File                                           | Purpose                                                                  |
-| ---------------------------------------------- | ------------------------------------------------------------------------ |
-| `lib/payments/index.ts`                        | Payment library exports                                                  |
-| `lib/payments/core/types.ts`                   | Payment type definitions                                                 |
-| `lib/payments/core/razorpay.ts`                | Razorpay gateway implementation                                          |
-| `lib/payments/payouts/earnings-service.ts`     | Consultant & org earnings creation, splits, and hold/refund operations   |
-| `lib/payments/payouts/earning-reversal-cas.ts` | CAS-loop helpers for bounded consultant & org earning reversals          |
-| `lib/payments/payouts/shared-lifecycle.ts`     | Shared payout lifecycle helpers (TDS split, error classification, ledger)|
-| `lib/payments/payouts/payout-service.ts`       | Consultant payout batching, processing, and settlement                   |
-| `lib/payments/payouts/org-payout-service.ts`   | Organization payout batching, processing, and settlement                 |
-| `lib/payments/ledger/post.ts`                  | Double-entry ledger journal writer (`postLedgerTxn`)                     |
-| `utils/appointmentlock.ts`                     | Short-lived interactive checkout & payout mutexes (Upstash Redis)        |
+| File                                           | Purpose                                                                   |
+| ---------------------------------------------- | ------------------------------------------------------------------------- |
+| `lib/payments/index.ts`                        | Payment library exports                                                   |
+| `lib/payments/core/types.ts`                   | Payment type definitions                                                  |
+| `lib/payments/core/razorpay.ts`                | Razorpay gateway implementation                                           |
+| `lib/payments/payouts/earnings-service.ts`     | Consultant & org earnings creation, splits, and hold/refund operations    |
+| `lib/payments/payouts/earning-reversal-cas.ts` | CAS-loop helpers for bounded consultant & org earning reversals           |
+| `lib/payments/payouts/shared-lifecycle.ts`     | Shared payout lifecycle helpers (TDS split, error classification, ledger) |
+| `lib/payments/payouts/payout-service.ts`       | Consultant payout batching, processing, and settlement                    |
+| `lib/payments/payouts/org-payout-service.ts`   | Organization payout batching, processing, and settlement                  |
+| `lib/payments/ledger/post.ts`                  | Double-entry ledger journal writer (`postLedgerTxn`)                      |
+| `utils/appointmentlock.ts`                     | Short-lived interactive checkout & payout mutexes (Upstash Redis)         |
 
 ### Admin Dashboard Pages
 
@@ -266,14 +266,14 @@ All payment, refund, dispute, and payout cleanup/reconciliation jobs are registe
 
 ### Scheduled Workflows & Tickers
 
-| File                                      | Schedule                    | Purpose                                                    |
-| ----------------------------------------- | --------------------------- | ---------------------------------------------------------- |
-| `netlify/functions/cron-tick.mts`         | `*/5 * * * *`               | 5-min & 15-min staggered operational sweeps via `/api/cleanup/[job]` |
-| `.github/workflows/cron-intra-day.yml`    | Sub-daily (`30m`/`1h`/`2h`/`4h`/`6h`) | Gateway & external vendor reconciliation sweeps            |
-| `.github/workflows/cron-daily.yml`        | Daily (`00:00`–`09:30` UTC) | Daily ledger integrity, pruning, dunning, and notifications|
-| `.github/workflows/cron-weekly.yml`       | Weekly / Monthly            | Weekly payout pipeline, backup verification               |
-| `.github/workflows/race-condition-tests.yml` | On push to `dev` / PR    | Concurrent booking & payment race-condition verification   |
-| `.github/workflows/ci.yaml`               | On PR / push                | Typecheck, lint, tests, and hermetic Postgres schema/sidecar verification |
+| File                                         | Schedule                              | Purpose                                                                   |
+| -------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------- |
+| `netlify/functions/cron-tick.mts`            | `*/5 * * * *`                         | 5-min & 15-min staggered operational sweeps via `/api/cleanup/[job]`      |
+| `.github/workflows/cron-intra-day.yml`       | Sub-daily (`30m`/`1h`/`2h`/`4h`/`6h`) | Gateway & external vendor reconciliation sweeps                           |
+| `.github/workflows/cron-daily.yml`           | Daily (`00:00`–`09:30` UTC)           | Daily ledger integrity, pruning, dunning, and notifications               |
+| `.github/workflows/cron-weekly.yml`          | Weekly / Monthly                      | Weekly payout pipeline, backup verification                               |
+| `.github/workflows/race-condition-tests.yml` | On push to `dev` / PR                 | Concurrent booking & payment race-condition verification                  |
+| `.github/workflows/ci.yaml`                  | On PR / push                          | Typecheck, lint, tests, and hermetic Postgres schema/sidecar verification |
 
 ---
 
@@ -344,9 +344,9 @@ All payment, refund, dispute, and payout cleanup/reconciliation jobs are registe
                                         |
                                         v
 +-----------------------------------------------------------------------------------+
-|  CHECKOUT PROCESSOR: processCheckout()                                            |
+|  CHECKOUT ORCHESTRATOR: handleCheckout()                                          |
 |  ------------------------------------------------------------------------------   |
-|  File: lib/payments/operations/checkout.ts                                        |
+|  File: lib/payments/checkout/orchestrate.ts                                       |
 +-----------------------------------------------------------------------------------+
 ```
 
@@ -609,18 +609,18 @@ All payment, refund, dispute, and payout cleanup/reconciliation jobs are registe
 
 ### Webhook Events by Gateway
 
-| Gateway      | Event                           | Handler                  |
-| ------------ | ------------------------------- | ------------------------ |
-| **Razorpay** | `payment.captured`              | `razorpay-dispatch.ts` → routes by `notes.type`: `credit_purchase`/`invoice_payment` → `handleOrgPaymentSuccess()`; `overage_member` → `handleOverageMemberSuccess()`; B2C → `handlePaymentSuccess()` |
-| **Razorpay** | `order.paid`                    | `razorpay-dispatch.ts` → same routing by `notes.type` as `payment.captured` |
-| **Razorpay** | `payment.failed`                | `razorpay-dispatch.ts` → routes by `notes.type`: org paths → `handleOrgPaymentFailure()`; B2C → `handlePaymentFailure()` |
-| **Razorpay** | `refund.created`                | `handleRefundCreated()`  |
-| **Razorpay** | `refund.processed`              | `handleRefundCreated()`  |
-| **Razorpay** | `refund.failed`                 | `handleRefundCreated()`  |
-| **Razorpay** | `payment.dispute.created`       | `handleDisputeCreated()` |
-| **Razorpay** | `payment.dispute.won`           | `handleDisputeUpdated()` |
-| **Razorpay** | `payment.dispute.lost`          | `handleDisputeUpdated()` |
-| **Razorpay** | `payment.dispute.closed`        | `handleDisputeUpdated()` |
+| Gateway      | Event                     | Handler                                                                                                                                                                                               |
+| ------------ | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Razorpay** | `payment.captured`        | `razorpay-dispatch.ts` → routes by `notes.type`: `credit_purchase`/`invoice_payment` → `handleOrgPaymentSuccess()`; `overage_member` → `handleOverageMemberSuccess()`; B2C → `handlePaymentSuccess()` |
+| **Razorpay** | `order.paid`              | `razorpay-dispatch.ts` → same routing by `notes.type` as `payment.captured`                                                                                                                           |
+| **Razorpay** | `payment.failed`          | `razorpay-dispatch.ts` → routes by `notes.type`: org paths → `handleOrgPaymentFailure()`; B2C → `handlePaymentFailure()`                                                                              |
+| **Razorpay** | `refund.created`          | `handleRefundCreated()`                                                                                                                                                                               |
+| **Razorpay** | `refund.processed`        | `handleRefundCreated()`                                                                                                                                                                               |
+| **Razorpay** | `refund.failed`           | `handleRefundCreated()`                                                                                                                                                                               |
+| **Razorpay** | `payment.dispute.created` | `handleDisputeCreated()`                                                                                                                                                                              |
+| **Razorpay** | `payment.dispute.won`     | `handleDisputeUpdated()`                                                                                                                                                                              |
+| **Razorpay** | `payment.dispute.lost`    | `handleDisputeUpdated()`                                                                                                                                                                              |
+| **Razorpay** | `payment.dispute.closed`  | `handleDisputeUpdated()`                                                                                                                                                                              |
 
 ### Payment Success Handler
 
@@ -973,13 +973,13 @@ All payment, refund, dispute, and payout cleanup/reconciliation jobs are registe
 
 The matrix below covers the dispute surface, where the two gateways differ most, and the settlement currency, where they deliberately do not differ at all.
 
-| Feature              | Stripe                          | Razorpay                        |
-| -------------------- | ------------------------------- | ------------------------------- |
-| Dispute Webhooks     | Yes                             | Yes                             |
-| List Disputes API    | Yes                             | No (Dashboard only)             |
-| Submit Evidence API  | Yes                             | No (Dashboard only)             |
-| Retrieve Dispute     | Yes                             | No                              |
-| Settlement currency  | INR only, enforced at order creation | INR only, enforced at order creation |
+| Feature             | Stripe                               | Razorpay                             |
+| ------------------- | ------------------------------------ | ------------------------------------ |
+| Dispute Webhooks    | Yes                                  | Yes                                  |
+| List Disputes API   | Yes                                  | No (Dashboard only)                  |
+| Submit Evidence API | Yes                                  | No (Dashboard only)                  |
+| Retrieve Dispute    | Yes                                  | No                                   |
+| Settlement currency | INR only, enforced at order creation | INR only, enforced at order creation |
 
 Settlement is INR-only by design, per [ADR 15](../enterprise/70-design-decisions/15-currency-as-enum-with-display-fields.md): every stored amount is an integer count of INR paise and the double-entry ledger is INR-denominated. That is enforced rather than assumed. `assertInrSettlement`, in `lib/payments/validation/currency-guards.ts`, is the first statement of `createRazorpayOrder`, and it throws a `PaymentError` with code `NON_INR_SETTLEMENT` for anything else. The assertion sits at the gateway boundary rather than at each caller because callers read a currency out of the database — an organisation's billing account, an invoice's display currency, an overage event — and any one of them forwarding a stale non-INR value would otherwise mint an order denominated in that currency's own subunit while the platform recorded rupees. An international buyer is still served an INR order; their card issuer performs the conversion. See [multi-currency/01-architecture.md](./multi-currency/01-architecture.md) for the display-side story.
 
@@ -1458,15 +1458,15 @@ VERCEL_CRON_SECRET=
 
 ### Key API Endpoints
 
-| Endpoint                   | Method   | Purpose                                                          |
-| -------------------------- | -------- | ---------------------------------------------------------------- |
-| `/api/checkout`            | POST     | Create payment intent & tentative appointment                    |
-| `/api/checkout/verify`     | GET      | Verify payment status                                            |
-| `/api/webhooks/razorpay`   | POST     | Razorpay webhook handler                                         |
-| `/api/payments/refunds`    | GET/POST | List/create refunds                                              |
-| `/api/payments/disputes`   | GET/POST | List disputes/submit evidence                                    |
-| `/api/cleanup/[job]`       | GET/POST | Dynamic cron dispatcher for all cleanup & reconciliation sweeps  |
-| `/api/admin/reconcile-ledgers` | POST | On-demand set-based double-entry ledger integrity verification   |
+| Endpoint                       | Method   | Purpose                                                         |
+| ------------------------------ | -------- | --------------------------------------------------------------- |
+| `/api/checkout`                | POST     | Create payment intent & tentative appointment                   |
+| `/api/checkout/verify`         | GET      | Verify payment status                                           |
+| `/api/webhooks/razorpay`       | POST     | Razorpay webhook handler                                        |
+| `/api/payments/refunds`        | GET/POST | List/create refunds                                             |
+| `/api/payments/disputes`       | GET/POST | List disputes/submit evidence                                   |
+| `/api/cleanup/[job]`           | GET/POST | Dynamic cron dispatcher for all cleanup & reconciliation sweeps |
+| `/api/admin/reconcile-ledgers` | POST     | On-demand set-based double-entry ledger integrity verification  |
 
 ---
 

@@ -127,7 +127,7 @@ Appointment {
 
 ### Backend Processing
 
-**Main Function:** `/lib/payments/operations/checkout.ts` - `handleWebinarCheckout()` (Lines 571-646)
+**Main Function:** `/lib/payments/checkout/handlers/webinar.ts` - `handleWebinarCheckout()`
 
 #### Step 1: Get Webinar with Appointment and Slots
 
@@ -313,7 +313,7 @@ sequenceDiagram
     participant U as User
     participant FE as Frontend
     participant API as /api/checkout
-    participant CO as checkout.ts
+    participant CO as lib/payments/checkout
     participant DB as Database
     participant PG as Payment Gateway
     participant WH as Webhook
@@ -583,7 +583,7 @@ Class {
 
 ### Backend Processing
 
-**Main Function:** `/lib/payments/operations/checkout.ts` - `handleClassCheckout()` (Lines 648-742)
+**Main Function:** `/lib/payments/checkout/handlers/class.ts` - `handleClassCheckout()`
 
 #### Step 1: Get Class with ALL Appointments and Slots
 
@@ -777,7 +777,7 @@ sequenceDiagram
     participant U as User (Student)
     participant FE as Frontend
     participant API as /api/checkout
-    participant CO as checkout.ts
+    participant CO as lib/payments/checkout
     participant DB as Database
     participant PG as Payment Gateway
     participant WH as Webhook

@@ -23,7 +23,7 @@ This directory contains tests to verify that the race condition fix for concurre
 
 ## Key Changes
 
-### 1. Modified `handleCheckout()` (`/lib/payments/operations/checkout.ts`)
+### 1. Modified `handleCheckout()` (`/lib/payments/checkout/orchestrate.ts`)
 
 - Now creates tentative appointments INSIDE the distributed lock
 - Payment is linked to appointment immediately (not null)
@@ -225,7 +225,7 @@ User A                                        User B
 
 ## Related Files
 
-- `/lib/payments/operations/checkout.ts` - Main checkout logic
+- `/lib/payments/checkout/` - Main checkout logic
 - `/lib/payments/webhooks/handlers.ts` - Webhook confirmation
 - `/utils/appointmentlock.ts` - Distributed locking
 - `/app/api/checkout/route.ts` - API endpoint

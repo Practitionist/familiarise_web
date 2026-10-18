@@ -21,7 +21,7 @@ Two models carry the documents, both defined in the invoicing section of `prisma
 | `ConsumerInvoice`    | The Rule 46 tax invoice for one successful consumer payment.         | `paymentId`, unique.                    |
 | `ConsumerCreditNote` | The section 34 credit note that reverses part or all of one invoice. | `refundId` or `disputeId`, both unique. |
 
-`mintConsumerInvoice` in `lib/payments/billing/consumer-invoice.ts` is called from two places, because a payment reaches its confirmed state by two different routes. The capture webhook calls it from `lib/payments/webhooks/handlers.ts` once the booking is confirmed, and the instant-confirm branch of `lib/payments/operations/checkout.ts` calls it for mock, zero-amount and org-sponsored checkouts, which never see a webhook at all.
+`mintConsumerInvoice` in `lib/payments/billing/consumer-invoice.ts` is called from two places, because a payment reaches its confirmed state by two different routes. The capture webhook calls it from `lib/payments/webhooks/handlers.ts` once the booking is confirmed, and the instant-confirm branch of `handleCheckout()` (`lib/payments/checkout/orchestrate.ts`) calls it for mock, zero-amount and org-sponsored checkouts, which never see a webhook at all.
 
 Both call sites wrap the mint in a try/catch that reports to Sentry at warning level and never rethrows. A confirmed booking must not roll back because a document could not be produced, and the monthly register export re-attempts anything that was missed.
 

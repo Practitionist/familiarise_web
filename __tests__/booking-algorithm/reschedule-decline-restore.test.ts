@@ -234,8 +234,8 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-jest.mock("../../utils/scheduling-engine/SchedulingService", () => ({
-  SchedulingService: { allocate: jest.fn() },
+jest.mock("../../lib/booking/allocation", () => ({
+  allocate: jest.fn(),
 }));
 
 const reportSentryError = jest.fn();

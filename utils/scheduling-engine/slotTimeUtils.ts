@@ -61,7 +61,7 @@ export function minuteUtcToDate(minuteUtc: number, referenceDate: Date): Date {
 /**
  * Map DayOfWeek enum string to JS getUTCDay() index (Sunday=0 ... Saturday=6)
  *
- * Shared constant used by SchedulingService and ScheduleValidationService
+ * Shared constant used by the allocator (lib/booking/allocation) and ScheduleValidationService
  * to convert Prisma DayOfWeek enum values to numeric day indices.
  */
 export const DAY_OF_WEEK_TO_INDEX: Record<string, number> = {

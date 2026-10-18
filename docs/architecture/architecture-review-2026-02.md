@@ -2,7 +2,7 @@
 
 > Migrated from GitHub Issue #446 (2026-02-19). Comprehensive architecture review covering schema, booking algorithm, payment system, rescheduling, Stream.io, cron jobs, and cross-cutting concerns. Rated 7.5/10.
 >
-> **Note**: Some findings have been addressed since this review was written. Cross-reference with merged PRs #441, #458, #462, #467 for fixes.
+> **Note**: Some findings have been addressed since this review was written. Cross-reference with merged PRs #441, #458, #462, #467 for fixes. The `SchedulingService` class named below no longer exists: its code now lives in `lib/booking/allocation/`.
 
 ---
 
@@ -131,6 +131,7 @@ The 5-layer validation architecture is excellent:
    The request-for-approval route uses `lockSlotBooking()`. The checkout route uses `lockSlotBooking()`. But `autoAllocate()` — the function that FINDS and ASSIGNS slots automatically — uses only a Prisma transaction, NOT a Redis lock.
 
    Race condition scenario with 2 concurrent requests:
+
    ```
    Consultant A: auto-allocate subscription (finds Mon 10:00 available)
    Consultant B: auto-allocate subscription (finds Mon 10:00 available) ← same slot!
@@ -230,8 +231,9 @@ The 5-step checkout flow is well-engineered:
 1. **Cancel does NOT check if the appointment is already completed.**
 
    There's no validation like:
+
    ```typescript
-   if (appointment.status === 'COMPLETED') {
+   if (appointment.status === "COMPLETED") {
      return error("Cannot cancel completed appointment");
    }
    ```
@@ -323,6 +325,7 @@ The 5-step checkout flow is well-engineered:
 #### Missing: Rate Limiting
 
 No rate limiting on any API endpoint. A malicious user could:
+
 - Spam the checkout endpoint to create hundreds of payment intents
 - Flood the validate endpoint to map out a consultant's entire availability
 - DDoS the slot booking endpoint to lock out all slots via Redis locks
@@ -343,18 +346,18 @@ With 214 API routes on Vercel's serverless model, each function invocation creat
 
 ## Severity Ranking: Top 10 Issues
 
-| # | Issue | Severity | Effort to Fix |
-|---|-------|----------|---------------|
-| 1 | No distributed lock on `autoAllocate()` — double-booking possible | 🔴 CRITICAL | 2 hours |
-| 2 | Stream webhook signature not verified — anyone can forge events | 🔴 CRITICAL | 1 hour |
-| 3 | No recording transfer job — recordings disappear after 14 days | 🟠 HIGH | 1 day |
-| 4 | Cancel doesn't check completion status — can delete completed appointments | 🟠 HIGH | 30 min |
-| 5 | No refund-on-cancel automation — manual refund creates support burden | 🟠 HIGH | 2 days |
-| 6 | Weekly availability uses `DateTime` instead of `Time` — source of timezone bugs | 🟠 HIGH | 3 days (migration) |
-| 7 | `Payment.@@unique([userId, appointmentId])` — blocks multi-user payments | 🟡 MEDIUM | 1 hour |
-| 8 | Cascade delete on plans — admin can accidentally nuke all bookings | 🟡 MEDIUM | 2 hours |
-| 9 | No `Appointment.status` field — forces 4-table joins everywhere | 🟡 MEDIUM | 1 day (migration) |
-| 10 | In-memory caching useless on Vercel — Stream API calls not cached | 🟡 MEDIUM | 4 hours |
+| #   | Issue                                                                           | Severity    | Effort to Fix      |
+| --- | ------------------------------------------------------------------------------- | ----------- | ------------------ |
+| 1   | No distributed lock on `autoAllocate()` — double-booking possible               | 🔴 CRITICAL | 2 hours            |
+| 2   | Stream webhook signature not verified — anyone can forge events                 | 🔴 CRITICAL | 1 hour             |
+| 3   | No recording transfer job — recordings disappear after 14 days                  | 🟠 HIGH     | 1 day              |
+| 4   | Cancel doesn't check completion status — can delete completed appointments      | 🟠 HIGH     | 30 min             |
+| 5   | No refund-on-cancel automation — manual refund creates support burden           | 🟠 HIGH     | 2 days             |
+| 6   | Weekly availability uses `DateTime` instead of `Time` — source of timezone bugs | 🟠 HIGH     | 3 days (migration) |
+| 7   | `Payment.@@unique([userId, appointmentId])` — blocks multi-user payments        | 🟡 MEDIUM   | 1 hour             |
+| 8   | Cascade delete on plans — admin can accidentally nuke all bookings              | 🟡 MEDIUM   | 2 hours            |
+| 9   | No `Appointment.status` field — forces 4-table joins everywhere                 | 🟡 MEDIUM   | 1 day (migration)  |
+| 10  | In-memory caching useless on Vercel — Stream API calls not cached               | 🟡 MEDIUM   | 4 hours            |
 
 ---
 

@@ -55,13 +55,13 @@ erDiagram
 
 The cap on a `LicensedSeatConfig` is denominated in engagements, where one engagement is one `Appointment` row, that is, one calendar occurrence regardless of its duration. Counting this way avoids two failure modes. Counting whole bookings would under-charge multi-session plans, because a 12-call SUBSCRIPTION purchased once at signup would burn a single cap unit and let the remaining eleven escape — the bug that issue #710 fixed. Counting slots, on the other hand, is commercially incoherent, because orgs do not sell "8 slots per cycle", they sell occurrences, and per-occurrence price is governed separately by `priceCapPerEngagementPaise`. The table below shows how each plan type maps onto cap units.
 
-| Plan type             | Cap units consumed                    | Debited at        |
-|-----------------------|---------------------------------------|-------------------|
-| 30-min CONSULTATION   | 1                                     | checkout          |
-| 4-hour CONSULTATION   | 1 (price cap polices the duration)    | checkout          |
-| WEBINAR (any length)  | 1                                     | checkout          |
-| 8-week CLASS          | 8 (one per class day enrolment)       | checkout          |
-| 12-call SUBSCRIPTION  | 1 per consultant allocation (lazy)    | slot allocation   |
+| Plan type            | Cap units consumed                 | Debited at      |
+| -------------------- | ---------------------------------- | --------------- |
+| 30-min CONSULTATION  | 1                                  | checkout        |
+| 4-hour CONSULTATION  | 1 (price cap polices the duration) | checkout        |
+| WEBINAR (any length) | 1                                  | checkout        |
+| 8-week CLASS         | 8 (one per class day enrolment)    | checkout        |
+| 12-call SUBSCRIPTION | 1 per consultant allocation (lazy) | slot allocation |
 
 The term **engagement** was picked to avoid collision with BetterAuth
 `Session` and Stream's `Meeting` (which is a video-call record,
@@ -85,9 +85,9 @@ flowchart TD
   CMT -- "no (14d)" --> CMTO["timeout cron → OverageEvent FAILED<br/>frees the breaker ceiling, notifies member"]
 ```
 
-The counter increment + ledger twin are written atomically in one transaction; see [concurrency & idempotency](01-concurrency-and-idempotency.md). `CREDIT_POOL` programs apply the same shape with the cap denominated in credits (1 credit = ₹1) — the meter is `consumedPaise` against `creditBudgetPerCycle × 100`. The pre-checkout preview (`lib/payments/billing/overage-preview.ts`, route `GET /api/organizations/[orgId]/checkout/overage-preview`) is **advisory only** — it reuses the same `computeOverageForBooking` mapper over the assignment's *current* usage so preview and the checkout recorder can't drift, then the authoritative `OverageEvent` is persisted at checkout. The `base`/`surcharge` split lives on the `OverageEvent` (`marginalPaise == basePaise + surchargePaise + GST on the surcharge`); the CHARGE_MEMBER timeout wall (14 days → `FAILED`) is the [timeout cron](01-concurrency-and-idempotency.md).
+The counter increment + ledger twin are written atomically in one transaction; see [concurrency & idempotency](01-concurrency-and-idempotency.md). `CREDIT_POOL` programs apply the same shape with the cap denominated in credits (1 credit = ₹1) — the meter is `consumedPaise` against `creditBudgetPerCycle × 100`. The pre-checkout preview (`lib/payments/billing/overage-preview.ts`, route `GET /api/organizations/[orgId]/checkout/overage-preview`) is **advisory only** — it reuses the same `computeOverageForBooking` mapper over the assignment's _current_ usage so preview and the checkout recorder can't drift, then the authoritative `OverageEvent` is persisted at checkout. The `base`/`surcharge` split lives on the `OverageEvent` (`marginalPaise == basePaise + surchargePaise + GST on the surcharge`); the CHARGE_MEMBER timeout wall (14 days → `FAILED`) is the [timeout cron](01-concurrency-and-idempotency.md).
 
-> 🟡 **Gap (SUBSCRIPTION lazy-debit crosses the cap silently).** SUBSCRIPTION engagements debit at slot-allocation time, and `SchedulingService` discards `recordBookingUtilization`'s result — a `wasOverage=true` crossing on a `CHARGE_*` program at allocation never reaches `recordOverageAtCheckout`, so no `OverageEvent`, side-payment, or accrual leg is created while `overageCount` still increments (a silent under-charge; the reconciler's `OVERAGE_COUNT_DRIFT` fires on exactly these rows). Wiring it needs a #715-style design decision first, because follow-on allocations pass `priceAtBookingPaise: 0` and the marginal price basis is undefined on that path. Found in the 2026-06-10 overage architecture audit.
+> **SUBSCRIPTION lazy debit.** SUBSCRIPTION engagements debit at slot-allocation time (`recordSubscriptionAllocationCap` in `lib/booking/allocation/commit/subscription-cap.ts`). When that debit crosses the cap, `settleSubscriptionAllocationOverage` in the same file settles the overage through `recordOverageAtCheckout`, the same path checkout uses, so an `OverageEvent` and its side-payment or accrual leg are created.
 
 ### The `OverageEvent` charge-status machine
 
@@ -120,10 +120,10 @@ The seeded Wipro program (`Wipro Engineer Leadership`, `LICENSED_SEAT`,
 cap boundary (the seed starts learner #0 at `engagementsUsed = 3`; here we walk
 the same row up to the edge):
 
-| Booking | `engagementsUsed` before | Price | Outcome | What gets written |
-|---|---|---|---|---|
-| 12th covered engagement | 11 | ₹8,000 | covered (last free seat) | `engagementsUsed → 12`, `BookingUtilization` + `UsageLedgerEntry`, no `OverageEvent` |
-| 13th (1st overage) | 12 | ₹12,000 | **CHARGE_ORG** | `engagementsUsed → 13`, `overageCount → 1`, `OverageEvent` |
+| Booking                 | `engagementsUsed` before | Price   | Outcome                  | What gets written                                                                    |
+| ----------------------- | ------------------------ | ------- | ------------------------ | ------------------------------------------------------------------------------------ |
+| 12th covered engagement | 11                       | ₹8,000  | covered (last free seat) | `engagementsUsed → 12`, `BookingUtilization` + `UsageLedgerEntry`, no `OverageEvent` |
+| 13th (1st overage)      | 12                       | ₹12,000 | **CHARGE_ORG**           | `engagementsUsed → 13`, `overageCount → 1`, `OverageEvent`                           |
 
 The 13th is the interesting one. `remainingSeats = max(0, 12 − 12) = 0`, so the
 whole booking is over-cap. The pass-through marginal would be the real ₹12,000,
@@ -145,11 +145,11 @@ IIT's seeded program (`IIT Student Coaching Pool`, `CREDIT_POOL`,
 MONTHLY, `overageBehavior` left at its `@default(BLOCK)`) meters in **paise on
 `consumedPaise`**, not engagement count. Same booking helper, different unit:
 
-| Booking | `consumedPaise` before | Price | Remaining budget | Outcome |
-|---|---|---|---|---|
-| early-month session | ₹0 | ₹3,000 | ₹10,000 | covered → `consumedPaise → ₹3,000` |
-| mid-month sessions | ₹7,000 | ₹2,000 | ₹3,000 | covered → `consumedPaise → ₹9,000` |
-| over-budget session | ₹9,000 | ₹3,000 | ₹1,000 | **402** — `ProgramAssignmentLimitError` |
+| Booking             | `consumedPaise` before | Price  | Remaining budget | Outcome                                 |
+| ------------------- | ---------------------- | ------ | ---------------- | --------------------------------------- |
+| early-month session | ₹0                     | ₹3,000 | ₹10,000          | covered → `consumedPaise → ₹3,000`      |
+| mid-month sessions  | ₹7,000                 | ₹2,000 | ₹3,000           | covered → `consumedPaise → ₹9,000`      |
+| over-budget session | ₹9,000                 | ₹3,000 | ₹1,000           | **402** — `ProgramAssignmentLimitError` |
 
 On the third booking `remaining = ₹10,000 − ₹9,000 = ₹1,000`, the ₹3,000 price
 exceeds it, and because the pool is `BLOCK`, `creditBudgetPerCycle` is a **hard** cap:
@@ -159,7 +159,7 @@ Nothing is half-written — the student picks a cheaper session or waits for the
 MONTHLY rollover, which mints a fresh assignment with `consumedPaise = 0` (see
 [cycle engine](08-cycle-engine-and-rollover.md)). Flip the same pool to
 `CHARGE_ORG` and the ₹2,000 over-budget portion would accrue to the invoice
-instead; the `creditBudgetPerCycle` cap becomes *soft*. That single enum value is the
+instead; the `creditBudgetPerCycle` cap becomes _soft_. That single enum value is the
 whole difference between "students get cut off at ₹10,000" and "the dean's
 office eats the overflow."
 
@@ -276,9 +276,9 @@ override (see `booking-to-earnings`).
 A credit debit moves money exactly like any other WALLET booking: the
 `BOOKING` `LedgerTransaction` debits the `WALLET(org)` journal account,
 and `walletDebit()` decrements the `BillingAccount.walletBalance`
-*cache* in the same conditional UPDATE (see
+_cache_ in the same conditional UPDATE (see
 `ledger-and-postings` / `wallet-and-topups`). The
-CreditPool Program is the *policy*, not the storage.
+CreditPool Program is the _policy_, not the storage.
 
 ## `ProgramAssignment`
 
@@ -371,7 +371,7 @@ reconciliation compares these two snapshots to detect drift.
 
 `paymentId` is `@unique` — one row per Payment. For SUBSCRIPTION's
 lazy allocation pattern, `recordBookingUtilization()` upserts and
-*increments* `engagementsConsumed` on subsequent allocations rather
+_increments_ `engagementsConsumed` on subsequent allocations rather
 than inserting a new row. The append-only `UsageLedgerEntry` still
 gets one row per call, so `sum(ledger.engagementsConsumed)` per
 payment equals the upserted `BookingUtilization.engagementsConsumed`.
@@ -404,16 +404,16 @@ credit note, not a silent status flip).
 
 The `overageBehavior` enum on a config row decides what happens when a LICENSED_SEAT assignment exceeds its cap, as the table below sets out.
 
-| Value           | When a LICENSED_SEAT assignment exceeds cap                |
-|-----------------|------------------------------------------------------------|
-| `BLOCK`         | Checkout throws `ProgramAssignmentLimitError` → HTTP 402. |
+| Value           | When a LICENSED_SEAT assignment exceeds cap                                        |
+| --------------- | ---------------------------------------------------------------------------------- |
+| `BLOCK`         | Checkout throws `ProgramAssignmentLimitError` → HTTP 402.                          |
 | `CHARGE_MEMBER` | Booking proceeds. Learner pays the overage on their own card. `wasOverage = true`. |
-| `CHARGE_ORG`    | Booking proceeds. Overage is attributed to the next `OrganizationInvoice` cycle. |
+| `CHARGE_ORG`    | Booking proceeds. Overage is attributed to the next `OrganizationInvoice` cycle.   |
 
 ## Config lock & archive 🔒
 
 A program's **money config locks the moment anything rides on it** (#779 §B).
-`Program.configLockedAt` is stamped in the transaction that creates the *first*
+`Program.configLockedAt` is stamped in the transaction that creates the _first_
 `ProgramAssignment` (not at program-create — a typo on a brand-new program is
 still fixable). Non-null ⇒ the `LOCKED_PROGRAM_FIELDS` (`type`,
 `coveredPlanTypes`, `ratePerSeatPaise`, `coveredEngagementsPerCycle`,
@@ -443,28 +443,29 @@ first. `DELETE` stays DRAFT-only (no assignments, no historical utilization).
 `rolledToAssignmentId`/`rolledAt` chain make liveness explicit instead of
 inferred from `periodEnd`. A nightly cron rolls each ended ACTIVE period into a
 fresh successor (counters zeroed) while its contract is ACTIVE + auto-renewing
-+ the successor fits the term, otherwise it closes the assignment. This is the
-mechanism that kills zombie assignments (#779 §A/§B). The state machine,
-roll-vs-close decision table, successor minting, and the PAUSED/CANCELLED paths
-are documented in full in
-[Cycle engine & rollover](08-cycle-engine-and-rollover.md); the contract states
-it reads are in [Contract lifecycle](07-contract-lifecycle.md).
+
+- the successor fits the term, otherwise it closes the assignment. This is the
+  mechanism that kills zombie assignments (#779 §A/§B). The state machine,
+  roll-vs-close decision table, successor minting, and the PAUSED/CANCELLED paths
+  are documented in full in
+  [Cycle engine & rollover](08-cycle-engine-and-rollover.md); the contract states
+  it reads are in [Contract lifecycle](07-contract-lifecycle.md).
 
 ## API surface
 
 The program and assignment CRUD routes and their role gates are listed below.
 
-| Route | Verbs | Role |
-|-------|-------|------|
-| `/api/organizations/[orgId]/programs` | `GET` | any active member |
-| `/api/organizations/[orgId]/programs` | `POST` | MAINTAINER |
-| `/api/organizations/[orgId]/programs/[programId]` | `GET` | any active member |
-| `/api/organizations/[orgId]/programs/[programId]` | `PATCH`, `DELETE` | MAINTAINER |
-| `/api/organizations/[orgId]/programs/[programId]/assignments` | `GET` | any active member |
-| `/api/organizations/[orgId]/programs/[programId]/assignments` | `POST` | MAINTAINER |
-| `/api/organizations/[orgId]/programs/[programId]/assignments/[assignmentId]` | `GET` | any active member |
-| `/api/organizations/[orgId]/programs/[programId]/assignments/[assignmentId]` | `PATCH`, `DELETE` | MAINTAINER |
-| `/api/organizations/[orgId]/programs/[programId]/auto-enroll` | `POST` | MAINTAINER + canSponsor |
+| Route                                                                        | Verbs             | Role                    |
+| ---------------------------------------------------------------------------- | ----------------- | ----------------------- |
+| `/api/organizations/[orgId]/programs`                                        | `GET`             | any active member       |
+| `/api/organizations/[orgId]/programs`                                        | `POST`            | MAINTAINER              |
+| `/api/organizations/[orgId]/programs/[programId]`                            | `GET`             | any active member       |
+| `/api/organizations/[orgId]/programs/[programId]`                            | `PATCH`, `DELETE` | MAINTAINER              |
+| `/api/organizations/[orgId]/programs/[programId]/assignments`                | `GET`             | any active member       |
+| `/api/organizations/[orgId]/programs/[programId]/assignments`                | `POST`            | MAINTAINER              |
+| `/api/organizations/[orgId]/programs/[programId]/assignments/[assignmentId]` | `GET`             | any active member       |
+| `/api/organizations/[orgId]/programs/[programId]/assignments/[assignmentId]` | `PATCH`, `DELETE` | MAINTAINER              |
+| `/api/organizations/[orgId]/programs/[programId]/auto-enroll`                | `POST`            | MAINTAINER + canSponsor |
 
 The POST body is a Zod `discriminatedUnion("type", [...])` so a
 `LICENSED_SEAT` body with `creditPoolConfig` fails validation at the

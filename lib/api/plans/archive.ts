@@ -11,7 +11,7 @@
  * Archiving stops NEW sales only: `archivedAt` already gates discovery
  * (`lib/api/plans/visibility.ts`), plan-list filters
  * (`app/api/plans/shared/plan-filters.ts`) and checkout
- * (`lib/payments/operations/checkout.ts`), but it never touches existing
+ * (`lib/payments/checkout/pricing.ts`), but it never touches existing
  * `Appointment`/`Payment` rows.
  */
 

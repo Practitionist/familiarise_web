@@ -66,7 +66,7 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 }));
 
 import prisma from "@/lib/prisma";
-import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { allocate } from "@/lib/booking/allocation";
 import { slotStartRefusal } from "@/lib/payments/utils/slot-validation";
 import { ScheduleType } from "@prisma/client";
 
@@ -191,7 +191,7 @@ describe("a consultant's published grid is the allocator's grid", () => {
     mockTx.consultation.findUnique.mockResolvedValue(
       consultationWithRow(customRow(iso, hours)),
     );
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",

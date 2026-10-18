@@ -106,7 +106,7 @@ GSTR-8 export (CSV in GSTN format) → file via portal or GSP partner (IRIS / Cl
 Phased — TCS first because it has a deadline (monthly):
 
 1. **Schema**: add `Payment.consumerStateCode` (2-char), `Payment.gstTcsCollectedPaise` (Int), `ConsultantEarnings.gstTcsAccruedPaise` (Int), `GstTcsBatch` model (id, monthYear, consultantProfileId, totalSuppliesPaise, tcsCollectedPaise, gstr8Filed Boolean, filedAt). Migrate via Supabase MCP.
-2. **`lib/payments/operations/checkout.ts`**: capture `consumerStateCode` from billing address; pass to `deriveGstBreakdown` for B2C path; emit `Payment.gstTcsCollectedPaise` when `consultant.gstin` is set.
+2. **`lib/payments/checkout/commit/payment-row.ts`**: capture `consumerStateCode` from billing address; pass to `deriveGstBreakdown` for B2C path; emit `Payment.gstTcsCollectedPaise` when `consultant.gstin` is set.
 3. **`lib/payments/operations/refund.ts`**: emit GST credit note (see [doc 05](./06-refund-and-chargeback-tax-adjustments.md)) and reduce TCS collected for the affected month's batch.
 4. **Cron `jobs/gst/aggregate-tcs-batches.ts`**: run on 1st of each month for the prior month — group `Payment.gstTcsCollectedPaise` by consultant, write `GstTcsBatch` rows.
 5. **GSTR-8 CSV export**: `app/api/admin/gst/gstr8/[monthYear]/route.ts` returning the filing-ready CSV.

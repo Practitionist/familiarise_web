@@ -50,8 +50,8 @@ const MAX_REMINDERS = 3;
 // still OVERDUE this long past being marked overdue, suspend the org's
 // sponsored bookings by stamping `dunningSuspendedAt`. OFF by default — the
 // cascade only runs when ENABLE_DUNNING_SUSPEND=true, so wiring it changes
-// nothing until explicitly enabled. The booking-side gate lives in checkout.ts
-// behind the SAME flag.
+// nothing until explicitly enabled. The booking-side gate lives in
+// lib/payments/checkout/org-funding.ts behind the SAME flag.
 const SUSPEND_ENABLED = ENABLE_DUNNING_SUSPEND;
 const SUSPEND_GRACE_MS = 7 * 24 * 60 * 60 * 1000; // 7d past the final reminder
 // Turning suspension on must not suspend the whole OVERDUE backlog in one tick.
@@ -294,9 +294,9 @@ export async function runDunning(): Promise<DunningStats> {
 
   // ── Stage 3 (#812, config-gated): suspend sponsored bookings ────────────
   // Once an invoice has had all 3 reminders and is still OVERDUE past the grace
-  // window, stamp dunningSuspendedAt. checkout.ts blocks the org's NEW sponsored
-  // bookings while any such invoice is unpaid (both sides gated on the same
-  // ENABLE_DUNNING_SUSPEND flag). Paying the invoice (status leaves OVERDUE)
+  // window, stamp dunningSuspendedAt. lib/payments/checkout/org-funding.ts
+  // blocks the org's NEW sponsored bookings while any such invoice is unpaid
+  // (both sides gated on the same ENABLE_DUNNING_SUSPEND flag). Paying the invoice (status leaves OVERDUE)
   // lifts the suspension naturally — nothing un-stamps a paid invoice.
   if (SUSPEND_ENABLED) {
     const suspendCutoff = new Date(now.getTime() - SUSPEND_GRACE_MS);

@@ -1,4 +1,8 @@
 /**
+ * @jest-environment node
+ */
+
+/**
  * Nothing in checkout compared the booking user against the plan's owner.
  *
  * That matters because `ConsultantProfile` and `ConsulteeProfile` are
@@ -16,129 +20,194 @@
  * The guard lives inside `revalidateInsideLock` — the same place ADR 18 chose
  * for allowlist enforcement — because that is where the plan's owner is
  * already loaded and the distributed lock closes the check-then-book race.
- * Asserting at the source level for the reason the refund-execution test
- * gives: standing up the whole checkout path would test the fixture, and what
- * matters is which check runs where.
  */
 
-import { readFileSync } from "fs";
-import { join } from "path";
+import "../booking-algorithm/setup";
+import {
+  buildCheckoutInput,
+  buyerRow,
+  mintOrder,
+  mockCreatePaymentIntent as createPaymentIntent,
+  silenceConsole,
+} from "../booking/repro/checkout-harness/mocks/setup";
 
-const SRC = readFileSync(
-  join(process.cwd(), "lib/payments/operations/checkout.ts"),
-  "utf8",
-);
+jest.mock("../../lib/api/organizations/program-helpers", () => ({
+  __esModule: true,
+  ProgramAssignmentLimitError: class extends Error {},
+  recordBookingUtilization: jest.fn(async () => ({
+    wasOverage: false,
+    engagementsConsumedDelta: 1,
+    engagementsUsedAfter: 1,
+    cap: null,
+    programType: "LICENSED_SEAT",
+    consumedPaiseAfter: 0,
+    creditBudgetPaise: null,
+  })),
+}));
+jest.mock("../../lib/payments/operations/cancellation-policy-store", () => ({
+  __esModule: true,
+  ensurePlatformCancellationPolicy: jest.fn(async () => undefined),
+  resolveCheckoutCancellationPolicyId: jest.fn(async () => "policy-1"),
+}));
 
-/** `revalidateInsideLock` body — everything the distributed lock protects. */
-function insideLock(): string {
-  const start = SRC.indexOf("async function revalidateInsideLock(");
-  expect(start).toBeGreaterThan(-1);
-  // Ends where the next top-level declaration begins.
-  const end = SRC.indexOf("\nasync function ", start + 1);
-  return SRC.slice(start, end > start ? end : undefined);
+import { handleCheckout } from "../../lib/payments/checkout";
+import { calls, resetDouble } from "../booking/repro/checkout-harness/setup";
+import type { Overrides } from "../booking/repro/checkout-harness/setup";
+
+const HOUR = 3600_000;
+const START = new Date(Date.now() + 72 * HOUR);
+const plan = {
+  id: "wplan-1",
+  price: 100_000,
+  priceCurrency: "INR",
+  maxParticipants: 50,
+  refundWindowHours: 24,
+  archivedAt: null,
+  visibility: "PUBLIC",
+  status: "PUBLISHED",
+  organizationId: null,
+  consultantProfileId: "cons-profile",
+  consultantProfile: {
+    id: "cons-profile",
+    userId: "cons-user",
+    deletedAt: null,
+    verificationStatus: "VERIFIED",
+  },
+};
+const webinar = {
+  id: "web-1",
+  status: "SCHEDULED",
+  webinarPlan: plan,
+  appointment: {
+    id: "appt-webinar",
+    occurrences: [
+      {
+        id: "occ-1",
+        startsAt: START,
+        endsAt: new Date(START.getTime() + HOUR),
+        deletedAt: null,
+        completionStatus: "SCHEDULED",
+      },
+    ],
+    participants: [],
+  },
+};
+
+/** The buyer, who may also hold a consultant profile of their own. */
+const buyer = (consultantProfileId: string | null) => ({
+  ...buyerRow(),
+  consultantProfile: consultantProfileId ? { id: consultantProfileId } : null,
+});
+/** The in-lock plan lookup: its owner and its PENDING/ACCEPTED collaborators. */
+const lookup = (owner: string | null, collaborators: string[] = []) => ({
+  consultantProfileId: owner,
+  organizationId: null,
+  collaborators: collaborators.map((consultantProfileId) => ({
+    consultantProfileId,
+  })),
+});
+/** A PERSONAL-rail org member whose programme carries a curated panel check. */
+const orgMember: Overrides = {
+  "organization.findUnique": () => ({
+    id: "org-1",
+    status: "ACTIVE",
+    canSponsor: true,
+    billingAccount: {
+      id: "ba-1",
+      fundingSource: "PERSONAL",
+      creditLimit: null,
+      walletBalance: 0,
+    },
+  }),
+  "billingAccount.findFirst": () => ({
+    id: "ba-1",
+    fundingSource: "PERSONAL",
+    creditLimit: null,
+  }),
+  "membership.findUnique": () => ({
+    id: "m-1",
+    role: "MEMBER",
+    status: "ACTIVE",
+  }),
+  "programAssignment.findFirst": () => ({ id: "pa-1", programId: "prog-1" }),
+};
+
+function setup(
+  buyerProfile: string | null,
+  planLookup: ReturnType<typeof lookup>,
+  extra: Overrides = {},
+) {
+  resetDouble({
+    "user.findUnique": () => buyer(buyerProfile),
+    "webinar.findUnique": () => webinar,
+    "webinarPlan.findUnique": () => planLookup,
+    ...extra,
+  });
 }
 
+const checkout = (organizationId?: string) =>
+  handleCheckout(
+    buildCheckoutInput({
+      appointmentType: "WEBINAR",
+      planId: "wplan-1",
+      eventId: "web-1",
+      ...(organizationId ? { organizationId } : {}),
+    }),
+    "buyer",
+  ).then(
+    () => null,
+    (caught: unknown) => caught,
+  );
+
+const called = (path: string) => calls.some((call) => call.path === path);
+
+beforeEach(() => {
+  mintOrder("order_1");
+  silenceConsole();
+});
+afterEach(() => jest.restoreAllMocks());
+
 describe("a user cannot book their own plan", () => {
-  it("compares the plan's owner against the booking user's consultant profile", () => {
-    const body = insideLock();
-
-    expect(body).toContain(
-      "plan.consultantProfileId === user.consultantProfile.id",
-    );
-    expect(body).toContain("You cannot book your own plan.");
+  it("refuses the plan's owner with a typed 409 before any gateway order", async () => {
+    setup("cons-profile", lookup("cons-profile"));
+    expect(await checkout()).toMatchObject({
+      httpStatus: 409,
+      code: "SELF_BOOKING",
+    });
+    expect(createPaymentIntent).not.toHaveBeenCalled();
+    // The in-lock read loads the profile it compares, or the guard reads undefined.
+    const userReads = calls.filter((call) => call.path === "user.findUnique");
+    expect(userReads.at(-1)?.args).toMatchObject({
+      include: { consultantProfile: { select: { id: true } } },
+    });
   });
 
-  it("loads the consultant profile it compares against", () => {
-    const body = insideLock();
-
-    // Without this the comparison silently reads undefined and the guard
-    // never fires — the failure mode would be a check that looks present
-    // and does nothing.
-    expect(body).toContain("consultantProfile: { select: { id: true } }");
+  it("refuses a PENDING or ACCEPTED collaborator, even on a plan with no owner", async () => {
+    setup("buyer-cp", lookup(null, ["buyer-cp"]));
+    expect(await checkout()).toMatchObject({ code: "SELF_BOOKING" });
+    const planRead = calls.find(
+      (call) => call.path === "webinarPlan.findUnique",
+    );
+    expect(planRead?.args).toMatchObject({
+      select: {
+        collaborators: {
+          where: { status: { in: ["PENDING", "ACCEPTED"] } },
+        },
+      },
+    });
   });
 
-  it("runs under the lock, before the ADR-18 panel and exclusivity checks", () => {
-    const body = insideLock();
-
-    const guard = body.indexOf("You cannot book your own plan.");
-    const panel = body.indexOf("programConsultantAllowlist");
-    const exclusivity = body.indexOf("exclusiveEngagement");
-
-    expect(guard).toBeGreaterThan(-1);
-    expect(panel).toBeGreaterThan(-1);
-    expect(exclusivity).toBeGreaterThan(-1);
-
-    // Cheapest and most fundamental check first: an allowlist lookup is a
-    // query, and self-dealing is refused whether or not a panel is
-    // configured.
-    expect(guard).toBeLessThan(panel);
-    expect(guard).toBeLessThan(exclusivity);
+  it("runs before the ADR-18 panel and exclusivity checks, on every paid path", async () => {
+    setup("cons-profile", lookup("cons-profile"), orgMember);
+    expect(await checkout("org-1")).toMatchObject({ code: "SELF_BOOKING" });
+    expect(called("programConsultantAllowlist.findMany")).toBe(false);
+    expect(called("membership.findFirst")).toBe(false);
   });
 
-  it("guards every paid path, not only org-sponsored ones", () => {
-    const body = insideLock();
-    const open = body.indexOf("if (\n      user.consultantProfile &&");
-    // Anchor first: without this the slice below is empty on unfixed code and
-    // the two `not.toContain`s pass vacuously.
-    expect(open).toBeGreaterThan(-1);
-
-    const guardBlock = body.slice(
-      open,
-      body.indexOf("You cannot book your own plan."),
-    );
-    expect(guardBlock.length).toBeGreaterThan(0);
-
-    // The ADR-18 panel check is `if (programId)`-scoped because a curated
-    // panel only exists for org funding. Self-dealing has no such carve-out,
-    // so the guard must not be nested under a funding condition.
-    expect(guardBlock).not.toContain("programId");
-    expect(guardBlock).not.toContain("organizationId");
-  });
-
-  it("refuses an ACCEPTED collaborator on the plan as well (#1580 C-P0-2)", () => {
-    // A collaborator holds a share of the price, so buying a seat routes part
-    // of it back to themselves — the same loop the owner guard closes. The
-    // plan lookup surfaces ACCEPTED collaborators and the guard reads them.
-    const lookupStart = SRC.indexOf(
-      "async function verifyPlanExistsInsideLock(",
-    );
-    expect(lookupStart).toBeGreaterThan(-1);
-    const lookup = SRC.slice(
-      lookupStart,
-      SRC.indexOf("\nasync function ", lookupStart + 1),
-    );
-    expect(lookup).toContain(
-      'where: { status: { in: ["PENDING" as const, "ACCEPTED" as const] } }',
-    );
-    expect(lookup).toContain("collaboratorProfileIds");
-
-    const body = insideLock();
-    const guard = body.slice(
-      body.indexOf("if (\n      user.consultantProfile &&"),
-      body.indexOf("You cannot book your own plan."),
-    );
-    expect(guard).toContain(
-      "plan.collaboratorProfileIds.includes(user.consultantProfile.id)",
-    );
-    // Not gated on the owner existing: an org-owned plan has a NULL owner and
-    // can still carry collaborators, so `plan.consultantProfileId &&` would
-    // skip the collaborator arm exactly there.
-    expect(guard).not.toContain("plan.consultantProfileId &&");
-  });
-
-  it("still allows the ordinary case — a plan owned by someone else", () => {
-    const body = insideLock();
-
-    // The buyer must hold a consultant profile before it throws, so a consultee
-    // with none (the overwhelming majority) is never caught by it; the plan
-    // side is an equality, not a presence test (see the collaborator case).
-    const guard = body.slice(
-      body.indexOf("if (\n      user.consultantProfile &&"),
-      body.indexOf("You cannot book your own plan."),
-    );
-    expect(guard).toContain("user.consultantProfile &&");
-    expect(guard).toContain(
-      "plan.consultantProfileId === user.consultantProfile.id",
-    );
+  it("still allows a plan owned by someone else, through the panel check", async () => {
+    setup("other-cp", lookup("cons-profile"), orgMember);
+    expect(await checkout("org-1")).toBeNull();
+    expect(called("programConsultantAllowlist.findMany")).toBe(true);
+    expect(createPaymentIntent).toHaveBeenCalledTimes(1);
   });
 });

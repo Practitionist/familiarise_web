@@ -221,11 +221,11 @@ import {
   unlockConsulteeBooking,
   unlockEventCheckout,
 } from "../../utils/appointmentlock";
+import { handleCheckout } from "../../lib/payments/checkout";
 import {
-  handleCheckout,
   readInvoiceExposurePaise,
   assertWithinInvoiceCreditLimit,
-} from "../../lib/payments/operations/checkout";
+} from "../../lib/payments/checkout/org-funding";
 
 // ---------------------------------------------------------------------------
 // In-memory store + faithful evaluation of the reuse lookup's WHERE clause.
@@ -560,7 +560,7 @@ describe("readInvoiceExposurePaise nets accrual reversals", () => {
 // above cannot discriminate them: eventId already pins scope and its fixtures
 // share one price).
 // ---------------------------------------------------------------------------
-import { findReusablePendingOrderPayment } from "../../lib/payments/operations/checkout";
+import { findReusablePendingOrderPayment } from "../../lib/payments/checkout/order-reuse";
 
 const SLOT = {
   startsAt: new Date("2026-09-01T10:00:00Z"),

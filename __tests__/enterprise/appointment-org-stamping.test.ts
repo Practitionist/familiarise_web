@@ -8,7 +8,7 @@
  * SUBSCRIPTION lazy allocation, CLASS pre-allocation, marketplace WEBINAR, and
  * CONSULTATION reschedule each used to create Appointment rows with
  * `organizationId = null` even when the booker was org-funded. The org tag is
- * resolved per event type inside `SchedulingService.fetchEventData`:
+ * resolved per event type inside `fetchEventData`:
  *
  *   - CONSULTATION → existing Appointment.organizationId (preserved across the
  *     reschedule delete+recreate).
@@ -23,7 +23,8 @@
  * not a re-implementation of the rule. Full DB integration lives in the E2E
  * guide.
  */
-import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { fetchEventData } from "@/lib/booking/allocation/event-data";
+import type { PrismaLike } from "@/lib/prisma";
 import type { EventType } from "@/utils/scheduling-engine/types";
 
 // Minimal consultant profile so fetchEventData resolves past its
@@ -35,24 +36,16 @@ const CONSULTANT = {
   availabilityWindowsCustom: [],
 };
 
-// fetchEventData is private + static; it uses only its `tx` arg (no `this`), so
-// it's callable detached. Returns the resolved organizationId for the event.
+// Returns the resolved organizationId for the event.
 async function resolveOrg(
   model: string,
   eventType: EventType,
   event: unknown,
 ): Promise<string | null> {
-  const svc = SchedulingService as unknown as {
-    fetchEventData: (
-      tx: unknown,
-      eventType: EventType,
-      eventId: string,
-    ) => Promise<{ organizationId?: string | null } | null | undefined>;
-  };
   const tx = {
     [model]: { findUnique: jest.fn().mockResolvedValue(event) },
-  };
-  const result = await svc.fetchEventData(tx, eventType, "evt-1");
+  } as unknown as PrismaLike;
+  const result = await fetchEventData(tx, eventType, "evt-1");
   return result?.organizationId ?? null;
 }
 
@@ -88,9 +81,9 @@ describe("Appointment.organizationId stamping (#768 Comment 5)", () => {
         payment: [{ organizationId: null }],
       },
     };
-    await expect(resolveOrg("subscription", "subscription", event)).resolves.toBe(
-      "wipro-org-id",
-    );
+    await expect(
+      resolveOrg("subscription", "subscription", event),
+    ).resolves.toBe("wipro-org-id");
   });
 
   it("SUBSCRIPTION falls back to the Payment org when the Appointment is untagged", async () => {
@@ -105,9 +98,9 @@ describe("Appointment.organizationId stamping (#768 Comment 5)", () => {
         payment: [{ organizationId: "wipro-org-id" }],
       },
     };
-    await expect(resolveOrg("subscription", "subscription", event)).resolves.toBe(
-      "wipro-org-id",
-    );
+    await expect(
+      resolveOrg("subscription", "subscription", event),
+    ).resolves.toBe("wipro-org-id");
   });
 
   it("SUBSCRIPTION stays null for a PERSONAL booking", async () => {

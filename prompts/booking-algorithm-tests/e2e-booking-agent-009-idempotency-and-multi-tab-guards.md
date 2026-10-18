@@ -47,12 +47,12 @@ the winner's response instead of surfacing a 500.
 
 **Allocation** (`app/api/bookings/<type>/[<type>Id]/allocate/route.ts`). The
 route reads `request.headers.get("Idempotency-Key")` and passes it to
-`SchedulingService.allocate` as `idempotencyKey`, persisted as the unique
+`allocate` (`lib/booking/allocation/allocate.ts`) as `idempotencyKey`, persisted as the unique
 `Appointment.allocationIdempotencyKey` (#837). A repeat with the same key
 replays the original batch.
 
 **The multi-tab guards** are separate from both and live in
-`utils/scheduling-engine/SchedulingService.ts`. `initialAllocation: true` makes
+`lib/booking/allocation/guards.ts`. `initialAllocation: true` makes
 `assertNoConfirmedSlots` reject when the event already holds any confirmed
 (non-tentative, non-tombstoned) slot, and `expectedTentativeSlotCount` rejects
 when the live tentative count differs from what the client's page captured

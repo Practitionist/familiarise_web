@@ -1,7 +1,7 @@
 /**
  * One definition of "tentative" and one of "confirmed", in one place.
  *
- * `SchedulingService` used to answer each concept three ways in the same file:
+ * The allocator used to answer each concept three ways in one file:
  *
  * - `tentativeSlotCountOf` / `assertExpectedTentativeSlotCountInTx` / the two
  *   mode entry points filtered bare `isTentative`, so a TOMBSTONED tentative row
@@ -79,7 +79,7 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 }));
 
 import prisma from "@/lib/prisma";
-import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { allocate } from "@/lib/booking/allocation";
 import { ScheduleType } from "@prisma/client";
 
 type Occurrence = {
@@ -225,7 +225,7 @@ afterEach(() => {
 });
 
 const allocateManual = (expectedTentativeSlotCount: number) =>
-  SchedulingService.allocate({
+  allocate({
     eventType: "subscription",
     eventId: "sub-1",
     mode: "manual",
@@ -301,7 +301,7 @@ describe("assertNoConfirmedSlots counts only live confirmed rows", () => {
     // The shape is the assertion: `liveOccurrenceWhere` is the same constant
     // `assertHeldSessionCountInTx` spreads, so a confirmed-but-voided row can no
     // longer block a fresh initialAllocation the way a deleted one does not.
-    await SchedulingService.allocate({
+    await allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "auto",
@@ -320,7 +320,7 @@ describe("assertNoConfirmedSlots counts only live confirmed rows", () => {
   it("refuses the fresh allocation when a LIVE confirmed row exists", async () => {
     mockPrisma.appointmentOccurrence.count.mockResolvedValue(1);
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "auto",

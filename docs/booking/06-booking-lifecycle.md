@@ -84,9 +84,9 @@ flowchart LR
 | Stage                    | What Happens                                                                                                                                                                                                             | Database Changes                                                                                                                   | Key Source File                                      |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
 | **Browse**               | Consultee views consultant profiles and available plans. No database writes occur.                                                                                                                                       | None                                                                                                                               | Frontend routes                                      |
-| **Select/Request**       | Consultee clicks "Book" or "Enroll." The checkout handler creates the event-specific record (Consultation, Subscription, etc.) and a tentative Appointment.                                                              | Creates: event record (PENDING status), Appointment, tentative AppointmentOccurrence(s)                                            | `lib/payments/operations/checkout.ts`                |
+| **Select/Request**       | Consultee clicks "Book" or "Enroll." The checkout handler creates the event-specific record (Consultation, Subscription, etc.) and a tentative Appointment.                                                              | Creates: event record (PENDING status), Appointment, tentative AppointmentOccurrence(s)                                            | `lib/payments/checkout/`                             |
 | **Approval** (if needed) | Consultant reviews and approves. For consultations: sets APPROVED_PENDING_PAYMENT. For subscriptions: approves and allocates slots. For trials: approves and schedules directly (a paid trial must already be captured). | Updates: event record status                                                                                                       | Requests tab API routes                              |
-| **Checkout**             | System validates slot availability, acquires a distributed lock to prevent double-booking, creates a payment intent with the gateway, and returns a client secret for the frontend.                                      | Creates: Payment record (PENDING)                                                                                                  | `lib/payments/operations/checkout.ts`                |
+| **Checkout**             | System validates slot availability, acquires a distributed lock to prevent double-booking, creates a payment intent with the gateway, and returns a client secret for the frontend.                                      | Creates: Payment record (PENDING)                                                                                                  | `lib/payments/checkout/`                             |
 | **Payment**              | Consultee completes payment in the gateway's UI (Razorpay modal or Stripe form). This happens entirely on the client side.                                                                                               | None (gateway-side only)                                                                                                           | Payment gateway client-side SDK                      |
 | **Webhook Confirms**     | Gateway sends a webhook. The handler runs in two phases: Phase 1 (transaction) marks payment SUCCEEDED and confirms slots; Phase 2 (post-transaction) creates earnings, invoice, and sends notifications.                | Updates: Payment status to SUCCEEDED, AppointmentOccurrence.isTentative to false, event record status. Creates: Earnings, Invoice. | `lib/payments/webhooks/handlers.ts`                  |
 | **Session**              | Consultant and consultee meet for the scheduled session(s).                                                                                                                                                              | None (managed by video/meeting integration)                                                                                        | External integrations                                |
@@ -169,7 +169,7 @@ flowchart TD
     style TRIAL fill:#f0e6ff
 ```
 
-**Source**: The routing switch is in `processCheckout()` at `lib/payments/operations/checkout.ts` around line 920. Each handler is exported as a separate function immediately below.
+**Source**: `handleCheckout()` (`lib/payments/checkout/orchestrate.ts`) prices and locks, then `commitCheckout()` (`lib/payments/checkout/commit/index.ts`) routes by appointment type to one handler in `lib/payments/checkout/handlers/`.
 
 A common mistake is thinking that trials go through the same checkout pipeline. They do not. Trials are free, so the consultant approves them directly through the Requests tab, which creates the Appointment and slots without any payment processing.
 
@@ -194,7 +194,7 @@ The reason two paths exist is flexibility. Some consultants want to screen clien
 
 #### Allocation is the approval, and the money decides where it lands (#1775 B-9)
 
-Every approval of a REQUEST-mode consultation or subscription from the UI — "Use requested times" on the Requests page, Approve on the detail page and the allocate page — goes through the allocate handler and `SchedulingService.updateEventStatus`, not through the detail PATCH route with `status: APPROVED`. Until 2026-09-20 that path CASed the request straight to `APPROVED` with no payment predicate and no pay order, so a priced request became "Confirmed · Nothing was charged" and the buyer was never asked to pay; the same from-set also let a re-allocation flip an awaiting-payment row to `APPROVED` while its pay order was still live. The service now makes two CAS attempts with the money predicate in each WHERE (`lib/booking/approve-request.ts`): first to `APPROVED` from `ALLOCATION_APPROVABLE_FROM` when the wrapper carries a SUCCEEDED, non-deleted payment or the plan is free (`SETTLED_*`), then to `APPROVED_PENDING_PAYMENT` from `PENDING` or from itself when no succeeded payment exists (`UNPAID_*`, the same arm the lapse core uses); both missing rolls the allocation back as before. On the awaiting-payment landing the placed sessions stay tentative (the requested path leaves its request-time holds as they are; the manual and auto paths mark the sessions they created tentative): they are the hold the pay order is for, the capture webhook confirms them, and a lapse or a withdraw releases them by status. The handler reads the outcome and, on `awaiting_payment`, runs `mintApprovalPaymentAfterCommit` before answering: the detail PATCH's post-commit block, now shared, which mints under the mint lock (a live PENDING intent is reused, so a retry or a re-allocation never mints a parallel order and a row that already carries a link mints nothing), CASes the link onto the row, tombstones an orphaned order and mails only a live link. A failed mint leaves the request awaiting payment with no link — the state the PATCH route leaves too — and is recorded as a PAYMENT system error; re-approving reuses the same intent. The response carries `awaitingPayment: true`, so the consultant's toast says the client has 24 hours to pay rather than "Confirmed".
+Every approval of a REQUEST-mode consultation or subscription from the UI — "Use requested times" on the Requests page, Approve on the detail page and the allocate page — goes through the allocate handler and `updateEventStatus` (`lib/booking/allocation/event-data.ts`), not through the detail PATCH route with `status: APPROVED`. Until 2026-09-20 that path CASed the request straight to `APPROVED` with no payment predicate and no pay order, so a priced request became "Confirmed · Nothing was charged" and the buyer was never asked to pay; the same from-set also let a re-allocation flip an awaiting-payment row to `APPROVED` while its pay order was still live. The service now makes two CAS attempts with the money predicate in each WHERE (`lib/booking/approve-request.ts`): first to `APPROVED` from `ALLOCATION_APPROVABLE_FROM` when the wrapper carries a SUCCEEDED, non-deleted payment or the plan is free (`SETTLED_*`), then to `APPROVED_PENDING_PAYMENT` from `PENDING` or from itself when no succeeded payment exists (`UNPAID_*`, the same arm the lapse core uses); both missing rolls the allocation back as before. On the awaiting-payment landing the placed sessions stay tentative (the requested path leaves its request-time holds as they are; the manual and auto paths mark the sessions they created tentative): they are the hold the pay order is for, the capture webhook confirms them, and a lapse or a withdraw releases them by status. The handler reads the outcome and, on `awaiting_payment`, runs `mintApprovalPaymentAfterCommit` before answering: the detail PATCH's post-commit block, now shared, which mints under the mint lock (a live PENDING intent is reused, so a retry or a re-allocation never mints a parallel order and a row that already carries a link mints nothing), CASes the link onto the row, tombstones an orphaned order and mails only a live link. A failed mint leaves the request awaiting payment with no link — the state the PATCH route leaves too — and is recorded as a PAYMENT system error; re-approving reuses the same intent. The response carries `awaitingPayment: true`, so the consultant's toast says the client has 24 hours to pay rather than "Confirmed".
 
 #### While the approval waits for payment (#1775)
 
@@ -226,7 +226,7 @@ sequenceDiagram
     FE->>API: POST /checkout (type=CONSULTATION, planId, slotStart, slotEnd)
 
     rect rgb(255, 249, 220)
-        Note over API,DB: handleConsultationCheckout (checkout.ts L940)
+        Note over API,DB: handleConsultationCheckout (handlers/consultation.ts)
         API->>DB: Fetch consultationPlan + consultantProfile
         API->>DB: validateSlotAvailability(consulteeId, consultantUserId)
         API->>DB: CREATE Consultation (status=PENDING, bookingSource=DIRECT_CHECKOUT)
@@ -292,10 +292,10 @@ The capture webhook moves a consultation to `APPROVED` only from `PENDING` or `A
 
 #### Source References
 
-- `handleConsultationCheckout()`: `lib/payments/operations/checkout.ts` line 940
-- `confirmExistingAppointment()`: `lib/payments/webhooks/handlers.ts` line 924
-- `confirmApprovalStatus()`: `lib/payments/webhooks/handlers.ts` line 855
-- `completeConsultations()`: `scripts/appointments/auto-complete-appointments.ts` line 193
+- `handleConsultationCheckout()`: `lib/payments/checkout/handlers/consultation.ts`
+- `confirmExistingAppointment()`: `lib/payments/webhooks/handlers.ts`
+- `confirmApprovalStatus()`: `lib/payments/webhooks/handlers.ts`
+- `completeConsultations()`: `scripts/appointments/auto-complete-appointments.ts`
 
 ---
 
@@ -327,7 +327,7 @@ sequenceDiagram
     FE->>API: POST /checkout (type=SUBSCRIPTION, planId, schedulingPeriodStart, schedulingPeriodEnd)
 
     rect rgb(255, 249, 220)
-        Note over API,DB: handleSubscriptionCheckout (checkout.ts L999)
+        Note over API,DB: handleSubscriptionCheckout (handlers/subscription.ts)
         API->>DB: Fetch subscriptionPlan + consultantProfile
         API->>DB: Determine if scheduling period request (has dates, no slots)
         API->>DB: Check for duplicate subscriptions (same plan, same consultee, overlapping period)
@@ -364,7 +364,7 @@ sequenceDiagram
 
     CT->>API: Allocate session slots (auto or manual)
     API->>DB: CREATE M Appointments with N AppointmentOccurrence each
-    API->>DB: UPDATE Subscription status = APPROVED (via SchedulingService)
+    API->>DB: UPDATE Subscription status = APPROVED (via allocate)
     API->>CE: Novu: appointment-booked
 
     Note over CE,CT: Recurring sessions take place over weeks/months
@@ -391,7 +391,7 @@ This is a critical subtlety. When the webhook calls `confirmApprovalStatus` for 
 - `APPROVED_PENDING_PAYMENT` --> `APPROVED` (this is the approval flow path)
 - `PENDING` --> **stays PENDING** (this is the direct checkout path)
 
-The reason `PENDING` does not transition to `APPROVED` in the webhook is that payment alone does not mean the subscription is ready. The consultant must still allocate session slots. The `SchedulingService.allocate()` method is what ultimately sets the status to `APPROVED`.
+The reason `PENDING` does not transition to `APPROVED` in the webhook is that payment alone does not mean the subscription is ready. The consultant must still allocate session slots. The `allocate()` function (`lib/booking/allocation/allocate.ts`) is what ultimately sets the status to `APPROVED`.
 
 A common mistake is assuming that after payment, the subscription is "active." It is not. It is paid but awaiting slot allocation. The consultee's dashboard will show "Awaiting scheduling" until the consultant allocates.
 
@@ -410,12 +410,10 @@ If found, it marks that trial as `CONVERTED` and links it to the new subscriptio
 
 #### Source References
 
-- `handleSubscriptionCheckout()`: `lib/payments/operations/checkout.ts` line 999
-- Duplicate subscription check: `lib/payments/operations/checkout.ts` line 1032
-- Trial conversion: `lib/payments/operations/checkout.ts` line 1073
-- Placeholder appointment creation: `lib/payments/operations/checkout.ts` line 1109
-- `confirmApprovalStatus()` subscription branch: `lib/payments/webhooks/handlers.ts` line 886
-- Slot allocation: `utils/scheduling-engine/SchedulingService.ts`
+- `handleSubscriptionCheckout()`: `lib/payments/checkout/handlers/subscription.ts`, which also holds the duplicate-subscription refusal and the placeholder appointment creation
+- Trial conversion: `linkCompletedTrialToSubscription()` in `lib/payments/checkout/handlers/subscription.ts`
+- `confirmApprovalStatus()` subscription branch: `lib/payments/webhooks/handlers.ts`
+- Slot allocation: `lib/booking/allocation/`
 
 ---
 
@@ -444,7 +442,7 @@ sequenceDiagram
     CE->>SYS: Browse webinar listing, click "Enroll"
 
     rect rgb(255, 249, 220)
-        Note over SYS,DB: handleWebinarCheckout (checkout.ts L1126)
+        Note over SYS,DB: handleWebinarCheckout (handlers/webinar.ts)
         SYS->>DB: Fetch webinar with plan, appointment occurrence, and live participants
         SYS->>DB: Count participants excluding consultant (countWebinarParticipants)
 
@@ -520,9 +518,9 @@ This ensures only the paying user's seat is confirmed. Without this filter, conf
 
 #### Source References
 
-- `handleWebinarCheckout()`: `lib/payments/operations/checkout.ts` line 2533
+- `handleWebinarCheckout()`: `lib/payments/checkout/handlers/webinar.ts`
 - Capacity check: `countWebinarParticipants()` in `lib/payments/utils/participants.ts`
-- Webinar-specific confirmation: `lib/payments/webhooks/handlers.ts` line 1903
+- Webinar-specific confirmation: `lib/payments/webhooks/handlers.ts`
 - `completeWebinars()`: `scripts/appointments/auto-complete-appointments.ts`
 
 ---
@@ -558,7 +556,7 @@ sequenceDiagram
     CE->>SYS: Browse class listing, click "Enroll"
 
     rect rgb(255, 249, 220)
-        Note over SYS,DB: handleClassCheckout (checkout.ts L2656)
+        Note over SYS,DB: handleClassCheckout (handlers/class.ts)
         SYS->>DB: Fetch class with plan, the wrapper's occurrences, and live participants
         SYS->>DB: countUniqueParticipants across the wrapper's roster
 
@@ -634,10 +632,10 @@ Every participant status write goes through `transitionParticipant` in `lib/book
 
 #### Source References
 
-- `handleClassCheckout()`: `lib/payments/operations/checkout.ts` line 2656
-- Participant seating: `recordParticipants()` call in `lib/payments/operations/checkout.ts` around line 2739
+- `handleClassCheckout()`: `lib/payments/checkout/handlers/class.ts`
+- Participant seating: the `recordParticipants()` call in `lib/payments/checkout/handlers/class.ts`
 - Unique participant counting: `countUniqueParticipants()` in `lib/payments/utils/participants.ts`
-- Class-specific confirmation: `lib/payments/webhooks/handlers.ts` line 1851
+- Class-specific confirmation: `lib/payments/webhooks/handlers.ts`
 - `completeClasses()`: `scripts/appointments/auto-complete-appointments.ts`
 
 ---
@@ -708,9 +706,9 @@ No other event type creates an ActivityLog entry during auto-completion. The rea
 
 #### Source References
 
-- `completeTrials()`: `scripts/appointments/auto-complete-appointments.ts` line 343
-- Trial conversion in subscription checkout: `lib/payments/operations/checkout.ts` line 1073
-- ActivityLog creation: `scripts/appointments/auto-complete-appointments.ts` line 409
+- `completeTrials()`: `scripts/appointments/auto-complete-appointments.ts`
+- Trial conversion in subscription checkout: `linkCompletedTrialToSubscription()` in `lib/payments/checkout/handlers/subscription.ts`
+- ActivityLog creation: `scripts/appointments/auto-complete-appointments.ts`
 
 ---
 
@@ -937,7 +935,7 @@ stateDiagram-v2
 
 **Enum values** (from `prisma/schema.prisma`): `PENDING`, `APPROVED`, `APPROVED_PENDING_PAYMENT`, `SCHEDULED`, `COMPLETED`, `REJECTED`, `CANCELLED`, `EXPIRED`.
 
-**Important nuance for subscriptions**: After direct checkout with payment, a subscription's status stays at `PENDING` (NOT `APPROVED`). The webhook's `confirmApprovalStatus` only transitions `APPROVED_PENDING_PAYMENT` to `APPROVED` for subscriptions. The transition from `PENDING` to `APPROVED` happens later, when the consultant allocates slots via `SchedulingService.allocate()`.
+**Important nuance for subscriptions**: After direct checkout with payment, a subscription's status stays at `PENDING` (NOT `APPROVED`). The webhook's `confirmApprovalStatus` only transitions `APPROVED_PENDING_PAYMENT` to `APPROVED` for subscriptions. The transition from `PENDING` to `APPROVED` happens later, when the consultant allocates slots via `allocate()`.
 
 ### 8b. TrialStatus
 
@@ -1052,7 +1050,7 @@ This section covers what happens when things go wrong. Understanding these scena
 
 **Safety net**: Even if the failure webhook is missed, the `cleanup-tentative-occurrences` cron runs every 2 hours and removes tentative slots with no successful payment after 24 hours (`TENTATIVE_EXPIRATION_HOURS = 24`).
 
-**Source**: `handlePaymentFailure()` at `lib/payments/webhooks/handlers.ts` line 486.
+**Source**: `handlePaymentFailure()` at `lib/payments/webhooks/handlers.ts`.
 
 ### 9b. Webinar Fills Up During Checkout
 
@@ -1126,7 +1124,7 @@ The reason the system marks the payment as SUCCEEDED (not FAILED) is truthfulnes
 
 **What happens**: The failure handler checks `if (payment.paymentStatus === PaymentStatus.SUCCEEDED)` and skips processing entirely. The log says: "Payment already SUCCEEDED. Ignoring late failure webhook." This guard prevents a catastrophic scenario where a confirmed booking is erroneously rolled back.
 
-**Source**: `handlePaymentFailure()` at `lib/payments/webhooks/handlers.ts`, the M7 FIX guard around line 542.
+**Source**: `handlePaymentFailure()` at `lib/payments/webhooks/handlers.ts`, the M7 FIX guard.
 
 ---
 
@@ -1160,7 +1158,7 @@ Notifications are sent via Novu workflows. All workflow IDs are defined in `lib/
 
 | Lifecycle Event         | Novu Workflow ID         | Recipients             | Trigger Point                                                               | Source                                                                                              |
 | ----------------------- | ------------------------ | ---------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Subscription started    | `subscription-started`   | Consultee              | Slot allocation completed                                                   | `SchedulingService`                                                                                 |
+| Subscription started    | `subscription-started`   | Consultee              | Slot allocation completed                                                   | `lib/booking/allocation`                                                                            |
 | Subscription cancelled  | `subscription-cancelled` | Consultee + Consultant | Cancellation API                                                            | Cancellation routes                                                                                 |
 | Subscription cycle done | `subscription-renewed`   | Consultee              | The last live occurrence of a cycle completes with entitlement left (#1766) | `lib/booking/subscription-cycle.ts` from the Stream completion handlers and the auto-complete sweep |
 
@@ -1376,11 +1374,11 @@ A buyer who has not paid for a booking leaves it through one door, `POST /api/bo
 
 The door resolves the booking first and proves the caller is its buyer, and it answers `NOT_FOUND` for both a missing booking and someone else's, so it cannot be used to probe other people's bookings. It then takes the appointment lock before opening one Serializable transaction, which is the same lock order the cancel route and every other lifecycle writer use. The outcome depends on the kind of booking, as the following table shows.
 
-| Kind | What the door does |
-| --- | --- |
+| Kind                         | What the door does                                                                                                                                                                                                                                                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Consultation or subscription | The request moves from `PENDING` or `APPROVED_PENDING_PAYMENT` to `CANCELLED` through its CAS helper, anyone waiting on the held times is told they are free, the live slots are cancelled and tombstoned, the participants are released, and any open reschedule proposal is declined through `declineOpenReschedules`. |
-| Trial | The trial moves from `PENDING` or `AWAITING_PAYMENT` to `CANCELLED`, its pay link and due date are cleared, and its held session is tombstoned through `softCancelTrialAppointmentInTx`. |
-| Webinar or class | Only the caller's own `HELD` consultee seat is released, and the event itself stays live for everyone else. |
+| Trial                        | The trial moves from `PENDING` or `AWAITING_PAYMENT` to `CANCELLED`, its pay link and due date are cleared, and its held session is tombstoned through `softCancelTrialAppointmentInTx`.                                                                                                                                 |
+| Webinar or class             | Only the caller's own `HELD` consultee seat is released, and the event itself stays live for everyone else.                                                                                                                                                                                                              |
 
 In every arm the caller's `PENDING` payment on that appointment moves to `EXPIRED` by compare-and-swap, so a capture that is racing the door keeps its `SUCCEEDED`. Each payment the door expires gives back the referral credits spent at checkout and the organisation engagement that checkout debited, and both give-backs are idempotent. The gateway order is cancelled only after the transaction commits and on a best-effort basis, so a gateway that refuses the cancel never un-abandons the booking, and a capture that still lands is refunded by the webhook's capture-after-release path.
 

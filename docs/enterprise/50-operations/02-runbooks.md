@@ -451,7 +451,7 @@ invoice-gen + expire so it reads invoices in their final state.
   three reminders already span ~21 days), stamp `dunningSuspendedAt`. The
   claim and its `INVOICE_DUNNING_SUSPENDED` audit row commit together in a
   single Serializable transaction so two replicas can't both stamp + log.
-  `checkout.ts` blocks the org's new sponsored bookings while any such
+  `lib/payments/checkout/org-funding.ts` blocks the org's new sponsored bookings while any such
   invoice is unpaid; paying the invoice lifts the suspension naturally.
 - Only orgs in `ACTIVE` / `PENDING_VERIFICATION` / `SUSPENDED` are dunned;
   `DEACTIVATED` orgs are not chased.

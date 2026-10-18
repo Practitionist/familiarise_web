@@ -8,7 +8,7 @@
  * a missing one. Excluding it blocked every enrollment for the length of an
  * open reschedule and under-counted the engagements the seat buys.
  *
- * Mocks mirror consultation-occurrence-parity.test.ts: everything checkout.ts
+ * Mocks mirror consultation-occurrence-parity.test.ts: everything lib/payments/checkout
  * touches at module scope is stubbed so the one exported handler can run
  * against a hand-built transaction.
  */
@@ -83,7 +83,7 @@ jest.mock("../../lib/events/capacity", () => ({
   getClassCapacity: jest.fn().mockReturnValue({ isFull: false }),
 }));
 
-import { handleClassCheckout } from "../../lib/payments/operations/checkout";
+import { handleClassCheckout } from "../../lib/payments/checkout/handlers/class";
 import type { Tx } from "../../lib/prisma";
 import type { CheckoutInput } from "../../schemas/checkout";
 
@@ -159,6 +159,17 @@ it("counts a RESCHEDULED session as planned: the gate opens and the meter says f
 
   expect(result.engagementsConsumed).toBe(4);
   expect(result.slotsLinked).toBe(4);
+  // One seat on the class wrapper, held until the payment captures.
+  expect(
+    (tx.appointmentParticipant.createMany as jest.Mock).mock.calls[0][0].data,
+  ).toEqual([
+    expect.objectContaining({
+      appointmentId: "appt-class",
+      userId: "buyer-1",
+      role: "CONSULTEE",
+      status: "HELD",
+    }),
+  ]);
   // And the read itself keeps the released row: only a cancelled or deleted
   // session is out of the plan.
   const args = (tx.class.findUnique as jest.Mock).mock.calls[0][0];

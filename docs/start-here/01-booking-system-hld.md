@@ -74,7 +74,7 @@ Several checks run before any gateway call or any row is written. The table list
 | A meeting extension writes `endsAt` in the database first, then calls Stream, and reverts by compare-and-swap if Stream fails                                        | 409 `EXTEND_CONFLICT` or 503                                                               | `app/api/meetings/[meetingId]/extend/route.ts`                                                  | Current |
 | Booking and money writes fail closed with 503 and `Retry-After` when the maintenance state cannot be read, and four more routes are on the degraded write-block list | 503                                                                                        | `lib/maintenance-edge.ts`                                                                       | Current |
 | The booked window must match the plan duration on request-for-approval, direct consultation checkout and trial scheduling                                            | 400 `WINDOW_DURATION_MISMATCH`                                                             | `lib/booking/slot-validation.ts`                                                                | Current |
-| A paused expert (`acceptingRequests = false`) refuses every new booking, including direct checkout and trials                                                        | 409 `NOT_ACCEPTING_BOOKINGS`                                                               | the purchasability gate in `lib/payments/operations/checkout.ts`                                | Current |
+| A paused expert (`acceptingRequests = false`) refuses every new booking, including direct checkout and trials                                                        | 409 `NOT_ACCEPTING_BOOKINGS`                                                               | the purchasability gate in `lib/payments/checkout/pricing.ts`                                   | Current |
 | Request-for-approval accepts an `Idempotency-Key` stored on the request row                                                                                          | A replay returns the original 201; another user's key answers 422 `IDEMPOTENCY_KEY_REUSED` | `app/api/scheduling/request-for-approval/route.ts`                                              | Current |
 
 ## 2. The 30-minute atom and coverage
@@ -90,7 +90,7 @@ by ANY availability row (findUncoveredAtom), so adjacent rows can combine.
 
 Each heatmap cell's status is the share of the cell covered by occupancy, computed on the server. Holds, tentative rows and confirmed rows all render as "fully booked", because there is no separate "held" colour.
 
-## 3. Allocation modes (`SchedulingService.ts`)
+## 3. Allocation modes (`lib/booking/allocation/`)
 
 ```text
                ┌─────────────── allocate(eventId, mode) ───────────────┐
@@ -113,7 +113,7 @@ Each heatmap cell's status is the share of the cell covered by occupancy, comput
      DELETE old rows → CREATE occurrences → CAS parent status
 ```
 
-The allocation route is the only place that decides who may allocate, and it does so before the service runs. `SchedulingService.allocate` itself never checks the actor, because the reschedule-accept and auto-confirm paths legitimately call it on behalf of the consultee. Three kinds of caller reach the route:
+The allocation route is the only place that decides who may allocate, and it does so before the service runs. `allocate` (`lib/booking/allocation/allocate.ts`) itself never checks the actor, because the reschedule-accept and auto-confirm paths legitimately call it on behalf of the consultee. Three kinds of caller reach the route:
 
 - The expert (the plan's own consultant) and staff may use every flag.
 - An operator of the plan's host organisation may allocate, but only inside the published availability, so `override`, `allowPartial` and `topUp` are ignored for them.
@@ -209,7 +209,7 @@ flowchart TD
   LOCK_FAIL -->|"Yes (423 / 409)"| BACKUP["Consultee can register WindowBackupInterest (max 3 active WAITING windows) - Notified when any hold releases"]
   LOCK_FAIL -->|"No"| TX_HOLD["Create Consultation(PENDING) + Occurrence(isTentative=true) + Payment(PENDING)"]
 
-  REQ --> ALLOC["Consultant Opens Requests Inbox & Runs SchedulingService"]
+  REQ --> ALLOC["Consultant Opens Requests Inbox & Runs the allocator"]
   ALLOC --> ALLOC_MODE{"Allocation Mode"}
   ALLOC_MODE -->|"useRequestedSlots"| USE_REQ["Validates consultee's requested tentative occurrences"]
   ALLOC_MODE -->|"manualAllocate"| MAN_ALLOC["Consultant picks exact 30-min blocks in UnifiedCalendar"]
@@ -402,7 +402,7 @@ In the target state Postgres is the only arbiter of time and capacity, and Redis
 
 - **Wave 0** fixes the defects that exist on today's schema: authorization and checkout correctness (both merged), durable "refund owed" markers, correctly scoped sweeps, a 60-second consultee grid poll that is freshness only and never correctness, and the subscription session-return policy.
 - **Wave 1** flips the availability readers to per-date daylight-saving offsets computed from the IANA zone, and adds platform-incident voiding (landed: ops declare an incident, every eligible overlapping session is voided and each learner gets the remedy for their product; the free-rebook offer is landing next). Seat transfer is deferred until after launch, and it would cover webinars only if it is ever built (#2140).
-- **Wave 2** splits `SchedulingService.ts` and `checkout.ts` along their module seams without changing behaviour.
+- **Wave 2** (landed) split the allocator and checkout along their module seams without changing behaviour: the allocator is now `lib/booking/allocation/` and checkout is `lib/payments/checkout/`.
 - **Wave 3** lands inside the owner's database reset window: the schema batch, the busy-time ledger that makes the database the arbiter of every person's time, and the scheduling rules.
 - **Wave 4** proves it with a concurrency harness on real Postgres, which is the launch gate.
 
@@ -424,7 +424,7 @@ The end-state invariants and what enforces each of them:
 
 The money terms (pre-mint, tombstone, dedupe key, leg, earnings hold and credit note) are defined in [the money HLD's glossary](./02-money-system-hld.md#13-glossary).
 
-- **Hold.** A booking that is reserved but not yet paid: a tentative occurrence plus a `PENDING` payment whose `expiresAt` is thirty minutes out on direct checkout (`DIRECT_CHECKOUT_HOLD_MS` in `lib/payments/operations/checkout.ts`) or 24 hours out on an approval pay-link. The `abandoned-payments` and `expire-stale-requests` sweeps release a hold once it lapses.
+- **Hold.** A booking that is reserved but not yet paid: a tentative occurrence plus a `PENDING` payment whose `expiresAt` is thirty minutes out on direct checkout (`DIRECT_CHECKOUT_HOLD_MS` in `lib/payments/constants.ts`) or 24 hours out on an approval pay-link. The `abandoned-payments` and `expire-stale-requests` sweeps release a hold once it lapses.
 - **Tentative.** An `AppointmentOccurrence` with `isTentative = true`, which is a hold or a requested time rather than a confirmed session. It still blocks the expert's calendar through the occupancy filter in `utils/scheduling-engine/occupancyPolicy.ts`, but the database overlap constraint `occurrence_no_confirmed_overlap` ignores it, so the Redis slot locks are what keep two holds apart.
 - **CAS-in-WHERE.** A compare-and-swap status change: an `updateMany` whose `WHERE` names the expected prior status, so a row that has already moved matches zero rows and the write fails instead of overwriting it. The helpers in `lib/booking/transitions.ts` do this for every booking status and throw `IllegalTransitionError` on a miss.
 - **Sweep.** A background job that finds rows in a stale state and moves them on, for example an unpaid hold to `EXPIRED`. Every sweep is registered in `lib/cron/cleanup-registry.ts`, runs under the Postgres lease in `withCronLock`, and is fired by the five-minute ticker `netlify/functions/cron-tick.mts` or by a GitHub Actions batch workflow.

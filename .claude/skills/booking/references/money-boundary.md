@@ -15,10 +15,9 @@ come to disagree.
 
 Checkout writes a `Payment` and its slot atoms together. When real money is
 involved the payment is `PENDING`, the slots are created with `isTentative:
-true`, and `expiresAt` is set thirty minutes out. That window is an inline
-`new Date(Date.now() + 30 * 60 * 1000)` in
-`lib/payments/operations/checkout.ts` with a trailing comment — **there is no
-named constant**, so if you change it, grep rather than trusting a symbol. The
+true`, and `expiresAt` is set thirty minutes out. That window is
+`DIRECT_CHECKOUT_HOLD_MS` in `lib/payments/constants.ts`, applied in
+`lib/payments/checkout/orchestrate.ts`. The
 abandoned-payments sweep mirrors it independently with a 35-minute buffer for
 legacy rows that carry a null `expiresAt`. `Payment` is indexed on
 `[expiresAt, paymentStatus]` for exactly this cohort.
@@ -210,7 +209,7 @@ before calling the gateway, stamps that row's id into the order's `notes` as
 then fills the real order id into the row by CAS on the placeholder. A crash
 between the two writes leaves a placeholder row that the lapsed pay-link sweep
 retires. If the fill fails, the minted order is recorded as an EXPIRED tombstone
-(`tombstoneAbortedGatewayOrder` in `checkout.ts`, `appointmentId: null`) and the
+(`tombstoneAbortedGatewayOrder` in `lib/payments/checkout/gateway-intent.ts`, `appointmentId: null`) and the
 placeholder row is expired, so a later capture on that order is auto-refunded
 instead of landing on no row. A re-mint reuses the same row in place
 (`claimRowForRemint`), keeping its id, user and appointment, and tombstones the
@@ -227,7 +226,7 @@ placeholder, at the order's exact amount and currency, and moves the CARD leg's
 
 **A seat re-buy never 500s.** Group-event seats share one appointment and
 `@@unique([userId, appointmentId])`, so `findPriorSeatPayment` and
-`assertSeatRemintable` (`checkout.ts`) re-mint an EXPIRED or FAILED row in place
+`assertSeatRemintable` (`lib/payments/checkout/seats.ts`) re-mint an EXPIRED or FAILED row in place
 and tombstone its old intent in the same transaction. A PENDING row answers
 `PAYMENT_ALREADY_EXISTS`; a fully refunded seat answers `SEAT_REBUY_UNSUPPORTED`
 until the schema batch makes the unique re-buyable **(planned)**. Both are typed

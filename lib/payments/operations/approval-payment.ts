@@ -18,7 +18,7 @@ import { validatePlanCurrency } from "@/lib/payments/validation/currency-guards"
 import { deriveCheckoutAmount } from "@/lib/payments/pricing/derive-checkout-amount";
 import { detectBuyerCountry } from "@/lib/payments/tax/buyer-country";
 import { appointmentTypeToServiceType } from "@/lib/payments/tax/tax-engine";
-import { tombstoneAbortedGatewayOrder } from "@/lib/payments/operations/checkout";
+import { tombstoneAbortedGatewayOrder } from "@/lib/payments/checkout/gateway-intent";
 import { tombstonePriorIntent } from "@/lib/payments/operations/prior-intent-tombstone";
 import { reportSentryError } from "@/lib/observability/report";
 import {

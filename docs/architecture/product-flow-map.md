@@ -638,8 +638,8 @@ flowchart TD
 | Enterprise scenarios   | `docs/enterprise/60-scenarios-and-verdicts/01-scenarios-and-examples.md` |
 | Funding & programs     | `docs/enterprise/00-foundations/03-funding-and-programs.md`              |
 | Enterprise readiness   | `docs/enterprise/90-audits/01-readiness-audit.md`                        |
-| Slot allocation engine | `utils/scheduling-engine/SchedulingService.ts`                           |
-| Checkout orchestration | `lib/payments/operations/checkout.ts`                                    |
+| Slot allocation engine | `lib/booking/allocation/` (entry point `allocate.ts`)                    |
+| Checkout orchestration | `lib/payments/checkout/` (entry point `orchestrate.ts`)                  |
 | Webhook handlers       | `lib/payments/webhooks/handlers.ts`                                      |
 | Explore pages          | `app/explore/`                                                           |
 | Checkout pages         | `app/checkout/plans/`                                                    |

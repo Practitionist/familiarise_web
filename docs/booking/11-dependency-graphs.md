@@ -30,7 +30,7 @@ block-beta
   block:SERVICES["BACKEND SERVICES"]
     M["ScheduleCalculationService"]
     N["ScheduleValidationService"]
-    O["SchedulingService"]
+    O["lib/booking/allocation (allocate)"]
     P["lib/booking/transitions.ts (CAS)"]
     Q["utils/appointmentlock.ts (locking)"]
   end
@@ -45,7 +45,7 @@ block-beta
 
 ## 2. Backend Dependency Graph
 
-Which backend file imports which, read bottom-up (leaf nodes first). `lib/booking/transitions.ts` is imported directly by API routes and by `SchedulingService`, not only by the service layer — every status write in the booking subsystem goes through it.
+Which backend file imports which, read bottom-up (leaf nodes first). `lib/booking/transitions.ts` is imported directly by API routes and by the allocator (`event-data.ts` and the mode files), not only by the service layer — every status write in the booking subsystem goes through it.
 
 ```mermaid
 flowchart BT
@@ -57,7 +57,7 @@ flowchart BT
   subgraph services ["Core Services"]
     CALC["ScheduleCalculationService.ts\npure math"]
     VAL["ScheduleValidationService.ts\nvalidate, isOccupiedByLiveAppointment"]
-    ALLOC["SchedulingService.ts\nautoAllocate, manualAllocate, useRequestedSlots"]
+    ALLOC["lib/booking/allocation/\nallocate, modes/auto, modes/manual, modes/use-requested"]
     OCC["occupancyPolicy.ts\nbuildOccupiedAppointmentFilter, buildDeadHoldFilter"]
     COV["availabilityCoverage.ts\nloadPublishedCoverage, findUncoveredAtom"]
     MERGE["mergeAdjacentWeeklyRows.ts"]
@@ -78,7 +78,7 @@ flowchart BT
     R_VAL["*/validate/route.ts (POST)"]
     R_CANCEL["appointments/[id]/cancel/route.ts"]
     R_RESCH["appointments/[id]/reschedule/route.ts"]
-    R_CHECKOUT["lib/payments/operations/checkout.ts"]
+    R_CHECKOUT["lib/payments/checkout/\nhandleCheckout, commit/index.ts"]
   end
 
   T --> CALC
@@ -105,6 +105,61 @@ flowchart BT
   R_CHECKOUT --> LOCK
   MERGE --> COV
 ```
+
+### 2.1 The allocation and checkout modules
+
+Two modules do the booking writes. The diagram shows who calls whom. Callers enter through one function each: `allocate` from `@/lib/booking/allocation` and `handleCheckout` from `@/lib/payments/checkout`.
+
+```mermaid
+flowchart TD
+  subgraph callers ["Callers"]
+    R_ALLOCATE["allocate routes\n(lib/scheduling/allocate-route.ts, org allocate route)"]
+    RESCH["lib/booking/reschedule-respond.ts\nlib/booking/reschedule-auto-confirm.ts"]
+    R_CO["app/api/checkout/route.ts"]
+  end
+
+  subgraph allocation ["lib/booking/allocation/"]
+    AL["allocate.ts\nallocate, dispatch"]
+    AUTO["modes/auto.ts"]
+    MAN["modes/manual.ts"]
+    REQ["modes/use-requested.ts"]
+    SEARCH["search/\nfindAvailableSlots"]
+    EVD["event-data.ts\nfetchEventData, updateEventStatus"]
+    GRD["guards.ts, idempotency.ts"]
+    COMMIT["commit/\nrelease-tentative, create-appointments,\nreconnect-enrolled, subscription-cap"]
+  end
+
+  subgraph checkout ["lib/payments/checkout/"]
+    ORCH["orchestrate.ts\nhandleCheckout"]
+    PRICE["pricing.ts, revalidate.ts,\nlocks.ts, order-reuse.ts"]
+    CCOMMIT["commit/index.ts\ncommitCheckout (only withSerializableRetry)"]
+    HAND["handlers/\nconsultation, subscription, webinar, class"]
+    CSTEPS["commit/\npayment-row, org-utilization,\npayment-legs, ledger"]
+  end
+
+  R_ALLOCATE --> AL
+  RESCH --> AL
+  AL --> AUTO
+  AL --> MAN
+  AL --> REQ
+  AUTO --> SEARCH
+  AUTO --> EVD
+  MAN --> EVD
+  REQ --> EVD
+  AUTO --> GRD
+  MAN --> GRD
+  REQ --> GRD
+  AUTO --> COMMIT
+  MAN --> COMMIT
+
+  R_CO --> ORCH
+  ORCH --> PRICE
+  ORCH --> CCOMMIT
+  CCOMMIT --> HAND
+  CCOMMIT --> CSTEPS
+```
+
+The transaction boundaries are explicit. In allocation, each mode file opens its own write transaction after taking its locks (`lockAutoAllocate`, then `lockConsulteeBooking`). In checkout, `orchestrate.ts` takes the locks and `commit/index.ts` opens the one booking transaction, renewing the lock grant at the top of every retry.
 
 ---
 
@@ -148,7 +203,7 @@ flowchart BT
   UC --> SP
 ```
 
-**Reading order**: `calendarUtils` -> `allocationService` -> `allocationAlgorithms` -> `useCalendarData` + `useScheduling` -> `UnifiedCalendar`. Server-side auto-allocation (`SchedulingService`) has no frontend counterpart in this chain — the client only pre-validates and submits.
+**Reading order**: `calendarUtils` -> `allocationService` -> `allocationAlgorithms` -> `useCalendarData` + `useScheduling` -> `UnifiedCalendar`. Server-side auto-allocation (`lib/booking/allocation`) has no frontend counterpart in this chain — the client only pre-validates and submits.
 
 ---
 
@@ -164,7 +219,7 @@ sequenceDiagram
   participant AS as allocationService
   participant API as allocate/route.ts
   participant ZOD as validationSchemas
-  participant SAS as SchedulingService
+  participant SAS as allocate (lib/booking/allocation)
   participant SVS as ScheduleValidationService
   participant SCS as ScheduleCalculationService
   participant TRANS as lib/booking/transitions.ts
@@ -201,7 +256,7 @@ sequenceDiagram
     API->>SAS: useRequestedSlots(type, id)
   end
 
-  SAS->>LOCK: lockSlotBooking / lockAutoAllocate
+  SAS->>LOCK: lockAutoAllocate, then lockConsulteeBooking
   LOCK-->>SAS: Lock acquired
 
   SAS->>SVS: validate(type, id, slots, consultant, config)
@@ -210,7 +265,7 @@ sequenceDiagram
   SVS-->>SAS: ValidationResult
 
   SAS->>DB: BEGIN TRANSACTION
-  SAS->>DB: Clear stale tentative slots (payment-guarded; never a payment-bearing appointment)
+  SAS->>DB: Clear stale tentative slots (payment-guarded, never a payment-bearing appointment)
   SAS->>DB: Create/reuse Appointment, create AppointmentOccurrence rows
   SAS->>TRANS: transitionConsultationRequest / transitionSubscriptionRequest
   SAS->>DB: COMMIT
@@ -314,8 +369,8 @@ erDiagram
 
 ## How to Read This
 
-**Backend algorithm**: `types.ts` -> `ScheduleCalculationService` -> `ScheduleValidationService` -> `SchedulingService`, with every status write routed through `lib/booking/transitions.ts` and every slot-occupying write holding a lock from `utils/appointmentlock.ts`.
+**Backend algorithm**: `types.ts` -> `ScheduleCalculationService` -> `ScheduleValidationService` -> `lib/booking/allocation`, with every status write routed through `lib/booking/transitions.ts` and every slot-occupying write holding a lock from `utils/appointmentlock.ts`.
 
 **Frontend**: `calendarUtils` -> `allocationService` -> `allocationAlgorithms` -> `useCalendarData` + `useScheduling` -> `UnifiedCalendar`. Auto-allocation is server-only; the client never scores or picks slots itself.
 
-**Tracing a full request**: `UnifiedCalendar` -> `useScheduling` -> `allocationAlgorithms` (manual and requested modes only; auto mode calls the service directly) -> `allocationService` -> API route -> `SchedulingService` -> `ScheduleValidationService` -> `ScheduleCalculationService` -> Prisma -> PostgreSQL (see Diagram 4).
+**Tracing a full request**: `UnifiedCalendar` -> `useScheduling` -> `allocationAlgorithms` (manual and requested modes only; auto mode calls the service directly) -> `allocationService` -> API route -> `allocate` -> `ScheduleValidationService` -> `ScheduleCalculationService` -> Prisma -> PostgreSQL (see Diagram 4).
