@@ -42,7 +42,7 @@ Everything below explains how those actors' intentions are made safe.
 
 This is the single most consequential decision in the codebase, and it inverts the usual instinct to validate in application code and hope.
 
-Prisma's schema language cannot express the things that make this system safe. It has no syntax for a `CHECK` constraint, no way to declare a deferrable constraint trigger, no partial unique indexes, no `NULLS NOT DISTINCT`, and no `EXCLUDE USING gist`. So this repository maintains a second layer of hand-written SQL in `prisma/sql/`, applied on top of every `prisma db push`.
+Prisma's schema language cannot express the things that make this system safe. It has no syntax for a `CHECK` constraint, no way to declare a deferrable constraint trigger, no `NULLS NOT DISTINCT`, and no `EXCLUDE USING gist`. Partial unique indexes are a near miss: the repository pins Prisma 7.10.0, where `partialIndexes` is still a preview feature and this schema enables only `relationJoins`, so the capability exists but is off here — and it was buggy at 7.7.0. So this repository maintains a second layer of hand-written SQL in `prisma/sql/`, applied on top of every `prisma db push`.
 
 Today that layer is roughly 80 named constraints, 28 indexes and 8 triggers. Every money column is constrained to be non-negative; every ledger transaction must balance at `COMMIT`; two confirmed sessions for one expert can never overlap; a payment's funding legs must sum to its amount. None of those statements are enforced by application code alone, and none of them can be.
 
@@ -66,7 +66,7 @@ Adding a parallel `route.ts` plus a `jobs/` wrapper plus a `scripts/` wrapper fo
 
 There are exactly two schedulers, and a given job runs on exactly one of them:
 
-- `netlify/functions/cron-tick.mts` runs every five minutes and drives the **latency-sensitive recovery sweeps**. It currently dispatches 27 targets.
+- `netlify/functions/cron-tick.mts` runs every five minutes and drives the **latency-sensitive recovery sweeps**. It currently dispatches 28 targets.
 - The GitHub Actions cron workflows (`cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`) drive the **daily, weekly and statutory batch work**, where a delay of an hour or more is harmless.
 
 There is no silent gap and no accidental double-fire: a test, `__tests__/maintenance/cleanup-job-scheduler-drift.test.ts`, fails the build if a registered job has no scheduler at all.
@@ -129,13 +129,13 @@ The rule that follows from this shape is written into the repository's own agent
 
 ## How scheduled work runs
 
-Fifty-six jobs are registered in `lib/cron/cleanup-registry.ts`. Each entry declares a slug, the cron job name, a lazy import of its core module, and an optional summariser. The registry is the only place a job is defined, and it is read by tests that check the job holds a lock and has a scheduler.
+Fifty-seven jobs are registered in `lib/cron/cleanup-registry.ts`. Each entry declares a slug, the cron job name, a lazy import of its core module, and an optional summariser. The registry is the only place a job is defined, and it is read by tests that check the job holds a lock and has a scheduler.
 
 The dispatch path is:
 
 ```mermaid
 flowchart LR
-    S1["Netlify ticker<br/>every 5 min · 27 targets"] --> R
+    S1["Netlify ticker<br/>every 5 min · 28 targets"] --> R
     S2["GitHub Actions<br/>daily / weekly / statutory"] --> R
     R["app/api/cleanup/[job]/route.ts<br/>CRON_SECRET"] --> G["assertNotInMaintenance(job)"]
     G --> L["withCronLock(jobName, failMode)"]
@@ -200,7 +200,7 @@ Neither family re-verifies a database invariant. A reconciler that did so would 
 | **Occurrence**     | One scheduled instance of a booking. A five-session subscription purchase has one `Appointment` and five occurrences                    |
 | **Leg**            | One source of funding within a payment. A wallet top-up plus a card charge produces two legs                                            |
 | **Money in paise** | Every amount is stored as an integer count of paise (one hundredth of a rupee)                                                          |
-| **Basis points**   | A tenth of a percent, used for platform fee rates, so 250 bps is 2.5 %                                                                  |
+| **Basis points**   | One hundredth of one percentage point, used for platform fee rates, so 250 bps is 2.5 %                                                 |
 
 ## Where to read next
 

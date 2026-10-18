@@ -20,7 +20,7 @@ A scheduled job is defined exactly once, in `lib/cron/cleanup-registry.ts`. Each
 ```
 core module (one implementation, in scripts/ or lib/)
    ↑
-lib/cron/cleanup-registry.ts          56 slugs, lazy imports
+lib/cron/cleanup-registry.ts          57 slugs, lazy imports
    ↑
 app/api/cleanup/[job]/route.ts        the only cleanup route file
    ↑
@@ -28,7 +28,7 @@ lib/cron/cleanup-route.ts             CRON_SECRET · ?limit= · maintenance gate
    ↑
 withCronLock()                        SystemJobExecution lease
    ↑
-   ├── netlify/functions/cron-tick.mts          every 5 min, 27 targets
+   ├── netlify/functions/cron-tick.mts          every 5 min, 28 targets
    └── .github/workflows/cron-*.yml             daily / weekly / statutory
 ```
 
@@ -45,7 +45,7 @@ Every dispatch calls `assertNotInMaintenance(job)` from `lib/maintenance-cron.ts
 | Phase      | Effect on scheduled work                                                           |
 | ---------- | ---------------------------------------------------------------------------------- |
 | `OFF`      | Everything runs                                                                    |
-| `DEGRADED` | Only the 27 names in `FINANCIAL_JOB_NAMES` (`lib/cron/financial-jobs.ts`) are held |
+| `DEGRADED` | Only the 28 names in `FINANCIAL_JOB_NAMES` (`lib/cron/financial-jobs.ts`) are held |
 | `OFFLINE`  | Every job is held                                                                  |
 
 A held job raises `MaintenanceActiveError`, which the route turns into a `503` carrying the phase. The ticker recognises the phase in the body and records the target as _held_, not _failed_.
@@ -59,7 +59,7 @@ The maintenance read fails **open** on a Redis error. That is deliberate — the
 | `200` | Clean run                                                                                                                                    | None                                                     |
 | `207` | Succeeded, but `needsAttention` — a double-booking was detected, a row was escrowed, a cascade is still failing, a document has gone missing | **Look at it**                                           |
 | `400` | Malformed `?limit=` (empty, non-numeric, zero, negative, fractional)                                                                         | Fix the caller                                           |
-| `401` | `CRON_SECRET` missing from the environment, or the bearer token does not match                                                               | Fix the secret                                           |
+| `401` | Both `CRON_SECRET` and `VERCEL_CRON_SECRET` are absent, or the bearer token does not match the selected secret                               | Fix the secret                                           |
 | `404` | Slug is not in the registry                                                                                                                  | Fix the slug                                             |
 | `409` | `CronLockHeldError` — another copy holds the lease                                                                                           | None; expected under overlap                             |
 | `500` | `result.success === false`, or an uncaught throw                                                                                             | Investigate                                              |
@@ -95,7 +95,7 @@ Two subtleties worth knowing before you alert on status codes:
 
 Two consequences follow from that formula. A tick that fires up to four minutes late still counts as its slot, and — critically — the per-target intervals and offsets spread work so that **no single five-minute tick fires more than eight targets**. Before phase staggering was introduced, nineteen targets fired simultaneously at the same four minutes past the hour, which saturated the single-connection Postgres pool that Netlify functions run with.
 
-### The 27 ticker targets
+### The 28 ticker targets
 
 | Slug                               | Every   | Fires at                    | Default limit |
 | ---------------------------------- | ------- | --------------------------- | ------------- |
@@ -107,6 +107,7 @@ Two consequences follow from that formula. A tick that fires up to four minutes 
 | `alert-orphaned-payments`          | 15 min  | :00 :15 :30 :45             | 10            |
 | `process-data-exports`             | 10 min  | :00 :10 :20 :30 :40 :50     | 50            |
 | `sentry-ingest-canary`             | 6 hours | 00:00 06:00 12:00 18:00 UTC | n/a           |
+| `settle-platform-incidents`        | 60 min  | :30                         | 10            |
 | `release-earnings`                 | 15 min  | :05 :20 :35 :50             | 50            |
 | `reconcile-refunds`                | 15 min  | :05 :20 :35 :50             | 10            |
 | `abandoned-payments`               | 15 min  | :05 :20 :35 :50             | 10            |
@@ -127,7 +128,7 @@ Two consequences follow from that formula. A tick that fires up to four minutes 
 | `settle-cancelled-sessions`        | 30 min  | :25 :55                     | 10            |
 | `retry-moderation-enforcement`     | 30 min  | :25 :55                     | n/a           |
 
-The stagger is exact: **every one of the twelve five-minute tick slots fires precisely eight targets**, which `__tests__/maintenance/cron-tick-targets.test.ts` pins between five and eight. Before offsets were introduced, nineteen targets fired simultaneously at `:00`, `:15`, `:30` and `:45`, which saturated the single-connection Postgres pool that Netlify functions run with.
+The stagger holds: **each of the twelve five-minute tick slots fires seven or eight targets** — `:00` fires seven, every other slot eight, which `__tests__/maintenance/cron-tick-targets.test.ts` pins between five and eight. Before offsets were introduced, nineteen targets fired simultaneously at `:00`, `:15`, `:30` and `:45`, which saturated the single-connection Postgres pool that Netlify functions run with.
 
 ### Why the ticker always answers 200
 
@@ -284,7 +285,7 @@ Recorded here so the next reader does not trust the prose over the source. The a
 | Cron registry size               | Various counts of "47", "48" and "56" slugs across docs and comments                           | 56 registry slugs, 13 jobs with no HTTP twin, 27 ticker targets                                                                                                                                          |
 | Cron schedule staggering         | That CI enforces stagger minutes across the fleet                                              | `scripts/ci/check-workflow-hygiene.ts` checks the secrets manifest, not staggering. Stagger minutes are maintained by hand                                                                               |
 | Dead job names in the alert list | `cascade-refund-earnings` and `release-pending-trust-earnings` listed in `MONEY_CRITICAL_JOBS` | Both jobs were folded into the `reconcile-refunds` and `release-earnings` cores. The names remain in `scripts/ci/notify-ops-failure.sh` where they can never match, so those two failures would not page |
-| Actions as a fleet backstop      | That the GitHub Actions cron fleet backs up the ticker                                         | It does not. Fourteen of the 27 ticker targets have no Actions workflow at all, and `auto-complete-appointments` and `detect-consultant-no-shows` gate money with the ticker as their only scheduler     |
+| Actions as a fleet backstop      | That the GitHub Actions cron fleet backs up the ticker                                         | It does not. Twenty-seven of the 28 ticker targets have no Actions workflow at all, and `auto-complete-appointments` and `detect-consultant-no-shows` gate money with the ticker as their only scheduler |
 
 The general rule these rows all illustrate: **verify a named object with a grep before building on it.** The repository has taught an agent a phantom constraint before, and agents trust these files as doctrine.
 

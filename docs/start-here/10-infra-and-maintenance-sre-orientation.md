@@ -117,8 +117,8 @@ All background work in this system comes from exactly one of two schedulers. Kno
    ┌──────────────────────────────────────────────────────────────────┐
    │  SCHEDULER A — Netlify ticker            every 5 minutes        │
    │  netlify/functions/cron-tick.mts                                 │
-   │  · 27 targets, latency-sensitive recovery sweeps                 │
-   │  · phase-staggered: exactly 8 targets fire per 5-minute slot     │
+   │  · 28 targets, latency-sensitive recovery sweeps                 │
+   │  · phase-staggered: 7–8 targets fire per 5-minute slot         │
    └────────────────────────────┬─────────────────────────────────────┘
                                 │  POST /api/cleanup/<slug>?limit=N
                                 │  Authorization: Bearer $CRON_SECRET
@@ -134,7 +134,7 @@ All background work in this system comes from exactly one of two schedulers. Kno
    └────────────────────────────┬─────────────────────────────────────┘
                                 │
    ┌────────────────────────────▼─────────────────────────────────────┐
-   │  lib/cron/cleanup-registry.ts     56 slugs, one implementation   │
+   │  lib/cron/cleanup-registry.ts     57 slugs, one implementation   │
    │  → core module (scripts/** or jobs/**)  →  row in SystemJobExecution
    └──────────────────────────────────────────────────────────────────┘
 
@@ -151,7 +151,7 @@ All background work in this system comes from exactly one of two schedulers. Kno
 
 **The split, and why it matters.** Sub-hourly _recovery_ work — sweeps that clean up after a failure — runs on the Netlify ticker, because GitHub throttles scheduled workflows and a job asking for every hour can be measured delivering once per hundred minutes. Daily and weekly _business_ work — payouts, invoices, statutory filings — runs on GitHub Actions, where a few hours of delay is harmless.
 
-**Actions is not a backstop for the ticker.** This trips people up constantly. If a job is listed as a ticker target, it runs on the ticker and nowhere else unless a workflow also names it. Fourteen of the 27 targets have no workflow at all — including `auto-complete-appointments` and `detect-consultant-no-shows`, which both move money. **If GitHub Actions is down, those two still run and the batch fleet does not.** If Actions is down, Monday payouts do not happen.
+**Actions is not a backstop for the ticker.** This trips people up constantly. If a job is listed as a ticker target, it runs on the ticker and nowhere else unless a workflow also names it. Twenty-seven of the 28 targets have no workflow at all — including `auto-complete-appointments` and `detect-consultant-no-shows`, which both move money. **If GitHub Actions is down, those two still run and the batch fleet does not.** If Actions is down, Monday payouts do not happen.
 
 Both schedulers converge on the same Postgres lease, so a tick and an Actions run of the same job can never proceed together. The loser gets a 409.
 
