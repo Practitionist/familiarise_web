@@ -116,52 +116,23 @@ export async function recordSubscriptionAllocationCap(
     select: { id: true, appointmentIds: true },
   });
 
-  // Re-allocation deletes counted occurrences and recreates them with
-  // fresh ids, so an id-set diff alone re-debits every replaced session.
-  // Substitute stale tracked ids (no longer live on this subscription)
-  // with incoming ids 1:1 WITHOUT debiting; only ids beyond the
-  // substitution budget are genuinely additional sessions.
-  const tracked = existingUtil?.appointmentIds ?? [];
-  const alreadyTracked = new Set(tracked);
-  let idsToDebit = newOccurrenceIds.filter((id) => !alreadyTracked.has(id));
-  if (existingUtil) {
-    const liveIds = new Set(
-      (subscription.appointment?.occurrences ?? []).map((o) => o.id),
-    );
-    const trackedLive = tracked.filter((id) => liveIds.has(id));
-    const staleCount = tracked.length - trackedLive.length;
-    if (staleCount > 0) {
-      const substituted = idsToDebit.slice(0, staleCount);
-      idsToDebit = idsToDebit.slice(staleCount);
-      await tx.bookingUtilization.update({
-        where: { id: existingUtil.id },
-        data: { appointmentIds: [...trackedLive, ...substituted] },
-      });
-
-      // Sessions removed and not re-created give their engagement back
-      // through the ledger-derived reversal, which clamps to what is left.
-      const netRemoved = staleCount - substituted.length;
-      if (netRemoved > 0) {
-        await reverseBookingUtilization(tx, {
-          paymentId: orgPayment.id,
-          engagementsToReverse: netRemoved,
-          reason: "Subscription sessions removed during re-allocation",
-        });
-      }
-
-      if (idsToDebit.length === 0) return null;
-    }
-  }
+  const idsToDebit = await substituteReplacedSessions(tx, {
+    existingUtil,
+    liveOccurrenceIds: (subscription.appointment?.occurrences ?? []).map(
+      (o) => o.id,
+    ),
+    newOccurrenceIds,
+    paymentId: orgPayment.id,
+  });
+  if (idsToDebit.length === 0) return null;
 
   const sessionPrice = subscriptionSessionPrice(subscription, orgPayment);
   // A CREDIT_POOL draws its credit per session as sessions are booked; a
   // LICENSED_SEAT row carries the plan price once, on the first allocation.
-  const priceAtBookingPaise =
-    assignment.program?.type === "CREDIT_POOL"
-      ? idsToDebit.length * sessionPrice.unitPaise
-      : existingUtil
-        ? 0
-        : orgPayment.amount;
+  let priceAtBookingPaise = idsToDebit.length * sessionPrice.unitPaise;
+  if (assignment.program?.type !== "CREDIT_POOL") {
+    priceAtBookingPaise = existingUtil ? 0 : orgPayment.amount;
+  }
 
   // Not captured here — this only runs from createAppointments, itself only
   // reachable via allocate()'s try, whose catch reports every error
@@ -193,6 +164,47 @@ export async function recordSubscriptionAllocationCap(
     utilResult,
     consulteeUserId,
   });
+}
+
+/**
+ * Re-allocation deletes counted occurrences and recreates them with fresh ids.
+ * Stale tracked ids (no longer live) are substituted 1:1 by incoming ids
+ * without a debit, and sessions removed for good give their engagement back
+ * through the ledger-derived reversal. Returns the ids still to debit.
+ */
+async function substituteReplacedSessions(
+  tx: Tx,
+  params: {
+    existingUtil: { id: string; appointmentIds: string[] } | null;
+    liveOccurrenceIds: string[];
+    newOccurrenceIds: string[];
+    paymentId: string;
+  },
+): Promise<string[]> {
+  const tracked = params.existingUtil?.appointmentIds ?? [];
+  const alreadyTracked = new Set(tracked);
+  const incoming = params.newOccurrenceIds.filter(
+    (id) => !alreadyTracked.has(id),
+  );
+  const liveIds = new Set(params.liveOccurrenceIds);
+  const trackedLive = tracked.filter((id) => liveIds.has(id));
+  const staleCount = tracked.length - trackedLive.length;
+  if (!params.existingUtil || staleCount === 0) return incoming;
+
+  const substituted = incoming.slice(0, staleCount);
+  await tx.bookingUtilization.update({
+    where: { id: params.existingUtil.id },
+    data: { appointmentIds: [...trackedLive, ...substituted] },
+  });
+  const netRemoved = staleCount - substituted.length;
+  if (netRemoved > 0) {
+    await reverseBookingUtilization(tx, {
+      paymentId: params.paymentId,
+      engagementsToReverse: netRemoved,
+      reason: "Subscription sessions removed during re-allocation",
+    });
+  }
+  return incoming.slice(staleCount);
 }
 
 interface SubscriptionSessionPrice {
