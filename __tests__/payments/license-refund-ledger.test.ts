@@ -415,8 +415,18 @@ describe("charged batch overages on a partial refund then the remainder", () => 
     "../../lib/payments/billing/overage-transitions",
   );
 
+  // The WALLET leg collected the CHARGE_ORG marginal inside the booking payment.
+  const walletParent = {
+    billingAccountId: "ba-1",
+    legs: [
+      { id: "leg-w", source: "WALLET", amountPaise: GROSS, sourceRef: "a-1" },
+    ],
+  };
+
   it("credits them back once, on the refund that completes the full refund", async () => {
+    mockWalletCredit.mockResolvedValue({ ownerOrgId: ORG });
     payment = paymentRow({
+      ...walletParent,
       refunds: [{ id: "rf-0", amountPaise: GROSS / 4, status: "SUCCEEDED" }],
     });
     const partialTx = txStub();
@@ -436,7 +446,9 @@ describe("charged batch overages on a partial refund then the remainder", () => 
       expect.anything(),
     );
 
+    mockWalletCredit.mockClear();
     payment = paymentRow({
+      ...walletParent,
       refunds: [
         { id: "rf-0", amountPaise: GROSS / 4, status: "SUCCEEDED" },
         { id: REFUND_ID, amountPaise: (GROSS * 3) / 4, status: "SUCCEEDED" },
@@ -456,6 +468,13 @@ describe("charged batch overages on a partial refund then the remainder", () => 
       "REVERSED",
       expect.objectContaining({ reversedAt: expect.any(Date) }),
       { fromIn: ["CHARGED"] },
+    );
+    expect(mockWalletCredit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        billingAccountId: "ba-1",
+        amountPaise: (GROSS * 3) / 4,
+      }),
     );
     expect(rest.memberOverageRefundDue).toEqual({
       overagePaymentIds: ["side-1"],
