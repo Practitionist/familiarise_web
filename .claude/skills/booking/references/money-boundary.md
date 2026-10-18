@@ -259,6 +259,20 @@ to mark intent: a PENDING row reduces the refundable balance and makes the
 credits rail refuse. The older `Auto-refund pending:` family means "booking not
 confirmed, refund the whole capture" and is a different thing.
 
+A declared platform incident is one more door on this pattern. The
+`settle-platform-incidents` sweep (`scripts/appointments/settle-platform-incidents.ts`)
+writes one `IncidentRemedy` per seat and session, and a consultation, paid-trial
+or webinar remedy calls `refundIncidentSeat`
+(`lib/payments/operations/incident-refunds.ts`): it stamps the marker under
+`incident:<incident>:<occurrence>:<user>` for the full remaining balance
+(`amountPaise: null`), cancels a paid trial in that same commit, then drives the
+refund. A payment that already owes a different key is a marker conflict: the
+remedy counts an attempt and, at `MAX_REMEDY_ATTEMPTS` (3), is dead-lettered
+with the `dead-letter:` prefix for an operator. The refund re-checks under the
+appointment lock that the session is still `VOIDED`, so an ops un-void wins.
+`occurrenceRefundsPaise` and `voidRefundExists` read the `incident:` prefix, so
+never add a new refund-key family without teaching those two scans.
+
 How a gateway failure is classified decides who finishes the job
 (`refundBookingPayment` and `isDefinitiveRefundRefusal`). A **definitive**
 refusal (our own pre-checks, or Razorpay's 4xx validation class such as
@@ -313,3 +327,10 @@ one reliability strike in the same transaction: a `SystemEvent` on the
 public profile shows a notice at three strikes in 90 days
 (`EXPERT_STRIKE_THRESHOLD`), the completion rate reads them, and ops reads them
 from `GET /api/admin/sessions/expert-strikes`. No money is taken from the expert.
+
+No strike lands inside a declared platform incident. `classifySessionOutcome`
+returns `PLATFORM_OUTAGE` first when the booked interval overlaps a declared
+window at all (`overlapsDeclaredIncident` in `lib/booking/session-outcome.ts`);
+the no-show detector claims only `HOST_ABSENT`, and `countExpertStrikes` and
+`readExpertStrikeReview` drop any strike on an appointment that has a session
+overlapping a declared incident, even one recorded before the declaration.
