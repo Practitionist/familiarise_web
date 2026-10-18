@@ -10,8 +10,8 @@
  * ("Webinar is full"), zero 5xx, and the confirmed participant count never
  * exceeds maxParticipants.
  *
- * Uses mock payments (dev-only flag) so winners confirm instantly and the
- * capacity math is synchronous.
+ * Sends isMockPayment, honoured only by a development server; elsewhere the
+ * winner holds a PENDING seat that teardown releases through the API.
  */
 import "dotenv/config";
 import prisma from "../../../../../lib/prisma";
@@ -24,6 +24,10 @@ import {
   loginAs,
   ensureServerOrSkip,
 } from "../../utilities/api-client";
+import {
+  releasePendingHolds,
+  retireOrphanSucceededPayments,
+} from "../../utilities/teardown";
 import { countWebinarParticipants } from "../../../../../lib/payments/utils/participants";
 
 const STORM_SIZE = 3;
@@ -50,7 +54,9 @@ async function run() {
     },
   });
   if (!webinar?.appointment) {
-    console.log("⏭️  SKIP — no scheduled webinar with an appointment in seed data");
+    console.log(
+      "⏭️  SKIP — no scheduled webinar with an appointment in seed data",
+    );
     process.exit(0);
   }
 
@@ -77,6 +83,14 @@ async function run() {
     process.exit(0);
   }
 
+  const stormerIds = stormers.map((s) => s.id);
+  const sessions = [];
+  for (const s of stormers) {
+    sessions.push(await loginAs(s.email!));
+  }
+  // Holds left by an earlier run would be replayed as 200s instead of racing.
+  await releasePendingHolds(sessions, stormerIds);
+
   // Arm: exactly one free seat.
   const originalMax = webinar.webinarPlan.maxParticipants;
   await prisma.webinarPlan.update({
@@ -86,11 +100,6 @@ async function run() {
 
   const testStart = new Date();
   try {
-    const sessions = [];
-    for (const s of stormers) {
-      sessions.push(await loginAs(s.email!));
-    }
-
     const results = await Promise.all(
       sessions.map((session) =>
         apiFetch(`/api/checkout`, {
@@ -129,12 +138,12 @@ async function run() {
       include: {
         webinarPlan: true,
         appointment: {
-        include: {
-          participants: {
-            where: liveParticipant(),
-            select: { userId: true },
+          include: {
+            participants: {
+              where: liveParticipant(),
+              select: { userId: true },
+            },
           },
-        },
         },
       },
     });
@@ -152,20 +161,30 @@ async function run() {
       where: { id: webinar.webinarPlan.id },
       data: { maxParticipants: originalMax },
     });
-    const stormerIds = stormers.map((s) => s.id);
+    // PENDING holds unwind through the API; payment rows are never deleted
+    // under a PENDING/legs-sum state (payment_legs_sum_to_amount).
+    const pendingLeft = await releasePendingHolds(
+      sessions,
+      stormerIds,
+      testStart,
+    );
+    check("no PENDING storm payments left behind", pendingLeft === 0, {
+      pendingLeft,
+    });
     const createdPayments = await prisma.payment.findMany({
       where: {
         userId: { in: stormerIds },
         createdAt: { gte: testStart },
         appointment: { webinarId: webinar.id },
+        paymentStatus: "SUCCEEDED",
       },
       select: { id: true },
     });
     const paymentIds = createdPayments.map((p) => p.id);
-    // Financial children Restrict the payment (#781 §B) — a mock checkout
-    // mints earnings/utilization rows that must go first. The whole phase is
-    // fenced so a failure here can never abort the slot/enrollment cleanup
-    // below (occupancy is slot-based; a leftover payment is inert).
+    // A mock winner (dev server) is SUCCEEDED with earnings/utilization rows
+    // that Restrict the payment; legs and payment go in one transaction so the
+    // legs-sum trigger sees the payment gone at commit. Fenced so a failure
+    // never aborts the enrollment cleanup below.
     try {
       await prisma.consultantEarnings.deleteMany({
         where: { paymentId: { in: paymentIds } },
@@ -176,15 +195,21 @@ async function run() {
       await prisma.bookingUtilization.deleteMany({
         where: { paymentId: { in: paymentIds } },
       });
-      await prisma.paymentLeg.deleteMany({
-        where: { paymentId: { in: paymentIds } },
-      });
-      await prisma.payment.deleteMany({ where: { id: { in: paymentIds } } });
+      await prisma.$transaction([
+        prisma.paymentLeg.deleteMany({
+          where: { paymentId: { in: paymentIds } },
+        }),
+        prisma.payment.deleteMany({ where: { id: { in: paymentIds } } }),
+      ]);
     } catch (e) {
       console.warn(
         `⚠️ payment cleanup incomplete — rows left in place: ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`,
       );
     }
+    await retireOrphanSucceededPayments({
+      userId: { in: stormerIds },
+      createdAt: { gte: testStart },
+    });
     // Release any stormer's seat (winner or tentative residue) so reruns
     // start from the same occupancy (#1554: the seat is the participant row).
     await prisma.appointmentParticipant.deleteMany({

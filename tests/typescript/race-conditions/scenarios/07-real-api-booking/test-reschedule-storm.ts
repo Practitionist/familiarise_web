@@ -2,7 +2,7 @@
  * Test: Reschedule Storm (N concurrent reschedules of one appointment)
  * Category: 07 - Real API booking races (#837 scenario 10)
  *
- * Ten concurrent reschedules of the same appointment. Reschedule is
+ * Ten concurrent reschedules of a harness-owned appointment. Reschedule is
  * re-entrant (PENDING is itself reschedulable), so multiple winners are
  * legal — the invariants are: zero 5xx, terminal slots never resurrected,
  * and the appointment ends in a single coherent state (PENDING + all live
@@ -23,28 +23,50 @@ import {
 async function run() {
   await ensureServerOrSkip();
 
-  const appointment = await prisma.appointment.findFirst({
-    where: {
-      consultation: { status: { in: ["PENDING", "APPROVED"] } },
-      occurrences: { some: { completionStatus: "SCHEDULED" } },
-    },
-    select: { id: true, consultation: { select: { id: true } } },
-    skip: 1, // avoid the fixture used by cancel-vs-reschedule
+  // Own fixture: a PENDING consultation with one tentative slot far in the
+  // future, so the storm never shares or consumes the seeded pool.
+  const plan = await prisma.consultationPlan.findFirst({
+    where: { status: "PUBLISHED" },
+    select: { id: true, consultantProfileId: true },
   });
-  if (!appointment) {
-    console.log("⏭️  SKIP — no reschedulable consultation appointment in seed data");
+  const consultee = await prisma.consulteeProfile.findFirst({
+    select: { id: true },
+  });
+  if (!plan || !consultee) {
+    console.log(
+      "⏭️  SKIP — no published consultation plan or consultee in seed data",
+    );
     process.exit(0);
   }
-
-  // Capture the fixture so repeat runs do not consume the seed pool.
-  const originalConsultation = await prisma.consultation.findUniqueOrThrow({
-    where: { id: appointment.consultation!.id },
-    select: { status: true },
+  const startsAt = new Date(Date.now() + 400 * 24 * 60 * 60 * 1000);
+  startsAt.setUTCHours(3, 0, 0, 0);
+  const created = await prisma.consultation.create({
+    data: {
+      consultationPlanId: plan.id,
+      requestedById: consultee.id,
+      status: "PENDING",
+      appointment: {
+        create: {
+          appointmentType: "CONSULTATION",
+          occurrences: {
+            create: {
+              ordinal: 1,
+              startsAt,
+              endsAt: new Date(startsAt.getTime() + 60 * 60 * 1000),
+              isTentative: true,
+              completionStatus: "SCHEDULED",
+              consultantProfileId: plan.consultantProfileId,
+            },
+          },
+        },
+      },
+    },
+    select: { id: true, appointment: { select: { id: true } } },
   });
-  const originalSlots = await prisma.appointmentOccurrence.findMany({
-    where: { appointmentId: appointment.id },
-    select: { id: true, completionStatus: true, isTentative: true },
-  });
+  const appointment = {
+    id: created.appointment!.id,
+    consultation: { id: created.id },
+  };
 
   const terminalBefore = await prisma.appointmentOccurrence.count({
     where: {
@@ -58,11 +80,14 @@ async function run() {
   );
 
   const results = await fireConcurrent(10, () =>
-    apiFetch(`/api/appointments/${appointment.id}/reschedule?type=CONSULTATION`, {
-      method: "POST",
-      session: admin,
-      body: JSON.stringify({}),
-    }),
+    apiFetch(
+      `/api/appointments/${appointment.id}/reschedule?type=CONSULTATION`,
+      {
+        method: "POST",
+        session: admin,
+        body: JSON.stringify({}),
+      },
+    ),
   );
 
   const h = histogram(results);
@@ -70,7 +95,7 @@ async function run() {
   check("reschedule storm: zero 5xx", serverErrors === 0, h);
 
   const consultation = await prisma.consultation.findUnique({
-    where: { id: appointment.consultation!.id },
+    where: { id: appointment.consultation.id },
     select: { status: true },
   });
   check(
@@ -85,26 +110,18 @@ async function run() {
       completionStatus: { in: ["COMPLETED", "CANCELLED", "UNVERIFIED"] },
     },
   });
-  check(
-    "terminal slots never resurrected",
-    terminalAfter === terminalBefore,
-    { terminalBefore, terminalAfter },
-  );
-
-  // Restore the fixture for repeat runs.
-  await prisma.consultation.update({
-    where: { id: appointment.consultation!.id },
-    data: { status: originalConsultation.status },
+  check("terminal slots never resurrected", terminalAfter === terminalBefore, {
+    terminalBefore,
+    terminalAfter,
   });
-  for (const slot of originalSlots) {
-    await prisma.appointmentOccurrence.update({
-      where: { id: slot.id },
-      data: {
-        completionStatus: slot.completionStatus,
-        isTentative: slot.isTentative,
-      },
-    });
-  }
+
+  // Retire the fixture; the appointment and its slots cascade with it.
+  await prisma.bookingStatusHistory.deleteMany({
+    where: { entityId: appointment.consultation.id },
+  });
+  await prisma.consultation.delete({
+    where: { id: appointment.consultation.id },
+  });
 
   finish("reschedule-storm");
 }
