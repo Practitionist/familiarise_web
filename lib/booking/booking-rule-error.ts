@@ -24,7 +24,12 @@ export type BookingRuleCode =
   | "WINDOW_DURATION_MISMATCH"
   | "SEAT_REBUY_UNSUPPORTED"
   | "NOT_ACCEPTING_BOOKINGS"
-  | "ALREADY_REGISTERED";
+  | "ALREADY_REGISTERED"
+  | "RETURN_WINDOW_CLOSED"
+  | "RETURN_CAP_REACHED"
+  | "RETURN_RESCHEDULE_OPEN"
+  | "SESSION_NOT_RETURNABLE"
+  | "DISPUTE_ACTIVE";
 
 export class BookingRuleError extends Error {
   constructor(

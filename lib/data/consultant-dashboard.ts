@@ -40,6 +40,7 @@ import {
 import { Prisma, type EarningStatus } from "@prisma/client";
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
 import { getConsultantResponseRate } from "@/lib/booking/response-rate";
+import { countExpertStrikes } from "@/lib/booking/expert-reliability";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { toPlain } from "@/lib/data/serialize";
 import {
@@ -99,10 +100,10 @@ export const NON_HOST_UNVERIFIED_REASONS: readonly string[] = [
 ];
 
 /**
- * Computes the consultant's 30-day session completion rate percentage from
- * grouped occurrence counts, excluding non-host-fault UNVERIFIED outcomes
- * (maintenance windows, inconclusive Stream outages, nobody joined, or
- * consultee no-shows) and platform-outage voids from the denominator.
+ * The consultant's 30-day completion rate from grouped occurrence counts. Only
+ * host-attributed misses count against it (ADR session-outcomes D6): host
+ * voids, unexplained UNVERIFIED rows and reliability strikes (expert cancels of
+ * paid bookings, consultant no-shows). A consultee's cancel or return does not.
  */
 export function computeConsultantCompletionRate(
   slotCounts: ReadonlyArray<{
@@ -111,11 +112,11 @@ export function computeConsultantCompletionRate(
     unverifiedReason?: string | null;
     _count: number;
   }>,
+  strikes = 0,
 ): number | null {
   const countOf = (keep: (s: (typeof slotCounts)[number]) => boolean) =>
     slotCounts.filter(keep).reduce((sum, s) => sum + s._count, 0);
   const completedSlots = countOf((s) => s.completionStatus === "COMPLETED");
-  const cancelledSlots = countOf((s) => s.completionStatus === "CANCELLED");
   const unverifiedSlots = countOf((s) => {
     if (s.completionStatus !== "UNVERIFIED") return false;
     const reason = s.outcome ?? s.unverifiedReason ?? null;
@@ -128,7 +129,7 @@ export function computeConsultantCompletionRate(
       (HOST_ATTRIBUTED_OUTCOMES as readonly string[]).includes(s.outcome),
   );
   const completionDenom =
-    completedSlots + cancelledSlots + unverifiedSlots + hostVoidedSlots;
+    completedSlots + strikes + unverifiedSlots + hostVoidedSlots;
   return completionDenom > 0
     ? Math.round((completedSlots / completionDenom) * 100)
     : null;
@@ -655,6 +656,7 @@ export async function getConsultantDashboard(
     slotCounts,
     trialCounts,
     earningsByStatus,
+    recentStrikes,
   ] = await Promise.all([
     // The appointments Home renders, in one joined statement. readByIds skips
     // the read for an empty id list; every read below is consultant-scoped and
@@ -854,6 +856,10 @@ export async function getConsultantDashboard(
       by: ["status"],
       where: { consultantProfileId },
       _sum: { consultantSharePaise: true, refundedShareAmount: true },
+    }),
+    // 8. D10 — personal reliability strikes in the completion-rate window.
+    countExpertStrikes(consultantProfileId, thirtyDaysAgo, {
+      personalOnly: true,
     }),
   ]);
 
@@ -1069,7 +1075,10 @@ export async function getConsultantDashboard(
         : 0;
 
   // Session completion rate from slot counts
-  const completionRate = computeConsultantCompletionRate(slotCounts);
+  const completionRate = computeConsultantCompletionRate(
+    slotCounts,
+    recentStrikes,
+  );
 
   // Trial conversion rate
   const trialCountMap = new Map(trialCounts.map((t) => [t.status, t._count]));

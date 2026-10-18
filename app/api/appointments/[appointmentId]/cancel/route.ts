@@ -81,6 +81,7 @@ import {
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
+import { recordExpertStrike } from "@/lib/booking/expert-reliability";
 
 /** Audit attribution shared by every CAS this cancel drives (#1322 A12). */
 type CancelAuditMeta = {
@@ -808,6 +809,17 @@ export async function POST(
         consultantUserId === session.user.id) ||
       (isPrivilegedUser && session.user.id !== consulteeUserId) ||
       (isHostOrgOperator && session.user.id !== consulteeUserId);
+    // D10 — the expert side (not a platform admin) cancelling a paid booking earns one strike.
+    const hostProfileId =
+      appointment.consultation?.consultationPlan?.consultantProfileId ??
+      appointment.subscription?.subscriptionPlan?.consultantProfileId ??
+      appointment.webinar?.webinarPlan?.consultantProfileId ??
+      appointment.class?.classPlan?.consultantProfileId ??
+      null;
+    const isExpertSideCancel =
+      (!!session.user.consultantProfileId &&
+        consultantUserId === session.user.id) ||
+      (isHostOrgOperator && session.user.id !== consulteeUserId);
 
     let eventKind: "class" | "webinar" | null = null;
     if (appointment.class) eventKind = "class";
@@ -935,6 +947,16 @@ export async function POST(
                 )
               : null;
           if (owed) await stampRefundOwed(tx, owed);
+          const isPaidBooking =
+            paidPayment !== null || (attendees?.payerOf.size ?? 0) > 0;
+          if (isExpertSideCancel && isPaidBooking && hostProfileId) {
+            await recordExpertStrike(tx, {
+              consultantProfileId: hostProfileId,
+              cause: "EXPERT_CANCEL",
+              appointmentId,
+              organizationId: appointment.organizationId,
+            });
+          }
           if (eventKind && eventId) {
             await stampWholeEventRefundsOwed(tx, {
               kind: eventKind,

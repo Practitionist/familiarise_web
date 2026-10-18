@@ -318,6 +318,8 @@ function makeMockTx() {
       findUnique: jest.fn().mockResolvedValue({ status: "PENDING_REVIEW" }),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       create: jest.fn().mockResolvedValue({ id: "reschedule-request-1" }),
+      // The reschedule caps count prior proposals by initiator.
+      count: jest.fn().mockResolvedValue(0),
     },
   };
 }

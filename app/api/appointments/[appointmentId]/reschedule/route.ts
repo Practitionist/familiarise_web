@@ -71,6 +71,8 @@ import type { AppointmentType } from "@/lib/payments/payouts/constants";
 
 const MINIMUM_HOURS_BEFORE_RESCHEDULE = 24;
 const RESCHEDULE_REALLOCATION_BUFFER_MS = 7 * 24 * 60 * 60 * 1000;
+/** Expert-initiated reschedules one booking allows (D10); the next answers 409. */
+const MAX_EXPERT_RESCHEDULES = 2;
 
 /**
  * Which side is asking. Null for a privileged ADMIN/STAFF bypass, which is
@@ -449,19 +451,41 @@ export async function POST(
             }
           }
 
+          // Counted from the proposal rows, which survive the allocator's
+          // hard-delete of replaced occurrences; a withdrawal restores the
+          // original time, so it costs nothing.
+          const priorReschedules =
+            initiatorRole && !isPrivilegedUser
+              ? await tx.rescheduleRequest.count({
+                  where: {
+                    appointmentId,
+                    initiatorRole,
+                    status: { not: "WITHDRAWN" },
+                  },
+                })
+              : 0;
+          if (
+            initiatorRole === "CONSULTANT" &&
+            !isPrivilegedUser &&
+            priorReschedules >= MAX_EXPERT_RESCHEDULES
+          ) {
+            throw Object.assign(
+              new Error(
+                `You've already rescheduled this booking ${MAX_EXPERT_RESCHEDULES} times. ` +
+                  "If the time no longer works, cancel instead — the client gets a full refund.",
+              ),
+              { httpStatus: 409, code: "EXPERT_RESCHEDULE_CAP" },
+            );
+          }
           if (initiatorRole === "CONSULTEE" && !isPrivilegedUser) {
             const MAX_CONSULTEE_RESCHEDULES = 2;
-            const historicalRescheduledOccurrences =
-              appointment.occurrences.filter(
-                (o) => o.completionStatus === "RESCHEDULED",
-              ).length;
             const baselineSessionCount = Math.max(
               1,
               slotsToReschedule.length,
               liveOccurrences.length,
             );
             if (
-              historicalRescheduledOccurrences >=
+              priorReschedules >=
               MAX_CONSULTEE_RESCHEDULES * baselineSessionCount
             ) {
               throw Object.assign(

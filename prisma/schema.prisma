@@ -4057,6 +4057,10 @@ model Subscription {
   /// check-constraints banner.
   sessionsTotal Int?
 
+  /// Sessions the consultee returned to the plan; each extended
+  /// `schedulingPeriodEndsAt` by 7 days. CHECK 0..2 lives in prisma/sql.
+  sessionsReturned Int @default(0)
+
   appointment               Appointment?
   convertedFromTrial        Trial?
   // #1743 — nullable-unique continuity link for same-plan re-purchase renewals.

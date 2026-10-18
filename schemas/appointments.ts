@@ -70,6 +70,9 @@ export const RescheduleProposalSchema = z
   })
   .passthrough();
 
+/** Returning one subscription session to the plan; the path names the session, so the body carries nothing. */
+export const SessionReturnSchema = z.object({}).strict();
+
 /** A priced cancel quote from `GET /api/appointments/[id]/cancel/preview` or the trial twin. */
 const CancelRefundQuoteSchema = z.object({
   refundPct: z.number(),

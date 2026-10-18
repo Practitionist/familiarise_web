@@ -36,6 +36,7 @@ jest.mock("../../lib/prisma", () => ({
     },
     consultantReview: { aggregate: jest.fn() },
     bookingStatusHistory: { findMany: jest.fn() },
+    systemEvent: { count: jest.fn().mockResolvedValue(0) },
   },
 }));
 

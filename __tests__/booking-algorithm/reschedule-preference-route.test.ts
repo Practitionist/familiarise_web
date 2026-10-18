@@ -156,6 +156,7 @@ function makeMockTx() {
         .mockResolvedValue([{ id: "slot-1" }, { id: "slot-2" }]),
     },
     rescheduleRequest: {
+      count: jest.fn().mockResolvedValue(0),
       create: jest.fn().mockImplementation(({ data }) => {
         createdData = data;
         return Promise.resolve({ id: "rr-1" });

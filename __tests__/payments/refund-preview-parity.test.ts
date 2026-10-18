@@ -74,6 +74,8 @@ const txStub = {
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
   },
   bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
+  // An expert-side cancel of a paid booking writes a reliability strike.
+  systemEvent: { create: jest.fn().mockResolvedValue({}) },
   // transitionOccurrenceCompletion reads the from-status, then moves the cohort with
   // updateManyAndReturn so each moved id gets its own history row.
   appointmentOccurrence: {

@@ -89,6 +89,8 @@ jest.mock("../../lib/prisma", () => {
       create: jest.fn().mockResolvedValue({}),
     },
     maintenanceWindow: { findMany: jest.fn().mockResolvedValue([]) },
+    // The claim writes the expert's reliability strike.
+    systemEvent: { create: jest.fn().mockResolvedValue({}) },
     // The claim stamps the owed refund; the drive clears it by CAS.
     payment: { updateMany: async () => ({ count: 1 }) },
     refund: { findUnique: async () => null },

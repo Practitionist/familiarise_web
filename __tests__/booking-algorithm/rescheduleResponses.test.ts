@@ -202,6 +202,8 @@ function makeMockTx(appointmentData: any) {
       deleteMany: jest.fn(),
     },
     bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
+    // The reschedule caps count prior proposals by initiator.
+    rescheduleRequest: { count: jest.fn().mockResolvedValue(0) },
   };
 }
 

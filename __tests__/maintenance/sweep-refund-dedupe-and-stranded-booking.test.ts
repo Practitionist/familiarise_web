@@ -132,6 +132,8 @@ jest.mock("../../lib/prisma", () => {
       findUnique: async () => null,
     },
     failedEmail: { findMany: jest.fn().mockResolvedValue([]) },
+    // The no-show claim writes the expert's reliability strike.
+    systemEvent: { create: jest.fn().mockResolvedValue({}) },
     supportTicket: { findFirst: jest.fn().mockResolvedValue(null) },
     maintenanceWindow: { findMany: jest.fn().mockResolvedValue([]) },
     windowBackupInterest: {
