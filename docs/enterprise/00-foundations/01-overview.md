@@ -69,14 +69,14 @@ sponsored session end-to-end — the spine every other doc hangs detail off.
 `LICENSED_SEAT` program — the seeded `wipro` org) books a 1:1 consultation.
 Wipro's program covers 12 engagements/cycle at a ₹10,000/engagement cap; this
 booking is engagement #4 of the cycle, so it's in-cap (no overage). The hops
-below are the real call order in `lib/payments/operations/checkout.ts` →
+below are the real call order in `lib/payments/checkout/` (`orchestrate.ts`, then `commit/index.ts`) →
 `lib/payments/payouts/earnings-service.ts` → `lib/payments/ledger/post.ts`.
 
 ```mermaid
 sequenceDiagram
   autonumber
   actor M as Member (Wipro learner)
-  participant CO as Checkout<br/>(operations/checkout.ts)
+  participant CO as Checkout<br/>(lib/payments/checkout)
   participant PA as Program / Assignment
   participant ES as earnings-service
   participant L as Ledger (postLedgerTxn)

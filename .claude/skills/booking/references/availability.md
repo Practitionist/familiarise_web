@@ -77,13 +77,13 @@ at least eight names and fall into three genuinely different behaviours, plus a
 fourth category that is not an atom at all. Read the table before assuming two
 of them can be swapped.
 
-| Declaration                                                                            | File                                                                                                                                                                                                    | Behaviour                                                                                                                                                                                                                                      |
-| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SLOT_GRID_MS`                                                                         | `lib/payments/utils/slot-validation.ts`                                                                                                                                                                 | **Rejects off-grid.** `slotStartRefusal` refuses a client-picked start with `SLOT_NOT_ON_GRID` when `start % 30min !== 0`. The only place 30 minutes is a constraint _on a timestamp_.                                                         |
-| `SLOT_ATOM_MS`                                                                         | `utils/appointmentlock.ts`                                                                                                                                                                              | **Floors to the grid.** `Math.floor(startsAt / SLOT_ATOM_MS) * SLOT_ATOM_MS`, then steps. Deliberately a superset: a `:15` start takes both the `:00` and `:30` atoms, so two writers can never hold disjoint keys for the same booked minute. |
-| `ATOM_MS`, `slidingIntervalMillis`, `SCHEDULING_INTERVAL_MS`, `SLOT_MS`, `thirtyMinMs` | `utils/scheduling-engine/availabilityCoverage.ts`, `utils/scheduling-engine/intervals.ts`, `lib/appointments/occurrences.ts`, `schemas/appointments.ts`, `utils/scheduling-engine/SchedulingService.ts` | **Steps from an arbitrary anchor.** Never consults the epoch — it steps from whatever start it is handed, so a window opening at `:15` yields `:15`/`:45` atoms.                                                                               |
-| `THIRTY_MIN_MS`                                                                        | `utils/scheduling-engine/intervals.ts`                                                                                                                                                                  | **Not an atom.** Used only as a `Math.floor(ms / X)` _bucket divisor_ for index keys in `buildAppointmentIndex` and in `lib/booking/overlap-meta.ts`. It has no window semantics, so "the atom" is the wrong name for it.                      |
-| `intervalDurationMs`                                                                   | `utils/scheduling-engine/interval-meta.ts`                                                                                                                                                              | **A duration, not a grid.** The "is this 30-minute interval already full?" threshold.                                                                                                                                                          |
+| Declaration                                                                            | File                                                                                                                                                                                      | Behaviour                                                                                                                                                                                                                                      |
+| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SLOT_GRID_MS`                                                                         | `lib/payments/utils/slot-validation.ts`                                                                                                                                                   | **Rejects off-grid.** `slotStartRefusal` refuses a client-picked start with `SLOT_NOT_ON_GRID` when `start % 30min !== 0`. The only place 30 minutes is a constraint _on a timestamp_.                                                         |
+| `SLOT_ATOM_MS`                                                                         | `utils/appointmentlock.ts`                                                                                                                                                                | **Floors to the grid.** `Math.floor(startsAt / SLOT_ATOM_MS) * SLOT_ATOM_MS`, then steps. Deliberately a superset: a `:15` start takes both the `:00` and `:30` atoms, so two writers can never hold disjoint keys for the same booked minute. |
+| `ATOM_MS`, `slidingIntervalMillis`, `SCHEDULING_INTERVAL_MS`, `SLOT_MS`, `thirtyMinMs` | `utils/scheduling-engine/availabilityCoverage.ts`, `utils/scheduling-engine/intervals.ts`, `lib/appointments/occurrences.ts`, `schemas/appointments.ts`, `lib/booking/allocation/search/` | **Steps from an arbitrary anchor.** Never consults the epoch — it steps from whatever start it is handed, so a window opening at `:15` yields `:15`/`:45` atoms.                                                                               |
+| `THIRTY_MIN_MS`                                                                        | `utils/scheduling-engine/intervals.ts`                                                                                                                                                    | **Not an atom.** Used only as a `Math.floor(ms / X)` _bucket divisor_ for index keys in `buildAppointmentIndex` and in `lib/booking/overlap-meta.ts`. It has no window semantics, so "the atom" is the wrong name for it.                      |
+| `intervalDurationMs`                                                                   | `utils/scheduling-engine/interval-meta.ts`                                                                                                                                                | **A duration, not a grid.** The "is this 30-minute interval already full?" threshold.                                                                                                                                                          |
 
 Only the exported `SCHEDULING_INTERVAL_MS` (`lib/appointments/occurrences.ts`) and
 `THIRTY_MIN_MS` (`utils/scheduling-engine/intervals.ts`) are importable, and
@@ -104,7 +104,7 @@ itself — a missing or soft-deleted `ConsultantProfile` returns
 `{ scheduleType: null, weeklyRows: [], customRows: [] }`, so a deleted expert
 publishes nothing whatever rows survived the deletion. As of wave 5 (#1323)
 exactly two callers enforce this inside their transaction: checkout
-(`lib/payments/operations/checkout.ts`), and the trial route
+(`revalidateInsideLock` in `lib/payments/checkout/revalidate.ts`), and the trial route
 (`app/api/trials/[trialId]/route.ts`), which throws
 `OutsideAvailabilityWindowError` even when the consultant is the one scheduling,
 because a trial is a booking.
@@ -123,7 +123,7 @@ whose 10:30 atom no row publishes, which checkout's union coverage then rejects.
 `ScheduleCalculationService` is a static date and duration utility, **not** the
 generator. Generation happens in two places that must agree:
 `processAvailabilitySlots` (`utils/scheduling-engine/intervals.ts`) for the grid and the
-private `SchedulingService.findAvailableSlots` for the allocator.
+`findAvailableSlots` (`lib/booking/allocation/search/find-available-slots.ts`) for the allocator.
 
 What makes them agree is that both project weekly rows through the same
 generator, `weeklyRowIntervalsInRange` (`utils/schedule/weekly-projection.ts`),
@@ -217,14 +217,16 @@ partial success returns `partial`, `placedSessions`, `requiredSessions` and
 so the client can offer the partial option instead of a dead end. The consultee
 learns of it through the Novu workflow `appointment-partially-scheduled`.
 
-`utils/scheduling-engine/SchedulingService.ts` is about 6,000 lines and owns all
-three modes, so find a path by function name (`allocate`, `autoAllocate`,
-`manualAllocate`, `useRequestedSlots`) rather than by scrolling. A pure-move split
-of the file is planned **(after Wave 2)**.
+The allocator lives in `lib/booking/allocation/`. `allocate` (`allocate.ts`) routes to
+one file per mode: `modes/auto.ts` (`autoAllocate`), `modes/manual.ts`
+(`manualAllocate`) and `modes/use-requested.ts` (`useRequestedSlots`). Each mode file
+takes its own locks and opens its own write transaction. The shared write steps
+are in `commit/`, the slot search in `search/`, and the multi-tab and replay guards
+in `guards.ts` and `idempotency.ts`.
 
 Allocation goes through **one handler route** as of #1702:
 `lib/scheduling/allocate-route.ts` carries the whole auth → limiter → Zod →
-`SchedulingService` → typed-error contract, and each of the four `PATCH …/allocate`
+`allocate` → typed-error contract, and each of the four `PATCH …/allocate`
 routes is a thin delegator that only resolves its own typed segment param. There
 is no per-event-type copy of the allocate logic to drift out of sync.
 
@@ -239,7 +241,7 @@ dialog and drop the row — every other code should keep the dialog open and
 refetch the grid, because the underlying request is still live and retriable.
 
 Also as of wave 5 (#1329), the co-host guard runs in **every** allocation mode:
-`SchedulingService.assertCollaboratorsFree` calls
+`assertCollaboratorsFree` (`lib/booking/allocation/collaborators.ts`) calls
 `assertCollaboratorsAvailableForWindows` (`lib/collaborators/availability.ts`)
 from all three paths, short-circuits for anything that is not a webinar or
 class, checks only `ACCEPTED` collaborators against live slots on a half-open

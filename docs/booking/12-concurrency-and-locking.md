@@ -8,13 +8,13 @@ The three mechanisms are described below in the order a request meets them.
 
 The first mechanism is a **Redis distributed lock**, acquired before the transaction opens. It serializes concurrent requests for the same resource across processes, so the expensive database work runs without contention in the common case. The lock functions live in `utils/appointmentlock.ts`.
 
-The second mechanism is **in-transaction re-validation**, which carries the real correctness guarantee — though the two booking paths enforce it differently. For a one-to-one interval, the allocation transaction (default Read Committed isolation) re-scans committed appointments for a conflict inside the transaction, and the `occurrence_no_confirmed_overlap` exclusion constraint is the database backstop: a concurrent overlap that slips past the scan is rejected at write time with Postgres `23P01`, which `SchedulingService.classifyError` maps to a 409. The payment webhook's own confirm-time recheck (#827) runs this same re-scan a second time, inside the Serializable transaction that confirms a captured payment, so that two concurrent capture webhooks for overlapping intervals cannot both confirm — under Serializable Snapshot Isolation one side aborts with Prisma `P2034` and retries into a `doubleBookingBlocked` result rather than a second confirmed occurrence (`lib/payments/webhooks/handlers.ts`). For a finite-capacity event, checkout opens the transaction at `isolationLevel: "Serializable"` and recounts participants (tentative-inclusive) via `AppointmentParticipant`; PostgreSQL serializable snapshot isolation then aborts the loser of a last-seat race with Prisma error `P2034`. In both cases the database, not the application, enforces the invariant.
+The second mechanism is **in-transaction re-validation**, which carries the real correctness guarantee — though the two booking paths enforce it differently. For a one-to-one interval, the allocation transaction (default Read Committed isolation) re-scans committed appointments for a conflict inside the transaction, and the `occurrence_no_confirmed_overlap` exclusion constraint is the database backstop: a concurrent overlap that slips past the scan is rejected at write time with Postgres `23P01`, which `classifyError` (`lib/booking/allocation/classify.ts`) maps to a 409. The payment webhook's own confirm-time recheck (#827) runs this same re-scan a second time, inside the Serializable transaction that confirms a captured payment, so that two concurrent capture webhooks for overlapping intervals cannot both confirm — under Serializable Snapshot Isolation one side aborts with Prisma `P2034` and retries into a `doubleBookingBlocked` result rather than a second confirmed occurrence (`lib/payments/webhooks/handlers.ts`). For a finite-capacity event, checkout opens the transaction at `isolationLevel: "Serializable"` and recounts participants (tentative-inclusive) via `AppointmentParticipant`; PostgreSQL serializable snapshot isolation then aborts the loser of a last-seat race with Prisma error `P2034`. In both cases the database, not the application, enforces the invariant.
 
 The third mechanism is the **`occurrence_no_confirmed_overlap` database exclusion constraint**, defined in `prisma/sql/check-constraints.sql`. It is a `btree_gist` `EXCLUDE` on `AppointmentOccurrence` keyed on `consultantProfileId WITH =` and `tstzrange("startsAt", "endsAt") WITH &&`, restricted to rows where `consultantProfileId IS NOT NULL`, `NOT "isTentative"`, `"deletedAt" IS NULL` and `"completionStatus" NOT IN ('CANCELLED', 'RESCHEDULED')`. The range is half-open, so back-to-back sessions do not conflict. A companion CHECK, `occurrence_confirmed_requires_consultant_chk`, forbids a confirmed live occurrence without a host id, so the exclusion cannot be bypassed with a null.
 
 The constraint covers only confirmed, non-tentative host rows. Every occurrence of every offering type (consultation, subscription, webinar, class and trial) carries its host's `consultantProfileId`, so a host can never hold two overlapping confirmed sessions of any type. It does not cover tentative holds, a co-host's time, a consultant booking as a client, a consultee's own overlapping bookings, or seat capacity; those are enforced by application code under the locks and the Serializable recounts described here, and the busy-time ledger planned for Wave 3 moves them into the database. The constraint is applied by the sidecar step (`npm run db:sidecars`), never by a plain `prisma db push`, which would not create it.
 
-**Source**: `utils/appointmentlock.ts`, `lib/payments/operations/checkout.ts`
+**Source**: `utils/appointmentlock.ts`, `lib/payments/checkout/locks.ts`, `lib/payments/checkout/commit/index.ts`
 
 ---
 
@@ -171,7 +171,7 @@ end
 
 ## Event Capacity Control
 
-Finite-capacity events — webinars and classes — must admit at most `maxParticipants` enrollments no matter how many buyers arrive at the same instant. There is no Redis counting semaphore for this; capacity is guarded entirely by the database. Two cooperating mechanisms enforce it, and `lib/payments/operations/checkout.ts` is the single source.
+Finite-capacity events — webinars and classes — must admit at most `maxParticipants` enrollments no matter how many buyers arrive at the same instant. There is no Redis counting semaphore for this; capacity is guarded entirely by the database. Two cooperating mechanisms enforce it, and `lib/payments/checkout/` is the single source (`locks.ts` for the mutex and the capacity read, `commit/index.ts` for the Serializable transaction).
 
 The first is a **per-event distributed mutex**, `lockEventCheckout` (key pattern `event-checkout:{appointmentType}:{eventOrPlanId}`). It serializes checkouts for one event so the common case never contends, and it fails closed: if Redis is unreachable, `lockEventCheckout` throws `EventCheckoutLockUnavailableError` (HTTP 503) rather than letting an unlocked buyer through, because an unlocked checkout could clear the same finite capacity twice. Genuine contention — another buyer already holding the lock — is a benign retry-later case that fails open with a "please try again" message.
 
@@ -219,12 +219,12 @@ sequenceDiagram
 
 All slot allocation and cancellation operations run inside Prisma interactive transactions. Transaction timeouts vary by operation complexity:
 
-| Operation                               | Timeout | Max Wait | Source                                              |
-| --------------------------------------- | ------- | -------- | --------------------------------------------------- |
-| Slot allocation (auto/manual/requested) | 120s    | Default  | `SchedulingService.ts`                              |
-| Appointment cancellation                | 30s     | 10s      | `appointments/[id]/cancel/route.ts`                 |
-| Payment / checkout transactions         | 30s     | 5s       | `lib/payments/operations/checkout.ts`               |
-| Webinar CRUD                            | 10s     | 5s       | `app/api/bookings/webinars/crud-with-plan/route.ts` |
+| Operation                               | Timeout                                  | Max Wait                                 | Source                                                            |
+| --------------------------------------- | ---------------------------------------- | ---------------------------------------- | ----------------------------------------------------------------- |
+| Slot allocation (auto/manual/requested) | `ALLOCATION_TX_TIMEOUT_MS` (30s default) | `ALLOCATION_TX_MAX_WAIT_MS` (8s default) | `lib/booking/allocation/modes/*.ts`, constants in `lib/prisma.ts` |
+| Appointment cancellation                | 30s                                      | 10s                                      | `appointments/[id]/cancel/route.ts`                               |
+| Payment / checkout transactions         | 25s                                      | Default                                  | `lib/payments/checkout/commit/index.ts`                           |
+| Webinar CRUD                            | 10s                                      | 5s                                       | `app/api/bookings/webinars/crud-with-plan/route.ts`               |
 
 The transaction provides two guarantees:
 

@@ -143,7 +143,7 @@ Familiarise never mutates balances via ad-hoc `UPDATE wallet SET balance = balan
 
 ```mermaid
 flowchart TB
-    subgraph Checkout["1. Multi-Leg Checkout (lib/payments/operations/checkout.ts)"]
+    subgraph Checkout["1. Multi-Leg Checkout (lib/payments/checkout/)"]
         CALC["deriveCheckoutAmount()<br/>(Pro-Rata Late Join + 48h Trial Credit + Promo + GST)"]
         LEGS["PaymentLeg Splitter<br/>(CARD | WALLET | INVOICE_ACCRUAL | OVERAGE_INVOICE_ACCRUAL | LICENSE | REFERRAL_CREDIT)"]
         TRIG1["Postgres Trigger: payment_legs_sum_to_amount<br/>(SUM(legs) == Payment.amountPaise)"]

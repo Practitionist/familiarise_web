@@ -2,7 +2,7 @@
 
 ## Overview
 
-Every direct-checkout booking — self-funded or employer-sponsored — enters through the **same** checkout operation (`handleCheckout()` in `lib/payments/operations/checkout.ts`); there is no separate B2B endpoint. (A request-mode booking is paid later through `createApprovalPaymentIntent()` and the approval pay-link, always by card.) What makes a booking org-funded is one optional input: when the client passes `organizationId`, checkout resolves the org's funding context up front and, for the sponsored funding sources, **skips the payment gateway entirely** — the appointment is confirmed in the same transaction with no webhook, no client payment step, and a synthetic payment-intent id.
+Every direct-checkout booking — self-funded or employer-sponsored — enters through the **same** checkout operation (`handleCheckout()` in `lib/payments/checkout/orchestrate.ts`); there is no separate B2B endpoint. (A request-mode booking is paid later through `createApprovalPaymentIntent()` and the approval pay-link, always by card.) What makes a booking org-funded is one optional input: when the client passes `organizationId`, checkout resolves the org's funding context up front and, for the sponsored funding sources, **skips the payment gateway entirely** — the appointment is confirmed in the same transaction with no webhook, no client payment step, and a synthetic payment-intent id.
 
 This document walks that rail from resolution to settlement, from the booking system's point of view. The payments-side view of the same seam (payment legs, refund audit rows, wallet lifecycle) is [`docs/payments/04-b2c-b2b-funding-seam.md`](../payments/04-b2c-b2b-funding-seam.md); the enterprise money model behind it is [`docs/enterprise/10-money-and-ledger/`](../enterprise/10-money-and-ledger/). For the ordinary gateway path this document builds on, read [10-checkout-payment-integration.md](./10-checkout-payment-integration.md) first.
 
@@ -19,7 +19,7 @@ The four funding sources behave as follows (`BillingAccount.fundingSource`, `pri
 
 ## The resolution chain
 
-When `validatedData.organizationId` is present, `handleCheckout()` resolves the org context before any pricing or locking (`lib/payments/operations/checkout.ts`). Each gate fails closed with a thrown error; the order below is the order in the code.
+When `validatedData.organizationId` is present, `handleCheckout()` resolves the org context before any pricing or locking (`resolveOrgFunding()` in `lib/payments/checkout/org-funding.ts`, called from `orchestrate.ts`). Each gate fails closed with a thrown error; the order below is the order in the code.
 
 1. **Org exists and may transact.** The org must be `ACTIVE` — or `PENDING_VERIFICATION`, which is allowed to transact only under the INVOICE credit-limit gate below (#687).
 2. **`canSponsor` gate.** An org not configured to sponsor bookings (`canSponsor: false`) is rejected outright.
@@ -55,7 +55,7 @@ Sponsored bookings consume **engagements** against the member's program cap (#71
 
 - **CONSULTATION / WEBINAR** debit **1** engagement at checkout.
 - **CLASS** debits **N** engagements at checkout — the count of class appointments the learner enrolled in, all known up front because the consultant pre-allocated the sessions (`classResult.engagementsConsumed`).
-- **SUBSCRIPTION** debits **nothing** at checkout (`engagementsForCap` stays `null`). Slots are allocated lazily by the consultant later, so the debit lands in `SchedulingService.createAppointments`, one per allocation batch.
+- **SUBSCRIPTION** debits **nothing** at checkout (`engagementsForCap` stays `null`). Slots are allocated lazily by the consultant later, so the debit lands in the allocator's `createAppointments` (`lib/booking/allocation/commit/create-appointments.ts`, through `subscription-cap.ts`), one per allocation batch.
 
 The debit is `recordBookingUtilization()`, which writes the `BookingUtilization` row and the `PaymentLeg` describing where the money or commitment actually came from. Breaching a `BLOCK`-behavior cap throws `ProgramAssignmentLimitError`, rolls the transaction back, and fires a bell notification to the assignee and org operators.
 
@@ -102,19 +102,19 @@ A request-mode booking that carries an organisation tag is still paid by card to
 
 ## Where to look
 
-The pointers below are the fastest paths into the code and the neighboring docs. They cite the file and the function or flag name, not a line number — `checkout.ts` has drifted 500-700 lines since this document was first line-cited, and will keep drifting.
+The pointers below are the fastest paths into the code and the neighboring docs. They cite the file and the function or flag name, not a line number — the checkout code has moved files and grown since this document was first line-cited, and will keep drifting.
 
-| Concern                                              | Location                                                                                                                                                                                                 |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Resolution chain + gates                             | `lib/payments/operations/checkout.ts`, inside `handleCheckout()`                                                                                                                                         |
-| ADR 18 allowlist/exclusivity (in-lock)               | `lib/payments/operations/checkout.ts`, the `revalidateInsideLock()` function; `docs/enterprise/70-design-decisions/18-open-b2b-b2c-boundary.md`                                                          |
-| Gateway skip + synthetic ids                         | `lib/payments/operations/checkout.ts`, the `isOrgWalletPayment` / `isOrgInvoicedPayment` / `isOrgLicensedPayment` / `isOrgSponsoredPayment` booleans and the `skipPayment` flag                          |
-| Wallet debit (atomic conditional updateMany)         | `lib/api/organizations/wallet.ts`, `walletDebit()`                                                                                                                                                       |
-| Engagement debits + caps                             | `recordBookingUtilization()` in `lib/api/organizations/program-helpers.ts`, called from `handleCheckout()`; lazy SUBSCRIPTION debit in `SchedulingService.createAppointments`                            |
-| Inline settlement + ledger posting                   | `lib/payments/operations/checkout.ts`, the sponsored-family branch of the settlement block; `lib/payments/payouts/earnings-service.ts`, `createEarningsFromPayment()`                                    |
-| Cancellation policy resolution + publishing          | `lib/payments/operations/cancellation-policy-store.ts`, `resolveCheckoutCancellationPolicyId()` and `publishOrgCancellationPolicy()`; the tier maths is `lib/payments/operations/cancellation-policy.ts` |
-| Payments-side seam (legs, refunds, wallet lifecycle) | `docs/payments/04-b2c-b2b-funding-seam.md`                                                                                                                                                               |
-| Enterprise money model                               | `docs/enterprise/10-money-and-ledger/`                                                                                                                                                                   |
+| Concern                                              | Location                                                                                                                                                                                                                                                                           |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Resolution chain + gates                             | `lib/payments/checkout/org-funding.ts` and `orchestrate.ts`, inside `handleCheckout()`                                                                                                                                                                                             |
+| ADR 18 allowlist/exclusivity (in-lock)               | `lib/payments/checkout/revalidate.ts`, the `revalidateInsideLock()` function; `docs/enterprise/70-design-decisions/18-open-b2b-b2c-boundary.md`                                                                                                                                    |
+| Gateway skip + synthetic ids                         | `lib/payments/checkout/orchestrate.ts` and `commit/payment-row.ts`, the `isOrgWalletPayment` / `isOrgInvoicedPayment` / `isOrgLicensedPayment` / `isOrgSponsoredPayment` booleans and the `skipPayment` flag                                                                       |
+| Wallet debit (atomic conditional updateMany)         | `lib/api/organizations/wallet.ts`, `walletDebit()`                                                                                                                                                                                                                                 |
+| Engagement debits + caps                             | `recordBookingUtilization()` in `lib/api/organizations/program-helpers.ts`, called from `handleCheckout()`; `recordCheckoutUtilization()` in `lib/payments/checkout/commit/org-utilization.ts`; lazy SUBSCRIPTION debit in `createAppointments` (`lib/booking/allocation/commit/`) |
+| Inline settlement + ledger posting                   | `lib/payments/checkout/commit/ledger.ts`, `recordSynchronousEarnings()`; `lib/payments/payouts/earnings-service.ts`, `createEarningsFromPayment()`                                                                                                                                 |
+| Cancellation policy resolution + publishing          | `lib/payments/operations/cancellation-policy-store.ts`, `resolveCheckoutCancellationPolicyId()` and `publishOrgCancellationPolicy()`; the tier maths is `lib/payments/operations/cancellation-policy.ts`                                                                           |
+| Payments-side seam (legs, refunds, wallet lifecycle) | `docs/payments/04-b2c-b2b-funding-seam.md`                                                                                                                                                                                                                                         |
+| Enterprise money model                               | `docs/enterprise/10-money-and-ledger/`                                                                                                                                                                                                                                             |
 
 ## Deprecated & Superseded Approaches
 

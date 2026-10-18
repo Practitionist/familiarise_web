@@ -23,7 +23,7 @@
  * helper decides coverage from the run's first start and last end.
  */
 
-// Boundary mocks. `lib/payments/operations/checkout` transitively imports the
+// Boundary mocks. `lib/payments/checkout` transitively imports the
 // auth stack through the payouts barrel, which is ESM-only under this Jest
 // transform; none of it is reached by the availability helper, which is handed
 // its own transaction client.

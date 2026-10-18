@@ -140,7 +140,7 @@ The API categorizes errors for client-side handling:
 
 ### 1.5 Checkout Idempotency (#828) and Per-Type Lock Budgets (#832)
 
-**`clientIdempotencyKey`** — callers may supply an optional `clientIdempotencyKey` (8–128 chars, validated by `checkoutSchema`). A unique DB index on this column ensures that a second `POST /api/checkout` with the same key returns the existing payment record instead of creating a duplicate. This makes client-side retry-on-network-error safe. (`schemas/checkout.ts` line ≈ 89; `lib/payments/operations/checkout.ts` line ≈ 2294.)
+**`clientIdempotencyKey`** — callers may supply an optional `clientIdempotencyKey` (8–128 chars, validated by `checkoutSchema`). A unique DB index on this column ensures that a second `POST /api/checkout` with the same key returns the existing payment record instead of creating a duplicate. This makes client-side retry-on-network-error safe. (`schemas/checkout.ts`; `writeCheckoutPayment()` in `lib/payments/checkout/commit/payment-row.ts`.)
 
 **`CHECKOUT_LOCK_TTL_MS`** — each `appointmentType` acquires a distributed lock before writing the tentative slot. The lock time-to-live varies by type to balance throughput vs. consistency:
 
@@ -182,32 +182,9 @@ The system supports multiple payment gateways with a unified interface:
 
 ### 2.2 Gateway Selection Logic
 
-**File:** `/lib/payments/operations/checkout.ts` (lines 75-96)
+**File:** `/lib/payments/checkout/orchestrate.ts`
 
-```typescript
-// Gateway selection based on currency and mode
-function selectPaymentGateway(
-  currency: string,
-  isMockPayment: boolean,
-): PaymentGateway {
-  if (isMockPayment) {
-    return PaymentGateway.STRIPE; // Mock uses Stripe format
-  }
-
-  switch (currency) {
-    case "USD":
-    case "EUR":
-    case "GBP":
-      return PaymentGateway.STRIPE;
-
-    case "INR":
-      return PaymentGateway.RAZORPAY;
-
-    default:
-      return PaymentGateway.STRIPE; // Default fallback
-  }
-}
-```
+The checkout route (`app/api/checkout/route.ts`) routes the gateway with `routeGateway` before calling `handleCheckout()`, and the `paymentGateway` field of `schemas/checkout.ts` is only a client hint. `handleCheckout()` then passes the routed gateway to `createPaymentIntent()` unchanged. Mock, zero-amount and org-funded checkouts skip the gateway call entirely.
 
 ### 2.3 Stripe Integration
 
@@ -435,24 +412,19 @@ All checkout data is stored in payment intent metadata for recovery:
 
 ### 3.3 Payment Record Creation
 
-**File:** `/lib/payments/operations/checkout.ts`
+**File:** `/lib/payments/checkout/commit/payment-row.ts` (`writeCheckoutPayment()`)
 
-Payment records are created in database BEFORE calling gateway:
+The gateway order is minted first (step 4 of `handleCheckout()`), and the `Payment` row is written inside the booking transaction (step 5, `commitCheckout()`) with the minted order id as `paymentIntent`. A gateway order therefore always lands on a durable row, or is cancelled and tombstoned if the transaction fails.
 
 ```typescript
-// Example for consultation (lines 118-147)
 const payment = await tx.payment.create({
   data: {
-    userId: userId,
-    amount: amount,
-    currency: currency,
-    paymentGateway: gateway,
-    paymentIntent: paymentIntentId,
-    appointmentId: null, // Linked after payment succeeds
+    paymentIntent: mintedOrder.id,
     paymentStatus: skipPayment
       ? PaymentStatus.SUCCEEDED
       : PaymentStatus.PENDING,
-    expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
+    expiresAt: skipPayment ? null : holdExpiresAt,
+    // ...amount, currency, gateway, buyer and org fields
   },
 });
 ```
@@ -1106,9 +1078,9 @@ stateDiagram-v2
 
 Two separate expiration windows exist — do not conflate them:
 
-| TTL                        | What it governs                                                                             | Value                                            | Source                                                          |
-| -------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------- |
-| `Payment.expiresAt`        | Gateway checkout session lifetime — the window in which the user must complete payment      | **30 minutes**                                   | `lib/payments/operations/checkout.ts` line ≈ 2307               |
+| TTL                        | What it governs                                                                             | Value                                            | Source                                                                |
+| -------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------- |
+| `Payment.expiresAt`        | Gateway checkout session lifetime — the window in which the user must complete payment      | **30 minutes**                                   | `DIRECT_CHECKOUT_HOLD_MS`, `lib/payments/constants.ts`                |
 | `isTentative` slot cleanup | Belt-and-braces sweep that frees orphaned tentative slots in case the webhook never arrived | **24 hours** (`TENTATIVE_EXPIRATION_HOURS = 24`) | `scripts/appointments/cleanup-tentative-occurrences.ts` line 28, #833 |
 
 The 24-hour slot-cleanup window replaced an earlier 7-day hold (#833 rationale: "gateway orders expire well inside a day, so a 7-day hold locked users out of rebooking for most of a week"). The `cleanup-abandoned-payments` job keys off `Payment.expiresAt` (30 min); the `cleanup-tentative-occurrences` job is a separate belt-and-braces sweep running every 2 hours.

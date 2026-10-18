@@ -63,16 +63,15 @@ export async function POST(req: NextRequest);
 | Appointment creation    | Created with `isTentative = true`, confirmed by webhook | Created with `isTentative = true`, payment marked `SUCCEEDED` inline |
 | Webhook dependency      | Required -- appointment not confirmed without it        | Not required -- status updated directly in `handleCheckout`          |
 
-**File**: `lib/payments/operations/checkout.ts` (lines ~1527-1533)
+**File**: `lib/payments/checkout/commit/payment-row.ts` (`writeCheckoutPayment`)
 
 ```typescript
-if (isMockPayment) {
-  await tx.payment.update({
-    where: { id: payment.id },
-    data: { paymentStatus: PaymentStatus.SUCCEEDED },
-  });
-}
+paymentStatus: skipPayment
+  ? PaymentStatus.SUCCEEDED
+  : PaymentStatus.PENDING,
 ```
+
+A mock payment sets `skipPayment`, so the row is written already `SUCCEEDED` in the same transaction as the booking.
 
 ### When to Use Mock Payments
 
@@ -135,13 +134,13 @@ Prisma Studio lets you browse all tables, filter by fields like `isTentative`, `
 1. **Seed or create** a consultant with availability and a consultation plan.
 2. **Checkout**: Call `POST /api/checkout` with `appointmentType: "CONSULTATION"`, a valid `planId`, and `startsAt`/`endsAt` within the consultant's availability. Set `isMockPayment: true` for local dev.
 3. **Verify**: The consultation should have `status: "PENDING"` and a tentative appointment.
-4. **Approve**: Use the consultant's dashboard Requests tab, or call `SchedulingService.allocate` directly with `mode: "requested"` to confirm the requested slots.
+4. **Approve**: Use the consultant's dashboard Requests tab, or call `allocate` (`lib/booking/allocation`) directly with `mode: "requested"` to confirm the requested slots.
 5. **Result**: `status` transitions to `APPROVED`, `isTentative` is cleared on all slots.
 
 ### b. Set Up a Subscription with Slot Allocation
 
 1. **Create subscription**: Checkout a subscription plan. This creates a subscription with `status: "PENDING"` and a placeholder appointment.
-2. **Auto allocation**: Call `SchedulingService.allocate({ eventType: "subscription", eventId, mode: "auto" })`. The service finds consecutive slots across weeks within the scheduling period and creates one appointment per session.
+2. **Auto allocation**: Call `allocate({ eventType: "subscription", eventId, mode: "auto" })`. The service finds consecutive slots across weeks within the scheduling period and creates one appointment per session.
 3. **Manual allocation**: Call with `mode: "manual"` and provide explicit `slots` array (ISO strings). Slots must be in multiples of `slotsPerCall` (e.g., 2 for 1-hour sessions).
 4. **Verify**: Check that `sessionsPerWeek` is not exceeded per Sunday-Saturday week. Use `SubscriptionValidationService.validateSubscriptionSlots` to validate before allocating.
 
@@ -221,7 +220,7 @@ npx jest --coverage
 
 | File                             | What It Tests                                                                                                                                                                                                                                                                                                                                                                 |
 | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `slotAllocationService.test.ts`  | `SchedulingService.allocate` -- mode routing (auto/manual/requested), duplicate detection, slot count validation, appointment creation, event data extraction, status updates, existing appointment deletion                                                                                                                                                                  |
+| `slotAllocationService.test.ts`  | `allocate` (`lib/booking/allocation`) -- mode routing (auto/manual/requested), duplicate detection, slot count validation, appointment creation, event data extraction, status updates, existing appointment deletion                                                                                                                                                         |
 | `slotCalculationService.test.ts` | `ScheduleCalculationService` -- week counting (`countWeeks`), `startOfWeekSunday`, duration validation, `calculateRequiredSlots` for all event types, `getSlotsPerCall`, `groupSlotsByDay`/`groupSlotsByWeek`, progress calculation                                                                                                                                           |
 | `slotValidationService.test.ts`  | `ScheduleValidationService.validate` -- future slot checks (5-second buffer), weekly/custom schedule matching, scheduling period boundaries, conflict detection, event-specific rules (consultation: same-day + consecutive, webinar: consecutive, class: weekly limits + session grouping), 30-minute fixed slot duration                                                    |
 | `allocationAlgorithms.test.ts`   | `AllocationAlgorithms` -- `manualAllocate` (validation, business rules) and `allocateRequestedSlots` (requested slot validation and delegation; formerly `preAllocate`). Auto mode is not covered here: the client auto-allocator was deleted in #997/#1132, and the server's picks are tested in `slotAllocationService.test.ts` and `preference-scored-allocation.test.ts`. |

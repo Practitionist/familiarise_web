@@ -148,7 +148,7 @@ Because `prisma/schema.prisma` is frozen at 155 models under Issue `#705`, all 3
 
 ### 3.3 Upgrade 3: 48-Hour Trial-to-Subscription 100% Fee Credit & Last-5-Min Upsell Drawer
 
-- **Existing Schema Models:** `Trial` (`id`, `consulteeProfileId`, `consultantProfileId`, `subscriptionPlanId`, `appointmentId`, `status`, `convertedToSubscriptionId`, `updatedAt`) and `Payment` / `deriveCheckoutAmount` (`lib/payments/operations/checkout.ts`).
+- **Existing Schema Models:** `Trial` (`id`, `consulteeProfileId`, `consultantProfileId`, `subscriptionPlanId`, `appointmentId`, `status`, `convertedToSubscriptionId`, `updatedAt`) and `Payment` / `deriveCheckoutAmount` (`lib/payments/checkout/pricing.ts`).
 - **Low-Level Implementation:**
   1. **Eligibility Rule (`lib/payments/operations/trial-credit.ts`):**
      - When a buyer initiates checkout for `SubscriptionPlan` $S$, `deriveCheckoutAmount` queries `prisma.trial.findFirst`:

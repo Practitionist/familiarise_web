@@ -216,7 +216,7 @@ The consultant's dashboard includes a **Requests** inbox (`components/dashboard/
 
 ### Reschedule-write contract (allocator)
 
-All three allocate paths (`autoAllocate`, `manualAllocate`, `deleteExistingAppointments` in `utils/scheduling-engine/SchedulingService.ts`) obey the same three rules:
+All three allocate paths (`autoAllocate` in `lib/booking/allocation/modes/auto.ts`, `manualAllocate` in `modes/manual.ts`, and `deleteExistingAppointments` in `commit/release-tentative.ts`) obey the same three rules:
 
 1. **Count releases, not tentatives.** `isReschedule` and the required-slot total derive from `releasedSessionCountOf` (live releases × `slotsPerCall`). The #1012 stale-tab guard (`assertExpectedTentativeSlotCount`) still compares tentative ROWS, because the page's `expectedTentativeSlotCount` is measured in rows.
 2. **Delete releases, not tentatives.** The `onlyTentative` branch frees only rows matching the canonical predicate (`isTentative + RESCHEDULED + live` in the delete's WHERE clause); coexisting fresh holds and crud-with-plan placeholders survive.
@@ -303,7 +303,7 @@ sequenceDiagram
     participant API_List as GET /api/bookings/inbox
     participant API_Alloc as POST /api/allocate
     participant DB as Database
-    participant Service as SchedulingService
+    participant Service as allocate (lib/booking/allocation)
 
     Con->>Tab: Opens the Requests inbox
     Tab->>API_List: Fetch the tab's cohort
@@ -320,7 +320,7 @@ sequenceDiagram
 
     alt Consultant clicks "Use Requested Times"
         Con->>API_Alloc: useRequestedSlots(eventType, eventId)
-        API_Alloc->>Service: SchedulingService.useRequestedSlots()
+        API_Alloc->>Service: useRequestedSlots()
         Service->>DB: Verify appointments exist
         Service->>DB: Verify slot count matches
         Service->>Service: Validate requested slots
@@ -331,7 +331,7 @@ sequenceDiagram
         API_Alloc-->>Con: Allocation complete
     else Consultant clicks "Allocate Slots"
         Con->>API_Alloc: autoAllocate(eventType, eventId)
-        API_Alloc->>Service: SchedulingService.autoAllocate()
+        API_Alloc->>Service: autoAllocate()
         Service->>DB: Fetch existing slots
         Service->>Service: Detect reschedule via tentative count
         Service->>Service: Calculate requiredSlots<br/>(nonTentative + tentative = original total)
@@ -358,7 +358,7 @@ sequenceDiagram
     participant DB as Database (Prisma)
     participant ConsultantUI as Consultant Frontend
     participant AllocateAPI as POST /allocate
-    participant SlotService as SchedulingService
+    participant SlotService as allocate (lib/booking/allocation)
 
     Note over Consultee,SlotService: PHASE 1: Consultee Initiates Reschedule
 
@@ -604,7 +604,7 @@ Note: The API returns `slotsAffected: 6` (slot count), not `sessionsAffected: 3`
 
 ## Reschedule Detection in Auto-Allocation
 
-When the consultant clicks "Allocate Slots" after a reschedule request, the `SchedulingService.autoAllocate()` method runs. This method must be reschedule-aware. Here is why and how.
+When the consultant clicks "Allocate Slots" after a reschedule request, the `autoAllocate()` function (`lib/booking/allocation/modes/auto.ts`) runs. This method must be reschedule-aware. Here is why and how.
 
 ### The Problem Without Detection
 
@@ -619,7 +619,7 @@ If the algorithm did not detect the reschedule, it would call `calculateRequired
 
 ### How Detection Works
 
-The algorithm inspects existing slot data before deciding how many slots to create (`SchedulingService.autoAllocate`):
+The algorithm inspects existing slot data before deciding how many slots to create (`autoAllocate`):
 
 ```typescript
 // Count existing slots by tentative status
@@ -1166,7 +1166,7 @@ Two refusals guard the accept path specifically, because accept is the action th
 
 ## Confirming a proposal without declining it (2026-09-05, #1340)
 
-Both confirmation paths — the consultee-initiated auto-confirm in `lib/booking/reschedule-auto-confirm.ts` and the explicit accept in `lib/booking/reschedule-respond.ts` — are one atomic transaction. They call `SchedulingService.allocate` in manual mode under the consultant-wide lock, so the full availability, cap and conflict validation happens before anything is written, and they pass an `inTx(tx)` hook. The allocator runs the hook inside its own transaction after the status compare-and-swap, and the hook closes the proposal from `PENDING_REVIEW` to `AUTO_ACCEPTED` or `ACCEPTED` (`closeConfirmedProposal` in `lib/booking/reschedule-confirm.ts`). If the proposal is no longer open, because it expired, was withdrawn or was declined in the meantime, the hook throws 409 `RESCHEDULE_NO_LONGER_OPEN` and the entire move rolls back. The booking therefore never moves while its proposal says something else. Earlier versions committed the move first and closed the proposal in a second transaction, which could leave a moved booking with a refusal in its audit trail.
+Both confirmation paths — the consultee-initiated auto-confirm in `lib/booking/reschedule-auto-confirm.ts` and the explicit accept in `lib/booking/reschedule-respond.ts` — are one atomic transaction. They call `allocate` (`lib/booking/allocation`) in manual mode under the consultant-wide lock, so the full availability, cap and conflict validation happens before anything is written, and they pass an `inTx(tx)` hook. The allocator runs the hook inside its own transaction after the status compare-and-swap, and the hook closes the proposal from `PENDING_REVIEW` to `AUTO_ACCEPTED` or `ACCEPTED` (`closeConfirmedProposal` in `lib/booking/reschedule-confirm.ts`). If the proposal is no longer open, because it expired, was withdrawn or was declined in the meantime, the hook throws 409 `RESCHEDULE_NO_LONGER_OPEN` and the entire move rolls back. The booking therefore never moves while its proposal says something else. Earlier versions committed the move first and closed the proposal in a second transaction, which could leave a moved booking with a refusal in its audit trail.
 
 The allocator's final act inside that transaction is `resolveConsumedPreferenceRequests`, which closes every open reschedule proposal whose released slots the newly placed times replace. That sweep exists because placing times on the calendar is itself an answer: a competing proposal must not keep holding its `openForAppointmentId` reservation once the session has been moved. Until #1340 the sweep had no way to tell a competing proposal from the one it was serving, so a confirmation superseded itself. The proposal was marked `DECLINED` inside the allocator's transaction, the caller's compare-and-swap then matched zero rows and threw `IllegalTransitionError`, and the booking moved while its audit trail recorded a refusal. Auto-confirm swallowed the error and answered `autoConfirmed: false` to a consultee whose session had already been rescheduled, and the explicit accept rethrew it as a `409` and never sent the MOVED notification.
 

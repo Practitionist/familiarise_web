@@ -150,7 +150,7 @@ As of #1766 the subscription's scheduling window is the first cycle only. The se
 
 ### 3c. Payment Processing
 
-**Handler:** `lib/payments/operations/checkout.ts` -> `handleCheckout()`
+**Handler:** `lib/payments/checkout/orchestrate.ts` -> `handleCheckout()`
 
 **Sequence:**
 
@@ -216,7 +216,7 @@ Allocation: PATCH /api/bookings/{subscriptions|classes}/[id]/allocate
 ScheduleValidationService (business rules)
     |
     v
-SchedulingService (Prisma transaction, 60s timeout)
+allocate (lib/booking/allocation; write transaction after the locks)
     |
     v
 Database: Appointment + AppointmentOccurrence records created
@@ -226,7 +226,7 @@ Database: Appointment + AppointmentOccurrence records created
 
 - `utils/scheduling-engine/ScheduleCalculationService.ts` -- Pure math, no DB. Counts weeks, calculates required slots, groups by day/week.
 - `utils/scheduling-engine/ScheduleValidationService.ts` -- Business rule validation. Checks conflicts, availability match, consecutive slots, weekly limits.
-- `utils/scheduling-engine/SchedulingService.ts` -- Main engine. Creates appointments in Prisma transactions with distributed locks.
+- `lib/booking/allocation/` -- The allocator. Each mode file takes the distributed locks and opens its own write transaction; `commit/create-appointments.ts` writes the occurrences.
 
 **Frontend hook:** `app/dashboard/consultant/[consultantId]/(features)/shared/hooks/useScheduling.ts`
 

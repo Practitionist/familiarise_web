@@ -1456,7 +1456,7 @@ model Membership {
   /// ADR 18 — org-declared exclusivity for internal consultants (pairs with
   /// payoutRecipient=ORGANIZATION). ENFORCED at checkout (#982): while an ACTIVE
   /// membership sets this flag, the consultant's independent (non-org-owned)
-  /// plans cannot be booked — see checkout.ts. The "hide" half (filtering those
+  /// plans cannot be booked — see lib/payments/checkout/pricing.ts. The "hide" half (filtering those
   /// plans out of marketplace listings) remains future work per the ADR.
   exclusiveEngagement Boolean @default(false)
 
@@ -1988,7 +1988,7 @@ model BookingUtilization {
   ///     the learner is being enrolled in (slots are pre-allocated by
   ///     the consultant; all appointments are known at enrolment time).
   ///   - SUBSCRIPTION: at slot-allocation time, 1 per consultant
-  ///     allocation — see SchedulingService.createAppointments. The
+  ///     allocation — see createAppointments in lib/booking/allocation/commit. The
   ///     subscription checkout itself does NOT write a utilization row.
   /// Reversal is the negative of this value via reverseBookingUtilization.
   engagementsConsumed Int               @default(1)
@@ -2035,7 +2035,7 @@ model BookingUtilization {
 /// checkout (#971): a Program with zero rows keeps the sponsor network open;
 /// once rows exist, an org-sponsored booking's consultant must be listed or
 /// the checkout is rejected under the distributed lock (see the ADR-18
-/// allowlist block in lib/payments/operations/checkout.ts).
+/// allowlist block in lib/payments/checkout/revalidate.ts).
 model ProgramConsultantAllowlist {
   id                  String            @id @default(uuid())
   programId           String
@@ -4647,7 +4647,7 @@ model Appointment {
 
   // Dedupe surface for allocation retries (client double-submit, webhook
   // redelivery): the allocate routes read the Idempotency-Key header and
-  // SchedulingService stamps it on the batch's first appointment. A
+  // The allocator (lib/booking/allocation) stamps it on the batch's first appointment. A
   // sequential replay (key already committed) is caught by the pre-check
   // and returns the original batch; a concurrent replay that races past
   // that pre-check instead trips @unique (P2002) and is converted to a 409

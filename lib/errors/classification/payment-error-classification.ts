@@ -270,7 +270,8 @@ const BUSINESS_ERROR_ENTRIES = [
     httpStatus: 422,
   },
   // #1426 — the wallet-freeze and consent guards throw with these codes
-  // (lib/payments/operations/checkout.ts:881, :1556, :2538) but had no
+  // (lib/payments/checkout: org-funding.ts, occupancy-validate.ts,
+  // commit/org-utilization.ts) but had no
   // BUSINESS_ERROR_CODES row, so classifyError's message-only fallback
   // mislabelled them 500 instead of the buyer-actionable rejection they are.
   {
