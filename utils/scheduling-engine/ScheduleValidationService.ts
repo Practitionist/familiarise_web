@@ -832,9 +832,10 @@ export class ScheduleValidationService {
             },
           ],
         },
-        include: {
+        select: {
+          id: true,
           occurrences: {
-            // The include carries the SAME predicate as the `some` filter
+            // This relation read carries the SAME predicate as the `some` filter
             // above: the JS matcher below treats every returned child as a
             // candidate conflict, so an unfiltered collection would let a
             // tombstoned slot of a qualifying appointment produce a
@@ -849,23 +850,26 @@ export class ScheduleValidationService {
             },
             select: { startsAt: true, endsAt: true },
           },
+          // Only what the occupancy rule and the conflict message read.
           consultation: {
-            include: {
-              consultationPlan: true,
+            select: {
+              status: true,
+              bookingSource: true,
               requestedBy: {
-                include: { user: true },
+                select: { user: { select: { id: true, name: true } } },
               },
             },
           },
           subscription: {
-            include: {
-              subscriptionPlan: true,
+            select: {
+              status: true,
+              bookingSource: true,
               requestedBy: {
-                include: { user: true },
+                select: { user: { select: { id: true, name: true } } },
               },
             },
           },
-          payment: true, // Need payment data to check expiry
+          payment: { select: { expiresAt: true, paymentStatus: true } },
           // #1721 QA — a group event names itself by plan title, so the
           // consultant's own conflict view is never a nameless "Booking".
           webinar: { select: { webinarPlan: { select: { title: true } } } },
