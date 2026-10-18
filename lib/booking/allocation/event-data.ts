@@ -10,6 +10,7 @@ import {
   EventConfig,
 } from "@/utils/scheduling-engine/types";
 import { intervalStartsOf } from "@/lib/appointments/occurrences";
+import { WEEKLY_COVERAGE_SELECT } from "@/utils/scheduling-engine/availabilityCoverage";
 import {
   sessionsTotalOf,
   subscriptionEntitlement,
@@ -266,13 +267,21 @@ export async function fetchEventData(
   /** AE-2 (#784) — the plan the co-host guard reads its collaborators from. */
   planId?: string | null;
 } | null> {
+  // Only rows that can still host a slot: every path refuses a past slot, so a
+  // custom row that has ended can never contain one.
   const consultantProfileSelect = {
     select: {
-      user: true,
+      user: { select: { id: true, timezone: true } },
       scheduleType: true,
-      availabilityWindowsWeekly: true,
-      availabilityWindowsCustom: true,
+      availabilityWindowsWeekly: { select: WEEKLY_COVERAGE_SELECT },
+      availabilityWindowsCustom: {
+        where: { endsAt: { gt: new Date() } },
+        select: { id: true, startsAt: true, endsAt: true },
+      },
     },
+  } as const;
+  const requestedBySelect = {
+    select: { user: { select: { id: true } } },
   } as const;
 
   let consultantProfile:
@@ -296,12 +305,20 @@ export async function fetchEventData(
     case "consultation": {
       const event = await db.consultation.findUnique({
         where: { id: eventId },
-        include: {
+        select: {
           consultationPlan: {
-            include: { consultantProfile: consultantProfileSelect },
+            select: {
+              durationInHours: true,
+              consultantProfile: consultantProfileSelect,
+            },
           },
-          requestedBy: { include: { user: true } },
-          appointment: { include: { occurrences: true } },
+          requestedBy: requestedBySelect,
+          appointment: {
+            select: {
+              organizationId: true,
+              occurrences: { select: { startsAt: true, endsAt: true } },
+            },
+          },
         },
       });
       if (!event) return null;
@@ -325,14 +342,32 @@ export async function fetchEventData(
     case "subscription": {
       const event = await db.subscription.findUnique({
         where: { id: eventId },
-        include: {
+        select: {
+          sessionsTotal: true,
+          schedulingPeriodStartsAt: true,
+          schedulingTimezone: true,
           subscriptionPlan: {
-            include: { consultantProfile: consultantProfileSelect },
+            select: {
+              totalSessions: true,
+              sessionsPerWeek: true,
+              durationInMonths: true,
+              sessionDurationInHours: true,
+              consultantProfile: consultantProfileSelect,
+            },
           },
-          requestedBy: { include: { user: true } },
+          requestedBy: requestedBySelect,
           appointment: {
-            include: {
-              occurrences: true,
+            select: {
+              organizationId: true,
+              occurrences: {
+                select: {
+                  startsAt: true,
+                  endsAt: true,
+                  completionStatus: true,
+                  isTentative: true,
+                  deletedAt: true,
+                },
+              },
               payment: { select: { organizationId: true } },
             },
           },
@@ -378,9 +413,14 @@ export async function fetchEventData(
     case "webinar": {
       const event = await db.webinar.findUnique({
         where: { id: eventId },
-        include: {
+        select: {
+          webinarPlanId: true,
           webinarPlan: {
-            include: { consultantProfile: consultantProfileSelect },
+            select: {
+              durationInHours: true,
+              organizationId: true,
+              consultantProfile: consultantProfileSelect,
+            },
           },
         },
       });
@@ -399,13 +439,21 @@ export async function fetchEventData(
     case "class": {
       const event = await db.class.findUnique({
         where: { id: eventId },
-        include: {
+        select: {
+          classPlanId: true,
+          schedulingPeriodStartsAt: true,
+          schedulingPeriodEndsAt: true,
+          schedulingTimezone: true,
           classPlan: {
-            include: {
+            select: {
+              sessionDurationInHours: true,
+              durationInMonths: true,
+              sessionsPerWeek: true,
+              totalSessions: true,
+              organizationId: true,
               consultantProfile: consultantProfileSelect,
             },
           },
-          appointment: { include: { occurrences: true } },
         },
       });
       if (!event) return null;

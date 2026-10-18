@@ -294,17 +294,17 @@ describe("checkSlotAvailability", () => {
   // matcher and produces a [CONFLICT] the parent filter just excluded
   // (CodeRabbit triage). End-to-end tombstone behavior is covered by the
   // grid-allocator-parity suite against a real database.
-  it("mirrors the parent slot predicate into the conflict query's include", async () => {
+  it("mirrors the parent slot predicate into the conflict query's occurrence read", async () => {
     await service.checkSlotAvailability(futureSlots(2), "user-1");
     const call = mockPrisma.appointment.findMany.mock.calls[0][0] as {
       where: Prisma.AppointmentWhereInput;
-      include: {
+      select: {
         occurrences: {
           where: { AND: Prisma.AppointmentOccurrenceWhereInput[] };
         };
       };
     };
-    const { where, include } = call;
+    const { where, select } = call;
     const andClauses = (where.AND ?? []) as Prisma.AppointmentWhereInput[];
     const parentFilter = andClauses.find(
       (clause) => clause.occurrences,
@@ -319,7 +319,7 @@ describe("checkSlotAvailability", () => {
             }
           ).some.AND
         : undefined;
-    const includeFilter = include.occurrences.where.AND;
+    const includeFilter = select.occurrences.where.AND;
     // Same three conditions, same order: envelope ×2, tombstone. #1554 — the
     // participant predicate sits on the appointment, not on the rows.
     expect(includeFilter).toEqual(slotFilter);
