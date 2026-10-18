@@ -165,14 +165,15 @@ WHERE u.email = 'testconsultee003@familiarise.com';
 
 INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
-  "consultantProfileId", "createdAt", "updatedAt"
+  "consultantProfileId", "createdAt", "updatedAt",
+  "utcOffsetMinutes", timezone, "localStartDay", "localStartMinutes", "localEndDay", "localEndMinutes"
 )
 VALUES
-  ('test-w003-mon', 'MONDAY',    240, 'MONDAY',    690, 'test-consultant-profile-003', NOW(), NOW()),
-  ('test-w003-tue', 'TUESDAY',   240, 'TUESDAY',   690, 'test-consultant-profile-003', NOW(), NOW()),
-  ('test-w003-wed', 'WEDNESDAY', 240, 'WEDNESDAY', 690, 'test-consultant-profile-003', NOW(), NOW()),
-  ('test-w003-thu', 'THURSDAY',  240, 'THURSDAY',  690, 'test-consultant-profile-003', NOW(), NOW()),
-  ('test-w003-fri', 'FRIDAY',    240, 'FRIDAY',    690, 'test-consultant-profile-003', NOW(), NOW())
+  ('test-w003-mon', 'MONDAY', 240, 'MONDAY', 690, 'test-consultant-profile-003', NOW(), NOW(), 330, 'Asia/Kolkata', 'MONDAY', 570, 'MONDAY', 1020),
+  ('test-w003-tue', 'TUESDAY', 240, 'TUESDAY', 690, 'test-consultant-profile-003', NOW(), NOW(), 330, 'Asia/Kolkata', 'TUESDAY', 570, 'TUESDAY', 1020),
+  ('test-w003-wed', 'WEDNESDAY', 240, 'WEDNESDAY', 690, 'test-consultant-profile-003', NOW(), NOW(), 330, 'Asia/Kolkata', 'WEDNESDAY', 570, 'WEDNESDAY', 1020),
+  ('test-w003-thu', 'THURSDAY', 240, 'THURSDAY', 690, 'test-consultant-profile-003', NOW(), NOW(), 330, 'Asia/Kolkata', 'THURSDAY', 570, 'THURSDAY', 1020),
+  ('test-w003-fri', 'FRIDAY', 240, 'FRIDAY', 690, 'test-consultant-profile-003', NOW(), NOW(), 330, 'Asia/Kolkata', 'FRIDAY', 570, 'FRIDAY', 1020)
 ON CONFLICT (id) DO NOTHING;
 
 -- Verify: should return 5 rows, each with startTimeUtc=240, endTimeUtc=690

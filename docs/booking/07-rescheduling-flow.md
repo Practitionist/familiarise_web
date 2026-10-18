@@ -698,7 +698,7 @@ flowchart LR
 
 ### Preserving Paid Appointments During Re-Allocation
 
-When the allocator clears an event's old slots before writing the new ones, it must not destroy any appointment that carries a `Payment`. Deleting such an appointment cascades to its `Payment`, which `ConsultantEarnings` references with `onDelete: Restrict`, so the cascade aborts the whole transaction. The allocator therefore preserves any payment-bearing appointment and strips only its slots.
+When the allocator clears an event's old slots before writing the new ones, it must not destroy any appointment that carries a `Payment`. Deleting such an appointment is refused by Postgres, because `Payment.appointment` is `onDelete: Restrict`, so the delete would abort the whole transaction. The allocator therefore preserves any payment-bearing appointment and strips only its slots.
 
 For subscriptions and classes this is sufficient, because their relation to `Appointment` is one-to-many: the allocator writes the new slots onto fresh appointment rows alongside the preserved one. Consultations and webinars are one-to-one (`consultationId` and `webinarId` are unique), so creating a second appointment for the same event would violate that unique constraint. For those two types the allocator instead reuses the preserved appointment, attaching the new slots to the existing row rather than creating a replacement (#898). The original payment, earnings, and cancellation-policy snapshot all stay attached, and a rescheduled webinar's enrolled attendees are re-linked to the new slots.
 

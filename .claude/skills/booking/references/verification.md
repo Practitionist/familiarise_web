@@ -103,8 +103,7 @@ The practical loop is a background dev server plus real HTTP calls, not schema
 pushes. Every seeded user shares one password, `SeedPass123!`
 (`prisma/seedFiles/1a-create-users.ts`, overridable with `SEED_PASSWORD`), stored
 as a bcrypt hash on a BetterAuth `Account` row with `providerId: "credential"`.
-The credential roster and the reseed recipe live in
-`docs/enterprise/90-audits/03-verification-guide.md` — and the reseed itself is a
+The credential roster lives in `docs/team/mock-credentials.md`; a reseed is a
 write against the shared project, with no production guard anywhere in
 `prisma/seed.ts`, so read §7 before running it; the booking- and
 money-specific walkthrough is `docs/testing/booking-finance-hardening-test-plan.md`.
@@ -149,7 +148,7 @@ worktree's `.env` symlinks to the same `DATABASE_URL`. `npm run db:push` is
 therefore a production operation, as are `--force-reset`, the seed scripts and
 the availability coalesce scripts (which is why those default to dry-run and
 require `--apply`). The reset itself is a scheduled, owner-approved event with
-its own procedure in `docs/prisma/02-pre-mvp-reset-runbook.md`. If a change needs
+its own procedure in `docs/prisma/README.md`. If a change needs
 new schema, say so and stop; do not push it to prove a test passes.
 
 Since #1322 merged, `db:push` on `dev` is push-then-sidecars-then-assert
@@ -188,7 +187,8 @@ occurrences, then the booking-status-history rows, then the appointment
 wrapper, then the consultation/subscription/plan row. A fixture that carried a
 mock payment deletes its own payment graph first (legs, and any
 `ConsultantEarnings` row the healer created against it), because
-`Payment.appointment` cascades on delete. The mock booking fixture
+`Payment.appointment` is `onDelete: Restrict`, so the appointment cannot be
+deleted while a Payment points at it. The mock booking fixture
 (`aaaaaaaa-…-aa01`) is never touched by any QA cleanup — it is a fixed,
 permanently-present fixture other tests and demos rely on.
 
@@ -214,3 +214,29 @@ state and cleans up. Conventions (`prompts/README.md`): the database is the
 arbiter, each case suffixes its ids and emails with its agent number, and each
 carries its rules inline. Add a case when a bug would not have been caught by a
 unit test.
+
+## 10. QA hygiene when you drive the Wave 0 cases
+
+- **Sentry may be quota-blind.** The free plan allows 5,000 errors a month, and a
+  flood can leave a preview ingesting nothing. Before concluding "no error was
+  raised", run `find_dropped_events` (Sentry MCP) or read the stats API for
+  `rate_limited`, then read the Netlify function logs for the preview deploy.
+  Refusal paths also write a `console.error` or a structured JSON line, for
+  example `approval_mint_order_unrecorded`.
+- **Report once per run.** A sweep records failures through
+  `createRunFailureReporter` and standing conditions through
+  `reportStandingFinding`, so expect at most one event per failing op per run and
+  one per distinct id per day. Ten failing rows are one event with `count: 10`,
+  not ten events.
+- **Retire synthetic webhook events.** A `WebhookEvent` you insert or replay
+  stays visible to `sweep-stuck-webhook-events` until it is terminal. Set
+  `error = 'permanent: qa fixture'` (the `permanent:` prefix is in
+  `TERMINAL_ERROR_PREFIXES` in `lib/webhooks/event-log.ts`) on every synthetic
+  row before cleanup so the sweep never re-drives it.
+- **Prefix every fixture** with the case's agent number and never touch a row a
+  real `Payment` points at; the database refuses the delete anyway.
+- **Seed availability with its local columns.** A weekly row with NULL `timezone`
+  or `local*` columns is refused by every reader, so a SQL-seeded row must set
+  `timezone`, `localStartDay`, `localStartMinutes`, `localEndDay` and
+  `localEndMinutes` as well as the UTC columns (the corpus convention is
+  Asia/Kolkata, offset 330, except the cases that name another zone).

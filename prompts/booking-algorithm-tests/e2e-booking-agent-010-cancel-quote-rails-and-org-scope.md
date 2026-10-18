@@ -198,10 +198,15 @@ Finally, promote the member to a role that holds `operations.read` and request
 the same scope.
 
 **Expected:** 200, and the result is now the org's rows without a user filter.
-Critically, it must contain **only rows the org owns** — a session this org
-merely _funded_ inside another org's event must NOT appear, because the detail
-page 404s any row whose `organizationId` is not this org (#1166 ORG-8). Prove
-it by creating one funded-elsewhere row and asserting it is absent.
+Critically, it must contain **only rows this org owns and paid for**: the row's
+`organizationId` is this org **and** a payment on it sits on a `WALLET`, `INVOICE`
+or `LICENSE` rail. A session this org merely _funded_ inside another org's event
+must NOT appear, because the detail page 404s any row whose `organizationId` is not
+this org (#1166 ORG-8), and a booking that checkout tagged with this org but a
+member paid for with their own card (the `PERSONAL` rail) must NOT appear either.
+Prove both by creating one funded-elsewhere row and one personal-rail org-tagged
+row, and asserting each is absent. Agent 017 exercises this alongside the sponsor
+allocate route.
 
 Also send a malformed `appointmentType`.
 
@@ -224,7 +229,7 @@ Also send a malformed `appointmentType`.
 | 9   | `?orgScope=` for a non-member                   | 403 `ORG_MEMBERSHIP_REQUIRED`             |
 | 10  | `?orgScope=all` for a non-privileged caller     | 403 `ALL_REQUIRES_PRIVILEGED_ROLE`        |
 | 11  | LEARNER passing their own org id                | 200, downgraded to their own rows         |
-| 12  | Org scope with `operations.read`                | owned rows only; funded-elsewhere absent  |
+| 12  | Org scope with `operations.read`                | org-paid owned rows only; funded-elsewhere and personal-rail absent |
 
 ---
 

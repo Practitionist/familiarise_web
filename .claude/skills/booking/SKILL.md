@@ -19,7 +19,7 @@ receipts. The four references carry the detail for a specific concern.
 
 ## Doctrine
 
-Six rules govern every change in this subsystem. Treat any diff that breaks one
+Seven rules govern every change in this subsystem. Treat any diff that breaks one
 as wrong until proven otherwise.
 
 ### 1. Every status write goes through a CAS transition helper
@@ -97,11 +97,14 @@ and the sweep expires without the restore and counts
 
 ### 2. Nothing that a Payment points at is ever deleted
 
-`Payment.appointment` cascades on delete, so deleting an Appointment destroys
-the Payment rows, the refund trail and the credit usage with it. A trial
-cancellation did exactly this once (#1074). The rule that replaced it is
-mechanical: **the payment guard rides inside the DELETE's WHERE clause**, never
-in an earlier read.
+`Payment.appointment` is `onDelete: Restrict` (`prisma/schema.prisma`), so
+Postgres refuses to delete an Appointment a Payment points at, and the delete
+throws instead of destroying the Payment rows, the refund trail and the credit
+usage. That backstop exists because a trial cancellation once deleted the
+appointment (#1074). The app rule is mechanical and sits in front of it: **the
+payment guard rides inside the DELETE's WHERE clause**, never in an earlier
+read, so a lost race becomes a clean zero-row answer rather than a thrown
+foreign-key error.
 
 The allocator's form is `tx.appointment.deleteMany({ where: { id, payment:
 { none: {} } } })`. A count of zero means a Payment committed between the read
@@ -119,7 +122,12 @@ tentative hold the same way, through `transitionOccurrenceCompletion` to `CANCEL
 with `deletedAt` set in the same call, so the row's history survives the
 release. If you think you need a delete on an Appointment or a confirmed slot,
 you are almost certainly wrong: reconcile in place, as `replaceContiguousSlotRun`
-does precisely so Stream `Meeting` and `Recording` rows survive.
+does precisely so Stream `Meeting` and `Recording` rows survive. The one
+remaining exception is the allocator, which still hard-deletes the superseded
+occurrences of a re-allocation (`SchedulingService.ts`), cascading their
+`Meeting`, attendance and feedback rows; it is replaced by release-by-status
+when the busy-time ledger lands **(planned)**. The reschedule cap therefore
+counts `BookingStatusHistory`, never occurrence rows (see the invariants table).
 
 Offerings obey the same rule (#1846 CT-02). The consultation-plan,
 subscription-plan, webinar and class DELETE routes run one Serializable
@@ -187,11 +195,11 @@ happened, never its content.
 The readable-status predicate is the same shape in `list-documents.ts` (through
 the parent `Appointment`, which is where a document's org lives) and
 `list-recordings.ts` (on the denormalized `organizationId` the org arm already
-pins). `resolveOrgScope`'s own `orgStatus` field is the better door and no caller
-passes it yet — read that field's docblock before assuming the resolver is
-refusing a DEACTIVATED org, because today it is not. A scope that reaches a
-consumer with neither the predicate nor the field is still open, and
-`/api/collaborations` is the one that is.
+pins). `resolveOrgScope`'s own `orgStatus` field is the other door:
+`app/api/collaborations/route.ts` passes the matched membership's
+`organization.status` and gates its org-hosted view on `ORG_SCOPE_READABLE_STATUSES`
+plus `catalog.manage`. Any other caller that omits `orgStatus` is not refused for
+a DEACTIVATED org by the resolver, so pass it or filter on the predicate.
 
 ### 5. An approved request that was never paid has one outcome: EXPIRED
 
@@ -264,10 +272,30 @@ cancel owns it.
 
 The schema is managed with `prisma db push`, not migrations, and everything
 currently in the database is seed data awaiting the one-time pre-MVP reset
-(`docs/prisma/02-pre-mvp-reset-runbook.md`). The doctrine is therefore to freeze
+(`docs/prisma/README.md`). The doctrine is therefore to freeze
 the schema shape before launch, have every code path write the new tables from
 day one, and never write a data migration for pre-reset rows. This is why wave 5
 added `AppointmentParticipant` and `BookingStatusHistory` with no backfill.
 Several constraints are staged behind a commented banner at the end of
 `prisma/sql/check-constraints.sql` because they cannot pass against pre-reset
 data; do not uncomment them outside the reset window.
+
+### 7. The Wave 0 invariants are enforced by code, so keep them
+
+Each row names what makes it true. The detail is in the reference named in the
+last column; do not weaken a row without changing its enforcer in the same PR.
+
+| Invariant                                                                                                                                                                                                                                                             | Enforcer                                                                                                                                                                                        | Detail                             |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| Allocation is host-side only. The consultee never allocates; a host-org operator allocates only inside the expert's published availability (`override`, `allowPartial` and `topUp` are expert and staff only).                                                        | `resolveEventHostActor` in `lib/auth-helpers.ts` (403 `ALLOCATE_FORBIDDEN`) and `canOverride` in `lib/scheduling/allocate-route.ts`.                                                            | `references/concurrency.md` §9     |
+| A sponsor org allocates only a booking the expert already approved.                                                                                                                                                                                                   | The org allocate route (`app/api/organizations/[orgId]/appointments/[appointmentId]/allocate/route.ts`): 409 `EXPERT_APPROVAL_REQUIRED`, plus `approvableFrom: [APPROVED]` in the CAS.          | `references/concurrency.md` §9     |
+| A webinar or class status never changes through an update. Cancel is the only door, because it owns refunds and history.                                                                                                                                              | Zod `status` probe plus 409 `USE_CANCEL_ROUTE` in the webinar and class PUT routes; `EventEditorStatusSchema` allows only DRAFT and SCHEDULED.                                                  | `references/concurrency.md` §9     |
+| A window is sold only at the plan's own length.                                                                                                                                                                                                                       | `assertWindowMatchesPlanDuration` (`lib/booking/slot-validation.ts`), called by request-for-approval, checkout and trials: 400 `WINDOW_DURATION_MISMATCH`.                                      | `references/money-boundary.md` §8  |
+| A minted order always lands on a durable row. An approval pay-link writes a pre-mint `Payment` before the gateway call; a re-buy re-mints in place and tombstones the old intent; a capture on an order with no row is adopted through the order's server-side notes. | `createApprovalPaymentIntent` (`lib/payments/operations/approval-payment.ts`), `tombstoneAbortedGatewayOrder` (`checkout.ts`), `adoptPreMintRow` (`lib/payments/webhooks/handlers.ts`).         | `references/money-boundary.md` §9  |
+| A refund a door owes is never lost. The door stamps the per-payment `refundOwed*` marker in the commit that ends the booking, drives the refund under its key, and a sweep re-drives it.                                                                              | `stampRefundOwed` and `driveRefundOwed` (`lib/payments/operations/refund-owed.ts`), the `retry-auto-refunds` sweep, and the unique `Payment.refundOwedKey`.                                     | `references/money-boundary.md` §10 |
+| The refund charged is the refund the dialog showed.                                                                                                                                                                                                                   | `assertQuoteMatchesClick` in the cancel route: 409 `REFUND_QUOTE_CHANGED` when `expectedRefundPaise` differs from the quote computed inside the cancel transaction.                             | `references/money-boundary.md` §10 |
+| A sweep touches only the lapsed buyer's rows and cannot starve the queue behind it.                                                                                                                                                                                   | `lapsedPendingPayment` in `scripts/payments/cleanup-abandoned-payments.ts`; `startDeadline` (`lib/cron/run-deadline.ts`) in the session-outcome sweeps; `updatedAt` rotation past a poison row. | `references/concurrency.md` §10    |
+| Every occupancy reader uses one definition of "still holds its time".                                                                                                                                                                                                 | `OCCUPYING_OCCURRENCE_WHERE` (`utils/scheduling-engine/occupancyPolicy.ts`).                                                                                                                    | `references/availability.md` §5    |
+| A subscription session is returned only 24 h or more ahead, twice per plan. Reschedules per side are capped from history; an expert's cancel or no-show records a strike.                                                                                             | `returnSessionToPlan` and the `subscription_sessions_returned_range` CHECK; `priorReschedules` (`lib/booking/reschedule-caps.ts`); `recordExpertStrike` (`lib/booking/expert-reliability.ts`).  | `references/money-boundary.md` §11 |
+| A weekly row means a local wall-clock window in its own IANA zone.                                                                                                                                                                                                    | `weeklyRowIntervalsInRange` (`utils/schedule/weekly-projection.ts`); a row with NULL local columns is refused by `partitionWeeklyRows`.                                                         | `references/availability.md` §1    |
+| A sweep reports to Sentry once per run, and a standing finding once per distinct id per day.                                                                                                                                                                          | `createRunFailureReporter` (`lib/observability/run-failures.ts`) and `reportStandingFinding` (`lib/observability/standing-finding.ts`).                                                         | `references/verification.md` §10   |

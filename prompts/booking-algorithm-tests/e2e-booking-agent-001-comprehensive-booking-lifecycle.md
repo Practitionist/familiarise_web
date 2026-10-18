@@ -237,29 +237,30 @@ Create weekly availability for the consultant: Monday-Friday, 10:00-17:00 IST (0
 INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
   "consultantProfileId",
-  "createdAt", "updatedAt"
+  "createdAt", "updatedAt",
+  "utcOffsetMinutes", timezone, "localStartDay", "localStartMinutes", "localEndDay", "localEndMinutes"
 )
 VALUES
   -- Monday 10:00-13:00 IST = 04:30-07:30 UTC = 270-450 min
-  ('test-weekly-slot-mon-am', 'MONDAY', 270, 'MONDAY', 450, 'test-consultant-profile-001', NOW(), NOW()),
+  ('test-weekly-slot-mon-am', 'MONDAY', 270, 'MONDAY', 450, 'test-consultant-profile-001', NOW(), NOW(), 330, 'Asia/Kolkata', 'MONDAY', 600, 'MONDAY', 780),
   -- Monday 14:00-17:00 IST = 08:30-11:30 UTC = 510-690 min
-  ('test-weekly-slot-mon-pm', 'MONDAY', 510, 'MONDAY', 690, 'test-consultant-profile-001', NOW(), NOW()),
+  ('test-weekly-slot-mon-pm', 'MONDAY', 510, 'MONDAY', 690, 'test-consultant-profile-001', NOW(), NOW(), 330, 'Asia/Kolkata', 'MONDAY', 840, 'MONDAY', 1020),
   -- Tuesday AM
-  ('test-weekly-slot-tue-am', 'TUESDAY', 270, 'TUESDAY', 450, 'test-consultant-profile-001', NOW(), NOW()),
+  ('test-weekly-slot-tue-am', 'TUESDAY', 270, 'TUESDAY', 450, 'test-consultant-profile-001', NOW(), NOW(), 330, 'Asia/Kolkata', 'TUESDAY', 600, 'TUESDAY', 780),
   -- Tuesday PM
-  ('test-weekly-slot-tue-pm', 'TUESDAY', 510, 'TUESDAY', 690, 'test-consultant-profile-001', NOW(), NOW()),
+  ('test-weekly-slot-tue-pm', 'TUESDAY', 510, 'TUESDAY', 690, 'test-consultant-profile-001', NOW(), NOW(), 330, 'Asia/Kolkata', 'TUESDAY', 840, 'TUESDAY', 1020),
   -- Wednesday AM
-  ('test-weekly-slot-wed-am', 'WEDNESDAY', 270, 'WEDNESDAY', 450, 'test-consultant-profile-001', NOW(), NOW()),
+  ('test-weekly-slot-wed-am', 'WEDNESDAY', 270, 'WEDNESDAY', 450, 'test-consultant-profile-001', NOW(), NOW(), 330, 'Asia/Kolkata', 'WEDNESDAY', 600, 'WEDNESDAY', 780),
   -- Wednesday PM
-  ('test-weekly-slot-wed-pm', 'WEDNESDAY', 510, 'WEDNESDAY', 690, 'test-consultant-profile-001', NOW(), NOW()),
+  ('test-weekly-slot-wed-pm', 'WEDNESDAY', 510, 'WEDNESDAY', 690, 'test-consultant-profile-001', NOW(), NOW(), 330, 'Asia/Kolkata', 'WEDNESDAY', 840, 'WEDNESDAY', 1020),
   -- Thursday AM
-  ('test-weekly-slot-thu-am', 'THURSDAY', 270, 'THURSDAY', 450, 'test-consultant-profile-001', NOW(), NOW()),
+  ('test-weekly-slot-thu-am', 'THURSDAY', 270, 'THURSDAY', 450, 'test-consultant-profile-001', NOW(), NOW(), 330, 'Asia/Kolkata', 'THURSDAY', 600, 'THURSDAY', 780),
   -- Thursday PM
-  ('test-weekly-slot-thu-pm', 'THURSDAY', 510, 'THURSDAY', 690, 'test-consultant-profile-001', NOW(), NOW()),
+  ('test-weekly-slot-thu-pm', 'THURSDAY', 510, 'THURSDAY', 690, 'test-consultant-profile-001', NOW(), NOW(), 330, 'Asia/Kolkata', 'THURSDAY', 840, 'THURSDAY', 1020),
   -- Friday AM
-  ('test-weekly-slot-fri-am', 'FRIDAY', 270, 'FRIDAY', 450, 'test-consultant-profile-001', NOW(), NOW()),
+  ('test-weekly-slot-fri-am', 'FRIDAY', 270, 'FRIDAY', 450, 'test-consultant-profile-001', NOW(), NOW(), 330, 'Asia/Kolkata', 'FRIDAY', 600, 'FRIDAY', 780),
   -- Friday PM
-  ('test-weekly-slot-fri-pm', 'FRIDAY', 510, 'FRIDAY', 690, 'test-consultant-profile-001', NOW(), NOW())
+  ('test-weekly-slot-fri-pm', 'FRIDAY', 510, 'FRIDAY', 690, 'test-consultant-profile-001', NOW(), NOW(), 330, 'Asia/Kolkata', 'FRIDAY', 840, 'FRIDAY', 1020)
 ON CONFLICT (id) DO NOTHING;
 
 -- Also create one custom availability slot (for a specific date, e.g., next Saturday)
@@ -1300,9 +1301,10 @@ SELECT id, "requestStatus", "cancellationReason", "cancellationNotes", "cancelle
 FROM "Consultation"
 WHERE id = '<CONSULTATION_ID>';
 
--- The slots are SOFT-cancelled, not deleted. Deleting the appointment would
--- cascade its Payment rows away (the #1074 class), so the cancel route only
--- moves completionStatus from SCHEDULED/RESCHEDULED to CANCELLED.
+-- The slots are SOFT-cancelled, not deleted. Payment.appointment is ON DELETE
+-- RESTRICT, so the database itself refuses to delete an appointment a Payment
+-- points at; the cancel route only moves completionStatus from
+-- SCHEDULED/RESCHEDULED to CANCELLED.
 SELECT COUNT(*) AS "remainingSlots",
        COUNT(*) FILTER (WHERE "completionStatus" = 'CANCELLED') AS "cancelledSlots"
 FROM "AppointmentOccurrence"
@@ -1316,7 +1318,7 @@ SELECT id, "paymentStatus", amount
 FROM "Payment"
 WHERE "appointmentId" = '<APPOINTMENT_ID>';
 -- Expected: the same rows, statuses and amounts as before the cancel. A missing
--- row is the #1074 cascade, and a changed status or amount means the cancel
+-- row means someone deleted around the RESTRICT, and a changed status or amount means the cancel
 -- route is touching money it has no business touching.
 ```
 
@@ -1836,7 +1838,8 @@ succeed: both `[consultationId]` and `[subscriptionId]` export a `DELETE` whose
 whole body is a 405. That handler is deliberate rather than vestigial — it
 answers `code: "DELETE_NOT_SUPPORTED"` and names the cancel route in its message,
 which a bare framework 405 would not, and it is what replaced the raw
-`prisma.consultation.delete` that used to cascade Payment rows away.
+`prisma.consultation.delete`; `Payment.appointment` is now `onDelete: Restrict`,
+so a delete of a paid appointment fails at the database instead of cascading.
 
 | Route                                                         | Methods exported        | Purpose                                                     |
 | ------------------------------------------------------------- | ----------------------- | ----------------------------------------------------------- |

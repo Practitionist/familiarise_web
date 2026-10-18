@@ -136,29 +136,44 @@ The final backstops are not in `schema.prisma`. They live in `prisma/sql/`
 applied after a schema push. The one that matters most here is
 `occurrence_no_confirmed_overlap` on `AppointmentOccurrence`: `EXCLUDE USING gist
 ("consultantProfileId" WITH =, tstzrange("startsAt", "endsAt") WITH &&) WHERE
-("consultantProfileId" IS NOT NULL AND NOT "isTentative" AND "deletedAt" IS NULL)`.
-That predicate has three consequences — tentative rows and rows with a null
+("consultantProfileId" IS NOT NULL AND NOT "isTentative" AND "deletedAt" IS NULL
+AND "completionStatus" NOT IN ('CANCELLED', 'RESCHEDULED'))`.
+That predicate has four consequences — tentative rows and rows with a null
 `consultantProfileId` (webinar and class attendee slots) are deliberately
 outside its reach, a tombstoned row (a cancel or a hold release keeps the row
 as CANCELLED with `deletedAt` set) no longer blocks the time it used to hold
-(#1694), and half-open `tstzrange` means back-to-back slots do not conflict.
-On a live database the predicate is changed only through
-`scripts/db/swap-occurrence-overlap-constraint.ts`, which verifies, builds a
-shadow index concurrently and swaps under a lock timeout in one transaction.
+(#1694), a CANCELLED or RESCHEDULED row never blocks even when `deletedAt` is
+null, and half-open `tstzrange` means back-to-back slots do not conflict.
+It guards one host's own calendar and nothing else: **tentative holds, co-host
+seats, a consultant booking as a client, and attendee seats are not covered** and
+stay app-enforced (slot locks, `assertCollaboratorsFree`, the Serializable seat
+count) until the busy-time ledger lands **(planned)**. The app-level occupancy
+predicate is deliberately not the same as the constraint's: a RESCHEDULED row
+still occupies for readers (`OCCUPYING_OCCURRENCE_WHERE`), because a pending
+reschedule holds the original time until it resolves.
+The predicate lives only in `prisma/sql/check-constraints.sql` (a DROP then an
+ADD, applied by `scripts/db/apply-sidecars.ts`), so re-applying it on the shared
+database briefly removes the constraint: change it only in an owner-approved
+window, and never add a standalone swap script.
 Never assume the sidecars are present on a database you did not push to with
 the full chain.
 The neighbouring sidecar `appointment_occurrence_live_ordinal_key` is a
 partial unique index, not an exclusion constraint — it guards
 `("appointmentId", "ordinal")` only over live rows
-(`completionStatus NOT IN ('RESCHEDULED', 'CANCELLED') AND deletedAt IS NULL`),
+(`completionStatus NOT IN ('RESCHEDULED', 'CANCELLED', 'VOIDED') AND deletedAt IS NULL`),
 because a reschedule's replacement occurrence inherits its predecessor's
-`ordinal` and the superseded row must be free to keep it for history.
+`ordinal` and the superseded row must be free to keep it for history, and a
+VOIDED session is a miss whose make-up reuses the ordinal.
 
 ## 8. Serializable retries, and what may not run inside one
 
-`withSerializableRetry` (`lib/db/serializable-retry.ts`) retries **only**
-`P2034`, up to `SERIALIZABLE_MAX_RETRIES` (3) — four attempts total — with
-50/100/200 ms backoff plus jitter. Anything else (an `IllegalTransitionError`, a
+`withSerializableRetry` (`lib/db/serializable-retry.ts`) retries **only** the two
+transient rollbacks Postgres reports — `P2034` (SQLSTATE 40001, the driver
+adapter's mapping of a serialization failure) and a deadlock victim (40P01,
+detected by `isDeadlock` in `lib/db/pg-errors.ts` because the pinned adapter
+rethrows it unmapped) — up to `SERIALIZABLE_MAX_RETRIES` (3), four attempts
+total, with 50/100/200 ms backoff plus jitter. Each retry and each exhaustion
+emits a `db.serializable_retry` metric tagged with the reason. Anything else (an `IllegalTransitionError`, a
 validation error, a 409) propagates immediately, by design: a business rejection
 must never be retried into accidental success. Because the callback runs up to
 four times, nothing inside it may be non-idempotent; gateway calls,
@@ -173,3 +188,56 @@ detect it with `isExclusionViolation` from `lib/db/pg-errors.ts` (SQLSTATE
 model such constraints — prisma/prisma#25562, #26366), and `isUniqueViolation`
 there for `P2002`/`23505`. Never sniff error messages in business logic; that
 heuristic is quarantined in `pg-errors.ts` deliberately.
+
+## 9. Who may allocate, and what an update may not touch
+
+Allocation is a host-side act. The one handler behind the four `PATCH
+/api/bookings/{consultations|subscriptions|webinars|classes}/[id]/allocate`
+routes (`lib/scheduling/allocate-route.ts`) resolves the caller with
+`resolveEventHostActor` (`lib/auth-helpers.ts`) after `authorizeEventAccess`. Only
+ADMIN or STAFF (`staff`), the plan's own consultant (`consultant`) or an operator of
+the plan's host organisation (`host-org`) pass; the consultee, who is a
+participant, gets 403 `ALLOCATE_FORBIDDEN` and answers a time through reschedule.
+The check lives in the route, never in `SchedulingService`, because reschedule
+accept and auto-confirm call the service legitimately. A `host-org` operator
+allocates only inside the expert's published availability: the route ANDs
+`override`, `allowPartial` and `topUp` with `canOverride` (`hostActor !==
+"host-org"`) before dispatch.
+
+A sponsor organisation reaches the same service through `POST
+/api/organizations/[orgId]/appointments/[appointmentId]/allocate`. It must hold
+`appointments.allocate.calendarRead`, the booking must be funded by that org's own
+rail (`isOrgFundedByOrg`, else 403 `NOT_ORG_FUNDED`), and the request must already
+be APPROVED (else 409 `EXPERT_APPROVAL_REQUIRED`). The service call passes
+`approvableFrom: [APPROVED]`, so even a stale read cannot approve a PENDING request
+on the expert's behalf.
+
+A webinar or class `PUT` never changes `status`. The Zod body probes the field
+and the routes answer 409 `USE_CANCEL_ROUTE` when it is present; the editor's
+status intent is limited to DRAFT and SCHEDULED (`EventEditorStatusSchema` in
+`schemas/event-instance.ts`, `editorStatusOrRefusal` in
+`lib/api/plans/event-status.ts`). The cancel route is the only door because it
+owns refunds and history.
+
+## 10. Sweeps are scoped to the lapsed buyer and bounded in time
+
+The abandoned-payments sweep (`scripts/payments/cleanup-abandoned-payments.ts`)
+builds its include from `lapsedPendingPayment`, so the gateway cancel, the
+expiry, the credit restore and the seat release all see only the payment whose
+own hold has lapsed, never a sibling buyer's live checkout on the same group
+event. Credits and seats are gated on the per-row PENDING to EXPIRED win, the
+seat release moves HELD to CANCELLED only, on that payment's own appointment, and
+a skipped or failed unit rotates behind fresh ones by touching `updatedAt`.
+
+`auto-complete-appointments` and `detect-consultant-no-shows` keep their
+30-minute cadence and bite size but loop bites inside one cron lock until a bite
+reads a short cohort or `startDeadline` (`lib/cron/run-deadline.ts`,
+`SWEEP_START_DEADLINE_MS`) says the sweep must stop **starting** rows; a row in
+flight still finishes. Rows a bite read but left in the cohort are excluded by id
+from later bites. Trial expiry isolates each row, rotates a failed row by
+`updatedAt` and runs its arms in separate `try` blocks so the refund arm always
+runs. Per-row failures go through `createRunFailureReporter`
+(`lib/observability/run-failures.ts`), one Sentry event per failing op per run,
+and a standing condition goes through `reportStandingFinding`
+(`lib/observability/standing-finding.ts`), one event per distinct id per day;
+never capture inside a row loop.

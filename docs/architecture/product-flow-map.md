@@ -277,7 +277,7 @@ flowchart TD
     PayConfirm --> AllocMode{Allocation mode?}
 
     AllocMode -- Auto --> AutoAlloc["Consultant clicks auto-allocate\nRedis lock acquired\nSystem scores + picks best N slots\nsessionsPerWeek × weeks in period"]
-    AllocMode -- Manual --> ManualAlloc["Consultant hand-picks slot IDs\nPATCH /api/events/subscriptions/{id}/allocate"]
+    AllocMode -- Manual --> ManualAlloc["Consultant hand-picks slot IDs\nPATCH /api/bookings/subscriptions/{id}/allocate"]
     AllocMode -- Requested --> ReqSlots["Consultee proposed times at checkout\nConsultant approves\nuseRequestedSlots()"]
 
     AutoAlloc --> SlotsCreated["N Appointments created\nCalendar populated for both parties"]

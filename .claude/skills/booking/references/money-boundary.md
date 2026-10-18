@@ -101,7 +101,7 @@ change a tier, a proration denominator or a clamp, change it here.
 `Appointment.cancellationPolicySnapshot` was FROZEN and has since been **dropped** —
 it is no longer a column on `Appointment`, so there is nothing left to add a reader
 to. The only surviving trace of the name is a cross-reference comment in the
-`SupportTicket` SLA block (`prisma/schema.prisma:327`). Refund terms come from the
+`SupportTicket` SLA block of `prisma/schema.prisma`. Refund terms come from the
 typed rows via `cancellationPolicyId` alone. Loading and publishing live
 in `lib/payments/operations/cancellation-policy-store.ts`
 (`POLICY_TERMS_INCLUDE`, `termsFromPolicyRow`, `ensurePlatformCancellationPolicy`,
@@ -176,7 +176,13 @@ re-asserted after the lock is held, because a gate that ran before the lock is a
 gate a concurrent writer walked through:
 
 - The slot window against the union of published availability rows, atom by
-  atom (see `references/availability.md`).
+  atom (see `references/availability.md`), **and** against the plan's own
+  length: `assertWindowMatchesPlanDuration` (`lib/booking/slot-validation.ts`)
+  refuses a window whose length differs from the plan's duration with 400
+  `WINDOW_DURATION_MISMATCH`. Request-for-approval, direct checkout and the trial
+  route all call it, so a 6-hour window can no longer be sold at a 1-hour price.
+- A paused expert (`acceptingRequests = false`) refuses direct checkout and
+  trials with 409 `NOT_ACCEPTING_BOOKINGS`; existing bookings are unaffected.
 - Slot conflicts, via `validateSlotAvailability`, checkout's own in-transaction
   re-check. It subtracts `buildDeadHoldFilter(new Date())` from the occupancy
   query so a lapsed hold no longer blocks, and the consultee-side conflict reads
@@ -195,3 +201,115 @@ gate a concurrent writer walked through:
 
 The mint has its own guarded key nested under the approval lock, in the order
 approval → mint; see `references/concurrency.md` §1.
+
+**The row exists before the order does.** `createApprovalPaymentIntent`
+(`lib/payments/operations/approval-payment.ts`) writes a PENDING `Payment` whose
+`paymentIntent` is a `premint_` placeholder (`lib/payments/pre-mint-intent.ts`)
+before calling the gateway, stamps that row's id into the order's `notes` as
+`familiarisePaymentId` (first key, so Razorpay's 15-key cap never drops it), and
+then fills the real order id into the row by CAS on the placeholder. A crash
+between the two writes leaves a placeholder row that the lapsed pay-link sweep
+retires. If the fill fails, the minted order is recorded as an EXPIRED tombstone
+(`tombstoneAbortedGatewayOrder` in `checkout.ts`, `appointmentId: null`) and the
+placeholder row is expired, so a later capture on that order is auto-refunded
+instead of landing on no row. A re-mint reuses the same row in place
+(`claimRowForRemint`), keeping its id, user and appointment, and tombstones the
+**old** intent so a payment on the old order is still matched.
+
+**A capture on an order with no row is adopted, not guessed.** When
+`handlePaymentSuccess` (`lib/payments/webhooks/handlers.ts`) finds no row for the
+captured order, `verifiedPreMintAdoption` fetches the order from Razorpay
+server-side (a client's notes are never trusted; a gateway failure throws so the
+webhook is retried) and reads `familiarisePaymentId`. `adoptPreMintRow` then
+swaps the placeholder for the order id by CAS, only for a row still carrying its
+placeholder, at the order's exact amount and currency, and moves the CARD leg's
+`sourceRef` with it.
+
+**A seat re-buy never 500s.** Group-event seats share one appointment and
+`@@unique([userId, appointmentId])`, so `findPriorSeatPayment` and
+`assertSeatRemintable` (`checkout.ts`) re-mint an EXPIRED or FAILED row in place
+and tombstone its old intent in the same transaction. A PENDING row answers
+`PAYMENT_ALREADY_EXISTS`; a fully refunded seat answers `SEAT_REBUY_UNSUPPORTED`
+until the schema batch makes the unique re-buyable **(planned)**. Both are typed
+refusals, never a 500.
+
+## 10. A refund owed is never lost, and the quote is bound to the click
+
+Every door that ends a booking and then refunds (the cancel route, trial
+cancel, rejection, moderation, the maintenance freeze, a consultant no-show and
+a whole-event cancel) is **state-as-outbox**. In the same transaction that ends
+the booking it stamps the per-payment marker `Payment.refundOwedPaise`,
+`refundOwedKey` (unique), `refundOwedReason`, `refundOwedAt` and
+`refundOwedAttempts` through `stampRefundOwed` or `stampRefundsOwed`
+(`lib/payments/operations/refund-owed.ts`). After the commit the door calls
+`driveRefundOwed`, which runs `refundBookingPayment` under the marker's key
+(`cancel:<appointmentId>:<paymentId>`, `trial-cancel:<trialId>:<paymentId>`,
+`rejection:<requestId>:<paymentId>`, `moderation:<appointmentId>:<paymentId>`,
+`freeze:<appointmentId>:<paymentId>`, `consultant-no-show:<paymentId>`,
+`event-cancel:<eventId>:pay:<paymentId>`)
+and clears the marker by CAS on the key once the refund is not PENDING. The first
+writer wins, so a second door cannot overwrite the amount owed. A death between
+commit and drive leaves CANCELLED plus SUCCEEDED plus a marker, and the
+`retry-auto-refunds` sweep (`scripts/payments/retry-auto-refunds.ts`) re-drives
+every marker older than 15 minutes, fewest attempts first. A drive that fails
+counts an attempt; at `MAX_REFUND_OWED_ATTEMPTS` (3) the sweep stops and records
+one system error ("refund by hand"), and a marker unresolved after two hours is
+reported once per run from the persisted amount. Do not pre-create a `Refund` row
+to mark intent: a PENDING row reduces the refundable balance and makes the
+credits rail refuse. The older `Auto-refund pending:` family means "booking not
+confirmed, refund the whole capture" and is a different thing.
+
+How a gateway failure is classified decides who finishes the job
+(`refundBookingPayment` and `isDefinitiveRefundRefusal`). A **definitive**
+refusal (our own pre-checks, or Razorpay's 4xx validation class such as
+`BAD_REQUEST_ERROR`, or a 404) proves no gateway refund exists, so the
+reservation row is FAILED at once and frees the key and balance for a retry. An
+**ambiguous** failure (timeout, 5xx, an in-flight idempotency key) may have moved
+money, so the reservation stays PENDING with the original gateway idempotency key
+and `reconcile-refunds` resolves it by lookup. The owed sweep skips any payment
+with a PENDING refund for exactly that reason.
+
+The cancel route binds the quote to the click. `quoteBookingRefund` runs inside
+the cancel transaction, then `assertQuoteMatchesClick` compares it with the
+dialog's `expectedRefundPaise` (and `expectedCreditRestoresInFull` on the credits
+rail). A difference commits nothing and answers 409 `REFUND_QUOTE_CHANGED` with
+the new `refundPaise`, `refundPct` and `creditRestoresInFull`; the client
+(`lib/appointments/cancel-requote.ts`) shows the new figure and re-asks. A body
+without `expectedRefundPaise` is an older client and is accepted unbound. A retry
+after a lost response gets the committed result, not `NOT_CANCELLABLE`:
+`replayCommittedCancel` answers `replayed: true` for a booking this caller already
+cancelled, reading the keyed `Refund` row or the owed marker rather than
+requoting. The platform absorbs the gateway fee, so the consultee receives
+exactly the quoted percentage.
+
+## 11. Returning a session, reschedule caps and strikes
+
+A consultee returns one live subscription session to the plan with `POST
+/api/appointments/[appointmentId]/occurrences/[occurrenceId]/return`
+(`returnSessionToPlan` in `lib/booking/session-return.ts`; replayed by
+`Idempotency-Key`). It requires the plan's own buyer, an APPROVED subscription, a
+SCHEDULED non-tentative occurrence starting at least 24 hours after the database's
+`now()`, no open reschedule proposal and no active dispute. The occurrence moves
+to CANCELLED through `transitionOccurrenceCompletion` with reason
+`RETURNED_TO_PLAN`, `Subscription.sessionsReturned` rises by one (at most two per
+plan, backed by the `subscription_sessions_returned_range` CHECK) and
+`schedulingPeriodEndsAt` moves seven days later in the same conditional write. No
+money moves. Refusals are typed: `RETURN_WINDOW_CLOSED`, `RETURN_CAP_REACHED`,
+`RETURN_RESCHEDULE_OPEN`, `DISPUTE_ACTIVE`, `SESSION_NOT_RETURNABLE`. Inside 24
+hours a missed session counts as delivered.
+
+Reschedule caps count `BookingStatusHistory`, not occurrence rows, because the
+allocator hard-deletes the occurrences a re-allocation replaces
+(`priorReschedules` in `lib/booking/reschedule-caps.ts`). Each reschedule stamps
+its RESCHEDULED history rows with one instant; a side's distinct instants, minus
+its WITHDRAWN proposals, are its reschedules. A consultee may reschedule twice
+per baseline session (422 `MAX_RESCHEDULES_EXCEEDED`); an expert may reschedule a
+booking twice and the third answers 409 `EXPERT_RESCHEDULE_CAP`. Staff are exempt.
+
+An expert-side cancel of a paid booking, or a consultant no-show claim, writes
+one reliability strike in the same transaction: a `SystemEvent` on the
+`expert-reliability:<consultantProfileId>` correlation (`recordExpertStrike` in
+`lib/booking/expert-reliability.ts`). A platform-caused miss records nothing. The
+public profile shows a notice at three strikes in 90 days
+(`EXPERT_STRIKE_THRESHOLD`), the completion rate reads them, and ops reads them
+from `GET /api/admin/sessions/expert-strikes`. No money is taken from the expert.
