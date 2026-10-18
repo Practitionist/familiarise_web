@@ -27,7 +27,7 @@ jest.mock("../../lib/rate-limit", () => ({
 }));
 
 const handleCheckout = jest.fn();
-jest.mock("../../lib/payments/operations/checkout", () => ({
+jest.mock("../../lib/payments/checkout", () => ({
   handleCheckout: (...args: unknown[]) => handleCheckout(...args),
 }));
 

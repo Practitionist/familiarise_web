@@ -221,11 +221,11 @@ import {
   unlockConsulteeBooking,
   unlockEventCheckout,
 } from "../../utils/appointmentlock";
+import { handleCheckout } from "../../lib/payments/checkout";
 import {
-  handleCheckout,
   readInvoiceExposurePaise,
   assertWithinInvoiceCreditLimit,
-} from "../../lib/payments/operations/checkout";
+} from "../../lib/payments/checkout/org-funding";
 
 // ---------------------------------------------------------------------------
 // In-memory store + faithful evaluation of the reuse lookup's WHERE clause.
@@ -314,6 +314,8 @@ function openSibling(overrides: Partial<ReuseRow> = {}): ReuseRow {
     appointmentId: "appt-w",
     appointment: {
       webinarId: "evt-1",
+      // The buyer's own seat, held by this open order.
+      participants: [{ status: "HELD" }],
       // Window gate reads the first slot (WEBINAR flow skips it, but keep the
       // shape faithful for the direct unit cases below).
       occurrences: [
@@ -560,7 +562,7 @@ describe("readInvoiceExposurePaise nets accrual reversals", () => {
 // above cannot discriminate them: eventId already pins scope and its fixtures
 // share one price).
 // ---------------------------------------------------------------------------
-import { findReusablePendingOrderPayment } from "../../lib/payments/operations/checkout";
+import { findReusablePendingOrderPayment } from "../../lib/payments/checkout/order-reuse";
 
 const SLOT = {
   startsAt: new Date("2026-09-01T10:00:00Z"),
@@ -619,6 +621,28 @@ describe("#1220-triage — reuse gates", () => {
     );
     expect(reusable?.id).toBe("pay-open");
     expect(supersede).toEqual([]);
+  });
+
+  test("a group order whose seat was released is superseded, not resumed", async () => {
+    const row = openSibling();
+    row.appointment = {
+      ...row.appointment,
+      participants: [{ status: "CANCELLED" }],
+    };
+    const { reusable, supersede } = await findReusablePendingOrderPayment(
+      gateDb([row]) as never,
+      {
+        userId: "user-1",
+        appointmentType: "WEBINAR",
+        planId: "plan-1",
+        eventId: "evt-1",
+        organizationId: null,
+        paymentGateway: "RAZORPAY" as never,
+        expectedAmountPaise: 100_000,
+      },
+    );
+    expect(reusable).toBeNull();
+    expect(supersede).toEqual([{ id: "pay-open", reason: "seat-released" }]);
   });
 
   test("amount parity gate: a stale frozen total is superseded, not resumed", async () => {

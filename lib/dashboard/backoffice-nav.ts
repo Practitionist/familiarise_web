@@ -22,6 +22,7 @@ import {
   Scale,
   ScrollText,
   Shield,
+  Siren,
   Star,
   UserPlus,
   Users,
@@ -95,6 +96,7 @@ const MONEY_ICONS: Record<MoneyTabKey, LucideIcon> = {
   payouts: Banknote,
   earnings: Coins,
   reconcile: ArrowLeftRight,
+  incidents: Siren,
   audit: ScrollText,
 };
 

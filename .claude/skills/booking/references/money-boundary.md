@@ -15,10 +15,9 @@ come to disagree.
 
 Checkout writes a `Payment` and its slot atoms together. When real money is
 involved the payment is `PENDING`, the slots are created with `isTentative:
-true`, and `expiresAt` is set thirty minutes out. That window is an inline
-`new Date(Date.now() + 30 * 60 * 1000)` in
-`lib/payments/operations/checkout.ts` with a trailing comment — **there is no
-named constant**, so if you change it, grep rather than trusting a symbol. The
+true`, and `expiresAt` is set thirty minutes out. That window is
+`DIRECT_CHECKOUT_HOLD_MS` in `lib/payments/constants.ts`, applied in
+`lib/payments/checkout/orchestrate.ts`. The
 abandoned-payments sweep mirrors it independently with a 35-minute buffer for
 legacy rows that carry a null `expiresAt`. `Payment` is indexed on
 `[expiresAt, paymentStatus]` for exactly this cohort.
@@ -210,7 +209,7 @@ before calling the gateway, stamps that row's id into the order's `notes` as
 then fills the real order id into the row by CAS on the placeholder. A crash
 between the two writes leaves a placeholder row that the lapsed pay-link sweep
 retires. If the fill fails, the minted order is recorded as an EXPIRED tombstone
-(`tombstoneAbortedGatewayOrder` in `checkout.ts`, `appointmentId: null`) and the
+(`tombstoneAbortedGatewayOrder` in `lib/payments/checkout/gateway-intent.ts`, `appointmentId: null`) and the
 placeholder row is expired, so a later capture on that order is auto-refunded
 instead of landing on no row. A re-mint reuses the same row in place
 (`claimRowForRemint`), keeping its id, user and appointment, and tombstones the
@@ -227,7 +226,7 @@ placeholder, at the order's exact amount and currency, and moves the CARD leg's
 
 **A seat re-buy never 500s.** Group-event seats share one appointment and
 `@@unique([userId, appointmentId])`, so `findPriorSeatPayment` and
-`assertSeatRemintable` (`checkout.ts`) re-mint an EXPIRED or FAILED row in place
+`assertSeatRemintable` (`lib/payments/checkout/seats.ts`) re-mint an EXPIRED or FAILED row in place
 and tombstone its old intent in the same transaction. A PENDING row answers
 `PAYMENT_ALREADY_EXISTS`; a fully refunded seat answers `SEAT_REBUY_UNSUPPORTED`
 until the schema batch makes the unique re-buyable **(planned)**. Both are typed
@@ -258,6 +257,20 @@ reported once per run from the persisted amount. Do not pre-create a `Refund` ro
 to mark intent: a PENDING row reduces the refundable balance and makes the
 credits rail refuse. The older `Auto-refund pending:` family means "booking not
 confirmed, refund the whole capture" and is a different thing.
+
+A declared platform incident is one more door on this pattern. The
+`settle-platform-incidents` sweep (`scripts/appointments/settle-platform-incidents.ts`)
+writes one `IncidentRemedy` per seat and session, and a consultation, paid-trial
+or webinar remedy calls `refundIncidentSeat`
+(`lib/payments/operations/incident-refunds.ts`): it stamps the marker under
+`incident:<incident>:<occurrence>:<user>` for the full remaining balance
+(`amountPaise: null`), cancels a paid trial in that same commit, then drives the
+refund. A payment that already owes a different key is a marker conflict: the
+remedy counts an attempt and, at `MAX_REMEDY_ATTEMPTS` (3), is dead-lettered
+with the `dead-letter:` prefix for an operator. The refund re-checks under the
+appointment lock that the session is still `VOIDED`, so an ops un-void wins.
+`occurrenceRefundsPaise` and `voidRefundExists` read the `incident:` prefix, so
+never add a new refund-key family without teaching those two scans.
 
 How a gateway failure is classified decides who finishes the job
 (`refundBookingPayment` and `isDefinitiveRefundRefusal`). A **definitive**
@@ -313,3 +326,10 @@ one reliability strike in the same transaction: a `SystemEvent` on the
 public profile shows a notice at three strikes in 90 days
 (`EXPERT_STRIKE_THRESHOLD`), the completion rate reads them, and ops reads them
 from `GET /api/admin/sessions/expert-strikes`. No money is taken from the expert.
+
+No strike lands inside a declared platform incident. `classifySessionOutcome`
+returns `PLATFORM_OUTAGE` first when the booked interval overlaps a declared
+window at all (`overlapsDeclaredIncident` in `lib/booking/session-outcome.ts`);
+the no-show detector claims only `HOST_ABSENT`, and `countExpertStrikes` and
+`readExpertStrikeReview` drop any strike on an appointment that has a session
+overlapping a declared incident, even one recorded before the declaration.

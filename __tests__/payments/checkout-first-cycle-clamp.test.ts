@@ -78,7 +78,7 @@ jest.mock("../../lib/events/capacity", () => ({
   getClassCapacity: jest.fn(),
 }));
 
-import { handleSubscriptionCheckout } from "../../lib/payments/operations/checkout";
+import { handleSubscriptionCheckout } from "../../lib/payments/checkout/handlers/subscription";
 import {
   classifyError,
   isBusinessErrorCode,
@@ -170,6 +170,50 @@ it("persists end = start + 7 zone-days and sessionsTotal = 24 despite a 90-day c
   );
   expect(data.sessionsTotal).toBe(24);
   expect(data.schedulingTimezone).toBe("Asia/Kolkata");
+  // The buyer holds a seat on the placeholder from the moment of purchase.
+  const seated = (tx.appointmentParticipant.createMany as jest.Mock).mock
+    .calls[0][0].data;
+  expect(seated).toEqual([
+    expect.objectContaining({
+      appointmentId: "apt-1",
+      userId: "buyer-user",
+      role: "CONSULTEE",
+      status: "HELD",
+    }),
+  ]);
+});
+
+it("converts the pair's completed trial through the CAS helper, never a bare update", async () => {
+  const tx = makeTx();
+  const trial = {
+    findFirst: jest.fn().mockResolvedValue({ id: "trial-1" }),
+    findUnique: jest.fn().mockResolvedValue({
+      status: "COMPLETED",
+      appointmentId: null,
+    }),
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    update: jest.fn(),
+  };
+  Object.assign(tx, { trial });
+
+  await handleSubscriptionCheckout(
+    tx,
+    {
+      appointmentType: "SUBSCRIPTION",
+      planId: "plan-1",
+      schedulingPeriodStartsAt: START.toISOString(),
+    } as unknown as CheckoutInput,
+    "consultee-profile-1",
+    false,
+    null,
+    "policy-1",
+  );
+
+  expect(trial.update).not.toHaveBeenCalled();
+  expect(trial.updateMany).toHaveBeenCalledWith({
+    where: { id: "trial-1", status: { in: ["COMPLETED"] } },
+    data: { status: "CONVERTED", convertedToSubscriptionId: "sub-1" },
+  });
 });
 
 it("the Zod edge accepts a start alone and still refuses a reversed pair", () => {

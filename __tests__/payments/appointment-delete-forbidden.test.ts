@@ -42,9 +42,8 @@ const FORBIDDEN = [
   /\bappointmentOccurrence\.deleteMany\(/,
 ];
 
-// The global slot rule below scans these trees. `utils/` is included because
-// the one sanctioned exception lives there, so the allowlist stays honest
-// instead of being decorative.
+// The global slot rule below scans these trees; `lib/` holds the one sanctioned
+// exception, so the allowlist stays honest instead of being decorative.
 const SLOT_SCAN_ROOTS = ["scripts", "jobs", "lib", "app", "utils"];
 
 /**
@@ -54,7 +53,7 @@ const SLOT_SCAN_ROOTS = ["scripts", "jobs", "lib", "app", "utils"];
  * reset scripts wipe a disposable database and are not booking writes.
  */
 const SLOT_DELETE_ALLOWLIST = [
-  "utils/scheduling-engine/SchedulingService.ts",
+  "lib/booking/allocation/commit/release-tentative.ts",
   "prisma/",
   "scripts/db/",
 ];
@@ -64,7 +63,7 @@ const SLOT_DELETE_ALLOWLIST = [
 const SLOT_DELETE =
   /\bappointmentOccurrence(?:\??\.delete(?:Many)?|\[\s*["']delete(?:Many)?["']\s*\])\s*\(/;
 // A file entry (no trailing slash) matches exactly; a directory entry matches
-// on a path boundary, so `SchedulingService.tsx` is not the allocator.
+// on a path boundary, so `release-tentative.tsx` is not the allocator.
 function isAllowlisted(file: string): boolean {
   return SLOT_DELETE_ALLOWLIST.some((ok) =>
     ok.endsWith("/") ? file.startsWith(ok) : file === ok,

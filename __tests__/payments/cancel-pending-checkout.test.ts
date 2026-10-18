@@ -111,7 +111,7 @@ function matchSlots(where: Row): SlotRow[] {
 function makeTx() {
   return {
     payment: {
-      findUnique: jest.fn(async ({ where }: any) => {
+      findUnique: jest.fn(async ({ where }: { where: { id: string } }) => {
         const p = state.payments.get(where.id);
         if (!p) return null;
         // Hydrate the appointment include shape the module selects.
@@ -132,51 +132,77 @@ function makeTx() {
             : null,
         };
       }),
-      updateMany: jest.fn(async ({ where, data }: any) => {
-        const p = state.payments.get(where.id);
-        if (!p) return { count: 0 };
-        if (where.userId !== undefined && p.userId !== where.userId)
-          return { count: 0 };
-        if (
-          where.paymentStatus !== undefined &&
-          p.paymentStatus !== where.paymentStatus
-        )
-          return { count: 0 };
-        Object.assign(p, data);
-        return { count: 1 };
-      }),
+      updateMany: jest.fn(
+        async ({
+          where,
+          data,
+        }: {
+          where: { id: string; userId?: string; paymentStatus?: string };
+          data: Row;
+        }) => {
+          const p = state.payments.get(where.id);
+          if (!p) return { count: 0 };
+          if (where.userId !== undefined && p.userId !== where.userId)
+            return { count: 0 };
+          if (
+            where.paymentStatus !== undefined &&
+            p.paymentStatus !== where.paymentStatus
+          )
+            return { count: 0 };
+          Object.assign(p, data);
+          return { count: 1 };
+        },
+      ),
     },
     bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
     consultation: {
       findUnique: jest.fn(
-        async ({ where }: any) => state.consultations.get(where.id) ?? null,
+        async ({ where }: { where: { id: string } }) =>
+          state.consultations.get(where.id) ?? null,
       ),
-      updateMany: jest.fn(async ({ where, data }: any) => {
-        const c = state.consultations.get(where.id);
-        if (!c) return { count: 0 };
-        const allowed = where.status?.in as string[] | undefined;
-        if (allowed && !allowed.includes(c.status as string))
-          return { count: 0 };
-        Object.assign(c, data);
-        return { count: 1 };
-      }),
+      updateMany: jest.fn(
+        async ({
+          where,
+          data,
+        }: {
+          where: { id: string; status?: { in?: string[] } };
+          data: Row;
+        }) => {
+          const c = state.consultations.get(where.id);
+          if (!c) return { count: 0 };
+          const allowed = where.status?.in as string[] | undefined;
+          if (allowed && !allowed.includes(c.status as string))
+            return { count: 0 };
+          Object.assign(c, data);
+          return { count: 1 };
+        },
+      ),
     },
     subscription: {
       findUnique: jest.fn(
-        async ({ where }: any) => state.subscriptions.get(where.id) ?? null,
+        async ({ where }: { where: { id: string } }) =>
+          state.subscriptions.get(where.id) ?? null,
       ),
-      updateMany: jest.fn(async ({ where, data }: any) => {
-        const s = state.subscriptions.get(where.id);
-        if (!s) return { count: 0 };
-        const allowed = where.status?.in as string[] | undefined;
-        if (allowed && !allowed.includes(s.status as string))
-          return { count: 0 };
-        Object.assign(s, data);
-        return { count: 1 };
-      }),
+      updateMany: jest.fn(
+        async ({
+          where,
+          data,
+        }: {
+          where: { id: string; status?: { in?: string[] } };
+          data: Row;
+        }) => {
+          const s = state.subscriptions.get(where.id);
+          if (!s) return { count: 0 };
+          const allowed = where.status?.in as string[] | undefined;
+          if (allowed && !allowed.includes(s.status as string))
+            return { count: 0 };
+          Object.assign(s, data);
+          return { count: 1 };
+        },
+      ),
     },
     appointmentOccurrence: {
-      findMany: jest.fn(async ({ where }: any) =>
+      findMany: jest.fn(async ({ where }: { where: Row }) =>
         matchSlots(where).map((slot) => ({
           id: slot.id,
           completionStatus: slot.completionStatus,
@@ -213,7 +239,9 @@ let tx: ReturnType<typeof makeTx>;
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    $transaction: jest.fn(async (fn: any, _opts: any) => fn(tx)),
+    $transaction: jest.fn(
+      async (fn: (client: unknown) => unknown, _opts: unknown) => fn(tx),
+    ),
   },
 }));
 
@@ -315,6 +343,25 @@ describe("cancelPendingCheckout — happy path (consultation)", () => {
         }),
       );
     }
+  });
+
+  it("releases the 1:1 hold's HELD participant rows with its slots", async () => {
+    seedConsultationPayment({});
+    for (const userId of ["consultant-1", "user-1"]) {
+      state.seats.push({
+        appointmentId: "appt-1",
+        classId: null,
+        userId,
+        status: "HELD",
+      });
+    }
+
+    await cancelPendingCheckout({ paymentId: "pay-1", userId: "user-1" });
+
+    expect(state.seats.map((seat) => seat.status)).toEqual([
+      "CANCELLED",
+      "CANCELLED",
+    ]);
   });
 
   it("skips the gateway cancel for mock payments", async () => {

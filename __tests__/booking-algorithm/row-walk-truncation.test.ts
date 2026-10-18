@@ -60,7 +60,7 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 }));
 
 import prisma from "@/lib/prisma";
-import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { allocate } from "@/lib/booking/allocation";
 import { ScheduleType } from "@prisma/client";
 
 const base = prisma as unknown as Record<string, Record<string, jest.Mock>>;
@@ -171,7 +171,7 @@ describe("#1194 — the candidate-start ceiling is no longer silent", () => {
     // inside the row, so the ceiling — not the row — ended it.
     mockTx.consultation.findUnique.mockResolvedValue(consultationWithRow(48));
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",
@@ -203,7 +203,7 @@ describe("#1194 — the candidate-start ceiling is no longer silent", () => {
     // Four hours of cover: 8 starts, then the row's own end stops it.
     mockTx.consultation.findUnique.mockResolvedValue(consultationWithRow(4));
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",
@@ -219,7 +219,7 @@ describe("#1194 — the candidate-start ceiling is no longer silent", () => {
     // truncated, so reporting one would be a false positive.
     mockTx.consultation.findUnique.mockResolvedValue(consultationWithRow(24));
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",

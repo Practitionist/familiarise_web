@@ -505,15 +505,15 @@ async function verifyMakeUpCollaboratorsAvailable(
  * Inserts the make-up AppointmentOccurrence row and translates unique or
  * GiST exclusion constraint violations into typed BookingRuleErrors.
  */
-async function createMakeUpOccurrence(
-  tx: Tx,
+export async function createMakeUpOccurrence(
+  tx: Pick<Tx, "appointmentOccurrence">,
   data: {
     appointmentId: string;
     ordinal: number;
     startsAt: Date;
     endsAt: Date;
     consultantProfileId: string | null;
-    movedAt: Date;
+    movedAt: Date | null;
   },
 ): Promise<{ id: string }> {
   try {

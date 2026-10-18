@@ -67,57 +67,59 @@ sequenceDiagram
     VS-->>API: ValidationResult {isValid, errors, warnings}
 ```
 
-### SchedulingService
+### Allocation module
 
-**File**: `utils/scheduling-engine/SchedulingService.ts`
+**Directory**: `lib/booking/allocation/`. Callers import one function, `allocate`, from `@/lib/booking/allocation` (`index.ts`). There is no allocator class.
 
-Main allocation engine. All operations run inside a Prisma transaction with 60-second timeout.
+The allocator picks or confirms the concrete times of a booking and writes them. `allocate()` in `allocate.ts` is the only entry point. It routes by mode through `dispatch()`, classifies any error into a typed answer (`classify.ts`), and, after a successful commit, attempts the notices that were staged inside the transaction (`notify.ts`).
+
+Each mode file owns its whole lock envelope and its write transaction. That is deliberate: a mode reads and validates under its locks, then opens one short write transaction, so each file can be read top to bottom as a single story.
+
+| Area               | Files                                                                                                                        | Responsibility                                                                                                                                                                      |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Entry              | `index.ts`, `allocate.ts`, `classify.ts`, `types.ts`                                                                         | The public `allocate`, the mode router, error classification and shared types.                                                                                                      |
+| Modes              | `modes/auto.ts`, `modes/manual.ts`, `modes/use-requested.ts`                                                                 | `autoAllocate`, `manualAllocate` and `useRequestedSlots`. Each acquires and releases its own locks and runs its own transaction.                                                    |
+| Commit steps       | `commit/release-tentative.ts`, `commit/create-appointments.ts`, `commit/reconnect-enrolled.ts`, `commit/subscription-cap.ts` | Free the tentative rows being replaced (`deleteExistingAppointments`), write the occurrences (`createAppointments`), re-link enrolled attendees and debit the subscription org cap. |
+| Search             | `search/find-available-slots.ts`, `search/window-walk.ts`, `search/blocks.ts`, `search/recurrence.ts`, `search/constants.ts` | `findAvailableSlots` and its day-by-day walk over weekly and custom availability.                                                                                                   |
+| Event and identity | `event-data.ts`, `identity.ts`, `counts.ts`, `preference.ts`, `collaborators.ts`                                             | Load the event (`fetchEventData`), resolve the consultant and consultee, count held and tentative sessions, read the stored preference and check co-host availability.              |
+| Guards and replay  | `guards.ts`, `idempotency.ts`                                                                                                | The in-transaction multi-tab and overlap guards, and replay of an earlier identical request.                                                                                        |
+| Status and notices | `event-data.ts` (`updateEventStatus`, `holdUntilPaid`, `approveByMoney`), `notify.ts`                                        | Move the event to its next status and stage the allocation notices in the outbox.                                                                                                   |
 
 ```mermaid
 flowchart TD
-    A[allocate request] --> B{mode?}
-    B -->|auto| C[autoAllocate]
-    B -->|manual| D[manualAllocate]
-    B -->|requested| E[useRequestedSlots]
+    A["allocate (allocate.ts)"] --> B{mode?}
+    B -->|auto| C["autoAllocate (modes/auto.ts)"]
+    B -->|manual| D["manualAllocate (modes/manual.ts)"]
+    B -->|requested| E["useRequestedSlots (modes/use-requested.ts)"]
 
-    C --> F[fetchEventData]
-    F --> G[Detect reschedule via isTentative]
-    G --> H[findAvailableSlots]
-    H --> I[validate + createAppointments]
+    C --> C1["Locks, then fetchEventData, findAvailableSlots, ScheduleValidationService"]
+    D --> D1["Locks, then fetchEventData, ScheduleValidationService on the chosen times"]
+    E --> E1["Locks, then validate the stored times and keep their existing occurrences"]
 
-    D --> J[fetchEventData]
-    J --> K[Check duplicates + slot count]
-    K --> L[validate + createAppointments]
+    C1 --> T["Write transaction: guardAllocationInTx, deleteExistingAppointments, createAppointments, updateEventStatus, stageAllocationNotices"]
+    D1 --> T
+    E1 --> T2["Write transaction: guards, clear isTentative, updateEventStatus"]
 
-    E --> M[fetchEventData]
-    M --> N[Verify existing appointments exist]
-    N --> O[validate + clear isTentative]
+    T --> U["Release the locks, then attempt the staged notices"]
+    T2 --> U
 ```
+
+**Lock envelope.** All three modes take the same Redis locks from `utils/appointmentlock.ts`, always in the same order: first the consultant lock (`lockAutoAllocate`), then the consultee lock (`lockConsulteeBooking`). Only consultation and subscription allocations have a single consultee, so only they take the consultee lock; webinar and class allocations skip it (`getConsulteeUserId` in `identity.ts` returns null for them). They release in the `finally` block. The consultant key is consultant-wide, except for a manual allocation of a one-off event with no weekly cap, which uses a per-day key. Recurring events always take the consultant-wide key because a weekly cap spans days. The write transaction runs with `ALLOCATION_TX_MAX_WAIT_MS` and `ALLOCATION_TX_TIMEOUT_MS` from `lib/prisma.ts`.
+
+**What the database enforces.** Two confirmed sessions of one expert never overlap: Postgres refuses the second with `occurrence_no_confirmed_overlap` (`prisma/sql/check-constraints.sql`). The Redis locks keep two allocations from racing to that point, and `guardAllocationInTx` (`guards.ts`) re-checks the replay and held-session conditions inside the transaction.
 
 **Auto allocation** (`autoAllocate`):
 
-1. Fetch event config and consultant availability
-2. Detect reschedule (existing tentative slots? preserve total slot count)
-3. Build lookup set of all available 30-min blocks (weekly: generate 8 weeks of occurrences; custom: break into 30-min blocks)
-4. For consultations/webinars: find first available consecutive block
-5. For subscriptions/classes: distribute across weeks (1 call/day, iterate days within weeks)
-6. Validate selected slots, create appointments, update event status
+1. Resolve the consultant profile outside any transaction, so the lock key is known.
+2. Replay check (`findIdempotentAllocation`), then take the two locks, then repeat the replay check, because a concurrent first submit may have stamped its key while this call waited.
+3. Load the event and its availability (`fetchEventData` reads only custom availability rows that have not ended).
+4. Detect a reschedule or top-up from the tentative and confirmed rows (`counts.ts`), and search (`findAvailableSlots`): consultations and webinars take the first consecutive block, subscriptions and classes are spread across the weeks of the scheduling period.
+5. Validate the chosen times with `ScheduleValidationService`.
+6. In one write transaction, run the guards, free the replaced tentative rows, create the occurrences and move the event status.
 
-**Manual allocation** (`manualAllocate`):
+**Manual allocation** (`manualAllocate`): the same envelope, with the consultant's chosen times in place of the search. It rejects duplicates and a count that is not a whole number of sessions, validates, then replaces the old tentative rows and creates the new ones.
 
-1. Convert ISO strings to Date objects
-2. Reject duplicates
-3. Verify slot count is exact multiple of slotsPerCall
-4. Run full validation pipeline
-5. Delete existing appointments, create new ones, update status
-
-**Requested allocation** (`useRequestedSlots`):
-
-1. Verify appointments actually exist (prevents approving empty requests)
-2. Verify slot count matches
-3. Run full validation
-4. Clear `isTentative` flag on all slots
-5. Update event status to APPROVED
+**Requested allocation** (`useRequestedSlots`): confirms the times the consultee stored. It checks the stored occurrences exist and match the required count, validates them, clears `isTentative` and moves the event to its approved status.
 
 **Appointment structure**:
 
@@ -165,7 +167,7 @@ There is no `useSubscriptionValidation` hook in this repo today — no file of t
 
 ### Where allocation happens
 
-There is one allocator and it lives on the server. The client engine that used to pick slots for auto mode — strategies, time-of-day and day-of-week scoring, weekly distribution, same-day spacing — was deleted in PR #1178 along with the tests that could only have exercised it, because product code has submitted `isAuto: true` and left the picking to `SchedulingService`, under its Redis locks and timezone-aware caps, since #997 Phase 1. Auto-mode preference scoring now lives server-side in `utils/scheduling-engine/preferenceScoring.ts`, which orders candidate slots but never filters them (#1065). `lib/scheduling/allocationAlgorithms.ts` was not deleted along with the auto engine: the file and class still exist, still export `manualAllocate()` and `allocateRequestedSlots()`, and are still imported — by `hooks/scheduling/useScheduling.ts` alone, which `UnifiedCalendar.tsx` and `RequestRequestSchedulingTab.tsx` both consume through that hook rather than importing the file directly — they now do pre-submission validation and submission for the manual and requested modes only, so nothing on the client can any longer be mistaken for a second auto-allocation engine. The hooks above are correspondingly a selection and display layer: `useScheduling` guards selection and submits, while `useCalendarData` polls date-dependent availability every 60 seconds whenever the tab is visible (#1164), so the heatmap reflects slots other people have taken instead of staying green until allocation rejects the choice.
+There is one allocator and it lives on the server. The client engine that used to pick slots for auto mode — strategies, time-of-day and day-of-week scoring, weekly distribution, same-day spacing — was deleted along with the tests that could only have exercised it, because product code has submitted `isAuto: true` and left the picking to the allocator in `lib/booking/allocation`, under its Redis locks and timezone-aware caps. Auto-mode preference scoring now lives server-side in `utils/scheduling-engine/preferenceScoring.ts`, which orders candidate slots but never filters them. `lib/scheduling/allocationAlgorithms.ts` was not deleted along with the auto engine: the file and class still exist, still export `manualAllocate()` and `allocateRequestedSlots()`, and are still imported — by `hooks/scheduling/useScheduling.ts` alone, which `UnifiedCalendar.tsx` and `RequestRequestSchedulingTab.tsx` both consume through that hook rather than importing the file directly — they now do pre-submission validation and submission for the manual and requested modes only, so nothing on the client can any longer be mistaken for a second auto-allocation engine. The hooks above are correspondingly a selection and display layer: `useScheduling` guards selection and submits, while `useCalendarData` polls date-dependent availability every 60 seconds whenever the tab is visible (#1164), so the heatmap reflects slots other people have taken instead of staying green until allocation rejects the choice.
 
 ---
 
@@ -236,7 +238,7 @@ sequenceDiagram
     participant VA as POST /validate
     participant AL as PATCH /allocate
     participant SV as ScheduleValidationService
-    participant SA as SchedulingService
+    participant SA as allocate (lib/booking/allocation)
     participant DB as Database
 
     UI->>VA: {slots: ["2025-01-15T10:00:00Z", ...]}
@@ -261,7 +263,7 @@ sequenceDiagram
 sequenceDiagram
     participant UI as Frontend
     participant AL as PATCH /allocate
-    participant SA as SchedulingService
+    participant SA as allocate (lib/booking/allocation)
     participant SC as ScheduleCalculationService
     participant DB as Database
 
@@ -307,3 +309,11 @@ stateDiagram-v2
 - Rate limiting: max 3 pending attempts per slot per 30 minutes
 - Cleanup job: runs every 2 hours, releases tentative slots older than 24 hours with no successful payment (`TENTATIVE_EXPIRATION_HOURS = 24`, cut from 7 days by #833); users can also self-release via `DELETE /api/checkout/pending/[paymentId]` (#849) (see [13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md))
 - Expired payment detection: `APPROVED_PENDING_PAYMENT` consultations with expired payments are treated as available slots
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **One allocator file.** The `SchedulingService` class, deleted from `utils/scheduling-engine/`, was about 6,000 lines and held the mode router, all three allocation modes, the slot search, the appointment writes and the event-status helpers. It was split into `lib/booking/allocation/` so that each mode file shows its own lock envelope and transaction, and so that the search and commit steps can be read and tested on their own. Delete any reference to `SchedulingService` you still find. The pure helpers that were never part of the class (`ScheduleCalculationService`, `ScheduleValidationService`, `intervals.ts`, `availabilityCoverage.ts`) stay in `utils/scheduling-engine/`.
+- **One checkout file.** The `operations/checkout` module, deleted from `lib/payments/`, held the whole checkout: the lock, the pricing, the four event handlers and the booking transaction. It was split into `lib/payments/checkout/`, where `commit/index.ts` is the only place that opens the booking transaction. See [10-checkout-payment-integration.md](./10-checkout-payment-integration.md).
+- **A 60-second catch-all transaction.** Older text described every allocation as running inside one long transaction. Reads, search and validation now run before it, under the Redis locks, and the write transaction holds only the guards and writes.

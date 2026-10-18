@@ -352,7 +352,7 @@ export async function POST(request: NextRequest) {
                 startTime && endTime
                   ? {
                       // #1554 / #2010 — one occurrence with the real end (same
-                      // shape as SchedulingService); non-tentative when SCHEDULED.
+                      // shape as the allocator); non-tentative when SCHEDULED.
                       create: {
                         appointmentType: "WEBINAR",
                         occurrences: {

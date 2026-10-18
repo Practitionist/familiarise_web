@@ -32,6 +32,7 @@ Both paths call the same core function exported from `scripts/appointments/` (or
 | Reconcile slot availability | `cron-intra-day.yml` hourly (`17 * * * *`); detects only              | `scripts/appointments/reconcile-occurrence-availability.ts` | `/api/cleanup/reconcile-occurrence-availability` |
 | Detect consultant no-shows  | Netlify ticker every 30 min, 10-row bites until 16 s; no Actions twin | `scripts/appointments/detect-consultant-no-shows.ts`        | `/api/cleanup/detect-consultant-no-shows`        |
 | Settle cancelled sessions   | Netlify ticker every 30 min, 10 sessions                              | `scripts/appointments/settle-cancelled-sessions.ts`         | `/api/cleanup/settle-cancelled-sessions`         |
+| Settle platform incidents   | Netlify ticker hourly at :30, 10 remedies per bite; no Actions twin   | `scripts/appointments/settle-platform-incidents.ts`         | `/api/cleanup/settle-platform-incidents`         |
 
 The repository has four scheduled workflows only (`cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`, `cron-heartbeat.yml`), and of the jobs in this document only `reconcile-occurrence-availability` runs from one of them. Everything else runs on the ticker, and a ticker target that is missing from `TARGETS` in `netlify/functions/cron-tick.mts` runs nowhere.
 
@@ -240,6 +241,24 @@ The table below lists where this job runs and how it is invoked.
 **Unrestored expiry**: If the consultant's original time was booked while the proposal was open, the restore meets the overlap constraint, or the parent request's CAS misses, and the whole transaction rolls back. The job reports the miss to Sentry first, then expires the proposal on its own, and the slots stay released for the consultant to re-place. The result reports `proposalsExpired`, which counts every proposal the run expired, and `proposalsExpiredUnrestored`, which counts the subset that expired without the restore; the HTTP twin summarises both fields. A proposal that was answered between the read and the write, or whose appointment lock is held by a live writer, is skipped and taken by a later tick.
 
 **Safety**: The job runs under a fail-open cron lock, because the work is idempotent: `EXPIRED` leaves the open set, so a re-run picks up exactly what is left. It reads lapsed proposals in batches of 500 and stops after four batches per invocation, and the next tick continues where it stopped.
+
+---
+
+### j. Settle Platform Incidents
+
+| Field              | Value                                               |
+| ------------------ | --------------------------------------------------- |
+| **Schedule**       | Netlify ticker hourly at :30                        |
+| **Source**         | `scripts/appointments/settle-platform-incidents.ts` |
+| **API**            | `/api/cleanup/settle-platform-incidents`            |
+| **GitHub Actions** | None                                                |
+| **HTTP Methods**   | N/A                                                 |
+
+**Purpose**: Voids every session that overlaps an ops-declared platform incident and makes each learner whole. A run does four things for each unsettled incident, oldest first: the retroactive pass voids the overlapping sessions as `PLATFORM_OUTAGE` and writes their `IncidentRemedy` rows in the same transaction; due remedies are applied (consultation and paid-trial refunds 48 hours after the void, webinar refunds straight away, free-trial re-offer and subscription plan-end extension straight away, nothing for a class beyond the void); one `PLATFORM_INCIDENT_DIGEST` email goes to each learner; and one report goes to ops. The incident is stamped `settledAt` when every remedy is done or dead-lettered, every learner is notified and the report is staged. The runbook is in [the money console page](../payments/backoffice/01-money-console.md#platform-incidents).
+
+**Cadence**: The ticker runs it hourly at :30 (`TARGET_EVERY_MINUTES` is 60 and `TARGET_OFFSET_MINUTES` is 30 in `netlify/functions/cron-tick.mts`), with a bite of ten remedies on the 20-second tier. The :30 slot is the only one with room under the eight-targets-per-tick cap every hour, and the refunds wait 48 hours anyway.
+
+**Safety**: The job runs under a fail-closed cron lock and is in `FINANCIAL_JOB_NAMES` (`lib/cron/financial-jobs.ts`), so DEGRADED maintenance holds it. Every step is a compare-and-swap or a unique-key write (`@@unique([incidentId, occurrenceId, userId])` and `@@unique([occurrenceId, userId])` on `IncidentRemedy`), so a run killed mid-way converges on the next. A refund whose payment already owes another door's marker is never overwritten; it counts an attempt, rotates to the back of the queue, and after three attempts it is dead-lettered for an operator. Failures are reported to Sentry once per run.
 
 ---
 

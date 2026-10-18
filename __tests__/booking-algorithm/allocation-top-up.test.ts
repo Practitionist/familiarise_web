@@ -58,7 +58,7 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 
 import prisma from "@/lib/prisma";
 import { attemptTrigger, notifyAppointmentBooked } from "@/lib/novu";
-import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { allocate } from "@/lib/booking/allocation";
 import { ScheduleType, DayOfWeek } from "@prisma/client";
 
 /** One 09:00–11:00 UTC window on `day`; the 1/day cap makes it one session. */
@@ -267,7 +267,7 @@ afterEach(() => {
 
 describe("#1206 top-up allocation", () => {
   it("places only the missing session of the cycle and deletes nothing", async () => {
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "subscription",
       eventId: "sub-topup",
       mode: "auto",
@@ -308,7 +308,7 @@ describe("#1206 top-up allocation", () => {
     );
     mockPrisma.appointment.findMany.mockResolvedValue([wrapperWith(complete)]);
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "subscription",
       eventId: "sub-topup",
       mode: "auto",
@@ -335,7 +335,7 @@ describe("#1206 top-up allocation", () => {
     // deleting the paid session. A subscription with held sessions now takes
     // the additive arm whatever the flag says — and this transaction has no
     // delete members, so any regression throws instead of quietly passing.
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "subscription",
       eventId: "sub-topup",
       mode: "auto",

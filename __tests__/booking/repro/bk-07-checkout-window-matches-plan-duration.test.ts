@@ -24,7 +24,7 @@ jest.mock("../../../utils/scheduling-engine/availabilityCoverage", () => ({
   }),
 }));
 
-import { handleCheckout } from "../../../lib/payments/operations/checkout";
+import { handleCheckout } from "../../../lib/payments/checkout";
 import { resetDouble } from "./checkout-harness/setup";
 import { assertWindowMatchesPlanDuration } from "../../../lib/booking/slot-validation";
 

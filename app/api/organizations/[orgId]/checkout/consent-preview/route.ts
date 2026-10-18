@@ -5,7 +5,7 @@ import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 
 /**
  * #1430 — read-only consent pre-flight for the org-funded booking surface.
- * `handleCheckout` (lib/payments/operations/checkout.ts) already fails
+ * `handleCheckout` (lib/payments/checkout/orchestrate.ts) already fails
  * closed on a missing SESSION_BOOKING consent artifact for the caller; this
  * route lets the payer selector warn about that BEFORE the member picks
  * "Bill to org" and hits the wall at pay time. No transaction is open here,

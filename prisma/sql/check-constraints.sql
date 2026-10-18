@@ -7,7 +7,7 @@
 --
 -- Payment amounts use >= 0, not > 0: credit-covered checkouts and
 -- org-sponsored bookings legitimately write amount = 0 (free_/org_ synthetic
--- payment intents in lib/payments/operations/checkout.ts).
+-- payment intents in lib/payments/checkout/orchestrate.ts).
 --
 -- Staged for the #1729 reset (#1771 row 7): ALTER TABLE "OrganizationPayoutAccount"
 -- DROP COLUMN "accountNumberEncrypted"; it is no longer written, as bank data is reference-only.
@@ -1234,3 +1234,9 @@ ALTER TABLE "Subscription" DROP CONSTRAINT IF EXISTS "subscription_sessions_retu
 -- SPLIT
 ALTER TABLE "Subscription" ADD CONSTRAINT "subscription_sessions_returned_range"
   CHECK ("sessionsReturned" BETWEEN 0 AND 2);
+-- SPLIT
+-- A declared platform incident is a real window.
+ALTER TABLE "PlatformIncident" DROP CONSTRAINT IF EXISTS "platform_incident_time_order";
+-- SPLIT
+ALTER TABLE "PlatformIncident" ADD CONSTRAINT "platform_incident_time_order"
+  CHECK ("endsAt" > "startsAt");

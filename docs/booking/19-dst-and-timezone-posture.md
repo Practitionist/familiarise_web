@@ -36,7 +36,7 @@ always did.
 
 The grid (`processWeeklySlots`), checkout and trial coverage
 (`findUncoveredAtom` over `loadPublishedCoverage`), the shrink notice
-(`findUncoveredUpcoming`), the allocator (`SchedulingService` through
+(`findUncoveredUpcoming`), the allocator (`lib/booking/allocation/search` through
 `createWeeklyCoverage` and `weeklyRowIntervalsInRange`), the validator
 (`validateMatchesSchedule`) and the co-host filter on the grid route all share
 this one generator. The client never projects weekly rows itself: the expert page

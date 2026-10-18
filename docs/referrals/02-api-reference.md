@@ -79,7 +79,7 @@ A different ADMIN may always approve a schedule. The proposer may approve their 
 
 The payment code calls into the referral code at three points.
 
-- `resolveCheckoutAttribution` runs when an order is minted, both in `lib/payments/operations/checkout.ts` and in the pricing preview route. A second live welcome-discounted order for the same buyer fails with the typed 409 `WELCOME_DISCOUNT_IN_USE`.
+- `resolveCheckoutAttribution` runs when an order is minted, both in `lib/payments/checkout/pricing.ts` and in the pricing preview route. A second live welcome-discounted order for the same buyer fails with the typed 409 `WELCOME_DISCOUNT_IN_USE`.
 - `recordReferralCaptureInSavepoint` runs inside the payment confirmation, from the checkout capture path and from the webhook handlers.
 - `reverseCreditsForPayment` and `restoreCreditsForPaymentUpTo` run in the refund and cancel paths.
 

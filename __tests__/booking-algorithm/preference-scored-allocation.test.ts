@@ -37,8 +37,12 @@ jest.mock("../../utils/appointmentlock", () => ({
   unlockConsulteeBooking: jest.fn(),
 }));
 
-import prisma from "../../lib/prisma";
-import { SchedulingService } from "../../utils/scheduling-engine/SchedulingService";
+import prisma, { type PrismaLike, type Tx } from "../../lib/prisma";
+import { findAvailableSlots as searchSlots } from "../../lib/booking/allocation/search/find-available-slots";
+import {
+  findAllocationPreference,
+  resolveConsumedPreferenceRequests,
+} from "../../lib/booking/allocation/preference";
 import { ScheduleCalculationService } from "../../utils/scheduling-engine/ScheduleCalculationService";
 import {
   isEmptyPreference,
@@ -63,7 +67,7 @@ const HALF_HOUR = 30 * MINUTE;
 const istToUtcMinutes = (hour: number, minute = 0) =>
   hour * 60 + minute - IST_OFFSET;
 
-/** findAvailableSlots is private; the search is the unit under test. */
+/** The search is the unit under test; this keeps the positional call in one place. */
 const findAvailableSlots = (
   consultant: ConsultantAllocationData,
   totalSlotsNeeded: number,
@@ -72,12 +76,8 @@ const findAvailableSlots = (
   config: EventConfig,
   preference?: AllocationPreference,
 ): Promise<Date[]> =>
-  (
-    SchedulingService as unknown as {
-      findAvailableSlots: (...a: unknown[]) => Promise<Date[]>;
-    }
-  ).findAvailableSlots(
-    emptyDb(),
+  searchSlots(
+    emptyDb() as unknown as PrismaLike,
     consultant,
     totalSlotsNeeded,
     slotsPerCall,
@@ -590,18 +590,6 @@ describe("bands are read in the event's scheduling timezone", () => {
 // ─── Finding the stated preference ──────────────────────────────────────────
 
 describe("findAllocationPreference", () => {
-  /** Private, and the seam where the preference is either found or silently lost. */
-  const findAllocationPreference = (
-    releasedOccurrenceIds: string[],
-  ): Promise<AllocationPreference | undefined> =>
-    (
-      SchedulingService as unknown as {
-        findAllocationPreference: (
-          ids: string[],
-        ) => Promise<AllocationPreference | undefined>;
-      }
-    ).findAllocationPreference(releasedOccurrenceIds);
-
   const findFirst = prisma.rescheduleRequest.findFirst as jest.Mock;
 
   beforeEach(() => findFirst.mockReset());
@@ -848,12 +836,8 @@ describe("#1340 — resolveConsumedPreferenceRequests and the confirming proposa
     releasedOccurrenceIds: string[],
     excludeRescheduleRequestId?: string,
   ): Promise<void> =>
-    (
-      SchedulingService as unknown as {
-        resolveConsumedPreferenceRequests: (...a: unknown[]) => Promise<void>;
-      }
-    ).resolveConsumedPreferenceRequests(
-      tx,
+    resolveConsumedPreferenceRequests(
+      tx as Tx,
       releasedOccurrenceIds,
       excludeRescheduleRequestId,
     );

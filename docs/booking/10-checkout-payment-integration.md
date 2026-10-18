@@ -12,12 +12,14 @@ Bookings and payments are tightly coupled through a **two-phase commit pattern**
 
 **Key files**:
 
-| File                                  | Role                                               |
-| ------------------------------------- | -------------------------------------------------- |
-| `app/api/checkout/route.ts`           | Route handler entry point (auth + validation)      |
-| `lib/payments/operations/checkout.ts` | Core checkout logic, appointment creation, locking |
-| `lib/payments/webhooks/handlers.ts`   | Webhook handlers for payment success/failure       |
-| `schemas/checkout.ts`                 | Zod validation schema for checkout input           |
+| File                                    | Role                                                                      |
+| --------------------------------------- | ------------------------------------------------------------------------- |
+| `app/api/checkout/route.ts`             | Route handler entry point (auth + validation)                             |
+| `lib/payments/checkout/orchestrate.ts`  | `handleCheckout()`: the five-step sequence, the lock and the gateway call |
+| `lib/payments/checkout/commit/index.ts` | `commitCheckout()`: the booking transaction, the only Serializable retry  |
+| `lib/payments/checkout/handlers/`       | One handler per event type (consultation, subscription, webinar, class)   |
+| `lib/payments/webhooks/handlers.ts`     | Webhook handlers for payment success/failure                              |
+| `schemas/checkout.ts`                   | Zod validation schema for checkout input                                  |
 
 ---
 
@@ -45,7 +47,7 @@ sequenceDiagram
     Checkout->>DB: calculateAmountAndValidate (pricing, discounts)
     Checkout->>Redis: Acquire distributed lock
     Checkout->>DB: Re-validate inside lock (TOCTOU protection)
-    Checkout->>Gateway: PaymentIntentManager.createWithCleanup()
+    Checkout->>Gateway: createPaymentIntent()
     Gateway-->>Checkout: Payment intent ID + client_secret
     Checkout->>DB: Create tentative appointment (isTentative: true)
     Checkout->>DB: Create Payment record (PENDING, 30min expiry)
@@ -86,19 +88,19 @@ export async function POST(req: NextRequest);
 
 ### handleCheckout()
 
-**File**: `lib/payments/operations/checkout.ts`
+**File**: `lib/payments/checkout/orchestrate.ts` (exported through `lib/payments/checkout/index.ts`)
 
-The main orchestrator. Executes five steps inside a lock-protected region:
+The orchestrator. It runs five steps and owns the lock envelope. It does not write booking rows itself; step 5 hands that to `commitCheckout()`.
 
-| Step | Action                                                                                 | Error Recovery                                              |
-| ---- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| 1    | `calculateAmountAndValidate()` -- pricing, discount validation, currency extraction    | Throws before lock                                          |
-| 2    | `acquireCheckoutLock()` -- Redis distributed lock                                      | Returns 409 if lock held                                    |
-| 3    | `revalidateInsideLock()` -- re-checks slot availability and plan existence             | Throws, lock released in `finally`                          |
-| 4    | `PaymentIntentManager.createWithCleanup()` -- creates gateway payment intent           | Throws, lock released in `finally`                          |
-| 5    | Prisma `$transaction` (Serializable) -- creates tentative appointment + payment record | Cancels payment intent via `PaymentIntentManager.cleanup()` |
+| Step | Action                                                                                                                                                                                                                 | Error Recovery                                                               |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| 1    | `calculateAmountAndValidate()` (`pricing.ts`) -- pricing, discount validation, currency                                                                                                                                | Throws before any lock                                                       |
+| 2    | `acquireCheckoutLock()` (`locks.ts`) -- the event lock or the slot lock; `handleCheckout()` also takes the consultee lock, before the slot lock for slot-based checkouts and after the event lock for event-based ones | Returns 409 if the lock is held                                              |
+| 3    | `revalidateInsideLock()` (`revalidate.ts`) -- re-checks slot availability, plan existence and org funding                                                                                                              | Throws, locks released in `finally`                                          |
+| 4    | `createPaymentIntent()` -- creates the gateway order, unless funding skips the gateway or `findReusablePendingOrderPayment()` finds a live hold to resume                                                              | Throws, locks released in `finally`                                          |
+| 5    | `commitCheckout()` (`commit/index.ts`) -- Serializable transaction that writes the tentative appointment, payment row, legs and sponsored-rail earnings                                                                | Cancels the gateway order and tombstones it (`tombstoneAbortedGatewayOrder`) |
 
-The transaction in step 5 uses `Prisma.TransactionIsolationLevel.Serializable` with a 25-second timeout to prevent phantom reads on capacity-limited events.
+**The transaction boundary.** `commit/index.ts` is the only file in checkout that calls `withSerializableRetry`. Each attempt first renews the lock grant (`renewOrAbort`), so the Redis lock cannot lapse while a retried transaction is still running, and then opens the Prisma transaction with a 25-second timeout. The write steps it composes live beside it in `commit/`: `payment-row.ts`, `org-utilization.ts`, `payment-legs.ts` and `ledger.ts`. Nothing that talks to the gateway or sends a message runs inside it.
 
 ### Validation Schema
 
@@ -106,13 +108,13 @@ The transaction in step 5 uses `Prisma.TransactionIsolationLevel.Serializable` w
 
 The `checkoutSchema` enforces per-type requirements via `superRefine`:
 
-| Appointment Type | Required Fields                                                                                              | Notes                                                |
-| ---------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| Appointment Type | Required Fields                                                                          | Notes                                                |
+| ---------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------- |
 | CONSULTATION     | `startsAt`, `endsAt`, one of `slotOfAvailabilityWeeklyId` / `slotOfAvailabilityCustomId` | Slot timing validated against minimum lead time      |
-| SUBSCRIPTION     | Either slot data OR `schedulingPeriodStartsAt` + `schedulingPeriodEndsAt`                                    | If slots provided, availability ID also required     |
-| WEBINAR          | `eventId`                                                                                                    | No slot times needed (uses master slot from webinar) |
-| CLASS            | `eventId`                                                                                                    | No slot times needed (uses session slots from class) |
-| TRIAL            | (handled separately)                                                                                         | Included in `appointmentTypeSchema`                  |
+| SUBSCRIPTION     | Either slot data OR `schedulingPeriodStartsAt` + `schedulingPeriodEndsAt`                | If slots provided, availability ID also required     |
+| WEBINAR          | `eventId`                                                                                | No slot times needed (uses master slot from webinar) |
+| CLASS            | `eventId`                                                                                | No slot times needed (uses session slots from class) |
+| TRIAL            | (handled separately)                                                                     | Included in `appointmentTypeSchema`                  |
 
 Cross-field validations:
 
@@ -123,28 +125,20 @@ Cross-field validations:
 
 ### Per-Type Checkout Handlers
 
-Each type has a dedicated handler called inside the Serializable transaction:
+Each type has a dedicated handler in `lib/payments/checkout/handlers/` (`consultation.ts`, `subscription.ts`, `webinar.ts`, `class.ts`), called from `commitCheckout()` inside the Serializable transaction:
 
-| Type         | Handler                        | What It Creates                                                                                                                                                            |
-| ------------ | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CONSULTATION | `handleConsultationCheckout()` | Consultation (PENDING) + Appointment + AppointmentOccurrence (`isTentative: !skipPayment`)                                                                                     |
-| SUBSCRIPTION | `handleSubscriptionCheckout()` | Subscription (PENDING) + placeholder Appointment (no slots). Slots allocated later by consultant via Requests tab. Links completed trial sessions for conversion tracking. |
-| WEBINAR      | `handleWebinarCheckout()`      | Adds AppointmentOccurrence to existing shared appointment. Validates: not full, not ended, user not already registered.                                                        |
-| CLASS        | `handleClassCheckout()`        | Creates AppointmentOccurrence for the user across ALL class sessions (appointments). Validates: not full, not ended, user not already enrolled.                                |
+| Type         | Handler                        | What It Creates                                                                                                                                                                          |
+| ------------ | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CONSULTATION | `handleConsultationCheckout()` | Consultation (PENDING) + Appointment + AppointmentOccurrence (`isTentative: !skipPayment`)                                                                                               |
+| SUBSCRIPTION | `handleSubscriptionCheckout()` | Subscription (PENDING) + placeholder Appointment (no slots). Slots allocated later by consultant via Requests tab. Links completed trial sessions for conversion tracking.               |
+| WEBINAR      | `handleWebinarCheckout()`      | Seats the buyer with a `HELD` `AppointmentParticipant` on the existing shared appointment (no new occurrences). Validates: not full, not ended, user not already registered.             |
+| CLASS        | `handleClassCheckout()`        | Seats the buyer with a `HELD` `AppointmentParticipant` on the class wrapper, which covers every session (no new occurrences). Validates: not full, not ended, user not already enrolled. |
 
-### PaymentIntentManager
+### Gateway order cleanup
 
-**File**: `lib/payments/operations/checkout.ts`
+**Files**: `lib/payments/checkout/orchestrate.ts`, `lib/payments/checkout/gateway-intent.ts`
 
-Tracks active payment intents for automatic cleanup on failure.
-
-| Method                           | Purpose                                                                |
-| -------------------------------- | ---------------------------------------------------------------------- |
-| `createWithCleanup(params)`      | Creates intent via gateway, tracks in `activeIntents` Map              |
-| `cancelIntent(intentId, reason)` | Cancels intent with gateway, removes from tracking                     |
-| `cleanup(intentId, reason)`      | Best-effort cancel (only if tracked). Called when DB transaction fails |
-
-If the database transaction fails after the payment intent is created, `cleanup()` cancels the intent to prevent orphaned charges.
+If the booking transaction fails after the gateway order was created, `handleCheckout()` cancels the order (`cancelPaymentIntent`) and, for a real gateway order, records a tombstone through `tombstoneAbortedGatewayOrder()` so a late capture for it can be recognised. Mock, org-funded and zero-amount payments never reach the gateway and need no cleanup.
 
 ### Mock Payment Support
 
@@ -160,13 +154,13 @@ When `isMockPayment = true`:
 
 `handleCheckout()` acquires a distributed lock before creating appointments. The lock type is determined by the appointment type and presence of slot data.
 
-| Event Type                       | Lock Function       | Key Pattern                                            | Default TTL |
-| -------------------------------- | ------------------- | ------------------------------------------------------ | ----------- |
+| Event Type                       | Lock Function       | Key Pattern                                  | Default TTL |
+| -------------------------------- | ------------------- | -------------------------------------------- | ----------- |
 | Consultation                     | `lockSlotBooking`   | `slot-booking:{consultantUserId}:{startsAt}` | 60s         |
 | Subscription (with slots)        | `lockSlotBooking`   | `slot-booking:{consultantUserId}:{startsAt}` | 60s         |
-| Subscription (scheduling period) | `lockEventCheckout` | `event-checkout:SUBSCRIPTION:{planId}`                 | 60s         |
-| Webinar                          | `lockEventCheckout` | `event-checkout:WEBINAR:{eventId}`                     | 60s         |
-| Class                            | `lockEventCheckout` | `event-checkout:CLASS:{eventId}`                       | 60s         |
+| Subscription (scheduling period) | `lockEventCheckout` | `event-checkout:SUBSCRIPTION:{planId}`       | 60s         |
+| Webinar                          | `lockEventCheckout` | `event-checkout:WEBINAR:{eventId}`           | 60s         |
+| Class                            | `lockEventCheckout` | `event-checkout:CLASS:{eventId}`             | 60s         |
 
 For multi-participant events (Webinar, Class), an additional semaphore mechanism is available:
 
@@ -179,7 +173,6 @@ The semaphore uses a Redis Lua script that atomically reads the counter, checks 
 **TOCTOU protection**: After acquiring the lock, `revalidateInsideLock()` re-runs all availability checks (slot conflicts, capacity, plan existence) inside the protected region. This prevents the classic time-of-check-to-time-of-use race where conditions change between initial validation and the locked transaction.
 
 **Slot conflict filtering**: The conflict check inside `revalidateInsideLock()` uses `buildOccupiedAppointmentFilter()` to exclude appointments with terminal statuses (CANCELLED, REJECTED, EXPIRED). This means cancelled, rejected, or expired appointment slots no longer block new bookings for the same time range.
-
 
 > Cross-reference: `docs/booking/12-concurrency-and-locking.md` for full locking architecture and Redis infrastructure details.
 
@@ -197,16 +190,16 @@ Processes successful payment events in two phases:
 
 Runs inside a Prisma `$transaction`. If anything fails here, the entire phase rolls back.
 
-| Step | Action                                                                           |
-| ---- | -------------------------------------------------------------------------------- |
-| 1    | Find payment by `paymentIntentId`                                                |
-| 2    | Idempotency check -- skip if already `SUCCEEDED`                                 |
-| 3    | Validate webhook metadata via `validateWebhookMetadata()`                        |
-| 4    | Update `paymentStatus` to `SUCCEEDED`                                            |
-| 5    | Find or create appointment (New Flow vs Legacy Flow)                             |
-| 6    | `confirmExistingAppointment()` -- set `isTentative: false`                       |
+| Step | Action                                                                                                                                                                                               |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | Find payment by `paymentIntentId`                                                                                                                                                                    |
+| 2    | Idempotency check -- skip if already `SUCCEEDED`                                                                                                                                                     |
+| 3    | Validate webhook metadata via `validateWebhookMetadata()`                                                                                                                                            |
+| 4    | Update `paymentStatus` to `SUCCEEDED`                                                                                                                                                                |
+| 5    | Find or create appointment (New Flow vs Legacy Flow)                                                                                                                                                 |
+| 6    | `confirmExistingAppointment()` -- set `isTentative: false`                                                                                                                                           |
 |      | — Webinar/class: the status stamp is a CAS guard (`EVENT_ALLOWED_FROM.SCHEDULED`); on a CANCELLED/DRAFT event nothing is confirmed and `capturedAfterTerminal` routes Phase 2 to an auto-refund (B2) |
-| 7    | `confirmApprovalStatus()` -- transition `APPROVED_PENDING_PAYMENT` to `APPROVED` |
+| 7    | `confirmApprovalStatus()` -- transition `APPROVED_PENDING_PAYMENT` to `APPROVED`                                                                                                                     |
 
 If metadata validation fails, the payment is marked as `SUCCEEDED` with description `REQUIRES_MANUAL_RECOVERY` and a P1 critical alert is logged. The appointment is NOT created -- manual intervention required.
 
@@ -218,7 +211,7 @@ If metadata validation fails, the payment is marked as `SUCCEEDED` with descript
 
 Three cooperating changes make a hot event or hot slot survivable:
 
-1. **Optimistic capacity pre-check (WEBINAR/CLASS)** — before the event mutex is even requested, one bounded read answers "already sold out" via the SAME capacity helpers the authoritative recount uses (`readEventCapacity` in checkout.ts). The overwhelming majority of losers in a drop fail fast with a plain **409 `EVENT_SOLD_OUT`** ("sold out, card not charged") instead of queueing into the function timeout.
+1. **Optimistic capacity pre-check (WEBINAR/CLASS)** — before the event mutex is even requested, one bounded read answers "already sold out" via the SAME capacity helpers the authoritative recount uses (`readEventCapacity` in `lib/payments/checkout/locks.ts`). The overwhelming majority of losers in a drop fail fast with a plain **409 `EVENT_SOLD_OUT`** ("sold out, card not charged") instead of queueing into the function timeout.
 2. **Bounded waiter budgets** — checkout's lock acquisitions (`event-checkout`, `consultee-booking`) pass `CHECKOUT_WAIT_RETRY_CONFIG` (5 retries ≈ 7s worst case), far inside the ~26s function ceiling. The loser of a near-capacity race now gets a structured **409 `EVENT_CHECKOUT_BUSY` / `CONSULTEE_BOOKING_BUSY` with `retryAfter`**, never a raw 504; contention errors are typed classes (`EventCheckoutBusyError`, `ConsulteeBookingBusyError`), not message-sniffed strings.
 3. **Client single auto-retry (B5)** — all four checkout submit paths wrap their request in `fetchCheckoutWithBusyRetry`: on a structured BUSY 409 it shows "your card has not been charged, retrying in Ns…" once, waits the advised pause (capped at 20s), and retries exactly once. The stable `clientIdempotencyKey` rides both attempts and the server CASes on it, so the retry cannot mint a duplicate order.
 
@@ -228,12 +221,12 @@ The Serializable participant recount inside the mutex remains the authoritative 
 
 Runs outside the transaction. Failures are logged but do not roll back the payment. Background jobs serve as safety nets.
 
-| Step | Action                                                           | Safety Net                       |
-| ---- | ---------------------------------------------------------------- | -------------------------------- |
-| 1    | `createEarningsFromPayment()`                                    | `sync-payment-earnings` cron job |
-| 2    | `createInvoiceFromPayment()`                                     | Manual reconciliation            |
-| 3    | `sendPaymentSuccessNotification()` -- payment-success email (M7: runs post-commit so a rollback cannot leave a false confirmation) | N/A                              |
-| 4    | `notifyPaymentSuccess()` via Novu (to consultee)                 | N/A                              |
+| Step | Action                                                                                                                                                                                                                                                                                              | Safety Net                       |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| 1    | `createEarningsFromPayment()`                                                                                                                                                                                                                                                                       | `sync-payment-earnings` cron job |
+| 2    | `createInvoiceFromPayment()`                                                                                                                                                                                                                                                                        | Manual reconciliation            |
+| 3    | `sendPaymentSuccessNotification()` -- payment-success email (M7: runs post-commit so a rollback cannot leave a false confirmation)                                                                                                                                                                  | N/A                              |
+| 4    | `notifyPaymentSuccess()` via Novu (to consultee)                                                                                                                                                                                                                                                    | N/A                              |
 | 5    | `notifyAppointmentBooked()` via Novu (to consultant + consultee) — **skipped when the appointment has no slots yet** (subscription placeholder): the template renders a session time, and a blank placeholder was the payer's first booking message. Allocation-time notification lands with PR 2c. | N/A                              |
 
 ### Per-Type Confirmation Differences

@@ -60,6 +60,20 @@ jest.mock("../../lib/api/organizations/program-helpers", () => ({
   ProgramAssignmentLimitError: class ProgramAssignmentLimitError extends Error {},
 }));
 
+const mockNotifyOverageDue = jest.fn();
+jest.mock("../../lib/payments/billing/overage-settlement", () => ({
+  __esModule: true,
+  recordOverageAtCheckout: jest.fn(async () => ({
+    userId: "consultee-1",
+    programAssignmentId: "assign-live",
+    marginalPaise: 50_000,
+    currency: "INR",
+    overageEventId: "overage-1",
+  })),
+  notifyOverageDueAfterCommit: (...args: unknown[]) =>
+    mockNotifyOverageDue(...args),
+}));
+
 const mockValidateFn = jest.fn();
 const mockRevalidateConflictsFn = jest.fn();
 jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
@@ -73,7 +87,7 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 }));
 
 import prisma from "@/lib/prisma";
-import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { allocate } from "@/lib/booking/allocation";
 import { ScheduleType, DayOfWeek } from "@prisma/client";
 
 const base = prisma as unknown as Record<string, Record<string, jest.Mock>>;
@@ -230,7 +244,7 @@ afterEach(() => {
 });
 
 async function allocateOneSession() {
-  return SchedulingService.allocate({
+  return allocate({
     eventType: "subscription",
     eventId: "sub-1",
     mode: "manual",
@@ -354,6 +368,47 @@ describe("removed subscription sessions return the engagement", () => {
     expect(recordBookingUtilization).toHaveBeenCalledWith(
       mockTx,
       expect.objectContaining({ appointmentIds: ["occ-new-1"] }),
+    );
+  });
+});
+
+describe("the member-due overage notice waits for the allocation to commit", () => {
+  beforeEach(() => {
+    mockNotifyOverageDue.mockClear();
+    mockTx.programAssignment.findFirst.mockResolvedValue({ id: "assign-live" });
+    recordBookingUtilization.mockResolvedValueOnce({
+      wasOverage: true,
+      engagementsConsumedDelta: 1,
+      engagementsUsedAfter: 3,
+      cap: 2,
+      programType: "LICENSED_SEAT",
+      consumedPaiseAfter: 0,
+      creditBudgetPaise: null,
+    });
+  });
+
+  it("sends nothing when a later step rolls the allocation back", async () => {
+    const result = await allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "manual",
+      slots: [MON_0900, MON_0930],
+      inTx: async () => {
+        throw new Error("a later allocation step failed");
+      },
+    });
+
+    expect(result.success).toBe(false);
+    expect(mockNotifyOverageDue).not.toHaveBeenCalled();
+  });
+
+  it("sends the notice once after the allocation commits", async () => {
+    const result = await allocateOneSession();
+
+    expect(result.success).toBe(true);
+    expect(mockNotifyOverageDue).toHaveBeenCalledTimes(1);
+    expect(mockNotifyOverageDue).toHaveBeenCalledWith(
+      expect.objectContaining({ overageEventId: "overage-1" }),
     );
   });
 });

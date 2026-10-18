@@ -136,6 +136,7 @@ jest.mock("../../lib/prisma", () => {
     systemEvent: { create: jest.fn().mockResolvedValue({}) },
     supportTicket: { findFirst: jest.fn().mockResolvedValue(null) },
     maintenanceWindow: { findMany: jest.fn().mockResolvedValue([]) },
+    platformIncident: { findMany: jest.fn().mockResolvedValue([]) },
     windowBackupInterest: {
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },

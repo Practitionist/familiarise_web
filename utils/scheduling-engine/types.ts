@@ -8,6 +8,8 @@
 import type { AppointmentStatus } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import type { StagedTrigger } from "@/lib/novu/outbox";
+import type { PendingOverageNotification } from "@/lib/payments/billing/overage-settlement";
+import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
 import type { NullableWeeklyRowLocalColumns } from "@/utils/schedule/weekly-projection";
 
 /**
@@ -234,11 +236,13 @@ export interface AllocationResult {
   outcome?: "approved" | "awaiting_payment";
   /**
    * #1697 item 5 — outbox rows staged inside the write transaction.
-   * `SchedulingService.allocate` strips this and attempts them post-commit;
+   * `allocate` (lib/booking/allocation) strips this and attempts them post-commit;
    * it never reaches a route response.
    */
   stagedNotices?: StagedTrigger[];
-  appointments?: any[]; // Appointment records created
+  /** A subscription allocation's member-due overage notice; `allocate` sends it after commit. */
+  overageNotice?: PendingOverageNotification | null;
+  appointments?: AppointmentWithSlots[]; // Appointment records created
   error?: string;
   errorCode?: AllocationErrorCode;
   httpStatus?: number;
@@ -306,6 +310,8 @@ export interface ConsultantAllocationData {
     startsAt: Date;
     endsAt: Date;
   }>;
+  /** Whether any custom row is published, when the rows above are only the live window. */
+  hasCustomRows?: boolean;
   timezone?: string;
 }
 

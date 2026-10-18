@@ -5,6 +5,7 @@ import { PayoutsBoard } from "@/components/dashboard/backoffice/payouts/PayoutsB
 import { EarningsTab } from "./EarningsTab";
 import { RefundDoorsPanel } from "./RefundsTab";
 import { ReconcileTab } from "./ReconcileTab";
+import { IncidentsTab } from "./IncidentsTab";
 import { AuditTab } from "./AuditTab";
 import { readOpsLog } from "@/lib/backoffice/ops-log-read";
 import { can, type BackofficeCapability } from "@/lib/backoffice/capability";
@@ -60,6 +61,8 @@ export async function MoneyTabBody({
       );
     case "reconcile":
       return <ReconcileTab />;
+    case "incidents":
+      return <IncidentsTab canDeclare={can(cap, "incidents.declare")} />;
     case "audit":
       // #1771 K-9 — RSC-seeded: the first page ships with the HTML.
       return (

@@ -26,6 +26,7 @@ import {
   useConsulteeAppointmentsAdapter,
 } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
 import { DisplayZoneProvider } from "@/lib/time/zoned-format";
+import { IncidentRemedyBanner } from "@/components/appointments/consultee/IncidentRemedyBanner";
 
 /** Sessions worth putting in a calendar: booked (not held), live, not over. */
 function calendarSessions(vm: AppointmentVM) {
@@ -433,12 +434,19 @@ export default function DetailPageClient({
             .overflowItems(vm)
             .some((item) => item.key === "message");
           return (
-            <ConsulteeExtraActions
-              vm={vm}
-              consulteeId={consulteeId}
-              appointmentId={appointmentId}
-              hasOverflowMessageAction={hasOverflowMessageAction}
-            />
+            <>
+              <ConsulteeExtraActions
+                vm={vm}
+                consulteeId={consulteeId}
+                appointmentId={appointmentId}
+                hasOverflowMessageAction={hasOverflowMessageAction}
+              />
+              <IncidentRemedyBanner
+                consulteeId={consulteeId}
+                zone={viewerZone}
+                appointmentId={appointmentId}
+              />
+            </>
           );
         }}
         resourceHrefs={{

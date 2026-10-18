@@ -106,9 +106,8 @@ describe("transitionParticipant / linkParticipantsToPayment", () => {
 describe("every creation path records the participant edge (#1544 / #1554)", () => {
   const read = (f: string) =>
     fs.readFileSync(path.join(process.cwd(), f), "utf8");
+  // The allocator and the four checkout handlers assert their roster writes behaviourally in their own suites.
   const writers: Array<[string, RegExp]> = [
-    ["lib/payments/operations/checkout.ts", /recordParticipants\(/],
-    ["utils/scheduling-engine/SchedulingService.ts", /recordParticipants\(/],
     ["app/api/trials/[trialId]/route.ts", /recordParticipants\(/],
     // #1544 — the one creation path that never wrote the roster until #1554.
     [
@@ -146,10 +145,5 @@ describe("every creation path records the participant edge (#1544 / #1554)", () 
   ];
   it.each(writers)("%s", (file, pattern) => {
     expect(read(file)).toMatch(pattern);
-  });
-
-  it("checkout records participants once per handler that seats a buyer", () => {
-    const src = read("lib/payments/operations/checkout.ts");
-    expect((src.match(/recordParticipants\(/g) ?? []).length).toBe(4);
   });
 });

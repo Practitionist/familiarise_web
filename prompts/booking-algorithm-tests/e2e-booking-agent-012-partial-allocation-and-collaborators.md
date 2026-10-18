@@ -49,7 +49,7 @@ reaches only the `auto` path, and inside the service it applies only to
 recurring event types and never on a reschedule: a consultation or webinar is
 one session, so it either fits or it does not.
 
-The co-host guard is `SchedulingService.assertCollaboratorsFree`, which
+The co-host guard is `assertCollaboratorsFree` (`lib/booking/allocation/collaborators.ts`), which
 calls `assertCollaboratorsAvailableForWindows`
 (`lib/collaborators/availability.ts`). It short-circuits for anything that is
 not a webinar or class, considers only collaborators whose status is

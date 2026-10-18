@@ -79,7 +79,7 @@ jest.mock("../../lib/prisma", () => {
   };
 });
 
-// Boundary mocks. `lib/payments/operations/checkout` transitively imports the
+// Boundary mocks. `lib/payments/checkout` transitively imports the
 // auth stack through the payouts barrel, which is ESM-only and cannot be
 // required under this Jest transform; the gateway and the Redis lock helpers
 // are infrastructure this suite never exercises. Note that
@@ -112,7 +112,7 @@ jest.mock("../../utils/appointmentlock", () => ({
 }));
 
 import prisma, { type Tx } from "../../lib/prisma";
-import { validateSlotAvailability } from "../../lib/payments/operations/checkout";
+import { validateSlotAvailability } from "../../lib/payments/checkout/occupancy-validate";
 
 const HOUR_MS = 60 * 60 * 1000;
 

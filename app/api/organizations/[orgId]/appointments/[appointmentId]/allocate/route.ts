@@ -16,7 +16,7 @@
  *   admins.
  * - Allocates only a booking the expert already APPROVED; PENDING and
  *   APPROVED_PENDING_PAYMENT answer 409 `EXPERT_APPROVAL_REQUIRED`.
- * - Delegates slot validation and conflict checks to `SchedulingService.allocate`
+ * - Delegates slot validation and conflict checks to `allocate` (lib/booking/allocation)
  *   with `override: false` (never bypassing the delivering expert's published
  *   availability).
  * - Records an immutable `OrgAuditLog` row with the mandatory `overrideReason`.
@@ -32,7 +32,7 @@ import { isActForOrgBooking, isOrgFundedByOrg } from "@/lib/booking/org-actor";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
-import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { allocate } from "@/lib/booking/allocation";
 
 const AllocateOrgBookingBodySchema = z
   .object({
@@ -152,7 +152,7 @@ export async function POST(
     const result = await Sentry.startSpan(
       { op: "booking.allocate.org", name: `allocate.org.${eventType}` },
       () =>
-        SchedulingService.allocate({
+        allocate({
           eventType,
           eventId,
           mode,

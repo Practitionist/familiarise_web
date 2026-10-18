@@ -2,18 +2,18 @@
  * The one allocate handler behind the four PATCH routes
  * (`/api/bookings/{consultations,subscriptions,webinars,classes}/[id]/allocate`).
  * Each route resolves its own typed segment param and delegates here, so the
- * auth → limiter → Zod → SchedulingService → typed-error contract is written
+ * auth → limiter → Zod → allocate() → typed-error contract is written
  * once and every event type answers the same shape.
  *
  * VALIDATION LAYERS:
  * 1. Zod schema validation - Type-safe validation with automatic type inference
- * 2. SchedulingService - Validates business rules and executes allocation
+ * 2. allocate() (lib/booking/allocation) - Validates business rules and executes allocation
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { ZodError } from "zod";
-import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { allocate } from "@/lib/booking/allocation";
 import type {
   AllocationMode,
   EventType,
@@ -131,7 +131,7 @@ export async function handleAllocate(
       const result = await Sentry.startSpan(
         { op: "booking.allocate", name: `allocate.${eventType}` },
         () =>
-          SchedulingService.allocate({
+          allocate({
             eventType,
             eventId,
             mode,

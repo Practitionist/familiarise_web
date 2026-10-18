@@ -76,9 +76,7 @@ export interface SessionParties {
  *   is a consultant-fault refund, so auto-complete owns these as before.
  */
 export type AttendanceVerdict =
-  | "consultant-attended"
-  | "consultant-absent"
-  | "inconclusive";
+  "consultant-attended" | "consultant-absent" | "inconclusive";
 
 /** Every session that actually happened on a booking's slots. */
 export function meetingsOf<S extends AttendedSession>(
@@ -132,7 +130,7 @@ export function classifyConsultantAttendance(
 export function isPastNoShowHandoff(
   lastSlotEndsAt: Date | null | undefined,
   now: Date = new Date(),
-  outages: readonly OutageWindow[] = [],
+  outages: readonly Pick<OutageWindow, "startsAt" | "endsAt">[] = [],
 ): boolean {
   // A booking whose slot end we cannot read cannot be held back on a deadline
   // we cannot compute; treat it as past the handoff so it can never strand.

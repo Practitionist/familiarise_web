@@ -17,6 +17,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { transitionParticipant } from "@/lib/booking/participants";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
+import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
 import { PaymentStatus, OccurrenceCompletionStatus } from "@prisma/client";
 
 import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
@@ -242,7 +243,9 @@ export async function quoteTrialRefund(
         where: { id: appointmentId },
         select: {
           cancellationPolicy: POLICY_TERMS_INCLUDE,
+          // The next undelivered session, so a rebook's voided original is never the clock.
           occurrences: {
+            where: LIVE_SLOT_WHERE,
             orderBy: { startsAt: "asc" },
             take: 1,
             select: { startsAt: true },

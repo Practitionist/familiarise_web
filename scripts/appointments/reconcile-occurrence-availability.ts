@@ -36,7 +36,7 @@ import {
   sessionsTotalOf,
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
-import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { allocate } from "@/lib/booking/allocation";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import type { EventConfig } from "@/utils/scheduling-engine/types";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
@@ -898,7 +898,7 @@ async function topUpIncompleteEvents(): Promise<TopUpSweepResult> {
     }
     summary.attempted++;
     try {
-      const result = await SchedulingService.allocate({
+      const result = await allocate({
         eventType: candidate.eventType,
         eventId: candidate.eventId,
         mode: "auto",

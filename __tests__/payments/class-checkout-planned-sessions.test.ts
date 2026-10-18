@@ -8,7 +8,7 @@
  * a missing one. Excluding it blocked every enrollment for the length of an
  * open reschedule and under-counted the engagements the seat buys.
  *
- * Mocks mirror consultation-occurrence-parity.test.ts: everything checkout.ts
+ * Mocks mirror consultation-occurrence-parity.test.ts: everything lib/payments/checkout
  * touches at module scope is stubbed so the one exported handler can run
  * against a hand-built transaction.
  */
@@ -83,7 +83,7 @@ jest.mock("../../lib/events/capacity", () => ({
   getClassCapacity: jest.fn().mockReturnValue({ isFull: false }),
 }));
 
-import { handleClassCheckout } from "../../lib/payments/operations/checkout";
+import { handleClassCheckout } from "../../lib/payments/checkout/handlers/class";
 import type { Tx } from "../../lib/prisma";
 import type { CheckoutInput } from "../../schemas/checkout";
 
@@ -159,6 +159,17 @@ it("counts a RESCHEDULED session as planned: the gate opens and the meter says f
 
   expect(result.engagementsConsumed).toBe(4);
   expect(result.slotsLinked).toBe(4);
+  // One seat on the class wrapper, held until the payment captures.
+  expect(
+    (tx.appointmentParticipant.createMany as jest.Mock).mock.calls[0][0].data,
+  ).toEqual([
+    expect.objectContaining({
+      appointmentId: "appt-class",
+      userId: "buyer-1",
+      role: "CONSULTEE",
+      status: "HELD",
+    }),
+  ]);
   // And the read itself keeps the released row: only a cancelled or deleted
   // session is out of the plan.
   const args = (tx.class.findUnique as jest.Mock).mock.calls[0][0];
@@ -212,6 +223,36 @@ describe("#1819 — late join", () => {
     });
     expect((await buy(tx, 4)).amount).toBe(49_999);
     expect(stamped(tx).sessionsPurchased).toBe(4);
+  });
+
+  it("meters a late joiner for the sessions bought, not the whole batch", async () => {
+    const tx = txWith(eight(4), {
+      price: 99_999,
+      totalSessions: 8,
+      lateJoinUntilSession: 6,
+    });
+    const result = await buy(tx, 4);
+    expect(result.engagementsConsumed).toBe(4);
+    expect(result.engagementIds).toEqual(["s5", "s6", "s7", "s8"]);
+  });
+
+  it("meters a rescheduled session once, on its replacement row", async () => {
+    const rows = eight(4);
+    // Released before session 5 starts, so it sorts ahead of it by time.
+    const tombstone = {
+      ...occurrence(
+        "s6-old",
+        new Date(rows[4].startsAt.getTime() - 1),
+        "RESCHEDULED",
+      ),
+      ordinal: 6,
+    };
+    const tx = txWith([...rows.slice(0, 4), tombstone, ...rows.slice(4)], {
+      totalSessions: 8,
+      lateJoinUntilSession: 6,
+    });
+    const result = await buy(tx, 4);
+    expect(result.engagementIds).toEqual(["s5", "s6", "s7", "s8"]);
   });
 
   it("closes enrolment once session 1 starts when the host set no cutoff", async () => {

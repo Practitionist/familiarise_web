@@ -257,7 +257,7 @@ The database this was measured against is seeded, not organic: 1,795
 `AppointmentOccurrence` rows, 1,091 appointments, 83 consultants, and no `PENDING`
 payment with a future `expiresAt` anywhere. Most seeded slot rows also leave
 the denormalized `consultantProfileId` null, which real allocations never do —
-`SchedulingService` sets it on every slot it creates. The absolute
+`createAppointments` (`lib/booking/allocation/commit/create-appointments.ts`) sets it on every slot it creates. The absolute
 milliseconds are therefore a floor, and the plan shapes are what should be
 trusted: the occupancy query's cost is structural (fifteen joins, whole-table
 reads, planning heavier than execution) and will grow with the tables, while

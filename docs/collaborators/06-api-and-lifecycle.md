@@ -51,7 +51,7 @@ Registered in `lib/cron/cleanup-registry.ts` under Postgres `withCronLock`:
 
 ### 2. Co-Host Double-Booking Guard (`lib/collaborators/availability.ts`)
 
-Whenever a host creates or reschedules webinar slots or class batches (`SchedulingService`, webinar/class CRUD routes):
+Whenever a host creates or reschedules webinar slots or class batches (the allocator in `lib/booking/allocation`, webinar/class CRUD routes):
 
 - `assertCollaboratorsAvailable()` and `assertCollaboratorsAvailableForWindows()` check every `ACCEPTED` collaborator's confirmed and live-checkout commitments across all owned and collaborated plans.
 - Rejects overlapping sessions inside the scheduling transaction with `CollaboratorUnavailableError` (`409 Conflict`) naming the conflicting co-host(s).

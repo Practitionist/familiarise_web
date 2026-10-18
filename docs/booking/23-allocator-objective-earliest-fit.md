@@ -4,9 +4,11 @@
 > but never written down, so a reader could only infer it — and a reader who
 > inferred "something smarter" would be right about the code and wrong about the
 > intent. Decided by the booking owner alongside the wave-1 allocation and grid
-> correctness work; the code it describes is `SchedulingService.autoAllocate`
-> (`findAvailableSlots` → `sweepPeriod` → `tryPlaceOnDay` →
-> `bestFittingBlockInRow`) and `bestBlockForSingleSession`.
+> correctness work; the code it describes is `autoAllocate`
+> (`lib/booking/allocation/modes/auto.ts`) and `findAvailableSlots`
+> (`lib/booking/allocation/search/find-available-slots.ts`: `sweepPeriod` →
+> `tryPlaceOnDay` → `bestFittingBlockInRow` in `search/blocks.ts`) and
+> `bestBlockForSingleSession`.
 
 ## The decision
 
@@ -36,7 +38,7 @@ the consultee's live bookings, the per-day cap (`sessionCaps.ts`), the
 as a maximum over placeable candidates, and the sweep that accepts only a perfect
 match (`sweepPeriod(true)`) is always followed by an unconditional
 `sweepPeriod(false)` over the same window. So a stated preference can change
-*which* of the equally-legal placements is chosen and can never change *whether*
+_which_ of the equally-legal placements is chosen and can never change _whether_
 one is found. With no preference the score ceiling is `0`, the first placeable
 candidate hits it, and the walk returns exactly what the plain first-fit walk
 returned. This is the #1065 safety property, and it is the reason a preference
@@ -52,9 +54,9 @@ is regularly misremembered in both directions:
 - **Within a week, the ceiling is binding.** A plan with `sessionsPerWeek: 1` puts
   at most one session in any week.
 - **Across weeks, there is no distribution at all.** The allocator fills week 1 to
-  its ceiling, then week 2, and so on. So a plan sold as *8 sessions over 4 months
-  at 1 per week* places all eight in the **first eight weeks**, not across the
-  four months; and a plan sold as *8 over 4 weeks at 2 per week* places eight in
+  its ceiling, then week 2, and so on. So a plan sold as _8 sessions over 4 months
+  at 1 per week_ places all eight in the **first eight weeks**, not across the
+  four months; and a plan sold as _8 over 4 weeks at 2 per week_ places eight in
   four weeks. `durationInMonths × sessionsPerWeek` is what the period can HOLD,
   not the shape the allocator produces.
 
@@ -80,7 +82,7 @@ is regularly misremembered in both directions:
 - **No load balancing.** No term spreads sessions across weeks, across days of
   the week, or across times of day for the allocator's own sake. A consultee's
   stated preference may reorder the candidates — never add one, never remove one
-  — so a balanced shape can be *asked for*, but it is never the default.
+  — so a balanced shape can be _asked for_, but it is never the default.
 - **No fairness between a plan's sessions.** The k-th session is placed by the
   same rule as the first; earlier sessions can and do occupy the best times.
 - **No cost function.** There is no weighting, no tunable, and no score other than
@@ -99,7 +101,7 @@ flatter load — that no party has asked for.
 
 The properties that would justify a richer objective (fragmentation, balance)
 matter when the scarce resource is being rationed among several claimants who
-each need a *usable* chunk. Here each placement is one contiguous session inside
+each need a _usable_ chunk. Here each placement is one contiguous session inside
 one consultant's own published hours, so a leftover partial block has no claimant
 to be denied. That is the reasoning; it is also the thing to revisit first if a
 future requirement makes fragmentation or balance matter, because the argument
@@ -109,18 +111,18 @@ rests on there being no second claimant.
 
 It is not a statement that the buyer's 15-minute lead time applies to
 server-picked slots. That asymmetry is separate and deliberate: `slotStartRefusal`
-enforces the `:00/:30` grid and the 15-minute lead for a *client-picked* start,
+enforces the `:00/:30` grid and the 15-minute lead for a _client-picked_ start,
 while the allocator's re-validation keeps a five-second buffer because its slots
 were chosen moments earlier by the server. See the comment in
 `lib/payments/utils/slot-validation.ts`.
 
 ## Where the code is
 
-| Concern | Location |
-| --- | --- |
-| The day-by-day walk | `SchedulingService.findAvailableSlots` → `sweepPeriod` |
-| Placement inside one day | `tryPlaceOnDay` → `bestFittingBlockInRow` |
-| Candidate starts inside one row | `candidateStartsInRow` (floored to the booking grid) |
+| Concern                               | Location                                                                                             |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| The day-by-day walk                   | `findAvailableSlots` → `sweepPeriod` (`lib/booking/allocation/search/find-available-slots.ts`)       |
+| Placement inside one day              | `tryPlaceOnDay` → `bestFittingBlockInRow`                                                            |
+| Candidate starts inside one row       | `candidateStartsInRow` (floored to the booking grid)                                                 |
 | Preference as a ceiling, not a filter | `utils/scheduling-engine/preferenceScoring.ts`, `sweepPeriod(true)` followed by `sweepPeriod(false)` |
-| Per-day and per-week caps | `utils/scheduling-engine/sessionCaps.ts`, the two counter maps in `findAvailableSlots` |
-| The client's 15-minute lead time | `lib/payments/constants.ts`, `lib/payments/utils/slot-validation.ts` |
+| Per-day and per-week caps             | `utils/scheduling-engine/sessionCaps.ts`, the two counter maps in `findAvailableSlots`               |
+| The client's 15-minute lead time      | `lib/payments/constants.ts`, `lib/payments/utils/slot-validation.ts`                                 |

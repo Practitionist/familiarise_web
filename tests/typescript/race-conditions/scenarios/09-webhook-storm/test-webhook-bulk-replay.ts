@@ -4,7 +4,7 @@
  *
  * Razorpay redelivers aggressively. Ten deliveries of the same signed
  * envelope (5 concurrent + 5 sequential) must produce exactly ONE
- * WebhookEvent row — the route derives `eventId = event:entityId` from the
+ * WebhookEvent row — the route derives `eventId = event:entityId:bodyHash` from the
  * payload and logWebhookEvent's 3-state machine + P2002 catch dedupe — and
  * every delivery must be ACKed 2xx so the gateway stops retrying.
  *
@@ -36,7 +36,8 @@ async function run() {
   }
 
   const paymentId = `pay_chaos_${process.pid}_${Date.now()}`;
-  const expectedEventId = `payment.captured:${paymentId}`;
+  // Stored ids are `<event>:<entity>:<bodyHash>`; match on the stable prefix.
+  const eventIdPrefix = `payment.captured:${paymentId}:`;
   const payload = buildRazorpayPaymentCapturedEnvelope({
     paymentId,
     orderId: `order_chaos_${process.pid}`,
@@ -73,7 +74,7 @@ async function run() {
   );
 
   const rows = await prisma.webhookEvent.findMany({
-    where: { eventId: expectedEventId },
+    where: { eventId: { startsWith: eventIdPrefix } },
     select: { id: true },
   });
   check("exactly one WebhookEvent row for the envelope", rows.length === 1, {
@@ -81,7 +82,9 @@ async function run() {
   });
 
   // Cleanup chaos rows for repeat runs.
-  await prisma.webhookEvent.deleteMany({ where: { eventId: expectedEventId } });
+  await prisma.webhookEvent.deleteMany({
+    where: { eventId: { startsWith: eventIdPrefix } },
+  });
 
   finish("webhook-bulk-replay");
 }

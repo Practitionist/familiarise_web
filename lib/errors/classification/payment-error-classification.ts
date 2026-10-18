@@ -270,7 +270,8 @@ const BUSINESS_ERROR_ENTRIES = [
     httpStatus: 422,
   },
   // #1426 — the wallet-freeze and consent guards throw with these codes
-  // (lib/payments/operations/checkout.ts:881, :1556, :2538) but had no
+  // (lib/payments/checkout: org-funding.ts, occupancy-validate.ts,
+  // commit/org-utilization.ts) but had no
   // BUSINESS_ERROR_CODES row, so classifyError's message-only fallback
   // mislabelled them 500 instead of the buyer-actionable rejection they are.
   {
@@ -521,14 +522,19 @@ const BUSINESS_ERROR_ENTRIES = [
       "CLASS_PRICE_CHANGED",
       // #1743 — subscription renewal already linked to an active successor.
       "ALREADY_RENEWED",
-      // A refunded seat cannot be bought again yet; a paused expert takes no new booking.
+      // A refunded seat cannot be bought again yet; a paused or unverified expert takes no new booking.
       "SEAT_REBUY_UNSUPPORTED",
       "NOT_ACCEPTING_BOOKINGS",
+      "EXPERT_NOT_VERIFIED",
       // A subscription session going back to the plan.
       "RETURN_WINDOW_CLOSED",
       "RETURN_CAP_REACHED",
       "RETURN_RESCHEDULE_OPEN",
       "SESSION_NOT_RETURNABLE",
+      // A free rebook of an incident-voided session, or its refund-now twin.
+      "INCIDENT_REMEDY_CLOSED",
+      "INCIDENT_REMEDY_WRONG_KIND",
+      "INCIDENT_REBOOK_SLOT_UNAVAILABLE",
     ] as const
   ).map((code) => ({
     code,
@@ -539,6 +545,11 @@ const BUSINESS_ERROR_ENTRIES = [
     code: "INVALID_RENEWAL_SOURCE",
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 400,
+  },
+  {
+    code: "INCIDENT_REMEDY_NOT_FOUND",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 404,
   },
   {
     code: "BACKUP_WINDOW_PAST",

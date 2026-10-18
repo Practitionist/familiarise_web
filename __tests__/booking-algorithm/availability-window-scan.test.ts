@@ -31,7 +31,9 @@ jest.mock("../../utils/appointmentlock", () => ({
   unlockConsulteeBooking: jest.fn(),
 }));
 
-import { SchedulingService } from "../../utils/scheduling-engine/SchedulingService";
+import { findAvailableSlots as searchSlots } from "../../lib/booking/allocation/search/find-available-slots";
+import type { AppointmentWithSlots } from "../../lib/booking/allocation/types";
+import type { PrismaLike } from "../../lib/prisma";
 import { ScheduleCalculationService } from "../../utils/scheduling-engine/ScheduleCalculationService";
 import type {
   ConsultantAllocationData,
@@ -44,7 +46,7 @@ import { weeklyRowLocalColumns } from "@/utils/schedule/weekly-projection";
 const IST = "Asia/Kolkata";
 const IST_OFFSET = 330;
 
-/** findAvailableSlots is private; the search is the unit under test. */
+/** The search is the unit under test; this keeps the positional call in one place. */
 const findAvailableSlots = (
   db: unknown,
   consultant: ConsultantAllocationData,
@@ -56,19 +58,15 @@ const findAvailableSlots = (
   eventOwnAppointments: unknown[] = [],
   consulteeUserId?: string,
 ): Promise<Date[]> =>
-  (
-    SchedulingService as unknown as {
-      findAvailableSlots: (...a: unknown[]) => Promise<Date[]>;
-    }
-  ).findAvailableSlots(
-    db,
+  searchSlots(
+    db as unknown as PrismaLike,
     consultant,
     totalSlotsNeeded,
     slotsPerCall,
     eventType,
     config,
     excludeAppointmentIds,
-    eventOwnAppointments,
+    eventOwnAppointments as unknown as AppointmentWithSlots[],
     consulteeUserId,
   );
 
