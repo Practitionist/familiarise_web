@@ -136,22 +136,33 @@ WHERE u.email = 'testconsultee002@familiarise.com';
 
 INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
-  "consultantProfileId", "createdAt", "updatedAt"
+  "consultantProfileId", "createdAt", "updatedAt",
+  "utcOffsetMinutes", timezone, "localStartDay", "localStartMinutes", "localEndDay", "localEndMinutes"
 )
 VALUES
   -- Monday AM: 09:30-12:30 IST = 04:00-07:00 UTC = 240-420 min
-  ('test-w002-mon-am', 'MONDAY',    240, 'MONDAY',    420, 'test-consultant-profile-002', NOW(), NOW()),
-  ('test-w002-tue-am', 'TUESDAY',   240, 'TUESDAY',   420, 'test-consultant-profile-002', NOW(), NOW()),
-  ('test-w002-wed-am', 'WEDNESDAY', 240, 'WEDNESDAY', 420, 'test-consultant-profile-002', NOW(), NOW()),
-  ('test-w002-thu-am', 'THURSDAY',  240, 'THURSDAY',  420, 'test-consultant-profile-002', NOW(), NOW()),
-  ('test-w002-fri-am', 'FRIDAY',    240, 'FRIDAY',    420, 'test-consultant-profile-002', NOW(), NOW()),
+  ('test-w002-mon-am', 'MONDAY', 240, 'MONDAY', 420, 'test-consultant-profile-002', NOW(), NOW(), 330, 'Asia/Kolkata', 'MONDAY', 570, 'MONDAY', 750),
+  ('test-w002-tue-am', 'TUESDAY', 240, 'TUESDAY', 420, 'test-consultant-profile-002', NOW(), NOW(), 330, 'Asia/Kolkata', 'TUESDAY', 570, 'TUESDAY', 750),
+  ('test-w002-wed-am', 'WEDNESDAY', 240, 'WEDNESDAY', 420, 'test-consultant-profile-002', NOW(), NOW(), 330, 'Asia/Kolkata', 'WEDNESDAY', 570, 'WEDNESDAY', 750),
+  ('test-w002-thu-am', 'THURSDAY', 240, 'THURSDAY', 420, 'test-consultant-profile-002', NOW(), NOW(), 330, 'Asia/Kolkata', 'THURSDAY', 570, 'THURSDAY', 750),
+  ('test-w002-fri-am', 'FRIDAY', 240, 'FRIDAY', 420, 'test-consultant-profile-002', NOW(), NOW(), 330, 'Asia/Kolkata', 'FRIDAY', 570, 'FRIDAY', 750),
   -- Monday PM: 14:00-17:00 IST = 08:30-11:30 UTC = 510-690 min
-  ('test-w002-mon-pm', 'MONDAY',    510, 'MONDAY',    690, 'test-consultant-profile-002', NOW(), NOW()),
-  ('test-w002-tue-pm', 'TUESDAY',   510, 'TUESDAY',   690, 'test-consultant-profile-002', NOW(), NOW()),
-  ('test-w002-wed-pm', 'WEDNESDAY', 510, 'WEDNESDAY', 690, 'test-consultant-profile-002', NOW(), NOW()),
-  ('test-w002-thu-pm', 'THURSDAY',  510, 'THURSDAY',  690, 'test-consultant-profile-002', NOW(), NOW()),
-  ('test-w002-fri-pm', 'FRIDAY',    510, 'FRIDAY',    690, 'test-consultant-profile-002', NOW(), NOW())
-ON CONFLICT (id) DO NOTHING;
+  ('test-w002-mon-pm', 'MONDAY', 510, 'MONDAY', 690, 'test-consultant-profile-002', NOW(), NOW(), 330, 'Asia/Kolkata', 'MONDAY', 840, 'MONDAY', 1020),
+  ('test-w002-tue-pm', 'TUESDAY', 510, 'TUESDAY', 690, 'test-consultant-profile-002', NOW(), NOW(), 330, 'Asia/Kolkata', 'TUESDAY', 840, 'TUESDAY', 1020),
+  ('test-w002-wed-pm', 'WEDNESDAY', 510, 'WEDNESDAY', 690, 'test-consultant-profile-002', NOW(), NOW(), 330, 'Asia/Kolkata', 'WEDNESDAY', 840, 'WEDNESDAY', 1020),
+  ('test-w002-thu-pm', 'THURSDAY', 510, 'THURSDAY', 690, 'test-consultant-profile-002', NOW(), NOW(), 330, 'Asia/Kolkata', 'THURSDAY', 840, 'THURSDAY', 1020),
+  ('test-w002-fri-pm', 'FRIDAY', 510, 'FRIDAY', 690, 'test-consultant-profile-002', NOW(), NOW(), 330, 'Asia/Kolkata', 'FRIDAY', 840, 'FRIDAY', 1020)
+ON CONFLICT (id) DO UPDATE SET
+  "startDay" = EXCLUDED."startDay",
+  "startTimeUtc" = EXCLUDED."startTimeUtc",
+  "endDay" = EXCLUDED."endDay",
+  "endTimeUtc" = EXCLUDED."endTimeUtc",
+  "utcOffsetMinutes" = EXCLUDED."utcOffsetMinutes",
+  timezone = EXCLUDED.timezone,
+  "localStartDay" = EXCLUDED."localStartDay",
+  "localStartMinutes" = EXCLUDED."localStartMinutes",
+  "localEndDay" = EXCLUDED."localEndDay",
+  "localEndMinutes" = EXCLUDED."localEndMinutes";
 
 -- Custom slot: next Saturday 10:00–16:00 IST (04:30–10:30 UTC)
 -- Custom slots use actual timestamps (DateTime @db.Timestamptz), not minutes
@@ -698,9 +709,9 @@ Body: { "reason": "CONSULTANT_UNAVAILABLE" }
 Expected: 200 { success: true, cancellationReason: "CONSULTANT_UNAVAILABLE" }
 ```
 
-DB verify. Cancelling **never** deletes a row: `Payment.appointment` cascades on
-delete, so removing the Appointment would take the payment, refund and dispute
-trail with it (the #1074 class). The cancel route moves
+DB verify. Cancelling **never** deletes a row: `Payment.appointment` is
+`onDelete: Restrict`, so the database refuses to remove an Appointment a Payment
+points at, and the app never tries. The cancel route moves
 `AppointmentOccurrence.completionStatus` from `SLOT_RESCHEDULABLE_FROM`
 (`SCHEDULED`, `RESCHEDULED`) to `CANCELLED` and leaves the rows in place.
 

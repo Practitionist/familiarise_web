@@ -35,9 +35,11 @@ whose offset is off the 30-minute grid (UTC+05:45) is refused with `ZONE`. See
 `docs/booking/19-dst-and-timezone-posture.md`.
 `AvailabilityWindowCustom` holds date-specific rows as `startsAt`/`endsAt` and
 has no `isAvailable`, so a custom row is purely additive and can never express a
-blackout. Both models gained a `deletedAt` tombstone in wave 5 (#1322, schema
-hygiene), but no reader filters on it yet — availability rows are still removed
-by a hard delete, so treat the column as frozen-in, not live.
+blackout. Neither model has a `deletedAt` column: removing a weekly or custom
+row is a hard delete (the per-row DELETE routes and the coalescing pass in
+`mergeAdjacentWeeklyRows.ts`), so a reader never has to filter a tombstone and
+history lives in `Appointment` and `AppointmentOccurrence`, not in availability
+rows.
 
 ## 2. Rows coalesce on save
 
@@ -148,11 +150,14 @@ The grid is `GET /api/scheduling/availability-with-allocation/[consultantId]` wi
 expert page asks for `zonedWeekWindow` bounds — viewer-zone local midnight to the
 local midnight seven days later, end exclusive — so the week's last 23:30 atom is
 inside the window.
-The expert page's grid queries (`useAvailabilityWindow`, `useAvailabilityMonth`)
-poll it every 60 s plus jitter while the tab is visible, refetch on focus, back
-off to 5 minutes after three failed polls in a row, and send the ETag so an
-unchanged poll is a 304 (`createGridPollInterval` in
-`lib/scheduling/availabilityPolling.ts`). Freshness stays a user-experience
+Both grids poll it, so a stale tab self-corrects. The consultee's expert-page
+queries (`useAvailabilityWindow`, `useAvailabilityMonth`) poll every 60 s plus
+jitter while the tab is visible, refetch on focus, back off to 5 minutes after
+three failed polls in a row, and send the ETag so an unchanged poll is a 304
+(`createGridPollInterval` in `lib/scheduling/availabilityPolling.ts`). The
+allocator's calendar (`hooks/scheduling/useCalendarData.ts`) polls on the same
+60 s cadence through `createAvailabilityPoller`, paused while the tab is hidden
+and refetched on a stale return. Freshness stays a user-experience
 concern (ADR 16, `docs/enterprise/70-design-decisions/16-slot-freshness-without-realtime.md`):
 checkout's recheck under the slot lock is the only correctness mechanism, and a
 taken slot answers 409 `code: "SLOT_TAKEN"`, which returns the buyer to a
@@ -211,6 +216,11 @@ partial success returns `partial`, `placedSessions`, `requiredSessions` and
 `unplacedSessions`; a refusal returns `SLOT_SHORTAGE` with `placeableSessions`
 so the client can offer the partial option instead of a dead end. The consultee
 learns of it through the Novu workflow `appointment-partially-scheduled`.
+
+`utils/scheduling-engine/SchedulingService.ts` is about 6,000 lines and owns all
+three modes, so find a path by function name (`allocate`, `autoAllocate`,
+`manualAllocate`, `useRequestedSlots`) rather than by scrolling. A pure-move split
+of the file is planned **(after Wave 2)**.
 
 Allocation goes through **one handler route** as of #1702:
 `lib/scheduling/allocate-route.ts` carries the whole auth → limiter → Zod →
