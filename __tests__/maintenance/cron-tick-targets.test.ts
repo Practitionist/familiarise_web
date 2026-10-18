@@ -118,11 +118,11 @@ describe("cron-tick targetRequest", () => {
   it("drives the earnings release and the no-show refund from the ticker", () => {
     expect(targetRequest(base, "auto-complete-appointments")).toEqual({
       url: "https://site.test/api/cleanup/auto-complete-appointments?limit=25",
-      timeoutMs: 20_000,
+      timeoutMs: 24_000,
     });
     expect(targetRequest(base, "detect-consultant-no-shows")).toEqual({
       url: "https://site.test/api/cleanup/detect-consultant-no-shows?limit=10",
-      timeoutMs: 20_000,
+      timeoutMs: 24_000,
     });
   });
 

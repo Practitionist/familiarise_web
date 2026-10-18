@@ -201,6 +201,9 @@ async function clearTentativeOnSuccessfulPayments(): Promise<{
   }
 }
 
+/** Ids carried in a drift report's extras; the count carries the rest. */
+const DRIFT_SAMPLE_SIZE = 20;
+
 /** One page of the double-booking scan (#1583 E-P1-10); see the caller. */
 function readDoubleBookingPage(
   windowEnd: Date,
@@ -508,7 +511,10 @@ async function detectDoubleBookings(): Promise<{
             op: "reconcile-occurrence-availability",
             expected: true,
             level: "warning",
-            extra: { count: doubleBookings.length },
+            extra: {
+              count: doubleBookings.length,
+              pairs: conflictPairKeys.slice(0, DRIFT_SAMPLE_SIZE),
+            },
           }),
       );
     }
@@ -1029,7 +1035,8 @@ async function reconcileSlotAvailabilityUnlocked(): Promise<SlotReconciliationRe
  * signal is an upcoming appointment with live occurrences and NO live seat:
  * every creation path writes the participant rows in the same transaction, so
  * an empty roster means a writer was missed, which is a bug to fix at the
- * source rather than a row to patch. Log-only.
+ * source rather than a row to patch. Detect-only: one report per run when the
+ * set has an appointment not already reported inside the standing window.
  */
 async function logParticipantDrift(): Promise<void> {
   const windowEnd = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
@@ -1063,6 +1070,27 @@ async function logParticipantDrift(): Promise<void> {
   }
   console.log(
     `   Participant drift: ${appointments.length} upcoming appointment(s) without a live seat`,
+  );
+  if (appointments.length === 0) return;
+  const message = "Upcoming appointments with no live participant row";
+  await reportStandingFinding(
+    {
+      key: "reconcile-occurrence-availability:participant-drift",
+      ids: appointments.map((a) => a.id),
+      message,
+    },
+    () =>
+      reportSentryMessage(message, {
+        subsystem: "bookings",
+        op: "reconcile-occurrence-availability.participant-drift",
+        level: "warning",
+        extra: {
+          count: appointments.length,
+          appointmentIds: appointments
+            .slice(0, DRIFT_SAMPLE_SIZE)
+            .map((a) => a.id),
+        },
+      }),
   );
 }
 

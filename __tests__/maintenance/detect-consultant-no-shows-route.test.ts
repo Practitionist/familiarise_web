@@ -104,7 +104,10 @@ describe("POST /api/cleanup/detect-consultant-no-shows", () => {
 
     // Without `?limit=` the registry's floor still bounds the run.
     expect(mockDetect).toHaveBeenCalledTimes(1);
-    expect(mockDetect).toHaveBeenCalledWith({ maxCandidates: 10 });
+    expect(mockDetect).toHaveBeenCalledWith({
+      maxCandidates: 10,
+      startedAt: expect.any(Number),
+    });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toMatchObject({ detected: 2, refunded: 2 });
@@ -127,7 +130,10 @@ describe("POST /api/cleanup/detect-consultant-no-shows", () => {
 
     const res = await post(request(`Bearer ${SECRET}`, "?limit=4"));
 
-    expect(mockDetect).toHaveBeenCalledWith({ maxCandidates: 4 });
+    expect(mockDetect).toHaveBeenCalledWith({
+      maxCandidates: 4,
+      startedAt: expect.any(Number),
+    });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ detected: 0, refunded: 0 });
   });

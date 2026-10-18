@@ -25,7 +25,10 @@ import {
   createEarningsFromPayment,
   ParkedCaptureEarningsError,
 } from "../../lib/payments/payouts/earnings-service";
-import { notSettledElsewhereWhere } from "@/lib/payments/webhooks/auto-refund-marker";
+import {
+  MANUAL_RECOVERY_PREFIX,
+  notSettledElsewhereWhere,
+} from "@/lib/payments/webhooks/auto-refund-marker";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { reportSentryMessage } from "@/lib/observability/report";
@@ -77,6 +80,8 @@ export interface PaymentEarningSyncResult {
   errorCount: number;
   /** #1319 — payments escalated as permanently unaccruable this run. */
   pagedCount: number;
+  /** Paged unaccruable payments stamped out of the cohort this run. */
+  retiredCount: number;
   errors: string[];
   timestamp: string;
 }
@@ -94,6 +99,7 @@ type UnaccruablePayment = {
   organizationId: string | null;
   amountPaise: string;
   createdAt: Date;
+  description: string | null;
 };
 
 /**
@@ -125,8 +131,8 @@ function unaccruedAlertKey(paymentId: string, now: Date): string {
 async function pageUnaccruablePayments(
   candidates: UnaccruablePayment[],
   now: Date,
-): Promise<number> {
-  if (candidates.length === 0) return 0;
+): Promise<{ paged: number; known: UnaccruablePayment[] }> {
+  if (candidates.length === 0) return { paged: 0, known: [] };
 
   const keys = candidates.map((p) => unaccruedAlertKey(p.id, now));
   // Best-effort throughout: the sweep's money repair must never fail because
@@ -143,14 +149,18 @@ async function pageUnaccruablePayments(
       "[sync-payment-earnings] dedupe lookup failed; skipping paging this run:",
       err,
     );
-    return 0;
+    return { paged: 0, known: [] };
   }
 
   let paged = 0;
   const newlyPagedIds: string[] = [];
+  const known: UnaccruablePayment[] = [];
   for (const payment of candidates) {
     const key = unaccruedAlertKey(payment.id, now);
-    if (seen.has(key)) continue;
+    if (seen.has(key)) {
+      known.push(payment);
+      continue;
+    }
 
     const ageHours = Math.floor(
       (now.getTime() - payment.createdAt.getTime()) / 3_600_000,
@@ -184,6 +194,7 @@ async function pageUnaccruablePayments(
     }
     paged++;
     newlyPagedIds.push(payment.id);
+    known.push(payment);
   }
 
   if (newlyPagedIds.length > 0) {
@@ -200,7 +211,49 @@ async function pageUnaccruablePayments(
       },
     );
   }
-  return paged;
+  return { paged, known };
+}
+
+/**
+ * Stamps each paged unaccruable payment with the marker the cohort already
+ * excludes, so rows no run can heal never fill the bounded read. CAS on the
+ * cohort's own predicate: a payment that grew earnings or a marker is left alone.
+ */
+async function retireUnaccruablePayments(
+  payments: UnaccruablePayment[],
+  errors: string[],
+): Promise<number> {
+  let retired = 0;
+  for (const payment of payments) {
+    try {
+      const { count } = await prisma.payment.updateMany({
+        where: {
+          id: payment.id,
+          paymentStatus: PaymentStatus.SUCCEEDED,
+          earnings: { none: {} },
+          AND: [notSettledElsewhereWhere],
+        },
+        data: {
+          description: [
+            `${MANUAL_RECOVERY_PREFIX} EARNINGS_UNACCRUABLE_NO_CONSULTANT; no consultant to accrue earnings to.`,
+            payment.description ? `Was: ${payment.description}` : null,
+          ]
+            .filter(Boolean)
+            .join(" "),
+        },
+      });
+      retired += count;
+    } catch (err) {
+      console.error(
+        `[sync-payment-earnings] failed to retire ${payment.id}:`,
+        err,
+      );
+      errors.push(
+        `Retire ${payment.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  return retired;
 }
 
 /**
@@ -385,6 +438,7 @@ async function syncPaymentEarningsUnlocked(
             organizationId: payment.organizationId,
             amountPaise: payment.amount.toString(),
             createdAt: payment.createdAt,
+            description: payment.description,
           });
         }
         console.log(
@@ -453,7 +507,14 @@ async function syncPaymentEarningsUnlocked(
     );
   }
 
-  const pagedCount = await pageUnaccruablePayments(unaccruable, now);
+  const { paged: pagedCount, known } = await pageUnaccruablePayments(
+    unaccruable,
+    now,
+  );
+  // Only a payment an operator has been told about leaves the cohort.
+  const errorsBeforeRetire = errors.length;
+  const retiredCount = await retireUnaccruablePayments(known, errors);
+  errorCount += errors.length - errorsBeforeRetire;
 
   // One message per run, not per row: the excluded volume is what an operator
   // needs to see when a cascade starts running ahead of the accrual (#1583 C-P0-05).
@@ -478,7 +539,7 @@ async function syncPaymentEarningsUnlocked(
   }
 
   console.log(
-    `Sync complete: ${totalProcessed} total, ${createdCount} created, ${skippedCount} skipped, ${errorCount} errors, ${pagedCount} paged`,
+    `Sync complete: ${totalProcessed} total, ${createdCount} created, ${skippedCount} skipped, ${errorCount} errors, ${pagedCount} paged, ${retiredCount} retired`,
   );
 
   return {
@@ -488,6 +549,7 @@ async function syncPaymentEarningsUnlocked(
     skippedCount,
     errorCount,
     pagedCount,
+    retiredCount,
     errors,
     timestamp: new Date().toISOString(),
   };

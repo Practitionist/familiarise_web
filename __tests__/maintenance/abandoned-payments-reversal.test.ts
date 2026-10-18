@@ -120,6 +120,12 @@ function abandonedConsultation() {
   };
 }
 
+/** The soft-delete write; a rotation touch of `updatedAt` is a different call. */
+const TOMBSTONE = {
+  where: { id: "apt_1", deletedAt: null },
+  data: { deletedAt: expect.any(Date) },
+};
+
 beforeEach(() => {
   jest.clearAllMocks();
   order.length = 0;
@@ -130,6 +136,7 @@ beforeEach(() => {
     paymentStatus: "PENDING",
   });
   tx.payment.update.mockResolvedValue({});
+  tx.payment.updateMany.mockResolvedValue({ count: 1 });
   tx.appointmentOccurrence.count.mockResolvedValue(0);
   tx.appointmentOccurrence.updateManyAndReturn.mockImplementation(() => {
     order.push("cancelSlots");
@@ -246,9 +253,20 @@ describe("cleanupAbandonedPayments — soft-cancel + credit reversal (#1319)", (
 
     expect(mockReverse).not.toHaveBeenCalled();
     expect(tx.consultation.updateMany).not.toHaveBeenCalled();
-    expect(tx.appointment.updateMany).not.toHaveBeenCalled();
+    expect(tx.appointment.updateMany).not.toHaveBeenCalledWith(TOMBSTONE);
     expect(tx.payment.update).not.toHaveBeenCalled();
     expect(result.errorCount).toBe(0);
+  });
+
+  it("restores nothing and releases nothing when a capture won the payment CAS", async () => {
+    tx.payment.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await cleanupAbandonedPayments();
+
+    expect(mockReverse).not.toHaveBeenCalled();
+    expect(tx.consultation.updateMany).not.toHaveBeenCalled();
+    expect(tx.appointment.updateMany).not.toHaveBeenCalledWith(TOMBSTONE);
+    expect(result.skippedCount).toBe(1);
   });
 
   it("skips the row, without an error, when the CAS finds it already moved on", async () => {
@@ -258,7 +276,7 @@ describe("cleanupAbandonedPayments — soft-cancel + credit reversal (#1319)", (
     const result = await cleanupAbandonedPayments();
 
     expect(tx.appointmentOccurrence.updateManyAndReturn).not.toHaveBeenCalled();
-    expect(tx.appointment.updateMany).not.toHaveBeenCalled();
+    expect(tx.appointment.updateMany).not.toHaveBeenCalledWith(TOMBSTONE);
     expect(result.errorCount).toBe(0);
     expect(result.skippedCount).toBe(1);
     expect(result.cleanedCount).toBe(0);
@@ -399,6 +417,24 @@ describe("cleanupAbandonedPayments — a failed gateway cancel (#1464)", () => {
     expect(result.errors).toEqual([
       expect.stringContaining("Payment cancellation failed for order_abc"),
     ]);
+  });
+
+  it("rotates an unreadable unit behind the cohort so it cannot head-of-line block", async () => {
+    (cancelRazorpayOrder as jest.Mock).mockRejectedValueOnce(
+      new Error("gateway refused"),
+    );
+
+    await cleanupAbandonedPayments();
+
+    expect(db.appointment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+      }),
+    );
+    expect(tx.appointment.updateMany).toHaveBeenCalledWith({
+      where: { id: "apt_1" },
+      data: { updatedAt: expect.any(Date) },
+    });
   });
 
   it("expires a legacy STRIPE row without a gateway call", async () => {

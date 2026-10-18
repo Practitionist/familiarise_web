@@ -120,9 +120,24 @@ type LapsedTrial = {
 };
 
 /**
+ * Moves a trial whose step failed to the back of its `updatedAt asc` cohort,
+ * so one poison row cannot head every bounded run.
+ */
+async function rotateTrial(trialId: string): Promise<void> {
+  try {
+    await prisma.trial.updateMany({
+      where: { id: trialId },
+      data: { updatedAt: new Date() },
+    });
+  } catch (error) {
+    console.warn(`⚠️ Could not rotate trial ${trialId}:`, describe(error));
+  }
+}
+
+/**
  * Expire one lapsed trial through the guarded transition. Returns true when
- * it moved. Throws on anything but a lost race so the caller aborts the
- * batch loudly instead of skipping rows silently.
+ * it moved. Throws on anything but a lost race; the caller records the
+ * failure and rotates the row.
  */
 async function expireOneTrial(trial: LapsedTrial, now: Date): Promise<boolean> {
   try {
@@ -236,7 +251,7 @@ async function repairUntombstonedCancelledTrials(): Promise<number> {
       status: TrialStatus.CANCELLED,
       appointment: { deletedAt: null },
     },
-    orderBy: { updatedAt: "asc" },
+    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
     take: REPAIR_BATCH_SIZE,
     select: { id: true, appointmentId: true },
   });
@@ -244,6 +259,7 @@ async function repairUntombstonedCancelledTrials(): Promise<number> {
   for (const row of stale) {
     if (!row.appointmentId) continue;
     if (await tombstoneHeldCall(row.id, row.appointmentId)) repaired += 1;
+    else await rotateTrial(row.id);
   }
   return repaired;
 }
@@ -404,6 +420,7 @@ async function retryUnansweredTrialRefunds(now: Date): Promise<number> {
 async function expireUnansweredPaidTrials(
   now: Date,
   maxTrials: number,
+  errors: string[],
 ): Promise<number> {
   const cutoff = new Date(now.getTime() - TRIAL_ANSWER_HOURS * 60 * 60 * 1000);
   const unanswered: Prisma.TrialWhereInput = {
@@ -412,7 +429,7 @@ async function expireUnansweredPaidTrials(
   };
   const rows: UnansweredTrial[] = await prisma.trial.findMany({
     where: { status: TrialStatus.PENDING, ...unanswered },
-    orderBy: { requestedAt: "asc" },
+    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
     take: maxTrials,
     select: {
       ...EXPIRY_SELECT,
@@ -434,7 +451,14 @@ async function expireUnansweredPaidTrials(
       });
     } catch (error) {
       if (error instanceof IllegalTransitionError) continue;
-      throw error;
+      errors.push(
+        `Failed to cancel unanswered trial ${trial.id}: ${describe(error)}`,
+      );
+      runFailures.add("expire-unanswered-paid-trials-cancel", error, {
+        trialId: trial.id,
+      });
+      await rotateTrial(trial.id);
+      continue;
     }
     if (trial.appointmentId) {
       await tombstoneHeldCall(trial.id, trial.appointmentId);
@@ -456,17 +480,15 @@ async function expireUnpaidTrialsUnlocked(
   console.log("🧹 Starting unpaid trial expiry...");
   console.log(`   Per-run cap: ${maxTrials} trial(s)`);
 
+  // Each arm has its own try, so a failure in one never skips the money arm.
   try {
     // One guarded transition per lapsed trial rather than a bulk updateMany.
     // fromIn repeats the cohort read's status inside the CAS where: a capture
     // that moves AWAITING_PAYMENT → SCHEDULED between the read and the write
     // matches zero rows instead of cancelling a paid trial (doctrine rule 5).
     // Each move also appends the BookingStatusHistory row every other writer
-    // emits. Idempotent: CANCELLED leaves the cohort.
-    //
-    // Bounded batches: see expire-reschedule-proposals — same hourly-cron
-    // ceiling reasoning, plus the caller's own per-run budget. CANCELLED
-    // leaves the cohort, so the next tick continues.
+    // emits. Idempotent: CANCELLED leaves the cohort, and a failed row is
+    // rotated behind the rest by `updatedAt`.
     let processed = 0;
     for (;;) {
       if (processed >= maxTrials) break;
@@ -474,35 +496,55 @@ async function expireUnpaidTrialsUnlocked(
       // minted after acceptance; holding a slot nobody can pay for is the worst case.
       const stale = await prisma.trial.findMany({
         where: unpaidLapsed(now),
-        orderBy: { id: "asc" },
+        orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
         take: Math.min(BATCH_SIZE, maxTrials - processed),
         select: EXPIRY_SELECT,
       });
       if (stale.length === 0) break;
 
       for (const row of stale) {
-        if (await expireOneTrial(row, now)) trialsExpired += 1;
         processed += 1;
+        try {
+          if (await expireOneTrial(row, now)) trialsExpired += 1;
+        } catch (error) {
+          errors.push(`Failed to expire trial ${row.id}: ${describe(error)}`);
+          runFailures.add("expire-unpaid-trials-expire", error, {
+            trialId: row.id,
+          });
+          await rotateTrial(row.id);
+        }
       }
 
       if (stale.length < BATCH_SIZE) break;
     }
-
     console.log(`   Trials expired: ${trialsExpired}`);
+  } catch (error) {
+    errors.push(`Lapsed-trial arm failed: ${describe(error)}`);
+  }
 
+  try {
     const repaired = await repairUntombstonedCancelledTrials();
     if (repaired > 0) console.log(`   Held calls re-tombstoned: ${repaired}`);
+  } catch (error) {
+    errors.push(`Repair arm failed: ${describe(error)}`);
+  }
 
-    trialsUnansweredRefunded = await expireUnansweredPaidTrials(now, maxTrials);
+  try {
+    trialsUnansweredRefunded = await expireUnansweredPaidTrials(
+      now,
+      maxTrials,
+      errors,
+    );
     console.log(
       `   Unanswered paid trials refunded: ${trialsUnansweredRefunded}`,
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    errors.push(message);
-    console.error("❌ Failed to expire unpaid trials:", message);
-  } finally {
-    runFailures.flush();
+    errors.push(`Unanswered paid-trial arm failed: ${describe(error)}`);
+  }
+
+  runFailures.flush();
+  if (errors.length > 0) {
+    console.error("❌ Unpaid trial expiry finished with errors:", errors);
   }
 
   return {
@@ -512,6 +554,10 @@ async function expireUnpaidTrialsUnlocked(
     errors,
     timestamp: now.toISOString(),
   };
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export async function disconnectDatabase(): Promise<void> {
