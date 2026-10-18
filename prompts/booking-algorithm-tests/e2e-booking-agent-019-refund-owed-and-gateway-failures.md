@@ -63,11 +63,16 @@ charge, with no fee deducted.
 
 ## Phase 2 — A dropped drive is re-driven once (QA-ONLY emulation)
 
-Emulate "the function died after the cancel committed, before the refund call":
-mark `<APPT_2>`'s payment as owing its full amount, aged past the 15-minute grace,
-without calling the refund door:
+Emulate "the function died after the cancel committed, before the refund call".
+First put `<APPT_2>` into the shape the cancel commit leaves (booking and sessions
+ended, payment untouched), then mark its payment as owing its full amount, aged
+past the 15-minute grace, without calling the refund door:
 
 ```sql
+UPDATE "Consultation" SET status = 'CANCELLED', "cancelledAt" = NOW()
+WHERE id = (SELECT "consultationId" FROM "Appointment" WHERE id = '<APPT_2>');
+UPDATE "AppointmentOccurrence" SET "completionStatus" = 'CANCELLED', "deletedAt" = NOW()
+WHERE "appointmentId" = '<APPT_2>';
 UPDATE "Payment"
 SET "refundOwedKey" = 'cancel:<APPT_2>:<PAYMENT_2>',
     "refundOwedPaise" = <AMOUNT>,
@@ -85,7 +90,7 @@ one `Refund` row with `dedupeKey = 'cancel:<APPT_2>:<PAYMENT_2>'` and
 `Refund` row (the key is unique), `owed.scanned` no longer includes the payment.
 
 A marker younger than 15 minutes must **not** be driven: set `refundOwedAt` to
-`NOW()` on a third payment and confirm the sweep leaves it alone.
+`NOW()` on one more mock-paid booking's payment (book it first) and confirm the sweep leaves it alone.
 
 ## Phase 3 — Two doors, two key shapes
 
@@ -104,7 +109,9 @@ refund each and no marker remains.
 
 1. As the consultee, pay for a booking `<APPT_4>` in Razorpay test mode (card
    `4111 1111 1111 1111`) and let the webhook confirm it.
-2. In the Razorpay test dashboard, fully refund that payment by hand. Our next
+2. In the Razorpay **test** dashboard, fully refund that payment by hand (this
+   leaves a gateway refund our database never recorded: note its id in the report
+   and never do this in live mode). Our next
    refund call is now refused with `BAD_REQUEST_ERROR` (a **definitive** refusal:
    no gateway refund can exist, so the reservation row goes `FAILED` at once).
 3. Stamp the marker as in Phase 2 for `<PAYMENT_4>` (`refundOwedAt` 20 minutes old).
@@ -130,8 +137,11 @@ the amount owed; confirm `refundOwedKey` is still not NULL.
 ## Phase 5 — Ambiguous outcome: reconciliation owns it (QA-ONLY emulation)
 
 A timeout or 5xx may have moved money, so the reservation stays `PENDING`. A real
-timeout cannot be produced on demand, so emulate the state: on a payment with a
-marker (as in Phase 2), insert the placeholder the first attempt would have left:
+timeout cannot be produced on demand, so emulate the state. Book and mock-pay a
+fifth consultation (`<APPT_5>`, `D+9` 05:00Z, `<PAYMENT_5>`), put it into the
+cancelled shape and stamp its marker exactly as in Phase 2 (key
+`cancel:<APPT_5>:<PAYMENT_5>`), then insert the placeholder the first attempt
+would have left:
 
 ```sql
 INSERT INTO "Refund" (id, "amountPaise", currency, status, "refundId", "dedupeKey",

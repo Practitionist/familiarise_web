@@ -686,7 +686,7 @@ Notice what remains:
 - The `ConsultationPlan`, profiles, and users -- **untouched**
 - The `Payment` record -- preserved, now with a `Refund` row and a balanced ledger reversal beside it
 
-**Why the appointment is never deleted**: `Payment.appointment` is declared `onDelete: Cascade`, so deleting the appointment would take the payment, its refunds and its dispute history down with it. That is not hypothetical — a trial cancellation once hard-deleted the appointment and destroyed the `Payment` row with it (#1074). The slot is freed by status alone, which is all that "freeing" ever required.
+**Why the appointment is never deleted**: `Payment.appointment` is declared `onDelete: Restrict`, so Postgres refuses to delete an appointment that a payment points at, and the money trail stays intact. The app never attempts it: a trial cancellation once hard-deleted the appointment under the older cascading rule and destroyed the `Payment` row with it (#1074), and the guard now rides inside the delete's `WHERE` clause. The slot is freed by status alone, which is all that "freeing" ever required.
 
 ---
 
@@ -926,7 +926,7 @@ The event record (consultation, subscription, webinar, or class) is intentionall
 3. **Dispute resolution**: If a consultee disputes a charge, the cancelled event record is evidence of what happened.
 4. **Consultant dashboards**: Consultants may want to see their cancellation history.
 
-The appointment record is preserved for a harder reason than any of those, and it is worth being blunt about it. `Payment` declares `onDelete: Cascade` against `Appointment`, so deleting an appointment silently takes its payments, refunds and disputes with it. A trial cancellation once did exactly that and destroyed a real `Payment` row (#1074). An appointment is therefore never a candidate for deletion, whatever its status: the slot is freed by `completionStatus` alone, and reads of live availability filter dead rows rather than expecting them to be gone.
+The appointment record is preserved for a harder reason than any of those, and it is worth being blunt about it. `Payment` declares `onDelete: Restrict` against `Appointment`, so the database refuses to delete an appointment that has payments, and the refunds and disputes hanging off them stay readable. A trial cancellation once deleted the appointment under the older cascading rule and destroyed a real `Payment` row (#1074). An appointment is therefore never a candidate for deletion, whatever its status: the slot is freed by `completionStatus` alone, and reads of live availability filter dead rows rather than expecting them to be gone.
 
 The same reasoning extends to the slots. `Meeting` and `Recording` rows from Stream hang off slots, so deleting a slot would orphan or cascade into the session artefacts that prove a session took place. This is why reschedule flips replaced slots to `RESCHEDULED` and re-confirms them in place rather than deleting and re-creating them.
 

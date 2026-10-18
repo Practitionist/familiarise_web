@@ -3,7 +3,11 @@
 **Supabase Project ID:** `pzmbxqdgibfkhjwzeprf`
 **App URL:** `http://localhost:3000` (or the Netlify deploy preview under test)
 
-Read this file first. Agents 013–020 exercise the hard cases the earlier cases
+Read this file first. **One Supabase project serves both development and
+production**, so every write below is a production operation on prefixed fixtures:
+touch only rows your run created, never run a seed, reset or `db push`, and never
+point a case at a customer account. If you cannot confirm that the fixtures are
+prefixed and the cleanup phase will run, stop before the first write. Agents 013–020 exercise the hard cases the earlier cases
 skip: duplicate submits, two devices, stale clients, races, caps, org scope, DST,
 webhook disorder, abandoned sweeps and refunds owed. Each of them follows the
 shape of Agents 001–012: Phase 0 seeds with SQL, later phases drive the real
