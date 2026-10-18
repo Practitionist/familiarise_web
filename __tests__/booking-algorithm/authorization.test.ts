@@ -332,7 +332,11 @@ function makeMockTx(appointmentData: any = null) {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
+    bookingStatusHistory: {
+      create: jest.fn().mockResolvedValue({}),
+      // The reschedule caps count past release acts.
+      groupBy: jest.fn().mockResolvedValue([]),
+    },
     // Cancel closes any live reschedule proposal so the appointment's
     // openForAppointmentId reservation is released.
     rescheduleRequest: {
@@ -341,8 +345,6 @@ function makeMockTx(appointmentData: any = null) {
       findUnique: jest.fn().mockResolvedValue({ status: "PENDING_REVIEW" }),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       create: jest.fn().mockResolvedValue({ id: "reschedule-request-1" }),
-      // The reschedule caps count prior proposals by initiator.
-      count: jest.fn().mockResolvedValue(0),
     },
   };
 }

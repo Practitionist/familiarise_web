@@ -67,12 +67,15 @@ import {
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { holdHoursFor } from "@/lib/payments/payouts/earnings-hold";
+import {
+  MAX_CONSULTEE_RESCHEDULES,
+  MAX_EXPERT_RESCHEDULES,
+  priorReschedules as priorRescheduleCount,
+} from "@/lib/booking/reschedule-caps";
 import type { AppointmentType } from "@/lib/payments/payouts/constants";
 
 const MINIMUM_HOURS_BEFORE_RESCHEDULE = 24;
 const RESCHEDULE_REALLOCATION_BUFFER_MS = 7 * 24 * 60 * 60 * 1000;
-/** Expert-initiated reschedules one booking allows (D10); the next answers 409. */
-const MAX_EXPERT_RESCHEDULES = 2;
 
 /**
  * Which side is asking. Null for a privileged ADMIN/STAFF bypass, which is
@@ -451,17 +454,30 @@ export async function POST(
             }
           }
 
-          // Counted from the proposal rows, which survive the allocator's
-          // hard-delete of replaced occurrences; a withdrawal restores the
-          // original time, so it costs nothing.
+          // Counted from the release history, which survives the allocator's
+          // hard-delete of replaced occurrences and includes releases with no
+          // proposal row.
+          const consulteeUserId =
+            appointment.consultation?.requestedBy?.userId ??
+            appointment.subscription?.requestedBy?.userId ??
+            null;
+          const expertUserId =
+            appointment.consultation?.consultationPlan?.consultantProfile
+              ?.userId ??
+            appointment.subscription?.subscriptionPlan?.consultantProfile
+              ?.userId ??
+            null;
+          const partyUserId =
+            initiatorRole === "CONSULTEE" ? consulteeUserId : expertUserId;
           const priorReschedules =
             initiatorRole && !isPrivilegedUser
-              ? await tx.rescheduleRequest.count({
-                  where: {
-                    appointmentId,
-                    initiatorRole,
-                    status: { not: "WITHDRAWN" },
-                  },
+              ? await priorRescheduleCount(tx, {
+                  appointmentId,
+                  role: initiatorRole,
+                  sideUserIds: [
+                    session.user.id,
+                    ...(partyUserId ? [partyUserId] : []),
+                  ],
                 })
               : 0;
           if (
@@ -478,7 +494,6 @@ export async function POST(
             );
           }
           if (initiatorRole === "CONSULTEE" && !isPrivilegedUser) {
-            const MAX_CONSULTEE_RESCHEDULES = 2;
             const baselineSessionCount = Math.max(
               1,
               slotsToReschedule.length,
@@ -516,6 +531,7 @@ export async function POST(
             actorUserId: session.user.id,
             reason: reason ?? null,
             organizationId: appointment.organizationId,
+            at: new Date(),
           };
           // Every slot flip below releases the row in place: RESCHEDULED plus
           // tentative, never a tombstone. The reschedule keeps these rows —

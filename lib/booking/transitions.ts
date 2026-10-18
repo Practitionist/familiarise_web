@@ -69,6 +69,8 @@ interface HistoryMeta {
    * pre-image when the caller omits it. A caller that knows better still wins.
    */
   appointmentId?: string | null;
+  /** One instant for every row a single act writes, so the act is countable as one. */
+  at?: Date;
 }
 async function appendHistory(
   tx: HistoryTx,
@@ -113,6 +115,7 @@ async function appendHistory(
       reason: meta.reason ?? null,
       organizationId: meta.organizationId ?? null,
       appointmentId: meta.appointmentId ?? null,
+      ...(meta.at ? { createdAt: meta.at } : {}),
     },
   });
 }

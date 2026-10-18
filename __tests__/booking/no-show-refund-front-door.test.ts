@@ -140,6 +140,7 @@ function noShowCandidate(payment: {
     id: "cons-1",
     consultationPlan: {
       title: "Career strategy",
+      consultantProfileId: "cp-1",
       consultantProfile: {
         userId: CONSULTANT_USER,
         user: { name: "Consultant" },
@@ -217,6 +218,12 @@ describe("consultant no-show refunds", () => {
     expect(refundPayment).not.toHaveBeenCalled();
     expect(result.detected).toBe(1);
     expect(result.refunded).toBe(1);
+    // D10 — the claim's transaction writes the expert's strike.
+    expect(prisma.systemEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        correlationId: "expert-reliability:cp-1",
+      }),
+    });
   });
 
   it("handles a fully credit-funded booking (amount 0) instead of skipping it", async () => {

@@ -58,9 +58,58 @@ const tx = {
   bookingStatusHistory: { create: jest.fn(async () => ({})) },
   user: { findMany: jest.fn(async () => []) },
 };
+type IdemRow = Record<string, unknown> & { completedAt: Date | null };
+const idem = new Map<string, IdemRow>();
+const idemKey = (w: { scope_key_userId: Record<string, string> }) =>
+  JSON.stringify(w.scope_key_userId);
+const idempotencyRecord = {
+  create: jest.fn(async ({ data }: { data: Record<string, string> }) => {
+    const k = JSON.stringify({
+      scope: data.scope,
+      key: data.key,
+      userId: data.userId,
+    });
+    if (idem.has(k)) throw Object.assign(new Error("dup"), { code: "P2002" });
+    idem.set(k, { ...data, completedAt: null });
+    return {};
+  }),
+  findUnique: jest.fn(async ({ where }: { where: never }) =>
+    idem.get(idemKey(where)),
+  ),
+  update: jest.fn(
+    async ({
+      where,
+      data,
+    }: {
+      where: never;
+      data: Record<string, unknown>;
+    }) => {
+      const row = idem.get(idemKey(where));
+      if (row) Object.assign(row, data);
+      return row;
+    },
+  ),
+  delete: jest.fn(async ({ where }: { where: never }) =>
+    idem.delete(idemKey(where)),
+  ),
+};
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { $transaction: (fn: (t: unknown) => unknown) => fn(tx) },
+  default: {
+    $transaction: (fn: (t: unknown) => unknown) => fn(tx),
+    get idempotencyRecord() {
+      return idempotencyRecord;
+    },
+  },
+}));
+jest.mock("../../lib/auth-helpers", () => ({
+  requireApiAuth: async () => ({
+    session: { user: { id: "u-cee", consulteeProfileId: "cee-1" } },
+  }),
+}));
+jest.mock("../../lib/rate-limit", () => ({
+  applyRateLimit: async () => null,
+  eventMutationLimiter: {},
 }));
 jest.mock("../../utils/appointmentlock", () => ({
   withAppointmentLock: (_id: string, fn: () => unknown) => fn(),
@@ -80,6 +129,12 @@ import { returnSessionToPlan } from "@/lib/booking/session-return";
 import { subscriptionEntitlement } from "@/lib/booking/entitlement";
 import { recordExpertStrike } from "@/lib/booking/expert-reliability";
 import { computeConsultantCompletionRate } from "@/lib/data/consultant-dashboard";
+import { POST as returnRoute } from "@/app/api/appointments/[appointmentId]/occurrences/[occurrenceId]/return/route";
+import {
+  showsReliabilityNotice,
+  strikeWindowStart,
+} from "@/lib/booking/expert-reliability-rules";
+import { NextRequest } from "next/server";
 
 const run = () =>
   returnSessionToPlan({
@@ -178,7 +233,46 @@ describe("returning a subscription session to the plan", () => {
   });
 });
 
+describe("the return route", () => {
+  const post = () =>
+    returnRoute(
+      new NextRequest(
+        "http://localhost/api/appointments/appt-1/occurrences/occ-1/return",
+        {
+          method: "POST",
+          headers: { "Idempotency-Key": "qa-key-0000001" },
+          body: "{}",
+        },
+      ),
+      {
+        params: Promise.resolve({
+          appointmentId: "appt-1",
+          occurrenceId: "occ-1",
+        }),
+      },
+    );
+
+  it("replays the first answer for a repeated Idempotency-Key", async () => {
+    idem.clear();
+    const first = await post();
+    expect(first.status).toBe(200);
+    const second = await post();
+    expect(second.status).toBe(200);
+    expect(second.headers.get("Idempotent-Replay")).toBe("true");
+    expect(await second.json()).toEqual(await first.json());
+    expect(tx.subscription.updateMany).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("expert reliability strikes", () => {
+  it("shows the profile notice only at 3 or more strikes in 90 days", () => {
+    expect(showsReliabilityNotice(2)).toBe(false);
+    expect(showsReliabilityNotice(3)).toBe(true);
+    expect(strikeWindowStart(NOW)).toEqual(
+      new Date(NOW.getTime() - 90 * 24 * HOUR),
+    );
+  });
+
   it("writes one strike on the expert's correlation, and none for a platform void", async () => {
     const create = jest.fn(async () => ({}));
     const db = { systemEvent: { create } } as never;

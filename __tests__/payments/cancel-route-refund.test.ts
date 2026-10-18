@@ -469,6 +469,13 @@ describe("a consultant cancelling always refunds in full", () => {
 
     expect(body.refund.refundPct).toBe(100);
     expect(body.refund.amountRefundedPaise).toBe(GROSS);
+    // D10 — the expert's cancel of a paid booking is one strike, in the cancel's transaction.
+    expect(txStub.systemEvent.create).toHaveBeenCalledTimes(1);
+    expect(txStub.systemEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        correlationId: `expert-reliability:${CONSULTANT_PROFILE}`,
+      }),
+    });
   });
 });
 
@@ -488,6 +495,7 @@ describe("a platform cancellation is not the buyer's choice", () => {
 
     expect(body.refund.refundPct).toBe(100);
     expect(body.refund.amountRefundedPaise).toBe(GROSS);
+    expect(txStub.systemEvent.create).not.toHaveBeenCalled();
   });
 });
 

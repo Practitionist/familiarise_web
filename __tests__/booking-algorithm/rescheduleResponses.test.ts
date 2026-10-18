@@ -201,9 +201,12 @@ function makeMockTx(appointmentData: any) {
       updateManyAndReturn: jest.fn().mockResolvedValue([{ id: "slot-1" }]),
       deleteMany: jest.fn(),
     },
-    bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
-    // The reschedule caps count prior proposals by initiator.
-    rescheduleRequest: { count: jest.fn().mockResolvedValue(0) },
+    bookingStatusHistory: {
+      create: jest.fn().mockResolvedValue({}),
+      // The reschedule caps count past release acts.
+      groupBy: jest.fn().mockResolvedValue([]),
+    },
+    rescheduleRequest: { findMany: jest.fn().mockResolvedValue([]) },
   };
 }
 
