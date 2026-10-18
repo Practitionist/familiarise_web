@@ -66,7 +66,7 @@ jest.mock("../../lib/observability/report", () => ({
 }));
 
 import prisma from "@/lib/prisma";
-import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { allocate } from "@/lib/booking/allocation";
 
 const mockPrisma = prisma as unknown as {
   $transaction: jest.Mock;
@@ -117,7 +117,7 @@ describe("manual allocation with initialAllocation", () => {
   it("returns a typed 409 when another session already confirmed slots", async () => {
     mockPrisma.appointmentOccurrence.count.mockResolvedValue(4);
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -137,7 +137,7 @@ describe("manual allocation with initialAllocation", () => {
   it("counts only confirmed slots — tentative checkout holds do not trip the guard", async () => {
     mockPrisma.appointmentOccurrence.count.mockResolvedValue(0);
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -158,7 +158,7 @@ describe("manual allocation with initialAllocation", () => {
   it("without the flag, existing confirmed slots do NOT 409 (replace/reschedule preserved)", async () => {
     mockPrisma.appointmentOccurrence.count.mockResolvedValue(4);
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -190,7 +190,7 @@ describe("manual allocation: transaction race window", () => {
       async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx),
     );
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -210,7 +210,7 @@ describe("auto allocation with initialAllocation", () => {
   it("returns a typed 409 when another session already confirmed slots", async () => {
     mockPrisma.appointmentOccurrence.count.mockResolvedValue(2);
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "auto",
@@ -283,7 +283,7 @@ describe("requested allocation with initialAllocation", () => {
       async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx),
     );
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "requested",
@@ -311,7 +311,7 @@ describe("advisory lock statement shape (#1518)", () => {
       async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx),
     );
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "requested",
@@ -407,7 +407,7 @@ describe("#1692 — a non-fresh (reschedule) manual allocation is advisory-locke
       async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx),
     );
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -441,7 +441,7 @@ describe("#1697 — pre-lock occupancy probe on manual allocation", () => {
       startsAt: new Date(FUTURE_SLOTS[0]),
     });
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -491,7 +491,7 @@ describe("expected refusals report as expected", () => {
       schedulingTimezone: "Asia/Kolkata",
     });
 
-    const odd = await SchedulingService.allocate({
+    const odd = await allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -508,7 +508,7 @@ describe("expected refusals report as expected", () => {
     mockPrisma.subscription.findUnique.mockRejectedValue(
       new Error("connect ETIMEDOUT"),
     );
-    const fault = await SchedulingService.allocate({
+    const fault = await allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",

@@ -54,7 +54,7 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 }));
 
 import prisma from "@/lib/prisma";
-import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { allocate } from "@/lib/booking/allocation";
 import { ScheduleType } from "@prisma/client";
 
 const mockPrisma = prisma as unknown as {
@@ -208,7 +208,7 @@ afterEach(() => {
 
 describe("#1766 manual allocation of a subscription's next cycle", () => {
   it("appends four sessions at ordinals 5–8 and deletes nothing", async () => {
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "subscription",
       eventId: "sub-cycle",
       mode: "manual",
@@ -229,7 +229,7 @@ describe("#1766 manual allocation of a subscription's next cycle", () => {
   });
 
   it("refuses a batch that is not exactly this cycle's size", async () => {
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "subscription",
       eventId: "sub-cycle",
       mode: "manual",

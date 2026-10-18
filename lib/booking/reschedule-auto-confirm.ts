@@ -19,7 +19,7 @@
 
 import prisma from "@/lib/prisma";
 import type { EventType } from "@/utils/scheduling-engine/types";
-import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { allocate } from "@/lib/booking/allocation";
 import { closeConfirmedProposal } from "@/lib/booking/reschedule-confirm";
 import { mayAutoConfirm } from "@/lib/booking/reschedule-proposals";
 import {
@@ -76,7 +76,7 @@ export async function tryAutoConfirmProposal(
   // this is the only holder — no nesting, same lock order as accept.
   try {
     return await withAppointmentLock(request.appointmentId, async () => {
-      const result = await SchedulingService.allocate({
+      const result = await allocate({
         eventType,
         eventId,
         // The proposed times go straight to the allocator, and nothing is written

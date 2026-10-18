@@ -49,7 +49,7 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 }));
 
 import prisma from "@/lib/prisma";
-import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { allocate } from "@/lib/booking/allocation";
 import { ScheduleType, DayOfWeek } from "@prisma/client";
 
 /** One weekly availability row, in the shape ConsultantAllocationData wants. */
@@ -225,7 +225,7 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
   it("rejects AUTO allocation with a typed 409", async () => {
     busyCoHost(mockTx);
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "auto",
@@ -242,7 +242,7 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
   it("rejects MANUAL allocation with a typed 409", async () => {
     busyCoHost(mockTx);
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "manual",
@@ -273,7 +273,7 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
       },
     ]);
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "requested",
@@ -297,7 +297,7 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
       },
     ]);
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "manual",
@@ -323,7 +323,7 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
 
 describe("AE-2 — the webinar path is unchanged", () => {
   it("allocates a webinar with no co-hosts without probing for clashes", async () => {
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "webinar",
       eventId: "webinar-1",
       mode: "auto",
@@ -338,7 +338,7 @@ describe("AE-2 — the webinar path is unchanged", () => {
   it("still blocks a webinar whose co-host is busy", async () => {
     busyCoHost(mockTx);
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "webinar",
       eventId: "webinar-1",
       mode: "auto",
@@ -366,7 +366,7 @@ describe("AE-2 — non-collaborative event types skip the guard", () => {
       appointment: null,
     });
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",

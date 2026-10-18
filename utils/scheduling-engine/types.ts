@@ -234,7 +234,7 @@ export interface AllocationResult {
   outcome?: "approved" | "awaiting_payment";
   /**
    * #1697 item 5 — outbox rows staged inside the write transaction.
-   * `SchedulingService.allocate` strips this and attempts them post-commit;
+   * `allocate` (lib/booking/allocation) strips this and attempts them post-commit;
    * it never reaches a route response.
    */
   stagedNotices?: StagedTrigger[];

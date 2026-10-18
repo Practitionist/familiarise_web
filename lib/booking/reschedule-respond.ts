@@ -30,7 +30,7 @@ import prisma from "@/lib/prisma";
 import { reportSentryError } from "@/lib/observability/report";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import type { EventType } from "@/utils/scheduling-engine/types";
-import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { allocate } from "@/lib/booking/allocation";
 import {
   AppointmentBusyError,
   BookingLockUnavailableError,
@@ -112,7 +112,7 @@ export async function acceptProposal(args: {
     return { done: false, reason: "NO_PROPOSED_TIMES" };
   }
 
-  const result = await SchedulingService.allocate({
+  const result = await allocate({
     eventType: args.eventType,
     eventId: args.eventId,
     mode: "manual",

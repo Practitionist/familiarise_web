@@ -73,7 +73,7 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 }));
 
 import prisma from "@/lib/prisma";
-import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { allocate } from "@/lib/booking/allocation";
 import { ScheduleType, DayOfWeek } from "@prisma/client";
 
 const base = prisma as unknown as Record<string, Record<string, jest.Mock>>;
@@ -230,7 +230,7 @@ afterEach(() => {
 });
 
 async function allocateOneSession() {
-  return SchedulingService.allocate({
+  return allocate({
     eventType: "subscription",
     eventId: "sub-1",
     mode: "manual",

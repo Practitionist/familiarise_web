@@ -95,7 +95,7 @@ jest.mock("../../utils/scheduling-engine/availability-search", () => {
 });
 
 import prisma from "@/lib/prisma";
-import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { allocate } from "@/lib/booking/allocation";
 import {
   buildAvailabilityIndex,
   createSearchBudget,
@@ -317,7 +317,7 @@ describe("the merged custom-availability index", () => {
       classWith(customRows("2025-06-01T09:00:00.000Z", 30)),
     );
 
-    await SchedulingService.allocate({
+    await allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "auto",
@@ -339,7 +339,7 @@ describe("the search's time budget", () => {
     // the whole budget.
     mockSpendMs = 30_000;
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "auto",
@@ -363,7 +363,7 @@ describe("the search's time budget", () => {
     );
     mockSpendMs = 30_000;
 
-    await SchedulingService.allocate({
+    await allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "auto",
@@ -395,7 +395,7 @@ describe("the search's time budget", () => {
     );
     mockSpendMs = 30_000;
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "auto",
@@ -418,7 +418,7 @@ describe("the search's time budget", () => {
     );
     mockSpendMs = 0;
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "auto",
@@ -438,7 +438,7 @@ describe("the search's time budget", () => {
     );
     mockSpendMs = 30_000;
 
-    await SchedulingService.allocate({
+    await allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "auto",
