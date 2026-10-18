@@ -40,7 +40,7 @@ import {
   assertClassEnrolmentOpen,
 } from "@/lib/payments/checkout/seats";
 import { resolvePriorRenewalEndsAt } from "@/lib/payments/checkout/renewal";
-import { validateSlotAvailability } from "@/lib/payments/operations/checkout";
+import { validateSlotAvailability } from "@/lib/payments/checkout/occupancy-validate";
 
 /**
  * Calculate final amount with discount and validate plan availability

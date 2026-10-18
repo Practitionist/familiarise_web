@@ -112,7 +112,7 @@ jest.mock("../../utils/appointmentlock", () => ({
 }));
 
 import prisma, { type Tx } from "../../lib/prisma";
-import { validateSlotAvailability } from "../../lib/payments/operations/checkout";
+import { validateSlotAvailability } from "../../lib/payments/checkout/occupancy-validate";
 
 const HOUR_MS = 60 * 60 * 1000;
 

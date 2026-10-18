@@ -63,7 +63,7 @@ jest.mock("../../lib/compliance/dpdp", () => ({
 
 import type { Tx } from "../../lib/prisma";
 import type { CheckoutInput } from "../../schemas/checkout";
-import { validateSlotAvailability } from "../../lib/payments/operations/checkout";
+import { validateSlotAvailability } from "../../lib/payments/checkout/occupancy-validate";
 
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
