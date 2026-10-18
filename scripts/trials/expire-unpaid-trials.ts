@@ -420,6 +420,7 @@ async function retryUnansweredTrialRefunds(now: Date): Promise<number> {
 async function expireUnansweredPaidTrials(
   now: Date,
   maxTrials: number,
+  errors: string[],
 ): Promise<number> {
   const cutoff = new Date(now.getTime() - TRIAL_ANSWER_HOURS * 60 * 60 * 1000);
   const unanswered: Prisma.TrialWhereInput = {
@@ -450,6 +451,9 @@ async function expireUnansweredPaidTrials(
       });
     } catch (error) {
       if (error instanceof IllegalTransitionError) continue;
+      errors.push(
+        `Failed to cancel unanswered trial ${trial.id}: ${describe(error)}`,
+      );
       runFailures.add("expire-unanswered-paid-trials-cancel", error, {
         trialId: trial.id,
       });
@@ -526,7 +530,11 @@ async function expireUnpaidTrialsUnlocked(
   }
 
   try {
-    trialsUnansweredRefunded = await expireUnansweredPaidTrials(now, maxTrials);
+    trialsUnansweredRefunded = await expireUnansweredPaidTrials(
+      now,
+      maxTrials,
+      errors,
+    );
     console.log(
       `   Unanswered paid trials refunded: ${trialsUnansweredRefunded}`,
     );

@@ -221,6 +221,7 @@ async function pageUnaccruablePayments(
  */
 async function retireUnaccruablePayments(
   payments: UnaccruablePayment[],
+  errors: string[],
 ): Promise<number> {
   let retired = 0;
   for (const payment of payments) {
@@ -246,6 +247,9 @@ async function retireUnaccruablePayments(
       console.error(
         `[sync-payment-earnings] failed to retire ${payment.id}:`,
         err,
+      );
+      errors.push(
+        `Retire ${payment.id}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
@@ -508,7 +512,9 @@ async function syncPaymentEarningsUnlocked(
     now,
   );
   // Only a payment an operator has been told about leaves the cohort.
-  const retiredCount = await retireUnaccruablePayments(known);
+  const errorsBeforeRetire = errors.length;
+  const retiredCount = await retireUnaccruablePayments(known, errors);
+  errorCount += errors.length - errorsBeforeRetire;
 
   // One message per run, not per row: the excluded volume is what an operator
   // needs to see when a cascade starts running ahead of the accrual (#1583 C-P0-05).

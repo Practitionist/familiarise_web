@@ -364,9 +364,12 @@ describe("a payment nobody can ever be paid for gets escalated", () => {
       Array.from({ length: 60 }, (_, i) => unaccruablePayment(`stuck-${i}`, 5)),
     );
 
+    // One row grew earnings between the read and the stamp: its CAS misses.
+    mockPaymentUpdateMany.mockResolvedValueOnce({ count: 0 });
+
     const result = await syncPaymentEarnings({ limit: 100 });
 
-    expect(result.retiredCount).toBe(60);
+    expect(result.retiredCount).toBe(59);
     expect(mockPaymentUpdateMany).toHaveBeenCalledWith({
       where: expect.objectContaining({
         id: "stuck-0",

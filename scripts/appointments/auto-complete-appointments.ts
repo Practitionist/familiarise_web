@@ -1197,31 +1197,35 @@ async function autoCompleteAppointmentsUnlocked(
     seen: [] as string[],
     open: true,
   }));
-  const rounds = await drainRounds(
-    { maxParents, maxSlotOutcomes, pastDeadline },
-    slotRun,
-    parents,
-    allErrors,
-  );
-
+  let rounds = 0;
   try {
-    // Owner decision — a needs-human item older than 72 h is warned about, throttled.
-    await alertStaleNeedsHuman(prisma, new Date());
-  } catch (error) {
-    allErrors.push(
-      `Failed to alert stale needs-human sessions: ${error instanceof Error ? error.message : "Unknown error"}`,
+    rounds = await drainRounds(
+      { maxParents, maxSlotOutcomes, pastDeadline },
+      slotRun,
+      parents,
+      allErrors,
     );
+    try {
+      // Owner decision — a needs-human item older than 72 h is warned about, throttled.
+      await alertStaleNeedsHuman(prisma, new Date());
+    } catch (error) {
+      allErrors.push(
+        `Failed to alert stale needs-human sessions: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+    }
+  } finally {
+    // Run-level reports survive a bite that throws.
+    // #1543 — silence must not mean "fine": Stream saw people we recorded nobody for.
+    if (slotRun.feedGaps > 0) {
+      reportSentryMessage("attendance feed gap", {
+        subsystem: "stream",
+        op: "auto-complete-appointments",
+        level: "warning",
+        extra: { sessions: slotRun.feedGaps },
+      });
+    }
+    slotRun.menteeFailures.flush();
   }
-  // #1543 — silence must not mean "fine": Stream saw people we recorded nobody for.
-  if (slotRun.feedGaps > 0) {
-    reportSentryMessage("attendance feed gap", {
-      subsystem: "stream",
-      op: "auto-complete-appointments",
-      level: "warning",
-      extra: { sessions: slotRun.feedGaps },
-    });
-  }
-  slotRun.menteeFailures.flush();
 
   const completed = (key: ParentKey) =>
     parents.find((p) => p.key === key)?.completed ?? 0;

@@ -831,40 +831,47 @@ async function detectConsultantNoShowsUnlocked(
 
   // Bite after bite until a short cohort or the drain deadline; the cron lock
   // is held by the caller for the whole loop.
-  while (!pastDeadline()) {
-    const candidates = await findNoShowCandidates(
-      graceCutoff,
-      maxCandidates,
-      seen,
-    );
-    seen.push(...candidates.map((c) => c.id));
-    console.log(`Found ${candidates.length} paid, ended candidates to check`);
-
-    for (const consultation of candidates) {
-      if (pastDeadline()) break;
-      await handleNoShowCandidate(consultation, outages, presence, tally);
-    }
-
-    // Runs after the consultant-fault pass so a session it already cancelled is
-    // no longer a candidate here — the query only reads APPROVED/SCHEDULED.
-    bothAbsentTickets += await detectBothAbsent(candidates, errors, presence, {
-      lostDeliveries,
-      pastDeadline,
-    });
-    if (candidates.length < maxCandidates) break;
-  }
-
   // TODO(#1319): subscriptions are multi-session — a single-session consultant
   // no-show is a partial refund of one session out of N, not a whole-booking
   // cancel. Deferred pending per-session refund design; consultations (the
   // single-session exclusive case) are handled above.
 
-  await reportOncePerRun(
-    "Consultant no-show refused on Stream evidence",
-    tally.refusals,
-  );
+  // Findings collected by earlier bites are reported even if a later bite throws.
+  try {
+    while (!pastDeadline()) {
+      const candidates = await findNoShowCandidates(
+        graceCutoff,
+        maxCandidates,
+        seen,
+      );
+      seen.push(...candidates.map((c) => c.id));
+      console.log(`Found ${candidates.length} paid, ended candidates to check`);
 
-  await reportLostDeliveries(lostDeliveries);
+      for (const consultation of candidates) {
+        if (pastDeadline()) break;
+        await handleNoShowCandidate(consultation, outages, presence, tally);
+      }
+
+      // Runs after the consultant-fault pass so a session it already cancelled is
+      // no longer a candidate here — the query only reads APPROVED/SCHEDULED.
+      bothAbsentTickets += await detectBothAbsent(
+        candidates,
+        errors,
+        presence,
+        {
+          lostDeliveries,
+          pastDeadline,
+        },
+      );
+      if (candidates.length < maxCandidates) break;
+    }
+  } finally {
+    await reportOncePerRun(
+      "Consultant no-show refused on Stream evidence",
+      tally.refusals,
+    );
+    await reportLostDeliveries(lostDeliveries);
+  }
 
   console.log("\n📊 No-Show Summary:");
   console.log(`   Detected: ${tally.detected}`);
