@@ -121,7 +121,7 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "tentative-occurrences": 200,
   "expire-unpaid-trials": 25,
   // One Stream call report per row, so these are bite sizes: each run loops
-  // bites until SWEEP_START_DEADLINE_MS (12 s) after its request began, which
+  // bites until SWEEP_START_DEADLINE_MS (16 s) after its request began, which
   // drains a backlog in one run and leaves in-flight rows inside the 20 s tier.
   "auto-complete-appointments": 25,
   "detect-consultant-no-shows": 10,

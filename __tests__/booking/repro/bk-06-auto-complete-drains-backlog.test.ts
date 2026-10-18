@@ -84,7 +84,7 @@ describe("autoCompleteAppointments backlog", () => {
 
   it("stops starting sessions once the drain deadline has passed", async () => {
     const startedAt = Date.now();
-    // Each decision costs one simulated second of the 12 s budget.
+    // Each decision costs one simulated second of the 16 s budget.
     jest
       .spyOn(Date, "now")
       .mockImplementation(() => startedAt + decided.length * 1000);
@@ -95,7 +95,7 @@ describe("autoCompleteAppointments backlog", () => {
       startedAt,
     });
 
-    expect(decided).toHaveLength(12);
+    expect(decided).toHaveLength(16);
   });
 
   it("re-reads parents while the slot pass is still draining", async () => {

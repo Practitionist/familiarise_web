@@ -1,9 +1,10 @@
 /**
  * A draining sweep stops starting rows this long after its request began, so a
  * row already in flight (a Stream call report) still lands inside the ticker's
- * 20 s abort.
+ * 20 s abort with at least 4 s to spare.
  */
-export const SWEEP_START_DEADLINE_MS = 12_000;
+// ≈3.3 s setup + ≈0.31 s/session ⇒ ≈40 sessions/run ⇒ ≈80/h at the 30-min cadence.
+export const SWEEP_START_DEADLINE_MS = 16_000;
 
 /** True once a sweep that began at `startedAt` must stop starting rows. */
 export function startDeadline(startedAt: number = Date.now()): () => boolean {
