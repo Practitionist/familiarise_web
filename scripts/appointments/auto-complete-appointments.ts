@@ -46,6 +46,7 @@ import {
 import { notificationScope } from "../../lib/novu/workflows";
 import { notificationHref } from "../../lib/novu/resolve-href";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { startDeadline } from "@/lib/cron/run-deadline";
 import {
   EVENT_ALLOWED_FROM,
   REQUEST_ALLOWED_FROM,
@@ -65,9 +66,13 @@ import {
   decideSlotOutcome,
   OUTCOME_SLOT_SELECT,
   readOutageWindows,
+  type OutcomeSlot,
   type SlotDecision,
 } from "@/lib/booking/session-outcome-sweep";
-import { createRunFailureReporter } from "@/lib/observability/run-failures";
+import {
+  createRunFailureReporter,
+  type RunFailureReporter,
+} from "@/lib/observability/run-failures";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { AWAITING_HUMAN, UNSETTLED_MISS } from "@/lib/booking/misses";
 import { sessionHostUserIds } from "@/lib/booking/session-hosts";
@@ -78,25 +83,14 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 // Only complete appointments that ended at least 1 hour ago
 // This gives buffer time for any post-session activities
 const COMPLETION_BUFFER_HOURS = 1;
-// #1569 — sessions judged per run; each may ask Stream for its call report, so
-// a backlog drains over several hourly runs instead of one long one.
-const MAX_SLOT_OUTCOMES_PER_RUN = 500;
+// Sessions judged per bite when the caller passes no bite; each may ask Stream
+// for its call report.
+const MAX_SLOT_OUTCOMES_PER_BITE = 500;
 
-// #1775 — the per-parent cap, and the reason it exists. All FIVE parent passes
-// (webinars, classes, consultations, subscriptions, trials) read their cohort
-// with no `take` and no `orderBy` at all, so "500 per run" bounded only the
-// slot pass and the five parents were unbounded. On Actions that is merely
-// slow; on the Netlify ticker — which drives this route inside a 20 s abort —
-// it is a guaranteed mid-run abort, and the abort lands in the middle of a
-// parent CAS loop, so a cold tick could complete some parents and abandon
-// others with no record that it had.
-//
-// Oldest-first on `updatedAt`, which is the parent's last write: a row that
-// has been sitting SCHEDULED longest is the one whose earnings hold has been
-// waiting longest, so that is the right end of the queue to drain first. Every
-// parent pass is a guarded CAS out of the cohort (COMPLETED is terminal), so a
-// capped run continues on the next tick with the rows it did not reach.
-const MAX_PARENTS_PER_RUN = 25;
+// Parents per bite when the caller passes no bite. Each pass reads oldest
+// `updatedAt` first and its CAS moves the row out of the cohort (COMPLETED is
+// terminal), so the next bite or the next run continues where this one stopped.
+const MAX_PARENTS_PER_BITE = 25;
 
 // #1583 B-P1-16 — "every session has ended" counts live confirmed rows only:
 // a stale tentative hold or a tombstoned row must not veto completion.
@@ -133,6 +127,18 @@ function endedAndSettled(
 
 const AUTO_COMPLETE_REASON = "auto-complete";
 
+/** One bite of a pass; `read` holds every id the bite's cohort read returned. */
+interface PassBite {
+  completed: number;
+  errors: string[];
+  read: string[];
+}
+
+/** Excludes rows an earlier bite of this run read but left in the cohort. */
+function unseen(seen: string[]): { id?: { notIn: string[] } } {
+  return seen.length > 0 ? { id: { notIn: seen } } : {};
+}
+
 export interface AutoCompleteResult {
   success: boolean;
   webinarsCompleted: number;
@@ -163,10 +169,11 @@ async function completeThroughHelper(
 /**
  * Auto-complete webinars that have ended
  */
-async function completeWebinars(maxParents: number): Promise<{
-  completed: number;
-  errors: string[];
-}> {
+async function completeWebinars(
+  maxParents: number,
+  seen: string[],
+  pastDeadline: () => boolean,
+): Promise<PassBite> {
   const errors: string[] = [];
   let completed = 0;
 
@@ -179,6 +186,7 @@ async function completeWebinars(maxParents: number): Promise<{
     orderBy: { updatedAt: "asc" },
     take: maxParents,
     where: {
+      ...unseen(seen),
       status: { in: [WebinarStatus.SCHEDULED, WebinarStatus.IN_PROGRESS] },
       appointment: { AND: endedAndSettled(bufferTime) },
     },
@@ -198,6 +206,7 @@ async function completeWebinars(maxParents: number): Promise<{
   console.log(`Found ${webinarsToComplete.length} webinars to auto-complete`);
 
   for (const webinar of webinarsToComplete) {
+    if (pastDeadline()) break;
     try {
       const lastSlot = webinar.appointment?.occurrences[0];
       console.log(`\nCompleting webinar ${webinar.id}`);
@@ -234,16 +243,17 @@ async function completeWebinars(maxParents: number): Promise<{
     }
   }
 
-  return { completed, errors };
+  return { completed, errors, read: webinarsToComplete.map((row) => row.id) };
 }
 
 /**
  * Auto-complete classes that have ended (all sessions done)
  */
-async function completeClasses(maxParents: number): Promise<{
-  completed: number;
-  errors: string[];
-}> {
+async function completeClasses(
+  maxParents: number,
+  seen: string[],
+  pastDeadline: () => boolean,
+): Promise<PassBite> {
   const errors: string[] = [];
   let completed = 0;
 
@@ -256,6 +266,7 @@ async function completeClasses(maxParents: number): Promise<{
     orderBy: { updatedAt: "asc" },
     take: maxParents,
     where: {
+      ...unseen(seen),
       status: { in: [ClassStatus.SCHEDULED, ClassStatus.IN_PROGRESS] },
       // #1554 — one wrapper: at least one occurrence, and every live one ended.
       appointment: { AND: endedAndSettled(bufferTime) },
@@ -276,6 +287,7 @@ async function completeClasses(maxParents: number): Promise<{
   console.log(`Found ${classesToComplete.length} classes to auto-complete`);
 
   for (const cls of classesToComplete) {
+    if (pastDeadline()) break;
     try {
       // The latest occurrence end on the wrapper
       const latestEnd: Date | null =
@@ -313,16 +325,17 @@ async function completeClasses(maxParents: number): Promise<{
     }
   }
 
-  return { completed, errors };
+  return { completed, errors, read: classesToComplete.map((row) => row.id) };
 }
 
 /**
  * Auto-complete consultations that have ended
  */
-async function completeConsultations(maxParents: number): Promise<{
-  completed: number;
-  errors: string[];
-}> {
+async function completeConsultations(
+  maxParents: number,
+  seen: string[],
+  pastDeadline: () => boolean,
+): Promise<PassBite> {
   const errors: string[] = [];
   let completed = 0;
 
@@ -335,6 +348,7 @@ async function completeConsultations(maxParents: number): Promise<{
     orderBy: { updatedAt: "asc" },
     take: maxParents,
     where: {
+      ...unseen(seen),
       status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
       // A voided consultation is owed its make-up or refund first (#1569 D4).
       appointment: {
@@ -374,6 +388,7 @@ async function completeConsultations(maxParents: number): Promise<{
   );
 
   for (const consultation of consultationsToComplete) {
+    if (pastDeadline()) break;
     try {
       const lastSlot = consultation.appointment?.occurrences[0];
       const consultantUserId =
@@ -482,16 +497,21 @@ async function completeConsultations(maxParents: number): Promise<{
     }
   }
 
-  return { completed, errors };
+  return {
+    completed,
+    errors,
+    read: consultationsToComplete.map((row) => row.id),
+  };
 }
 
 /**
  * Auto-complete subscriptions that have ended (all sessions done)
  */
-async function completeSubscriptions(maxParents: number): Promise<{
-  completed: number;
-  errors: string[];
-}> {
+async function completeSubscriptions(
+  maxParents: number,
+  seen: string[],
+  pastDeadline: () => boolean,
+): Promise<PassBite> {
   const errors: string[] = [];
   let completed = 0;
 
@@ -504,6 +524,7 @@ async function completeSubscriptions(maxParents: number): Promise<{
     orderBy: { updatedAt: "asc" },
     take: maxParents,
     where: {
+      ...unseen(seen),
       status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
       // #1554 — one wrapper: at least one occurrence, and every live one ended.
       appointment: {
@@ -551,6 +572,7 @@ async function completeSubscriptions(maxParents: number): Promise<{
   );
 
   for (const subscription of subscriptionsToComplete) {
+    if (pastDeadline()) break;
     try {
       // #1766 — COMPLETED is terminal: a plan whose live cycle ended but whose
       // entitlement is not spent is waiting for its next cycle, not finished.
@@ -662,16 +684,21 @@ async function completeSubscriptions(maxParents: number): Promise<{
     }
   }
 
-  return { completed, errors };
+  return {
+    completed,
+    errors,
+    read: subscriptionsToComplete.map((row) => row.id),
+  };
 }
 
 /**
  * Auto-complete trial sessions that have ended
  */
-async function completeTrials(maxParents: number): Promise<{
-  completed: number;
-  errors: string[];
-}> {
+async function completeTrials(
+  maxParents: number,
+  seen: string[],
+  pastDeadline: () => boolean,
+): Promise<PassBite> {
   const errors: string[] = [];
   let completed = 0;
 
@@ -684,6 +711,7 @@ async function completeTrials(maxParents: number): Promise<{
     orderBy: { updatedAt: "asc" },
     take: maxParents,
     where: {
+      ...unseen(seen),
       status: TrialStatus.SCHEDULED,
       // #1569 D4 — a free trial's void is a record only, so the unsettled-miss
       // check (which a void never leaves on a trial) is not applied here.
@@ -744,6 +772,7 @@ async function completeTrials(maxParents: number): Promise<{
   console.log(`Found ${trialsToComplete.length} trials to auto-complete`);
 
   for (const trial of trialsToComplete) {
+    if (pastDeadline()) break;
     try {
       const lastSlot = trial.appointment?.occurrences[0];
       console.log(`\nCompleting trial ${trial.id}`);
@@ -861,7 +890,7 @@ async function completeTrials(maxParents: number): Promise<{
     }
   }
 
-  return { completed, errors };
+  return { completed, errors, read: trialsToComplete.map((row) => row.id) };
 }
 
 type SlotTally = {
@@ -911,13 +940,15 @@ function tallyDecision(tally: SlotTally, decision: SlotDecision): boolean {
  * a consultant would leave their column permanently stale once their sessions
  * stopped, which is worse than the queries it saved.
  */
-async function settleMenteesHelped(hostUserIds: Set<string>): Promise<void> {
+async function settleMenteesHelped(
+  hostUserIds: Set<string>,
+  failures: RunFailureReporter,
+): Promise<void> {
   if (hostUserIds.size === 0) return;
   const profiles = await prisma.consultantProfile.findMany({
     where: { userId: { in: [...hostUserIds] } },
     select: { id: true },
   });
-  const failures = createRunFailureReporter("bookings");
   for (const profile of profiles) {
     try {
       await recomputeMenteesHelped(prisma, profile.id);
@@ -930,7 +961,6 @@ async function settleMenteesHelped(hostUserIds: Set<string>): Promise<void> {
       );
     }
   }
-  failures.flush();
 }
 
 /**
@@ -965,6 +995,34 @@ async function settleCycleBells(wrappers: Set<string>): Promise<void> {
   }
 }
 
+/** Decides one session and records what the bite's tail must settle. */
+async function decideOneSlot(
+  slot: OutcomeSlot,
+  ctx: Omit<Parameters<typeof decideSlotOutcome>[1], "onFeedGap">,
+  run: SlotRun,
+  settle: { wrappers: Set<string>; decidedHosts: Set<string> },
+): Promise<void> {
+  const decision = await decideSlotOutcome(slot, {
+    ...ctx,
+    onFeedGap: () => run.feedGaps++,
+  });
+  if (tallyDecision(run.tally, decision) && slot.appointment.subscriptionId) {
+    settle.wrappers.add(slot.appointmentId);
+  }
+  if (decision.kind === "written" && decision.moved) {
+    for (const id of sessionHostUserIds(slot.appointment)) {
+      settle.decidedHosts.add(id);
+    }
+  }
+}
+
+/** What the slot pass carries across its bites; reported once per run. */
+interface SlotRun {
+  tally: SlotTally;
+  feedGaps: number;
+  menteeFailures: RunFailureReporter;
+}
+
 /**
  * #1569 D2 — the one writer of each past session's outcome. Runs BEFORE the
  * parent passes so they read decided rows: presence is classified by
@@ -972,31 +1030,24 @@ async function settleCycleBells(wrappers: Set<string>): Promise<void> {
  * one CAS per row (`decideSlotOutcome`). A live overrun and a consultation host
  * no-show still inside the detector's handoff are left SCHEDULED.
  */
-async function completeIndividualSlots(maxOutcomes: number): Promise<{
-  completed: number;
-  unverified: number;
-  voided: number;
-  deferred: number;
-  errors: string[];
-}> {
+async function completeIndividualSlots(
+  maxOutcomes: number,
+  seen: string[],
+  pastDeadline: () => boolean,
+  run: SlotRun,
+): Promise<{ errors: string[]; read: string[] }> {
   const errors: string[] = [];
   const now = new Date();
   const bufferTime = new Date(
     now.getTime() - COMPLETION_BUFFER_HOURS * 60 * 60 * 1000,
   );
-  const tally: SlotTally = {
-    completed: 0,
-    unverified: 0,
-    voided: 0,
-    deferred: 0,
-  };
-  let feedGaps = 0;
 
   try {
     // Doctrine rule 1: a tentative hold is an unpaid reservation and a
     // tombstoned row was already released; neither is a session to judge.
     const cohort = await prisma.appointmentOccurrence.findMany({
       where: {
+        ...unseen(seen),
         endsAt: { lt: bufferTime },
         isTentative: false,
         deletedAt: null,
@@ -1006,6 +1057,7 @@ async function completeIndividualSlots(maxOutcomes: number): Promise<{
       orderBy: { endsAt: "asc" },
       take: maxOutcomes,
     });
+    const read = cohort.map((slot) => slot.id);
     // The cohort is ordered by end, so the earliest start is not cohort[0]'s.
     const earliestStart = new Date(
       Math.min(
@@ -1017,49 +1069,90 @@ async function completeIndividualSlots(maxOutcomes: number): Promise<{
     const wrappers = new Set<string>();
     const decidedHosts = new Set<string>();
     for (const slot of cohort) {
+      if (pastDeadline()) break;
       try {
-        const decision = await decideSlotOutcome(slot, {
-          now,
-          outages,
-          onFeedGap: () => feedGaps++,
+        await decideOneSlot(slot, { now, outages }, run, {
+          wrappers,
+          decidedHosts,
         });
-        if (tallyDecision(tally, decision) && slot.appointment.subscriptionId) {
-          wrappers.add(slot.appointmentId);
-        }
-        if (decision.kind === "written" && decision.moved) {
-          for (const id of sessionHostUserIds(slot.appointment)) {
-            decidedHosts.add(id);
-          }
-        }
       } catch (error) {
         errors.push(
           `Failed to decide session ${slot.id}: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     }
-    // Owner decision — a needs-human item older than 72 h is warned about, throttled.
-    await alertStaleNeedsHuman(prisma, now);
-    // #1543 — silence must not mean "fine": Stream saw people we recorded nobody for.
-    if (feedGaps > 0) {
-      reportSentryMessage("attendance feed gap", {
-        subsystem: "stream",
-        op: "auto-complete-appointments",
-        level: "warning",
-        extra: { sessions: feedGaps },
-      });
-    }
     await settleCycleBells(wrappers);
-    await settleMenteesHelped(decidedHosts);
-    console.log(
-      `   Sessions: ${tally.completed} completed, ${tally.voided} voided, ${tally.unverified} unverified, ${tally.deferred} deferred`,
-    );
-    return { ...tally, errors };
+    await settleMenteesHelped(decidedHosts, run.menteeFailures);
+    return { errors, read };
   } catch (error) {
     const message = `Failed to decide session outcomes: ${error instanceof Error ? error.message : "Unknown error"}`;
     console.error(`   ❌ ${message}`);
     errors.push(message);
-    return { ...tally, errors };
+    return { errors, read: [] };
   }
+}
+
+/** The parent passes, in the order a round runs them after the slot pass. */
+const PARENT_PASSES = [
+  { key: "webinars", run: completeWebinars },
+  { key: "classes", run: completeClasses },
+  { key: "consultations", run: completeConsultations },
+  { key: "subscriptions", run: completeSubscriptions },
+  { key: "trials", run: completeTrials },
+] as const;
+
+type ParentKey = (typeof PARENT_PASSES)[number]["key"];
+
+type ParentPassState = (typeof PARENT_PASSES)[number] & {
+  completed: number;
+  seen: string[];
+  open: boolean;
+};
+
+/**
+ * One round is a bite of every pass still open, slots first so the parents
+ * read decided rows; a pass closes once a bite reads a short cohort (a parent
+ * pass only after the slot pass has closed). Returns the number of rounds run.
+ */
+async function drainRounds(
+  bites: {
+    maxParents: number;
+    maxSlotOutcomes: number;
+    pastDeadline: () => boolean;
+  },
+  slotRun: SlotRun,
+  parents: ParentPassState[],
+  allErrors: string[],
+): Promise<number> {
+  const { maxParents, maxSlotOutcomes, pastDeadline } = bites;
+  const slotSeen: string[] = [];
+  let slotsOpen = true;
+  let rounds = 0;
+  while (!pastDeadline() && (slotsOpen || parents.some((p) => p.open))) {
+    rounds++;
+    if (slotsOpen) {
+      const bite = await completeIndividualSlots(
+        maxSlotOutcomes,
+        slotSeen,
+        pastDeadline,
+        slotRun,
+      );
+      allErrors.push(...bite.errors);
+      slotSeen.push(...bite.read);
+      slotsOpen = bite.read.length === maxSlotOutcomes;
+    }
+    for (const pass of parents) {
+      if (!pass.open || pastDeadline()) continue;
+      const bite = await pass.run(maxParents, pass.seen, pastDeadline);
+      allErrors.push(...bite.errors);
+      pass.completed += bite.completed;
+      pass.seen.push(...bite.read);
+      // A later slot bite can make more parents eligible, so a short parent
+      // cohort closes its pass only once the slot pass has closed.
+      pass.open = bite.read.length === maxParents || slotsOpen;
+    }
+  }
+  return rounds;
 }
 
 /**
@@ -1068,29 +1161,32 @@ async function completeIndividualSlots(maxOutcomes: number): Promise<{
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 //
-// `maxParents` is the Netlify ticker's bite across each of the five parent
-// passes (#1775); `maxSlotOutcomes` bounds the slot pass, which was already
-// bounded. A caller that omits them keeps the Actions figures.
+// `maxParents` and `maxSlotOutcomes` are bite sizes: the run loops bites until
+// every pass reads a short cohort or `startedAt` + SWEEP_START_DEADLINE_MS passes.
 export async function autoCompleteAppointments(opts?: {
   maxParents?: number;
   maxSlotOutcomes?: number;
+  /** When the request began (ms epoch); defaults to this call. */
+  startedAt?: number;
 }): Promise<AutoCompleteResult> {
   const maxParents =
     opts?.maxParents && opts.maxParents > 0
       ? Math.floor(opts.maxParents)
-      : MAX_PARENTS_PER_RUN;
+      : MAX_PARENTS_PER_BITE;
   const maxSlotOutcomes =
     opts?.maxSlotOutcomes && opts.maxSlotOutcomes > 0
       ? Math.floor(opts.maxSlotOutcomes)
-      : MAX_SLOT_OUTCOMES_PER_RUN;
+      : MAX_SLOT_OUTCOMES_PER_BITE;
+  const pastDeadline = startDeadline(opts?.startedAt);
   return withCronLock("auto-complete-appointments", { failMode: "open" }, () =>
-    autoCompleteAppointmentsUnlocked(maxParents, maxSlotOutcomes),
+    autoCompleteAppointmentsUnlocked(maxParents, maxSlotOutcomes, pastDeadline),
   );
 }
 
 async function autoCompleteAppointmentsUnlocked(
   maxParents: number,
   maxSlotOutcomes: number,
+  pastDeadline: () => boolean,
 ): Promise<AutoCompleteResult> {
   const allErrors: string[] = [];
 
@@ -1099,43 +1195,64 @@ async function autoCompleteAppointmentsUnlocked(
     `   Buffer time: ${COMPLETION_BUFFER_HOURS} hour(s) after session end`,
   );
   console.log(
-    `   Per-run cap: ${maxSlotOutcomes} session(s), ${maxParents} parent(s) per pass`,
+    `   Bite: ${maxSlotOutcomes} session(s), ${maxParents} parent(s) per pass`,
   );
 
-  // Complete individual slots first (per-slot status before parent-level)
-  const slotResult = await completeIndividualSlots(maxSlotOutcomes);
-  allErrors.push(...slotResult.errors);
+  const slotRun: SlotRun = {
+    tally: { completed: 0, unverified: 0, voided: 0, deferred: 0 },
+    feedGaps: 0,
+    menteeFailures: createRunFailureReporter("bookings"),
+  };
+  const parents = PARENT_PASSES.map((pass) => ({
+    ...pass,
+    completed: 0,
+    seen: [] as string[],
+    open: true,
+  }));
+  let rounds = 0;
+  try {
+    rounds = await drainRounds(
+      { maxParents, maxSlotOutcomes, pastDeadline },
+      slotRun,
+      parents,
+      allErrors,
+    );
+    try {
+      // Owner decision — a needs-human item older than 72 h is warned about, throttled.
+      await alertStaleNeedsHuman(prisma, new Date());
+    } catch (error) {
+      allErrors.push(
+        `Failed to alert stale needs-human sessions: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+    }
+  } finally {
+    // Run-level reports survive a bite that throws.
+    // #1543 — silence must not mean "fine": Stream saw people we recorded nobody for.
+    if (slotRun.feedGaps > 0) {
+      reportSentryMessage("attendance feed gap", {
+        subsystem: "stream",
+        op: "auto-complete-appointments",
+        level: "warning",
+        extra: { sessions: slotRun.feedGaps },
+      });
+    }
+    slotRun.menteeFailures.flush();
+  }
 
-  // Complete webinars
-  const webinarResult = await completeWebinars(maxParents);
-  allErrors.push(...webinarResult.errors);
-
-  // Complete classes
-  const classResult = await completeClasses(maxParents);
-  allErrors.push(...classResult.errors);
-
-  // Complete consultations
-  const consultationResult = await completeConsultations(maxParents);
-  allErrors.push(...consultationResult.errors);
-
-  // Complete subscriptions
-  const subscriptionResult = await completeSubscriptions(maxParents);
-  allErrors.push(...subscriptionResult.errors);
-
-  // Complete trial sessions
-  const trialResult = await completeTrials(maxParents);
-  allErrors.push(...trialResult.errors);
+  const completed = (key: ParentKey) =>
+    parents.find((p) => p.key === key)?.completed ?? 0;
+  const { tally } = slotRun;
 
   // Summary
-  console.log("\n📊 Auto-Complete Summary:");
+  console.log(`\n📊 Auto-Complete Summary (${rounds} round(s)):`);
   console.log(
-    `   Sessions: ${slotResult.completed} completed, ${slotResult.voided} voided, ${slotResult.unverified} unverified`,
+    `   Sessions: ${tally.completed} completed, ${tally.voided} voided, ${tally.unverified} unverified, ${tally.deferred} deferred`,
   );
-  console.log(`   Webinars completed: ${webinarResult.completed}`);
-  console.log(`   Classes completed: ${classResult.completed}`);
-  console.log(`   Consultations completed: ${consultationResult.completed}`);
-  console.log(`   Subscriptions completed: ${subscriptionResult.completed}`);
-  console.log(`   Trials completed: ${trialResult.completed}`);
+  console.log(`   Webinars completed: ${completed("webinars")}`);
+  console.log(`   Classes completed: ${completed("classes")}`);
+  console.log(`   Consultations completed: ${completed("consultations")}`);
+  console.log(`   Subscriptions completed: ${completed("subscriptions")}`);
+  console.log(`   Trials completed: ${completed("trials")}`);
 
   if (allErrors.length > 0) {
     console.log("\n⚠️ Errors encountered:");
@@ -1144,11 +1261,11 @@ async function autoCompleteAppointmentsUnlocked(
 
   return {
     success: allErrors.length === 0,
-    webinarsCompleted: webinarResult.completed,
-    classesCompleted: classResult.completed,
-    consultationsCompleted: consultationResult.completed,
-    subscriptionsCompleted: subscriptionResult.completed,
-    trialsCompleted: trialResult.completed,
+    webinarsCompleted: completed("webinars"),
+    classesCompleted: completed("classes"),
+    consultationsCompleted: completed("consultations"),
+    subscriptionsCompleted: completed("subscriptions"),
+    trialsCompleted: completed("trials"),
     errors: allErrors,
     timestamp: new Date().toISOString(),
   };

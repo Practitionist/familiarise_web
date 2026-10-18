@@ -199,6 +199,24 @@ describe("consultant no-show refunds", () => {
     });
   });
 
+  it("drains a backlog of 30 candidates in one run, bite after bite", async () => {
+    const backlog = Array.from({ length: 30 }, (_, i) => ({
+      ...noShowCandidate({ id: `pay-${i}`, amount: 150000 }),
+      id: `cons-${i}`,
+    }));
+    (prisma.consultation.findMany as jest.Mock).mockImplementation(
+      async (args: { take: number; where: { id?: { notIn: string[] } } }) =>
+        backlog
+          .filter((c) => !args.where.id?.notIn.includes(c.id))
+          .slice(0, args.take),
+    );
+
+    const result = await detectConsultantNoShows({ maxCandidates: 10 });
+
+    expect(result.refunded).toBe(30);
+    expect(refundBookingPayment).toHaveBeenCalledTimes(30);
+  });
+
   it("refunds through the front door, never the raw gateway path", async () => {
     (prisma.consultation.findMany as jest.Mock).mockResolvedValue([
       noShowCandidate({ id: "pay-1", amount: 150000 }),

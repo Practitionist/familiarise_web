@@ -43,7 +43,10 @@ import { CLASS_PREFIX, WEBINAR_PREFIX } from "@/lib/stream-channel-ids";
 import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import { dmEligibleStatusFilter } from "@/lib/stream/dm-eligibility-statuses";
 import { queryOrgTaggedChannels } from "@/lib/stream/event-channel-service";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  transitionParticipant,
+} from "@/lib/booking/participants";
 import { getAppUrl } from "@/lib/url";
 import {
   revokeCollaboratorAccess,
@@ -170,11 +173,12 @@ async function collectAndCancelOrgCollaborations(
     },
     data: { status: "REMOVED" },
   });
-  await tx.appointmentParticipant.updateMany({
-    where: {
+  // Through the participant map, so a REFUNDED seat stays terminal.
+  await transitionParticipant(
+    tx,
+    {
       userId,
       role: "COLLABORATOR",
-      status: { not: "CANCELLED" },
       appointment: {
         deletedAt: null,
         occurrences: {
@@ -186,8 +190,8 @@ async function collectAndCancelOrgCollaborations(
         ],
       },
     },
-    data: { status: "CANCELLED" },
-  });
+    "CANCELLED",
+  );
 
   const revoked: RevokedOrgCollaboration[] = [];
   for (const c of orgCollabs) {

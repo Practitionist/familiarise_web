@@ -42,7 +42,7 @@ import {
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import prisma, { type Tx } from "@/lib/prisma";
-import { releaseParticipant } from "@/lib/booking/participants";
+import { transitionParticipant } from "@/lib/booking/participants";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { lapseApprovedRequest } from "@/lib/booking/lapse-approved-request";
 import {
@@ -235,69 +235,65 @@ function lapsedLinkNotice(
   };
 }
 
+/** A legacy row with no `expiresAt` lapses 5 min after the 30 min checkout hold. */
+const LEGACY_HOLD_MS = 35 * 60 * 1000;
+
+/** A PENDING payment whose own hold has lapsed; a sibling buyer's live hold never matches. */
+function lapsedPendingPayment(now: Date): Prisma.PaymentWhereInput {
+  return {
+    paymentStatus: PaymentStatus.PENDING,
+    OR: [
+      { expiresAt: { lt: now } },
+      {
+        expiresAt: null,
+        createdAt: { lt: new Date(now.getTime() - LEGACY_HOLD_MS) },
+      },
+    ],
+  };
+}
+
 /**
- * What one cleanup unit needs loaded: the PENDING payments it expires, the
- * parties a lapsed pay-link notice names, and the hold it releases.
+ * What one cleanup unit needs loaded: only the payments `paymentWhere` selects
+ * (the gateway cancel, the expiry, the credit restore and the seat release all
+ * read this list), the parties a lapsed pay-link notice names, and the hold.
  */
-const ABANDONED_INCLUDE = {
-  payment: {
-    where: { paymentStatus: PaymentStatus.PENDING },
-  },
-  // #1703 D2 — a lapsed pay-link can be claimed here first; the notice
-  // it sends after commit names these parties.
-  consultation: {
-    include: {
-      ...LAPSED_LINK_PARTIES,
-      consultationPlan: LAPSED_LINK_PLAN_SELECT,
+function abandonedInclude(paymentWhere: Prisma.PaymentWhereInput) {
+  return {
+    payment: { where: paymentWhere },
+    // #1703 D2 — a lapsed pay-link can be claimed here first; the notice
+    // it sends after commit names these parties.
+    consultation: {
+      include: {
+        ...LAPSED_LINK_PARTIES,
+        consultationPlan: LAPSED_LINK_PLAN_SELECT,
+      },
     },
-  },
-  subscription: {
-    include: {
-      ...LAPSED_LINK_PARTIES,
-      subscriptionPlan: LAPSED_LINK_PLAN_SELECT,
+    subscription: {
+      include: {
+        ...LAPSED_LINK_PARTIES,
+        subscriptionPlan: LAPSED_LINK_PLAN_SELECT,
+      },
     },
-  },
-  webinar: true,
-  class: true,
-  occurrences: true,
-} satisfies Prisma.AppointmentInclude;
+    webinar: true,
+    class: true,
+    occurrences: true,
+  } satisfies Prisma.AppointmentInclude;
+}
 
 /**
  * The cohort: an appointment still holding a slot or a group seat against a
  * PENDING payment that has passed its expiry.
  */
 function findAbandonedAppointments(limit?: number) {
+  const lapsed = lapsedPendingPayment(new Date());
   return prisma.appointment.findMany({
     take: limit,
-    // Oldest-first with an id tie-break: a bounded run must not leave the
-    // same stale holds behind every tick while newer ones get processed.
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    // A skipped unit's `updatedAt` is touched, so it rotates behind the rest
+    // of the cohort instead of heading every bounded run.
+    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
     where: {
       deletedAt: null,
-      payment: {
-        some: {
-          AND: [
-            { paymentStatus: PaymentStatus.PENDING },
-            {
-              OR: [
-                { expiresAt: { lt: new Date() } }, // Explicitly expired
-                {
-                  AND: [
-                    { expiresAt: null }, // No expiration set (legacy)
-                    {
-                      createdAt: {
-                        // FIX Issue #6: 35 min buffer (5 min over 30 min expiry)
-                        // Prevents race condition at payment expiration boundary
-                        lt: new Date(Date.now() - 35 * 60 * 1000),
-                      },
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
-      },
+      payment: { some: lapsed },
       // Group-event seats are held by connecting the buyer to shared,
       // non-tentative slots, so a tentative-slot filter would never see an
       // abandoned webinar or class checkout.
@@ -307,7 +303,7 @@ function findAbandonedAppointments(limit?: number) {
         { class: { isNot: null } },
       ],
     },
-    include: ABANDONED_INCLUDE,
+    include: abandonedInclude(lapsed),
   });
 }
 
@@ -394,15 +390,18 @@ async function reportLiveGatewaySkips(paymentIds: string[]): Promise<void> {
 async function expirePendingPayments(
   tx: Pick<Tx, "payment">,
   payments: AbandonedPayment[],
-): Promise<void> {
+): Promise<AbandonedPayment[]> {
+  const expired: AbandonedPayment[] = [];
   // One-at-a-time and in cohort order: a deterministic write sequence.
   for (const payment of payments) {
     // Conditional on PENDING: a capture racing this sweep keeps SUCCEEDED.
-    await tx.payment.updateMany({
+    const { count } = await tx.payment.updateMany({
       where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
       data: { paymentStatus: PaymentStatus.EXPIRED },
     });
+    if (count === 1) expired.push(payment);
   }
+  return expired;
 }
 
 /**
@@ -557,29 +556,25 @@ async function restoreReferralCredits(
 }
 
 /**
- * Group events: release only the abandoning buyers' seats (#1554: by participant
- * status). The occurrences are shared by everyone who registered, so deleting
- * them would strand every other attendee.
+ * Group events: release the HELD seat of each buyer whose own payment this unit
+ * expired, on that payment's appointment only. A CONFIRMED or ATTENDED seat is
+ * never released, and the shared occurrences stay for every other attendee.
  */
 async function releaseGroupSeats(
   tx: Pick<Tx, "appointmentParticipant">,
   appointment: AbandonedAppointment,
+  expired: AbandonedPayment[],
 ): Promise<void> {
   const kind = appointment.webinar ? "webinar" : "class";
-  const abandonedUserIds = Array.from(
-    new Set(appointment.payment.map((p) => p.userId)),
-  );
-  const seatFilter = appointment.class
-    ? { appointment: { classId: appointment.class.id } }
-    : { appointmentId: appointment.id };
-
-  for (const abandonedUserId of abandonedUserIds) {
-    const released = await releaseParticipant(tx, {
-      ...seatFilter,
-      userId: abandonedUserId,
-    });
+  for (const payment of expired) {
+    const released = await transitionParticipant(
+      tx,
+      { appointmentId: appointment.id, userId: payment.userId },
+      "CANCELLED",
+      { fromIn: ["HELD"] },
+    );
     console.log(
-      `🗑️ Released ${released} seat(s) for user ${abandonedUserId} on ${kind} appointment ${appointment.id}`,
+      `🗑️ Released ${released} seat(s) for user ${payment.userId} on ${kind} appointment ${appointment.id}`,
     );
   }
 }
@@ -742,11 +737,20 @@ async function cleanupAbandonedAppointment(
         };
       }
 
-      await expirePendingPayments(tx, appointment.payment);
-      await restoreReferralCredits(tx, appointment.payment);
+      // Read Committed suffices: everything below is gated on this unit's own
+      // PENDING → EXPIRED row-lock wins, which a capture's CAS cannot also win.
+      const expired = await expirePendingPayments(tx, appointment.payment);
+      if (expired.length === 0) {
+        return {
+          outcome: "skipped" as const,
+          notice: null,
+          holdNotices: null,
+        };
+      }
+      await restoreReferralCredits(tx, expired);
 
       if (appointment.webinar || appointment.class) {
-        await releaseGroupSeats(tx, appointment);
+        await releaseGroupSeats(tx, appointment, expired);
         return {
           outcome: "cleaned" as const,
           notice: null,
@@ -788,13 +792,13 @@ async function cleanupAbandonedAppointment(
 export async function retireOrphanPendingPayment(
   paymentId: string,
 ): Promise<{ outcome: "retired" | "skipped"; errors: string[] }> {
+  const orphan = { id: paymentId, paymentStatus: PaymentStatus.PENDING };
   const appointment = await prisma.appointment.findFirst({
-    where: {
-      payment: {
-        some: { id: paymentId, paymentStatus: PaymentStatus.PENDING },
-      },
+    where: { payment: { some: orphan } },
+    include: {
+      ...abandonedInclude(orphan),
+      _count: { select: { payment: true } },
     },
-    include: { ...ABANDONED_INCLUDE, _count: { select: { payment: true } } },
   });
 
   if (appointment) {
@@ -808,14 +812,10 @@ export async function retireOrphanPendingPayment(
         ],
       };
     }
-    // Only the orphan row is expired; a sibling PENDING checkout is left alone.
-    const scoped: AbandonedAppointment = {
-      ...appointment,
-      payment: appointment.payment.filter((p) => p.id === paymentId),
-    };
+    // The include loads only the orphan row, so a sibling checkout is left alone.
     const failures: FailureSink = { messages: [], count: 0, liveSkips: [] };
     const { outcome, notice } = await cleanupAbandonedAppointment(
-      scoped,
+      appointment,
       failures,
     );
     await reportLiveGatewaySkips(failures.liveSkips);
@@ -839,6 +839,24 @@ export async function retireOrphanPendingPayment(
     return true;
   });
   return { outcome: claimed ? "retired" : "skipped", errors: [] };
+}
+
+/**
+ * Moves a skipped or failed unit to the back of the `updatedAt asc` cohort, so a
+ * permanently unreadable gateway state cannot head-of-line block a bounded run.
+ */
+async function rotateUnit(appointmentId: string): Promise<void> {
+  try {
+    await prisma.appointment.updateMany({
+      where: { id: appointmentId },
+      data: { updatedAt: new Date() },
+    });
+  } catch (error) {
+    console.warn(
+      `⚠️ Could not rotate appointment ${appointmentId}:`,
+      describeError(error),
+    );
+  }
 }
 
 /**
@@ -905,6 +923,7 @@ async function cleanupAbandonedPaymentsUnlocked(
 
         if (outcome === "skipped") {
           result.skippedCount++;
+          await rotateUnit(appointment.id);
         } else {
           result.cleanedCount++;
           console.log(
@@ -926,6 +945,7 @@ async function cleanupAbandonedPaymentsUnlocked(
         result.errors.push(
           `Appointment cleanup failed for ${appointment.id}: ${errorMessage}`,
         );
+        await rotateUnit(appointment.id);
       }
     }
 
@@ -1012,7 +1032,7 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
     const [expiredConsultations, expiredSubscriptions] = await Promise.all([
       prisma.consultation.findMany({
         take: perKind,
-        // Oldest-first with an id tie-break: see findAbandonedAppointments above.
+        // Oldest-first with an id tie-break: a bounded run drains the tail too.
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         where: lapsedWhere,
         include: {

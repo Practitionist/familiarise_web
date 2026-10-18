@@ -133,13 +133,54 @@ interface PreloadedWindowContext {
   emailTx?: StagingTx;
 }
 
+/** Slack past one window-width when bounding the staged-reminder read. */
+const STAGED_LOOKBACK_MARGIN_MS = 5 * 60 * 1000;
+
+/**
+ * Slot ids whose reminder for this window is already staged, so the bounded
+ * cohort read skips them. A slot still in the window was staged at most one
+ * window-width ago, which bounds the read by `createdAt`.
+ */
+async function stagedReminderSlotIds(
+  window: { label: ReminderWindowLabel; minMs: number; maxMs: number },
+  now: number,
+): Promise<string[]> {
+  // Split the writer's own builder output so the reader cannot drift from it.
+  const [prefix, suffix] = appointmentReminderEntityRef(
+    "|",
+    window.label,
+  ).split("|");
+  const rows = await prisma.failedEmail.findMany({
+    where: {
+      emailType: APPOINTMENT_REMINDER_EMAIL_TYPE,
+      createdAt: {
+        gte: new Date(
+          now - (window.maxMs - window.minMs) - STAGED_LOOKBACK_MARGIN_MS,
+        ),
+      },
+      entityRef: { startsWith: prefix, endsWith: suffix },
+    },
+    select: { entityRef: true },
+  });
+  // One row is staged per recipient, so a slot's ref repeats; the WHERE needs it once.
+  const ids = new Set<string>();
+  for (const { entityRef } of rows) {
+    if (entityRef) {
+      ids.add(entityRef.slice(prefix.length, entityRef.length - suffix.length));
+    }
+  }
+  return [...ids];
+}
+
 function queryUpcomingOccurrences(
   windowStart: Date,
   windowEnd: Date,
   maxPerRun: number,
+  stagedSlotIds: string[],
 ) {
   return prisma.appointmentOccurrence.findMany({
     where: {
+      ...(stagedSlotIds.length > 0 ? { id: { notIn: stagedSlotIds } } : {}),
       startsAt: {
         gte: windowStart,
         lte: windowEnd,
@@ -546,6 +587,7 @@ async function sendRemindersForWindow(
     windowStart,
     windowEnd,
     maxPerRun,
+    await stagedReminderSlotIds(window, now),
   );
 
   console.log(

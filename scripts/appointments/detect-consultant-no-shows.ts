@@ -58,6 +58,7 @@ import {
   type RefundOwedMarker,
 } from "@/lib/payments/operations/refund-owed";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { startDeadline } from "@/lib/cron/run-deadline";
 import { reportSentryMessage } from "@/lib/observability/report";
 import {
   CANCELLABLE_FROM,
@@ -101,31 +102,23 @@ export interface NoShowResult {
 }
 
 /**
- * #1775 — candidates per run.
- *
- * The cohort read below had no `take` and no `orderBy` at all, so the only
- * bound on a run was "however many rows matched". That is survivable on a
- * 10-minute Actions workflow and is a guaranteed mid-run abort on the Netlify
- * ticker, which drives this route inside a 20 s window — and an abort here is
- * worse than an abort elsewhere, because this job is one refund per candidate
- * and the candidates are worked in stream order.
- *
- * Oldest-first on `updatedAt`: the candidate that has been waiting longest for
- * its verdict is the one whose consultee has waited longest for the refund
- * decision, so that is the right end of the queue. Resumable because the CAS
- * claim in `claimConsultantNoShow` moves the consultation out of the cohort
- * (APPROVED/SCHEDULED only), so a capped run continues on the next tick with
- * the rows it did not reach.
+ * Candidates per bite when the caller passes none. Oldest `updatedAt` first;
+ * the CAS claim in `claimConsultantNoShow` moves a consultation out of the
+ * cohort (APPROVED/SCHEDULED only), and a candidate a bite read but left in
+ * the cohort is excluded from the run's later bites by id.
  */
-const MAX_CANDIDATES_PER_RUN = 10;
+const MAX_CANDIDATES_PER_BITE = 10;
 
 export async function detectConsultantNoShows(opts?: {
   maxCandidates?: number;
+  /** When the request began (ms epoch); defaults to this call. */
+  startedAt?: number;
 }): Promise<NoShowResult> {
   const maxCandidates =
     opts?.maxCandidates && opts.maxCandidates > 0
       ? Math.floor(opts.maxCandidates)
-      : MAX_CANDIDATES_PER_RUN;
+      : MAX_CANDIDATES_PER_BITE;
+  const pastDeadline = startDeadline(opts?.startedAt);
   // #476 — locked at the core so every entry shares one mutual exclusion.
   // Fail-closed: this is a money job (auto-refund), so per with-cron-lock.ts it
   // refuses to run without a real Redis lock rather than risk a silent unlocked
@@ -134,7 +127,7 @@ export async function detectConsultantNoShows(opts?: {
   return withCronLock(
     "detect-consultant-no-shows",
     { failMode: "closed" },
-    () => detectConsultantNoShowsUnlocked(maxCandidates),
+    () => detectConsultantNoShowsUnlocked(maxCandidates, pastDeadline),
   );
 }
 
@@ -152,11 +145,16 @@ const DECIDED_OR_PARKED = {
   ],
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
-function findNoShowCandidates(graceCutoff: Date, maxCandidates: number) {
+function findNoShowCandidates(
+  graceCutoff: Date,
+  maxCandidates: number,
+  seen: string[],
+) {
   return prisma.consultation.findMany({
     orderBy: { updatedAt: "asc" },
     take: maxCandidates,
     where: {
+      ...(seen.length > 0 ? { id: { notIn: seen } } : {}),
       status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
       appointment: {
         payment: {
@@ -437,11 +435,13 @@ export async function detectBothAbsent(
   candidates: NoShowCandidate[],
   errors: string[],
   lookup: PresenceLookup,
+  run?: { lostDeliveries: string[]; pastDeadline: () => boolean },
 ): Promise<number> {
   let raised = 0;
-  const lostDeliveries: string[] = [];
+  const lostDeliveries = run?.lostDeliveries ?? [];
 
   for (const consultation of candidates) {
+    if (run?.pastDeadline()) break;
     try {
       const consultantUserId =
         consultation.consultationPlan?.consultantProfile?.userId;
@@ -510,12 +510,17 @@ export async function detectBothAbsent(
     }
   }
 
-  await reportOncePerRun(
-    "Attendance rows missing for a session Stream saw participants in",
-    lostDeliveries.map((consultationId) => ({ consultationId })),
-  );
+  // A drain run collects across its bites and reports once at the end.
+  if (!run) await reportLostDeliveries(lostDeliveries);
 
   return raised;
+}
+
+function reportLostDeliveries(consultationIds: string[]): Promise<void> {
+  return reportOncePerRun(
+    "Attendance rows missing for a session Stream saw participants in",
+    consultationIds.map((consultationId) => ({ consultationId })),
+  );
 }
 
 // Claim it: CAS active → CANCELLED. This is the idempotency gate — the detection
@@ -737,15 +742,86 @@ async function notifyNoShowParties(
   }
 }
 
+interface NoShowTally {
+  detected: number;
+  refunded: number;
+  contradicted: number;
+  refusals: Array<{ consultationId: string; refusal: string }>;
+  errors: string[];
+}
+
+/** One candidate through the consultant-fault pass; failures land in `tally.errors`. */
+async function handleNoShowCandidate(
+  consultation: NoShowCandidate,
+  outages: OutageWindow[],
+  presence: PresenceLookup,
+  tally: NoShowTally,
+): Promise<void> {
+  try {
+    const party = evaluateConsultantNoShow(consultation, outages);
+    if (!party) return;
+
+    // Corroborate against Stream before moving money. Our attendance rows are
+    // webhook-derived and each party's arrives separately, so the predicate
+    // above can be satisfied by a LOST DELIVERY rather than a real absence.
+    const refusal = await refusalFromStreamEvidence(consultation, presence);
+    if (refusal) {
+      tally.contradicted++;
+      console.log(
+        `\n🛑 Not a no-show after all: consultation ${consultation.id} — ${refusal}`,
+      );
+      // Worth an alert rather than a log line. Either a webhook was lost — in
+      // which case attendance data is wrong platform-wide and this is the only
+      // place it surfaces — or the detector's own predicate needs revisiting.
+      tally.refusals.push({ consultationId: consultation.id, refusal });
+      return;
+    }
+
+    tally.detected++;
+    console.log(`\n🚫 Consultant no-show: consultation ${consultation.id}`);
+    console.log(`   Plan: ${consultation.consultationPlan?.title}`);
+
+    const paid = paidPaymentOf(consultation);
+    const claimed = await claimConsultantNoShow(
+      consultation.id,
+      party.appointmentId,
+      paid ? noShowRefundOwed(paid.id) : null,
+      {
+        consultantProfileId: consultation.consultationPlan.consultantProfileId,
+        organizationId: consultation.appointment?.organizationId ?? null,
+      },
+    );
+    if (!claimed) {
+      console.log(`   ⏭️ Skipped — status changed since scan`);
+      tally.detected--;
+      return;
+    }
+
+    const { refundedPaise, succeeded, paidPayment } =
+      await refundNoShowConsultation(consultation, tally.errors);
+    if (succeeded) tally.refunded++;
+
+    await notifyNoShowParties(consultation, party, refundedPaise, paidPayment);
+  } catch (error) {
+    const msg = `Failed to handle candidate consultation ${consultation.id}: ${error}`;
+    console.error(`   ❌ ${msg}`);
+    tally.errors.push(msg);
+  }
+}
+
 async function detectConsultantNoShowsUnlocked(
   maxCandidates: number,
+  pastDeadline: () => boolean,
 ): Promise<NoShowResult> {
-  const errors: string[] = [];
-  let detected = 0;
-  let refunded = 0;
-  let contradicted = 0;
+  const tally: NoShowTally = {
+    detected: 0,
+    refunded: 0,
+    contradicted: 0,
+    refusals: [],
+    errors: [],
+  };
+  const { errors } = tally;
   let bothAbsentTickets = 0;
-  const refusals: Array<{ consultationId: string; refusal: string }> = [];
   // One cache for the whole run: both passes examine overlapping candidates.
   const presence = makePresenceLookup();
 
@@ -755,94 +831,64 @@ async function detectConsultantNoShowsUnlocked(
   console.log(
     `   Grace window: ${NO_SHOW_GRACE_MINUTES} min after session end`,
   );
-  console.log(`   Per-run cap: ${maxCandidates} candidate(s)`);
+  console.log(`   Bite: ${maxCandidates} candidate(s)`);
 
-  const candidates = await findNoShowCandidates(graceCutoff, maxCandidates);
   // #1569 — the classifier's maintenance hold turns a host-absent verdict inconclusive.
   const outages = await readOutageWindows(
     prisma,
     new Date(graceCutoff.getTime() - 7 * 86_400_000),
   );
+  const seen: string[] = [];
+  const lostDeliveries: string[] = [];
 
-  console.log(`Found ${candidates.length} paid, ended candidates to check`);
-
-  for (const consultation of candidates) {
-    try {
-      const party = evaluateConsultantNoShow(consultation, outages);
-      if (!party) continue;
-
-      // Corroborate against Stream before moving money. Our attendance rows are
-      // webhook-derived and each party's arrives separately, so the predicate
-      // above can be satisfied by a LOST DELIVERY rather than a real absence.
-      const refusal = await refusalFromStreamEvidence(consultation, presence);
-      if (refusal) {
-        contradicted++;
-        console.log(
-          `\n🛑 Not a no-show after all: consultation ${consultation.id} — ${refusal}`,
-        );
-        // Worth an alert rather than a log line. Either a webhook was lost — in
-        // which case attendance data is wrong platform-wide and this is the only
-        // place it surfaces — or the detector's own predicate needs revisiting.
-        refusals.push({ consultationId: consultation.id, refusal });
-        continue;
-      }
-
-      detected++;
-      console.log(`\n🚫 Consultant no-show: consultation ${consultation.id}`);
-      console.log(`   Plan: ${consultation.consultationPlan?.title}`);
-
-      const paid = paidPaymentOf(consultation);
-      const claimed = await claimConsultantNoShow(
-        consultation.id,
-        party.appointmentId,
-        paid ? noShowRefundOwed(paid.id) : null,
-        {
-          consultantProfileId:
-            consultation.consultationPlan.consultantProfileId,
-          organizationId: consultation.appointment?.organizationId ?? null,
-        },
-      );
-      if (!claimed) {
-        console.log(`   ⏭️ Skipped — status changed since scan`);
-        detected--;
-        continue;
-      }
-
-      const { refundedPaise, succeeded, paidPayment } =
-        await refundNoShowConsultation(consultation, errors);
-      if (succeeded) refunded++;
-
-      await notifyNoShowParties(
-        consultation,
-        party,
-        refundedPaise,
-        paidPayment,
-      );
-    } catch (error) {
-      const msg = `Failed to handle candidate consultation ${consultation.id}: ${error}`;
-      console.error(`   ❌ ${msg}`);
-      errors.push(msg);
-    }
-  }
-
+  // Bite after bite until a short cohort or the drain deadline; the cron lock
+  // is held by the caller for the whole loop.
   // TODO(#1319): subscriptions are multi-session — a single-session consultant
   // no-show is a partial refund of one session out of N, not a whole-booking
   // cancel. Deferred pending per-session refund design; consultations (the
   // single-session exclusive case) are handled above.
 
-  await reportOncePerRun(
-    "Consultant no-show refused on Stream evidence",
-    refusals,
-  );
+  // Findings collected by earlier bites are reported even if a later bite throws.
+  try {
+    while (!pastDeadline()) {
+      const candidates = await findNoShowCandidates(
+        graceCutoff,
+        maxCandidates,
+        seen,
+      );
+      seen.push(...candidates.map((c) => c.id));
+      console.log(`Found ${candidates.length} paid, ended candidates to check`);
 
-  // Runs after the consultant-fault pass so a session it already cancelled is
-  // no longer a candidate here — the query only reads APPROVED/SCHEDULED.
-  bothAbsentTickets = await detectBothAbsent(candidates, errors, presence);
+      for (const consultation of candidates) {
+        if (pastDeadline()) break;
+        await handleNoShowCandidate(consultation, outages, presence, tally);
+      }
+
+      // Runs after the consultant-fault pass so a session it already cancelled is
+      // no longer a candidate here — the query only reads APPROVED/SCHEDULED.
+      bothAbsentTickets += await detectBothAbsent(
+        candidates,
+        errors,
+        presence,
+        {
+          lostDeliveries,
+          pastDeadline,
+        },
+      );
+      if (candidates.length < maxCandidates) break;
+    }
+  } finally {
+    await reportOncePerRun(
+      "Consultant no-show refused on Stream evidence",
+      tally.refusals,
+    );
+    await reportLostDeliveries(lostDeliveries);
+  }
 
   console.log("\n📊 No-Show Summary:");
-  console.log(`   Detected: ${detected}`);
-  console.log(`   Refunded: ${refunded}`);
-  console.log(`   Refused on Stream evidence: ${contradicted}`);
+  console.log(`   Detected: ${tally.detected}`);
+  console.log(`   Refunded: ${tally.refunded}`);
+  console.log(`   Refused on Stream evidence: ${tally.contradicted}`);
   console.log(`   Both-absent tickets raised: ${bothAbsentTickets}`);
   if (errors.length > 0) {
     console.log("\n⚠️ Errors:");
@@ -851,9 +897,9 @@ async function detectConsultantNoShowsUnlocked(
 
   return {
     success: errors.length === 0,
-    detected,
-    refunded,
-    contradicted,
+    detected: tally.detected,
+    refunded: tally.refunded,
+    contradicted: tally.contradicted,
     bothAbsentTickets,
     errors,
     timestamp: new Date().toISOString(),

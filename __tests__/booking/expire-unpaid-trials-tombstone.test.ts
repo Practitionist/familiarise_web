@@ -40,7 +40,7 @@ jest.mock("../../lib/prisma", () => {
   return {
     __esModule: true,
     default: {
-      trial: { findMany: jest.fn() },
+      trial: { findMany: jest.fn(), updateMany: jest.fn(async () => ({})) },
       // #1775 C-12 — the retry cohort for a refund that failed after the CAS.
       bookingStatusHistory: { findMany: jest.fn(async () => []) },
       refund: { findMany: jest.fn(async () => []) },
@@ -54,7 +54,7 @@ import prisma from "../../lib/prisma";
 import { expireUnpaidTrials } from "../../scripts/trials/expire-unpaid-trials";
 
 const db = prisma as unknown as {
-  trial: { findMany: jest.Mock };
+  trial: { findMany: jest.Mock; updateMany: jest.Mock };
   __tx: {
     trial: { findUnique: jest.Mock; updateMany: jest.Mock };
     bookingStatusHistory: { create: jest.Mock };
@@ -149,6 +149,35 @@ describe("expire-unpaid-trials tombstones the held call", () => {
     );
     expect(tombstone).toHaveLength(1);
     expect(tombstone[0][1].extra.count).toBe(5);
+  });
+
+  it("isolates a poison row: the next row still expires, the row rotates, the money arm runs", async () => {
+    db.trial.findMany
+      .mockReset()
+      .mockResolvedValueOnce([lapsed, { ...lapsed, id: "trial-2" }])
+      .mockResolvedValue([]);
+    db.__tx.trial.updateMany
+      .mockRejectedValueOnce(new Error("deadlock"))
+      .mockResolvedValue({ count: 1 });
+
+    const result = await expireUnpaidTrials();
+
+    expect(result.trialsExpired).toBe(1);
+    expect(result.success).toBe(false);
+    expect(db.trial.findMany.mock.calls[0][0].orderBy).toEqual([
+      { updatedAt: "asc" },
+      { id: "asc" },
+    ]);
+    expect(db.trial.updateMany).toHaveBeenCalledWith({
+      where: { id: "trial-1" },
+      data: { updatedAt: expect.any(Date) },
+    });
+    const expiry = reportSentryError.mock.calls.filter(
+      ([, opts]) => opts.op === "expire-unpaid-trials-expire",
+    );
+    expect(expiry).toHaveLength(1);
+    // Lapse batch, repair arm, then the unanswered (money) arm.
+    expect(db.trial.findMany).toHaveBeenCalledTimes(3);
   });
 
   it("touches nothing when the trial was paid or scheduled in between", async () => {
