@@ -36,6 +36,7 @@ const EXPERT_NAME = {
 const DIGEST_SELECT = {
   kind: true,
   dueAt: true,
+  doneAt: true,
   rebookedOccurrence: { select: { startsAt: true } },
   occurrence: {
     select: {
@@ -83,9 +84,14 @@ function digestItem(row: DigestRow): IncidentDigestItem {
       (appt.consultation?.consultationPlan ?? appt.trial)?.consultantProfile
         .user.name ?? null,
     rebookedStartsAt: row.rebookedOccurrence?.startsAt ?? null,
-    rebookable: REBOOKABLE_PARENT_STATUSES.has(
-      (appt.consultation ?? appt.trial)?.status ?? "",
-    ),
+    // Offered only while the remedy is still open, as the rebook door requires.
+    rebookable:
+      row.kind === "REFUND_AT_DUE" &&
+      row.doneAt === null &&
+      row.dueAt > new Date() &&
+      REBOOKABLE_PARENT_STATUSES.has(
+        (appt.consultation ?? appt.trial)?.status ?? "",
+      ),
     planTitle:
       appt.consultation?.consultationPlan.title ??
       appt.trial?.subscriptionPlan.title ??

@@ -156,7 +156,7 @@ const closed = () =>
 const slotUnavailable = (message: string) =>
   refuse("INCIDENT_REBOOK_SLOT_UNAVAILABLE", message);
 
-async function readRemedy(remedyId: string): Promise<RemedyRow | null> {
+function readRemedy(remedyId: string): Promise<RemedyRow | null> {
   return prisma.incidentRemedy.findUnique({
     where: { id: remedyId },
     select: REMEDY_SELECT,
