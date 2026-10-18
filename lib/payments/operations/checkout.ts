@@ -30,8 +30,6 @@ import {
 } from "@/lib/booking/entitlement";
 import {
   AppointmentsType,
-  type Currency,
-  type OfferingPlanStatus,
   PaymentGateway,
   PaymentStatus,
   Prisma,
@@ -68,15 +66,8 @@ import { getExchangeRates } from "@/lib/currency";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import { applyCreditsToPayment, getUserCredits } from "@/lib/referrals/service";
 import { notifyCreditsAppliedBestEffort } from "@/lib/referrals/referral-notify";
-import {
-  asWelcomeDiscountConflict,
-  resolveCheckoutAttribution,
-} from "@/lib/referrals/attribution";
+import { asWelcomeDiscountConflict } from "@/lib/referrals/attribution";
 import { recordReferralCaptureInSavepoint } from "@/lib/referrals/capture";
-import {
-  deriveCheckoutAmount,
-  type CheckoutDiscountInput,
-} from "@/lib/payments/pricing/derive-checkout-amount";
 import {
   createEarningsFromPayment,
   resolvePaymentForEarnings,
@@ -90,11 +81,6 @@ import {
   recordBookingUtilization,
   ProgramAssignmentLimitError,
 } from "@/lib/api/organizations/program-helpers";
-import { appointmentTypeToServiceType } from "@/lib/payments/tax/tax-engine";
-import {
-  validatePlanCurrency,
-  validateDiscountCurrency,
-} from "@/lib/payments/validation/currency-guards";
 import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
 import {
@@ -120,10 +106,6 @@ import { sendOrgOperationalEmail } from "@/lib/email/senders/money";
 import { getAppUrl } from "@/lib/url";
 import { sumPaise } from "@/lib/payments/utils/money";
 import {
-  MARKETPLACE_VISIBILITY,
-  planSaleRefusal,
-} from "@/lib/api/plans/visibility";
-import {
   ensurePlatformCancellationPolicy,
   resolveCheckoutCancellationPolicyId,
 } from "@/lib/payments/operations/cancellation-policy-store";
@@ -131,16 +113,12 @@ import {
   type BusinessErrorCode,
   isBusinessErrorCode,
 } from "@/lib/errors/classification/payment-error-classification";
-import {
-  classEnrolmentFrom,
-  type OpenClassEnrolment,
-} from "@/lib/booking/class-enrolment";
+import { classEnrolmentFrom } from "@/lib/booking/class-enrolment";
 import {
   BookingRuleError,
   SlotTakenError,
 } from "@/lib/booking/booking-rule-error";
 import { seatPayerOrganizationId } from "@/lib/data/org-sponsored-seats";
-import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
 import { tombstonePriorIntent } from "@/lib/payments/operations/prior-intent-tombstone";
 import {
   releaseSupersededHolds,
@@ -157,6 +135,16 @@ import {
   acquireCheckoutLock,
   verifyPlanExistsInsideLock,
 } from "@/lib/payments/checkout/locks";
+import {
+  assertClassEnrolmentOpen,
+  alreadyHeldSeatError,
+  assertSeatRemintable,
+  asSeatPaymentConflict,
+  findPriorSeatPayment,
+  SEAT_CHECKOUT_OPEN_MESSAGE,
+} from "@/lib/payments/checkout/seats";
+import { calculateAmountAndValidate } from "@/lib/payments/checkout/pricing";
+import { resolvePriorSubscriptionForRenewal } from "@/lib/payments/checkout/renewal";
 
 // ============================================================================
 // Type Definitions
@@ -177,15 +165,6 @@ const LIVE_SUBSCRIPTION_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.APPROVED_PENDING_PAYMENT,
   AppointmentStatus.SCHEDULED,
 ];
-
-/**
- * #1743 — only an active or completed subscription may be renewed; a PENDING /
- * APPROVED_PENDING_PAYMENT / SCHEDULED request has not run yet and cannot
- * anchor a successor cycle.
- */
-const RENEWABLE_SUBSCRIPTION_STATUSES: ReadonlySet<AppointmentStatus> = new Set(
-  [AppointmentStatus.APPROVED, AppointmentStatus.COMPLETED],
-);
 
 const REFERRAL_CREDITS_DROPPED_NOTICE =
   "Referral credits can't be used on organisation-funded bookings, so none were spent.";
@@ -214,99 +193,6 @@ const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<BusinessErrorCode> =
     "SEAT_REBUY_UNSUPPORTED",
     "ALREADY_REGISTERED",
   ]);
-
-/** A confirmed seat for this buyer; a HELD one belongs to an open order the reuse step may resume. */
-function holdsSettledSeat(
-  appointment: { participants: { userId: string; status: string }[] } | null,
-  userId: string,
-): boolean {
-  return (
-    appointment?.participants.some(
-      (seat) => seat.userId === userId && seat.status !== "HELD",
-    ) ?? false
-  );
-}
-
-/** The buyer already holds a live seat: a modelled 409, never a fault. */
-function alreadyHeldSeatError(kind: "WEBINAR" | "CLASS"): BookingRuleError {
-  return new BookingRuleError(
-    "ALREADY_REGISTERED",
-    kind === "CLASS"
-      ? "You are already enrolled in this class"
-      : "You are already registered for this webinar",
-  );
-}
-
-const SEAT_CHECKOUT_OPEN_MESSAGE =
-  "You already have a checkout open for this seat. Finish it, or wait a few minutes for it to lapse and try again. You have not been charged for this attempt.";
-
-/** One Payment per buyer per event appointment: a second insert is a raced seat checkout, answered 409. */
-function asSeatPaymentConflict(err: unknown): unknown {
-  if (
-    !isUniqueViolationOn(err, "userId") ||
-    !isUniqueViolationOn(err, "appointmentId")
-  ) {
-    return err;
-  }
-  return new BookingRuleError(
-    "PAYMENT_ALREADY_EXISTS",
-    SEAT_CHECKOUT_OPEN_MESSAGE,
-  );
-}
-
-/** The buyer's earlier Payment on a shared webinar/class appointment, if any. */
-function findPriorSeatPayment(tx: Tx, userId: string, appointmentId: string) {
-  return tx.payment.findFirst({
-    where: { userId, appointmentId },
-    select: {
-      id: true,
-      userId: true,
-      paymentIntent: true,
-      gatewayPaymentId: true,
-      amount: true,
-      originalAmount: true,
-      taxAmount: true,
-      currency: true,
-      paymentGateway: true,
-      paymentStatus: true,
-      refunds: {
-        where: { status: "SUCCEEDED" },
-        select: { amountPaise: true },
-      },
-    },
-  });
-}
-
-/** Only an EXPIRED or FAILED seat payment is re-minted in place; every other prior row refuses. */
-function assertSeatRemintable(
-  prior: NonNullable<Awaited<ReturnType<typeof findPriorSeatPayment>>>,
-  kind: "WEBINAR" | "CLASS",
-): void {
-  if (
-    prior.paymentStatus === PaymentStatus.EXPIRED ||
-    prior.paymentStatus === PaymentStatus.FAILED
-  ) {
-    return;
-  }
-  if (prior.paymentStatus === PaymentStatus.PENDING) {
-    throw new BookingRuleError(
-      "PAYMENT_ALREADY_EXISTS",
-      SEAT_CHECKOUT_OPEN_MESSAGE,
-    );
-  }
-  const refundedPaise = (prior.refunds ?? []).reduce(
-    (total, refund) => total + sumPaise(refund.amountPaise),
-    0,
-  );
-  // A zero-amount seat has no refund rows, so only a priced seat can read as refunded.
-  if (prior.amount > 0 && refundedPaise >= prior.amount) {
-    throw new BookingRuleError(
-      "SEAT_REBUY_UNSUPPORTED",
-      "Your earlier seat here was refunded, and a refunded seat can't be bought again yet. Contact support if you'd like to rejoin.",
-    );
-  }
-  throw alreadyHeldSeatError(kind);
-}
 
 // ============================================================================
 // Open-Order Reuse (rec C, checkout dossier Q2)
@@ -384,512 +270,6 @@ export async function readInvoiceExposurePaise(
 // ============================================================================
 // Amount Calculation and Validation
 // ============================================================================
-
-/**
- * Calculate final amount with discount and validate plan availability
- * Does NOT create any appointment records - only validates
- */
-async function calculateAmountAndValidate(
-  validatedData: CheckoutInput,
-  userId: string,
-  buyerCountry: string = "IN",
-  /**
-   * #1465-triage — the org scope `handleCheckout` already resolved (membership
-   * verified) before it calls this. Only reaches the slot-availability gate,
-   * where it scopes the self-hold exclusion to holds this request could
-   * actually resume. Null default keeps every non-org caller personal.
-   */
-  organizationId: string | null = null,
-  /** The signed own-link cookie and whether an org funds this booking; null for neither. */
-  referral: { viaToken: string | null; orgFunded: boolean } | null = null,
-) {
-  return await prisma.$transaction(async (tx) => {
-    let amount = 0;
-    let plan;
-    let priceCurrency: Currency = "INR";
-    let classSessionsQuoted: number | null = null;
-    let subscriptionSchedulingPeriod: { startsAt: Date; endsAt: Date } | null =
-      null;
-
-    // Lazy-create ConsulteeProfile if this is the user's first
-    // consumer action. ORG_WORKSPACE / CONSULTANT users who also book
-    // personal sessions (valid, if rare) would hit "User profile not
-    // found" before this helper existed — now we seed the profile on
-    // demand inside the checkout tx.
-    await ensureConsulteeProfile(tx, userId);
-    const user = await tx.user.findUnique({
-      where: { id: userId },
-      include: {
-        consulteeProfile: true,
-      },
-    });
-
-    if (!user?.consulteeProfile) {
-      throw new Error("User profile not found");
-    }
-
-    // Get plan and validate availability without creating records
-    // E2E-audit P1 fix — purchase-path storefront gates. Detail pages hide
-    // unverified consultants' profiles and archived (withdrawn-from-sale)
-    // plans, but this transaction looked rows up by bare id, so a stale or
-    // hand-built URL could still pay an unverified seller or buy a pulled
-    // plan. Mirror lib/data/consultant-detail.ts's VERIFIED rule and
-    // eventPlanDiscoverableWhere's archivedAt/marketplace rules here, inside
-    // the lock. Non-marketplace (ORG_ONLY) plans stay purchasable only via
-    // the org-sponsored path — whose membership/assignment/contract gates
-    // run below and inside revalidateInsideLock.
-    const assertPlanPurchasable = (
-      p: {
-        archivedAt: Date | null;
-        visibility: string;
-        organizationId?: string | null;
-        status?: OfferingPlanStatus | null;
-        consultantProfile: {
-          verificationStatus: string;
-          acceptingRequests: boolean;
-        } | null;
-      },
-      label: string,
-    ) => {
-      // A paused expert takes no new booking of any kind; approved pay-links are minted elsewhere.
-      if (p.consultantProfile?.acceptingRequests === false) {
-        throw new BookingRuleError(
-          "NOT_ACCEPTING_BOOKINGS",
-          "This expert is not taking new bookings right now. Pick another expert, or try again later.",
-        );
-      }
-      // #1527 Q4 — new sales only. Pay-links minted for approved requests
-      // (approval-payment.ts) deliberately skip this, so unpublishing a plan
-      // never strands a booking the consultant already accepted.
-      if (planSaleRefusal(p)) {
-        throw new BookingRuleError(
-          "PLAN_NOT_PUBLISHED",
-          `${label} isn't available to book right now.`,
-        );
-      }
-      if (
-        p.consultantProfile &&
-        p.consultantProfile.verificationStatus !== "VERIFIED"
-      ) {
-        throw new Error(`${label} is not available`);
-      }
-      if (p.archivedAt) {
-        throw new Error(`${label} is no longer available`);
-      }
-      if (
-        !MARKETPLACE_VISIBILITY.includes(
-          p.visibility as (typeof MARKETPLACE_VISIBILITY)[number],
-        ) &&
-        (!validatedData.organizationId ||
-          (p.organizationId &&
-            p.organizationId !== validatedData.organizationId))
-      ) {
-        throw new Error(`${label} is not available`);
-      }
-    };
-
-    switch (validatedData.appointmentType) {
-      case "CONSULTATION":
-        plan = await tx.consultationPlan.findUnique({
-          where: { id: validatedData.planId },
-          include: {
-            consultantProfile: {
-              include: { user: true },
-            },
-          },
-        });
-
-        if (!plan) {
-          throw new Error("Consultation plan not found");
-        }
-
-        // #781 §B — soft-deleted expert is not bookable
-        if (plan.consultantProfile?.deletedAt) {
-          throw new Error("Consultation plan not found");
-        }
-
-        assertPlanPurchasable(plan, "This consultation");
-        if (!validatedData.startsAt || !validatedData.endsAt) {
-          throw new BookingRuleError(
-            "WINDOW_DURATION_MISMATCH",
-            "Choose a start and end time for this consultation.",
-            400,
-          );
-        }
-        assertWindowMatchesPlanDuration(
-          plan,
-          validatedData.startsAt,
-          validatedData.endsAt,
-        );
-
-        // #1463 — the buyer's User id, not their ConsulteeProfile id: the
-        // duplicate-hold step compares it to `Payment.userId`.
-        await validateSlotAvailability(
-          tx,
-          validatedData,
-          userId,
-          plan.consultantProfile.user.id, // FIX: Pass consultant user ID to filter by consultant
-          organizationId,
-          plan.consultantProfile.id,
-        );
-        amount = plan.price;
-        priceCurrency = plan.priceCurrency;
-        break;
-
-      case "SUBSCRIPTION":
-        plan = await tx.subscriptionPlan.findUnique({
-          where: { id: validatedData.planId },
-          include: {
-            consultantProfile: {
-              include: { user: true },
-            },
-          },
-        });
-
-        if (!plan) {
-          throw new Error("Subscription plan not found");
-        }
-
-        // #781 §B — soft-deleted expert is not bookable
-        if (plan.consultantProfile?.deletedAt) {
-          throw new Error("Subscription plan not found");
-        }
-
-        assertPlanPurchasable(plan, "This subscription");
-
-        // #1463 — the buyer's User id; see the consultation arm above.
-        await validateSlotAvailability(
-          tx,
-          validatedData,
-          userId,
-          plan.consultantProfile.user.id, // FIX: Pass consultant user ID to filter by consultant
-          organizationId,
-          plan.consultantProfile.id,
-        );
-        if (
-          validatedData.schedulingPeriodStartsAt ||
-          validatedData.renewsSubscriptionId
-        ) {
-          const priorEndsAt = await resolvePriorRenewalEndsAt(
-            tx,
-            validatedData.renewsSubscriptionId,
-            user.consulteeProfile.id,
-            plan.id,
-          );
-          const schedulingTimezone = resolveSchedulingTimezone(
-            plan.consultantProfile?.user?.timezone,
-          );
-          const now = new Date();
-          const requestedStart = validatedData.schedulingPeriodStartsAt
-            ? new Date(validatedData.schedulingPeriodStartsAt)
-            : now;
-          const effectiveStart = priorEndsAt
-            ? new Date(
-                Math.max(
-                  priorEndsAt.getTime(),
-                  requestedStart.getTime(),
-                  now.getTime(),
-                ),
-              )
-            : requestedStart;
-          const { start, end } = firstCycleWindow(
-            plan,
-            effectiveStart,
-            schedulingTimezone,
-          );
-          subscriptionSchedulingPeriod = { startsAt: start, endsAt: end };
-        }
-        amount = plan.price;
-        priceCurrency = plan.priceCurrency;
-        break;
-
-      case "WEBINAR": {
-        if (!validatedData.eventId) {
-          throw new Error("Event ID is required for webinar");
-        }
-        const webinar = await tx.webinar.findUnique({
-          where: { id: validatedData.eventId },
-          include: {
-            webinarPlan: {
-              include: {
-                consultantProfile: true,
-              },
-            },
-            appointment: {
-              include: {
-                occurrences: true,
-                participants: {
-                  where: { ...liveParticipant(), role: "CONSULTEE" },
-                  select: { userId: true, status: true },
-                },
-              },
-            },
-          },
-        });
-
-        if (!webinar) {
-          throw new Error("Webinar not found");
-        }
-
-        plan = webinar.webinarPlan;
-
-        // #781 §B — soft-deleted expert is not bookable
-        if (plan.consultantProfile?.deletedAt) {
-          throw new Error("Webinar not found");
-        }
-
-        assertPlanPurchasable(plan, "This webinar");
-
-        const consultantUserId = plan.consultantProfile?.userId;
-        const webinarCapacity = getWebinarCapacity({
-          webinar,
-          plan: webinar.webinarPlan,
-          excludeUserIds: consultantUserId ? [consultantUserId] : [],
-        });
-
-        if (webinarCapacity.isFull) {
-          // #1757 — a coded refusal (EVENT_FULL, 409), not a fault; the tx
-          // catch rethrows registered codes unchanged.
-          throw Object.assign(new Error("Webinar is full"), {
-            httpStatus: 409,
-            code: "EVENT_FULL",
-          });
-        }
-
-        // A settled seat fails fast before any gateway order; a HELD one may still be resumed below.
-        const priorWebinarSeat = webinar.appointment
-          ? await findPriorSeatPayment(tx, userId, webinar.appointment.id)
-          : null;
-        if (priorWebinarSeat?.paymentStatus === PaymentStatus.SUCCEEDED) {
-          assertSeatRemintable(priorWebinarSeat, "WEBINAR");
-        }
-        if (holdsSettledSeat(webinar.appointment, userId)) {
-          throw alreadyHeldSeatError("WEBINAR");
-        }
-
-        amount = plan.price;
-        priceCurrency = plan.priceCurrency;
-        break;
-      }
-
-      case "CLASS": {
-        if (!validatedData.eventId) {
-          throw new Error("Event ID is required for class");
-        }
-        const classInstance = await tx.class.findUnique({
-          where: { id: validatedData.eventId },
-          include: {
-            classPlan: {
-              include: { consultantProfile: true },
-            },
-            appointment: {
-              include: {
-                occurrences: true,
-                participants: {
-                  where: { ...liveParticipant(), role: "CONSULTEE" },
-                  select: { userId: true, status: true },
-                },
-              },
-            },
-          },
-        });
-
-        if (!classInstance) {
-          throw new Error("Class not found");
-        }
-
-        plan = classInstance.classPlan;
-
-        // #781 §B — soft-deleted expert is not bookable
-        if (plan.consultantProfile?.deletedAt) {
-          throw new Error("Class not found");
-        }
-
-        assertPlanPurchasable(plan, "This class");
-
-        const classConsultantUserId = plan.consultantProfile?.userId;
-        const classCapacity = getClassCapacity({
-          classInstance,
-          plan: classInstance.classPlan,
-          excludeUserIds: classConsultantUserId ? [classConsultantUserId] : [],
-        });
-
-        if (classCapacity.isFull) {
-          // #1757 — a coded refusal (EVENT_FULL, 409), not a fault; the tx
-          // catch rethrows registered codes unchanged.
-          throw Object.assign(new Error("Class is full"), {
-            httpStatus: 409,
-            code: "EVENT_FULL",
-          });
-        }
-
-        // A settled seat fails fast before any gateway order; a HELD one may still be resumed below.
-        const priorClassSeat = classInstance.appointment
-          ? await findPriorSeatPayment(tx, userId, classInstance.appointment.id)
-          : null;
-        if (priorClassSeat?.paymentStatus === PaymentStatus.SUCCEEDED) {
-          assertSeatRemintable(priorClassSeat, "CLASS");
-        }
-        if (holdsSettledSeat(classInstance.appointment, userId)) {
-          throw alreadyHeldSeatError("CLASS");
-        }
-
-        // #1819 — a late joiner pays for the sessions left; the tx re-derives this.
-        const enrolment = assertClassEnrolmentOpen(
-          classEnrolmentFrom({
-            pricePaise: plan.price,
-            N: plan.totalSessions,
-            lateJoinUntilSession: plan.lateJoinUntilSession,
-            sessions: classInstance.appointment?.occurrences ?? [],
-            now: new Date(),
-          }),
-        );
-        amount = enrolment.basePaise;
-        classSessionsQuoted = enrolment.remaining;
-        priceCurrency = plan.priceCurrency;
-        break;
-      }
-
-      default:
-        throw new Error("Invalid appointment type");
-    }
-
-    // Apply discount if provided - with full backend re-validation
-    let discountCodeId = null;
-    let appliedDiscount: CheckoutDiscountInput | null = null;
-    if (validatedData.discountCode) {
-      const discount = await tx.discountCode.findUnique({
-        where: { code: validatedData.discountCode.toUpperCase().trim() },
-      });
-
-      if (discount) {
-        // Re-validate all conditions (don't trust frontend validation)
-        if (!discount.isActive) {
-          throw new Error("Discount code is no longer active");
-        }
-
-        if (discount.expiresAt && new Date() > discount.expiresAt) {
-          throw new Error("Discount code has expired");
-        }
-
-        if (
-          discount.maxUses !== null &&
-          discount.currentUses >= discount.maxUses
-        ) {
-          throw new DiscountExhaustedError(
-            discount.currentUses,
-            discount.maxUses,
-          );
-        }
-
-        discountCodeId = discount.id;
-
-        // Validate FIXED_AMOUNT discount currency matches plan currency (INR for MVP)
-        if (
-          !validateDiscountCurrency(
-            {
-              discountType: discount.discountType,
-              currency: discount.currency,
-            },
-            priceCurrency,
-          )
-        ) {
-          // #1586 J32 — its prose matched the "discount code" AVAILABILITY
-          // pattern and told the buyer the plan was gone.
-          throw Object.assign(
-            new Error("Discount code currency does not match plan currency"),
-            { httpStatus: 400, code: "DISCOUNT_CURRENCY_MISMATCH" },
-          );
-        }
-
-        appliedDiscount = {
-          discountType: discount.discountType,
-          discountValue: discount.discountValue,
-          maxDiscount: discount.maxDiscount,
-        };
-
-        // NOTE: currentUses increment is done in the payment transaction
-        // to ensure count only increases when payment is successfully created
-      } else {
-        // #1592 A-P1-05 — an unknown code used to fall through to full price
-        // with no word to the buyer. A coded 400 the classifier answers.
-        throw Object.assign(
-          new Error("That discount code is not valid for this purchase"),
-          { httpStatus: 400, code: "DISCOUNT_CODE_INVALID" },
-        );
-      }
-    }
-
-    // Use priceCurrency extracted from plan (set in the switch above)
-    const currency = priceCurrency;
-
-    // Validate plan currency (MVP: all plans must be INR)
-    validatePlanCurrency(currency);
-
-    // #1319 — list price, then discount, then GST on the discounted base, then
-    // referral credits against the tax-inclusive total. That sequence is now a
-    // single pure function the parity suite imports instead of transcribing.
-    // The credit balance is still read lazily, only once the order clears the
-    // redemption floor, so orders that cannot spend a credit keep it out of the
-    // transaction's read set.
-    const attribution = await resolveCheckoutAttribution(tx, {
-      buyerUserId: userId,
-      consultantProfileId: plan.consultantProfile?.id ?? null,
-      consultantUserId: plan.consultantProfile?.userId ?? null,
-      viaToken: referral?.viaToken ?? null,
-      orgFunded: referral?.orgFunded ?? false,
-      hasDiscountCode: appliedDiscount !== null,
-    });
-    const derived = await deriveCheckoutAmount({
-      basePaise: amount,
-      buyerCountry,
-      serviceType: appointmentTypeToServiceType(validatedData.appointmentType),
-      discount: appliedDiscount,
-      welcomeDiscount: attribution.welcomeDiscount,
-      creditCapBps: attribution.creditCapBps,
-      useReferralCredits: validatedData.useReferralCredits === true,
-      resolveAvailableCreditsPaise: async () =>
-        (await getUserCredits(userId, tx)).totalAvailable,
-    });
-    // Original plan price before any discounts/credits, used for consultant
-    // earnings — discounts are platform-funded, not consultant-funded.
-    const { originalAmount, taxAmount, creditsApplied, isInternational } =
-      derived;
-    amount = derived.amount;
-
-    // Guard: reject amounts in the 1-99 paise range (> ₹0 but < ₹1).
-    // Razorpay requires a minimum order value of ₹1 (100 paise). An amount of exactly 0
-    // is allowed — it triggers the mock/zero-amount payment path (free tier, full-credit cover).
-    const MINIMUM_CHECKOUT_AMOUNT_PAISE = 100;
-    if (amount > 0 && amount < MINIMUM_CHECKOUT_AMOUNT_PAISE) {
-      throw new Error(
-        `Final checkout amount (${amount} paise) is below the ₹1 minimum after discounts and credits. ` +
-          `Please adjust the discount or use a free-session mechanism for zero-price bookings.`,
-      );
-    }
-
-    return {
-      amount,
-      originalAmount,
-      taxAmount,
-      currency,
-      discountCodeId,
-      consulteeProfileId: user.consulteeProfile.id,
-      // #1365 — the buyer's remembered GST state, resolved in the same lookup
-      // that resolves the consultee so the invoice mint needs no extra read.
-      consulteeBillingStateCode: user.consulteeProfile.billingStateCode,
-      creditsApplied,
-      buyerCountry,
-      isInternational,
-      classSessionsQuoted,
-      subscriptionSchedulingPeriod,
-      attributionSource: attribution.source,
-      attributionReferralId: attribution.referralId,
-      platformFeeBps: attribution.platformFeeBps,
-      welcomeDiscountPaise: derived.welcomeDiscountPaise,
-    };
-  });
-}
 
 // ============================================================================
 // Slot Availability Validation
@@ -2102,125 +1482,6 @@ export async function handleConsultationCheckout(
   return { appointment, plan, amount: plan.price };
 }
 
-async function resolvePriorRenewalEndsAt(
-  tx: Tx,
-  renewsSubscriptionId: string | undefined,
-  consulteeProfileId: string,
-  planId: string,
-): Promise<Date | null> {
-  if (
-    !renewsSubscriptionId ||
-    typeof tx.subscription?.findUnique !== "function"
-  ) {
-    return null;
-  }
-  const priorSub = await tx.subscription.findUnique({
-    where: { id: renewsSubscriptionId },
-    select: {
-      schedulingPeriodEndsAt: true,
-      status: true,
-      deletedAt: true,
-      requestedById: true,
-      subscriptionPlanId: true,
-    },
-  });
-  if (
-    !priorSub ||
-    priorSub?.deletedAt !== null ||
-    priorSub.requestedById !== consulteeProfileId ||
-    priorSub.subscriptionPlanId !== planId ||
-    !RENEWABLE_SUBSCRIPTION_STATUSES.has(priorSub.status)
-  ) {
-    return null;
-  }
-  return priorSub.schedulingPeriodEndsAt;
-}
-
-async function resolvePriorSubscriptionForRenewal(
-  tx: Tx,
-  renewsSubscriptionId: string | undefined,
-  consulteeProfileId: string,
-  planId: string,
-) {
-  if (!renewsSubscriptionId) return null;
-
-  const priorSubscription = await tx.subscription.findUnique({
-    where: { id: renewsSubscriptionId },
-    select: {
-      id: true,
-      subscriptionPlanId: true,
-      requestedById: true,
-      status: true,
-      schedulingPeriodEndsAt: true,
-      deletedAt: true,
-      renewal: {
-        select: { id: true, status: true, deletedAt: true },
-      },
-    },
-  });
-
-  if (
-    !priorSubscription ||
-    priorSubscription?.deletedAt !== null ||
-    priorSubscription.requestedById !== consulteeProfileId ||
-    priorSubscription.subscriptionPlanId !== planId ||
-    !RENEWABLE_SUBSCRIPTION_STATUSES.has(priorSubscription.status)
-  ) {
-    throw Object.assign(
-      new Error(
-        "The subscription being renewed was not found or cannot be renewed.",
-      ),
-      { httpStatus: 400, code: "INVALID_RENEWAL_SOURCE" },
-    );
-  }
-
-  if (priorSubscription.renewal) {
-    const child = priorSubscription.renewal;
-    const isChildDead =
-      child?.deletedAt !== null ||
-      child.status === AppointmentStatus.CANCELLED ||
-      child.status === AppointmentStatus.REJECTED ||
-      child.status === AppointmentStatus.EXPIRED;
-    if (!isChildDead) {
-      throw Object.assign(
-        new Error("This subscription has already been renewed."),
-        { httpStatus: 409, code: "ALREADY_RENEWED" },
-      );
-    }
-    // Clear unique FK on a dead/cancelled renewal attempt via CAS so a
-    // concurrent reactivation cannot lose its renewedFromSubscriptionId link.
-    const cleared = await tx.subscription.updateMany({
-      where: {
-        id: child.id,
-        OR: [
-          { deletedAt: { not: null } },
-          {
-            status: {
-              in: [
-                AppointmentStatus.CANCELLED,
-                AppointmentStatus.REJECTED,
-                AppointmentStatus.EXPIRED,
-              ],
-            },
-          },
-        ],
-      },
-      data: { renewedFromSubscriptionId: null },
-    });
-    if (cleared.count !== 1) {
-      throw Object.assign(
-        new PaymentError(
-          "This subscription has already been renewed.",
-          "ALREADY_RENEWED",
-        ),
-        { httpStatus: 409 },
-      );
-    }
-  }
-
-  return priorSubscription;
-}
-
 async function linkCompletedTrialToSubscription(
   tx: Tx,
   consulteeProfileId: string,
@@ -2618,24 +1879,6 @@ async function handleWebinarCheckout(
   }
 
   return { appointment, plan, amount: plan.price };
-}
-
-/** #1819 — a batch past its host's cutoff refuses with ENROLMENT_CLOSED (409). */
-function assertClassEnrolmentOpen(
-  enrolment: ReturnType<typeof classEnrolmentFrom>,
-): OpenClassEnrolment {
-  if (enrolment.state === "unscheduled") {
-    throw new Error(
-      "This class has not been scheduled yet. Enrollment opens once all sessions are scheduled.",
-    );
-  }
-  if (enrolment.state === "closed") {
-    throw new BookingRuleError(
-      "ENROLMENT_CLOSED",
-      "Enrolment for this batch has closed. Please choose a batch that has not started yet.",
-    );
-  }
-  return enrolment;
 }
 
 export async function handleClassCheckout(
