@@ -6,13 +6,7 @@
  */
 
 import { reportSentryError } from "@/lib/observability/report";
-import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
-import {
-  liveParticipant,
-  recordParticipants,
-} from "@/lib/booking/participants";
 import prisma, {
-  type Tx,
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
 } from "@/lib/prisma";
@@ -22,17 +16,11 @@ import {
   AllocationResult,
   type AllocationTxOptions,
   EventType,
-  EventConfig,
   isRecurringEventType,
   isReleasedForReschedule,
 } from "./types";
 import { ScheduleCalculationService } from "./ScheduleCalculationService";
-import {
-  intervalCountOf,
-  nextOrdinal,
-  SCHEDULING_INTERVAL_MS,
-} from "@/lib/appointments/occurrences";
-import { recomputeEarningsHold } from "@/lib/payments/payouts/earnings-hold";
+import { intervalCountOf } from "@/lib/appointments/occurrences";
 import { ScheduleValidationService } from "./ScheduleValidationService";
 import {
   lockAutoAllocate,
@@ -41,19 +29,14 @@ import {
   unlockConsulteeBooking,
   type ApprovalLock,
 } from "@/utils/appointmentlock";
-import { isExclusionViolation, isUniqueViolation } from "@/lib/db/pg-errors";
-import { isHostMove, type FreedWindow } from "@/lib/booking/class-series";
-import { TWENTY_FOUR_HOURS_IN_MS } from "./slotTimeUtils";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
+import type { FreedWindow } from "@/lib/booking/class-series";
 import {
   AllocationValidationError,
   AllocationNotFoundError,
   AllocationConflictError,
   SlotShortageError,
 } from "./errors";
-import {
-  recordBookingUtilization,
-  reverseBookingUtilization,
-} from "@/lib/api/organizations/program-helpers";
 import { attemptTrigger } from "@/lib/novu";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import {
@@ -65,7 +48,6 @@ import {
   getConsulteeUserId,
   getEventRelationField,
   getConsultantProfileId,
-  getAppointmentType,
 } from "@/lib/booking/allocation/identity";
 import {
   updateEventStatus,
@@ -97,6 +79,12 @@ import {
 import { findIdempotentAllocation } from "@/lib/booking/allocation/idempotency";
 import { assertCollaboratorsFree } from "@/lib/booking/allocation/collaborators";
 import { findAvailableSlots } from "@/lib/booking/allocation/search/find-available-slots";
+import { createAppointments } from "@/lib/booking/allocation/commit/create-appointments";
+import { deleteExistingAppointments } from "@/lib/booking/allocation/commit/release-tentative";
+import {
+  reconnectEnrolledUsers,
+  collectEventParticipantIds,
+} from "@/lib/booking/allocation/commit/reconnect-enrolled";
 
 /**
  * Main service for slot allocation operations
@@ -706,12 +694,11 @@ export class SchedulingService {
             // ones would have no attendees. A subscription's consultee is
             // connected by createAppointments, so it needs no such read.
             if (eventType === "class") {
-              enrolledUserIds =
-                await SchedulingService.collectEventParticipantIds(
-                  tx,
-                  eventType,
-                  eventId,
-                );
+              enrolledUserIds = await collectEventParticipantIds(
+                tx,
+                eventType,
+                eventId,
+              );
             }
           } else {
             ({
@@ -720,7 +707,7 @@ export class SchedulingService {
               freedOrdinals,
               freedWindows,
               reusableAppointmentId,
-            } = await this.deleteExistingAppointments(
+            } = await deleteExistingAppointments(
               tx,
               eventType,
               eventId,
@@ -730,7 +717,7 @@ export class SchedulingService {
           }
 
           // Create appointments
-          const appointments = await this.createAppointments(
+          const appointments = await createAppointments(
             tx,
             eventType,
             eventId,
@@ -747,7 +734,7 @@ export class SchedulingService {
 
           // Reconnect enrolled users to new slots (for group events like classes)
           if (enrolledUserIds.length > 0) {
-            await this.reconnectEnrolledUsers(
+            await reconnectEnrolledUsers(
               tx,
               appointments,
               enrolledUserIds,
@@ -1320,12 +1307,11 @@ export class SchedulingService {
           let reusableAppointmentId: string | undefined;
           if (isTopUp) {
             if (eventType === "class") {
-              enrolledUserIds =
-                await SchedulingService.collectEventParticipantIds(
-                  tx,
-                  eventType,
-                  eventId,
-                );
+              enrolledUserIds = await collectEventParticipantIds(
+                tx,
+                eventType,
+                eventId,
+              );
             }
           } else {
             ({
@@ -1334,7 +1320,7 @@ export class SchedulingService {
               freedOrdinals,
               freedWindows,
               reusableAppointmentId,
-            } = await this.deleteExistingAppointments(
+            } = await deleteExistingAppointments(
               tx,
               eventType,
               eventId,
@@ -1344,7 +1330,7 @@ export class SchedulingService {
           }
 
           // Create appointments
-          const appointments = await this.createAppointments(
+          const appointments = await createAppointments(
             tx,
             eventType,
             eventId,
@@ -1361,7 +1347,7 @@ export class SchedulingService {
 
           // Reconnect enrolled users to new slots (for group events like classes)
           if (enrolledUserIds.length > 0) {
-            await this.reconnectEnrolledUsers(
+            await reconnectEnrolledUsers(
               tx,
               appointments,
               enrolledUserIds,
@@ -1838,1054 +1824,5 @@ export class SchedulingService {
       if (consulteeLock) await unlockConsulteeBooking(consulteeLock);
       await unlockAutoAllocate(lock);
     }
-  }
-
-  /**
-   * Create the occurrence rows for allocated slots (#1554).
-   *
-   * ARCHITECTURE:
-   * - One Appointment = one PURCHASE (the wrapper checkout or the planner
-   *   created); a subscription or class is one wrapper with N occurrences.
-   * - One AppointmentOccurrence = one call, carrying its real endsAt and a
-   *   1-based ordinal inside the wrapper.
-   * - The 30-minute interval is the unit of arithmetic only.
-   *
-   * The wrapper is REUSED whenever it exists (the payment-bearing row for a
-   * subscription, the class row the planner minted, a preserved 1:1 row); a
-   * fresh wrapper is created only when the event has none. Returns the one
-   * wrapper in a single-element array, which is what every caller reads.
-   *
-   * DEFENSIVE VALIDATION:
-   * This is a defensive check - slot count should already be validated
-   * by the caller, but we verify again to prevent data corruption.
-   */
-  private static async createAppointments(
-    tx: Tx,
-    eventType: EventType,
-    eventId: string,
-    slots: Date[],
-    consultantUserId: string,
-    consulteeUserId?: string,
-    config?: EventConfig,
-    // #768 Comment 5 — slots created here inherit the org context
-    // resolved by fetchEventData. SUBSCRIPTION pulls from the placeholder
-    // Appointment's Payment.organizationId; CLASS pulls from
-    // classPlan.organizationId (host wins per #768 design decision);
-    // CONSULTATION/WEBINAR re-read the existing Appointment's tag.
-    organizationId?: string | null,
-    // #898 — when set (a 1:1 consultation/webinar whose payment-bearing
-    // appointment was preserved by the delete guard), REUSE that appointment
-    // instead of creating a second row on the @unique event FK (P2002). Only
-    // ever set for single-call event types.
-    reuseAppointmentId?: string,
-    // #837 — stamp this batch's dedupe key on the FIRST appointment only, so a
-    // replay trips the @unique (P2002 → typed 409 below) if it slips past the
-    // pre-check. Nullable by design: only real keys dedupe.
-    idempotencyKey?: string,
-    // #1554 — ordinals of the rows this allocation replaces, in call order;
-    // call i inherits position i and only surplus calls take a new number.
-    inheritedOrdinals: number[] = [],
-    // #1780 decision 9 — a reschedule's replacements are moves; a re-plan's
-    // row is a move only when its times differ from the freed row's.
-    moves?: { isReschedule: boolean; freedWindows: FreedWindow[] },
-  ): Promise<any[]> {
-    const hostMoves = moves ?? { isReschedule: false, freedWindows: [] };
-    const slotsPerCall = ScheduleCalculationService.getSlotsPerCall(
-      config?.sessionDurationInHours || config?.durationInHours || 1,
-    );
-
-    // DEFENSIVE CHECK: Ensure slots divide evenly into complete appointments
-    // This should never fail if validation was done correctly, but prevents
-    // database corruption if validation was bypassed
-    if (slots.length % slotsPerCall !== 0) {
-      throw new Error(
-        `INTERNAL ERROR: Cannot create appointments - ${slots.length} slots ` +
-          `cannot be evenly divided into ${slotsPerCall}-slot sessions. ` +
-          `This indicates a validation bug.`,
-      );
-    }
-
-    // Group slots by call (consecutive blocks)
-    const calls: Date[][] = [];
-    for (let i = 0; i < slots.length; i += slotsPerCall) {
-      calls.push(slots.slice(i, i + slotsPerCall));
-    }
-
-    // CRITICAL: For consultations/webinars, ensure only ONE appointment is created
-    if (
-      (eventType === "consultation" || eventType === "webinar") &&
-      calls.length > 1
-    ) {
-      throw new Error(
-        `INTERNAL ERROR: ${eventType} should create exactly 1 appointment, but ${calls.length} were grouped. ` +
-          `This indicates non-consecutive slots were provided. Slots: ${slots.map((s) => s.toISOString()).join(", ")}`,
-      );
-    }
-
-    // #440 — denormalize the consultant onto each slot for the DB-level
-    // overlap guard. The column is nullable for LEGACY rows only — an active
-    // allocation without a resolvable profile would silently disable the
-    // guard, so it throws instead (review catch on #843).
-    const consultantProfileRow = await tx.consultantProfile.findFirst({
-      where: { user: { id: consultantUserId } },
-      select: { id: true },
-    });
-    if (!consultantProfileRow) {
-      throw new Error(
-        `Consultant profile not found for user ${consultantUserId} — refusing to create slots without the #440 overlap-guard column`,
-      );
-    }
-
-    // #1499 — sessions allocated later inherit the terms the booking was SOLD
-    // under, read off the row checkout created (the oldest appointment of this
-    // event). Resolving fresh here would hand a buyer whatever ladder the org
-    // published since, which is precisely what versioning exists to prevent. A
-    // reused appointment already carries its own FK, so it is skipped.
-    let inheritedPolicyId: string | null = null;
-    if (!reuseAppointmentId) {
-      const relationField = getEventRelationField(eventType);
-      const originating = await tx.appointment.findFirst({
-        where: {
-          [`${relationField}Id`]: eventId,
-        } as Prisma.AppointmentWhereInput,
-        orderBy: { createdAt: "asc" },
-        select: { cancellationPolicyId: true },
-      });
-      inheritedPolicyId = originating?.cancellationPolicyId ?? null;
-    }
-
-    // One wrapper, N occurrences. A concurrent booking that overlaps an
-    // existing confirmed occurrence trips the #440 exclusion constraint (or the
-    // unique guard); convert it to a typed 409 here at the source so
-    // classifyError can stay typed-only rather than sniffing Postgres error
-    // strings (#837).
-    // #873 — kept as any[]: tx.appointment.create's include-payload type does
-    // not narrow to AppointmentWithSlots through Promise.all+map here (tsc rejects).
-    let appointments: any[];
-    // The rows THIS batch wrote, by ordinal: a reused wrapper's include also
-    // returns the occurrences it already had (#1554).
-    let newOccurrenceIds: string[] = [];
-    try {
-      const relationField = getEventRelationField(eventType);
-      // #1554 — the purchase wrapper already exists for every subscription
-      // (checkout minted it) and for a class the planner scheduled; attach to
-      // it. The event FKs are @unique, so a second create would be a P2002.
-      const wrapperId =
-        reuseAppointmentId ??
-        (
-          await tx.appointment.findFirst({
-            where: {
-              [`${relationField}Id`]: eventId,
-            } as Prisma.AppointmentWhereInput,
-            select: { id: true },
-          })
-        )?.id;
-      // A genuinely new call continues the wrapper's numbering past both the
-      // surviving rows and the positions being inherited.
-      let nextFreshOrdinal = Math.max(
-        wrapperId ? await nextOrdinal(tx, wrapperId) : 1,
-        ...inheritedOrdinals.map((ordinal) => ordinal + 1),
-      );
-      // #837 — the batch's dedupe key rides on the wrapper.
-      const idempotencyData = idempotencyKey
-        ? { allocationIdempotencyKey: idempotencyKey }
-        : {};
-      // One occurrence per call with the real end; the 30-minute intervals
-      // stay the unit of arithmetic, not the persisted shape.
-      const movedAt = new Date();
-      const occurrencesToCreate = calls.map((sessionSlots, callIndex) => {
-        const row = {
-          ordinal: inheritedOrdinals[callIndex] ?? nextFreshOrdinal++,
-          startsAt: sessionSlots[0],
-          endsAt: new Date(
-            sessionSlots[sessionSlots.length - 1].getTime() +
-              SCHEDULING_INTERVAL_MS,
-          ),
-          isTentative: false,
-          consultantProfileId: consultantProfileRow.id,
-        };
-        const inherited = inheritedOrdinals[callIndex] !== undefined;
-        return inherited && isHostMove(row, hostMoves)
-          ? { ...row, movedAt }
-          : row;
-      });
-
-      const wrapper = wrapperId
-        ? await tx.appointment.update({
-            where: { id: wrapperId },
-            data: {
-              ...idempotencyData,
-              occurrences: { create: occurrencesToCreate },
-            },
-            include: { occurrences: true },
-          })
-        : await tx.appointment.create({
-            // Unchecked (scalar-FK) shape throughout, as checkout writes it.
-            // A relation-style `connect` next to any scalar FK makes Prisma
-            // validate against the checked input, which has no *Id fields —
-            // "Unknown argument cancellationPolicyId" (FAMILIARISE_WEB-4F).
-            data: {
-              appointmentType: getAppointmentType(eventType),
-              [`${relationField}Id`]: eventId,
-              ...idempotencyData,
-              organizationId: organizationId ?? null,
-              // B1/#1499 — inherit the terms the booking was sold under;
-              // NULL is the platform ladder.
-              cancellationPolicyId: inheritedPolicyId,
-              occurrences: { create: occurrencesToCreate },
-            },
-            include: { occurrences: true },
-          });
-      appointments = [wrapper];
-      // #1569 — the hold anchors on the last live call, and this write just
-      // changed the live set (first allocation, top-up or reschedule alike).
-      await recomputeEarningsHold(tx, wrapper.id);
-      const written = new Set(occurrencesToCreate.map((row) => row.ordinal));
-      newOccurrenceIds = (
-        wrapper.occurrences as { id: string; ordinal: number }[]
-      )
-        .filter((row) => written.has(row.ordinal))
-        .map((row) => row.id);
-      // #1319 A9 — allocation writes confirmed occurrences, so the participants
-      // are CONFIRMED from the start; a reused wrapper already has its rows
-      // (createMany skips duplicates). Once per purchase (#1554).
-      await recordParticipants(
-        tx,
-        wrapper.id,
-        consulteeUserId
-          ? [
-              { userId: consultantUserId, role: "CONSULTANT" },
-              { userId: consulteeUserId, role: "CONSULTEE" },
-            ]
-          : [{ userId: consultantUserId, role: "CONSULTANT" }],
-        { organizationId: organizationId ?? null, status: "CONFIRMED" },
-      );
-    } catch (error) {
-      // Not captured here — createAppointments only runs inside
-      // autoAllocate/manualAllocate, both under allocate()'s try, whose catch
-      // reports every error reaching it (this one included). A second
-      // capture here would be a pure dupe of the same instance.
-      if (isExclusionViolation(error) || isUniqueViolation(error)) {
-        // A concurrent booking winning the #440 overlap guard is the ordinary
-        // "someone else got there first" race, not a fault.
-        throw new AllocationConflictError(
-          "This time slot was just booked by someone else. Please pick another time.",
-          "SLOT_TAKEN",
-        );
-      }
-      throw error;
-    }
-
-    // Issue #710: per-allocation cap debit for SUBSCRIPTION.
-    //
-    // CONSULTATION/WEBINAR debit at checkout (1 engagement, slots known
-    // synchronously). CLASS debits at enrolment (N engagements, all
-    // occurrences pre-allocated by the consultant). SUBSCRIPTION is the
-    // only event type with truly lazy allocation — the consultant adds calls
-    // one-at-a-time via the Requests tab — so the cap debit must happen
-    // here, once per occurrence created (#1554: the engagement is the call).
-    //
-    // The original Payment carries the org tag; we re-resolve the
-    // ProgramAssignment fresh because cycles may have rolled since
-    // signup and we want today's cap, not signup-time's cap. If the
-    // booking wasn't org-sponsored (no organizationId on the original
-    // Payment) we skip silently.
-    if (
-      eventType === "subscription" &&
-      consulteeUserId &&
-      newOccurrenceIds.length > 0
-    ) {
-      await this.recordSubscriptionAllocationCap(
-        tx,
-        eventId,
-        consulteeUserId,
-        newOccurrenceIds,
-      );
-    }
-
-    return appointments;
-  }
-
-  /**
-   * For SUBSCRIPTION: debit `engagementsConsumed` per occurrence created in
-   * this allocation batch against the consultee's active org program
-   * assignment. No-op when the booking isn't org-sponsored. #1554 —
-   * `BookingUtilization.appointmentIds` holds the OCCURRENCE ids here: the
-   * engagement is the call, and the wrapper is one row for the whole plan.
-   *
-   * Throws `ProgramAssignmentLimitError` if the cap is BLOCK and would
-   * be exceeded — the surrounding transaction rolls back the new slots.
-   */
-  private static async recordSubscriptionAllocationCap(
-    tx: Tx,
-    subscriptionId: string,
-    consulteeUserId: string,
-    newOccurrenceIds: string[],
-  ): Promise<void> {
-    // Find the original signup Payment via the purchase wrapper (#1554).
-    const subscription = await tx.subscription.findUnique({
-      where: { id: subscriptionId },
-      include: {
-        subscriptionPlan: { select: { totalSessions: true, price: true } },
-        appointment: {
-          include: {
-            payment: true,
-            occurrences: { where: { deletedAt: null }, select: { id: true } },
-          },
-        },
-      },
-    });
-
-    // Schema declares Appointment.payment as Payment[] (one Appointment
-    // can carry multiple Payments historically — refunds/retries chain
-    // off the original). Pick the EARLIEST org-tagged one: an unordered
-    // .find() over a retry chain debits whichever row the DB happened to
-    // return first, landing utilization on the wrong ProgramAssignment cycle
-    // (#1169 PR 1).
-    const orgPayment = (subscription?.appointment?.payment ?? [])
-      .filter((p) => !!p.organizationId)
-      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0];
-
-    if (!orgPayment || !orgPayment.organizationId) {
-      // PERSONAL-funded subscription — no org cap to debit.
-      return;
-    }
-
-    const membership = await tx.membership.findUnique({
-      where: {
-        userId_organizationId: {
-          userId: consulteeUserId,
-          organizationId: orgPayment.organizationId,
-        },
-      },
-    });
-    if (!membership || membership.status !== "ACTIVE") return;
-
-    // Re-resolve the active ProgramAssignment at allocation time.
-    // Mirrors the resolver in lib/payments/operations/checkout.ts so the
-    // same coverage filters apply (assignment ACTIVE, program ACTIVE,
-    // contract ACTIVE, covers SUBSCRIPTION).
-    const now = new Date();
-    const assignment = await tx.programAssignment.findFirst({
-      where: {
-        membershipId: membership.id,
-        // #1132 follow-up — checkout filters on status too; without it the
-        // period window alone matched ROLLED / CLOSED / CANCELLED rows, so a
-        // dead assignment inside its old window could still be debited by a
-        // lazily-allocated subscription session.
-        status: "ACTIVE",
-        periodStart: { lte: now },
-        periodEnd: { gte: now },
-        program: {
-          status: "ACTIVE",
-          OR: [
-            { coveredPlanTypes: { isEmpty: true } },
-            { coveredPlanTypes: { has: "SUBSCRIPTION" } },
-          ],
-          contract: {
-            organizationId: orgPayment.organizationId,
-            status: "ACTIVE",
-            effectiveFrom: { lte: now },
-            OR: [{ effectiveTo: null }, { effectiveTo: { gte: now } }],
-          },
-        },
-      },
-      orderBy: { periodEnd: "desc" },
-      select: {
-        id: true,
-        program: {
-          select: {
-            type: true,
-            licensedSeatConfig: {
-              select: { priceCapPerEngagementPaise: true },
-            },
-          },
-        },
-      },
-    });
-    if (!assignment) return;
-
-    // priceAtBookingPaise: full upfront sub price on the very first
-    // allocation (so the BookingUtilization row carries it for
-    // analytics); 0 on subsequent allocations (no new money). The
-    // helper's upsert preserves the first-create priceAtBookingPaise.
-    const existingUtil = await tx.bookingUtilization.findUnique({
-      where: { paymentId: orgPayment.id },
-      select: { id: true, appointmentIds: true },
-    });
-    const priceAtBookingPaise = existingUtil ? 0 : orgPayment.amount;
-
-    // Re-allocation deletes counted occurrences and recreates them with
-    // fresh ids, so an id-set diff alone re-debits every replaced session.
-    // Substitute stale tracked ids (no longer live on this subscription)
-    // with incoming ids 1:1 WITHOUT debiting; only ids beyond the
-    // substitution budget are genuinely additional sessions.
-    let idsToDebit = newOccurrenceIds;
-    if (existingUtil) {
-      const liveIds = new Set(
-        (subscription!.appointment?.occurrences ?? []).map((o) => o.id),
-      );
-      const trackedLive = existingUtil.appointmentIds.filter((id) =>
-        liveIds.has(id),
-      );
-      const staleCount =
-        existingUtil.appointmentIds.length - trackedLive.length;
-      if (staleCount > 0) {
-        const alreadyTracked = new Set(trackedLive);
-        const incomingNew = newOccurrenceIds.filter(
-          (id) => !alreadyTracked.has(id),
-        );
-        const substituted = incomingNew.slice(0, staleCount);
-        idsToDebit = incomingNew.slice(staleCount);
-        await tx.bookingUtilization.update({
-          where: { id: existingUtil.id },
-          data: { appointmentIds: [...trackedLive, ...substituted] },
-        });
-
-        // The substitution above only cancels out the sessions that were
-        // REPLACED. Sessions removed and not re-created in this allocation
-        // (a partial reschedule that drops 3 and re-places 1, an in-progress
-        // reallocation that shrinks the remaining plan) were left debited
-        // forever: the org kept paying for engagements the consultee will
-        // never take, and the seat never came back. Give the difference back
-        // through the ledger-derived reversal, which is idempotent and clamps
-        // itself to what is still reversible.
-        const netRemoved = staleCount - substituted.length;
-        if (netRemoved > 0) {
-          await reverseBookingUtilization(tx, {
-            paymentId: orgPayment.id,
-            engagementsToReverse: netRemoved,
-            reason: "Subscription sessions removed during re-allocation",
-          });
-        }
-
-        if (idsToDebit.length === 0) return;
-      }
-    }
-
-    // Not captured here — this only runs from createAppointments, itself only
-    // reachable via allocate()'s try, whose catch reports every error
-    // reaching it (a ProgramAssignmentLimitError cap-exceeded included,
-    // correctly classified as one of its modelled outcomes). A capture here
-    // too would be a dupe, so this no longer needs its own try/catch.
-    const utilResult = await recordBookingUtilization(tx, {
-      programAssignmentId: assignment.id,
-      paymentId: orgPayment.id,
-      engagementsConsumed: idsToDebit.length,
-      priceAtBookingPaise,
-      // PR-1e (G3): pass the occurrence ids so re-allocation
-      // (delete+recreate of the same call) can't double-debit. The
-      // helper computes the set diff against
-      // BookingUtilization.appointmentIds and increments only by the
-      // genuinely-new ids.
-      appointmentIds: idsToDebit,
-    });
-
-    // #1895 — Trigger overage billing when a lazily allocated subscription
-    // session exceeds the program cap.
-    if (utilResult?.wasOverage) {
-      await this.settleSubscriptionAllocationOverage({
-        tx,
-        subscriptionId,
-        subscription,
-        orgPayment,
-        assignment,
-        existingUtil,
-        idsToDebit,
-        utilResult,
-        consulteeUserId,
-      });
-    }
-  }
-
-  private static async settleSubscriptionAllocationOverage(params: {
-    tx: Tx;
-    subscriptionId: string;
-    subscription: {
-      subscriptionPlanId?: string;
-      sessionsTotal?: number | null;
-      subscriptionPlan?: {
-        totalSessions?: number | null;
-        price?: number | null;
-      } | null;
-    } | null;
-    orgPayment: {
-      id: string;
-      amount: number;
-      originalAmount?: number | null;
-      currency?: Prisma.PaymentCreateInput["currency"] | null;
-      organizationId: string | null;
-      paymentGateway?: Prisma.PaymentCreateInput["paymentGateway"] | null;
-    };
-    assignment: {
-      id: string;
-      program?: {
-        type?: "LICENSED_SEAT" | "CREDIT_POOL" | null;
-        licensedSeatConfig?: {
-          priceCapPerEngagementPaise?: number | null;
-        } | null;
-      } | null;
-    };
-    existingUtil: { id: string } | null;
-    idsToDebit: string[];
-    utilResult: Awaited<ReturnType<typeof recordBookingUtilization>>;
-    consulteeUserId: string;
-  }): Promise<void> {
-    const {
-      tx,
-      subscriptionId,
-      subscription,
-      orgPayment,
-      assignment,
-      existingUtil,
-      idsToDebit,
-      utilResult,
-      consulteeUserId,
-    } = params;
-    if (!orgPayment.organizationId) return;
-
-    const totalPlanSessions = Math.max(
-      1,
-      subscription?.sessionsTotal ??
-        subscription?.subscriptionPlan?.totalSessions ??
-        1,
-    );
-    const basePaymentAmount = orgPayment.originalAmount ?? orgPayment.amount;
-    let unitSessionPricePaise = Math.round(
-      basePaymentAmount / totalPlanSessions,
-    );
-    if (unitSessionPricePaise <= 0) {
-      const planPricePaise =
-        subscription?.subscriptionPlan?.price ??
-        (subscription?.subscriptionPlanId
-          ? (
-              await tx.subscriptionPlan?.findUnique?.({
-                where: { id: subscription.subscriptionPlanId },
-                select: { price: true },
-              })
-            )?.price
-          : undefined);
-      if (typeof planPricePaise === "number" && planPricePaise > 0) {
-        unitSessionPricePaise = Math.round(planPricePaise / totalPlanSessions);
-      }
-    }
-
-    const programPriceCapPaise =
-      assignment.program?.licensedSeatConfig?.priceCapPerEngagementPaise;
-    if (unitSessionPricePaise <= 0 && (programPriceCapPaise ?? 0) <= 0) {
-      await recordSystemErrorSafe({
-        organizationId: orgPayment.organizationId,
-        category: "OVERAGE_SUBSCRIPTION_NO_UNIT_PRICE",
-        summary:
-          "Subscription overage allocation resolved zero unit session price with no program price cap",
-        err: new Error(
-          `OVERAGE_SUBSCRIPTION_NO_UNIT_PRICE for subscription=${subscriptionId} payment=${orgPayment.id}`,
-        ),
-        db: tx,
-        context: {
-          subscriptionId,
-          paymentId: orgPayment.id,
-          programAssignmentId: assignment.id,
-          basePaymentAmount,
-          totalPlanSessions,
-        },
-      });
-      return;
-    }
-
-    const overageBookingPricePaise = idsToDebit.length * unitSessionPricePaise;
-    const { recordOverageAtCheckout, notifyOverageDueAfterCommit } =
-      await import("@/lib/payments/billing/overage-settlement");
-    const resolvedProgramType =
-      assignment.program?.type ?? utilResult.programType ?? "LICENSED_SEAT";
-    const lazyCreditDelta = existingUtil ? overageBookingPricePaise : 0;
-    const effectiveConsumedPaiseAfter =
-      resolvedProgramType === "CREDIT_POOL"
-        ? utilResult.consumedPaiseAfter + lazyCreditDelta
-        : utilResult.consumedPaiseAfter;
-    const pendingNotify = await recordOverageAtCheckout({
-      tx,
-      programAssignmentId: assignment.id,
-      utilization: {
-        programType: resolvedProgramType,
-        engagementsConsumedDelta: utilResult.engagementsConsumedDelta,
-        engagementsUsedAfter: utilResult.engagementsUsedAfter,
-        consumedPaiseAfter: effectiveConsumedPaiseAfter,
-        creditBudgetPaise: utilResult.creditBudgetPaise,
-      },
-      bookingPricePaise: overageBookingPricePaise,
-      currency: orgPayment.currency ?? "INR",
-      paymentId: orgPayment.id,
-      userId: consulteeUserId,
-      organizationId: orgPayment.organizationId,
-      paymentGateway: orgPayment.paymentGateway ?? "RAZORPAY",
-      isLazyAllocation: existingUtil !== null,
-    });
-    if (pendingNotify) {
-      notifyOverageDueAfterCommit(pendingNotify);
-    }
-  }
-
-  /**
-   * Re-seat enrolled users on newly created appointments.
-   * Used during in-progress reallocation of group events (classes): when
-   * future sessions are deleted and recreated, the learners' participant rows
-   * go with the deleted appointments (#1554). This restores them.
-   */
-  private static async reconnectEnrolledUsers(
-    tx: Tx,
-    appointments: AppointmentWithSlots[],
-    enrolledUserIds: string[],
-    consultantUserId: string,
-    organizationId: string | null | undefined,
-  ): Promise<void> {
-    // Filter out the consultant (already seated via createAppointments)
-    const userIdsToConnect = enrolledUserIds.filter(
-      (id) => id !== consultantUserId,
-    );
-    if (userIdsToConnect.length === 0) return;
-
-    for (const appointment of appointments) {
-      // #1319 A9 — re-linked learners keep their seat; idempotent on retry.
-      await recordParticipants(
-        tx,
-        appointment.id,
-        userIdsToConnect.map((userId) => ({
-          userId,
-          role: "CONSULTEE" as const,
-        })),
-        // Same org tag as the consultant row createAppointments wrote, so an
-        // org-scoped read of the participants never sees a half-tagged seat.
-        { status: "CONFIRMED", organizationId },
-      );
-    }
-  }
-
-  /**
-   * #1206 — the people already seated on an event's confirmed sessions.
-   *
-   * Every delete branch harvests these ids from the rows it frees, so that
-   * `reconnectEnrolledUsers` can re-seat them on the replacements. A top-up
-   * frees nothing, so it reads them off the surviving appointments instead.
-   * Without this a class topped up with two more sessions would create them
-   * empty: enrolment for a group event lives ONLY on AppointmentParticipant.
-   */
-  private static async collectEventParticipantIds(
-    tx: Tx,
-    eventType: EventType,
-    eventId: string,
-  ): Promise<string[]> {
-    const relationField = getEventRelationField(eventType);
-    const seats = await tx.appointmentParticipant.findMany({
-      where: {
-        // A released seat stays as history; only live seats are carried
-        // onto the new sessions.
-        ...liveParticipant(),
-        appointment: {
-          [`${relationField}Id`]: eventId,
-          occurrences: { some: { isTentative: false, deletedAt: null } },
-        } as Prisma.AppointmentWhereInput,
-      },
-      select: { userId: true },
-    });
-    return Array.from(new Set(seats.map((seat) => seat.userId)));
-  }
-
-  /**
-   * Delete existing appointments for an event
-   *
-   * @param onlyTentative - If true, only delete RELEASED AppointmentOccurrence records
-   *                        (tentative + RESCHEDULED + live), preserving confirmed slots,
-   *                        fresh tentative holds and their parent appointments.
-   *                        Appointments are only deleted if they have zero remaining slots
-   *                        after released-slot removal. This is used for partial reschedules.
-   * @param preservePastSlots - If true (and onlyTentative is false), only delete future slots,
-   *                            preserving past confirmed slots and their Meeting records.
-   *                            Used for in-progress reallocation of classes/subscriptions.
-   * @returns preservedSlotCount - Number of past slots that were preserved.
-   * @returns enrolledUserIds - User IDs connected to deleted future slots (for reconnection).
-   * @returns deletedAppointmentIds - AE-4: appointment ids whose tentative slots
-   *   were freed (partial reschedule path), so callers can refresh those slots.
-   * @returns freedOrdinals - #1554: the ordinals of the occurrence rows this
-   *   call deleted, in start order, so their replacements inherit them.
-   */
-  /** #1766 — the delete step's shape when a top-up deletes nothing. */
-  private static nothingDeleted(): {
-    enrolledUserIds: string[];
-    deletedAppointmentIds: string[];
-    freedOrdinals: number[];
-    freedWindows: FreedWindow[];
-    reusableAppointmentId?: string;
-  } {
-    return {
-      enrolledUserIds: [],
-      deletedAppointmentIds: [],
-      freedOrdinals: [],
-      freedWindows: [],
-    };
-  }
-
-  private static async deleteExistingAppointments(
-    tx: Tx,
-    eventType: EventType,
-    eventId: string,
-    onlyTentative: boolean = false,
-    preservePastSlots: boolean = false,
-  ): Promise<{
-    preservedSlotCount: number;
-    enrolledUserIds: string[];
-    deletedAppointmentIds: string[];
-    freedOrdinals: number[];
-    freedWindows: FreedWindow[];
-    // #898 — id of a preserved 1:1 (consultation/webinar) payment-bearing
-    // appointment the caller must REUSE: its @unique event FK is still taken,
-    // so a fresh create would throw P2002. At most one per 1:1 event.
-    reusableAppointmentId?: string;
-  }> {
-    const relationField = getEventRelationField(eventType);
-    const whereClause = {
-      [`${relationField}Id`]: eventId,
-    } as Prisma.AppointmentWhereInput;
-    // #898 — set in the onlyTentative / full-delete branches when a 1:1
-    // payment-bearing appointment is kept rather than deleted.
-    let reusableAppointmentId: string | undefined;
-
-    if (onlyTentative) {
-      // Find appointments with tentative slots for this event
-      const appointments = await tx.appointment.findMany({
-        where: whereClause,
-        include: {
-          // #1554 — live seat holders, so enrolled learners on a group event
-          // can be re-seated on the replacement appointments.
-          participants: { where: liveParticipant(), select: { userId: true } },
-          occurrences: true,
-          // B8 — Payment has onDelete: Cascade on Appointment; deleting an
-          // appointment with payment rows destroys the payment/refund audit
-          // trail. The refusal now rides in the delete's own WHERE clause
-          // (B-P1-05) rather than this read, which can go stale mid-txn.
-        },
-      });
-
-      // AE-4 — record which appointments had tentative slots freed here (ids
-      // captured from the pre-fetched rows, before the deleteMany runs).
-      const deletedAppointmentIds: string[] = [];
-      // Capture the seat holders of the appointments being emptied. For a
-      // group event (class) the enrolled learners live ONLY on
-      // AppointmentParticipant — createAppointments seats just the
-      // consultant, so without this they'd be orphaned when the class is
-      // scheduled (tentative crud-with-plan slots → onlyTentative path).
-      // reconnectEnrolledUsers re-seats them; it filters the consultant itself.
-      const enrolledUserIdSet = new Set<string>();
-      const freed: { ordinal: number; startsAt: Date; endsAt: Date }[] = [];
-      for (const appointment of appointments) {
-        // Released rows only: a reschedule frees what it released, never a
-        // fresh request's tentative holds or crud-with-plan placeholders that
-        // happen to coexist on the same event.
-        const released = appointment.occurrences.filter(
-          isReleasedForReschedule,
-        );
-        const hasTentative = released.length > 0;
-
-        if (hasTentative) {
-          deletedAppointmentIds.push(appointment.id);
-          for (const slot of released) {
-            freed.push(slot);
-          }
-          // Collect the seat holders before the appointment may be deleted
-          // (their participant rows cascade with it).
-          for (const seat of appointment.participants) {
-            enrolledUserIdSet.add(seat.userId);
-          }
-          // Delete only released slots using a direct query (not stale IDs).
-          // The WHERE mirrors isReleasedForReschedule: tentative +
-          // RESCHEDULED + live.
-          await tx.appointmentOccurrence.deleteMany({
-            where: {
-              appointmentId: appointment.id,
-              isTentative: true,
-              completionStatus: "RESCHEDULED",
-              deletedAt: null,
-            },
-          });
-
-          // If no occurrences remain after the released ones are removed,
-          // delete the now-empty appointment — unless payments reference it
-          // (B8): the empty shell is cheaper than a destroyed audit trail;
-          // the orphan sweep reports it. A surviving fresh hold or confirmed
-          // slot keeps the wrapper: deleting it would cascade-destroy rows
-          // this reschedule did not release.
-          //
-          // B-P1-05 (#1189 audit) — the payment guard rides IN the delete's
-          // WHERE clause rather than trusting `_count.payment` above. That
-          // count was read earlier in this transaction; a checkout's Payment
-          // insert can COMMIT between the read and the delete, and
-          // Payment.appointment is onDelete: Cascade, so an unconditional
-          // delete would cascade-destroy a payment that did not exist when we
-          // looked. Zero rows deleted means a payment appeared: keep the
-          // appointment exactly like the payment-bearing path.
-          const hasRemaining = appointment.occurrences.some(
-            (slot) => !isReleasedForReschedule(slot),
-          );
-          const deletedAppointment = !hasRemaining
-            ? await tx.appointment.deleteMany({
-                where: { id: appointment.id, payment: { none: {} } },
-              })
-            : null;
-          if (
-            (hasRemaining || deletedAppointment?.count === 0) &&
-            (eventType === "consultation" || eventType === "webinar")
-          ) {
-            // #898 — the appointment is kept (unreleased slots remain, or the
-            // payment guard fired). For a 1:1 event it still holds the @unique
-            // event FK, so the allocator must REUSE it; a fresh create P2002s.
-            reusableAppointmentId = appointment.id;
-          }
-        }
-      }
-      return {
-        preservedSlotCount: 0,
-        enrolledUserIds: Array.from(enrolledUserIdSet),
-        deletedAppointmentIds,
-        freedOrdinals: this.ordinalsInStartOrder(freed),
-        freedWindows: this.windowsOf(freed),
-        reusableAppointmentId,
-      };
-    } else if (preservePastSlots) {
-      // In-progress reallocation: only delete future slots, preserve past ones
-      const now = new Date();
-      const appointments = await tx.appointment.findMany({
-        where: whereClause,
-        include: {
-          // #1554 — live seat holders, so enrolled learners on a group event
-          // can be re-seated on the replacement appointments.
-          participants: { where: liveParticipant(), select: { userId: true } },
-          occurrences: {
-            include: {
-              meeting: { select: { id: true, endedAt: true } },
-            },
-          },
-          // The payment guard on the empty-appointment delete below rides in
-          // that delete's WHERE clause (B-P1-05), not in a pre-read count.
-        },
-      });
-
-      let preservedSlotCount = 0;
-      const enrolledUserIdSet = new Set<string>();
-      const freed: { ordinal: number; startsAt: Date; endsAt: Date }[] = [];
-      const imminentCutoff = new Date(now.getTime() + TWENTY_FOUR_HOURS_IN_MS);
-
-      for (const appointment of appointments) {
-        const pastSlots = appointment.occurrences.filter(
-          (slot) => new Date(slot.endsAt) <= now,
-        );
-        const futureSlots = appointment.occurrences.filter(
-          (slot) => new Date(slot.endsAt) > now,
-        );
-
-        // Guard: preserve slots that are imminent (<24h) or have active sessions
-        const protectedFutureSlots = futureSlots.filter(
-          (slot) =>
-            new Date(slot.startsAt) < imminentCutoff ||
-            (slot.meeting && !slot.meeting.endedAt),
-        );
-        const deletableFutureSlots = futureSlots.filter(
-          (slot) =>
-            new Date(slot.startsAt) >= imminentCutoff &&
-            (!slot.meeting || slot.meeting.endedAt !== null),
-        );
-
-        preservedSlotCount += pastSlots.length + protectedFutureSlots.length;
-
-        // Capture the seat holders before the appointment may be deleted
-        if (deletableFutureSlots.length > 0) {
-          for (const seat of appointment.participants) {
-            enrolledUserIdSet.add(seat.userId);
-          }
-        }
-
-        if (deletableFutureSlots.length > 0) {
-          freed.push(...deletableFutureSlots);
-          await tx.appointmentOccurrence.deleteMany({
-            where: {
-              appointmentId: appointment.id,
-              id: { in: deletableFutureSlots.map((s) => s.id) },
-            },
-          });
-        }
-
-        // Only delete the appointment if no slots remain at all — and never
-        // when it carries payments (#898 defense-in-depth: the Payment cascade
-        // is Restrict-blocked by ConsultantEarnings and rolls back the tx).
-        // Latent today (the subscription placeholder can't reach this branch),
-        // but mirrors the onlyTentative / full-delete guards. The payment
-        // guard rides in the delete's WHERE (B-P1-05) — same race as the
-        // onlyTentative branch.
-        if (pastSlots.length === 0 && protectedFutureSlots.length === 0) {
-          await tx.appointment.deleteMany({
-            where: { id: appointment.id, payment: { none: {} } },
-          });
-        }
-      }
-
-      return {
-        preservedSlotCount,
-        enrolledUserIds: Array.from(enrolledUserIdSet),
-        // AE-4 — in-progress path frees future slots, not tentative ones; the
-        // freed-id contract is scoped to the partial-reschedule case.
-        deletedAppointmentIds: [],
-        freedOrdinals: this.ordinalsInStartOrder(freed),
-        freedWindows: this.windowsOf(freed),
-        // #898 — only class/subscription (1:N) reach this branch; no 1:1 reuse.
-        reusableAppointmentId,
-      };
-    } else {
-      // Full delete: remove all appointments for this event.
-      // B8 — an appointment that carries Payment rows must NOT be deleted: the
-      // delete cascades to Payment (onDelete: Cascade), which is Restrict-
-      // referenced by ConsultantEarnings, so the cascade trips the
-      // ConsultantEarnings_paymentId_fkey constraint and the whole allocation
-      // rolls back. This is exactly the SUBSCRIPTION case — checkout leaves a
-      // zero-slot placeholder Appointment carrying the signup Payment+earnings,
-      // and initial allocation reaches this branch. Mirror the onlyTentative
-      // guard: preserve payment-bearing appointments, just free their slots so
-      // they no longer block availability; delete the rest as before.
-      const existingAppointments = await tx.appointment.findMany({
-        where: whereClause,
-        include: {
-          // #1554 — live seat holders, so enrolled learners on a group event
-          // can be re-seated on the replacement appointments.
-          participants: { where: liveParticipant(), select: { userId: true } },
-          // meeting rides along so held-session slots can be preserved
-          // (#1169 PR 1 — deleting them cascades Meeting → Recording).
-          occurrences: {
-            include: {
-              meeting: { select: { id: true } },
-            },
-          },
-          _count: { select: { payment: true } },
-        },
-      });
-
-      // Capture every seat holder before the appointment is deleted or
-      // stripped; reconnectEnrolledUsers (called by the allocator on a non-empty
-      // result) re-seats them on the new appointments and filters the consultant.
-      const enrolledUserIdSet = new Set<string>();
-      for (const appointment of existingAppointments) {
-        for (const seat of appointment.participants) {
-          enrolledUserIdSet.add(seat.userId);
-        }
-      }
-      // Every replaceable sessionless row below is deleted whichever arm runs;
-      // a held-session or completed/past history row survives and keeps its ordinal.
-      const now = new Date();
-      const isProtectedSessionlessSlot = (
-        slot: (typeof existingAppointments)[number]["occurrences"][number],
-      ): boolean =>
-        slot.completionStatus === "COMPLETED" ||
-        (slot.completionStatus !== undefined &&
-          !slot.isTentative &&
-          new Date(slot.endsAt) <= now);
-      const freed = existingAppointments.flatMap((appointment) =>
-        appointment.occurrences.filter(
-          (slot) => slot.meeting === null && !isProtectedSessionlessSlot(slot),
-        ),
-      );
-
-      await Promise.all(
-        existingAppointments.map(async (appointment) => {
-          // #1169 PR 1 & #1692 Item 6 — a slot whose Meeting already happened
-          // or that is already COMPLETED / in the past is history, not
-          // availability: deleting it cascades Meeting → Recording or destroys
-          // completed occurrence history. Preserve the appointment and every
-          // held/completed/past slot; only replaceable future sessionless slots
-          // are freed.
-          const hasHeldSession = appointment.occurrences.some(
-            (slot) => slot.meeting !== null,
-          );
-          const hasProtectedSessionless = appointment.occurrences.some(
-            isProtectedSessionlessSlot,
-          );
-          const occurrenceDeleteWhere: Prisma.AppointmentOccurrenceWhereInput =
-            hasProtectedSessionless
-              ? {
-                  appointmentId: appointment.id,
-                  meeting: { is: null },
-                  endsAt: { gt: now },
-                  completionStatus: { not: "COMPLETED" },
-                }
-              : {
-                  appointmentId: appointment.id,
-                  meeting: { is: null },
-                };
-          if (
-            (appointment._count?.payment ?? 0) > 0 ||
-            hasHeldSession ||
-            hasProtectedSessionless
-          ) {
-            // Keep the Appointment (and its Payment + ConsultantEarnings audit
-            // trail); strip its slots. No-op for the slot-less subscription
-            // placeholder, but frees slots for any other payment-bearing case.
-            if (eventType === "consultation" || eventType === "webinar") {
-              // #898 — 1:1 event: the kept appointment still holds the @unique
-              // event FK, so the allocator must REUSE it (a fresh create P2002s).
-              // At most one such appointment exists per 1:1 event.
-              reusableAppointmentId = appointment.id;
-            }
-            return tx.appointmentOccurrence.deleteMany({
-              where: occurrenceDeleteWhere,
-            });
-          }
-          // B-P1-05 (#1189 audit) — atomic payment guard, same as the
-          // onlyTentative branch: a checkout's Payment can commit between the
-          // `_count` read above and this delete; the WHERE clause re-checks at
-          // write time so the cascade can never consume it. Zero rows deleted
-          // means a payment appeared — keep the appointment and strip only its
-          // sessionless slots, exactly like the payment-bearing path above.
-          const deletedAppointment = await tx.appointment.deleteMany({
-            where: { id: appointment.id, payment: { none: {} } },
-          });
-          if (deletedAppointment.count === 0) {
-            if (eventType === "consultation" || eventType === "webinar") {
-              reusableAppointmentId = appointment.id;
-            }
-            return tx.appointmentOccurrence.deleteMany({
-              where: occurrenceDeleteWhere,
-            });
-          }
-          return deletedAppointment;
-        }),
-      );
-      return {
-        preservedSlotCount: 0,
-        enrolledUserIds: Array.from(enrolledUserIdSet),
-        deletedAppointmentIds: [],
-        freedOrdinals: this.ordinalsInStartOrder(freed),
-        freedWindows: this.windowsOf(freed),
-        reusableAppointmentId,
-      };
-    }
-  }
-
-  /** #1780 decision 9 — the times each freed ordinal held before the re-plan. */
-  private static windowsOf(
-    rows: { ordinal: number; startsAt: Date; endsAt: Date }[],
-  ): FreedWindow[] {
-    return rows.map((row) => ({
-      ordinal: row.ordinal,
-      startsAt: new Date(row.startsAt),
-      endsAt: new Date(row.endsAt),
-    }));
-  }
-
-  /** #1554 — freed ordinals in call order, so call i inherits position i. */
-  private static ordinalsInStartOrder(
-    rows: { ordinal: number; startsAt: Date }[],
-  ): number[] {
-    return [...rows]
-      .sort(
-        (a, b) =>
-          new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
-      )
-      .map((row) => row.ordinal);
   }
 }
