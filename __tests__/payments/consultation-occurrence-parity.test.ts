@@ -160,7 +160,7 @@ jest.mock("../../lib/payments/utils/slot-validation", () => ({
 }));
 
 import { handlePaymentSuccess } from "../../lib/payments/webhooks/handlers";
-import { handleConsultationCheckout } from "../../lib/payments/operations/checkout";
+import { handleConsultationCheckout } from "../../lib/payments/checkout/handlers/consultation";
 import { validateWebhookMetadata } from "../../schemas/webhooks/metadata";
 import type { Tx } from "../../lib/prisma";
 import type { CheckoutInput } from "../../schemas/checkout";
