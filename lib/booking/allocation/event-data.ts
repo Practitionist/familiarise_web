@@ -278,6 +278,7 @@ export async function fetchEventData(
         where: { endsAt: { gt: new Date() } },
         select: { id: true, startsAt: true, endsAt: true },
       },
+      _count: { select: { availabilityWindowsCustom: true } },
     },
   } as const;
   const requestedBySelect = {
@@ -290,6 +291,7 @@ export async function fetchEventData(
         scheduleType: "WEEKLY" | "CUSTOM";
         availabilityWindowsWeekly: ConsultantAllocationData["availabilityWindowsWeekly"];
         availabilityWindowsCustom: ConsultantAllocationData["availabilityWindowsCustom"];
+        _count?: { availabilityWindowsCustom: number };
       }
     | null
     | undefined;
@@ -508,6 +510,9 @@ export async function fetchEventData(
       scheduleType: consultantProfile.scheduleType,
       availabilityWindowsWeekly: consultantProfile.availabilityWindowsWeekly,
       availabilityWindowsCustom: consultantProfile.availabilityWindowsCustom,
+      hasCustomRows: consultantProfile._count
+        ? consultantProfile._count.availabilityWindowsCustom > 0
+        : undefined,
       timezone: consultantProfile.user.timezone ?? undefined,
     },
     config,

@@ -306,6 +306,8 @@ export interface ConsultantAllocationData {
     startsAt: Date;
     endsAt: Date;
   }>;
+  /** Whether any custom row is published, when the rows above are only the live window. */
+  hasCustomRows?: boolean;
   timezone?: string;
 }
 
