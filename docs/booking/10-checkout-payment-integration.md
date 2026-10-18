@@ -92,13 +92,13 @@ export async function POST(req: NextRequest);
 
 The orchestrator. It runs five steps and owns the lock envelope. It does not write booking rows itself; step 5 hands that to `commitCheckout()`.
 
-| Step | Action                                                                                                                                                    | Error Recovery                                                               |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| 1    | `calculateAmountAndValidate()` (`pricing.ts`) -- pricing, discount validation, currency                                                                   | Throws before any lock                                                       |
-| 2    | `acquireCheckoutLock()` (`locks.ts`) -- the event or slot lock, then the consultee lock                                                                   | Returns 409 if the lock is held                                              |
-| 3    | `revalidateInsideLock()` (`revalidate.ts`) -- re-checks slot availability, plan existence and org funding                                                 | Throws, locks released in `finally`                                          |
-| 4    | `createPaymentIntent()` -- creates the gateway order, unless funding skips the gateway or `findReusablePendingOrderPayment()` finds a live hold to resume | Throws, locks released in `finally`                                          |
-| 5    | `commitCheckout()` (`commit/index.ts`) -- Serializable transaction that writes the tentative appointment, payment row, legs and sponsored-rail earnings   | Cancels the gateway order and tombstones it (`tombstoneAbortedGatewayOrder`) |
+| Step | Action                                                                                                                                                                                                                 | Error Recovery                                                               |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| 1    | `calculateAmountAndValidate()` (`pricing.ts`) -- pricing, discount validation, currency                                                                                                                                | Throws before any lock                                                       |
+| 2    | `acquireCheckoutLock()` (`locks.ts`) -- the event lock or the slot lock; `handleCheckout()` also takes the consultee lock, before the slot lock for slot-based checkouts and after the event lock for event-based ones | Returns 409 if the lock is held                                              |
+| 3    | `revalidateInsideLock()` (`revalidate.ts`) -- re-checks slot availability, plan existence and org funding                                                                                                              | Throws, locks released in `finally`                                          |
+| 4    | `createPaymentIntent()` -- creates the gateway order, unless funding skips the gateway or `findReusablePendingOrderPayment()` finds a live hold to resume                                                              | Throws, locks released in `finally`                                          |
+| 5    | `commitCheckout()` (`commit/index.ts`) -- Serializable transaction that writes the tentative appointment, payment row, legs and sponsored-rail earnings                                                                | Cancels the gateway order and tombstones it (`tombstoneAbortedGatewayOrder`) |
 
 **The transaction boundary.** `commit/index.ts` is the only file in checkout that calls `withSerializableRetry`. Each attempt first renews the lock grant (`renewOrAbort`), so the Redis lock cannot lapse while a retried transaction is still running, and then opens the Prisma transaction with a 25-second timeout. The write steps it composes live beside it in `commit/`: `payment-row.ts`, `org-utilization.ts`, `payment-legs.ts` and `ledger.ts`. Nothing that talks to the gateway or sends a message runs inside it.
 
@@ -127,12 +127,12 @@ Cross-field validations:
 
 Each type has a dedicated handler in `lib/payments/checkout/handlers/` (`consultation.ts`, `subscription.ts`, `webinar.ts`, `class.ts`), called from `commitCheckout()` inside the Serializable transaction:
 
-| Type         | Handler                        | What It Creates                                                                                                                                                            |
-| ------------ | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CONSULTATION | `handleConsultationCheckout()` | Consultation (PENDING) + Appointment + AppointmentOccurrence (`isTentative: !skipPayment`)                                                                                 |
-| SUBSCRIPTION | `handleSubscriptionCheckout()` | Subscription (PENDING) + placeholder Appointment (no slots). Slots allocated later by consultant via Requests tab. Links completed trial sessions for conversion tracking. |
-| WEBINAR      | `handleWebinarCheckout()`      | Adds AppointmentOccurrence to existing shared appointment. Validates: not full, not ended, user not already registered.                                                    |
-| CLASS        | `handleClassCheckout()`        | Creates AppointmentOccurrence for the user across ALL class sessions (appointments). Validates: not full, not ended, user not already enrolled.                            |
+| Type         | Handler                        | What It Creates                                                                                                                                                                          |
+| ------------ | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CONSULTATION | `handleConsultationCheckout()` | Consultation (PENDING) + Appointment + AppointmentOccurrence (`isTentative: !skipPayment`)                                                                                               |
+| SUBSCRIPTION | `handleSubscriptionCheckout()` | Subscription (PENDING) + placeholder Appointment (no slots). Slots allocated later by consultant via Requests tab. Links completed trial sessions for conversion tracking.               |
+| WEBINAR      | `handleWebinarCheckout()`      | Seats the buyer with a `HELD` `AppointmentParticipant` on the existing shared appointment (no new occurrences). Validates: not full, not ended, user not already registered.             |
+| CLASS        | `handleClassCheckout()`        | Seats the buyer with a `HELD` `AppointmentParticipant` on the class wrapper, which covers every session (no new occurrences). Validates: not full, not ended, user not already enrolled. |
 
 ### Gateway order cleanup
 

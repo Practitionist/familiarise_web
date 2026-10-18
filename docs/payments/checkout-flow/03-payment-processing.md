@@ -414,7 +414,7 @@ All checkout data is stored in payment intent metadata for recovery:
 
 **File:** `/lib/payments/checkout/commit/payment-row.ts` (`writeCheckoutPayment()`)
 
-The gateway order is minted first (step 4 of `handleCheckout()`), and the `Payment` row is written inside the booking transaction (step 5, `commitCheckout()`) with the minted order id as `paymentIntent`. A gateway order therefore always lands on a durable row, or is cancelled and tombstoned if the transaction fails.
+The gateway order is minted first (step 4 of `handleCheckout()`), and the `Payment` row is written inside the booking transaction (step 5, `commitCheckout()`) with the minted order id as `paymentIntent`. A minted gateway order normally lands on a durable row. If the transaction fails, `handleCheckout()` makes a best-effort attempt to cancel the order and write a tombstone; the gateway cannot void a minted order, so if the tombstone write also fails and the buyer still pays, the capture arrives with no `Payment` row and is adopted from the order's server-side notes by `adoptPreMintRow` in `lib/payments/webhooks/handlers.ts`.
 
 ```typescript
 const payment = await tx.payment.create({
@@ -1078,10 +1078,10 @@ stateDiagram-v2
 
 Two separate expiration windows exist — do not conflate them:
 
-| TTL                        | What it governs                                                                             | Value                                            | Source                                                                |
-| -------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------- |
-| `Payment.expiresAt`        | Gateway checkout session lifetime — the window in which the user must complete payment      | **30 minutes**                                   | `DIRECT_CHECKOUT_HOLD_MS`, `lib/payments/constants.ts`                |
-| `isTentative` slot cleanup | Belt-and-braces sweep that frees orphaned tentative slots in case the webhook never arrived | **24 hours** (`TENTATIVE_EXPIRATION_HOURS = 24`) | `scripts/appointments/cleanup-tentative-occurrences.ts` line 28, #833 |
+| TTL                        | What it governs                                                                                                                                  | Value                                            | Source                                                                |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------ | --------------------------------------------------------------------- |
+| `Payment.expiresAt`        | Database pending-payment and slot-hold deadline; a minted gateway order can still be paid after it, so the hold expiring does not void the order | **30 minutes**                                   | `DIRECT_CHECKOUT_HOLD_MS`, `lib/payments/constants.ts`                |
+| `isTentative` slot cleanup | Belt-and-braces sweep that frees orphaned tentative slots in case the webhook never arrived                                                      | **24 hours** (`TENTATIVE_EXPIRATION_HOURS = 24`) | `scripts/appointments/cleanup-tentative-occurrences.ts` line 28, #833 |
 
 The 24-hour slot-cleanup window replaced an earlier 7-day hold (#833 rationale: "gateway orders expire well inside a day, so a 7-day hold locked users out of rebooking for most of a week"). The `cleanup-abandoned-payments` job keys off `Payment.expiresAt` (30 min); the `cleanup-tentative-occurrences` job is a separate belt-and-braces sweep running every 2 hours.
 

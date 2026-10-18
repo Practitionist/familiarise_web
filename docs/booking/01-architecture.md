@@ -92,12 +92,16 @@ flowchart TD
     B -->|manual| D["manualAllocate (modes/manual.ts)"]
     B -->|requested| E["useRequestedSlots (modes/use-requested.ts)"]
 
-    C --> L["lockAutoAllocate, then lockConsulteeBooking"]
-    D --> L
-    E --> L
-    L --> R["Read and validate under the locks: fetchEventData, findAvailableSlots, ScheduleValidationService"]
-    R --> T["One write transaction: guardAllocationInTx, deleteExistingAppointments, createAppointments, updateEventStatus, stageAllocationNotices"]
-    T --> U["Release both locks, then attempt the staged notices"]
+    C --> C1["Locks, then fetchEventData, findAvailableSlots, ScheduleValidationService"]
+    D --> D1["Locks, then fetchEventData, ScheduleValidationService on the chosen times"]
+    E --> E1["Locks, then validate the stored times and keep their existing occurrences"]
+
+    C1 --> T["Write transaction: guardAllocationInTx, deleteExistingAppointments, createAppointments, updateEventStatus, stageAllocationNotices"]
+    D1 --> T
+    E1 --> T2["Write transaction: guards, clear isTentative, updateEventStatus"]
+
+    T --> U["Release the locks, then attempt the staged notices"]
+    T2 --> U
 ```
 
 **Lock envelope.** All three modes take the same Redis locks from `utils/appointmentlock.ts`, always in the same order: first the consultant lock (`lockAutoAllocate`), then the consultee lock (`lockConsulteeBooking`). Only consultation and subscription allocations have a single consultee, so only they take the consultee lock; webinar and class allocations skip it (`getConsulteeUserId` in `identity.ts` returns null for them). They release in the `finally` block. The consultant key is consultant-wide, except for a manual allocation of a one-off event with no weekly cap, which uses a per-day key. Recurring events always take the consultant-wide key because a weekly cap spans days. The write transaction runs with `ALLOCATION_TX_MAX_WAIT_MS` and `ALLOCATION_TX_TIMEOUT_MS` from `lib/prisma.ts`.
