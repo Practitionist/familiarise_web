@@ -55,15 +55,15 @@ async function run() {
   // the org's FK, so both are deleted explicitly.
   for (const row of rows) {
     try {
-      await prisma.orgAuditLog.deleteMany({
-        where: { organizationId: row.id },
+      await prisma.$transaction(async (tx) => {
+        await tx.orgAuditLog.deleteMany({ where: { organizationId: row.id } });
+        await tx.organization.delete({ where: { id: row.id } });
+        if (row.billingAccountId) {
+          await tx.billingAccount.delete({
+            where: { id: row.billingAccountId },
+          });
+        }
       });
-      await prisma.organization.delete({ where: { id: row.id } });
-      if (row.billingAccountId) {
-        await prisma.billingAccount.delete({
-          where: { id: row.billingAccountId },
-        });
-      }
     } catch (e) {
       console.warn(
         `⚠️  could not fully delete chaos org ${row.id}; manual cleanup needed`,

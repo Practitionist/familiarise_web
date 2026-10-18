@@ -79,6 +79,18 @@ async function run() {
     select: { fromStatus: true, toStatus: true },
   });
 
+  // The request that returned 2xx must be the one whose target was recorded.
+  const targets = [["APPROVED", "APPROVED_PENDING_PAYMENT"], ["REJECTED"]];
+  check(
+    "each 2xx matches a recorded transition to its requested status",
+    results.every(
+      (r, i) =>
+        r.status < 200 ||
+        r.status >= 300 ||
+        history.some((h) => targets[i].includes(h.toStatus)),
+    ),
+    { history, statuses: results.map((r) => r.status) },
+  );
   check(
     "each 2xx is exactly one recorded transition",
     history.length === winners.length,
