@@ -33,15 +33,13 @@ import {
 } from "@/utils/appointmentlock";
 import { BookingRuleError } from "./booking-rule-error";
 import { createMakeUpOccurrence } from "./class-sessions";
-import { incidentRefundKey } from "./incident-keys";
+import { REBOOKABLE_PARENT_STATUSES, incidentRefundKey } from "./incident-keys";
 import { rescheduleNotificationVariant } from "./reschedule-proposals";
 import { transitionConsultationRequest, transitionTrial } from "./transitions";
 
 const HOUR_MS = 3_600_000;
 /** The rebooked session must start within this many days, so the payment never sits unresolved for long. */
 export const INCIDENT_REBOOK_HORIZON_DAYS = 30;
-/** A voided booking reopens from these parent statuses; any other ending keeps only the refund. */
-const REOPENABLE: ReadonlySet<string> = new Set(["SCHEDULED", "COMPLETED"]);
 
 const PERSON = { select: { id: true, name: true } } as const;
 
@@ -296,7 +294,7 @@ async function reopenBooking(
           where: { id: booking.id },
           select: { status: true },
         });
-  if (!live || !REOPENABLE.has(live.status)) throw closed();
+  if (!live || !REBOOKABLE_PARENT_STATUSES.has(live.status)) throw closed();
   if (live.status !== "COMPLETED") return;
   if (booking.kind === "consultation") {
     await transitionConsultationRequest(tx, {
@@ -462,7 +460,8 @@ export async function rebookIncidentRemedy(args: {
   const remedy = await readRemedy(args.remedyId);
   assertOpenFor(remedy, args.userId, now);
   const booking = bookingOf(remedy);
-  if (!booking || !REOPENABLE.has(booking.status)) throw closed();
+  if (!booking || !REBOOKABLE_PARENT_STATUSES.has(booking.status))
+    throw closed();
   assertStartAllowed(args.startsAt, now);
   const voided = remedy.occurrence;
   const ctx: RebookContext = {
@@ -537,16 +536,27 @@ export async function bringIncidentRefundForward(args: {
   });
   const after =
     count > 0
-      ? { dueAt: now, doneAt: null, rebookedOccurrenceId: null }
+      ? {
+          dueAt: now,
+          doneAt: null,
+          lastError: null,
+          rebookedOccurrenceId: null,
+        }
       : await prisma.incidentRemedy.findUniqueOrThrow({
           where: { id: remedy.id },
-          select: { dueAt: true, doneAt: true, rebookedOccurrenceId: true },
+          select: {
+            dueAt: true,
+            doneAt: true,
+            lastError: true,
+            rebookedOccurrenceId: true,
+          },
         });
   if (after.rebookedOccurrenceId) throw closed();
   return {
     incidentId: remedy.incidentId,
     dueAt: after.dueAt.toISOString(),
-    refunded: after.doneAt !== null,
+    // A remedy closed with a note was skipped, not refunded.
+    refunded: after.doneAt !== null && after.lastError === null,
   };
 }
 
@@ -571,7 +581,7 @@ export async function readOpenIncidentRemedies(
   });
   return rows.flatMap((row) => {
     const booking = bookingOf(row);
-    if (!booking || !REOPENABLE.has(booking.status)) return [];
+    if (!booking || !REBOOKABLE_PARENT_STATUSES.has(booking.status)) return [];
     return [
       {
         id: row.id,

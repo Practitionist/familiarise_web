@@ -18,7 +18,11 @@ import {
 } from "@/lib/email/senders/incident";
 import { canaryAlertRecipient } from "@/lib/observability/ingest-alert";
 import { postOpsChat } from "@/lib/observability/ops-chat";
-import { DEAD_LETTER_PREFIX, MAX_REMEDY_ATTEMPTS } from "./incident-keys";
+import {
+  DEAD_LETTER_PREFIX,
+  MAX_REMEDY_ATTEMPTS,
+  REBOOKABLE_PARENT_STATUSES,
+} from "./incident-keys";
 
 const DIGEST_LEARNERS_PER_RUN = 500;
 const PLATFORM_INCIDENT_REPORT = "platform-incident-report";
@@ -41,6 +45,7 @@ const DIGEST_SELECT = {
         select: {
           consultation: {
             select: {
+              status: true,
               consultationPlan: {
                 select: { title: true, ...EXPERT_NAME },
               },
@@ -53,7 +58,9 @@ const DIGEST_SELECT = {
               subscriptionPlan: TITLE,
             },
           },
-          trial: { select: { subscriptionPlan: TITLE, ...EXPERT_NAME } },
+          trial: {
+            select: { status: true, subscriptionPlan: TITLE, ...EXPERT_NAME },
+          },
           class: { select: { classPlan: TITLE } },
           webinar: { select: { webinarPlan: TITLE } },
         },
@@ -76,6 +83,9 @@ function digestItem(row: DigestRow): IncidentDigestItem {
       (appt.consultation?.consultationPlan ?? appt.trial)?.consultantProfile
         .user.name ?? null,
     rebookedStartsAt: row.rebookedOccurrence?.startsAt ?? null,
+    rebookable: REBOOKABLE_PARENT_STATUSES.has(
+      (appt.consultation ?? appt.trial)?.status ?? "",
+    ),
     planTitle:
       appt.consultation?.consultationPlan.title ??
       appt.trial?.subscriptionPlan.title ??

@@ -30,6 +30,8 @@ export interface IncidentDigestItem {
   planEndsAt: Date | null;
   /** The free session a 1:1 was already rebooked to. */
   rebookedStartsAt: Date | null;
+  /** The booking can still take a free rebook. */
+  rebookable: boolean;
 }
 
 interface IncidentDigestArgs {
@@ -45,8 +47,11 @@ export function incidentRemedyText(
 ): string {
   switch (item.kind) {
     case "REFUND_AT_DUE":
-      return item.rebookedStartsAt
-        ? `You rebooked this session free for ${whenText(item.rebookedStartsAt, zone)}.`
+      if (item.rebookedStartsAt) {
+        return `You rebooked this session free for ${whenText(item.rebookedStartsAt, zone)}.`;
+      }
+      return !item.rebookable
+        ? `You get a full refund on ${dateText(item.dueAt, zone)}.`
         : `Rebook free with ${item.expertName ?? "your expert"} by ${whenText(item.dueAt, zone)}, or we refund 100 % on ${dateText(item.dueAt, zone)}.`;
     case "REFUND_NOW":
       return "You get a full refund now.";
@@ -84,7 +89,9 @@ export function stagePlatformIncidentDigest(
             startsAtText: whenText(item.startsAt, r.zone),
             remedyText: incidentRemedyText(item, r.zone),
             rebookUrl:
-              item.kind === "REFUND_AT_DUE" && !item.rebookedStartsAt
+              item.kind === "REFUND_AT_DUE" &&
+              item.rebookable &&
+              !item.rebookedStartsAt
                 ? absolute(
                     goHref("client", `appointments/${item.appointmentId}`),
                   )

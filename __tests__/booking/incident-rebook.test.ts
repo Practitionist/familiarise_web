@@ -363,6 +363,7 @@ it("the digest offers the free rebook before the refund date, in the reader's zo
     dueAt: new Date("2026-10-20T06:30:00Z"),
     planEndsAt: null,
     rebookedStartsAt: null,
+    rebookable: true,
   };
   expect(incidentRemedyText(item, "Asia/Kolkata")).toMatch(
     /^Rebook free with Asha by .*12:00.*, or we refund 100 % on .*20.*\.$/,
@@ -373,4 +374,7 @@ it("the digest offers the free rebook before the refund date, in the reader's zo
       "Asia/Kolkata",
     ),
   ).toMatch(/^You rebooked this session free for /);
+  expect(
+    incidentRemedyText({ ...item, rebookable: false }, "Asia/Kolkata"),
+  ).toMatch(/^You get a full refund on /);
 });

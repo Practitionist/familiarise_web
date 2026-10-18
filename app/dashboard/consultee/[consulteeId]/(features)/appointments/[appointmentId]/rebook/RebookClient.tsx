@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -32,6 +32,8 @@ export function RebookClient({
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [submitting, setSubmitting] = useState(false);
+  // One key per chosen time, so a double submit replays the first answer.
+  const attempt = useRef<{ startsAt: string; key: string } | null>(null);
   useSetBreadcrumbLabel(title);
 
   const goBack = () => {
@@ -43,6 +45,10 @@ export function RebookClient({
     onSubmit: async ({ proposedSlots }) => {
       const startsAt = proposedSlots?.map((slot) => slot.startsAt).sort()[0];
       if (!startsAt) return;
+      if (attempt.current?.startsAt !== startsAt) {
+        attempt.current = { startsAt, key: crypto.randomUUID() };
+      }
+      const idempotencyKey = attempt.current.key;
       setSubmitting(true);
       try {
         const res = await fetch(
@@ -51,7 +57,7 @@ export function RebookClient({
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "Idempotency-Key": crypto.randomUUID(),
+              "Idempotency-Key": idempotencyKey,
             },
             body: JSON.stringify({ startsAt }),
           },
