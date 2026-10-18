@@ -146,14 +146,20 @@ export async function handleClassCheckout(
     },
   });
 
-  // The seat meters the sessions it bought: the ones not yet started, as
-  // classEnrolmentFrom counts them (a RESCHEDULED row awaits its new time).
-  const boughtSessions = sessions
-    .filter(
-      (session) =>
-        session.startsAt > now || session.completionStatus === "RESCHEDULED",
-    )
-    .slice(-enrolment.remaining);
+  // The seat meters the sessions it bought: the ones not yet started, one per
+  // ordinal as classEnrolmentFrom counts them, preferring a RESCHEDULED row's replacement.
+  const notStarted = new Map<number, (typeof sessions)[number]>();
+  for (const session of sessions) {
+    if (session.startsAt <= now && session.completionStatus !== "RESCHEDULED") {
+      continue;
+    }
+    const key = session.ordinal ?? session.startsAt.getTime();
+    const kept = notStarted.get(key);
+    if (!kept || kept.completionStatus === "RESCHEDULED") {
+      notStarted.set(key, session);
+    }
+  }
+  const boughtSessions = [...notStarted.values()].slice(-enrolment.remaining);
 
   return {
     appointment: wrapper,

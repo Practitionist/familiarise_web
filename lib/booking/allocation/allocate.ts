@@ -45,9 +45,18 @@ export async function allocate(
     }
     // The allocation transaction has committed, so the overage it settled is real.
     if (overageNotice) {
-      const { notifyOverageDueAfterCommit } =
-        await import("@/lib/payments/billing/overage-settlement");
-      void notifyOverageDueAfterCommit(overageNotice);
+      try {
+        const { notifyOverageDueAfterCommit } =
+          await import("@/lib/payments/billing/overage-settlement");
+        void notifyOverageDueAfterCommit(overageNotice);
+      } catch (notifyErr) {
+        // A lost notice never turns a committed allocation into a failure.
+        reportSentryError(notifyErr, {
+          subsystem: "scheduling",
+          op: "allocate.overage-notice",
+          level: "warning",
+        });
+      }
     }
     return result;
   } catch (error) {
