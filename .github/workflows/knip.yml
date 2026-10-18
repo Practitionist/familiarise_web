@@ -20,14 +20,16 @@ permissions:
 on:
   pull_request:
     branches: [dev, staging, prod, "feat/**"]
-    # Report-only: one report per PR open, not one per push. Docs-only PRs skip it.
+    # Report-only: one report per PR open, and only when dependencies or the
+    # export surface could have changed.
     types: [opened, reopened]
     paths:
-      - "**"
-      - "!docs/**"
-      - "!**/*.md"
-      - "!.claude/**"
-      - "!prompts/**"
+      - "package.json"
+      - "package-lock.json"
+      - "knip.*"
+      - "lib/**"
+      - "app/**"
+      - "components/**"
   workflow_dispatch:
 
 jobs:
