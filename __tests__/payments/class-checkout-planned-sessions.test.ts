@@ -238,11 +238,16 @@ describe("#1819 — late join", () => {
 
   it("meters a rescheduled session once, on its replacement row", async () => {
     const rows = eight(4);
+    // Released before session 5 starts, so it sorts ahead of it by time.
     const tombstone = {
-      ...occurrence("s6-old", rows[5].startsAt, "RESCHEDULED"),
+      ...occurrence(
+        "s6-old",
+        new Date(rows[4].startsAt.getTime() - 1),
+        "RESCHEDULED",
+      ),
       ordinal: 6,
     };
-    const tx = txWith([...rows.slice(0, 5), tombstone, ...rows.slice(5)], {
+    const tx = txWith([...rows.slice(0, 4), tombstone, ...rows.slice(4)], {
       totalSessions: 8,
       lateJoinUntilSession: 6,
     });

@@ -159,7 +159,10 @@ export async function handleClassCheckout(
       notStarted.set(key, session);
     }
   }
-  const boughtSessions = [...notStarted.values()].slice(-enrolment.remaining);
+  const boughtSessions = [...notStarted.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, session]) => session)
+    .slice(-enrolment.remaining);
 
   return {
     appointment: wrapper,
