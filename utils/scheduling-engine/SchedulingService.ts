@@ -28,7 +28,6 @@ import {
 } from "@prisma/client";
 import { addMonths } from "date-fns";
 import {
-  AllocationErrorCode,
   AllocationRequest,
   AllocationResult,
   type AllocationTxOptions,
@@ -114,22 +113,10 @@ import {
 import {
   recordBookingUtilization,
   reverseBookingUtilization,
-  ProgramAssignmentLimitError,
 } from "@/lib/api/organizations/program-helpers";
-import {
-  assertCollaboratorsAvailableForWindows,
-  CollaboratorUnavailableError,
-} from "@/lib/collaborators/availability";
-import {
-  notifyAppointmentBooked,
-  notifyAppointmentPartiallyScheduled,
-  attemptTrigger,
-  type StagedTrigger,
-} from "@/lib/novu";
-import { notificationScope } from "@/lib/novu/workflows";
+import { assertCollaboratorsAvailableForWindows } from "@/lib/collaborators/availability";
+import { attemptTrigger } from "@/lib/novu";
 import { scheduleAfter } from "@/lib/api/after-safe";
-import { notificationHref } from "@/lib/novu/resolve-href";
-import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
 import {
   matchCustomSlotToDay,
   sortWeeklyByNextOccurrence,
@@ -147,6 +134,11 @@ import {
   bestFittingBlockInRow,
   bestBlockForSingleSession,
 } from "@/lib/booking/allocation/search/blocks";
+import {
+  classifyError,
+  isModeledOutcome,
+} from "@/lib/booking/allocation/classify";
+import { stageAllocationNotices } from "@/lib/booking/allocation/notify";
 
 type AppointmentWithSlots = Appointment & {
   occurrences: AppointmentOccurrence[];
@@ -181,7 +173,7 @@ export class SchedulingService {
       }
       return result;
     } catch (error) {
-      const { errorCode, httpStatus } = this.classifyError(error);
+      const { errorCode, httpStatus } = classifyError(error);
       // Full-coverage policy: every error reaching here is reported, modelled
       // outcome or not, so volume/pattern of ordinary answers (slot taken,
       // limit reached, lost CAS race) is visible in Sentry too — but at
@@ -190,7 +182,7 @@ export class SchedulingService {
       // error level with no expected tag.
       // #1721 QA — every 4xx classification is an answer, including the
       // untyped legacy throws classifyError maps by message; only a 5xx is a fault.
-      const modeled = this.isModeledOutcome(error) || httpStatus < 500;
+      const modeled = isModeledOutcome(error) || httpStatus < 500;
       reportSentryError(error, {
         subsystem: "scheduling",
         op: "scheduling",
@@ -301,316 +293,6 @@ export class SchedulingService {
   }
 
   /**
-   * PR 2c — fire-and-forget APPOINTMENT_BOOKED to both parties once real
-   * times exist. Completes the B9 story: payment skipped this notification
-   * for slot-less bookings on purpose.
-   */
-  private static async stageAllocationNotices(
-    tx: Tx,
-    eventType: EventType,
-    eventId: string,
-    /**
-     * #1206 — when only some of the plan's sessions were placed, the consultee
-     * must be told how many are scheduled and what happens to the rest.
-     */
-    partial?: {
-      partial: boolean;
-      placedSessions?: number;
-      requiredSessions?: number;
-      unplacedSessions?: number;
-    },
-    outcome?: ApprovalOutcome,
-  ): Promise<StagedTrigger[]> {
-    // #1775 B-9 — nothing is booked before payment: an awaiting-payment
-    // approval's only consultee message is the pay-link email the mint sends.
-    if (outcome === "awaiting_payment") return [];
-    const prisma = tx;
-    let context: {
-      userIds: string[];
-      // #1206 — the partial notice goes to these only; the consultant was
-      // already shown the shortfall and confirmed it.
-      consulteeUserIds: string[];
-      consultantName: string;
-      consulteeName: string;
-      planTitle: string;
-      firstStart: Date | null;
-      organizationId: string | null;
-      appointmentId?: string;
-    } | null = null;
-
-    if (eventType === "consultation") {
-      const row = await prisma.consultation.findUnique({
-        where: { id: eventId },
-        select: {
-          consultationPlan: {
-            select: {
-              title: true,
-              consultantProfile: {
-                select: { user: { select: { id: true, name: true } } },
-              },
-            },
-          },
-          requestedBy: {
-            select: { user: { select: { id: true, name: true } } },
-          },
-          appointment: {
-            select: {
-              id: true,
-              organizationId: true,
-              // A rebooked consultation keeps its voided original; the notice names the live one.
-              occurrences: {
-                where: { ...LIVE_SLOT_WHERE, isTentative: false },
-                orderBy: { startsAt: "asc" },
-                take: 1,
-                select: { startsAt: true },
-              },
-            },
-          },
-        },
-      });
-      if (!row?.appointment) return [];
-      context = {
-        userIds: [
-          row.consultationPlan.consultantProfile.user.id,
-          row.requestedBy.user.id,
-        ].filter(Boolean),
-        consulteeUserIds: [row.requestedBy.user.id].filter(Boolean),
-        consultantName:
-          row.consultationPlan.consultantProfile.user.name || "Consultant",
-        consulteeName: row.requestedBy.user.name || "Consultee",
-        planTitle: row.consultationPlan.title,
-        firstStart: row.appointment.occurrences[0]?.startsAt ?? null,
-        organizationId: row.appointment.organizationId,
-        appointmentId: row.appointment.id,
-      };
-    } else if (eventType === "subscription") {
-      const row = await prisma.subscription.findUnique({
-        where: { id: eventId },
-        select: {
-          subscriptionPlan: {
-            select: {
-              title: true,
-              consultantProfile: {
-                select: { user: { select: { id: true, name: true } } },
-              },
-            },
-          },
-          requestedBy: {
-            select: { user: { select: { id: true, name: true } } },
-          },
-          appointment: {
-            select: {
-              id: true,
-              organizationId: true,
-              occurrences: {
-                where: { isTentative: false, deletedAt: null },
-                orderBy: { startsAt: "asc" },
-                take: 1,
-                select: { startsAt: true },
-              },
-            },
-          },
-        },
-      });
-      if (!row?.appointment) return [];
-      context = {
-        userIds: [
-          row.subscriptionPlan.consultantProfile.user.id,
-          row.requestedBy.user.id,
-        ].filter(Boolean),
-        consulteeUserIds: [row.requestedBy.user.id].filter(Boolean),
-        consultantName:
-          row.subscriptionPlan.consultantProfile.user.name || "Consultant",
-        consulteeName: row.requestedBy.user.name || "Consultee",
-        planTitle: row.subscriptionPlan.title,
-        firstStart: row.appointment.occurrences[0]?.startsAt ?? null,
-        organizationId: row.appointment.organizationId,
-        appointmentId: row.appointment.id,
-      };
-    } else if (eventType === "webinar") {
-      const row = await prisma.webinar.findUnique({
-        where: { id: eventId },
-        select: {
-          webinarPlan: {
-            select: {
-              title: true,
-              consultantProfile: {
-                select: { user: { select: { id: true, name: true } } },
-              },
-            },
-          },
-          appointment: {
-            select: {
-              id: true,
-              organizationId: true,
-              participants: {
-                where: liveParticipant(),
-                select: { user: { select: { id: true, name: true } } },
-              },
-              occurrences: {
-                where: { isTentative: false, deletedAt: null },
-                select: {
-                  startsAt: true,
-                },
-              },
-            },
-          },
-        },
-      });
-      if (!row?.appointment) return [];
-      const plan = row.webinarPlan;
-      const hostUser = plan.consultantProfile?.user;
-      if (!hostUser) return [];
-      const userMap = new Map<string, string>();
-      let firstStart: Date | null = null;
-      for (const slot of row.appointment.occurrences) {
-        if (!firstStart || slot.startsAt < firstStart)
-          firstStart = slot.startsAt;
-      }
-      for (const { user: u } of row.appointment.participants)
-        userMap.set(u.id, u.name ?? "Attendee");
-      userMap.delete(hostUser.id);
-      context = {
-        userIds: [hostUser.id, ...userMap.keys()],
-        consulteeUserIds: [...userMap.keys()],
-        consultantName: hostUser.name || "Consultant",
-        consulteeName:
-          userMap.size === 1
-            ? [...userMap.values()][0]
-            : `${userMap.size} attendees`,
-        planTitle: plan.title,
-        firstStart,
-        organizationId: row.appointment.organizationId,
-        appointmentId: row.appointment.id,
-      };
-    } else {
-      const row = await prisma.class.findUnique({
-        where: { id: eventId },
-        select: {
-          classPlan: {
-            select: {
-              title: true,
-              consultantProfile: {
-                select: { user: { select: { id: true, name: true } } },
-              },
-            },
-          },
-          appointment: {
-            select: {
-              id: true,
-              organizationId: true,
-              participants: {
-                where: liveParticipant(),
-                select: { user: { select: { id: true, name: true } } },
-              },
-              occurrences: {
-                where: { isTentative: false, deletedAt: null },
-                select: {
-                  startsAt: true,
-                },
-              },
-            },
-          },
-        },
-      });
-      if (!row?.appointment) return [];
-      const appts = [row.appointment];
-      const plan = row.classPlan;
-      const hostUser = plan.consultantProfile?.user;
-      if (!hostUser) return [];
-      const host = hostUser;
-      const userMap = new Map<string, string>();
-      let firstStart: Date | null = null;
-      for (const a of appts) {
-        for (const slot of a.occurrences) {
-          if (!firstStart || slot.startsAt < firstStart)
-            firstStart = slot.startsAt;
-        }
-        for (const { user: u } of a.participants)
-          userMap.set(u.id, u.name ?? "Attendee");
-      }
-      userMap.delete(host.id);
-      context = {
-        userIds: [host.id, ...userMap.keys()],
-        consulteeUserIds: [...userMap.keys()],
-        consultantName: host.name || "Consultant",
-        consulteeName:
-          userMap.size === 1
-            ? [...userMap.values()][0]
-            : `${userMap.size} attendees`,
-        planTitle: plan.title,
-        firstStart,
-        organizationId: appts[0]!.organizationId,
-        appointmentId: appts[0]!.id,
-      };
-    }
-
-    if (!context || context.userIds.length === 0) return [];
-
-    const payload = {
-      ...notificationScope(context.organizationId),
-      appointmentId: context.appointmentId,
-      dateTime: context.firstStart?.toISOString(),
-      appointmentType: eventType,
-      consultantName: context.consultantName,
-      consulteeName: context.consulteeName,
-      planTitle: context.planTitle,
-      dashboardUrl: notificationHref(context.organizationId, "appointments"),
-    };
-
-    const results = await notifyAppointmentBooked(context.userIds, payload, {
-      tx,
-    });
-
-    // #1206 — a second, separate notice rather than a flag on the booking one:
-    // the times that WERE placed are a real booking and read as one, and the
-    // thing the consultee has to be told is what happened to the rest.
-    if (partial?.partial && context.consulteeUserIds.length > 0) {
-      results.push(
-        ...(await notifyAppointmentPartiallyScheduled(
-          context.consulteeUserIds,
-          {
-            ...payload,
-            placedSessions: partial.placedSessions ?? 0,
-            requiredSessions: partial.requiredSessions ?? 0,
-            unplacedSessions: partial.unplacedSessions ?? 0,
-          },
-          { tx },
-        )),
-      );
-    }
-    return results.flatMap((r) => (r.staged ? [r.staged] : []));
-  }
-
-  /**
-   * Whether `error` is one of the modelled business outcomes this engine
-   * throws for ordinary reasons (validation, not-found, lock/CAS contention,
-   * an org cap reached) rather than an actual fault. Both branches are
-   * reported to Sentry (full-coverage policy); this only decides the
-   * level/tag so a modelled answer never reads as a fault on the dashboard.
-   * Deliberately narrower than classifyError()'s message-sniffing fallback,
-   * which exists only to pick an HTTP status for legacy untyped throws and
-   * would otherwise also mark real bugs "expected" if the message happens to
-   * contain "not found".
-   */
-  private static isModeledOutcome(error: unknown): boolean {
-    return (
-      error instanceof AllocationValidationError ||
-      error instanceof AllocationNotFoundError ||
-      error instanceof AllocationConflictError ||
-      error instanceof AllocationIdempotencyMismatchError ||
-      error instanceof IllegalTransitionError ||
-      error instanceof BookingRuleError ||
-      error instanceof ProgramAssignmentLimitError ||
-      isUniqueViolation(error) ||
-      isExclusionViolation(error) ||
-      // AE-2 (#784) — a co-host already committed elsewhere is a scheduling
-      // answer, not a fault.
-      error instanceof CollaboratorUnavailableError
-    );
-  }
-
-  /**
    * AE-2 (#784) — refuse to commit these times when an ACCEPTED co-host on a
    * webinar/class plan is already busy. Co-hosts are not slot participants, so
    * neither `occurrence_no_confirmed_overlap` nor the owner-scoped validators see
@@ -639,80 +321,6 @@ export class SchedulingService {
       })),
       excludeAppointmentIds,
     });
-  }
-
-  /**
-   * Classifies an unknown error into a structured error code and HTTP status.
-   * Called from the allocate() catch block to avoid string-prefix checks in routes.
-   */
-  private static classifyError(error: unknown): {
-    errorCode: AllocationErrorCode;
-    httpStatus: number;
-  } {
-    // Typed error classes — primary classification mechanism
-    if (error instanceof AllocationValidationError) {
-      return { errorCode: error.errorCode, httpStatus: error.httpStatus };
-    }
-    if (error instanceof AllocationNotFoundError) {
-      return { errorCode: error.errorCode, httpStatus: error.httpStatus };
-    }
-    if (error instanceof AllocationConflictError) {
-      return { errorCode: error.errorCode, httpStatus: error.httpStatus };
-    }
-    if (error instanceof AllocationIdempotencyMismatchError) {
-      return { errorCode: error.errorCode, httpStatus: error.httpStatus };
-    }
-    // #1775 C-1 — an unpaid plan; the allocation rolled back.
-    if (
-      error instanceof BookingRuleError &&
-      error.code === "SUBSCRIPTION_UNPAID"
-    ) {
-      return { errorCode: "SUBSCRIPTION_UNPAID", httpStatus: error.httpStatus };
-    }
-    // #836 — consultee cancelled (or request expired) while the consultant
-    // was allocating; the whole allocation tx rolled back.
-    if (error instanceof IllegalTransitionError) {
-      return { errorCode: "ILLEGAL_TRANSITION", httpStatus: error.httpStatus };
-    }
-
-    // The org's per-cycle overage ceiling refusing an assignment is a decision,
-    // not a fault. It was already reported to Sentry as an expected outcome
-    // while falling through to UNKNOWN_ERROR/500 here — so the dashboard called
-    // it routine and the caller got a server error. 402 matches what
-    // recordOverageAtCheckout returns for the very same ceiling.
-    if (error instanceof ProgramAssignmentLimitError) {
-      return { errorCode: "PROGRAM_CAP_EXHAUSTED", httpStatus: 402 };
-    }
-
-    // AE-2 (#784) — a co-host's clash is a conflict, and the crud-with-plan
-    // routes already answer 409 for the identical rejection.
-    if (error instanceof CollaboratorUnavailableError) {
-      return { errorCode: "COLLABORATOR_UNAVAILABLE", httpStatus: 409 };
-    }
-
-    // Structured DB-conflict detection (no message sniffing): unique (P2002 /
-    // 23505) and the #440 exclusion constraint (23P01). createAppointments
-    // already rethrows these as a typed AllocationConflictError at the source;
-    // this is the safety net for the conflict paths that don't (e.g. the
-    // requested-slots isTentative flip).
-    if (isUniqueViolation(error) || isExclusionViolation(error)) {
-      return { errorCode: "LOCK_CONTENTION", httpStatus: 409 };
-    }
-
-    // Last-resort fallback for untyped throws from legacy code paths. Matching on
-    // message text is fragile; migrating these callers to typed errors is #837.
-    const msg = error instanceof Error ? error.message : "";
-    if (
-      msg.includes("lock") ||
-      msg.includes("Lock") ||
-      msg.includes("in progress")
-    ) {
-      return { errorCode: "LOCK_CONTENTION", httpStatus: 409 };
-    }
-    if (msg.includes("not found") || msg.includes("no consultant")) {
-      return { errorCode: "NOT_FOUND", httpStatus: 400 };
-    }
-    return { errorCode: "UNKNOWN_ERROR", httpStatus: 500 };
   }
 
   /**
@@ -2275,7 +1883,7 @@ export class SchedulingService {
           await txOptions.inTx?.(tx);
 
           // #1697 item 5 — staged in THIS transaction; attempted after commit.
-          const stagedNotices = await SchedulingService.stageAllocationNotices(
+          const stagedNotices = await stageAllocationNotices(
             tx,
             eventType,
             eventId,
@@ -2899,7 +2507,7 @@ export class SchedulingService {
             warnings: validation.warnings,
             deletedAppointmentIds, // AE-4
             ...manualPartialInfo,
-            stagedNotices: await SchedulingService.stageAllocationNotices(
+            stagedNotices: await stageAllocationNotices(
               tx,
               eventType,
               eventId,
@@ -3326,7 +2934,7 @@ export class SchedulingService {
             outcome,
             appointments: existingAppointments,
             warnings: validation.warnings,
-            stagedNotices: await SchedulingService.stageAllocationNotices(
+            stagedNotices: await stageAllocationNotices(
               tx,
               eventType,
               eventId,
