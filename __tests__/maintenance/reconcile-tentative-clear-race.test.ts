@@ -42,6 +42,21 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_key: string, _opts: unknown, fn: () => unknown) => fn(),
 }));
 
+const reportSentryMessage = jest.fn();
+jest.mock("../../lib/observability/report", () => ({
+  __esModule: true,
+  reportSentryError: jest.fn(),
+  reportSentryMessage: (...a: unknown[]) => reportSentryMessage(...a),
+}));
+// The cross-run dedupe has its own suite; here every finding is new.
+jest.mock("../../lib/observability/standing-finding", () => ({
+  __esModule: true,
+  reportStandingFinding: async (_args: unknown, report: () => void) => {
+    report();
+    return true;
+  },
+}));
+
 // The allocator is out of scope here and drags Novu/undici into the graph.
 jest.mock("../../utils/scheduling-engine/SchedulingService", () => ({
   __esModule: true,
@@ -242,5 +257,29 @@ describe("reconcile-occurrence-availability × top-up cohort (#1766)", () => {
     expect(allocate).toHaveBeenCalledWith(
       expect.objectContaining({ eventId: "sub-short", topUp: true }),
     );
+  });
+});
+
+describe("reconcile-occurrence-availability × participant drift", () => {
+  it("reports drift once per run, with the count and ids in the extras", async () => {
+    jest.spyOn(console, "log").mockImplementation(() => {});
+    (prisma.appointment.findMany as jest.Mock).mockResolvedValueOnce(
+      ["apt-1", "apt-2", "apt-3"].map((id) => ({
+        id,
+        appointmentType: "WEBINAR",
+      })),
+    );
+
+    await reconcileOccurrenceAvailability();
+
+    const drift = reportSentryMessage.mock.calls.filter(
+      ([, opts]) =>
+        opts.op === "reconcile-occurrence-availability.participant-drift",
+    );
+    expect(drift).toHaveLength(1);
+    expect(drift[0][1].extra).toEqual({
+      count: 3,
+      appointmentIds: ["apt-1", "apt-2", "apt-3"],
+    });
   });
 });
