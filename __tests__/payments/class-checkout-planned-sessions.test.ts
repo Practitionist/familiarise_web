@@ -159,6 +159,17 @@ it("counts a RESCHEDULED session as planned: the gate opens and the meter says f
 
   expect(result.engagementsConsumed).toBe(4);
   expect(result.slotsLinked).toBe(4);
+  // One seat on the class wrapper, held until the payment captures.
+  expect(
+    (tx.appointmentParticipant.createMany as jest.Mock).mock.calls[0][0].data,
+  ).toEqual([
+    expect.objectContaining({
+      appointmentId: "appt-class",
+      userId: "buyer-1",
+      role: "CONSULTEE",
+      status: "HELD",
+    }),
+  ]);
   // And the read itself keeps the released row: only a cancelled or deleted
   // session is out of the plan.
   const args = (tx.class.findUnique as jest.Mock).mock.calls[0][0];

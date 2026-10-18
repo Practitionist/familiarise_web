@@ -21,7 +21,7 @@ jest.mock("../../../lib/payments/operations/cancellation-policy-store", () => ({
 }));
 
 import { handleCheckout } from "../../../lib/payments/operations/checkout";
-import { overrides, resetDouble } from "./checkout-harness/setup";
+import { calls, overrides, resetDouble } from "./checkout-harness/setup";
 
 type Row = Record<string, unknown>;
 let payments: Row[] = [];
@@ -180,6 +180,20 @@ describe("re-buying a webinar seat after an EXPIRED payment on the same appointm
     expect(tombstone).toMatchObject({
       paymentStatus: "EXPIRED",
       appointmentId: null,
+    });
+    // The buyer is re-seated on the shared webinar appointment, held until capture.
+    const seat = calls.find(
+      (c) => c.path === "appointmentParticipant.createMany",
+    );
+    expect(seat?.args).toMatchObject({
+      data: [
+        {
+          appointmentId: APPT,
+          userId: BUYER,
+          role: "CONSULTEE",
+          status: "HELD",
+        },
+      ],
     });
   });
 });

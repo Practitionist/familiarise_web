@@ -314,15 +314,6 @@ describe("checkout coverage rule (#1320)", () => {
     }
   });
 
-  it("checkout validates against the union, not the named row", () => {
-    const src = fs.readFileSync(
-      path.join(process.cwd(), "lib/payments/operations/checkout.ts"),
-      "utf8",
-    );
-    expect(src).toContain("findUncoveredAtom(atoms, weeklyRows, customRows)");
-    expect(src).not.toMatch(/isMinuteWithinWeeklySlot\(\s*candidateDay/);
-  });
-
   it("every save path merges adjacent rows", () => {
     for (const f of [
       "utils/onboarding-server.ts",

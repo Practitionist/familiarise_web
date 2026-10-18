@@ -32,7 +32,7 @@ import {
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { PaymentError } from "@/lib/payments/core/types";
 import prisma, { type Tx } from "@/lib/prisma";
-import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
+import type { CheckoutInput } from "@/schemas/checkout";
 import {
   firstCycleWindow,
   sessionsTotalOf,
@@ -161,10 +161,6 @@ import {
 import { seatPayerOrganizationId } from "@/lib/data/org-sponsored-seats";
 import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
 import { tombstonePriorIntent } from "@/lib/payments/operations/prior-intent-tombstone";
-
-// Re-export for backward compatibility
-export const unifiedCheckoutSchema = checkoutSchema;
-export type { CheckoutInput };
 
 // ============================================================================
 // Type Definitions
@@ -942,7 +938,7 @@ export async function tombstoneAbortedGatewayOrder(input: {
  * Calculate final amount with discount and validate plan availability
  * Does NOT create any appointment records - only validates
  */
-export async function calculateAmountAndValidate(
+async function calculateAmountAndValidate(
   validatedData: CheckoutInput,
   userId: string,
   buyerCountry: string = "IN",
@@ -1519,7 +1515,7 @@ function buildLiveHoldPaymentFilter(
  * carries both endpoints: the run's first start and last end are what must
  * equal the request.
  */
-export async function findSelfHoldAppointmentIds(
+async function findSelfHoldAppointmentIds(
   tx: Tx,
   params: {
     buyerUserId: string;
@@ -3343,7 +3339,7 @@ export async function handleSubscriptionCheckout(
   };
 }
 
-export async function handleWebinarCheckout(
+async function handleWebinarCheckout(
   tx: Tx,
   data: CheckoutInput,
   userId: string,
