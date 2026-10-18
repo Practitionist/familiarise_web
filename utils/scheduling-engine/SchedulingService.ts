@@ -5,7 +5,6 @@
  * Handles auto, manual, and requested slot allocation.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { reportSentryError } from "@/lib/observability/report";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import {
@@ -56,7 +55,6 @@ import {
 import {
   matchesPreferredDays,
   maxPreferenceScore,
-  scoreCandidateStart,
   type AllocationPreference,
 } from "./preferenceScoring";
 import {
@@ -100,19 +98,10 @@ import {
   type ApprovalOutcome,
 } from "@/lib/booking/approve-request";
 import { TWENTY_FOUR_HOURS_IN_MS } from "./slotTimeUtils";
+import { createSearchBudget } from "./availability-search";
 import {
-  buildAvailabilityIndex,
-  createSearchBudget,
-  indexCoversAtom,
-  type AvailabilityInterval,
-  type SearchBudget,
-} from "./availability-search";
-import {
-  createWeeklyCoverage,
   partitionWeeklyRows,
   weeklyRowIntervalsInRange,
-  type WeeklyCoverage,
-  type WeeklyRowLocalColumns,
 } from "@/utils/schedule/weekly-projection";
 import { reportIncompleteWeeklyRows } from "@/lib/scheduling/incomplete-weekly-rows";
 import {
@@ -141,68 +130,27 @@ import { notificationScope } from "@/lib/novu/workflows";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
+import {
+  matchCustomSlotToDay,
+  sortWeeklyByNextOccurrence,
+} from "@/lib/booking/allocation/search/recurrence";
+import {
+  DAY_MS,
+  ALLOCATOR_SEARCH_TIME_BUDGET_MS,
+  type AllocationWalkContext,
+} from "@/lib/booking/allocation/search/constants";
+import {
+  projectableWeeklyRows,
+  reportSearchBudgetSpent,
+} from "@/lib/booking/allocation/search/window-walk";
+import {
+  bestFittingBlockInRow,
+  bestBlockForSingleSession,
+} from "@/lib/booking/allocation/search/blocks";
 
 type AppointmentWithSlots = Appointment & {
   occurrences: AppointmentOccurrence[];
 };
-
-/**
- * Ceiling on the 30-minute starts walked from one availability row.
- *
- * The walk stops at the first candidate outside availability, but adjacent rows
- * make `isWithinAvailability` keep answering true past this row's own end, so a
- * consultant with contiguous cover would otherwise walk the whole week. 48 steps
- * is a day of cover, which bounds the scan without truncating any real row.
- */
-const MAX_CANDIDATE_STARTS_PER_ROW = 48;
-
-/**
- * Wall-clock ceiling on ONE availability search.
- *
- * The search is O(window × rows) and runs outside the write transaction, so an
- * unbounded walk is the only thing in this path that can cross the ~25 s edge
- * ceiling (a long scheduling period over a consultant with many published rows)
- * — and because the `auto-allocate` grant behind it is a fixed 150 s TTL that is
- * never renewed, an overrun also runs the search unprotected. Ten seconds leaves
- * the rest of the request (the validator read, the write transaction, the
- * notices) its budget; past it the walk stops and answers with the same
- * SLOT_SHORTAGE a full calendar produces, which `allowPartial` already knows how
- * to turn into "place what fits". Mirrors `TOP_UP_TIME_BUDGET_MS`
- * (scripts/appointments/reconcile-occurrence-availability.ts).
- */
-const ALLOCATOR_SEARCH_TIME_BUDGET_MS = 10_000;
-
-/**
- * #1194 — who is being scheduled, carried down the row walk so a truncated
- * availability row names a consultant and an event instead of appearing as an
- * anonymous "no slots available".
- */
-interface AllocationWalkContext {
-  eventType: EventType;
-  eventId?: string;
-  consultantProfileId?: string;
-  /**
-   * Rows already reported as truncated on THIS allocation. The walk re-visits
-   * a row once per day, and again after every placement, so without this one
-   * long row emits hundreds of identical warnings and evicts every other
-   * breadcrumb on the Sentry scope — losing the context the report exists for.
-   */
-  reportedTruncations?: Set<string>;
-  /**
-   * The merged custom-availability index, built on first use. Keyed by object
-   * identity because `fetchEventData` mints a fresh consultant per allocation:
-   * the index can never outlive the rows it was built from, and the scan it
-   * replaces ran once per candidate.
-   */
-  customIndex?: AvailabilityInterval[];
-  /** The weekly rows' projected occurrences, built on first use like `customIndex`. */
-  weeklyCoverage?: WeeklyCoverage;
-}
-
-/** A weekly row the allocator can project. */
-type ProjectableWeeklyRow = { id: string } & WeeklyRowLocalColumns;
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Main service for slot allocation operations
@@ -3401,470 +3349,6 @@ export class SchedulingService {
   }
 
   /**
-   * Whether a 30-minute candidate sits inside one occurrence of a published
-   * row; weekly rows are projected through their own zone, as the validator does.
-   */
-  private static isWithinAvailability(
-    candidate: Date,
-    consultant: ConsultantAllocationData,
-    walk?: AllocationWalkContext,
-  ): boolean {
-    if (consultant.scheduleType === ScheduleType.WEEKLY) {
-      return this.weeklyAvailabilityCoverage(consultant, walk).covers(
-        candidate.getTime(),
-        candidate.getTime() + SCHEDULING_INTERVAL_MS,
-      );
-    }
-    // CUSTOM schedule: the candidate's own atom must fit inside ONE published
-    // range. That used to be a linear `.some()` with two `new Date()` per row per
-    // call, run once per candidate start × row × day of the window — the reason a
-    // consultant with a few hundred published rows could push this past the edge
-    // ceiling. The merged index is built once per allocation (below) and then
-    // binary-searched, which is exactly equivalent: a contiguous atom lies inside
-    // a union of ranges if and only if it lies inside one connected component.
-    return indexCoversAtom(
-      this.customAvailabilityIndex(consultant, walk),
-      candidate.getTime(),
-    );
-  }
-
-  /** The consultant's projectable weekly rows; refused ones are reported by the caller. */
-  private static projectableWeeklyRows(
-    consultant: ConsultantAllocationData,
-  ): ProjectableWeeklyRow[] {
-    return partitionWeeklyRows(consultant.availabilityWindowsWeekly).usable;
-  }
-
-  private static weeklyAvailabilityCoverage(
-    consultant: ConsultantAllocationData,
-    walk?: AllocationWalkContext,
-  ): WeeklyCoverage {
-    if (walk?.weeklyCoverage) return walk.weeklyCoverage;
-    const coverage = createWeeklyCoverage(
-      this.projectableWeeklyRows(consultant),
-    );
-    if (walk) walk.weeklyCoverage = coverage;
-    return coverage;
-  }
-
-  /** Weekly rows ordered by their next occurrence after `now`; rows with none sort last. */
-  private static sortWeeklyByNextOccurrence(
-    rows: ProjectableWeeklyRow[],
-    now: Date,
-  ): ProjectableWeeklyRow[] {
-    const horizon = new Date(now.getTime() + 15 * DAY_MS);
-    const nextStart = (row: ProjectableWeeklyRow) =>
-      weeklyRowIntervalsInRange(row, now, horizon)
-        .find((occurrence) => occurrence.start > now)
-        ?.start.getTime() ?? Number.POSITIVE_INFINITY;
-    return rows
-      .map((row) => ({ row, next: nextStart(row) }))
-      .sort((a, b) => a.next - b.next)
-      .map(({ row }) => row);
-  }
-
-  /**
-   * The consultant's custom rows as one merged interval list, built on first use
-   * and then carried on the walk. A walk without a context (a direct unit call)
-   * builds it per call, which is what the test that calls the predicate directly
-   * asserts about.
-   */
-  private static customAvailabilityIndex(
-    consultant: ConsultantAllocationData,
-    walk?: AllocationWalkContext,
-  ): AvailabilityInterval[] {
-    if (!walk) {
-      return buildAvailabilityIndex(consultant.availabilityWindowsCustom);
-    }
-    if (!walk.customIndex) {
-      walk.customIndex = buildAvailabilityIndex(
-        consultant.availabilityWindowsCustom,
-      );
-    }
-    return walk.customIndex;
-  }
-
-  /**
-   * Every 30-minute start inside one availability row that could host a call.
-   *
-   * The search used to test only the row's own start instant: a booked 09:00
-   * forfeited the entire 09:00-17:00 window and the loop advanced to the next
-   * row, so auto-allocate yielded at most one placement per row per week even
-   * with seven hours free. Walking the row restores the other fifteen starts.
-   *
-   * #1194 — the walk is bounded by the ROW'S OWN END (passed by the caller),
-   * not just by isWithinAvailability (which adjacent rows keep answering true)
-   * nor by the old hard MAX_CANDIDATE_STARTS_PER_ROW=48 ceiling (which
-   * silently truncated legitimate long rows). Callers that cannot supply a
-   * row end still get the 48-step safety net.
-   *
-   * The anchor is snapped UP to the booking grid (buyer paths refuse off-grid
-   * starts), so an off-grid legacy row 10:15-12:00 yields 10:30, 11:00, 11:30:
-   * on-grid and inside the published hours.
-   */
-  private static candidateStartsInRow(
-    rowStart: Date,
-    consultant: ConsultantAllocationData,
-    /**
-     * Epoch ms of this row's own end; the walk stops here (#1194). Required —
-     * every live caller has the row it is walking, and the optional form was
-     * how the 48-step ceiling came to silently truncate a legitimate row.
-     */
-    rowEndMs: number,
-    walk?: AllocationWalkContext,
-  ): Date[] {
-    const starts: Date[] = [];
-    /** Did the ROW (its end, or the edge of availability) stop the walk? */
-    let boundedByRow = false;
-    const anchorMs =
-      Math.ceil(rowStart.getTime() / SCHEDULING_INTERVAL_MS) *
-      SCHEDULING_INTERVAL_MS;
-
-    for (let step = 0; step < MAX_CANDIDATE_STARTS_PER_ROW; step++) {
-      const candidate = new Date(anchorMs + step * SCHEDULING_INTERVAL_MS);
-      // Stop at the row's own end before checking availability — adjacent
-      // rows would otherwise let the walk escape past its owner.
-      if (candidate.getTime() + SCHEDULING_INTERVAL_MS > rowEndMs) {
-        boundedByRow = true;
-        break;
-      }
-      if (!this.isWithinAvailability(candidate, consultant, walk)) {
-        boundedByRow = true;
-        break;
-      }
-      starts.push(candidate);
-    }
-
-    // #1194 — the CEILING ended the walk, not the row: a row longer than a
-    // day of cover was truncated and its tail is invisible to allocation. The
-    // walk used to exit here in silence, so an unallocatable long row looked
-    // like "no slots available". Probing the NEXT candidate keeps a row that
-    // simply ends at the 48th start from reporting a truncation it never had.
-    if (!boundedByRow) {
-      const next = new Date(
-        anchorMs + MAX_CANDIDATE_STARTS_PER_ROW * SCHEDULING_INTERVAL_MS,
-      );
-      if (
-        next.getTime() + SCHEDULING_INTERVAL_MS <= rowEndMs &&
-        this.isWithinAvailability(next, consultant, walk)
-      ) {
-        this.reportRowWalkTruncated(rowStart, rowEndMs, consultant, walk);
-      }
-    }
-
-    return starts;
-  }
-
-  /**
-   * #1194 — one breadcrumb + one structured warning per truncated row, so a
-   * SLOT_SHORTAGE that was really a scan ceiling is attributable to a
-   * consultant and an event instead of being indistinguishable from a genuinely
-   * full calendar.
-   */
-  private static reportRowWalkTruncated(
-    rowStart: Date,
-    rowEndMs: number,
-    consultant: ConsultantAllocationData,
-    walk?: AllocationWalkContext,
-  ): void {
-    // One report per row per allocation. A walk with no context (a direct unit
-    // call) has no set and still reports, which is what its callers assert on.
-    const rowKey = `${rowStart.getTime()}-${rowEndMs}`;
-    if (walk?.reportedTruncations) {
-      if (walk.reportedTruncations.has(rowKey)) return;
-      walk.reportedTruncations.add(rowKey);
-    }
-    const detail = {
-      rowStart: rowStart.toISOString(),
-      rowEnd: new Date(rowEndMs).toISOString(),
-      cap: MAX_CANDIDATE_STARTS_PER_ROW,
-      consultantUserId: consultant.userId,
-      consultantProfileId: walk?.consultantProfileId ?? null,
-      eventType: walk?.eventType ?? null,
-      eventId: walk?.eventId ?? null,
-    };
-    try {
-      Sentry.addBreadcrumb({
-        category: "scheduling",
-        message: "allocation: availability row hit the candidate-start ceiling",
-        level: "warning",
-        data: detail,
-      });
-    } catch {
-      // Telemetry must never fail an allocation.
-    }
-    console.warn(
-      "[allocation] availability row truncated at MAX_CANDIDATE_STARTS_PER_ROW",
-      detail,
-    );
-  }
-
-  /**
-   * One breadcrumb per allocation for a search that ran out of its time budget.
-   * Without it a budget-truncated walk is indistinguishable from a genuinely full
-   * calendar — the SLOT_SHORTAGE it raises is the same one, by design — and the
-   * next thing anyone would do is widen the search again.
-   */
-  private static reportSearchBudgetSpent(
-    budget: SearchBudget,
-    consultant: ConsultantAllocationData,
-    walk?: AllocationWalkContext,
-  ): void {
-    const detail = {
-      budgetMs: budget.limitMs,
-      spentMs: budget.spentMs(),
-      consultantUserId: consultant.userId,
-      consultantProfileId: walk?.consultantProfileId ?? null,
-      customRows: consultant.availabilityWindowsCustom.length,
-      eventType: walk?.eventType ?? null,
-      eventId: walk?.eventId ?? null,
-    };
-    try {
-      Sentry.addBreadcrumb({
-        category: "scheduling",
-        message: "allocation: availability search hit its time budget",
-        level: "warning",
-        data: detail,
-      });
-    } catch {
-      // Telemetry must never fail an allocation.
-    }
-    console.warn(
-      "[allocation] availability search hit its time budget",
-      detail,
-    );
-  }
-
-  /**
-   * Build one call's worth of back-to-back slots from `start`, or null if the
-   * run is interrupted by a booking, the edge of availability, or the past.
-   */
-  private static buildConsecutiveBlock(
-    start: Date,
-    slotsPerCall: number,
-    consultant: ConsultantAllocationData,
-    bookedSlots: Set<string>,
-    now: Date,
-    walk?: AllocationWalkContext,
-  ): Date[] | null {
-    const block: Date[] = [];
-    let currentTime = new Date(start);
-
-    for (let i = 0; i < slotsPerCall; i++) {
-      if (
-        bookedSlots.has(currentTime.toISOString()) ||
-        !this.isWithinAvailability(currentTime, consultant, walk) ||
-        currentTime < now
-      ) {
-        return null;
-      }
-      block.push(new Date(currentTime));
-      currentTime = new Date(currentTime.getTime() + SCHEDULING_INTERVAL_MS);
-    }
-
-    return block;
-  }
-
-  /**
-   * Best-scoring placeable call inside one row on a recurring event's day, or
-   * null when the row can host none.
-   *
-   * A candidate may cross local midnight inside one overnight row, but only
-   * onto a day and week whose caps still have room (`hasRoomOn`), so the walk
-   * never breaches the per-day cap the validator enforces (ADR B9).
-   *
-   * #1065 — ordering by preference score, never filtering by it. Every
-   * candidate that was placeable before is still placeable; only which of them
-   * is returned can change. With no preference the maximum score is 0, the
-   * first placeable candidate hits it, and this returns exactly what the old
-   * first-fit walk returned.
-   */
-  private static bestFittingBlockInRow(
-    rowStart: Date,
-    slotsPerCall: number,
-    consultant: ConsultantAllocationData,
-    bookedSlots: Set<string>,
-    /** The clock and the window the placement has to fall inside. */
-    bounds: {
-      now: Date;
-      startDate: Date;
-      endDate: Date;
-      schedulingTimezone?: string;
-      /** Whether the per-day and per-week caps have room at this start. */
-      hasRoomOn: (candidateStart: Date) => boolean;
-    },
-    /** Epoch ms of this row's own end (#1194). */
-    rowEndMs: number,
-    preference?: AllocationPreference,
-    walk?: AllocationWalkContext,
-  ): { block: Date[]; score: number } | null {
-    const { now, startDate, endDate, schedulingTimezone, hasRoomOn } = bounds;
-    const maxScore = maxPreferenceScore(preference);
-    let best: { block: Date[]; score: number } | null = null;
-
-    for (const candidateStart of this.candidateStartsInRow(
-      rowStart,
-      consultant,
-      rowEndMs,
-      walk,
-    )) {
-      // The whole session must fit, not just its first slot: the validator
-      // rejects any slot whose end passes endDate, so testing the start alone
-      // would emit a block the validator then throws out.
-      const candidateEnd = new Date(
-        candidateStart.getTime() + slotsPerCall * SCHEDULING_INTERVAL_MS,
-      );
-
-      if (
-        candidateStart < now ||
-        candidateStart < startDate ||
-        candidateEnd > endDate ||
-        !hasRoomOn(candidateStart)
-      ) {
-        continue;
-      }
-
-      const block = this.buildConsecutiveBlock(
-        candidateStart,
-        slotsPerCall,
-        consultant,
-        bookedSlots,
-        now,
-        walk,
-      );
-      if (!block) continue;
-
-      const score = scoreCandidateStart(
-        candidateStart,
-        preference,
-        schedulingTimezone,
-      );
-      // Nothing later in the row can beat a perfect match, and an earlier one
-      // is the better session anyway — so stop. This is also the no-preference
-      // fast path: maxScore is 0, so the first placeable candidate ends the walk.
-      if (score >= maxScore) return { block, score };
-      if (!best || score > best.score) best = { block, score };
-    }
-
-    return best;
-  }
-
-  /**
-   * The one block a consultation or webinar needs, or null if the search window
-   * holds none.
-   *
-   * The walk order is unchanged — chronologically sorted rows, week by week,
-   * every 30-minute start inside each row. What changed for #1065 is that a
-   * placeable block is SCORED and remembered rather than returned outright, and
-   * the walk stops early only once a candidate matches the preference in full.
-   * With no preference the ceiling is 0, so the very first placeable block ends
-   * the walk and this returns precisely what the old first-fit search did.
-   *
-   * The remembered best is the entire safety property: whatever the preference
-   * says, if any block was placeable at all this returns one, so a preference
-   * that cannot be met costs a less-liked time and never the allocation.
-   *
-   * `budget` bounds the row walk only. The remembered best survives a truncated
-   * walk, so a search that ran out of time still returns the best block it had
-   * found rather than nothing — which is what lets the caller answer with a
-   * shortage instead of a timeout.
-   */
-  private static bestBlockForSingleSession(
-    eventType: EventType,
-    consultant: ConsultantAllocationData,
-    slotsPerCall: number,
-    bookedSlots: Set<string>,
-    now: Date,
-    sortedWeekly: ProjectableWeeklyRow[],
-    sortedCustom: ConsultantAllocationData["availabilityWindowsCustom"],
-    schedulingTimezone?: string,
-    preference?: AllocationPreference,
-    walk?: AllocationWalkContext,
-    budget?: SearchBudget,
-  ): Date[] | null {
-    const maxWeeksToSearch = eventType === "consultation" ? 8 : 4;
-    const maxScore = maxPreferenceScore(preference);
-
-    let bestBlock: Date[] | null = null;
-    let bestScore = -1;
-
-    /** Row {start, endMs} pairs, in the order the search has always used them. */
-    const rowStarts: { start: Date; endMs: number }[] = [];
-    if (consultant.scheduleType === ScheduleType.WEEKLY) {
-      // Week-major, row-minor: each row's next `maxWeeksToSearch` occurrences
-      // after now, projected per date so a DST change moves the instant, not the wall clock.
-      const horizon = new Date(
-        now.getTime() + (maxWeeksToSearch * 7 + 1) * DAY_MS,
-      );
-      const occurrencesByRow = sortedWeekly.map((slot) =>
-        weeklyRowIntervalsInRange(slot, now, horizon)
-          .filter((occurrence) => occurrence.start > now)
-          .slice(0, maxWeeksToSearch),
-      );
-      for (let week = 0; week < maxWeeksToSearch; week++) {
-        for (const occurrences of occurrencesByRow) {
-          const occurrence = occurrences[week];
-          if (!occurrence) continue;
-          rowStarts.push({
-            start: occurrence.start,
-            endMs: occurrence.end.getTime(),
-          });
-        }
-      }
-    } else {
-      for (const slot of sortedCustom) {
-        rowStarts.push({
-          start: new Date(slot.startsAt),
-          endMs: new Date(slot.endsAt).getTime(),
-        });
-      }
-    }
-
-    for (const { start: rowStart, endMs: rowEndMs } of rowStarts) {
-      // One row's worth of walk is the unit of work here, so this is the finest
-      // place the budget can be tested without putting a clock read inside the
-      // candidate loop.
-      if (budget?.exhausted()) {
-        this.reportSearchBudgetSpent(budget, consultant, walk);
-        break;
-      }
-      for (const candidateStart of this.candidateStartsInRow(
-        rowStart,
-        consultant,
-        rowEndMs,
-        walk,
-      )) {
-        if (candidateStart < now) continue;
-
-        const consecutiveBlock = this.buildConsecutiveBlock(
-          candidateStart,
-          slotsPerCall,
-          consultant,
-          bookedSlots,
-          now,
-          walk,
-        );
-        if (!consecutiveBlock) continue;
-
-        const score = scoreCandidateStart(
-          candidateStart,
-          preference,
-          schedulingTimezone,
-        );
-        // A full match cannot be beaten, and the earliest full match is the
-        // better session — so stop here rather than scanning the whole window.
-        if (score >= maxScore) return consecutiveBlock;
-        if (score > bestScore) {
-          bestScore = score;
-          bestBlock = consecutiveBlock;
-        }
-      }
-    }
-
-    return bestBlock;
-  }
-
-  /**
    * Find available consecutive slots for auto-allocation.
    *
    * #1065 — `preference` orders the candidates that are already valid. Every
@@ -4063,7 +3547,7 @@ export class SchedulingService {
     }
 
     // Validate availability exists
-    const projectableWeekly = this.projectableWeeklyRows(consultant);
+    const projectableWeekly = projectableWeeklyRows(consultant);
     const hasWeeklySlots = projectableWeekly.length > 0;
     const hasCustomSlots = consultant.availabilityWindowsCustom.length > 0;
     if (
@@ -4089,7 +3573,7 @@ export class SchedulingService {
     // Without this, Tue 08:00 (480min) would sort before Mon 09:00 (540min).
     const sortedWeekly =
       consultant.scheduleType === ScheduleType.WEEKLY
-        ? this.sortWeeklyByNextOccurrence(projectableWeekly, now)
+        ? sortWeeklyByNextOccurrence(projectableWeekly, now)
         : [];
     const sortedCustom =
       consultant.scheduleType === ScheduleType.CUSTOM
@@ -4106,7 +3590,7 @@ export class SchedulingService {
 
     // For consultations/webinars: find one consecutive block, searching multiple weeks
     if (eventType === "consultation" || eventType === "webinar") {
-      const singleSession = this.bestBlockForSingleSession(
+      const singleSession = bestBlockForSingleSession(
         eventType,
         consultant,
         slotsPerCall,
@@ -4247,10 +3731,7 @@ export class SchedulingService {
         ? (weeklyStartsByUtcDay.get(currentDay.getTime()) ?? [])
         : sortedCustom
             .map((slot) => {
-              const start = this.matchCustomSlotToDay(
-                slot.startsAt,
-                currentDay,
-              );
+              const start = matchCustomSlotToDay(slot.startsAt, currentDay);
               if (!start) return null;
               return { start, endMs: new Date(slot.endsAt).getTime() };
             })
@@ -4312,7 +3793,7 @@ export class SchedulingService {
           continue;
         }
 
-        const candidate = this.bestFittingBlockInRow(
+        const candidate = bestFittingBlockInRow(
           rowStart,
           slotsPerCall,
           consultant,
@@ -4412,7 +3893,7 @@ export class SchedulingService {
         cursor.setUTCDate(cursor.getUTCDate() + 1)
       ) {
         if (searchBudget.exhausted()) {
-          this.reportSearchBudgetSpent(searchBudget, consultant, walk);
+          reportSearchBudgetSpent(searchBudget, consultant, walk);
           return;
         }
         while (
@@ -4472,25 +3953,6 @@ export class SchedulingService {
     }
 
     return selectedSlots.sort((a, b) => a.getTime() - b.getTime());
-  }
-
-  /**
-   * Match a custom slot to a specific target day.
-   */
-  private static matchCustomSlotToDay(
-    slotTime: Date,
-    targetDay: Date,
-  ): Date | null {
-    const slotDate = new Date(slotTime);
-    // Use ISO date string for reliable comparison (always YYYY-MM-DD format).
-    // Previous code used getUTCMonth() (0-indexed) without padding, which was fragile.
-    const slotDateStr = slotDate.toISOString().split("T")[0];
-    const targetDateStr = targetDay.toISOString().split("T")[0];
-
-    if (slotDateStr === targetDateStr) {
-      return new Date(slotTime);
-    }
-    return null;
   }
 
   /**
