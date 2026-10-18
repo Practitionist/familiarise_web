@@ -10,7 +10,7 @@ import {
   transitionParticipant,
 } from "@/lib/booking/participants";
 import { PaymentError } from "@/lib/payments/core/types";
-import prisma, { type Tx } from "@/lib/prisma";
+import prisma from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import { PaymentGateway, PaymentStatus, Prisma } from "@prisma/client";
 import {
@@ -52,13 +52,6 @@ import {
 } from "@/lib/payments/billing/overage-settlement";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import { DiscountExhaustedError } from "@/lib/payments/pricing/discount-exhausted-error";
-import {
-  getInvoiceCreditLimitPaise,
-  assertVerifiedDomainOrThrow,
-} from "@/lib/enterprise/governance";
-import { checkConsent } from "@/lib/compliance/dpdp";
-import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
-import { ENABLE_DUNNING_SUSPEND } from "@/lib/feature-flags";
 import { savedCardCustomerId } from "@/lib/payments/core/saved-card-customer";
 import {
   notifyOrgProgramExhausted,
@@ -66,7 +59,6 @@ import {
 } from "@/lib/novu/org-workflows";
 import { sendOrgOperationalEmail } from "@/lib/email/senders/money";
 import { getAppUrl } from "@/lib/url";
-import { sumPaise } from "@/lib/payments/utils/money";
 import {
   ensurePlatformCancellationPolicy,
   resolveCheckoutCancellationPolicyId,
@@ -103,6 +95,11 @@ import { handleClassCheckout } from "@/lib/payments/checkout/handlers/class";
 import { handleWebinarCheckout } from "@/lib/payments/checkout/handlers/webinar";
 import { handleSubscriptionCheckout } from "@/lib/payments/checkout/handlers/subscription";
 import { handleConsultationCheckout } from "@/lib/payments/checkout/handlers/consultation";
+import {
+  assertWithinInvoiceCreditLimit,
+  readInvoiceExposurePaise,
+} from "@/lib/payments/checkout/org-funding";
+import { resolveOrgFunding } from "@/lib/payments/checkout/org-funding";
 
 // ============================================================================
 // Type Definitions
@@ -143,71 +140,6 @@ const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<BusinessErrorCode> =
 // ============================================================================
 // Open-Order Reuse (rec C, checkout dossier Q2)
 // ============================================================================
-
-/**
- * #1744 row 4 — the one credit-limit predicate both gates share: the booking
- * being priced counts, so `exposure + booking > limit` refuses. Copy is in
- * whole rupees; the limit is a business figure, not a paise integer.
- */
-export function assertWithinInvoiceCreditLimit(
-  exposurePaise: number,
-  bookingPaise: number,
-  limitPaise: number,
-): void {
-  if (exposurePaise + bookingPaise <= limitPaise) return;
-  const rupees = (p: number) =>
-    `₹${Math.round(p / 100).toLocaleString("en-IN")}`;
-  throw Object.assign(
-    new Error(
-      `This booking would take the organisation past its invoice credit limit of ${rupees(limitPaise)} (${rupees(exposurePaise)} already outstanding). Outstanding invoices must be paid before new bookings.`,
-    ),
-    { httpStatus: 402, code: "ORG_CREDIT_LIMIT_REACHED" },
-  );
-}
-
-/**
- * #1591 J3-P1-01 — an org's open invoice exposure: unbilled accruals NET of
- * their refund reversal legs (mirrors invoice-rollup.ts, which bills the net),
- * plus invoices already issued and unpaid. Both credit-limit gates read this.
- */
-export async function readInvoiceExposurePaise(
-  db: Pick<Tx, "paymentLeg" | "organizationInvoice">,
-  organizationId: string,
-): Promise<number> {
-  // Sequential (never Promise.all on `tx`): under PG_POOL_MAX=1 a single
-  // interactive-tx connection cannot serve concurrent queries (#1435).
-  const accrualAgg = await db.paymentLeg.aggregate({
-    where: {
-      source: {
-        in: [
-          "INVOICE_ACCRUAL",
-          "OVERAGE_INVOICE_ACCRUAL",
-          // Refunds append negative *_REVERSAL siblings (#786); without them
-          // a refunded seat kept counting against the limit.
-          "INVOICE_ACCRUAL_REVERSAL",
-          "OVERAGE_INVOICE_ACCRUAL_REVERSAL",
-        ],
-      },
-      payment: {
-        organizationId,
-        paymentStatus: "SUCCEEDED",
-        billableToOrgInvoiceId: null,
-      },
-    },
-    _sum: { amountPaise: true },
-  });
-  const outstandingAgg = await db.organizationInvoice.aggregate({
-    where: {
-      organizationId,
-      status: { in: ["ISSUED", "OVERDUE"] },
-    },
-    _sum: { totalPaise: true },
-  });
-  return (
-    sumPaise(accrualAgg._sum.amountPaise) +
-    sumPaise(outstandingAgg._sum.totalPaise)
-  );
-}
 
 // ============================================================================
 // Payment Intent Manager
@@ -406,234 +338,23 @@ export async function handleCheckout(
   let paymentResponse: { id: string; client_secret: string | null } | null =
     null;
 
-  // Enterprise (Arch 4-Modified): resolve org + Program context up-front.
-  //
-  //   fundingSource=PERSONAL → org is tagged for reporting only; learner pays.
-  //   fundingSource=WALLET   → debit BillingAccount.walletBalance atomically.
-  //   fundingSource=INVOICE  → accrue to the org's monthly invoice.
-  //   fundingSource=LICENSE  → absorbed by a LICENSED_SEAT program, amount=0.
-  //
-  // Every non-PERSONAL path also requires an ACTIVE `ProgramAssignment`
-  // whose Program covers the current `appointmentType` — that's the source
-  // of truth for "is this booking sponsored?". A missing assignment on a
-  // WALLET/INVOICE/LICENSE org fails closed: we refuse rather than
-  // silently bill the learner's card.
   const appointmentType: Exclude<CheckoutInput["appointmentType"], "TRIAL"> =
     requestedType;
 
-  let organizationId: string | null = null;
-  let billingAccountId: string | null = null;
-  let fundingSource: "PERSONAL" | "WALLET" | "INVOICE" | "LICENSE" | null =
-    null;
-  let programAssignmentId: string | null = null;
-  // ADR 18 — Program behind the assignment above; feeds the curated-panel
-  // check in revalidateInsideLock.
-  let fundingProgramId: string | null = null;
-  let callerMembershipId: string | null = null;
-  // #785 B6 — effective INVOICE credit limit; threaded to the Serializable
-  // booking tx for a race-safe re-check (the pre-lock check below is fast-fail only).
-  let creditEffectiveLimit: number | null = null;
-  // Set when org funding strips the buyer's referral credits; the UI says so.
-  let referralCreditsDropped = false;
-
-  if (validatedData.organizationId) {
-    const org = await prisma.organization.findUnique({
-      where: { id: validatedData.organizationId },
-      select: {
-        id: true,
-        status: true,
-        canSponsor: true,
-        billingAccount: {
-          select: {
-            id: true,
-            fundingSource: true,
-            creditLimit: true,
-            walletBalance: true,
-          },
-        },
-      },
-    });
-    if (!org) {
-      throw new Error("Organization not found.");
-    }
-    // PR-1d: PENDING_VERIFICATION orgs may transact for INVOICE bookings
-    // under the credit-limit gate (#687 invoice-fraud guard). Anything
-    // else still requires fully ACTIVE status.
-    // #1582 B-P1-01c — typed 403s; the pre-tx twins of the in-tx re-checks.
-    if (org.status !== "ACTIVE" && org.status !== "PENDING_VERIFICATION") {
-      throw Object.assign(
-        new Error(
-          `Organization is ${org.status.toLowerCase()}; cannot process bookings.`,
-        ),
-        { httpStatus: 403, code: "ORG_NOT_OPERATIONAL" },
-      );
-    }
-    if (!org.canSponsor) {
-      throw Object.assign(
-        new Error(
-          "This organization is not configured to sponsor bookings (canSponsor=false).",
-        ),
-        { httpStatus: 403, code: "ORG_CANNOT_SPONSOR" },
-      );
-    }
-
-    // #812 — dunning-suspend gate (config-gated, default off). The dunning cron's
-    // Stage 3 stamps OrganizationInvoice.dunningSuspendedAt once an invoice is
-    // unpaid past the grace window; while any such invoice is still OVERDUE, new
-    // sponsored bookings for the org are blocked until it is paid. Paying the
-    // invoice clears its OVERDUE status, which lifts this gate naturally.
-    if (ENABLE_DUNNING_SUSPEND) {
-      const suspended = await prisma.organizationInvoice.findFirst({
-        where: {
-          organizationId: org.id,
-          status: "OVERDUE",
-          dunningSuspendedAt: { not: null },
-        },
-        select: { invoiceNumber: true },
-        // #750 — cite the OLDEST overdue invoice in the block message, not an
-        // arbitrary one.
-        orderBy: { dueDate: "asc" },
-      });
-      if (suspended) {
-        // #1467 — same shape as the assignment refusal below: a bare Error here
-        // would 500 the moment the flag is switched on. 402 because the block is
-        // lifted by paying money that is already owed, which is exactly what
-        // Payment Required means to the buyer's client.
-        throw Object.assign(
-          new Error(
-            `This organization has an overdue invoice (${suspended.invoiceNumber}) and is suspended from new sponsored bookings until it is paid.`,
-          ),
-          { httpStatus: 402, code: "BILLING_SUSPENDED_DUNNING" },
-        );
-      }
-    }
-
-    // SECURITY: Verify the caller is an active Membership of this org.
-    const callerMembership = await prisma.membership.findUnique({
-      where: { userId_organizationId: { userId, organizationId: org.id } },
-      select: { role: true, status: true, id: true },
-    });
-    if (!callerMembership || callerMembership.status !== "ACTIVE") {
-      // qa-1753 — the pre-tx twin of the in-tx check carries the same code.
-      throw Object.assign(
-        new Error("You are not an active member of this organization."),
-        { httpStatus: 403, code: "ORG_MEMBERSHIP_REQUIRED" },
-      );
-    }
-
-    // #701 — DPDP consent gate. The member is having a session booked + paid on
-    // their behalf by the org; require a live SESSION_BOOKING consent artifact
-    // before processing it. Fail-closed (checkConsent is false with no artifact).
-    if (
-      !(await checkConsent({
-        userId,
-        purposeCode: PURPOSE_CODES.SESSION_BOOKING,
-      }))
-    ) {
-      throw Object.assign(
-        new Error(
-          "Consent required before your organization can book sessions for you. Give session-booking consent in Settings › Account › Data consent.",
-        ),
-        {
-          httpStatus: 403,
-          code: "CONSENT_REQUIRED",
-          purposeCode: "SESSION_BOOKING",
-        },
-      );
-    }
-
-    organizationId = org.id;
-    callerMembershipId = callerMembership.id;
-    billingAccountId = org.billingAccount?.id ?? null;
-    fundingSource = org.billingAccount?.fundingSource ?? "PERSONAL";
-
-    // Block personal referral credits on org-funded bookings.
-    if (validatedData.useReferralCredits && fundingSource !== "PERSONAL") {
-      validatedData = { ...validatedData, useReferralCredits: false };
-      referralCreditsDropped = true;
-    }
-
-    // INVOICE fundingSource: enforce creditLimit. PR-1d (#687):
-    // unverified orgs (PENDING_VERIFICATION) get an automatic
-    // governance credit-limit even when the BillingAccount.creditLimit
-    // column is null — the default ₹50k starter blocks the
-    // book-everything-then-ghost abuse pattern. The cap auto-lifts
-    // once the org is verified OR pays its first invoice.
-    if (fundingSource === "INVOICE") {
-      // K-02 / #687 — an org may not accrue INVOICE debt without a verified
-      // domain. The credit-limit gate below caps unverified-STATUS orgs; this
-      // asserts the orthogonal domain-ownership proof (OrgDomainClaim), the
-      // gate governance.ts documents for INVOICE funding but had no caller.
-      await assertVerifiedDomainOrThrow(prisma, org.id, "INVOICE_FUNDING");
-
-      const explicitLimit = org.billingAccount?.creditLimit ?? null;
-      const isVerified = org.status === "ACTIVE";
-      const governanceLimit = isVerified ? null : getInvoiceCreditLimitPaise();
-      const effectiveLimit =
-        explicitLimit === null
-          ? governanceLimit
-          : governanceLimit === null
-            ? explicitLimit
-            : Math.min(explicitLimit, governanceLimit);
-      creditEffectiveLimit = effectiveLimit;
-      // #1744 row 4 — the fast-fail exposure check moved below STEP 1: it needs
-      // this booking's price, which is not derived yet at this point.
-    }
-
-    // Resolve a currently-active ProgramAssignment for this member that
-    // covers the appointment type. The assignment's Program must be
-    // ACTIVE and attached to an ACTIVE contract still within its
-    // effectiveFrom..effectiveTo window. The Program's
-    // `coveredPlanTypes` array filters which appointment types it
-    // sponsors (empty array = covers everything).
-    // For PERSONAL funding, an active ProgramAssignment is optional (enables
-    // curated-panel and cap/overage governance when assigned, while allowing
-    // unassigned personal bookings to proceed).
-    if (
-      fundingSource !== "PERSONAL" ||
-      Boolean(prisma.programAssignment?.findFirst)
-    ) {
-      const now = new Date();
-      const assignment = await prisma.programAssignment.findFirst({
-        where: {
-          membershipId: callerMembership.id,
-          status: "ACTIVE",
-          periodStart: { lte: now },
-          periodEnd: { gte: now },
-          program: {
-            status: "ACTIVE",
-            OR: [
-              { coveredPlanTypes: { isEmpty: true } },
-              { coveredPlanTypes: { has: appointmentType } },
-            ],
-            contract: {
-              organizationId: org.id,
-              status: "ACTIVE",
-              effectiveFrom: { lte: now },
-              OR: [{ effectiveTo: null }, { effectiveTo: { gte: now } }],
-            },
-          },
-        },
-        orderBy: { periodEnd: "desc" },
-        select: { id: true, programId: true },
-      });
-
-      if (!assignment && fundingSource !== "PERSONAL") {
-        throw Object.assign(
-          new Error(
-            "No active program assignment covers this booking. Ask your organization admin to assign you to a Program that covers " +
-              appointmentType +
-              ".",
-          ),
-          { httpStatus: 409, code: "PROGRAM_ASSIGNMENT_INACTIVE" },
-        );
-      }
-      if (assignment) {
-        programAssignmentId = assignment.id;
-        fundingProgramId = assignment.programId;
-      }
-    }
-  }
+  const orgFunding = await resolveOrgFunding(
+    validatedData,
+    userId,
+    appointmentType,
+  );
+  validatedData = orgFunding.validatedData;
+  const {
+    organizationId,
+    programAssignmentId,
+    fundingProgramId,
+    callerMembershipId,
+    referralCreditsDropped,
+  } = orgFunding;
+  let { billingAccountId, fundingSource, creditEffectiveLimit } = orgFunding;
 
   try {
     // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)

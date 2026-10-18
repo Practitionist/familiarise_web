@@ -221,11 +221,11 @@ import {
   unlockConsulteeBooking,
   unlockEventCheckout,
 } from "../../utils/appointmentlock";
+import { handleCheckout } from "../../lib/payments/operations/checkout";
 import {
-  handleCheckout,
   readInvoiceExposurePaise,
   assertWithinInvoiceCreditLimit,
-} from "../../lib/payments/operations/checkout";
+} from "../../lib/payments/checkout/org-funding";
 
 // ---------------------------------------------------------------------------
 // In-memory store + faithful evaluation of the reuse lookup's WHERE clause.
