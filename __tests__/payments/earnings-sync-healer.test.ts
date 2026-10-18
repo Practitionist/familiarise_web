@@ -22,6 +22,7 @@
 const mockPaymentFindMany = jest.fn();
 const mockPaymentCount = jest.fn();
 const mockPaymentFindFirst = jest.fn();
+const mockPaymentUpdateMany = jest.fn();
 const mockReportSentryMessage = jest.fn();
 const mockConsultantEarningsFindMany = jest.fn();
 const mockSystemEventFindMany = jest.fn();
@@ -35,6 +36,7 @@ jest.mock("../../lib/prisma", () => ({
       findMany: (...a: unknown[]) => mockPaymentFindMany(...a),
       count: (...a: unknown[]) => mockPaymentCount(...a),
       findFirst: (...a: unknown[]) => mockPaymentFindFirst(...a),
+      updateMany: (...a: unknown[]) => mockPaymentUpdateMany(...a),
     },
     consultantEarnings: {
       findMany: (...a: unknown[]) => mockConsultantEarningsFindMany(...a),
@@ -129,6 +131,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockPaymentCount.mockResolvedValue(0);
   mockPaymentFindFirst.mockResolvedValue(null);
+  mockPaymentUpdateMany.mockResolvedValue({ count: 1 });
   mockConsultantEarningsFindMany.mockResolvedValue([]);
   mockSystemEventFindMany.mockResolvedValue([]);
   mockRecordSystemError.mockResolvedValue(undefined);
@@ -354,6 +357,32 @@ describe("a payment nobody can ever be paid for gets escalated", () => {
     expect(
       mockSystemEventFindMany.mock.calls[0][0].where.correlationId.in,
     ).toHaveLength(3);
+  });
+
+  it("stamps 60 paged unaccruable rows out of the cohort so they cannot starve the healer", async () => {
+    servePayments(
+      Array.from({ length: 60 }, (_, i) => unaccruablePayment(`stuck-${i}`, 5)),
+    );
+
+    const result = await syncPaymentEarnings({ limit: 100 });
+
+    expect(result.retiredCount).toBe(60);
+    expect(mockPaymentUpdateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: "stuck-0",
+        paymentStatus: "SUCCEEDED",
+        AND: [notSettledElsewhereWhere],
+      }),
+      data: {
+        description: expect.stringMatching(
+          /^REQUIRES_MANUAL_RECOVERY: EARNINGS_UNACCRUABLE_NO_CONSULTANT/,
+        ),
+      },
+    });
+    // The cohort excludes the marker, so the next run reads healable rows.
+    expect(mockPaymentFindMany.mock.calls[0][0].where.AND).toEqual([
+      notSettledElsewhereWhere,
+    ]);
   });
 
   it("leaves a payment younger than a day alone", async () => {

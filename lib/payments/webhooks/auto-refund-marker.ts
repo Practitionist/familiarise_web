@@ -26,6 +26,9 @@ export const AUTO_REFUND_STUCK_PREFIX = "Auto-refund stuck:";
 /** A settled replay sale: appointment-less by design, so never an orphan. */
 export const REPLAY_SALE_PREFIX = "Replay sale:";
 
+/** A row no sweep can settle; it leaves every sweep's cohort until an operator acts. */
+export const MANUAL_RECOVERY_PREFIX = "REQUIRES_MANUAL_RECOVERY:";
+
 /**
  * Appointment-less SUCCEEDED rows another owner settles (replay sales and every
  * auto-refund marker); the orphan sweeps must neither page, link nor refund them.
@@ -39,7 +42,7 @@ export const notSettledElsewhereWhere: Prisma.PaymentWhereInput = {
         AUTO_REFUNDED_PREFIX,
         AUTO_REFUND_STUCK_PREFIX,
         REPLAY_SALE_PREFIX,
-        "REQUIRES_MANUAL_RECOVERY:",
+        MANUAL_RECOVERY_PREFIX,
       ].map((prefix) => ({ description: { startsWith: prefix } })),
     },
   ],
@@ -71,7 +74,7 @@ export function settledAutoRefundDescription(pending: string): string {
   if (
     pending.startsWith(`${AUTO_REFUND_PENDING_PREFIX} Over-capture surplus`)
   ) {
-    return swapPrefix(pending, "REQUIRES_MANUAL_RECOVERY:");
+    return swapPrefix(pending, MANUAL_RECOVERY_PREFIX);
   }
   return swapPrefix(pending, AUTO_REFUNDED_PREFIX);
 }
