@@ -21,6 +21,7 @@ import {
   type SupportedCheckoutGateway,
 } from "@/schemas/checkout";
 import {
+  DIRECT_CHECKOUT_HOLD_MS,
   MINIMUM_BOOKING_LEAD_TIME_MS,
   MINIMUM_BOOKING_LEAD_TIME_MINUTES,
 } from "@/lib/payments/constants";
@@ -107,18 +108,22 @@ function gatewaylessConfirmationText(data: {
   return "Your consultation has been confirmed. Check your dashboard for details.";
 }
 
-// sessionStorage can throw in privacy modes; a lost flag only re-runs the advisory slot check.
-function readSessionFlag(key: string): boolean {
+// sessionStorage can throw in privacy modes; a lost marker only re-runs the advisory slot check.
+// The marker holds the hold's expiry, so once the hold has lapsed the check runs again.
+function holdMarkerLive(key: string): boolean {
   try {
-    return globalThis.sessionStorage?.getItem(key) === "1";
+    return Number(globalThis.sessionStorage?.getItem(key)) > Date.now();
   } catch {
     return false;
   }
 }
 
-function writeSessionFlag(key: string): void {
+function writeHoldMarker(key: string): void {
   try {
-    globalThis.sessionStorage?.setItem(key, "1");
+    globalThis.sessionStorage?.setItem(
+      key,
+      String(Date.now() + DIRECT_CHECKOUT_HOLD_MS),
+    );
   } catch {
     // Advisory only: checkout's own recheck still arbitrates the slot.
   }
@@ -379,7 +384,7 @@ export default function ConsultationCheckoutPage({
 
   // The checkout page can be reached from a stale grid, so it re-asks the grid once before Pay.
   // The buyer's own open hold on this window reads as taken there, so a page that already
-  // started payment skips it and leaves the hold to checkout's resume path.
+  // started payment skips it until that hold lapses, leaving it to checkout's resume path.
   const holdMarkerKey = `checkout-hold:${resolvedParams.planId}:${validatedSearchParams?.startsAt ?? ""}`;
   const slotOfferedQuery = useQuery({
     queryKey: [
@@ -395,7 +400,7 @@ export default function ConsultationCheckoutPage({
     retry: false,
     refetchOnWindowFocus: false,
     queryFn: () =>
-      readSessionFlag(holdMarkerKey) ||
+      holdMarkerLive(holdMarkerKey) ||
       !consultantProfileId ||
       !validatedSearchParams
         ? Promise.resolve(true)
@@ -1024,7 +1029,7 @@ export default function ConsultationCheckoutPage({
                           }
                           disabled={isMaintenanceBlocked}
                           onBeforeCheckout={async () => {
-                            writeSessionFlag(holdMarkerKey);
+                            writeHoldMarker(holdMarkerKey);
                             return true;
                           }}
                           onPaymentError={(error: {

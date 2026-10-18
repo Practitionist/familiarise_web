@@ -64,6 +64,7 @@ import {
 } from "@/utils/appointmentlock";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 import { buildOccurrenceForWindow } from "@/lib/appointments/occurrences";
+import { DIRECT_CHECKOUT_HOLD_MS } from "@/lib/payments/constants";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import {
   buildConsultantOccupancyWhere,
@@ -244,9 +245,6 @@ const RENEWABLE_SUBSCRIPTION_STATUSES: ReadonlySet<AppointmentStatus> = new Set(
 
 const REFERRAL_CREDITS_DROPPED_NOTICE =
   "Referral credits can't be used on organisation-funded bookings, so none were spent.";
-
-/** A direct checkout's PENDING window; the slot frees when it lapses (#1319). */
-const DIRECT_CHECKOUT_HOLD_MS = 30 * 60 * 1000;
 
 /** Why a superseded open order's booking was cancelled (#1463). */
 const SUPERSEDED_HOLD_NOTE =
