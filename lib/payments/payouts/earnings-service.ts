@@ -1063,6 +1063,22 @@ async function resolvePartySettlements(
   return { partySettlements, collabSettlements };
 }
 
+/** The CHARGE_ORG surcharges riding on a payment: one per live over-cap batch. */
+async function orgOverageSurchargeOnPayment(
+  db: Tx | typeof prisma,
+  paymentId: string,
+): Promise<number> {
+  const events = await db.overageEvent.findMany({
+    where: {
+      bookingUtilization: { paymentId },
+      overageBehavior: "CHARGE_ORG",
+      chargeStatus: { notIn: ["REVERSED", "BLOCKED", "FAILED"] },
+    },
+    select: { surchargePaise: true },
+  });
+  return events.reduce((sum, e) => sum + e.surchargePaise, 0);
+}
+
 async function resolvePlannedWalletAndOverage(
   db: Tx | typeof prisma,
   payment: {
@@ -1099,17 +1115,13 @@ async function resolvePlannedWalletAndOverage(
   let orgOverageSurchargePaise = 0;
   const nominalTotal = (payment.originalAmount ?? 0) + (payment.taxAmount ?? 0);
   if (
-    typeof db.overageEvent?.findFirst === "function" &&
+    typeof db.overageEvent?.findMany === "function" &&
     (overageAccrualPaise > 0 || wallet > nominalTotal)
   ) {
-    const orgOverage = await db.overageEvent.findFirst({
-      where: {
-        bookingUtilization: { paymentId: payment.id },
-        overageBehavior: "CHARGE_ORG",
-      },
-      select: { surchargePaise: true },
-    });
-    orgOverageSurchargePaise = sumPaise(orgOverage?.surchargePaise);
+    orgOverageSurchargePaise = await orgOverageSurchargeOnPayment(
+      db,
+      payment.id,
+    );
   }
 
   return { walletLegOrgId, orgOverageSurchargePaise };
@@ -1644,17 +1656,10 @@ async function resolveOverageSurchargeForCredits(
 ): Promise<number> {
   if (overageAccrualPaise <= 0 && !hasWalletSurcharge) return 0;
   if (
-    typeof tx.overageEvent?.findFirst === "function" &&
+    typeof tx.overageEvent?.findMany === "function" &&
     (!preplanned || preplanned.orgOverageSurchargePaise === 0)
   ) {
-    const orgOverage = await tx.overageEvent.findFirst({
-      where: {
-        bookingUtilization: { paymentId },
-        overageBehavior: "CHARGE_ORG",
-      },
-      select: { surchargePaise: true },
-    });
-    return sumPaise(orgOverage?.surchargePaise);
+    return orgOverageSurchargeOnPayment(tx, paymentId);
   }
   return preplanned?.orgOverageSurchargePaise ?? 0;
 }

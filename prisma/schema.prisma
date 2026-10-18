@@ -2023,8 +2023,8 @@ model BookingUtilization {
   // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
   deletedAt DateTime? @db.Timestamptz
 
-  createdAt    DateTime      @default(now()) @db.Timestamptz
-  overageEvent OverageEvent?
+  createdAt     DateTime       @default(now()) @db.Timestamptz
+  overageEvents OverageEvent[]
 
   // #781 §D — createdAt-ordered utilization scans (statements / reconcile). The
   // composite also serves programAssignmentId-only lookups (leftmost prefix).
@@ -7925,8 +7925,10 @@ model OverageEvent {
   id                   String              @id @default(cuid())
   programAssignmentId  String
   programAssignment    ProgramAssignment   @relation(fields: [programAssignmentId], references: [id], onDelete: Restrict)
-  bookingUtilizationId String              @unique
+  bookingUtilizationId String
   bookingUtilization   BookingUtilization  @relation(fields: [bookingUtilizationId], references: [id], onDelete: Restrict)
+  /// The UsageLedgerEntry id of the metered batch that went over cap: one event per batch.
+  batchKey             String?
   overageBehavior      OverageBehavior
   /// #778 elegance — the marginal split into its two components so the money is
   /// auditable and GST-itemizable. `basePaise` is the pass-through over-cap
@@ -7968,6 +7970,7 @@ model OverageEvent {
 
   createdAt DateTime @default(now())
 
+  @@unique([bookingUtilizationId, batchKey])
   @@index([programAssignmentId, createdAt])
   @@index([settledAt])
   // #781 §D — per-assignment settlement/reconcile scans

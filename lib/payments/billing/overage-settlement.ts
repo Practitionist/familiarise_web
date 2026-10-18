@@ -38,6 +38,8 @@ export interface RecordOverageInput {
     engagementsUsedAfter: number;
     consumedPaiseAfter: number;
     creditBudgetPaise: number | null;
+    /** The metered batch's ledger row; keys this batch's OverageEvent. */
+    usageLedgerEntryId: string | null;
   };
   bookingPricePaise: number;
   currency: Currency;
@@ -419,6 +421,7 @@ async function recordMemberOverageCharge(
     organizationId,
     paymentGateway,
   } = input;
+  const batchKey = input.utilization.usageLedgerEntryId;
 
   // Carve the over-cap pass-through (basePaise) out of the org-funded parent
   // FIRST so we know the exact carvedBasePaise to bill the member (preventing
@@ -457,7 +460,10 @@ async function recordMemberOverageCharge(
       consumerStateCode: ctx.consumerStateCode,
       currency,
       paymentMethod: "CARD",
-      paymentIntent: `overage:${paymentId}`,
+      // One side-payment per over-cap batch, so the batch key keeps the intent unique.
+      paymentIntent: batchKey
+        ? `overage:${paymentId}:${batchKey}`
+        : `overage:${paymentId}`,
       paymentGateway,
       paymentStatus: PaymentStatus.PENDING,
       isMockPayment: false,
@@ -474,6 +480,7 @@ async function recordMemberOverageCharge(
     data: {
       programAssignmentId,
       bookingUtilizationId: ctx.bookingUtilizationId,
+      batchKey,
       overageBehavior: "CHARGE_MEMBER",
       basePaise: carvedBasePaise,
       surchargePaise: ctx.surchargePaise,
@@ -614,6 +621,7 @@ async function recordParentInvoicedOrgOverage(
       data: {
         programAssignmentId,
         bookingUtilizationId,
+        batchKey: input.utilization.usageLedgerEntryId,
         overageBehavior: "CHARGE_ORG",
         basePaise: 0,
         surchargePaise,
@@ -630,6 +638,7 @@ async function recordParentInvoicedOrgOverage(
     data: {
       programAssignmentId,
       bookingUtilizationId,
+      batchKey: input.utilization.usageLedgerEntryId,
       overageBehavior: "CHARGE_ORG",
       basePaise: 0,
       surchargePaise: 0,
@@ -676,6 +685,7 @@ async function recordOrgOverageCharge(
       paymentId,
       programAssignmentId,
       bookingUtilizationId: ctx.bookingUtilizationId,
+      batchKey: input.utilization.usageLedgerEntryId,
       basePaise,
       surchargePaise,
       marginalPaise,
@@ -722,6 +732,7 @@ async function recordOrgOverageCharge(
         data: {
           programAssignmentId,
           bookingUtilizationId: ctx.bookingUtilizationId,
+          batchKey: input.utilization.usageLedgerEntryId,
           overageBehavior: "CHARGE_ORG",
           basePaise: effectiveBasePaise,
           surchargePaise,
@@ -808,6 +819,7 @@ async function recordOrgOverageCharge(
     data: {
       programAssignmentId,
       bookingUtilizationId: ctx.bookingUtilizationId,
+      batchKey: input.utilization.usageLedgerEntryId,
       overageBehavior: "CHARGE_ORG",
       basePaise,
       surchargePaise,
@@ -837,6 +849,7 @@ async function recordWalletCollectedOrgOverage(
     paymentId: string;
     programAssignmentId: string;
     bookingUtilizationId: string;
+    batchKey: string | null;
     basePaise: number;
     surchargePaise: number;
     marginalPaise: number;
@@ -888,6 +901,7 @@ async function recordWalletCollectedOrgOverage(
     data: {
       programAssignmentId: args.programAssignmentId,
       bookingUtilizationId: args.bookingUtilizationId,
+      batchKey: args.batchKey,
       overageBehavior: "CHARGE_ORG",
       basePaise: args.basePaise,
       surchargePaise: args.surchargePaise,

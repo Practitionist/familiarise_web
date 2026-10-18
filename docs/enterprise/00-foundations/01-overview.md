@@ -217,9 +217,11 @@ in `prisma/sql/`, so multiple organizations can stage unverified domain claims
 without blocking one another while at most one organization can hold a verified
 claim on a domain.
 
-The over-cap money meter is the `OverageEvent` row (#775/#778). It is 1:1 with a
-`BookingUtilization` and splits into `basePaise` plus `surchargePaise`, which sum
-to `marginalPaise`. Meanwhile, the append-only entitlement consumption log is
+The over-cap money meter is the `OverageEvent` row (#775/#778). A `BookingUtilization`
+carries one per over-cap metered batch, keyed by `batchKey` (the batch's
+`UsageLedgerEntry` id; unique with `bookingUtilizationId`), so a subscription that
+goes over cap on several allocations carries several. Each splits into `basePaise`
+plus `surchargePaise`, which sum to `marginalPaise`. Meanwhile, the append-only entitlement consumption log is
 `UsageLedgerEntry` (`engagementsConsumed`, `minutesConsumed`, `priceAtBookingPaise`,
 `wasOverage`), whose signed `engagementsConsumed` sum across a period is reconciled
 nightly against `ProgramAssignment.engagementsUsed`.
@@ -276,7 +278,7 @@ erDiagram
     ProgramAssignment ||--o| ProgramAssignment  : "rolledTo (rollover chain)"
     ProgramAssignment ||--o{ OverageEvent    : "over-cap charges"
     BookingUtilization ||--|| Payment        : "1:1 lock"
-    BookingUtilization ||--o| OverageEvent   : "1:1 if over-cap"
+    BookingUtilization ||--o{ OverageEvent   : "one per over-cap batch"
     OverageEvent }o--o| Payment              : "settling payment (opt)"
     OverageEvent }o--o| InvoiceLineItem      : "CHARGE_ORG roll-up (opt)"
     Payment ||--o{ OrganizationEarnings      : "per (org, consultant, role, cycle)"
@@ -385,7 +387,8 @@ erDiagram
     OverageEvent {
         string id                   PK
         string programAssignmentId  FK
-        string bookingUtilizationId UK "1:1"
+        string bookingUtilizationId FK "UK with batchKey"
+        string batchKey             "over-cap batch's UsageLedgerEntry id"
         OverageBehavior overageBehavior
         int    basePaise            "pass-through over-cap portion"
         int    surchargePaise       "overageSurchargeBps markup"

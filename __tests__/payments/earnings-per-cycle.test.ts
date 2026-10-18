@@ -57,7 +57,7 @@ jest.mock("../../lib/prisma", () => {
     },
     membership: { findFirst: jest.fn().mockResolvedValue(null) },
     paymentLeg: { findMany: jest.fn().mockResolvedValue([]) },
-    overageEvent: { findFirst: jest.fn().mockResolvedValue(null) },
+    overageEvent: { findMany: jest.fn().mockResolvedValue([]) },
     ledgerTransaction: {
       findUnique: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue({ id: "ltxn-1" }),

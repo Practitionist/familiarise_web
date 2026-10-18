@@ -166,7 +166,7 @@ function txStub() {
     // payment has no consumer invoice, which is the case in every fixture here.
     consumerCreditNote: { findUnique: jest.fn().mockResolvedValue(null) },
     consumerInvoice: { findUnique: jest.fn().mockResolvedValue(null) },
-    overageEvent: { findFirst: jest.fn().mockResolvedValue(null) },
+    overageEvent: { findMany: jest.fn().mockResolvedValue([]) },
     orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
     paymentLeg: { upsert: jest.fn().mockResolvedValue({}) },
     ledgerTransaction: { findUnique: jest.fn().mockResolvedValue(null) },

@@ -34,6 +34,7 @@ import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import {
   recarveOverageBase,
+  releaseOverageHeldParentEarnings,
   restoreOverageBaseCarve,
 } from "@/lib/payments/billing/overage-base-carve";
 import {
@@ -135,42 +136,6 @@ async function resolveInvoicedBaseAfterRecarve(
     context: { sidePaymentId: sideId, paymentIntentId },
   });
   return null;
-}
-
-async function releaseParentHeldEarningsIfNoDispute(
-  tx: Tx,
-  parentPaymentId: string,
-): Promise<void> {
-  const openDisputes = tx.dispute?.count
-    ? await tx.dispute.count({
-        where: {
-          paymentId: parentPaymentId,
-          status: { notIn: ["WON", "LOST"] },
-        },
-      })
-    : 0;
-  if (openDisputes > 0) return;
-
-  if (tx.consultantEarnings?.updateMany) {
-    await tx.consultantEarnings.updateMany({
-      where: {
-        paymentId: parentPaymentId,
-        status: "HELD",
-        preDisputeStatus: "PENDING",
-      },
-      data: { status: "PENDING", preDisputeStatus: null },
-    });
-  }
-  if (tx.organizationEarnings?.updateMany) {
-    await tx.organizationEarnings.updateMany({
-      where: {
-        paymentId: parentPaymentId,
-        status: "HELD",
-        preDisputeStatus: "PENDING",
-      },
-      data: { status: "PENDING", preDisputeStatus: null },
-    });
-  }
 }
 
 async function postOverageMemberLedgerEntries(
@@ -353,7 +318,7 @@ async function settleOverageSidePaymentInTx(
     return null;
   }
 
-  await releaseParentHeldEarningsIfNoDispute(tx, side.parentPaymentId);
+  await releaseOverageHeldParentEarnings(tx, side.parentPaymentId, side.id);
   await postOverageMemberLedgerEntries(tx, side);
 
   if (invoicedBase) {
