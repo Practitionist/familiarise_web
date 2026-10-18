@@ -734,16 +734,82 @@ async function notifyNoShowParties(
   }
 }
 
+interface NoShowTally {
+  detected: number;
+  refunded: number;
+  contradicted: number;
+  refusals: Array<{ consultationId: string; refusal: string }>;
+  errors: string[];
+}
+
+/** One candidate through the consultant-fault pass; failures land in `tally.errors`. */
+async function handleNoShowCandidate(
+  consultation: NoShowCandidate,
+  outages: OutageWindow[],
+  presence: PresenceLookup,
+  tally: NoShowTally,
+): Promise<void> {
+  try {
+    const party = evaluateConsultantNoShow(consultation, outages);
+    if (!party) return;
+
+    // Corroborate against Stream before moving money. Our attendance rows are
+    // webhook-derived and each party's arrives separately, so the predicate
+    // above can be satisfied by a LOST DELIVERY rather than a real absence.
+    const refusal = await refusalFromStreamEvidence(consultation, presence);
+    if (refusal) {
+      tally.contradicted++;
+      console.log(
+        `\n🛑 Not a no-show after all: consultation ${consultation.id} — ${refusal}`,
+      );
+      // Worth an alert rather than a log line. Either a webhook was lost — in
+      // which case attendance data is wrong platform-wide and this is the only
+      // place it surfaces — or the detector's own predicate needs revisiting.
+      tally.refusals.push({ consultationId: consultation.id, refusal });
+      return;
+    }
+
+    tally.detected++;
+    console.log(`\n🚫 Consultant no-show: consultation ${consultation.id}`);
+    console.log(`   Plan: ${consultation.consultationPlan?.title}`);
+
+    const paid = paidPaymentOf(consultation);
+    const claimed = await claimConsultantNoShow(
+      consultation.id,
+      party.appointmentId,
+      paid ? noShowRefundOwed(paid.id) : null,
+    );
+    if (!claimed) {
+      console.log(`   ⏭️ Skipped — status changed since scan`);
+      tally.detected--;
+      return;
+    }
+
+    const { refundedPaise, succeeded, paidPayment } =
+      await refundNoShowConsultation(consultation, tally.errors);
+    if (succeeded) tally.refunded++;
+
+    await notifyNoShowParties(consultation, party, refundedPaise, paidPayment);
+  } catch (error) {
+    const msg = `Failed to handle candidate consultation ${consultation.id}: ${error}`;
+    console.error(`   ❌ ${msg}`);
+    tally.errors.push(msg);
+  }
+}
+
 async function detectConsultantNoShowsUnlocked(
   maxCandidates: number,
   pastDeadline: () => boolean,
 ): Promise<NoShowResult> {
-  const errors: string[] = [];
-  let detected = 0;
-  let refunded = 0;
-  let contradicted = 0;
+  const tally: NoShowTally = {
+    detected: 0,
+    refunded: 0,
+    contradicted: 0,
+    refusals: [],
+    errors: [],
+  };
+  const { errors } = tally;
   let bothAbsentTickets = 0;
-  const refusals: Array<{ consultationId: string; refusal: string }> = [];
   // One cache for the whole run: both passes examine overlapping candidates.
   const presence = makePresenceLookup();
 
@@ -776,57 +842,7 @@ async function detectConsultantNoShowsUnlocked(
 
     for (const consultation of candidates) {
       if (pastDeadline()) break;
-      try {
-        const party = evaluateConsultantNoShow(consultation, outages);
-        if (!party) continue;
-
-        // Corroborate against Stream before moving money. Our attendance rows are
-        // webhook-derived and each party's arrives separately, so the predicate
-        // above can be satisfied by a LOST DELIVERY rather than a real absence.
-        const refusal = await refusalFromStreamEvidence(consultation, presence);
-        if (refusal) {
-          contradicted++;
-          console.log(
-            `\n🛑 Not a no-show after all: consultation ${consultation.id} — ${refusal}`,
-          );
-          // Worth an alert rather than a log line. Either a webhook was lost — in
-          // which case attendance data is wrong platform-wide and this is the only
-          // place it surfaces — or the detector's own predicate needs revisiting.
-          refusals.push({ consultationId: consultation.id, refusal });
-          continue;
-        }
-
-        detected++;
-        console.log(`\n🚫 Consultant no-show: consultation ${consultation.id}`);
-        console.log(`   Plan: ${consultation.consultationPlan?.title}`);
-
-        const paid = paidPaymentOf(consultation);
-        const claimed = await claimConsultantNoShow(
-          consultation.id,
-          party.appointmentId,
-          paid ? noShowRefundOwed(paid.id) : null,
-        );
-        if (!claimed) {
-          console.log(`   ⏭️ Skipped — status changed since scan`);
-          detected--;
-          continue;
-        }
-
-        const { refundedPaise, succeeded, paidPayment } =
-          await refundNoShowConsultation(consultation, errors);
-        if (succeeded) refunded++;
-
-        await notifyNoShowParties(
-          consultation,
-          party,
-          refundedPaise,
-          paidPayment,
-        );
-      } catch (error) {
-        const msg = `Failed to handle candidate consultation ${consultation.id}: ${error}`;
-        console.error(`   ❌ ${msg}`);
-        errors.push(msg);
-      }
+      await handleNoShowCandidate(consultation, outages, presence, tally);
     }
 
     // Runs after the consultant-fault pass so a session it already cancelled is
@@ -845,15 +861,15 @@ async function detectConsultantNoShowsUnlocked(
 
   await reportOncePerRun(
     "Consultant no-show refused on Stream evidence",
-    refusals,
+    tally.refusals,
   );
 
   await reportLostDeliveries(lostDeliveries);
 
   console.log("\n📊 No-Show Summary:");
-  console.log(`   Detected: ${detected}`);
-  console.log(`   Refunded: ${refunded}`);
-  console.log(`   Refused on Stream evidence: ${contradicted}`);
+  console.log(`   Detected: ${tally.detected}`);
+  console.log(`   Refunded: ${tally.refunded}`);
+  console.log(`   Refused on Stream evidence: ${tally.contradicted}`);
   console.log(`   Both-absent tickets raised: ${bothAbsentTickets}`);
   if (errors.length > 0) {
     console.log("\n⚠️ Errors:");
@@ -862,9 +878,9 @@ async function detectConsultantNoShowsUnlocked(
 
   return {
     success: errors.length === 0,
-    detected,
-    refunded,
-    contradicted,
+    detected: tally.detected,
+    refunded: tally.refunded,
+    contradicted: tally.contradicted,
     bothAbsentTickets,
     errors,
     timestamp: new Date().toISOString(),

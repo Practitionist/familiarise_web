@@ -79,7 +79,7 @@ describe("autoCompleteAppointments backlog", () => {
   it("decides the whole backlog in one run, not just the first bite", async () => {
     await autoCompleteAppointments({ maxParents: BITE, maxSlotOutcomes: BITE });
 
-    expect(decided.length).toBe(BACKLOG);
+    expect(decided).toHaveLength(BACKLOG);
   });
 
   it("stops starting sessions once the drain deadline has passed", async () => {
@@ -95,6 +95,6 @@ describe("autoCompleteAppointments backlog", () => {
       startedAt,
     });
 
-    expect(decided.length).toBe(12);
+    expect(decided).toHaveLength(12);
   });
 });

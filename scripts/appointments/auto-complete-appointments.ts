@@ -1093,6 +1093,56 @@ const PARENT_PASSES = [
 
 type ParentKey = (typeof PARENT_PASSES)[number]["key"];
 
+type ParentPassState = (typeof PARENT_PASSES)[number] & {
+  completed: number;
+  seen: string[];
+  open: boolean;
+};
+
+/**
+ * One round is a bite of every pass still open, slots first so the parents
+ * read decided rows; a pass closes once a bite reads a short cohort. Returns
+ * the number of rounds run.
+ */
+async function drainRounds(
+  bites: {
+    maxParents: number;
+    maxSlotOutcomes: number;
+    pastDeadline: () => boolean;
+  },
+  slotRun: SlotRun,
+  parents: ParentPassState[],
+  allErrors: string[],
+): Promise<number> {
+  const { maxParents, maxSlotOutcomes, pastDeadline } = bites;
+  const slotSeen: string[] = [];
+  let slotsOpen = true;
+  let rounds = 0;
+  while (!pastDeadline() && (slotsOpen || parents.some((p) => p.open))) {
+    rounds++;
+    if (slotsOpen) {
+      const bite = await completeIndividualSlots(
+        maxSlotOutcomes,
+        slotSeen,
+        pastDeadline,
+        slotRun,
+      );
+      allErrors.push(...bite.errors);
+      slotSeen.push(...bite.read);
+      slotsOpen = bite.read.length === maxSlotOutcomes;
+    }
+    for (const pass of parents) {
+      if (!pass.open || pastDeadline()) continue;
+      const bite = await pass.run(maxParents, pass.seen, pastDeadline);
+      allErrors.push(...bite.errors);
+      pass.completed += bite.completed;
+      pass.seen.push(...bite.read);
+      pass.open = bite.read.length === maxParents;
+    }
+  }
+  return rounds;
+}
+
 /**
  * Main function to auto-complete all eligible appointments
  */
@@ -1141,40 +1191,18 @@ async function autoCompleteAppointmentsUnlocked(
     feedGaps: 0,
     menteeFailures: createRunFailureReporter("bookings"),
   };
-  const slotSeen: string[] = [];
-  let slotsOpen = true;
   const parents = PARENT_PASSES.map((pass) => ({
     ...pass,
     completed: 0,
     seen: [] as string[],
     open: true,
   }));
-
-  // One round is a bite of every pass still open, slots first so the parents
-  // read decided rows; a pass closes once a bite reads a short cohort.
-  let rounds = 0;
-  while (!pastDeadline() && (slotsOpen || parents.some((p) => p.open))) {
-    rounds++;
-    if (slotsOpen) {
-      const bite = await completeIndividualSlots(
-        maxSlotOutcomes,
-        slotSeen,
-        pastDeadline,
-        slotRun,
-      );
-      allErrors.push(...bite.errors);
-      slotSeen.push(...bite.read);
-      slotsOpen = bite.read.length === maxSlotOutcomes;
-    }
-    for (const pass of parents) {
-      if (!pass.open || pastDeadline()) continue;
-      const bite = await pass.run(maxParents, pass.seen, pastDeadline);
-      allErrors.push(...bite.errors);
-      pass.completed += bite.completed;
-      pass.seen.push(...bite.read);
-      pass.open = bite.read.length === maxParents;
-    }
-  }
+  const rounds = await drainRounds(
+    { maxParents, maxSlotOutcomes, pastDeadline },
+    slotRun,
+    parents,
+    allErrors,
+  );
 
   try {
     // Owner decision — a needs-human item older than 72 h is warned about, throttled.

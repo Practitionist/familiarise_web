@@ -233,7 +233,12 @@ async function retireUnaccruablePayments(
           AND: [notSettledElsewhereWhere],
         },
         data: {
-          description: `${MANUAL_RECOVERY_PREFIX} EARNINGS_UNACCRUABLE_NO_CONSULTANT; no consultant to accrue earnings to.${payment.description ? ` Was: ${payment.description}` : ""}`,
+          description: [
+            `${MANUAL_RECOVERY_PREFIX} EARNINGS_UNACCRUABLE_NO_CONSULTANT; no consultant to accrue earnings to.`,
+            payment.description ? `Was: ${payment.description}` : null,
+          ]
+            .filter(Boolean)
+            .join(" "),
         },
       });
       retired += count;
