@@ -162,16 +162,14 @@ async function stagedReminderSlotIds(
     },
     select: { entityRef: true },
   });
-  return rows.flatMap((row) =>
-    row.entityRef
-      ? [
-          row.entityRef.slice(
-            prefix.length,
-            row.entityRef.length - suffix.length,
-          ),
-        ]
-      : [],
-  );
+  // One row is staged per recipient, so a slot's ref repeats; the WHERE needs it once.
+  const ids = new Set<string>();
+  for (const { entityRef } of rows) {
+    if (entityRef) {
+      ids.add(entityRef.slice(prefix.length, entityRef.length - suffix.length));
+    }
+  }
+  return [...ids];
 }
 
 function queryUpcomingOccurrences(
