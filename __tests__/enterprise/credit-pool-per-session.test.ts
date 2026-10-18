@@ -499,3 +499,46 @@ describe("a re-bought class seat reverses only its own sale", () => {
     });
   });
 });
+
+describe("a credit pool's partial refunds return the whole price between them", () => {
+  it("two half refunds of a one-session booking return all of its credit", async () => {
+    const w = world(
+      {
+        type: "CREDIT_POOL",
+        overageBehavior: "BLOCK",
+        creditBudgetPerCycle: 12_000,
+      },
+      "WALLET",
+    );
+    w.s.ledger.push({
+      id: "ule-1",
+      paymentId: "pay-1",
+      engagementsConsumed: 1,
+      priceAtBookingPaise: 100_000,
+      wasOverage: false,
+      createdAt: new Date(1),
+    });
+    w.s.util = {
+      id: "bu-1",
+      paymentId: "pay-1",
+      engagementsConsumed: 1,
+      priceAtBookingPaise: 100_000,
+      wasOverage: false,
+      appointmentIds: ["a1"],
+      reversedAt: null,
+    };
+    w.s.meter = { engagementsUsed: 1, consumedPaise: 100_000, overageCount: 0 };
+    const half = { refundAmountPaise: 50_000, paymentAmountPaise: 100_000 };
+
+    await reverseBookingUtilization(w.tx, {
+      paymentId: "pay-1",
+      refundRatio: half,
+    });
+    await reverseBookingUtilization(w.tx, {
+      paymentId: "pay-1",
+      refundRatio: half,
+    });
+
+    expect(w.s.meter).toMatchObject({ engagementsUsed: 0, consumedPaise: 0 });
+  });
+});

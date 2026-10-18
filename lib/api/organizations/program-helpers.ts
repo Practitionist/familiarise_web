@@ -603,14 +603,20 @@ export async function reverseBookingUtilization(
 
   const sale = await currentSaleLedger(tx, params.paymentId);
   const remainingReversible = Math.max(0, sale.consumed - sale.reversed);
-  if (remainingReversible === 0) {
-    return { reversed: false, engagementsReversed: 0, fullyReversed: true };
-  }
-
+  const remainingPrice = Math.max(0, sale.pricePaise - sale.reversedPaise);
   const ratio =
     params.refundRatio && params.refundRatio.paymentAmountPaise > 0
       ? params.refundRatio
       : null;
+  const isCreditPool = util.programAssignment.program?.type === "CREDIT_POOL";
+  // A ratio refund that lands after the sale's engagements are spent still
+  // returns its share of a credit pool's paise.
+  const paiseOnly =
+    remainingReversible === 0 && isCreditPool && !!ratio && remainingPrice > 0;
+  if (remainingReversible === 0 && !paiseOnly) {
+    return { reversed: false, engagementsReversed: 0, fullyReversed: true };
+  }
+
   let target = sale.consumed;
   if (params.engagementsToReverse !== undefined) {
     target = Math.max(0, params.engagementsToReverse);
@@ -623,29 +629,32 @@ export async function reverseBookingUtilization(
     );
   }
   const actualReversal = Math.min(target, remainingReversible);
-  if (actualReversal <= 0) {
+  if (actualReversal <= 0 && !paiseOnly) {
     return { reversed: false, engagementsReversed: 0, fullyReversed: false };
   }
 
-  const willBeFullyReversed = sale.reversed + actualReversal >= sale.consumed;
+  const willBeFullyReversed =
+    actualReversal > 0 && sale.reversed + actualReversal >= sale.consumed;
 
   // The price follows the engagements, or the money actually refunded when a
   // ratio is given, clamped to what the sale has not yet returned.
-  let priceReversal = Math.round(
-    (sale.pricePaise * actualReversal) / sale.consumed,
-  );
+  let priceReversal =
+    actualReversal > 0
+      ? Math.round((sale.pricePaise * actualReversal) / sale.consumed)
+      : 0;
   if (ratio) {
-    const remainingPrice = Math.max(0, sale.pricePaise - sale.reversedPaise);
     const proportional = Math.floor(
       (sale.pricePaise * ratio.refundAmountPaise) / ratio.paymentAmountPaise,
     );
     priceReversal = Math.min(Math.max(0, proportional), remainingPrice);
   }
+  if (paiseOnly && priceReversal <= 0) {
+    return { reversed: false, engagementsReversed: 0, fullyReversed: true };
+  }
 
   // #1372 — a CREDIT_POOL program meters in paise; LICENSED_SEAT leaves
   // consumedPaise alone (writing a seat count as money would invent a number).
-  const reversesPaise =
-    util.programAssignment.program?.type === "CREDIT_POOL" && priceReversal > 0;
+  const reversesPaise = isCreditPool && priceReversal > 0;
   // Each over-cap batch of the sale bumped overageCount once.
   const overageDecrement = willBeFullyReversed ? sale.overCapBatches : 0;
 
@@ -660,14 +669,15 @@ export async function reverseBookingUtilization(
   const guard = await tx.programAssignment.updateMany({
     where: {
       id: util.programAssignmentId,
-      engagementsUsed: { gte: actualReversal },
+      ...(actualReversal > 0 && { engagementsUsed: { gte: actualReversal } }),
       ...(reversesPaise && { consumedPaise: { gte: priceReversal } }),
       ...(overageDecrement > 0 && {
         overageCount: { gte: overageDecrement },
       }),
     },
     data: {
-      engagementsUsed: { decrement: actualReversal },
+      engagementsUsed:
+        actualReversal > 0 ? { decrement: actualReversal } : undefined,
       // #775/#753 — CREDIT_POOL meters in paise; reverse the prorated price so
       // consumedPaise nets back.
       consumedPaise: reversesPaise ? { decrement: priceReversal } : undefined,
@@ -722,6 +732,6 @@ export async function reverseBookingUtilization(
   return {
     reversed: true,
     engagementsReversed: actualReversal,
-    fullyReversed: willBeFullyReversed,
+    fullyReversed: willBeFullyReversed || paiseOnly,
   };
 }
