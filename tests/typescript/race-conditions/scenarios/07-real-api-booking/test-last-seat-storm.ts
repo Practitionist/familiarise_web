@@ -89,7 +89,9 @@ async function run() {
     sessions.push(await loginAs(s.email!));
   }
   // Holds left by an earlier run would be replayed as 200s instead of racing.
-  await releasePendingHolds(sessions, stormerIds);
+  await releasePendingHolds(sessions, stormerIds, {
+    appointmentId: webinar.appointment.id,
+  });
 
   // Arm: exactly one free seat.
   const originalMax = webinar.webinarPlan.maxParticipants;
@@ -163,11 +165,10 @@ async function run() {
     });
     // PENDING holds unwind through the API; payment rows are never deleted
     // under a PENDING/legs-sum state (payment_legs_sum_to_amount).
-    const pendingLeft = await releasePendingHolds(
-      sessions,
-      stormerIds,
-      testStart,
-    );
+    const pendingLeft = await releasePendingHolds(sessions, stormerIds, {
+      appointmentId: webinar.appointment.id,
+      since: testStart,
+    });
     check("no PENDING storm payments left behind", pendingLeft === 0, {
       pendingLeft,
     });
@@ -206,10 +207,15 @@ async function run() {
         `⚠️ payment cleanup incomplete — rows left in place: ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`,
       );
     }
-    await retireOrphanSucceededPayments({
-      userId: { in: stormerIds },
-      createdAt: { gte: testStart },
+    const stormOrphans = await prisma.payment.findMany({
+      where: {
+        userId: { in: stormerIds },
+        createdAt: { gte: testStart },
+        appointmentId: null,
+      },
+      select: { id: true },
     });
+    await retireOrphanSucceededPayments(stormOrphans.map((p) => p.id));
     // Release any stormer's seat (winner or tentative residue) so reruns
     // start from the same occupancy (#1554: the seat is the participant row).
     await prisma.appointmentParticipant.deleteMany({

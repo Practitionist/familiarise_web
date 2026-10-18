@@ -68,60 +68,64 @@ async function run() {
     consultation: { id: created.id },
   };
 
-  const terminalBefore = await prisma.appointmentOccurrence.count({
-    where: {
-      appointmentId: appointment.id,
-      completionStatus: { in: ["COMPLETED", "CANCELLED", "UNVERIFIED"] },
-    },
-  });
-
-  const admin = await loginAs(
-    process.env.CHAOS_ADMIN_EMAIL ?? "olivia.brown@protonmail.com",
-  );
-
-  const results = await fireConcurrent(10, () =>
-    apiFetch(
-      `/api/appointments/${appointment.id}/reschedule?type=CONSULTATION`,
-      {
-        method: "POST",
-        session: admin,
-        body: JSON.stringify({}),
+  try {
+    const terminalBefore = await prisma.appointmentOccurrence.count({
+      where: {
+        appointmentId: appointment.id,
+        completionStatus: { in: ["COMPLETED", "CANCELLED", "UNVERIFIED"] },
       },
-    ),
-  );
+    });
 
-  const h = histogram(results);
-  const serverErrors = results.filter((r) => r.status >= 500).length;
-  check("reschedule storm: zero 5xx", serverErrors === 0, h);
+    const admin = await loginAs(
+      process.env.CHAOS_ADMIN_EMAIL ?? "olivia.brown@protonmail.com",
+    );
 
-  const consultation = await prisma.consultation.findUnique({
-    where: { id: appointment.consultation.id },
-    select: { status: true },
-  });
-  check(
-    "appointment ends in a single coherent state (PENDING)",
-    consultation?.status === "PENDING",
-    consultation,
-  );
+    const results = await fireConcurrent(10, () =>
+      apiFetch(
+        `/api/appointments/${appointment.id}/reschedule?type=CONSULTATION`,
+        {
+          method: "POST",
+          session: admin,
+          body: JSON.stringify({}),
+        },
+      ),
+    );
 
-  const terminalAfter = await prisma.appointmentOccurrence.count({
-    where: {
-      appointmentId: appointment.id,
-      completionStatus: { in: ["COMPLETED", "CANCELLED", "UNVERIFIED"] },
-    },
-  });
-  check("terminal slots never resurrected", terminalAfter === terminalBefore, {
-    terminalBefore,
-    terminalAfter,
-  });
+    const h = histogram(results);
+    const serverErrors = results.filter((r) => r.status >= 500).length;
+    check("reschedule storm: zero 5xx", serverErrors === 0, h);
 
-  // Retire the fixture; the appointment and its slots cascade with it.
-  await prisma.bookingStatusHistory.deleteMany({
-    where: { entityId: appointment.consultation.id },
-  });
-  await prisma.consultation.delete({
-    where: { id: appointment.consultation.id },
-  });
+    const consultation = await prisma.consultation.findUnique({
+      where: { id: appointment.consultation.id },
+      select: { status: true },
+    });
+    check(
+      "appointment ends in a single coherent state (PENDING)",
+      consultation?.status === "PENDING",
+      consultation,
+    );
+
+    const terminalAfter = await prisma.appointmentOccurrence.count({
+      where: {
+        appointmentId: appointment.id,
+        completionStatus: { in: ["COMPLETED", "CANCELLED", "UNVERIFIED"] },
+      },
+    });
+    check(
+      "terminal slots never resurrected",
+      terminalAfter === terminalBefore,
+      {
+        terminalBefore,
+        terminalAfter,
+      },
+    );
+  } finally {
+    // Retire the fixture; the appointment and its slots cascade with it.
+    // BookingStatusHistory is append-only and stays.
+    await prisma.consultation.delete({
+      where: { id: appointment.consultation.id },
+    });
+  }
 
   finish("reschedule-storm");
 }
