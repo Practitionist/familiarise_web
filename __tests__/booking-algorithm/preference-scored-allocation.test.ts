@@ -37,8 +37,8 @@ jest.mock("../../utils/appointmentlock", () => ({
   unlockConsulteeBooking: jest.fn(),
 }));
 
-import prisma, { type Tx } from "../../lib/prisma";
-import { SchedulingService } from "../../utils/scheduling-engine/SchedulingService";
+import prisma, { type PrismaLike, type Tx } from "../../lib/prisma";
+import { findAvailableSlots as searchSlots } from "../../lib/booking/allocation/search/find-available-slots";
 import {
   findAllocationPreference,
   resolveConsumedPreferenceRequests,
@@ -67,7 +67,7 @@ const HALF_HOUR = 30 * MINUTE;
 const istToUtcMinutes = (hour: number, minute = 0) =>
   hour * 60 + minute - IST_OFFSET;
 
-/** findAvailableSlots is private; the search is the unit under test. */
+/** The search is the unit under test; this keeps the positional call in one place. */
 const findAvailableSlots = (
   consultant: ConsultantAllocationData,
   totalSlotsNeeded: number,
@@ -76,12 +76,8 @@ const findAvailableSlots = (
   config: EventConfig,
   preference?: AllocationPreference,
 ): Promise<Date[]> =>
-  (
-    SchedulingService as unknown as {
-      findAvailableSlots: (...a: unknown[]) => Promise<Date[]>;
-    }
-  ).findAvailableSlots(
-    emptyDb(),
+  searchSlots(
+    emptyDb() as unknown as PrismaLike,
     consultant,
     totalSlotsNeeded,
     slotsPerCall,
