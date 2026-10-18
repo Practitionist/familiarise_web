@@ -395,3 +395,70 @@ describe("a past-cutoff refund of a taxed member overage side-payment", () => {
     expect(sum(postings, "DEBIT")).toBe(sum(postings, "CREDIT"));
   });
 });
+
+describe("charged batch overages on a partial refund then the remainder", () => {
+  const charged = [
+    {
+      id: "ov-org",
+      overageBehavior: "CHARGE_ORG",
+      paymentId: PAYMENT_ID,
+      invoiceLineItemId: null,
+    },
+    {
+      id: "ov-member",
+      overageBehavior: "CHARGE_MEMBER",
+      paymentId: "side-1",
+      invoiceLineItemId: null,
+    },
+  ];
+  const { transitionOverage } = jest.requireMock(
+    "../../lib/payments/billing/overage-transitions",
+  );
+
+  it("credits them back once, on the refund that completes the full refund", async () => {
+    payment = paymentRow({
+      refunds: [{ id: "rf-0", amountPaise: GROSS / 4, status: "SUCCEEDED" }],
+    });
+    const partialTx = txStub();
+    partialTx.overageEvent.findMany.mockResolvedValue(charged);
+    const partial = await applyRefundCascade(partialTx as never, {
+      paymentId: PAYMENT_ID,
+      refundId: "rf-0",
+      amountPaise: GROSS / 4,
+      reason: "goodwill",
+    });
+    expect(partial.memberOverageRefundDue).toBeNull();
+    expect(transitionOverage).not.toHaveBeenCalledWith(
+      expect.anything(),
+      { id: "ov-org" },
+      "REVERSED",
+      expect.anything(),
+      expect.anything(),
+    );
+
+    payment = paymentRow({
+      refunds: [
+        { id: "rf-0", amountPaise: GROSS / 4, status: "SUCCEEDED" },
+        { id: REFUND_ID, amountPaise: (GROSS * 3) / 4, status: "SUCCEEDED" },
+      ],
+    });
+    const restTx = txStub();
+    restTx.overageEvent.findMany.mockResolvedValue(charged);
+    const rest = await applyRefundCascade(restTx as never, {
+      paymentId: PAYMENT_ID,
+      refundId: REFUND_ID,
+      amountPaise: (GROSS * 3) / 4,
+      reason: "cancellation",
+    });
+    expect(transitionOverage).toHaveBeenCalledWith(
+      expect.anything(),
+      { id: "ov-org" },
+      "REVERSED",
+      expect.objectContaining({ reversedAt: expect.any(Date) }),
+      { fromIn: ["CHARGED"] },
+    );
+    expect(rest.memberOverageRefundDue).toEqual({
+      overagePaymentIds: ["side-1"],
+    });
+  });
+});

@@ -1139,18 +1139,20 @@ export async function applyRefundCascade(
     });
   }
 
+  // This refund completes the payment's full refund when it and every other
+  // SUCCEEDED refund together reach the amount.
+  const otherSucceededPaise = payment.refunds
+    .filter(
+      (r) => r.id !== rawInput.refundId && r.status === RefundStatus.SUCCEEDED,
+    )
+    .reduce((sum, r) => sum + r.amountPaise, 0);
+  const completesFullRefund =
+    otherSucceededPaise + input.amountPaise >= payment.amount;
+
   // Replay sales are the only appointment-less payments that grant playback;
   // only a full refund revokes it, so a partial goodwill refund keeps access.
-  if (payment.appointmentId === null) {
-    const otherSucceededPaise = payment.refunds
-      .filter(
-        (r) =>
-          r.id !== rawInput.refundId && r.status === RefundStatus.SUCCEEDED,
-      )
-      .reduce((sum, r) => sum + r.amountPaise, 0);
-    if (otherSucceededPaise + input.amountPaise >= payment.amount) {
-      await revokeReplayEntitlement(tx, payment.paymentIntent);
-    }
+  if (payment.appointmentId === null && completesFullRefund) {
+    await revokeReplayEntitlement(tx, payment.paymentIntent);
   }
 
   if (payment.amount <= 0 || input.amountPaise <= 0) {
@@ -1623,8 +1625,8 @@ export async function applyRefundCascade(
   // -----------------------------------------------------------------------
   // Step 7.6 (#715/#716): credit-back for an ALREADY-CHARGED overage on full
   // refund. reverseBookingUtilization only cancels UNCOLLECTED overages; a
-  // CHARGED one moved real money. Full-reversal-only — a partial parent refund
-  // leaves the overage standing (no clean proration for a surcharge).
+  // CHARGED one moved real money. Only the refund that completes the full
+  // refund credits them back; an earlier partial refund leaves them standing.
   //   CHARGE_ORG   — the marginal rode inside this payment.amount and its
   //                  invoice was paid, so the credit note above returns it;
   //                  flip the event once the CN is actually minted.
@@ -1633,7 +1635,7 @@ export async function applyRefundCascade(
   //                  refund post-commit (that refund's own cascade flips it).
   // -----------------------------------------------------------------------
   let memberOverageRefundDue: { overagePaymentIds: string[] } | null = null;
-  if (payment.bookingUtilization && input.amountPaise === payment.amount) {
+  if (payment.bookingUtilization && completesFullRefund) {
     // One CHARGED event per over-cap batch; each is credited back on its own.
     const chargedEvents = await tx.overageEvent.findMany({
       where: {

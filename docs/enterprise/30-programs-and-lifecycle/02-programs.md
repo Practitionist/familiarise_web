@@ -404,6 +404,10 @@ transitioned to `REVERSED` only on that final exhaustion, and only while
 still uncollected (an already-`CHARGED` overage needs a real refund /
 credit note, not a silent status flip).
 
+A ratio refund of a `CREDIT_POOL` subscription's plan payment reverses
+refund ÷ plan of the credit metered so far, and later allocations join the
+same sale (owner decision D32).
+
 ## `OverageBehavior`
 
 The `overageBehavior` enum on a config row decides what happens when a LICENSED_SEAT assignment exceeds its cap, as the table below sets out.
