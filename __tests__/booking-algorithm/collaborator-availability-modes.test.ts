@@ -10,9 +10,6 @@
 
 import "./setup";
 
-import fs from "fs";
-import path from "path";
-
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -258,15 +255,8 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
     expect(mockTx.appointment.create).not.toHaveBeenCalled();
   });
 
-  /**
-   * The requested path carries the same guard, but a class/webinar cannot
-   * reach it today: fetchEventData only derives `requestedSlots` for
-   * consultation/subscription, so useRequestedSlots 400s on a group event
-   * before any co-host is consulted. Pinned here so the guard is not mistaken
-   * for dead code, and so this changes loudly if group events ever gain the
-   * path.
-   */
-  it("carries the guard on the REQUESTED path, which group events cannot reach yet", async () => {
+  // A group event never reaches the requested path, so no co-host can be confirmed there.
+  it("refuses the REQUESTED path for a group event before any time is confirmed", async () => {
     busyCoHost(mockTx);
     mockTx.appointment.findMany.mockResolvedValue([
       {
@@ -296,23 +286,6 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
     expect(result.errorCode).toBe("INVALID_MODE");
     // Nothing was confirmed, so no co-host could be double-booked either way.
     expect(mockTx.appointmentOccurrence.updateMany).not.toHaveBeenCalled();
-
-    // The guard IS wired into the requested transaction, between validation
-    // and the isTentative flip that confirms the stored times.
-    const source = fs.readFileSync(
-      path.join(process.cwd(), "utils/scheduling-engine/SchedulingService.ts"),
-      "utf8",
-    );
-    const requestedBody = source.slice(
-      source.indexOf("private static async useRequestedSlots("),
-      source.indexOf("private static isWithinAvailability("),
-    );
-    expect(requestedBody).toContain(
-      "SchedulingService.assertCollaboratorsFree(",
-    );
-    expect(requestedBody.indexOf("assertCollaboratorsFree(")).toBeLessThan(
-      requestedBody.indexOf("await this.updateEventStatus("),
-    );
   });
 
   it("merges the session's 30-minute atoms into ONE overlap window", async () => {

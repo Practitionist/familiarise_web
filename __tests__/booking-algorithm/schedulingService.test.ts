@@ -85,6 +85,7 @@ import {
 import { lockAutoAllocate as mockLockAutoAllocate } from "../../utils/appointmentlock";
 // Mocked in ./setup; the B-9 pins read whether the booked bell was staged.
 import { notifyAppointmentBooked } from "../../lib/novu";
+import { UNPAID_SUBSCRIPTION } from "@/lib/booking/approve-request";
 
 // ─── Mock Transaction Factory ───────────────────────────────────────────────
 
@@ -1065,9 +1066,7 @@ describe("Requested slot allocation", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("Reschedule state changed");
-    expect(
-      mockTx.appointmentOccurrence.updateMany,
-    ).not.toHaveBeenCalled();
+    expect(mockTx.appointmentOccurrence.updateMany).not.toHaveBeenCalled();
   });
 
   it("should update event status on success", async () => {
@@ -3015,6 +3014,47 @@ describe("partial reschedule slot count", () => {
 
     expect(result.success).toBe(true);
   });
+
+  it("counts and excludes only live releases, never fresh holds or tombstones", async () => {
+    const row = (
+      id: string,
+      completionStatus: string,
+      deletedAt: Date | null,
+    ) => ({
+      id,
+      isTentative: true,
+      completionStatus,
+      deletedAt,
+      startsAt: new Date(),
+      endsAt: new Date(),
+    });
+    mockTx.subscription.findUnique.mockResolvedValue(partialReschedSub());
+    mockTx.appointment.findMany.mockResolvedValue([
+      ...twoTentativeAppointments,
+      {
+        id: "fresh-hold",
+        occurrences: [
+          row("hold-1", "SCHEDULED", null),
+          row("tomb-1", "RESCHEDULED", new Date()),
+        ],
+        participants: [],
+        _count: { payment: 0 },
+      },
+    ]);
+
+    const result = await SchedulingService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "manual",
+      slots: ["2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    const [, , , , , appointmentIdsToExclude, options] =
+      mockValidateFn.mock.calls[0];
+    expect(appointmentIdsToExclude).toEqual([]);
+    expect(options.excludeOccurrenceIds).toEqual(["ts1", "ts2"]);
+  });
 });
 
 // ─── Edge Cases ─────────────────────────────────────────────────────────────
@@ -3713,5 +3753,31 @@ describe("#1775 B-9 — allocation lands by money", () => {
     expect(result.success).toBe(false);
     expect(result.httpStatus).toBe(409);
     expect(mockTx.consultation.updateMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("an unpaid subscription is refused SUBSCRIPTION_UNPAID, never parked awaiting payment", async () => {
+    mockTx.subscription.findUnique.mockResolvedValue(makeSubscriptionEvent());
+    mockTx.subscription.updateMany.mockResolvedValue({ count: 0 });
+    const unpaidCount = jest.fn().mockResolvedValue(1);
+    Object.assign(mockTx.subscription, { count: unpaidCount });
+
+    const result = await SchedulingService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "manual",
+      slots: TWO_SLOTS,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errorCode).toBe("SUBSCRIPTION_UNPAID");
+    // Only the settled CAS ran; the awaiting-payment edge is never tried.
+    expect(mockTx.subscription.updateMany).toHaveBeenCalledTimes(1);
+    expect(mockTx.subscription.updateMany.mock.calls[0][0].data.status).toBe(
+      AppointmentStatus.APPROVED,
+    );
+    expect(unpaidCount.mock.calls[0][0].where).toMatchObject({
+      id: "sub-1",
+      ...UNPAID_SUBSCRIPTION,
+    });
   });
 });

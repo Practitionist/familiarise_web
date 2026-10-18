@@ -185,23 +185,11 @@ describe("#1775 — the detail PATCH refuses self-approval", () => {
 });
 
 describe("#1775 C-1 — an unpaid plan is never approved", () => {
-  const schedulingService = read(
-    "utils/scheduling-engine/SchedulingService.ts",
-  );
-
   it("the detail PATCH refuses with SUBSCRIPTION_UNPAID and never parks the plan awaiting payment", () => {
     expect(subscriptionsRoute).toContain('"SUBSCRIPTION_UNPAID"');
     expect(subscriptionsRoute).toContain("...SETTLED_SUBSCRIPTION");
     expect(subscriptionsRoute).not.toContain(
       "to: AppointmentStatus.APPROVED_PENDING_PAYMENT",
     );
-  });
-
-  it("the allocate path refuses instead of minting for a subscription", () => {
-    const arm = schedulingService
-      .split('case "subscription":\n        return this.approveByMoney(')[1]
-      .split('case "webinar"')[0];
-    expect(arm).toContain('"SUBSCRIPTION_UNPAID"');
-    expect(arm).toMatch(/SETTLED_SUBSCRIPTION,\s*async \(\) =>/);
   });
 });

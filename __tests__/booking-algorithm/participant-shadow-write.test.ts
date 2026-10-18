@@ -106,9 +106,9 @@ describe("transitionParticipant / linkParticipantsToPayment", () => {
 describe("every creation path records the participant edge (#1544 / #1554)", () => {
   const read = (f: string) =>
     fs.readFileSync(path.join(process.cwd(), f), "utf8");
+  // The allocator's roster write is asserted behaviourally in schedulingService.test.ts.
   const writers: Array<[string, RegExp]> = [
     ["lib/payments/operations/checkout.ts", /recordParticipants\(/],
-    ["utils/scheduling-engine/SchedulingService.ts", /recordParticipants\(/],
     ["app/api/trials/[trialId]/route.ts", /recordParticipants\(/],
     // #1544 — the one creation path that never wrote the roster until #1554.
     [
