@@ -12,22 +12,6 @@ import type { FreedWindow } from "@/lib/booking/class-series";
 import { TWENTY_FOUR_HOURS_IN_MS } from "@/utils/scheduling-engine/slotTimeUtils";
 import { getEventRelationField } from "@/lib/booking/allocation/identity";
 
-/** #1766 — the delete step's shape when a top-up deletes nothing. */
-export function nothingDeleted(): {
-  enrolledUserIds: string[];
-  deletedAppointmentIds: string[];
-  freedOrdinals: number[];
-  freedWindows: FreedWindow[];
-  reusableAppointmentId?: string;
-} {
-  return {
-    enrolledUserIds: [],
-    deletedAppointmentIds: [],
-    freedOrdinals: [],
-    freedWindows: [],
-  };
-}
-
 /**
  * Delete existing appointments for an event
  *

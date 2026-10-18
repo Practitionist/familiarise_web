@@ -4,7 +4,10 @@ import {
 } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import type { Tx } from "@/lib/prisma";
-import { releaseParticipant } from "@/lib/booking/participants";
+import {
+  releaseParticipant,
+  transitionParticipant,
+} from "@/lib/booking/participants";
 import { Prisma, type PaymentGateway } from "@prisma/client";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
@@ -78,12 +81,17 @@ async function releaseSlots(
     // Doctrine rule 2: freed by status, not by DELETE. The buyer keeps a
     // record of the hold they abandoned, and occupancy already ignores a
     // soft-cancelled row.
-    return transitionOccurrenceCompletion(tx, {
+    const released = await transitionOccurrenceCompletion(tx, {
       where: { appointmentId: appt.id, isTentative: true, deletedAt: null },
       to: "CANCELLED",
       data: { deletedAt: new Date() },
       allowZero: true,
     });
+    // The 1:1 appointment is the buyer's own hold, so its HELD seats go too.
+    await transitionParticipant(tx, { appointmentId: appt.id }, "CANCELLED", {
+      fromIn: ["HELD"],
+    });
+    return released;
   }
 
   const seatFilter = appt.class

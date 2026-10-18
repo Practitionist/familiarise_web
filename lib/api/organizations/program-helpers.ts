@@ -451,16 +451,9 @@ export async function recordBookingUtilization(
     }
   }
 
-  // Upsert the BookingUtilization on paymentId (which is @unique).
-  //   - CONSULTATION/WEBINAR/CLASS: called once per Payment, so this is
-  //     effectively an insert.
-  //   - SUBSCRIPTION: called once per consultant allocation (lazy). The
-  //     first allocation inserts the row; subsequent allocations
-  //     increment engagementsConsumed by the *new* delta (computed via
-  //     appointmentIds set-diff above). priceAtBookingPaise keeps the
-  //     original (the upfront subscription price); incremental
-  //     allocations pass `priceAtBookingPaise: 0` since no new money
-  //     changed hands at allocation time.
+  // Upsert the BookingUtilization on paymentId (which is @unique). The row's
+  // engagementsConsumed and priceAtBookingPaise are the sums of its positive
+  // ledger rows, which is what reverseBookingUtilization prorates against.
   await tx.bookingUtilization.upsert({
     where: { paymentId: params.paymentId },
     create: {
@@ -473,6 +466,7 @@ export async function recordBookingUtilization(
     },
     update: {
       engagementsConsumed: { increment: actualDelta },
+      priceAtBookingPaise: { increment: params.priceAtBookingPaise },
       // Sticky once true — any allocation that crossed the cap marks
       // the row as having had an overage at some point.
       wasOverage: wasOverage ? true : undefined,

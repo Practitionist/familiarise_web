@@ -8,6 +8,7 @@ import {
   recordBookingUtilization,
   reverseBookingUtilization,
 } from "@/lib/api/organizations/program-helpers";
+import type { PendingOverageNotification } from "@/lib/payments/billing/overage-settlement";
 
 /**
  * For SUBSCRIPTION: debit `engagementsConsumed` per occurrence created in
@@ -18,13 +19,14 @@ import {
  *
  * Throws `ProgramAssignmentLimitError` if the cap is BLOCK and would
  * be exceeded — the surrounding transaction rolls back the new slots.
+ * Returns the member-due overage notice for the caller to send after commit.
  */
 export async function recordSubscriptionAllocationCap(
   tx: Tx,
   subscriptionId: string,
   consulteeUserId: string,
   newOccurrenceIds: string[],
-): Promise<void> {
+): Promise<PendingOverageNotification | null> {
   // Find the original signup Payment via the purchase wrapper (#1554).
   const subscription = await tx.subscription.findUnique({
     where: { id: subscriptionId },
@@ -51,7 +53,7 @@ export async function recordSubscriptionAllocationCap(
 
   if (!orgPayment || !orgPayment.organizationId) {
     // PERSONAL-funded subscription — no org cap to debit.
-    return;
+    return null;
   }
 
   const membership = await tx.membership.findUnique({
@@ -62,7 +64,7 @@ export async function recordSubscriptionAllocationCap(
       },
     },
   });
-  if (!membership || membership.status !== "ACTIVE") return;
+  if (!membership || membership.status !== "ACTIVE") return null;
 
   // Re-resolve the active ProgramAssignment at allocation time.
   // Mirrors the resolver in lib/payments/checkout/org-funding.ts so the
@@ -106,7 +108,7 @@ export async function recordSubscriptionAllocationCap(
       },
     },
   });
-  if (!assignment) return;
+  if (!assignment) return null;
 
   // priceAtBookingPaise: full upfront sub price on the very first
   // allocation (so the BookingUtilization row carries it for
@@ -161,7 +163,7 @@ export async function recordSubscriptionAllocationCap(
         });
       }
 
-      if (idsToDebit.length === 0) return;
+      if (idsToDebit.length === 0) return null;
     }
   }
 
@@ -185,19 +187,18 @@ export async function recordSubscriptionAllocationCap(
 
   // #1895 — Trigger overage billing when a lazily allocated subscription
   // session exceeds the program cap.
-  if (utilResult?.wasOverage) {
-    await settleSubscriptionAllocationOverage({
-      tx,
-      subscriptionId,
-      subscription,
-      orgPayment,
-      assignment,
-      existingUtil,
-      idsToDebit,
-      utilResult,
-      consulteeUserId,
-    });
-  }
+  if (!utilResult?.wasOverage) return null;
+  return settleSubscriptionAllocationOverage({
+    tx,
+    subscriptionId,
+    subscription,
+    orgPayment,
+    assignment,
+    existingUtil,
+    idsToDebit,
+    utilResult,
+    consulteeUserId,
+  });
 }
 
 export async function settleSubscriptionAllocationOverage(params: {
@@ -232,7 +233,7 @@ export async function settleSubscriptionAllocationOverage(params: {
   idsToDebit: string[];
   utilResult: Awaited<ReturnType<typeof recordBookingUtilization>>;
   consulteeUserId: string;
-}): Promise<void> {
+}): Promise<PendingOverageNotification | null> {
   const {
     tx,
     subscriptionId,
@@ -244,7 +245,7 @@ export async function settleSubscriptionAllocationOverage(params: {
     utilResult,
     consulteeUserId,
   } = params;
-  if (!orgPayment.organizationId) return;
+  if (!orgPayment.organizationId) return null;
 
   const totalPlanSessions = Math.max(
     1,
@@ -290,11 +291,11 @@ export async function settleSubscriptionAllocationOverage(params: {
         totalPlanSessions,
       },
     });
-    return;
+    return null;
   }
 
   const overageBookingPricePaise = idsToDebit.length * unitSessionPricePaise;
-  const { recordOverageAtCheckout, notifyOverageDueAfterCommit } =
+  const { recordOverageAtCheckout } =
     await import("@/lib/payments/billing/overage-settlement");
   const resolvedProgramType =
     assignment.program?.type ?? utilResult.programType ?? "LICENSED_SEAT";
@@ -303,7 +304,7 @@ export async function settleSubscriptionAllocationOverage(params: {
     resolvedProgramType === "CREDIT_POOL"
       ? utilResult.consumedPaiseAfter + lazyCreditDelta
       : utilResult.consumedPaiseAfter;
-  const pendingNotify = await recordOverageAtCheckout({
+  return recordOverageAtCheckout({
     tx,
     programAssignmentId: assignment.id,
     utilization: {
@@ -321,7 +322,4 @@ export async function settleSubscriptionAllocationOverage(params: {
     paymentGateway: orgPayment.paymentGateway ?? "RAZORPAY",
     isLazyAllocation: existingUtil !== null,
   });
-  if (pendingNotify) {
-    notifyOverageDueAfterCommit(pendingNotify);
-  }
 }

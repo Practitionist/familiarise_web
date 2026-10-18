@@ -26,7 +26,7 @@ export async function allocate(
   request: AllocationRequest,
 ): Promise<AllocationResult> {
   try {
-    const { stagedNotices, ...result } = await dispatch(request);
+    const { stagedNotices, overageNotice, ...result } = await dispatch(request);
     // PR 2c — the allocation-time notification (audit G1 / B9's promised
     // completion): APPOINTMENT_BOOKED was deliberately skipped at payment
     // when no slots existed; THIS is where the times finally exist, so both
@@ -39,9 +39,15 @@ export async function allocate(
     // #1206 — a top-up that placed nothing stages nothing (see the
     // suppressor at the staging site), so nothing is attempted here.
     if (stagedNotices && stagedNotices.length > 0) {
-      scheduleAfter(async () => {
+      void scheduleAfter(async () => {
         for (const staged of stagedNotices) await attemptTrigger(staged);
       }, "scheduling.allocate.post-commit");
+    }
+    // The allocation transaction has committed, so the overage it settled is real.
+    if (overageNotice) {
+      const { notifyOverageDueAfterCommit } =
+        await import("@/lib/payments/billing/overage-settlement");
+      void notifyOverageDueAfterCommit(overageNotice);
     }
     return result;
   } catch (error) {

@@ -31,6 +31,9 @@ jest.mock("../../lib/prisma", () => {
       update: jest.fn(),
     },
     appointment: { updateMany: jest.fn() },
+    appointmentParticipant: {
+      updateMany: jest.fn().mockResolvedValue({ count: 2 }),
+    },
     consultation: { findUnique: jest.fn(), updateMany: jest.fn() },
     subscription: { findUnique: jest.fn(), updateMany: jest.fn() },
     // #1319 A12 — every CAS helper appends its history row in the same tx.
@@ -91,6 +94,7 @@ const db = prisma as unknown as {
       update: jest.Mock;
     };
     appointment: { updateMany: jest.Mock };
+    appointmentParticipant: { updateMany: jest.Mock };
     consultation: { findUnique: jest.Mock; updateMany: jest.Mock };
     subscription: { findUnique: jest.Mock; updateMany: jest.Mock };
     bookingStatusHistory: { create: jest.Mock };
@@ -215,6 +219,13 @@ describe("cleanupAbandonedPayments — soft-cancel + credit reversal (#1319)", (
     expect(tx.appointment.updateMany).toHaveBeenCalledWith({
       where: { id: "apt_1", deletedAt: null },
       data: { deletedAt: expect.any(Date) },
+    });
+    // The 1:1 hold's HELD seats go with it; a settled seat is never touched.
+    expect(tx.appointmentParticipant.updateMany).toHaveBeenCalledWith({
+      where: {
+        AND: [{ appointmentId: "apt_1" }, { status: { in: ["HELD"] } }],
+      },
+      data: { status: "CANCELLED" },
     });
   });
 

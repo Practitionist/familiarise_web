@@ -169,6 +169,10 @@ export async function findReusablePendingOrderPayment(
               schedulingPeriodEndsAt: true,
             },
           },
+          participants: {
+            where: { userId: params.userId, role: "CONSULTEE" },
+            select: { status: true },
+          },
         },
       },
     },
@@ -190,13 +194,18 @@ export async function findReusablePendingOrderPayment(
       continue;
     }
 
-    const appt = candidate.appointment as {
-      occurrences: Array<{ startsAt: Date; endsAt: Date }>;
-      subscription?: {
-        schedulingPeriodStartsAt: Date | null;
-        schedulingPeriodEndsAt: Date | null;
-      } | null;
-    } | null;
+    const appt = candidate.appointment;
+
+    // A group order pays for the buyer's HELD seat; one released while the
+    // order stayed open (a leave, a removal) is no longer theirs to resume.
+    if (
+      (params.appointmentType === "WEBINAR" ||
+        params.appointmentType === "CLASS") &&
+      !appt?.participants.some((seat) => seat.status === "HELD")
+    ) {
+      supersede.push({ id: candidate.id, reason: "seat-released" });
+      continue;
+    }
 
     // Gate 1 — slot window (#1220-triage Critical): a second checkout for a
     // DIFFERENT appointment time must never resume the first attempt's order.
@@ -308,9 +317,9 @@ export async function releaseSupersededHolds(params: {
       select: { id: true, appointmentId: true },
     });
 
-    await Promise.all(
-      claimed.map((row) => reverseCreditsForPayment(row.id, tx)),
-    );
+    for (const row of claimed) {
+      await reverseCreditsForPayment(row.id, tx);
+    }
 
     const appointmentIds = claimed
       .map((row) => row.appointmentId)
