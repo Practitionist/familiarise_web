@@ -15,6 +15,34 @@ import {
   alreadyHeldSeatError,
 } from "@/lib/payments/checkout/seats";
 
+/**
+ * The sessions a seat bought: those not yet started, one per ordinal as
+ * classEnrolmentFrom counts them, preferring a RESCHEDULED row's replacement.
+ */
+function sessionsBought<
+  T extends {
+    ordinal: number | null;
+    startsAt: Date;
+    completionStatus: string;
+  },
+>(sessions: T[], remaining: number, now: Date): T[] {
+  const notStarted = new Map<number, T>();
+  for (const session of sessions) {
+    const started =
+      session.startsAt <= now && session.completionStatus !== "RESCHEDULED";
+    if (started) continue;
+    const key = session.ordinal ?? session.startsAt.getTime();
+    const kept = notStarted.get(key);
+    if (!kept || kept.completionStatus === "RESCHEDULED") {
+      notStarted.set(key, session);
+    }
+  }
+  return [...notStarted.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, session]) => session)
+    .slice(-remaining);
+}
+
 export async function handleClassCheckout(
   tx: Tx,
   data: CheckoutInput,
@@ -146,23 +174,7 @@ export async function handleClassCheckout(
     },
   });
 
-  // The seat meters the sessions it bought: the ones not yet started, one per
-  // ordinal as classEnrolmentFrom counts them, preferring a RESCHEDULED row's replacement.
-  const notStarted = new Map<number, (typeof sessions)[number]>();
-  for (const session of sessions) {
-    if (session.startsAt <= now && session.completionStatus !== "RESCHEDULED") {
-      continue;
-    }
-    const key = session.ordinal ?? session.startsAt.getTime();
-    const kept = notStarted.get(key);
-    if (!kept || kept.completionStatus === "RESCHEDULED") {
-      notStarted.set(key, session);
-    }
-  }
-  const boughtSessions = [...notStarted.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([, session]) => session)
-    .slice(-enrolment.remaining);
+  const boughtSessions = sessionsBought(sessions, enrolment.remaining, now);
 
   return {
     appointment: wrapper,
