@@ -87,25 +87,48 @@ export type SlotDecision =
       moved: boolean;
     };
 
-/** Platform-wide DEGRADED/OFFLINE windows that overlap [from, now]. */
+/** Platform-wide DEGRADED/OFFLINE windows and declared incidents that overlap [from, now]. */
 export async function readOutageWindows(
-  db: Pick<Tx, "maintenanceWindow">,
+  db: Pick<Tx, "maintenanceWindow" | "platformIncident">,
   from: Date,
 ): Promise<OutageWindow[]> {
-  const rows = await db.maintenanceWindow.findMany({
-    where: {
-      organizationId: null,
-      startedAt: { not: null },
-      // An ended window flips to OFF, so only an open one is read by phase.
-      OR: [{ endedAt: null, phase: { not: "OFF" } }, { endedAt: { gt: from } }],
-    },
-    select: { startedAt: true, endedAt: true },
-  });
-  return rows
-    .filter((r): r is { startedAt: Date; endedAt: Date | null } =>
-      Boolean(r.startedAt),
-    )
-    .map((r) => ({ startsAt: r.startedAt, endsAt: r.endedAt }));
+  const [rows, incidents] = await Promise.all([
+    db.maintenanceWindow.findMany({
+      where: {
+        organizationId: null,
+        startedAt: { not: null },
+        // An ended window flips to OFF, so only an open one is read by phase.
+        OR: [
+          { endedAt: null, phase: { not: "OFF" } },
+          { endedAt: { gt: from } },
+        ],
+      },
+      select: { startedAt: true, endedAt: true },
+      take: 200,
+    }),
+    db.platformIncident.findMany({
+      where: { endsAt: { gt: from } },
+      select: { startsAt: true, endsAt: true },
+      orderBy: { startsAt: "asc" },
+      take: 200,
+    }),
+  ]);
+  return [
+    ...rows
+      .filter((r): r is { startedAt: Date; endedAt: Date | null } =>
+        Boolean(r.startedAt),
+      )
+      .map((r) => ({
+        startsAt: r.startedAt,
+        endsAt: r.endedAt,
+        source: "maintenance" as const,
+      })),
+    ...incidents.map((i) => ({
+      startsAt: i.startsAt,
+      endsAt: i.endsAt,
+      source: "incident" as const,
+    })),
+  ];
 }
 
 async function capOpenSlotPresences(
@@ -273,60 +296,34 @@ async function writeSlotOutcomeTransaction(
     },
     { timeout: 15_000 },
   );
-  const [
-    noShowEmails,
-    missedRecordingEmails,
-    voidedCancelEmails,
-    voidedExitEmails,
-  ] = await Promise.all([
-    txResult.noShow?.emailArgs
-      ? stageSessionOutcomeEmails(prisma, txResult.noShow.emailArgs).catch(
-          (err) => {
+  const [noShowEmails, missedRecordingEmails, voidedEmails] = await Promise.all(
+    [
+      txResult.noShow?.emailArgs
+        ? stageSessionOutcomeEmails(prisma, txResult.noShow.emailArgs).catch(
+            (err) => {
+              console.error(
+                "[session-outcome-sweep] Failed to stage NO_SHOW emails:",
+                err,
+              );
+              return [];
+            },
+          )
+        : Promise.resolve([]),
+      txResult.missedRecording?.emailArgs
+        ? stageSessionOutcomeEmails(
+            prisma,
+            txResult.missedRecording.emailArgs,
+          ).catch((err) => {
             console.error(
-              "[session-outcome-sweep] Failed to stage NO_SHOW emails:",
+              "[session-outcome-sweep] Failed to stage MISSED_RECORDING emails:",
               err,
             );
             return [];
-          },
-        )
-      : Promise.resolve([]),
-    txResult.missedRecording?.emailArgs
-      ? stageSessionOutcomeEmails(
-          prisma,
-          txResult.missedRecording.emailArgs,
-        ).catch((err) => {
-          console.error(
-            "[session-outcome-sweep] Failed to stage MISSED_RECORDING emails:",
-            err,
-          );
-          return [];
-        })
-      : Promise.resolve([]),
-    txResult.voided?.cancelEmailArgs
-      ? stageAppointmentCancelledEmail(
-          prisma,
-          txResult.voided.cancelEmailArgs,
-        ).catch((err) => {
-          console.error(
-            "[session-outcome-sweep] Failed to stage VOIDED cancel emails:",
-            err,
-          );
-          return [];
-        })
-      : Promise.resolve([]),
-    txResult.voided?.exitEmailArgs
-      ? stageClassExitAvailableEmails(
-          prisma,
-          txResult.voided.exitEmailArgs,
-        ).catch((err) => {
-          console.error(
-            "[session-outcome-sweep] Failed to stage VOIDED exit emails:",
-            err,
-          );
-          return [];
-        })
-      : Promise.resolve([]),
-  ]);
+          })
+        : Promise.resolve([]),
+      stageClassVoidEmails(txResult.voided),
+    ],
+  );
   await flushNotificationsAfter(
     {
       bells: [
@@ -343,19 +340,57 @@ async function writeSlotOutcomeTransaction(
           rows: missedRecordingEmails,
           emailType: "CLASS_SESSION_MISSED_RECORDING",
         },
-        {
-          rows: voidedCancelEmails,
-          emailType: "APPOINTMENT_CANCELLED",
-        },
-        {
-          rows: voidedExitEmails,
-          emailType: "CLASS_SESSION_EXIT_AVAILABLE",
-        },
+        ...voidedEmails,
       ],
     },
     "class-sessions.voided",
   );
   return txResult.applied;
+}
+
+type ClassVoidNotices = Awaited<ReturnType<typeof onClassSessionVoided>>;
+
+/** Stages a class void's cancel and exit emails after its commit; a failed stage is logged, never thrown. */
+async function stageClassVoidEmails(voided: ClassVoidNotices | null) {
+  const [cancelRows, exitRows] = await Promise.all([
+    voided?.cancelEmailArgs
+      ? stageAppointmentCancelledEmail(prisma, voided.cancelEmailArgs).catch(
+          (err) => {
+            console.error(
+              "[session-outcome-sweep] Failed to stage VOIDED cancel emails:",
+              err,
+            );
+            return [];
+          },
+        )
+      : Promise.resolve([]),
+    voided?.exitEmailArgs
+      ? stageClassExitAvailableEmails(prisma, voided.exitEmailArgs).catch(
+          (err) => {
+            console.error(
+              "[session-outcome-sweep] Failed to stage VOIDED exit emails:",
+              err,
+            );
+            return [];
+          },
+        )
+      : Promise.resolve([]),
+  ]);
+  return [
+    { rows: cancelRows, emailType: "APPOINTMENT_CANCELLED" },
+    { rows: exitRows, emailType: "CLASS_SESSION_EXIT_AVAILABLE" },
+  ];
+}
+
+/** The bells and emails a class void staged in its transaction, sent once it committed. */
+export async function flushClassVoidNotices(
+  voided: ClassVoidNotices | null,
+): Promise<void> {
+  if (!voided) return;
+  await flushNotificationsAfter(
+    { bells: voided.bells, emails: await stageClassVoidEmails(voided) },
+    "class-sessions.voided",
+  );
 }
 
 /** Classify one past session and write its outcome, or defer it. */

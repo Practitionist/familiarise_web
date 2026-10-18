@@ -158,6 +158,8 @@ model User {
   // Disputes this admin owns (#269).
   disputesAssigned              Dispute[]                     @relation("DisputeAssignee")
   opsActions                    OpsActionLog[]
+  declaredIncidents             PlatformIncident[]
+  incidentRemedies              IncidentRemedy[]
   // A8 — documents this consultant reviewed (back-relation for the FK-ified
   // AppointmentDocument.reviewedById; named to avoid the implicit-relation guess).
   documentsReviewed             AppointmentDocument[]         @relation("DocumentReviewer")
@@ -5332,6 +5334,8 @@ model AppointmentOccurrence {
 
   supportCases SupportCase[] @relation("SupportCaseByOccurrence")
 
+  incidentRemedies IncidentRemedy[]
+
   // No @@unique/@@index on (appointmentId, ordinal): the live-row unique is the
   // partial index appointment_occurrence_live_ordinal_key in prisma/sql (#1268).
   // OPT-3: Additional indexes for time range queries in validateSlotAvailability
@@ -5766,6 +5770,8 @@ model Payment {
 
   refunds  Refund[] // Refunds associated with this payment
   disputes Dispute[] // Disputes associated with this payment
+
+  incidentRemedies IncidentRemedy[]
 
   // #1365 — the statutory B2C tax invoice for this payment, at most one.
   consumerInvoice ConsumerInvoice?
@@ -7344,6 +7350,72 @@ model MaintenanceWindow {
 
   @@index([organizationId, phase])
   @@map("maintenance_windows")
+}
+
+/// A platform outage window ops declared; never auto-declared and never edited.
+/// Every booked session overlapping it voids as PLATFORM_OUTAGE. CHECK endsAt > startsAt lives in prisma/sql.
+model PlatformIncident {
+  id               String    @id @default(uuid())
+  startsAt         DateTime  @db.Timestamptz
+  endsAt           DateTime  @db.Timestamptz
+  reason           String    @db.Text
+  declaredByUser   User?     @relation(fields: [declaredByUserId], references: [id], onDelete: SetNull)
+  declaredByUserId String?
+  /// Every overlapping session has been voided and given its remedy rows.
+  enumeratedAt     DateTime? @db.Timestamptz
+  /// The ops report has been staged.
+  reportedAt       DateTime? @db.Timestamptz
+  /// Every remedy is done or dead-lettered.
+  settledAt        DateTime? @db.Timestamptz
+  createdAt        DateTime  @default(now()) @db.Timestamptz
+
+  remedies IncidentRemedy[]
+
+  @@unique([startsAt, endsAt])
+  @@index([settledAt])
+  @@index([endsAt])
+}
+
+/// One learner's remedy for one incident-voided session; the settle sweep applies it at dueAt.
+model IncidentRemedy {
+  id           String                @id @default(uuid())
+  incident     PlatformIncident      @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  incidentId   String
+  occurrence   AppointmentOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  occurrenceId String
+  user         User                  @relation(fields: [userId], references: [id], onDelete: Restrict)
+  userId       String
+  payment      Payment?              @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  paymentId    String?
+  kind         IncidentRemedyKind
+  dueAt        DateTime              @db.Timestamptz
+  doneAt       DateTime?             @db.Timestamptz
+  notifiedAt   DateTime?             @db.Timestamptz
+  attempts     Int                   @default(0)
+  lastError    String?               @db.Text
+  createdAt    DateTime              @default(now()) @db.Timestamptz
+  updatedAt    DateTime              @updatedAt @db.Timestamptz
+
+  @@unique([incidentId, occurrenceId, userId])
+  /// One remedy per seat and session, even where two declared windows overlap it.
+  @@unique([occurrenceId, userId])
+  @@index([doneAt, dueAt])
+  @@index([incidentId, notifiedAt])
+  @@index([userId])
+  @@index([paymentId])
+}
+
+enum IncidentRemedyKind {
+  /// A 1:1 consultation or paid trial: a 100 % refund once dueAt (48 h) passes.
+  REFUND_AT_DUE
+  /// A webinar seat: a 100 % refund now.
+  REFUND_NOW
+  /// A free trial: the trial is cancelled, which frees the pair for a new request.
+  TRIAL_REOFFER
+  /// A subscription session: back in the allowance, and the plan end moves 7 days.
+  SUBSCRIPTION_EXTEND
+  /// A class session: the existing make-up or day-14 refund applies.
+  CLASS_EXISTING
 }
 
 model SsoProvider {

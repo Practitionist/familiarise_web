@@ -35,7 +35,7 @@ jest.mock("../../lib/prisma", () => ({
     membership: { findMany: jest.fn() },
     // #1703 D4 — the response-rate read on the requests card.
     bookingStatusHistory: { findMany: jest.fn() },
-    systemEvent: { count: jest.fn().mockResolvedValue(0) },
+    systemEvent: { findMany: jest.fn().mockResolvedValue([]) },
   },
 }));
 

@@ -18,6 +18,7 @@ export type MoneyTabKey =
   | "payouts"
   | "earnings"
   | "reconcile"
+  | "incidents"
   | "audit";
 
 export interface MoneyTab {
@@ -65,6 +66,13 @@ export const MONEY_TABS: readonly MoneyTab[] = [
     label: "Reconcile",
     description: "Run the reconcile jobs now and see when each last ran.",
     surface: "payouts.manage",
+  },
+  {
+    key: "incidents",
+    label: "Incidents",
+    description:
+      "Declared platform outages, the sessions they voided and each learner's remedy.",
+    surface: "incidents.read",
   },
 ];
 

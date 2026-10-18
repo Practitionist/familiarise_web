@@ -24,6 +24,7 @@ import type {
 
 import type { Tx } from "@/lib/prisma";
 import { HOST_ATTRIBUTED_OUTCOMES } from "./session-outcome";
+import { INCIDENT_REFUND_KEY_PREFIX } from "./incident-keys";
 
 export interface LedgerOccurrence {
   ordinal: number;
@@ -248,7 +249,7 @@ export async function seriesLedger(
   });
 }
 
-/** #1780 E-3b — units this payment already got back per session (`occ:*`). */
+/** Units this payment already got back per session (`occ:*`, `incident:*`). */
 export async function occurrenceRefundsPaise(
   db: Pick<Tx, "refund">,
   paymentId: string,
@@ -257,7 +258,10 @@ export async function occurrenceRefundsPaise(
     where: {
       paymentId,
       status: { in: ["SUCCEEDED", "PENDING"] },
-      dedupeKey: { startsWith: "occ:", endsWith: `:pay:${paymentId}` },
+      OR: [
+        { dedupeKey: { startsWith: "occ:", endsWith: `:pay:${paymentId}` } },
+        { dedupeKey: { startsWith: INCIDENT_REFUND_KEY_PREFIX } },
+      ],
     },
     select: { amountPaise: true },
   });

@@ -30,10 +30,12 @@ export interface PresenceInterval {
   leftAt: Date | null;
 }
 
-/** A maintenance or DEGRADED window; `endsAt` null means still open. */
+/** A maintenance window or a declared incident; `endsAt` null means still open. */
 export interface OutageWindow {
   startsAt: Date;
   endsAt: Date | null;
+  /** A declared incident voids every session it overlaps; maintenance only holds a host-absent verdict. */
+  source: "maintenance" | "incident";
 }
 
 export interface SessionOutcomeInput {
@@ -230,10 +232,34 @@ function earlyVerdict(
   return null;
 }
 
+/** Any overlap with the booked interval counts, because ops chose the window. */
+export function overlapsDeclaredIncident(
+  startsAt: Date,
+  endsAt: Date,
+  windows: readonly OutageWindow[],
+): boolean {
+  return windows.some(
+    (w) =>
+      w.source === "incident" &&
+      w.startsAt < endsAt &&
+      (w.endsAt === null || w.endsAt > startsAt),
+  );
+}
+
 /** Pure. See the module comment for the rule; the guards live in `earlyVerdict`. */
 export function classifySessionOutcome(
   input: SessionOutcomeInput,
 ): SessionOutcomeVerdict {
+  // A declared incident is the platform's miss: never a forfeit, never a strike.
+  if (
+    overlapsDeclaredIncident(
+      input.startsAt,
+      input.endsAt,
+      input.maintenanceWindows,
+    )
+  ) {
+    return verdict("PLATFORM_OUTAGE");
+  }
   const early = earlyVerdict(input);
   if (early) return early;
 

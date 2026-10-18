@@ -74,6 +74,9 @@ export type BackofficeSurface =
   // Class-series doors: support moves vs money moves.
   | "classSeries.support"
   | "classSeries.money"
+  // Declared platform incidents: staff review them, admin declares and settles.
+  | "incidents.read"
+  | "incidents.declare"
   // The console's audit log; staff read only their own rows.
   | "opsLog.read"
   // Platform: org lifecycle, comms, and system control.
@@ -156,6 +159,8 @@ export const BACKOFFICE_PERMISSIONS: Record<
   // reliability; anything that refunds (skip, series cancel, sweeps) is admin's.
   "classSeries.support": OPERATORS,
   "classSeries.money": ADMIN_ONLY,
+  "incidents.read": OPERATORS,
+  "incidents.declare": ADMIN_ONLY,
   "opsLog.read": OPERATORS,
 
   // Platform — org lifecycle and system control are admin's remit.
