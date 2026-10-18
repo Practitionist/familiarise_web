@@ -122,7 +122,7 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "expire-unpaid-trials": 25,
   // One Stream call report per row, so these are bite sizes: each run loops
   // bites until SWEEP_START_DEADLINE_MS (16 s) after its request began, which
-  // drains a backlog in one run and leaves in-flight rows inside the 20 s tier.
+  // drains a backlog in one run and leaves in-flight rows inside the 24 s abort.
   "auto-complete-appointments": 25,
   "detect-consultant-no-shows": 10,
   // #1859 M-P0-14 — read-only scan, but one Sentry page per orphan row group;
@@ -249,9 +249,9 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "retry-auto-refunds": 20_000,
   "vest-referral-credits": 20_000,
   "reconcile-refunds": 20_000,
-  // One Stream call-report round trip per judged session or candidate.
-  "auto-complete-appointments": 20_000,
-  "detect-consultant-no-shows": 20_000,
+  // Cold boot (~5 s) runs before the job's 16 s drain clock starts, so these need headroom above it while staying under Netlify's ~26 s edge cut.
+  "auto-complete-appointments": 24_000,
+  "detect-consultant-no-shows": 24_000,
   "alert-orphaned-payments": 20_000,
   "reconcile-orphaned-payments": 20_000,
   "process-data-exports": 20_000,

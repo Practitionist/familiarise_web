@@ -1,7 +1,7 @@
 /**
  * A draining sweep stops starting rows this long after its request began, so a
  * row already in flight (a Stream call report) still lands inside the ticker's
- * 20 s abort with at least 4 s to spare.
+ * 24 s abort for these targets, with room for a ~5 s cold boot.
  */
 // ≈3.3 s setup + ≈0.31 s/session ⇒ ≈40 sessions/run ⇒ ≈80/h at the 30-min cadence.
 export const SWEEP_START_DEADLINE_MS = 16_000;
