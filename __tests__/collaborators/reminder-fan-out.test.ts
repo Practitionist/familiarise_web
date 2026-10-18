@@ -126,3 +126,32 @@ it("skips the window whose email is already staged and still sends the other", a
     expect.arrayContaining(["u-attendee", "u-host", "u-cohost"]),
   );
 });
+
+it("skips staged sessions in the cohort read, so a full window still reaches its tail", async () => {
+  const [template] = await slotFindMany();
+  const window = Array.from({ length: 30 }, (_, i) => ({
+    ...template,
+    id: `slot-${i}`,
+    appointment: { ...template.appointment, id: `appt-${i}` },
+  }));
+  const original = slotFindMany.getMockImplementation();
+  slotFindMany.mockImplementation(async (...args: unknown[]) => {
+    const { where, take } = args[0] as {
+      where: { id?: { notIn: string[] }; startsAt: { gte: Date; lte: Date } };
+      take: number;
+    };
+    return window
+      .filter((s) => s.startsAt >= where.startsAt.gte)
+      .filter((s) => s.startsAt <= where.startsAt.lte)
+      .filter((s) => !where.id?.notIn.includes(s.id))
+      .slice(0, take);
+  });
+  stagedEmails.findMany.mockResolvedValue(
+    window.slice(0, 25).map((s) => ({ entityRef: `appointment:${s.id}:1h` })),
+  );
+
+  await sendAppointmentReminders();
+  slotFindMany.mockImplementation(original);
+
+  expect(bell).toHaveBeenCalledTimes(5);
+});
