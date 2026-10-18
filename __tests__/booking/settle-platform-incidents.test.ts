@@ -197,3 +197,25 @@ it("dead-letters a row at the retire count and leaves it out of the cohort", asy
   await settlePlatformIncidents();
   expect(refundIncidentSeat).not.toHaveBeenCalled();
 });
+
+it("waits quietly behind a dispute: no attempt counted, never dead-lettered", async () => {
+  state.rows = [remedy({ attempts: 2 })];
+  refundIncidentSeat.mockResolvedValue({ kind: "blocked" });
+  const result = await settlePlatformIncidents();
+  expect(state.rows[0]).toMatchObject({ attempts: 2, doneAt: null });
+  expect(result.deadLettered).toBe(0);
+  expect(result.settled).toBe(0);
+});
+
+it("skips the refund of a session ops un-voided, and stamps a replay done once", async () => {
+  state.rows = [remedy({}), remedy({ id: "rem-2", userId: "u2" })];
+  (prisma.appointmentOccurrence.findUnique as jest.Mock)
+    .mockResolvedValueOnce({ completionStatus: "COMPLETED" })
+    .mockResolvedValueOnce({ completionStatus: "VOIDED" });
+  refundIncidentSeat.mockResolvedValue({ kind: "done", refundedPaise: 0 });
+  await settlePlatformIncidents();
+  await settlePlatformIncidents();
+  expect(refundIncidentSeat).toHaveBeenCalledTimes(1);
+  expect(state.rows[0].lastError).toMatch(/no longer voided/);
+  expect(state.rows.every((r) => r.doneAt)).toBe(true);
+});

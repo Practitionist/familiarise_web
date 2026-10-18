@@ -164,8 +164,8 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "tentative-occurrences": 15,
   "expire-stale-requests": 15,
   "settle-cancelled-sessions": 30,
-  // 30, not 15: only the :00/:30 ticks have room under the 8-target cap; the refunds wait 48 h anyway.
-  "settle-platform-incidents": 30,
+  // Hourly at :30, the one slot with room under the 8-target cap every hour; the refunds wait 48 h anyway.
+  "settle-platform-incidents": 60,
   "retry-auto-refunds": 15,
   // #1775 — 30 minutes, not 15. Both jobs are latency-relevant but not
   // minute-relevant: auto-complete's own buffer is one hour after a session
@@ -213,7 +213,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "tentative-occurrences": 10,
   "expire-stale-requests": 10,
   "settle-cancelled-sessions": 25,
-  "settle-platform-incidents": 0,
+  "settle-platform-incidents": 30,
   "retry-auto-refunds": 10,
   // Thirty-minute session-outcome jobs and orphan healer on staggered slots
   "auto-complete-appointments": 15,

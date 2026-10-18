@@ -1041,10 +1041,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "settle-platform-incidents": () =>
       cleanupRoute({
         job: "settle-platform-incidents",
-        run: async (req) => {
+        run: async (req, { startedAt }) => {
           const { settlePlatformIncidents } =
             await import("@/scripts/appointments/settle-platform-incidents");
-          return settlePlatformIncidents({ limit: parseLimitParam(req) });
+          return settlePlatformIncidents({
+            limit: parseLimitParam(req),
+            startedAt,
+          });
         },
         summarize: (r) => ({
           incidents: r.incidents,

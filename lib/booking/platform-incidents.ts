@@ -67,21 +67,23 @@ export async function declareIncident(
   const where = {
     startsAt_endsAt: { startsAt: args.startsAt, endsAt: args.endsAt },
   };
-  const existing = await tx.platformIncident.findUnique({
+  // ON CONFLICT DO NOTHING, so a concurrent duplicate never aborts the transaction.
+  const { count } = await tx.platformIncident.createMany({
+    data: [
+      {
+        startsAt: args.startsAt,
+        endsAt: args.endsAt,
+        reason: args.reason,
+        declaredByUserId: args.declaredByUserId,
+      },
+    ],
+    skipDuplicates: true,
+  });
+  const row = await tx.platformIncident.findUniqueOrThrow({
     where,
     select: { id: true },
   });
-  if (existing) return { id: existing.id, created: false };
-  const row = await tx.platformIncident.create({
-    data: {
-      startsAt: args.startsAt,
-      endsAt: args.endsAt,
-      reason: args.reason,
-      declaredByUserId: args.declaredByUserId,
-    },
-    select: { id: true },
-  });
-  return { id: row.id, created: true };
+  return { id: row.id, created: count === 1 };
 }
 
 export interface IncidentRow {
@@ -133,11 +135,11 @@ export type RetroOccurrence = Prisma.AppointmentOccurrenceGetPayload<{
 
 type ClassVoid = Awaited<ReturnType<typeof onClassSessionVoided>> | null;
 
-const VOIDABLE_FROM: OccurrenceCompletionStatus[] = [
+const VOIDABLE_FROM: ReadonlySet<OccurrenceCompletionStatus> = new Set([
   "SCHEDULED",
   "COMPLETED",
   "UNVERIFIED",
-];
+]);
 
 /** The remedy kind a session's product owes, or null when no row is needed. */
 function remedyKindFor(
@@ -210,7 +212,7 @@ export async function voidForIncident(
     async (tx) => {
       let outcome: RetroOutcome = "kept";
       let classVoid: ClassVoid = null;
-      if (VOIDABLE_FROM.includes(occ.completionStatus)) {
+      if (VOIDABLE_FROM.has(occ.completionStatus)) {
         const moved = await transitionOccurrenceCompletion(tx, {
           where: {
             id: occ.id,
@@ -289,7 +291,6 @@ export async function enumerateIncident(
   opts: { limit: number; pastDeadline: () => boolean; now: Date },
   tally: EnumerateTally,
 ): Promise<boolean> {
-  const bufferCutoff = new Date(opts.now.getTime() - RETRO_BUFFER_MS);
   let cursor: string | null = null;
   let complete = true;
   for (;;) {
@@ -308,30 +309,45 @@ export async function enumerateIncident(
         select: RETRO_SELECT,
       },
     );
-    for (const occ of page) {
-      if (opts.pastDeadline()) return false;
-      cursor = occ.id;
-      if (occ.completionStatus === "SCHEDULED" && occ.endsAt > bufferCutoff) {
-        // Still inside the live-overrun buffer; a later run voids it.
-        complete = false;
-        continue;
-      }
-      try {
-        const { outcome, created } = await voidForIncident(
-          occ,
-          incident.id,
-          opts.now,
-        );
-        if (outcome === "voided") tally.voided += 1;
-        if (outcome === "lost") complete = false;
-        tally.remediesCreated += created;
-      } catch (error) {
-        complete = false;
-        tally.failed(occ.id, error);
-      }
-    }
+    const bite = await enumeratePage(page, incident.id, opts, tally);
+    if (bite === "deadline") return false;
+    if (bite === "pending") complete = false;
+    cursor = page.at(-1)?.id ?? cursor;
     if (page.length < opts.limit) return complete;
   }
+}
+
+/** One page of the walk: "deadline" stops the run, "pending" leaves work for a later one. */
+async function enumeratePage(
+  page: RetroOccurrence[],
+  incidentId: string,
+  opts: { pastDeadline: () => boolean; now: Date },
+  tally: EnumerateTally,
+): Promise<"done" | "pending" | "deadline"> {
+  const bufferCutoff = new Date(opts.now.getTime() - RETRO_BUFFER_MS);
+  let result: "done" | "pending" = "done";
+  for (const occ of page) {
+    if (opts.pastDeadline()) return "deadline";
+    if (occ.completionStatus === "SCHEDULED" && occ.endsAt > bufferCutoff) {
+      // Still inside the live-overrun buffer; a later run voids it.
+      result = "pending";
+      continue;
+    }
+    try {
+      const { outcome, created } = await voidForIncident(
+        occ,
+        incidentId,
+        opts.now,
+      );
+      if (outcome === "voided") tally.voided += 1;
+      if (outcome === "lost") result = "pending";
+      tally.remediesCreated += created;
+    } catch (error) {
+      result = "pending";
+      tally.failed(occ.id, error);
+    }
+  }
+  return result;
 }
 
 /** Cancels a voided trial so the pair is free for a new request; an already-ended trial is left alone. */

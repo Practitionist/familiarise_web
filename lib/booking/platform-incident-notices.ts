@@ -20,7 +20,7 @@ import { canaryAlertRecipient } from "@/lib/observability/ingest-alert";
 import { postOpsChat } from "@/lib/observability/ops-chat";
 import { DEAD_LETTER_PREFIX, MAX_REMEDY_ATTEMPTS } from "./incident-keys";
 
-const DIGEST_ROWS_PER_RUN = 500;
+const DIGEST_LEARNERS_PER_RUN = 500;
 const PLATFORM_INCIDENT_REPORT = "platform-incident-report";
 
 const TITLE = { select: { title: true } } as const;
@@ -77,45 +77,43 @@ function digestItem(row: DigestRow): IncidentDigestItem {
   };
 }
 
-/** A learner is ready once every remedy due now is done; a 48 h refund is not waited for. */
-function readyLearners(
-  rows: readonly {
-    userId: string;
-    kind: IncidentRemedyKind;
-    doneAt: Date | null;
-    attempts: number;
-  }[],
-): string[] {
-  const blocked = new Set(
-    rows
-      .filter(
-        (r) =>
-          r.kind !== "REFUND_AT_DUE" &&
-          r.doneAt === null &&
-          r.attempts < MAX_REMEDY_ATTEMPTS,
-      )
-      .map((r) => r.userId),
-  );
-  return [...new Set(rows.map((r) => r.userId))].filter(
-    (id) => !blocked.has(id),
-  );
-}
+/** A remedy that holds the learner's digest: due now and not yet applied or dead-lettered. */
+const holdsDigest = (incidentId: string, userId: string) =>
+  ({
+    incidentId,
+    userId,
+    doneAt: null,
+    attempts: { lt: MAX_REMEDY_ATTEMPTS },
+    kind: { not: "REFUND_AT_DUE" },
+  }) satisfies Prisma.IncidentRemedyWhereInput;
 
-/** One digest per learner per incident; returns how many were staged. */
+/**
+ * One digest per learner per incident, sent once every remedy due now is
+ * applied (a 48 h refund is not waited for); returns how many were staged.
+ */
 export async function sendIncidentDigests(
   incidentId: string,
   opts: { limit: number; pastDeadline: () => boolean },
 ): Promise<number> {
-  const rows = await prisma.incidentRemedy.findMany({
+  const learners = await prisma.incidentRemedy.findMany({
     where: { incidentId, notifiedAt: null },
-    orderBy: [{ userId: "asc" }, { id: "asc" }],
-    take: DIGEST_ROWS_PER_RUN,
-    select: { userId: true, kind: true, doneAt: true, attempts: true },
+    distinct: ["userId"],
+    orderBy: { userId: "asc" },
+    take: DIGEST_LEARNERS_PER_RUN,
+    select: { userId: true },
   });
   let sent = 0;
-  for (const userId of readyLearners(rows).slice(0, opts.limit)) {
-    if (opts.pastDeadline()) break;
+  for (const { userId } of learners) {
+    if (sent >= opts.limit || opts.pastDeadline()) break;
     const staged = await prisma.$transaction(async (tx) => {
+      // Judged on every one of the learner's rows, inside the commit that stamps them.
+      if (
+        (await tx.incidentRemedy.count({
+          where: holdsDigest(incidentId, userId),
+        })) > 0
+      ) {
+        return [];
+      }
       const { count } = await tx.incidentRemedy.updateMany({
         where: { incidentId, userId, notifiedAt: null },
         data: { notifiedAt: new Date() },
@@ -132,7 +130,8 @@ export async function sendIncidentDigests(
         items: items.map(digestItem),
       });
     });
-    if (staged.length > 0) sent += 1;
+    if (staged.length === 0) continue;
+    sent += 1;
     await attemptStaged(staged, PLATFORM_INCIDENT_DIGEST, EMAIL_BUDGET_MS.JOB);
   }
   return sent;

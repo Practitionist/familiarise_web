@@ -287,7 +287,7 @@ async function stepFor(remedy: DueRemedy): Promise<Step> {
 }
 
 /** The trial re-offer or plan extension and its done stamp, in one commit. */
-async function applyInTx(remedy: DueRemedy): Promise<number> {
+function applyInTx(remedy: DueRemedy): Promise<number> {
   const now = new Date();
   return prisma.$transaction(async (tx) => {
     const { count } = await tx.incidentRemedy.updateMany({
@@ -359,25 +359,24 @@ async function markDone(remedy: DueRemedy, note?: string): Promise<number> {
     where: { id: remedy.id, doneAt: null },
     data: { doneAt: now, lastError: note ?? null },
   });
-  if (count === 0 || !MONEY_KINDS.includes(remedy.kind) || note) return count;
-  const left = await prisma.incidentRemedy.count({
-    where: {
-      occurrenceId: remedy.occurrenceId,
-      doneAt: null,
-      kind: { in: MONEY_KINDS },
-    },
-  });
-  if (left === 0) {
-    await prisma.appointmentOccurrence.updateMany({
-      where: {
-        id: remedy.occurrenceId,
-        completionStatus: "VOIDED",
-        seatsSettledAt: null,
-      },
-      data: { seatsSettledAt: now },
-    });
+  if (count > 0 && MONEY_KINDS.includes(remedy.kind) && !note) {
+    await settleSessionIfLastSeat(remedy.occurrenceId, now);
   }
   return count;
+}
+
+async function settleSessionIfLastSeat(
+  occurrenceId: string,
+  now: Date,
+): Promise<void> {
+  const left = await prisma.incidentRemedy.count({
+    where: { occurrenceId, doneAt: null, kind: { in: MONEY_KINDS } },
+  });
+  if (left > 0) return;
+  await prisma.appointmentOccurrence.updateMany({
+    where: { id: occurrenceId, completionStatus: "VOIDED", seatsSettledAt: null },
+    data: { seatsSettledAt: now },
+  });
 }
 
 /** Records the failure and rotates the row; the cap dead-letters it. */

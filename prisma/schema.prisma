@@ -7397,9 +7397,10 @@ model IncidentRemedy {
   updatedAt    DateTime              @updatedAt @db.Timestamptz
 
   @@unique([incidentId, occurrenceId, userId])
+  /// One remedy per seat and session, even where two declared windows overlap it.
+  @@unique([occurrenceId, userId])
   @@index([doneAt, dueAt])
   @@index([incidentId, notifiedAt])
-  @@index([occurrenceId])
   @@index([userId])
   @@index([paymentId])
 }

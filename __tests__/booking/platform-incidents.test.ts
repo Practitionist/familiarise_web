@@ -27,7 +27,8 @@ jest.mock("../../lib/prisma", () => ({
     payment: { findUnique: jest.fn() },
     platformIncident: {
       findUnique: jest.fn(),
-      create: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
+      createMany: jest.fn(),
       findMany: jest.fn(),
       updateMany: jest.fn(),
     },
@@ -112,7 +113,11 @@ const db = prisma as unknown as {
   >;
   payment: Record<"findUnique", Fn>;
   platformIncident: Record<
-    "findUnique" | "create" | "findMany" | "updateMany",
+    | "findUnique"
+    | "findUniqueOrThrow"
+    | "createMany"
+    | "findMany"
+    | "updateMany",
     Fn
   >;
   refund: Record<"findFirst" | "findMany", Fn>;
@@ -173,7 +178,10 @@ describe("the declare door", () => {
   });
 
   it("returns the first incident for an exact duplicate window", async () => {
-    db.platformIncident.findUnique.mockResolvedValueOnce({ id: "inc-1" });
+    db.platformIncident.createMany.mockResolvedValueOnce({ count: 0 });
+    db.platformIncident.findUniqueOrThrow.mockResolvedValueOnce({
+      id: "inc-1",
+    });
     await expect(
       declareIncident(db as never, {
         startsAt: at(0),
@@ -182,7 +190,9 @@ describe("the declare door", () => {
         declaredByUserId: "admin-1",
       }),
     ).resolves.toEqual({ id: "inc-1", created: false });
-    expect(db.platformIncident.create).not.toHaveBeenCalled();
+    expect(db.platformIncident.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({ skipDuplicates: true }),
+    );
   });
 
   it("is admin-only behind a fresh session, and staff may read", async () => {
@@ -368,14 +378,11 @@ describe("the incident refund", () => {
 
 describe("notices", () => {
   it("sends one digest per learner across two runs and two sessions", async () => {
-    const rows = [
-      { userId: "u1", kind: "REFUND_AT_DUE", doneAt: null, attempts: 0 },
-      { userId: "u1", kind: "CLASS_EXISTING", doneAt: at(0), attempts: 0 },
-    ];
     db.incidentRemedy.findMany
-      .mockResolvedValueOnce(rows)
+      .mockResolvedValueOnce([{ userId: "u1" }])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
+    db.incidentRemedy.count.mockResolvedValue(0);
     db.incidentRemedy.updateMany.mockResolvedValueOnce({ count: 2 });
     const opts = { limit: 10, pastDeadline: () => false };
 
@@ -385,12 +392,18 @@ describe("notices", () => {
   });
 
   it("holds a learner's digest until their due-now remedies are applied", async () => {
-    db.incidentRemedy.findMany.mockResolvedValueOnce([
-      { userId: "u1", kind: "REFUND_NOW", doneAt: null, attempts: 0 },
-    ]);
+    db.incidentRemedy.findMany.mockResolvedValueOnce([{ userId: "u1" }]);
+    db.incidentRemedy.count.mockResolvedValueOnce(1);
     const opts = { limit: 10, pastDeadline: () => false };
     expect(await sendIncidentDigests("inc-1", opts)).toBe(0);
-    expect(db.$transaction).not.toHaveBeenCalled();
+    expect(db.incidentRemedy.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        userId: "u1",
+        doneAt: null,
+        kind: { not: "REFUND_AT_DUE" },
+      }),
+    });
+    expect(db.incidentRemedy.updateMany).not.toHaveBeenCalled();
   });
 
   it("stages the ops report once, with its reportedAt stamp", async () => {
