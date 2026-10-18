@@ -516,8 +516,8 @@ interface SaleLedger {
 
 /**
  * The current sale of a payment: its ledger rows since the previous sale was
- * fully reversed. A re-minted seat reuses the payment id, so a metering that
- * follows a full reversal opens a new sale.
+ * fully reversed, engagements and paise alike. A re-minted seat reuses the
+ * payment id, so a metering that follows a full reversal opens a new sale.
  */
 async function currentSaleLedger(
   tx: Tx,
@@ -543,7 +543,11 @@ async function currentSaleLedger(
   let sale = empty();
   for (const row of rows) {
     if (row.engagementsConsumed > 0) {
-      if (sale.consumed > 0 && sale.reversed >= sale.consumed) sale = empty();
+      const closed =
+        sale.consumed > 0 &&
+        sale.reversed >= sale.consumed &&
+        sale.reversedPaise >= sale.pricePaise;
+      if (closed) sale = empty();
       sale.consumed += row.engagementsConsumed;
       sale.pricePaise += row.priceAtBookingPaise;
       if (row.wasOverage) sale.overCapBatches += 1;
