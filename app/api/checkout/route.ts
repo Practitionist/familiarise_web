@@ -1,6 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { checkoutSchema } from "@/schemas/checkout";
-import { handleCheckout } from "@/lib/payments/operations/checkout";
+import { handleCheckout } from "@/lib/payments/checkout";
 import {
   classifyError,
   logClassifiedError,

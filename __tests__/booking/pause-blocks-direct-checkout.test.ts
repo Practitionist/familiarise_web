@@ -12,7 +12,7 @@ import {
   silenceConsole,
 } from "./repro/checkout-harness/mocks/setup";
 
-import { handleCheckout } from "../../lib/payments/operations/checkout";
+import { handleCheckout } from "../../lib/payments/checkout";
 import { resetDouble } from "./repro/checkout-harness/setup";
 import type { CheckoutInput } from "../../schemas/checkout";
 

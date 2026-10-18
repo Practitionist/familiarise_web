@@ -27,7 +27,7 @@ jest.mock("../../lib/payments/operations/cancellation-policy-store", () => ({
   resolveCheckoutCancellationPolicyId: jest.fn(async () => "policy-1"),
 }));
 
-import { handleCheckout } from "../../lib/payments/operations/checkout";
+import { handleCheckout } from "../../lib/payments/checkout";
 import { validateSlotAvailability } from "../../lib/payments/checkout/occupancy-validate";
 import { db, resetDouble } from "../booking/repro/checkout-harness/setup";
 import { SlotTakenError } from "../../lib/booking/booking-rule-error";
