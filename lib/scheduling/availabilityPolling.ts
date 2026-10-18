@@ -40,6 +40,47 @@ export function availabilityPollJitterMs(): number {
   return sign < 0.5 ? -magnitude : magnitude;
 }
 
+/** Three failed polls in a row slow a react-query grid poll to this until one succeeds. */
+export const GRID_POLL_FAILURE_LIMIT = 3;
+export const GRID_POLL_BACKOFF_MS = 5 * 60_000;
+
+/** The react-query `Query.state` counters the grid poll interval reads. */
+export interface GridPollQueryState {
+  dataUpdateCount: number;
+  errorUpdateCount: number;
+}
+
+/**
+ * A react-query `refetchInterval` for a polled grid: the 60 s cadence plus one jitter draw per
+ * fetch outcome, so a re-render between polls cannot re-arm the timer with a fresh offset.
+ */
+export function createGridPollInterval(
+  jitterMs: () => number = availabilityPollJitterMs,
+): (state: GridPollQueryState) => number {
+  let seenDataUpdates = -1;
+  let errorsBeforeLastSuccess = 0;
+  let seenOutcomes = -1;
+  let jitter = 0;
+  return (state) => {
+    if (state.dataUpdateCount !== seenDataUpdates) {
+      seenDataUpdates = state.dataUpdateCount;
+      errorsBeforeLastSuccess = state.errorUpdateCount;
+    }
+    if (
+      state.errorUpdateCount - errorsBeforeLastSuccess >=
+      GRID_POLL_FAILURE_LIMIT
+    ) {
+      return GRID_POLL_BACKOFF_MS;
+    }
+    const outcomes = state.dataUpdateCount + state.errorUpdateCount;
+    if (outcomes !== seenOutcomes) {
+      seenOutcomes = outcomes;
+      jitter = jitterMs();
+    }
+    return AVAILABILITY_POLL_INTERVAL_MS + jitter;
+  };
+}
+
 /** Default hold-off when a 429 arrives without a usable Retry-After (#1697). */
 export const RATE_LIMIT_FALLBACK_BACKOFF_MS = 60_000;
 

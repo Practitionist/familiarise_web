@@ -176,16 +176,33 @@ describe("a business-coded refusal leaves POST /api/checkout as an answer", () =
     });
   });
 
-  it("counts a taken 1:1 slot as SLOT_TAKEN without adding a code to the body", async () => {
-    handleCheckout.mockRejectedValue(new SlotTakenError());
+  it.each([
+    ["the pre-check", new SlotTakenError()],
+    [
+      "the overlap constraint",
+      new Error(
+        'violates exclusion constraint "occurrence_no_confirmed_overlap"',
+      ),
+    ],
+  ])(
+    "answers a slot taken at %s 409 SLOT_TAKEN, counted and never captured",
+    async (_at, error) => {
+      handleCheckout.mockRejectedValue(error);
 
-    const body = await (await POST(checkoutRequest())).json();
+      const res = await POST(checkoutRequest());
+      const body = await res.json();
 
-    expect(metricsCount).toHaveBeenCalledWith("checkout.conflict", 1, {
-      attributes: { reason: "SLOT_TAKEN" },
-    });
-    expect(body.code).toBeUndefined();
-  });
+      expect(metricsCount).toHaveBeenCalledWith("checkout.conflict", 1, {
+        attributes: { reason: "SLOT_TAKEN" },
+      });
+      expect(res.status).toBe(409);
+      expect(body).toMatchObject({
+        errorType: "AVAILABILITY_ERROR",
+        code: "SLOT_TAKEN",
+      });
+      expect(captureException).not.toHaveBeenCalled();
+    },
+  );
 
   it("still captures an unrecognised failure at Sentry's default level", async () => {
     handleCheckout.mockRejectedValue(new Error("connection terminated"));

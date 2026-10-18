@@ -64,11 +64,13 @@ import {
 } from "@/utils/appointmentlock";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 import { buildOccurrenceForWindow } from "@/lib/appointments/occurrences";
+import { DIRECT_CHECKOUT_HOLD_MS } from "@/lib/payments/constants";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import {
   buildConsultantOccupancyWhere,
   buildDeadHoldFilter,
   buildOccupiedAppointmentFilter,
+  OCCUPYING_OCCURRENCE_WHERE,
 } from "@/utils/scheduling-engine/occupancyPolicy";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
@@ -243,9 +245,6 @@ const RENEWABLE_SUBSCRIPTION_STATUSES: ReadonlySet<AppointmentStatus> = new Set(
 
 const REFERRAL_CREDITS_DROPPED_NOTICE =
   "Referral credits can't be used on organisation-funded bookings, so none were spent.";
-
-/** A direct checkout's PENDING window; the slot frees when it lapses (#1319). */
-const DIRECT_CHECKOUT_HOLD_MS = 30 * 60 * 1000;
 
 /** Why a superseded open order's booking was cancelled (#1463). */
 const SUPERSEDED_HOLD_NOTE =
@@ -1810,6 +1809,7 @@ export async function validateSlotAvailability(
       AND: [
         { startsAt: { lt: slotEnd } },
         { endsAt: { gt: slotStart } },
+        OCCUPYING_OCCURRENCE_WHERE,
         // #1169 PR 2 — the `{ isTentative: false }` filter that used to sit
         // here hid LIVE tentative holds: an in-flight checkout's hold passed
         // unseen (the exclusion constraint carries the same NOT-isTentative
@@ -2285,18 +2285,9 @@ async function assertConsulteeHasNoOverlappingSession(
               AND: [
                 { startsAt: { lt: new Date(window.endsAt) } },
                 { endsAt: { gt: new Date(window.startsAt) } },
-                // Defense-in-depth, and parity with the two twins of this
-                // predicate (ScheduleValidationService.validate and
-                // buildConsultantOccupancyWhere): a tombstoned slot is not a
-                // booking, and this check has to answer exactly what they answer
-                // — the whole point of it is that the buyer's own calendar is
-                // arbitrated by the same rule as the consultant's. No
-                // completionStatus filter, for the reason they give: a RESCHEDULED
-                // row is a pending reschedule's live hold and must still block,
-                // or the buyer books over the session they are moving. CANCELLED
-                // needs no clause of its own — every writer of it stamps
-                // `deletedAt` in the same update.
-                { deletedAt: null },
+                // The buyer's calendar is arbitrated by the same occurrence
+                // rule as the consultant's (buildConsultantOccupancyWhere).
+                OCCUPYING_OCCURRENCE_WHERE,
               ],
             },
           },

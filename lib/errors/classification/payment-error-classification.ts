@@ -117,6 +117,8 @@ export const ErrorTypes = {
   // exactly this reason.
   SLOT_TOO_SOON: "SLOT_TOO_SOON",
   SLOT_NOT_ON_GRID: "SLOT_NOT_ON_GRID",
+  // Another buyer took this 1:1 time first; rides as `code` beside AVAILABILITY_ERROR.
+  SLOT_TAKEN: "SLOT_TAKEN",
 
   // Catch-all
   UNKNOWN: "UNKNOWN_ERROR",

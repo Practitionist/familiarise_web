@@ -40,6 +40,7 @@ import { SubscriptionValidationService } from "../subscriptionValidation";
 import {
   buildCohostCommitmentFilter,
   buildOccupiedAppointmentFilter,
+  OCCUPYING_OCCURRENCE_WHERE,
 } from "./occupancyPolicy";
 import {
   MAX_CLASS_SESSIONS_PER_DAY,
@@ -809,7 +810,7 @@ export class ScheduleValidationService {
                         occurrences: {
                           some: {
                             consultantProfileId,
-                            deletedAt: null,
+                            ...OCCUPYING_OCCURRENCE_WHERE,
                           },
                         },
                       },
@@ -823,10 +824,7 @@ export class ScheduleValidationService {
                   AND: [
                     { startsAt: { lt: new Date(latestEnd) } },
                     { endsAt: { gt: new Date(earliestStart) } },
-                    // Defense-in-depth: a tombstoned slot is not a booking.
-                    // No completionStatus filter here — RESCHEDULED rows are
-                    // a pending reschedule's live hold and must still block.
-                    { deletedAt: null },
+                    OCCUPYING_OCCURRENCE_WHERE,
                     ...occurrenceExclusion,
                   ],
                 },
@@ -845,7 +843,7 @@ export class ScheduleValidationService {
               AND: [
                 { startsAt: { lt: new Date(latestEnd) } },
                 { endsAt: { gt: new Date(earliestStart) } },
-                { deletedAt: null },
+                OCCUPYING_OCCURRENCE_WHERE,
                 ...occurrenceExclusion,
               ],
             },

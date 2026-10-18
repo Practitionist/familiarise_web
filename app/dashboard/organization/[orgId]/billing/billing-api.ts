@@ -17,7 +17,7 @@ export const billingSummarySchema = z.object({
     .enum(["PERSONAL", "WALLET", "INVOICE", "LICENSE"])
     .nullable(),
   monthToDate: z.object({
-    gross: z.number(),
+    net: z.number(),
     paymentCount: z.number(),
   }),
   outstanding: z.object({
