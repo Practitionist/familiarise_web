@@ -2,8 +2,8 @@
 
 ## Endpoints Overview
 
-| Event Type   | Validate (POST)                           | Allocate (PATCH)                          |
-| ------------ | ----------------------------------------- | ----------------------------------------- |
+| Event Type   | Validate (POST)                             | Allocate (PATCH)                            |
+| ------------ | ------------------------------------------- | ------------------------------------------- |
 | Consultation | `/api/bookings/consultations/{id}/validate` | `/api/bookings/consultations/{id}/allocate` |
 | Subscription | `/api/bookings/subscriptions/{id}/validate` | `/api/bookings/subscriptions/{id}/allocate` |
 | Webinar      | `/api/bookings/webinars/{id}/validate`      | `/api/bookings/webinars/{id}/allocate`      |
@@ -17,24 +17,24 @@ All endpoints require session-based authentication. The `{id}` parameter accepts
 
 All `/api/scheduling/` endpoints are covered by `AUTHENTICATED_API_PREFIXES` in middleware, meaning they require a valid session cookie. Two sub-paths are exempted as public:
 
-| Path                                    | Auth Required | Notes                                                              |
-| --------------------------------------- | ------------- | ------------------------------------------------------------------ |
-| `/api/scheduling/availability/`              | No            | Public -- consultees can view consultant availability without auth |
-| `/api/scheduling/availability-with-allocation/` | No         | Public -- includes allocation data for calendar display            |
-| `/api/scheduling/appointments` (GET)         | Yes           | Non-privileged users are filtered to their own profile only        |
-| `/api/scheduling/appointments` (POST)        | Yes           | Admin/staff only                                                   |
-| `/api/scheduling/appointments/[id]` (GET)    | Yes           | Requires participant check (consultant or consultee on the appointment) |
+| Path                                            | Auth Required | Notes                                                                   |
+| ----------------------------------------------- | ------------- | ----------------------------------------------------------------------- |
+| `/api/scheduling/availability/`                 | No            | Public -- consultees can view consultant availability without auth      |
+| `/api/scheduling/availability-with-allocation/` | No            | Public -- includes allocation data for calendar display                 |
+| `/api/scheduling/appointments` (GET)            | Yes           | Non-privileged users are filtered to their own profile only             |
+| `/api/scheduling/appointments` (POST)           | Yes           | Admin/staff only                                                        |
+| `/api/scheduling/appointments/[id]` (GET)       | Yes           | Requires participant check (consultant or consultee on the appointment) |
 
-**Removed (booking-journey audit B3 / #1193)**: the `[id]` route's `PATCH` (blind delete-all + slot recreate with no conflict validation and no `consultantProfileId`, so recreated confirmed slots sat OUTSIDE the `occurrence_no_confirmed_overlap` guard), `PUT`, and `DELETE` (hard-delete bypassing the soft-cancel doctrine) handlers. No in-repo caller used them; slot mutations go through `SchedulingService` (allocate/reschedule/manage-timings), which carries locks, revalidation, and the GiST backstop.
+**Removed (booking-journey audit B3 / #1193)**: the `[id]` route's `PATCH` (blind delete-all + slot recreate with no conflict validation and no `consultantProfileId`, so recreated confirmed slots sat OUTSIDE the `occurrence_no_confirmed_overlap` guard), `PUT`, and `DELETE` (hard-delete bypassing the soft-cancel doctrine) handlers. No in-repo caller used them; slot mutations go through the allocator (`lib/booking/allocation`; allocate/reschedule/manage-timings), which carries locks, revalidation, and the GiST backstop.
 
 ### Status Filters
 
 The `/api/scheduling/appointments` GET endpoint supports status filtering. The accepted status values depend on the event type:
 
-| Event Type                   | Status Enum    | Valid Values                                       |
-| ---------------------------- | -------------- | -------------------------------------------------- |
-| Consultation / Subscription  | `AppointmentStatus` | PENDING, APPROVED, APPROVED_PENDING_PAYMENT, etc. |
-| Webinar / Class              | Event status   | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED       |
+| Event Type                  | Status Enum         | Valid Values                                      |
+| --------------------------- | ------------------- | ------------------------------------------------- |
+| Consultation / Subscription | `AppointmentStatus` | PENDING, APPROVED, APPROVED_PENDING_PAYMENT, etc. |
+| Webinar / Class             | Event status        | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED      |
 
 ---
 
@@ -126,7 +126,7 @@ sequenceDiagram
     participant Client
     participant API as PATCH /allocate
     participant Zod
-    participant SA as SchedulingService
+    participant SA as allocate (lib/booking/allocation)
 
     alt Auto mode
         Client->>API: {isAuto: true}
@@ -215,15 +215,20 @@ This is the one door a buyer uses to walk away from a booking they have not paid
 A successful call answers 200 with the body below.
 
 ```json
-{ "abandoned": true, "kind": "consultation", "paymentsExpired": 1, "slotsReleased": 2 }
+{
+  "abandoned": true,
+  "kind": "consultation",
+  "paymentsExpired": 1,
+  "slotsReleased": 2
+}
 ```
 
 The refusals carry a `code` next to the `error` text, as the following table shows.
 
-| Status | Code              | Meaning                                                                                                                                  |
-| ------ | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| 404    | `NOT_FOUND`       | No booking with this id exists, or it is not the caller's; the two answers are the same so the door reveals nothing about other people's bookings. |
-| 409    | `NOT_ABANDONABLE` | The booking has already moved on (confirmed, cancelled or expired).                                                                      |
+| Status | Code              | Meaning                                                                                                                                                     |
+| ------ | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 404    | `NOT_FOUND`       | No booking with this id exists, or it is not the caller's; the two answers are the same so the door reveals nothing about other people's bookings.          |
+| 409    | `NOT_ABANDONABLE` | The booking has already moved on (confirmed, cancelled or expired).                                                                                         |
 | 409    | `ALREADY_PAID`    | A payment on the booking has been captured, including one that committed while the door was running, so the buyer must use Cancel, which quotes the refund. |
 
 ### Withdraw a reschedule proposal
@@ -254,9 +259,9 @@ This route returns what cancelling the trial right now would pay back, and it ne
 
 The optional JSON body carries `confirmedRefundPaise`, which is the `estimatedRefundPaise` the caller saw in the preview. The route re-quotes the refund under the appointment lock, cancels the trial and tombstones its session in one transaction, and then refunds exactly the confirmed quote. A free or unpaid trial needs no body. The refusals specific to a paid trial are listed in the following table, and both carry the current `quote` so the dialog can show it and ask again.
 
-| Status | Code                   | Meaning                                                              |
-| ------ | ---------------------- | -------------------------------------------------------------------- |
-| 409    | `REFUND_QUOTE_REQUIRED` | The trial is paid and the body carried no valid `confirmedRefundPaise`. |
+| Status | Code                    | Meaning                                                                  |
+| ------ | ----------------------- | ------------------------------------------------------------------------ |
+| 409    | `REFUND_QUOTE_REQUIRED` | The trial is paid and the body carried no valid `confirmedRefundPaise`.  |
 | 409    | `REFUND_QUOTE_CHANGED`  | The confirmed amount no longer matches the refund quoted under the lock. |
 
 The compare-and-swap narrows to the status the caller read, so a trial accepted or paid since that read answers 409 `ILLEGAL_TRANSITION` instead of being cancelled on a stale view.
@@ -314,16 +319,16 @@ Validates URL path parameter `{id}`. Accepts UUID (`xxxxxxxx-xxxx-xxxx-xxxx-xxxx
 
 **File**: `utils/scheduling-engine/types.ts`
 
-| Type                       | Description                                                                                        |
-| -------------------------- | -------------------------------------------------------------------------------------------------- |
-| `EventType`                | `"consultation" \| "subscription" \| "webinar" \| "class"`                                         |
-| `AllocationMode`           | `"auto" \| "manual" \| "requested"`                                                                |
-| `AllocationRequest`        | `{eventType, eventId, mode, slots?}`                                                               |
+| Type                       | Description                                                                                           |
+| -------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `EventType`                | `"consultation" \| "subscription" \| "webinar" \| "class"`                                            |
+| `AllocationMode`           | `"auto" \| "manual" \| "requested"`                                                                   |
+| `AllocationRequest`        | `{eventType, eventId, mode, slots?}`                                                                  |
 | `AllocationConstraints`    | `{schedulingPeriod, slotsRequired, sessionDuration, sessionsPerWeek, ...}`                            |
-| `ValidationResult`         | `{isValid, errors: string[], warnings: string[]}`                                                  |
-| `SlotConflictResult`       | `{conflicts[], outsideAvailability[], validSlots[]}`                                               |
-| `AllocationResult`         | `{success, appointments?, error?, warnings?}`                                                      |
-| `TimeSlot`                 | `{startTime, endTime, isAvailable, isBooked}`                                                      |
-| `ProgressInfo`             | `{scheduled, required, remaining, sessionDuration, displayText}`                                   |
-| `ConsultantAllocationData` | `{userId, scheduleType, slotsOfAvailabilityWeekly[], slotsOfAvailabilityCustom[]}`                 |
+| `ValidationResult`         | `{isValid, errors: string[], warnings: string[]}`                                                     |
+| `SlotConflictResult`       | `{conflicts[], outsideAvailability[], validSlots[]}`                                                  |
+| `AllocationResult`         | `{success, appointments?, error?, warnings?}`                                                         |
+| `TimeSlot`                 | `{startTime, endTime, isAvailable, isBooked}`                                                         |
+| `ProgressInfo`             | `{scheduled, required, remaining, sessionDuration, displayText}`                                      |
+| `ConsultantAllocationData` | `{userId, scheduleType, slotsOfAvailabilityWeekly[], slotsOfAvailabilityCustom[]}`                    |
 | `EventConfig`              | `{durationInMonths?, durationInHours?, sessionDurationInHours?, sessionsPerWeek?, schedulingPeriod?}` |

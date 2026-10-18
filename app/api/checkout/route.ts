@@ -306,7 +306,7 @@ export async function POST(req: NextRequest) {
     }
 
     // #1407 — invoice funding asserts a verified org domain
-    // (lib/payments/operations/checkout.ts:2585) and the guard's typed 403 fell
+    // (lib/payments/checkout/org-funding.ts) and the guard's typed 403 fell
     // through to classifyError, which is message-only and answered 500
     // UNKNOWN_ERROR. Honour the structured status like WalletFrozenError above,
     // so the page can say what the admin has to do.

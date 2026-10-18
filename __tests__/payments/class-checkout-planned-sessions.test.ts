@@ -8,7 +8,7 @@
  * a missing one. Excluding it blocked every enrollment for the length of an
  * open reschedule and under-counted the engagements the seat buys.
  *
- * Mocks mirror consultation-occurrence-parity.test.ts: everything checkout.ts
+ * Mocks mirror consultation-occurrence-parity.test.ts: everything lib/payments/checkout
  * touches at module scope is stubbed so the one exported handler can run
  * against a hand-built transaction.
  */

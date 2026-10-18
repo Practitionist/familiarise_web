@@ -850,8 +850,8 @@ guard from PR-1d through three steps:
 1. Book up to (just under) the governance credit limit — bookings
    succeed, OrganizationEarnings rows land in
    `status=PENDING_TRUST` (NOT the usual PENDING).
-2. Try to book past the limit — expect `402 CREDIT_LIMIT_EXCEEDED`
-   from `lib/payments/operations/checkout.ts`.
+2. Try to book past the limit — expect `402 ORG_CREDIT_LIMIT_REACHED`
+   from `assertWithinInvoiceCreditLimit` in `lib/payments/checkout/org-funding.ts`.
 3. Flip the org to `status=ACTIVE` (admin verify), kick the
    release cron — observe PENDING_TRUST earnings promote to
    PENDING.

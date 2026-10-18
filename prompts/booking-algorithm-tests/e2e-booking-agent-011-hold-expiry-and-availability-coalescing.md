@@ -55,7 +55,8 @@ request whose `bookingSource` is `REQUEST_SUBMITTED` waits on a human, not a
 payment, and always occupies.
 
 Checkout writes `expiresAt` as thirty minutes from now
-(`lib/payments/operations/checkout.ts`); there is no named constant for it.
+(`DIRECT_CHECKOUT_HOLD_MS` in `lib/payments/constants.ts`, applied in
+`lib/payments/checkout/orchestrate.ts`).
 
 ---
 

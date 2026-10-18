@@ -29,8 +29,7 @@ The BetterAuth signup hook in `lib/auth.ts`
 `lib/profiles/ensure-consultee-profile.ts::ensureConsulteeProfile(db,
 userId)` upserts one on first consumer action. It is invoked from:
 
-- `lib/payments/operations/checkout.ts` (checkout path +
-  `revalidateInsideLock`)
+- `lib/payments/checkout/revalidate.ts` (`revalidateInsideLock`)
 - `app/api/scheduling/request-for-approval/route.ts`
 - `app/api/organizations/invitations/accept/route.ts` (LEARNER branch, for an already onboarded user)
 - The existing `/form/onboarding` path continues to work because

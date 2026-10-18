@@ -323,7 +323,7 @@ export async function POST(req: NextRequest) {
 
     // DISTRIBUTED LOCKS: serialize on the CONSULTEE first, then the slot
     // atoms. Order matters: direct checkout takes consultee → slot atoms
-    // (lib/payments/operations/checkout.ts), so this route must use the same
+    // (lib/payments/checkout/orchestrate.ts), so this route must use the same
     // order — the reverse would let a checkout holding the consultee lock
     // wait on atoms this route holds while it waits on the consultee lock
     // (classic ABBA). The consultee arm is the piece the audit flagged (B8a):

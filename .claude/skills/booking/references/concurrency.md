@@ -198,7 +198,7 @@ routes (`lib/scheduling/allocate-route.ts`) resolves the caller with
 ADMIN or STAFF (`staff`), the plan's own consultant (`consultant`) or an operator of
 the plan's host organisation (`host-org`) pass; the consultee, who is a
 participant, gets 403 `ALLOCATE_FORBIDDEN` and answers a time through reschedule.
-The check lives in the route, never in `SchedulingService`, because reschedule
+The check lives in the route, never in `allocate`, because reschedule
 accept and auto-confirm call the service legitimately. A `host-org` operator
 allocates only inside the expert's published availability: the route ANDs
 `override`, `allowPartial` and `topUp` with `canOverride` (`hostActor !==

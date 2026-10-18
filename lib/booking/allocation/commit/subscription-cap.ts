@@ -65,7 +65,7 @@ export async function recordSubscriptionAllocationCap(
   if (!membership || membership.status !== "ACTIVE") return;
 
   // Re-resolve the active ProgramAssignment at allocation time.
-  // Mirrors the resolver in lib/payments/operations/checkout.ts so the
+  // Mirrors the resolver in lib/payments/checkout/org-funding.ts so the
   // same coverage filters apply (assignment ACTIVE, program ACTIVE,
   // contract ACTIVE, covers SUBSCRIPTION).
   const now = new Date();

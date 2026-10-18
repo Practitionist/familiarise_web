@@ -168,7 +168,7 @@ function makeMockTx() {
       // one row already sits at ordinal 1, so a fresh call takes 2.
       aggregate: jest.fn().mockResolvedValue({ _max: { ordinal: 1 } }),
     },
-    // pg_advisory_xact_lock inside guardInitialAllocationInTx.
+    // pg_advisory_xact_lock inside guardAllocationInTx.
     $executeRaw: jest.fn().mockResolvedValue(1),
   };
 }

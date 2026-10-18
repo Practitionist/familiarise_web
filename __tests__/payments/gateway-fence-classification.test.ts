@@ -29,8 +29,8 @@ describe("gateway fence classification", () => {
   });
 
   // #1426 — WALLET_FROZEN, CONSENT_REQUIRED and CONSENT_WITHDRAWN are the
-  // codes checkout.ts already throws (lib/payments/operations/checkout.ts:881,
-  // :1556, :2538) but BUSINESS_ERROR_CODES only carried UNSUPPORTED_GATEWAY,
+  // codes lib/payments/checkout already throws (org-funding.ts,
+  // occupancy-validate.ts, commit/org-utilization.ts) but BUSINESS_ERROR_CODES only carried UNSUPPORTED_GATEWAY,
   // so these three fell through to the 500 UNKNOWN path.
   it("classifies SELF_BOOKING as its own 409 business error (#1593)", () => {
     const classified = classifyError(

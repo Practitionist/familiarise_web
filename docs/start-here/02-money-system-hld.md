@@ -27,7 +27,7 @@ This document is the finance counterpart of [01-booking-system-hld.md](./01-book
  cascade: legs, earnings, utilization, credit note, ledger reversal      reconcilers heal every external boundary
 ```
 
-Three rules hold the pipeline together. There is one checkout function, `handleCheckout()` in `lib/payments/operations/checkout.ts`. There is one writer of `SUCCEEDED` for gateway captures, `handlePaymentSuccess()` in `lib/payments/webhooks/handlers.ts`; the sponsored and free rails create their payment as `SUCCEEDED` inline inside checkout's own transaction because no gateway is involved. And there is one append-only journal, written only through `postLedgerTxn()` in `lib/payments/ledger/post.ts`. Consumer and enterprise flows differ only in which `PaymentLeg` rows fund the payment and whether an organisation claims a host share.
+Three rules hold the pipeline together. There is one checkout function, `handleCheckout()` in `lib/payments/checkout/orchestrate.ts`. There is one writer of `SUCCEEDED` for gateway captures, `handlePaymentSuccess()` in `lib/payments/webhooks/handlers.ts`; the sponsored and free rails create their payment as `SUCCEEDED` inline inside checkout's own transaction because no gateway is involved. And there is one append-only journal, written only through `postLedgerTxn()` in `lib/payments/ledger/post.ts`. Consumer and enterprise flows differ only in which `PaymentLeg` rows fund the payment and whether an organisation claims a host share.
 
 ## 2. End-to-end architecture
 

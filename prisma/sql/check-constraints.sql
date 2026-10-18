@@ -7,7 +7,7 @@
 --
 -- Payment amounts use >= 0, not > 0: credit-covered checkouts and
 -- org-sponsored bookings legitimately write amount = 0 (free_/org_ synthetic
--- payment intents in lib/payments/operations/checkout.ts).
+-- payment intents in lib/payments/checkout/orchestrate.ts).
 --
 -- Staged for the #1729 reset (#1771 row 7): ALTER TABLE "OrganizationPayoutAccount"
 -- DROP COLUMN "accountNumberEncrypted"; it is no longer written, as bank data is reference-only.

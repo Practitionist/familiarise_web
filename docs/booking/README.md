@@ -18,7 +18,7 @@ graph TD
         E --> G[Zod Schema Validation]
         F --> G
         G --> H[ScheduleValidationService]
-        H --> I[SchedulingService]
+        H --> I["allocate (lib/booking/allocation)"]
     end
 
     subgraph "Database"
@@ -50,11 +50,22 @@ Every guarded status transition appends one `BookingStatusHistory` row inside th
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `ScheduleCalculationService.ts` | Pure math: countWeeks, calculateRequiredSlots, getSlotsPerCall, groupSlotsByDay/Week, progress                                                   |
 | `ScheduleValidationService.ts`  | Unified validation: future check, conflict detection, schedule matching, event-specific rules                                                    |
-| `SchedulingService.ts`          | Allocation engine: auto/manual/requested modes, rescheduling, appointment creation                                                               |
 | `intervals.ts`                  | Booking-status math for a bookable interval (available / partially-booked / fully-booked) against `weeklyRowIntervalsInRange`                    |
 | `interval-validation.ts`        | Validates a submitted interval against `MAX_DURATION_MINUTES` (12h) and the 30-minute/15-minute increment rules an availability row must satisfy |
 | `interval-meta.ts`              | Overlap and metadata helpers shared by availability rows and appointment intervals, keyed off `TimeSlotMeta`                                     |
 | `types.ts`                      | Shared types: EventType, AllocationMode, AllocationRequest, ValidationResult, etc.                                                               |
+
+### Allocation module (`lib/booking/allocation/`)
+
+| File or folder                    | Purpose                                                                                         |
+| --------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `index.ts`, `allocate.ts`         | The public `allocate` and the mode router                                                       |
+| `modes/`                          | `auto.ts`, `manual.ts`, `use-requested.ts`: each owns its lock envelope and write transaction   |
+| `commit/`                         | Release tentative rows, create appointments, reconnect enrolled attendees, subscription org cap |
+| `search/`                         | `findAvailableSlots` and the day-by-day walk over availability                                  |
+| `event-data.ts`, `guards.ts`, ... | Event loading and status moves, in-transaction guards, replay, counts, collaborators, notices   |
+
+See [01-architecture.md](./01-architecture.md) for the call graph and the lock envelope.
 
 ### Zod Schemas (`schemas/slotAllocation/`)
 

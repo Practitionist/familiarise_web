@@ -105,9 +105,8 @@ All checkout data is stored in payment intent metadata:
 ```
 
 > **Webhook backward-compat note:** Razorpay order `notes` objects embedded with the old keys (`startsAt` / `endsAt`) are still accepted by the webhook handler for in-flight orders created before the rename. `normalizeLegacySlotKeys()` in `schemas/webhooks/metadata.ts` maps old → new on ingest; new orders always use `startsAt` / `endsAt`.
-```
 
-> **Empty optional fields are omitted, never sent as `""` (#1462).** `buildPaymentMetadata()` in `lib/payments/operations/checkout.ts` includes an optional key only when it has a value, because the webhook schemas type those fields with `.optional()`, which accepts an absent key and rejects an empty string. A subscription bought for a scheduling period carries no direct slot times, so it used to reach the gateway with `startsAt: ""` and `endsAt: ""`, and every capture webhook for such a sale then failed validation and stamped the payment `REQUIRES_MANUAL_RECOVERY` with the buyer already charged. Because a Razorpay order never expires, orders minted before the fix keep replaying with those empty strings, so `validateWebhookMetadata()` also strips empty-string entries before it normalizes legacy keys and parses. Omitting empty keys has the useful side effect of giving the fifteen-key gateway ceiling more headroom.
+> **Empty optional fields are omitted, never sent as `""` (#1462).** `buildPaymentMetadata()` in `lib/payments/checkout/schema.ts` includes an optional key only when it has a value, because the webhook schemas type those fields with `.optional()`, which accepts an absent key and rejects an empty string. A subscription bought for a scheduling period carries no direct slot times, so it used to reach the gateway with `startsAt: ""` and `endsAt: ""`, and every capture webhook for such a sale then failed validation and stamped the payment `REQUIRES_MANUAL_RECOVERY` with the buyer already charged. Because a Razorpay order never expires, orders minted before the fix keep replaying with those empty strings, so `validateWebhookMetadata()` also strips empty-string entries before it normalizes legacy keys and parses. Omitting empty keys has the useful side effect of giving the fifteen-key gateway ceiling more headroom.
 
 **Benefits:**
 
@@ -283,7 +282,7 @@ export async function POST(request: Request) {
 
 ### Backend Processing
 
-**Main Function:** `/lib/payments/operations/checkout.ts` - `handleConsultationCheckout()` (Lines 430-481)
+**Main Function:** `/lib/payments/checkout/handlers/consultation.ts` - `handleConsultationCheckout()`
 
 #### Step 1: Validate Plan
 
@@ -493,7 +492,7 @@ if (pendingAttempts >= 3) {
 ```typescript
 const consultation = await tx.consultation.create({
   data: {
-    status: AppointmentStatus.PENDING,   // field renamed from `requestStatus`
+    status: AppointmentStatus.PENDING, // field renamed from `requestStatus`
     requestNotes: data.notes,
     requestedById: consulteeProfileId,
     consultationPlanId: plan.id,
@@ -570,7 +569,7 @@ sequenceDiagram
     participant U as User
     participant FE as Frontend
     participant API as /api/checkout
-    participant CO as checkout.ts
+    participant CO as lib/payments/checkout
     participant PG as Payment Gateway
     participant DB as Database
     participant WH as Webhook
@@ -696,7 +695,7 @@ Subscriptions are **recurring one-on-one sessions** between a consultee and cons
 
 ### Backend Processing
 
-**Main Function:** `/lib/payments/operations/checkout.ts` - `handleSubscriptionCheckout()` (Lines 483-569)
+**Main Function:** `/lib/payments/checkout/handlers/subscription.ts` - `handleSubscriptionCheckout()`
 
 #### Step 1: Validate Plan
 
@@ -778,7 +777,9 @@ totalSessions = 13 * 2 = 26 sessions
 const subscription = await tx.subscription.create({
   data: {
     subscriptionPlanId: plan.id,
-    status: skipPayment ? AppointmentStatus.APPROVED : AppointmentStatus.PENDING,  // field renamed from `requestStatus`
+    status: skipPayment
+      ? AppointmentStatus.APPROVED
+      : AppointmentStatus.PENDING, // field renamed from `requestStatus`
     requestedById: consulteeProfileId,
     requestNotes: data.notes,
     bookingSource: "DIRECT_CHECKOUT",
@@ -920,7 +921,7 @@ sequenceDiagram
     participant U as User
     participant FE as Frontend
     participant API as /api/checkout
-    participant CO as checkout.ts
+    participant CO as lib/payments/checkout
     participant DB as Database
     participant PG as Payment Gateway
     participant WH as Webhook

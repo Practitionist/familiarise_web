@@ -16,7 +16,7 @@
  * it is persisted on the Payment and Appointment rows either way.
  */
 
-// Boundary mocks. `lib/payments/operations/checkout` transitively imports the
+// Boundary mocks. `lib/payments/checkout` transitively imports the
 // auth stack through the payouts barrel, which is ESM-only under this Jest
 // transform; none of it is exercised by a pure metadata builder.
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));

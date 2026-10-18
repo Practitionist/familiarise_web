@@ -81,7 +81,7 @@ export async function commitCheckout(input: CheckoutCommitInput) {
         //     all known at checkout because consultant pre-allocated)
         //   - SUBSCRIPTION: null → SKIP recordBookingUtilization at
         //     checkout. Slots are allocated lazily by the consultant;
-        //     debits land in SchedulingService.createAppointments,
+        //     debits land in createAppointments (lib/booking/allocation/commit),
         //     1 per allocation batch.
         let engagementsForCap: number | null = null;
         let classEngagementIds: string[] = [];

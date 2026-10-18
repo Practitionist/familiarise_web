@@ -28,7 +28,7 @@ All test data uses the `-003` suffix to avoid collisions with existing `-001` / 
 
 ## Background: What Auto Allocate Does
 
-`SchedulingService.autoAllocate()` picks slots on behalf of the consultant without
+`autoAllocate()` (`lib/booking/allocation/modes/auto.ts`) picks slots on behalf of the consultant without
 them manually choosing times.
 
 | Behaviour                    | Webinar                                                                                                             | Class                                                      |
@@ -43,7 +43,7 @@ them manually choosing times.
 
 **Critical source files:**
 
-- `utils/scheduling-engine/SchedulingService.ts` — `autoAllocate()`, reached through the public `allocate()` entry point via `dispatch`
+- `lib/booking/allocation/modes/auto.ts` — `autoAllocate()`, reached through the public `allocate()` entry point (`lib/booking/allocation/allocate.ts`) via `dispatch`
 - `app/api/bookings/webinars/[webinarId]/allocate/route.ts`
 - `app/api/bookings/classes/[classId]/allocate/route.ts`
 - `schemas/slotAllocation/validationSchemas.ts`
@@ -527,7 +527,7 @@ ORDER BY 1;
 -- Expected: all sessions_this_week values ≤ 2
 ```
 
-**If any week shows > 2 sessions, this is a bug — fix `autoAllocate()` in `SchedulingService.ts` immediately.**
+**If any week shows > 2 sessions, this is a bug — fix `autoAllocate()` in `lib/booking/allocation/modes/auto.ts` immediately.**
 
 ### Test 3.3 — UI Verify (Appointments Page)
 
