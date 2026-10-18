@@ -1,5 +1,9 @@
 # Cron Jobs Reference
 
+> **Partially superseded.** The scheduling _mechanics_ — response codes, `?limit=`, lock modes and lease durations, the sidecar inventory, reconciler rules, and the current per-target ticker schedule — are maintained in [10-cron-and-reconciliation-reference.md](./10-cron-and-reconciliation-reference.md). Read that file first; treat this one as background.
+>
+> Known stale claims below, listed so you do not trust them: this document says **5 scheduled workflows** (there are **7** — `db-live-drift.yml` and `security-audit.yml` also declare a `cron:` schedule) and its maintenance README index calls it **61 jobs** (the registry holds **56** slugs, of which **27** are ticker targets and **13** further jobs have no HTTP twin at all). Its schedule tables predate the ticker's phase staggering, so most cadence values no longer match `TARGET_EVERY_MINUTES` in `netlify/functions/cron-tick.mts`. Sections not listed here remain useful.
+
 The platform runs **5 scheduled GitHub Actions workflows** (`cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`, `cron-heartbeat.yml`, and `stream-webhook-drift.yml`) executing 43 background maintenance, compliance, and reconciliation scripts alongside the Netlify sub-hour scheduled function (`netlify/functions/cron-tick.mts`). Each CLI job boots a bare Node process with `tsx`, connects straight to PostgreSQL through Prisma, acquires a distributed lock via `withCronLock`, checks `abortIfMaintenance()`, and exits.
 
 Every HTTP cleanup twin is served by the unified dynamic route `app/api/cleanup/[job]/route.ts` backed by `lib/cron/cleanup-registry.ts`.

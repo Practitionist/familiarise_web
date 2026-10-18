@@ -24,6 +24,7 @@ Familiarise's maintenance mode system provides two-tier protection (DEGRADED and
 7. [Post-Maintenance Recovery](./07-post-maintenance-recovery.md) -- Verification and reconciliation steps
 8. [SDK Update Guide](./08-sdk-update-guide.md) -- Detailed per-package update guide
 9. [Future Improvements](./09-future-improvements.md) -- Planned code changes for better protection
+10. [Cron, Sidecars and Reconciliation Reference](./10-cron-and-reconciliation-reference.md) -- **Current authority** for every job, lock mode, response code, the sidecar inventory and the reconciler rules. Supersedes parts of [04](./04-cron-jobs-reference.md)
 
 ---
 
