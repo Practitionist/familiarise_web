@@ -148,7 +148,11 @@ The following risks are ordered by estimated impact at launch-scale load. The mi
 
 **Current mitigation.** `lib/db/serializable-retry.ts` exists and is intended for this path. Whether it is actually applied to the `updateMany` call requires code-level verification.
 
-**Verification needed.** Confirm that the program-assignment increment in `lib/api/organizations/program-helpers.ts` is either (a) the lone SQL statement (no broader transaction, relying on Postgres row-level locking) or (b) wrapped in a SERIALIZABLE transaction via `serializableRetry`. No scenario under `tests/typescript/race-conditions/` exercises this path — seat and program-assignment over-allocation is staged work under scenario 14c in the [chaos test runbook](../enterprise/50-operations/06-chaos-test-runbook.md) — so this stays a code-level verification until that scenario lands.
+**Verification needed.** This one is answered in the code, so the check is a read rather than an investigation. `lib/api/organizations/program-helpers.ts:256-259` states the intent outright — the racy part is the increment, performed as a conditional UPDATE so two concurrent bookings cannot both pass the cap check — and the `BLOCK` branch at `:426-432` is exactly that: one `updateMany({ where: { id, engagementsUsed: { lte: cap - delta } }, data: { engagementsUsed: { increment: delta } } })`, with `res.count === 0` raising the limit error. Checking the cap and incrementing the same row in a single statement is the whole guard.
+
+There is therefore no `(a) lone statement **or** (b) SERIALIZABLE` choice to make. A conditional UPDATE takes a row lock, and when a concurrent updater commits first Postgres re-evaluates the `WHERE` against the updated row, so the second writer's predicate fails and it gets `count === 0`. That holds inside a broader `READ COMMITTED` transaction — which is how this code already runs — and does not by itself require `serializableRetry`. `SERIALIZABLE` earns its keep on the paths that read a count and then act on it in separate statements, not on a single conditional UPDATE.
+
+No scenario under `tests/typescript/race-conditions/` exercises this path, so the reasoning above rests on the implementation rather than on an executed race. Seat and program-assignment over-allocation is staged work under scenario 14c in the [chaos test runbook](../enterprise/50-operations/06-chaos-test-runbook.md).
 
 ### Risk 3 — BillingAccount Wallet Over-Draft (Severity: HIGH)
 
@@ -628,7 +632,7 @@ npm run test:race
 npx tsx tests/typescript/test-race-condition-fix.ts
 ```
 
-Each scenario asserts independently on the expected success count, the expected conflict count, and zero unexpected errors — and on the real-API paths, that no PENDING hold is left behind. Only an **overbooking** symptom, more than one winner, points at the isolation guard; the fix for that is to wrap the relevant Prisma calls in `serializableRetry(() => prisma.$transaction(..., { isolationLevel: 'Serializable' }))`. A wrong conflict count, an unexpected 5xx or a leftover hold is a different fault and should be read as one.
+Each scenario asserts independently on the expected success count, the expected conflict count, and zero unexpected errors — and on the real-API paths, that no PENDING hold is left behind. Read the failure against the guard that actually protects the path: for same-slot consultations that is the Redis lock in `utils/appointmentlock.ts` and the `occurrence_no_confirmed_overlap` constraint described in §4.4, and for webinar and class seats it is the checkout lock plus the tentative-inclusive participant count. A wrong conflict count, an unexpected 5xx or a leftover hold is a different fault again. None of these scenarios exercises the program-assignment or wallet `serializableRetry` paths, so an overbooking failure here says nothing about them.
 
 ### Action 3 — Upgrade to Netlify Pro Before Launch (Priority: High)
 
