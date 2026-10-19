@@ -23,6 +23,11 @@ import {
 } from "@/lib/payments/payouts/razorpay-payouts";
 import { transitionOrgPayoutAccount } from "@/lib/enterprise/transitions";
 import { requireFreshSession } from "@/lib/auth/step-up";
+import { PAYOUT_ACCOUNT_COOLING_OFF_MS } from "@/lib/payments/payouts/payout-requirements";
+import {
+  emailPayoutAccountChanged,
+  orgPayoutFreezeUrl,
+} from "@/lib/payments/payouts/payout-account-change";
 
 const UpsertBodySchema = z.object({
   accountHolderName: z.string().min(1).max(200),
@@ -214,10 +219,15 @@ export async function PUT(
   // once and is never stored. The column stays NOT NULL until the #1729 drop.
   const noStoredAccountNumber = "";
 
-  const upserted = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const existing = await tx.organizationPayoutAccount.findUnique({
       where: { organizationId: orgId },
     });
+    const destinationChanged =
+      !!existing &&
+      (existing.accountNumberLast4 !== last4 ||
+        existing.accountHolderName !== body.accountHolderName ||
+        (existing.ifscCode ?? null) !== (body.ifscCode ?? null));
 
     // Changing bank details resets verification. A different account
     // number means the side-channel verification artifacts no longer
@@ -250,15 +260,15 @@ export async function PUT(
         // #1234 r2 — holder name and IFSC identify the destination as much
         // as the last-4 does; comparing last4 alone let a same-last-4
         // different-bank edit keep a stale VERIFIED stamp).
-        ...(existing &&
-        (existing.accountNumberLast4 !== last4 ||
-          existing.accountHolderName !== body.accountHolderName ||
-          (existing.ifscCode ?? null) !== (body.ifscCode ?? null))
+        ...(destinationChanged
           ? {
               status: "PENDING_VERIFICATION" as const,
               verifiedAt: null,
               razorpayContactId: null,
               razorpayFundAccountId: null,
+              payoutsAllowedAfter: new Date(
+                Date.now() + PAYOUT_ACCOUNT_COOLING_OFF_MS,
+              ),
             }
           : {}),
       },
@@ -285,8 +295,20 @@ export async function PUT(
       },
     });
 
-    return next;
+    return { upserted: next, destinationChanged };
   });
+  const { upserted, destinationChanged } = result;
+
+  if (destinationChanged) {
+    const owners = await prisma.membership.findMany({
+      where: { organizationId: orgId, status: "ACTIVE", role: "OWNER" },
+      select: { userId: true },
+    });
+    await emailPayoutAccountChanged(
+      owners.map((o) => o.userId),
+      orgPayoutFreezeUrl(orgId),
+    );
+  }
 
   // #1230 — wire the dormant verification loop (see helper below).
   await provisionAndVerifyOrgPayoutAccount({

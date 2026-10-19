@@ -255,9 +255,14 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         job: "create-payout-batch",
         run: async () => {
           const { createPayoutBatch } = await import("@/lib/payments/payouts");
-          return { success: true, batchId: await createPayoutBatch() };
+          return { success: true, ...(await createPayoutBatch()) };
         },
-        summarize: (r) => ({ batchId: r.batchId }),
+        summarize: (r) => ({
+          batchId: r.batchId,
+          minted: r.minted,
+          failed: r.failed,
+        }),
+        status: (r) => statusFor(r, r.failed > 0),
         failureMessage: "Failed to create payout batch",
       }),
 

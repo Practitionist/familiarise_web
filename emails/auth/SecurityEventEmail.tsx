@@ -15,7 +15,8 @@ export type SecurityEvent =
   | { kind: "backup-codes-regenerated" }
   | { kind: "backup-code-used"; remaining: number }
   | { kind: "two-factor-reset-by-admin" }
-  | { kind: "two-factor-locked"; lockedUntil: Date };
+  | { kind: "two-factor-locked"; lockedUntil: Date }
+  | { kind: "payout-account-changed"; freezeUrl: string };
 
 export interface SecurityEventEmailProps {
   recipientName: string;
@@ -45,6 +46,8 @@ export function securityEventSubject(event: SecurityEvent): string {
       return "Your Familiarise two-factor authentication was reset";
     case "two-factor-locked":
       return "Two-factor sign-in is locked on your Familiarise account";
+    case "payout-account-changed":
+      return "Your payout bank account was changed";
   }
 }
 
@@ -97,6 +100,10 @@ function eventLines(
         `Too many incorrect two-factor codes were entered for your account, most recently on ${when}.`,
         `Two-factor sign-in is locked until ${lockedUntilText ?? "the lock expires"}. Someone who tried may already know your password, so change it once you are back in.`,
       ];
+    case "payout-account-changed":
+      return [
+        "Your payout bank account was changed. If this wasn't you, freeze payouts.",
+      ];
   }
 }
 
@@ -118,6 +125,13 @@ export default function SecurityEventEmail({
           {line}
         </Text>
       ))}
+      {event.kind === "payout-account-changed" && (
+        <Section style={buttonContainer}>
+          <Button style={button} href={event.freezeUrl}>
+            Freeze payouts
+          </Button>
+        </Section>
+      )}
       <Text style={paragraph}>
         <strong>If this wasn&apos;t you</strong>, contact support at{" "}
         {supportEmail} or your administrator immediately.

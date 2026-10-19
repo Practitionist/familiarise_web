@@ -32,7 +32,34 @@ export type PayoutEligibilityReason =
   | "NON_INDIA"
   | "NO_ACCOUNT"
   | "UNVERIFIED"
+  | PayoutAccountHoldReason
   | "BELOW_MINIMUM";
+
+export type PayoutAccountHoldReason =
+  "PAYOUT_ACCOUNT_FROZEN" | "PAYOUT_ACCOUNT_COOLING_OFF";
+
+/** A changed payout destination waits this long before a payout may reach it. */
+export const PAYOUT_ACCOUNT_COOLING_OFF_MS = 48 * 60 * 60 * 1000;
+
+export interface PayoutAccountHoldInput {
+  payoutsAllowedAfter?: Date | string | null;
+  payoutsFrozenAt?: Date | string | null;
+}
+
+/** Why mint must skip this default account right now, or null when it may pay it. */
+export function payoutAccountHold(
+  account: PayoutAccountHoldInput,
+  now: Date = new Date(),
+): PayoutAccountHoldReason | null {
+  if (account.payoutsFrozenAt) return "PAYOUT_ACCOUNT_FROZEN";
+  if (
+    account.payoutsAllowedAfter &&
+    new Date(account.payoutsAllowedAfter).getTime() > now.getTime()
+  ) {
+    return "PAYOUT_ACCOUNT_COOLING_OFF";
+  }
+  return null;
+}
 
 export interface PayoutRequirementsInput {
   consultantProfileId: string;
@@ -140,9 +167,10 @@ export function payoutRequirements(
 export interface PayoutEligibilityGateInput {
   livePayoutsEnabled: boolean;
   isIndianResident: boolean;
-  defaultAccount: { isVerified: boolean } | null;
+  defaultAccount: ({ isVerified: boolean } & PayoutAccountHoldInput) | null;
   readyAmount: number;
   minimumAmount: number;
+  now?: Date;
 }
 
 /**
@@ -157,6 +185,8 @@ export function payoutEligibilityReason(
   if (!input.isIndianResident) return "NON_INDIA";
   if (!input.defaultAccount) return "NO_ACCOUNT";
   if (!input.defaultAccount.isVerified) return "UNVERIFIED";
+  const hold = payoutAccountHold(input.defaultAccount, input.now);
+  if (hold) return hold;
   if (input.readyAmount < input.minimumAmount) return "BELOW_MINIMUM";
   return null;
 }

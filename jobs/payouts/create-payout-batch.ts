@@ -28,12 +28,13 @@ async function main(): Promise<void> {
   );
 
   try {
-    const batchId = await createPayoutBatch();
+    const { batchId, failed } = await createPayoutBatch();
     const orgBatch = await createOrgPayoutBatches();
 
     const duration = (Date.now() - startTime) / 1000;
     console.log(`⏱️ Job completed in ${duration.toFixed(2)} seconds`);
     console.log(`   📦 Consultant Batch ID: ${batchId || "none"}`);
+    console.log(`   ❌ Consultant mints failed: ${failed}`);
     console.log(
       `   🏢 Org Payouts Created: ${orgBatch.payoutsCreated} (scanned ${orgBatch.orgsScanned})`,
     );
@@ -42,6 +43,7 @@ async function main(): Promise<void> {
       const outputs = [
         `batch_id=${batchId}`,
         `org_payouts_created=${orgBatch.payoutsCreated}`,
+        `consultant_mints_failed=${failed}`,
         `success=true`,
       ].join("\n");
       fs.appendFileSync(process.env.GITHUB_OUTPUT, outputs + "\n");
@@ -49,6 +51,7 @@ async function main(): Promise<void> {
 
     Sentry.logger.info("job:create-payout-batch finished", {
       batchId,
+      consultantMintsFailed: failed,
       orgPayoutsCreated: orgBatch.payoutsCreated,
       orgsScanned: orgBatch.orgsScanned,
     });

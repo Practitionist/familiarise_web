@@ -14,7 +14,12 @@
  * reversed is released (re-opened) in the transaction that makes that move.
  */
 
-import { PayoutStatus } from "@prisma/client";
+import {
+  PayoutStatus,
+  type LedgerAccountKind,
+  type LedgerDirection,
+  type LedgerTransactionKind,
+} from "@prisma/client";
 import type { PrismaLike, Tx } from "@/lib/prisma";
 import { PAN_FALLBACK_BPS } from "@/lib/compliance/tds";
 import {
@@ -31,6 +36,7 @@ export const ORG_CLAWBACK_KEY_PREFIX = "clawback:";
 export const CLAWBACK_RECOVERY_KEY_PREFIX = "clawback-recovery:";
 export const CLAWBACK_RECOVERY_RELEASE_KEY_PREFIX =
   "clawback-recovery-release:";
+export const CLAWBACK_VOID_KEY_PREFIX = "clawback-void:";
 
 /** Payout statuses whose recovery no longer stands. */
 export const RECOVERY_RELEASING_STATUSES: PayoutStatus[] = [
@@ -163,6 +169,50 @@ export async function clawbackRecoveredPaise(
   return (await clawbackRecoveredByPayout(db, [payoutId])).get(payoutId) ?? 0;
 }
 
+const MIRRORED_TXN_SELECT = {
+  idempotencyKey: true,
+  kind: true,
+  entries: {
+    select: {
+      direction: true,
+      amountPaise: true,
+      account: {
+        select: {
+          kind: true,
+          organizationId: true,
+          consultantProfileId: true,
+        },
+      },
+    },
+  },
+} as const;
+
+interface MirroredTxn {
+  kind: LedgerTransactionKind;
+  entries: Array<{
+    direction: LedgerDirection;
+    amountPaise: number | bigint;
+    account: {
+      kind: LedgerAccountKind;
+      organizationId: string | null;
+      consultantProfileId: string | null;
+    };
+  }>;
+}
+
+/** Every entry of `txn` with its direction flipped. */
+function mirrorPostings(txn: MirroredTxn): Posting[] {
+  return txn.entries.map((e): Posting => ({
+    account: {
+      kind: e.account.kind,
+      organizationId: e.account.organizationId,
+      consultantProfileId: e.account.consultantProfileId,
+    },
+    direction: e.direction === "DEBIT" ? "CREDIT" : "DEBIT",
+    amountPaise: sumPaise(e.amountPaise),
+  }));
+}
+
 /**
  * Re-opens the clawback recovered on a payout that did not complete, by
  * mirroring its recovery journal. Idempotent; a no-op when nothing was
@@ -182,23 +232,7 @@ export async function releaseClawbackRecovery(
         ],
       },
     },
-    select: {
-      idempotencyKey: true,
-      kind: true,
-      entries: {
-        select: {
-          direction: true,
-          amountPaise: true,
-          account: {
-            select: {
-              kind: true,
-              organizationId: true,
-              consultantProfileId: true,
-            },
-          },
-        },
-      },
-    },
+    select: MIRRORED_TXN_SELECT,
   });
   if (txns.length !== 1) return;
   const [recovery] = txns;
@@ -208,16 +242,34 @@ export async function releaseClawbackRecovery(
     kind: recovery.kind,
     payoutId,
     description: `Clawback recovery released: payout ${payoutId} did not complete`,
-    postings: recovery.entries.map((e): Posting => ({
-      account: {
-        kind: e.account.kind,
-        organizationId: e.account.organizationId,
-        consultantProfileId: e.account.consultantProfileId,
-      },
-      direction: e.direction === "DEBIT" ? "CREDIT" : "DEBIT",
-      amountPaise: sumPaise(e.amountPaise),
-    })),
+    postings: mirrorPostings(recovery),
   });
+}
+
+/**
+ * Voids every clawback receivable raised against a consultant payout the bank
+ * returned: its earnings reopen net of the refund, so the receivable would net twice.
+ */
+export async function voidClawbacksRaisedOnPayout(
+  tx: PrismaLike,
+  payoutId: string,
+): Promise<void> {
+  const raised = await tx.ledgerTransaction.findMany({
+    where: {
+      payoutId,
+      idempotencyKey: { startsWith: ORG_CLAWBACK_KEY_PREFIX },
+    },
+    select: MIRRORED_TXN_SELECT,
+  });
+  for (const txn of raised) {
+    await postLedgerTxn(tx, {
+      idempotencyKey: `${CLAWBACK_VOID_KEY_PREFIX}${txn.idempotencyKey}`,
+      kind: txn.kind,
+      payoutId,
+      description: `Clawback voided: payout ${payoutId} was reversed by the bank`,
+      postings: mirrorPostings(txn),
+    });
+  }
 }
 
 /**

@@ -2181,8 +2181,15 @@ model OrganizationPayoutAccount {
   /// Optimistic-lock clock — same CAS contract as Organization.version.
   version    Int                    @default(1)
 
+  /// Mint skips this account until then; stamped when the destination changes.
+  payoutsAllowedAfter DateTime? @db.Timestamptz
+  /// The org froze payouts from the change email; only an admin clears it.
+  payoutsFrozenAt     DateTime? @db.Timestamptz
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  payouts OrganizationPayout[]
 }
 
 enum OrgPayoutAccountStatus {
@@ -2325,6 +2332,10 @@ model OrganizationPayout {
   /// window. Manual / route-driven payouts leave this null. Unique when
   /// present so two cron runs cannot both insert the same key.
   idempotencyKey String? @unique
+
+  /// The destination snapshotted at mint; processing sends to exactly this account.
+  orgPayoutAccountId String?
+  orgPayoutAccount   OrganizationPayoutAccount? @relation(fields: [orgPayoutAccountId], references: [id], onDelete: SetNull)
 
   earnings   OrganizationEarnings[]
   tdsRecords TDSRecord[]
@@ -6116,18 +6127,21 @@ model ConsultantEarnings {
   cycleOrdinal Int?
 
   // Status tracking
-  status           EarningStatus  @default(PENDING)
+  status               EarningStatus  @default(PENDING)
   /// #1569 — max(capture time, last live occurrence endsAt) + the hold hours;
   /// recomputed when a reschedule moves the call. #1766 — NULL = tranche not
   /// yet delivered; stamped by the completion path.
-  holdUntil        DateTime?      @db.Timestamptz
-  paidAt           DateTime?      @db.Timestamptz
+  holdUntil            DateTime?      @db.Timestamptz
+  paidAt               DateTime?      @db.Timestamptz
   // #1020-1 — the status an earning was in when an open dispute HELD it
   // (PENDING vs READY), so a WON/CLOSED release restores the true prior state
   // instead of force-maturing a PENDING row into READY prematurely. Null =
   // never dispute-held (or held before this column shipped — releases then
   // fall back to READY, the historical behavior).
-  preDisputeStatus EarningStatus?
+  preDisputeStatus     EarningStatus?
+  /// The last payout that released this row back to READY on failure, so a late
+  /// gateway completion of that payout can find what it actually paid.
+  releasedFromPayoutId String?
 
   // Currency (always INR for MVP, extensible for multi-currency)
   currency Currency @default(INR)
@@ -6214,7 +6228,11 @@ model ConsultantPayout {
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
+  /// The destination snapshotted at mint; processing sends to exactly this account.
+  payoutAccountId String?
+
   consultantProfile ConsultantProfile    @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Restrict)
+  payoutAccount     PayoutAccount?       @relation(fields: [payoutAccountId], references: [id], onDelete: SetNull)
   earnings          ConsultantEarnings[]
   tdsRecords        TDSRecord[]
 
@@ -6247,10 +6265,16 @@ model PayoutAccount {
   isVerified Boolean @default(false)
   isDefault  Boolean @default(false)
 
+  /// Mint skips this account as the default until then; stamped when the default changes.
+  payoutsAllowedAfter DateTime? @db.Timestamptz
+  /// The payee froze payouts from the change email; only an admin clears it.
+  payoutsFrozenAt     DateTime? @db.Timestamptz
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Restrict)
+  consultantProfile ConsultantProfile  @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Restrict)
+  payouts           ConsultantPayout[]
 
   @@index([consultantProfileId])
   @@index([isDefault])

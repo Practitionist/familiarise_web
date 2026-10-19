@@ -67,7 +67,11 @@ async function readRequirementInputs(
   });
   const defaultAccount = await prisma.payoutAccount.findFirst({
     where: { consultantProfileId, isDefault: true },
-    select: { isVerified: true },
+    select: {
+      isVerified: true,
+      payoutsAllowedAfter: true,
+      payoutsFrozenAt: true,
+    },
   });
   const earningsCount =
     known.earningsCount ??
