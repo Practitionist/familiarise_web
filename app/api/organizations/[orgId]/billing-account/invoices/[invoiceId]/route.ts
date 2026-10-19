@@ -2,53 +2,18 @@
  * GET   /api/organizations/[orgId]/billing-account/invoices/[invoiceId]
  * PATCH /api/organizations/[orgId]/billing-account/invoices/[invoiceId]
  *
- * Invoice status transitions are narrow:
- *   DRAFT → ISSUED      (manual issue; also done by issueImmediately on POST)
- *   DRAFT → CANCELLED   (safe to cancel before send)
- *   ISSUED → PAID       (webhook path — see /pay)
- *   ISSUED → OVERDUE    (cron path; not exposed as an API mutation)
- *   ISSUED → VOID       (credit-note equivalent; refund-worthy)
- *
- * The /pay sub-route handles the webhook → PAID transition. This
- * PATCH only covers manual admin actions that don't need payment
- * gateway integration. #1851 decision 7 — a due-date or PDF edit writes
- * its own audit row in any status, PAID included.
+ * A tenant may only cancel a DRAFT. Issuing, voiding and due-date or PDF
+ * edits are the platform's; PAID and OVERDUE are webhook- and cron-owned.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { HttpsUrlSchema } from "@/schemas/url";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionOrgInvoice } from "@/lib/enterprise/transitions";
-import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
-import {
-  postInvoiceIssuedJournal,
-  postInvoiceVoidedJournal,
-} from "@/lib/payments/billing/org-invoice-journal";
-import { EMAIL_BUDGET_MS } from "@/lib/email/config";
-import type { StagedRecipientEmail as StagedEmail } from "@/lib/email/send-to-recipients";
-import {
-  MONEY_EMAIL_TYPES,
-  stageOrgBillingEmail,
-} from "@/lib/email/senders/money";
-import type { StagedTrigger } from "@/lib/novu";
-import { notifyOrgInvoiceIssued } from "@/lib/novu/org-workflows";
-import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
-import { getAppUrl } from "@/lib/url";
 
-const PatchStatusSchema = z.enum(["ISSUED", "CANCELLED", "VOID"]);
-
-const PatchBodySchema = z
-  .object({
-    status: PatchStatusSchema.optional(),
-    dueDate: z.coerce.date().optional(),
-    pdfUrl: HttpsUrlSchema.optional(),
-  })
-  .refine((v) => Object.keys(v).length > 0, {
-    message: "PATCH body must contain at least one field",
-  });
+const PatchBodySchema = z.object({ status: z.literal("CANCELLED") }).strict();
 
 export async function GET(
   _req: NextRequest,
@@ -123,21 +88,19 @@ export async function PATCH(
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
-  const parsed = PatchBodySchema.safeParse(raw);
-  if (!parsed.success) {
+  if (!PatchBodySchema.safeParse(raw).success) {
     return NextResponse.json(
-      { error: "Invalid body", detail: parsed.error.flatten() },
-      { status: 400 },
+      {
+        error:
+          "Only cancelling a draft invoice is allowed here. Contact Familiarise support to change this.",
+        code: "INVOICE_CHANGE_PLATFORM_ONLY",
+      },
+      { status: 403 },
     );
   }
-  const body = parsed.data;
 
   try {
-    let stagedBells: StagedTrigger[] = [];
-    let stagedEmails: StagedEmail[] = [];
     const updated = await prisma.$transaction(async (tx) => {
-      stagedBells = [];
-      stagedEmails = [];
       const current = await tx.organizationInvoice.findFirst({
         where: { id: invoiceId, organizationId: orgId },
       });
@@ -146,198 +109,46 @@ export async function PATCH(
           httpStatus: 404,
         });
       }
-
-      // Route policy — narrower than the global INVOICE_ALLOWED_FROM on
-      // purpose: PAID/OVERDUE/REFUNDED are webhook- and cron-owned moves, not
-      // manual ones. This pre-check is the friendly error; the CAS below is
-      // the race-safe enforcement.
-      if (body.status) {
-        const allowed: Record<string, string[]> = {
-          DRAFT: ["ISSUED", "CANCELLED"],
-          ISSUED: ["VOID"],
-          OVERDUE: ["VOID"],
-          PAID: [],
-          VOID: [],
-          CANCELLED: [],
-        };
-        const allowedFromCurrent = allowed[current.status] ?? [];
-        if (!allowedFromCurrent.includes(body.status)) {
-          throw Object.assign(
-            new Error(
-              `Cannot transition invoice from ${current.status} to ${body.status}`,
-            ),
-            { httpStatus: 409 },
-          );
-        }
+      // The friendly error; the CAS below is the race-safe enforcement.
+      if (current.status !== "DRAFT") {
+        throw Object.assign(
+          new Error(
+            `Cannot transition invoice from ${current.status} to CANCELLED`,
+          ),
+          { httpStatus: 409 },
+        );
       }
 
-      // Invalidate the cached PDF when the invoice transitions out of a
-      // sendable state (CANCELLED / VOID) — the next GET …/pdf must
-      // regenerate so the watermark + status reflect the change. The
-      // refunded path lives on Payment, not OrganizationInvoice, so we
-      // don't branch on REFUNDED here.
-      const invalidatePdfCache =
-        body.status !== undefined &&
-        (body.status === "CANCELLED" || body.status === "VOID");
-
-      const restorePoBalance =
-        body.status &&
-        body.status !== current.status &&
-        (body.status === "VOID" || body.status === "CANCELLED") &&
-        current.purchaseOrderId !== null;
-
-      if (body.status) {
-        // CAS — a concurrent transition (e.g. the dunning cron flipping
-        // ISSUED → OVERDUE, or the payment webhook landing PAID) between the
-        // pre-check read and this write matches zero rows and 409s instead
-        // of voiding a paid invoice.
-        await transitionOrgInvoice(tx, {
-          where: { id: invoiceId, organizationId: orgId },
-          to: body.status,
-          data: {
-            ...(body.status === "ISSUED" ? { issuedAt: new Date() } : {}),
-            ...(body.dueDate !== undefined && { dueDate: body.dueDate }),
-            ...(body.pdfUrl !== undefined && { pdfUrl: body.pdfUrl }),
-            ...(invalidatePdfCache && {
-              pdfStoragePath: null,
-              pdfGeneratedAt: null,
+      await transitionOrgInvoice(tx, {
+        where: { id: invoiceId, organizationId: orgId },
+        to: "CANCELLED",
+        // The next GET …/pdf regenerates so the watermark shows the status.
+        data: { pdfStoragePath: null, pdfGeneratedAt: null },
+        audit: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "INVOICE",
+          action: AUDIT_ACTIONS.INVOICE.INVOICE_CANCELLED,
+          description: `Invoice ${current.invoiceNumber}: ${current.status} → CANCELLED`,
+          details: {
+            invoiceId,
+            from: current.status,
+            to: "CANCELLED",
+            ...(current.purchaseOrderId !== null && {
+              purchaseOrderId: current.purchaseOrderId,
+              restoredPaise: current.totalPaise,
             }),
           },
-          audit: {
-            organizationId: orgId,
-            actorMembershipId: access.member.id,
-            category: "INVOICE",
-            action:
-              body.status === "ISSUED"
-                ? AUDIT_ACTIONS.INVOICE.INVOICE_ISSUED
-                : body.status === "CANCELLED"
-                  ? AUDIT_ACTIONS.INVOICE.INVOICE_CANCELLED
-                  : AUDIT_ACTIONS.INVOICE.INVOICE_VOIDED,
-            description: `Invoice ${current.invoiceNumber}: ${current.status} → ${body.status}`,
-            details: {
-              invoiceId,
-              from: current.status,
-              to: body.status,
-              ...(restorePoBalance && {
-                purchaseOrderId: current.purchaseOrderId,
-                restoredPaise: current.totalPaise,
-              }),
-            },
-          },
-        });
+        },
+      });
 
-        if (body.status === "ISSUED") {
-          const effectiveDueDate = body.dueDate ?? current.dueDate;
-          const origin = getAppUrl();
-          const dashboardUrl = `${origin}/dashboard/organization/${orgId}/billing`;
-          const orgName = access.org.name;
-          const ownerRows = tx.membership?.findMany
-            ? await tx.membership.findMany({
-                where: {
-                  organizationId: orgId,
-                  status: "ACTIVE",
-                  role: "OWNER",
-                },
-                select: { userId: true },
-              })
-            : [];
-          await postInvoiceIssuedJournal(tx, invoiceId);
-          stagedBells =
-            (await notifyOrgInvoiceIssued(
-              orgId,
-              {
-                invoiceNumber: current.invoiceNumber,
-                orgName,
-                totalPaise: Number(current.totalPaise),
-                currency: current.displayCurrency,
-                dueDate: effectiveDueDate.toISOString(),
-                dashboardUrl,
-                pdfUrl: `${origin}/api/organizations/${orgId}/billing-account/invoices/${invoiceId}/pdf`,
-              },
-              { tx, entityRef: `orgInvoice:${invoiceId}` },
-            )) ?? [];
-          stagedEmails = await stageOrgBillingEmail(tx, {
-            recipientUserIds: ownerRows.map((r) => r.userId),
-            organizationId: orgId,
-            orgName,
-            kind: "INVOICE_ISSUED",
-            amountPaise: Number(current.totalPaise),
-            currency: current.displayCurrency,
-            invoiceId,
-            invoiceNumber: current.invoiceNumber,
-            dueDate: effectiveDueDate,
-            dashboardUrl,
-          });
-          if (typeof tx.webhookEndpoint?.findMany === "function") {
-            await dispatchWebhookEvent({
-              prisma: tx,
-              organizationId: orgId,
-              eventType: "invoice.issued",
-              payload: {
-                invoiceId,
-                invoiceNumber: current.invoiceNumber,
-                totalPaise: Number(current.totalPaise),
-                displayCurrency: current.displayCurrency,
-                dueDate: effectiveDueDate.toISOString(),
-                purchaseOrderId: current.purchaseOrderId,
-                contractId: current.contractId,
-              },
-            });
-          }
-        } else if (body.status === "VOID") {
-          await postInvoiceVoidedJournal(tx, invoiceId);
-        }
-
-        // PO balance restoration on VOID / CANCELLED. The invoice POST
-        // route atomically decremented `PurchaseOrder.remainingAmountPaise`
-        // at issue time; when the invoice is now being voided or cancelled,
-        // atomically increment the PO balance back so the consumed budget
-        // is released. Unbounded increment is safe — we can never overshoot
-        // `totalAmountPaise` because we only restore amounts we previously
-        // took, and the CAS above guarantees this runs at most once per
-        // invoice (VOID/CANCELLED are terminal).
-        if (restorePoBalance && current.purchaseOrderId) {
-          await tx.purchaseOrder.update({
-            where: { id: current.purchaseOrderId },
-            data: {
-              remainingAmountPaise: { increment: current.totalPaise },
-            },
-          });
-        }
-      } else {
-        const scalarData = {
-          ...(body.dueDate !== undefined && { dueDate: body.dueDate }),
-          ...(body.pdfUrl !== undefined && { pdfUrl: body.pdfUrl }),
-        };
-        if (Object.keys(scalarData).length > 0) {
-          await tx.organizationInvoice.update({
-            where: { id: invoiceId },
-            data: scalarData,
-          });
-        }
-      }
-
-      if (body.dueDate !== undefined || body.pdfUrl !== undefined) {
-        await tx.orgAuditLog.create({
+      // CANCELLED is terminal and the CAS above runs once, so this returns
+      // exactly the PO budget the invoice drew down at creation.
+      if (current.purchaseOrderId) {
+        await tx.purchaseOrder.update({
+          where: { id: current.purchaseOrderId },
           data: {
-            organizationId: orgId,
-            actorMembershipId: access.member.id,
-            category: "INVOICE",
-            action: AUDIT_ACTIONS.INVOICE.INVOICE_UPDATED,
-            description: `Invoice ${current.invoiceNumber} updated`,
-            details: {
-              invoiceId,
-              status: current.status,
-              ...(body.dueDate !== undefined && {
-                dueDate: {
-                  from: current.dueDate.toISOString(),
-                  to: body.dueDate.toISOString(),
-                },
-              }),
-              ...(body.pdfUrl !== undefined && {
-                pdfUrl: { from: current.pdfUrl, to: body.pdfUrl },
-              }),
-            },
+            remainingAmountPaise: { increment: current.totalPaise },
           },
         });
       }
@@ -347,23 +158,6 @@ export async function PATCH(
         where: { id: invoiceId },
       });
     });
-
-    await flushNotificationsAfter(
-      {
-        bells: stagedBells,
-        emails:
-          stagedEmails.length > 0
-            ? [
-                {
-                  rows: stagedEmails,
-                  emailType: MONEY_EMAIL_TYPES.ORG_BILLING_RECEIPT,
-                  budgetMs: EMAIL_BUDGET_MS.REQUEST,
-                },
-              ]
-            : [],
-      },
-      "org.invoice.issued",
-    );
 
     return NextResponse.json({ invoice: updated });
   } catch (err) {

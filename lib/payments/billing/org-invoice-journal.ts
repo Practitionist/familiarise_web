@@ -1,6 +1,6 @@
 /**
  * Issue-time journal for an org invoice whose GST no booking journal posted:
- * `Dr ORG_RECEIVABLE / Cr PLATFORM_FEE / Cr GST_PAYABLE`, reversed exactly on void.
+ * `Dr ORG_RECEIVABLE / Cr PLATFORM_FEE / Cr GST_PAYABLE`.
  * An invoice that bills bookings (its rollup stamped `billedPayments`) never
  * posts here — those bookings already credited GST_PAYABLE.
  */
@@ -14,8 +14,6 @@ import { sumPaise } from "@/lib/payments/utils/money";
 
 export const invoiceIssuedKey = (invoiceId: string) =>
   `invoice-issued:${invoiceId}`;
-export const invoiceVoidedKey = (invoiceId: string) =>
-  `invoice-voided:${invoiceId}`;
 
 export type IssueJournalOutcome =
   "POSTED" | "BILLS_BOOKINGS" | "NOTHING_TO_POST";
@@ -75,19 +73,6 @@ export async function postInvoiceIssuedJournal(
     postings,
   });
   return "POSTED";
-}
-
-/** Post the exact mirror of `invoice-issued:<id>`; a no-op when the invoice never posted one. */
-export function postInvoiceVoidedJournal(
-  tx: Tx,
-  invoiceId: string,
-): Promise<boolean> {
-  return postJournalMirror(tx, {
-    sourceKey: invoiceIssuedKey(invoiceId),
-    idempotencyKey: invoiceVoidedKey(invoiceId),
-    invoiceId,
-    description: "Org invoice voided: reverses its issue journal",
-  });
 }
 
 /** Post the exact mirror of the journal under `sourceKey`; false when none was posted. */

@@ -27,7 +27,6 @@ describe("PM-36 — moneyOpsLimiter wiring (source contract)", () => {
   const routeFiles = [
     "app/api/admin/refunds/route.ts",
     "app/api/payments/disputes/route.ts",
-    "app/api/organizations/[orgId]/billing-account/invoices/route.ts",
     "app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pdf/route.ts",
     "app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pay/route.ts",
   ];

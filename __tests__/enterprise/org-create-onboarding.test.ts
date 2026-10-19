@@ -205,3 +205,16 @@ describe("POST /api/organizations onboarding a first-time owner", () => {
     expect(mockTransaction).not.toHaveBeenCalled();
   });
 });
+
+it("refuses a tenant creating an INVOICE-funded org and creates nothing", async () => {
+  const res = await POST(
+    createRequest({
+      canSponsor: true,
+      fundingSource: "INVOICE",
+      gstStateCode: "29",
+      onboarding,
+    }),
+  );
+  expect(res.status).toBe(400);
+  expect(mockTransaction).not.toHaveBeenCalled();
+});

@@ -3,9 +3,9 @@
  */
 
 /**
- * Regression coverage for the PurchaseOrder balance invariant on the
- * `POST /api/organizations/[orgId]/billing-account/invoices` route and
- * its `PATCH /[invoiceId]` restoration counterpart.
+ * Regression coverage for the PurchaseOrder balance invariant in
+ * `createOrgInvoice` and its tenant `PATCH /[invoiceId]` restoration
+ * counterpart.
  *
  * The invariant
  * -------------
@@ -15,13 +15,9 @@
  * insufficient remaining budget. The route uses a CAS-style
  * `updateMany` predicate (`status: "ACTIVE"` + `remainingAmountPaise:
  * { gte: amount }`) so two concurrent POSTs against the same PO can
- * never both succeed beyond the PO's balance. On VOID / CANCELLED,
- * the PATCH restores the consumed budget by incrementing
- * `remainingAmountPaise` back. See enterprise-test-findings.txt PO.2 / PO.4.
- *
- * These cases pin the contract — the code itself lives at
- * `app/api/organizations/[orgId]/billing-account/invoices/route.ts:198-225`
- * (POST) and `[invoiceId]/route.ts:146-166` (PATCH restoration).
+ * never both succeed beyond the PO's balance. On a draft cancel, the
+ * PATCH restores the consumed budget by incrementing
+ * `remainingAmountPaise` back.
  */
 
 import { NextRequest } from "next/server";
@@ -30,15 +26,6 @@ import { NextRequest } from "next/server";
 
 jest.mock("../../lib/payments/billing/org-invoice-journal", () => ({
   postInvoiceIssuedJournal: jest.fn().mockResolvedValue("POSTED"),
-  postInvoiceVoidedJournal: jest.fn().mockResolvedValue(true),
-}));
-// The route applies moneyOpsLimiter (10/min). Without this stub, the real
-// Upstash limiter 429s the later cases in CI — the same house mock every
-// other enterprise suite uses (see owner-role-escalation-guard.test.ts).
-jest.mock("../../lib/rate-limit", () => ({
-  __esModule: true,
-  applyRateLimit: jest.fn().mockResolvedValue(null),
-  moneyOpsLimiter: {},
 }));
 
 jest.mock("../../lib/prisma", () => ({
@@ -122,7 +109,10 @@ jest.mock("../../lib/novu/org-workflows", () => ({
 
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { POST as createInvoice } from "@/app/api/organizations/[orgId]/billing-account/invoices/route";
+import {
+  createOrgInvoice,
+  CreateOrgInvoiceSchema,
+} from "@/lib/payments/billing/create-org-invoice";
 
 // ---- Fixtures ---------------------------------------------------------
 
@@ -157,14 +147,14 @@ function ownerAccess() {
   };
 }
 
-function makeRequest(body: unknown) {
-  return new NextRequest(
-    "http://localhost/api/organizations/org-1/billing-account/invoices",
-    {
-      method: "POST",
-      body: JSON.stringify(body),
-      headers: { "Content-Type": "application/json" },
-    },
+function createInvoice(body: unknown) {
+  return mockedPrisma.$transaction(
+    (tx: Parameters<typeof createOrgInvoice>[0]) =>
+      createOrgInvoice(tx, {
+        orgId: "org-1",
+        actorMembershipId: "m-owner",
+        input: CreateOrgInvoiceSchema.parse(body),
+      }),
   );
 }
 
@@ -236,7 +226,7 @@ function setupActivePo(orgId = "org-1") {
 
 // ---- Tests ------------------------------------------------------------
 
-describe("POST /api/organizations/[orgId]/billing-account/invoices — PO balance enforcement", () => {
+describe("createOrgInvoice — PO balance enforcement", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockedRequireOrgAccess.mockResolvedValue(ownerAccess());
@@ -250,22 +240,16 @@ describe("POST /api/organizations/[orgId]/billing-account/invoices — PO balanc
     });
   });
 
-  const paramsP = { params: Promise.resolve({ orgId: "org-1" }) };
-
   it("decrements PO balance and writes invoice when sufficient budget", async () => {
     // CAS succeeds → claim.count === 1 → invoice creation proceeds.
     mockedPrisma.purchaseOrder.updateMany.mockResolvedValue({ count: 1 });
 
-    const res = await createInvoice(
-      makeRequest({
-        purchaseOrderId: "po-1",
-        items: [{ description: "seats", quantity: 1, unitPrice: 5000 }],
-        dueDate: "2026-06-30",
-      }),
-      paramsP,
-    );
+    await createInvoice({
+      purchaseOrderId: "po-1",
+      items: [{ description: "seats", quantity: 1, unitPrice: 5000 }],
+      dueDate: "2026-06-30",
+    });
 
-    expect(res.status).toBe(201);
     expect(mockedPrisma.purchaseOrder.updateMany).toHaveBeenCalledWith({
       where: {
         id: "po-1",
@@ -281,41 +265,32 @@ describe("POST /api/organizations/[orgId]/billing-account/invoices — PO balanc
   });
 
   it("accepts an invoice that exactly drains the PO balance", async () => {
-    // The route doesn't read the remaining balance — it lets the CAS
-    // predicate be the gate. The simulated CAS hit (count = 1) proves
-    // the route doesn't reject on equality.
+    // The CAS predicate is the gate; a hit (count = 1) on equality passes.
     mockedPrisma.purchaseOrder.updateMany.mockResolvedValue({ count: 1 });
 
-    const res = await createInvoice(
-      makeRequest({
-        purchaseOrderId: "po-1",
-        items: [{ description: "wrap-up", quantity: 1, unitPrice: 5000 }],
-        dueDate: "2026-06-30",
-      }),
-      paramsP,
-    );
-    expect(res.status).toBe(201);
+    await createInvoice({
+      purchaseOrderId: "po-1",
+      items: [{ description: "wrap-up", quantity: 1, unitPrice: 5000 }],
+      dueDate: "2026-06-30",
+    });
+    expect(mockedPrisma.organizationInvoice.create).toHaveBeenCalled();
   });
 
   it("rejects with 409 PO_BALANCE_EXCEEDED when CAS does not match", async () => {
     // Either remainingAmountPaise < amount OR status != ACTIVE.
-    // updateMany matches no rows → count: 0 → route throws typed error.
+    // updateMany matches no rows → count: 0 → a typed refusal.
     mockedPrisma.purchaseOrder.updateMany.mockResolvedValue({ count: 0 });
 
-    const res = await createInvoice(
-      makeRequest({
+    await expect(
+      createInvoice({
         purchaseOrderId: "po-1",
         items: [{ description: "overshoot", quantity: 1, unitPrice: 5001 }],
         dueDate: "2026-06-30",
       }),
-      paramsP,
-    );
-
-    expect(res.status).toBe(409);
-    const body = await res.json();
-    expect(body).toEqual({
-      error: "PurchaseOrder balance insufficient or no longer ACTIVE",
+    ).rejects.toMatchObject({
+      message: "PurchaseOrder balance insufficient or no longer ACTIVE",
       code: "PO_BALANCE_EXCEEDED",
+      httpStatus: 409,
     });
     // Critical: the invoice row must NOT have been created.
     expect(mockedPrisma.organizationInvoice.create).not.toHaveBeenCalled();
@@ -323,22 +298,16 @@ describe("POST /api/organizations/[orgId]/billing-account/invoices — PO balanc
 
   it("skips PO logic entirely when purchaseOrderId is absent", async () => {
     // A plain invoice (no PO) must not even touch purchaseOrder.updateMany.
-    const res = await createInvoice(
-      makeRequest({
-        items: [{ description: "ad-hoc", quantity: 1, unitPrice: 2500 }],
-        dueDate: "2026-06-30",
-      }),
-      paramsP,
-    );
-    expect(res.status).toBe(201);
+    await createInvoice({
+      items: [{ description: "ad-hoc", quantity: 1, unitPrice: 2500 }],
+      dueDate: "2026-06-30",
+    });
+    expect(mockedPrisma.organizationInvoice.create).toHaveBeenCalled();
     expect(mockedPrisma.purchaseOrder.updateMany).not.toHaveBeenCalled();
   });
 });
 
 describe("PATCH /api/organizations/[orgId]/billing-account/invoices/[invoiceId] — PO balance restoration", () => {
-  // The PATCH handler is its own route module; importing it lazily inside
-  // the test keeps the POST suite above from accidentally importing the
-  // detail-route's exports during module init.
   let patchHandler: typeof import("@/app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/route").PATCH;
 
   beforeAll(async () => {
@@ -357,12 +326,12 @@ describe("PATCH /api/organizations/[orgId]/billing-account/invoices/[invoiceId] 
     return { params: Promise.resolve({ orgId: "org-1", invoiceId }) };
   }
 
-  it("restores PO balance when an ISSUED invoice transitions to VOID", async () => {
+  it("restores PO balance when a DRAFT invoice is cancelled", async () => {
     mockedPrisma.organizationInvoice.findFirst.mockResolvedValue({
       id: "inv-1",
       organizationId: "org-1",
       purchaseOrderId: "po-1",
-      status: "ISSUED",
+      status: "DRAFT",
       totalPaise: 5000,
       invoiceNumber: "ACME-2026-00001",
       pdfStoragePath: null,
@@ -372,7 +341,7 @@ describe("PATCH /api/organizations/[orgId]/billing-account/invoices/[invoiceId] 
     });
     mockedPrisma.organizationInvoice.findUniqueOrThrow.mockResolvedValue({
       id: "inv-1",
-      status: "VOID",
+      status: "CANCELLED",
     });
     mockedPrisma.purchaseOrder.update.mockResolvedValue({ id: "po-1" });
 
@@ -380,7 +349,7 @@ describe("PATCH /api/organizations/[orgId]/billing-account/invoices/[invoiceId] 
       "http://localhost/api/organizations/org-1/billing-account/invoices/inv-1",
       {
         method: "PATCH",
-        body: JSON.stringify({ status: "VOID" }),
+        body: JSON.stringify({ status: "CANCELLED" }),
         headers: { "Content-Type": "application/json" },
       },
     );
@@ -394,14 +363,11 @@ describe("PATCH /api/organizations/[orgId]/billing-account/invoices/[invoiceId] 
   });
 
   it("does NOT restore PO balance when invoice has no purchase order", async () => {
-    // Use ISSUED → VOID since that's the only allowed exit from ISSUED.
-    // (DRAFT → CANCELLED would also work; the salient property is that no
-    // PO is attached, so the route's restoration branch must be skipped.)
     mockedPrisma.organizationInvoice.findFirst.mockResolvedValue({
       id: "inv-2",
       organizationId: "org-1",
       purchaseOrderId: null,
-      status: "ISSUED",
+      status: "DRAFT",
       totalPaise: 3000,
       invoiceNumber: "ACME-2026-00002",
       pdfStoragePath: null,
@@ -411,14 +377,14 @@ describe("PATCH /api/organizations/[orgId]/billing-account/invoices/[invoiceId] 
     });
     mockedPrisma.organizationInvoice.findUniqueOrThrow.mockResolvedValue({
       id: "inv-2",
-      status: "VOID",
+      status: "CANCELLED",
     });
 
     const req = new NextRequest(
       "http://localhost/api/organizations/org-1/billing-account/invoices/inv-2",
       {
         method: "PATCH",
-        body: JSON.stringify({ status: "VOID" }),
+        body: JSON.stringify({ status: "CANCELLED" }),
         headers: { "Content-Type": "application/json" },
       },
     );
