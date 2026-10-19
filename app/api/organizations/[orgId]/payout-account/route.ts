@@ -26,6 +26,7 @@ import { requireFreshSession } from "@/lib/auth/step-up";
 import { PAYOUT_ACCOUNT_COOLING_OFF_MS } from "@/lib/payments/payouts/payout-requirements";
 import {
   emailPayoutAccountChanged,
+  orgHasAccruedEarnings,
   orgPayoutFreezeUrl,
 } from "@/lib/payments/payouts/payout-account-change";
 
@@ -228,6 +229,17 @@ export async function PUT(
       (existing.accountNumberLast4 !== last4 ||
         existing.accountHolderName !== body.accountHolderName ||
         (existing.ifscCode ?? null) !== (body.ifscCode ?? null));
+    // A first account skips cooling-off only while no money has accrued.
+    const coolsOff =
+      destinationChanged ||
+      (!existing && (await orgHasAccruedEarnings(tx, orgId)));
+    const coolingOff = coolsOff
+      ? {
+          payoutsAllowedAfter: new Date(
+            Date.now() + PAYOUT_ACCOUNT_COOLING_OFF_MS,
+          ),
+        }
+      : {};
 
     // Changing bank details resets verification. A different account
     // number means the side-channel verification artifacts no longer
@@ -244,6 +256,7 @@ export async function PUT(
         routingNumber: body.routingNumber ?? null,
         swiftCode: body.swiftCode ?? null,
         status: "PENDING_VERIFICATION",
+        ...coolingOff,
       },
       update: {
         accountHolderName: body.accountHolderName,
@@ -266,9 +279,7 @@ export async function PUT(
               verifiedAt: null,
               razorpayContactId: null,
               razorpayFundAccountId: null,
-              payoutsAllowedAfter: new Date(
-                Date.now() + PAYOUT_ACCOUNT_COOLING_OFF_MS,
-              ),
+              ...coolingOff,
             }
           : {}),
       },
@@ -295,11 +306,11 @@ export async function PUT(
       },
     });
 
-    return { upserted: next, destinationChanged };
+    return { upserted: next, coolsOff };
   });
-  const { upserted, destinationChanged } = result;
+  const { upserted, coolsOff } = result;
 
-  if (destinationChanged) {
+  if (coolsOff) {
     const owners = await prisma.membership.findMany({
       where: { organizationId: orgId, status: "ACTIVE", role: "OWNER" },
       select: { userId: true },

@@ -25,6 +25,7 @@ const db = {
   },
   payoutAccount: { findFirst: jest.fn() },
   ledgerTransaction: { findMany: jest.fn(async () => [] as Row[]) },
+  ledgerEntry: { findMany: jest.fn(async () => [] as Row[]) },
   $transaction: runTx,
 };
 runTx.mockImplementation(async (fn: (tx: unknown) => unknown) => fn(db));
@@ -46,9 +47,10 @@ const postLedgerTxn = jest.fn(async (_db: unknown, _input: Row) => ({
 }));
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: (db: unknown, input: Row) => postLedgerTxn(db, input),
-  ledgerAccountId: jest.fn(),
-  ledgerBalancePaise: jest.fn(async () => 0),
+  ledgerAccountId: () => "acct",
+  ledgerBalancePaise: (...a: unknown[]) => ledgerBalancePaise(...a),
 }));
+const ledgerBalancePaise = jest.fn(async (..._a: unknown[]) => 0);
 const postConsultantPayoutClawback = jest.fn(
   async (_tx: unknown, _i: Row) => {},
 );
@@ -196,48 +198,89 @@ describe("FIN-17: payout.processed after the payout was failed locally", () => {
   });
 });
 
-it("FIN-26: a reversed payout voids the clawback raised on it, mirrored", async () => {
+describe("FIN-26: a reversed payout voids only the unrecovered part of its clawbacks", () => {
   const account = (kind: string) => ({
     kind,
     organizationId: null,
     consultantProfileId: "cp_1",
   });
-  db.ledgerTransaction.findMany.mockResolvedValueOnce([
-    {
-      idempotencyKey: "clawback:rf_1:po_0",
-      kind: "PAYOUT",
-      entries: [
-        {
-          direction: "DEBIT",
-          amountPaise: 40_000,
-          account: account("CONSULTANT_RECEIVABLE"),
-        },
-        {
-          direction: "CREDIT",
-          amountPaise: 40_000,
-          account: account("CONSULTANT_PAYABLE"),
-        },
-      ],
-    },
-  ]);
+  const raised = {
+    id: "tx_claw",
+    idempotencyKey: "clawback:rf_1:po_0",
+    kind: "PAYOUT",
+    entries: [
+      {
+        direction: "DEBIT",
+        amountPaise: 40_000,
+        account: account("CONSULTANT_RECEIVABLE"),
+      },
+      {
+        direction: "CREDIT",
+        amountPaise: 40_000,
+        account: account("CONSULTANT_PAYABLE"),
+      },
+    ],
+  };
+  const reverse = (receivablePaise: number) => {
+    db.ledgerTransaction.findMany.mockResolvedValueOnce([raised]);
+    ledgerBalancePaise.mockResolvedValueOnce(receivablePaise);
+    db.ledgerEntry.findMany.mockResolvedValueOnce([
+      { transactionId: "tx_claw", amountPaise: 40_000 },
+    ]);
+    return voidClawbacksRaisedOnPayout(db as never, {
+      payoutId: "po_0",
+      consultantProfileId: "cp_1",
+    });
+  };
 
-  await voidClawbacksRaisedOnPayout(db as never, "po_0");
+  it("voids a clawback nothing has recovered yet, mirrored", async () => {
+    await expect(reverse(40_000)).resolves.toEqual({
+      voidedPaise: 40_000,
+      alreadyRecoveredPaise: 0,
+    });
+    expect(db.ledgerTransaction.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          payoutId: "po_0",
+          idempotencyKey: { startsWith: "clawback:" },
+        },
+      }),
+    );
+    expect(postLedgerTxn).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        idempotencyKey: "clawback-void:clawback:rf_1:po_0",
+        postings: [
+          expect.objectContaining({ direction: "CREDIT", amountPaise: 40_000 }),
+          expect.objectContaining({ direction: "DEBIT", amountPaise: 40_000 }),
+        ],
+      }),
+    );
+  });
 
-  expect(db.ledgerTransaction.findMany).toHaveBeenCalledWith(
-    expect.objectContaining({
-      where: { payoutId: "po_0", idempotencyKey: { startsWith: "clawback:" } },
-    }),
-  );
-  expect(postLedgerTxn).toHaveBeenCalledWith(
-    db,
-    expect.objectContaining({
-      idempotencyKey: "clawback-void:clawback:rf_1:po_0",
-      postings: [
-        expect.objectContaining({ direction: "CREDIT", amountPaise: 40_000 }),
-        expect.objectContaining({ direction: "DEBIT", amountPaise: 40_000 }),
-      ],
-    }),
-  );
+  it("raise, recover on a later payout, then reverse: nothing is voided twice", async () => {
+    await expect(reverse(0)).resolves.toEqual({
+      voidedPaise: 0,
+      alreadyRecoveredPaise: 40_000,
+    });
+    expect(postLedgerTxn).not.toHaveBeenCalled();
+  });
+
+  it("voids only the remainder of a partly recovered clawback", async () => {
+    await expect(reverse(15_000)).resolves.toEqual({
+      voidedPaise: 15_000,
+      alreadyRecoveredPaise: 25_000,
+    });
+    expect(postLedgerTxn).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        postings: [
+          expect.objectContaining({ amountPaise: 15_000 }),
+          expect.objectContaining({ amountPaise: 15_000 }),
+        ],
+      }),
+    );
+  });
 });
 
 it("F4: a frozen or cooling-off default account is not payable", () => {

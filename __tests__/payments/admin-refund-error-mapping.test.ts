@@ -125,9 +125,27 @@ describe("the door's own guards", () => {
     await POST(refundRequest(SINGLE), ROUTE);
 
     expect(refundPayment).toHaveBeenCalledWith(
-      expect.objectContaining({ dedupeKey: `admin-refund:${KEY}` }),
+      expect.objectContaining({
+        dedupeKey: `admin-refund:admin_1:pay_row_1:${KEY}`,
+      }),
     );
     expect(opsLog).toHaveBeenCalledTimes(1);
+  });
+
+  it("a replay answers the first refund; the same key on another payment does not collide", async () => {
+    refundPayment.mockResolvedValue({ refundId: "rfnd_1" });
+
+    const first = await POST(refundRequest(SINGLE), ROUTE);
+    const replay = await POST(refundRequest(SINGLE), ROUTE);
+    await POST(refundRequest({ ...SINGLE, paymentId: "pay_row_2" }), ROUTE);
+
+    expect((await first.json()).result.refundId).toBe("rfnd_1");
+    expect((await replay.json()).result.refundId).toBe("rfnd_1");
+    const keys = refundPayment.mock.calls.map(
+      ([input]) => (input as { dedupeKey: string }).dedupeKey,
+    );
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[2]).not.toBe(keys[0]);
   });
 
   it("rejects a reason shorter than five characters", async () => {

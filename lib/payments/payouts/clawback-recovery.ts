@@ -247,29 +247,65 @@ export async function releaseClawbackRecovery(
 }
 
 /**
- * Voids every clawback receivable raised against a consultant payout the bank
- * returned: its earnings reopen net of the refund, so the receivable would net twice.
+ * Voids the still-unrecovered part of each clawback raised against a consultant
+ * payout the bank returned: its earnings reopen net of the refund, so that part
+ * would net twice. Later payouts are taken to recover the oldest debits first.
+ * Returns what is voided and what had already been recovered and stays booked.
  */
 export async function voidClawbacksRaisedOnPayout(
   tx: PrismaLike,
-  payoutId: string,
-): Promise<void> {
+  input: { payoutId: string; consultantProfileId: string },
+): Promise<{ voidedPaise: number; alreadyRecoveredPaise: number }> {
+  const { payoutId } = input;
   const raised = await tx.ledgerTransaction.findMany({
     where: {
       payoutId,
       idempotencyKey: { startsWith: ORG_CLAWBACK_KEY_PREFIX },
     },
-    select: MIRRORED_TXN_SELECT,
+    select: { id: true, ...MIRRORED_TXN_SELECT },
   });
+  if (raised.length === 0) return { voidedPaise: 0, alreadyRecoveredPaise: 0 };
+
+  const receivable: AccountRef = {
+    kind: "CONSULTANT_RECEIVABLE",
+    consultantProfileId: input.consultantProfileId,
+  };
+  const balance = Math.max(0, await ledgerBalancePaise(tx, receivable));
+  const debits = await tx.ledgerEntry.findMany({
+    where: { accountId: ledgerAccountId(receivable), direction: "DEBIT" },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { transactionId: true, amountPaise: true },
+  });
+
+  let voidedPaise = 0;
+  let alreadyRecoveredPaise = 0;
   for (const txn of raised) {
+    const at = debits.findIndex((d) => d.transactionId === txn.id);
+    const raisedPaise = at === -1 ? 0 : sumPaise(debits[at].amountPaise);
+    const laterPaise = debits
+      .slice(at + 1)
+      .reduce((s, d) => s + sumPaise(d.amountPaise), 0);
+    const uniform = txn.entries.every(
+      (e) => sumPaise(e.amountPaise) === raisedPaise,
+    );
+    const voidPaise = uniform
+      ? Math.min(raisedPaise, Math.max(0, balance - laterPaise))
+      : 0;
+    alreadyRecoveredPaise += raisedPaise - voidPaise;
+    if (voidPaise <= 0) continue;
+    voidedPaise += voidPaise;
     await postLedgerTxn(tx, {
       idempotencyKey: `${CLAWBACK_VOID_KEY_PREFIX}${txn.idempotencyKey}`,
       kind: txn.kind,
       payoutId,
       description: `Clawback voided: payout ${payoutId} was reversed by the bank`,
-      postings: mirrorPostings(txn),
+      postings: mirrorPostings(txn).map((p) => ({
+        ...p,
+        amountPaise: voidPaise,
+      })),
     });
   }
+  return { voidedPaise, alreadyRecoveredPaise };
 }
 
 /**

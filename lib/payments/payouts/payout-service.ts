@@ -858,8 +858,40 @@ const PAYOUT_PROCESS_LOCK_TTL = 35 * 60_000;
 
 const APPROVED_PAYOUT_INCLUDE = {
   payoutAccount: true,
-  consultantProfile: { include: { user: true } },
+  consultantProfile: {
+    include: {
+      // Only for a payout minted before the snapshot existed (payoutAccountId null).
+      payoutAccounts: { where: { isDefault: true, isVerified: true } },
+      user: true,
+    },
+  },
 } satisfies Prisma.ConsultantPayoutInclude;
+
+type PayoutDestination = {
+  razorpayFundAccId: string | null;
+  accountType: string;
+  isVerified: boolean;
+  payoutsAllowedAfter: Date | null;
+  payoutsFrozenAt: Date | null;
+};
+
+/**
+ * The snapshotted account, or for a pre-snapshot payout the current default,
+ * which must also be out of cooling-off. Null when neither may be paid.
+ */
+function payableDestination(payout: {
+  payoutAccount: PayoutDestination | null;
+  consultantProfile: { payoutAccounts?: PayoutDestination[] };
+}): PayoutDestination | null {
+  const snapshot = payout.payoutAccount;
+  if (snapshot) {
+    return snapshot.isVerified && !snapshot.payoutsFrozenAt ? snapshot : null;
+  }
+  const fallback = payout.consultantProfile.payoutAccounts?.[0] ?? null;
+  return fallback?.isVerified && payoutAccountHold(fallback) === null
+    ? fallback
+    : null;
+}
 
 /** Execution bounds for an on-demand request run within Lambda timeout limits. */
 export const REQUEST_PAYOUT_RUN_BOUNDS = {
@@ -1532,13 +1564,9 @@ async function processSinglePayout(
     currency: string;
     method: PayoutMethod;
     idempotencyKey: string | null;
-    payoutAccount: {
-      razorpayFundAccId: string | null;
-      accountType: string;
-      isVerified: boolean;
-      payoutsFrozenAt: Date | null;
-    } | null;
+    payoutAccount: PayoutDestination | null;
     consultantProfile: {
+      payoutAccounts?: PayoutDestination[];
       user: {
         name: string | null;
         email: string | null;
@@ -1575,10 +1603,10 @@ async function processSinglePayout(
       return blockedResult;
     }
 
-    const account = payout.payoutAccount;
-    if (!account?.isVerified || account.payoutsFrozenAt) {
+    const account = payableDestination(payout);
+    if (!account) {
       throw new Error(
-        "The payout's snapshotted account is missing, unverified or frozen",
+        "The payout's account is missing, unverified, frozen or cooling off",
       );
     }
 
@@ -2458,7 +2486,23 @@ export async function markConsultantPayoutReversed(
           }
 
           await releaseClawbackRecovery(tx, payout.id);
-          await voidClawbacksRaisedOnPayout(tx, payout.id);
+          const voided = await voidClawbacksRaisedOnPayout(tx, {
+            payoutId: payout.id,
+            consultantProfileId: payout.consultantProfileId,
+          });
+          if (voided.alreadyRecoveredPaise > 0) {
+            await recordSystemEventSafe({
+              db: tx,
+              category: "PAYOUT",
+              severity: "ERROR",
+              message: `PAYOUT_REVERSED_CLAWBACK_ALREADY_RECOVERED: payout ${payout.id} was reversed after ${voided.alreadyRecoveredPaise}p of the clawbacks raised on it had been recovered from later payouts; that sum is owed back to the consultant`,
+              context: {
+                payoutId: payout.id,
+                consultantProfileId: payout.consultantProfileId,
+                ...voided,
+              },
+            });
+          }
 
           stagedNotice = await stageConsultantPayoutNotice(tx, {
             consultantProfileId: payout.consultantProfileId,

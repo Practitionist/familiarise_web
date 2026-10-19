@@ -159,7 +159,8 @@ DECLARE
   v_refunded BIGINT;
   v_charged_back BIGINT;
 BEGIN
-  SELECT "amount" INTO v_amount FROM "Payment" WHERE "id" = p_payment_id;
+  -- Concurrent refund commits on one payment serialize here, so each sees the other's row.
+  SELECT "amount" INTO v_amount FROM "Payment" WHERE "id" = p_payment_id FOR UPDATE;
   IF NOT FOUND THEN
     RETURN;
   END IF;

@@ -131,9 +131,9 @@ const refundDoor = (idempotencyKey: string) =>
         await assertMoneyOpsBudget(actor.userId);
 
         if (body.paymentId) {
-          // Keyed on the caller's Idempotency-Key, so a double-click collapses
-          // on `Refund.dedupeKey @unique` instead of minting a second refund.
-          const dedupeKey = `admin-refund:${idempotencyKey}`;
+          // A replay of one dialog collapses on `Refund.dedupeKey @unique`; a key
+          // reused for another payment or by another admin can never match it.
+          const dedupeKey = `admin-refund:${actor.userId}:${body.paymentId}:${idempotencyKey}`;
           const result = await refundBookingPayment({
             paymentId: body.paymentId,
             amountPaise: body.amountPaise,

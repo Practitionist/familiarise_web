@@ -7,7 +7,16 @@
 import { sendSecurityNoticeEmail } from "@/lib/email/senders/security";
 import type { PrismaLike } from "@/lib/prisma";
 import { getAppUrl } from "@/lib/url";
+import { EarningStatus } from "@prisma/client";
 import { PAYOUT_ACCOUNT_COOLING_OFF_MS } from "./payout-requirements";
+
+/** Earnings the payee is still owed: a new destination for them needs the cooling-off. */
+const ACCRUED_EARNING_STATUSES: EarningStatus[] = [
+  EarningStatus.PENDING,
+  EarningStatus.PENDING_TRUST,
+  EarningStatus.HELD,
+  EarningStatus.READY,
+];
 
 interface DefaultSwitchStamp {
   payoutsAllowedAfter?: Date;
@@ -15,8 +24,8 @@ interface DefaultSwitchStamp {
 }
 
 /**
- * Stamps for `accountId` becoming the consultant's default. The payee's first
- * account is exempt from cooling-off: there is no earlier destination to protect.
+ * Stamps for `accountId` becoming the consultant's default. Only a payee's first
+ * account, added before any money accrued, skips cooling-off: nothing is at risk yet.
  */
 export async function consultantDefaultSwitchStamp(
   db: PrismaLike,
@@ -33,7 +42,11 @@ export async function consultantDefaultSwitchStamp(
   });
   const firstEver =
     others.length === 0 &&
-    (await db.consultantPayout.count({ where: { consultantProfileId } })) === 0;
+    (await db.consultantPayout.count({ where: { consultantProfileId } })) ===
+      0 &&
+    (await db.consultantEarnings.count({
+      where: { consultantProfileId, status: { in: ACCRUED_EARNING_STATUSES } },
+    })) === 0;
   const frozenAt = others.find((o) => o.payoutsFrozenAt)?.payoutsFrozenAt;
   return {
     ...(firstEver
@@ -47,12 +60,24 @@ export async function consultantDefaultSwitchStamp(
   };
 }
 
+/** True when an org adding its first payout account already has money accruing. */
+export async function orgHasAccruedEarnings(
+  db: PrismaLike,
+  organizationId: string,
+): Promise<boolean> {
+  const accrued = await db.organizationEarnings.count({
+    where: { organizationId, status: { in: ACCRUED_EARNING_STATUSES } },
+  });
+  return accrued > 0;
+}
+
+/** The email link opens a confirm page; only its same-origin POST freezes. */
 export function consultantPayoutFreezeUrl(): string {
-  return `${getAppUrl()}/api/consultant/payout-accounts/freeze`;
+  return `${getAppUrl()}/dashboard/payouts/freeze`;
 }
 
 export function orgPayoutFreezeUrl(organizationId: string): string {
-  return `${getAppUrl()}/api/organizations/${encodeURIComponent(organizationId)}/payout-account/freeze`;
+  return `${getAppUrl()}/dashboard/payouts/freeze?org=${encodeURIComponent(organizationId)}`;
 }
 
 /** The one change notice per payee recipient; the sender never throws. */

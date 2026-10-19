@@ -1,17 +1,22 @@
 /**
- * GET /api/consultant/payout-accounts/freeze — the "this wasn't me" link in the
- * payout-account change email. Freezes every payout account of the signed-in
- * consultant; mint refuses a frozen default and only an admin lifts it.
+ * POST /api/consultant/payout-accounts/freeze — sent by the confirm page the
+ * payout-account change email links to. Freezes every payout account of the
+ * signed-in consultant; mint refuses a frozen default and only an admin lifts it.
  */
 
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
+import { isSameOriginJsonRequest } from "@/lib/api/same-origin";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
-import { payoutSettingsHref } from "@/lib/payments/payouts/payout-requirements";
-import { getAppUrl } from "@/lib/url";
 
-export async function GET() {
+export async function POST(req: NextRequest) {
+  if (!isSameOriginJsonRequest(req)) {
+    return NextResponse.json(
+      { error: "Cross-site request refused", code: "CROSS_SITE" },
+      { status: 403 },
+    );
+  }
   const session = await getSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -38,7 +43,5 @@ export async function GET() {
     context: { consultantProfileId: profile.id, accounts: frozen.count },
   });
 
-  return NextResponse.redirect(
-    `${getAppUrl()}${payoutSettingsHref(profile.id)}?payouts=frozen`,
-  );
+  return NextResponse.json({ frozen: true, accounts: frozen.count });
 }

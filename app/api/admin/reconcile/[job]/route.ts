@@ -46,6 +46,7 @@ export const POST = withOpsAction(
       };
     },
   },
+  { stepUp: true },
 );
 
 /**

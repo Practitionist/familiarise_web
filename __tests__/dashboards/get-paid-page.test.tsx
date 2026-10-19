@@ -22,6 +22,7 @@ jest.mock("../../lib/prisma", () => ({
       create: jest.fn(),
     },
     consultantPayout: { count: jest.fn().mockResolvedValue(0) },
+    consultantEarnings: { count: jest.fn().mockResolvedValue(0) },
     consultantProfile: { findUniqueOrThrow: jest.fn() },
     $transaction: jest.fn(),
   },
