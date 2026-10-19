@@ -309,73 +309,45 @@ export function getTotalAppointments(): number {
 }
 
 /* -------------------------------------------------------------------------- */
-/* #1927 — the privileged-user gate                                           */
+/* Privileged-user gate                                                       */
 /* -------------------------------------------------------------------------- */
+
+/** Committed fixture password for non-operator seed users only. */
+export const DEFAULT_SEED_PASSWORD = "SeedPass123!";
+
+/**
+ * Password for seeded ADMIN/STAFF accounts. It comes only from
+ * `SEED_OPERATOR_PASSWORD`; there is no in-repo fallback, and an unset value
+ * refuses the run before any row is written.
+ */
+export function requireSeedOperatorPassword(): string {
+  const value = process.env.SEED_OPERATOR_PASSWORD?.trim();
+  if (!value) {
+    throw new Error(
+      "Refusing to create or reset ADMIN/STAFF seed accounts: SEED_OPERATOR_PASSWORD is not set. " +
+        "Set it in your local .env (see .env.sample); operator accounts never use the committed seed default.",
+    );
+  }
+  return value;
+}
 
 /**
  * Whether the seed creates STAFF and ADMIN rows. DEFAULT: NO.
  *
- * ## What was wrong
- *
- * `1a-create-users.ts` created `config.volumes.users.staff` (4) and
- * `config.volumes.users.admins` (3) faker people on EVERY run, and every one of
- * them got the same `SEED_PASSWORD`, which defaults to the literal
- * `"SeedPass123!"`. That value is in the repository, in this file's sibling,
- * and in every README that documents local setup. So on a real deployment the
- * people with `refunds.manage` and `payouts.manage` — the ability to move every
- * rupee on the platform — were accounts whose password anyone could read on
- * GitHub. Nobody had to be breached for that to be true.
- *
- * They were also *necessary* to have: STAFF and ADMIN are hard-rejected from
- * self-service onboarding (`utils/onboarding-server.ts:824`), and
- * `POST /api/admin/team/members` requires an admin to already exist. So deleting the
- * rows without adding a front door would have locked every operator out of
- * their own console — which is exactly the trap `scripts/bootstrap-admin.ts`
- * now fills, and why the two changes ship together.
- *
- * ## Why the default is off rather than on
- *
- * A seed that mints privileged accounts unless told not to is a foot-gun with
- * a plausible trigger: "let me just re-seed the preview database" and "let me
- * point the seed at prod to fix the payouts table" are both one command, and
- * the second one used to be silent. Now it needs `SEED_WITH_STAFF=true` AND an
- * explicit `SEED_PASSWORD`, and on a production NODE_ENV it is refused outright
- * — see {@link assertStaffSeedAllowed}.
- *
- * ## Turning it on
- *
- *   SEED_WITH_STAFF=true SEED_PASSWORD='…' npm run db:seed
- *
- * The dev-only "I need to click around the console" case is now served by the
- * real flow instead: `npx tsx -r dotenv/config scripts/bootstrap-admin.ts
- * --email you@localhost --name "You" --print-link`, which mints one real admin
- * and prints the link where you choose its password.
+ * Opt in with `SEED_WITH_STAFF=true`; those rows take their password from
+ * `SEED_OPERATOR_PASSWORD` (see {@link requireSeedOperatorPassword}) and the
+ * run is refused on a production NODE_ENV ({@link assertStaffSeedAllowed}).
+ * A real administrator is minted with `scripts/bootstrap-admin.ts`.
  */
 export function getSeedWithStaff(): boolean {
   return process.env.SEED_WITH_STAFF?.trim().toLowerCase() === "true";
 }
 
 /**
- * Refuse a seed run that would mint privileged accounts on a production
- * database, or that would fall back to the public default password.
- *
- * Throws rather than warns, and it throws BEFORE any row is written, so a
- * refused run leaves the database exactly as it found it. Two independent
- * reasons, either sufficient:
- *
- *  - a faker person holding `refunds.manage` on a live database is a
- *    credentialed attacker with a known password, and no later revoke undoes
- *    the data it touched in the window;
- *  - `"SeedPass123!"` is in version control. A production seed that uses it
- *    creates a population of accounts anyone can sign in as, and the
- *    consultant/consumer rows are not the problem — they are the same known
- *    password, they are just less valuable.
- *
- * The second reason applies to the WHOLE seed, not only to the staff rows,
- * which is why this runs even when `SEED_WITH_STAFF` is false. A production
- * seed with an explicit password is allowed: some operators genuinely need to
- * backfill reference data (TDS rates, cancellation policies) that is not
- * derivable, and refusing that would just push them to ad-hoc SQL.
+ * Refuses, before any row is written, a seed run against a production NODE_ENV
+ * or non-local database that uses an empty or the committed default
+ * `SEED_PASSWORD`. It applies to the whole seed, even when `SEED_WITH_STAFF` is
+ * false; an explicit `SEED_PASSWORD` is allowed.
  */
 const LOCAL_DB_HOSTS = new Set([
   "localhost",
@@ -418,7 +390,7 @@ export function assertSeedPasswordSafeForEnv(
   if (!trimmed || isDefaultPassword) {
     throw new Error(
       "Refusing to seed with an empty or default SEED_PASSWORD when NODE_ENV=production or DATABASE_URL points to a non-local host — " +
-        '"SeedPass123!" is committed to this repository, so every seeded account on a ' +
+        "the default is committed to this repository, so every seeded account on a " +
         "live database would be sign-in-able by anyone who has read it. Set an " +
         "explicit SEED_PASSWORD, or point DATABASE_URL to a local database.",
     );
@@ -446,7 +418,7 @@ export const config = {
   volumes: getVolumeConfig(),
   batchSize: parseInt(process.env.SEED_BATCH_SIZE || "50", 10),
   logInterval: parseInt(process.env.SEED_LOG_INTERVAL || "10", 10),
-  /** #1927 — false unless SEED_WITH_STAFF=true. See getSeedWithStaff(). */
+  /** False unless SEED_WITH_STAFF=true. See getSeedWithStaff(). */
   withStaff: getSeedWithStaff(),
 };
 

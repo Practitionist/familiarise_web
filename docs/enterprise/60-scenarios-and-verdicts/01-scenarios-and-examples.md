@@ -459,7 +459,7 @@ Four seeded organizations cover every major org shape; use this map as a quick c
 | `learnpro-academy`          | HOST       | —       | —                                   | 10/10/80 rate card                |
 | `arjun-anderson-coaching-…` | HOST       | —       | —                                   | solo consultant, dynamic slug     |
 
-Sign in as the seed users (`SEED_PASSWORD`, default `SeedPass123!`) to walk these live — see [design-partner-customer-set](03-design-partner-customer-set.md).
+Sign in as the seed users (`SEED_PASSWORD`, default: the seed default in `prisma/seedFiles/1a-create-users.ts`) to walk these live — see [design-partner-customer-set](03-design-partner-customer-set.md).
 
 ---
 
