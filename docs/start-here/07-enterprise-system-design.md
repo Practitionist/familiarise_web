@@ -82,10 +82,10 @@ Some existing enterprise reference pages predate the current code. The sections 
 
 ## Relationship to the rest of the documentation
 
-- [Start Here](../README.md) introduces the shared booking and money systems.
-- [Enterprise domain references](../../enterprise/README.md) hold deeper contracts, API descriptions and runbooks.
-- [Booking HLD](../01-booking-system-hld.md), [money HLD](../02-money-system-hld.md), and [booking and money examples](../03-booking-and-money-machinery.md) explain the shared platform around enterprise.
-- [Compliance overview](../../compliance/00-overview.md) contains deeper statutory and filing references.
+- [Start Here](./README.md) introduces the shared booking and money systems.
+- [Enterprise domain references](../enterprise/README.md) hold deeper contracts, API descriptions and runbooks.
+- [Booking HLD](./01-booking-system-hld.md), [money HLD](./02-money-system-hld.md), and [booking and money examples](./03-booking-and-money-machinery.md) explain the shared platform around enterprise.
+- [Compliance overview](../compliance/00-overview.md) contains deeper statutory and filing references.
 
 - [Glossary](#glossary).
 - [Deprecated and superseded approaches](#deprecated--superseded-approaches).
@@ -291,7 +291,7 @@ No single “enterprise status” can faithfully summarize all of these. The das
 | ------------------------------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | Organization and membership                 | May this organization and this person act here?               | [Identity and governance](#2-identity-governance-and-lifecycle).                               |
 | Contract, program and assignment            | Which commercial version and allowance apply now?             | [Commercial design](#3-commercial-axes-and-programs).                                          |
-| Booking request, participant and occurrence | What was purchased, who participates, and what was delivered? | [Booking HLD](../01-booking-system-hld.md) and [dashboards](#6-dashboards-and-user-journeys).  |
+| Booking request, participant and occurrence | What was purchased, who participates, and what was delivered? | [Booking HLD](./01-booking-system-hld.md) and [dashboards](#6-dashboards-and-user-journeys).   |
 | Payment, overage, invoice and refund        | Who owes what, and what is settled?                           | [Checkout](#4-checkout-and-overage) and [settlement](#5-ledger-billing-and-settlement).        |
 | Earnings and payout                         | What may be paid, and what has reached the bank?              | [Settlement](#5-ledger-billing-and-settlement).                                                |
 | Export, erasure and delivery                | Which data or external effects remain unfinished?             | [Compliance](#7-compliance-privacy-and-data) and [operations](#8-operations-and-integrations). |
@@ -340,13 +340,13 @@ different guards.
 
 For the cross-org and per-org dashboard journeys, see [06 — Dashboards and user journeys](#6-dashboards-and-user-journeys). The existing
 enterprise band gives the deeper implementation references for
-[organization lifecycle](../../enterprise/00-foundations/05-organization-lifecycle.md),
-[roles and permissions](../../enterprise/00-foundations/04-roles-and-permissions.md),
-[SSO](../../enterprise/20-iam-and-security/01-sso-and-authentication.md),
-[JIT and session refresh](../../enterprise/20-iam-and-security/02-jit-and-session-refresh.md),
-[contracts](../../enterprise/30-programs-and-lifecycle/07-contract-lifecycle.md),
-[programs](../../enterprise/30-programs-and-lifecycle/02-programs.md), and
-[cycle rollover](../../enterprise/30-programs-and-lifecycle/08-cycle-engine-and-rollover.md). Other parts of the design are
+[organization lifecycle](../enterprise/00-foundations/05-organization-lifecycle.md),
+[roles and permissions](../enterprise/00-foundations/04-roles-and-permissions.md),
+[SSO](../enterprise/20-iam-and-security/01-sso-and-authentication.md),
+[JIT and session refresh](../enterprise/20-iam-and-security/02-jit-and-session-refresh.md),
+[contracts](../enterprise/30-programs-and-lifecycle/07-contract-lifecycle.md),
+[programs](../enterprise/30-programs-and-lifecycle/02-programs.md), and
+[cycle rollover](../enterprise/30-programs-and-lifecycle/08-cycle-engine-and-rollover.md). Other parts of the design are
 [commercial axes and programs](#3-commercial-axes-and-programs), [checkout and overage](#4-checkout-and-overage),
 [ledger, billing and settlement](#5-ledger-billing-and-settlement), [compliance, privacy and data](#7-compliance-privacy-and-data),
 [operations and integrations](#8-operations-and-integrations), and
@@ -374,7 +374,7 @@ erDiagram
   Membership ||--o{ ProgramAssignment : "member entitlement"
 ```
 
-The models and exact relations in this diagram are defined in [`prisma/schema.prisma`](../../../prisma/schema.prisma). Identity, membership, commercial, SSO/domain and profile satellites are separate model groups; follow their named relations rather than assuming that a dashboard facet owns a second user identity.
+The models and exact relations in this diagram are defined in [`prisma/schema.prisma`](../../prisma/schema.prisma). Identity, membership, commercial, SSO/domain and profile satellites are separate model groups; follow their named relations rather than assuming that a dashboard facet owns a second user identity.
 
 #### 2.1.1. Four labels that must remain separate
 
@@ -1689,7 +1689,7 @@ must apply the corresponding permission key and resource ownership check.
 The appointments page merges own and everyone views in one page. The `operations.read` permission controls the wider view; an org member without
 that permission sees only their own rows. This rule matters for BILLING_ADMIN, which can inspect finance records but is intentionally absent from
 the org-wide operations feed. Public/session content boundaries are described in
-[ADR 20](../../enterprise/70-design-decisions/20-org-visibility-into-member-sessions.md).
+[ADR 20](../enterprise/70-design-decisions/20-org-visibility-into-member-sessions.md).
 
 #### 6.2.2. Operator pages and tabs
 
@@ -1950,7 +1950,7 @@ be marked as proposed rather than described as current.
 
 ## 7. Compliance, privacy and data
 
-This explainer maps the implemented privacy, compliance, export, audit, and statutory rails that cross the enterprise platform. It names the schema and runtime paths that enforce each control, describes failure and recovery, and separates implementation from legal interpretation and proposed work. The rules for each tax or privacy question remain in [`docs/compliance/`](../../compliance/00-overview.md); the enterprise wiring map remains in [`docs/enterprise/40-compliance-and-data/`](../../enterprise/40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md).
+This explainer maps the implemented privacy, compliance, export, audit, and statutory rails that cross the enterprise platform. It names the schema and runtime paths that enforce each control, describes failure and recovery, and separates implementation from legal interpretation and proposed work. The rules for each tax or privacy question remain in [`docs/compliance/`](../compliance/00-overview.md); the enterprise wiring map remains in [`docs/enterprise/40-compliance-and-data/`](../enterprise/40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md).
 
 The operational rule is simple: distinguish the obligation from the control that records or performs it. A local timestamp or alert can help an operator meet a duty; it does not itself complete an external filing or notification.
 
@@ -2232,7 +2232,7 @@ Use the current [RBI PA/PG directions](https://www.rbi.org.in/Scripts/BS_ViewMas
 
 ## 8. Operations and integrations
 
-This guide explains the operational machinery around the enterprise platform: scheduled work, leases, monitoring, vendor boundaries, and host portability. It follows the runtime that exists in source and calls out mismatches with older runbooks. It does not replace a job's domain design; follow [`docs/enterprise/50-operations/`](../../enterprise/50-operations/01-api-reference.md) and the relevant subsystem docs before changing a worker.
+This guide explains the operational machinery around the enterprise platform: scheduled work, leases, monitoring, vendor boundaries, and host portability. It follows the runtime that exists in source and calls out mismatches with older runbooks. It does not replace a job's domain design; follow [`docs/enterprise/50-operations/`](../enterprise/50-operations/01-api-reference.md) and the relevant subsystem docs before changing a worker.
 
 The central operational design is a durable database state plus a bounded worker. The scheduler asks the app to process a slice; the app authenticates, checks maintenance, acquires a Postgres lease, runs the shared core, and records a result. External calls occur after the business state is durable or through an outbox whenever loss between commit and delivery would be material.
 
@@ -2942,83 +2942,262 @@ Each would be new evidence for a new design. None should be implemented from a s
 
 ## Deprecated & Superseded Approaches
 
+This appendix collects removed models and outdated descriptions that an engineer may still encounter in older enterprise documents, comments or diagrams. It explains the replacement and the mistake that would result from reviving the old interpretation. An outdated description is not evidence that the described behavior ever shipped. Where implementation is incomplete, the current sections identify that limitation; this appendix does not turn a recommendation into an implemented feature.
+
+Use these notes to recognize residual artifacts when changing a component. The current source baseline and component sections remain the authority for runtime behavior. Correct an obsolete reference as part of the relevant change rather than adding another compatibility model merely because an old document mentions one. The examples below illustrate the consequence of an interpretation; they do not introduce a new migration, policy or historical production incident.
+
 ### Enterprise architecture and data boundaries — superseded approaches
 
-Earlier enterprise descriptions used a single organization kind to imply buying and hosting behavior. The current model uses `canSponsor` and `canHost`, with separate optional taxonomies for market identity. Do not recreate an exclusive kind switch to determine funding or settlement behavior.
+#### Exclusive organization kind as the commercial engine
 
-Earlier descriptions also presented parent/root organization hierarchy fields as active structure. Those fields are absent from the current `Organization` model. `departmentLabel` is a simple membership label, not a subsidiary authorization tree. A future hierarchy would require an explicit data and authorization design.
+Earlier enterprise explanations used one organization kind to imply both purchasing and hosting behavior. That representation obscures an organization that sponsors its employees and also supplies experts. The current model uses `canSponsor` and `canHost`; nullable market taxonomies describe the organization without deciding its financial permissions.
 
-The old `FundingLedgerEntry`, `WalletEntry`, and `SettlementLedgerEntry` money logs have been replaced by the balanced journal. A legacy comment naming one of those logs does not establish a current table or an independent source of financial truth.
+For example, adding a sponsor capability must not erase an existing host relationship or move its earnings to a buyer account. A document that switches on one exclusive kind to decide every route is using the superseded interpretation. Read the capability checks and buyer/host attribution separately, as explained in [data boundaries](#1-enterprise-architecture-and-data-boundaries).
 
-Three-, five-, and seven-axis diagrams appeared at different explanatory levels. Treating one of them as the complete runtime settlement specification produced overbroad claims. The current reachable-triples table, guidance classifier, configuration validation, and actual settlement call sites must be read together.
+#### Parent/root fields as an implemented organization tree
 
-A workspace, an organization, and a person's global role used to be easy to conflate in prose. The current data model separates them. Keep future dashboards aligned with those boundaries instead of deriving organizational power from a personal dashboard identity.
+Older material refers to parent or root organization relationships. Those fields are absent from the current `Organization` model. `Membership.departmentLabel` is a label within one membership; it does not grant a parent company access to another organization's members, invoices or experts.
 
-A balanced journal and a successful external transfer were sometimes described as one outcome. They remain distinct. Immutable posting protects local evidence; provider reconciliation protects the boundary outside PostgreSQL. One cannot replace the other.
+The replacement is explicit per-organization membership and scoped records. Two organizations sharing a brand still require separate authorization decisions. Reintroducing a hierarchy would change ownership, visibility and delegation, so it needs a deliberate design rather than a helper that assumes an old field still exists. The existing workspace aggregates access the operator already holds; it does not supply inherited tenant authority.
 
-Finally, older “wired” integration maps and stale source comments are discovery aids, not proof of active end-to-end behavior. This document retains the current component design and records unresolved integration choices explicitly, so a future implementation does not repeat an already superseded architecture.
+#### A workspace, tenant and person as interchangeable identities
+
+A cross-organization workspace was easy to mistake for a tenant in earlier prose because both present organization information. They have different keys and responsibilities. `OrgWorkspaceProfile.id` groups an operator's portfolio; `organizationId` identifies one tenant; a `User` and its personal profiles represent the person using those surfaces.
+
+A workspace selection therefore cannot become an invoice owner or replace the organization in a permission predicate. Similarly, a consultant's personal dashboard identity does not make that consultant an organizational finance operator. The replacement is to keep actor identity, current tenant and navigation context explicit throughout the request. See [dashboards](#6-dashboards-and-user-journeys) for the resulting page boundaries.
+
+#### A locally balanced journal as proof of external completion
+
+Older integration pictures sometimes compressed local posting and provider completion into one successful money operation. A balanced journal establishes the local accounting record. It cannot prove that a payment provider accepted a transfer, that a webhook arrived, or that a processor deleted personal data.
+
+The current architecture keeps durable local state and external reconciliation or retry responsibilities separate. For example, an ambiguous provider response requires recovery using the external operation identity; creating a second local posting does not establish what happened remotely. Keep PostgreSQL invariants as local guarantees and inspect the relevant provider lifecycle before describing the whole operation as complete. [Operations](#8-operations-and-integrations) explains that boundary.
 
 ### Identity, governance and lifecycle — superseded approaches
 
-- **BetterAuth Organization plugin membership as the app authorization source.** The app uses typed `Membership` rows and its own `Invitation`
-  flow.
-- **Direct admin add of members.** `POST /api/organizations/[orgId]/members` now returns 405; joining is invitation acceptance or approved SSO
-  JIT.
-- **One enum as the org type and authority model.** Capabilities are separate booleans; market taxonomies are separate nullable values.
-- **`Contract.kind` and live parent/root organization hierarchy.** Neither is in current Prisma schema; use `ContractSupersessionReason` and the
-  actual per-org records. Hierarchy is a future structural change, not an active tree.
-- **Derived-only program money lock and staged pending config.** The first assignment stamps persistent `configLockedAt`; used terms require
-  archive or contract supersession rather than silent next-cycle mutation.
+#### Authentication-provider membership as application authorization
+
+BetterAuth establishes authentication and supports the SSO boundary, but its Organization plugin membership is not the application's authorization source. Familiarise uses typed `Membership` records and its own invitation and permission flows. Copying provider membership into an authorization assumption would bypass application lifecycle and tenant rules.
+
+A successful login answers who the caller is. It does not by itself answer which organization the caller may operate, whether membership is active, or whether a finance action is granted. The replacement is to resolve the application membership and required action in the selected organization. This distinction also matters when a session outlives a membership change; the protected request still needs the application guard.
+
+#### Direct administrator creation of a live member
+
+The former direct-add interpretation is no longer the member-entry path. `POST /api/organizations/[orgId]/members` returns 405. Joining proceeds through invitation acceptance or the approved SSO JIT path, with the appropriate identity and organizational checks.
+
+For example, entering a colleague's email in an administrator form must not be documented as immediately creating a fully active relationship. The invitation and acceptance boundary determines when that relationship is established; an approved SSO join has its own prerequisites. Retaining the old endpoint in an integration guide would encourage clients to depend on a rejected operation. See [membership lifecycle](#2-identity-governance-and-lifecycle) for the active transitions.
+
+#### Generic role rank as the organization policy
+
+A single role ordering is an outdated explanation of organization permissions. The current action matrix contains non-linear grants: finance delegation, operational maintenance and ordinary member actions are different responsibilities. A global user role is also distinct from `Membership.role` inside one organization.
+
+An operator who may inspect invoices should not automatically acquire every member-management action merely because a diagram puts finance above another role. The replacement is an action-specific permission check composed with membership, tenant and structural gates. Keep UI affordances aligned with those grants, then enforce the same boundary at the server. A convenient role sort order is presentation data, not a complete authorization policy.
+
+#### `Contract.kind` as the renewal or amendment record
+
+Older descriptions refer to a contract kind as if renewal and amendment were values on that column. There is no `Contract.kind` in the current schema. The current model represents committed-term changes through successor records and `ContractSupersessionReason`, with links and timestamps preserving the relationship.
+
+Overwriting the original terms would make an earlier booking appear to have used the replacement agreement. A successor instead keeps both the old commercial basis and the new agreement addressable. When updating a contract screen or document, describe activation, locking and supersession using the actual lifecycle rather than adding a synthetic kind to restore an obsolete diagram. [Identity and lifecycle](#2-identity-governance-and-lifecycle) describes the current model.
+
+#### A lock inferred only from currently active assignments
+
+A derived-only program lock is superseded by persistent `Program.configLockedAt`. The first assignment stamps the lock, and ending that assignment does not make the historical money terms editable again. Earlier staged pending-configuration descriptions should not be read as an active mechanism for silently changing used program economics.
+
+For example, removing the final member cannot make the old price cap safe to overwrite: past usage still needs its original interpretation. The replacement is archive/replacement or the relevant contract supersession workflow. Preserve the durable lock and history, and distinguish harmless descriptive edits from committed money fields. A count of today's assignments is insufficient evidence that no past obligation exists.
 
 ### Commercial axes and programs — superseded approaches
 
-The former OrgBillingMode names TAG_ONLY, SEAT_PACK, INVOICED_MONTHLY, and PREPAID_UNLIMITED were replaced by FundingSource plus Program. PROJECT and RETAINER were discussed as possible program types but are absent from the enum. Program JSON pricing escape hatches and a configurable credit multiplier were removed; current budgets are rupee values with paise accounting.
+#### `OrgBillingMode` as a bundle of independent decisions
+
+The former names TAG_ONLY, SEAT_PACK, INVOICED_MONTHLY and PREPAID_UNLIMITED bundled several business choices together. Current configuration separates `FundingSource` from `Program` and its meter. Funding determines the rail; the program determines the allowance and eligibility rules.
+
+A wallet-funded program can therefore still have a member allowance. It does not have to become an unlimited product merely because money was prepaid. When an older table equates a billing name with both the payer and entitlement, translate it into the present dimensions rather than reviving that enum. The [commercial axes](#3-commercial-axes-and-programs) section gives the reachable combinations and explains which checks establish actual validity.
+
+#### One axis diagram as the entire runtime specification
+
+Three-, five- and seven-axis explanations describe different projections. Treating any one as the complete settlement contract hides dimensions that the other view intentionally omits. The replacement is to name the projection and then inspect reachability, validation, UI guidance and the concrete settlement call site.
+
+For example, appearing in a funding/program matrix does not prove that every overage behavior has an implemented collection path. Conversely, an ADVANCED guidance tier does not automatically mean a valid configuration is forbidden. Keep those claims separate in diagrams and product copy. A projection is useful because it simplifies one question; extending its answer to every runtime question creates the misleading promise.
+
+#### PROJECT and RETAINER as available program types
+
+PROJECT and RETAINER appear in earlier discussions, but they are absent from the current `ProgramType` enum. The implemented types are `LICENSED_SEAT` and `CREDIT_POOL`. A document or UI proposal must distinguish a possible future commercial offering from a selectable current program.
+
+For instance, a contract described informally as a retainer still needs to be explained using its actual funding, allowance and billing records. The label alone does not create a new meter, rollover policy or settlement rail. Introducing a new program type would require those semantics and their callers to be designed explicitly. Do not add compatibility branches for names that are only present in old planning material.
+
+#### Arbitrary program JSON and a configurable credit multiplier
+
+Program JSON pricing escape hatches and a configurable credit multiplier were removed. Current program budgets are rupee values represented in paise for accounting, while other meter units retain their stated meanings. Reintroducing an untyped multiplier would blur the boundary between usage units, price and money.
+
+For example, a budget of ₹5,000 is 500,000 paise; it should not acquire a different financial value because an obsolete credit conversion setting survives in a form. Use the current validated configuration and explicit meter calculations. If a future offering genuinely needs a separate unit, it needs a stated conversion and accounting design rather than an undocumented JSON field interpreted differently by checkout and reporting.
+
+#### Fixed funding/meter pairs as the only valid products
+
+Older scenario explanations sometimes treated a funding rail and a program meter as one inseparable product. The current design permits independent choices where the validity rules allow them, with RECOMMENDED, ADVANCED and DISCOURAGED guidance expressing product advice separately.
+
+A broad backend refusal wall would incorrectly reject some valid negotiated configurations, including combinations whose meter is independent of how cash arrives. The replacement is precise validation plus explained recipes in the editor. Guidance should identify unusual economics or incomplete integration honestly; it should not silently redefine the reachability table. This preserves flexibility while requiring an actual implementation trace before promising a particular collection outcome.
 
 ### Checkout and overage — superseded approaches
 
-The initial overage behavior depended on a single cap refusal. Current configs support BLOCK, CHARGE_MEMBER, and CHARGE_ORG, a surcharge and a cycle breaker. Earlier scenario language treated member co-pay as synchronous split tender and treated WALLET/PERSONAL as unsupported carve rails; the current helper and tests implement wallet credit-back and separate child payments, while the personal main checkout integration remains incomplete.
+#### A cap refusal as the whole overage policy
+
+The initial cap-only interpretation stops at allowance exhaustion. Current configuration distinguishes BLOCK, CHARGE_MEMBER and CHARGE_ORG, with surcharge and cycle-ceiling behavior. A description that says every exceeded allowance is rejected misses both the chosen payer policy and the collection obligation.
+
+The replacement is to calculate the allowance and marginal first, then apply the configured behavior and the implemented funding path. A booking can therefore have consumed usage, an overage event and a separately pending collection outcome; those are not one status. Read [checkout and overage](#4-checkout-and-overage) for the numerical examples, failure handling and explicit limitations before changing a cap check or explaining its result.
+
+#### Member co-pay as synchronous split tender
+
+Earlier scenario language described member co-pay as if the original checkout atomically collected both parties' payments. The current CHARGE_MEMBER path creates a separate child payment and a later member-facing resume flow. The original booking transaction does not mint and capture that side order synchronously.
+
+This distinction changes both experience and risk: confirmation of the booking does not establish that the later child payment has been collected. A diagram that merges the two hides the pending collection state and its retry behavior. Preserve separate payment identity, capture handling and reversal mapping. A future true split-tender design is an alternative requiring its own implementation; it is not a more convenient name for the existing path.
+
+#### WALLET as an unsupported member-carve rail
+
+Older descriptions treated the wallet case as an unsupported carve. The current helper and tests implement wallet credit-back for the relevant member-charge flow. The design must account for the fact that the sponsor wallet initially paid the booking price before assigning the member's marginal obligation.
+
+Simply charging the member again without the corresponding sponsor treatment would misstate who ultimately bore the amount. The replacement is the implemented credit-back and separately identified child payment behavior, with its refund handling. This does not imply that every personal-card configuration reaches the same helper; the funding-specific branches and their callers still need separate evidence. Preserve that distinction when reading the worked examples.
+
+#### Helper coverage as proof of PERSONAL checkout integration
+
+A reusable overage helper can contain a PERSONAL branch even when the main checkout does not call it for that case. Current PERSONAL bookings can meter an organization program while charging the full regular booking price to the member's card. The reviewed checkout bypasses organization-sponsored overage settlement on that path.
+
+Therefore the broad statement that all configured combinations settle end to end is outdated. An additional member base charge would also need to account for the price already paid. The replacement is to document personally paid, metered access as current and leave any extra sponsor marginal or surcharge contract as an explicit design choice. Unit coverage of the helper alone cannot close the call-site gap.
+
+#### Invoice issuance as a reset of the cycle breaker
+
+A description that counts only unbilled overage understates the implemented ceiling. The cycle breaker includes PENDING, ACCRUED and CHARGED base plus surcharge amounts in the relevant assignment period. Moving an event onto an invoice or paying that invoice does not create a new allowance cycle.
+
+For example, issuing a mid-cycle invoice cannot make the same member's previously charged overage disappear from the ceiling. Reversed, failed and blocked events have different treatment, as described in the current calculation. Keep the ceiling's units and scope explicit: surcharge GST is separate from the counted base and surcharge. The replacement is the status-specific sum, rather than the ambiguous phrase “outstanding overage.”
 
 ### Ledger, billing and settlement — superseded approaches
 
-WalletEntry and separate single-entry funding/settlement logs were replaced by the double-entry ledger, WalletTopUp lifecycle row, and reconciled wallet cache. Mutable RateCards were replaced with effective-dated rows and earnings snapshots. Payout clawbacks once remained informational; current batch creation can recover an amount against future payouts. Old lifecycle docs that treat held subscription earnings as a flat partial refund should use per-cycle tranches and newest-undelivered-first allocation.
+#### Parallel single-entry funding, wallet and settlement logs
+
+`FundingLedgerEntry`, `WalletEntry` and `SettlementLedgerEntry` are superseded financial models. Current money evidence is the balanced journal, alongside purposeful lifecycle rows and caches. An old comment naming a removed log does not establish a second source of financial truth that new code should write.
+
+The replacement matters especially on a retry: two independently maintained histories invite disagreement about whether a debit already happened. Use the current operation identity, journal posting and associated state transition instead. A correction preserves immutable evidence through the appropriate compensating operation rather than editing the original entry. [Ledger and settlement](#5-ledger-billing-and-settlement) explains which records are authority, lifecycle evidence or a performance copy.
+
+#### Wallet balance as an independent historical ledger
+
+Replacing the old wallet log does not remove the need for a wallet cache or `WalletTopUp` lifecycle record. These serve different purposes. The cache supports the guarded sufficient-funds debit, while the top-up row tracks the external payment lifecycle. Neither should become an alternative mutable accounting history.
+
+For example, directly changing a displayed balance cannot prove that a top-up was captured or explain a refund. The replacement is to preserve the journal, state transition and cache responsibilities together. A cache discrepancy calls for the designed reconciliation path, not a second wallet event table that reproduces all postings. Keep NULL-cache handling explicit rather than treating an unavailable cache as permission to spend an invented balance.
+
+#### Mutable rate cards as the explanation of past earnings
+
+Mutable RateCards were replaced by effective-dated rows and earnings snapshots. Recomputing an old earning from today's rate would rewrite the commercial explanation of a completed booking, even if the payment amount itself had not changed.
+
+The current design preserves the basis-point values applied to the booking. For example, a later negotiated platform share should affect the appropriate future transactions without changing why an earlier host earned its recorded share. A historical earnings view must therefore read its snapshot rather than substitute the latest card. Replacement and effective dating preserve both current pricing and the evidence needed to investigate earlier payouts, refunds and clawbacks.
+
+#### Clawback as an informational balance only
+
+Earlier payout descriptions left clawbacks as amounts to observe. Current organization payout creation can recover an amount against future payouts. The economic effect must therefore be distinguished from an informational note: the cash ultimately transferred can differ from earnings before withholding and recovery.
+
+A refund after an earlier payout does not erase the original earning or make its already sent cash disappear. The replacement records the reversal and subsequent recovery through their actual lifecycles. When explaining a batch, show the earnings basis, TDS and recovery separately. A single “payout amount” label that merges them makes the current recovery behavior difficult to understand and obscures the remaining obligation.
+
+#### Parent-level subscription refunds as sufficient allocation evidence
+
+Old lifecycle explanations sometimes treated held subscription earnings as one flat partial refund. The current design needs per-cycle tranches and newest-undelivered-first allocation. Later allocation batches and partial outcomes retain their own identity; the original parent payment is not enough to reconstruct every affected usage or earning.
+
+For example, refunding an undelivered portion must not imply that an already delivered tranche was restored too. The replacement follows the current allocation and reversal identities rather than applying a coarse parent-level percentage everywhere. Keep usage restoration, overage reversal, earnings adjustment and cash refund conceptually separate even when one cancellation initiates them. Their evidence explains what was actually undone.
+
+#### Application sweeps as substitutes for database invariants
+
+A JavaScript reconciliation loop is not the replacement for a commit-time CHECK constraint or constraint trigger already enforcing a local structural invariant. The current architecture gives PostgreSQL ownership of those guarantees and retains application checks for the boundaries the database does not cover.
+
+For instance, repeatedly searching for locally unbalanced committed journals cannot strengthen the installed balance trigger. It can add cost and imply that invalid committed states are an accepted operating condition. The replacement is to install and verify the sidecars and use the proper transaction paths. External provider reconciliation remains necessary because the database cannot constrain the vendor's records; that is a different responsibility from re-proving local arithmetic.
 
 ### Dashboards and user journeys — superseded approaches
 
-- **Personal dashboard context filter for organization work.** Personal pages now use personal scope; organization-owned work is read in its
-  organization.
-- **Separate nav destinations for list filters.** Member roles/invites and billing subtables are tabs; appointment scope is a control on one
-  list.
-- **One generic role rank as the org permissions policy.** The action matrix carries non-linear finance, operations and member-role grants.
-- **Treating sidebar hiding as access control.** API and server page guards enforce the permission and tenant scope independently.
-- **Public organization discovery gated on `canHost`.** The live org directory is opted-in ACTIVE organizations; plan visibility is a separate
-  gate.
+#### Personal dashboard context as the organization workspace
+
+The former personal-dashboard context-filter interpretation mixes personal ownership with tenant operations. Current personal pages use personal scope, and organization-owned work is read in its organization. The cross-organization workspace provides a separate portfolio view for operators who have the necessary access.
+
+A person may legitimately use all of these surfaces, but the page context still determines which relationship and records are being queried. For example, attending a sponsored booking does not grant the attendee a view of every appointment funded by the sponsor. Keep the selected organization and required action in server queries rather than widening a personal endpoint because a navigation control selected an organization.
+
+#### A navigation destination for every list filter
+
+Earlier layouts exposed separate destinations for related list filters. Current member roles and invitations, and the relevant billing subtables, are tabs. Appointment scope is a control on one list. These presentation choices keep related work together without creating a different authorization model for each visual arrangement.
+
+A tab can still require its own permitted data, and changing a filter must preserve the tenant predicate. The replacement is a coherent page with scoped queries and action checks, rather than duplicate routes whose behavior gradually diverges. When updating an old screenshot or link, point to the active page and control; do not recreate a retired destination merely to preserve an obsolete layout description.
+
+#### Hidden sidebar items as access control
+
+A sidebar that omits a page is a navigation aid, not evidence that the underlying action is protected. The current architecture independently enforces the required membership, tenant scope and action permission in server pages and APIs. A caller can address a route without using the sidebar.
+
+For example, hiding a finance item for an ordinary member does not justify an invoice query that filters only by a request-supplied organization identifier. The replacement is the real server guard and scoped select, with navigation reflecting its outcome. Keep negative-access examples in mind when changing dashboard composition: a correct screenshot can coexist with an incorrect data boundary if the query is not checked.
+
+#### `canHost` as the public organization directory gate
+
+Older discovery descriptions restricted public organization inclusion to hosts. The current directory uses opted-in ACTIVE organizations; public plan visibility is a separate decision. An organization can be publicly discoverable without that fact creating a host capability or making every plan public.
+
+The replacement separates organizational discovery, capability and service visibility. For example, a sponsor's public profile does not mean it owns a bookable catalog, and a listed host can still have restricted plans. Reusing one boolean for all three would change both product behavior and exposure. Follow the [dashboard and public-entry design](#6-dashboards-and-user-journeys) before updating public queries or explaining directory eligibility.
 
 ### Compliance, privacy and data — superseded approaches
 
-Older compliance notes describe consent retention as a generic daily purge, the org export as one full JSON+CSV bundle, and a 9-hour webhook signature replay period. The current code has weekly count-only-by-default consent cleanup, PEOPLE/FINANCE export kinds with JSON output, and a five-minute per-attempt signature window. Those older band descriptions need a separate refresh; use the current paths and values described here for new implementation decisions.
+#### Consent retention as a generic daily destructive purge
+
+Older compliance notes describe a generic daily purge. The current consent-retention worker runs weekly and counts expired evidence by default. Deletion requires `DPDP_SWEEPER_DELETE=true` and occurs in bounded batches. This is distinct from category-specific organization audit pruning and from a general policy for every data model.
+
+The replacement is to state the actual worker, schedule, default and data class. A row being past its retention timestamp does not prove it was deleted by the default run. Similarly, consent withdrawal records the change in processing permission; it is not itself an erasure of all historical records. Treating these operations as one generic cleanup obscures both retained evidence and uncompleted deletion work.
+
+#### One unrestricted FULL JSON+CSV organization export
+
+Older export descriptions present a single full bundle with JSON and CSV output. Current new jobs use PEOPLE or FINANCE kinds and produce JSON; FULL remains a legacy value. Permission grants determine which export kind a caller may request, rather than treating every organizational operator as entitled to all exported data.
+
+For example, a finance delegate's need for billing evidence does not automatically establish access to every people export. The replacement is the kind-specific request and download boundary described in [privacy and data](#7-compliance-privacy-and-data). Preserve the generated artifact's authorization, expiry and failure handling as well as its data selection. A successful worker upload alone is not a complete export-access design.
+
+#### Local scrub completion as vendor erasure completion
+
+Equating local erasure with complete processor off-boarding overlooks the durable retry machinery already present. The local scrub removes or pseudonymizes the designated identifiers while approved records remain. External legs use their own durable state, retries and finalization conditions.
+
+For example, a locally scrubbed profile cannot prove that Stream has accepted the corresponding vendor operation. The replacement preserves the local result and the external obligation separately, with recovery visible to operators. Building a second erasure queue under a new name would duplicate the existing boundary rather than complete it. Investigate the current outbox and retry worker before proposing new machinery or reporting an erasure as fully finished.
+
+#### Stored compliance fields as proof of regulatory delivery
+
+A stored GST identifier, TDS deduction, grievance record or breach intake row proves only the behavior implemented around that record. It does not by itself establish completed filing, regulator notification, recipient delivery or operational compliance. Earlier “wired” maps are insufficient evidence for those end-to-end claims.
+
+The replacement is the workflow-level explanation in the current compliance section: distinguish collection, calculation, document generation, submission and acknowledgment, and identify any missing integration. An exported draft still needs its applicable filing steps. This guide also separates legal source and commencement questions from what the source code implements. Preserve that distinction rather than turning a model field into a compliance certification.
+
+#### Reporting currency and regional attributes as settlement or hosting guarantees
+
+Stored currency or residency-related attributes must not be promoted into a promise of international settlement or regional hosting. The reviewed settlement rail is INR-only, and a label cannot establish where processors, storage, backups or operational access actually reside.
+
+For example, choosing a reporting label does not create the bank, tax and reconciliation paths required to settle another currency. The replacement is to describe the implemented money rail and separately verify any infrastructure or contractual claim. Future regional or international support needs operational evidence across the participating systems. Reusing existing metadata as if it enabled that support would overstate both the implementation and the assurance it provides.
 
 ### Operations and integrations — superseded approaches
 
-Older runbook sections describe each cron as an independent script/route chain, use a Redis cron lock, or list the old nine-hour outbound signature replay period. Current scheduled execution uses the central cleanup registry, Postgres `SystemJobExecution` lease, and a five-minute per-attempt signature replay window. Keep any legacy standalone workflow only as an invocation of the shared core; do not make it a second source of job logic.
+#### Three implementations for one scheduled job
 
-### Design decisions and recommendations — superseded approaches
+Older runbooks sometimes describe an independent script, job and cleanup-route chain as if every layer owned the job logic. The current architecture uses the central cleanup registry with shared execution, dispatched through the cleanup and admin surfaces. A legacy invocation is not a reason to create another implementation.
 
-Treating every organization as exactly one exclusive commercial kind obscured hybrid buyers and hosts. The current capability pair should remain the source of that distinction; taxonomy is a separate concern.
+The replacement keeps the business function in one place and gives schedulers a bounded way to invoke it. For example, manual recovery and scheduled recovery should operate the same state transitions rather than gradually acquire different retry semantics. Existing standalone invocation paths need to be understood as callers of the shared core where applicable, not templates for a new wrapper hierarchy.
 
-Collapsing funding and metering into fixed pairs made a wallet-backed engagement allowance look invalid. The current design supports independent choices with guidance and real validity checks. Reintroducing broad refusal walls would reverse that product decision.
+#### Redis locks as cron mutual exclusion
 
-Calling a helper branch “supported end to end” without inspecting its callers led to inaccurate PERSONAL-overage claims. The reviewed call path is now the standard of evidence. Future support declarations should include collection, reversal and reporting behavior.
+Redis remains important for request rate limits, edge state and short interactive mutexes, but cron mutual exclusion uses a Postgres `SystemJobExecution` lease. Older descriptions that select a Redis cron lock are superseded for this responsibility.
 
-Charging or restoring a subscription only at the parent-payment level lost the identity of later allocation batches and partial outcomes. Current usage and overage identities should be preserved rather than replaced by coarse approximations.
+The replacement makes the lease and job execution record part of the same operational model, including bounded ownership and the recorded outcome. Adding a second lock provider would create two authorities for whether the same job may run. This does not remove the separate need to coordinate active and standby schedulers: preventing overlapping executions and choosing which fleet is entitled to dispatch are different guarantees.
 
-The former single-entry financial logs are not additional authorities to resurrect. Journal postings and purposeful caches have distinct responsibilities, and corrections use compensating entries.
+#### Fleet ownership inferred from a successful cron lock
 
-A JavaScript sweep that re-proves commit-time database invariants is a weaker and more expensive form of assurance than installing and testing the existing sidecars. Provider reconciliation remains necessary because PostgreSQL cannot constrain a vendor's database.
+A job lease does not prove that the correct hosting fleet dispatched the work. Active and standby schedulers could fire sequentially and each acquire a free lease. The current guide identifies the required `ops:active_cron_platform` switch and the reviewed implementation gap rather than describing fleet ownership as already complete.
 
-Using an organization owner or generic administrator as the answer to every permission question obscures finance delegation and privacy boundaries. Current action permissions, membership roles and scopes should lead both UI and API design.
+The replacement design retains the Postgres lease while adding and verifying the distinct scheduler-ownership boundary. A diagram showing a lock between two schedulers should not imply that sequential duplicate dispatch is impossible. Keep the implementation status explicit in runbooks and capacity claims, especially when describing hot-standby failback. This remains a documented requirement and recommendation where the source does not yet satisfy it.
 
-Equating local erasure with completed vendor erasure misses the durable retry workers already present. Rebuilding that pipeline under a new name would duplicate rather than close the boundary.
+#### Nine-hour outbound webhook signature validity
 
-Assuming job locks imply active/standby scheduler ownership misses sequential duplicate dispatch. The existing Postgres lease should be retained while the separate required fleet switch is implemented and verified.
+Older outbound webhook descriptions use a nine-hour replay period. The current implementation uses a five-minute signature window per delivery attempt. Retry duration and acceptance of a particular signed attempt are different time concepts; a retry is not permission to accept an arbitrarily old signature.
 
-Finally, stored enums, feature code and old integration maps cannot prove international settlement, regional hosting or automated regulatory delivery. Those promises require current operational evidence. This section records the recommended direction without presenting a proposal as shipped behavior.
+The replacement documentation should state the attempt boundary and the current verification window while separately explaining the durable retry lifecycle. A receiver that implements the obsolete window would expose a broader replay interval than the reviewed sender contract describes. Keep signing, SSRF protection, delivery identity and retry evidence in the same component design, without collapsing their separate checks into a generic “secure webhook” assertion.
+
+#### A resolved callback as an automatically successful job
+
+A worker can return normally while reporting failure in its result. `withCronLock` recognizes the relevant `success === false` or `overallSuccess === false` outcome as FAILED, in addition to handling thrown errors. Describing every resolved promise as a successful run loses that operational meaning.
+
+The replacement is to inspect the wrapper's recorded outcome and the worker's summary, not merely whether the invocation returned HTTP data or avoided an exception. For example, a bounded sweep can complete its attempt and still report failed external work. Keep that distinction in alerts and dashboards so the successful execution of the wrapper does not conceal the unsuccessful business operation it attempted.
+
+#### Another general queue before examining existing durable work
+
+The existence of retries does not establish that enterprise needs a second general-purpose queue today. Current jobs and outboxes already provide durable rows, bounded execution and recovery for specific workflows. Recreating those paths under another transport would create migration and ownership questions without automatically improving the user outcome.
+
+The replacement is to identify the measured missing guarantee first: latency, throughput, isolation, ordering or visibility. Keep current durable identities and database transitions if a later measured requirement justifies a different transport. This appendix records why rediscovering the existing machinery matters; the recommendation is not a claim that a general queue can never become appropriate. See [design recommendations](#9-design-decisions-and-recommendations) for the evidence that would change the choice.
