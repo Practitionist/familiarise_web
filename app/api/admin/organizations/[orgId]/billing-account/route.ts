@@ -55,14 +55,29 @@ export const PATCH = withOpsAction(
         await assertVerifiedDomainOrThrow(tx, params.orgId, "INVOICE_FUNDING");
       }
 
-      const next = await tx.billingAccount.update({
-        where: { id: ba.id },
+      // CAS on the values read, so a wallet credit committed after the read is never nulled.
+      const cas = await tx.billingAccount.updateMany({
+        where: {
+          id: ba.id,
+          fundingSource: ba.fundingSource,
+          walletBalance: ba.walletBalance,
+          creditLimit: ba.creditLimit,
+        },
         data: {
           ...(switching && { fundingSource: "INVOICE", walletBalance: null }),
           ...(body.creditLimit !== undefined && {
             creditLimit: body.creditLimit,
           }),
         },
+      });
+      if (cas.count !== 1) {
+        throw new OpsRefusal(
+          "BILLING_ACCOUNT_CONFLICT",
+          "The billing account changed while this ran. Reload and retry.",
+        );
+      }
+      const next = await tx.billingAccount.findUniqueOrThrow({
+        where: { id: ba.id },
       });
       await recordBillingAccountUpdate(tx, {
         organizationId: params.orgId,

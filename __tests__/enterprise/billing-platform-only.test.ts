@@ -12,7 +12,11 @@ import { NextRequest } from "next/server";
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 const tx = {
-  billingAccount: { findFirst: jest.fn(), update: jest.fn() },
+  billingAccount: {
+    findFirst: jest.fn(),
+    updateMany: jest.fn(),
+    findUniqueOrThrow: jest.fn(),
+  },
   organizationInvoice: {
     count: jest.fn(),
     findFirst: jest.fn(),
@@ -77,9 +81,17 @@ const ACCOUNT = {
 beforeEach(() => {
   jest.clearAllMocks();
   tx.billingAccount.findFirst.mockResolvedValue(ACCOUNT);
-  tx.billingAccount.update.mockImplementation(
-    async ({ data }: { data: object }) => ({ ...ACCOUNT, ...data }),
+  let written = {};
+  tx.billingAccount.updateMany.mockImplementation(
+    async ({ data }: { data: object }) => {
+      written = data;
+      return { count: 1 };
+    },
   );
+  tx.billingAccount.findUniqueOrThrow.mockImplementation(async () => ({
+    ...ACCOUNT,
+    ...written,
+  }));
   tx.organizationInvoice.count.mockResolvedValue(0);
   tx.organizationInvoice.updateMany.mockResolvedValue({ count: 1 });
   tx.organizationInvoice.findUniqueOrThrow.mockResolvedValue({ id: "inv-1" });
@@ -100,15 +112,16 @@ describe("tenant billing-account PATCH", () => {
     const res = await patchAccount(req(body), orgParams);
     expect(res.status).toBe(403);
     expect((await res.json()).code).toBe(code);
-    expect(tx.billingAccount.update).not.toHaveBeenCalled();
+    expect(tx.billingAccount.updateMany).not.toHaveBeenCalled();
   });
 
   it("lets a tenant lower its credit limit", async () => {
     const res = await patchAccount(req({ creditLimit: 50_000 }), orgParams);
     expect(res.status).toBe(200);
-    expect(tx.billingAccount.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { creditLimit: 50_000 } }),
-    );
+    expect(tx.billingAccount.updateMany).toHaveBeenCalledWith({
+      where: { id: "ba-1", creditLimit: 1_00_000 },
+      data: { creditLimit: 50_000 },
+    });
   });
 });
 
@@ -159,8 +172,13 @@ describe("admin billing-account door", () => {
       "org-1",
       "INVOICE_FUNDING",
     );
-    expect(tx.billingAccount.update).toHaveBeenCalledWith({
-      where: { id: "ba-1" },
+    expect(tx.billingAccount.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "ba-1",
+        fundingSource: "WALLET",
+        walletBalance: 0,
+        creditLimit: 1_00_000,
+      },
       data: {
         fundingSource: "INVOICE",
         walletBalance: null,
@@ -179,3 +197,24 @@ describe("admin billing-account door", () => {
     );
   });
 });
+
+it.each([
+  ["tenant", () => patchAccount(req({ creditLimit: 50_000 }), orgParams)],
+  [
+    "admin",
+    () =>
+      adminPatchAccount(
+        req({ fundingSource: "INVOICE", reason: "signed MSA with net-60" }),
+        orgParams,
+      ),
+  ],
+])(
+  "%s write refuses 409 when the account changed after it was read",
+  async (_door, call) => {
+    tx.billingAccount.updateMany.mockResolvedValueOnce({ count: 0 });
+    const res = await call();
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("BILLING_ACCOUNT_CONFLICT");
+    expect(tx.orgAuditLog.create).not.toHaveBeenCalled();
+  },
+);

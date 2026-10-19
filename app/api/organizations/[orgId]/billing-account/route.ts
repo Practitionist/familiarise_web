@@ -206,8 +206,19 @@ export async function PATCH(
         }
       }
 
-      const next = await tx.billingAccount.update({
-        where: { id: ba.id },
+      // CAS on the values the checks above read: a concurrent platform limit
+      // change or wallet credit refuses this write instead of being overwritten.
+      const cas = await tx.billingAccount.updateMany({
+        where: {
+          id: ba.id,
+          ...(body.creditLimit !== undefined && {
+            creditLimit: ba.creditLimit,
+          }),
+          ...(body.fundingSource !== undefined && {
+            fundingSource: ba.fundingSource,
+            walletBalance: ba.walletBalance,
+          }),
+        },
         data: {
           ...(body.billingEmail !== undefined && {
             billingEmail: body.billingEmail,
@@ -228,6 +239,15 @@ export async function PATCH(
             minBalancePaise: body.minBalancePaise,
           }),
         },
+      });
+      if (cas.count !== 1) {
+        throw Object.assign(
+          new Error("Billing account changed concurrently. Reload and retry."),
+          { httpStatus: 409, code: "BILLING_ACCOUNT_CONFLICT" },
+        );
+      }
+      const next = await tx.billingAccount.findUniqueOrThrow({
+        where: { id: ba.id },
       });
 
       await recordBillingAccountUpdate(tx, {
