@@ -204,7 +204,7 @@ This band collects the architecture decision records (`01` through `36`): each o
 
 ### Cross-Rail Explainers — `docs/start-here/`
 
-For the full component-by-component enterprise design, start with the [nine-chapter enterprise system design](../start-here/enterprise/README.md). It traces the current schema through the code, includes worked examples, distinguishes three-, five- and seven-axis views, and records recommendations and implementation boundaries.
+For the full component-by-component enterprise design, start with the [enterprise system design](../start-here/enterprise/README.md). It traces the current schema through the code, includes worked examples, distinguishes three-, five- and seven-axis views, and records recommendations and implementation boundaries.
 
 | File                                                                                         | Purpose                                                                                                                                                                                                                                                       |
 | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
