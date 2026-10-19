@@ -14,8 +14,6 @@ import {
   type OrgBatchResult,
 } from "./org-payout-service";
 
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-
 export interface CreatePayoutBatchesRun {
   success: boolean;
   batchId: string;
@@ -28,7 +26,7 @@ export interface CreatePayoutBatchesRun {
 /**
  * The scheduled consultant and org batch, `limit` units per rail. The org
  * period ends at `windowStart` so every slice of one window reuses the same
- * period and idempotency key; a manual run without it ends the period now.
+ * idempotency key; a manual run without it ends the period now.
  */
 export async function runCreatePayoutBatches(opts: {
   limit: number;
@@ -39,10 +37,8 @@ export async function runCreatePayoutBatches(opts: {
     { failMode: "closed" },
     async () => {
       const consultant = await createPayoutBatchSlice(opts);
-      const periodEnd = opts.windowStart ?? new Date();
       const org = await createOrgPayoutBatches({
-        periodStart: new Date(periodEnd.getTime() - WEEK_MS),
-        periodEnd,
+        periodEnd: opts.windowStart ?? new Date(),
         limit: opts.limit,
       });
       return {

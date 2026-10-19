@@ -2059,8 +2059,12 @@ export interface OrgBatchResult {
   errors: string[];
 }
 
+/**
+ * The scheduled org batch. Each org's period starts at its oldest READY,
+ * unbatched earning before `periodEnd`, so a late-released or returned earning
+ * is still batched; the key is per org per `periodEnd`, one payout per window.
+ */
 export async function createOrgPayoutBatches(opts?: {
-  periodStart?: Date;
   periodEnd?: Date;
   /** Caps the payouts created plus failures; already-batched and refused orgs do not count. */
   limit?: number;
@@ -2068,9 +2072,6 @@ export async function createOrgPayoutBatches(opts?: {
   const { createHash } = await import("crypto");
   const { getActiveOrgMaintenanceWindow } = await import("@/lib/maintenance");
   const periodEnd = opts?.periodEnd ?? new Date();
-  const periodStart =
-    opts?.periodStart ??
-    new Date(periodEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
 
   const result: OrgBatchResult = {
     success: false,
@@ -2089,10 +2090,11 @@ export async function createOrgPayoutBatches(opts?: {
     where: {
       status: "READY",
       orgPayoutId: null,
-      createdAt: { gte: periodStart, lt: periodEnd },
+      createdAt: { lt: periodEnd },
     },
     orderBy: { organizationId: "asc" },
     _count: true,
+    _min: { createdAt: true },
   });
   result.orgsScanned = eligible.length;
 
@@ -2115,8 +2117,9 @@ export async function createOrgPayoutBatches(opts?: {
       continue;
     }
 
+    const periodStart = row._min.createdAt ?? periodEnd;
     const idempotencyKey = createHash("sha256")
-      .update(`${orgId}:${periodStart.toISOString()}`)
+      .update(`scheduled:${orgId}:${periodEnd.toISOString()}`)
       .digest("hex");
 
     try {
