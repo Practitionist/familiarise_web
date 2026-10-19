@@ -337,12 +337,14 @@ describe("cron-tick reportableToSentry", () => {
 describe("cron-tick bucketFor", () => {
   const { bucketFor } = loadTicker();
 
-  it("sorts a maintenance 503 with the lock-held 409, a bare 503 and a partial 207 as failed", () => {
+  it("sorts a maintenance 503 with the lock-held 409, a bare 503 and a money-batch 207 as failed", () => {
     expect(bucketFor(503, true)).toBe("held");
     expect(bucketFor(503)).toBe("failed");
     expect(bucketFor(409)).toBe("held");
     expect(bucketFor(200)).toBe("ok");
-    expect(bucketFor(207)).toBe("failed");
+    expect(bucketFor(207, false, "process-payouts")).toBe("failed");
+    expect(bucketFor(207, false, "dunning")).toBe("failed");
+    expect(bucketFor(207, false, "reconcile-payment-status")).toBe("ok");
     expect(bucketFor(500)).toBe("failed");
     expect(bucketFor(0)).toBe("failed");
   });

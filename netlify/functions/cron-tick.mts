@@ -311,7 +311,8 @@ interface CalendarWindow {
   dayOfMonthUtc?: number;
 }
 
-const DAILY_0300: CalendarWindow = { startMinuteUtc: 180, windowMinutes: 180 };
+// Runs to 20:00 so seventeen hourly slices drain the day's cohort before the Monday payout window opens.
+const DAILY_0300: CalendarWindow = { startMinuteUtc: 180, windowMinutes: 1020 };
 const DAILY_2330: CalendarWindow = { startMinuteUtc: 1410, windowMinutes: 180 };
 
 /** Every windowed target re-runs on its slots until the window closes; each run is a bounded, claim-based slice. */
@@ -324,7 +325,7 @@ const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
   "settle-invoice-accruals": {
     dayOfMonthUtc: 1,
     startMinuteUtc: 240,
-    windowMinutes: 180,
+    windowMinutes: 960,
   },
   "expire-referral-credits": {
     dayOfMonthUtc: 1,
@@ -577,18 +578,28 @@ async function hitTarget(
   }
 }
 
+/** Targets whose 207 means some rows failed; every other target's 207 is a successful run that flagged rows. */
+const PARTIAL_FAILURE_TARGETS: ReadonlySet<string> = new Set([
+  "process-payouts",
+  ...Object.keys(TARGET_WINDOWS),
+]);
+
 /**
  * Which bucket a target's status lands in; exported so a test can pin it.
  * 409 is the cron lock's loser; a 503 whose body carries the maintenance
  * `phase` is a twin refusing inside a hold — both expected, neither a failure.
- * A bare 503 has no such marker and stays failed (#1598 P1-W03). A 207 is a
- * run that failed or flagged some rows, so it is failed too.
+ * A bare 503 has no such marker and stays failed. A 207 is failed only for
+ * {@link PARTIAL_FAILURE_TARGETS}.
  */
 export function bucketFor(
   status: number,
   maintenance = false,
+  name = "",
 ): "ok" | "held" | "failed" {
   if (status === 200) return "ok";
+  if (status === 207) {
+    return PARTIAL_FAILURE_TARGETS.has(name) ? "failed" : "ok";
+  }
   if (status === 409 || (status === 503 && maintenance)) return "held";
   return "failed";
 }
@@ -842,7 +853,7 @@ export default async function cronTick(_req: Request): Promise<Response> {
       result.status === "fulfilled" && result.value.maintenance === true;
     const errorBody =
       result.status === "fulfilled" ? result.value.errorBody : undefined;
-    const bucket = bucketFor(status, maintenance);
+    const bucket = bucketFor(status, maintenance, name);
     if (bucket === "ok") ok.push(name);
     else if (bucket === "held") lockHeld.push(name);
     else {
