@@ -3,7 +3,8 @@
  * contract whose `effectiveTo` has passed.
  *
  * Schedule: the ticker's daily window from 03:00 UTC, on a slot after
- * auto-renew-contracts; both select contracts ended by the window start.
+ * auto-renew-contracts; both select contracts ended by the window start, and
+ * an un-renewed autoRenew contract is left to auto-renew for one day.
  *
  * Soft enforcement: contract expiry does NOT take the org offline. The
  * `requireOrgAccess` helper continues to honour the org regardless of
@@ -123,6 +124,25 @@ async function notifyExpiredContract(
   }
 }
 
+/** How long auto-renew owns an un-renewed autoRenew contract before expiry may take it. */
+const AUTO_RENEW_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The expiry cohort and claim filter: ACTIVE contracts ended by `asOf`, minus
+ * autoRenew contracts auto-renew has not stamped yet and that ended inside the grace.
+ */
+export function expiryCohortWhere(asOf: Date): Prisma.ContractWhereInput {
+  return {
+    status: "ACTIVE",
+    effectiveTo: { lte: asOf, not: null },
+    NOT: {
+      autoRenew: true,
+      autoRenewedAt: null,
+      effectiveTo: { gt: new Date(asOf.getTime() - AUTO_RENEW_GRACE_MS) },
+    },
+  };
+}
+
 // fail-closed: expiry withdraws the sponsorship the checkout resolver reads.
 export async function runExpireContracts(opts: {
   limit?: number;
@@ -140,13 +160,10 @@ async function expireContracts(opts: {
   const stats: ExpireStats = { scanned: 0, expired: 0, assignmentsClosed: 0 };
   const now = new Date();
 
-  // ACTIVE contracts whose effectiveTo passed by the window start, oldest
-  // first; a claimed row leaves the cohort. Null effectiveTo never expires.
+  // Oldest first; a claimed row leaves the cohort. Null effectiveTo never expires.
+  const cohort = expiryCohortWhere(opts.windowStart ?? now);
   const due = await prisma.contract.findMany({
-    where: {
-      status: "ACTIVE",
-      effectiveTo: { lte: opts.windowStart ?? now, not: null },
-    },
+    where: cohort,
     orderBy: { effectiveTo: "asc" },
     take: opts.limit,
     select: {
@@ -177,7 +194,7 @@ async function expireContracts(opts: {
           // cron replicas don't double-process. Doubles as the distributed
           // lock; loser sees `claim.count === 0` and skips.
           const claim = await tx.contract.updateMany({
-            where: { id: c.id, status: "ACTIVE" },
+            where: { id: c.id, ...cohort },
             data: { status: "EXPIRED" },
           });
           if (claim.count === 0) {

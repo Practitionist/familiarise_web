@@ -3,9 +3,9 @@
  *
  * Schedule: the ticker's daily window from 03:00 UTC, on a slot BEFORE
  * expire-contracts, and both select contracts ended by the window start.
- * Renewal must win the race with expiry: we stamp the RENEWAL successor + flip
- * the old contract to EXPIRED here, so by the time expire-contracts runs
- * there's nothing left for it to expire (its claim gates on status=ACTIVE).
+ * Renewal must win the race with expiry: expire-contracts leaves an un-renewed
+ * autoRenew contract alone for one day after it ends (`expiryCohortWhere`), and
+ * this job flips a renewed contract to EXPIRED itself.
  *
  * Per contract due for renewal (status ACTIVE, autoRenew, effectiveTo<=now,
  * autoRenewedAt null):
