@@ -11,16 +11,13 @@
  * member. The two are idempotent against each other: a row the sweep already
  * moved to FAILED no longer matches `chargeStatus = PENDING` here.
  *
- * Schedule: daily at 04:30 IST (`.github/workflows/timeout-member-overages.yml`).
+ * Schedule: the ticker's daily window from 23:30 UTC; the 14-day cutoff is
+ * measured from the window start so every slice of a window sees one cohort.
  *
  * Idempotent: claims on `chargeTimedOutAt:null` (+ `chargeStatus PENDING`),
  * so a re-run or second replica matches zero rows.
- *
- * Usage:
- *   npx tsx jobs/billing/timeout-member-overages.ts
  */
 
-import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { sendOrgOperationalEmail } from "@/lib/email/senders/money";
 import { notifyMemberOverageTimedOut } from "@/lib/novu/org-workflows";
@@ -28,9 +25,6 @@ import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-car
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { abortIfMaintenance } from "@/lib/maintenance-cron";
-import * as Sentry from "@sentry/nextjs";
-import { runJob } from "@/lib/observability/job-sentry";
 
 // #779 — 14-day window before a never-settled member overage times out.
 const TIMEOUT_DAYS = 14;
@@ -41,10 +35,24 @@ interface TimeoutStats {
   timedOut: number;
 }
 
-export async function runTimeoutMemberOverages(): Promise<TimeoutStats> {
+export async function runTimeoutMemberOverages(opts: {
+  limit?: number;
+  windowStart?: Date;
+}): Promise<TimeoutStats> {
+  return withCronLock("timeout-member-overages", { failMode: "closed" }, () =>
+    timeoutMemberOverages(opts),
+  );
+}
+
+async function timeoutMemberOverages(opts: {
+  limit?: number;
+  windowStart?: Date;
+}): Promise<TimeoutStats> {
   const stats: TimeoutStats = { scanned: 0, timedOut: 0 };
   const now = new Date();
-  const cutoff = new Date(now.getTime() - TIMEOUT_DAYS * 86_400_000);
+  const cutoff = new Date(
+    (opts.windowStart ?? now).getTime() - TIMEOUT_DAYS * 86_400_000,
+  );
 
   const stale = await prisma.overageEvent.findMany({
     where: {
@@ -53,6 +61,8 @@ export async function runTimeoutMemberOverages(): Promise<TimeoutStats> {
       createdAt: { lt: cutoff },
       chargeTimedOutAt: null,
     },
+    orderBy: { createdAt: "asc" },
+    take: opts.limit,
     select: {
       id: true,
       marginalPaise: true,
@@ -146,30 +156,4 @@ export async function runTimeoutMemberOverages(): Promise<TimeoutStats> {
   }
 
   return stats;
-}
-
-async function main() {
-  await abortIfMaintenance("timeout-member-overages");
-  console.log(
-    `[timeout-member-overages] Starting at ${new Date().toISOString()}`,
-  );
-  Sentry.logger.info("job:timeout-member-overages started");
-  const stats = await withCronLock(
-    "timeout-member-overages",
-    { failMode: "closed" },
-    () => runTimeoutMemberOverages(),
-  );
-  console.log(
-    `[timeout-member-overages] Done. scanned=${stats.scanned} timedOut=${stats.timedOut}`,
-  );
-  Sentry.logger.info("job:timeout-member-overages finished", {
-    scanned: stats.scanned,
-    timedOut: stats.timedOut,
-  });
-}
-
-if (require.main === module) {
-  runJob("timeout-member-overages", () =>
-    main().finally(() => prisma.$disconnect()),
-  );
 }

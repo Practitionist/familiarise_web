@@ -1,11 +1,11 @@
 /**
  * #779 §A — Cron: auto-renew expiring contracts.
  *
- * Schedule: daily at 02:30 UTC (`.github/workflows/auto-renew-contracts.yml`)
- * — 40 min BEFORE expire-contracts.yml (03:10 UTC). Renewal must win the race
- * with expiry: we stamp the RENEWAL successor + flip the old contract to
- * EXPIRED here, so by the time expire-contracts runs there's nothing left for
- * it to expire (its claim gates on status=ACTIVE, which we've already moved).
+ * Schedule: the ticker's daily window from 03:00 UTC, on a slot BEFORE
+ * expire-contracts, and both select contracts ended by the window start.
+ * Renewal must win the race with expiry: we stamp the RENEWAL successor + flip
+ * the old contract to EXPIRED here, so by the time expire-contracts runs
+ * there's nothing left for it to expire (its claim gates on status=ACTIVE).
  *
  * Per contract due for renewal (status ACTIVE, autoRenew, effectiveTo<=now,
  * autoRenewedAt null):
@@ -22,19 +22,13 @@
  * Concurrency: candidates findMany (bounded) → per-row Serializable
  * $transaction → conditional updateMany claim (count===0 ⇒ skip) → side effects
  * in same tx → OrgAuditLog row. Mirrors jobs/contracts/expire-contracts.ts.
- *
- * Usage:
- *   npx tsx jobs/contracts/auto-renew-contracts.ts
  */
 
-import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { Prisma } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
-import { runJob } from "@/lib/observability/job-sentry";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { nextPeriodEnd } from "@/lib/enterprise/cycle-engine";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
@@ -57,6 +51,7 @@ interface RenewStats {
   scanned: number;
   renewed: number;
   skipped: number;
+  failed: number;
 }
 
 type TxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
@@ -129,18 +124,34 @@ async function notifyAutoRenewedContract(
   }
 }
 
-export async function runAutoRenewContracts(): Promise<RenewStats> {
-  const stats: RenewStats = { scanned: 0, renewed: 0, skipped: 0 };
+// fail-closed: renewal mints the next contract period the checkout sponsorship resolver reads.
+export async function runAutoRenewContracts(opts: {
+  limit?: number;
+  windowStart?: Date;
+}): Promise<RenewStats> {
+  return withCronLock("auto-renew-contracts", { failMode: "closed" }, () =>
+    autoRenewContracts(opts),
+  );
+}
+
+/** Every candidate leaves the cohort on claim, so `limit` is a plain oldest-first bite. */
+async function autoRenewContracts(opts: {
+  limit?: number;
+  windowStart?: Date;
+}): Promise<RenewStats> {
+  const stats: RenewStats = { scanned: 0, renewed: 0, skipped: 0, failed: 0 };
   const now = new Date();
+  const asOf = opts.windowStart ?? now;
 
   const due = await prisma.contract.findMany({
     where: {
       status: "ACTIVE",
       autoRenew: true,
       autoRenewedAt: null,
-      effectiveTo: { lte: now, not: null },
+      effectiveTo: { lte: asOf, not: null },
     },
-    take: BATCH_SIZE,
+    orderBy: { effectiveTo: "asc" },
+    take: opts.limit ?? BATCH_SIZE,
     select: {
       id: true,
       organizationId: true,
@@ -314,37 +325,9 @@ export async function runAutoRenewContracts(): Promise<RenewStats> {
         tags: { subsystem: "jobs", job: "auto-renew-contracts" },
       });
       console.error(`[auto-renew-contracts] Failed for contract ${c.id}:`, err);
-      stats.skipped += 1;
+      stats.failed += 1;
     }
   }
 
   return stats;
-}
-
-async function main() {
-  await abortIfMaintenance("auto-renew-contracts");
-  Sentry.logger.info("job:auto-renew-contracts started");
-  console.log(`[auto-renew-contracts] Starting at ${new Date().toISOString()}`);
-  // fail-closed since #1169 lists it as financial: renewal mints the next
-  // contract period the checkout sponsorship resolver reads.
-  const stats = await withCronLock(
-    "auto-renew-contracts",
-    { failMode: "closed" },
-    () => runAutoRenewContracts(),
-  );
-  console.log(
-    `[auto-renew-contracts] Done. scanned=${stats.scanned} renewed=${stats.renewed} skipped=${stats.skipped}`,
-  );
-  Sentry.logger.info("job:auto-renew-contracts finished", {
-    scanned: stats.scanned,
-    renewed: stats.renewed,
-    skipped: stats.skipped,
-  });
-}
-
-// Self-execute only when invoked directly (importable for unit tests).
-if (require.main === module) {
-  runJob("auto-renew-contracts", () =>
-    main().finally(() => prisma.$disconnect()),
-  );
 }

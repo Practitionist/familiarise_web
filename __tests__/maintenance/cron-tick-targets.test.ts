@@ -31,6 +31,8 @@ type Ticker = Pick<
   | "isFirstDueTickOfHour"
   | "bucketFor"
   | "buildFailedTargetEvent"
+  | "windowStartFor"
+  | "MAX_TARGETS_PER_TICK"
 >;
 type Target = ReturnType<Ticker["dueTargets"]>[number];
 
@@ -212,11 +214,14 @@ describe("cron-tick dueTargets cadence", () => {
     }
   });
 
-  it("caps every 5-minute tick across the hour to 5–8 targets", () => {
-    for (const minute of [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]) {
-      const due = dueTargets(at(minute));
+  it("never fires more than MAX_TARGETS_PER_TICK on any tick of a month, windows included", () => {
+    const { MAX_TARGETS_PER_TICK } = loadTicker();
+    expect(MAX_TARGETS_PER_TICK).toBe(9);
+    const start = Date.UTC(2026, 10, 1);
+    for (let m = 0; m < 30 * 24 * 60; m += 5) {
+      const due = dueTargets(new Date(start + m * 60_000));
       expect(due.length).toBeGreaterThanOrEqual(5);
-      expect(due.length).toBeLessThanOrEqual(8);
+      expect(due.length).toBeLessThanOrEqual(MAX_TARGETS_PER_TICK);
     }
   });
 
@@ -332,13 +337,62 @@ describe("cron-tick reportableToSentry", () => {
 describe("cron-tick bucketFor", () => {
   const { bucketFor } = loadTicker();
 
-  it("sorts a maintenance 503 with the lock-held 409, a bare 503 as failed", () => {
+  it("sorts a maintenance 503 with the lock-held 409, a bare 503 and a partial 207 as failed", () => {
     expect(bucketFor(503, true)).toBe("held");
     expect(bucketFor(503)).toBe("failed");
     expect(bucketFor(409)).toBe("held");
     expect(bucketFor(200)).toBe("ok");
+    expect(bucketFor(207)).toBe("failed");
     expect(bucketFor(500)).toBe("failed");
     expect(bucketFor(0)).toBe("failed");
+  });
+});
+
+describe("cron-tick calendar windows", () => {
+  const { dueTargets, windowStartFor, targetRequest } = loadTicker();
+  const utc = (d: number, h: number, m: number) =>
+    new Date(Date.UTC(2026, 10, d, h, m));
+
+  it("fires the weekly payout batch on its Monday 20:00 window only", () => {
+    // 2026-11-02 is a Monday.
+    expect(dueTargets(utc(2, 20, 5))).toContain("create-payout-batch");
+    expect(dueTargets(utc(2, 22, 50))).toContain("create-payout-batch");
+    expect(dueTargets(utc(2, 23, 5))).not.toContain("create-payout-batch");
+    expect(dueTargets(utc(3, 20, 5))).not.toContain("create-payout-batch");
+    expect(
+      windowStartFor("create-payout-batch", utc(2, 21, 35))?.toISOString(),
+    ).toBe("2026-11-02T20:00:00.000Z");
+  });
+
+  it("anchors a window that runs past midnight to the day it opened", () => {
+    expect(dueTargets(utc(3, 0, 40))).toContain("dunning");
+    expect(windowStartFor("dunning", utc(3, 0, 40))?.toISOString()).toBe(
+      "2026-11-02T23:30:00.000Z",
+    );
+    expect(dueTargets(utc(3, 2, 40))).not.toContain("dunning");
+  });
+
+  it("opens the monthly rollup on the 1st only and sends the window start", () => {
+    expect(dueTargets(utc(1, 4, 45))).toContain("settle-invoice-accruals");
+    expect(dueTargets(utc(2, 4, 45))).not.toContain("settle-invoice-accruals");
+    expect(
+      targetRequest(
+        "https://site.test",
+        "settle-invoice-accruals",
+        utc(1, 5, 45),
+      ).url,
+    ).toBe(
+      "https://site.test/api/cleanup/settle-invoice-accruals?limit=10&windowStart=2026-11-01T04:00:00.000Z",
+    );
+  });
+
+  it("sends the MSME digest once a day and payouts every hour", () => {
+    const fires = (name: Parameters<typeof windowStartFor>[0]) =>
+      Array.from({ length: 24 * 12 }, (_, i) => utc(4, 0, i * 5)).filter((t) =>
+        dueTargets(t).includes(name),
+      ).length;
+    expect(fires("msme-payment-alerts")).toBe(1);
+    expect(fires("process-payouts")).toBe(24);
   });
 });
 

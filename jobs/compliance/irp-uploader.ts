@@ -18,26 +18,20 @@
  *   4. Accountant / legal sign-off on IRN format and invoice sequence
  *   5. Retry dashboard and ops runbook in place (see docs/enterprise/50-operations/02-runbooks.md)
  *
- * Schedule: daily at 02:50 UTC (08:20 IST; #709 minute map).
- * GH Actions: `.github/workflows/irp-uploader.yml`.
+ * Schedule: the ticker's daily window from 03:00 UTC, in `limit`-sized slices.
  * Scope: B2B OrganizationInvoice (buyer GSTIN on the document) with
  *        irpStatus=PENDING, issuedAt within 30d (CBIC cut-off for retroactive
- *        IRN generation). B2C is exempt from e-invoicing. Batch size: 50.
+ *        IRN generation). B2C is exempt from e-invoicing. A windowed run skips
+ *        invoices already attempted since the window start, so a retry is
+ *        spent at most once a day.
  */
 
-// Why: tsx does not auto-load .env when this script runs outside the
-// Next.js runtime. Without dotenv/config, DATABASE_URL is undefined and
-// PrismaClient throws on the first query. See
-// docs/enterprise/50-operations/02-runbooks.md "Running cron jobs locally".
-import "dotenv/config";
 import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { generateIrn } from "@/lib/compliance/irp";
 import { buildIrpPayload } from "@/lib/compliance/irp-payload";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
-import { runJob } from "@/lib/observability/job-sentry";
 import { isValidGstin } from "@/lib/compliance/gst";
 import { supplierStateCode } from "@/lib/payments/billing/consumer-invoice";
 
@@ -69,13 +63,16 @@ type SellerIdentity = { gstin: string; stateCode: string };
 // registered with the government and cancellable only inside a 24-hour window,
 // so two runners both believing they hold the lock while Redis is unreachable
 // is the one outcome this job may never risk.
-export async function runIrpUploader(): Promise<{
+export async function runIrpUploader(opts: {
+  limit?: number;
+  windowStart?: Date;
+}): Promise<{
   processed: number;
   failed: number;
   skipped: number;
 }> {
   return withCronLock("irp-uploader", { failMode: "closed" }, () =>
-    runIrpUploaderUnlocked(),
+    runIrpUploaderUnlocked(opts),
   );
 }
 
@@ -127,9 +124,24 @@ export function irpCandidateWhere(
   };
 }
 
-async function fetchIrpCandidates(thirtyDaysAgo: Date) {
+async function fetchIrpCandidates(
+  thirtyDaysAgo: Date,
+  opts: { limit?: number; windowStart?: Date },
+) {
   return prisma.organizationInvoice.findMany({
-    where: irpCandidateWhere(thirtyDaysAgo),
+    where: opts.windowStart
+      ? {
+          AND: [
+            irpCandidateWhere(thirtyDaysAgo),
+            {
+              OR: [
+                { irpLastAttemptAt: null },
+                { irpLastAttemptAt: { lt: opts.windowStart } },
+              ],
+            },
+          ],
+        }
+      : irpCandidateWhere(thirtyDaysAgo),
     // #703 — widen to everything the payload mapper needs (split paise,
     // place-of-supply, line items, buyer tax info). The mapper is pure;
     // the cron does the fetch.
@@ -169,7 +181,7 @@ async function fetchIrpCandidates(thirtyDaysAgo: Date) {
     // #1584 P2-P0-03 — oldest first so a backlog cannot starve an invoice
     // out of the 30-day window; the window and requeue policy are #1366's.
     orderBy: { issuedAt: "asc" },
-    take: 50, // batch size
+    take: opts.limit ?? 50,
   });
 }
 
@@ -240,7 +252,10 @@ async function processIrpCandidate(
   return "skipped";
 }
 
-async function runIrpUploaderUnlocked(): Promise<{
+async function runIrpUploaderUnlocked(opts: {
+  limit?: number;
+  windowStart?: Date;
+}): Promise<{
   processed: number;
   failed: number;
   skipped: number;
@@ -288,7 +303,7 @@ async function runIrpUploaderUnlocked(): Promise<{
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-  const candidates = await fetchIrpCandidates(thirtyDaysAgo);
+  const candidates = await fetchIrpCandidates(thirtyDaysAgo, opts);
 
   let processed = 0;
   let failed = 0;
@@ -312,14 +327,4 @@ async function runIrpUploaderUnlocked(): Promise<{
     skipped,
   });
   return { processed, failed, skipped };
-}
-
-// Self-execute when invoked directly via `npx tsx`. Allows imports for
-// unit tests without triggering the cron body. Mirrors the pattern in
-// jobs/contracts/expire-contracts.ts.
-if (require.main === module) {
-  runJob("irp-uploader", async () => {
-    await abortIfMaintenance("irp-uploader");
-    await runIrpUploader().finally(() => prisma.$disconnect());
-  });
 }

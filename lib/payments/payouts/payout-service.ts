@@ -243,6 +243,31 @@ export async function createPayoutBatch(
   consultantProfileIds?: string[],
   opts?: { createdBy?: string },
 ): Promise<string> {
+  return (await runPayoutBatch(consultantProfileIds, opts ?? {})).batchId;
+}
+
+export interface PayoutBatchSlice {
+  batchId: string;
+  minted: number;
+  remaining: number;
+}
+
+/**
+ * One bounded slice of the scheduled batch: mints at most `limit` payouts and
+ * skips consultants already given a batch payout since `windowStart`, so every
+ * slice of one window batches each consultant at most once.
+ */
+export async function createPayoutBatchSlice(opts: {
+  limit: number;
+  windowStart?: Date;
+}): Promise<PayoutBatchSlice> {
+  return runPayoutBatch(undefined, opts);
+}
+
+async function runPayoutBatch(
+  consultantProfileIds: string[] | undefined,
+  opts: { createdBy?: string; limit?: number; windowStart?: Date },
+): Promise<PayoutBatchSlice> {
   // Fail closed when Redis is mocked or unreachable so concurrent callers cannot double-batch.
   if (isMockRedis()) {
     throw new CronLockUnavailableError("create-payout-batch");
@@ -272,6 +297,15 @@ export async function createPayoutBatch(
         ...(consultantProfileIds?.length
           ? { consultantProfileId: { in: consultantProfileIds } }
           : {}),
+        ...(opts.windowStart
+          ? {
+              consultantProfile: {
+                payouts: {
+                  none: { kind: null, createdAt: { gte: opts.windowStart } },
+                },
+              },
+            }
+          : {}),
       },
       orderBy: { consultantProfileId: "asc" },
       _sum: { consultantSharePaise: true },
@@ -282,18 +316,28 @@ export async function createPayoutBatch(
       },
     });
 
+    // Only a minted payout spends the slice budget; a skipped consultant is a cheap read.
+    let minted = 0;
+    let visited = 0;
     for (const { consultantProfileId } of eligibleConsultants) {
-      await mintConsultantPayout({
+      if (opts.limit !== undefined && minted >= opts.limit) break;
+      visited += 1;
+      const payout = await mintConsultantPayout({
         consultantProfileId,
         batchId,
         idempotencyKey: `payout_${consultantProfileId}_${batchId}`,
-        createdBy: opts?.createdBy ?? "SYSTEM_CRON",
+        createdBy: opts.createdBy ?? "SYSTEM_CRON",
         autoApprove: (amount) =>
           amount < PAYOUT_CONSTANTS.AUTO_APPROVE_THRESHOLD,
       });
+      if (payout) minted += 1;
     }
 
-    return batchId;
+    return {
+      batchId,
+      minted,
+      remaining: eligibleConsultants.length - visited,
+    };
   } finally {
     await releaseLock(PAYOUT_BATCH_LOCK_KEY, lockToken);
   }
@@ -805,6 +849,8 @@ export async function processApprovedPayouts(
     budgetMs?: number;
     lockTtlMs?: number;
     triggeredByUserId?: string;
+    /** Caps the disbursements one run attempts; skipped rows do not count. */
+    limit?: number;
   } = {},
 ): Promise<PayoutResult[]> {
   const startedAt = Date.now();
@@ -861,6 +907,12 @@ export async function processApprovedPayouts(
         console.warn(
           `[Payouts] Run budget spent; ${approvedPayouts.length - results.length} approved payout(s) left for the next run`,
         );
+        break;
+      }
+      if (
+        opts.limit !== undefined &&
+        results.filter((r) => !r.skipped).length >= opts.limit
+      ) {
         break;
       }
       const result = await processSinglePayout(payout, opts.triggeredByUserId);
