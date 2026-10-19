@@ -63,7 +63,6 @@ jest.mock("../../lib/db/serializable-retry", () => ({
 
 jest.mock("../../lib/payments/operations/refund", () => ({
   refundPayment: (...a: unknown[]) => mockRefundPayment(...a),
-  refundMemberOverageSidePayment: async () => undefined,
   RefundValidationError: class RefundValidationError extends Error {
     constructor(
       message: string,

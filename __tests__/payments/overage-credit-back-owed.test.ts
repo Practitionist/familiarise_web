@@ -3,9 +3,9 @@
  */
 
 /**
- * A full refund of a booking with several CHARGE_MEMBER side-payments refunds
- * one of them in the request; the parent's cascade stamped every one
- * refund-owed, so retryRefundsOwed drains the rest and retries a failed attempt.
+ * A full refund of a booking with CHARGE_MEMBER side-payments refunds none of
+ * them in the request: the parent's cascade stamps each refund-owed, and
+ * retryRefundsOwed refunds every one and retries a failed attempt.
  */
 
 type Row = {
@@ -89,7 +89,6 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 jest.mock("../../lib/payments/webhooks/handlers", () => ({}));
 
-import { refundMemberOverageSidePayment } from "../../lib/payments/operations/refund";
 import { retryAutoRefunds } from "../../scripts/payments/retry-auto-refunds";
 
 const PARENT = "pay-parent";
@@ -128,41 +127,24 @@ beforeEach(() => {
   stampedSides();
 });
 
-const due = { overagePaymentIds: SIDES };
-
 describe("member overage credit-back on a full parent refund", () => {
-  it("refunds one side-payment inline and leaves the rest to the sweep, each under its key", async () => {
-    await refundMemberOverageSidePayment({
-      parentPaymentId: PARENT,
-      due,
-      initiatedByUserId: null,
-    });
-    expect(mockRefunds.map((r) => r.paymentId)).toEqual(["side-1"]);
-    expect(mockRows.get("side-1")!.refundOwedKey).toBeNull();
-    expect(mockRows.get("side-3")!.refundOwedKey).toBe(keyOf("side-3"));
+  it("leaves every side-payment owed, and the sweep refunds each once under its key", async () => {
+    expect(mockRefunds).toHaveLength(0);
 
     const swept = await retryAutoRefunds({ limit: 10 });
-    expect(swept.owed.refunded).toBe(2);
+    expect(swept.owed.refunded).toBe(3);
     expect(mockRefunds.map((r) => r.dedupeKey)).toEqual(SIDES.map(keyOf));
     expect([...mockRows.values()].every((r) => !r.refundOwedKey)).toBe(true);
 
-    // Replaying the inline drive and the sweep moves no money twice.
-    await refundMemberOverageSidePayment({
-      parentPaymentId: PARENT,
-      due,
-      initiatedByUserId: null,
-    });
-    await retryAutoRefunds({ limit: 10 });
+    // A replayed sweep finds nothing owed and moves no money.
+    expect((await retryAutoRefunds({ limit: 10 })).owed.scanned).toBe(0);
     expect(mockRefunds).toHaveLength(3);
   });
 
-  it("keeps a failed inline attempt as a counted debt the sweep retries, reported once", async () => {
+  it("keeps a failed attempt as a counted debt the next sweep retries, reported once per run", async () => {
     mockRefundBookingPayment.mockRejectedValueOnce(new Error("gateway 503"));
-    await refundMemberOverageSidePayment({
-      parentPaymentId: PARENT,
-      due,
-      initiatedByUserId: null,
-    });
+    const first = await retryAutoRefunds({ limit: 10 });
+    expect(first.owed.failed).toBe(1);
     expect(mockReportSentryError).toHaveBeenCalledTimes(1);
     expect(mockRows.get("side-1")).toMatchObject({
       refundOwedKey: keyOf("side-1"),
