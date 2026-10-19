@@ -86,6 +86,7 @@ export const moneyResultExtensions = {
     sgstPaise: f("sgstPaise"),
     totalPaise: f("totalPaise"),
   },
+  organizationInvoiceReceipt: { amountPaise: f("amountPaise") },
   invoiceLineItem: {
     unitPricePaise: f("unitPricePaise"),
     taxPaise: fn("taxPaise"),

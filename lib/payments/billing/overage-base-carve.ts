@@ -49,12 +49,13 @@ type RestoreCarveTx = Pick<Tx, "overageEvent" | "payment" | "paymentLeg"> &
 /**
  * Release the parent's OVERAGE holds once no other member overage on it is
  * unpaid. A FAILED one still holds on a LICENSE parent, whose base was never
- * restored to the org. Other owners' holds on the same earnings stay.
+ * restored to the org, until it is charged, settled to the org or reversed.
+ * Other owners' holds on the same earnings stay.
  */
 export async function releaseOverageHeldParentEarnings(
   tx: Pick<Tx, "overageEvent" | "paymentLeg"> & EarningsHoldDb,
   parentPaymentId: string,
-  settledSidePaymentId: string,
+  settledSidePaymentId?: string,
 ): Promise<void> {
   const overageHeld = {
     paymentId: parentPaymentId,
@@ -92,7 +93,7 @@ export async function releaseOverageHeldParentEarnings(
     where: {
       overageBehavior: "CHARGE_MEMBER",
       chargeStatus: { in: licenseLeg ? ["PENDING", "FAILED"] : ["PENDING"] },
-      paymentId: { not: settledSidePaymentId },
+      ...(settledSidePaymentId && { paymentId: { not: settledSidePaymentId } }),
       payment: { parentPaymentId },
     },
   });

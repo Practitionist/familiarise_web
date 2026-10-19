@@ -24,7 +24,12 @@ import { walletCredit, walletDebit } from "@/lib/api/organizations/wallet";
 import { orgBuyerCountry } from "@/lib/compliance/gst";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { overageAccrualKey } from "@/lib/payments/billing/overage-accrual-void";
-import { lockHeldOverageEarnings } from "@/lib/payments/billing/overage-base-carve";
+import {
+  lockHeldOverageEarnings,
+  releaseOverageHeldParentEarnings,
+} from "@/lib/payments/billing/overage-base-carve";
+import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { placeEarningsHolds } from "@/lib/payments/payouts/earnings-holds";
 import { notifyOrgProgramOverageDue } from "@/lib/novu/org-workflows";
 import { sendOrgOverageDueEmail } from "@/lib/email";
@@ -545,7 +550,16 @@ async function recordMemberOverageCharge(
  * since no booking journal ever runs for it.
  */
 async function mintChildOverageAccrualPayment(
-  input: RecordOverageInput,
+  input: Pick<
+    RecordOverageInput,
+    | "tx"
+    | "programAssignmentId"
+    | "currency"
+    | "paymentId"
+    | "userId"
+    | "organizationId"
+    | "paymentGateway"
+  >,
   accrualPaise: number,
   taxPaise: number,
 ) {
@@ -849,6 +863,135 @@ async function recordOrgOverageCharge(
     },
   });
   return null;
+}
+
+/**
+ * Settle a FAILED member overage the org will now pay: its base and surcharge
+ * accrue to the org's next rollup through a CHARGE_ORG child accrual, the
+ * member's event is closed as REVERSED, and the parent's OVERAGE hold is
+ * released. Only for a parent the base could not be restored onto: an
+ * already-invoiced INVOICE_ACCRUAL parent or a LICENSE parent.
+ */
+export async function settleFailedMemberOverageAsOrg(
+  tx: Tx,
+  args: { organizationId: string; overageEventId: string },
+): Promise<{ childPaymentId: string; accruedPaise: number }> {
+  const event = await tx.overageEvent.findUnique({
+    where: { id: args.overageEventId },
+    select: {
+      id: true,
+      overageBehavior: true,
+      chargeStatus: true,
+      basePaise: true,
+      surchargePaise: true,
+      currency: true,
+      batchKey: true,
+      paymentId: true,
+      programAssignmentId: true,
+      bookingUtilizationId: true,
+      programAssignment: {
+        select: {
+          program: {
+            select: { contract: { select: { organizationId: true } } },
+          },
+        },
+      },
+      bookingUtilization: {
+        select: {
+          payment: {
+            select: {
+              id: true,
+              userId: true,
+              paymentGateway: true,
+              billableToOrgInvoiceId: true,
+              legs: { select: { source: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (
+    event?.programAssignment.program.contract.organizationId !==
+    args.organizationId
+  ) {
+    throw new OpsRefusal(
+      "OVERAGE_NOT_FOUND",
+      "No such overage for this organisation.",
+      404,
+    );
+  }
+  if (
+    event.overageBehavior !== "CHARGE_MEMBER" ||
+    event.chargeStatus !== "FAILED"
+  ) {
+    throw new OpsRefusal(
+      "OVERAGE_NOT_SETTLEABLE",
+      `Only a failed member overage can be settled to the org; this one is ${event.overageBehavior} ${event.chargeStatus}.`,
+    );
+  }
+  const parent = event.bookingUtilization.payment;
+  const sources = new Set(parent.legs.map((l) => l.source));
+  const licensed = sources.has("LICENSE");
+  const invoicedAccrual =
+    sources.has("INVOICE_ACCRUAL") && parent.billableToOrgInvoiceId !== null;
+  if (!licensed && !invoicedAccrual) {
+    throw new OpsRefusal(
+      "OVERAGE_BASE_RESTORABLE",
+      "This overage's base went back to the org's own accrual; there is nothing to settle.",
+    );
+  }
+
+  // The REVERSED CAS is the once-only claim; a late member capture then cannot charge it.
+  const closed = await transitionOverage(
+    tx,
+    { id: event.id },
+    "REVERSED",
+    { chargeFailureReason: "Settled to the organisation by the platform" },
+    { fromIn: ["FAILED"] },
+  );
+  if (closed === 0) {
+    throw new OpsRefusal(
+      "OVERAGE_NOT_SETTLEABLE",
+      "This overage changed state; reload and try again.",
+    );
+  }
+
+  const taxPaise = await orgSurchargeTaxPaise(
+    tx,
+    args.organizationId,
+    event.surchargePaise,
+  );
+  const accrualPaise = event.basePaise + event.surchargePaise;
+  const child = await mintChildOverageAccrualPayment(
+    {
+      tx,
+      programAssignmentId: event.programAssignmentId,
+      currency: event.currency,
+      paymentId: parent.id,
+      userId: parent.userId,
+      organizationId: args.organizationId,
+      paymentGateway: parent.paymentGateway,
+    },
+    accrualPaise,
+    taxPaise,
+  );
+  await tx.overageEvent.create({
+    data: {
+      programAssignmentId: event.programAssignmentId,
+      bookingUtilizationId: event.bookingUtilizationId,
+      batchKey: `org-settled:${event.id}`,
+      overageBehavior: "CHARGE_ORG",
+      basePaise: event.basePaise,
+      surchargePaise: event.surchargePaise,
+      marginalPaise: accrualPaise + taxPaise,
+      currency: event.currency,
+      chargeStatus: "PENDING",
+      paymentId: child.id,
+    },
+  });
+  await releaseOverageHeldParentEarnings(tx, parent.id);
+  return { childPaymentId: child.id, accruedPaise: accrualPaise + taxPaise };
 }
 
 /**

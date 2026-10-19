@@ -36,14 +36,10 @@ import {
   type StagedTrigger,
 } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
-import {
-  notifyOrgInvoicePaid,
-  notifyOrgWalletTopupConfirmed,
-} from "@/lib/novu/org-workflows";
+import { notifyOrgWalletTopupConfirmed } from "@/lib/novu/org-workflows";
 import {
   sendOrgBillingEmail,
   stageDisputeNoticeEmail,
-  stageOrgBillingEmail,
 } from "@/lib/email/senders/money";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { toCurrencyEnum } from "@/lib/payments/validation/currency-guards";
@@ -63,6 +59,10 @@ import {
 } from "@/lib/payments/operations/refund";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
 import { invoiceRefundDebits } from "@/lib/payments/billing/org-invoice-journal";
+import {
+  applyOrgInvoiceCapture,
+  attemptSettledInvoiceNotices,
+} from "@/lib/payments/billing/org-invoice-settlement";
 import { isPastGstCreditNoteCutoff } from "@/lib/compliance/gst-credit-note-cutoff";
 import { releaseClawbackRecovery } from "@/lib/payments/payouts/clawback-recovery";
 import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
@@ -74,7 +74,6 @@ import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import {
   EMAIL_BUDGET_MS,
@@ -291,285 +290,44 @@ export async function handleOrgPaymentSuccess(
       console.error("[Webhook] invoice_payment missing invoiceId");
       return;
     }
-
-    // Verify the captured amount matches what was billed before we
-    // flip the invoice to PAID. Without this, a tampered or partial
-    // capture could mark an invoice paid for less than what was owed.
-    // If we don't have a gateway amount (order-level event), we wait
-    // for the payment.captured event — no ISSUED→PAID without proof.
-    if (gatewayAmountPaise === undefined) {
+    // No ISSUED→PAID without the captured amount and its payment id; the
+    // payment.captured delivery carries both.
+    if (gatewayAmountPaise === undefined || !razorpayPaymentId) {
       console.log(
         `[Webhook] invoice_payment ${invoiceId} deferred: no gateway amount (awaiting payment.captured)`,
       );
       return;
     }
-    const invoiceRow = await prisma.organizationInvoice.findUnique({
-      where: { id: invoiceId },
-      select: {
-        id: true,
-        invoiceNumber: true,
-        totalPaise: true,
-        status: true,
-        displayCurrency: true,
-        organizationId: true,
-      },
-    });
-    if (!invoiceRow) {
-      console.error(`[Webhook] invoice_payment ${invoiceId} not found`);
-      return;
-    }
-    const issuedCredits = prisma.creditNote?.aggregate
-      ? await prisma.creditNote.aggregate({
-          where: { invoiceId },
-          _sum: { totalPaise: true },
-        })
-      : null;
-    const expectedNetPaise = Math.max(
-      0,
-      invoiceRow.totalPaise - Number(issuedCredits?._sum?.totalPaise ?? 0),
+    // Delivery is at-least-once: a throw rolls back and Razorpay retries.
+    const outcome = await prisma.$transaction((tx) =>
+      applyOrgInvoiceCapture(tx, {
+        invoiceId,
+        gatewayPaymentId: razorpayPaymentId,
+        capturedPaise: gatewayAmountPaise,
+        notesOrganizationId: organizationId ?? null,
+      }),
     );
-    const matchesCaptureAmount =
-      gatewayAmountPaise === expectedNetPaise ||
-      gatewayAmountPaise === invoiceRow.totalPaise;
-    if (!matchesCaptureAmount) {
-      console.error(
-        `[Webhook] invoice_payment ${invoiceId} net=${expectedNetPaise} ≠ gatewayAmount=${gatewayAmountPaise}. Not marking PAID.`,
-      );
-      if (organizationId) {
-        await prisma.orgAuditLog
-          .create({
-            data: {
-              organizationId,
-              actorMembershipId: null,
-              category: "INVOICE",
-              action: AUDIT_ACTIONS.INVOICE.INVOICE_PAYMENT_INITIATED,
-              description: `Invoice ${invoiceId} captured amount mismatch: expected=${expectedNetPaise}p, captured=${gatewayAmountPaise}p`,
-              details: {
-                invoiceId,
-                providerPaymentId: razorpayPaymentId ?? null,
-                totalPaise: invoiceRow.totalPaise,
-                expectedNetPaise,
-                gatewayAmountPaise,
-              },
-            },
-          })
-          .catch((err) =>
-            console.error(
-              "[Webhook] Failed to write invoice amount-mismatch audit log:",
-              err,
-            ),
-          );
-      }
+    if (outcome.kind !== "PAID") {
+      console.log(`[Webhook] invoice_payment ${invoiceId}: ${outcome.kind}`);
       return;
     }
-
-    const resolvedOrgId = invoiceRow.organizationId ?? organizationId;
-
-    let claimedCount = 0;
-    let stagedInvoiceBells: StagedTrigger[] = [];
-    let stagedBillingEmails: StagedRecipientEmail[] = [];
-    try {
-      const txResult = await prisma.$transaction(async (tx) => {
-        const paidAt = new Date();
-        const claimed = await tx.organizationInvoice.updateMany({
-          where: { id: invoiceId, status: { in: ["ISSUED", "OVERDUE"] } },
-          data: {
-            status: "PAID",
-            paidAt,
-            providerPaymentOrderId: null,
-            ...(razorpayPaymentId
-              ? { providerPaymentId: razorpayPaymentId }
-              : {}),
-          },
-        });
-        if (claimed.count === 0) {
-          return {
-            count: 0 as const,
-            invoiceBells: [] as StagedTrigger[],
-            billingEmails: [] as StagedRecipientEmail[],
-          };
-        }
-        let invoiceBells: StagedTrigger[] = [];
-        let billingEmails: StagedRecipientEmail[] = [];
-        if (resolvedOrgId) {
-          if (gatewayAmountPaise > 0) {
-            await postLedgerTxn(tx, {
-              idempotencyKey: `invoicepaid:${invoiceId}`,
-              kind: "INVOICE_PAID",
-              invoiceId,
-              postings: [
-                {
-                  account: { kind: "CASH" },
-                  direction: "DEBIT",
-                  amountPaise: gatewayAmountPaise,
-                },
-                {
-                  account: {
-                    kind: "ORG_RECEIVABLE",
-                    organizationId: resolvedOrgId,
-                  },
-                  direction: "CREDIT",
-                  amountPaise: gatewayAmountPaise,
-                },
-              ],
-            });
-          }
-          await dispatchWebhookEvent({
-            prisma: tx,
-            organizationId: resolvedOrgId,
-            eventType: "invoice.paid",
-            payload: {
-              invoiceId: invoiceRow.id,
-              invoiceNumber: invoiceRow.invoiceNumber,
-              paidPaise: Number(gatewayAmountPaise),
-              paymentId: razorpayPaymentId ?? invoiceRow.id,
-              settledAt: paidAt.toISOString(),
-            },
-          });
-
-          const orgName =
-            (
-              await tx.organization?.findUnique({
-                where: { id: resolvedOrgId },
-                select: { name: true },
-              })
-            )?.name ?? "your organization";
-          const dashboardUrl = `${getAppUrl()}/dashboard/organization/${resolvedOrgId}/billing`;
-          const canStageOutbox =
-            typeof tx.notificationOutbox?.upsert === "function" &&
-            typeof tx.membership?.findMany === "function";
-          invoiceBells =
-            (await notifyOrgInvoicePaid(
-              resolvedOrgId,
-              {
-                invoiceNumber: invoiceRow.invoiceNumber,
-                orgName,
-                totalPaise: invoiceRow.totalPaise,
-                currency: invoiceRow.displayCurrency,
-                paidAt: paidAt.toISOString(),
-                dashboardUrl,
-              },
-              canStageOutbox
-                ? { tx, entityRef: `orgInvoice:${invoiceId}` }
-                : undefined,
-            )) ?? [];
-
-          if (
-            typeof tx.membership?.findMany === "function" &&
-            typeof tx.user?.findMany === "function" &&
-            typeof tx.failedEmail?.create === "function"
-          ) {
-            const owners = await tx.membership.findMany({
-              where: {
-                organizationId: resolvedOrgId,
-                status: "ACTIVE",
-                role: "OWNER",
-              },
-              select: { userId: true },
-            });
-            if (owners.length > 0) {
-              billingEmails = await stageOrgBillingEmail(tx, {
-                recipientUserIds: owners.map((o) => o.userId),
-                organizationId: resolvedOrgId,
-                orgName,
-                kind: "INVOICE_PAID",
-                amountPaise: invoiceRow.totalPaise,
-                currency: invoiceRow.displayCurrency,
-                invoiceId: invoiceRow.id,
-                invoiceNumber: invoiceRow.invoiceNumber,
-                dashboardUrl,
-              });
-            }
-          }
-        }
-        await tx.overageEvent.updateMany({
-          where: {
-            overageBehavior: "CHARGE_ORG",
-            chargeStatus: "ACCRUED",
-            invoiceLineItem: { invoiceId },
-          },
-          data: { chargeStatus: "CHARGED" },
-        });
-        if (resolvedOrgId) {
-          const trustReleaseWhere = {
-            payment: {
-              organizationId: resolvedOrgId,
-              OR: [
-                { billableToOrgInvoiceId: invoiceId },
-                { billableToOrgInvoiceId: null },
-              ],
-            },
-            status: "PENDING_TRUST" as const,
-          };
-          await tx.organizationEarnings.updateMany({
-            where: trustReleaseWhere,
-            data: { status: "PENDING" },
-          });
-          await tx.consultantEarnings?.updateMany({
-            where: trustReleaseWhere,
-            data: { status: "PENDING" },
-          });
-        }
-        return {
-          count: claimed.count,
-          invoiceBells,
-          billingEmails,
-        };
-      });
-      claimedCount = txResult.count;
-      stagedInvoiceBells = txResult.invoiceBells;
-      stagedBillingEmails = txResult.billingEmails;
-    } catch (err) {
-      // Webhook delivery is at-least-once; throwing causes Razorpay to
-      // retry. The tx already rolled back so a retry sees the original
-      // ISSUED/OVERDUE state and tries again cleanly.
-      console.error(
-        `[Webhook] INVOICE_PAID transaction failed for ${invoiceId}; rolling back:`,
-        err,
-      );
-      throw err;
-    }
-
-    if (claimedCount === 0) {
-      console.log(
-        `[Webhook] Invoice ${invoiceId} already PAID — skipping (idempotent)`,
-      );
-      return;
-    }
-
+    const { settled } = outcome;
     console.log(`[Webhook] Invoice paid: ${invoiceId}`);
-
-    if (resolvedOrgId) {
-      await prisma.orgAuditLog
-        .create({
-          data: {
-            organizationId: resolvedOrgId,
-            actorMembershipId: null,
-            category: "INVOICE",
-            action: AUDIT_ACTIONS.INVOICE.INVOICE_PAID,
-            description: `Invoice ${invoiceId} paid via webhook`,
-            details: {
-              invoiceId,
-              providerPaymentId: razorpayPaymentId ?? null,
-            },
-          },
-        })
-        .catch((err) =>
-          console.error(
-            "[Webhook] Failed to write INVOICE_PAID audit log:",
-            err,
-          ),
-        );
-
-      await Promise.allSettled([
-        ...stagedInvoiceBells.map((bell) => attemptTrigger(bell)),
-        attemptStagedEmails(
-          stagedBillingEmails,
-          MONEY_EMAIL_TYPES.ORG_BILLING_RECEIPT,
-          EMAIL_BUDGET_MS.WEBHOOK,
-        ),
-      ]);
-    }
+    await prisma.orgAuditLog
+      .create({
+        data: {
+          organizationId: settled.organizationId,
+          actorMembershipId: null,
+          category: "INVOICE",
+          action: AUDIT_ACTIONS.INVOICE.INVOICE_PAID,
+          description: `Invoice ${settled.invoiceNumber} paid via webhook`,
+          details: { invoiceId, providerPaymentId: razorpayPaymentId },
+        },
+      })
+      .catch((err) =>
+        console.error("[Webhook] Failed to write INVOICE_PAID audit log:", err),
+      );
+    await attemptSettledInvoiceNotices(settled);
   }
 }
 

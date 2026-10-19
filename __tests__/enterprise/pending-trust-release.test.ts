@@ -24,8 +24,18 @@ const tx = {
     findUniqueOrThrow: (...a: unknown[]) => orgFindUniqueOrThrow(...a),
   },
   organizationInvoice: {
+    findUnique: (...a: unknown[]) => orgInvoiceFindUnique(...a),
+    findUniqueOrThrow: (...a: unknown[]) => orgInvoiceFindUnique(...a),
     updateMany: (...a: unknown[]) => orgInvoiceUpdateMany(...a),
   },
+  organizationInvoiceReceipt: {
+    findUnique: jest.fn(async () => null),
+    create: jest.fn(async () => ({ id: "rcpt_1" })),
+    groupBy: jest.fn(async () => []),
+    aggregate: jest.fn(async () => ({ _sum: { amountPaise: BigInt(50_000) } })),
+  },
+  creditNote: { groupBy: jest.fn(async () => []) },
+  membership: { findMany: jest.fn(async () => []) },
   overageEvent: {
     updateMany: (...a: unknown[]) => overageEventUpdateMany(...a),
   },
@@ -154,21 +164,19 @@ describe("Inline PENDING_TRUST -> PENDING earnings promotion (#1915 P3)", () => 
     expect(orgEarningsUpdateMany).not.toHaveBeenCalled();
   });
 
+  // An org still awaiting verification can pay (FIN-24); paying releases its trust hold.
   it("promotes PENDING_TRUST earnings when an organization invoice is marked PAID", async () => {
-    orgInvoiceFindUnique
-      .mockResolvedValueOnce({
-        id: "inv_1",
-        totalPaise: 50_000,
-        status: "ISSUED",
-        displayCurrency: "INR",
-        organizationId: "org_1",
-      })
-      .mockResolvedValueOnce({
-        invoiceNumber: "INV-001",
-        paidAt: new Date("2026-10-01T00:00:00Z"),
-        organization: { name: "Acme" },
-      });
-    orgInvoiceUpdateMany.mockResolvedValueOnce({ count: 1 });
+    orgInvoiceFindUnique.mockResolvedValue({
+      id: "inv_1",
+      invoiceNumber: "INV-001",
+      totalPaise: 50_000,
+      status: "ISSUED",
+      displayCurrency: "INR",
+      organizationId: "org_1",
+      providerPaymentId: null,
+      organization: { name: "Acme", status: "PENDING_VERIFICATION" },
+    });
+    orgInvoiceUpdateMany.mockResolvedValue({ count: 1 });
 
     await handleOrgPaymentSuccess(
       {

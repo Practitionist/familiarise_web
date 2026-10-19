@@ -43,8 +43,8 @@ export interface RollupResult {
   billedPaymentCount: number;
   subtotalPaise: number;
   totalPaise: number;
-  /** Set when the invoice issued without a covering PO on an org that requires one. */
-  unbackedPo?: boolean;
+  /** Set when an org that requires a PO had none covering it, so the invoice stays DRAFT for an admin. */
+  heldForPo?: boolean;
   /** Set when a domestic org has no GST state, so nothing was billed. */
   skippedNoGstState?: boolean;
 }
@@ -249,7 +249,6 @@ export async function rollupOrgInvoiceAccruals(params: {
         }
 
         const issuedAt = new Date();
-        const issueImmediately = params.issueImmediately ?? true;
         const dueDate = new Date(issuedAt);
         dueDate.setDate(dueDate.getDate() + (org.paymentTermsDays ?? 60));
 
@@ -269,6 +268,9 @@ export async function rollupOrgInvoiceAccruals(params: {
           amountPaise: gst.totalPaise,
           now: issuedAt,
         });
+        const heldForPo = org.requiresPO && !purchaseOrderId;
+        const issueImmediately =
+          (params.issueImmediately ?? true) && !heldForPo;
 
         const invoice = await tx.organizationInvoice.create({
           data: {
@@ -458,7 +460,7 @@ export async function rollupOrgInvoiceAccruals(params: {
             billedPaymentCount: accrued.length,
             subtotalPaise: gst.subtotalPaise,
             totalPaise: gst.totalPaise,
-            unbackedPo: org.requiresPO && !purchaseOrderId,
+            heldForPo,
           },
           notifyStaged,
           emailArgs,

@@ -32,6 +32,7 @@ import type { Tx, PrismaLike } from "@/lib/prisma";
 import type { ProgramAssignment, ProgramType } from "@prisma/client";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import { voidReversedOverageAccruals } from "@/lib/payments/billing/overage-accrual-void";
+import { releaseOverageHeldParentEarnings } from "@/lib/payments/billing/overage-base-carve";
 
 // #780 — reads come through the extended client (money as number); the raw
 // model type still says bigint.
@@ -732,13 +733,17 @@ export async function reverseBookingUtilization(
         parentPaymentId: params.paymentId,
       });
     }
-    await transitionOverage(
+    const reversed = await transitionOverage(
       tx,
       { bookingUtilizationId: util.id },
       "REVERSED",
       undefined,
       { fromIn: ["PENDING", "ACCRUED", "FAILED"] },
     );
+    // A reversed member overage no longer owes the base its parent's hold guards.
+    if (reversed > 0) {
+      await releaseOverageHeldParentEarnings(tx, params.paymentId);
+    }
   }
 
   return {
