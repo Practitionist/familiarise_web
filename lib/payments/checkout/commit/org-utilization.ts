@@ -91,6 +91,7 @@ export async function recordCheckoutUtilization(
       programType: "LICENSED_SEAT",
       consumedPaiseAfter: 0,
       creditBudgetPaise: null,
+      usageLedgerEntryId: null,
     };
     try {
       utilizationResult = await recordBookingUtilization(tx, {
@@ -209,6 +210,7 @@ export async function recordCheckoutUtilization(
           engagementsUsedAfter: utilizationResult.engagementsUsedAfter,
           consumedPaiseAfter: utilizationResult.consumedPaiseAfter,
           creditBudgetPaise: utilizationResult.creditBudgetPaise,
+          usageLedgerEntryId: utilizationResult.usageLedgerEntryId,
         },
         bookingPricePaise: amount,
         currency,

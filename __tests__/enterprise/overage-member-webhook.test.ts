@@ -41,6 +41,7 @@ jest.mock("../../lib/payments/billing/overage-transitions", () => ({
 jest.mock("../../lib/payments/billing/overage-base-carve", () => ({
   restoreOverageBaseCarve: jest.fn().mockResolvedValue("restored"),
   recarveOverageBase: jest.fn().mockResolvedValue("recarved"),
+  releaseOverageHeldParentEarnings: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock("../../lib/enterprise/system-events", () => {
   const recordSystemError = jest.fn().mockResolvedValue(undefined);

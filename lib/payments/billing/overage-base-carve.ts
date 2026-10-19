@@ -42,12 +42,54 @@ type RestoreCarveTx = Pick<Tx, "overageEvent" | "payment" | "paymentLeg"> &
     >
   >;
 
+/**
+ * Release the parent's overage-held earnings once no other member overage on
+ * it is unpaid. A FAILED one still holds on a LICENSE parent, whose base was
+ * never restored to the org.
+ */
 export async function releaseOverageHeldParentEarnings(
-  tx: Partial<
-    Pick<Tx, "dispute" | "consultantEarnings" | "organizationEarnings">
-  >,
+  tx: Pick<Tx, "overageEvent" | "paymentLeg"> &
+    Partial<
+      Pick<Tx, "dispute" | "consultantEarnings" | "organizationEarnings">
+    >,
   parentPaymentId: string,
+  settledSidePaymentId: string,
 ): Promise<void> {
+  const held = {
+    paymentId: parentPaymentId,
+    status: "HELD" as const,
+    preDisputeStatus: "PENDING" as const,
+  };
+  // Lock the held rows before counting: a batch holding them concurrently is
+  // then either committed and counted, or forces this transaction to retry.
+  if (typeof tx.consultantEarnings?.updateMany === "function") {
+    await tx.consultantEarnings.updateMany({
+      where: held,
+      data: { status: "HELD" },
+    });
+  }
+  if (typeof tx.organizationEarnings?.updateMany === "function") {
+    await tx.organizationEarnings.updateMany({
+      where: held,
+      data: { status: "HELD" },
+    });
+  }
+  const licenseLeg = await tx.paymentLeg.findUnique({
+    where: {
+      paymentId_source: { paymentId: parentPaymentId, source: "LICENSE" },
+    },
+    select: { amountPaise: true },
+  });
+  const unpaidSiblings = await tx.overageEvent.count({
+    where: {
+      overageBehavior: "CHARGE_MEMBER",
+      chargeStatus: { in: licenseLeg ? ["PENDING", "FAILED"] : ["PENDING"] },
+      paymentId: { not: settledSidePaymentId },
+      payment: { parentPaymentId },
+    },
+  });
+  if (unpaidSiblings > 0) return;
+
   const openDisputes =
     typeof tx.dispute?.count === "function"
       ? await tx.dispute.count({
@@ -61,21 +103,13 @@ export async function releaseOverageHeldParentEarnings(
 
   if (typeof tx.consultantEarnings?.updateMany === "function") {
     await tx.consultantEarnings.updateMany({
-      where: {
-        paymentId: parentPaymentId,
-        status: "HELD",
-        preDisputeStatus: "PENDING",
-      },
+      where: held,
       data: { status: "PENDING", preDisputeStatus: null },
     });
   }
   if (typeof tx.organizationEarnings?.updateMany === "function") {
     await tx.organizationEarnings.updateMany({
-      where: {
-        paymentId: parentPaymentId,
-        status: "HELD",
-        preDisputeStatus: "PENDING",
-      },
+      where: held,
       data: { status: "PENDING", preDisputeStatus: null },
     });
   }
@@ -113,7 +147,7 @@ async function loadCarveContext(
     },
   });
   if (!parent) return null;
-  return { event, parent };
+  return { event, parent, sidePaymentId: event.payment.id };
 }
 
 /**
@@ -132,7 +166,11 @@ export async function restoreOverageBaseCarve(
   if (!ctx) return "none";
 
   if (ctx.event.basePaise <= 0) {
-    await releaseOverageHeldParentEarnings(tx, ctx.parent.id);
+    await releaseOverageHeldParentEarnings(
+      tx,
+      ctx.parent.id,
+      ctx.sidePaymentId,
+    );
     return "none";
   }
 
@@ -179,7 +217,11 @@ export async function restoreOverageBaseCarve(
         },
         data: { amountPaise: { increment: ctx.event.basePaise } },
       });
-      await releaseOverageHeldParentEarnings(tx, ctx.parent.id);
+      await releaseOverageHeldParentEarnings(
+        tx,
+        ctx.parent.id,
+        ctx.sidePaymentId,
+      );
       return "restored";
     }
   }
@@ -200,7 +242,7 @@ export async function restoreOverageBaseCarve(
     },
     data: { amountPaise: { increment: ctx.event.basePaise } },
   });
-  await releaseOverageHeldParentEarnings(tx, ctx.parent.id);
+  await releaseOverageHeldParentEarnings(tx, ctx.parent.id, ctx.sidePaymentId);
   return "restored";
 }
 

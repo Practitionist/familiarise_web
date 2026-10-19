@@ -21,6 +21,7 @@ interface MockOpts {
   parent?: object | null;
   legUpdateManyCount?: number;
   parentUpdateManyCount?: number;
+  unpaidSiblings?: number;
 }
 
 function mockTx(opts: MockOpts = {}) {
@@ -45,22 +46,32 @@ function mockTx(opts: MockOpts = {}) {
   const paymentUpdateMany = jest
     .fn()
     .mockResolvedValue({ count: opts.parentUpdateManyCount ?? 1 });
+  const eventCount = jest.fn().mockResolvedValue(opts.unpaidSiblings ?? 0);
+  const earningsUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
   return {
     legUpdate,
     legUpdateMany,
     paymentUpdate,
     paymentUpdateMany,
+    eventCount,
+    earningsUpdateMany,
     tx: {
       overageEvent: {
         findFirst: jest.fn().mockResolvedValue(event),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        count: eventCount,
       },
+      consultantEarnings: { updateMany: earningsUpdateMany },
       payment: {
         findUnique: jest.fn().mockResolvedValue(parent),
         update: paymentUpdate,
         updateMany: paymentUpdateMany,
       },
-      paymentLeg: { update: legUpdate, updateMany: legUpdateMany },
+      paymentLeg: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        update: legUpdate,
+        updateMany: legUpdateMany,
+      },
     } as never,
   };
 }
@@ -84,6 +95,36 @@ describe("restoreOverageBaseCarve", () => {
     });
   });
 
+  it("keeps the parent's earnings held while another batch's member overage is unpaid", async () => {
+    const held = mockTx({ unpaidSiblings: 1 });
+    await restoreOverageBaseCarve(held.tx, { overageEventId: "ov1" });
+    expect(held.eventCount).toHaveBeenCalledWith({
+      where: {
+        overageBehavior: "CHARGE_MEMBER",
+        chargeStatus: { in: ["PENDING"] },
+        paymentId: { not: "side1" },
+        payment: { parentPaymentId: "parent1" },
+      },
+    });
+    // The held rows are locked before the count, and never released.
+    expect(held.earningsUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      held.eventCount.mock.invocationCallOrder[0],
+    );
+    expect(held.earningsUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { status: "PENDING", preDisputeStatus: null },
+      }),
+    );
+
+    const last = mockTx();
+    await restoreOverageBaseCarve(last.tx, { overageEventId: "ov1" });
+    expect(last.earningsUpdateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: { status: "PENDING", preDisputeStatus: null },
+      }),
+    );
+  });
+
   it("returns invoiced (no leg writes) when the guarded parent update matches no row", async () => {
     const m = mockTx({
       parent: { id: "parent1", billableToOrgInvoiceId: "inv1" },
@@ -96,9 +137,33 @@ describe("restoreOverageBaseCarve", () => {
   });
 
   it.each([
-    ["zero basePaise", { id: "ov1", basePaise: 0, overageBehavior: "CHARGE_MEMBER", payment: { id: "s", parentPaymentId: "p" } }],
-    ["CHARGE_ORG event", { id: "ov1", basePaise: 300, overageBehavior: "CHARGE_ORG", payment: { id: "s", parentPaymentId: "p" } }],
-    ["no parent linkage", { id: "ov1", basePaise: 300, overageBehavior: "CHARGE_MEMBER", payment: { id: "s", parentPaymentId: null } }],
+    [
+      "zero basePaise",
+      {
+        id: "ov1",
+        basePaise: 0,
+        overageBehavior: "CHARGE_MEMBER",
+        payment: { id: "s", parentPaymentId: "p" },
+      },
+    ],
+    [
+      "CHARGE_ORG event",
+      {
+        id: "ov1",
+        basePaise: 300,
+        overageBehavior: "CHARGE_ORG",
+        payment: { id: "s", parentPaymentId: "p" },
+      },
+    ],
+    [
+      "no parent linkage",
+      {
+        id: "ov1",
+        basePaise: 300,
+        overageBehavior: "CHARGE_MEMBER",
+        payment: { id: "s", parentPaymentId: null },
+      },
+    ],
     ["missing event", null],
   ])("is a no-op for %s", async (_label, event) => {
     const m = mockTx({ event });

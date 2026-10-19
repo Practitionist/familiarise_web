@@ -12,7 +12,12 @@
  * hydration applies verbatim.
  */
 
-import type { FundingSource, MemberRole, OrgStatus } from "@prisma/client";
+import type {
+  FundingSource,
+  MemberRole,
+  OrgStatus,
+  OverageChargeStatus,
+} from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { ledgerAccountId } from "@/lib/payments/ledger/post";
 import { sumPaise } from "@/lib/payments/utils/money";
@@ -21,6 +26,29 @@ import { isHostOrgsEnabled } from "@/lib/enterprise/feature-flag";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** A utilization's live overage: its batches' marginals, or its price when an over-cap row has no event. */
+function liveOveragePaise(
+  u: {
+    wasOverage: boolean;
+    overageEvents: {
+      marginalPaise: number;
+      chargeStatus: OverageChargeStatus;
+      reversedAt: Date | null;
+    }[];
+  },
+  pricePaise: number,
+): number {
+  if (u.overageEvents.length === 0) return u.wasOverage ? pricePaise : 0;
+  return u.overageEvents
+    .filter(
+      (e) =>
+        !e.reversedAt &&
+        e.chargeStatus !== "REVERSED" &&
+        e.chargeStatus !== "BLOCKED",
+    )
+    .reduce((sum, e) => sum + e.marginalPaise, 0);
+}
 
 export interface OrgMonthlySeriesPoint {
   month: string;
@@ -300,7 +328,7 @@ export async function getOrgAnalytics(
         engagementsConsumed: true,
         priceAtBookingPaise: true,
         wasOverage: true,
-        overageEvent: {
+        overageEvents: {
           select: {
             marginalPaise: true,
             chargeStatus: true,
@@ -336,7 +364,7 @@ export async function getOrgAnalytics(
                 priceAtBookingPaise: true,
                 engagementsConsumed: true,
                 wasOverage: true,
-                overageEvent: {
+                overageEvents: {
                   select: {
                     marginalPaise: true,
                     chargeStatus: true,
@@ -396,16 +424,7 @@ export async function getOrgAnalytics(
     bucket.spendPaise += pricePaise;
     bucket.engagementsCount += engagements;
 
-    if (
-      u.overageEvent &&
-      !u.overageEvent.reversedAt &&
-      u.overageEvent.chargeStatus !== "REVERSED" &&
-      u.overageEvent.chargeStatus !== "BLOCKED"
-    ) {
-      bucket.overagePaise += Number(u.overageEvent.marginalPaise ?? 0);
-    } else if (u.wasOverage && !u.overageEvent) {
-      bucket.overagePaise += pricePaise;
-    }
+    bucket.overagePaise += liveOveragePaise(u, pricePaise);
 
     if (u.programAssignment?.membershipId) {
       bucket.learners.add(u.programAssignment.membershipId);
@@ -438,16 +457,7 @@ export async function getOrgAnalytics(
           if (u.wasOverage) {
             overageCount += 1;
           }
-          if (
-            u.overageEvent &&
-            !u.overageEvent.reversedAt &&
-            u.overageEvent.chargeStatus !== "REVERSED" &&
-            u.overageEvent.chargeStatus !== "BLOCKED"
-          ) {
-            overagePaise += Number(u.overageEvent.marginalPaise ?? 0);
-          } else if (u.wasOverage && !u.overageEvent) {
-            overagePaise += pricePaise;
-          }
+          overagePaise += liveOveragePaise(u, pricePaise);
         }
       }
 

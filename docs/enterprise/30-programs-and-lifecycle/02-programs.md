@@ -87,7 +87,7 @@ flowchart TD
 
 The counter increment + ledger twin are written atomically in one transaction; see [concurrency & idempotency](01-concurrency-and-idempotency.md). `CREDIT_POOL` programs apply the same shape with the cap denominated in credits (1 credit = ₹1) — the meter is `consumedPaise` against `creditBudgetPerCycle × 100`. The pre-checkout preview (`lib/payments/billing/overage-preview.ts`, route `GET /api/organizations/[orgId]/checkout/overage-preview`) is **advisory only** — it reuses the same `computeOverageForBooking` mapper over the assignment's _current_ usage so preview and the checkout recorder can't drift, then the authoritative `OverageEvent` is persisted at checkout. The `base`/`surcharge` split lives on the `OverageEvent` (`marginalPaise == basePaise + surchargePaise + GST on the surcharge`); the CHARGE_MEMBER timeout wall (14 days → `FAILED`) is the [timeout cron](01-concurrency-and-idempotency.md).
 
-> **SUBSCRIPTION lazy debit.** SUBSCRIPTION engagements debit at slot-allocation time (`recordSubscriptionAllocationCap` in `lib/booking/allocation/commit/subscription-cap.ts`). When that debit crosses the cap, `settleSubscriptionAllocationOverage` in the same file settles the overage through `recordOverageAtCheckout`, the same path checkout uses, so an `OverageEvent` and its side-payment or accrual leg are created.
+> **SUBSCRIPTION lazy debit.** SUBSCRIPTION engagements debit at slot-allocation time (`recordSubscriptionAllocationCap` in `lib/booking/allocation/commit/subscription-cap.ts`). A `CREDIT_POOL` subscription meters each allocation batch per session: sessions × one session's share of the plan payment (₹12,000 for 12 sessions meters ₹1,000 a session), so the per-engagement price cap and the pool budget see one session at a time. When a batch crosses the cap, `settleSubscriptionAllocationOverage` in the same file settles it through `recordOverageAtCheckout`, the same path checkout uses, so that batch gets its own `OverageEvent` (keyed by its `UsageLedgerEntry` id) and its own side-payment or accrual leg.
 
 ### The `OverageEvent` charge-status machine
 
@@ -389,16 +389,24 @@ The row is never deleted because:
 - Audit trail needs the original cap decision.
 
 The `engagementsUsed` counter on the parent assignment is decremented
-at the same time. **Partial** reversal is supported (#776): callers pass
-`engagementsToReverse` to release a fraction (clamped to the unreversed
-remainder derived from the negative ledger entries), and `refundRatio`
-to reverse `consumedPaise` in proportion to the actual money refunded
-(so a 75k refund of a 2×100k booking reverses 75k of price even though it
-releases one whole seat). `reversedAt` is stamped only when the cumulative
-reversal fully exhausts the original consumption; the linked `OverageEvent`
-is transitioned to `REVERSED` only on that final exhaustion, and only while
-it's still uncollected (an already-`CHARGED` overage needs a real refund /
+at the same time. Every amount is measured against the payment's
+**current sale**: its ledger rows since the previous sale was fully
+reversed. A re-bought event seat reuses its payment id, so this is what
+keeps a refund of the new sale from returning the lapsed sale's credit.
+**Partial** reversal is supported (#776): callers pass
+`engagementsToReverse` to release a fraction, or `refundRatio` alone to
+release the refund's share of the sale's engagements (at least one) and
+reverse `consumedPaise` in proportion to the money refunded (so a 75k
+refund of a 2×100k booking reverses 75k of price even though it releases
+one whole seat). Both clamp to what the sale still holds. `reversedAt` is
+stamped only when the sale is fully reversed; its `OverageEvent`s are
+transitioned to `REVERSED` only on that final exhaustion, and only while
+still uncollected (an already-`CHARGED` overage needs a real refund /
 credit note, not a silent status flip).
+
+A ratio refund of a `CREDIT_POOL` subscription's plan payment reverses
+refund ÷ plan of the credit metered so far, and later allocations join the
+same sale (owner decision D32).
 
 ## `OverageBehavior`
 
