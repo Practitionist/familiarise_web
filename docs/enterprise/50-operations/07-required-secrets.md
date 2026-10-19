@@ -204,7 +204,7 @@ to do for production. If you ever want previews to exercise webhooks, set a
 **test** Razorpay webhook secret for that context — not the production value,
 since preview URLs are public and the secret is what stops forged webhooks.
 
-**2. Three ops secrets remain, and they belong to GitHub Actions, not Netlify.**
+**2. Two ops secrets remain, and they belong to GitHub Actions, not Netlify.**
 This distinction cost real signal, so it is worth stating plainly: 60 of the 61
 workflow files list their secrets individually as `${{ secrets.X }}`, and only
 `ci.yaml` loads the bundled `ENV_FILE`. The scheduled fleet therefore reads
@@ -219,11 +219,27 @@ copied from Netlify production into GitHub Actions on 2026-07-29.
 
 Still missing, because each needs a value only a human can supply:
 
-| Secret                  | Where          | What it needs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ----------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `CRON_SECRET`           | GitHub Actions | The same value already set in Netlify production. Seven `cron-daily.yml` and `cron-weekly.yml` steps POST to `/api/cleanup/*` with it as a bearer token, and none of the seven is on the Netlify ticker's target list, so GitHub Actions is their **only** scheduler: `auth-tokens`, `purge-deleted-documents`, `expire-stale-collaborator-invites`, `purge-unverified-users`, `archive-webhook-events`, `expire-onboarding-drafts` and `expire-referral-credits`. Without it every one of them 401s. Each carries `continue-on-error: true`, but the terminal `Check job outcomes and notify on failure` step reads every step outcome and exits 1, so the workflow still goes red — the sweeps are dead, not silent. |
-| `SLACK_OPS_WEBHOOK_URL` | GitHub Actions | An incoming-webhook URL from the Slack workspace. Referenced by 57 workflows. Until it exists, Sentry is the only channel by which a money-cron failure reaches anyone.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `MSME_ALERT_EMAIL`      | GitHub Actions | The finance inbox that should receive MSME §43B(h) payment-deadline alerts. `RESEND_API_KEY` is already set, so email dispatch starts working the moment a recipient exists.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Secret                  | Where          | What it needs                                                                                                                                                                |
+| ----------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SLACK_OPS_WEBHOOK_URL` | GitHub Actions | An incoming-webhook URL from the Slack workspace. Referenced by 57 workflows. Until it exists, Sentry is the only channel by which a money-cron failure reaches anyone.      |
+| `MSME_ALERT_EMAIL`      | GitHub Actions | The finance inbox that should receive MSME §43B(h) payment-deadline alerts. `RESEND_API_KEY` is already set, so email dispatch starts working the moment a recipient exists. |
+
+**`CRON_SECRET` is provisioned in both stores, and the two copies must stay identical.**
+Netlify holds the value the route compares against; GitHub Actions holds the value the seven
+`cron-daily.yml` / `cron-weekly.yml` steps send as `Authorization: Bearer …`. `bearerMatches`
+in `lib/cron/cleanup-route.ts` compares `sha256(header)` against `sha256("Bearer " + secret)`
+with `timingSafeEqual`, so the match is byte-for-byte — a freshly generated value in GitHub
+that Netlify does not share produces a 401 on every call, and a rotation has to land in both
+stores before the Netlify redeploy, because functions read their env at deploy time. Do not
+set it with `netlify env:set` and expect to read it back: the CLI masks it and the list
+endpoint nulls the top-level `value`. All three Netlify contexts currently hold one identical
+value (verified by hash), so the #1634 single-context failure mode is not present.
+
+Those seven steps — `auth-tokens`, `purge-deleted-documents`, `expire-stale-collaborator-invites`,
+`purge-unverified-users`, `archive-webhook-events`, `expire-onboarding-drafts` and
+`expire-referral-credits` — are on no Netlify ticker target list, so Actions is their only
+scheduler. They still do not run while org-level Actions usage is blocked; the secret was the
+second blocker, not the only one.
 
 **3. Take the GST zero-rating evidence gap to a CA.** Buyer-country detection
 now defaults to `IN` unless a country was explicitly asserted, so the error
