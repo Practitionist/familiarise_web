@@ -135,6 +135,12 @@ jest.mock("../../lib/payments/core/razorpay-disputes", () => ({
   ...jest.requireActual("../../lib/payments/core/razorpay-disputes"),
   getRazorpayDispute: (...a: unknown[]) => mockGetRazorpayDispute(...a),
 }));
+const mockReleaseClawbackRecovery = jest.fn();
+jest.mock("../../lib/payments/payouts/clawback-recovery", () => ({
+  ...jest.requireActual("../../lib/payments/payouts/clawback-recovery"),
+  releaseClawbackRecovery: (...a: unknown[]) =>
+    mockReleaseClawbackRecovery(...a),
+}));
 const mockDisputeFindMany = jest.fn();
 // #1365 — the chargeback path now mints the B2C credit note beside the org one.
 jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
@@ -182,6 +188,8 @@ interface ConsultantEarningRow {
   refundedShareAmount: number;
   consultantProfileId: string;
   payoutId: string | null;
+  /** The payout as the batched-earnings read saw it. */
+  payout?: { status: string } | null;
 }
 
 interface OrgEarningRow {
@@ -207,12 +215,15 @@ const holds = createEarningsHoldStore<ConsultantEarningRow, OrgEarningRow>();
 const store = {
   payments: new Map<string, PaymentRow>(),
   disputes: [] as DisputeRow[],
+  /** ConsultantPayout id → its live status. */
+  payouts: new Map<string, string>(),
   consultantEarnings: holds.consultant,
   orgEarnings: holds.org,
 };
 
 function resetStore(): void {
   store.payments.clear();
+  store.payouts.clear();
   store.disputes.length = 0;
   holds.consultant.length = 0;
   holds.org.length = 0;
@@ -286,6 +297,20 @@ function makeTxStub() {
         );
         if (!row) return { count: 0 };
         Object.assign(row, data);
+        return { count: 1 };
+      },
+    },
+    consultantPayout: {
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: { id: string; status: { in: string[] } };
+        data: { status: string };
+      }) => {
+        const status = store.payouts.get(where.id);
+        if (!status || !where.status.in.includes(status)) return { count: 0 };
+        store.payouts.set(where.id, data.status);
         return { count: 1 };
       },
     },
@@ -461,6 +486,39 @@ describe("#1020-1 — a dispute hold records the prior status", () => {
     });
     expect(holds.activeReasons("ce_ready")).toEqual(["DISPUTE", "DISPUTE"]);
   });
+});
+
+describe("a dispute pulls a share out of an unsent payout only by cancelling it", () => {
+  test.each([
+    ["APPROVED", "CANCELLED", "HELD", null],
+    ["PROCESSING", "PROCESSING", "BATCHED", "po_1"],
+  ] as const)(
+    "a payout %s at the cancel ends %s; its earning is %s",
+    async (live, payoutAfter, earningAfter, payoutIdAfter) => {
+      seedPayment(10_000);
+      // The batched read saw APPROVED; `live` is the payout's status at the CAS.
+      store.payouts.set("po_1", live);
+      store.consultantEarnings.push(
+        ce({
+          id: "ce_b",
+          status: "BATCHED",
+          payoutId: "po_1",
+          payout: { status: "APPROVED" },
+        }),
+      );
+
+      await openDispute(10_000);
+
+      expect(store.payouts.get("po_1")).toBe(payoutAfter);
+      expect(rowOf("ce_b")).toMatchObject({
+        status: earningAfter,
+        payoutId: payoutIdAfter,
+      });
+      expect(mockReleaseClawbackRecovery).toHaveBeenCalledTimes(
+        live === "APPROVED" ? 1 : 0,
+      );
+    },
+  );
 });
 
 describe("#1020-1 — WON releases this dispute's hold and restores the prior", () => {

@@ -1414,26 +1414,26 @@ async function placeDisputeHolds(
         .filter((id): id is string => Boolean(id)),
     ),
   ];
-  if (openConsultantPayoutIds.length > 0) {
+  // Cancel first: only a payout the CAS moved may hand its earnings back.
+  const cancelledConsultant: string[] = [];
+  for (const id of openConsultantPayoutIds) {
+    const { count } = await tx.consultantPayout.updateMany({
+      where: { id, status: { in: ["PENDING", "APPROVED"] } },
+      data: { status: "CANCELLED", failureReason },
+    });
+    if (count === 1) cancelledConsultant.push(id);
+  }
+  if (cancelledConsultant.length > 0) {
     await tx.consultantEarnings.updateMany({
       where: {
-        payoutId: { in: openConsultantPayoutIds },
+        payoutId: { in: cancelledConsultant },
         status: EarningStatus.BATCHED,
       },
       data: { status: EarningStatus.READY, payoutId: null },
     });
-    await tx.consultantPayout.updateMany({
-      where: {
-        id: { in: openConsultantPayoutIds },
-        status: { in: ["PENDING", "APPROVED"] },
-      },
-      data: { status: "CANCELLED", failureReason },
-    });
-    const cancelled = await tx.consultantPayout.findMany({
-      where: { id: { in: openConsultantPayoutIds }, status: "CANCELLED" },
-      select: { id: true },
-    });
-    for (const { id } of cancelled) await releaseClawbackRecovery(tx, id);
+    for (const id of cancelledConsultant) {
+      await releaseClawbackRecovery(tx, id);
+    }
   }
 
   const openOrgPayoutIds = [
@@ -1452,26 +1452,23 @@ async function placeDisputeHolds(
         .filter((id): id is string => Boolean(id)),
     ),
   ];
-  if (openOrgPayoutIds.length > 0) {
+  const cancelledOrg: string[] = [];
+  for (const id of openOrgPayoutIds) {
+    const { count } = await tx.organizationPayout.updateMany({
+      where: { id, status: { in: ["PENDING", "APPROVED"] } },
+      data: { status: "CANCELLED", failureReason },
+    });
+    if (count === 1) cancelledOrg.push(id);
+  }
+  if (cancelledOrg.length > 0) {
     await tx.organizationEarnings.updateMany({
       where: {
-        orgPayoutId: { in: openOrgPayoutIds },
+        orgPayoutId: { in: cancelledOrg },
         status: EarningStatus.BATCHED,
       },
       data: { status: EarningStatus.READY, orgPayoutId: null },
     });
-    await tx.organizationPayout.updateMany({
-      where: {
-        id: { in: openOrgPayoutIds },
-        status: { in: ["PENDING", "APPROVED"] },
-      },
-      data: { status: "CANCELLED", failureReason },
-    });
-    const cancelled = await tx.organizationPayout.findMany({
-      where: { id: { in: openOrgPayoutIds }, status: "CANCELLED" },
-      select: { id: true },
-    });
-    for (const { id } of cancelled) await releaseClawbackRecovery(tx, id);
+    for (const id of cancelledOrg) await releaseClawbackRecovery(tx, id);
   }
 
   const hold = { reason: EarningsHoldReason.DISPUTE, sourceRef: disputeRowId };
@@ -2069,13 +2066,13 @@ export async function settleDisputeVerdict(
 /**
  * Handle dispute updated event (status change, evidence submitted, etc.)
  */
-const TERMINAL_DISPUTE_STATUSES: DisputeStatus[] = [
+const TERMINAL_DISPUTE_STATUSES = new Set<DisputeStatus>([
   "WON",
   "LOST",
   "CHARGE_REFUNDED",
   "CLOSED",
   "WARNING_CLOSED",
-];
+]);
 
 async function stageDisputeUpdatedNotification(
   tx: Tx,
@@ -2131,7 +2128,7 @@ async function stageDisputeUpdatedNotification(
     return { notification: notifications?.[0]?.staged ?? null, emails };
   }
 
-  if (TERMINAL_DISPUTE_STATUSES.includes(mappedStatus)) {
+  if (TERMINAL_DISPUTE_STATUSES.has(mappedStatus)) {
     const disputePayment = await tx.payment.findUnique({
       where: { id: dispute.paymentId },
     });

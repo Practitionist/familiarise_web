@@ -363,6 +363,15 @@ describe("multi-party collaborator revenue splitting & settlement invariants", (
     expect(collabRow.platformFeePaise).toBe(666);
     expect(collabRow.consultantSharePaise).toBe(2667);
 
+    // The new-expert hold is judged per payee, not from the owner alone.
+    const { withNewExpertHold } = jest.requireMock(
+      "../../lib/payments/payouts/earnings-hold",
+    );
+    const payees = (withNewExpertHold as jest.Mock).mock.calls.map(
+      ([, cp]) => cp,
+    );
+    expect(payees).toEqual(expect.arrayContaining(["cp-host", "cp-collab"]));
+
     expectBalancedJournalWithDebits(10_003);
   });
 

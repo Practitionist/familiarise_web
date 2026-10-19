@@ -1335,7 +1335,12 @@ async function createMultiPartyConsultantEarnings(
         shareBps: shareBpsList[i] ?? 0,
         appointmentOccurrenceId,
         status: initialEarningStatus,
-        holdUntil,
+        // The new-expert days follow each payee, never the owner's standing.
+        holdUntil: await withNewExpertHold(
+          tx,
+          p.consultantProfileId,
+          holdUntil,
+        ),
         currency: "INR",
       },
     });
@@ -1449,7 +1454,7 @@ async function createSingleOwnerConsultantEarnings(
       consultantSharePaise: totalConsultantPool,
       appointmentOccurrenceId,
       status: initialEarningStatus,
-      holdUntil,
+      holdUntil: await withNewExpertHold(tx, consultantProfileId, holdUntil),
       currency: "INR",
     },
   });
@@ -2021,6 +2026,7 @@ async function executeEarningsCreationInTx(
     scope,
     grossAmount,
     anchor,
+    holdUntil,
     preplanned,
   } = params;
   const hasPreplanned = preplanned !== null && preplanned !== undefined;
@@ -2037,12 +2043,6 @@ async function executeEarningsCreationInTx(
   if (existing.exists) {
     return existing.id;
   }
-
-  const holdUntil = await withNewExpertHold(
-    tx,
-    consultantProfileId,
-    params.holdUntil,
-  );
 
   const parkForTrust = await resolveInTxTrustPark(tx, payment, preplanned);
   const initialEarningStatus: EarningStatus = parkForTrust

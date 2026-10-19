@@ -16,6 +16,7 @@ import type { SubscriptionLifecycleEmailArgs } from "@/lib/email/senders/booking
 import {
   computeHoldUntil,
   holdHoursFor,
+  stampConsultantHolds,
 } from "@/lib/payments/payouts/earnings-hold";
 import type { Tx } from "@/lib/prisma";
 
@@ -42,7 +43,10 @@ const UNSTAMPED_STATUSES = ["PENDING", "PENDING_TRUST"] as const;
  */
 export async function stampTranchesOnCancel(
   tx: {
-    consultantEarnings?: Pick<Tx["consultantEarnings"], "updateMany">;
+    consultantEarnings?: Pick<
+      Tx["consultantEarnings"],
+      "findMany" | "findFirst" | "aggregate" | "updateMany"
+    >;
     organizationEarnings?: Pick<Tx["organizationEarnings"], "updateMany">;
   },
   args: { paymentId: string; now: Date },
@@ -52,15 +56,18 @@ export async function stampTranchesOnCancel(
     lastOccurrenceEndsAt: null,
     holdHours: holdHoursFor("SUBSCRIPTION"),
   });
-  const res = await tx.consultantEarnings?.updateMany?.({
-    where: {
-      paymentId: args.paymentId,
-      cycleOrdinal: { not: null },
-      holdUntil: null,
-      status: { in: [...UNSTAMPED_STATUSES] },
-    },
-    data: { holdUntil },
-  });
+  const stamped = tx.consultantEarnings
+    ? await stampConsultantHolds(
+        { consultantEarnings: tx.consultantEarnings },
+        {
+          paymentId: args.paymentId,
+          cycleOrdinal: { not: null },
+          holdUntil: null,
+          status: { in: [...UNSTAMPED_STATUSES] },
+        },
+        holdUntil,
+      )
+    : 0;
   await tx.organizationEarnings?.updateMany?.({
     where: {
       paymentId: args.paymentId,
@@ -69,7 +76,7 @@ export async function stampTranchesOnCancel(
     },
     data: { holdUntil },
   });
-  return res?.count ?? 0;
+  return stamped;
 }
 
 export async function settleSubscriptionCycleWithNotice(
@@ -157,17 +164,16 @@ export async function settleSubscriptionCycleWithNotice(
       lastOccurrenceEndsAt: lastCompletedEnd,
       holdHours: holdHoursFor("SUBSCRIPTION"),
     });
-    await tx.consultantEarnings.updateMany({
-      where: {
+    await stampConsultantHolds(
+      tx,
+      {
         paymentId: { in: wrapper.payment.map((p) => p.id) },
         cycleOrdinal: { lte: matured },
         holdUntil: null,
         status: { in: [...UNSTAMPED_STATUSES] },
       },
-      data: {
-        holdUntil,
-      },
-    });
+      holdUntil,
+    );
     if (matured >= tranches.count - 1) {
       await tx.organizationEarnings?.updateMany?.({
         where: {

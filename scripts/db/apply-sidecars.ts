@@ -3,6 +3,8 @@
  *   - `check-constraints.sql`     (--check-constraints)
  *   - `ledger-triggers.sql`       (--ledger-triggers)
  *   - `payment-legs-triggers.sql` (--payment-legs-triggers)
+ *   - `pre-push.sql`              (--pre-push; in-place renames run BEFORE
+ *     `prisma db push`, never part of --all)
  *
  * `prisma db push` / `prisma migrate` do NOT manage CHECK constraints,
  * partial unique indexes, or constraint triggers, so this must run after every
@@ -16,6 +18,7 @@
  *   --check-constraints
  *   --ledger-triggers
  *   --payment-legs-triggers
+ *   --pre-push
  *   --dry-run
  */
 import { readFileSync } from "fs";
@@ -48,7 +51,14 @@ const SIDECAR_TARGETS: SidecarTarget[] = [
   },
 ];
 
+const PRE_PUSH_TARGET: SidecarTarget = {
+  flag: "--pre-push",
+  label: "pre-push renames",
+  file: "pre-push.sql",
+};
+
 function resolveTargets(argv: string[]): SidecarTarget[] {
+  if (argv.includes(PRE_PUSH_TARGET.flag)) return [PRE_PUSH_TARGET];
   if (argv.includes("--all")) return SIDECAR_TARGETS;
   const selected = SIDECAR_TARGETS.filter((t) => argv.includes(t.flag));
   return selected.length > 0 ? selected : SIDECAR_TARGETS;

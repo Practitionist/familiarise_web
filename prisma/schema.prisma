@@ -6150,7 +6150,8 @@ model ConsultantEarnings {
 /// (unreleased) hold; lib/payments/payouts/earnings-holds.ts is the only writer.
 /// Exactly one earnings FK is set (`earnings_hold_one_earning`), and one active
 /// hold per (earning, reason, sourceRef) (`earnings_hold_active_*_key`), both
-/// in prisma/sql/check-constraints.sql.
+/// in prisma/sql/check-constraints.sql. `preHoldStatus` is renamed in place by
+/// prisma/sql/pre-push.sql, which must run before this schema is pushed.
 model EarningsHold {
   id                     String                @id @default(uuid())
   consultantEarningsId   String?

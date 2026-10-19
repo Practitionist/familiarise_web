@@ -393,98 +393,108 @@ async function mintConsultantPayout(
     msmeProfile?.userId,
   );
 
-  return prisma.$transaction(async (tx) => {
-    // CLAWBACK_RECOVERY_PAUSE: an expert owing more than the pause line is
-    // skipped, not netted, until the receivable comes down.
-    const owed = await outstandingClawbackPaise(tx, {
-      rail: "CONSULTANT",
-      consultantProfileId,
-    });
-    if (owed > PAYOUT_CONSTANTS.CLAWBACK_RECOVERY_PAUSE_PAISE) {
-      console.warn(
-        `Skipping consultant ${consultantProfileId}: ${owed} paise of clawback outstanding`,
-      );
-      return null;
-    }
+  // Serializable: a clawback committing after the pause read conflicts and retries.
+  return withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        // CLAWBACK_RECOVERY_PAUSE: an expert owing more than the pause line is
+        // skipped, not netted, until the receivable comes down.
+        const owed = await outstandingClawbackPaise(tx, {
+          rail: "CONSULTANT",
+          consultantProfileId,
+        });
+        if (owed > PAYOUT_CONSTANTS.CLAWBACK_RECOVERY_PAUSE_PAISE) {
+          console.warn(
+            `Skipping consultant ${consultantProfileId}: ${owed} paise of clawback outstanding`,
+          );
+          return null;
+        }
 
-    const readyEarnings = await tx.consultantEarnings.findMany({
-      where: {
-        consultantProfileId,
-        status: EarningStatus.READY,
-        payoutId: null,
+        const readyEarnings = await tx.consultantEarnings.findMany({
+          where: {
+            consultantProfileId,
+            status: EarningStatus.READY,
+            payoutId: null,
+          },
+          select: {
+            id: true,
+            consultantSharePaise: true,
+            refundedShareAmount: true,
+          },
+        });
+
+        if (readyEarnings.length === 0) return null;
+
+        const amount = readyEarnings.reduce(
+          (sum, e) =>
+            sum + Math.max(e.consultantSharePaise - e.refundedShareAmount, 0),
+          0,
+        );
+
+        if (amount < PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT) return null;
+
+        const shouldAutoApprove = draft.autoApprove(amount);
+
+        const payout = await tx.consultantPayout.create({
+          data: {
+            consultantProfileId,
+            provider: account.provider,
+            amount,
+            currency: "INR",
+            status: shouldAutoApprove
+              ? PayoutStatus.APPROVED
+              : PayoutStatus.PENDING,
+            method,
+            batchId,
+            idempotencyKey: draft.idempotencyKey,
+            kind: draft.kind ?? null,
+            createdBy: resolvedCreatedBy,
+            approvedAt: shouldAutoApprove ? new Date() : undefined,
+            approvedBy: shouldAutoApprove ? "SYSTEM_AUTO_APPROVE" : undefined,
+            mustPayByDate: resolvePayoutMsmeDeadline(
+              msmeProfile?.msmeStatus,
+              msmeProfile?.writtenAgreementWithFamiliarise,
+            ),
+          },
+        });
+
+        await recoverClawbackOnPayout(tx, {
+          payee: { rail: "CONSULTANT", consultantProfileId },
+          payoutId: payout.id,
+          recoverablePaise: recoverablePaise(
+            amount,
+            PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT,
+            false,
+          ),
+        });
+
+        // Claim earnings READY → BATCHED; PAID transition only occurs at COMPLETED webhook.
+        const linkResult = await tx.consultantEarnings.updateMany({
+          where: {
+            id: { in: readyEarnings.map((e) => e.id) },
+            status: EarningStatus.READY,
+            payoutId: null,
+          },
+          data: {
+            payoutId: payout.id,
+            status: EarningStatus.BATCHED,
+          },
+        });
+
+        if (linkResult.count !== readyEarnings.length) {
+          throw new Error(
+            `Payout linking race: expected ${readyEarnings.length} earnings, linked ${linkResult.count} for consultant ${consultantProfileId}. Rolling back.`,
+          );
+        }
+        return { id: payout.id, amount, status: payout.status };
       },
-      select: {
-        id: true,
-        consultantSharePaise: true,
-        refundedShareAmount: true,
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 10_000,
+        timeout: 15_000,
       },
-    });
-
-    if (readyEarnings.length === 0) return null;
-
-    const amount = readyEarnings.reduce(
-      (sum, e) =>
-        sum + Math.max(e.consultantSharePaise - e.refundedShareAmount, 0),
-      0,
-    );
-
-    if (amount < PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT) return null;
-
-    const shouldAutoApprove = draft.autoApprove(amount);
-
-    const payout = await tx.consultantPayout.create({
-      data: {
-        consultantProfileId,
-        provider: account.provider,
-        amount,
-        currency: "INR",
-        status: shouldAutoApprove
-          ? PayoutStatus.APPROVED
-          : PayoutStatus.PENDING,
-        method,
-        batchId,
-        idempotencyKey: draft.idempotencyKey,
-        kind: draft.kind ?? null,
-        createdBy: resolvedCreatedBy,
-        approvedAt: shouldAutoApprove ? new Date() : undefined,
-        approvedBy: shouldAutoApprove ? "SYSTEM_AUTO_APPROVE" : undefined,
-        mustPayByDate: resolvePayoutMsmeDeadline(
-          msmeProfile?.msmeStatus,
-          msmeProfile?.writtenAgreementWithFamiliarise,
-        ),
-      },
-    });
-
-    await recoverClawbackOnPayout(tx, {
-      payee: { rail: "CONSULTANT", consultantProfileId },
-      payoutId: payout.id,
-      recoverablePaise: recoverablePaise(
-        amount,
-        PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT,
-        false,
-      ),
-    });
-
-    // Claim earnings READY → BATCHED; PAID transition only occurs at COMPLETED webhook.
-    const linkResult = await tx.consultantEarnings.updateMany({
-      where: {
-        id: { in: readyEarnings.map((e) => e.id) },
-        status: EarningStatus.READY,
-        payoutId: null,
-      },
-      data: {
-        payoutId: payout.id,
-        status: EarningStatus.BATCHED,
-      },
-    });
-
-    if (linkResult.count !== readyEarnings.length) {
-      throw new Error(
-        `Payout linking race: expected ${readyEarnings.length} earnings, linked ${linkResult.count} for consultant ${consultantProfileId}. Rolling back.`,
-      );
-    }
-    return { id: payout.id, amount, status: payout.status };
-  });
+    ),
+  );
 }
 
 export async function approvePayout(

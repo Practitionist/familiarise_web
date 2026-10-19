@@ -11,9 +11,9 @@
  * `earnings-service` pulls Stream, Razorpay and Novu through its imports.
  */
 
-import { EarningStatus } from "@prisma/client";
+import { EarningStatus, type Prisma } from "@prisma/client";
 
-import type { PrismaLike } from "@/lib/prisma";
+import type { PrismaLike, Tx } from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { PAYOUT_CONSTANTS, type AppointmentType } from "./constants";
 
@@ -48,13 +48,17 @@ export function computeHoldUntil(args: {
   return new Date(anchor + args.holdHours * HOUR_MS);
 }
 
+type NewExpertDb = {
+  consultantEarnings: Pick<Tx["consultantEarnings"], "findFirst" | "aggregate">;
+};
+
 /**
  * `holdUntil` plus the new-expert days when the expert's first paid earning is
- * under the tenure window old (or they have none yet) or their lifetime
- * non-refunded share is below the threshold. A null hold stays null.
+ * under the tenure window old (or they have none yet) or their lifetime share,
+ * net of refunds, is below the threshold. A null hold stays null.
  */
 export async function withNewExpertHold(
-  db: PrismaLike,
+  db: NewExpertDb,
   consultantProfileId: string | null,
   holdUntil: Date | null,
   now = new Date(),
@@ -72,10 +76,11 @@ export async function withNewExpertHold(
   if (!isNew) {
     const lifetime = await db.consultantEarnings.aggregate({
       where: { consultantProfileId, status: { not: EarningStatus.REFUNDED } },
-      _sum: { consultantSharePaise: true },
+      _sum: { consultantSharePaise: true, refundedShareAmount: true },
     });
     isNew =
-      sumPaise(lifetime._sum.consultantSharePaise) <
+      sumPaise(lifetime._sum.consultantSharePaise) -
+        sumPaise(lifetime._sum.refundedShareAmount) <
       PAYOUT_CONSTANTS.NEW_EXPERT_LIFETIME_SHARE_PAISE;
   }
   return isNew
@@ -84,6 +89,38 @@ export async function withNewExpertHold(
           PAYOUT_CONSTANTS.NEW_EXPERT_EXTRA_HOLD_DAYS * DAY_MS,
       )
     : holdUntil;
+}
+
+/**
+ * Stamps `holdUntil` on the deferred consultant earnings `where` selects,
+ * adding the new-expert days per payee; answers the rows stamped.
+ */
+export async function stampConsultantHolds(
+  db: {
+    consultantEarnings: Pick<
+      Tx["consultantEarnings"],
+      "findMany" | "findFirst" | "aggregate" | "updateMany"
+    >;
+  },
+  where: Prisma.ConsultantEarningsWhereInput,
+  holdUntil: Date,
+): Promise<number> {
+  const payees = await db.consultantEarnings.findMany({
+    where,
+    select: { consultantProfileId: true },
+    distinct: ["consultantProfileId"],
+  });
+  let stamped = 0;
+  for (const { consultantProfileId } of payees) {
+    const res = await db.consultantEarnings.updateMany({
+      where: { ...where, consultantProfileId },
+      data: {
+        holdUntil: await withNewExpertHold(db, consultantProfileId, holdUntil),
+      },
+    });
+    stamped += res.count;
+  }
+  return stamped;
 }
 
 /** The end of the appointment's last live occurrence, or null when it has none. */

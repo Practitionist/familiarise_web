@@ -35,13 +35,13 @@ const APPROACHING_DEADLINE_MS = 7 * 24 * 60 * 60 * 1000;
 const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000;
 
 /** Statuses whose adoption moves money (settleDisputeVerdict). */
-const VERDICT_STATUSES: DisputeStatus[] = [
+const VERDICT_STATUSES = new Set<DisputeStatus>([
   DisputeStatus.WON,
   DisputeStatus.LOST,
   DisputeStatus.CHARGE_REFUNDED,
   DisputeStatus.CLOSED,
   DisputeStatus.WARNING_CLOSED,
-];
+]);
 
 export interface DisputeReconciliationResult {
   success: boolean;
@@ -190,7 +190,7 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
     gatewayDispute: Awaited<ReturnType<typeof getRazorpayDispute>>,
     payment: { id: string; amount: number },
   ): Promise<boolean> {
-    const settlement = VERDICT_STATUSES.includes(newStatus)
+    const settlement = VERDICT_STATUSES.has(newStatus)
       ? (await import("@/app/api/webhooks/utils")).settleDisputeVerdict
       : null;
     const outcome = await withSerializableRetry(() =>

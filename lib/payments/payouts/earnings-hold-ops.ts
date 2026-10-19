@@ -24,10 +24,10 @@ import {
   type EarningsSide,
 } from "./earnings-holds";
 
-const HOLDABLE_FROM: EarningStatus[] = [
+const HOLDABLE_FROM = new Set<EarningStatus>([
   EarningStatus.PENDING,
   EarningStatus.READY,
-];
+]);
 
 /** The holds an operator release may clear. */
 const OPERATOR_RELEASABLE: EarningsHoldReason[] = [
@@ -93,7 +93,7 @@ export async function holdEarnings(
 ): Promise<{ side: EarningsSide; before: EarningStatus }> {
   requireReason(reason);
   const row = await readEarning(db, id);
-  if (!HOLDABLE_FROM.includes(row.status)) {
+  if (!HOLDABLE_FROM.has(row.status)) {
     throw new OpsRefusal(
       "EARNING_NOT_HOLDABLE",
       `Only pending or ready earnings can be held (this one is ${row.status}).`,

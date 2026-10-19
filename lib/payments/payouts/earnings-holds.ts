@@ -128,6 +128,36 @@ function railOf(db: EarningsHoldDb, side: EarningsSide): Rail {
   };
 }
 
+/** One read-then-CAS pass; answers the rows now HELD and the ones that moved under it. */
+async function freezeOnce(
+  rail: Rail,
+  ids: string[],
+): Promise<{ moved: string[]; retry: string[] }> {
+  const byStatus = new Map<EarningStatus, string[]>();
+  for (const row of await rail.read(ids)) {
+    const holdable =
+      row.status === EarningStatus.HELD ||
+      HOLDABLE_EARNING_STATUSES.includes(row.status);
+    if (!holdable) continue;
+    assertEarningStatusTransitionLegal(row.id, row.status, EarningStatus.HELD);
+    byStatus.set(row.status, [...(byStatus.get(row.status) ?? []), row.id]);
+  }
+  const moved: string[] = [];
+  const retry: string[] = [];
+  for (const [status, group] of byStatus) {
+    const count = await rail.cas(
+      { ids: group, status },
+      status === EarningStatus.HELD
+        ? { status }
+        : { status: EarningStatus.HELD, preHoldStatus: status },
+    );
+    // A short count means a row moved between the read and the CAS; the
+    // whole group is re-read on the next pass to find which one.
+    (count === group.length ? moved : retry).push(...group);
+  }
+  return { moved, retry };
+}
+
 export interface HoldSpec {
   reason: EarningsHoldReason;
   sourceRef: string;
@@ -162,36 +192,9 @@ export async function placeEarningsHolds(
   const placed: string[] = [];
 
   for (let attempt = 0; attempt < 2 && pending.length > 0; attempt++) {
-    const rows = await rail.read(pending);
-    const byStatus = new Map<EarningStatus, string[]>();
-    for (const row of rows) {
-      if (
-        row.status !== EarningStatus.HELD &&
-        !HOLDABLE_EARNING_STATUSES.includes(row.status)
-      ) {
-        continue;
-      }
-      assertEarningStatusTransitionLegal(
-        row.id,
-        row.status,
-        EarningStatus.HELD,
-      );
-      byStatus.set(row.status, [...(byStatus.get(row.status) ?? []), row.id]);
-    }
-    const moved = new Set<string>();
-    for (const [status, group] of byStatus) {
-      const count = await rail.cas(
-        { ids: group, status },
-        status === EarningStatus.HELD
-          ? { status }
-          : { status: EarningStatus.HELD, preHoldStatus: status },
-      );
-      // A short count means a row moved between the read and the CAS; the
-      // group is re-read on the next attempt to find which one.
-      if (count === group.length) group.forEach((id) => moved.add(id));
-    }
+    const { moved, retry } = await freezeOnce(rail, pending);
     placed.push(...moved);
-    pending = [...byStatus.values()].flat().filter((id) => !moved.has(id));
+    pending = retry;
   }
   if (pending.length > 0) throw new EarningsHoldRaceError(side, pending);
 

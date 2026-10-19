@@ -51,6 +51,11 @@ import { type WebhookClaim, permanentFailure } from "@/lib/webhooks/event-log";
 import { errorMessageOf, reportSentryError } from "@/lib/observability/report";
 import { z, ZodError } from "zod";
 
+const DISPUTE_EVENT_VERDICT: Partial<Record<string, string>> = {
+  "payment.dispute.won": "won",
+  "payment.dispute.lost": "lost",
+};
+
 const refundEntitySchema = z.object({
   id: z.string(),
   payment_id: z.string(),
@@ -455,11 +460,7 @@ export async function processRazorpayWebhookEvent(
         );
         // won/lost are the event's verdict; closed carries its own entity status.
         const verdictStatus =
-          eventType === "payment.dispute.won"
-            ? "won"
-            : eventType === "payment.dispute.lost"
-              ? "lost"
-              : verdictEvent.status;
+          DISPUTE_EVENT_VERDICT[eventType] ?? verdictEvent.status;
         const verdictResult = await handleDisputeUpdated(
           verdictEvent.id,
           verdictStatus,
