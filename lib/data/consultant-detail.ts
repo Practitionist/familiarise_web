@@ -98,13 +98,24 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
       // #1527 Q4 — this feeds ExpertPricing, the main buy surface: only plans
       // a buyer can purchase (not DRAFT, archived or ORG_ONLY). The page has
       // no owner preview; authors see drafts in their planner.
-      consultationPlans: { where: oneOnOnePlanDiscoverableWhere() },
+      //
+      // Order is the expert's own merchandising, not a duration sort: a low
+      // `sortOrder` outranks duration, and duration only breaks ties. FAQs ride
+      // along so the profile can render the questions inline, the way a buyer
+      // self-qualifies before clicking through to a plan.
+      consultationPlans: {
+        where: oneOnOnePlanDiscoverableWhere(),
+        orderBy: [{ sortOrder: "asc" }, { durationInHours: "asc" }],
+        include: { faqs: { orderBy: { order: "asc" } } },
+      },
       subscriptionPlans: {
         where: oneOnOnePlanDiscoverableWhere(),
+        orderBy: [{ sortOrder: "asc" }, { durationInMonths: "asc" }],
         include: {
           subscriptionContents: {
             orderBy: { order: "asc" as const },
           },
+          faqs: { orderBy: { order: "asc" as const } },
         },
       },
       webinarPlans: true,

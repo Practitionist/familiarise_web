@@ -42,6 +42,7 @@ import {
 } from "@/lib/booking/booking-mode";
 import { SlotList } from "./SlotList";
 import type { SlotWithStatus } from "./slot-list-policy";
+import { formatSessionLength } from "../utils/session-length";
 
 interface ConsultantDetailsForBooking {
   id: string;
@@ -427,8 +428,23 @@ export default function ConsultationPricingToggle({
             >
               {/* Pricing content — no nested dark card, lives directly in glass parent */}
               <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  {/* Session length reads as metadata above the expert's own
+                      title, so several plans of the same length stay tellable
+                      apart instead of sharing one duration-shaped heading. */}
+                  <p className="text-xs text-zinc-500">
+                    Video meeting · {option.duration}
+                  </p>
+                  {option.isFeatured && (
+                    <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-400 ring-1 ring-emerald-500/30">
+                      Popular
+                    </span>
+                  )}
+                </div>
                 <h3 className="text-lg font-bold text-white">{option.title}</h3>
-                <p className="text-xs text-zinc-500">{option.description}</p>
+                {option.description && (
+                  <p className="text-xs text-zinc-500">{option.description}</p>
+                )}
               </div>
 
               <div className="flex items-end gap-2 my-5">
@@ -489,11 +505,10 @@ export default function ConsultationPricingToggle({
                 <DialogContent className="sm:max-w-[700px] lg:max-w-[950px] xl:max-w-[1050px] max-h-[85vh] overflow-y-auto bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl">
                   <DialogHeader className="p-6 lg:p-8 border-b border-zinc-800">
                     <DialogTitle className="text-xl lg:text-2xl font-semibold">
-                      Book {option.title} Consultation
+                      Book {option.title}
                     </DialogTitle>
                     <DialogDescription className="text-zinc-400 text-base">
-                      Select a date and time for your {option.duration}{" "}
-                      consultation
+                      Select a date and time for your {option.duration} session
                     </DialogDescription>
                   </DialogHeader>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-10 p-6 lg:p-8">
@@ -580,7 +595,8 @@ export default function ConsultationPricingToggle({
                       <div className="flex items-center justify-between mb-5">
                         <h3 className="text-lg font-semibold flex items-center text-white">
                           <ClockIcon className="mr-2 h-5 w-5 text-zinc-400" />{" "}
-                          Available {selectedDuration} hour Slots
+                          Available {formatSessionLength(selectedDuration)}{" "}
+                          Slots
                         </h3>
                         {onRefreshSlots && (
                           <button
