@@ -81,7 +81,8 @@ and `claude.yml` only when a comment or review body contains `@claude`.
 
 CI's `test-and-build` job is the gate: it passes only when the `typecheck`
 job (`npm audit`, `prisma generate`, `npx tsc --noEmit`, and the money-column,
-auth-schema and workflow-hygiene guards), the `unit-tests` job (`npm run test`)
+auth-schema and workflow-hygiene guards), the unit-test job (full sharded `unit-tests` on pushes and PRs into `prod`;
+`unit-tests-changed`, `jest --changedSince`, on other PRs)
 and the `build` job (`npm run build`) all pass. The `db-guards` job runs the
 DB-sidecar guard against a throwaway Postgres. There is no `typecheck`
 script, so type-check locally by typing `npx tsc --noEmit` yourself.
@@ -137,7 +138,7 @@ Scenarios that find no reachable server skip rather than fail, so check for SKIP
 lines before believing green.
 
 The race workflow `.github/workflows/race-condition-tests.yml` triggers only on
-`push` to `dev` and on `workflow_dispatch`. **It has no `pull_request` trigger**,
+`push` to `prod` and on `workflow_dispatch`. **It has no `pull_request` trigger**,
 so it will not run on your PR — dispatch it manually if you want its verdict
 before merge.
 

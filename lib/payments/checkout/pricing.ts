@@ -128,7 +128,10 @@ export async function calculateAmountAndValidate(
         p.consultantProfile &&
         p.consultantProfile.verificationStatus !== "VERIFIED"
       ) {
-        throw new Error(`${label} is not available`);
+        throw new BookingRuleError(
+          "EXPERT_NOT_VERIFIED",
+          `${label} isn't available to book until the expert is verified.`,
+        );
       }
       if (p.archivedAt) {
         throw new Error(`${label} is no longer available`);

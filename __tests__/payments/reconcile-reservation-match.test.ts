@@ -634,7 +634,7 @@ describe("reconcilePendingRefunds — stranded-refund backstop", () => {
       ]);
     mockApplyRefundCascade
       .mockResolvedValueOnce({
-        memberOverageRefundDue: { overagePaymentId: "pay_side" },
+        memberOverageRefundDue: { overagePaymentIds: ["pay_side"] },
       })
       .mockRejectedValueOnce(new Error("ledger down"));
 
@@ -649,7 +649,7 @@ describe("reconcilePendingRefunds — stranded-refund backstop", () => {
     );
     expect(mockRefundSidePayment).toHaveBeenCalledWith({
       parentPaymentId: "pay_1",
-      due: { overagePaymentId: "pay_side" },
+      due: { overagePaymentIds: ["pay_side"] },
       initiatedByUserId: null,
     });
     expect(refundTable.updateMany).toHaveBeenCalledWith(

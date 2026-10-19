@@ -8,6 +8,8 @@
 import type { AppointmentStatus } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import type { StagedTrigger } from "@/lib/novu/outbox";
+import type { PendingOverageNotification } from "@/lib/payments/billing/overage-settlement";
+import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
 import type { NullableWeeklyRowLocalColumns } from "@/utils/schedule/weekly-projection";
 
 /**
@@ -238,7 +240,9 @@ export interface AllocationResult {
    * it never reaches a route response.
    */
   stagedNotices?: StagedTrigger[];
-  appointments?: any[]; // Appointment records created
+  /** A subscription allocation's member-due overage notice; `allocate` sends it after commit. */
+  overageNotice?: PendingOverageNotification | null;
+  appointments?: AppointmentWithSlots[]; // Appointment records created
   error?: string;
   errorCode?: AllocationErrorCode;
   httpStatus?: number;

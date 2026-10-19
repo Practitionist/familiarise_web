@@ -21,6 +21,12 @@ jest.mock("../../lib/api/organizations/program-helpers", () => ({
     mockRecordBookingUtilization(...a),
   reverseBookingUtilization: jest.fn(),
 }));
+const mockReportSentryError = jest.fn();
+jest.mock("../../lib/observability/report", () => ({
+  __esModule: true,
+  ...jest.requireActual("../../lib/observability/report"),
+  reportSentryError: (...a: unknown[]) => mockReportSentryError(...a),
+}));
 jest.mock("../../lib/payments/operations/cancellation-policy-store", () => ({
   __esModule: true,
   ensurePlatformCancellationPolicy: jest.fn(async () => undefined),
@@ -33,6 +39,7 @@ import { db, resetDouble } from "../booking/repro/checkout-harness/setup";
 import { SlotTakenError } from "../../lib/booking/booking-rule-error";
 import { buildOccupiedAppointmentFilter } from "../../utils/scheduling-engine/occupancyPolicy";
 import type { Tx } from "../../lib/prisma";
+import { classifyError } from "../../lib/errors/classification/payment-error-classification";
 
 const HOUR = 3600_000;
 const START = new Date(Math.ceil((Date.now() + 7 * 24 * HOUR) / HOUR) * HOUR);
@@ -320,5 +327,66 @@ describe("checkout names the appointments it meters", () => {
       engagementsConsumed: 2,
       appointmentIds: ["s-1", "s-2"],
     });
+  });
+});
+
+describe("modelled refusals answer as refusals", () => {
+  it.each([
+    ["CONSULTATION", "consultationPlan.findUnique"],
+    ["SUBSCRIPTION", "subscriptionPlan.findUnique"],
+  ] as const)(
+    "an unverified expert's %s is a typed 409, not a 500",
+    async (appointmentType, planLookup) => {
+      resetDouble({
+        "user.findUnique": () => buyerRow(),
+        [planLookup]: () => ({
+          ...publishedPlan,
+          consultantProfile: { ...profile, verificationStatus: "PENDING" },
+        }),
+      });
+      const error = await refusal(
+        buildCheckoutInput({
+          appointmentType,
+          startsAt: at(0).toISOString(),
+          endsAt: at(1).toISOString(),
+        }),
+      );
+      expect(error).toMatchObject({
+        httpStatus: 409,
+        code: "EXPERT_NOT_VERIFIED",
+      });
+      expect(classifyError(error)).toMatchObject({
+        httpStatus: 409,
+        isBusinessError: true,
+      });
+      expect(createPaymentIntent).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a slot another buyer holds is reported as expected, never as a fault", async () => {
+    mockReportSentryError.mockClear();
+    resetDouble({
+      "user.findUnique": () => buyerRow(),
+      "consultationPlan.findUnique": () => publishedPlan,
+      "appointmentOccurrence.findFirst": () => ({
+        id: "held",
+        isTentative: true,
+      }),
+    });
+    const error = await refusal(
+      buildCheckoutInput({
+        appointmentType: "CONSULTATION",
+        startsAt: at(0).toISOString(),
+        endsAt: at(1).toISOString(),
+      }),
+    );
+    expect(error).toBeInstanceOf(SlotTakenError);
+    const reports = mockReportSentryError.mock.calls.filter(
+      ([reported]) => reported === error,
+    );
+    expect(reports.length).toBeGreaterThan(0);
+    for (const [, context] of reports) {
+      expect(context).toMatchObject({ expected: true });
+    }
   });
 });

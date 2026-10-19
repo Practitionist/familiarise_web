@@ -1,231 +1,33 @@
-# Race Condition Fix - Testing Guide
+# Race and chaos harness
 
-## Overview
+Scenario scripts under `scenarios/`, each a standalone `tsx` process that exits 0 (pass or skip) or 1 (fail). `master-runner.ts` runs them by category.
 
-This directory contains tests to verify that the race condition fix for concurrent checkout prevents duplicate bookings.
+| Category                              | Kind                                                     | Needs                                                                             |
+| ------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| 01 to 06, 10, 11                      | In-process simulation (in-memory registry, lock helpers) | Nothing; set `USE_MOCK_REDIS=true` to keep real Upstash keys untouched            |
+| 07 real-api-booking, 09 webhook-storm | Drives the real app over HTTP                            | Seeded DB, a reachable server, `CHAOS_BASE_URL` (default `http://localhost:3000`) |
 
-## What Was Fixed
-
-### The Problem (Before Fix)
-
-1. User A clicks checkout → Validates slot (available ✓) → Creates payment with `appointmentId: null`
-2. User B clicks checkout → Validates slot (available ✓) → Creates payment with `appointmentId: null`
-3. Both payments created → Slot permanently blocked with duplicate pending payments
-
-**Root Cause**: Validation checked `slotOfAppointment` table, but payments were invisible until webhook created appointments later.
-
-### The Solution (After Fix)
-
-1. User A acquires distributed lock → Re-validates → **Creates tentative appointment** → Creates payment linked to appointment
-2. User B acquires distributed lock (waits) → Re-validates → **Sees tentative appointment** → Validation fails ✗
-3. Only ONE payment + tentative appointment created
-4. Webhook confirms appointment by setting `isTentative: false`
-
-## Key Changes
-
-### 1. Modified `handleCheckout()` (`/lib/payments/checkout/orchestrate.ts`)
-
-- Now creates tentative appointments INSIDE the distributed lock
-- Payment is linked to appointment immediately (not null)
-- Validation can see tentative bookings
-
-### 2. Updated `handlePaymentSuccess()` (`/lib/payments/webhooks/handlers.ts`)
-
-- **NEW FLOW**: If `appointmentId` exists → confirm it (set `isTentative: false`)
-- **LEGACY FLOW**: If `appointmentId` is null → create appointment from metadata
-- Backwards compatible with older payments
-
-### 3. No Changes to Handlers
-
-- `handleConsultationCheckout()`, `handleSubscriptionCheckout()`, etc. already support `isTentative` flag
-- They use `skipPayment` parameter which maps to `!isTentative`
-
-## Running Tests
-
-### Prerequisites
-
-1. Update test configuration with real database IDs:
-
-   ```typescript
-   const TEST_CONFIG = {
-     PLAN_ID: "clx123...", // Consultation plan ID
-     CONSULTANT_PROFILE_ID: "clx456...", // Consultant profile ID
-     USER_A_ID: "user_a_id", // First test user
-     USER_B_ID: "user_b_id", // Second test user
-     SLOT_START: "...", // Future slot start time
-     SLOT_END: "...", // Future slot end time
-   };
-   ```
-
-2. Ensure Redis is running (required for distributed locking):
-   ```bash
-   # Check if Redis is accessible
-   curl -X GET "https://your-upstash-redis-url.upstash.io"
-   ```
-
-### Run the Test
+Runbook: `docs/enterprise/50-operations/06-chaos-test-runbook.md`.
 
 ```bash
-# Run the concurrent checkout test
-npx tsx tests/race-conditions/test-checkout-race-condition-fix.ts
+USE_MOCK_REDIS=true npx tsx tests/typescript/race-conditions/master-runner.ts sequential --category=01-concurrent-access
+CHAOS_BASE_URL=https://<deploy>.netlify.app npx tsx tests/typescript/race-conditions/scenarios/07-real-api-booking/test-last-seat-storm.ts
 ```
 
-### Expected Output
+## Invariants the scenarios assert
 
-```
-🧪 Starting Concurrent Checkout Race Condition Test
+- A guarded mutation may legally have more than one winner when its serial order is legal (approve then reject is `{200,200}`). Assert the final state, the recorded `BookingStatusHistory` chain, and the absence of doubled side effects, not a single 2xx.
+- Webhook rows are stored as `<event>:<entityId>:<bodyHash>`; look them up by the `<event>:<entityId>:` prefix.
+- Fixtures the harness needs but the seed lacks (the reschedule-storm consultation) are created and deleted by the scenario.
 
-🧹 Cleaning up test data...
+## Teardown rules (shared DB)
 
-🚀 Simulating concurrent checkout by User A and User B...
-Slot: 2025-12-01T10:00:00.000Z to 2025-12-01T11:00:00.000Z
+`utilities/teardown.ts` holds the shared helpers.
 
-📊 Checkout Results:
-✅ User A: SUCCESS
-   Payment Intent: pi_mock_abc123
-❌ User B: FAILED
-   Error: Time slot is already booked
+- Release `PENDING` checkout holds with `releasePendingHolds` (`DELETE /api/checkout/pending/:id`, then a CAS to `EXPIRED`). Never delete `PaymentLeg` rows under a live payment: `payment_legs_sum_to_amount` rejects it, and the leftover `PENDING` payment is later replayed as a 200.
+- A `SUCCEEDED` payment with no appointment is retired with `retireOrphanSucceededPayments`, which prefixes its `description` with `REQUIRES_MANUAL_RECOVERY: race harness fixture` so the orphan sweeps skip it.
+- Back-office scenarios log in as `CHAOS_ADMIN_EMAIL` (default `olivia.brown@protonmail.com`); a deployed target answers 428 `TWO_FACTOR_REQUIRED` unless that account has an enrolled TOTP session in the cookie cache.
 
-Summary: 1 succeeded, 1 failed
+## Deploy previews and `isMockPayment`
 
-🔍 Verifying Database State:
-📋 Appointments found: 1
-   [1] ID: apt_123
-       Type: CONSULTATION
-       Slots: 1
-         - 2025-12-01T10:00:00.000Z to 2025-12-01T11:00:00.000Z
-           Tentative: false
-
-💳 Payments found: 1
-   [1] Intent: pi_mock_abc123
-       User: user_a_id
-       Status: SUCCEEDED
-       Appointment: apt_123
-
-✅ Test Assertions:
-1. ✅ PASS: Exactly ONE checkout should succeed (actual: 1)
-2. ✅ PASS: Exactly ONE checkout should fail (actual: 1)
-3. ✅ PASS: Exactly ONE appointment should exist (actual: 1)
-4. ✅ PASS: Appointment slots should be confirmed (isTentative=false)
-5. ✅ PASS: Exactly ONE payment should exist (actual: 1)
-6. ✅ PASS: Payment status should be SUCCEEDED
-
-🎉 ALL TESTS PASSED - Race condition fix is working correctly!
-```
-
-## Manual Testing
-
-For manual testing with real users:
-
-1. Open two browser windows (incognito mode for different users)
-2. Navigate to the same consultation slot
-3. Click "Book Now" simultaneously in both windows
-4. Expected result:
-   - One user: "Payment processing..."
-   - Other user: "Time slot is already booked" or "Another user is currently booking this slot"
-
-## Monitoring
-
-Check logs for these events:
-
-```json
-// Lock acquisition
-{"event": "lock_acquired", "key": "slot-booking:consultant_id:slot_time", "attempts": 1}
-
-// Appointment creation
-{"event": "checkout_appointment_created", "appointmentType": "CONSULTATION", "appointmentId": "apt_123", "isMockPayment": false}
-
-// Webhook confirmation
-{"event": "webhook_confirming_existing_appointment", "appointmentId": "apt_123"}
-```
-
-## Troubleshooting
-
-### Test fails with "Lock acquisition timeout"
-
-- **Cause**: Redis is down or unreachable
-- **Fix**: Check Redis connection in `/lib/redis.ts`
-
-### Both users succeed (race condition not fixed)
-
-- **Cause**: Distributed locking not working or appointments not being created
-- **Fix**: Check logs for lock acquisition failures
-
-### Second user gets different error
-
-- **Cause**: Validation error message may vary
-- **Expected errors**:
-  - "Time slot is already booked"
-  - "Another user is currently booking this slot"
-  - "Failed to acquire lock after N attempts"
-
-## Database Cleanup
-
-If tests fail and leave orphaned data:
-
-```sql
--- Find orphaned tentative appointments
-SELECT * FROM "AppointmentOccurrence" WHERE "isTentative" = true;
-
--- Find pending payments older than 30 minutes
-SELECT * FROM "Payment"
-WHERE "paymentStatus" = 'PENDING'
-  AND "createdAt" < NOW() - INTERVAL '30 minutes';
-
--- Run cleanup job manually
--- (Your cron job should handle this automatically)
-```
-
-## Architecture Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                      CONCURRENT CHECKOUT FLOW                        │
-└─────────────────────────────────────────────────────────────────────┘
-
-User A                                        User B
-  │                                             │
-  ├─ calculateAmountAndValidate()              ├─ calculateAmountAndValidate()
-  │  └─ Validates slot (available ✓)           │  └─ Validates slot (available ✓)
-  │                                             │
-  ├─ Acquire Lock (SUCCESS) ──┐                ├─ Acquire Lock (WAITING...)
-  │                            │                │
-  ├─ revalidateInsideLock()    │                │
-  │  └─ Re-validates (available ✓)             │
-  │                            │                │
-  ├─ CREATE TENTATIVE APPOINTMENT ─────────────┼─ Tentative slot visible
-  │  └─ isTentative: true      │                │
-  │                            │                │
-  ├─ CREATE PAYMENT            │                │
-  │  └─ appointmentId: apt_123 │                │
-  │                            │                │
-  ├─ Release Lock ─────────────┘                ├─ Acquire Lock (SUCCESS)
-  │                                             │
-  │                                             ├─ revalidateInsideLock()
-  │                                             │  └─ Sees tentative slot ✗
-  │                                             │
-  │                                             ├─ VALIDATION FAILS
-  │                                             │  └─ Error: "Slot already booked"
-  │                                             │
-  ├─ Webhook: payment.succeeded                ├─ Release Lock
-  │  └─ Confirm appointment                    │
-  │     └─ isTentative: false                  └─ User sees error
-  │
-  └─ Appointment confirmed
-```
-
-## Success Criteria
-
-✅ Only ONE payment record created for concurrent attempts
-✅ Only ONE appointment record created
-✅ Second user receives clear error message
-✅ No orphaned payments with `appointmentId: null`
-✅ Webhook confirms existing appointment (doesn't create new one)
-✅ Distributed lock logs show sequential processing
-
-## Related Files
-
-- `/lib/payments/checkout/` - Main checkout logic
-- `/lib/payments/webhooks/handlers.ts` - Webhook confirmation
-- `/utils/appointmentlock.ts` - Distributed locking
-- `/app/api/checkout/route.ts` - API endpoint
+`isMockPayment` cannot be honoured on a deploy preview. `app/api/checkout/route.ts` keeps the flag only when `NODE_ENV === "development"`, and a preview is a production build; `ENABLE_MOCK_PAYMENTS=true` only widens the second gate in `createPaymentIntent` and cannot override the first. So on a preview every booking round creates a Razorpay TEST-key order (unpaid, no money moves) and its winner stays `PENDING`, which teardown releases through the API. To get instant mock confirmation, run the scenario against a local `next dev` server (shared DB, seeded users only).

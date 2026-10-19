@@ -8,6 +8,7 @@ import {
   recordBookingUtilization,
   reverseBookingUtilization,
 } from "@/lib/api/organizations/program-helpers";
+import type { PendingOverageNotification } from "@/lib/payments/billing/overage-settlement";
 
 /**
  * For SUBSCRIPTION: debit `engagementsConsumed` per occurrence created in
@@ -18,13 +19,14 @@ import {
  *
  * Throws `ProgramAssignmentLimitError` if the cap is BLOCK and would
  * be exceeded — the surrounding transaction rolls back the new slots.
+ * Returns the member-due overage notice for the caller to send after commit.
  */
 export async function recordSubscriptionAllocationCap(
   tx: Tx,
   subscriptionId: string,
   consulteeUserId: string,
   newOccurrenceIds: string[],
-): Promise<void> {
+): Promise<PendingOverageNotification | null> {
   // Find the original signup Payment via the purchase wrapper (#1554).
   const subscription = await tx.subscription.findUnique({
     where: { id: subscriptionId },
@@ -38,6 +40,7 @@ export async function recordSubscriptionAllocationCap(
       },
     },
   });
+  if (!subscription) return null;
 
   // Schema declares Appointment.payment as Payment[] (one Appointment
   // can carry multiple Payments historically — refunds/retries chain
@@ -45,13 +48,13 @@ export async function recordSubscriptionAllocationCap(
   // .find() over a retry chain debits whichever row the DB happened to
   // return first, landing utilization on the wrong ProgramAssignment cycle
   // (#1169 PR 1).
-  const orgPayment = (subscription?.appointment?.payment ?? [])
+  const orgPayment = (subscription.appointment?.payment ?? [])
     .filter((p) => !!p.organizationId)
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0];
 
   if (!orgPayment || !orgPayment.organizationId) {
     // PERSONAL-funded subscription — no org cap to debit.
-    return;
+    return null;
   }
 
   const membership = await tx.membership.findUnique({
@@ -62,7 +65,7 @@ export async function recordSubscriptionAllocationCap(
       },
     },
   });
-  if (!membership || membership.status !== "ACTIVE") return;
+  if (membership?.status !== "ACTIVE") return null;
 
   // Re-resolve the active ProgramAssignment at allocation time.
   // Mirrors the resolver in lib/payments/checkout/org-funding.ts so the
@@ -106,63 +109,29 @@ export async function recordSubscriptionAllocationCap(
       },
     },
   });
-  if (!assignment) return;
+  if (!assignment) return null;
 
-  // priceAtBookingPaise: full upfront sub price on the very first
-  // allocation (so the BookingUtilization row carries it for
-  // analytics); 0 on subsequent allocations (no new money). The
-  // helper's upsert preserves the first-create priceAtBookingPaise.
   const existingUtil = await tx.bookingUtilization.findUnique({
     where: { paymentId: orgPayment.id },
     select: { id: true, appointmentIds: true },
   });
-  const priceAtBookingPaise = existingUtil ? 0 : orgPayment.amount;
 
-  // Re-allocation deletes counted occurrences and recreates them with
-  // fresh ids, so an id-set diff alone re-debits every replaced session.
-  // Substitute stale tracked ids (no longer live on this subscription)
-  // with incoming ids 1:1 WITHOUT debiting; only ids beyond the
-  // substitution budget are genuinely additional sessions.
-  let idsToDebit = newOccurrenceIds;
-  if (existingUtil) {
-    const liveIds = new Set(
-      (subscription!.appointment?.occurrences ?? []).map((o) => o.id),
-    );
-    const trackedLive = existingUtil.appointmentIds.filter((id) =>
-      liveIds.has(id),
-    );
-    const staleCount = existingUtil.appointmentIds.length - trackedLive.length;
-    if (staleCount > 0) {
-      const alreadyTracked = new Set(trackedLive);
-      const incomingNew = newOccurrenceIds.filter(
-        (id) => !alreadyTracked.has(id),
-      );
-      const substituted = incomingNew.slice(0, staleCount);
-      idsToDebit = incomingNew.slice(staleCount);
-      await tx.bookingUtilization.update({
-        where: { id: existingUtil.id },
-        data: { appointmentIds: [...trackedLive, ...substituted] },
-      });
+  const idsToDebit = await substituteReplacedSessions(tx, {
+    existingUtil,
+    liveOccurrenceIds: (subscription.appointment?.occurrences ?? []).map(
+      (o) => o.id,
+    ),
+    newOccurrenceIds,
+    paymentId: orgPayment.id,
+  });
+  if (idsToDebit.length === 0) return null;
 
-      // The substitution above only cancels out the sessions that were
-      // REPLACED. Sessions removed and not re-created in this allocation
-      // (a partial reschedule that drops 3 and re-places 1, an in-progress
-      // reallocation that shrinks the remaining plan) were left debited
-      // forever: the org kept paying for engagements the consultee will
-      // never take, and the seat never came back. Give the difference back
-      // through the ledger-derived reversal, which is idempotent and clamps
-      // itself to what is still reversible.
-      const netRemoved = staleCount - substituted.length;
-      if (netRemoved > 0) {
-        await reverseBookingUtilization(tx, {
-          paymentId: orgPayment.id,
-          engagementsToReverse: netRemoved,
-          reason: "Subscription sessions removed during re-allocation",
-        });
-      }
-
-      if (idsToDebit.length === 0) return;
-    }
+  const sessionPrice = subscriptionSessionPrice(subscription, orgPayment);
+  // A CREDIT_POOL draws its credit per session as sessions are booked; a
+  // LICENSED_SEAT row carries the plan price once, on the first allocation.
+  let priceAtBookingPaise = idsToDebit.length * sessionPrice.unitPaise;
+  if (assignment.program?.type !== "CREDIT_POOL") {
+    priceAtBookingPaise = existingUtil ? 0 : orgPayment.amount;
   }
 
   // Not captured here — this only runs from createAppointments, itself only
@@ -183,34 +152,94 @@ export async function recordSubscriptionAllocationCap(
     appointmentIds: idsToDebit,
   });
 
-  // #1895 — Trigger overage billing when a lazily allocated subscription
-  // session exceeds the program cap.
-  if (utilResult?.wasOverage) {
-    await settleSubscriptionAllocationOverage({
-      tx,
-      subscriptionId,
-      subscription,
-      orgPayment,
-      assignment,
-      existingUtil,
-      idsToDebit,
-      utilResult,
-      consulteeUserId,
-    });
-  }
+  if (!utilResult?.wasOverage) return null;
+  return settleSubscriptionAllocationOverage({
+    tx,
+    subscriptionId,
+    sessionPrice,
+    orgPayment,
+    assignment,
+    existingUtil,
+    idsToDebit,
+    utilResult,
+    consulteeUserId,
+  });
 }
 
-export async function settleSubscriptionAllocationOverage(params: {
+/**
+ * Re-allocation deletes counted occurrences and recreates them with fresh ids.
+ * Stale tracked ids (no longer live) are substituted 1:1 by incoming ids
+ * without a debit, and sessions removed for good give their engagement back
+ * through the ledger-derived reversal. Returns the ids still to debit.
+ */
+async function substituteReplacedSessions(
+  tx: Tx,
+  params: {
+    existingUtil: { id: string; appointmentIds: string[] } | null;
+    liveOccurrenceIds: string[];
+    newOccurrenceIds: string[];
+    paymentId: string;
+  },
+): Promise<string[]> {
+  const tracked = params.existingUtil?.appointmentIds ?? [];
+  const alreadyTracked = new Set(tracked);
+  const incoming = params.newOccurrenceIds.filter(
+    (id) => !alreadyTracked.has(id),
+  );
+  const liveIds = new Set(params.liveOccurrenceIds);
+  const trackedLive = tracked.filter((id) => liveIds.has(id));
+  const staleCount = tracked.length - trackedLive.length;
+  if (!params.existingUtil || staleCount === 0) return incoming;
+
+  const substituted = incoming.slice(0, staleCount);
+  await tx.bookingUtilization.update({
+    where: { id: params.existingUtil.id },
+    data: { appointmentIds: [...trackedLive, ...substituted] },
+  });
+  const netRemoved = staleCount - substituted.length;
+  if (netRemoved > 0) {
+    await reverseBookingUtilization(tx, {
+      paymentId: params.paymentId,
+      engagementsToReverse: netRemoved,
+      reason: "Subscription sessions removed during re-allocation",
+    });
+  }
+  return incoming.slice(staleCount);
+}
+
+interface SubscriptionSessionPrice {
+  unitPaise: number;
+  totalPlanSessions: number;
+  basePaymentAmount: number;
+}
+
+/** One session's share of the plan payment, falling back to the plan's list price. */
+function subscriptionSessionPrice(
+  subscription: {
+    sessionsTotal: number | null;
+    subscriptionPlan: { totalSessions: number; price: number } | null;
+  },
+  orgPayment: { amount: number; originalAmount: number | null },
+): SubscriptionSessionPrice {
+  const totalPlanSessions = Math.max(
+    1,
+    subscription.sessionsTotal ??
+      subscription.subscriptionPlan?.totalSessions ??
+      1,
+  );
+  const basePaymentAmount = orgPayment.originalAmount ?? orgPayment.amount;
+  let unitPaise = Math.round(basePaymentAmount / totalPlanSessions);
+  const planPricePaise = subscription.subscriptionPlan?.price ?? 0;
+  if (unitPaise <= 0 && planPricePaise > 0) {
+    unitPaise = Math.round(planPricePaise / totalPlanSessions);
+  }
+  return { unitPaise, totalPlanSessions, basePaymentAmount };
+}
+
+async function settleSubscriptionAllocationOverage(params: {
   tx: Tx;
   subscriptionId: string;
-  subscription: {
-    subscriptionPlanId?: string;
-    sessionsTotal?: number | null;
-    subscriptionPlan?: {
-      totalSessions?: number | null;
-      price?: number | null;
-    } | null;
-  } | null;
+  sessionPrice: SubscriptionSessionPrice;
   orgPayment: {
     id: string;
     amount: number;
@@ -232,11 +261,11 @@ export async function settleSubscriptionAllocationOverage(params: {
   idsToDebit: string[];
   utilResult: Awaited<ReturnType<typeof recordBookingUtilization>>;
   consulteeUserId: string;
-}): Promise<void> {
+}): Promise<PendingOverageNotification | null> {
   const {
     tx,
     subscriptionId,
-    subscription,
+    sessionPrice,
     orgPayment,
     assignment,
     existingUtil,
@@ -244,32 +273,13 @@ export async function settleSubscriptionAllocationOverage(params: {
     utilResult,
     consulteeUserId,
   } = params;
-  if (!orgPayment.organizationId) return;
+  if (!orgPayment.organizationId) return null;
 
-  const totalPlanSessions = Math.max(
-    1,
-    subscription?.sessionsTotal ??
-      subscription?.subscriptionPlan?.totalSessions ??
-      1,
-  );
-  const basePaymentAmount = orgPayment.originalAmount ?? orgPayment.amount;
-  let unitSessionPricePaise = Math.round(basePaymentAmount / totalPlanSessions);
-  if (unitSessionPricePaise <= 0) {
-    const planPricePaise =
-      subscription?.subscriptionPlan?.price ??
-      (subscription?.subscriptionPlanId
-        ? (
-            await tx.subscriptionPlan?.findUnique?.({
-              where: { id: subscription.subscriptionPlanId },
-              select: { price: true },
-            })
-          )?.price
-        : undefined);
-    if (typeof planPricePaise === "number" && planPricePaise > 0) {
-      unitSessionPricePaise = Math.round(planPricePaise / totalPlanSessions);
-    }
-  }
-
+  const {
+    unitPaise: unitSessionPricePaise,
+    totalPlanSessions,
+    basePaymentAmount,
+  } = sessionPrice;
   const programPriceCapPaise =
     assignment.program?.licensedSeatConfig?.priceCapPerEngagementPaise;
   if (unitSessionPricePaise <= 0 && (programPriceCapPaise ?? 0) <= 0) {
@@ -290,28 +300,24 @@ export async function settleSubscriptionAllocationOverage(params: {
         totalPlanSessions,
       },
     });
-    return;
+    return null;
   }
 
   const overageBookingPricePaise = idsToDebit.length * unitSessionPricePaise;
-  const { recordOverageAtCheckout, notifyOverageDueAfterCommit } =
+  const { recordOverageAtCheckout } =
     await import("@/lib/payments/billing/overage-settlement");
   const resolvedProgramType =
     assignment.program?.type ?? utilResult.programType ?? "LICENSED_SEAT";
-  const lazyCreditDelta = existingUtil ? overageBookingPricePaise : 0;
-  const effectiveConsumedPaiseAfter =
-    resolvedProgramType === "CREDIT_POOL"
-      ? utilResult.consumedPaiseAfter + lazyCreditDelta
-      : utilResult.consumedPaiseAfter;
-  const pendingNotify = await recordOverageAtCheckout({
+  return recordOverageAtCheckout({
     tx,
     programAssignmentId: assignment.id,
     utilization: {
       programType: resolvedProgramType,
       engagementsConsumedDelta: utilResult.engagementsConsumedDelta,
       engagementsUsedAfter: utilResult.engagementsUsedAfter,
-      consumedPaiseAfter: effectiveConsumedPaiseAfter,
+      consumedPaiseAfter: utilResult.consumedPaiseAfter,
       creditBudgetPaise: utilResult.creditBudgetPaise,
+      usageLedgerEntryId: utilResult.usageLedgerEntryId,
     },
     bookingPricePaise: overageBookingPricePaise,
     currency: orgPayment.currency ?? "INR",
@@ -321,7 +327,4 @@ export async function settleSubscriptionAllocationOverage(params: {
     paymentGateway: orgPayment.paymentGateway ?? "RAZORPAY",
     isLazyAllocation: existingUtil !== null,
   });
-  if (pendingNotify) {
-    notifyOverageDueAfterCommit(pendingNotify);
-  }
 }

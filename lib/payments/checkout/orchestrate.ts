@@ -43,6 +43,7 @@ import {
   acquireCheckoutLock,
 } from "@/lib/payments/checkout/locks";
 import { asSeatPaymentConflict } from "@/lib/payments/checkout/seats";
+import { SlotTakenError } from "@/lib/booking/booking-rule-error";
 import { calculateAmountAndValidate } from "@/lib/payments/checkout/pricing";
 import { revalidateInsideLock } from "@/lib/payments/checkout/revalidate";
 import {
@@ -708,6 +709,7 @@ export async function handleCheckout(
       );
       const isModelledOutcome =
         isIdempotencyKeyCollision ||
+        dbError instanceof SlotTakenError ||
         dbError instanceof WalletFrozenError ||
         dbError instanceof ProgramAssignmentLimitError ||
         dbErrorCode === "PROGRAM_CAP_EXHAUSTED" ||
@@ -877,7 +879,8 @@ export async function handleCheckout(
         isModeledLockRace ||
         isConsulteeDoubleBook ||
         isBusinessRefusal ||
-        isKeyCollision,
+        isKeyCollision ||
+        error instanceof SlotTakenError,
     });
     // Enhanced error handling with lock-specific errors
     if (isLockContention) {

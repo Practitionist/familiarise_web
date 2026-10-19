@@ -48,6 +48,7 @@ type MockTx = {
   usageLedgerEntry: {
     create: jest.Mock;
     aggregate: jest.Mock;
+    findMany: jest.Mock;
   };
   overageEvent: {
     updateMany: jest.Mock;
@@ -100,6 +101,7 @@ function makeTx(opts: {
       aggregate: jest
         .fn()
         .mockResolvedValue({ _sum: { engagementsConsumed: 0 } }),
+      findMany: jest.fn().mockResolvedValue([]),
     },
     overageEvent: {
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -328,6 +330,26 @@ describe("recordBookingUtilization — engagement counting (issue #710)", () => 
   });
 });
 
+/** The payment's usage ledger: the sale's metering row, then any earlier reversals. */
+function withLedger(
+  tx: MockTx,
+  sale: { engagements: number; pricePaise: number; wasOverage?: boolean },
+  reversed: { engagements: number; pricePaise?: number }[] = [],
+) {
+  tx.usageLedgerEntry.findMany.mockResolvedValue([
+    {
+      engagementsConsumed: sale.engagements,
+      priceAtBookingPaise: sale.pricePaise,
+      wasOverage: sale.wasOverage ?? false,
+    },
+    ...reversed.map((r) => ({
+      engagementsConsumed: -r.engagements,
+      priceAtBookingPaise: -(r.pricePaise ?? 0),
+      wasOverage: false,
+    })),
+  ]);
+}
+
 describe("reverseBookingUtilization — refund cap reversal (full + partial)", () => {
   it("default (no engagementsToReverse) reverses the full count + stamps reversedAt", async () => {
     const tx = makeTx({ cap: 10, behavior: "BLOCK" });
@@ -339,6 +361,7 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
       reversedAt: null,
       programAssignment: { membershipId: "mem-1" },
     });
+    withLedger(tx, { engagements: 8, pricePaise: 200_000 });
     const result = await reverseBookingUtilization(tx as never, {
       paymentId: "pay-class-1",
       reason: "Refund",
@@ -380,6 +403,7 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
       reversedAt: null,
       programAssignment: { membershipId: "mem-1" },
     });
+    withLedger(tx, { engagements: 8, pricePaise: 200_000 });
     const result = await reverseBookingUtilization(tx as never, {
       paymentId: "pay-class-partial",
       engagementsToReverse: 4, // caller computed Math.round(8 * 0.5)
@@ -420,10 +444,9 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
       reversedAt: null,
       programAssignment: { membershipId: "mem-1" },
     });
-    // Simulate 3 already reversed (e.g., a prior partial refund of 37.5%)
-    tx.usageLedgerEntry.aggregate = jest.fn().mockResolvedValue({
-      _sum: { engagementsConsumed: -3 },
-    });
+    withLedger(tx, { engagements: 8, pricePaise: 200_000 }, [
+      { engagements: 3 },
+    ]);
     // Caller wants to reverse 5 more (the remaining 62.5%)
     const result = await reverseBookingUtilization(tx as never, {
       paymentId: "pay-class-2nd-partial",
@@ -451,9 +474,9 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
       reversedAt: null,
       programAssignment: { membershipId: "mem-1" },
     });
-    tx.usageLedgerEntry.aggregate = jest.fn().mockResolvedValue({
-      _sum: { engagementsConsumed: -6 }, // 6 already reversed; 2 remaining
-    });
+    withLedger(tx, { engagements: 8, pricePaise: 200_000 }, [
+      { engagements: 6 },
+    ]);
     const result = await reverseBookingUtilization(tx as never, {
       paymentId: "pay-clamp",
       engagementsToReverse: 10, // caller over-asks; helper clamps
@@ -472,9 +495,9 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
       reversedAt: new Date(),
       programAssignment: { membershipId: "mem-1" },
     });
-    tx.usageLedgerEntry.aggregate = jest.fn().mockResolvedValue({
-      _sum: { engagementsConsumed: -8 }, // fully reversed already
-    });
+    withLedger(tx, { engagements: 8, pricePaise: 200_000 }, [
+      { engagements: 8 },
+    ]);
     const result = await reverseBookingUtilization(tx as never, {
       paymentId: "pay-already-reversed",
     });
@@ -506,6 +529,7 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
       reversedAt: null,
       programAssignment: { membershipId: "mem-1" },
     });
+    withLedger(tx, { engagements: 8, pricePaise: 200_000 });
     const result = await reverseBookingUtilization(tx as never, {
       paymentId: "pay-zero",
       engagementsToReverse: 0,
@@ -518,9 +542,6 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
   // #1372 — every case above meters ENGAGEMENTS. A CREDIT_POOL program meters
   // PAISE, and that arm had no assertions at all, so `consumedPaise` could have
   // reversed the wrong amount (or not at all) without a single test noticing.
-  // `makeTx`'s single `aggregate` mock answers both aggregates; `sumPaise` of an
-  // undefined sum is 0, so the price clamp below is inert and the proportional
-  // amount is what lands.
   it("#1372 CREDIT_POOL: a full reversal decrements consumedPaise by the whole price", async () => {
     const tx = makeTx({ cap: 10, behavior: "BLOCK" });
     tx.bookingUtilization.findUnique = jest.fn().mockResolvedValue({
@@ -534,6 +555,7 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
         program: { type: "CREDIT_POOL" },
       },
     });
+    withLedger(tx, { engagements: 2, pricePaise: 200_000 });
 
     await reverseBookingUtilization(tx as never, {
       paymentId: "pay-credit-pool",
@@ -563,6 +585,7 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
         program: { type: "LICENSED_SEAT" },
       },
     });
+    withLedger(tx, { engagements: 2, pricePaise: 200_000 });
 
     await reverseBookingUtilization(tx as never, {
       paymentId: "pay-licensed-seat",
@@ -595,6 +618,7 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
         program: { type: "CREDIT_POOL" },
       },
     });
+    withLedger(tx, { engagements: 2, pricePaise: 200_000 });
 
     const result = await reverseBookingUtilization(tx as never, {
       paymentId: "pay-refund-ratio",
@@ -633,6 +657,7 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
       reversedAt: null,
       programAssignment: { membershipId: "mem-1" },
     });
+    withLedger(tx, { engagements: 8, pricePaise: 200_000, wasOverage: true });
     // First partial: 4 of 8 — overageCount should NOT decrement
     const partial = await reverseBookingUtilization(tx as never, {
       paymentId: "pay-overage",
@@ -647,9 +672,9 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
       }),
     );
     // Now the second half — overageCount SHOULD decrement
-    tx.usageLedgerEntry.aggregate = jest.fn().mockResolvedValue({
-      _sum: { engagementsConsumed: -4 },
-    });
+    withLedger(tx, { engagements: 8, pricePaise: 200_000, wasOverage: true }, [
+      { engagements: 4, pricePaise: 100_000 },
+    ]);
     const final = await reverseBookingUtilization(tx as never, {
       paymentId: "pay-overage",
       engagementsToReverse: 4,
@@ -682,6 +707,7 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
           program: { type: "CREDIT_POOL" },
         },
       });
+      withLedger(tx, { engagements: 8, pricePaise: 200_000, wasOverage: true });
       return tx;
     }
 
@@ -757,6 +783,7 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
           program: { type: "LICENSED_SEAT" },
         },
       });
+      withLedger(tx, { engagements: 2, pricePaise: 200_000 });
 
       await reverseBookingUtilization(tx as never, { paymentId: "pay-seat" });
 

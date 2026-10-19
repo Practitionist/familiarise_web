@@ -184,6 +184,20 @@ export async function writeCheckoutPayment(
       retiringIntent,
       "seat re-bought after the earlier payment lapsed or failed",
     );
+    // A re-bought seat is a new sale: its fully reversed utilization re-opens on
+    // today's assignment so checkout meters it once more; the id set dedupes replays.
+    if (input.programAssignmentId) {
+      await tx.bookingUtilization.updateMany({
+        where: { paymentId: priorSeatPayment.id, reversedAt: { not: null } },
+        data: {
+          programAssignmentId: input.programAssignmentId,
+          appointmentIds: [],
+          reversedAt: null,
+          reversalReason: null,
+          wasOverage: false,
+        },
+      });
+    }
     payment = {
       id: priorSeatPayment.id,
       amount,

@@ -36,6 +36,8 @@ async function run() {
         name,
         slug,
         billingEmail: `chaos-${process.pid}@example.com`,
+        // A sponsoring domestic org is invoiced, so it needs a GST state.
+        gstStateCode: "29",
       }),
     }),
   );
@@ -48,17 +50,20 @@ async function run() {
   });
   check("exactly one Organization row exists", rows.length === 1, rows);
 
-  // Cleanup the chaos org for repeat runs. Org children (audit, members,
-  // memberships) cascade on delete; the BillingAccount does NOT — the org
-  // holds the FK, so deleting the org orphans it. Delete it explicitly.
+  // Cleanup the chaos org for repeat runs. Members and memberships cascade,
+  // but OrgAuditLog restricts the org delete and the BillingAccount is held by
+  // the org's FK, so both are deleted explicitly.
   for (const row of rows) {
     try {
-      await prisma.organization.delete({ where: { id: row.id } });
-      if (row.billingAccountId) {
-        await prisma.billingAccount.delete({
-          where: { id: row.billingAccountId },
-        });
-      }
+      await prisma.$transaction(async (tx) => {
+        await tx.orgAuditLog.deleteMany({ where: { organizationId: row.id } });
+        await tx.organization.delete({ where: { id: row.id } });
+        if (row.billingAccountId) {
+          await tx.billingAccount.delete({
+            where: { id: row.billingAccountId },
+          });
+        }
+      });
     } catch (e) {
       console.warn(
         `⚠️  could not fully delete chaos org ${row.id}; manual cleanup needed`,

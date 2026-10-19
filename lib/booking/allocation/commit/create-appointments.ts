@@ -19,6 +19,8 @@ import {
   getAppointmentType,
 } from "@/lib/booking/allocation/identity";
 import { recordSubscriptionAllocationCap } from "@/lib/booking/allocation/commit/subscription-cap";
+import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
+import type { PendingOverageNotification } from "@/lib/payments/billing/overage-settlement";
 
 /**
  * Create the occurrence rows for allocated slots (#1554).
@@ -33,7 +35,8 @@ import { recordSubscriptionAllocationCap } from "@/lib/booking/allocation/commit
  * The wrapper is REUSED whenever it exists (the payment-bearing row for a
  * subscription, the class row the planner minted, a preserved 1:1 row); a
  * fresh wrapper is created only when the event has none. Returns the one
- * wrapper in a single-element array, which is what every caller reads.
+ * wrapper in a single-element array, which is what every caller reads, and a
+ * subscription's member-due overage notice to send after commit.
  *
  * DEFENSIVE VALIDATION:
  * This is a defensive check - slot count should already be validated
@@ -68,7 +71,10 @@ export async function createAppointments(
   // #1780 decision 9 — a reschedule's replacements are moves; a re-plan's
   // row is a move only when its times differ from the freed row's.
   moves?: { isReschedule: boolean; freedWindows: FreedWindow[] },
-): Promise<any[]> {
+): Promise<{
+  appointments: AppointmentWithSlots[];
+  overageNotice: PendingOverageNotification | null;
+}> {
   const hostMoves = moves ?? { isReschedule: false, freedWindows: [] };
   const slotsPerCall = ScheduleCalculationService.getSlotsPerCall(
     config?.sessionDurationInHours || config?.durationInHours || 1,
@@ -139,9 +145,7 @@ export async function createAppointments(
   // unique guard); convert it to a typed 409 here at the source so
   // classifyError can stay typed-only rather than sniffing Postgres error
   // strings (#837).
-  // #873 — kept as any[]: tx.appointment.create's include-payload type does
-  // not narrow to AppointmentWithSlots through Promise.all+map here (tsc rejects).
-  let appointments: any[];
+  let appointments: AppointmentWithSlots[];
   // The rows THIS batch wrote, by ordinal: a reused wrapper's include also
   // returns the occurrences it already had (#1554).
   let newOccurrenceIds: string[] = [];
@@ -270,18 +274,17 @@ export async function createAppointments(
   // signup and we want today's cap, not signup-time's cap. If the
   // booking wasn't org-sponsored (no organizationId on the original
   // Payment) we skip silently.
-  if (
+  const overageNotice =
     eventType === "subscription" &&
     consulteeUserId &&
     newOccurrenceIds.length > 0
-  ) {
-    await recordSubscriptionAllocationCap(
-      tx,
-      eventId,
-      consulteeUserId,
-      newOccurrenceIds,
-    );
-  }
+      ? await recordSubscriptionAllocationCap(
+          tx,
+          eventId,
+          consulteeUserId,
+          newOccurrenceIds,
+        )
+      : null;
 
-  return appointments;
+  return { appointments, overageNotice };
 }

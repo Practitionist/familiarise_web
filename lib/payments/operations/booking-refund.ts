@@ -88,6 +88,7 @@ import {
   type PendingConsultantClawback,
 } from "@/lib/payments/payouts/paid-consultant-clawback";
 import {
+  type ApplyRefundCascadeResult,
   findDedupedRefund,
   isDedupeKeyConflict,
   RefundValidationError,
@@ -1042,7 +1043,7 @@ async function refundInternalFundedPayment(input: {
 
   // Staged inside the tx, attempted after it; a retried attempt re-stages.
   let notice: StagedRefundNotice | null = null;
-  let overageDue: { overagePaymentId: string } | null = null;
+  let overageDue: ApplyRefundCascadeResult["memberOverageRefundDue"] = null;
   const result = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {

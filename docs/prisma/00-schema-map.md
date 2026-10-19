@@ -1436,6 +1436,7 @@ erDiagram
         string id
         string programAssignmentId
         string bookingUtilizationId
+        string batchKey
         OverageBehavior overageBehavior
         int basePaise
         int surchargePaise
@@ -1468,7 +1469,7 @@ erDiagram
     ProgramAssignment ||--o| ProgramAssignment : "rolls to (cycle rollover)"
     ProgramAssignment ||--o{ BookingUtilization : "usage tracking"
     ProgramAssignment ||--o{ OverageEvent : "over-cap charges"
-    BookingUtilization ||--o| OverageEvent : "overage (1:1)"
+    BookingUtilization ||--o{ OverageEvent : "one per over-cap batch"
     OverageEvent ||--o| InvoiceLineItem : "CHARGE_ORG line"
     OverageEvent ||--o| Payment : "CHARGE_MEMBER side-payment"
     Membership ||--o{ ProgramAssignment : "assigned to program"

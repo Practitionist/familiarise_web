@@ -13,7 +13,14 @@
  * resumed order against the same Payment charged the org's cap twice.
  */
 
+jest.mock("../../lib/payments/operations/prior-intent-tombstone", () => ({
+  __esModule: true,
+  tombstonePriorIntent: jest.fn(async () => undefined),
+}));
+
 import { recordBookingUtilization } from "@/lib/api/organizations/program-helpers";
+import { writeCheckoutPayment } from "@/lib/payments/checkout/commit/payment-row";
+import type { CheckoutCommitInput } from "@/lib/payments/checkout/commit/types";
 import type { Tx } from "@/lib/prisma";
 
 /**
@@ -27,6 +34,7 @@ function makeFakeTx() {
     util: null as null | {
       appointmentIds: string[];
       engagementsConsumed: number;
+      reversedAt: Date | null;
     },
     ledger: [] as { engagementsConsumed: number }[],
   };
@@ -56,6 +64,20 @@ function makeFakeTx() {
     },
     bookingUtilization: {
       findUnique: async () => state.util,
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: { reversedAt?: { not: null } };
+        data: { appointmentIds?: string[]; reversedAt?: null };
+      }) => {
+        if (!state.util) return { count: 0 };
+        if (where.reversedAt && state.util.reversedAt === null) {
+          return { count: 0 };
+        }
+        Object.assign(state.util, data);
+        return { count: 1 };
+      },
       upsert: async ({
         create,
         update,
@@ -70,6 +92,7 @@ function makeFakeTx() {
           state.util = {
             engagementsConsumed: create.engagementsConsumed,
             appointmentIds: [...create.appointmentIds],
+            reversedAt: null,
           };
         } else {
           state.util.engagementsConsumed +=
@@ -80,6 +103,20 @@ function makeFakeTx() {
         }
         return state.util;
       },
+    },
+    payment: {
+      findFirst: async () => ({
+        id: "pay-1",
+        userId: "buyer-1",
+        paymentIntent: "order_OLD",
+        paymentStatus: "EXPIRED",
+        amount: 250_000,
+        refunds: [],
+      }),
+      updateMany: async () => ({ count: 1 }),
+    },
+    appointmentParticipant: {
+      updateMany: async () => ({ count: 1 }),
     },
     usageLedgerEntry: {
       create: async ({ data }: { data: { engagementsConsumed: number } }) => {
@@ -141,5 +178,59 @@ describe("PR-1e (G3) — the set-diff guard needs the caller to name the appoint
 
     expect(state.engagementsUsed).toBe(2);
     expect(state.ledger).toHaveLength(2);
+  });
+});
+
+/** The checkout input for re-buying a PERSONAL-rail webinar seat under a programme. */
+const REBUY = {
+  validatedData: {
+    appointmentType: "WEBINAR",
+    planId: "plan-1",
+    eventId: "webinar-1",
+    paymentGateway: "RAZORPAY",
+  },
+  userId: "buyer-1",
+  isMockPayment: false,
+  mintedOrder: { id: "order_NEW", client_secret: null },
+  holdExpiresAt: new Date("2030-01-01T00:00:00Z"),
+  organizationId: "org-1",
+  billingAccountId: null,
+  programAssignmentId: "assign-1",
+  isOrgWalletPayment: false,
+  isOrgInvoicedPayment: false,
+  isOrgLicensedPayment: false,
+  isOrgSponsoredPayment: false,
+  isZeroAmountPayment: false,
+  displayCurrencyAtCheckout: "INR",
+  exchangeRateAtCheckout: null,
+  priced: { amount: 250_000, currency: "INR" },
+} as unknown as CheckoutCommitInput;
+
+describe("a re-minted seat whose utilization was reversed", () => {
+  it("meters the re-bought seat once more, and a replay of it stays a no-op", async () => {
+    const { state, tx } = makeFakeTx();
+    await recordBookingUtilization(tx, { ...CALL, appointmentIds: ["apt-1"] });
+    // The lapsed payment's expiry gave the engagement back.
+    state.engagementsUsed = 0;
+    state.util!.reversedAt = new Date();
+    state.ledger.push({ engagementsConsumed: -1 });
+
+    await writeCheckoutPayment(tx, REBUY, {
+      createdAppointment: { id: "apt-1" },
+      bookedPlan: null,
+      skipPayment: false,
+    });
+    await recordBookingUtilization(tx, { ...CALL, appointmentIds: ["apt-1"] });
+    await recordBookingUtilization(tx, { ...CALL, appointmentIds: ["apt-1"] });
+
+    expect(state.engagementsUsed).toBe(1);
+    expect(state.ledger.map((row) => row.engagementsConsumed)).toEqual([
+      1, -1, 1,
+    ]);
+    expect(state.util).toMatchObject({
+      engagementsConsumed: 2,
+      appointmentIds: ["apt-1"],
+      reversedAt: null,
+    });
   });
 });

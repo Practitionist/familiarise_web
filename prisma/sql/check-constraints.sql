@@ -1240,3 +1240,12 @@ ALTER TABLE "PlatformIncident" DROP CONSTRAINT IF EXISTS "platform_incident_time
 -- SPLIT
 ALTER TABLE "PlatformIncident" ADD CONSTRAINT "platform_incident_time_order"
   CHECK ("endsAt" > "startsAt");
+-- SPLIT
+-- One OverageEvent per metered batch: the batch key is the over-cap batch's
+-- UsageLedgerEntry id. Rows written before the key keep NULL.
+ALTER TABLE "OverageEvent" ADD COLUMN IF NOT EXISTS "batchKey" TEXT;
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "OverageEvent_bookingUtilizationId_batchKey_key"
+  ON "OverageEvent" ("bookingUtilizationId", "batchKey");
+-- SPLIT
+DROP INDEX IF EXISTS "OverageEvent_bookingUtilizationId_key";

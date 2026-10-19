@@ -686,6 +686,13 @@ async function expireRequestAndReleaseSlots(
     data: { deletedAt: now },
     allowZero: true,
   });
+  // The lapsed buyer's own 1:1 hold: its HELD seats are released with it.
+  await transitionParticipant(
+    tx,
+    { appointmentId: appointment.id },
+    "CANCELLED",
+    { fromIn: ["HELD"] },
+  );
   await tx.appointment.updateMany({
     where: { id: appointment.id, deletedAt: null },
     data: { deletedAt: now },

@@ -31,7 +31,6 @@ import type { Tx, PrismaLike } from "@/lib/prisma";
 
 import type { ProgramAssignment, ProgramType } from "@prisma/client";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
-import { sumPaise } from "@/lib/payments/utils/money";
 
 // #780 — reads come through the extended client (money as number); the raw
 // model type still says bigint.
@@ -244,6 +243,8 @@ export async function recordBookingUtilization(
   programType: ProgramType;
   consumedPaiseAfter: number;
   creditBudgetPaise: number | null;
+  /** The ledger row this call wrote; it keys an over-cap batch's OverageEvent. */
+  usageLedgerEntryId: string | null;
 }> {
   if (params.engagementsConsumed < 0) {
     throw new Error(
@@ -312,6 +313,7 @@ export async function recordBookingUtilization(
         programType: assignment.program.type ?? "LICENSED_SEAT",
         consumedPaiseAfter: assignment.consumedPaise ?? 0,
         creditBudgetPaise: null,
+        usageLedgerEntryId: null,
       };
     }
   } else if (params.engagementsConsumed === 0) {
@@ -324,6 +326,7 @@ export async function recordBookingUtilization(
       programType: assignment.program.type ?? "LICENSED_SEAT",
       consumedPaiseAfter: assignment.consumedPaise ?? 0,
       creditBudgetPaise: null,
+      usageLedgerEntryId: null,
     };
   }
 
@@ -451,16 +454,9 @@ export async function recordBookingUtilization(
     }
   }
 
-  // Upsert the BookingUtilization on paymentId (which is @unique).
-  //   - CONSULTATION/WEBINAR/CLASS: called once per Payment, so this is
-  //     effectively an insert.
-  //   - SUBSCRIPTION: called once per consultant allocation (lazy). The
-  //     first allocation inserts the row; subsequent allocations
-  //     increment engagementsConsumed by the *new* delta (computed via
-  //     appointmentIds set-diff above). priceAtBookingPaise keeps the
-  //     original (the upfront subscription price); incremental
-  //     allocations pass `priceAtBookingPaise: 0` since no new money
-  //     changed hands at allocation time.
+  // Upsert the BookingUtilization on paymentId (which is @unique). The row's
+  // engagementsConsumed and priceAtBookingPaise are the sums of its positive
+  // ledger rows, which is what reverseBookingUtilization prorates against.
   await tx.bookingUtilization.upsert({
     where: { paymentId: params.paymentId },
     create: {
@@ -473,6 +469,7 @@ export async function recordBookingUtilization(
     },
     update: {
       engagementsConsumed: { increment: actualDelta },
+      priceAtBookingPaise: { increment: params.priceAtBookingPaise },
       // Sticky once true — any allocation that crossed the cap marks
       // the row as having had an overage at some point.
       wasOverage: wasOverage ? true : undefined,
@@ -485,7 +482,7 @@ export async function recordBookingUtilization(
   // The ledger is append-only. Every call writes a fresh row, so the
   // sum across rows for this paymentId equals the BookingUtilization's
   // engagementsConsumed (after upsert).
-  await tx.usageLedgerEntry.create({
+  const ledgerEntry = await tx.usageLedgerEntry.create({
     data: {
       programAssignmentId: params.programAssignmentId,
       membershipId: assignment.membershipId,
@@ -504,23 +501,74 @@ export async function recordBookingUtilization(
     programType,
     consumedPaiseAfter,
     creditBudgetPaise,
+    usageLedgerEntryId: ledgerEntry.id,
   };
 }
 
+/** One sale's metered and reversed totals, read from the usage ledger. */
+interface SaleLedger {
+  consumed: number;
+  pricePaise: number;
+  overCapBatches: number;
+  reversed: number;
+  reversedPaise: number;
+}
+
 /**
- * Reverse a utilization on refund. Decrements engagementsUsed, writes a
- * correcting UsageLedgerEntry (we don't delete the original — the ledger
- * is append-only for audit).
+ * The current sale of a payment: its ledger rows since the previous sale was
+ * fully reversed, engagements and paise alike. A re-minted seat reuses the
+ * payment id, so a metering that follows a full reversal opens a new sale.
+ */
+async function currentSaleLedger(
+  tx: Tx,
+  paymentId: string,
+): Promise<SaleLedger> {
+  const rows = await tx.usageLedgerEntry.findMany({
+    where: { paymentId },
+    // One allocation writes its reversal before its metering, so a timestamp tie sorts negatives first.
+    orderBy: [{ createdAt: "asc" }, { engagementsConsumed: "asc" }],
+    select: {
+      engagementsConsumed: true,
+      priceAtBookingPaise: true,
+      wasOverage: true,
+    },
+  });
+  const empty = (): SaleLedger => ({
+    consumed: 0,
+    pricePaise: 0,
+    overCapBatches: 0,
+    reversed: 0,
+    reversedPaise: 0,
+  });
+  let sale = empty();
+  for (const row of rows) {
+    if (row.engagementsConsumed > 0) {
+      const closed =
+        sale.consumed > 0 &&
+        sale.reversed >= sale.consumed &&
+        sale.reversedPaise >= sale.pricePaise;
+      if (closed) sale = empty();
+      sale.consumed += row.engagementsConsumed;
+      sale.pricePaise += row.priceAtBookingPaise;
+      if (row.wasOverage) sale.overCapBatches += 1;
+    } else {
+      sale.reversed -= row.engagementsConsumed;
+      sale.reversedPaise -= row.priceAtBookingPaise;
+    }
+  }
+  return sale;
+}
+
+/**
+ * Reverse a utilization on refund. Decrements the assignment's meters and
+ * appends a negative UsageLedgerEntry; the utilization row is never deleted.
  *
- * Partial reversal (PR-1e / G2): callers may pass `engagementsToReverse`
- * to reverse only a fraction of the original consumption — used by the
- * refund webhook when `refundAmount < paymentAmount`. The function
- * derives "already reversed" from the sum of negative
- * `UsageLedgerEntry` rows for this paymentId, then clamps the new
- * reversal to `min(target, remaining)`. Multiple partial reversals on
- * the same booking are supported (e.g., refund 25% now, another 50%
- * later); `reversedAt` is stamped only when the cumulative reversal
- * fully exhausts the original consumption.
+ * Everything is measured against the payment's current sale (see
+ * `currentSaleLedger`), so a re-minted seat never returns an earlier sale's
+ * credit. With no `engagementsToReverse` the call reverses the whole sale, or
+ * a refund's share of it when `refundRatio` is given; repeated partial calls
+ * accumulate and clamp to what the sale still holds. `reversedAt` is stamped
+ * when the sale is fully reversed.
  *
  * The counter decrement is a guarded CAS, so a meter that has drifted
  * below what this call returns raises `ProgramAssignmentUnderflowError`
@@ -531,20 +579,12 @@ export async function reverseBookingUtilization(
   params: {
     paymentId: string;
     reason?: string;
-    /**
-     * Fraction of the original `engagementsConsumed` to reverse.
-     * Defaults to full. Pass an explicit count for partial refunds.
-     * Negative or zero → no-op.
-     */
+    /** Engagements to reverse; negative or zero is a no-op. */
     engagementsToReverse?: number;
     /**
-     * #776 — refund ratio for the MONEY meter. The engagement count above is
-     * `ceil`'d so a partial refund still releases ≥1 whole seat; deriving the
-     * reversed *price* from that ceil'd count overstates `consumedPaise` and the
-     * `UsageLedgerEntry` price (breaks REFUND_BOOKING_COHERENCE). When refunding,
-     * pass the actual paise so the money-meter reverses in proportion to the
-     * booking price, independent of the engagement rounding. Clamped to the
-     * unreversed price remainder.
+     * The refund's share of the payment. It sizes the money-meter reversal,
+     * and the engagement count when `engagementsToReverse` is omitted (a
+     * partial refund still releases at least one engagement).
      */
     refundRatio?: { refundAmountPaise: number; paymentAmountPaise: number };
   },
@@ -553,14 +593,6 @@ export async function reverseBookingUtilization(
   engagementsReversed: number;
   fullyReversed: boolean;
 }> {
-  // Restore engagements via a reversal LEDGER ENTRY, not by deleting the
-  // original BookingUtilization row. Deleting would destroy the history
-  // needed by analytics ("who used seats in Q1?"), audits ("was this
-  // member assigned on 2026-04-10?"), and partial-refund support (we may
-  // need to reverse more than once). Instead we stamp `reversedAt` on
-  // the row when fully exhausted and append an opposing UsageLedgerEntry;
-  // the row stays queryable forever and the ledger sum still nets to the
-  // correct usage.
   const util = await tx.bookingUtilization.findUnique({
     where: { paymentId: params.paymentId },
     include: {
@@ -573,79 +605,62 @@ export async function reverseBookingUtilization(
     return { reversed: false, engagementsReversed: 0, fullyReversed: false };
   }
 
-  // Derive "already reversed" from the immutable ledger. Negative
-  // entries are reversal markers; their absolute sum is the cumulative
-  // reversed count to date.
-  const reversalLedger = await tx.usageLedgerEntry.aggregate({
-    where: {
-      paymentId: params.paymentId,
-      engagementsConsumed: { lt: 0 },
-    },
-    _sum: { engagementsConsumed: true },
-  });
-  const alreadyReversed = -1 * (reversalLedger._sum.engagementsConsumed ?? 0);
-  const remainingReversible = Math.max(
-    0,
-    util.engagementsConsumed - alreadyReversed,
-  );
-
-  if (remainingReversible === 0) {
-    // Already fully reversed — idempotent no-op.
+  const sale = await currentSaleLedger(tx, params.paymentId);
+  const remainingReversible = Math.max(0, sale.consumed - sale.reversed);
+  const remainingPrice = Math.max(0, sale.pricePaise - sale.reversedPaise);
+  const ratio =
+    params.refundRatio && params.refundRatio.paymentAmountPaise > 0
+      ? params.refundRatio
+      : null;
+  const isCreditPool = util.programAssignment.program?.type === "CREDIT_POOL";
+  // A ratio refund that lands after the sale's engagements are spent still
+  // returns its share of a credit pool's paise.
+  const paiseOnly =
+    remainingReversible === 0 && isCreditPool && !!ratio && remainingPrice > 0;
+  if (remainingReversible === 0 && !paiseOnly) {
     return { reversed: false, engagementsReversed: 0, fullyReversed: true };
   }
 
-  const target =
-    params.engagementsToReverse === undefined
-      ? util.engagementsConsumed
-      : Math.max(0, params.engagementsToReverse);
+  let target = sale.consumed;
+  if (params.engagementsToReverse !== undefined) {
+    target = Math.max(0, params.engagementsToReverse);
+  } else if (ratio && ratio.refundAmountPaise < ratio.paymentAmountPaise) {
+    target = Math.max(
+      1,
+      Math.ceil(
+        (sale.consumed * ratio.refundAmountPaise) / ratio.paymentAmountPaise,
+      ),
+    );
+  }
   const actualReversal = Math.min(target, remainingReversible);
-  if (actualReversal <= 0) {
+  if (actualReversal <= 0 && !paiseOnly) {
     return { reversed: false, engagementsReversed: 0, fullyReversed: false };
   }
 
   const willBeFullyReversed =
-    alreadyReversed + actualReversal >= util.engagementsConsumed;
+    actualReversal > 0 && sale.reversed + actualReversal >= sale.consumed;
 
-  // Prorate the price refund so the ledger sum stays consistent with
-  // the partial reversal. Round to the nearest paise; the integer
-  // round-off lands within ±1 paise of the proportional amount.
-  const engagementDerivedPrice =
-    util.engagementsConsumed > 0
-      ? Math.round(
-          (util.priceAtBookingPaise * actualReversal) /
-            util.engagementsConsumed,
-        )
+  // The price follows the engagements, or the money actually refunded when a
+  // ratio is given, clamped to what the sale has not yet returned.
+  let priceReversal =
+    actualReversal > 0
+      ? Math.round((sale.pricePaise * actualReversal) / sale.consumed)
       : 0;
-
-  // #776 — when a refund ratio is supplied, reverse the price in proportion to
-  // the actual money refunded (booking price × refundAmount/paymentAmount) rather
-  // than the ceil'd engagement count, clamped to the unreversed price remainder.
-  // Keeps consumedPaise + the usage ledger coherent with the refund (a 75k refund
-  // of a 2×100k booking reverses 75k of price even though it releases 1 seat).
-  let priceReversal = engagementDerivedPrice;
-  if (params.refundRatio && params.refundRatio.paymentAmountPaise > 0) {
-    const priceLedger = await tx.usageLedgerEntry.aggregate({
-      where: { paymentId: params.paymentId, priceAtBookingPaise: { lt: 0 } },
-      _sum: { priceAtBookingPaise: true },
-    });
-    const alreadyReversedPrice =
-      -1 * sumPaise(priceLedger._sum.priceAtBookingPaise);
-    const remainingPrice = Math.max(
-      0,
-      util.priceAtBookingPaise - alreadyReversedPrice,
-    );
+  if (ratio) {
     const proportional = Math.floor(
-      (util.priceAtBookingPaise * params.refundRatio.refundAmountPaise) /
-        params.refundRatio.paymentAmountPaise,
+      (sale.pricePaise * ratio.refundAmountPaise) / ratio.paymentAmountPaise,
     );
     priceReversal = Math.min(Math.max(0, proportional), remainingPrice);
+  }
+  if (paiseOnly && priceReversal <= 0) {
+    return { reversed: false, engagementsReversed: 0, fullyReversed: true };
   }
 
   // #1372 — a CREDIT_POOL program meters in paise; LICENSED_SEAT leaves
   // consumedPaise alone (writing a seat count as money would invent a number).
-  const reversesPaise =
-    util.programAssignment.program?.type === "CREDIT_POOL" && priceReversal > 0;
-  const decrementsOverage = util.wasOverage && willBeFullyReversed;
+  const reversesPaise = isCreditPool && priceReversal > 0;
+  // Each over-cap batch of the sale bumped overageCount once.
+  const overageDecrement = willBeFullyReversed ? sale.overCapBatches : 0;
 
   // Guarded CAS, same shape as the BLOCK branch of the forward path above:
   // the predicate rides the WHERE, so a counter that cannot absorb the
@@ -658,20 +673,21 @@ export async function reverseBookingUtilization(
   const guard = await tx.programAssignment.updateMany({
     where: {
       id: util.programAssignmentId,
-      engagementsUsed: { gte: actualReversal },
+      ...(actualReversal > 0 && { engagementsUsed: { gte: actualReversal } }),
       ...(reversesPaise && { consumedPaise: { gte: priceReversal } }),
-      ...(decrementsOverage && { overageCount: { gte: 1 } }),
+      ...(overageDecrement > 0 && {
+        overageCount: { gte: overageDecrement },
+      }),
     },
     data: {
-      engagementsUsed: { decrement: actualReversal },
+      engagementsUsed:
+        actualReversal > 0 ? { decrement: actualReversal } : undefined,
       // #775/#753 — CREDIT_POOL meters in paise; reverse the prorated price so
       // consumedPaise nets back.
       consumedPaise: reversesPaise ? { decrement: priceReversal } : undefined,
-      // overageCount tracks the number of OVER-CAP BOOKINGS, not units.
-      // Decrement only on the LAST reversal (the booking is now wholly
-      // un-counted). Partial reversals leave the flag in place — the
-      // booking still happened over cap.
-      overageCount: decrementsOverage ? { decrement: 1 } : undefined,
+      // Only the last reversal un-counts the sale's over-cap batches.
+      overageCount:
+        overageDecrement > 0 ? { decrement: overageDecrement } : undefined,
     },
   });
   // Fail closed and loud: the ledger row below is what the reconciler trusts,
@@ -698,9 +714,6 @@ export async function reverseBookingUtilization(
     },
   });
 
-  // Stamp `reversedAt` only when the cumulative reversal fully exhausts
-  // the original consumption. Subsequent partial calls update the
-  // ledger but don't re-stamp.
   if (willBeFullyReversed) {
     await tx.bookingUtilization.update({
       where: { paymentId: params.paymentId },
@@ -709,11 +722,8 @@ export async function reverseBookingUtilization(
         reversalReason: params.reason ?? "Refund",
       },
     });
-    // #775 — the over-cap charge for this booking is no longer owed. Cancel the
-    // linked OverageEvent only while it's still uncollected — an already-CHARGED
-    // overage (member card captured, or org invoice paid) needs a real refund /
-    // credit note, handled by the refund cascade (#715/#716), not a silent flip.
-    // fromIn excludes CHARGED explicitly now that REVERSED accepts it.
+    // Every still-uncollected batch overage is no longer owed; a CHARGED one
+    // is credited back by the refund cascade instead.
     await transitionOverage(
       tx,
       { bookingUtilizationId: util.id },
@@ -726,6 +736,6 @@ export async function reverseBookingUtilization(
   return {
     reversed: true,
     engagementsReversed: actualReversal,
-    fullyReversed: willBeFullyReversed,
+    fullyReversed: willBeFullyReversed || paiseOnly,
   };
 }

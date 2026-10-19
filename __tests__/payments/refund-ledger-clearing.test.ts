@@ -62,7 +62,7 @@ function txStub(payment: Record<string, unknown>, parked: boolean) {
     creditNote: { findUnique: jest.fn().mockResolvedValue(null) },
     consumerCreditNote: { findUnique: jest.fn().mockResolvedValue(null) },
     consumerInvoice: { findUnique: jest.fn().mockResolvedValue(null) },
-    overageEvent: { findFirst: jest.fn().mockResolvedValue(null) },
+    overageEvent: { findMany: jest.fn().mockResolvedValue([]) },
     ledgerTransaction: {
       findUnique: jest.fn(
         async (args: { where: { idempotencyKey: string } }) =>

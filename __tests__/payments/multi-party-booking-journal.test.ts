@@ -105,7 +105,7 @@ jest.mock("../../lib/prisma", () => {
     payment: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     paymentLeg: { findMany: jest.fn().mockResolvedValue([]) },
     // #1458 — only read when an OVERAGE_INVOICE_ACCRUAL leg funded the payment.
-    overageEvent: { findFirst: jest.fn().mockResolvedValue(null) },
+    overageEvent: { findMany: jest.fn().mockResolvedValue([]) },
     consultantEarnings: {
       findFirst: jest.fn().mockResolvedValue(null),
       create: jest
@@ -168,7 +168,7 @@ const mockedTx = (
       consultantEarnings: { findFirst: jest.Mock; create: jest.Mock };
       ledgerTransaction: { findUnique: jest.Mock; create: jest.Mock };
       paymentLeg: { findMany: jest.Mock };
-      overageEvent: { findFirst: jest.Mock };
+      overageEvent: { findMany: jest.Mock };
     };
   }
 ).__mockTx;
@@ -259,7 +259,7 @@ beforeEach(() => {
   mockedTx.consultantEarnings.findFirst.mockResolvedValue(null);
   mockedTx.ledgerTransaction.findUnique.mockResolvedValue(null);
   mockedTx.paymentLeg.findMany.mockResolvedValue([]);
-  mockedTx.overageEvent.findFirst.mockResolvedValue(null);
+  mockedTx.overageEvent.findMany.mockResolvedValue([]);
   setStandardRateCard();
 });
 
@@ -515,7 +515,7 @@ describe("#1458 org-overage rails keep the booking journal balanced", () => {
     // funding side and the platform absorbs nothing as DISCOUNT.
     expect(legAmount(txn, "DEBIT", "WALLET|_|_|INR")).toBe(258_326);
     expect(legAmount(txn, "DEBIT", "DISCOUNT|_|_|INR")).toBe(0);
-    expect(mockedTx.overageEvent.findFirst).not.toHaveBeenCalled();
+    expect(mockedTx.overageEvent.findMany).not.toHaveBeenCalled();
   });
 
   it("INVOICE + CHARGE_ORG with a surcharge: the surcharge is credited to PLATFORM_FEE", async () => {
@@ -529,9 +529,9 @@ describe("#1458 org-overage rails keep the booking journal balanced", () => {
       { source: "INVOICE_ACCRUAL", amountPaise: 0 },
       { source: "OVERAGE_INVOICE_ACCRUAL", amountPaise: 125_000 },
     ]);
-    mockedTx.overageEvent.findFirst.mockResolvedValue({
-      surchargePaise: BigInt(25_000),
-    });
+    mockedTx.overageEvent.findMany.mockResolvedValue([
+      { surchargePaise: 25_000 },
+    ]);
 
     await createEarningsFromPayment({
       payment: makePayment({

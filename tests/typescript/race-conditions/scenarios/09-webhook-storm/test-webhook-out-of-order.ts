@@ -54,16 +54,16 @@ async function run() {
   const paymentId = `pay_chaos_ooo_${suffix}`;
   const refundId = `rfnd_chaos_ooo_${suffix}`;
 
-  // 1) Refund arrives FIRST.
-  const refundFirst = await deliver(
-    buildRazorpayRefundCreatedEnvelope({
-      refundId,
-      paymentId,
-      amount: 100,
-      currency: "INR",
-      status: "created",
-    }),
-  );
+  // 1) Refund arrives FIRST. Dedup keys on the body hash, so a redelivery
+  // must resend the identical bytes.
+  const refundPayload = buildRazorpayRefundCreatedEnvelope({
+    refundId,
+    paymentId,
+    amount: 100,
+    currency: "INR",
+    status: "created",
+  });
+  const refundFirst = await deliver(refundPayload);
   check(
     "refund.created before capture is ACKed (2xx)",
     refundFirst.status >= 200 && refundFirst.status < 300,
@@ -86,8 +86,9 @@ async function run() {
   );
 
   // 3) Each envelope recorded exactly once under its own composite id.
-  const refundEventId = `refund.created:${refundId}`;
-  const captureEventId = `payment.captured:${paymentId}`;
+  // Stored ids are `<event>:<entity>:<bodyHash>`; match on the stable prefix.
+  const refundEventId = { startsWith: `refund.created:${refundId}:` };
+  const captureEventId = { startsWith: `payment.captured:${paymentId}:` };
   const refundRows = await prisma.webhookEvent.count({
     where: { eventId: refundEventId },
   });
@@ -101,27 +102,17 @@ async function run() {
   );
 
   // 4) Replaying each once more stays deduped.
-  await deliver(
-    buildRazorpayRefundCreatedEnvelope({
-      refundId,
-      paymentId,
-      amount: 100,
-      currency: "INR",
-      status: "created",
-    }),
-  );
+  await deliver(refundPayload);
   const refundRowsAfterReplay = await prisma.webhookEvent.count({
     where: { eventId: refundEventId },
   });
-  check(
-    "replay does not create a second row",
-    refundRowsAfterReplay === 1,
-    { refundRowsAfterReplay },
-  );
+  check("replay does not create a second row", refundRowsAfterReplay === 1, {
+    refundRowsAfterReplay,
+  });
 
   // Cleanup chaos rows for repeat runs.
   await prisma.webhookEvent.deleteMany({
-    where: { eventId: { in: [refundEventId, captureEventId] } },
+    where: { OR: [{ eventId: refundEventId }, { eventId: captureEventId }] },
   });
 
   finish("webhook-out-of-order");

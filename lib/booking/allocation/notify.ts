@@ -3,6 +3,7 @@
 
 import { liveParticipant } from "@/lib/booking/participants";
 import type { Tx } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { EventType } from "@/utils/scheduling-engine/types";
 import type { ApprovalOutcome } from "@/lib/booking/approve-request";
 import {
@@ -39,6 +40,12 @@ export async function stageAllocationNotices(
   // approval's only consultee message is the pay-link email the mint sends.
   if (outcome === "awaiting_payment") return [];
   const prisma = tx;
+  // A top-up or reallocation keeps past and cancelled rows; the notice names the next live one.
+  const nextLiveSession = {
+    ...LIVE_SLOT_WHERE,
+    isTentative: false,
+    startsAt: { gte: new Date() },
+  } satisfies Prisma.AppointmentOccurrenceWhereInput;
   let context: {
     userIds: string[];
     // #1206 — the partial notice goes to these only; the consultant was
@@ -73,7 +80,7 @@ export async function stageAllocationNotices(
             organizationId: true,
             // A rebooked consultation keeps its voided original; the notice names the live one.
             occurrences: {
-              where: { ...LIVE_SLOT_WHERE, isTentative: false },
+              where: nextLiveSession,
               orderBy: { startsAt: "asc" },
               take: 1,
               select: { startsAt: true },
@@ -117,7 +124,7 @@ export async function stageAllocationNotices(
             id: true,
             organizationId: true,
             occurrences: {
-              where: { isTentative: false, deletedAt: null },
+              where: nextLiveSession,
               orderBy: { startsAt: "asc" },
               take: 1,
               select: { startsAt: true },
@@ -162,7 +169,7 @@ export async function stageAllocationNotices(
               select: { user: { select: { id: true, name: true } } },
             },
             occurrences: {
-              where: { isTentative: false, deletedAt: null },
+              where: nextLiveSession,
               select: {
                 startsAt: true,
               },
@@ -217,7 +224,7 @@ export async function stageAllocationNotices(
               select: { user: { select: { id: true, name: true } } },
             },
             occurrences: {
-              where: { isTentative: false, deletedAt: null },
+              where: nextLiveSession,
               select: {
                 startsAt: true,
               },

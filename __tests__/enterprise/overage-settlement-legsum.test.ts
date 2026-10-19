@@ -160,6 +160,7 @@ const callArgs = (price: number) => ({
     engagementsUsedAfter: 6,
     consumedPaiseAfter: 0,
     creditBudgetPaise: null,
+    usageLedgerEntryId: "ule-1",
   },
   bookingPricePaise: price,
   currency: "INR" as const,
@@ -307,9 +308,7 @@ describe("recordOverageAtCheckout — CHARGE_ORG on the WALLET and LICENSE rails
         paymentId: "pay1",
       }),
     );
-    expect(state.legs).toEqual([
-      { source: "WALLET", amountPaise: 129_500 },
-    ]);
+    expect(state.legs).toEqual([{ source: "WALLET", amountPaise: 129_500 }]);
     expect(state.payment.amount).toBe(129_500);
     expect(state.payment.taxAmount).toBe(4_500);
     expect(sum(state.legs)).toBe(state.payment.amount);
@@ -344,9 +343,7 @@ describe("recordOverageAtCheckout — CHARGE_ORG on the WALLET and LICENSE rails
       isLazyAllocation: true,
     });
 
-    expect(state.legs).toEqual([
-      { source: "WALLET", amountPaise: 129_500 },
-    ]);
+    expect(state.legs).toEqual([{ source: "WALLET", amountPaise: 129_500 }]);
     expect(state.payment.amount).toBe(129_500);
     expect(state.payment.taxAmount).toBe(4_500);
     expect(postLedgerTxn).toHaveBeenCalledWith(
@@ -609,6 +606,7 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
           overageBehavior: "CHARGE_MEMBER",
           payment: { id: "side_wallet_1", parentPaymentId: "parent_wallet_1" },
         }),
+        count: jest.fn().mockResolvedValue(0),
       },
       payment: {
         findUnique: jest.fn().mockResolvedValue({
@@ -727,4 +725,3 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
     expect(consultantUpdateMany).not.toHaveBeenCalled();
   });
 });
-

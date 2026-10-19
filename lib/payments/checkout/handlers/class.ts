@@ -15,6 +15,35 @@ import {
   alreadyHeldSeatError,
 } from "@/lib/payments/checkout/seats";
 
+/**
+ * The sessions a seat bought: per ordinal, its live row (a RESCHEDULED row only
+ * until it is replaced), kept while not yet started, as classEnrolmentFrom counts.
+ */
+function sessionsBought<
+  T extends {
+    ordinal: number | null;
+    startsAt: Date;
+    completionStatus: string;
+  },
+>(sessions: T[], remaining: number, now: Date): T[] {
+  const byOrdinal = new Map<number, T>();
+  for (const session of sessions) {
+    const key = session.ordinal ?? session.startsAt.getTime();
+    const kept = byOrdinal.get(key);
+    if (!kept || kept.completionStatus === "RESCHEDULED") {
+      byOrdinal.set(key, session);
+    }
+  }
+  return [...byOrdinal.entries()]
+    .filter(
+      ([, session]) =>
+        session.startsAt > now || session.completionStatus === "RESCHEDULED",
+    )
+    .sort(([a], [b]) => a - b)
+    .map(([, session]) => session)
+    .slice(-remaining);
+}
+
 export async function handleClassCheckout(
   tx: Tx,
   data: CheckoutInput,
@@ -109,6 +138,7 @@ export async function handleClassCheckout(
 
   // #1819 — re-derived at commit over the quote's rows (cancelled ones too): a
   // session that started since the quote re-prices the order.
+  const now = new Date();
   const enrolment = assertClassEnrolmentOpen(
     classEnrolmentFrom({
       pricePaise: plan.price,
@@ -118,7 +148,7 @@ export async function handleClassCheckout(
         where: { appointmentId: wrapper.id, deletedAt: null },
         select: { ordinal: true, startsAt: true, completionStatus: true },
       }),
-      now: new Date(),
+      now,
     }),
   );
   if (quotedSessions !== null && enrolment.remaining !== quotedSessions) {
@@ -145,18 +175,15 @@ export async function handleClassCheckout(
     },
   });
 
+  const boughtSessions = sessionsBought(sessions, enrolment.remaining, now);
+
   return {
     appointment: wrapper,
     plan,
     amount: enrolment.basePaise,
     sessionsPurchased: enrolment.remaining,
     slotsLinked: sessions.length,
-    // For enterprise cap counting (issue #710): one engagement per
-    // class session. The learner is enrolling in every existing session
-    // at this moment, so the count is fully known here.
-    engagementsConsumed: sessions.length,
-    // #1554 — the metered unit is the session, so the utilization row names
-    // the occurrence ids (the wrapper is one row for the whole class).
-    engagementIds: sessions.map((session) => session.id),
+    engagementsConsumed: boughtSessions.length,
+    engagementIds: boughtSessions.map((session) => session.id),
   };
 }
