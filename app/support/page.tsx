@@ -65,6 +65,17 @@ export default function SupportIndexPage() {
               </Suspense>
             </div>
 
+            <p className="mt-4 max-w-xl text-sm text-muted-foreground">
+              After the search misses?{" "}
+              <Link
+                href="/support/faq"
+                className="font-medium underline underline-offset-4"
+              >
+                Browse the FAQ index
+              </Link>{" "}
+              — every question the Help Center answers, in one list.
+            </p>
+
             {popular.length > 0 && (
               <ul className="mt-10 divide-y divide-border border-y border-border">
                 {popular.map((article) => (

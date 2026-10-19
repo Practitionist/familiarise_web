@@ -69,3 +69,34 @@ export const SupportThreadIdParams = z.object({
 export const OrgIdParams = z.object({
   orgId: z.string().min(1).max(64),
 });
+
+// ---------------------------------------------------------------------------
+// Help Center article feedback — the "was this helpful?" vote.
+//
+// The article key is the article's SLUG (the last segment of its public
+// `/support/{category}/{slug}` URL). Slugs are unique across the corpus, so
+// the slug alone names one article and needs no escaping in a URL path.
+// ---------------------------------------------------------------------------
+
+export const SupportArticleKeyParams = z.object({
+  articleKey: z
+    .string()
+    .min(1)
+    .max(80)
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Not a Help Center article key"),
+});
+
+export const SupportArticleFeedbackBody = z.object({
+  helpful: z.boolean(),
+});
+
+/** One article's tally, as the support console reads it. */
+export const SupportArticleFeedbackTally = z.object({
+  articleKey: z.string(),
+  title: z.string(),
+  category: z.string(),
+  categoryTitle: z.string(),
+  helpful: z.number().int().nonnegative(),
+  notHelpful: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+});

@@ -64,6 +64,8 @@ export interface ModerationReportRef {
   feedbackId?: string | null;
   streamMessageId?: string | null;
   streamChannelCid?: string | null;
+  /** The operator the report is assigned to, when it already is one. */
+  assignedToId?: string | null;
 }
 
 export interface ModerationSideEffectInput {
@@ -82,6 +84,8 @@ export interface TransactionalEffectResult {
   profilesUnverified?: number;
   reviewRemoved?: boolean;
   reviewExcludedFromAggregate?: boolean;
+  /** The private rating was taken down, not merely kept out of the average. */
+  feedbackRemoved?: boolean;
   /** The reviewed expert, notified in-transaction when their review is excluded. */
   expertUserId?: string;
   /** Whose public surfaces need purging once the transaction commits. */
@@ -300,9 +304,16 @@ async function applyActionEffects(
       return banOrSuspendUser(tx, input);
     case "PROFILE_UNVERIFIED":
       return unverifyProfiles(tx, report.targetUserId);
-    case "CONTENT_REMOVED":
-      if (report.type !== "REVIEW") return {};
-      return softDeleteReview(tx, report.reviewId);
+    case "CONTENT_REMOVED": {
+      // A takedown of the reported content: the review when the report names
+      // one, and the private rating when the action names one.
+      const review =
+        report.type === "REVIEW"
+          ? await softDeleteReview(tx, report.reviewId)
+          : {};
+      const feedback = await removeFeedback(tx, report.feedbackId);
+      return { ...review, ...feedback };
+    }
     case "REVIEW_EXCLUDED_FROM_AGGREGATE":
       return excludeReviewFromAggregate(tx, report);
     case "FEEDBACK_EXCLUDED_FROM_AGGREGATE":
@@ -543,6 +554,38 @@ async function excludeFeedbackFromAggregate(
     );
   }
   return {};
+}
+
+/**
+ * Take a rating down.
+ *
+ * `excludedFromAggregateAt` and `deletedAt` are two different things, and the
+ * two-track doctrine says so: an EXCLUDED rating stays listed with its text
+ * and simply stops counting, while a DELETED row disappears from every read.
+ * So the exclusion action writes only the first, and this takedown writes the
+ * second — and the first as well, because a row that is gone must not sit in
+ * the average either.
+ *
+ * CAS'd on `deletedAt IS NULL`: a second takedown of the same rating is a
+ * 409, not a second audit row.
+ */
+async function removeFeedback(
+  tx: Tx,
+  feedbackId: string | null | undefined,
+): Promise<TransactionalEffectResult> {
+  if (!feedbackId) return {};
+  const now = new Date();
+  const removed = await tx.appointmentFeedback.updateMany({
+    where: { id: feedbackId, deletedAt: null },
+    data: { deletedAt: now, excludedFromAggregateAt: now },
+  });
+  if (removed.count === 0) {
+    throw Object.assign(
+      new Error("This feedback is already removed or not found"),
+      { httpStatus: 409 },
+    );
+  }
+  return { feedbackRemoved: true };
 }
 
 type TriggerOutcome = { success: boolean; error?: Error | string } | null;

@@ -4,7 +4,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { ModerationReportStatus } from "@prisma/client";
+import type {
+  ModerationReportStatus,
+  ModerationResolution,
+} from "@prisma/client";
 import { z } from "zod";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -66,6 +69,12 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             banExpires: true,
           },
         },
+        assignedTo: {
+          select: { id: true, name: true, email: true, role: true },
+        },
+        resolvedByUser: {
+          select: { id: true, name: true, email: true },
+        },
         review: {
           select: {
             id: true,
@@ -99,12 +108,34 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       report.review ? readExclusionDropsBelowGate(report.review.id) : false,
     ]);
 
+    // The private ratings a takedown may name: the ones the reported review's
+    // author gave in that session. The action route re-checks the binding, so
+    // this list is what the moderator chooses from, not what they may act on.
+    const ratingCandidates =
+      report.type === "REVIEW" && report.review?.appointmentId
+        ? await prisma.appointmentFeedback.findMany({
+            where: {
+              appointmentId: report.review.appointmentId,
+              userId: report.targetUserId,
+              deletedAt: null,
+            },
+            select: {
+              id: true,
+              rating: true,
+              createdAt: true,
+              excludedFromAggregateAt: true,
+            },
+            orderBy: { createdAt: "asc" },
+          })
+        : [];
+
     return NextResponse.json({
       report: {
         ...report,
         bookingContext,
         exclusionDropsBelowGate,
       },
+      ratingCandidates,
     });
   } catch (error) {
     Sentry.captureException(
@@ -121,14 +152,17 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
 function buildReportPatchData(
   validatedData: z.infer<typeof patchReportSchema>,
+  staffUserId: string,
 ): {
   status?: ModerationReportStatus;
+  resolution?: ModerationResolution | null;
   assignedToId?: string | null;
   resolvedAt?: Date | null;
   resolvedBy?: string | null;
 } {
   const updateData: {
     status?: ModerationReportStatus;
+    resolution?: ModerationResolution | null;
     assignedToId?: string | null;
     resolvedAt?: Date | null;
     resolvedBy?: string | null;
@@ -136,8 +170,18 @@ function buildReportPatchData(
 
   if (validatedData.status !== undefined) {
     updateData.status = validatedData.status;
-    updateData.resolvedAt = null;
-    updateData.resolvedBy = null;
+    if (validatedData.status === "ESCALATED") {
+      // The sidecar CHECK refuses a closed report without a resolution and an
+      // open one with one, so the disposition is written with the status.
+      // Escalating closes the triage round and names who closed it.
+      updateData.resolution = "ESCALATED";
+      updateData.resolvedAt = new Date();
+      updateData.resolvedBy = staffUserId;
+    } else {
+      updateData.resolution = null;
+      updateData.resolvedAt = null;
+      updateData.resolvedBy = null;
+    }
   }
 
   if (validatedData.assignedToId !== undefined) {
@@ -204,7 +248,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const updateData = buildReportPatchData(parsed.data);
+    const updateData = buildReportPatchData(parsed.data, auth.session.user.id);
     // Resolved reports change only through the audited action route.
     const updated = await prisma.moderationReport.updateMany({
       where: {

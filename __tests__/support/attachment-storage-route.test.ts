@@ -2,28 +2,57 @@
  * @jest-environment node
  */
 
+/**
+ * The evidence attachment storage.
+ *
+ * The canonical case graph serves attachments in three steps — mint a row and
+ * a signed upload URL, PUT the file, then confirm the upload — and the
+ * behaviours that matter are pinned here:
+ *
+ *   - a customer is throttled, and the throttle is per person per case;
+ *   - a file is NOT visible until the upload is confirmed, so a half-finished
+ *     upload is never downloadable;
+ *   - the declared size and type must match what actually landed, or the
+ *     confirmation is refused;
+ *   - submitted evidence is RETAINED with the case, not quietly deleted.
+ */
+
+const mockCreateSignedUploadUrl = jest.fn();
+const mockCreateSignedUrl = jest.fn();
+const mockStorageInfo = jest.fn();
+const mockAttachmentFindFirst = jest.fn();
+const mockAttachmentFindMany = jest.fn();
+const mockAttachmentCount = jest.fn();
+const mockAttachmentCreate = jest.fn();
+const mockAttachmentUpdateMany = jest.fn();
+const mockCaseFindFirst = jest.fn();
+const mockEvidenceRequestFindFirst = jest.fn();
+const mockSession = jest.fn();
+
 jest.mock("@sentry/nextjs", () => ({
   __esModule: true,
   captureException: jest.fn(),
   captureMessage: jest.fn(),
+  flush: jest.fn(async () => true),
+}));
+
+jest.mock("../../lib/supabase-storage-core", () => ({
+  adminStorage: () => ({
+    from: () => ({
+      createSignedUploadUrl: mockCreateSignedUploadUrl,
+      createSignedUrl: mockCreateSignedUrl,
+      info: mockStorageInfo,
+    }),
+  }),
 }));
 
 jest.mock("../../lib/auth-server", () => ({
   __esModule: true,
-  getSession: jest.fn(async () => ({ user: { id: "owner" } })),
-}));
-
-jest.mock("../../lib/supabase", () => ({
-  __esModule: true,
-  uploadSupportTicketAttachment: jest.fn(),
-  deleteSupportTicketAttachment: jest.fn(),
-  signSupportTicketAttachment: jest.fn(),
-  getManualBucketInstructions: jest.fn(),
+  getSession: () => mockSession(),
 }));
 
 jest.mock("../../lib/rate-limit", () => ({
   __esModule: true,
-  spamLimiter: {},
   documentUploadLimiter: {},
   applyRateLimit: jest.fn(async () => null),
 }));
@@ -31,139 +60,271 @@ jest.mock("../../lib/rate-limit", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    user: { findUnique: jest.fn(async () => ({ role: "CONSULTEE" })) },
-    supportTicket: {
-      findUnique: jest.fn(async () => ({ userId: "owner", status: "OPEN" })),
+    supportCaseAttachment: {
+      findFirst: mockAttachmentFindFirst,
+      findMany: mockAttachmentFindMany,
+      count: mockAttachmentCount,
+      create: mockAttachmentCreate,
+      updateMany: mockAttachmentUpdateMany,
     },
-    supportTicketAttachment: {
-      findUnique: jest.fn(async () => ({
-        id: "att-1",
-        ticketId: "t1",
-        storagePath: "support-tickets/t1/file.png",
-        ticket: { userId: "owner" },
-      })),
-      delete: jest.fn(async () => ({})),
-      count: jest.fn(async () => 0),
-    },
+    supportCase: { findFirst: mockCaseFindFirst },
+    supportCaseEvidenceRequest: { findFirst: mockEvidenceRequestFindFirst },
+    supportCaseMessage: { findFirst: jest.fn(async () => null) },
+    $transaction: jest.fn(),
   },
 }));
 
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest } from "next/server";
-import prisma from "../../lib/prisma";
-import {
-  uploadSupportTicketAttachment,
-  deleteSupportTicketAttachment,
-  signSupportTicketAttachment,
-} from "../../lib/supabase";
-import { getSession } from "../../lib/auth-server";
 import { applyRateLimit } from "../../lib/rate-limit";
 import {
-  DELETE,
-  POST,
-} from "../../app/api/support-tickets/[ticketId]/attachments/route";
-import { GET } from "../../app/api/support-tickets/[ticketId]/attachments/[attachmentId]/route";
+  GET as getAttachment,
+  DELETE as deleteAttachment,
+} from "../../app/api/support/attachments/[attachmentId]/route";
+import {
+  GET as listAttachments,
+  POST as createAttachment,
+  PUT as confirmAttachment,
+} from "../../app/api/support/cases/[caseId]/attachments/route";
 
-const mockedDelete = deleteSupportTicketAttachment as jest.Mock;
-const mockedSign = signSupportTicketAttachment as jest.Mock;
-const rowDelete = prisma.supportTicketAttachment.delete as jest.Mock;
+const CASE = {
+  id: "c-1",
+  deletedAt: null,
+  status: "OPEN",
+  ownershipScope: "PERSONAL",
+  organizationId: null,
+  requesterUserId: "u1",
+  submitterUserId: "u1",
+};
 
-const deleteRequest = () =>
-  new NextRequest("http://localhost/api/support-tickets/t1/attachments", {
-    method: "DELETE",
-    body: JSON.stringify({ attachmentId: "att-1" }),
+const post = (body: unknown) =>
+  new NextRequest("https://x.test/api/support/cases/c-1/attachments", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockSession.mockResolvedValue({ user: { id: "u1", role: "CONSULTEE" } });
+  mockCaseFindFirst.mockResolvedValue(CASE);
+  mockEvidenceRequestFindFirst.mockResolvedValue(null);
+  mockAttachmentCount.mockResolvedValue(0);
+  mockAttachmentCreate.mockImplementation(async ({ data }: { data: { id: string } }) => ({
+    id: data.id,
+    storagePath: `support-cases/c-1/${data.id}`,
+  }));
+  mockCreateSignedUploadUrl.mockResolvedValue({
+    data: { signedUrl: "https://storage.test/upload", token: "tok", path: "p" },
+    error: null,
+  });
+  mockStorageInfo.mockResolvedValue({
+    data: { size: 1024, contentType: "application/pdf" },
+    error: null,
+  });
+  mockAttachmentUpdateMany.mockResolvedValue({ count: 1 });
+  mockAttachmentFindMany.mockResolvedValue([]);
+});
 
-describe("support attachment storage", () => {
-  it("answers 502 and keeps the row when storage does not confirm the delete", async () => {
-    mockedDelete.mockResolvedValue(false);
-    const res = await DELETE(deleteRequest(), {
-      params: Promise.resolve({ ticketId: "t1" }),
-    });
-    expect(res.status).toBe(502);
-    expect(rowDelete).not.toHaveBeenCalled();
-    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+describe("the upload", () => {
+  it("mints a row and a signed upload URL", async () => {
+    const res = await createAttachment(
+      post({ originalName: "proof.pdf", mimeType: "application/pdf", fileSize: 1024 }),
+      { params: Promise.resolve({ caseId: "c-1" }) },
+    );
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.data.uploadUrl).toBe("https://storage.test/upload");
+    expect(mockAttachmentCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          caseId: "c-1",
+          originalName: "proof.pdf",
+          uploadedById: "u1",
+        }),
+      }),
+    );
   });
 
-  it("deletes the row once storage confirms the delete", async () => {
-    mockedDelete.mockResolvedValue(true);
-    const res = await DELETE(deleteRequest(), {
-      params: Promise.resolve({ ticketId: "t1" }),
-    });
-    expect(res.status).toBe(200);
-    expect(rowDelete).toHaveBeenCalledWith({ where: { id: "att-1" } });
-  });
-
-  it("throttles a customer per ticket and never throttles staff", async () => {
-    mockedDelete.mockResolvedValue(true);
-    await DELETE(deleteRequest(), {
-      params: Promise.resolve({ ticketId: "t1" }),
-    });
+  it("throttles a customer per person per case", async () => {
+    await createAttachment(
+      post({ originalName: "proof.pdf", mimeType: "application/pdf", fileSize: 1024 }),
+      { params: Promise.resolve({ caseId: "c-1" }) },
+    );
     expect(applyRateLimit).toHaveBeenCalledWith(
       expect.anything(),
-      "ticket-attachment-delete:owner:t1",
+      "case-upload:u1",
     );
-
-    (applyRateLimit as jest.Mock).mockClear();
-    (prisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
-      role: "STAFF",
-    });
-    const res = await DELETE(deleteRequest(), {
-      params: Promise.resolve({ ticketId: "t1" }),
-    });
-    expect(res.status).toBe(200);
-    expect(applyRateLimit).not.toHaveBeenCalled();
   });
 
-  it("redirects the owner to a signed URL minted from the stored path", async () => {
-    mockedSign.mockResolvedValue("https://storage.test/signed?token=x");
-    const res = await GET(
-      new NextRequest(
-        "http://localhost/api/support-tickets/t1/attachments/att-1",
-      ),
-      { params: Promise.resolve({ ticketId: "t1", attachmentId: "att-1" }) },
+  it("refuses a file on a closed case", async () => {
+    mockCaseFindFirst.mockResolvedValue({ ...CASE, status: "CLOSED" });
+    const res = await createAttachment(
+      post({ originalName: "proof.pdf", mimeType: "application/pdf", fileSize: 1024 }),
+      { params: Promise.resolve({ caseId: "c-1" }) },
     );
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe(
-      "https://storage.test/signed?token=x",
-    );
-    expect(mockedSign).toHaveBeenCalledWith("support-tickets/t1/file.png");
-    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.status).toBe(409);
+    expect(mockAttachmentCreate).not.toHaveBeenCalled();
   });
 
-  it("refuses a caller who neither owns the ticket nor is staff", async () => {
-    (getSession as jest.Mock).mockResolvedValueOnce({ user: { id: "other" } });
-    const res = await GET(
-      new NextRequest(
-        "http://localhost/api/support-tickets/t1/attachments/att-1",
-      ),
-      { params: Promise.resolve({ ticketId: "t1", attachmentId: "att-1" }) },
-    );
-    expect(res.status).toBe(403);
-    expect(mockedSign).not.toHaveBeenCalled();
-  });
-
-  it("answers an upload failure with generic copy and reports the vendor message once", async () => {
-    (uploadSupportTicketAttachment as jest.Mock).mockResolvedValue({
-      success: false,
-      error: "bucket 'support-attachments' not found",
-    });
-    const form = new FormData();
-    form.set("file", new File(["x"], "a.png", { type: "image/png" }));
-    const res = await POST(
-      new NextRequest("http://localhost/api/support-tickets/t1/attachments", {
-        method: "POST",
-        body: form,
-      }),
-      { params: Promise.resolve({ ticketId: "t1" }) },
+  it("refuses a twenty-first file", async () => {
+    mockAttachmentCount.mockResolvedValue(20);
+    const res = await createAttachment(
+      post({ originalName: "proof.pdf", mimeType: "application/pdf", fileSize: 1024 }),
+      { params: Promise.resolve({ caseId: "c-1" }) },
     );
     expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(JSON.stringify(json)).not.toMatch(/bucket|storage/i);
-    expect(json).not.toHaveProperty("message");
-    expect(json).not.toHaveProperty("instructions");
-    expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+    expect(mockAttachmentCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses a file type it does not accept", async () => {
+    const res = await createAttachment(
+      post({ originalName: "payload.exe", mimeType: "application/x-msdownload", fileSize: 10 }),
+      { params: Promise.resolve({ caseId: "c-1" }) },
+    );
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("the confirmation", () => {
+  it("refuses a file whose stored size or type does not match the declaration", async () => {
+    mockAttachmentFindFirst.mockResolvedValue({
+      id: "att-1",
+      caseId: "c-1",
+      uploadedById: "u1",
+      completedAt: null,
+      deletedAt: null,
+      storagePath: "support-cases/c-1/att-1",
+      fileSize: 1024,
+      mimeType: "application/pdf",
+      evidenceRequestId: null,
+    });
+    mockStorageInfo.mockResolvedValue({
+      data: { size: 999, contentType: "application/pdf" },
+      error: null,
+    });
+    const res = await confirmAttachment(
+      new NextRequest("https://x.test/api/support/cases/c-1/attachments", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ attachmentId: "att-1" }),
+      }),
+      { params: Promise.resolve({ caseId: "c-1" }) },
+    );
+    expect(res.status).toBe(400);
+    expect(mockAttachmentUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("completes the upload when the file matches the declaration", async () => {
+    mockAttachmentFindFirst.mockResolvedValue({
+      id: "att-1",
+      caseId: "c-1",
+      uploadedById: "u1",
+      completedAt: null,
+      deletedAt: null,
+      storagePath: "support-cases/c-1/att-1",
+      fileSize: 1024,
+      mimeType: "application/pdf",
+      evidenceRequestId: null,
+    });
+    const res = await confirmAttachment(
+      new NextRequest("https://x.test/api/support/cases/c-1/attachments", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ attachmentId: "att-1" }),
+      }),
+      { params: Promise.resolve({ caseId: "c-1" }) },
+    );
+    expect(res.status).toBe(200);
+    expect(mockAttachmentUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "att-1", completedAt: null }),
+      }),
+    );
+  });
+});
+
+describe("the download", () => {
+  it("redirects to a signed URL minted from the stored path", async () => {
+    mockAttachmentFindFirst.mockResolvedValue({
+      id: "att-1",
+      caseId: "c-1",
+      completedAt: new Date(),
+      deletedAt: null,
+      storagePath: "support-cases/c-1/att-1",
+      originalName: "proof.pdf",
+      message: null,
+      evidenceRequestId: null,
+    });
+    mockCreateSignedUrl.mockResolvedValue({
+      data: { signedUrl: "https://storage.test/download" },
+      error: null,
+    });
+    const res = await getAttachment(new NextRequest("https://x.test/x"), {
+      params: Promise.resolve({ attachmentId: "att-1" }),
+    });
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe("https://storage.test/download");
+  });
+
+  it("hides an attachment that is not finished", async () => {
+    mockAttachmentFindFirst.mockResolvedValue(null);
+    const res = await getAttachment(new NextRequest("https://x.test/x"), {
+      params: Promise.resolve({ attachmentId: "att-1" }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("lists only finished attachments", async () => {
+    const res = await listAttachments(
+      new NextRequest("https://x.test/api/support/cases/c-1/attachments"),
+      { params: Promise.resolve({ caseId: "c-1" }) },
+    );
+    expect(res.status).toBe(200);
+    expect(mockAttachmentFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ caseId: "c-1", completedAt: { not: null } }),
+      }),
+    );
+  });
+});
+
+describe("the removal", () => {
+  it("retains submitted evidence rather than deleting it", async () => {
+    mockAttachmentFindFirst.mockResolvedValue({
+      id: "att-1",
+      caseId: "c-1",
+      uploadedById: "u1",
+      completedAt: new Date(),
+      deletedAt: null,
+      evidenceRequestId: null,
+      supportCase: { decisions: [], status: "OPEN" },
+    });
+    const res = await deleteAttachment(new NextRequest("https://x.test/x"), {
+      params: Promise.resolve({ attachmentId: "att-1" }),
+    });
+    expect(res.status).toBe(409);
+    expect(mockAttachmentUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("soft-deletes an unfinished upload", async () => {
+    mockAttachmentFindFirst.mockResolvedValue({
+      id: "att-1",
+      caseId: "c-1",
+      uploadedById: "u1",
+      completedAt: null,
+      deletedAt: null,
+      evidenceRequestId: null,
+      supportCase: { decisions: [], status: "OPEN" },
+    });
+    const res = await deleteAttachment(new NextRequest("https://x.test/x"), {
+      params: Promise.resolve({ attachmentId: "att-1" }),
+    });
+    expect(res.status).toBe(200);
+    expect(mockAttachmentUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "att-1", completedAt: null }),
+        data: expect.objectContaining({ deletedAt: expect.any(Date) }),
+      }),
+    );
   });
 });

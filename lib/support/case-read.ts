@@ -14,12 +14,13 @@ import {
   INBOX_PAGE_SIZE,
   STATS_WINDOW_DAYS,
   averageFirstResponseMs,
-  compareCasesBySla,
   countSlaBreaches,
   inboxBadgeFilters,
   inboxCaseWhere,
   slaCandidateWhere,
+  slaComparator,
   type InboxFilters,
+  type InboxSortSpec,
 } from "./inbox-query";
 import { slaStateOf } from "./sla";
 export { extractCallbackInfo } from "./callback-info";
@@ -32,6 +33,13 @@ export const SLA_SELECT = {
   resolvedAt: true,
   awaitingUserSince: true,
   pausedSeconds: true,
+  /**
+   * The statutory ceiling on this case, set at intake. It is selected here
+   * because `effectiveResolutionDueAt` CAPS the internal deadline with it —
+   * without this column the inbox list and the SLA-breach count would apply
+   * the internal target and miss a statutory breach entirely.
+   */
+  statutoryDueAt: true,
 } as const;
 
 export const PLAN_TITLE_SELECT = {
@@ -73,7 +81,36 @@ const ROW_SELECT = {
   ...SLA_SELECT,
   requester: { select: { id: true, name: true } },
   assignedTo: { select: { id: true, name: true } },
+  subjects: {
+    where: { subjectType: "PAYMENT" },
+    select: { subjectId: true },
+    take: 1,
+  },
 } satisfies Prisma.SupportCaseSelect;
+
+/** The `orderBy` for a sortable column; `id` breaks every tie. */
+function orderByFor(
+  sort: InboxSortSpec,
+): Prisma.SupportCaseOrderByWithRelationInput[] {
+  const dir = sort.dir;
+  switch (sort.key) {
+    case "reference":
+      return [{ referenceNumber: dir }, { id: "asc" }];
+    case "subject":
+      return [{ title: dir }, { id: "asc" }];
+    case "assignee":
+      return [{ assignedTo: { name: dir } }, { id: "asc" }];
+    case "activity":
+    default:
+      return dir === "desc"
+        ? [...CASE_ORDER_BY]
+        : [
+            { lastMessageAt: { sort: "asc", nulls: "last" } },
+            { createdAt: "asc" },
+            { id: "asc" },
+          ];
+  }
+}
 
 export async function readInboxPage(
   filters: InboxFilters,
@@ -95,20 +132,29 @@ export async function readInboxPage(
     resolutionDueAt: true,
   } as const;
   const rowsRead =
-    filters.sort === "sla"
+    filters.sort.key === "sla"
       ? (async () => {
+          const dir = filters.sort.dir;
           // Acknowledged cases rank by resolution; their old acknowledgement deadline cannot reorder them.
           const [awaitingAck, rest] = await Promise.all([
             prisma.supportCase.findMany({
               where: {
                 AND: [where, { acknowledgedAt: null, ackDueAt: { not: null } }],
               },
-              orderBy: [
-                { ackDueAt: "asc" },
-                { resolutionDueAt: { sort: "asc", nulls: "last" } },
-                { createdAt: "asc" },
-                { id: "asc" },
-              ],
+              orderBy:
+                dir === "desc"
+                  ? [
+                      { ackDueAt: "desc" },
+                      { resolutionDueAt: { sort: "desc", nulls: "last" } },
+                      { createdAt: "desc" },
+                      { id: "desc" },
+                    ]
+                  : [
+                      { ackDueAt: "asc" },
+                      { resolutionDueAt: { sort: "asc", nulls: "last" } },
+                      { createdAt: "asc" },
+                      { id: "asc" },
+                    ],
               take: depth,
               select: keySelect,
             }),
@@ -121,18 +167,25 @@ export async function readInboxPage(
                   },
                 ],
               },
-              orderBy: [
-                { resolutionDueAt: { sort: "asc", nulls: "last" } },
-                { createdAt: "asc" },
-                { id: "asc" },
-              ],
+              orderBy:
+                dir === "desc"
+                  ? [
+                      { resolutionDueAt: { sort: "desc", nulls: "last" } },
+                      { createdAt: "desc" },
+                      { id: "desc" },
+                    ]
+                  : [
+                      { resolutionDueAt: { sort: "asc", nulls: "last" } },
+                      { createdAt: "asc" },
+                      { id: "asc" },
+                    ],
               take: depth,
               select: keySelect,
             }),
           ]);
           const keys = [...awaitingAck, ...rest]
             .map((c) => ({ ...c, key: c.id }))
-            .sort(compareCasesBySla)
+            .sort(slaComparator(dir))
             .slice(skip, skip + INBOX_PAGE_SIZE);
           if (!keys.length) return [];
           const cases = await prisma.supportCase.findMany({
@@ -144,27 +197,48 @@ export async function readInboxPage(
         })()
       : prisma.supportCase.findMany({
           where,
-          orderBy: [...CASE_ORDER_BY],
+          orderBy: orderByFor(filters.sort),
           skip,
           take: INBOX_PAGE_SIZE,
           select: ROW_SELECT,
         });
   const [cases, total] = await Promise.all([rowsRead, totalRead]);
-  const rows: InboxRow[] = cases.map((c) => ({
-    key: caseKeyOf({ kind: "case", id: c.id }),
-    kind: "case",
-    scope: c.appointmentId ? "session" : "platform",
-    requester: { ...c.requester, callbackRequested: Boolean(c.callbackPhone) },
-    subject: c.title,
-    reference: c.referenceNumber,
-    topic: ticketTopic(c),
-    status: c.status,
-    priority: c.priority,
-    channel: c.activeChannel,
-    sla: slaStateOf(c),
-    assignee: c.assignedTo,
-    lastActivityAt: (c.lastMessageAt ?? c.createdAt).toISOString(),
-  }));
+  const paymentIds = [
+    ...new Set(cases.flatMap((c) => c.subjects.map((s) => s.subjectId))),
+  ];
+  const payments = paymentIds.length
+    ? await prisma.payment.findMany({
+        where: { id: { in: paymentIds } },
+        select: { id: true, amount: true, currency: true },
+      })
+    : [];
+  const amountByPayment = new Map(payments.map((p) => [p.id, p]));
+  const rows: InboxRow[] = cases.map((c) => {
+    const payment = c.subjects[0]
+      ? amountByPayment.get(c.subjects[0].subjectId)
+      : undefined;
+    return {
+      key: caseKeyOf({ kind: "case", id: c.id }),
+      kind: "case",
+      scope: c.appointmentId ? "session" : "platform",
+      requester: {
+        ...c.requester,
+        callbackRequested: Boolean(c.callbackPhone),
+      },
+      subject: c.title,
+      reference: c.referenceNumber,
+      topic: ticketTopic(c),
+      status: c.status,
+      priority: c.priority,
+      channel: c.activeChannel,
+      sla: slaStateOf(c),
+      assignee: c.assignedTo,
+      /** The linked payment's amount in paise; null when the case has none. */
+      amount: payment ? payment.amount : null,
+      currency: payment ? payment.currency : null,
+      lastActivityAt: (c.lastMessageAt ?? c.createdAt).toISOString(),
+    };
+  });
   return {
     rows,
     total: Math.min(total, INBOX_MAX_DEPTH + INBOX_PAGE_SIZE),

@@ -41,6 +41,7 @@ import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { formatForViewer } from "@/lib/time/viewer-zone";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
+import { PlanCheckoutFaq } from "@/app/checkout/components/PlanCheckoutFaq";
 import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclosure";
 import {
   CancellationPolicyNote,
@@ -57,6 +58,7 @@ import type {
   Appointment,
   ConsultantProfile,
   Domain,
+  PlanFaq,
   Tag as PrismaTag,
   Topic as PrismaTopic,
   Webinar as PrismaWebinar,
@@ -70,6 +72,9 @@ import type {
 // price arrives as number: extended client + JSON serialization (#780)
 export type CheckoutWebinarPlanData = Omit<WebinarPlan, "price"> & {
   price: number;
+  // The buyer's questions, answered at checkout — the same rows the plan
+  // detail page renders.
+  faqs: PlanFaq[];
   consultantProfile:
     | (ConsultantProfile & {
         user: User & {
@@ -930,6 +935,9 @@ export default function WebinarCheckoutPage({
             </div>
           </CardContent>
         </Card>
+        {/* The buyer's doubt ("what exactly do I get, is this right for me")
+            is answered where the money is, not only where they browsed. */}
+        <PlanCheckoutFaq faqs={planData?.data.faqs} />
         <div className="grid gap-4">
           <div className="grid gap-2">
             <div className="font-semibold">Payment</div>

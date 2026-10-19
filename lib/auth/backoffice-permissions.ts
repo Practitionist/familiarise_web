@@ -59,8 +59,18 @@ export type BackofficeSurface =
   | "payments.manage"
   | "refunds.read"
   | "refunds.manage"
+  // The money doors are split into PROPOSE and EXECUTE, so a maker-checker
+  // separation is a configuration change rather than a migration. There is
+  // exactly one admin today, so both keys resolve to ADMIN and the split
+  // costs nothing until a second admin exists.
+  | "refunds.decide"
+  | "refunds.execute"
   | "disputes.read"
   | "disputes.manage"
+  // Issuing the platform's verdict on a two-party buyer dispute. Separate
+  // from `disputes.manage` (which is the gateway chargeback's evidence and
+  // contest door), because they are different acts on different records.
+  | "disputes.decide"
   | "invoices.read"
   | "invoices.manage"
   | "subscriptions.read"
@@ -143,8 +153,14 @@ export const BACKOFFICE_PERMISSIONS: Record<
   "payments.manage": ADMIN_ONLY,
   "refunds.read": OPERATORS,
   "refunds.manage": ADMIN_ONLY,
+  // Propose vs execute. Both are ADMIN today (there is exactly one admin);
+  // splitting them is what a maker-checker deployment would need.
+  "refunds.decide": ADMIN_ONLY,
+  "refunds.execute": ADMIN_ONLY,
   "disputes.read": OPERATORS,
   "disputes.manage": ADMIN_ONLY,
+  // The platform's verdict on a two-party buyer dispute.
+  "disputes.decide": ADMIN_ONLY,
   "invoices.read": OPERATORS,
   "invoices.manage": ADMIN_ONLY,
   "subscriptions.read": OPERATORS,

@@ -1249,3 +1249,99 @@ CREATE UNIQUE INDEX IF NOT EXISTS "OverageEvent_bookingUtilizationId_batchKey_ke
   ON "OverageEvent" ("bookingUtilizationId", "batchKey");
 -- SPLIT
 DROP INDEX IF EXISTS "OverageEvent_bookingUtilizationId_key";
+
+-- SPLIT
+-- At most one open non-deleted SupportCase per (appointmentId, appointmentOccurrenceId,
+-- requesterUserId, submitterUserId, category, organizationId, ownershipScope, scopeKey).
+--
+-- scopeKey is the app-level dedupe key: it names the narrowest entity the case is
+-- about (OCCURRENCE:<id> / APPOINTMENT:<id> / <PRIMARY_SUBJECT_TYPE>:<id> / ACCOUNT).
+-- Without it in the index, two open cases by the same requester with the same
+-- category but different subjects collide in the database while the application
+-- considers them distinct — and the collision handler then silently answers with
+-- the FIRST case. A moderation appeal is exactly that case: two appeals of two
+-- different moderation actions are both category MODERATION_APPEAL, both with a
+-- NULL appointment, so they collided and the second appeal was answered with the
+-- first appeal's case.
+DROP INDEX IF EXISTS "support_case_open_scope_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "support_case_open_scope_key"
+  ON "SupportCase" ("appointmentId", "appointmentOccurrenceId", "requesterUserId", "submitterUserId", "category", "organizationId", "ownershipScope", "scopeKey")
+  NULLS NOT DISTINCT
+  WHERE "closedAt" IS NULL AND "deletedAt" IS NULL;
+
+-- SPLIT
+-- At most one LIVE payment hold per (case, payment). A released hold keeps its
+-- row for the audit trail, so the guard is partial on releasedAt.
+DROP INDEX IF EXISTS "support_payment_hold_live_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "support_payment_hold_live_key"
+  ON "SupportPaymentHold" ("caseId", "paymentId")
+  WHERE "releasedAt" IS NULL;
+
+-- SPLIT
+-- At most one OPEN dispute per payment. A resolved, withdrawn or closed
+-- dispute is history; a second OPEN one would mean two live claims on the same
+-- money, and the two protocols would not know about each other.
+DROP INDEX IF EXISTS "purchase_dispute_open_payment_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "purchase_dispute_open_payment_key"
+  ON "PurchaseDispute" ("paymentId")
+  WHERE "status" NOT IN ('RESOLVED', 'WITHDRAWN', 'CLOSED');
+
+-- SPLIT
+-- A PurchaseDispute names exactly one respondent, and the two respondent kinds
+-- are mutually exclusive. A dispute with neither (or both) would have nobody to
+-- answer it.
+ALTER TABLE "PurchaseDispute" DROP CONSTRAINT IF EXISTS "purchase_dispute_respondent_chk";
+-- SPLIT
+ALTER TABLE "PurchaseDispute" ADD CONSTRAINT "purchase_dispute_respondent_chk"
+  CHECK (
+    ("respondentType" = 'CONSULTANT' AND "respondentUserId" IS NOT NULL AND "respondentOrganizationId" IS NULL)
+    OR ("respondentType" = 'ORGANIZATION' AND "respondentOrganizationId" IS NOT NULL AND "respondentUserId" IS NULL)
+  );
+
+-- SPLIT
+-- The money at stake is never negative.
+ALTER TABLE "PurchaseDispute" DROP CONSTRAINT IF EXISTS "purchase_dispute_amount_nonnegative";
+-- SPLIT
+ALTER TABLE "PurchaseDispute" ADD CONSTRAINT "purchase_dispute_amount_nonnegative"
+  CHECK ("amountAtStakePaise" >= 0);
+
+-- SPLIT
+-- The protocol version starts at 1 and only ever moves forward.
+ALTER TABLE "PurchaseDispute" DROP CONSTRAINT IF EXISTS "purchase_dispute_version_positive";
+-- SPLIT
+ALTER TABLE "PurchaseDispute" ADD CONSTRAINT "purchase_dispute_version_positive"
+  CHECK ("version" >= 1);
+
+-- SPLIT
+-- A platform-credit refund is only lawful with the buyer's specific agreement
+-- (RBI PA/PG §12.4: refunds go to the original method unless the customer
+-- specifically agrees otherwise). The consent stamp is what records it.
+ALTER TABLE "PurchaseDispute" DROP CONSTRAINT IF EXISTS "purchase_dispute_credits_consent_chk";
+-- SPLIT
+ALTER TABLE "PurchaseDispute" ADD CONSTRAINT "purchase_dispute_credits_consent_chk"
+  CHECK ("refundMethod" IS DISTINCT FROM 'PLATFORM_CREDITS' OR "refundMethodConsentedAt" IS NOT NULL);
+
+-- SPLIT
+-- A terminal dispute carries the moment it closed.
+ALTER TABLE "PurchaseDispute" DROP CONSTRAINT IF EXISTS "purchase_dispute_terminal_resolved_chk";
+-- SPLIT
+ALTER TABLE "PurchaseDispute" ADD CONSTRAINT "purchase_dispute_terminal_resolved_chk"
+  CHECK (
+    "status" NOT IN ('RESOLVED', 'WITHDRAWN', 'CLOSED')
+    OR "resolvedAt" IS NOT NULL
+  );
+
+-- SPLIT
+-- A moderation report is either open (no resolution) or closed WITH a
+-- resolution, so the queue can report on dispositions rather than free text.
+ALTER TABLE "ModerationReport" DROP CONSTRAINT IF EXISTS "moderation_report_resolution_chk";
+-- SPLIT
+ALTER TABLE "ModerationReport" ADD CONSTRAINT "moderation_report_resolution_chk"
+  CHECK (
+    ("status" IN ('PENDING', 'UNDER_REVIEW') AND "resolution" IS NULL)
+    OR ("status" IN ('DISMISSED', 'ACTION_TAKEN', 'ESCALATED') AND "resolution" IS NOT NULL)
+  );
+

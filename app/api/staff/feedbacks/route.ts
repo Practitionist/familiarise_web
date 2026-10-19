@@ -5,6 +5,7 @@ import { z } from "zod";
 import { PlatformFeedbackStatusSchema } from "@/schemas/enums";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { STAFF_FEEDBACK_SELECT } from "@/lib/backoffice/staff-feedback";
 import * as Sentry from "@sentry/nextjs";
 
 const staffFeedbacksQuerySchema = z.object({
@@ -58,16 +59,9 @@ export async function GET(req: NextRequest) {
     const [feedbacks, statusGroups] = await Promise.all([
       prisma.platformFeedback.findMany({
         where,
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              image: true,
-            },
-          },
-        },
+        // The operator's own note travels with the row: the moderation team
+        // wrote it and must be able to read it back.
+        select: STAFF_FEEDBACK_SELECT,
         orderBy: { createdAt: "desc" },
         skip: (page - 1) * limit,
         take: limit,

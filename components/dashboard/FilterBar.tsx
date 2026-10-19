@@ -28,6 +28,11 @@ export interface FilterBarSearch {
   value: string;
   /** Called 300 ms after the user stops typing. */
   onChange: (value: string) => void;
+  /**
+   * A stable id for the input, so a keyboard shortcut elsewhere on the page
+   * can focus it. Defaults to a generated one.
+   */
+  inputId?: string;
 }
 
 export interface FilterBarChips {
@@ -65,6 +70,7 @@ function DebouncedSearch({
   placeholder,
   value,
   onChange,
+  inputId,
 }: Readonly<FilterBarSearch>) {
   const id = useId();
   const [draft, setDraft] = useState(value);
@@ -91,7 +97,7 @@ function DebouncedSearch({
 
   return (
     <div className="relative min-w-[180px] max-w-sm flex-1">
-      <label htmlFor={id} className="sr-only">
+      <label htmlFor={inputId ?? id} className="sr-only">
         {label}
       </label>
       <Search
@@ -99,7 +105,7 @@ function DebouncedSearch({
         aria-hidden
       />
       <Input
-        id={id}
+        id={inputId ?? id}
         type="search"
         value={draft}
         onChange={(e) => setDraft(e.target.value)}

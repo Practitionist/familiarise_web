@@ -1472,6 +1472,31 @@ export function getArticle(
   );
 }
 
+/**
+ * The article's URL-safe key: its slug. Slugs are unique across the whole
+ * corpus (the content test enforces it), so a slug alone names one article —
+ * the same identity the public `/support/{category}/{slug}` URL already uses,
+ * and the key the "was this helpful?" vote is filed under.
+ */
+export function getArticleByKey(key: string): SupportArticle | undefined {
+  return supportArticles.find((a) => a.slug === key);
+}
+
+/**
+ * The FAQ index: every article grouped under its category, in corpus order.
+ * The categories that hold no article are dropped — an empty heading is noise
+ * on an index whose whole job is to be scanned.
+ */
+export function faqIndexByCategory(): {
+  category: SupportCategory;
+  articles: SupportArticle[];
+}[] {
+  return supportCategories.flatMap((category) => {
+    const articles = articlesForCategory(category.slug);
+    return articles.length > 0 ? [{ category, articles }] : [];
+  });
+}
+
 export function articlesForCategory(category: string): SupportArticle[] {
   return supportArticles.filter((a) => a.category === category);
 }
@@ -1753,6 +1778,11 @@ const TOPIC_ARTICLES: Record<CaseTopic, readonly string[]> = {
     "organizations/org-support-retention",
     "organizations/wallet-invoice-billing",
     "organizations/members-roles",
+  ],
+  tax: [
+    "payments/gst-invoices",
+    "organizations/wallet-invoice-billing",
+    "help/tickets-and-contact",
   ],
   other: [
     "help/tickets-and-contact",

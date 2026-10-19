@@ -115,6 +115,18 @@ export type OrgSurface =
   | "supportRequests.org"
   | "supportCases.operations.manage"
   | "supportCases.billing.manage"
+  // Deciding an OWN-ORG, no-money service-quality case. Narrower than the
+  // two keys above: this is a verdict, and a verdict on the org's own
+  // service quality is the org's to make. A case where platform money or
+  // another org's money is at stake is NOT the org's to decide — that stays
+  // platform-side, and the scope resolver refuses it.
+  | "supportCases.decide"
+  // REQUESTING a refund on the org's own money. A request, never an
+  // execution: the org's money sits in the PLATFORM's escrow, so the org is
+  // not the holder of the funds it would be releasing.
+  | "refunds.request"
+  // Cases are closed, never deleted. The audit trail outlives the row.
+  | "supportCases.delete"
   | "quality.read"
   // Acting for the org on an org-funded booking (#1527 decision 8). Cancel is
   // narrower: it refunds.
@@ -247,6 +259,12 @@ export const ORG_PERMISSIONS: Record<OrgSurface, ReadonlySet<MemberRole>> = {
   // #1527 — operations.read OR billing.read: an ops lead or the finance team
   // raises requests about the org and reads the ones raised.
   "supportRequests.org": new Set([...OPERATIONS_READERS, ...FINANCE_READERS]),
+  // A verdict on the org's own service quality, and only that.
+  "supportCases.decide": GOVERNANCE,
+  // Ask the platform to refund the org's money. Never execute it.
+  "refunds.request": FINANCE_MUTATORS,
+  // A case is closed, not deleted.
+  "supportCases.delete": NOBODY,
   "supportCases.operations.manage": OPERATIONS_READERS,
   "supportCases.billing.manage": roles("OWNER", "MAINTAINER", "BILLING_ADMIN"),
 

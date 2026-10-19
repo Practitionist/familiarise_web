@@ -7,34 +7,23 @@ import { Plus } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
-import { FilterBar } from "@/components/dashboard/FilterBar";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useListParams } from "@/hooks/useListParams";
 import { durationLabel } from "@/lib/support/case-format";
-import { CASE_TOPICS, CASE_TOPIC_LABEL } from "@/lib/support/case-topic";
 import {
-  INBOX_FILTER_KEYS,
-  INBOX_STATUSES,
   INBOX_VIEWS,
   INBOX_VIEW_LABEL,
-  type InboxFilterKey,
-  type InboxView,
+  inboxViewOf,
 } from "@/lib/support/inbox-query";
-import { humanizeEnum } from "@/lib/ui/tone";
+import { InboxStatsSchema } from "@/schemas/support-inbox";
 import type { InboxStats } from "@/types/support-case";
 import { cn } from "@/utils/tailwind";
 
 import { CaseList } from "./CaseList";
+import { InboxFilterBar } from "./InboxFilterBar";
 import { StaffSupportComposeDialog } from "./StaffSupportComposeDialog";
-
-const ANY = "any";
-const withAny = (
-  label: string,
-  options: { value: string; label: string }[],
-) => [{ value: ANY, label }, ...options];
+import { useInboxListParams } from "./useInboxListParams";
 
 function avgFirstResponse(s: InboxStats | undefined): string {
   if (!s) return "—";
@@ -48,10 +37,10 @@ function StatsLine({
 }: Readonly<{ basePath: string; className?: string }>) {
   const stats = useQuery({
     queryKey: ["support-inbox-stats"],
-    queryFn: async (): Promise<InboxStats> => {
+    queryFn: async () => {
       const res = await fetch("/api/staff/support-inbox/stats");
       if (!res.ok) throw new Error("Couldn't load the team stats");
-      return res.json();
+      return InboxStatsSchema.parse(await res.json());
     },
     staleTime: 60_000,
   });
@@ -97,11 +86,8 @@ export function SupportInboxShell({
   const caseKey = useSelectedLayoutSegment();
   const { basePath } = useBackofficeCapability();
   const search = useSearchParams().toString();
-  const list = useListParams({ filterKeys: INBOX_FILTER_KEYS });
-  const f = list.filters;
-  const view = (f.view as InboxView | null) ?? "needs-reply";
-  const pick = (key: InboxFilterKey) => (value: string) =>
-    list.setFilter(key, value === ANY ? null : value);
+  const list = useInboxListParams();
+  const view = inboxViewOf(list.filters.view);
   const searchSuffix = search ? `?${search}` : "";
   const [composeOpen, setComposeOpen] = useState(false);
 
@@ -141,116 +127,19 @@ export function SupportInboxShell({
             ))}
           </TabsList>
         </Tabs>
-        <FilterBar
-          search={{
-            label: "Search cases",
-            placeholder: "Name, email, subject or reference",
-            value: list.q,
-            onChange: list.setQ,
-          }}
-          selects={[
-            {
-              key: "sort",
-              label: "Sort",
-              value:
-                f.sort ??
-                (view === "needs-reply" || view === "sla-at-risk"
-                  ? "sla"
-                  : "activity"),
-              options: [
-                { value: "activity", label: "Latest activity" },
-                { value: "sla", label: "Nearest SLA deadline" },
-              ],
-              onChange: pick("sort"),
-            },
-            {
-              key: "scope",
-              label: "Kind",
-              value: f.scope ?? ANY,
-              options: withAny("Session and platform", [
-                { value: "session", label: "Session" },
-                { value: "platform", label: "Platform" },
-              ]),
-              onChange: pick("scope"),
-            },
-            {
-              key: "status",
-              label: "Status",
-              value: f.status ?? ANY,
-              options: withAny(
-                "Any status",
-                INBOX_STATUSES.map((s) => ({
-                  value: s,
-                  label: humanizeEnum(s),
-                })),
-              ),
-              onChange: pick("status"),
-            },
-            {
-              key: "priority",
-              label: "Priority",
-              value: f.priority ?? ANY,
-              options: withAny(
-                "Any priority",
-                ["URGENT", "HIGH", "MEDIUM", "LOW"].map((p) => ({
-                  value: p,
-                  label: humanizeEnum(p),
-                })),
-              ),
-              onChange: pick("priority"),
-            },
-            {
-              key: "topic",
-              label: "Category",
-              value: f.topic ?? ANY,
-              options: withAny(
-                "Any category",
-                CASE_TOPICS.map((t) => ({
-                  value: t,
-                  label: CASE_TOPIC_LABEL[t],
-                })),
-              ),
-              onChange: pick("topic"),
-            },
-          ]}
-          onClear={() =>
-            list.setParams({
-              q: "",
-              filters: Object.fromEntries(
-                INBOX_FILTER_KEYS.filter((k) => k !== "view").map((k) => [
-                  k,
-                  null,
-                ]),
-              ),
-            })
-          }
-          canClear={
-            !!list.q ||
-            INBOX_FILTER_KEYS.some((k) => k !== "view" && f[k] !== null)
-          }
-        >
-          <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
-            From
-            <Input
-              type="date"
-              className="h-9 w-auto"
-              value={f.from ?? ""}
-              onChange={(e) => list.setFilter("from", e.target.value || null)}
-            />
-          </label>
-          <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
-            To
-            <Input
-              type="date"
-              className="h-9 w-auto"
-              value={f.to ?? ""}
-              onChange={(e) => list.setFilter("to", e.target.value || null)}
-            />
-          </label>
-        </FilterBar>
+        <InboxFilterBar />
       </div>
 
-      <div className="lg:grid lg:grid-cols-[22rem_minmax(0,1fr)] lg:items-start lg:gap-6">
+      <div
+        className={cn(
+          "lg:grid lg:items-start lg:gap-6",
+          // With a case open, the queue is the narrow rail beside the
+          // conversation. With no case open, the queue IS the page — and ten
+          // columns need the room, so it takes the full width and the panel
+          // below it.
+          caseKey ? "lg:grid-cols-[22rem_minmax(0,1fr)]" : "lg:grid-cols-1",
+        )}
+      >
         <div className={cn(caseKey && "hidden lg:block")}>
           <CaseList activeKey={caseKey} />
         </div>

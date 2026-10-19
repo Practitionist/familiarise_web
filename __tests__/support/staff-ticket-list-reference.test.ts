@@ -15,6 +15,7 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     supportCase: { findMany: jest.fn(), count: jest.fn() },
+    payment: { findMany: jest.fn() },
   },
 }));
 
@@ -43,12 +44,14 @@ const CASE_ROW = {
   pausedSeconds: 0,
   requester: { id: "u1", name: "U" },
   assignedTo: null,
+  subjects: [],
 };
 
 beforeEach(() => {
   jest.clearAllMocks();
   (prisma.supportCase.findMany as jest.Mock).mockResolvedValue([CASE_ROW]);
   (prisma.supportCase.count as jest.Mock).mockResolvedValue(1);
+  (prisma.payment.findMany as jest.Mock).mockResolvedValue([]);
 });
 
 describe("Support inbox list (E2E F-4)", () => {

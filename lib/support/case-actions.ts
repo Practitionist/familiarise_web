@@ -24,7 +24,7 @@ export const CaseActionSchema = z.discriminatedUnion("action", [
   base.extend({ action: z.literal("REVIEW_REFUND"), recommendationId: id, approve: z.boolean(), reason, expectedRefundablePaise: z.number().int().nonnegative().safe().optional() }),
   base.extend({ action: z.literal("APPLY_HOLD"), paymentId: id, reason }),
   base.extend({ action: z.literal("RELEASE_HOLD"), holdId: id, reason }),
-  base.extend({ action: z.literal("HANDOVER"), reason }),
+  base.extend({ action: z.literal("HANDOVER"), assignedToId: id.nullable(), reason }),
 ]);
 export type CaseAction = z.infer<typeof CaseActionSchema>;
 export type CaseActor = { userId: string; role: UserRole };
@@ -195,6 +195,23 @@ export async function performCaseAction(caseId: string, actor: CaseActor, input:
       if (!released.count) throw new CaseActionError("CONFLICT", "This hold was already released.");
     }
     if (input.action === "HANDOVER" && supportCase.ownershipScope === "PERSONAL") throw new CaseActionError("PERSONAL_CASE", "Personal correspondence cannot be handed over to an organization.", 403);
+    if (input.action === "HANDOVER") {
+      // A handover REASSIGNS the case. It used to write an audit event and
+      // change nothing else, so the case stayed with the same operator while
+      // the trail said it had moved — an audit entry that lied.
+      if (input.assignedToId !== null) {
+        const assignee = await tx.user.findUnique({ where: { id: input.assignedToId }, select: { role: true, name: true } });
+        if (!assignee || (assignee.role !== "STAFF" && assignee.role !== "ADMIN")) throw new CaseActionError("INVALID_ASSIGNEE", "A case can only be handed to a staff or admin operator.", 400);
+        const moved = await tx.supportCase.updateMany({ where: { id: caseId, updatedAt: new Date(input.expectedUpdatedAt) }, data: { assignedToId: input.assignedToId } });
+        if (moved.count === 0) throw new CaseActionError("CONFLICT", "This case was modified concurrently; please retry.", 409);
+        await tx.supportCaseEvent.create({ data: { caseId, actorId: actor.userId, kind: "ASSIGNED", note: `Handed over to ${assignee.name ?? "an operator"}` } });
+        return { ok: true, assignedToId: input.assignedToId };
+      }
+      const unassigned = await tx.supportCase.updateMany({ where: { id: caseId, updatedAt: new Date(input.expectedUpdatedAt) }, data: { assignedToId: null } });
+      if (unassigned.count === 0) throw new CaseActionError("CONFLICT", "This case was modified concurrently; please retry.", 409);
+      await tx.supportCaseEvent.create({ data: { caseId, actorId: actor.userId, kind: "UNASSIGNED", note: "Handed back to the queue" } });
+      return { ok: true, assignedToId: null };
+    }
     await privateEvent(tx, caseId, actor.userId, `${input.action}: ${"reason" in input ? input.reason : ""}`);
     return { ok: true };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));

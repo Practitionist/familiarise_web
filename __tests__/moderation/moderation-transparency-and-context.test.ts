@@ -11,6 +11,7 @@ const mockModerationReport = {
   update: jest.fn(),
   updateMany: jest.fn(),
   count: jest.fn(),
+  groupBy: jest.fn(),
 };
 const mockConsultantReview = {
   findFirst: jest.fn(),
@@ -40,6 +41,10 @@ const mockAppointmentSupportThread = {
   findMany: jest.fn(),
   count: jest.fn(),
 };
+const mockSupportCase = {
+  findFirst: jest.fn(),
+  findMany: jest.fn(),
+};
 const mockRefund = {
   findMany: jest.fn(),
 };
@@ -50,6 +55,7 @@ const mockDispute = {
 const mockPlatformFeedback = {
   findUnique: jest.fn(),
   findUniqueOrThrow: jest.fn(),
+  findMany: jest.fn(),
   updateMany: jest.fn(),
 };
 const mockNotificationOutbox = {
@@ -99,6 +105,9 @@ jest.mock("../../lib/prisma", () => ({
     },
     get appointmentSupportThread() {
       return mockAppointmentSupportThread;
+    },
+    get supportCase() {
+      return mockSupportCase;
     },
     get refund() {
       return mockRefund;
@@ -155,6 +164,7 @@ jest.mock("../../lib/novu", () => ({
   notifyVerificationStatusChanged: jest
     .fn()
     .mockResolvedValue({ success: true }),
+  notifyFeedbackReceived: jest.fn().mockResolvedValue({ success: true }),
 }));
 
 jest.mock("../../lib/reviews", () => ({
@@ -170,6 +180,8 @@ import {
 } from "@/lib/moderation/review-context";
 import { POST as postReport } from "@/app/api/report/route";
 import { GET as getUserReports } from "@/app/api/user/reports/route";
+import { GET as getOwnFeedbacks } from "@/app/api/user/feedbacks/route";
+import { GET as getModerationReports } from "@/app/api/staff/moderation/reports/route";
 import { PATCH as patchModerationReport } from "@/app/api/staff/moderation/reports/[reportId]/route";
 import { PATCH as patchStaffFeedback } from "@/app/api/staff/feedbacks/[feedbackId]/route";
 import { GET as getSessionFeedback } from "@/app/api/appointments/[appointmentId]/feedback/route";
@@ -328,9 +340,8 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
       mockRefund.findMany.mockResolvedValue([
         { payment: { appointmentId: "apt-1" } },
       ]);
-      mockAppointmentSupportThread.findMany.mockResolvedValue([
-        { appointmentId: "apt-2" },
-      ]);
+      // The canonical SupportCase table replaced the legacy thread table.
+      mockSupportCase.findMany.mockResolvedValue([{ appointmentId: "apt-2" }]);
       mockDispute.findMany.mockResolvedValue([]);
 
       const signals = await readReviewReportSignals(["apt-1", "apt-2"]);
@@ -349,7 +360,8 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
         id: "apt-1",
         occurrences: [{ completionStatus: "COMPLETED" }],
         consultantReviews: [{ createdAt: new Date("2026-10-07T10:00:00Z") }],
-        supportThreads: [{ id: "thread-open-1" }],
+        // The canonical SupportCase table replaced the legacy thread table.
+        supportCases: [{ id: "case-open-1" }],
         payment: [
           {
             refunds: [
@@ -568,10 +580,11 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
       });
       mockAppointmentOccurrence.findMany.mockResolvedValue([]);
       mockAppointmentFeedback.findMany.mockResolvedValue([]);
-      // Only consultee-1's own thread is open; another attendee's is not visible.
-      mockAppointmentSupportThread.findFirst.mockImplementation(
-        async ({ where }: { where: { userId: string } }) =>
-          where.userId === "consultee-1" ? { id: "thread-1" } : null,
+      // Only consultee-1's own case is open; another attendee's is not visible.
+      // The canonical SupportCase table replaced the legacy thread table.
+      mockSupportCase.findFirst.mockImplementation(
+        async ({ where }: { where: { requesterUserId: string } }) =>
+          where.requesterUserId === "consultee-1" ? { id: "case-1" } : null,
       );
 
       const req = new NextRequest(
@@ -668,6 +681,252 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
         }),
       );
       expect(mockAttemptTrigger).toHaveBeenCalled();
+    });
+  });
+
+  describe("the typed ground, the disposition and the operator's note", () => {
+    const reviewId = "550e8400-e29b-41d4-a716-446655440000";
+    const authorUserId = "550e8400-e29b-41d4-a716-446655440001";
+    const consultantUserId = "550e8400-e29b-41d4-a716-446655440002";
+
+    it("files a report under a typed ground and keeps the human label in `reason`", async () => {
+      mockGetSession.mockResolvedValue({
+        user: { id: consultantUserId, role: "CONSULTANT" },
+      });
+      mockConsultantReview.findFirst.mockResolvedValue({
+        id: reviewId,
+        deletedAt: null,
+        reviewDescription: "Unfair review",
+        consulteeProfile: { userId: authorUserId },
+        consultantProfile: { userId: consultantUserId },
+        appointment: { organizationId: null },
+      });
+      mockModerationReport.findFirst.mockResolvedValue(null);
+      mockModerationReport.create.mockResolvedValue({ id: "report-1" });
+
+      const res = await postReport(
+        new NextRequest("http://localhost/api/report", {
+          method: "POST",
+          body: JSON.stringify({
+            type: "REVIEW",
+            reason: "COERCION_OR_RETALIATION",
+            reviewId,
+            targetUserId: authorUserId,
+          }),
+        }),
+      );
+
+      expect(res.status).toBe(201);
+      expect(mockModerationReport.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            reason: "Coercion, extortion, or retaliatory pressure",
+            reasonCode: "COERCION_OR_RETALIATION",
+          }),
+        }),
+      );
+    });
+
+    it("narrows the queue by assignment and returns the assignee's name", async () => {
+      mockRequirePrivilegedAuth.mockResolvedValue({
+        session: { user: { id: "staff-1", role: "STAFF" } },
+      });
+      mockModerationReport.count.mockResolvedValue(0);
+      mockModerationReport.groupBy.mockResolvedValue([]);
+      mockModerationReport.findMany.mockResolvedValue([
+        {
+          id: "rep-1",
+          type: "MESSAGE",
+          status: "PENDING",
+          reason: "Harassment or abusive language",
+          reasonCode: "HARASSMENT_OR_ABUSE",
+          resolution: null,
+          description: null,
+          contentText: null,
+          contentUrl: null,
+          streamMessageId: "msg-1",
+          streamChannelCid: "messaging:dm-1",
+          reportCount: 1,
+          reviewId: null,
+          review: null,
+          reportedBy: { id: "p1", name: "Reporter", email: "r@x.com" },
+          targetUser: { id: "u1", name: "Target", email: "t@x.com" },
+          assignedToId: "staff-2",
+          assignedTo: {
+            id: "staff-2",
+            name: "Priya",
+            email: "p@x.com",
+            role: "STAFF",
+          },
+          actions: [],
+          _count: { actions: 0 },
+          createdAt: new Date(),
+          resolvedAt: null,
+          resolvedBy: null,
+          organizationId: null,
+        },
+      ]);
+
+      const res = await getModerationReports(
+        new Request(
+          "http://localhost/api/staff/moderation/reports?status=PENDING&assignment=mine",
+        ) as never,
+      );
+      const body = await res.json();
+
+      expect(mockModerationReport.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            status: "PENDING",
+            assignedToId: "staff-1",
+          }),
+        }),
+      );
+      expect(body.reports[0].assignedTo.name).toBe("Priya");
+      expect(body.reports[0].reasonCode).toBe("HARASSMENT_OR_ABUSE");
+    });
+
+    it("writes the disposition with the status, because the database refuses one without the other", async () => {
+      mockRequirePrivilegedAuth.mockResolvedValue({
+        session: { user: { id: "staff-1", role: "STAFF" } },
+      });
+      mockModerationReport.findUnique
+        .mockResolvedValueOnce({
+          id: "rep-1",
+          status: "PENDING",
+          assignedToId: null,
+        })
+        .mockResolvedValueOnce({
+          id: "rep-1",
+          status: "ESCALATED",
+          assignedToId: null,
+        });
+      mockModerationReport.updateMany.mockResolvedValue({ count: 1 });
+
+      const res = await patchModerationReport(
+        new NextRequest("http://localhost/api/staff/moderation/reports/rep-1", {
+          method: "PATCH",
+          body: JSON.stringify({
+            status: "ESCALATED",
+            expectedStatus: "PENDING",
+            expectedAssignedToId: null,
+          }),
+        }),
+        { params: Promise.resolve({ reportId: "rep-1" }) },
+      );
+
+      expect(res.status).toBe(200);
+      expect(mockModerationReport.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: "ESCALATED",
+            resolution: "ESCALATED",
+            resolvedBy: "staff-1",
+          }),
+        }),
+      );
+    });
+
+    it("writes the operator's note with the status, and never to the author", async () => {
+      mockRequirePrivilegedAuth.mockResolvedValue({
+        session: { user: { id: "staff-1", role: "STAFF" } },
+      });
+      mockPlatformFeedback.findUnique.mockResolvedValueOnce({
+        id: "fb-1",
+        status: "PENDING",
+        userId: "author-1",
+        title: "The app is slow",
+        staffNote: null,
+      });
+      mockPlatformFeedback.updateMany.mockResolvedValueOnce({ count: 1 });
+      mockPlatformFeedback.findUniqueOrThrow.mockResolvedValueOnce({
+        id: "fb-1",
+        status: "IN_PROGRESS",
+        staffNote: "Called the author",
+        user: { id: "author-1", name: "Asha", email: "a@x.com", image: null },
+      });
+
+      const res = await patchStaffFeedback(
+        new NextRequest("http://localhost/api/staff/feedbacks/fb-1", {
+          method: "PATCH",
+          body: JSON.stringify({
+            status: "IN_PROGRESS",
+            staffNote: "Called the author",
+          }),
+        }),
+        { params: Promise.resolve({ feedbackId: "fb-1" }) },
+      );
+
+      expect(res.status).toBe(200);
+      expect(mockPlatformFeedback.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { status: "IN_PROGRESS", staffNote: "Called the author" },
+        }),
+      );
+
+      // The author's own read carries the row and nothing else.
+      mockGetSession.mockResolvedValue({ user: { id: "author-1" } });
+      mockPlatformFeedback.findMany.mockResolvedValueOnce([]);
+      await getOwnFeedbacks();
+      const select = mockPlatformFeedback.findMany.mock.calls[0][0].select;
+      expect(select).not.toHaveProperty("staffNote");
+      expect(select).toHaveProperty("status");
+    });
+
+    it("takes the rating down with the review: the row is removed and out of the average", async () => {
+      mockConsultantReview.findUnique.mockResolvedValue({
+        consultantProfileId: "prof-1",
+        deletedAt: null,
+        removedBy: null,
+      });
+      mockConsultantReview.updateMany.mockResolvedValue({ count: 1 });
+      mockAppointmentFeedback.updateMany.mockResolvedValue({ count: 1 });
+
+      const result = await applyTransactionalEffects(prisma, {
+        actionId: "act-takedown",
+        actionType: "CONTENT_REMOVED" as const,
+        staffUserId: "staff-1",
+        report: {
+          id: "11223344-5566-7788-99aa-bbccddeeff00",
+          type: "REVIEW" as const,
+          reportedById: "reporter-user-1",
+          targetUserId: "author-user-1",
+          reviewId: "rev-1",
+          feedbackId: "fb-rating-1",
+        },
+      });
+
+      expect(mockAppointmentFeedback.updateMany).toHaveBeenCalledWith({
+        where: { id: "fb-rating-1", deletedAt: null },
+        data: {
+          deletedAt: expect.any(Date),
+          excludedFromAggregateAt: expect.any(Date),
+        },
+      });
+      expect(result.feedbackRemoved).toBe(true);
+    });
+
+    it("keeps an EXCLUDED rating listed: the exclusion writes the average, not the row", async () => {
+      mockAppointmentFeedback.updateMany.mockResolvedValue({ count: 1 });
+
+      await applyTransactionalEffects(prisma, {
+        actionId: "act-exclusion",
+        actionType: "FEEDBACK_EXCLUDED_FROM_AGGREGATE" as const,
+        staffUserId: "staff-1",
+        report: {
+          id: "11223344-5566-7788-99aa-bbccddeeff00",
+          type: "REVIEW" as const,
+          reportedById: "reporter-user-1",
+          targetUserId: "author-user-1",
+          reviewId: "rev-1",
+          feedbackId: "fb-rating-1",
+        },
+      });
+
+      expect(mockAppointmentFeedback.updateMany).toHaveBeenCalledWith({
+        where: { id: "fb-rating-1", excludedFromAggregateAt: null },
+        data: { excludedFromAggregateAt: expect.any(Date) },
+      });
     });
   });
 });

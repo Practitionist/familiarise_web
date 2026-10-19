@@ -12,6 +12,7 @@ import {
  * never shown to a role whose page guard would then turn it away.
  */
 export type MoneyTabKey =
+  | "overview"
   | "payments"
   | "refunds"
   | "disputes"
@@ -29,6 +30,13 @@ export interface MoneyTab {
 }
 
 export const MONEY_TABS: readonly MoneyTab[] = [
+  {
+    key: "overview",
+    label: "Overview",
+    description:
+      "Money in flight: what came in, what is owed, and what is at risk.",
+    surface: "payments.read",
+  },
   {
     key: "payments",
     label: "Payments",

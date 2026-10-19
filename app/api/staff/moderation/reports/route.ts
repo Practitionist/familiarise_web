@@ -8,6 +8,12 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
+import {
+  COERCION_REPORT_WHERE,
+  PENDING_REPORT_WHERE,
+  reportAssignmentWhere,
+  REPORT_ASSIGNMENTS,
+} from "@/lib/backoffice/queue-predicates";
 import { readReviewReportSignals } from "@/lib/moderation/review-context";
 import {
   ModerationReportType,
@@ -36,6 +42,16 @@ const moderationReportsQuerySchema = z.object({
       "ESCALATED",
     ] as const satisfies readonly ModerationReportStatus[])
     .optional(),
+  /** Whose queue: everybody's, mine, or nobody's. */
+  assignment: z.enum(REPORT_ASSIGNMENTS).default("all"),
+  /** One named operator's queue. "unassigned" is the nobody's queue. */
+  assignedToId: z
+    .union([z.literal("unassigned"), z.string().min(1).max(64)])
+    .optional(),
+  /** The organisation whose reports to show; "personal" is the user's own. */
+  organizationId: z.string().min(1).max(64).optional(),
+  /** A free-text term, matched server-side over the report and its parties. */
+  search: z.string().trim().max(200).optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce
     .number()
@@ -63,6 +79,14 @@ const REPORT_INCLUDE = {
       role: true,
       banned: true,
       banExpires: true,
+    },
+  },
+  assignedTo: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
     },
   },
   actions: {
@@ -99,19 +123,36 @@ const REPORT_ORDER_BY: Prisma.ModerationReportOrderByWithRelationInput[] = [
   { createdAt: "desc" },
 ];
 
-function buildModerationFilterWhere(
-  searchParams: URLSearchParams,
-  type?: z.infer<typeof moderationReportsQuerySchema>["type"],
+/**
+ * The status slice of the queue. The PENDING view is the badge's own
+ * predicate, so the queue and the nav badge can never count different rows.
+ */
+function reportStatusWhere(
+  status: z.infer<typeof moderationReportsQuerySchema>["status"],
 ): Prisma.ModerationReportWhereInput {
-  const assignedToId = searchParams.get("assignedToId");
-  const organizationId = searchParams.get("organizationId");
-  const search = searchParams.get("search");
+  if (status === "PENDING") return PENDING_REPORT_WHERE;
+  if (status) return { status };
+  return {};
+}
+
+function buildModerationFilterWhere(filters: {
+  type?: z.infer<typeof moderationReportsQuerySchema>["type"];
+  assignment: z.infer<typeof moderationReportsQuerySchema>["assignment"];
+  viewerId: string;
+  assignedToId?: string;
+  organizationId?: string;
+  search?: string;
+}): Prisma.ModerationReportWhereInput {
+  const { type, assignment, viewerId, assignedToId, organizationId, search } =
+    filters;
   const filterWhere: Prisma.ModerationReportWhereInput = {};
 
   if (type) filterWhere.type = type;
   if (assignedToId) {
     filterWhere.assignedToId =
       assignedToId === "unassigned" ? null : assignedToId;
+  } else {
+    Object.assign(filterWhere, reportAssignmentWhere(assignment, viewerId));
   }
   if (organizationId) {
     filterWhere.organizationId =
@@ -143,6 +184,10 @@ export async function GET(req: NextRequest) {
     const parsedQuery = moderationReportsQuerySchema.safeParse({
       type: searchParams.get("type") ?? undefined,
       status: searchParams.get("status") ?? undefined,
+      assignment: searchParams.get("assignment") ?? undefined,
+      assignedToId: searchParams.get("assignedToId") ?? undefined,
+      organizationId: searchParams.get("organizationId") ?? undefined,
+      search: searchParams.get("search") ?? undefined,
       page: searchParams.get("page") ?? undefined,
       limit: searchParams.get("limit") ?? undefined,
     });
@@ -155,21 +200,40 @@ export async function GET(req: NextRequest) {
         { status: 400 },
       );
     }
-    const { type, status, page, limit } = parsedQuery.data;
+    const {
+      type,
+      status,
+      assignment,
+      assignedToId,
+      organizationId,
+      search,
+      page,
+      limit,
+    } = parsedQuery.data;
     const offset = (page - 1) * limit;
-    const filterWhere = buildModerationFilterWhere(searchParams, type);
+    const filterWhere = buildModerationFilterWhere({
+      type,
+      assignment,
+      viewerId: auth.session.user.id,
+      assignedToId,
+      organizationId,
+      search,
+    });
 
-    const where: Prisma.ModerationReportWhereInput = status
-      ? { ...filterWhere, status }
-      : filterWhere;
+    const where: Prisma.ModerationReportWhereInput = {
+      ...filterWhere,
+      ...reportStatusWhere(status),
+    };
 
+    // The coercion ground floats to the top of the queue. It rides as its own
+    // `AND` so the search terms keep their own `OR`.
     const coercionWhere: Prisma.ModerationReportWhereInput = {
       ...where,
-      reason: "COERCION_OR_RETALIATION",
+      AND: [COERCION_REPORT_WHERE],
     };
     const nonCoercionWhere: Prisma.ModerationReportWhereInput = {
       ...where,
-      reason: { not: "COERCION_OR_RETALIATION" },
+      AND: [{ NOT: COERCION_REPORT_WHERE }],
     };
 
     const [total, coercionCount, statusCounts] = await Promise.all([
@@ -221,6 +285,8 @@ export async function GET(req: NextRequest) {
       type: report.type,
       status: report.status,
       reason: report.reason,
+      reasonCode: report.reasonCode,
+      resolution: report.resolution,
       description: report.description,
       contentText: report.contentText,
       contentUrl: report.contentUrl,
@@ -236,10 +302,12 @@ export async function GET(req: NextRequest) {
         : null,
       organizationId: report.organizationId ?? null,
       assignedToId: report.assignedToId,
+      assignedTo: report.assignedTo,
       actionCount: report._count.actions,
       latestAction: report.actions[0] ?? null,
       createdAt: report.createdAt,
       resolvedAt: report.resolvedAt,
+      resolvedBy: report.resolvedBy,
     }));
 
     const counts = {

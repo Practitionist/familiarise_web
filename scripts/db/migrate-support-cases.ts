@@ -575,14 +575,22 @@ export async function migrateLegacySource(
     const conflict = await rows(
       db,
       z.object({ id: z.string() }),
-      'SELECT id FROM "SupportCase" WHERE id = $1 OR ("referenceNumber" = $2 AND $2 IS NOT NULL) OR ("scopeKey" = $3 AND "requesterUserId" = $4 AND "submitterUserId" = $4 AND category IS NOT DISTINCT FROM $5 AND "closedAt" IS NULL AND "deletedAt" IS NULL AND $6::boolean)',
+      // The same 8-tuple the `support_case_open_scope_key` sidecar enforces,
+      // so the script refuses a source the database would refuse. A narrower
+      // check here would pass a source the INSERT then rejected.
+      'SELECT id FROM "SupportCase" WHERE id = $1 OR ("referenceNumber" = $2 AND $2 IS NOT NULL) OR ("scopeKey" = $3 AND "requesterUserId" = $4 AND "submitterUserId" = $4 AND "appointmentId" IS NOT DISTINCT FROM $5 AND "appointmentOccurrenceId" IS NOT DISTINCT FROM $6 AND category IS NOT DISTINCT FROM $7 AND "organizationId" IS NOT DISTINCT FROM $8 AND "ownershipScope" = $9 AND "closedAt" IS NULL AND "deletedAt" IS NULL)',
       [
         plan.supportCase.id,
         plan.supportCase.referenceNumber,
         plan.supportCase.scopeKey,
         plan.supportCase.requesterUserId,
+        plan.supportCase.appointmentId,
+        // The legacy model had no occurrence-level anchor, so a drained case
+        // never carries one and the column is NULL by construction.
+        null,
         plan.supportCase.category,
-        plan.supportCase.closedAt === null,
+        plan.supportCase.organizationId,
+        plan.supportCase.ownershipScope,
       ],
     );
     if (conflict.length)

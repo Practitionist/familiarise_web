@@ -1122,6 +1122,27 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to run support SLA sweep",
       }),
 
+    // @cleanup-twin dispute-window-sweep
+    // The two-party dispute protocol's deadlines: a respondent who missed
+    // their answer window hands the case to the platform, and a claim nearing
+    // its statutory redressal deadline is flagged BEFORE it breaches.
+    "dispute-window-sweep": () =>
+      cleanupRoute({
+        job: "dispute-window-sweep",
+        run: async (req) => {
+          const { runDisputeSweep } = await import("@/lib/support/disputes/sweep");
+          return runDisputeSweep({ limit: parseLimitParam(req) });
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          escalated: r.escalated,
+          atRiskNotified: r.atRiskNotified,
+          errors: r.errors.length,
+        }),
+        status: (r) => statusFor(r, r.errors.length > 0),
+        failureMessage: "Failed to run the dispute window sweep",
+      }),
+
     // @cleanup-twin sweep-abandoned-overage-charges
     "sweep-abandoned-overage-charges": () =>
       cleanupRoute({

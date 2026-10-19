@@ -53,6 +53,7 @@ import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import type {
   ModerationCapabilities,
   ModerationLatestAction,
+  ModerationRatingCandidate,
   ModerationReport,
   ModerationReportDetail,
   ModerationReview,
@@ -84,6 +85,8 @@ type ModerationReportDetailWithContext = ModerationReportDetail & {
   bookingContext?: ReportBookingContext | null;
   /** Excluding the reported review would take the expert's score below the publication gate. */
   exclusionDropsBelowGate?: boolean;
+  /** The private ratings a takedown may name. */
+  ratingCandidates?: ModerationRatingCandidate[];
 };
 
 // #1527 — one tone map for report statuses (was a local colour switch).
@@ -256,6 +259,15 @@ const REPORT_STATUS_FILTERS = [
   { value: "DISMISSED", label: "Dismissed" },
 ] as const;
 
+/** Whose queue: everybody's, mine, or nobody's. */
+const ASSIGNMENT_FILTERS = [
+  { value: "all", label: "Everyone" },
+  { value: "mine", label: "Mine" },
+  { value: "unassigned", label: "Unassigned" },
+] as const;
+
+type AssignmentFilter = (typeof ASSIGNMENT_FILTERS)[number]["value"];
+
 /**
  * What is still true about the target when the Stream half of an action never
  * landed (#1270). Written for the moderator, not for the log: "stream: failed"
@@ -363,6 +375,12 @@ function actorName(
   return takenBy.name ?? "an unnamed staff member";
 }
 
+/** Who the report sits with. An unassigned report says so; it is not a gap. */
+function assigneeName(report: ModerationReport): string {
+  if (!report.assignedToId) return "nobody";
+  return report.assignedTo?.name ?? "an unnamed operator";
+}
+
 function ActionAuditTrail({
   actions,
   status,
@@ -426,10 +444,16 @@ export function ModerationPage() {
   );
   const [moderationNote, setModerationNote] = useState("");
   const [suspensionDays, setSuspensionDays] = useState(7);
+  // The private rating a takedown removes with the review, when the moderator
+  // picks one. A takedown of a rating is not implied by a takedown of the
+  // review: the rating may be a true statement about the session.
+  const [removeRatingId, setRemoveRatingId] = useState<string | null>(null);
   // #1270 — a report whose enforcement half-failed leaves the PENDING queue the
   // moment it is actioned, so without a way to look at resolved reports the
   // persisted failure was unreachable from this page.
   const [statusFilter, setStatusFilter] = useState("PENDING");
+  // Whose queue the moderator is looking at.
+  const [assignment, setAssignment] = useState<AssignmentFilter>("all");
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -438,6 +462,11 @@ export function ModerationPage() {
     const timer = setTimeout(() => setDebouncedSearch(searchQuery), 300);
     return () => clearTimeout(timer);
   }, [searchQuery]);
+
+  // A different report is a different rating to remove.
+  useEffect(() => {
+    setRemoveRatingId(null);
+  }, [selectedReport?.id]);
 
   // Fetch moderation stats
   const {
@@ -468,12 +497,18 @@ export function ModerationPage() {
     isError: reportsError,
     refetch: refetchReports,
   } = useQuery({
-    queryKey: ["staff-moderation-reports", statusFilter, debouncedSearch],
+    queryKey: [
+      "staff-moderation-reports",
+      statusFilter,
+      assignment,
+      debouncedSearch,
+    ],
     queryFn: async (): Promise<{
       reports: ModerationReportItem[];
       capabilities?: ModerationCapabilities;
     }> => {
       const params = new URLSearchParams({ status: statusFilter });
+      if (assignment !== "all") params.set("assignment", assignment);
       if (debouncedSearch) params.set("search", debouncedSearch);
       const response = await fetch(`/api/staff/moderation/reports?${params}`);
       if (!response.ok) throw new Error("Failed to fetch reports");
@@ -517,8 +552,12 @@ export function ModerationPage() {
       if (!response.ok) throw new Error("Failed to fetch report detail");
       const body = (await response.json()) as {
         report: ModerationReportDetailWithContext;
+        ratingCandidates?: ModerationRatingCandidate[];
       };
-      return body.report;
+      return {
+        ...body.report,
+        ratingCandidates: body.ratingCandidates ?? [],
+      };
     },
     enabled: !!selectedReport,
   });
@@ -548,11 +587,14 @@ export function ModerationPage() {
       reportId,
       action,
       notes = moderationNote,
+      feedbackId,
     }: {
       reportId: string;
       action: ReportActionKey;
       /** The confirm dialog's reason, for Suspend and Ban. */
       notes?: string;
+      /** The private rating a takedown removes with the review. */
+      feedbackId?: string;
     }) => {
       const response = await fetch(
         `/api/staff/moderation/reports/${reportId}/action`,
@@ -563,6 +605,7 @@ export function ModerationPage() {
             actionType: REPORT_ACTION_TYPE[action],
             notes,
             ...(action === "SUSPEND" ? { suspensionDays } : {}),
+            ...(feedbackId ? { feedbackId } : {}),
           }),
         },
       );
@@ -607,6 +650,7 @@ export function ModerationPage() {
       setSelectedReport(null);
       setModerationNote("");
       setSuspensionDays(7);
+      setRemoveRatingId(null);
       queryClient.invalidateQueries({
         queryKey: ["staff-moderation-reports"],
       });
@@ -629,8 +673,17 @@ export function ModerationPage() {
   );
   const ACCOUNT_ACTIONS = new Set<ReportActionKey>(["SUSPEND", "BAN"]);
   const handleReportAction = (reportId: string, action: ReportActionKey) => {
-    if (ACCOUNT_ACTIONS.has(action)) setConfirmAction(action);
-    else reportActionMutation.mutate({ reportId, action });
+    if (ACCOUNT_ACTIONS.has(action)) {
+      setConfirmAction(action);
+      return;
+    }
+    reportActionMutation.mutate({
+      reportId,
+      action,
+      ...(action === "REMOVE_CONTENT" && removeRatingId
+        ? { feedbackId: removeRatingId }
+        : {}),
+    });
   };
 
   /**
@@ -906,6 +959,22 @@ export function ModerationPage() {
                   </Button>
                 ))}
               </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">Assigned:</span>
+                {ASSIGNMENT_FILTERS.map((filter) => (
+                  <Button
+                    key={filter.value}
+                    type="button"
+                    size="sm"
+                    variant={
+                      assignment === filter.value ? "default" : "outline"
+                    }
+                    onClick={() => setAssignment(filter.value)}
+                  >
+                    {filter.label}
+                  </Button>
+                ))}
+              </div>
             </CardContent>
           </Card>
 
@@ -999,6 +1068,12 @@ export function ModerationPage() {
                               <span>
                                 Reason: {reportReasonLabel(report.reason)}
                               </span>
+                              <span>Assigned to: {assigneeName(report)}</span>
+                              {report.resolution && (
+                                <span>
+                                  Outcome: {humanizeEnum(report.resolution)}
+                                </span>
+                              )}
                               {report.reportCount > 1 && (
                                 <span>{report.reportCount} reports</span>
                               )}
@@ -1338,6 +1413,45 @@ export function ModerationPage() {
                     )}
                   </div>
                 )}
+                {selectedReportDetail?.ratingCandidates &&
+                  selectedReportDetail.ratingCandidates.length > 0 && (
+                    <div className="rounded-lg border p-3 space-y-2">
+                      <Label className="text-sm font-medium">
+                        Private rating
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        The rater&apos;s own rating of that session. Removing it
+                        takes the rating off every surface and out of the
+                        average; leaving it keeps the review takedown to the
+                        review.
+                      </p>
+                      {selectedReportDetail.ratingCandidates.map(
+                        (candidate) => (
+                          <label
+                            key={candidate.id}
+                            className="flex items-center gap-2 text-sm"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={removeRatingId === candidate.id}
+                              onChange={(e) =>
+                                setRemoveRatingId(
+                                  e.target.checked ? candidate.id : null,
+                                )
+                              }
+                            />
+                            <span>
+                              {candidate.rating} out of 5 ·{" "}
+                              {formatDate(candidate.createdAt)}
+                              {candidate.excludedFromAggregateAt
+                                ? " · already out of the average"
+                                : ""}
+                            </span>
+                          </label>
+                        ),
+                      )}
+                    </div>
+                  )}
                 {selectedReport.latestAction && (
                   <EnforcementSummary action={selectedReport.latestAction} />
                 )}

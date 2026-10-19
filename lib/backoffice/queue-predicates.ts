@@ -20,6 +20,44 @@ export const PENDING_REPORT_WHERE: Prisma.ModerationReportWhereInput = {
   status: "PENDING",
 };
 
+/**
+ * Reports raised on the coercion ground — the ones that must not wait behind
+ * the rest of the queue.
+ *
+ * `reasonCode` is the typed ground. Reports filed before it existed keep the
+ * code in `reason`, so both are matched: the queue floats the same rows it
+ * always did.
+ */
+export const COERCION_REPORT_WHERE: Prisma.ModerationReportWhereInput = {
+  OR: [
+    { reasonCode: "COERCION_OR_RETALIATION" },
+    { reasonCode: null, reason: "COERCION_OR_RETALIATION" },
+  ],
+};
+
+/** How the moderation queue narrows by assignment. */
+export const REPORT_ASSIGNMENTS = ["all", "mine", "unassigned"] as const;
+export type ReportAssignment = (typeof REPORT_ASSIGNMENTS)[number];
+
+/**
+ * The assignment slice of the moderation queue. Shared with the queue's own
+ * route so a filter added here cannot drift between the queue and anything
+ * that counts it.
+ */
+export function reportAssignmentWhere(
+  assignment: ReportAssignment,
+  viewerId: string,
+): Prisma.ModerationReportWhereInput {
+  switch (assignment) {
+    case "mine":
+      return { assignedToId: viewerId };
+    case "unassigned":
+      return { assignedToId: null };
+    case "all":
+      return {};
+  }
+}
+
 // ── Verification ────────────────────────────────────────────────────────
 
 export const PENDING_CONSULTANT_VERIFICATION_WHERE: Prisma.ConsultantProfileVerificationWhereInput =

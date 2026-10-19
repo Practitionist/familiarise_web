@@ -369,7 +369,14 @@ async function validateProblemCaseTargetTx(
   );
 }
 
-async function executeCreateOrReuseCaseTx(
+/**
+ * The case-creation step, on the caller's transaction.
+ *
+ * Exported so a caller that must create the case AND something else in one
+ * atomic step (the dispute intake) can compose them. `createOrReuseSupportCase`
+ * is the standalone wrapper for callers that own the whole transaction.
+ */
+export async function executeCreateOrReuseCaseTx(
   tx: Tx,
   input: CreateSupportCaseInput,
   now: Date,

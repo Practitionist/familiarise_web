@@ -34,8 +34,25 @@ export const INBOX_VIEW_LABEL: Record<InboxView, string> = {
   all: "All",
 };
 
-export const INBOX_SORTS = ["activity", "sla"] as const;
+/**
+ * The columns the queue can be ordered by. The URL carries the direction as a
+ * leading `-` (the `useListParams` convention), so `sort=-activity` is the
+ * oldest activity first and `sort=activity` the newest.
+ */
+export const INBOX_SORTS = [
+  "activity",
+  "sla",
+  "reference",
+  "subject",
+  "assignee",
+] as const;
 export type InboxSort = (typeof INBOX_SORTS)[number];
+export type InboxSortDir = "asc" | "desc";
+
+export interface InboxSortSpec {
+  key: InboxSort;
+  dir: InboxSortDir;
+}
 
 export const INBOX_SCOPES = ["session", "platform"] as const;
 export type InboxScope = (typeof INBOX_SCOPES)[number];
@@ -57,10 +74,13 @@ const PRIORITIES: readonly SupportPriority[] = [
   "URGENT",
 ];
 
-/** The URL keys the inbox's views and filters live under (useListParams). */
+/**
+ * The URL keys the inbox's views and filters live under (useListParams).
+ * `sort` is NOT one of them: it is the list's first-class sort, carried by
+ * `useListParams`' own `sort` (a key plus a direction), not a filter value.
+ */
 export const INBOX_FILTER_KEYS = [
   "view",
-  "sort",
   "scope",
   "status",
   "priority",
@@ -76,7 +96,7 @@ export const INBOX_MAX_DEPTH = 1000;
 
 export interface InboxFilters {
   view: InboxView;
-  sort: InboxSort;
+  sort: InboxSortSpec;
   scope: InboxScope | null;
   status: InboxStatus | null;
   priority: SupportPriority | null;
@@ -99,18 +119,43 @@ function day(v: string | null, endOfDay: boolean): Date | null {
   return endOfDay ? new Date(d.getTime() + 86_400_000) : d;
 }
 
+/**
+ * The order a view opens in: the two urgency views read the SLA clock, every
+ * other view reads the last activity.
+ */
+export function defaultInboxSort(view: InboxView): InboxSortSpec {
+  return view === "needs-reply" || view === "sla-at-risk"
+    ? { key: "sla", dir: "asc" }
+    : { key: "activity", dir: "desc" };
+}
+
+/** The view a URL names, or the default one. */
+export function inboxViewOf(raw: string | null | undefined): InboxView {
+  return oneOf(INBOX_VIEWS, raw ?? null) ?? "needs-reply";
+}
+
+/**
+ * `sort=activity` / `sort=-activity`: the same encoding `useListParams` uses
+ * for its first-class sort, so the table's header and the URL agree.
+ */
+export function parseInboxSort(raw: string | null): InboxSortSpec | null {
+  if (!raw) return null;
+  const desc = raw.startsWith("-");
+  const key = oneOf(INBOX_SORTS, desc ? raw.slice(1) : raw);
+  if (!key) return null;
+  return { key, dir: desc ? "desc" : "asc" };
+}
+
 export function parseInboxFilters(
   get: (key: string) => string | null,
   viewerId: string,
 ): InboxFilters {
   const topic = get("topic");
-  const view = oneOf(INBOX_VIEWS, get("view")) ?? "needs-reply";
-  const requestedSort = oneOf(INBOX_SORTS, get("sort"));
+  const view = inboxViewOf(get("view"));
+  const requestedSort = parseInboxSort(get("sort"));
   return {
     view,
-    sort:
-      requestedSort ??
-      (view === "needs-reply" || view === "sla-at-risk" ? "sla" : "activity"),
+    sort: requestedSort ?? defaultInboxSort(view),
     scope: oneOf(INBOX_SCOPES, get("scope")),
     status: oneOf(INBOX_STATUSES, get("status")),
     priority: oneOf(PRIORITIES, get("priority")),
@@ -239,6 +284,13 @@ export function compareCasesBySla(a: SortKey, b: SortKey): number {
   if (byCreated !== 0) return byCreated;
   if (a.key === b.key) return 0;
   return a.key < b.key ? -1 : 1;
+}
+
+/** The SLA order in the direction the queue asked for. */
+export function slaComparator(dir: InboxSortDir) {
+  return dir === "desc"
+    ? (a: SortKey, b: SortKey) => compareCasesBySla(b, a)
+    : compareCasesBySla;
 }
 
 // ── Team stats ──────────────────────────────────────────────────────────

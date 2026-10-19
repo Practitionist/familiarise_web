@@ -12,6 +12,12 @@ export interface StatProps {
   hint?: ReactNode;
   /** Makes the whole tile a link; only then does it get a hover state. */
   href?: string;
+  /**
+   * Makes the whole tile a button — a KPI that opens the rows behind it
+   * rather than navigating. Wins over `href`: a tile is either a link or a
+   * button, never both.
+   */
+  onClick?: () => void;
   /** Colours the value only; the tile stays neutral (#1527). */
   tone?: Tone;
   icon?: LucideIcon;
@@ -27,6 +33,7 @@ export function Stat({
   value,
   hint,
   href,
+  onClick,
   tone = "neutral",
   icon: Icon,
   className,
@@ -56,6 +63,21 @@ export function Stat({
     </>
   );
 
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={cn(
+          TILE,
+          "w-full text-left transition-colors hover:border-foreground/20 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          className,
+        )}
+      >
+        {body}
+      </button>
+    );
+  }
   if (href) {
     return (
       <Link

@@ -7,6 +7,7 @@ import { cn } from "@/utils/tailwind";
 import {
   Table,
   TableBody,
+  TableCaption,
   TableCell,
   TableHead,
   TableHeader,
@@ -69,6 +70,12 @@ export interface ResponsiveTableProps<T> {
   onRetry?: () => void;
   /** Filters, search and counts above the list. */
   toolbar?: React.ReactNode;
+  /**
+   * The table's caption. Rendered visually hidden by default: it names the
+   * list for a screen reader (WCAG 1.3.1) without adding a visible heading
+   * the page may already have.
+   */
+  caption?: React.ReactNode;
   sort?: TableSort | null;
   onSortChange?: (sort: TableSort) => void;
   /** Below this width rows render as stacked cards. Default "md". */
@@ -207,6 +214,7 @@ export function ResponsiveTable<T>({
   error,
   onRetry,
   toolbar,
+  caption,
   sort,
   onSortChange,
   breakpoint = "md",
@@ -226,7 +234,7 @@ export function ResponsiveTable<T>({
       <Link
         href={href}
         data-row-link=""
-        className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="scroll-mb-16 rounded-sm hover:underline focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
         {col.cell(row)}
       </Link>
@@ -270,6 +278,9 @@ export function ResponsiveTable<T>({
         {/* Desktop / tablet: real table */}
         <div className={sw.table}>
           <Table>
+            {caption && (
+              <TableCaption className="sr-only">{caption}</TableCaption>
+            )}
             <TableHeader>
               <TableRow>
                 {selectable && (
@@ -326,6 +337,7 @@ export function ResponsiveTable<T>({
                           checked={isSelected(id)}
                           onCheckedChange={() => onToggle?.(id)}
                           aria-label="Select row"
+                          className="scroll-mb-16"
                         />
                       </TableCell>
                     )}
@@ -379,6 +391,7 @@ export function ResponsiveTable<T>({
                             checked={isSelected(id)}
                             onCheckedChange={() => onToggle?.(id)}
                             aria-label="Select row"
+                            className="scroll-mb-16"
                           />
                         </span>
                       )}

@@ -104,6 +104,37 @@ Every mutation enforces its expected prior state directly inside `updateMany` `W
 | `PROBLEM` -> `INCIDENT` cascade  | `id: inc.id`, `status: inc.status`, `messageSeq: inc.messageSeq`, `awaitingUserSince`, `pausedSeconds`       | Skips concurrently modified child incident safely                                         |
 | `applyStaffReply` SLA clocks     | `acknowledgedAt: null`, `firstAgentReplyAt: null`, `awaitingUserSince` as read                               | Earliest responder retains first-reply timestamps                                         |
 
+## The buyer-dispute protocol's concurrency
+
+The two-party protocol in [10-buyer-disputes.md](10-buyer-disputes.md) has its
+own concurrency contract, layered on top of the case's. Four mechanisms, each
+closing a different failure mode:
+
+| Layer | Mechanism | Closes |
+| --- | --- | --- |
+| Protocol CAS | `updateMany` with `{ id, status, version: expectedVersion }` in the `WHERE` | Two parties moving the dispute at once |
+| Idempotency | `PurchaseDisputeAction` unique on `(disputeId, clientActionId)` | A double-click, a retried request, a replayed webhook |
+| Money uniqueness | `Refund.dedupeKey @unique`, `SupportFinancialRecommendation.refundId @unique`, partial index `purchase_dispute_open_payment_key` | Two refunds, or two live claims, on the same money |
+| Queue claim | `pg_advisory_xact_lock(hashtext(caseId))` — transaction-scoped, **not** Redis | Two operators working the same case |
+
+The protocol's `version` is deliberately **not** `updatedAt`: the case's
+`updatedAt` also moves when a message is appended, so an unrelated message
+would read as a protocol conflict and the operator would be told to retry a
+move that had already happened.
+
+**The money path never forks.** The dispute executes a refund through
+`refundBookingPayment` — the same front door as every other refund — so the
+live-chargeback re-check inside its Serializable reservation still aborts a
+refund that races a Razorpay dispute. A second refund path would not have
+that guard, and that is the whole reason there is only one.
+
+**The global lock order** is `dispute → case → payment → refund → earnings
+→ ledger`, so no two doors can deadlock.
+
+**Inside a transaction, every helper receives `tx`** and never the global
+Prisma client: under `PG_POOL_MAX=1` (the serverless setting) a global read
+inside a transaction deadlocks.
+
 ## Deprecated & Superseded Approaches
 
 - **Moving unassigned `OPEN` tickets to `IN_PROGRESS` on customer reply:** Previously, `POST /api/user/support-tickets/[ticketId]/responses` set every non-settled reply to `IN_PROGRESS`, hiding unassigned customer follow-ups from unassigned queue filters. Superseded by `resolveUserReplyNextStatus` keeping `OPEN` when `assignedToId === null`.

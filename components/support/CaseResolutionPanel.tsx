@@ -581,10 +581,14 @@ export function CaseResolutionPanel({
           variant="outline"
           disabled={busy || !reason.trim()}
           onClick={() =>
-            action.mutate({ action: "HANDOVER", reason: reason.trim() })
+            action.mutate({
+              action: "HANDOVER",
+              assignedToId: null,
+              reason: reason.trim(),
+            })
           }
         >
-          Record organization handover
+          Hand back to the queue
         </Button>
       )}
       <AlertDialog

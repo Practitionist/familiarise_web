@@ -138,6 +138,9 @@ export async function POST(req: NextRequest) {
       data: {
         type: "OTHER",
         reason: "User blocked via chat",
+        // A block is not a policy ground in its own right; it is filed under
+        // the catch-all so the queue can still decompose by ground.
+        reasonCode: "OTHER",
         description: `User ${session.user.id} blocked user ${targetUserId} from chat`,
         reportedById: session.user.id,
         targetUserId,

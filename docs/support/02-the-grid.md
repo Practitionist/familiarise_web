@@ -27,6 +27,7 @@ Support, feedback, and reviews all hang off bookings and answer three distinct q
 | `SupportFlowOutcome` — deflection counter             | **Flow execution** (`userId` + optional `organizationId`)                                                  | Terminal node ID, escalation `reason`, binary/star `helpfulRating`                                                                                | Server on every terminal flowchart turn                                        | Admin operators in rolling aggregate (`/api/admin/support/health`)                                                  |
 | `Feedback` — product feedback                         | **User** (`userId`)                                                                                        | Unaggregated score, free-text category, operator triage status                                                                                    | Any authenticated user                                                         | Author, staff                                                                                                       |
 | `DpdpGrievance` — statutory privacy pipeline          | **Data principal**                                                                                         | Dedicated DPDP Act / IT Rules data protection pipeline                                                                                            | Data principal                                                                 | Designated Grievance Officer (strictly separate from consumer support tickets)                                      |
+| `PurchaseDispute` — two-party adjudication             | **Payment** (`paymentId`), 1:1 with a `SupportCase`                                                          | `referenceNumber` (`DSP-`), the respondent, `status` (the protocol), `round`, `respondentAcceptedRefund`, `buyerDecision`, `refundMethod` + the consent stamp | The buyer (raise, accept/reject, withdraw, choose the refund method); the respondent (answer) | The buyer, the respondent, an organisation's OWNER/MAINTAINER for its own side, and platform staff |
 
 The governing design invariant is compact: **a rating is about a conversation, a review is about a person, a case is about a problem, and product feedback is about us.**
 
@@ -123,6 +124,55 @@ flowchart LR
 
     CSAT["Support CSAT\n(Flow helpfulRating + Case csatRating)"] --> Ops["Admin Health & Monthly Compliance\n(Internal Operations Only)"]
 ```
+
+## G · Scope × capability — who may decide what
+
+The tables above answer "who may write this record". They do not answer
+"who may **decide** it", and for anything touching money the two are very
+different questions: an organisation may raise a refund request against
+its own money and may not release it.
+
+The answer is two orthogonal axes:
+
+- **CAPABILITY** — what act: `read` · `investigate` · `decide` · `execute`.
+  `execute` is the only one that moves money or an irreversible state.
+- **SCOPE** — which entity the case is *about*. This is a property of the
+  **row**, not of the user, which is why it does not explode into a
+  role-per-case-type table.
+
+| Scope | When |
+| --- | --- |
+| `counterparty-org` | two organisations on the same payment |
+| `platform-money` | the platform's escrow or the ledger is at stake (this includes every personal payment) |
+| `org` | an organisation's own service quality: no money, no counterparty |
+| `individual` | one person's case, no organisation involved |
+
+The rule is one line: **an actor may perform a capability on a case only if
+the matrix grants them that capability for the case's scope, and the scope
+permits that tier to act on it. Scope never grants capability; capability
+never overrides scope.**
+
+| | Platform staff | Platform admin | Org admin | Org member |
+| --- | --- | --- | --- | --- |
+| `org` | R I D | R I D X | R I D | R |
+| `individual` | R I | R I D X | — | R |
+| `platform-money` | R I | R I D X | **R only** | — |
+| `counterparty-org` | R I | R I D X | **R only (own side)** | — |
+
+Two rows carry the whole design:
+
+1. **Money acts are platform-only at every scope.** An organisation may
+   decide its own service quality, respond as the counterparty, and
+   *request* a refund — never *execute* one. Its money sits in the
+   **platform's** escrow, so it is not the holder of the funds it would be
+   releasing. `refunds.manage` is a `BackofficeSurface` and an `OrgSurface`
+   is a different axis, so the separation is structural rather than a
+   special case.
+2. **`counterparty-org` is read-only for both organisations.** The party
+   that benefits from the outcome must never be the party that decides it.
+
+The implementation is `lib/support/disputes/scope.ts`; the protocol it
+governs is in [10-buyer-disputes.md](10-buyer-disputes.md).
 
 ## Session-level support anchoring (`SupportCase` & `lib/support/case-service.ts`)
 

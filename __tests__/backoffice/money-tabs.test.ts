@@ -12,6 +12,7 @@ import {
 it("hides the admin-only sections from staff and keeps the rest", () => {
   const staff = moneyTabsFor("STAFF").map((t) => t.key);
   expect(staff).toEqual([
+    "overview",
     "payments",
     "refunds",
     "disputes",

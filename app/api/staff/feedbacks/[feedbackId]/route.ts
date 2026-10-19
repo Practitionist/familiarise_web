@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "lib/prisma";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { STAFF_FEEDBACK_SELECT } from "@/lib/backoffice/staff-feedback";
 import { goHref } from "@/lib/dashboard/go";
 import { stageFeedbackUpdateEmail } from "@/lib/email/senders/people";
 import { stageBell } from "@/lib/novu/stage-bell";
@@ -11,6 +12,15 @@ import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { PatchFeedbackSchema } from "@/schemas/moderation";
 
 const patchFeedbackSchema = PatchFeedbackSchema.strict();
+
+/**
+ * An absent note leaves the stored one alone; an empty one clears it. The
+ * schema has already trimmed it.
+ */
+function parseStaffNote(raw: string | undefined): string | null | undefined {
+  if (raw === undefined) return undefined;
+  return raw.length > 0 ? raw : null;
+}
 
 export async function GET(
   req: NextRequest,
@@ -24,18 +34,7 @@ export async function GET(
 
     const feedback = await prisma.platformFeedback.findUnique({
       where: { id: feedbackId },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            image: true,
-            phone: true,
-            createdAt: true,
-          },
-        },
-      },
+      select: STAFF_FEEDBACK_SELECT,
     });
 
     if (!feedback) {
@@ -72,31 +71,52 @@ export async function PATCH(
       await req.json().catch(() => null),
     );
     if (!parsed.success) {
-      return NextResponse.json({ error: "Invalid status" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid status or note" },
+        { status: 400 },
+      );
     }
 
     const nextStatus = parsed.data.status;
+    // The operator's own note. It is written by the same PATCH that moves the
+    // status, so a note and a status never disagree about what was done.
+    const staffNote = parseStaffNote(parsed.data.staffNote);
 
     const result = await prisma.$transaction(async (tx) => {
       const existing = await tx.platformFeedback.findUnique({
         where: { id: feedbackId },
-        select: { id: true, status: true, userId: true, title: true },
+        select: {
+          id: true,
+          status: true,
+          userId: true,
+          title: true,
+          staffNote: true,
+        },
       });
       if (!existing) {
         return { kind: "not_found" as const };
       }
 
-      if (existing.status !== nextStatus) {
+      const statusChanged = existing.status !== nextStatus;
+      const noteChanged =
+        staffNote !== undefined && staffNote !== existing.staffNote;
+
+      if (statusChanged || noteChanged) {
+        // CAS'd on the status we read: a concurrent write to the same row
+        // loses the guard and the caller is told, rather than one write
+        // silently overwriting the other's.
         const updated = await tx.platformFeedback.updateMany({
           where: { id: feedbackId, status: existing.status },
-          data: { status: nextStatus },
+          data: {
+            ...(statusChanged ? { status: nextStatus } : {}),
+            ...(noteChanged ? { staffNote } : {}),
+          },
         });
         if (updated.count === 0) {
           return { kind: "conflict" as const };
         }
       }
 
-      const statusChanged = existing.status !== nextStatus;
       const dashboardUrl = goHref("auto", "feedbacks");
       const stagedBell = statusChanged
         ? await stageBell(tx, {
@@ -113,16 +133,7 @@ export async function PATCH(
 
       const feedback = await tx.platformFeedback.findUniqueOrThrow({
         where: { id: feedbackId },
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              image: true,
-            },
-          },
-        },
+        select: STAFF_FEEDBACK_SELECT,
       });
 
       return {

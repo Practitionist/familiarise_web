@@ -8,6 +8,7 @@ import {
   Home,
   Inbox,
   MessageSquare,
+  Scale,
   Settings,
   Star,
   Video,
@@ -53,6 +54,7 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
           { name: "Availability", icon: CalendarClock, path: "availability" },
           { name: "Earnings", icon: Wallet, path: "earnings" },
           { name: "Reviews", icon: Star, path: "reviews" },
+          { name: "Disputes", icon: Scale, path: "disputes" },
         ],
       },
       {
@@ -101,6 +103,7 @@ export const CONSULTANT_PAGE_LABELS: Record<string, string> = {
   reschedule: "Reschedule",
   collaborations: "Collaborations",
   reviews: "Reviews",
+  disputes: "Disputes",
   recordings: "Recordings",
   documents: "Session documents",
   earnings: "Earnings",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   keepPreviousData,
   useMutation,
@@ -32,6 +32,8 @@ import {
   ResponsiveModalHeader,
   ResponsiveModalTitle,
 } from "@/components/ui/responsive-modal";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -151,6 +153,9 @@ export function FeedbackPage({
   // Detail view state
   const [selectedFeedback, setSelectedFeedback] =
     useState<PlatformFeedback | null>(null);
+  // The operator's own note. Drafted here so a half-typed note survives a
+  // re-render, and seeded from the row that was opened.
+  const [staffNoteDraft, setStaffNoteDraft] = useState("");
 
   // Debounced search
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -193,6 +198,13 @@ export function FeedbackPage({
   const counts = data?.counts ?? EMPTY_COUNTS;
   const totalPages = data?.pagination.totalPages ?? 1;
 
+  // Seed the note draft from the row that was opened. The dependencies are
+  // the primitives, so a re-render (a status change, a refetch) never
+  // clobbers a half-typed note.
+  useEffect(() => {
+    setStaffNoteDraft(selectedFeedback?.staffNote ?? "");
+  }, [selectedFeedback?.id, selectedFeedback?.staffNote]);
+
   const updateStatus = useMutation({
     mutationFn: async ({
       feedbackId,
@@ -232,6 +244,50 @@ export function FeedbackPage({
     feedbackId: string,
     newStatus: PlatformFeedbackStatus,
   ) => updateStatus.mutate({ feedbackId, newStatus });
+
+  /**
+   * The operator's own note. It is written by the same PATCH that moves the
+   * status, so the note and the status can never disagree, and the author
+   * never sees it.
+   */
+  const saveStaffNote = useMutation({
+    mutationFn: async ({
+      feedbackId,
+      note,
+      status,
+    }: {
+      feedbackId: string;
+      note: string;
+      status: PlatformFeedbackStatus;
+    }) => {
+      const response = await fetch(`${apiEndpoint}/${feedbackId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, staffNote: note }),
+      });
+      if (!response.ok) throw new Error("Failed to save the note");
+      return { feedbackId, note };
+    },
+    onSuccess: ({ feedbackId, note }) => {
+      toast({
+        title: "Note saved",
+        description: "Your note is stored on this feedback.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["admin-feedbacks"] });
+      setSelectedFeedback((current) =>
+        current?.id === feedbackId
+          ? { ...current, staffNote: note.length > 0 ? note : null }
+          : current,
+      );
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to save the note",
+        variant: "destructive",
+      });
+    },
+  });
 
   const renderRowActions = (feedback: PlatformFeedback) => (
     <DropdownMenu>
@@ -654,6 +710,41 @@ export function FeedbackPage({
                       <SelectItem value="CLOSED">Closed</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+
+                {/* Staff note — the moderation team's own note. It is never
+                    shown to the author. */}
+                <div>
+                  <Label
+                    htmlFor="staff-note"
+                    className="text-xs text-muted-foreground uppercase tracking-wide mb-2"
+                  >
+                    Staff note
+                  </Label>
+                  <Textarea
+                    id="staff-note"
+                    value={staffNoteDraft}
+                    onChange={(e) => setStaffNoteDraft(e.target.value)}
+                    placeholder="Notes for the moderation team — the author never sees this."
+                    className="min-h-20"
+                    maxLength={2000}
+                  />
+                  <div className="mt-2 flex justify-end">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        saveStaffNote.mutate({
+                          feedbackId: selectedFeedback.id,
+                          note: staffNoteDraft.trim(),
+                          status: selectedFeedback.status,
+                        })
+                      }
+                      disabled={saveStaffNote.isPending}
+                    >
+                      {saveStaffNote.isPending ? "Saving…" : "Save note"}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </>

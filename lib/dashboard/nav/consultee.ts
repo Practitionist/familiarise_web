@@ -5,6 +5,7 @@ import {
   Gift,
   Home,
   MessageSquare,
+  Scale,
   Search,
   Settings,
   Video,
@@ -44,6 +45,7 @@ export function buildConsulteeNav(consulteeId: string): DashboardNav {
         label: "Money",
         items: [
           { name: "Payments", icon: CreditCard, path: "payments" },
+          { name: "Disputes", icon: Scale, path: "disputes" },
           { name: "Invite & earn", icon: Gift, path: "referrals" },
         ],
       },
@@ -68,6 +70,7 @@ export const CONSULTEE_PAGE_LABELS: Record<string, string> = {
   resources: "Resources",
   messages: "Messages",
   payments: "Payments",
+  disputes: "Disputes",
   referrals: "Invite & earn",
   support: "Support requests",
   settings: "Settings",

@@ -188,6 +188,16 @@ model User {
   supportHoldsApplied SupportPaymentHold[] @relation("SupportHoldApplier")
   supportHoldsReleased SupportPaymentHold[] @relation("SupportHoldReleaser")
   supportAttachments SupportCaseAttachment[]
+  /// The Help Center articles this reader has rated.
+  supportArticleFeedback SupportArticleFeedback[]
+  /// The buyer side of a two-party dispute.
+  purchaseDisputesBought PurchaseDispute[] @relation("PurchaseDisputeBuyer")
+  /// The respondent side of a two-party dispute (the consultant answering).
+  purchaseDisputesResponded PurchaseDispute[] @relation("PurchaseDisputeRespondent")
+  /// The reports this operator is assigned to.
+  moderationReportsAssigned ModerationReport[] @relation("ModerationReportAssignee")
+  /// The reports this operator resolved.
+  moderationReportsResolved ModerationReport[] @relation("ModerationReportResolver")
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -288,6 +298,11 @@ model PlatformFeedback {
   category    String?
   status      PlatformFeedbackStatus @default(PENDING)
 
+  /// The operator's own note. Staff-only, never shown to the author, and
+  /// written by the same PATCH that changes `status` — previously the note
+  /// was accepted by the schema and silently dropped.
+  staffNote String? @db.Text
+
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String
 
@@ -295,6 +310,7 @@ model PlatformFeedback {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+  @@index([status])
 }
 
 // FROZEN: Unified into SupportCase at pre-MVP cutover; kept read/write compatible until legacy row drain completes.
@@ -672,6 +688,8 @@ model SupportCase {
   recommendations SupportFinancialRecommendation[]
   paymentHolds SupportPaymentHold[]
   attachments SupportCaseAttachment[]
+  /// The two-party dispute on this case, when the case is one. 1:1.
+  purchaseDispute PurchaseDispute?
 
   subjects SupportCaseSubject[]
   messages SupportCaseMessage[]
@@ -847,6 +865,200 @@ model SupportPaymentHold {
   @@index([caseId])
   @@index([appliedById])
   @@index([releasedById])
+}
+
+/// A reader's "was this article helpful?" vote on one Help Center article.
+///
+/// One row per (article, reader): the unique constraint turns a second vote
+/// into an UPDATE of the first, so the tally the support team reads is the
+/// readers' CURRENT sentiment rather than a count of clicks. `articleKey` is
+/// the Help Center slug (app/support/_data/support-content.ts) — the same
+/// identity the public article URL already uses.
+model SupportArticleFeedback {
+  id         String   @id @default(cuid())
+  /// The article's Help Center slug.
+  articleKey String
+  /// True = "yes, this helped".
+  helpful    Boolean
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  createdAt  DateTime @default(now()) @db.Timestamptz
+  updatedAt  DateTime @updatedAt @db.Timestamptz
+
+  @@unique([articleKey, userId])
+  @@index([articleKey])
+}
+
+/// The two-party adjudication protocol. A buyer claims a session was not
+/// delivered (or not as described); the respondent — the consultant, or the
+/// host organisation — answers; the buyer accepts or rejects that answer; an
+/// unreached or rejected answer escalates to the platform, which rules.
+///
+/// It is a 1:1 child of `SupportCase`, so the conversation, the SLA, the
+/// audit trail, the evidence and the verdict all stay on the case, and this
+/// table carries ONLY the protocol: who must respond, which round it is, and
+/// what the money disposition is.
+model PurchaseDispute {
+  id             String   @id @default(cuid())
+  /// Human-facing reference, speakable over a phone line: DSP-YYYY-NNNNNN.
+  referenceNumber String   @unique @db.VarChar(24)
+
+  supportCaseId String     @unique
+  supportCase   SupportCase @relation(fields: [supportCaseId], references: [id], onDelete: Restrict)
+
+  paymentId String
+  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  /// The buyer who raised the claim.
+  buyerUserId String
+  buyer       User   @relation("PurchaseDisputeBuyer", fields: [buyerUserId], references: [id], onDelete: Restrict)
+
+  /// The counterparty who must answer. Exactly one of the two is set, and a
+  /// sidecar CHECK enforces that.
+  respondentType           PurchaseDisputeRespondentType
+  respondentUserId         String?
+  respondent               User?         @relation("PurchaseDisputeRespondent", fields: [respondentUserId], references: [id], onDelete: Restrict)
+  respondentOrganizationId String?
+  respondentOrganization   Organization? @relation("PurchaseDisputeRespondentOrg", fields: [respondentOrganizationId], references: [id], onDelete: Restrict)
+
+  reason PurchaseDisputeReason
+  remark String?                @db.Text
+
+  /// The protocol state. The money disposition lives on the decision and the
+  /// recommendation (the case's own money model), not here: this column says
+  /// where the conversation is, not where the money went.
+  status PurchaseDisputeStatus @default(OPEN)
+
+  /// Which round of the protocol this is. Bumped on every respondent answer.
+  round Int @default(1)
+
+  /// The respondent's answer. `respondentAcceptedRefund` is the money-relevant
+  /// half: true means the respondent agreed the buyer should be made whole.
+  respondentResponse       String?
+  respondentAcceptedRefund Boolean?
+  respondentRespondedAt    DateTime? @db.Timestamptz
+  /// The respondent's contractual deadline. Past it, the sweep escalates.
+  respondentDueAt          DateTime? @db.Timestamptz
+
+  /// The buyer's answer to the respondent's answer.
+  buyerDecision   PurchaseDisputeBuyerDecision?
+  buyerDecisionAt DateTime? @db.Timestamptz
+
+  escalatedAt     DateTime? @db.Timestamptz
+  escalatedReason String?   @db.VarChar(64)
+  /// The moment the protocol reached a terminal state.
+  resolvedAt DateTime? @db.Timestamptz
+
+  /// Where the refund goes if one is ordered. `ORIGINAL_METHOD` is the
+  /// default and the only one the platform may choose: RBI PA/PG §12.4
+  /// requires the original method unless the customer specifically agrees
+  /// otherwise, so `PLATFORM_CREDITS` carries a recorded consent stamp and a
+  /// sidecar CHECK refuses it without one.
+  refundMethod           PurchaseDisputeRefundMethod?
+  refundMethodChosenAt   DateTime? @db.Timestamptz
+  refundMethodConsentedAt DateTime? @db.Timestamptz
+
+  /// The money at stake when the claim was raised. Paise, like every money
+  /// column in this schema.
+  amountAtStakePaise BigInt
+
+  /// Protocol-level optimistic concurrency. Deliberately NOT `updatedAt`:
+  /// the SupportCase `updatedAt` also moves on a message append, so an
+  /// unrelated message would read as a protocol conflict.
+  version Int @default(1)
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  actions PurchaseDisputeAction[]
+
+  @@index([status, respondentDueAt])
+  @@index([buyerUserId, createdAt])
+  @@index([respondentUserId, status])
+  @@index([respondentOrganizationId, status])
+  @@index([paymentId])
+}
+
+enum PurchaseDisputeStatus {
+  /// The buyer has claimed; the respondent has not answered.
+  OPEN
+  /// The respondent answered; the buyer has not accepted or rejected it.
+  RESPONDED
+  /// The buyer rejected the answer, or the respondent missed the deadline.
+  ESCALATED
+  /// The platform is adjudicating.
+  UNDER_REVIEW
+  /// Terminal. The money disposition is on the decision and the recommendation.
+  RESOLVED
+  /// Terminal: the buyer withdrew the claim.
+  WITHDRAWN
+  /// Terminal: closed with no money moved.
+  CLOSED
+}
+
+enum PurchaseDisputeReason {
+  NOT_DELIVERED
+  SERVICE_NOT_AS_DESCRIBED
+  NO_SHOW
+  SESSION_ENDED_EARLY
+  WRONG_CONSULTANT
+  DUPLICATE_CHARGE
+  REFUND_NOT_RECEIVED
+  UNAUTHORISED
+  OTHER
+}
+
+enum PurchaseDisputeRespondentType {
+  CONSULTANT
+  ORGANIZATION
+}
+
+/// The buyer's answer to the respondent's answer. ACCEPTED means the buyer
+/// takes the rejection and the money stays with the respondent; REJECTED
+/// escalates the claim to the platform.
+enum PurchaseDisputeBuyerDecision {
+  ACCEPTED
+  REJECTED
+}
+
+enum PurchaseDisputeRefundMethod {
+  ORIGINAL_METHOD
+  PLATFORM_CREDITS
+}
+
+/// The append-only log of protocol transitions. It is the idempotency anchor:
+/// one row per (dispute, clientActionId), so a double-click replays instead
+/// of writing twice.
+model PurchaseDisputeAction {
+  id String @id @default(cuid())
+  disputeId String
+  dispute PurchaseDispute @relation(fields: [disputeId], references: [id], onDelete: Restrict)
+  /// Caller-minted, per logical action. Replaying the same key replays the
+  /// same row; reusing it with a different body is refused.
+  clientActionId String @db.VarChar(128)
+  kind           PurchaseDisputeActionKind
+  fromStatus     PurchaseDisputeStatus?
+  toStatus       PurchaseDisputeStatus?
+  actorUserId    String?
+  payload        Json?
+  createdAt      DateTime @default(now()) @db.Timestamptz
+
+  @@unique([disputeId, clientActionId])
+  @@index([kind, createdAt])
+  @@index([actorUserId])
+}
+
+enum PurchaseDisputeActionKind {
+  RAISED
+  RESPONDED
+  BUYER_ACCEPTED
+  BUYER_REJECTED
+  ESCALATED
+  UNDER_REVIEW
+  RESOLVED
+  WITHDRAWN
+  CLOSED
+  REFUND_METHOD_CHOSEN
 }
 
 model SupportCaseAttachment {
@@ -1113,6 +1325,11 @@ enum SupportIssueType {
   CHARGED_TWICE
   REFUND_REQUEST
   BILLING_QUESTION
+
+  // Tax & statutory questions (GST invoices, 26Q certificates, PAN mismatch).
+  TAX_GST
+  TDS_CERTIFICATE
+  PAN_CARD_MISMATCH
 
   // Documents
   DOCUMENT_ISSUE
@@ -1443,6 +1660,8 @@ model Organization {
   // Referral attribution (#727) — same contract as TrialsByOrg.
   referralsByOrg Referral[]    @relation("ReferralsByOrg")
   supportCases   SupportCase[] @relation("SupportCaseByOrg")
+  /// The two-party disputes this organisation must answer as the respondent.
+  purchaseDisputesResponded PurchaseDispute[] @relation("PurchaseDisputeRespondentOrg")
 
   // #674 personal-vs-org scope split — appointments / recordings booked or
   // produced by org members. Mirrors TrialsByOrg.
@@ -5856,6 +6075,8 @@ enum Platform {
 
 model Payment {
   supportHolds SupportPaymentHold[]
+  /// The two-party disputes raised against this payment.
+  purchaseDisputes PurchaseDispute[]
   supportRecommendations SupportFinancialRecommendation[]
   id                   String         @id @default(uuid())
   amount               BigInt // in paise — final amount charged to gateway (after discounts + tax - credits)
@@ -7195,6 +7416,23 @@ enum ModerationReportType {
   OTHER
 }
 
+/// The closed set of grounds a report can be filed on. `ModerationReport.reason`
+/// stays a free-text column (it is a live column and the schema is
+/// additive-only until launch), so the machine-readable code lives beside it
+/// and is what reporting decomposes by.
+enum ModerationReason {
+  COERCION_OR_RETALIATION
+  SPAM_OR_FAKE
+  HARASSMENT_OR_ABUSE
+  OFF_TOPIC
+  IMAGINARY_LISTING
+  INAPPROPRIATE_CONTENT
+  OFF_PLATFORM_SOLICITATION
+  PRIVACY_VIOLATION
+  FRAUD_OR_SCAM
+  OTHER
+}
+
 enum ModerationReportStatus {
   PENDING
   UNDER_REVIEW
@@ -7277,12 +7515,22 @@ model ModerationReport {
   streamMessageId  String?
   streamChannelCid String? // "messaging:<id>" — for the staff link back to the thread
 
-  // Staff assignment
+  // The machine-readable ground. `reason` below keeps the human label.
+  reasonCode ModerationReason?
+
+  // Staff assignment. A real relation on the EXISTING column, so the change
+  // is additive: the two actor columns were bare strings with no FK, which
+  // made them the weakest link in the audit chain.
   assignedToId String?
+  assignedTo   User?   @relation("ModerationReportAssignee", fields: [assignedToId], references: [id], onUpdate: Cascade, onDelete: SetNull)
 
   // Resolution
   resolvedAt DateTime?
   resolvedBy String? // Staff user ID
+  resolvedByUser User? @relation("ModerationReportResolver", fields: [resolvedBy], references: [id], onUpdate: Cascade, onDelete: SetNull)
+
+  /// The outcome, as a closed set. NULL while the report is still open.
+  resolution ModerationResolution?
 
   actions ModerationAction[]
 
@@ -7291,6 +7539,7 @@ model ModerationReport {
 
   @@index([status])
   @@index([type])
+  @@index([reasonCode])
   @@index([reportedById])
   @@index([targetUserId])
   @@index([organizationId, status])
@@ -7300,6 +7549,15 @@ model ModerationReport {
   @@index([streamMessageId])
   // The staff queue's "reports about this review", and the SetNull scan.
   @@index([reviewId])
+}
+
+/// How a report was closed. The disposition an operator chose, as a closed set
+/// so the queue can report on outcomes rather than on free text.
+enum ModerationResolution {
+  DISMISSED
+  ACTION_TAKEN
+  ESCALATED
+  DUPLICATE
 }
 
 model ModerationAction {

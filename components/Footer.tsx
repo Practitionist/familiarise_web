@@ -125,6 +125,7 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
     links: [
       { label: "About", href: "/about" },
       { label: "Help Center", href: "/support" },
+      { label: "FAQs", href: "/support/faq" },
       { label: "Contact", href: "/contactus" },
       { label: "Blog", href: "/blog" },
       { label: "Pricing", href: "/pricing" },

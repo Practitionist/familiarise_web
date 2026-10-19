@@ -9,6 +9,7 @@ import {
   Coins,
   CreditCard,
   FileWarning,
+  Gauge,
   Gift,
   Home,
   Inbox,
@@ -90,6 +91,7 @@ export interface BackofficeNavOptions {
 }
 
 const MONEY_ICONS: Record<MoneyTabKey, LucideIcon> = {
+  overview: Gauge,
   payments: CreditCard,
   refunds: RotateCcw,
   disputes: Scale,

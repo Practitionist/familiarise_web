@@ -128,6 +128,7 @@ export const moneyResultExtensions = {
     exchangeRateAtRefund: dn("exchangeRateAtRefund"),
   },
   dispute: { amountPaise: f("amountPaise") },
+  purchaseDispute: { amountAtStakePaise: f("amountAtStakePaise") },
   consultantEarnings: {
     grossAmount: f("grossAmount"),
     platformFeePaise: f("platformFeePaise"),

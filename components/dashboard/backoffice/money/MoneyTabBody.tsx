@@ -1,8 +1,10 @@
 import { PaymentsPage } from "@/components/dashboard/shared/PaymentsPage";
 import { RefundsPage } from "@/components/dashboard/shared/RefundsPage";
 import { DisputesPage } from "@/components/dashboard/shared/DisputesPage";
+import { BuyerDisputesPanel } from "./BuyerDisputesPanel";
 import { PayoutsBoard } from "@/components/dashboard/backoffice/payouts/PayoutsBoard";
 import { EarningsTab } from "./EarningsTab";
+import { MoneyOverviewTab } from "./MoneyOverviewTab";
 import { RefundDoorsPanel } from "./RefundsTab";
 import { ReconcileTab } from "./ReconcileTab";
 import { IncidentsTab } from "./IncidentsTab";
@@ -25,6 +27,8 @@ export async function MoneyTabBody({
   viewer: { userId: string; role: string };
 }>) {
   switch (tabKey) {
+    case "overview":
+      return <MoneyOverviewTab />;
     case "payments":
       return <PaymentsPage />;
     case "refunds":
@@ -49,15 +53,18 @@ export async function MoneyTabBody({
       return <EarningsTab />;
     case "disputes":
       return (
-        <DisputesPage
-          apiEndpoint="/api/admin/disputes"
-          title="Disputes"
-          description={
-            can(cap, "disputes.manage")
-              ? "Manage and respond to payment disputes"
-              : "View and track payment disputes"
-          }
-        />
+        <div className="space-y-6">
+          <DisputesPage
+            apiEndpoint="/api/admin/disputes"
+            title="Disputes"
+            description={
+              can(cap, "disputes.manage")
+                ? "Manage and respond to payment disputes"
+                : "View and track payment disputes"
+            }
+          />
+          <BuyerDisputesPanel />
+        </div>
       );
     case "reconcile":
       return <ReconcileTab />;

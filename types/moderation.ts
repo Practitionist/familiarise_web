@@ -142,6 +142,10 @@ export interface ModerationReport {
   id: string;
   type: string;
   reason: string;
+  /** The typed ground (`ModerationReason`); null on reports filed before it. */
+  reasonCode: string | null;
+  /** How the report was closed; null while it is still open. */
+  resolution: string | null;
   description: string | null;
   contentText: string | null;
   contentUrl: string | null;
@@ -151,10 +155,17 @@ export interface ModerationReport {
   status: string;
   createdAt: string;
   resolvedAt: string | null;
+  resolvedBy: string | null;
   reviewId: string | null;
   // #1300 — set only for a REVIEW report; the card's title is the review, not the id.
   review: ModerationReportReviewSubject | null;
   assignedToId: string | null;
+  assignedTo: {
+    id: string;
+    name: string | null;
+    email: string;
+    role: string;
+  } | null;
   actionCount: number;
   latestAction: ModerationLatestAction | null;
   reportedBy: {
@@ -173,6 +184,17 @@ export interface ModerationReport {
     banned: boolean | null;
     banExpires: string | null;
   };
+}
+
+/**
+ * A private rating a takedown may name: the ones the reported review's author
+ * gave in that session. The action route re-checks the binding.
+ */
+export interface ModerationRatingCandidate {
+  id: string;
+  rating: number;
+  createdAt: string;
+  excludedFromAggregateAt: string | null;
 }
 
 /**

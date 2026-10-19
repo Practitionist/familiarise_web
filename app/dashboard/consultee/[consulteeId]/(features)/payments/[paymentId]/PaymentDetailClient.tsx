@@ -11,6 +11,7 @@ import { toneBadge } from "@/lib/dashboard/money-state";
 import { caseKeyOf } from "@/lib/support/case-key";
 import { humanizeEnum, toneTextClass } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { DisputeBanner } from "@/components/support/DisputeBanner";
 import type { ConsulteePaymentDetail } from "@/lib/data/consultee-payment-detail";
 
 const DATE_TIME = new Intl.DateTimeFormat("en-IN", {
@@ -136,6 +137,13 @@ export function PaymentDetailClient({
           </Button>
         }
       />
+
+      {detail.dispute && (
+        <DisputeBanner
+          dispute={detail.dispute}
+          disputeHref={`${basePath}/disputes/${detail.dispute.referenceNumber}`}
+        />
+      )}
 
       <Section title="Charge" variant="card">
         <KeyValueList items={facts} />

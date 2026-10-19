@@ -67,6 +67,22 @@ export interface ConsulteePaymentDetail {
   /** What each funding rail carried, in the payer's words. */
   legs: { source: string; amountPaise: number }[];
   coPays: { id: string; amountPaise: number; currency: string }[];
+  /**
+   * The buyer's open dispute on this payment, if any. The banner on the
+   * payment page is driven by this, so the buyer always sees the state of a
+   * claim they have already raised without hunting for it.
+   */
+  dispute: {
+    id: string;
+    referenceNumber: string;
+    status: string;
+    reason: string;
+    round: number;
+    amountPaise: number;
+    respondentDueAt: Date | null;
+    escalatedAt: Date | null;
+    createdAt: Date;
+  } | null;
 }
 
 export const REFUND_FAILED_NOTICE =
@@ -98,7 +114,7 @@ export async function readConsulteePaymentDetail(args: {
   });
   if (!payment) return null;
 
-  const [refunds, creditNotes] = await Promise.all([
+  const [refunds, creditNotes, dispute] = await Promise.all([
     // Reached only after the payer-bound payment read above succeeded.
     prisma.refund.findMany({
       where: { paymentId, deletedAt: null },
@@ -112,6 +128,23 @@ export async function readConsulteePaymentDetail(args: {
           orderBy: { issuedAt: "asc" },
         })
       : Promise.resolve([]),
+    // The buyer's own dispute on this payment. Scoped to the buyer, so a
+    // payment page never surfaces somebody else's claim.
+    prisma.purchaseDispute.findFirst({
+      where: { paymentId, buyerUserId: userId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        referenceNumber: true,
+        status: true,
+        reason: true,
+        round: true,
+        amountAtStakePaise: true,
+        respondentDueAt: true,
+        escalatedAt: true,
+        createdAt: true,
+      },
+    }),
   ]);
 
   const row = toRow(payment);
@@ -170,5 +203,18 @@ export async function readConsulteePaymentDetail(args: {
       amountPaise: Number(leg.amountPaise),
     })),
     coPays,
+    dispute: dispute
+      ? {
+          id: dispute.id,
+          referenceNumber: dispute.referenceNumber,
+          status: dispute.status,
+          reason: dispute.reason,
+          round: dispute.round,
+          amountPaise: Number(dispute.amountAtStakePaise),
+          respondentDueAt: dispute.respondentDueAt,
+          escalatedAt: dispute.escalatedAt,
+          createdAt: dispute.createdAt,
+        }
+      : null,
   });
 }

@@ -221,6 +221,33 @@ const BY_TOPIC: Partial<Record<CaseTopic, SavedReply[]>> = {
       body: "Recordings stay available for a limited period after the session. The Help Center article on recording expiry has the details.",
     },
   ],
+  tax: [
+    {
+      id: "tax-gst-invoice",
+      title: "Where the GST invoice is",
+      body: "Your GST invoice is on your Payments page: open the payment and use the invoice link to download it. If the invoice you need isn't there, send me the payment reference and I'll check it.",
+    },
+    {
+      id: "tax-gstin",
+      title: "GSTIN and place of supply",
+      body: "The GSTIN and state code on your invoices live in your billing settings. Once they are updated there, the next invoice carries the right place of supply.",
+    },
+    {
+      id: "tax-tds-certificate",
+      title: "TDS certificate (26Q)",
+      body: "TDS certificates are issued for a financial year once the payouts for that year have been processed. Tell me the year and the PAN on file so I can check the status.",
+    },
+    {
+      id: "tax-pan-mismatch",
+      title: "PAN name mismatch",
+      body: "The PAN printed on an invoice has to match the PAN on your PAN card. Send me the PAN it should carry and I'll have it corrected for future invoices.",
+    },
+    {
+      id: "tax-checking",
+      title: "Checking the tax details",
+      body: "I'm checking the tax details on this transaction against our records and will reply here with what I find.",
+    },
+  ],
 };
 
 /** The topic's replies first, then the general ones. */

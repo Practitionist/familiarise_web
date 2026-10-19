@@ -77,6 +77,10 @@ const TARGETS = [
   "vest-referral-credits",
   // Support SLA warn/breach outbox alerts, 28-day RESOLVED auto-close, and T-72h/T-24h dispute alerts.
   "support-sla-sweep",
+  // The two-party dispute protocol's deadlines: a respondent who missed their
+  // answer window hands the case to the platform, and a claim nearing its
+  // statutory redressal deadline is flagged BEFORE it breaches.
+  "dispute-window-sweep",
 ] as const;
 
 type Target = (typeof TARGETS)[number];
@@ -137,6 +141,7 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   // Gateway polls per PENDING row plus a Serializable cascade per stranded row.
   "reconcile-refunds": 10,
   "support-sla-sweep": 20,
+  "dispute-window-sweep": 20,
 };
 
 /**
@@ -183,6 +188,7 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   // 30, not 15: only the :05/:35 ticks have room under the 8-target cap, and a vest waits hours anyway.
   "vest-referral-credits": 30,
   "support-sla-sweep": 30,
+  "dispute-window-sweep": 30,
 };
 
 /**
@@ -223,6 +229,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "retry-moderation-enforcement": 25,
   "vest-referral-credits": 5,
   "support-sla-sweep": 10,
+  "dispute-window-sweep": 20,
 };
 
 /** The targets due on this tick; exported so a test can pin the cadence. */

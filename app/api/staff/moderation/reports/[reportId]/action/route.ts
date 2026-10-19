@@ -65,6 +65,14 @@ const moderationActionPayloadSchema = z.object({
   feedbackId: z.string().min(1).max(64).optional(),
 });
 
+/**
+ * The binding between a report and the rating an action names.
+ *
+ * A rating is named only by the two actions that can act on one — the
+ * exclusion and the takedown — and either way it must be the rating that
+ * belongs to the reported review's session and author, so staff cannot act on
+ * somebody else's rating.
+ */
 async function validateActionTargetBinding(
   report: {
     type: ModerationReportType;
@@ -91,25 +99,38 @@ async function validateActionTargetBinding(
       { status: 409 },
     );
   }
-  if (actionType !== "FEEDBACK_EXCLUDED_FROM_AGGREGATE") {
+  const actsOnRating =
+    actionType === "FEEDBACK_EXCLUDED_FROM_AGGREGATE" ||
+    actionType === "CONTENT_REMOVED";
+  if (!actsOnRating) {
+    if (feedbackId) {
+      return NextResponse.json(
+        { error: "This action does not act on a rating" },
+        { status: 400 },
+      );
+    }
     return null;
   }
   if (report.type !== "REVIEW" || !report.review?.appointmentId) {
     return NextResponse.json(
       {
         error:
-          "Feedback exclusion requires a review report bound to an appointment",
+          "A rating can only be acted on through a review report bound to an appointment",
       },
       { status: 409 },
     );
   }
   if (!feedbackId) {
-    return NextResponse.json(
-      {
-        error: "A feedbackId is required to exclude feedback from aggregate",
-      },
-      { status: 409 },
-    );
+    // The exclusion IS the rating; the takedown may name the review alone.
+    if (actionType === "FEEDBACK_EXCLUDED_FROM_AGGREGATE") {
+      return NextResponse.json(
+        {
+          error: "A feedbackId is required to exclude feedback from aggregate",
+        },
+        { status: 409 },
+      );
+    }
+    return null;
   }
   const feedback = await prisma.appointmentFeedback.findUnique({
     where: { id: feedbackId },
@@ -152,8 +173,16 @@ function applyModerationTransaction(
           },
           data: {
             status: actionType === "NO_ACTION" ? "DISMISSED" : "ACTION_TAKEN",
+            // The sidecar CHECK refuses a closed report without a resolution
+            // and an open one with one, so the disposition is written with
+            // the status it belongs to.
+            resolution:
+              actionType === "NO_ACTION" ? "DISMISSED" : "ACTION_TAKEN",
             resolvedAt: new Date(),
             resolvedBy: staffUserId,
+            // The operator who decided the report owns it from here on, unless
+            // it was already assigned to somebody else.
+            assignedToId: input.report.assignedToId ?? staffUserId,
           },
         });
         if (moved.count === 0) {
@@ -260,6 +289,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         targetUserId: true,
         reviewId: true,
         streamMessageId: true,
+        assignedToId: true,
         review: { select: { appointmentId: true } },
       },
     });
@@ -304,6 +334,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         reviewId: report.reviewId,
         feedbackId,
         streamMessageId: report.streamMessageId,
+        assignedToId: report.assignedToId,
       },
       staffUserId: session.user.id,
       notes,

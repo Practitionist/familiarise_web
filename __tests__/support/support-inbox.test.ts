@@ -8,6 +8,7 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     supportCase: { findMany: jest.fn(), count: jest.fn() },
+    payment: { findMany: jest.fn() },
   },
 }));
 
@@ -116,6 +117,7 @@ describe("readInboxPage SLA paging", () => {
     appointmentId: null,
     callbackPhone: null,
     assignedTo: null,
+    subjects: [],
     deletedAt: null,
   });
   // Acknowledged rows: ackDueAt order is the reverse of resolutionDueAt order.
@@ -162,6 +164,7 @@ describe("readInboxPage SLA paging", () => {
       },
     );
     (prisma.supportCase.count as jest.Mock).mockResolvedValue(fixtures.length);
+    (prisma.payment.findMany as jest.Mock).mockResolvedValue([]);
   });
 
   it("pages are disjoint and together equal the full SLA order", async () => {

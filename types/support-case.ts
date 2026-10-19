@@ -14,42 +14,15 @@ export interface ArticleLink {
   href: string;
 }
 
-export interface InboxRow {
-  key: string;
-  kind: "case";
-  scope: "session" | "platform";
-  /** Name only: contact fields are on the case detail, never the list. */
-  requester: {
-    id: string;
-    name: string | null;
-    callbackRequested?: boolean;
-  };
-  subject: string;
-  reference: string | null;
-  topic: CaseTopic;
-  status: string;
-  priority: SupportPriority | null;
-  channel: SupportChannel | null;
-  sla: SlaState | null;
-  assignee: { id: string; name: string | null } | null;
-  lastActivityAt: string;
-}
-
-export interface InboxListResponse {
-  rows: InboxRow[];
-  total: number;
-  page: number;
-  pageSize: number;
-  /** True when `total` runs past the deepest page the merge will read. */
-  truncated: boolean;
-}
-
-export interface InboxStats {
-  openCases: number;
-  slaBreaches: number;
-  avgFirstResponseMs: number | null;
-  windowDays: number;
-}
+/**
+ * The inbox's wire shapes are defined ONCE, by the Zod schema the client
+ * parses the response with; these are the same shapes seen from the server.
+ */
+export type {
+  InboxListResponse,
+  InboxRow,
+  InboxStats,
+} from "@/schemas/support-inbox";
 
 export interface TimelineItem {
   id: string;

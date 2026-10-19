@@ -35,7 +35,7 @@ import {
 } from "@/app/checkout/components/BillingStateSelect";
 import { useSession } from "@/lib/auth-client";
 import { Refusal } from "@/lib/errors/refusal";
-import { ConsultantProfile, ConsultationPlan } from "@prisma/client";
+import { ConsultantProfile, ConsultationPlan, PlanFaq } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -63,10 +63,14 @@ import {
 } from "@/components/booking/CancellationPolicyNote";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { fetchWithIdentity } from "@/lib/auth/identity-header";
+import { PlanCheckoutFaq } from "@/app/checkout/components/PlanCheckoutFaq";
 
 // price arrives as number: extended client + JSON serialization (#780)
 type ConsultationPlanWithConsultant = Omit<ConsultationPlan, "price"> & {
   price: number;
+  // The buyer's questions, answered at checkout — the same rows the plan
+  // detail page renders.
+  faqs: PlanFaq[];
   consultantProfile: ConsultantProfile & {
     user: {
       id: string;
@@ -970,6 +974,9 @@ export default function ConsultationCheckoutPage({
             </div>
           </CardContent>
         </Card>
+        {/* The buyer's doubt ("what exactly do I get, is this right for me")
+            is answered where the money is, not only where they browsed. */}
+        <PlanCheckoutFaq faqs={eventData?.data.faqs} />
         <div className="grid gap-4">
           <div className="grid gap-2">
             <div className="font-semibold">Payment</div>

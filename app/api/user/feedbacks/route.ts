@@ -5,6 +5,7 @@ import { notifyFeedbackReceived } from "@/lib/novu";
 import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
 import { CreateFeedbackSchema } from "@/schemas/feedbacks";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { AUTHOR_FEEDBACK_SELECT } from "@/lib/backoffice/staff-feedback";
 
 import { getSession } from "@/lib/auth-server";
 import { supportError } from "@/lib/api/support-http";
@@ -23,6 +24,9 @@ export async function GET() {
       where: {
         userId: session.user.id,
       },
+      // The author's own row and nothing else: the operator's note is
+      // staff-only and never reaches the person who wrote the feedback.
+      select: AUTHOR_FEEDBACK_SELECT,
       orderBy: {
         createdAt: "desc",
       },

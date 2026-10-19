@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Lock, Send } from "lucide-react";
 
 import { CaseAttachments } from "@/components/support/CaseAttachments";
@@ -13,6 +13,7 @@ import type { ArticleLink, CaseWorkspace } from "@/types/support-case";
 import { cn } from "@/utils/tailwind";
 
 import { articleInsertText, CaseInsertMenu } from "./CaseInsertMenu";
+import { CaseEventRow } from "./CaseEventRow";
 
 export type ComposerMode = "reply" | "note";
 
@@ -78,6 +79,41 @@ export function CaseConversation({
     data.nextBeforeSeq,
     data.hasMore,
   );
+  /**
+   * The transcript and the case's audit trail are ONE stream: a system event
+   * sits between the messages around it, in the column the operator is
+   * reading, and is drawn differently so it can never be mistaken for
+   * something the customer wrote.
+   */
+  const events = useMemo(() => data.events ?? [], [data.events]);
+  const stream = useMemo(() => {
+    const items = [
+      ...history.timeline.map((m) => ({
+        key: `m:${m.id}`,
+        at: m.at,
+        rank: 0,
+        node: (
+          <SupportBubble
+            author={m.author}
+            authorName={m.authorName}
+            body={m.body}
+            at={m.at}
+            internal={m.internal}
+            perspective="staff"
+          />
+        ),
+      })),
+      ...events.map((e) => ({
+        key: `e:${e.id}`,
+        at: e.createdAt,
+        rank: 1,
+        node: <CaseEventRow event={e} />,
+      })),
+    ];
+    return items.sort((a, b) =>
+      a.at === b.at ? a.rank - b.rank : a.at < b.at ? -1 : 1,
+    );
+  }, [events, history.timeline]);
   const canNote = !!data.caseId;
   const [note, setNote] = useState("");
   const [noteSaved, setNoteSaved] = useState(false);
@@ -96,7 +132,7 @@ export function CaseConversation({
   const endRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [data.key, data.timeline.length]);
+  }, [data.key, stream.length]);
 
   const isNote = mode === "note" && canNote;
   const replyLocked = data.status === "CLOSED" && !isNote;
@@ -161,20 +197,10 @@ export function CaseConversation({
             Load older messages
           </Button>
         )}
-        {history.timeline.length === 0 ? (
+        {stream.length === 0 ? (
           <p className="text-sm text-muted-foreground">No messages yet.</p>
         ) : (
-          history.timeline.map((m) => (
-            <SupportBubble
-              key={m.id}
-              perspective="staff"
-              author={m.author}
-              authorName={m.authorName}
-              body={m.body}
-              at={m.at}
-              internal={m.internal}
-            />
-          ))
+          stream.map((item) => <div key={item.key}>{item.node}</div>)
         )}
         <div ref={endRef} />
       </div>

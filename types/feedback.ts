@@ -22,6 +22,8 @@ export interface PlatformFeedback {
   rating: number | null;
   category: string | null;
   status: PlatformFeedbackStatus;
+  /** The operator's own note. Staff-only: never returned to the author. */
+  staffNote: string | null;
   user: FeedbackUser;
   createdAt: string;
   updatedAt: string;

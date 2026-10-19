@@ -30,6 +30,7 @@ import { CASE_TOPIC_LABEL, type CaseTopic } from "@/lib/support/case-topic";
 import { throwSupportError } from "@/lib/support/error-copy";
 import { savedRepliesFor } from "@/lib/support/saved-replies";
 import { slaHint } from "@/lib/support/sla-hint";
+import { CaseWorkspaceResponseSchema } from "@/schemas/support-inbox";
 import type {
   ArticleLink,
   CaseWorkspace as CaseData,
@@ -155,7 +156,7 @@ export function CaseWorkspace({
     queryFn: async (): Promise<CaseData> => {
       const res = await fetch(`/api/staff/support-inbox/${caseKey}`);
       if (!res.ok) await throwSupportError(res, "support case load");
-      return ((await res.json()) as { data: CaseData }).data;
+      return CaseWorkspaceResponseSchema.parse(await res.json()).data;
     },
     // The customer replies from their side; nothing pushes that here.
     refetchIntervalInBackground: false,

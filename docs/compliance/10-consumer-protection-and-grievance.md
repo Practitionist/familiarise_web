@@ -64,6 +64,51 @@ sequenceDiagram
   - Gates raw `evidence`, payer billing `email`, and `evidencePack` strictly behind `hasBackofficePermission(role, "disputes.manage")` (`ADMIN` only; `STAFF` receives `evidencePack: null` and redacted billing contact details).
   - Omits raw participant PII across both `payment.appointment` and `evidencePack`: session `attendances` rows are reduced to aggregate counts (`presentCount`, `recordsFound`, summary text) without user IDs or timestamps, and raw `supportThreads` / `supportCases` arrays are stripped from `payment.appointment` and normalized into summary status/reference metadata under `evidencePack.supportHistory`.
 
+## 5. Buyer Disputes — the "consumer dispute" surface
+
+The gateway chargeback above is the CARD ISSUER disputing a payment. A
+**buyer dispute** is a different legal object: the *consumer* contesting the
+delivery of a service the platform sold. Consumer Protection Act 2019 s.2(8)
+draws the line exactly where the protocol does:
+
+> a *"consumer dispute"* means a dispute where the person against whom the
+> complaint has been made **denies or disputes the allegations** contained in
+> the complaint.
+
+So the statutory character of a case changes when the respondent REFUSES,
+not when it is raised. The platform's protocol is built to match that:
+
+| Moment | What it triggers |
+|---|---|
+| The buyer raises a claim | the **complaint** clock starts: acknowledge within 48 hours, redress within one month (CP (E-Commerce) Rules 2020 r.4(4)–(5)) |
+| The respondent **denies** the claim | the **consumer dispute** exists from that moment (CP Act s.2(8)); the platform's own redressal duty is measured from the denial |
+| The respondent misses their three-business-day window | the claim escalates to the platform automatically (`dispute-window-sweep`) |
+| The buyer rejects the respondent's denial | the case goes to the platform for a decision, and the case's `SupportCaseDecision` records the verdict, the customer-facing explanation, and the staff-only private rationale |
+
+The 48-hour acknowledgement and the one-month redressal are enforced as
+**caps on the case's internal SLA**, not as aspirational targets:
+`effectiveResolutionDueAt` takes the earlier of the internal deadline and
+the statutory one, and the statutory deadline does not pause while the case
+waits on the user.
+
+The platform also publishes the mandatory e-commerce disclosures the Rules
+require — return and refund terms, the modes of payment, the charge-back
+route and the payment service provider's contact details, the grievance
+officer's name and contact details, and the nodal officer — on the public
+[refund](../(pages)/refund/page.tsx) and grievance pages.
+
+The refund method is a statutory matter, not a preference: RBI's Payment
+Aggregator guidelines (§12.4) require a refund to go to the **original method
+of payment** unless the customer *specifically agrees* otherwise. The
+platform's protocol therefore defaults to `ORIGINAL_METHOD` and treats
+`PLATFORM_CREDITS` as a recorded opt-in — the buyer's agreement is written
+with the choice, and a PostgreSQL `CHECK` refuses a credits refund without
+it. A goodwill credit is an *additional* gesture the consumer may decline; it
+is never a substitute for a refund the platform owes.
+
+See [../support/10-buyer-disputes.md](../support/10-buyer-disputes.md) for
+the protocol, the clocks, and the concurrency contract.
+
 ## Deprecated & Superseded Approaches
 
 - **Dead-MX `support@familiarisenow.com` address, `Bengaluru, Karnataka` jurisdiction, fabricated phone numbers, and mass-overwritten policy dates:** Superseded in `app/(pages)/constants.ts` by live-MX `resolveLiveMailbox()` (`support@practitionist.com`), registered jurisdiction `Haryana, India` for `Practitionist (OPC) Private Limited` (`CIN: U62012HR2026OPC146217`), conditional phone omission when `NEXT_PUBLIC_SUPPORT_PHONE` is unset, and preserved historical dates (`July 12, 2026` / `September 26, 2026`) on untouched legal documents.

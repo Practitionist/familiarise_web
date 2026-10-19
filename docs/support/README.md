@@ -25,6 +25,7 @@ The governing design invariant is compact: **a rating is about a conversation, a
 7. [07-ticket-lifecycle-and-concurrency.md](07-ticket-lifecycle-and-concurrency.md) — case/ticket state machine, reopen semantics, thread mirroring, and optimistic concurrency guards.
 8. [08-intake-callbacks-attachments-and-limits.md](08-intake-callbacks-attachments-and-limits.md) — intake validation, IST callback windows, engineering escalations, receipts, attachments, and per-route rate limiters.
 9. [09-support-case-and-sla-sweep.md](09-support-case-and-sla-sweep.md) — unified `SupportCase` graph, ITIL `PROBLEM`/`INCIDENT` cascade, ADR 20 redaction, 2FA gate, and monthly IT Rules compliance report.
+10. [10-buyer-disputes.md](10-buyer-disputes.md) — the two-party adjudication protocol: the respondent's round, the buyer's accept/reject, the platform's verdict, the three statutory clocks, and the concurrency contract.
 
 ## Source code map
 

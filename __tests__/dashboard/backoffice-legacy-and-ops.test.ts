@@ -123,7 +123,7 @@ describe("support SLA status badges and sla-at-risk inbox query", () => {
       "staff-1",
     );
     expect(f.view).toBe("sla-at-risk");
-    expect(f.sort).toBe("sla");
+    expect(f.sort).toEqual({ key: "sla", dir: "asc" });
     expect(JSON.stringify(inboxCaseWhere(f))).toContain(
       '"awaitingUserSince":null',
     );

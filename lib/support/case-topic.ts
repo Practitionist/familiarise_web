@@ -22,6 +22,7 @@ export const CASE_TOPICS = [
   "documents",
   "account",
   "organisation",
+  "tax",
   "other",
 ] as const;
 export type CaseTopic = (typeof CASE_TOPICS)[number];
@@ -36,6 +37,7 @@ export const CASE_TOPIC_LABEL: Record<CaseTopic, string> = {
   documents: "Documents",
   account: "Account",
   organisation: "Organisation",
+  tax: "Tax & statutory",
   other: "Other",
 };
 
@@ -72,6 +74,9 @@ const ISSUE_TOPIC: Record<SupportIssueType, CaseTopic> = {
   CHARGED_TWICE: "payments",
   REFUND_REQUEST: "payments",
   BILLING_QUESTION: "payments",
+  TAX_GST: "tax",
+  TDS_CERTIFICATE: "tax",
+  PAN_CARD_MISMATCH: "tax",
   DOCUMENT_ISSUE: "documents",
   WANT_TO_CANCEL: "cancellation",
   CANCELLATION_ISSUE: "cancellation",

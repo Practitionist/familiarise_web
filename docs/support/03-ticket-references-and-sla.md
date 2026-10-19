@@ -13,6 +13,28 @@ Every support case or escalated ticket carries a unique handle in `referenceNumb
 3. **Lock-safe single-query increment:** Inside the caller's transaction `tx`, `SupportTicketCounter.upsert` (`where: { year: istYear }`, `create: { year: istYear, nextSeq: 2 }`, `update: { nextSeq: { increment: 1 } }`) executes `INSERT … ON CONFLICT DO UPDATE … RETURNING` under row-level locking without read-modify-write races and returns `formatTicketReference(istYear, counter.nextSeq - 1)`. Rolling back the enclosing transaction rolls back the sequence counter cleanly.
 4. **Schema uniqueness:** `SupportCase.referenceNumber` is non-null `@unique`; legacy `SupportTicket.referenceNumber` is nullable `@unique` so pre-counter rows retain UUID fallbacks (`t.referenceNumber ?? t.id`).
 
+## Dispute references: `DSP-YYYY-NNNNNN`
+
+A **buyer dispute** — the two-party adjudication protocol in
+[10-buyer-disputes.md](10-buyer-disputes.md) — carries its own speakable
+reference, `DSP-YYYY-NNNNNN`.
+
+It is **derived from the case's reference** by swapping the prefix
+(`FAM-2026-000123` → `DSP-2026-000123`), not allocated from a second
+counter. Three reasons:
+
+1. A dispute is 1:1 with a case, so the case's number is already unique and
+   the derived number cannot collide.
+2. The two identifiers line up. A customer says "my case is FAM-2026-000123"
+   and the agent says "your dispute is DSP-2026-000123" — the same number in
+   two vocabularies, so the two can never drift apart.
+3. There is no second sequence to allocate, and no second series to leak a
+   volume signal through.
+
+The derivation is `disputeReferenceFromCase` in
+`lib/support/disputes/reference.ts`, and it refuses a reference that is not
+a case reference rather than producing a malformed one.
+
 ## Statutory SLA model & priority tightening
 
 Two Indian statutory regimes govern customer redressal, and `lib/support/sla.ts` enforces the stricter ceiling across both:
@@ -85,6 +107,7 @@ stateDiagram-v2
 - [05-schema-reference.md](05-schema-reference.md) — relational schema and check constraint index.
 - [07-ticket-lifecycle-and-concurrency.md](07-ticket-lifecycle-and-concurrency.md) — status transitions, reopen behavior, and CAS guards.
 - [09-support-case-and-sla-sweep.md](09-support-case-and-sla-sweep.md) — unified `SupportCase` APIs, operator 2FA, CSAT, and monthly IT Rules compliance reports.
+- [10-buyer-disputes.md](10-buyer-disputes.md) — the two-party dispute protocol, its three clocks, and its concurrency contract.
 - Public policy disclosures (`app/(pages)/constants.ts`, `app/(pages)/contactus/**`, `app/(pages)/grievance/page.tsx`) bind `ACK_PROMISE_COPY` (`within 24 hours`) and disposal promises (`within 15 days`) directly to `STATUTORY_ACK_HOURS` and `STATUTORY_RESOLUTION_DAYS`.
 
 ## Deprecated & Superseded Approaches

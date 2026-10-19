@@ -17,6 +17,7 @@ import {
 
 import { TrialPayButton } from "./TrialPayButton";
 import { ViewerLocalTime } from "./ViewerLocalTime";
+import { PlanCheckoutFaq } from "@/app/checkout/components/PlanCheckoutFaq";
 
 /**
  * Branded checkout page for a paid trial.
@@ -70,6 +71,9 @@ export default async function TrialCheckoutPage({
             trialPriceInPaise: true,
             trialDurationMinutes: true,
             priceCurrency: true,
+            // The buyer's questions, answered where they pay for the trial —
+            // the same rows the plan detail page renders.
+            faqs: { orderBy: { order: "asc" } },
             consultantProfile: {
               select: { user: { select: { name: true } } },
             },
@@ -204,6 +208,8 @@ export default async function TrialCheckoutPage({
 
           {isPayable ? (
             <>
+              {/* The buyer's doubt, answered before the money moves. */}
+              <PlanCheckoutFaq faqs={trial.subscriptionPlan.faqs} />
               <TrialPayButton href={payHref!} />
               {chargedAtRequest && (
                 <p className="text-center text-xs text-muted-foreground">

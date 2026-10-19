@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { ChevronDown, CheckCircle2, Target, Package } from "lucide-react";
 import { groupCurriculumBySection } from "@/lib/labels/plan-labels";
 import { cn } from "@/utils/tailwind";
@@ -184,6 +184,9 @@ export function PlanFaqAccordion({
   className,
 }: Readonly<{ faqs: PlanFaqItem[] | null | undefined; className?: string }>) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+  // Per-instance id prefix: the same FAQ can be rendered more than once on a
+  // page, and a shared id would break the button/answer pairing.
+  const instanceId = useId();
   if (!faqs?.length) return null;
 
   return (
@@ -194,12 +197,17 @@ export function PlanFaqAccordion({
       <div className="divide-y divide-border border border-border rounded-xl overflow-hidden">
         {faqs.map((faq, index) => {
           const isOpen = openIndex === index;
+          const faqKey = faq.id ?? String(index);
+          const buttonId = `${instanceId}-faq-button-${faqKey}`;
+          const answerId = `${instanceId}-faq-answer-${faqKey}`;
           return (
             <div key={faq.id ?? `${index}-${faq.question}`}>
               <button
                 type="button"
                 onClick={() => setOpenIndex(isOpen ? null : index)}
+                id={buttonId}
                 aria-expanded={isOpen}
+                aria-controls={answerId}
                 className="w-full flex items-center justify-between gap-3 text-left px-4 py-3 hover:bg-muted/50 transition-colors"
               >
                 <span className="text-sm font-medium text-foreground">
@@ -213,7 +221,10 @@ export function PlanFaqAccordion({
                 />
               </button>
               {isOpen && (
-                <p className="px-4 pb-4 text-sm text-muted-foreground whitespace-pre-line">
+                <p
+                  id={answerId}
+                  className="px-4 pb-4 text-sm text-muted-foreground whitespace-pre-line"
+                >
                   {faq.answer}
                 </p>
               )}
