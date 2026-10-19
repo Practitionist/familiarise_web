@@ -146,6 +146,7 @@ function txStub() {
     payment: {
       findUniqueOrThrow: jest.fn(async () => payment),
       findUnique: jest.fn(async () => payment),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     // W1c — the earnings REFUNDED writers moved from a plain `update` to a
     // CAS `updateMany` (source status in WHERE, `refundedShareAmount` pinned to
@@ -404,12 +405,12 @@ describe("charged batch overages on a partial refund then the remainder", () => 
       paymentId: PAYMENT_ID,
       invoiceLineItemId: null,
     },
-    {
-      id: "ov-member",
+    ...["side-1", "side-2", "side-3"].map((paymentId) => ({
+      id: `ov-${paymentId}`,
       overageBehavior: "CHARGE_MEMBER",
-      paymentId: "side-1",
+      paymentId,
       invoiceLineItemId: null,
-    },
+    })),
   ];
   const { transitionOverage } = jest.requireMock(
     "../../lib/payments/billing/overage-transitions",
@@ -476,8 +477,18 @@ describe("charged batch overages on a partial refund then the remainder", () => 
         amountPaise: (GROSS * 3) / 4,
       }),
     );
+    // Each side-payment is stamped refund-owed in this tx for the sweep.
     expect(rest.memberOverageRefundDue).toEqual({
-      overagePaymentIds: ["side-1"],
+      overagePaymentIds: ["side-1", "side-2", "side-3"],
     });
+    expect(
+      restTx.payment.updateMany.mock.calls.map(
+        ([arg]) => arg.data.refundOwedKey,
+      ),
+    ).toEqual(
+      ["side-1", "side-2", "side-3"].map(
+        (id) => `overage-credit-back:${PAYMENT_ID}:${id}`,
+      ),
+    );
   });
 });

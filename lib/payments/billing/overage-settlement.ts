@@ -21,6 +21,7 @@ import {
 import { walletCredit, walletDebit } from "@/lib/api/organizations/wallet";
 import { orgBuyerCountry } from "@/lib/compliance/gst";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
+import { overageAccrualKey } from "@/lib/payments/billing/overage-accrual-void";
 import { notifyOrgProgramOverageDue } from "@/lib/novu/org-workflows";
 import { sendOrgOverageDueEmail } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
@@ -573,7 +574,7 @@ async function mintChildOverageAccrualPayment(
   });
   if (organizationId && amount > 0) {
     await postLedgerTxn(tx, {
-      idempotencyKey: `overage-accrual:${child.id}`,
+      idempotencyKey: overageAccrualKey(child.id),
       kind: "INVOICE_ISSUED",
       paymentId: child.id,
       description: "CHARGE_ORG overage accrued onto the next org invoice",

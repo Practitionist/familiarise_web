@@ -51,6 +51,7 @@ type MockTx = {
     findMany: jest.Mock;
   };
   overageEvent: {
+    findMany: jest.Mock;
     updateMany: jest.Mock;
   };
 };
@@ -104,6 +105,7 @@ function makeTx(opts: {
       findMany: jest.fn().mockResolvedValue([]),
     },
     overageEvent: {
+      findMany: jest.fn().mockResolvedValue([]),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
   };

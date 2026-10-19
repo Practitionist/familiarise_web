@@ -78,12 +78,31 @@ export async function postInvoiceIssuedJournal(
 }
 
 /** Post the exact mirror of `invoice-issued:<id>`; a no-op when the invoice never posted one. */
-export async function postInvoiceVoidedJournal(
+export function postInvoiceVoidedJournal(
   tx: Tx,
   invoiceId: string,
 ): Promise<boolean> {
+  return postJournalMirror(tx, {
+    sourceKey: invoiceIssuedKey(invoiceId),
+    idempotencyKey: invoiceVoidedKey(invoiceId),
+    invoiceId,
+    description: "Org invoice voided: reverses its issue journal",
+  });
+}
+
+/** Post the exact mirror of the journal under `sourceKey`; false when none was posted. */
+export async function postJournalMirror(
+  tx: Tx,
+  params: {
+    sourceKey: string;
+    idempotencyKey: string;
+    description: string;
+    invoiceId?: string;
+    paymentId?: string;
+  },
+): Promise<boolean> {
   const issued = await tx.ledgerTransaction.findUnique({
-    where: { idempotencyKey: invoiceIssuedKey(invoiceId) },
+    where: { idempotencyKey: params.sourceKey },
     select: {
       entries: {
         select: {
@@ -103,10 +122,11 @@ export async function postInvoiceVoidedJournal(
   });
   if (!issued) return false;
   await postLedgerTxn(tx, {
-    idempotencyKey: invoiceVoidedKey(invoiceId),
+    idempotencyKey: params.idempotencyKey,
     kind: "INVOICE_ISSUED",
-    invoiceId,
-    description: "Org invoice voided: reverses its issue journal",
+    invoiceId: params.invoiceId,
+    paymentId: params.paymentId,
+    description: params.description,
     postings: issued.entries.map((e) => ({
       account: e.account satisfies AccountRef,
       direction: e.direction === "DEBIT" ? "CREDIT" : "DEBIT",
