@@ -55,9 +55,7 @@ erDiagram
   Membership ||--o{ ProgramAssignment : "member entitlement"
 ```
 
-The schema for the center of this diagram is in [`prisma/schema.prisma`](../../../prisma/schema.prisma): `Organization` starts at line 1143,
-`Invitation` at 1384, `Membership` at 1430, `Contract` at 1655, `Program` at 1826, `ProgramAssignment` at 1927, SSO/domain models at 2773 and
-2788, `OrgWorkspaceProfile` at 3582, and `OrgBrandingProfile` at 7885.
+The models and exact relations in this diagram are defined in [`prisma/schema.prisma`](../../../prisma/schema.prisma). Identity, membership, commercial, SSO/domain and profile satellites are separate model groups; follow their named relations rather than assuming that a dashboard facet owns a second user identity.
 
 ### Four labels that must remain separate
 
