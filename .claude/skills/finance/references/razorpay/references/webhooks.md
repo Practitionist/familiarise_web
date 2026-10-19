@@ -69,37 +69,13 @@ export function verifyRazorpaySignature(
 
 ---
 
-## 3. Tamper-Proof `eventId` Synthesis: `${eventType}:${entityId}:${sha256(rawBody).slice(0, 16)}`
+## 3. `eventId`: `${eventType}:${entityId}:${x-razorpay-event-id | sha256(rawBody).slice(0, 16)}`
 
-Neither raw unsigned HTTP headers nor coarse entity keys are safe on their own:
+`route.ts` keys dedupe on Razorpay's own event id when the `x-razorpay-event-id` header is present and well formed (`/^[A-Za-z0-9_-]{1,64}$/`), and on a 16-character SHA-256 digest of the raw body otherwise. Razorpay keeps the same event id across its retries and dashboard replays, which is exactly the boundary dedupe needs, and two distinct upstream updates on one entity (a `payout.updated` with a later `utr`, a dispute phase change) arrive as two events with two ids.
 
-1. **Why raw `x-razorpay-event-id` alone is unsafe**: `x-razorpay-signature` covers **only** the HTTP body bytes — HTTP headers are completely unsigned. Keying deduplication on `x-razorpay-event-id` allows anyone holding a single captured `(body, x-razorpay-signature)` pair to replay the request $N$ times under $N$ forged `x-razorpay-event-id` headers and trigger $N$ full dispatches.
-2. **Why `${eventType}:${entityId}` alone is unsafe**: Distinct business transitions on the same entity share identical `(eventType, entityId)` pairs — such as consecutive `payout.updated` webhooks when `status_details` changes followed later by bank `utr` assignment on the same `pout_...`, or multi-stage `payment.dispute.action_required` / `payment.dispute.under_review` transitions across `chargeback` and `pre_arbitration` phases on the same `disp_...`. A key without a payload digest drops every subsequent state transition on that entity as a false duplicate.
+The event type and entity id always come from the signed body, so a forged header can only re-key the same verified event. The trade-off is known and accepted: the header is not covered by `x-razorpay-signature`, so a party holding a captured `(body, signature)` pair could replay it under new header values. Every handler is idempotent (ledger keys, CAS status guards), so such a replay re-runs no money movement; it only adds a `WebhookEvent` row.
 
-To preserve both cryptographic tamper-resistance and multi-transition delivery fidelity, `route.ts` synthesizes `eventId` strictly from **signature-covered body material**:
-
-```ts
-const bodyDigest = crypto
-  .createHash("sha256")
-  .update(body)
-  .digest("hex")
-  .slice(0, 16);
-
-const entityId =
-  event.payload?.refund?.entity?.id ||
-  event.payload?.dispute?.entity?.id ||
-  event.payload?.payout?.entity?.id ||
-  event.payload?.["fund_account.validation"]?.entity?.id ||
-  event.payload?.payment?.entity?.id ||
-  event.payload?.order?.entity?.id ||
-  event.account_id ||
-  `body_${bodyDigest}`;
-
-const eventId = `${eventType}:${entityId}:${bodyDigest}`;
-```
-
-- **Most-specific entity probing**: Refund events ship `contains: ["refund", "payment"]` and dispute events ship `contains: ["payment", "dispute"]`; probing `refund` / `dispute` / `payout` / `["fund_account.validation"]` before `payment` ensures `entityId` always identifies the specific child record.
-- **Exact retry collapsing + distinct update pass-through**: Retries of the exact signed delivery produce the identical 16-char SHA-256 hex digest and collapse immediately at `logWebhookEvent`, whereas any genuine upstream change (`utr` arrival, `respond_by` update, `phase` escalation) changes `bodyDigest` and executes cleanly.
+- **Most-specific entity probing**: refund events ship `contains: ["refund", "payment"]` and dispute events ship `contains: ["payment", "dispute"]`, so `refund`, `dispute`, `payout` and `fund_account.validation` are probed before `payment`.
 
 ---
 
@@ -133,7 +109,7 @@ Because serverless containers run under `PG_POOL_MAX=1` and Netlify may freeze e
 
 ## Deprecated & Superseded Approaches
 
-- **Keying Deduplication on `x-razorpay-event-id` Header Alone**: Superseded because `x-razorpay-signature` only authenticates the request body; unsigned headers allow trivial replay amplification.
+- **Keying Deduplication on the Body Hash Alone**: Superseded by preferring `x-razorpay-event-id`, which Razorpay holds stable across retries and dashboard replays; the body hash remains the fallback when the header is absent.
 - **Keying Deduplication on `${eventType}:${entityId}` Without Body Hash**: Superseded because repeat state transitions on one entity (`payout.updated` UTR assignment after status details update, multi-stage `payment.dispute.action_required`) share `(eventType, entityId)` and were falsely discarded as duplicates.
 - **Restricting `RAZORPAYX_WEBHOOK_SECRET` Fallback to `payout.*` Only**: Superseded by `isPayoutEventName` accepting both `payout.*` and `fund_account.*` so `fund_account.validation.{completed,failed}` RPD webhooks verify cleanly under the RazorpayX secret.
 - **Immediate Slot Cancellation & Wallet Credit Restoration on Every `payment.failed`**: Superseded by active hold preservation (`expiresAt > now()`) because Razorpay reuses one `order_id` across multiple in-modal payment attempts.

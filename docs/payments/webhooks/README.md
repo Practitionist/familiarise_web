@@ -44,6 +44,6 @@ Every inbound webhook receiver runs on the Node.js App Router runtime (`export c
 
 ## Deprecated & Superseded Approaches
 
-- **Keying Razorpay Idempotency on Unsigned `x-razorpay-event-id` or Plain `${eventType}:${entityId}`**: Superseded by `${eventType}:${entityId}:${sha256(rawBody).slice(0, 16)}` to prevent both unsigned header replay attacks and false duplicate drops on multi-stage `payout.updated` / `payment.dispute.*` updates.
+- **Keying Razorpay Idempotency on `${eventType}:${entityId}:${sha256(rawBody).slice(0, 16)}` Alone**: Superseded by preferring the `x-razorpay-event-id` header, which Razorpay holds stable across retries and dashboard replays; the body digest remains the fallback, and plain `${eventType}:${entityId}` stays rejected because it drops repeat updates on one entity.
 - **Unfenced Asynchronous `after()` Completion Writes**: Superseded by conditional CAS fencing on `WebhookEvent.claimedAt` (`WebhookClaim`) so a delayed or unfreezing container cannot overwrite a sweeper worker's completion status.
 - **Separate Non-Transactional `EmailEvent` Insert Before Resend Side Effects**: Superseded by wrapping `EmailEvent.create` + `EmailSuppression` + `Waitlist` updates inside a single `$transaction(tx)` so transient DB errors return HTTP `500` instead of silently skipping suppressions.

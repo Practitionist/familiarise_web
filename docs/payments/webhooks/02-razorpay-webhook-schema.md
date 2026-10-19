@@ -13,31 +13,9 @@
 2. `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` (`role: "previous"`): Checked during Dashboard secret rotation so in-flight retries signed prior to cutover succeed cleanly while logging a `WEBHOOK` `WARN` `SystemEvent`.
 3. `RAZORPAYX_WEBHOOK_SECRET` (RazorpayX Banking Fallback): Consulted **only** when `isPayoutEventName(rawBody)` returns `true` (`event.startsWith("payout.") || event.startsWith("fund_account.")`). Customer payment, order, refund, and dispute events can never authenticate against `RAZORPAYX_WEBHOOK_SECRET`.
 
-### Tamper-Proof `eventId` Derivation (`route.ts`)
+### `eventId` Derivation (`route.ts`)
 
-Razorpay's `x-razorpay-signature` covers **only** the HTTP body bytes; HTTP headers (`x-razorpay-event-id`) are completely unsigned. Conversely, `${eventType}:${entityId}` without a body digest drops legitimate repeat updates on the same entity (such as sequential `payout.updated` webhooks when `status_details` changes followed later by bank `utr` assignment on the same `pout_...`, or multi-stage `payment.dispute.action_required` / `payment.dispute.under_review` transitions across `chargeback` and `pre_arbitration` on the same `disp_...`).
-
-Therefore, every Razorpay webhook synthesizes a tamper-proof composite key strictly from signature-authenticated bytes:
-
-```typescript
-const bodyDigest = crypto
-  .createHash("sha256")
-  .update(body)
-  .digest("hex")
-  .slice(0, 16);
-
-const entityId =
-  event.payload?.refund?.entity?.id ||
-  event.payload?.dispute?.entity?.id ||
-  event.payload?.payout?.entity?.id ||
-  event.payload?.["fund_account.validation"]?.entity?.id ||
-  event.payload?.payment?.entity?.id ||
-  event.payload?.order?.entity?.id ||
-  event.account_id ||
-  `body_${bodyDigest}`;
-
-const eventId = `${eventType}:${entityId}:${bodyDigest}`;
-```
+The dedupe key is `${eventType}:${entityId}:${id}`, where `id` is the `x-razorpay-event-id` header when it is present and matches `/^[A-Za-z0-9_-]{1,64}$/`, and a 16-character SHA-256 digest of the raw body otherwise. Razorpay keeps the event id stable across its retries and dashboard replays, so a redelivery collapses at `logWebhookEvent`, while two distinct updates on one entity (a `payout.updated` with a later `utr`, a dispute phase change) carry two ids and both run. The event type and entity id come from the signed body; the header itself is unsigned, so a captured `(body, signature)` pair could be replayed under new ids, which the idempotent handlers absorb without moving money twice.
 
 ---
 
