@@ -9,6 +9,7 @@
 
 type Row = Record<string, unknown>;
 
+const runTx = jest.fn();
 const db = {
   consultantEarnings: {
     groupBy: jest.fn(),
@@ -24,8 +25,9 @@ const db = {
   },
   payoutAccount: { findFirst: jest.fn() },
   ledgerTransaction: { findMany: jest.fn(async () => [] as Row[]) },
-  $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(db)),
+  $transaction: runTx,
 };
+runTx.mockImplementation(async (fn: (tx: unknown) => unknown) => fn(db));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   get default() {
@@ -244,6 +246,8 @@ it("F4: a frozen or cooling-off default account is not payable", () => {
     isIndianResident: true,
     readyAmount: 100_000,
     minimumAmount: 50_000,
+    outstandingClawbackPaise: 0,
+    clawbackPausePaise: 1_000_000,
     now: new Date("2026-10-20T00:00:00Z"),
   };
   expect(

@@ -45,6 +45,7 @@ const earning = (
   holdUntil: "2026-09-25T09:12:00Z",
   paidAt: null,
   preHoldStatus: null,
+  releasedFromPayoutId: null,
   holds: [],
   cycleOrdinal: null,
   currency: "INR",
