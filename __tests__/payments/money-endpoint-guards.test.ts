@@ -25,7 +25,6 @@ const read = (rel: string) =>
 
 describe("PM-36 — moneyOpsLimiter wiring (source contract)", () => {
   const routeFiles = [
-    "app/api/admin/refunds/route.ts",
     "app/api/payments/disputes/route.ts",
     "app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pdf/route.ts",
     "app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pay/route.ts",
@@ -44,6 +43,15 @@ describe("PM-36 — moneyOpsLimiter wiring (source contract)", () => {
       /applyRateLimit\(\s*moneyOpsLimiter,\s*(?:access\.member\?\.id \?\? orgId|actorRateLimitKey)/;
     expect(src).toMatch(
       rel.includes("/pdf/") || rel.includes("/pay/") ? actorKeyed : /^/,
+    );
+  });
+
+  it("the admin refund door spends the shared money-ops budget", () => {
+    expect(read("app/api/admin/refunds/route.ts")).toContain(
+      "assertMoneyOpsBudget(actor.userId)",
+    );
+    expect(read("lib/backoffice/money-limit.ts")).toContain(
+      "applyRateLimit(moneyOpsLimiter, userId)",
     );
   });
 

@@ -54,6 +54,7 @@ import {
   PASSWORD_MIN_LENGTH,
 } from "@/lib/auth/password-rules";
 import { authRateLimit } from "@/lib/auth/rate-limit";
+import { betterAuthTrustedOrigins } from "@/lib/auth/trusted-origins";
 import { stripSessionToken } from "@/lib/auth/strip-session-token";
 import { notifySecurityEvents } from "@/lib/auth/security-event-hook";
 import {
@@ -127,10 +128,7 @@ async function allowAuthMailSend(
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
   baseURL: process.env.BETTER_AUTH_URL,
-  trustedOrigins: (process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? "")
-    .split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean),
+  trustedOrigins: betterAuthTrustedOrigins(),
 
   // BetterAuth swallows endpoint exceptions into 500s; this forwards its
   // `error` logs to Sentry (lib/auth/auth-logger.ts).

@@ -22,6 +22,10 @@ import { acquireLock, releaseLock } from "@/lib/redis";
 import { assertPayoutBalance } from "./balance-preflight";
 import { PAYOUT_CONSTANTS } from "./constants";
 import {
+  PAYOUT_ACCOUNT_COOLING_OFF_MS,
+  payoutAccountHold,
+} from "./payout-requirements";
+import {
   getIndianFinancialYear,
   recordOrgTDSDeduction,
   recordOrgTdsReversal,
@@ -198,7 +202,7 @@ export async function getOrgPayoutEligibility(
 ): Promise<OrgPayoutEligibility> {
   const account = await prisma.organizationPayoutAccount.findUnique({
     where: { organizationId: orgId },
-    select: { status: true },
+    select: { status: true, payoutsAllowedAfter: true, payoutsFrozenAt: true },
   });
 
   if (!account) {
@@ -218,6 +222,17 @@ export async function getOrgPayoutEligibility(
       earningsCount: 0,
       payoutAccountStatus: account.status,
       reason: `Payout account is ${account.status} — must be VERIFIED to receive funds`,
+    };
+  }
+
+  const hold = payoutAccountHold(account);
+  if (hold) {
+    return {
+      eligible: false,
+      readyAmount: 0,
+      earningsCount: 0,
+      payoutAccountStatus: account.status,
+      reason: hold,
     };
   }
 
@@ -323,6 +338,13 @@ export async function createOrgPayoutBatch(
                 409,
               );
             }
+            const hold = payoutAccountHold(payoutAccount);
+            if (hold) {
+              throw new PayoutValidationError(
+                `${hold}: the payout account cannot receive payouts yet`,
+                409,
+              );
+            }
 
             const created = await tx.organizationPayout.create({
               data: {
@@ -340,6 +362,7 @@ export async function createOrgPayoutBatch(
                 createdBy: opts.createdBy ?? "SYSTEM_CRON",
                 idempotencyKey:
                   opts.idempotencyKey ?? globalThis.crypto.randomUUID(),
+                orgPayoutAccountId: payoutAccount.id,
               },
             });
 
@@ -882,6 +905,15 @@ async function submitOrgPayoutToGateway(payoutId: string): Promise<void> {
       currency: true,
       paymentGateway: true,
       payoutReference: true,
+      createdAt: true,
+      orgPayoutAccount: {
+        select: {
+          status: true,
+          razorpayFundAccountId: true,
+          payoutsAllowedAfter: true,
+          payoutsFrozenAt: true,
+        },
+      },
     },
   });
 
@@ -892,24 +924,47 @@ async function submitOrgPayoutToGateway(payoutId: string): Promise<void> {
     );
   }
 
-  const account = await prisma.organizationPayoutAccount.findUnique({
-    where: { organizationId: payout.organizationId },
-    select: {
-      status: true,
-      razorpayContactId: true,
-      razorpayFundAccountId: true,
-    },
-  });
+  // Sent to the account snapshotted at mint; a pre-snapshot payout falls back
+  // to the org's current account, which must also be out of cooling-off.
+  const fallback = payout.orgPayoutAccount
+    ? null
+    : await prisma.organizationPayoutAccount.findUnique({
+        where: { organizationId: payout.organizationId },
+        select: {
+          status: true,
+          razorpayFundAccountId: true,
+          payoutsAllowedAfter: true,
+          payoutsFrozenAt: true,
+        },
+      });
+  if (fallback && payoutAccountHold(fallback)) {
+    throw new PayoutValidationError(
+      `Payout ${payoutId}: ${payoutAccountHold(fallback)} on the organisation's current payout account — refusing to submit`,
+      409,
+    );
+  }
+  const account = payout.orgPayoutAccount ?? fallback;
   const fundAccountId = account?.razorpayFundAccountId ?? null;
   if (!fundAccountId) {
     throw new PayoutValidationError(
-      `Payout ${payoutId}: organization has no razorpayFundAccountId on its payout account`,
+      `Payout ${payoutId}: its snapshotted payout account is missing or has no razorpayFundAccountId`,
       400,
     );
   }
-  if (account?.status !== "VERIFIED") {
+  if (account?.status !== "VERIFIED" || account.payoutsFrozenAt) {
     throw new PayoutValidationError(
-      `Payout ${payoutId}: organization payout account is ${account?.status ?? "missing"}, not VERIFIED — refusing to submit`,
+      `Payout ${payoutId}: snapshotted payout account is ${account?.payoutsFrozenAt ? "frozen" : (account?.status ?? "missing")} — refusing to submit`,
+      409,
+    );
+  }
+  // The org account row is edited in place, so a destination changed after mint is a different destination.
+  const changedAt =
+    payout.orgPayoutAccount && account.payoutsAllowedAfter
+      ? account.payoutsAllowedAfter.getTime() - PAYOUT_ACCOUNT_COOLING_OFF_MS
+      : null;
+  if (changedAt !== null && changedAt > payout.createdAt.getTime()) {
+    throw new PayoutValidationError(
+      `Payout ${payoutId}: the payout account changed after this payout was minted — refusing to submit`,
       409,
     );
   }
