@@ -15,6 +15,7 @@ import {
   recarveOverageBase,
 } from "@/lib/payments/billing/overage-base-carve";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
+import { createEarningsHoldStore } from "../fixtures/earnings-hold-store";
 
 interface MockOpts {
   event?: object | null;
@@ -47,8 +48,29 @@ function mockTx(opts: MockOpts = {}) {
     .fn()
     .mockResolvedValue({ count: opts.parentUpdateManyCount ?? 1 });
   const eventCount = jest.fn().mockResolvedValue(opts.unpaidSiblings ?? 0);
-  const earningsUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+  // The parent's one consultant earning, held by its member overage.
+  const holds = createEarningsHoldStore();
+  holds.consultant.push({
+    id: "ce1",
+    paymentId: "parent1",
+    status: "HELD",
+    preHoldStatus: "PENDING",
+    holdUntil: null,
+  });
+  holds.holds.push({
+    id: "h1",
+    consultantEarningsId: "ce1",
+    organizationEarningsId: null,
+    reason: "OVERAGE",
+    sourceRef: "parent1",
+    placedAt: new Date(0),
+    releasedAt: null,
+    releasedById: null,
+    note: null,
+  });
+  const earningsUpdateMany = jest.fn(holds.db.consultantEarnings.updateMany);
   return {
+    holds,
     legUpdate,
     legUpdateMany,
     paymentUpdate,
@@ -61,7 +83,11 @@ function mockTx(opts: MockOpts = {}) {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         count: eventCount,
       },
-      consultantEarnings: { updateMany: earningsUpdateMany },
+      ...holds.db,
+      consultantEarnings: {
+        ...holds.db.consultantEarnings,
+        updateMany: earningsUpdateMany,
+      },
       payment: {
         findUnique: jest.fn().mockResolvedValue(parent),
         update: paymentUpdate,
@@ -110,19 +136,16 @@ describe("restoreOverageBaseCarve", () => {
     expect(held.earningsUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(
       held.eventCount.mock.invocationCallOrder[0],
     );
-    expect(held.earningsUpdateMany).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: { status: "PENDING", preDisputeStatus: null },
-      }),
-    );
+    expect(held.holds.consultant[0].status).toBe("HELD");
+    expect(held.holds.activeReasons("ce1")).toEqual(["OVERAGE"]);
 
     const last = mockTx();
     await restoreOverageBaseCarve(last.tx, { overageEventId: "ov1" });
-    expect(last.earningsUpdateMany).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        data: { status: "PENDING", preDisputeStatus: null },
-      }),
-    );
+    expect(last.holds.consultant[0]).toMatchObject({
+      status: "PENDING",
+      preHoldStatus: null,
+    });
+    expect(last.holds.activeReasons("ce1")).toEqual([]);
   });
 
   it("returns invoiced (no leg writes) when the guarded parent update matches no row", async () => {

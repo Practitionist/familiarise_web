@@ -32,6 +32,7 @@ export type PayoutEligibilityReason =
   | "NON_INDIA"
   | "NO_ACCOUNT"
   | "UNVERIFIED"
+  | "CLAWBACK_RECOVERY_PAUSE"
   | "BELOW_MINIMUM";
 
 export interface PayoutRequirementsInput {
@@ -143,6 +144,9 @@ export interface PayoutEligibilityGateInput {
   defaultAccount: { isVerified: boolean } | null;
   readyAmount: number;
   minimumAmount: number;
+  /** Unrecovered clawback receivable; above the pause line no payout is minted. */
+  outstandingClawbackPaise: number;
+  clawbackPausePaise: number;
 }
 
 /**
@@ -157,6 +161,9 @@ export function payoutEligibilityReason(
   if (!input.isIndianResident) return "NON_INDIA";
   if (!input.defaultAccount) return "NO_ACCOUNT";
   if (!input.defaultAccount.isVerified) return "UNVERIFIED";
+  if (input.outstandingClawbackPaise > input.clawbackPausePaise) {
+    return "CLAWBACK_RECOVERY_PAUSE";
+  }
   if (input.readyAmount < input.minimumAmount) return "BELOW_MINIMUM";
   return null;
 }

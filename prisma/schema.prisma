@@ -2222,11 +2222,11 @@ model OrganizationEarnings {
   orgBpsApplied        Int?
   consultantBpsApplied Int?
 
-  status           EarningStatus
-  holdUntil        DateTime?      @db.Timestamptz
-  // #1020-1 — mirror of ConsultantEarnings.preDisputeStatus: prior state
-  // preserved when a dispute HELDs the row so release restores it faithfully.
-  preDisputeStatus EarningStatus?
+  status        EarningStatus
+  holdUntil     DateTime?      @db.Timestamptz
+  // The status the first active EarningsHold froze; the last release restores it.
+  preHoldStatus EarningStatus? @map("preDisputeStatus")
+  holds         EarningsHold[]
 
   orgPayoutId String?
   orgPayout   OrganizationPayout? @relation(fields: [orgPayoutId], references: [id])
@@ -6050,7 +6050,7 @@ enum DisputeStatus {
 
 enum EarningStatus {
   PENDING // In hold period
-  HELD // Extended hold (dispute)
+  HELD // Has at least one active EarningsHold
   READY // Ready for payout
   /// #837 E-03/E-04 — rolled into a payout batch but cash has NOT left yet
   /// (batch exists / gateway not wired / ENABLE_LIVE_PAYOUTS off). Distinct
@@ -6116,18 +6116,15 @@ model ConsultantEarnings {
   cycleOrdinal Int?
 
   // Status tracking
-  status           EarningStatus  @default(PENDING)
+  status        EarningStatus  @default(PENDING)
   /// #1569 — max(capture time, last live occurrence endsAt) + the hold hours;
   /// recomputed when a reschedule moves the call. #1766 — NULL = tranche not
   /// yet delivered; stamped by the completion path.
-  holdUntil        DateTime?      @db.Timestamptz
-  paidAt           DateTime?      @db.Timestamptz
-  // #1020-1 — the status an earning was in when an open dispute HELD it
-  // (PENDING vs READY), so a WON/CLOSED release restores the true prior state
-  // instead of force-maturing a PENDING row into READY prematurely. Null =
-  // never dispute-held (or held before this column shipped — releases then
-  // fall back to READY, the historical behavior).
-  preDisputeStatus EarningStatus?
+  holdUntil     DateTime?      @db.Timestamptz
+  paidAt        DateTime?      @db.Timestamptz
+  // The status the first active EarningsHold froze; the last release restores it.
+  preHoldStatus EarningStatus? @map("preDisputeStatus")
+  holds         EarningsHold[]
 
   // Currency (always INR for MVP, extensible for multi-currency)
   currency Currency @default(INR)
@@ -6147,6 +6144,37 @@ model ConsultantEarnings {
   @@index([status, holdUntil])
   @@index([payoutId])
   @@index([paymentId])
+}
+
+/// One reason an earning is frozen. An earning is HELD iff it has an active
+/// (unreleased) hold; lib/payments/payouts/earnings-holds.ts is the only writer.
+/// Exactly one earnings FK is set (`earnings_hold_one_earning`), and one active
+/// hold per (earning, reason, sourceRef) (`earnings_hold_active_*_key`), both
+/// in prisma/sql/check-constraints.sql.
+model EarningsHold {
+  id                     String                @id @default(uuid())
+  consultantEarningsId   String?
+  consultantEarnings     ConsultantEarnings?   @relation(fields: [consultantEarningsId], references: [id], onDelete: Restrict)
+  organizationEarningsId String?
+  organizationEarnings   OrganizationEarnings? @relation(fields: [organizationEarningsId], references: [id], onDelete: Restrict)
+  reason                 EarningsHoldReason
+  /// Dispute row id, banned user id, OpsActionLog id, or the overage parent payment id.
+  sourceRef              String
+  placedAt               DateTime              @default(now()) @db.Timestamptz
+  releasedAt             DateTime?             @db.Timestamptz
+  releasedById           String?
+  note                   String?               @db.Text
+
+  @@index([consultantEarningsId, releasedAt])
+  @@index([organizationEarningsId, releasedAt])
+  @@index([reason, sourceRef])
+}
+
+enum EarningsHoldReason {
+  DISPUTE
+  MODERATION
+  OPERATOR
+  OVERAGE // a CHARGE_MEMBER side charge on the parent payment is still unpaid
 }
 
 /// Payouts to individual consultants (1099-style). The parallel

@@ -14,7 +14,8 @@ import { AppointmentsType } from "@prisma/client";
  */
 const baseMetadataSchema = z.object({
   appointmentType: z.nativeEnum(AppointmentsType),
-  userId: z.string().cuid(),
+  // Better Auth mints 32-char base62 user ids, not cuids.
+  userId: z.string().min(1),
   planId: z.string().optional(),
   eventId: z.string().optional(),
   notes: z.string().optional(),

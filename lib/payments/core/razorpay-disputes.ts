@@ -217,6 +217,7 @@ interface RazorpayDisputeEntity {
   evidence?: Record<string, unknown> | null;
   is_charge_refundable?: boolean;
   deduct_at_onset?: boolean;
+  amount_deducted?: number | null;
 }
 
 /**
@@ -227,6 +228,8 @@ interface RazorpayDisputeEntity {
  */
 export type RazorpayDisputeResult = DisputeResult & {
   paymentId: string | null;
+  /** Paise Razorpay pulled from the balance; null when the entity omits it. */
+  amountDeductedPaise: number | null;
 };
 
 /**
@@ -262,8 +265,7 @@ export async function getRazorpayDispute(
     disputeId: entity.id ?? disputeId,
     status: rawStatus as DisputeStatus,
     evidence: (entity.evidence ?? undefined) as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     // The fetch entity carries no refundability signal, so derive it the way
     // the seed does: a lost or refunded charge is no longer refundable.
     isChargeRefundable:
@@ -274,5 +276,6 @@ export async function getRazorpayDispute(
     // respond_by is unix seconds, like the webhook entity.
     dueBy: entity.respond_by ? new Date(entity.respond_by * 1000) : undefined,
     paymentId: entity.payment_id ?? null,
+    amountDeductedPaise: entity.amount_deducted ?? null,
   };
 }

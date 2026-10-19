@@ -45,6 +45,8 @@ const REASON_LINE: Record<PayoutEligibilityReason, string> = {
     "Add a bank account or UPI ID so we have somewhere to send your earnings.",
   UNVERIFIED:
     "Your account is waiting on the ₹1 verification before payouts can start.",
+  CLAWBACK_RECOVERY_PAUSE:
+    "Payouts are paused while a refunded or charged-back amount you were already paid is recovered — support can tell you more.",
   BELOW_MINIMUM:
     "Payouts go out once your available balance reaches the minimum.",
 };

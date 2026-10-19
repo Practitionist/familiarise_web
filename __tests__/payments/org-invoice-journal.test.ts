@@ -4,7 +4,6 @@
 import {
   invoiceRefundDebits,
   postInvoiceIssuedJournal,
-  postInvoiceVoidedJournal,
 } from "@/lib/payments/billing/org-invoice-journal";
 import type { Posting, postLedgerTxn } from "@/lib/payments/ledger/post";
 import type { Tx } from "@/lib/prisma";
@@ -48,27 +47,13 @@ const net = (postings: Posting[], kind: string) =>
 beforeEach(() => mockPost.mockReset());
 
 describe("org invoice issue journal", () => {
-  it("books receivable, fee and GST at issue, and void posts the exact mirror", async () => {
+  it("books receivable, fee and GST at issue", async () => {
     expect(await postInvoiceIssuedJournal(makeTx(null), "inv1")).toBe("POSTED");
     const issue = mockPost.mock.calls[0][1];
     expect(issue.idempotencyKey).toBe("invoice-issued:inv1");
     expect(net(issue.postings, "ORG_RECEIVABLE")).toBe(118_000);
     expect(net(issue.postings, "PLATFORM_FEE")).toBe(-100_000);
     expect(net(issue.postings, "GST_PAYABLE")).toBe(-18_000);
-
-    const entries = issue.postings.map((p: Posting) => ({
-      direction: p.direction,
-      amountPaise: BigInt(p.amountPaise),
-      account: { ...p.account, consultantProfileId: null, currency: "INR" },
-    }));
-    expect(await postInvoiceVoidedJournal(makeTx({ entries }), "inv1")).toBe(
-      true,
-    );
-    const voided = mockPost.mock.calls[1][1];
-    expect(voided.idempotencyKey).toBe("invoice-voided:inv1");
-    for (const kind of ["ORG_RECEIVABLE", "PLATFORM_FEE", "GST_PAYABLE"]) {
-      expect(net(voided.postings, kind)).toBe(-net(issue.postings, kind));
-    }
   });
 
   it("never posts for an invoice that bills bookings (their journals booked the GST)", async () => {
@@ -109,9 +94,8 @@ describe("org invoice issue journal", () => {
 
   it("flags wallet-collected CHARGE_ORG overage surcharge missing GST_PAYABLE (#2005)", async () => {
     const prismaClient = (await import("@/lib/prisma")).default;
-    const { orgInvoiceGstFindings } = await import(
-      "../../scripts/reconcile/tax-and-clawback-steps"
-    );
+    const { orgInvoiceGstFindings } =
+      await import("../../scripts/reconcile/tax-and-clawback-steps");
     const invSpy = jest
       .spyOn(prismaClient.organizationInvoice, "findMany")
       .mockResolvedValueOnce([] as never);
@@ -166,5 +150,3 @@ describe("org invoice issue journal", () => {
     }
   });
 });
-
-

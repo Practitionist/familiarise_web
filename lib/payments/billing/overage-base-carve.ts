@@ -1,4 +1,10 @@
+import { EarningStatus, EarningsHoldReason } from "@prisma/client";
+
 import type { Tx } from "@/lib/prisma";
+import {
+  releaseEarningsHolds,
+  type EarningsHoldDb,
+} from "@/lib/payments/payouts/earnings-holds";
 /**
  * #812 §P0 / #775 / #782 — basePaise carve bookkeeping for CHARGE_MEMBER
  * overage side-charges.
@@ -29,12 +35,10 @@ export type CarveOutcome = "restored" | "recarved" | "none" | "invoiced";
 type CarveRef = { overageEventId: string } | { sidePaymentId: string };
 
 type RestoreCarveTx = Pick<Tx, "overageEvent" | "payment" | "paymentLeg"> &
+  EarningsHoldDb &
   Partial<
     Pick<
       Tx,
-      | "dispute"
-      | "consultantEarnings"
-      | "organizationEarnings"
       | "billingAccount"
       | "ledgerTransaction"
       | "ledgerAccount"
@@ -43,37 +47,41 @@ type RestoreCarveTx = Pick<Tx, "overageEvent" | "payment" | "paymentLeg"> &
   >;
 
 /**
- * Release the parent's overage-held earnings once no other member overage on
- * it is unpaid. A FAILED one still holds on a LICENSE parent, whose base was
- * never restored to the org.
+ * Release the parent's OVERAGE holds once no other member overage on it is
+ * unpaid. A FAILED one still holds on a LICENSE parent, whose base was never
+ * restored to the org. Other owners' holds on the same earnings stay.
  */
 export async function releaseOverageHeldParentEarnings(
-  tx: Pick<Tx, "overageEvent" | "paymentLeg"> &
-    Partial<
-      Pick<Tx, "dispute" | "consultantEarnings" | "organizationEarnings">
-    >,
+  tx: Pick<Tx, "overageEvent" | "paymentLeg"> & EarningsHoldDb,
   parentPaymentId: string,
   settledSidePaymentId: string,
 ): Promise<void> {
-  const held = {
+  const overageHeld = {
     paymentId: parentPaymentId,
-    status: "HELD" as const,
-    preDisputeStatus: "PENDING" as const,
+    holds: {
+      some: {
+        reason: EarningsHoldReason.OVERAGE,
+        sourceRef: parentPaymentId,
+        releasedAt: null,
+      },
+    },
   };
+  const consultantIds = (
+    await tx.consultantEarnings.findMany({
+      where: overageHeld,
+      select: { id: true },
+    })
+  ).map((r) => r.id);
+  const orgIds = (
+    await tx.organizationEarnings.findMany({
+      where: overageHeld,
+      select: { id: true },
+    })
+  ).map((r) => r.id);
+  if (consultantIds.length + orgIds.length === 0) return;
   // Lock the held rows before counting: a batch holding them concurrently is
   // then either committed and counted, or forces this transaction to retry.
-  if (typeof tx.consultantEarnings?.updateMany === "function") {
-    await tx.consultantEarnings.updateMany({
-      where: held,
-      data: { status: "HELD" },
-    });
-  }
-  if (typeof tx.organizationEarnings?.updateMany === "function") {
-    await tx.organizationEarnings.updateMany({
-      where: held,
-      data: { status: "HELD" },
-    });
-  }
+  await lockHeldOverageEarnings(tx, consultantIds, orgIds);
   const licenseLeg = await tx.paymentLeg.findUnique({
     where: {
       paymentId_source: { paymentId: parentPaymentId, source: "LICENSE" },
@@ -90,27 +98,31 @@ export async function releaseOverageHeldParentEarnings(
   });
   if (unpaidSiblings > 0) return;
 
-  const openDisputes =
-    typeof tx.dispute?.count === "function"
-      ? await tx.dispute.count({
-          where: {
-            paymentId: parentPaymentId,
-            status: { notIn: ["WON", "LOST"] },
-          },
-        })
-      : 0;
-  if (openDisputes > 0) return;
+  const match = {
+    reasons: [EarningsHoldReason.OVERAGE],
+    sourceRef: parentPaymentId,
+  };
+  await releaseEarningsHolds(tx, "consultant", consultantIds, match);
+  await releaseEarningsHolds(tx, "org", orgIds, match);
+}
 
-  if (typeof tx.consultantEarnings?.updateMany === "function") {
+/** A no-op write on the parent's HELD earnings, taken by both the overage place and release. */
+export async function lockHeldOverageEarnings(
+  tx: EarningsHoldDb,
+  consultantIds: string[],
+  orgIds: string[],
+): Promise<void> {
+  const held = { status: EarningStatus.HELD };
+  if (consultantIds.length > 0) {
     await tx.consultantEarnings.updateMany({
-      where: held,
-      data: { status: "PENDING", preDisputeStatus: null },
+      where: { id: { in: consultantIds }, ...held },
+      data: held,
     });
   }
-  if (typeof tx.organizationEarnings?.updateMany === "function") {
+  if (orgIds.length > 0) {
     await tx.organizationEarnings.updateMany({
-      where: held,
-      data: { status: "PENDING", preDisputeStatus: null },
+      where: { id: { in: orgIds }, ...held },
+      data: held,
     });
   }
 }

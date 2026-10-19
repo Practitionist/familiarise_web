@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SelfServiceFundingSourceSchema } from "@/lib/labels/org-labels";
 
 export const orgInfoSchema = z.object({
   name: z.string().trim().min(2, "Name must be at least 2 characters").max(100),
@@ -15,9 +16,7 @@ export const orgInfoSchema = z.object({
 });
 
 export const billingSchema = z.object({
-  // PERSONAL / WALLET / INVOICE / LICENSE — PROJECT is admin-only and
-  // not exposed in the self-service wizard (milestone workflow missing).
-  fundingSource: z.enum(["PERSONAL", "WALLET", "INVOICE", "LICENSE"]),
+  fundingSource: SelfServiceFundingSourceSchema,
   // paymentTermsDays is only meaningful when fundingSource = INVOICE.
   // We accept it in all cases so the form can retain the value if the
   // user flips back and forth across funding sources.

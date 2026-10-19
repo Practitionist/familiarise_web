@@ -51,6 +51,7 @@ import { formatNotificationMoney } from "@/lib/novu/humanize";
 import {
   computeHoldUntil,
   holdHoursFor,
+  stampConsultantHolds,
 } from "@/lib/payments/payouts/earnings-hold";
 
 export interface SettleCancelledSessionsResult {
@@ -573,14 +574,15 @@ async function stampSubscriptionVoidEarningsHold(
     lastOccurrenceEndsAt: null,
     holdHours: holdHoursFor("SUBSCRIPTION"),
   });
-  await prisma.consultantEarnings?.updateMany?.({
-    where: {
+  await stampConsultantHolds(
+    prisma,
+    {
       paymentId: { in: paymentIds },
       holdUntil: null,
       status: { in: ["PENDING", "PENDING_TRUST"] },
     },
-    data: { holdUntil },
-  });
+    holdUntil,
+  );
   await prisma.organizationEarnings?.updateMany?.({
     where: {
       paymentId: { in: paymentIds },

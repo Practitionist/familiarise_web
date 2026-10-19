@@ -161,6 +161,15 @@ describe("Area 4 — Lifecycle & Money Spine Fixes (F-4.1 through F-4.17)", () =
             .fn()
             .mockResolvedValueOnce({ count: 1 })
             .mockResolvedValueOnce({ count: 0 }),
+          // One payee waiting, then none once stamped.
+          findMany: jest
+            .fn()
+            .mockResolvedValueOnce([{ consultantProfileId: "cp" }])
+            .mockResolvedValueOnce([]),
+          findFirst: jest.fn().mockResolvedValue({ createdAt: new Date(0) }),
+          aggregate: jest.fn().mockResolvedValue({
+            _sum: { consultantSharePaise: 9e9, refundedShareAmount: 0 },
+          }),
         },
         organizationEarnings: {
           updateMany: jest
@@ -216,6 +225,14 @@ describe("Area 4 — Lifecycle & Money Spine Fixes (F-4.1 through F-4.17)", () =
             .fn()
             .mockResolvedValueOnce({ count: 2 })
             .mockResolvedValueOnce({ count: 0 }),
+          findMany: jest
+            .fn()
+            .mockResolvedValueOnce([{ consultantProfileId: "cp" }])
+            .mockResolvedValueOnce([]),
+          findFirst: jest.fn().mockResolvedValue({ createdAt: new Date(0) }),
+          aggregate: jest.fn().mockResolvedValue({
+            _sum: { consultantSharePaise: 9e9, refundedShareAmount: 0 },
+          }),
         },
         organizationEarnings: {
           updateMany: jest
