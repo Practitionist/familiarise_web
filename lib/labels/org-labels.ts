@@ -183,13 +183,13 @@ export const MEMBER_STATUS_TONE: Record<MemberStatus, Tone> = {
 //   - Prisma's full `FundingSource` enum includes PROJECT, which is v2
 //     (milestone workflow missing). Keeping it out of self-service keeps
 //     invalid states unrepresentable.
+//   - INVOICE is platform-only credit, set by an admin after verification.
 
 import { z } from "zod";
 
 export const SelfServiceFundingSourceSchema = z.enum([
   "PERSONAL",
   "WALLET",
-  "INVOICE",
   "LICENSE",
 ]);
 export type SelfServiceFundingSource = z.infer<

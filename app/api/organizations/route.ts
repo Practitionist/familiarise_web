@@ -36,6 +36,7 @@ import { notifyOrgCreated } from "@/lib/novu/org-workflows";
 import { attemptTrigger } from "@/lib/novu";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { OrgOnboardingSchema } from "@/utils/onboarding";
+import { SelfServiceFundingSourceSchema } from "@/lib/labels/org-labels";
 import {
   claimOnboardingCompletion,
   recordOnboardingConsent,
@@ -46,12 +47,6 @@ import {
 // yet — callers that pick it would otherwise silently fall into the
 // TAG_ONLY path in checkout. Re-add here once checkout has a dedicated
 // PROJECT branch.
-const FundingSourceSchema = z.enum([
-  "PERSONAL",
-  "LICENSE",
-  "WALLET",
-  "INVOICE",
-]);
 // #1396 — the `Currency` enum stays on the column (ADR 15 keeps the type), but
 // this API refuses to write anything except INR. `BillingAccount.currency` is
 // forwarded verbatim into `createRazorpayOrder` by the wallet top-up route, and
@@ -100,7 +95,7 @@ const CreateBodySchema = z
       .optional(),
     canSponsor: z.boolean().default(true),
     canHost: z.boolean().default(false),
-    fundingSource: FundingSourceSchema.default("PERSONAL"),
+    fundingSource: SelfServiceFundingSourceSchema.default("PERSONAL"),
     billingEmail: z.string().email(),
     currency: CurrencySchema.default("INR"),
     paymentTermsDays: z.coerce.number().int().min(0).max(180).optional(),
