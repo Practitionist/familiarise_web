@@ -1,16 +1,4 @@
-/**
- * #705 — support SLA clocks.
- *
- * India makes an escalation ladder a legal artifact rather than a nicety. Two
- * regimes can apply: the Consumer Protection (E-Commerce) Rules 2020 (grievance
- * officer, acknowledge <= 48h, redress <= 1 month) and the IT Rules 2021
- * (acknowledge <= 24h, dispose <= 15 days). We size to the TIGHTER one, because
- * meeting it satisfies both and we do not have to first settle whether the
- * platform is an intermediary.
- *
- * The per-priority targets below sit INSIDE those caps — they are an internal
- * service goal, never a relaxation of the statutory number.
- */
+/** Internal response targets are capped by category-specific, non-pausing statutory deadlines. */
 
 import type {
   SupportCaseStatus,
@@ -21,7 +9,7 @@ import type { Tx } from "@/lib/prisma";
 
 /** The statutory ceilings. Nothing here may exceed these. */
 export const STATUTORY_ACK_HOURS = 24;
-export const STATUTORY_RESOLUTION_DAYS = 15;
+export const STATUTORY_RESOLUTION_DAYS = 7;
 export const ACK_PROMISE_COPY = "within 24 hours";
 
 const HOUR_MS = 3_600_000;
@@ -116,6 +104,7 @@ export interface SlaClock {
   resolvedAt: Date | null;
   awaitingUserSince: Date | null;
   pausedSeconds: number;
+  statutoryDueAt?: Date | null;
 }
 
 /**
@@ -150,9 +139,8 @@ export function effectiveResolutionDueAt(
   now: Date = new Date(),
 ): Date | null {
   if (!clock.resolutionDueAt) return null;
-  return new Date(
-    clock.resolutionDueAt.getTime() + pausedSecondsAt(clock, now) * 1000,
-  );
+  const internalDue = clock.resolutionDueAt.getTime() + pausedSecondsAt(clock, now) * 1000;
+  return new Date(clock.statutoryDueAt ? Math.min(internalDue, clock.statutoryDueAt.getTime()) : internalDue);
 }
 
 export interface SlaState {

@@ -1,9 +1,9 @@
+import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
-  isPrivileged,
   requireApiAuth,
-  requirePrivilegedAuth,
+  requireBackofficeSurface,
 } from "@/lib/auth-helpers";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import prisma from "@/lib/prisma";
@@ -47,7 +47,10 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 
     const view = await readSupportCaseForViewer(caseId, {
       userId: user.id,
-      isStaff: isPrivileged(user.role),
+      isStaff: hasBackofficePermission(user.role, "tickets.manage"),
+      role: user.role,
+      canReadPayments: hasBackofficePermission(user.role, "payments.read"),
+      canReadContact: hasBackofficePermission(user.role, "users.read"),
     });
 
     if (!view) {
@@ -76,7 +79,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
   const { caseId } = id.data;
 
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("tickets.manage");
     if (auth.error) return auth.error;
     const actorId = auth.session.user.id;
 

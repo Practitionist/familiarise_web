@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Prisma, SupportCaseStatus } from "@prisma/client";
+import { Prisma, SupportCaseStatus, type UserRole } from "@prisma/client";
 import { SupportIssueTypeEnum } from "@/schemas/enums";
 import { callbackPhoneSchema } from "@/lib/validation/phone";
 import { stageBell } from "@/lib/novu/stage-bell";
@@ -11,6 +11,8 @@ import prisma, {
   type Tx,
 } from "@/lib/prisma";
 import { caseKeyOf } from "./case-key";
+import { canCorrespondOnCase } from "./case-access";
+import { supportDeadline } from "./deadline-policy";
 import { allocateTicketReference } from "./reference";
 import {
   openWaitSeconds,
@@ -45,7 +47,7 @@ export class SupportCaseValidationError extends Error {
 
 const CASE_RELATIONS_INCLUDE = {
   subjects: true,
-  messages: { orderBy: { seq: "asc" } },
+  messages: { orderBy: { seq: "asc" }, take: -200 },
   events: { orderBy: { createdAt: "asc" } },
 } as const;
 
@@ -134,6 +136,7 @@ export const CreateSupportCaseObjectSchema = z.object({
   requesterUserId: z.string().min(1).max(64),
   submitterUserId: z.string().min(1).max(64),
   organizationId: z.string().min(1).max(64).nullable().optional(),
+  ownershipScope: z.enum(["PERSONAL", "ORG_OPERATIONS", "ORG_BILLING"]).optional(),
   appointmentId: z.string().min(1).max(64).nullable().optional(),
   appointmentOccurrenceId: z.string().min(1).max(64).nullable().optional(),
   callbackPhone: callbackPhoneSchema.nullish(),
@@ -203,6 +206,13 @@ function resolveReopenedUserTurnStatus(
     return assignedToId ? "IN_PROGRESS" : "OPEN";
   }
   return currentStatus;
+}
+
+function caseScopeKey(input: CreateSupportCaseInput): string {
+  if (input.appointmentOccurrenceId) return `OCCURRENCE:${input.appointmentOccurrenceId}`;
+  if (input.appointmentId) return `APPOINTMENT:${input.appointmentId}`;
+  const primary = input.subjects?.find((subject) => subject.isPrimary);
+  return primary ? `${primary.subjectType}:${primary.subjectId}` : "ACCOUNT";
 }
 
 function buildInitialCaseSubjects(input: CreateSupportCaseInput) {
@@ -400,6 +410,9 @@ async function executeCreateOrReuseCaseTx(
       appointmentId: input.appointmentId ?? null,
       appointmentOccurrenceId: input.appointmentOccurrenceId ?? null,
       category: input.category ?? null,
+      organizationId: input.organizationId ?? null,
+      ownershipScope: input.ownershipScope ?? "PERSONAL",
+      scopeKey: caseScopeKey(input),
       closedAt: null,
       deletedAt: null,
     },
@@ -425,6 +438,9 @@ async function executeCreateOrReuseCaseTx(
     data: {
       referenceNumber,
       clientIntakeId: input.clientIntakeId ?? null,
+      ownershipScope: input.ownershipScope ?? "PERSONAL",
+      scopeKey: caseScopeKey(input),
+      ...supportDeadline(input.category, now),
       title: input.title,
       description: input.description,
       category: input.category ?? null,
@@ -509,6 +525,9 @@ async function recoverFromCaseUniqueConflict(input: CreateSupportCaseInput) {
       appointmentId: input.appointmentId ?? null,
       appointmentOccurrenceId: input.appointmentOccurrenceId ?? null,
       category: input.category ?? null,
+      organizationId: input.organizationId ?? null,
+      ownershipScope: input.ownershipScope ?? "PERSONAL",
+      scopeKey: caseScopeKey(input),
       closedAt: null,
       deletedAt: null,
     },
@@ -651,7 +670,8 @@ async function advanceAgentPublicTurnState(
   const moved = await tx.supportCase.updateMany({
     where: {
       id: input.caseId,
-      status: { not: "CLOSED" },
+      status: existingCase.status,
+      updatedAt: existingCase.updatedAt,
       awaitingUserSince: existingCase.awaitingUserSince,
       ...(expectedDate
         ? {
@@ -789,16 +809,24 @@ async function executeAppendTurnTx(
 }
 
 /** Append a message turn idempotently via clientTurnId and advance SLA/status via CAS. */
-export function appendSupportCaseTurn(
+export async function appendSupportCaseTurn(
   rawInput: AppendSupportCaseTurnInput,
   now: Date = new Date(),
 ) {
   const input = AppendSupportCaseTurnSchema.parse(rawInput);
 
-  return prisma.$transaction((tx) => executeAppendTurnTx(tx, input, now), {
-    maxWait: ALLOCATION_TX_MAX_WAIT_MS,
-    timeout: ALLOCATION_TX_TIMEOUT_MS,
-  });
+  try {
+    return await prisma.$transaction((tx) => executeAppendTurnTx(tx, input, now), {
+      maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+      timeout: ALLOCATION_TX_TIMEOUT_MS,
+    });
+  } catch (error) {
+    if (input.clientTurnId && error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      const replay = await prisma.$transaction((tx) => replayClientTurnIfExists(tx, input));
+      if (replay) return replay;
+    }
+    throw error;
+  }
 }
 
 function buildStatusDatesPatch(
@@ -1156,7 +1184,7 @@ async function validatePatchLifecyclePreconditionsTx(
   return null;
 }
 
-async function executePatchLifecycleTx(
+export async function executePatchLifecycleTx(
   tx: Tx,
   input: PatchSupportCaseInput,
   now: Date,
@@ -1171,6 +1199,13 @@ async function executePatchLifecycleTx(
       code: "NOT_FOUND" as const,
       error: "Support case not found.",
     };
+  }
+
+  if (existing.appealOfDecisionId || existing.appealOfModerationActionId) {
+    const reviewerIds = new Set([input.actorId, input.assignedToId].filter((id): id is string => Boolean(id)));
+    const decision = existing.appealOfDecisionId ? await tx.supportCaseDecision.findUnique({ where: { id: existing.appealOfDecisionId }, select: { decidedById: true } }) : null;
+    const action = existing.appealOfModerationActionId ? await tx.moderationAction.findUnique({ where: { id: existing.appealOfModerationActionId }, select: { takenById: true } }) : null;
+    if ((decision?.decidedById && reviewerIds.has(decision.decidedById)) || (action?.takenById && reviewerIds.has(action.takenById))) return { ok: false as const, status: 403 as const, code: "INDEPENDENT_REVIEW_REQUIRED" as const, error: "A different eligible reviewer must handle this appeal." };
   }
 
   const preconditionFailure = await validatePatchLifecyclePreconditionsTx(
@@ -1282,7 +1317,7 @@ export function patchSupportCaseLifecycle(
  */
 export async function readSupportCaseForViewer(
   caseId: string,
-  viewer: { userId: string; isStaff: boolean },
+  viewer: { userId: string; isStaff: boolean; role?: UserRole; canReadPayments?: boolean; canReadContact?: boolean },
 ) {
   const supportCase = await prisma.supportCase.findUnique({
     where: { id: caseId },
@@ -1292,14 +1327,20 @@ export async function readSupportCaseForViewer(
     return null;
   }
 
-  const isSubmitter = viewer.userId === supportCase.submitterUserId;
+  if (supportCase.externalRequesterEmail && !viewer.isStaff) return null;
   const isRequester = viewer.userId === supportCase.requesterUserId;
-  if (!viewer.isStaff && !isSubmitter && !isRequester) {
-    return null;
-  }
+  const canCorrespond = viewer.isStaff || await canCorrespondOnCase(supportCase, {
+    userId: viewer.userId,
+    role: viewer.role ?? "CONSULTEE",
+  });
+  if (!canCorrespond && !isRequester) return null;
 
+  // ADR 20 (S-ADR-08): a member who is the SUBJECT of an org-filed case sees
+  // the summary notice only — never the transcript. This is decided BEFORE
+  // the ownership-scope guard below: an org-scoped case must not answer 404
+  // to the very member it is about.
   if (
-    !viewer.isStaff &&
+    !canCorrespond &&
     viewer.userId === supportCase.requesterUserId &&
     supportCase.requesterUserId !== supportCase.submitterUserId
   ) {
@@ -1321,9 +1362,13 @@ export async function readSupportCaseForViewer(
     };
   }
 
+  if (supportCase.ownershipScope !== "PERSONAL" && !canCorrespond) return null;
+
   if (viewer.isStaff) {
     return {
       ...supportCase,
+      callbackPhone: viewer.canReadContact ? supportCase.callbackPhone : null,
+      subjects: supportCase.subjects.filter((subject) => viewer.canReadPayments || !["PAYMENT", "REFUND", "INVOICE"].includes(subject.subjectType)),
       filedByOrganizationNotice: false as const,
     };
   }
@@ -1331,9 +1376,10 @@ export async function readSupportCaseForViewer(
   return {
     ...supportCase,
     messages: (supportCase.messages ?? []).filter((m) => !m.isInternal),
+    assignedToId: null,
     events: (supportCase.events ?? []).filter(
-      (e) => e.kind !== "VISIBILITY_CHANGED",
-    ),
+      (e) => ["CREATED", "STATUS_CHANGED", "REOPENED", "AUTO_CLOSED"].includes(e.kind),
+    ).map((event) => ({ ...event, actorId: null, note: null })),
     filedByOrganizationNotice: false as const,
   };
 }

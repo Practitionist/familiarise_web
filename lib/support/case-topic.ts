@@ -137,3 +137,29 @@ export function threadTopicWhere(
 ): Prisma.AppointmentSupportThreadWhereInput {
   return { category: { in: threadCategoriesOf(topic) } };
 }
+
+/** Match the same category and issue precedence used by ticketTopic. */
+export function supportCaseTopicWhere(
+  topic: CaseTopic,
+): Prisma.SupportCaseWhereInput {
+  const byIssue: Prisma.SupportCaseWhereInput[] = [
+    { issueType: { in: issueTypesOf(topic) } },
+  ];
+  if (topic === "other") byIssue.push({ issueType: null });
+  return {
+    OR: [
+      { category: { in: threadCategoriesOf(topic) } },
+      {
+        AND: [
+          {
+            OR: [
+              { category: null },
+              { category: { notIn: THREAD_CATEGORIES } },
+            ],
+          },
+          { OR: byIssue },
+        ],
+      },
+    ],
+  };
+}

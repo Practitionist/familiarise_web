@@ -6,22 +6,27 @@
  * #support-hub — escalation replay-dedup scoping. A B2C (null-org) replay
  * must filter on organizationId: NULL explicitly; passing `?? undefined`
  * would omit the constraint and let a personal retry dedupe against an
- * organization ticket for the same issue type.
+ * organization case for the same issue type.
+ *
+ * The dedup read now runs against the canonical SupportCase table: a replay
+ * matches an open (unsettled, undeleted) case the same requester filed for
+ * the same issue type in the same organization scope.
  */
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    supportTicket: { findFirst: jest.fn(async () => null) },
+    supportCase: { findFirst: jest.fn(async () => null) },
   },
 }));
 
 import prisma from "../../lib/prisma";
 import { findRecentOpenEscalation } from "../../lib/support/create-ticket";
 
-const mockedFind = prisma.supportTicket.findFirst as jest.Mock;
+const mockedFind = prisma.supportCase.findFirst as jest.Mock;
 
 beforeEach(() => {
+  jest.clearAllMocks();
   mockedFind.mockClear();
 });
 
@@ -41,7 +46,21 @@ describe("findRecentOpenEscalation", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           organizationId: "org-1",
-          status: "OPEN",
+          status: { in: ["OPEN", "IN_PROGRESS", "ESCALATED", "ON_HOLD"] },
+        }),
+      }),
+    );
+  });
+
+  it("matches only the same requester's live cases for the same issue type", async () => {
+    await findRecentOpenEscalation("u1", "BILLING_QUESTION", null);
+    expect(mockedFind).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          requesterUserId: "u1",
+          submitterUserId: "u1",
+          issueType: "BILLING_QUESTION",
+          deletedAt: null,
         }),
       }),
     );

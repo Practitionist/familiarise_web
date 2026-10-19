@@ -21,13 +21,9 @@ export async function raiseDocumentRemovalRequest(args: {
     .filter(Boolean)
     .join("\n");
 
-  const existing = await prisma.appointmentSupportThread.findUnique({
-    where: {
-      appointmentId_userId: {
-        appointmentId: args.appointmentId,
-        userId: args.userId,
-      },
-    },
+  const existing = await prisma.supportCase.findFirst({
+    where: { appointmentId: args.appointmentId, requesterUserId: args.userId, deletedAt: null },
+    orderBy: { createdAt: "desc" },
     select: { activeChannel: true, status: true },
   });
   if (existing?.activeChannel === "HUMAN" && existing.status !== "RESOLVED") {

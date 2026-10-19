@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { useCaseTimeline } from "./useCaseTimeline";
 import { useToast } from "@/hooks/use-toast";
 import {
   SupportRequestError,
@@ -29,6 +30,7 @@ interface MessageMetadata {
 
 export interface ThreadMessage {
   id: string;
+  seq?: number;
   sender: Sender;
   body: string;
   metadata?: MessageMetadata | null;
@@ -43,6 +45,10 @@ export interface SupportThread {
   activeChannel: string;
   category?: string;
   currentNodeId: string | null;
+  resolvedAt?: string | null;
+  csatRating?: number | null;
+  hasMore?: boolean;
+  nextBeforeSeq?: number | null;
   messages: ThreadMessage[];
   /** Present once escalated — the deadline committed to at intake. */
   supportTicket?: {
@@ -88,6 +94,7 @@ interface TurnResult {
 
 /** One turn's payload, kept so a failed send can be repeated verbatim. */
 export interface TurnVars {
+  clientTurnId?: string;
   category?: string;
   chosenOptionId?: string;
   userMessage?: string;
@@ -243,6 +250,33 @@ export function useSupportThread(
       chosenLabel: _chosenLabel,
       ...body
     }: TurnVars): Promise<TurnResult> => {
+      const current = qc.getQueryData<ThreadData>(queryKey)?.thread;
+      if (
+        current?.activeChannel === "HUMAN" &&
+        current.id !== "local" &&
+        body.userMessage &&
+        !body.category &&
+        !body.chosenOptionId
+      ) {
+        const res = await fetch(`/api/support/cases/${current.id}/messages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            body: body.userMessage,
+            clientTurnId: body.clientTurnId,
+          }),
+        });
+        if (!res.ok) await throwSupportError(res, "support reply");
+        return {
+          status: current.status === "RESOLVED" ? "OPEN" : current.status,
+          activeChannel: "HUMAN",
+          currentNodeId: current.currentNodeId,
+          messages: [],
+          escalated: false,
+          resolved: false,
+          actions: [],
+        };
+      }
       const res = await fetch(`/api/appointments/${appointmentId}/support`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -368,7 +402,34 @@ export function useSupportThread(
       }))
     : [];
 
-  const messages = thread?.messages ?? [];
+  const latestMessages = thread?.messages ?? [];
+  const history = useCaseTimeline(
+    thread?.id ?? "unstarted",
+    latestMessages.map((message) => ({
+      id: message.id,
+      seq: message.seq,
+      author: message.sender,
+      authorName: null,
+      body: message.body,
+      internal: false,
+      at: message.createdAt,
+    })),
+    thread?.nextBeforeSeq,
+    thread?.hasMore,
+  );
+  const latestById = new Map(
+    latestMessages.map((message) => [message.id, message]),
+  );
+  const messages: ThreadMessage[] = history.timeline.map(
+    (message) =>
+      latestById.get(message.id) ?? {
+        id: message.id,
+        seq: message.seq,
+        sender: message.author,
+        body: message.body,
+        createdAt: message.at,
+      },
+  );
   const isHuman = thread?.activeChannel === "HUMAN";
   const isResolved = thread?.status === "RESOLVED";
   const isClosed = thread?.status === "CLOSED";
@@ -390,7 +451,10 @@ export function useSupportThread(
     (vars: TurnVars): boolean => {
       if (inFlight.current) return false;
       inFlight.current = true;
-      mutateTurn(vars, { onSettled: () => (inFlight.current = false) });
+      mutateTurn(
+        { ...vars, clientTurnId: vars.clientTurnId ?? crypto.randomUUID() },
+        { onSettled: () => (inFlight.current = false) },
+      );
       return true;
     },
     [mutateTurn],
@@ -433,6 +497,7 @@ export function useSupportThread(
     data,
     thread,
     messages,
+    history,
     availableIntents,
     options,
     isHuman,

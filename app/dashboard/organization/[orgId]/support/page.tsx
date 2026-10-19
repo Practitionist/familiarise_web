@@ -8,6 +8,8 @@ import {
 } from "@/components/dashboard/PageScaffold";
 import { UrlTabs } from "@/components/dashboard/UrlTabs";
 
+import { EvidenceInbox } from "@/components/support/EvidenceInbox";
+import { ReportHistory } from "@/components/dashboard/shared/ReportHistory";
 import { OrgSupportTriage } from "./OrgSupportTriage";
 import { OrgSupportRequests } from "./OrgSupportRequests";
 
@@ -50,6 +52,16 @@ export default async function OrgSupportPage({
               label: "Session conversations",
               content: <OrgSupportTriage orgId={orgId} />,
               show: triage,
+            },
+            {
+              value: "evidence",
+              label: "Evidence requests",
+              content: <EvidenceInbox />,
+            },
+            {
+              value: "reports",
+              label: "Reports and decisions",
+              content: <ReportHistory />,
             },
             {
               value: "requests",

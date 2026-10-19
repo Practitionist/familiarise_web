@@ -9,6 +9,11 @@
  * UNAUTHORIZED envelope; an unknown/stale flowId 404s with refresh guidance
  * instead of silently escalating. The flowchart engine itself is covered by
  * platform-flows/flow-walk suites.
+ *
+ * An escalation now files a canonical SupportCase (through
+ * createOrReuseSupportCase), so the row the queue will show is written by
+ * `supportCase.create`, and a replayed hand-off raises THAT case instead of
+ * filing a second one.
  */
 
 jest.mock("@sentry/nextjs", () => ({
@@ -36,22 +41,44 @@ jest.mock("../../lib/validation/limits", () => ({
 jest.mock("../../lib/prisma", () => {
   const db = {
     membership: { findMany: jest.fn(async () => []) },
-    // Escalation writes a ticket; the counter behind its reference and the
-    // staff fan-out both live on the same client.
-    supportTicket: {
+    // Escalation writes a canonical case; the counter behind its reference and
+    // the staff fan-out all live on the same client.
+    supportCase: {
       findFirst: jest.fn(async () => null),
       findUnique: jest.fn(async () => null),
+      findMany: jest.fn(async () => []),
+      count: jest.fn(async () => 0),
       updateMany: jest.fn(async () => ({ count: 1 })),
-      create: jest.fn(async () => ({
-        id: "t1",
-        title: "T",
-        organizationId: null,
-        referenceNumber: "FAM-2026-000001",
-      })),
+      create: jest.fn(
+        async (args: {
+          data: Record<string, unknown> & {
+            title: string;
+            description: string;
+            requesterUserId: string;
+            submitterUserId: string;
+            priority: string;
+            organizationId: string | null;
+            issueType: string | null;
+            category: string | null;
+            ackDueAt: Date;
+            referenceNumber: string;
+          };
+        }) => ({
+          id: "c1",
+          status: "OPEN",
+          activeChannel: "HUMAN",
+          createdAt: new Date("2026-03-01T00:00:00Z"),
+          ...args.data,
+        }),
+      ),
     },
     supportTicketCounter: { upsert: jest.fn(async () => ({ nextSeq: 2 })) },
-    supportFlowOutcome: { create: jest.fn(async () => ({})) },
-    user: { findMany: jest.fn(async () => []) },
+    supportFlowOutcome: { create: jest.fn(async () => ({ id: "o1" })) },
+    user: {
+      findMany: jest.fn(async () => []),
+      findUnique: jest.fn(async () => null),
+      findFirst: jest.fn(async () => null),
+    },
     organization: { findUnique: jest.fn(async () => null) },
     // Assigned after the literal: referencing `db` inside its own initializer
     // makes TypeScript give up and infer `any`.
@@ -72,6 +99,22 @@ jest.mock("../../lib/novu", () => ({
   __esModule: true,
   notifySupportTicketCreated: jest.fn(async () => ({ success: true })),
   notifySupportTicketActivity: jest.fn(async () => []),
+  notifySupportTicketResponse: jest.fn(async () => ({ staged: null })),
+}));
+
+jest.mock("../../lib/novu/stage-bell", () => ({
+  __esModule: true,
+  stageBell: jest.fn(async () => null),
+}));
+
+jest.mock("../../lib/novu/stage-then-attempt", () => ({
+  __esModule: true,
+  flushNotificationsAfter: jest.fn(async () => undefined),
+}));
+
+jest.mock("../../lib/email/senders/people", () => ({
+  __esModule: true,
+  sendSupportTicketReceivedEmail: jest.fn(async () => undefined),
 }));
 
 import { NextRequest } from "next/server";
@@ -83,9 +126,18 @@ import { GET, POST } from "../../app/api/support/platform/route";
 const mockedGetSession = getSession as jest.Mock;
 
 beforeEach(() => {
+  jest.clearAllMocks();
   (applyRateLimit as jest.Mock).mockClear();
-  (prisma.supportTicket.create as jest.Mock).mockClear();
-  (prisma.supportTicket.updateMany as jest.Mock).mockClear();
+  (prisma.supportCase.create as jest.Mock).mockClear();
+  (prisma.supportCase.updateMany as jest.Mock).mockClear();
+  // Reset the two reads whose value a test queues per-scenario, so a queued
+  // "recent case" never leaks into the next test.
+  const findFirst = prisma.supportCase.findFirst as jest.Mock;
+  findFirst.mockReset();
+  findFirst.mockResolvedValue(null);
+  const findUnique = prisma.supportCase.findUnique as jest.Mock;
+  findUnique.mockReset();
+  findUnique.mockResolvedValue(null);
 });
 
 function postReq(body: unknown): NextRequest {
@@ -179,7 +231,7 @@ describe("asking for a person, in the scope that had no way to", () => {
         urgent: true,
       }),
     );
-    expect(prisma.supportTicket.create).toHaveBeenCalledWith(
+    expect(prisma.supportCase.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ priority: "HIGH" }),
       }),
@@ -198,7 +250,7 @@ describe("asking for a person, in the scope that had no way to", () => {
     );
     const json = await res.json();
     expect(json.data.escalated).toBe(true);
-    expect(prisma.supportTicket.create).toHaveBeenCalledWith(
+    expect(prisma.supportCase.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           priority: "HIGH",
@@ -208,10 +260,10 @@ describe("asking for a person, in the scope that had no way to", () => {
     );
   });
 
-  it("raises a reused open ticket to HIGH when the replayed hand-off is urgent", async () => {
+  it("raises a reused open case to HIGH when the replayed hand-off is urgent", async () => {
     mockedGetSession.mockResolvedValue({ user: { id: "u1", name: "U" } });
-    (prisma.supportTicket.findFirst as jest.Mock).mockResolvedValueOnce({
-      id: "t-recent",
+    (prisma.supportCase.findFirst as jest.Mock).mockResolvedValueOnce({
+      id: "c-recent",
       referenceNumber: "FAM-2026-000009",
     });
     const res = await POST(
@@ -224,21 +276,23 @@ describe("asking for a person, in the scope that had no way to", () => {
     );
     const json = await res.json();
     expect(json.data.deduped).toBe(true);
-    expect(prisma.supportTicket.create).not.toHaveBeenCalled();
-    expect(prisma.supportTicket.updateMany).toHaveBeenCalledWith({
+    expect(json.data.supportTicketId).toBe("c-recent");
+    expect(prisma.supportCase.create).not.toHaveBeenCalled();
+    expect(prisma.supportCase.updateMany).toHaveBeenCalledWith({
       where: {
-        id: "t-recent",
-        status: { not: "CLOSED" },
+        id: "c-recent",
+        closedAt: null,
+        deletedAt: null,
         priority: { in: ["LOW", "MEDIUM"] },
       },
       data: { priority: "HIGH" },
     });
   });
 
-  it("leaves a reused ticket's priority alone when the replay is not urgent", async () => {
+  it("leaves a reused case's priority alone when the replay is not urgent", async () => {
     mockedGetSession.mockResolvedValue({ user: { id: "u1", name: "U" } });
-    (prisma.supportTicket.findFirst as jest.Mock).mockResolvedValueOnce({
-      id: "t-recent",
+    (prisma.supportCase.findFirst as jest.Mock).mockResolvedValueOnce({
+      id: "c-recent",
       referenceNumber: "FAM-2026-000009",
     });
     await POST(
@@ -248,7 +302,7 @@ describe("asking for a person, in the scope that had no way to", () => {
         userMessage: "just get me an agent please",
       }),
     );
-    expect(prisma.supportTicket.updateMany).not.toHaveBeenCalled();
+    expect(prisma.supportCase.updateMany).not.toHaveBeenCalled();
   });
 
   it("leaves an ordinary message to the flow", async () => {

@@ -15,6 +15,7 @@ import { getSession } from "@/lib/auth-server";
 import { formatReportReference } from "@/lib/moderation/report-reference";
 
 const userReportsQuerySchema = z.object({
+  scope: z.enum(["submitted", "decisions"]).default("submitted"),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce
     .number()
@@ -69,6 +70,7 @@ export async function GET(req: NextRequest) {
 
     const { searchParams } = new URL(req.url);
     const parsedQuery = userReportsQuerySchema.safeParse({
+      scope: searchParams.get("scope") ?? undefined,
       page: searchParams.get("page") ?? undefined,
       limit: searchParams.get("limit") ?? undefined,
     });
@@ -82,9 +84,12 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const { page, limit } = parsedQuery.data;
+    const { page, limit, scope } = parsedQuery.data;
     const offset = (page - 1) * limit;
-    const where = { reportedById: session.user.id };
+    const where =
+      scope === "submitted"
+        ? { reportedById: session.user.id }
+        : { targetUserId: session.user.id, status: "ACTION_TAKEN" as const };
 
     const [rows, total] = await Promise.all([
       prisma.moderationReport.findMany({

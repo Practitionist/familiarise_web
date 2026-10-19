@@ -76,8 +76,8 @@ export async function readUser360(userId: string) {
       createdAt: true,
     },
   });
-  const tickets = await prisma.supportTicket.findMany({
-    where: { userId },
+  const tickets = await prisma.supportCase.findMany({
+    where: { requesterUserId: userId, deletedAt: null },
     orderBy: { createdAt: "desc" },
     take: TAKE,
     select: {

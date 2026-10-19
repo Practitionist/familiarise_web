@@ -3,13 +3,17 @@
  */
 
 /**
- * #support-hub — per-appointment support thread ROUTE wiring.
+ * #support-hub — per-appointment support ROUTE wiring.
  *
  * The regression that started this: seeded demo databases mint readable slug
  * ids (`demo0813-appt-ba`), and the old `z.string().uuid()` param gate 400'd
  * them with "Invalid appointment id" before the DB lookup could speak — the
  * toast every consultant on the preview deploy saw. These pin the opaque-id
  * contract and the coded envelope at the route boundary.
+ *
+ * The conversation now lives on the canonical SupportCase table: the route
+ * reads THIS requester's case for the appointment, and a hand-off surfaces the
+ * same row's acknowledgement deadline.
  */
 
 jest.mock("@sentry/nextjs", () => ({
@@ -48,7 +52,9 @@ jest.mock("../../lib/api/appointment-access", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    appointmentSupportThread: { findUnique: jest.fn() },
+    // The canonical case table: the conversation for an appointment IS a
+    // SupportCase, and a human hand-off reads the same row's SLA deadline.
+    supportCase: { findFirst: jest.fn(), findUnique: jest.fn() },
   },
 }));
 
@@ -81,8 +87,8 @@ import {
 } from "../../app/api/appointments/[appointmentId]/support/route";
 
 const mockedAuthorize = authorizeAppointment as jest.Mock;
-const mockedFindThread = prisma.appointmentSupportThread
-  .findUnique as jest.Mock;
+const mockedFindCase = prisma.supportCase.findFirst as jest.Mock;
+const mockedFindCaseById = prisma.supportCase.findUnique as jest.Mock;
 const mockedBuildContext = buildSupportContext as jest.Mock;
 const mockedRunTurn = runSupportTurn as jest.Mock;
 
@@ -108,7 +114,8 @@ beforeEach(() => {
     organizationId: null,
     detail: {},
   });
-  mockedFindThread.mockResolvedValue(null);
+  mockedFindCase.mockResolvedValue(null);
+  mockedFindCaseById.mockResolvedValue(null);
   mockedBuildContext.mockResolvedValue(null);
 });
 
@@ -133,6 +140,36 @@ describe("GET /api/appointments/[appointmentId]/support", () => {
     expect(mockedAuthorize).toHaveBeenCalledWith(uuid, true);
   });
 
+  it("reads THIS requester's canonical case for the appointment", async () => {
+    mockedFindCase.mockResolvedValue({
+      id: "c-1",
+      referenceNumber: "FAM-2026-000042",
+      activeChannel: "HUMAN",
+      ackDueAt: new Date("2026-03-01T08:00:00Z"),
+      requesterUserId: "u1",
+      submitterUserId: "u1",
+      messages: [],
+    });
+    const res = await GET(req("GET"), {
+      params: Promise.resolve({ appointmentId: SLUG }),
+    });
+    expect(res.status).toBe(200);
+    expect(mockedFindCase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          appointmentId: SLUG,
+          requesterUserId: "u1",
+          submitterUserId: "u1",
+          deletedAt: null,
+        }),
+      }),
+    );
+    const json = await res.json();
+    expect(json.data.id).toBe("c-1");
+    expect(json.data.supportTicketId).toBe("c-1");
+    expect(json.data.supportTicket.referenceNumber).toBe("FAM-2026-000042");
+  });
+
   it("400 INVALID_ID envelope on an over-long id — garbage never reaches Prisma", async () => {
     const long = "x".repeat(65);
     const res = await GET(req("GET"), {
@@ -143,7 +180,7 @@ describe("GET /api/appointments/[appointmentId]/support", () => {
     expect(json.code).toBe("INVALID_ID");
     expect(json.detail).toBeDefined();
     expect(mockedAuthorize).not.toHaveBeenCalled();
-    expect(mockedFindThread).not.toHaveBeenCalled();
+    expect(mockedFindCase).not.toHaveBeenCalled();
   });
 
   it("maps a coded FORBIDDEN through the envelope", async () => {
@@ -229,6 +266,28 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
       "u1",
       expect.objectContaining({ category: "OTHER", urgent: true }),
     );
+  });
+
+  it("surfaces the canonical case's acknowledgement deadline for a hand-off", async () => {
+    mockedRunTurn.mockResolvedValue({
+      messages: [],
+      nextNodeId: null,
+      actions: [],
+      supportTicketId: "c-1",
+    });
+    mockedFindCaseById.mockResolvedValue({
+      ackDueAt: new Date("2026-03-01T08:00:00Z"),
+    });
+    const res = await POST(req("POST", { userMessage: "hello?" }), {
+      params: Promise.resolve({ appointmentId: SLUG }),
+    });
+    expect(res.status).toBe(200);
+    expect(mockedFindCaseById).toHaveBeenCalledWith({
+      where: { id: "c-1" },
+      select: { ackDueAt: true },
+    });
+    const json = await res.json();
+    expect(json.data.replyByAt).toBe("2026-03-01T08:00:00.000Z");
   });
 
   it("VALIDATION_FAILED envelope when the turn has nothing actionable", async () => {

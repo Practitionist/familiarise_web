@@ -95,7 +95,7 @@ async function countRecontactedUsers(
   earliestAt: Date,
 ): Promise<number> {
   const userIds = [...firstResolvedByUser.keys()];
-  const [subsequentOutcomes, subsequentCases, subsequentTickets] =
+  const [subsequentOutcomes, subsequentCases] =
     await Promise.all([
       prisma.supportFlowOutcome.findMany({
         where: {
@@ -112,13 +112,7 @@ async function countRecontactedUsers(
         },
         select: { requesterUserId: true, createdAt: true },
       }),
-      prisma.supportTicket.findMany({
-        where: {
-          userId: { in: userIds },
-          createdAt: { gt: earliestAt },
-        },
-        select: { userId: true, createdAt: true },
-      }),
+
     ]);
 
   const recontacted = new Set<string>();
@@ -136,12 +130,6 @@ async function countRecontactedUsers(
     const first = firstResolvedByUser.get(c.requesterUserId);
     if (first && isWithinRecontactWindow(first.at, c.createdAt)) {
       recontacted.add(c.requesterUserId);
-    }
-  }
-  for (const t of subsequentTickets) {
-    const first = firstResolvedByUser.get(t.userId);
-    if (first && isWithinRecontactWindow(first.at, t.createdAt)) {
-      recontacted.add(t.userId);
     }
   }
   return recontacted.size;
@@ -269,7 +257,7 @@ export async function supportHealthMetrics(
   since: Date,
   now: Date = new Date(),
 ): Promise<SupportHealthMetrics> {
-  const [deflection, cases, tickets] = await Promise.all([
+  const [deflection, cases] = await Promise.all([
     deflectionSince(since),
     prisma.supportCase.findMany({
       where: { createdAt: { gte: since }, deletedAt: null },
@@ -282,16 +270,7 @@ export async function supportHealthMetrics(
         csatRating: true,
       },
     }),
-    prisma.supportTicket.findMany({
-      where: { createdAt: { gte: since } },
-      select: {
-        createdAt: true,
-        acknowledgedAt: true,
-        resolvedAt: true,
-        pausedSeconds: true,
-        firstAgentReplyAt: true,
-      },
-    }),
+
   ]);
 
   const ratings = cases
@@ -303,7 +282,7 @@ export async function supportHealthMetrics(
       ? Math.round((ratings.reduce((a, b) => a + b, 0) / csatCount) * 100) / 100
       : null;
 
-  const timings = summarizeHealthTimings([...cases, ...tickets], now);
+  const timings = summarizeHealthTimings(cases, now);
 
   return {
     ...deflection,

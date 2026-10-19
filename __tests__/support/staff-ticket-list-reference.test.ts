@@ -4,17 +4,17 @@
 
 /**
  * E2E F-4 — the staff queue rendered uuid-tail labels (e.g. `66A3CB17`) for
- * tickets that HAVE a referenceNumber, because the list payload omitted it.
+ * cases that HAVE a referenceNumber, because the list payload omitted it.
  *
- * #1527 — the queue is now the Support inbox (lib/support/case-read.ts); this
- * pins the same fix there: a ticket case carries its `FAM-` reference.
+ * #1527 — the queue is the Support inbox (lib/support/case-read.ts) over the
+ * canonical SupportCase table; this pins the same fix there: a case carries
+ * its `FAM-` reference under a `c_`-prefixed key.
  */
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    supportTicket: { findMany: jest.fn(), count: jest.fn() },
-    appointmentSupportThread: { findMany: jest.fn(), count: jest.fn() },
+    supportCase: { findMany: jest.fn(), count: jest.fn() },
   },
 }));
 
@@ -22,7 +22,7 @@ import prisma from "../../lib/prisma";
 import { readInboxPage } from "../../lib/support/case-read";
 import { parseInboxFilters } from "../../lib/support/inbox-query";
 
-const TICKET_ROW = {
+const CASE_ROW = {
   id: "0f8fad5b-6bd8-4e9d-9c9f-aa1166a3cb17",
   referenceNumber: "FAM-2026-000006",
   title: "Refund not received",
@@ -30,6 +30,9 @@ const TICKET_ROW = {
   status: "OPEN",
   category: null,
   issueType: "REFUND_REQUEST",
+  activeChannel: "HUMAN",
+  appointmentId: null,
+  callbackPhone: null,
   createdAt: new Date("2026-03-01T00:00:00Z"),
   lastMessageAt: new Date("2026-03-01T00:00:00Z"),
   ackDueAt: null,
@@ -38,20 +41,18 @@ const TICKET_ROW = {
   resolvedAt: null,
   awaitingUserSince: null,
   pausedSeconds: 0,
-  user: { id: "u1", name: "U", email: "u@x.test" },
+  requester: { id: "u1", name: "U" },
   assignedTo: null,
-  appointmentSupportThread: null,
 };
 
 beforeEach(() => {
-  (prisma.supportTicket.findMany as jest.Mock).mockResolvedValue([TICKET_ROW]);
-  (prisma.supportTicket.count as jest.Mock).mockResolvedValue(1);
-  (prisma.appointmentSupportThread.findMany as jest.Mock).mockResolvedValue([]);
-  (prisma.appointmentSupportThread.count as jest.Mock).mockResolvedValue(0);
+  jest.clearAllMocks();
+  (prisma.supportCase.findMany as jest.Mock).mockResolvedValue([CASE_ROW]);
+  (prisma.supportCase.count as jest.Mock).mockResolvedValue(1);
 });
 
 describe("Support inbox list (E2E F-4)", () => {
-  it("a ticket case carries its referenceNumber and topic", async () => {
+  it("a case carries its referenceNumber and topic", async () => {
     const filters = parseInboxFilters(
       (k) => (k === "view" ? "all" : null),
       "s1",
@@ -59,7 +60,8 @@ describe("Support inbox list (E2E F-4)", () => {
     const page = await readInboxPage(filters, 1);
     expect(page.total).toBe(1);
     expect(page.rows[0]).toMatchObject({
-      key: `t_${TICKET_ROW.id}`,
+      key: `c_${CASE_ROW.id}`,
+      kind: "case",
       reference: "FAM-2026-000006",
       topic: "payments",
       scope: "platform",

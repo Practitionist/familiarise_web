@@ -4,6 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Send } from "lucide-react";
 
+import { CaseCsat } from "@/components/support/CaseCsat";
+import { CaseResolutionPanel } from "@/components/support/CaseResolutionPanel";
+import { CaseAttachments } from "@/components/support/CaseAttachments";
 import { SupportBubble } from "@/components/support/SupportBubble";
 import {
   describeAction,
@@ -444,6 +447,16 @@ export function SessionConversation({
   return (
     <div className="flex flex-col rounded-lg border border-border bg-card">
       <div className="max-h-[60vh] min-h-[16rem] space-y-3 overflow-y-auto p-4">
+        {t.history.hasMore && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={t.history.loading}
+            onClick={() => void t.history.loadOlder()}
+          >
+            Load older messages
+          </Button>
+        )}
         <p className="text-sm text-muted-foreground">{intro}</p>
         {t.messages.map((m, i) => (
           <div key={m.id} className="space-y-3">
@@ -508,6 +521,15 @@ export function SessionConversation({
             </div>
           ) : null,
         )}
+        {t.isHuman && t.thread?.id && t.thread.id !== "local" && (
+          <CaseCsat
+            key={t.thread.id}
+            caseId={t.thread.id}
+            status={t.thread.status}
+            resolvedAt={t.thread.resolvedAt}
+            rating={t.thread.csatRating}
+          />
+        )}
         {t.isResolved && !t.isHuman && (
           <FlowRatingCard
             flowRating={flowRating}
@@ -538,6 +560,12 @@ export function SessionConversation({
         <div ref={endRef} />
       </div>
 
+      {t.thread?.id && t.thread.id !== "local" && (
+        <>
+          <CaseAttachments caseId={t.thread.id} canUpload={!t.isClosed} />
+          {t.isHuman && <CaseResolutionPanel caseId={t.thread.id} customer />}
+        </>
+      )}
       <div className="space-y-3 border-t border-border p-4">
         <SessionControls
           t={t}

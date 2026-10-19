@@ -8,7 +8,7 @@ import { supportError } from "@/lib/api/support-http";
 import { createOutboundStaffSupportTicket } from "@/lib/support/create-ticket";
 import { stripCallbackTags } from "@/lib/validation/phone";
 export { GET } from "@/app/api/user/support-tickets/route";
-import { POST as postUserSupportTicket } from "@/app/api/user/support-tickets/route";
+import { retiredSupportEndpoint } from "@/lib/api/retired-endpoint";
 
 const STAFF_OUTBOUND_ROUTE = "staff.support-tickets";
 
@@ -20,14 +20,12 @@ export async function POST(req: NextRequest) {
   const tooLarge = assertBodySize(req);
   if (tooLarge) return tooLarge;
 
-  const cloned = req.clone();
-  const peek = (await cloned.json().catch(() => null)) as {
-    targetUserId?: unknown;
-  } | null;
-
-  if (!peek || typeof peek.targetUserId !== "string") {
-    return postUserSupportTicket(req);
-  }
+  const peek: unknown = await req
+    .clone()
+    .json()
+    .catch(() => null);
+  const target = z.object({ targetUserId: z.unknown() }).safeParse(peek);
+  if (!target.success) return retiredSupportEndpoint();
 
   try {
     const auth = await requireBackofficeSurface("tickets.manage");

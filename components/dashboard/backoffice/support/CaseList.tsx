@@ -28,7 +28,7 @@ function CaseRow({
 }: Readonly<{ row: InboxRow; href: string; active: boolean }>) {
   const slaStatus = slaStatusBadge(row.sla);
   const sla = slaHint(row.sla);
-  const selfServe = row.kind === "thread" && row.channel !== "HUMAN";
+  const selfServe = row.channel !== "HUMAN";
   return (
     <li>
       <Link

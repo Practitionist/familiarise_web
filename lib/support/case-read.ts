@@ -1,42 +1,28 @@
 import type { Prisma } from "@prisma/client";
-
 import prisma from "@/lib/prisma";
 import type {
   InboxListResponse,
   InboxRow,
   InboxStats,
 } from "@/types/support-case";
-
-import { extractCallbackInfo } from "./callback-info";
 import { caseKeyOf } from "./case-key";
-import { threadTopic, ticketTopic } from "./case-topic";
+import { ticketTopic } from "./case-topic";
 import {
+  CASE_OPEN_WHERE,
   CASE_ORDER_BY,
   INBOX_MAX_DEPTH,
   INBOX_PAGE_SIZE,
   STATS_WINDOW_DAYS,
-  THREAD_OPEN_WHERE,
-  TICKET_OPEN_WHERE,
   averageFirstResponseMs,
+  compareCasesBySla,
   countSlaBreaches,
   inboxBadgeFilters,
-  inboxThreadWhere,
-  inboxTicketWhere,
-  mergeCasePage,
+  inboxCaseWhere,
   slaCandidateWhere,
   type InboxFilters,
 } from "./inbox-query";
 import { slaStateOf } from "./sla";
-
 export { extractCallbackInfo } from "./callback-info";
-
-const STATS_ROW_CAP = 5000;
-
-const orderBy: Prisma.SupportTicketOrderByWithRelationInput[] = [
-  ...CASE_ORDER_BY,
-];
-const threadOrderBy: Prisma.AppointmentSupportThreadOrderByWithRelationInput[] =
-  [...CASE_ORDER_BY];
 
 export const SLA_SELECT = {
   status: true,
@@ -72,278 +58,147 @@ export function planTitle(a: PlanTitled): string {
   );
 }
 
-// ── The list ────────────────────────────────────────────────────────────
-
-/** List rows name the requester only; email and phone live on the case detail. */
-const USER_SELECT = {
+const ROW_SELECT = {
   id: true,
-  name: true,
-} as const;
-
-const TICKET_ROW_SELECT = {
-  id: true,
-  referenceNumber: true,
   title: true,
-  description: true,
-  priority: true,
+  referenceNumber: true,
   category: true,
   issueType: true,
+  priority: true,
+  activeChannel: true,
+  appointmentId: true,
+  callbackPhone: true,
   createdAt: true,
   lastMessageAt: true,
   ...SLA_SELECT,
-  user: { select: USER_SELECT },
+  requester: { select: { id: true, name: true } },
   assignedTo: { select: { id: true, name: true } },
-  appointmentSupportThread: { select: { id: true } },
-} as const;
-
-const THREAD_ROW_SELECT = {
-  id: true,
-  status: true,
-  activeChannel: true,
-  category: true,
-  createdAt: true,
-  lastMessageAt: true,
-  user: { select: USER_SELECT },
-  appointment: { select: PLAN_TITLE_SELECT },
-} as const;
-
-type TicketInboxSource = Prisma.SupportTicketGetPayload<{
-  select: typeof TICKET_ROW_SELECT;
-}>;
-type ThreadInboxSource = Prisma.AppointmentSupportThreadGetPayload<{
-  select: typeof THREAD_ROW_SELECT;
-}>;
-
-function ticketToInboxRow(t: TicketInboxSource, now: Date): InboxRow {
-  const callback = extractCallbackInfo(t.description, null);
-  return {
-    key: caseKeyOf({ kind: "ticket", id: t.id }),
-    kind: "ticket",
-    scope: t.appointmentSupportThread ? "session" : "platform",
-    requester: {
-      id: t.user.id,
-      name: t.user.name,
-      callbackRequested: callback.callbackRequested,
-    },
-    subject: t.title,
-    reference: t.referenceNumber,
-    topic: ticketTopic(t),
-    status: t.status,
-    priority: t.priority,
-    channel: null,
-    sla: slaStateOf(
-      { ...t, ackDueAt: t.acknowledgedAt ? null : t.ackDueAt },
-      now,
-    ),
-    assignee: t.assignedTo,
-    lastActivityAt: (t.lastMessageAt ?? t.createdAt).toISOString(),
-  };
-}
-
-function threadToInboxRow(t: ThreadInboxSource): InboxRow {
-  return {
-    key: caseKeyOf({ kind: "thread", id: t.id }),
-    kind: "thread",
-    scope: "session",
-    requester: { id: t.user.id, name: t.user.name },
-    subject: `Help with ${planTitle(t.appointment)}`,
-    reference: null,
-    topic: threadTopic(t.category),
-    status: t.status,
-    priority: null,
-    channel: t.activeChannel,
-    sla: null,
-    assignee: null,
-    lastActivityAt: (t.lastMessageAt ?? t.createdAt).toISOString(),
-  };
-}
-
-const ticketKeySelect = {
-  id: true,
-  lastMessageAt: true,
-  createdAt: true,
-  acknowledgedAt: true,
-  ackDueAt: true,
-  resolutionDueAt: true,
-} as const;
-
-/**
- * Two reads whose DB orders each agree with `compareCasesBySla`: a single
- * `ackDueAt` order would rank acknowledged tickets by a deadline the comparator ignores.
- */
-async function readTicketKeysBySla(
-  ticketWhere: Prisma.SupportTicketWhereInput,
-  depth: number,
-) {
-  const [awaitingAck, rest] = await Promise.all([
-    prisma.supportTicket.findMany({
-      where: {
-        AND: [
-          ticketWhere,
-          { acknowledgedAt: null },
-          { ackDueAt: { not: null } },
-        ],
-      },
-      orderBy: [
-        { ackDueAt: "asc" },
-        { resolutionDueAt: { sort: "asc", nulls: "last" } },
-        { createdAt: "asc" },
-        { id: "asc" },
-      ],
-      take: depth,
-      select: ticketKeySelect,
-    }),
-    prisma.supportTicket.findMany({
-      where: {
-        AND: [
-          ticketWhere,
-          { OR: [{ acknowledgedAt: { not: null } }, { ackDueAt: null }] },
-        ],
-      },
-      orderBy: [
-        { resolutionDueAt: { sort: "asc", nulls: "last" } },
-        { createdAt: "asc" },
-        { id: "asc" },
-      ],
-      take: depth,
-      select: ticketKeySelect,
-    }),
-  ]);
-  return [...awaitingAck, ...rest];
-}
+} satisfies Prisma.SupportCaseSelect;
 
 export async function readInboxPage(
   filters: InboxFilters,
   page: number,
 ): Promise<InboxListResponse> {
-  const pageSize = INBOX_PAGE_SIZE;
-  const skip = Math.min((Math.max(1, page) - 1) * pageSize, INBOX_MAX_DEPTH);
-  const depth = skip + pageSize;
-  const ticketWhere = inboxTicketWhere(filters);
-  const threadWhere = inboxThreadWhere(filters);
-  const threadKeySelect = {
-    id: true,
-    lastMessageAt: true,
-    createdAt: true,
-  } as const;
-
-  const [ticketKeys, threadKeys, ticketTotal, threadTotal] = await Promise.all([
-    ticketWhere
-      ? filters.sort === "sla"
-        ? readTicketKeysBySla(ticketWhere, depth)
-        : prisma.supportTicket.findMany({
-            where: ticketWhere,
-            orderBy,
-            take: depth,
-            select: ticketKeySelect,
-          })
-      : [],
-    threadWhere
-      ? prisma.appointmentSupportThread.findMany({
-          where: threadWhere,
-          orderBy:
-            filters.sort === "sla"
-              ? [{ createdAt: "asc" }, { id: "asc" }]
-              : threadOrderBy,
-          take: depth,
-          select: threadKeySelect,
-        })
-      : [],
-    ticketWhere ? prisma.supportTicket.count({ where: ticketWhere }) : 0,
-    threadWhere
-      ? prisma.appointmentSupportThread.count({ where: threadWhere })
-      : 0,
-  ]);
-
-  const pageKeys = mergeCasePage(
-    ticketKeys.map((t) => ({
-      ...t,
-      ackDueAt: t.acknowledgedAt ? null : t.ackDueAt,
-      key: caseKeyOf({ kind: "ticket", id: t.id }),
-    })),
-    threadKeys.map((t) => ({
-      ...t,
-      key: caseKeyOf({ kind: "thread", id: t.id }),
-    })),
-    skip,
-    pageSize,
-    filters.sort,
+  const skip = Math.min(
+    (Math.max(1, page) - 1) * INBOX_PAGE_SIZE,
+    INBOX_MAX_DEPTH,
   );
-  const ticketIds = pageKeys
-    .filter((k) => k.key.startsWith("t_"))
-    .map((k) => k.id);
-  const threadIds = pageKeys
-    .filter((k) => k.key.startsWith("s_"))
-    .map((k) => k.id);
-
-  const [tickets, threads] = await Promise.all([
-    ticketIds.length
-      ? prisma.supportTicket.findMany({
-          where: { id: { in: ticketIds } },
-          select: TICKET_ROW_SELECT,
-        })
-      : [],
-    threadIds.length
-      ? prisma.appointmentSupportThread.findMany({
-          where: { id: { in: threadIds } },
-          select: THREAD_ROW_SELECT,
-        })
-      : [],
-  ]);
-
-  const now = new Date();
-  const byKey = new Map<string, InboxRow>();
-  for (const t of tickets) {
-    byKey.set(
-      caseKeyOf({ kind: "ticket", id: t.id }),
-      ticketToInboxRow(t, now),
-    );
-  }
-  for (const t of threads) {
-    byKey.set(caseKeyOf({ kind: "thread", id: t.id }), threadToInboxRow(t));
-  }
-
-  const total = ticketTotal + threadTotal;
+  const where = inboxCaseWhere(filters);
+  const totalRead = prisma.supportCase.count({ where });
+  const depth = skip + INBOX_PAGE_SIZE;
+  const keySelect = {
+    id: true,
+    createdAt: true,
+    lastMessageAt: true,
+    acknowledgedAt: true,
+    ackDueAt: true,
+    resolutionDueAt: true,
+  } as const;
+  const rowsRead =
+    filters.sort === "sla"
+      ? (async () => {
+          // Acknowledged cases rank by resolution; their old acknowledgement deadline cannot reorder them.
+          const [awaitingAck, rest] = await Promise.all([
+            prisma.supportCase.findMany({
+              where: {
+                AND: [where, { acknowledgedAt: null, ackDueAt: { not: null } }],
+              },
+              orderBy: [
+                { ackDueAt: "asc" },
+                { resolutionDueAt: { sort: "asc", nulls: "last" } },
+                { createdAt: "asc" },
+                { id: "asc" },
+              ],
+              take: depth,
+              select: keySelect,
+            }),
+            prisma.supportCase.findMany({
+              where: {
+                AND: [
+                  where,
+                  {
+                    OR: [{ acknowledgedAt: { not: null } }, { ackDueAt: null }],
+                  },
+                ],
+              },
+              orderBy: [
+                { resolutionDueAt: { sort: "asc", nulls: "last" } },
+                { createdAt: "asc" },
+                { id: "asc" },
+              ],
+              take: depth,
+              select: keySelect,
+            }),
+          ]);
+          const keys = [...awaitingAck, ...rest]
+            .map((c) => ({ ...c, key: c.id }))
+            .sort(compareCasesBySla)
+            .slice(skip, skip + INBOX_PAGE_SIZE);
+          if (!keys.length) return [];
+          const cases = await prisma.supportCase.findMany({
+            where: { id: { in: keys.map((c) => c.id) }, deletedAt: null },
+            select: ROW_SELECT,
+          });
+          const byId = new Map(cases.map((c) => [c.id, c]));
+          return keys.flatMap((c) => byId.get(c.id) ?? []);
+        })()
+      : prisma.supportCase.findMany({
+          where,
+          orderBy: [...CASE_ORDER_BY],
+          skip,
+          take: INBOX_PAGE_SIZE,
+          select: ROW_SELECT,
+        });
+  const [cases, total] = await Promise.all([rowsRead, totalRead]);
+  const rows: InboxRow[] = cases.map((c) => ({
+    key: caseKeyOf({ kind: "case", id: c.id }),
+    kind: "case",
+    scope: c.appointmentId ? "session" : "platform",
+    requester: { ...c.requester, callbackRequested: Boolean(c.callbackPhone) },
+    subject: c.title,
+    reference: c.referenceNumber,
+    topic: ticketTopic(c),
+    status: c.status,
+    priority: c.priority,
+    channel: c.activeChannel,
+    sla: slaStateOf(c),
+    assignee: c.assignedTo,
+    lastActivityAt: (c.lastMessageAt ?? c.createdAt).toISOString(),
+  }));
   return {
-    rows: pageKeys.flatMap((k) => byKey.get(k.key) ?? []),
-    total: Math.min(total, INBOX_MAX_DEPTH + pageSize),
-    page: Math.floor(skip / pageSize) + 1,
-    pageSize,
-    truncated: total > INBOX_MAX_DEPTH + pageSize,
+    rows,
+    total: Math.min(total, INBOX_MAX_DEPTH + INBOX_PAGE_SIZE),
+    page: Math.floor(skip / INBOX_PAGE_SIZE) + 1,
+    pageSize: INBOX_PAGE_SIZE,
+    truncated: total > INBOX_MAX_DEPTH + INBOX_PAGE_SIZE,
   };
 }
 
-/** The nav badge: exactly the default (Needs reply) view's total (#1345). */
 export function inboxBadgeCountReads(viewerId: string) {
-  const f = inboxBadgeFilters(viewerId);
-  const ticketWhere = inboxTicketWhere(f) ?? { id: { in: [] } };
-  const threadWhere = inboxThreadWhere(f) ?? { id: { in: [] } };
   return [
-    prisma.supportTicket.count({ where: ticketWhere }),
-    prisma.appointmentSupportThread.count({ where: threadWhere }),
+    prisma.supportCase.count({
+      where: inboxCaseWhere(inboxBadgeFilters(viewerId)),
+    }),
   ] as const;
 }
 
-// ── Team stats ──────────────────────────────────────────────────────────
-
 export async function readInboxStats(now = new Date()): Promise<InboxStats> {
   const since = new Date(now.getTime() - STATS_WINDOW_DAYS * 86_400_000);
-  const [openTickets, openThreads, slaRows, replied] = await Promise.all([
-    prisma.supportTicket.count({ where: TICKET_OPEN_WHERE }),
-    prisma.appointmentSupportThread.count({ where: THREAD_OPEN_WHERE }),
-    prisma.supportTicket.findMany({
+  const [openCases, slaRows, replied] = await Promise.all([
+    prisma.supportCase.count({ where: CASE_OPEN_WHERE }),
+    prisma.supportCase.findMany({
       where: slaCandidateWhere(now),
       select: SLA_SELECT,
-      take: STATS_ROW_CAP,
+      take: 5000,
     }),
-    prisma.supportTicket.findMany({
-      where: { firstAgentReplyAt: { gte: since } },
+    prisma.supportCase.findMany({
+      where: { deletedAt: null, firstAgentReplyAt: { gte: since } },
       select: { createdAt: true, firstAgentReplyAt: true },
-      take: STATS_ROW_CAP,
+      take: 5000,
     }),
   ]);
   return {
-    openCases: openTickets + openThreads,
+    openCases,
     slaBreaches: countSlaBreaches(slaRows, now),
     avgFirstResponseMs: averageFirstResponseMs(replied),
     windowDays: STATS_WINDOW_DAYS,

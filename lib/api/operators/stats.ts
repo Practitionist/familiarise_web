@@ -15,7 +15,7 @@
  */
 
 import prisma from "@/lib/prisma";
-import { PaymentStatus, SupportTicketStatus } from "@prisma/client";
+import { PaymentStatus, SupportCaseStatus } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
 
 export type OperatorDashboardStats = {
@@ -192,13 +192,13 @@ export async function getStaffDashboardStats(): Promise<StaffDashboardStats> {
     resolvedToday,
     recentTickets,
   ] = await Promise.all([
-    prisma.supportTicket.count({
-      where: { status: SupportTicketStatus.OPEN },
+    prisma.supportCase.count({
+      where: { status: SupportCaseStatus.OPEN },
     }),
-    prisma.supportTicket.count({
+    prisma.supportCase.count({
       where: {
         status: {
-          in: [SupportTicketStatus.RESOLVED, SupportTicketStatus.CLOSED],
+          in: [SupportCaseStatus.RESOLVED, SupportCaseStatus.CLOSED],
         },
         updatedAt: { gte: weekStart },
       },
@@ -209,22 +209,22 @@ export async function getStaffDashboardStats(): Promise<StaffDashboardStats> {
         deletedAt: null,
       },
     }),
-    prisma.supportTicket.count({
+    prisma.supportCase.count({
       where: {
         status: {
-          in: [SupportTicketStatus.RESOLVED, SupportTicketStatus.CLOSED],
+          in: [SupportCaseStatus.RESOLVED, SupportCaseStatus.CLOSED],
         },
         updatedAt: { gte: todayStart },
       },
     }),
-    prisma.supportTicket.findMany({
+    prisma.supportCase.findMany({
       where: {
         status: {
-          in: [SupportTicketStatus.OPEN, SupportTicketStatus.IN_PROGRESS],
+          in: [SupportCaseStatus.OPEN, SupportCaseStatus.IN_PROGRESS],
         },
       },
       include: {
-        user: {
+        requester: {
           select: {
             id: true,
             name: true,
@@ -247,8 +247,8 @@ export async function getStaffDashboardStats(): Promise<StaffDashboardStats> {
       id: ticket.id,
       referenceNumber: ticket.referenceNumber,
       subject: ticket.title,
-      user: ticket.user.name || ticket.user.email || "Unknown",
-      userImage: ticket.user.image,
+      user: ticket.requester.name || ticket.requester.email || "Unknown",
+      userImage: ticket.requester.image,
       status: ticket.status.toLowerCase(),
       priority: ticket.priority.toLowerCase(),
       createdAt: ticket.createdAt,

@@ -215,8 +215,8 @@ export async function GET() {
           issuedAt: true,
         },
       }),
-      prisma.supportTicket.findMany({
-        where: { userId },
+      prisma.supportCase.findMany({
+        where: { requesterUserId: userId, externalRequesterEmail: null },
         orderBy: { createdAt: "desc" },
         take: 100,
         select: {

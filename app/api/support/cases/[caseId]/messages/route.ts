@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
+import { requireApiAuth } from "@/lib/auth-helpers";
+import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import {
   spamLimiter as ticketResponseLimiter,
   applyRateLimit,
@@ -56,7 +57,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const auth = await requireApiAuth();
     if (auth.error) return auth.error;
     const { user } = auth.session;
-    const staff = isPrivileged(user.role);
+    const staff = hasBackofficePermission(user.role, "tickets.manage");
 
     if (!staff) {
       const rl = await applyRateLimit(
@@ -72,6 +73,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const access = await readSupportCaseForViewer(caseId, {
       userId: user.id,
       isStaff: staff,
+      role: user.role,
+      canReadPayments: hasBackofficePermission(user.role, "payments.read"),
+      canReadContact: hasBackofficePermission(user.role, "users.read"),
     });
     if (!access || access.filedByOrganizationNotice) {
       return NextResponse.json(

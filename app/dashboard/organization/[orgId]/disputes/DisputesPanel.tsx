@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import { useQuery } from "@tanstack/react-query";
 
 import { Stat, StatRow, StatSkeleton } from "@/components/dashboard/Stat";
@@ -23,62 +25,64 @@ interface DisputeItem {
   dueBy: string | null;
   createdAt: string;
   updatedAt: string;
-  payment: { id: string; billingAccountId: string | null };
+  payment: { id: string } | null;
+  relationship: "BUYER" | "HOST" | "BUYER_AND_HOST";
 }
 
-async function fetchDisputes(orgId: string): Promise<{ data: DisputeItem[] }> {
-  const res = await fetch(`/api/organizations/${orgId}/disputes`);
+interface DisputesResponse {
+  data: DisputeItem[];
+  pagination: {
+    total: number;
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
+  stats: {
+    totalCount: number;
+    openCount: number;
+    lostAmounts: { currency: string; amountPaise: number }[];
+  };
+}
+
+async function fetchDisputes(
+  orgId: string,
+  page: number,
+): Promise<DisputesResponse> {
+  const res = await fetch(
+    `/api/organizations/${orgId}/disputes?limit=25&offset=${(page - 1) * 25}`,
+  );
   if (!res.ok) throw new Error("Failed to load disputes");
   return res.json();
 }
 
-// Mirrors prisma `enum DisputeStatus`. "Open" rolls up everything still
-// needing action or under review; LOST/CHARGE_REFUNDED were settled against
-// the org (its wallet bore the chargeback).
-const STATUS: Record<
-  string,
-  { label: string; tone: Tone; open: boolean; lost: boolean }
-> = {
+const STATUS: Record<string, { label: string; tone: Tone }> = {
   WARNING_NEEDS_RESPONSE: {
     label: "Needs response",
     tone: "warning",
-    open: true,
-    lost: false,
   },
   WARNING_UNDER_REVIEW: {
     label: "Under review",
     tone: "info",
-    open: true,
-    lost: false,
   },
   WARNING_CLOSED: {
     label: "Closed",
     tone: "neutral",
-    open: false,
-    lost: false,
   },
   NEEDS_RESPONSE: {
     label: "Needs response",
     tone: "warning",
-    open: true,
-    lost: false,
   },
   UNDER_REVIEW: {
     label: "Under review",
     tone: "info",
-    open: true,
-    lost: false,
   },
   CHARGE_REFUNDED: {
     label: "Charge refunded",
     tone: "critical",
-    open: false,
-    lost: true,
   },
-  WON: { label: "Won", tone: "success", open: false, lost: false },
-  LOST: { label: "Lost", tone: "critical", open: false, lost: true },
-  // Ended without a verdict; the wallet bore nothing beyond any refund.
-  CLOSED: { label: "Closed", tone: "neutral", open: false, lost: false },
+  WON: { label: "Won", tone: "success" },
+  LOST: { label: "Lost", tone: "critical" },
+  CLOSED: { label: "Closed", tone: "neutral" },
 };
 
 const columns: ResponsiveColumn<DisputeItem>[] = [
@@ -93,6 +97,16 @@ const columns: ResponsiveColumn<DisputeItem>[] = [
     header: "Amount",
     className: "tabular-nums",
     cell: (d) => formatCurrencyAmount(d.amountPaise, d.currency),
+  },
+  {
+    key: "relationship",
+    header: "Organization role",
+    cell: (d) =>
+      d.relationship === "BUYER_AND_HOST"
+        ? "Buyer and host"
+        : d.relationship === "BUYER"
+          ? "Buyer"
+          : "Host",
   },
   { key: "reason", header: "Reason", cell: (d) => d.reason ?? "—" },
   {
@@ -116,11 +130,12 @@ const columns: ResponsiveColumn<DisputeItem>[] = [
   },
 ];
 
-/** Chargebacks on org-funded bookings — a Billing tab since #1527 Q7. */
+/** Chargebacks on the organization’s buyer and host activity. */
 export function DisputesPanel({ orgId }: Readonly<{ orgId: string }>) {
+  const [page, setPage] = useState(1);
   const { data, isPending, isError, refetch } = useQuery({
-    queryKey: ["org-disputes", orgId],
-    queryFn: () => fetchDisputes(orgId),
+    queryKey: ["org-disputes", orgId, page],
+    queryFn: () => fetchDisputes(orgId, page),
   });
 
   if (isPending) {
@@ -144,10 +159,15 @@ export function DisputesPanel({ orgId }: Readonly<{ orgId: string }>) {
   }
 
   const disputes = data.data;
-  const openCount = disputes.filter((d) => STATUS[d.status]?.open).length;
-  const lostAmount = disputes
-    .filter((d) => STATUS[d.status]?.lost)
-    .reduce((sum, d) => sum + d.amountPaise, 0);
+  const { openCount, totalCount, lostAmounts } = data.stats;
+  const lostAmount =
+    lostAmounts
+      .map((row) => formatCurrencyAmount(row.amountPaise, row.currency))
+      .join(" · ") || formatCurrencyAmount(0, "INR");
+  const totalPages = Math.max(
+    1,
+    Math.ceil(data.pagination.total / data.pagination.limit),
+  );
 
   return (
     <>
@@ -158,14 +178,23 @@ export function DisputesPanel({ orgId }: Readonly<{ orgId: string }>) {
           tone={openCount > 0 ? "warning" : "neutral"}
         />
         <Stat
-          label="Lost to chargebacks"
-          value={formatCurrencyAmount(lostAmount, "INR")}
-          hint="Borne by the organization"
-          tone={lostAmount > 0 ? "critical" : "neutral"}
+          label="Lost or refunded dispute value"
+          value={lostAmount}
+          hint="Disputed value; actual recovery depends on funding and earnings"
+          tone={
+            lostAmounts.some((row) => row.amountPaise > 0)
+              ? "critical"
+              : "neutral"
+          }
         />
-        <Stat label="Total disputes" value={disputes.length} />
+        <Stat label="Total disputes" value={totalCount} />
       </StatRow>
       <Section title="Dispute history">
+        <p className="mb-4 text-sm text-zinc-500">
+          Buyer funding and host earnings can both be affected. A dispute’s
+          amount is not the organization’s final liability. Funding details are
+          visible only to the buyer organization.
+        </p>
         <ResponsiveTable<DisputeItem>
           columns={columns}
           rows={disputes}
@@ -173,6 +202,29 @@ export function DisputesPanel({ orgId }: Readonly<{ orgId: string }>) {
           empty="No disputes have been raised against this organization."
         />
       </Section>
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => p - 1)}
+          >
+            Previous
+          </Button>
+          <span className="text-sm text-zinc-500">
+            Page {page} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!data.pagination.hasMore}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      )}
     </>
   );
 }

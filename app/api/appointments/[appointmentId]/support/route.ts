@@ -15,7 +15,6 @@ import prisma from "@/lib/prisma";
 import { runSupportTurn, ORG_PARTY_CATEGORIES } from "@/lib/support/service";
 import { buildSupportContext } from "@/lib/support/context";
 import { flowsForContext } from "@/lib/support/flows";
-import { MESSAGE_ORDER } from "@/lib/support/message-seq";
 import { AppointmentIdParams } from "@/schemas/support";
 import { SupportThreadCategoryEnum } from "@/schemas/enums";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
@@ -62,11 +61,16 @@ export async function GET(
         appointmentId,
       });
 
-    const thread = await prisma.appointmentSupportThread.findUnique({
-      where: { appointmentId_userId: { appointmentId, userId: auth.userId } },
+    const thread = await prisma.supportCase.findFirst({
+      where: {
+        appointmentId,
+        requesterUserId: auth.userId,
+        submitterUserId: auth.userId,
+        deletedAt: null,
+      },
+      orderBy: { createdAt: "desc" },
       include: {
-        messages: { orderBy: MESSAGE_ORDER },
-        supportTicket: { select: { referenceNumber: true, ackDueAt: true } },
+        messages: { where: { isInternal: false }, orderBy: { seq: "asc" } },
       },
     });
 
@@ -112,7 +116,25 @@ export async function GET(
       });
     }
 
-    return NextResponse.json({ data: thread, intents, booking });
+    return NextResponse.json({
+      data: thread
+        ? {
+            ...thread,
+            userId: thread.requesterUserId,
+            supportTicketId:
+              thread.activeChannel === "HUMAN" ? thread.id : null,
+            supportTicket:
+              thread.activeChannel === "HUMAN"
+                ? {
+                    referenceNumber: thread.referenceNumber,
+                    ackDueAt: thread.ackDueAt,
+                  }
+                : null,
+          }
+        : null,
+      intents,
+      booking,
+    });
   } catch (cause) {
     return supportError({
       status: 500,
@@ -191,7 +213,7 @@ export async function POST(
     }
 
     const linkedTicket = result.supportTicketId
-      ? await prisma.supportTicket.findUnique({
+      ? await prisma.supportCase.findUnique({
           where: { id: result.supportTicketId },
           select: { ackDueAt: true },
         })

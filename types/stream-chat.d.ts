@@ -43,6 +43,8 @@ declare module "stream-chat" {
     // DM pair channel linking
     dm_consultant_user_id?: string;
     dm_consultee_user_id?: string;
+    // Host org of the booking the channel serves (event channels only).
+    organization_id?: string;
   }
 
   /**

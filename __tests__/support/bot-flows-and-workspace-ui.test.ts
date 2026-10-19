@@ -5,27 +5,23 @@
 interface MockDb {
   appointment: { findUnique: jest.Mock };
   membership: { findMany: jest.Mock };
-  appointmentSupportThread: {
-    upsert: jest.Mock;
-    update: jest.Mock;
-    updateMany: jest.Mock;
-    findUnique: jest.Mock;
-    findUniqueOrThrow: jest.Mock;
-    findMany: jest.Mock;
-  };
-  supportMessage: { create: jest.Mock; findMany: jest.Mock };
-  supportTicket: {
+  supportCase: {
     create: jest.Mock;
     findFirst: jest.Mock;
     findUnique: jest.Mock;
+    findUniqueOrThrow: jest.Mock;
     findMany: jest.Mock;
     update: jest.Mock;
     updateMany: jest.Mock;
   };
-  supportCaseEvent: { findMany: jest.Mock };
+  supportCaseMessage: { create: jest.Mock; findMany: jest.Mock };
+  supportCaseEvent: { create: jest.Mock; findMany: jest.Mock };
+  supportCaseLegacyAlias: { findUnique: jest.Mock };
   supportFlowOutcome: { findFirst: jest.Mock; create: jest.Mock };
   supportTicketCounter: { upsert: jest.Mock };
-  user: { findMany: jest.Mock };
+  notificationOutbox: { upsert: jest.Mock };
+  user: { findMany: jest.Mock; findUnique: jest.Mock };
+  organization: { findUnique: jest.Mock };
   $transaction: jest.Mock;
 }
 
@@ -46,27 +42,23 @@ function getMocks(): MockDeps {
       db: {
         appointment: { findUnique: jest.fn() },
         membership: { findMany: jest.fn() },
-        appointmentSupportThread: {
-          upsert: jest.fn(),
-          update: jest.fn(),
-          updateMany: jest.fn(),
-          findUnique: jest.fn(),
-          findUniqueOrThrow: jest.fn(),
-          findMany: jest.fn(),
-        },
-        supportMessage: { create: jest.fn(), findMany: jest.fn() },
-        supportTicket: {
+        supportCase: {
           create: jest.fn(),
           findFirst: jest.fn(),
           findUnique: jest.fn(),
+          findUniqueOrThrow: jest.fn(),
           findMany: jest.fn(),
           update: jest.fn(),
           updateMany: jest.fn(),
         },
-        supportCaseEvent: { findMany: jest.fn() },
+        supportCaseMessage: { create: jest.fn(), findMany: jest.fn() },
+        supportCaseEvent: { create: jest.fn(), findMany: jest.fn() },
+        supportCaseLegacyAlias: { findUnique: jest.fn() },
         supportFlowOutcome: { findFirst: jest.fn(), create: jest.fn() },
         supportTicketCounter: { upsert: jest.fn() },
-        user: { findMany: jest.fn() },
+        notificationOutbox: { upsert: jest.fn() },
+        user: { findMany: jest.fn(), findUnique: jest.fn() },
+        organization: { findUnique: jest.fn() },
         $transaction: jest.fn(),
       },
       buildSupportContext: jest.fn(),
@@ -112,6 +104,49 @@ import { readCaseWorkspace } from "@/lib/support/case-workspace";
 import { POST as platformTurnPost } from "@/app/api/support/platform/route";
 import { isOrgOperatorThread } from "@/app/dashboard/organization/[orgId]/support/OrgSupportTriage";
 
+/** The one canonical SupportCase per (appointment, user). */
+const CASE_ID = "case1";
+const CASE_UPDATED_AT = new Date("2026-09-01T09:00:00Z");
+
+/** The canonical case row the service and the workspace both read. */
+function canonicalCase(overrides: Record<string, unknown> = {}) {
+  return {
+    id: CASE_ID,
+    referenceNumber: "FAM-2026-0042",
+    clientIntakeId: "appointment:appt1:user1",
+    title: "Support — Strategy Session",
+    description: "Appointment help requested",
+    category: "PAYMENT_STATUS",
+    flowKey: null,
+    currentNodeId: "start",
+    activeChannel: "SELF_SERVE",
+    issueType: null,
+    priority: "MEDIUM",
+    status: "IN_PROGRESS",
+    caseKind: "INCIDENT",
+    requesterUserId: "user1",
+    submitterUserId: "user1",
+    organizationId: null,
+    appointmentId: "appt1",
+    assignedToId: null,
+    callbackPhone: null,
+    ackDueAt: new Date("2026-09-01T14:00:00Z"),
+    acknowledgedAt: null,
+    resolutionDueAt: new Date("2026-09-02T10:00:00Z"),
+    resolvedAt: null,
+    closedAt: null,
+    deletedAt: null,
+    firstAgentReplyAt: null,
+    awaitingUserSince: null,
+    pausedSeconds: 0,
+    messageSeq: 2,
+    lastMessageAt: null,
+    createdAt: CASE_UPDATED_AT,
+    updatedAt: CASE_UPDATED_AT,
+    ...overrides,
+  };
+}
+
 describe("bot handoff context, loop escalation, workspace UI & org triage", () => {
   const {
     db: mockPrisma,
@@ -136,41 +171,47 @@ describe("bot handoff context, loop escalation, workspace UI & org triage", () =
     );
     mockPrisma.membership.findMany.mockResolvedValue([]);
     mockPrisma.user.findMany.mockResolvedValue([]);
+    mockPrisma.user.findUnique.mockResolvedValue({
+      id: "user1",
+      name: "Riya",
+      email: "riya@example.com",
+    });
+    mockPrisma.organization.findUnique.mockResolvedValue({ name: "Acme" });
     mockPrisma.appointment.findUnique.mockResolvedValue({
       id: "appt1",
       appointmentType: "CONSULTATION",
       organizationId: null,
       occurrences: [{ startsAt: new Date("2026-09-01T10:00:00Z") }],
     });
-    mockPrisma.supportMessage.create.mockResolvedValue({});
-    mockPrisma.supportTicketCounter.upsert.mockResolvedValue({ counter: 42 });
-    mockPrisma.supportTicket.findFirst.mockResolvedValue(null);
-    mockPrisma.supportTicket.findUnique.mockResolvedValue(null);
-    mockPrisma.supportTicket.findMany.mockResolvedValue([]);
-    mockPrisma.supportCaseEvent.findMany.mockResolvedValue([]);
-    mockPrisma.appointmentSupportThread.findMany.mockResolvedValue([]);
-    mockPrisma.appointmentSupportThread.update.mockResolvedValue({});
-    mockPrisma.appointmentSupportThread.updateMany.mockResolvedValue({
-      count: 1,
-    });
-    mockPrisma.appointmentSupportThread.findUniqueOrThrow.mockResolvedValue({
-      id: "thread1",
-      supportTicketId: "tkt1",
-      supportTicket: {
-        id: "tkt1",
-        referenceNumber: "FAM-2026-0042",
-        ackDueAt: new Date("2026-09-01T14:00:00Z"),
-      },
-    });
-    mockPrisma.supportTicket.create.mockResolvedValue({
-      id: "tkt1",
+    mockPrisma.supportCaseMessage.create.mockResolvedValue({});
+    mockPrisma.supportCaseMessage.findMany.mockResolvedValue([]);
+    mockPrisma.supportTicketCounter.upsert.mockResolvedValue({ nextSeq: 2 });
+    // No case yet unless a test says otherwise; no recent escalation either.
+    mockPrisma.supportCase.findFirst.mockResolvedValue(null);
+    mockPrisma.supportCase.findUnique.mockResolvedValue(null);
+    mockPrisma.supportCase.findUniqueOrThrow.mockResolvedValue(null);
+    mockPrisma.supportCase.findMany.mockResolvedValue([]);
+    mockPrisma.supportCase.create.mockResolvedValue({
+      id: CASE_ID,
       referenceNumber: "FAM-2026-0042",
       ackDueAt: new Date("2026-09-01T14:00:00Z"),
+      createdAt: CASE_UPDATED_AT,
+      requesterUserId: "user1",
+      title: "Payments & billing: node escalated",
+      description: "Escalation brief",
+      organizationId: null,
+      status: "OPEN",
+      activeChannel: "HUMAN",
     });
+    mockPrisma.supportCase.update.mockResolvedValue({ messageSeq: 1 });
+    mockPrisma.supportCase.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.supportCaseEvent.create.mockResolvedValue({ id: "ev1" });
+    mockPrisma.supportCaseEvent.findMany.mockResolvedValue([]);
+    mockPrisma.supportCaseLegacyAlias.findUnique.mockResolvedValue(null);
     mockPrisma.supportFlowOutcome.findFirst.mockResolvedValue({ id: "out-99" });
     mockPrisma.supportFlowOutcome.create.mockResolvedValue({ id: "out-99" });
     mockBuildSupportContext.mockResolvedValue({
-      threadId: "thread1",
+      threadId: CASE_ID,
       appointmentId: "appt1",
       userId: "user1",
       organizationId: null,
@@ -267,13 +308,13 @@ describe("bot handoff context, loop escalation, workspace UI & org triage", () =
     expect(json.data.escalated).toBe(true);
     expect(json.data.replyByAt).toBe("2026-09-01T14:00:00.000Z");
 
-    const createdTicket =
-      mockPrisma.supportTicket.create.mock.calls[0]?.[0]?.data;
-    expect(createdTicket.description).toContain(
+    // The hand-off brief is written onto the ONE canonical case.
+    const createdCase = mockPrisma.supportCase.create.mock.calls[0]?.[0]?.data;
+    expect(createdCase.description).toContain(
       "Flow path: Payments & billing → Money deducted but booking not confirmed",
     );
-    expect(createdTicket.description).not.toContain("forged-node-id-ignored");
-    expect(createdTicket.description).toContain("Bot told the customer:");
+    expect(createdCase.description).not.toContain("forged-node-id-ignored");
+    expect(createdCase.description).toContain("Bot told the customer:");
   });
 
   test("platform self-serve resolution returns outcomeId for helpfulness rating", async () => {
@@ -345,19 +386,14 @@ describe("bot handoff context, loop escalation, workspace UI & org triage", () =
   });
 
   test("runSupportTurn auto-escalates on 3rd consecutive unrecognized input, not when a valid option breaks the streak", async () => {
-    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue({
-      id: "thread1",
-      appointmentId: "appt1",
-      userId: "user1",
-      organizationId: null,
-      category: "PAYMENT_STATUS",
-      status: "IN_PROGRESS",
-      activeChannel: "SELF_SERVE",
-      currentNodeId: "start",
-      supportTicketId: null,
-    });
+    mockPrisma.supportCase.findFirst.mockResolvedValue(
+      canonicalCase({ category: "PAYMENT_STATUS" }),
+    );
+    mockPrisma.supportCase.findUniqueOrThrow.mockResolvedValue(
+      canonicalCase({ category: "PAYMENT_STATUS" }),
+    );
 
-    mockPrisma.supportMessage.findMany.mockResolvedValue([
+    mockPrisma.supportCaseMessage.findMany.mockResolvedValue([
       {
         sender: "BOT",
         body: "I didn't follow that — pick one of the options above.",
@@ -382,28 +418,24 @@ describe("bot handoff context, loop escalation, workspace UI & org triage", () =
     });
 
     expect(escalated?.escalated).toBe(true);
+    expect(escalated?.supportTicketId).toBe(CASE_ID);
     expect(escalated?.replyByAt).toBe("2026-09-01T14:00:00.000Z");
-    const createdTicket =
-      mockPrisma.supportTicket.create.mock.calls[0]?.[0]?.data;
-    expect(createdTicket.description).toContain(
+    // The hand-off brief lands on the canonical case.
+    const flipped = mockPrisma.supportCase.updateMany.mock.calls[0]?.[0]?.data;
+    expect(flipped.description).toContain(
       "Escalation reason: repeated_unrecognized",
     );
   });
 
   test("runSupportTurn auto-escalates legacy UNRECOGNIZED_BODY bot messages without metadata", async () => {
-    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue({
-      id: "thread1",
-      appointmentId: "appt1",
-      userId: "user1",
-      organizationId: null,
-      category: "PAYMENT_STATUS",
-      status: "IN_PROGRESS",
-      activeChannel: "SELF_SERVE",
-      currentNodeId: "start",
-      supportTicketId: null,
-    });
+    mockPrisma.supportCase.findFirst.mockResolvedValue(
+      canonicalCase({ category: "PAYMENT_STATUS" }),
+    );
+    mockPrisma.supportCase.findUniqueOrThrow.mockResolvedValue(
+      canonicalCase({ category: "PAYMENT_STATUS" }),
+    );
 
-    mockPrisma.supportMessage.findMany.mockResolvedValue([
+    mockPrisma.supportCaseMessage.findMany.mockResolvedValue([
       {
         sender: "BOT",
         body: UNRECOGNIZED_BODY,
@@ -428,27 +460,18 @@ describe("bot handoff context, loop escalation, workspace UI & org triage", () =
     });
 
     expect(escalated?.escalated).toBe(true);
-    const createdTicket =
-      mockPrisma.supportTicket.create.mock.calls[0]?.[0]?.data;
-    expect(createdTicket.description).toContain(
+    const flipped = mockPrisma.supportCase.updateMany.mock.calls[0]?.[0]?.data;
+    expect(flipped.description).toContain(
       "Escalation reason: repeated_unrecognized",
     );
   });
 
   test("runSupportTurn does not auto-escalate when 2 gibberish turns are followed by a valid option", async () => {
-    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue({
-      id: "thread1",
-      appointmentId: "appt1",
-      userId: "user1",
-      organizationId: null,
-      category: "PAYMENT_STATUS",
-      status: "IN_PROGRESS",
-      activeChannel: "SELF_SERVE",
-      currentNodeId: "start",
-      supportTicketId: null,
-    });
+    mockPrisma.supportCase.findFirst.mockResolvedValue(
+      canonicalCase({ category: "PAYMENT_STATUS" }),
+    );
 
-    mockPrisma.supportMessage.findMany.mockResolvedValueOnce([
+    mockPrisma.supportCaseMessage.findMany.mockResolvedValueOnce([
       {
         sender: "BOT",
         body: "I didn't follow that — pick one of the options above.",
@@ -474,7 +497,14 @@ describe("bot handoff context, loop escalation, workspace UI & org triage", () =
 
     expect(validTurn?.escalated).toBe(false);
     expect(validTurn?.resolved).toBe(true);
-    expect(mockPrisma.supportTicket.create).not.toHaveBeenCalled();
+    // The case stayed on the bot — no hand-off, and no second case row.
+    expect(validTurn?.activeChannel).toBe("SELF_SERVE");
+    expect(mockPrisma.supportCase.create).not.toHaveBeenCalled();
+    expect(mockPrisma.supportCase.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ activeChannel: "HUMAN" }),
+      }),
+    );
   });
 
   test("org operator session flows (SPONSORSHIP_BILLING and ORG_ADMIN_DISPUTE) expose human escalation options", () => {
@@ -498,27 +528,37 @@ describe("bot handoff context, loop escalation, workspace UI & org triage", () =
   test("readCaseWorkspace exposes lastMessageAt, structured botPromises, duplicateOpenCases, and events history", async () => {
     const createdAt = new Date("2026-09-01T10:00:00Z");
     const lastMessageAt = new Date("2026-09-01T10:05:00Z");
-    mockPrisma.supportTicket.findUnique.mockResolvedValueOnce({
-      id: "tkt1",
+    mockPrisma.supportCase.findFirst.mockResolvedValueOnce({
+      id: CASE_ID,
       referenceNumber: "FAM-2026-0042",
       title: "Support — Strategy Session",
       description:
         "Escalation reason: node_escalated\nBot told the customer: Auto-reverses within 5–7 business days; bank timing varies | Refunds go back to original payment method only",
-      status: "OPEN",
+      status: "ESCALATED",
       priority: "HIGH",
       category: "PAYMENT_STATUS",
       issueType: null,
+      // The server put this case on the human queue, so its description is the
+      // hand-off brief and its promises may be surfaced.
+      activeChannel: "HUMAN",
+      requesterUserId: "user1",
+      submitterUserId: "user1",
+      organizationId: null,
+      appointmentId: "appt1",
+      assignedToId: "staff1",
+      callbackPhone: null,
       createdAt,
       updatedAt: lastMessageAt,
       lastMessageAt,
-      paymentId: "pay1",
-      consultationId: null,
       ackDueAt: new Date("2026-09-01T14:00:00Z"),
-      firstResponseAt: null,
+      acknowledgedAt: null,
       resolutionDueAt: new Date("2026-09-02T10:00:00Z"),
       resolvedAt: null,
-      slaBreachedAt: null,
-      user: {
+      closedAt: null,
+      deletedAt: null,
+      awaitingUserSince: null,
+      pausedSeconds: 0,
+      requester: {
         id: "user1",
         name: "Riya",
         email: "riya@example.com",
@@ -528,41 +568,49 @@ describe("bot handoff context, loop escalation, workspace UI & org triage", () =
       },
       assignedTo: { id: "staff1", name: "Aman" },
       organization: null,
-      attachments: [],
-      responses: [],
-      appointmentSupportThread: {
-        id: "thread1",
-        appointmentId: "appt1",
-        messages: [],
-      },
+      subjects: [],
+      messages: [],
+      // The workspace reads newest-first and reverses, so the timeline the
+      // staff sees runs oldest-first.
+      events: [
+        {
+          id: "ev2",
+          kind: "STATUS_CHANGED",
+          fromValue: "OPEN",
+          toValue: "ESCALATED",
+          note: null,
+          createdAt: new Date("2026-09-01T10:10:00Z"),
+          actor: { name: "Aman" },
+        },
+        {
+          id: "ev1",
+          kind: "ASSIGNED",
+          fromValue: null,
+          toValue: "staff1",
+          note: "Escalated billing review",
+          createdAt,
+          actor: { name: "Aman" },
+        },
+      ],
     });
-    mockPrisma.supportTicket.findMany
-      .mockResolvedValueOnce([])
+    mockPrisma.supportCase.findMany
+      .mockResolvedValueOnce([]) // past cases
       .mockResolvedValueOnce([
         {
-          id: "tkt2",
+          id: "case2",
           referenceNumber: "FAM-2026-0043",
           title: "Duplicate charge inquiry",
           status: "OPEN",
         },
-      ]);
-    mockPrisma.supportCaseEvent.findMany.mockResolvedValueOnce([
-      {
-        id: "ev1",
-        kind: "ASSIGNED",
-        fromValue: null,
-        toValue: "staff1",
-        note: "Escalated billing review",
-        createdAt,
-        actor: { name: "Aman" },
-      },
-    ]);
+      ]); // duplicate open cases
 
     const workspace = await readCaseWorkspace(
-      { kind: "ticket", id: "tkt1" },
+      { kind: "case", id: CASE_ID },
       { showEmail: true, showPayment: false },
     );
 
+    expect(workspace?.kind).toBe("case");
+    expect(workspace?.caseId).toBe(CASE_ID);
     expect(workspace?.lastMessageAt).toBe(lastMessageAt.toISOString());
     expect(workspace?.botPromises).toEqual([
       "Auto-reverses within 5–7 business days; bank timing varies",
@@ -570,7 +618,7 @@ describe("bot handoff context, loop escalation, workspace UI & org triage", () =
     ]);
     expect(workspace?.duplicateOpenCases).toEqual([
       {
-        id: "tkt2",
+        id: "case2",
         reference: "FAM-2026-0043",
         title: "Duplicate charge inquiry",
         status: "OPEN",
@@ -586,33 +634,51 @@ describe("bot handoff context, loop escalation, workspace UI & org triage", () =
         actorName: "Aman",
         createdAt: createdAt.toISOString(),
       },
+      {
+        id: "ev2",
+        kind: "STATUS_CHANGED",
+        fromValue: "OPEN",
+        toValue: "ESCALATED",
+        note: null,
+        actorName: "Aman",
+        createdAt: new Date("2026-09-01T10:10:00Z").toISOString(),
+      },
     ]);
   });
 
-  test("readCaseWorkspace yields botPromises: [] for a form-filed ticket (filedBy: consultee) containing Bot told the customer text", async () => {
+  test("readCaseWorkspace yields botPromises: [] for a customer-filed case containing Bot told the customer text", async () => {
     const createdAt = new Date("2026-09-01T10:00:00Z");
-    mockPrisma.supportTicket.findUnique.mockResolvedValueOnce({
-      id: "tkt-form-1",
+    mockPrisma.supportCase.findFirst.mockResolvedValueOnce({
+      id: "case-form-1",
       referenceNumber: "FAM-2026-0099",
       title: "Refund demand",
-      filedBy: "consultee",
       description:
         "I am unhappy with the session.\nBot told the customer: Full refund approved",
       status: "OPEN",
       priority: "MEDIUM",
       category: "PAYMENT_STATUS",
       issueType: null,
+      // A case the CUSTOMER filed: the description is their own text, so it
+      // must never be rendered as an operator promise.
+      activeChannel: "SELF_SERVE",
+      requesterUserId: "user1",
+      submitterUserId: "user1",
+      organizationId: null,
+      appointmentId: null,
+      assignedToId: null,
+      callbackPhone: null,
       createdAt,
       updatedAt: createdAt,
       lastMessageAt: createdAt,
-      paymentId: null,
-      consultationId: null,
       ackDueAt: new Date("2026-09-01T14:00:00Z"),
-      firstResponseAt: null,
+      acknowledgedAt: null,
       resolutionDueAt: new Date("2026-09-02T10:00:00Z"),
       resolvedAt: null,
-      slaBreachedAt: null,
-      user: {
+      closedAt: null,
+      deletedAt: null,
+      awaitingUserSince: null,
+      pausedSeconds: 0,
+      requester: {
         id: "user1",
         name: "Riya",
         email: "riya@example.com",
@@ -622,15 +688,14 @@ describe("bot handoff context, loop escalation, workspace UI & org triage", () =
       },
       assignedTo: null,
       organization: null,
-      attachments: [],
-      responses: [],
-      appointmentSupportThread: null,
+      subjects: [],
+      messages: [],
+      events: [],
     });
-    mockPrisma.supportTicket.findMany.mockResolvedValueOnce([]);
-    mockPrisma.supportCaseEvent.findMany.mockResolvedValueOnce([]);
+    mockPrisma.supportCase.findMany.mockResolvedValue([]);
 
     const workspace = await readCaseWorkspace(
-      { kind: "ticket", id: "tkt-form-1" },
+      { kind: "case", id: "case-form-1" },
       { showEmail: true, showPayment: false },
     );
 

@@ -1,8 +1,11 @@
+import { visibleCaseWhere, caseOwnershipPermission } from "@/lib/support/case-access";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { MemberRole } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
+import { requireApiAuth } from "@/lib/auth-helpers";
+import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { assertBodySize } from "@/lib/validation/limits";
 import { supportError } from "@/lib/api/support-http";
@@ -57,7 +60,7 @@ export async function GET(req: NextRequest) {
     const auth = await requireApiAuth();
     if (auth.error) return auth.error;
     const { user } = auth.session;
-    const staff = isPrivileged(user.role);
+    const staff = hasBackofficePermission(user.role, "tickets.manage");
 
     const parsedStatus = SupportCaseStatusSchema.safeParse(
       req.nextUrl.searchParams.get("status"),
@@ -67,16 +70,7 @@ export async function GET(req: NextRequest) {
       ? Math.min(Math.max(1, limitParam), 100)
       : 50;
 
-    const where = staff
-      ? {
-          deletedAt: null,
-          ...(parsedStatus.success ? { status: parsedStatus.data } : {}),
-        }
-      : {
-          deletedAt: null,
-          OR: [{ submitterUserId: user.id }, { requesterUserId: user.id }],
-          ...(parsedStatus.success ? { status: parsedStatus.data } : {}),
-        };
+    const where = { ...await visibleCaseWhere({ userId: user.id, role: user.role }), ...(parsedStatus.success ? { status: parsedStatus.data } : {}) };
 
     const cases = await prisma.supportCase.findMany({
       where,
@@ -403,7 +397,7 @@ export async function POST(req: NextRequest) {
     const auth = await requireApiAuth();
     if (auth.error) return auth.error;
     const { user } = auth.session;
-    const staff = isPrivileged(user.role);
+    const staff = hasBackofficePermission(user.role, "tickets.manage");
 
     const rl = await applyRateLimit(spamLimiter, `support-cases:${user.id}`);
     if (rl) return rl;
@@ -413,6 +407,13 @@ export async function POST(req: NextRequest) {
 
     const requesterUserId = bodyRes.data.requesterUserId ?? user.id;
     const targetOrgId = bodyRes.data.organizationId ?? null;
+
+    const ownershipPermission = caseOwnershipPermission(bodyRes.data.ownershipScope ?? "PERSONAL");
+    if (ownershipPermission) {
+      const member = targetOrgId ? await prisma.membership.findFirst({ where: { organizationId: targetOrgId, userId: user.id, status: "ACTIVE" }, select: { role: true } }) : null;
+      if (!staff && (!member || !hasOrgPermission(member.role, ownershipPermission))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      if (!targetOrgId) return NextResponse.json({ error: "Organization is required" }, { status: 400 });
+    }
 
     const accessErr = await validateCaseScopeAccess({
       staff,
@@ -435,6 +436,9 @@ export async function POST(req: NextRequest) {
     const viewerCase = await readSupportCaseForViewer(result.supportCase.id, {
       userId: user.id,
       isStaff: staff,
+      role: user.role,
+      canReadPayments: hasBackofficePermission(user.role, "payments.read"),
+      canReadContact: hasBackofficePermission(user.role, "users.read"),
     });
     if (!viewerCase) {
       return supportError({

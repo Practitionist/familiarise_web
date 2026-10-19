@@ -65,7 +65,7 @@ export function BillingPageClient({
 }) {
   const { can } = useOrgRole(orgId);
   const requestHref = (ticketId: string) =>
-    `/dashboard/organization/${orgId}/support/requests/${caseKeyOf({ kind: "ticket", id: ticketId })}`;
+    `/dashboard/organization/${orgId}/support/requests/${caseKeyOf({ kind: "case", id: ticketId })}`;
   const { allowed } = useRequireOrgAccess(orgId, {
     permission: "billing.read",
     canSponsor: true,

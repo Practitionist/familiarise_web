@@ -61,6 +61,7 @@ import {
   revokeSessionById,
 } from "@/lib/auth/session-revoke";
 import { socialProviderConfig } from "@/lib/auth/social-providers";
+import { toUserRole } from "@/lib/auth/user-role";
 import {
   assertOperatorMayEnableTwoFactor,
   assertTwoFactorRequestPolicy,
@@ -766,7 +767,7 @@ export const auth = betterAuth({
           sentryUserId: isSentryIdentityEnabled()
             ? resolveSentryUserId(user.id)
             : undefined,
-          role: user.role ?? "CONSULTEE",
+          role: toUserRole(user.role),
           onboardingCompleted: user.onboardingCompleted ?? false,
           phone: user.phone ?? undefined,
           address: user.address ?? undefined,

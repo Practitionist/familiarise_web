@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { UrlTabs } from "@/components/dashboard/UrlTabs";
 import { FeedbackPanel } from "./FeedbackPanel";
+import { EvidenceInbox } from "@/components/support/EvidenceInbox";
+import { ReportHistory } from "@/components/dashboard/shared/ReportHistory";
 import { SupportHub } from "./SupportHub";
 
 export interface SupportRequestsPageProps {
@@ -46,6 +48,11 @@ export function SupportRequestsPage({
                 <aside>{suggested}</aside>
               </div>
             ),
+          },
+          {
+            value: "reports",
+            label: "Reports and decisions",
+            content: <ReportHistory />,
           },
           {
             value: "feedback",

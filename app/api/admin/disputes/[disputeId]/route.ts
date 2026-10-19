@@ -5,6 +5,8 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { withOpsAction } from "@/lib/backoffice/ops-action-log";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 
 interface RouteParams {
@@ -40,6 +42,8 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         isChargeRefundable: true,
         ...(canManageDisputes ? { evidence: true } : {}),
         evidenceSubmittedAt: true,
+        assignedToUserId: true,
+        assignedTo: { select: { id: true, name: true } },
         createdAt: true,
         updatedAt: true,
         payment: {
@@ -227,3 +231,55 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     );
   }
 }
+
+/** Assignment coordinates the gateway chargeback owner; it does not move money. */
+export const PATCH = withOpsAction(
+  "disputes.manage",
+  "dispute.assign",
+  {
+    assignedToUserId: z.string().min(1).nullable(),
+    expectedUpdatedAt: z.coerce.date(),
+  },
+  {
+    mode: "tx",
+    run: async (tx, { body, params }) => {
+      const before = await tx.dispute.findUnique({
+        where: { id: params.disputeId },
+        select: { id: true, assignedToUserId: true, updatedAt: true },
+      });
+      if (!before) throw new OpsRefusal("NOT_FOUND", "Dispute not found", 404);
+      if (body.assignedToUserId) {
+        const assignee = await tx.user.findFirst({
+          where: { id: body.assignedToUserId, role: "ADMIN", banned: false },
+          select: { id: true },
+        });
+        if (!assignee)
+          throw new OpsRefusal(
+            "INVALID_ASSIGNEE",
+            "Choose an active administrator for gateway chargeback ownership.",
+            400,
+          );
+      }
+      const changed = await tx.dispute.updateMany({
+        where: {
+          id: before.id,
+          updatedAt: body.expectedUpdatedAt,
+          assignedToUserId: before.assignedToUserId,
+        },
+        data: { assignedToUserId: body.assignedToUserId },
+      });
+      if (changed.count !== 1)
+        throw new OpsRefusal(
+          "CONFLICT",
+          "This dispute changed. Refresh it before assigning an owner.",
+          409,
+        );
+      return {
+        target: { kind: "Dispute", id: before.id },
+        before: { assignedToUserId: before.assignedToUserId },
+        after: { assignedToUserId: body.assignedToUserId },
+        response: { success: true },
+      };
+    },
+  },
+);

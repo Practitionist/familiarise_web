@@ -147,6 +147,7 @@ export type RefundInput = {
    * the first refund instead of moving money twice. Refund.dedupeKey is unique.
    */
   dedupeKey?: string;
+  supportRecommendationId?: string;
 };
 
 export type RefundResult = {
@@ -505,6 +506,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
               status: RefundStatus.PENDING,
               refundId: `pending_${globalThis.crypto.randomUUID()}`,
               dedupeKey: input.dedupeKey ?? null,
+              ...(input.supportRecommendationId ? { supportRecommendation: { connect: { id: input.supportRecommendationId } } } : {}),
               paymentGateway: payment.paymentGateway,
               exchangeRateAtRefund: payment.exchangeRateAtCheckout,
               displayCurrency: payment.displayCurrencyAtCheckout,

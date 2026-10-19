@@ -247,7 +247,7 @@ async function handleEscalatedTurn(
   );
   if (recent) {
     if (input.urgent) await raiseReusedTicketToHigh(prisma, recent.id);
-    const recentTicket = await prisma.supportTicket.findUnique({
+    const recentTicket = await prisma.supportCase.findUnique({
       where: { id: recent.id },
       select: { ackDueAt: true },
     });

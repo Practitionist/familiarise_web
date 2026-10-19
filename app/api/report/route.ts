@@ -12,99 +12,78 @@ import { assertBodySize } from "@/lib/validation/limits";
 import { CreateReportSchema } from "@/schemas/moderation";
 
 import { getSession } from "@/lib/auth-server";
-import { getStreamChatClient } from "@/lib/stream-client";
+import {
+  getStreamChatClient,
+  withStreamCircuitBreaker,
+} from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { formatReportReference } from "@/lib/moderation/report-reference";
 
-/**
- * #1270 — what "the same content" means for aggregation.
- *
- * A MESSAGE report always has a null `reviewId`, so the old `(targetUserId,
- * type, reviewId)` key folded every message ever reported against one user
- * into a single row: the second report only incremented a counter and its
- * excerpt was thrown away, leaving moderators looking at the first message
- * anyone ever complained about. Scoping on the message id fixes that.
- *
- * Reports that arrive without a message id — an older client, or a surface
- * that has no message to point at — deliberately keep the previous per-user
- * collapse (`streamMessageId IS NULL`) rather than splitting into one row per
- * reporter, which would flood the queue.
- */
+// Normalize content identity before deduplication and storage.
 function contentScopeFor(
   type: ModerationReportType,
-  reviewId: string | undefined,
-  streamMessageId: string | undefined,
+  reviewId: string | null,
+  streamMessageId: string | null,
 ): Prisma.ModerationReportWhereInput {
-  if (type === ModerationReportType.MESSAGE) {
-    return { streamMessageId: streamMessageId ?? null };
-  }
-  return reviewId ? { reviewId } : {};
+  return {
+    reviewId: type === "REVIEW" ? reviewId : null,
+    streamMessageId: type === "MESSAGE" ? streamMessageId : null,
+  };
 }
 
-/**
- * POST /api/report
- * Submit a content report
- */
-
-/**
- * Resolve a reported Stream message with SERVER credentials, and only accept it
- * when its author really is the person being reported.
- *
- * #1270 review — the ids arrived from the browser. `CONTENT_REMOVED` later
- * forwards the stored `streamMessageId` to Stream's server-side delete, so a
- * caller who reported user X while supplying a message authored by someone else
- * could get an arbitrary message deleted, using a staff moderator as the
- * instrument. The channel cid was caller-supplied too, so the staff deep-link
- * pointed wherever the reporter chose.
- *
- * Both now come from Stream's own answer, or the report is stored with no
- * message identity at all — which degrades to the pre-#1270 behaviour (a report
- * a human reads) rather than refusing the report outright. A reporter should
- * not be blocked because Stream is briefly unavailable.
- */
 async function resolveReportedMessage(
-  streamMessageId: string | undefined,
+  streamMessageId: string,
   targetUserId: string,
-): Promise<{
-  streamMessageId: string | null;
-  streamChannelCid: string | null;
-  messageText: string | null;
-}> {
-  const none = {
-    streamMessageId: null,
-    streamChannelCid: null,
-    messageText: null,
-  };
-  if (!streamMessageId) return none;
-
+  reporterUserId: string,
+) {
   try {
-    const { message } = await getStreamChatClient().getMessage(streamMessageId);
-    if (!message?.user?.id || message.user.id !== targetUserId) {
-      streamLogger.warn(
-        "Report named a message the reported user did not send",
-        {
-          streamMessageId,
-          targetUserId,
-          actualAuthor: message?.user?.id ?? null,
-        },
-      );
-      return none;
+    const client = getStreamChatClient();
+    const { message } = await withStreamCircuitBreaker(() =>
+      client.getMessage(streamMessageId),
+    );
+    if (!message?.cid || message.user?.id !== targetUserId) {
+      return {
+        error: "The reported message could not be verified",
+        status: 403,
+      };
     }
+    // Hoisted out of the closure: TS does not keep a property narrowing
+    // (`message.cid`) alive across a callback boundary.
+    const cid = message.cid;
+    // Server credentials bypass channel permissions; require the reporter's membership explicitly.
+    const channels = await withStreamCircuitBreaker(() =>
+      client.queryChannels(
+        { cid: { $eq: cid }, members: { $in: [reporterUserId] } },
+        {},
+        { limit: 1, state: false, watch: false },
+      ),
+    );
+    const channel = channels[0];
+    if (!channel) {
+      return {
+        error: "The reported message could not be verified",
+        status: 403,
+      };
+    }
+    const organization = channel.data?.organization_id;
     return {
-      streamMessageId: message.id,
-      // Canonical, from Stream — never the caller's.
-      streamChannelCid: message.cid ?? null,
-      messageText:
-        typeof message.text === "string" && message.text.length > 0
-          ? message.text
-          : null,
+      data: {
+        streamMessageId: message.id,
+        streamChannelCid: message.cid,
+        messageText: message.text || null,
+        organizationId: typeof organization === "string" ? organization : null,
+      },
     };
   } catch (error) {
-    streamLogger.warn("Could not resolve a reported Stream message", {
+    streamLogger.warn("Could not verify a reported Stream message", {
       streamMessageId,
       error: String(error),
     });
-    return none;
+    return {
+      error: "Message verification is unavailable; please retry",
+      status: 503,
+    };
   }
 }
 
@@ -140,10 +119,6 @@ export async function POST(req: NextRequest) {
       reviewId,
       organizationId: callerOrganizationId,
       streamMessageId,
-      // NB: `streamChannelCid` is accepted by the schema and deliberately NOT
-      // read. The cid stored comes from Stream's own answer — see
-      // resolveReportedMessage — because a caller-supplied one pointed the
-      // staff deep-link wherever the reporter chose.
     } = parsed.data;
 
     // Validate required fields
@@ -201,7 +176,7 @@ export async function POST(req: NextRequest) {
       }
       const consultantUserId = reported.consultantProfile?.userId;
       const hostOrgId = reported.appointment?.organizationId ?? null;
-      if (consultantUserId && consultantUserId !== session.user.id) {
+      if (consultantUserId !== session.user.id) {
         const isHostOrgAdmin = hostOrgId
           ? Boolean(
               await prisma.membership.findFirst({
@@ -231,18 +206,41 @@ export async function POST(req: NextRequest) {
       reviewSnapshotText = reported.reviewDescription ?? null;
     }
 
-    if (!resolvedOrganizationId && callerOrganizationId) {
-      const targetMembership = await prisma.membership.findFirst({
-        where: {
-          organizationId: callerOrganizationId,
-          userId: target,
-          status: "ACTIVE",
-        },
-        select: { id: true },
-      });
-      if (targetMembership) {
-        resolvedOrganizationId = callerOrganizationId;
+    const verifiedMessage: {
+      streamMessageId: string | null;
+      streamChannelCid: string | null;
+      messageText: string | null;
+    } = { streamMessageId: null, streamChannelCid: null, messageText: null };
+    if (type === "MESSAGE") {
+      if (!streamMessageId) {
+        return NextResponse.json(
+          { error: "A message report must name the message" },
+          { status: 400 },
+        );
       }
+      const resolved = await resolveReportedMessage(
+        streamMessageId,
+        target,
+        session.user.id,
+      );
+      if ("error" in resolved) {
+        return NextResponse.json(
+          { error: resolved.error },
+          { status: resolved.status },
+        );
+      }
+      Object.assign(verifiedMessage, resolved.data);
+      resolvedOrganizationId = resolved.data.organizationId;
+    }
+    // Organization attribution comes only from the reported review or canonical channel.
+    if (
+      callerOrganizationId &&
+      callerOrganizationId !== resolvedOrganizationId
+    ) {
+      return NextResponse.json(
+        { error: "Organization does not match the reported content" },
+        { status: 403 },
+      );
     }
 
     // Prevent self-reporting
@@ -267,8 +265,8 @@ export async function POST(req: NextRequest) {
 
     const contentScope = contentScopeFor(
       type,
-      reportedReviewId ?? undefined,
-      streamMessageId,
+      reportedReviewId,
+      verifiedMessage.streamMessageId,
     );
 
     // Check for existing report from same user for same content
@@ -278,116 +276,26 @@ export async function POST(req: NextRequest) {
         targetUserId: target,
         type,
         ...contentScope,
-        status: { in: ["PENDING", "UNDER_REVIEW"] },
+        status: { in: ["PENDING", "UNDER_REVIEW", "ESCALATED"] },
       },
     });
 
     if (existingReport) {
       return NextResponse.json(
-        { error: "You have already reported this content" },
-        { status: 400 },
+        {
+          error: "You have already reported this content",
+          reportId: existingReport.id,
+          reportReference: formatReportReference(existingReport.id),
+        },
+        { status: 409 },
       );
     }
-
-    // Check if there's an existing report for same content from others
-    // If so, increment reportCount instead of creating new
-    const similarReport = await prisma.moderationReport.findFirst({
-      where: {
-        targetUserId: target,
-        type,
-        ...contentScope,
-        status: { in: ["PENDING", "UNDER_REVIEW"] },
-      },
-    });
-
-    if (similarReport) {
-      const verifiedForBackfill =
-        similarReport.contentText === null && type === "MESSAGE"
-          ? await resolveReportedMessage(streamMessageId, target)
-          : null;
-      const backfillContentText =
-        type === "REVIEW"
-          ? reviewSnapshotText
-          : (verifiedForBackfill?.messageText ?? contentText);
-
-      const MAX_AGGREGATED_DESCRIPTION_LENGTH = 4000;
-      let candidate = similarReport;
-      let updated = false;
-
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const currentCount = candidate.reportCount;
-        const baseDescription = candidate.description ?? "";
-        const newestLine = `\nReporter ${currentCount + 1} (${reason}): ${(description ?? "").slice(0, 280)}`;
-        const keptPrefix = baseDescription.slice(
-          0,
-          Math.max(0, MAX_AGGREGATED_DESCRIPTION_LENGTH - newestLine.length),
-        );
-        const cappedDescription = keptPrefix + newestLine;
-
-        const casResult = await prisma.moderationReport.updateMany({
-          where: {
-            id: candidate.id,
-            reportCount: currentCount,
-            status: { in: ["PENDING", "UNDER_REVIEW"] },
-          },
-          data: {
-            reportCount: { increment: 1 },
-            description: cappedDescription,
-            ...(candidate.contentText === null && backfillContentText
-              ? { contentText: backfillContentText }
-              : {}),
-          },
-        });
-
-        if (casResult.count > 0) {
-          updated = true;
-          break;
-        }
-
-        const reloaded = await prisma.moderationReport.findUnique({
-          where: { id: candidate.id },
-        });
-        if (
-          !reloaded ||
-          (reloaded.status !== "PENDING" && reloaded.status !== "UNDER_REVIEW")
-        ) {
-          candidate = reloaded ?? candidate;
-          break;
-        }
-        candidate = reloaded;
-      }
-
-      if (updated) {
-        return NextResponse.json({
-          message: "Report submitted successfully",
-          reportId: candidate.id,
-          reportReference: formatReportReference(candidate.id),
-          aggregated: true,
-        });
-      }
-      if (
-        candidate.status === "PENDING" ||
-        candidate.status === "UNDER_REVIEW"
-      ) {
-        return NextResponse.json(
-          { error: "Concurrent report update conflict; please retry" },
-          { status: 409 },
-        );
-      }
-    }
-
-    // Verified against Stream, not trusted from the caller — see
-    // resolveReportedMessage. Only a MESSAGE report may carry a message at all.
-    const verifiedMessage =
-      type === "MESSAGE"
-        ? await resolveReportedMessage(streamMessageId, target)
-        : { streamMessageId: null, streamChannelCid: null, messageText: null };
 
     let effectiveContentText = contentText;
     if (type === "REVIEW") {
       effectiveContentText = reviewSnapshotText ?? undefined;
     } else if (type === "MESSAGE") {
-      effectiveContentText = verifiedMessage.messageText ?? contentText;
+      effectiveContentText = verifiedMessage.messageText ?? undefined;
     }
 
     // Create new report
@@ -416,6 +324,14 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
+    if (isUniqueViolation(error)) {
+      return NextResponse.json(
+        {
+          error: "You have already reported this content; reload your reports",
+        },
+        { status: 409 },
+      );
+    }
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "report" } },

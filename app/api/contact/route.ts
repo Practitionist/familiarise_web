@@ -109,7 +109,7 @@ async function recordPublicGrievanceTicket(
     const now = new Date();
     const ref = await allocateTicketReference(tx, now);
     const name = `${data.firstName} ${data.lastName}`.trim();
-    await tx.supportTicket.create({
+    await tx.supportCase.create({
       data: {
         referenceNumber: ref,
         title: `[Grievance] ${data.subject || "Public Grievance"}`,
@@ -117,7 +117,22 @@ async function recordPublicGrievanceTicket(
         category: "GRIEVANCE",
         status: "OPEN",
         priority: "HIGH",
-        userId,
+        requesterUserId: userId,
+        submitterUserId: userId,
+        activeChannel: "HUMAN",
+        externalRequesterEmail: data.email,
+        externalRequesterName: name,
+        messageSeq: 1,
+        messages: {
+          create: {
+            seq: 1,
+            sender: "USER",
+            authorUserId: null,
+            body: data.message,
+            metadata: { origin: "public-grievance", email: data.email, name },
+          },
+        },
+        events: { create: { kind: "CREATED", toValue: "OPEN" } },
         lastMessageAt: now,
         ...slaDeadlinesFor("HIGH", now),
       },
