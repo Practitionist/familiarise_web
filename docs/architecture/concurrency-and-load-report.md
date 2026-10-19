@@ -628,7 +628,7 @@ npm run test:race
 npx tsx tests/typescript/test-race-condition-fix.ts
 ```
 
-If either test fails — more than one booking succeeds — the serializable isolation guard is not applied correctly. The fix is to wrap the relevant Prisma calls in `serializableRetry(() => prisma.$transaction(..., { isolationLevel: 'Serializable' }))`.
+Each scenario asserts independently on the expected success count, the expected conflict count, and zero unexpected errors — and on the real-API paths, that no PENDING hold is left behind. Only an **overbooking** symptom, more than one winner, points at the isolation guard; the fix for that is to wrap the relevant Prisma calls in `serializableRetry(() => prisma.$transaction(..., { isolationLevel: 'Serializable' }))`. A wrong conflict count, an unexpected 5xx or a leftover hold is a different fault and should be read as one.
 
 ### Action 3 — Upgrade to Netlify Pro Before Launch (Priority: High)
 
