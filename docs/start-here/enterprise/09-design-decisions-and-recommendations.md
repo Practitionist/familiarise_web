@@ -209,7 +209,7 @@ Marketing can describe an organization-funded pool, but the current allowance co
 
 **Recommended option.** Preserve the law code, applicable date, rate and identity snapshot with financial evidence. Examples should state their tax assumptions. A future legal change should affect new applicable events and correction rules, rather than silently rewriting old payouts.
 
-**Why.** The Income Tax Department's transition guidance uses the earlier credit/payment event to select the governing Act around 1 April 2026. Payment date alone can therefore select the wrong regime. See the official [TDS transition FAQs](https://www.incometax.gov.in/iec/foportal/help/all-topics/e-filing-services/%20tds%20compliance-faq).
+**Why.** For TDS provisions triggered by the earlier of credit or payment, the Income Tax Department's transition guidance uses that event to select the governing Act around 1 April 2026. Payment date alone can select the wrong regime for those provisions. Salary TDS follows the payment date and must be treated separately. See the official [TDS transition FAQs](https://www.incometax.gov.in/iec/foportal/help/all-topics/e-filing-services/%20tds%20compliance-faq).
 
 **Alternative.** A single globally configured percentage cannot represent residency, legal category, thresholds, exceptions and historical corrections. A fully configurable tax engine would also be excessive without present needs; use the implemented typed tax components and explicit review for classifications that remain uncertain.
 

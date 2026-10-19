@@ -129,7 +129,7 @@ Appointment IDs can be supplied as a set. The utilization writer subtracts alrea
 
 The 80% warning is a separate notification threshold. It does not change whether the booking is covered. CREDIT_POOL compares consumed paise with budget paise; LICENSED_SEAT compares used engagement count with the engagement cap.
 
-For the cycle-level breaker, the engine sums nonterminal OverageEvent base and surcharge amounts. A billed-but-unpaid CHARGE_ORG event continues to consume the ceiling; a reversed, blocked, or failed event does not. This allows a confirmed refund or failed member collection to return capacity.
+For the cycle-level breaker, the engine sums PENDING, ACCRUED and CHARGED OverageEvent base and surcharge amounts. A billed-but-unpaid CHARGE_ORG event continues to consume the ceiling; a reversed, blocked, or failed event does not. This allows a confirmed refund or failed member collection to return capacity.
 
 ## 6. Configuration validation and edit history
 

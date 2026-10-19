@@ -70,12 +70,13 @@ GitHub Actions run daily and weekly operations such as audit pruning, consent re
 
 ### Cron lease and job execution
 
-`lib/cron/with-cron-lock.ts` uses `SystemJobExecution` as the lease record. A unique partial index in `prisma/sql/check-constraints.sql` admits one recent `RUNNING` row per job name. A run first marks expired leases failed, then checks for an active row and inserts a new `RUNNING` record. The callback's result marks the row completed; thrown errors mark it failed and truncate stored error details. A heartbeat is written to Redis on success, but Postgres remains the authoritative lease and execution trail.
+`lib/cron/with-cron-lock.ts` uses `SystemJobExecution` as the lease record. A unique partial index in `prisma/sql/check-constraints.sql` admits one recent `RUNNING` row per job name. A run first marks expired leases failed, then checks for an active row and inserts a new `RUNNING` record. A successful callback result marks the row completed. A resolved result with `success === false` or `overallSuccess === false` also marks it FAILED; thrown errors mark it failed and truncate stored error details. A heartbeat is written to Redis on success, but Postgres remains the authoritative lease and execution trail.
 
 ```mermaid
 stateDiagram-v2
   [*] --> RUNNING: lease create succeeds
-  RUNNING --> COMPLETED: callback resolves
+  RUNNING --> COMPLETED: callback resolves successfully
+  RUNNING --> FAILED: result success or overallSuccess is false
   RUNNING --> FAILED: callback throws
   RUNNING --> FAILED: lease expires and a later run sweeps it
   RUNNING --> RUNNING: periodic lease re-arm while long job runs

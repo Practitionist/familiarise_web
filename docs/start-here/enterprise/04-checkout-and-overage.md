@@ -116,7 +116,7 @@ Refund reversal appends negative usage rows and CAS-decrements the counters. Rev
 
 computeOverageForBooking() is the common pure mapper used by overage preview and checkout. It receives the pre-booking assignment usage, booking price, plan subtype, selected caps, behavior, prior cycle overage and surcharge bps.
 
-For a CREDIT_POOL, let P be booking price, B be cycle budget, U be consumed value, E be engagement count and C be price cap per engagement:
+For a CREDIT_POOL, let P be booking price, B be cycle budget, U be pre-booking consumed value, E be the current booking's `engagementsConsumed`, and C be price cap per engagement:
 
     remaining = max(0, B - U)
     covered = min(P, remaining, E × C when C is configured)
@@ -147,7 +147,7 @@ The preview endpoint returns an advisory result before payment. Distinguish mapp
 
 ## 6. Per-cycle breaker
 
-The breaker counts the sum of prior nonterminal event basePaise plus surchargePaise for the current ProgramAssignment cycle. GST does not consume the ceiling. A mid-cycle invoice does not reset it. Reversed, failed and blocked events do not consume ceiling; rolled-cycle predecessor assignment is considered for the equal-period cancelled-predecessor edge case.
+The breaker counts the sum of prior PENDING, ACCRUED, and CHARGED event basePaise plus surchargePaise for the current ProgramAssignment cycle. Additional GST on the surcharge does not consume the ceiling. A mid-cycle invoice does not reset it. Reversed, failed and blocked events do not consume ceiling; rolled-cycle predecessor assignment is considered for the equal-period cancelled-predecessor edge case.
 
 If existing cycle overage plus the new tax-exclusive marginal exceeds maxOveragePerCyclePaise, checkout throws PROGRAM_CAP_EXHAUSTED (HTTP 402) regardless of CHARGE_MEMBER or CHARGE_ORG. It is a modeled limit, not a gateway failure.
 
