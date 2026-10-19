@@ -237,6 +237,9 @@ it("keeps an over-threshold payout PENDING after the org approves, and only a th
   actorId = "admin_1";
   expect((await door(approve, { id: "op_1" })).status).toBe(200);
   expect(payout).toMatchObject({ status: "APPROVED", approvedBy: "admin_1" });
+  actorId = "admin_2";
+  expect((await door(approve, { id: "op_1" })).status).toBe(409);
+  expect(payout.approvedBy).toBe("admin_1");
 });
 
 it("a platform hold blocks processing and its release unblocks it", async () => {

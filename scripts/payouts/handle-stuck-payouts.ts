@@ -441,56 +441,69 @@ async function handleStuckOrgPayouts(
     return run;
   }
 
+  // One row's failure is recorded and never blocks the rows behind it.
   for (const payout of stuck) {
-    let gatewayPayoutId = payout.gatewayPayoutId;
-    if (!gatewayPayoutId) {
-      const ref = await findRazorpayPayoutByReference(payout.id);
-      if (ref.kind === "gateway_error" || ref.kind === "ambiguous") {
-        run.errors.push(
-          `OrgPayout ${payout.id}: reference lookup ${ref.kind} (${ref.detail})`,
-        );
-        continue;
-      }
-      if (ref.kind === "none") {
-        const reset = await prisma.organizationPayout.updateMany({
-          where: {
-            id: payout.id,
-            status: PayoutStatus.PROCESSING,
-            gatewayPayoutId: null,
-          },
-          data: { status: PayoutStatus.APPROVED },
-        });
-        if (reset.count === 0) run.skipped++;
-        else run.retried++;
-        continue;
-      }
-      await prisma.organizationPayout.updateMany({
-        where: { id: payout.id, gatewayPayoutId: null },
-        data: { gatewayPayoutId: ref.providerPayoutId },
-      });
-      gatewayPayoutId = ref.providerPayoutId;
+    try {
+      await reconcileStuckOrgPayout(payout, run);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      run.errors.push(`OrgPayout ${payout.id}: ${message}`);
     }
-
-    const lookup = await getRazorpayPayoutStatus(gatewayPayoutId);
-    if (lookup.kind === "unknown_id") {
-      await markOrgPayoutFailed(payout.id, "GATEWAY_UNKNOWN_ID");
-      run.retired.push(payout.id);
-      continue;
-    }
-    if (lookup.kind === "gateway_error") {
-      run.errors.push(
-        `OrgPayout ${payout.id}: Could not query gateway status (${lookup.detail})`,
-      );
-      continue;
-    }
-    const moved = await applyOrgGatewayStatus(payout.id, {
-      status: lookup.status,
-      utr: lookup.utr,
-      failureReason: lookup.failureMessage || lookup.failureReason,
-    });
-    if (moved) run.reconciled++;
   }
   return run;
+}
+
+async function reconcileStuckOrgPayout(
+  payout: { id: string; gatewayPayoutId: string | null },
+  run: StuckOrgPayoutsRun,
+): Promise<void> {
+  let gatewayPayoutId = payout.gatewayPayoutId;
+  if (!gatewayPayoutId) {
+    const ref = await findRazorpayPayoutByReference(payout.id);
+    if (ref.kind === "gateway_error" || ref.kind === "ambiguous") {
+      run.errors.push(
+        `OrgPayout ${payout.id}: reference lookup ${ref.kind} (${ref.detail})`,
+      );
+      return;
+    }
+    if (ref.kind === "none") {
+      const reset = await prisma.organizationPayout.updateMany({
+        where: {
+          id: payout.id,
+          status: PayoutStatus.PROCESSING,
+          gatewayPayoutId: null,
+        },
+        data: { status: PayoutStatus.APPROVED },
+      });
+      if (reset.count === 0) run.skipped++;
+      else run.retried++;
+      return;
+    }
+    await prisma.organizationPayout.updateMany({
+      where: { id: payout.id, gatewayPayoutId: null },
+      data: { gatewayPayoutId: ref.providerPayoutId },
+    });
+    gatewayPayoutId = ref.providerPayoutId;
+  }
+
+  const lookup = await getRazorpayPayoutStatus(gatewayPayoutId);
+  if (lookup.kind === "unknown_id") {
+    await markOrgPayoutFailed(payout.id, "GATEWAY_UNKNOWN_ID");
+    run.retired.push(payout.id);
+    return;
+  }
+  if (lookup.kind === "gateway_error") {
+    run.errors.push(
+      `OrgPayout ${payout.id}: Could not query gateway status (${lookup.detail})`,
+    );
+    return;
+  }
+  const moved = await applyOrgGatewayStatus(payout.id, {
+    status: lookup.status,
+    utr: lookup.utr,
+    failureReason: lookup.failureMessage || lookup.failureReason,
+  });
+  if (moved) run.reconciled++;
 }
 
 /**
