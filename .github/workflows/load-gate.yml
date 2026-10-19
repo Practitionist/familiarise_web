@@ -83,8 +83,8 @@ jobs:
       # the respond leg needs its own credential; a buyer answering their own
       # proposal is refused 404 by design.
       CONSULTANT_COOKIES: ${{ secrets.LOAD_GATE_CONSULTANT_TOKEN }}
-      # Fallback when no cookies are supplied. `SeedPass123!` is the seed
-      # suite's password; the harness signs in at most four of each pool.
+      # Fallback when no cookies are supplied. the seed default is the
+      # seed suite's password; the harness signs in at most four of each pool.
       BUYER_EMAILS: ${{ secrets.LOAD_GATE_BUYER_EMAILS }}
       ORG_ADMIN_EMAILS: ${{ secrets.LOAD_GATE_ORG_ADMIN_EMAILS }}
       BUYER_PASSWORD: ${{ secrets.LOAD_GATE_BUYER_PASSWORD }}
