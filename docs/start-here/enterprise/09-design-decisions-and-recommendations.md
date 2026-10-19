@@ -79,6 +79,8 @@ A recommendation becomes ready to implement when the triggering user flow, preci
 
 **Why.** A four-hour consultation can be one engagement while costing more than a shorter consultation. A wallet with ample cash can still fail program eligibility. A member with unused engagement count can still select an offering outside its covered plan types or allowed panel.
 
+Marketing can describe an organization-funded pool, but the current allowance counter is per assignment; the wallet or invoice credit limit is a separate organization-level financial control. For example, two assignments with 10,000 credits each represent ₹20,000 of nominal allowances, not one ₹10,000 shared counter. Label those units and scopes explicitly before promising a shared company budget.
+
 **Alternative.** A universal “credits remaining” number is convenient but makes count and money appear interchangeable. That produces support errors and misleading forecasts. A future normalized display can summarize several measures only if it preserves their underlying unit and explains which constraint will actually block a booking.
 
 ## Decision 6: Preserve per-allocation subscription evidence

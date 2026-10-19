@@ -243,6 +243,37 @@ The endpoint list is representative for the page tree, not a permission bypass. 
 `organizationId`; UUID or CUID possession is not a grant. Commands that touch money or status use their own expected-state checks, and successful
 mutation is audited within the same transaction where required.
 
+## Public enterprise entry and the sales pipeline
+
+The public entry pages are `app/enterprise/page.tsx`, `app/enterprise/team-training/page.tsx`, and `app/enterprise/corporate-mentorship/page.tsx`. They present sponsor use cases and send the primary “Talk to sales” action to `/contactus`. They do not create a contract, assign seats, collect an enterprise subscription, or enable hosting. Team training emphasizes licensed seats; mentorship emphasizes credits and choice of experts. Those are product recipes over the same funding/program model, not additional program enums.
+
+The pages supply metadata, FAQ data and typed content to `app/enterprise/_components/EnterprisePageLayout.tsx` and `app/enterprise/_components/EnterpriseSections.tsx`. The server-page boundary owns route metadata and content; the client sections own presentation and motion. Their calls to action separate the sponsor sales conversation from the public organization directory. No public marketing claim should be treated as evidence that a gated settlement path is enabled.
+
+### Contact intake component
+
+`POST /api/contact`, implemented in `app/api/contact/route.ts`, is intentionally public because a prospect may not have an account. It applies a per-IP spam limit, validates lengths and email/category fields with Zod, and checks a hidden honeypot. A filled honeypot receives the normal 202 shape while creating no lead and sending no inquiry email.
+
+Only category `enterprise` or `team-training` creates a `Lead`. The source hashes the UTC day plus the submitted persisted fields, with normalized email, into `submissionKey`; the unique schema field deduplicates an identical retry within that day. A changed inquiry or later-day inquiry can create a new lead. This is contact deduplication, not a permanent one-lead-per-company rule. The stored fields include contact name/email, phone, category, subject and message; `companyName` starts null in this intake.
+
+The route records the lead before sending the sales inquiry through guarded email delivery. An email staged for retry can still produce an accepted response. A lead row is therefore durable intake evidence independent of immediate mail delivery. It does not establish an organization membership, an accepted commercial offer, or a customer entitlement. The same generic contact route has a grievance category with a separate support-ticket path; that is not an enterprise sales lead or the authenticated `DpdpGrievance` endpoint.
+
+### Backoffice lead component
+
+The page at `app/dashboard/(backoffice)/[tree]/leads/page.tsx` calls `requireBackofficePage("leads.manage", tree)` and renders `components/admin/LeadsManagement.tsx`. The list API, `app/api/admin/leads/route.ts`, checks privileged authentication, validates an optional status, and returns a newest-first cursor page of up to fifty leads. The mutation API, `app/api/admin/leads/[leadId]/route.ts`, validates the requested status, rate-limits the privileged operator, and conditionally changes only an allowed prior state.
+
+| Current state             | Permitted next state      | Meaning                                                                |
+| ------------------------- | ------------------------- | ---------------------------------------------------------------------- |
+| NEW                       | CONTACTED or CLOSED_LOST  | Intake awaits contact, or the inquiry is closed without advancing.     |
+| CONTACTED                 | QUALIFIED or CLOSED_LOST  | Sales has made contact and can qualify the opportunity.                |
+| QUALIFIED                 | CLOSED_WON or CLOSED_LOST | The commercial outcome is recorded.                                    |
+| CLOSED_WON or CLOSED_LOST | None                      | Terminal; the API refuses a replay or further advance with a conflict. |
+
+A lead cannot skip qualification on the path to CLOSED_WON. The `updateMany` allowed-from predicate is the enforcer; a stale concurrent operator receives 409 and must refresh. Recording CLOSED_WON changes the sales row only. Organization creation, verification, contracts and assignments remain explicit workflows described in [identity and lifecycle](02-identity-governance-and-lifecycle.md).
+
+For example, a procurement contact submits the same team-training inquiry twice on 26 October 2026 UTC. The lead uniqueness prevents duplicate intake rows for that identical daily submission; email retry behavior is a separate concern. Sales advances NEW to CONTACTED, then QUALIFIED, then CLOSED_WON. The organization still requires onboarding and approved commercial setup before a learner can book with sponsored funding.
+
+**Recommended boundary.** Keep public intake, sales progress and tenant provisioning separate until a current automation requirement justifies connecting them. Any future “convert lead” command should explicitly identify its resulting organization and idempotency behavior; a sales status alone should not mint a funded account. Also distinguish a shared organization wallet from per-assignment credit allowances in marketing: the current program meter is not a single shared company-wide counter.
+
 ## 7. Public directory and branding boundary
 
 The public org directory is `/explore/enterprise/organisations`, backed by `GET /api/organizations/public` and

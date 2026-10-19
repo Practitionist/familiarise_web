@@ -59,6 +59,7 @@ The chapters explain each component's responsibility, durable data, input and ou
 | Organization billing, purchase orders, payouts and spend            | [06](06-dashboards-and-user-journeys.md)      | [Settlement](05-ledger-billing-and-settlement.md).                                   |
 | Organization audit, analytics, support, settings and exports        | [06](06-dashboards-and-user-journeys.md)      | [Data boundaries](07-compliance-privacy-and-data.md).                                |
 | Cross-company workspace and platform backoffice                     | [06](06-dashboards-and-user-journeys.md)      | [Operational evidence](08-operations-and-integrations.md).                           |
+| Enterprise marketing, contact intake and sales leads                | [06](06-dashboards-and-user-journeys.md)      | [Tenant provisioning](02-identity-governance-and-lifecycle.md).                      |
 | Public directory, branding and plan visibility                      | [06](06-dashboards-and-user-journeys.md)      | [Capability versus visibility](02-identity-governance-and-lifecycle.md).             |
 | Consent, grievances and breach intake                               | [07](07-compliance-privacy-and-data.md)       | [Compliance completion recommendations](09-design-decisions-and-recommendations.md). |
 | Data export generation, authorization and download                  | [07](07-compliance-privacy-and-data.md)       | [Scheduled export worker](08-operations-and-integrations.md).                        |
