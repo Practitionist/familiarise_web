@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import { callOpsDoor } from "@/components/dashboard/backoffice/money/ops-door";
 
 type OrgAction = "VERIFY" | "REJECT" | "SUSPEND" | "REACTIVATE" | "DEACTIVATE";
 
@@ -71,13 +72,10 @@ export function OrgLifecycleActions({
   const actions = ALLOWED[org.status] ?? [];
 
   const run = async (action: OrgAction, reason?: string) => {
-    const res = await fetch(`/api/admin/organizations/${org.id}/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, reason }),
+    await callOpsDoor(`/api/admin/organizations/${org.id}/verify`, {
+      action,
+      reason,
     });
-    const json = (await res.json().catch(() => ({}))) as { error?: string };
-    if (!res.ok) throw new Error(json.error ?? "That did not go through.");
     toast({ title: `${org.name}: ${COPY[action].label.toLowerCase()} done` });
     for (const key of [
       ["admin-organizations"],

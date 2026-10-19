@@ -37,6 +37,7 @@ export {
   createOrgPayoutBatch,
   createOrgPayoutBatches,
   approveOrgPayout,
+  applyOrgGatewayStatus,
   processOrgPayout,
   processPendingOrgPayouts,
   markOrgPayoutCompleted,

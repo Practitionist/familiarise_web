@@ -47,6 +47,8 @@ interface PayoutItem {
   periodEnd: string;
   processedAt: string | null;
   createdAt: string;
+  platformApprovalRequiredAt: string | null;
+  platformHeldAt: string | null;
 }
 
 interface PayoutsResponse {
@@ -107,6 +109,25 @@ const STATUS: Record<string, { label: string; tone: Tone }> = {
   FAILED: { label: "Failed", tone: "critical" },
   CANCELLED: { label: "Cancelled", tone: "neutral" },
 };
+
+/** A large or recently re-routed payout also waits for Familiarise; a held one waits on Familiarise. */
+function statusOf(payout: PayoutItem): { label: string; tone: Tone } {
+  if (
+    payout.platformHeldAt &&
+    ["PENDING", "APPROVED"].includes(payout.status)
+  ) {
+    return { label: "Held by Familiarise", tone: "caution" };
+  }
+  if (payout.status === "PENDING" && payout.platformApprovalRequiredAt) {
+    return { label: "Awaiting Familiarise approval", tone: "caution" };
+  }
+  return (
+    STATUS[payout.status] ?? {
+      label: humanizeEnum(payout.status),
+      tone: "neutral" as const,
+    }
+  );
+}
 
 // Filter options for the status dropdown (#777 §B). "ALL" is "no filter".
 const STATUS_FILTERS = [
@@ -406,10 +427,7 @@ export function PayoutRunsPanel({
                 </thead>
                 <tbody>
                   {visiblePayouts.map((payout) => {
-                    const cfg = STATUS[payout.status] ?? {
-                      label: humanizeEnum(payout.status),
-                      tone: "neutral" as const,
-                    };
+                    const cfg = statusOf(payout);
                     // #776 §B: while live payouts are off, a PROCESSING
                     // row is held at the platform, not in flight — label
                     // it as such so we never imply money is moving.
@@ -523,19 +541,21 @@ export function PayoutRunsPanel({
                           ) : (
                             <div className="flex flex-col items-center gap-1">
                               <StatusBadge {...cfg} />
-                              {canApprove && payout.status === "PENDING" && (
-                                <ConfirmDialog
-                                  title="Approve this payout batch?"
-                                  description="Approved batches are paid in the next payout run. If you created this batch, another Owner or Billing admin has to approve it."
-                                  confirmLabel="Approve"
-                                  onConfirm={() => approve(payout.id)}
-                                  trigger={
-                                    <Button size="sm" variant="outline">
-                                      Approve
-                                    </Button>
-                                  }
-                                />
-                              )}
+                              {canApprove &&
+                                payout.status === "PENDING" &&
+                                !payout.platformApprovalRequiredAt && (
+                                  <ConfirmDialog
+                                    title="Approve this payout batch?"
+                                    description="Approved batches are paid in the next payout run. If you created this batch, another Owner or Billing admin has to approve it."
+                                    confirmLabel="Approve"
+                                    onConfirm={() => approve(payout.id)}
+                                    trigger={
+                                      <Button size="sm" variant="outline">
+                                        Approve
+                                      </Button>
+                                    }
+                                  />
+                                )}
                             </div>
                           )}
                         </td>

@@ -21,7 +21,11 @@
 import prisma from "../../lib/prisma";
 import { PayoutStatus, PaymentGateway, EarningStatus } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
-import { handlePayoutWebhook } from "@/lib/payments/payouts";
+import {
+  applyOrgGatewayStatus,
+  handlePayoutWebhook,
+  markOrgPayoutFailed,
+} from "@/lib/payments/payouts";
 import { resolveRazorpayXCredentials } from "@/lib/payments/payouts/razorpay-payouts";
 import { releaseClawbackRecovery } from "@/lib/payments/payouts/clawback-recovery";
 import {
@@ -350,9 +354,18 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
     }
   }
 
+  const org = await handleStuckOrgPayouts(stuckThreshold, razorpayConfigured);
+  reconciledCount += org.reconciled;
+  retriedCount += org.retried;
+  skippedCount += org.skipped;
+  retiredCount += org.retired.length;
+  retired.push(...org.retired);
+  errors.push(...org.errors);
+  const totalProcessed = stuckPayouts.length + org.processed;
+
   // Summary
   console.log("\n📊 Stuck Payouts Summary:");
-  console.log(`   Total processed: ${stuckPayouts.length}`);
+  console.log(`   Total processed: ${totalProcessed}`);
   console.log(`   Reconciled: ${reconciledCount}`);
   console.log(`   Reset for retry: ${retriedCount}`);
   console.log(`   Permanently failed: ${failedCount}`);
@@ -376,7 +389,7 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
 
   return {
     success: errors.length === 0,
-    totalProcessed: stuckPayouts.length,
+    totalProcessed,
     reconciledCount,
     retriedCount,
     failedCount,
@@ -386,6 +399,98 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
     errors,
     timestamp: new Date().toISOString(),
   };
+}
+
+interface StuckOrgPayoutsRun {
+  processed: number;
+  reconciled: number;
+  retried: number;
+  skipped: number;
+  retired: string[];
+  errors: string[];
+}
+
+/**
+ * The same rules for OrganizationPayout: a row with no gateway id is looked up
+ * by reference id, and only a confirmed "gateway has none" re-arms it APPROVED,
+ * so the next run re-checks holds, disputes and the account before resending.
+ */
+async function handleStuckOrgPayouts(
+  stuckThreshold: Date,
+  razorpayConfigured: boolean,
+): Promise<StuckOrgPayoutsRun> {
+  const run: StuckOrgPayoutsRun = {
+    processed: 0,
+    reconciled: 0,
+    retried: 0,
+    skipped: 0,
+    retired: [],
+    errors: [],
+  };
+  const stuck = await prisma.organizationPayout.findMany({
+    where: {
+      status: PayoutStatus.PROCESSING,
+      updatedAt: { lt: stuckThreshold },
+    },
+    select: { id: true, gatewayPayoutId: true },
+    orderBy: { updatedAt: "asc" },
+  });
+  run.processed = stuck.length;
+  if (stuck.length > 0 && !razorpayConfigured) {
+    run.skipped += stuck.length;
+    return run;
+  }
+
+  for (const payout of stuck) {
+    let gatewayPayoutId = payout.gatewayPayoutId;
+    if (!gatewayPayoutId) {
+      const ref = await findRazorpayPayoutByReference(payout.id);
+      if (ref.kind === "gateway_error" || ref.kind === "ambiguous") {
+        run.errors.push(
+          `OrgPayout ${payout.id}: reference lookup ${ref.kind} (${ref.detail})`,
+        );
+        continue;
+      }
+      if (ref.kind === "none") {
+        const reset = await prisma.organizationPayout.updateMany({
+          where: {
+            id: payout.id,
+            status: PayoutStatus.PROCESSING,
+            gatewayPayoutId: null,
+          },
+          data: { status: PayoutStatus.APPROVED },
+        });
+        if (reset.count === 0) run.skipped++;
+        else run.retried++;
+        continue;
+      }
+      await prisma.organizationPayout.updateMany({
+        where: { id: payout.id, gatewayPayoutId: null },
+        data: { gatewayPayoutId: ref.providerPayoutId },
+      });
+      gatewayPayoutId = ref.providerPayoutId;
+    }
+
+    const lookup = await getRazorpayPayoutStatus(gatewayPayoutId);
+    if (lookup.kind === "unknown_id") {
+      await markOrgPayoutFailed(payout.id, "GATEWAY_UNKNOWN_ID");
+      run.retired.push(payout.id);
+      continue;
+    }
+    if (lookup.kind === "gateway_error") {
+      run.errors.push(
+        `OrgPayout ${payout.id}: Could not query gateway status (${lookup.detail})`,
+      );
+      continue;
+    }
+    const moved = await applyOrgGatewayStatus(payout.id, {
+      status: lookup.status,
+      utr: lookup.utr,
+      failureReason: lookup.failureMessage || lookup.failureReason,
+    });
+    if (moved) run.reconciled++;
+  }
+  return run;
 }
 
 /**
