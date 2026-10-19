@@ -58,7 +58,9 @@ jest.mock("../../lib/prisma", () => {
     },
     organization: { findUnique: jest.fn(async () => null) },
     orgAuditLog: { create: jest.fn(async () => ({})) },
-    $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(client)),
+    $transaction: jest.fn(
+      async (fn: (tx: unknown) => unknown): Promise<unknown> => fn(client),
+    ),
   };
   return { __esModule: true, default: client };
 });

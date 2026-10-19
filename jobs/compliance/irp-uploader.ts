@@ -7,9 +7,8 @@
  * connector posts the invoice payload to ClearTax GSP and persists
  * `irn`, `ackNumber`, `signedQrPayload`, `irpStatus`, plus retry
  * telemetry (`irpRetryCount`, `irpLastError`, `irpLastAttemptAt`).
- * When env vars are absent, `generateIrn` returns
- * `{ status: "FAILED", reason: "STUB" }` and the uploader records that
- * as a normal retry — the cron does not crash on missing credentials.
+ * When `PLATFORM_GSTIN` or any `CLEARTAX_*` setting is absent, the run
+ * touches no invoice and returns `skipped: "<NAME> not configured"`.
  *
  * Production approval requires:
  *   1. Sandbox credentials provisioned and end-to-end tested
@@ -31,6 +30,7 @@ import prisma from "@/lib/prisma";
 import { generateIrn } from "@/lib/compliance/irp";
 import { buildIrpPayload } from "@/lib/compliance/irp-payload";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { reportConfigSkip, type ConfigSkip } from "@/lib/cron/config-skip";
 import * as Sentry from "@sentry/nextjs";
 import { isValidGstin } from "@/lib/compliance/gst";
 import { supplierStateCode } from "@/lib/payments/billing/consumer-invoice";
@@ -63,14 +63,17 @@ type SellerIdentity = { gstin: string; stateCode: string };
 // registered with the government and cancellable only inside a 24-hour window,
 // so two runners both believing they hold the lock while Redis is unreachable
 // is the one outcome this job may never risk.
+export interface IrpUploaderResult {
+  processed: number;
+  failed: number;
+  skippedRows: number;
+  skipped?: ConfigSkip;
+}
+
 export async function runIrpUploader(opts: {
   limit?: number;
   windowStart?: Date;
-}): Promise<{
-  processed: number;
-  failed: number;
-  skipped: number;
-}> {
+}): Promise<IrpUploaderResult> {
   return withCronLock("irp-uploader", { failMode: "closed" }, () =>
     runIrpUploaderUnlocked(opts),
   );
@@ -252,14 +255,18 @@ async function processIrpCandidate(
   return "skipped";
 }
 
+function configSkip(
+  skipped: ConfigSkip,
+  windowStart?: Date,
+): IrpUploaderResult {
+  reportConfigSkip("irp-uploader", skipped, windowStart);
+  return { processed: 0, failed: 0, skippedRows: 0, skipped };
+}
+
 async function runIrpUploaderUnlocked(opts: {
   limit?: number;
   windowStart?: Date;
-}): Promise<{
-  processed: number;
-  failed: number;
-  skipped: number;
-}> {
+}): Promise<IrpUploaderResult> {
   console.log("[cron][irp-uploader] starting");
   Sentry.logger.info("job:irp-uploader started");
 
@@ -269,10 +276,7 @@ async function runIrpUploaderUnlocked(opts: {
   // queue on a fixable config slip.
   const sellerGstin = SELLER.gstin;
   if (!sellerGstin) {
-    console.error(
-      "[cron][irp-uploader] PLATFORM_GSTIN missing or malformed — skipping run",
-    );
-    return { processed: 0, failed: 0, skipped: 0 };
+    return configSkip("PLATFORM_GSTIN not configured", opts.windowStart);
   }
   // #1447 — GSTIN-first seller state; a GSTIN/env mismatch is the same ENV
   // outage as a missing GSTIN, so the run is skipped and every row stays PENDING.
@@ -281,7 +285,7 @@ async function runIrpUploaderUnlocked(opts: {
     seller = { gstin: sellerGstin, stateCode: supplierStateCode() };
   } catch (err) {
     console.error(`[cron][irp-uploader] ${String(err)} — skipping run`);
-    return { processed: 0, failed: 0, skipped: 0 };
+    return { processed: 0, failed: 0, skippedRows: 0 };
   }
   // CR #1234 r5 — preflight the FULL provider configuration. generateIrn
   // marks rows FAILED on a missing CLEARTAX_* credential, so an auth outage
@@ -294,10 +298,10 @@ async function runIrpUploaderUnlocked(opts: {
     "CLEARTAX_GSTIN",
   ].filter((k) => !process.env[k]?.trim());
   if (missingCleartax.length > 0) {
-    console.error(
-      `[cron][irp-uploader] IRP provider config missing (${missingCleartax.join(", ")}) — skipping run; invoices stay PENDING`,
+    return configSkip(
+      `${missingCleartax.join(", ")} not configured`,
+      opts.windowStart,
     );
-    return { processed: 0, failed: 0, skipped: 0 };
   }
 
   const thirtyDaysAgo = new Date();
@@ -307,7 +311,7 @@ async function runIrpUploaderUnlocked(opts: {
 
   let processed = 0;
   let failed = 0;
-  let skipped = 0;
+  let skippedRows = 0;
 
   for (const candidate of candidates) {
     // CR #1234 r5 — per-candidate mapping/submission/state-update lives in
@@ -315,16 +319,16 @@ async function runIrpUploaderUnlocked(opts: {
     const outcome = await processIrpCandidate(candidate, seller);
     if (outcome === "processed") processed++;
     else if (outcome === "failed") failed++;
-    else skipped++;
+    else skippedRows++;
   }
 
   console.log(
-    `[IRP] uploader finished — processed=${processed} failed=${failed} skipped=${skipped}`,
+    `[IRP] uploader finished — processed=${processed} failed=${failed} skipped=${skippedRows}`,
   );
   Sentry.logger.info("job:irp-uploader finished", {
     processed,
     failed,
-    skipped,
+    skippedRows,
   });
-  return { processed, failed, skipped };
+  return { processed, failed, skippedRows };
 }
