@@ -37,6 +37,7 @@ function dn<K extends string>(field: K) {
 }
 
 export const moneyResultExtensions = {
+  supportFinancialRecommendation: { amountPaise: f("amountPaise") },
   billingAccount: {
     walletBalance: fn("walletBalance"),
     creditLimit: fn("creditLimit"),

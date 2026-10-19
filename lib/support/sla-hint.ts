@@ -14,14 +14,14 @@ export function slaStatusBadge(sla: SlaState | null | undefined): {
   if (sla.ackBreached || sla.resolutionBreached) {
     return { label: "Breached", tone: "critical" };
   }
-  if (sla.paused) {
-    return { label: "Waiting on customer", tone: "neutral" };
-  }
   const ackSoon = sla.msToAckDue !== null && sla.msToAckDue <= 6 * HOUR_MS;
   const resolutionSoon =
     sla.msToResolutionDue !== null && sla.msToResolutionDue <= 12 * HOUR_MS;
   if (ackSoon || resolutionSoon) {
     return { label: "Due soon", tone: "warning" };
+  }
+  if (sla.paused) {
+    return { label: "Waiting on customer", tone: "neutral" };
   }
   if (sla.msToAckDue !== null || sla.msToResolutionDue !== null) {
     return { label: "On track", tone: "neutral" };

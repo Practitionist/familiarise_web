@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Lock, Send } from "lucide-react";
 
+import { CaseAttachments } from "@/components/support/CaseAttachments";
+import { useCaseTimeline } from "@/components/support/useCaseTimeline";
 import { SupportBubble } from "@/components/support/SupportBubble";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -70,7 +72,13 @@ export function CaseConversation({
   onInsert: (text: string) => void;
   onSelectReply?: (reply: SavedReply) => void;
 }>) {
-  const canNote = !!data.ticketId;
+  const history = useCaseTimeline(
+    data.caseId,
+    data.timeline,
+    data.nextBeforeSeq,
+    data.hasMore,
+  );
+  const canNote = !!data.caseId;
   const [note, setNote] = useState("");
   const [noteSaved, setNoteSaved] = useState(false);
 
@@ -93,6 +101,10 @@ export function CaseConversation({
   const isNote = mode === "note" && canNote;
   const replyLocked = data.status === "CLOSED" && !isNote;
   const draft = isNote ? note : replyDraft;
+  const latestDraft = useRef({ key: data.key, note, reply: replyDraft });
+  useEffect(() => {
+    latestDraft.current = { key: data.key, note, reply: replyDraft };
+  }, [data.key, note, replyDraft]);
   const submit = async () => {
     const message = draft.trim();
     if (!message || sending || replyLocked) return;
@@ -101,6 +113,12 @@ export function CaseConversation({
     } catch {
       return;
     }
+    const current = latestDraft.current;
+    if (
+      current.key !== data.key ||
+      (isNote ? current.note : current.reply).trim() !== message
+    )
+      return;
     if (isNote) changeNote("");
     else onReplyDraftChange("");
     setNoteSaved(false);
@@ -133,10 +151,20 @@ export function CaseConversation({
         </div>
       )}
       <div className="max-h-[60vh] flex-1 space-y-3 overflow-y-auto p-4">
-        {data.timeline.length === 0 ? (
+        {history.hasMore && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={history.loading}
+            onClick={() => void history.loadOlder()}
+          >
+            Load older messages
+          </Button>
+        )}
+        {history.timeline.length === 0 ? (
           <p className="text-sm text-muted-foreground">No messages yet.</p>
         ) : (
-          data.timeline.map((m) => (
+          history.timeline.map((m) => (
             <SupportBubble
               key={m.id}
               perspective="staff"
@@ -151,6 +179,10 @@ export function CaseConversation({
         <div ref={endRef} />
       </div>
 
+      <CaseAttachments
+        caseId={data.caseId}
+        canUpload={data.status !== "CLOSED"}
+      />
       <div className="space-y-2 border-t border-border p-3">
         {suggested.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">

@@ -507,6 +507,7 @@ export function PlatformSupportSheet({
       ...body
     }: {
       flowId: string;
+      clientTurnId: string;
       nodeId?: string | null;
       chosenOptionId?: string;
       userMessage?: string;
@@ -623,6 +624,7 @@ export function PlatformSupportSheet({
     setBareHumanUrgent(false);
     turn.mutate({
       flowId: flow.id,
+      clientTurnId: crypto.randomUUID(),
       chosenLabel: flow.title,
       epoch: sittingRef.current,
       visitedNodeIdsOverride: [],
@@ -823,7 +825,11 @@ export function PlatformSupportSheet({
               onBareHumanDetailsChange={setBareHumanDetails}
               onBareHumanUrgentChange={setBareHumanUrgent}
               onSubmitTurn={(payload) =>
-                turn.mutate({ ...payload, epoch: sittingRef.current })
+                turn.mutate({
+                  ...payload,
+                  clientTurnId: crypto.randomUUID(),
+                  epoch: sittingRef.current,
+                })
               }
             />
           </div>

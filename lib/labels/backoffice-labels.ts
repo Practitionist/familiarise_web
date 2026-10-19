@@ -76,9 +76,9 @@ export const threadStatus = (v: string | null | undefined) =>
 
 /** #1527 — a Support inbox case: a ticket, or a not-yet-escalated conversation. */
 export const caseStatus = (
-  kind: "ticket" | "thread",
+  kind: "ticket" | "thread" | "case",
   v: string | null | undefined,
-) => (kind === "ticket" ? ticketStatus(v) : threadStatus(v));
+) => (kind === "thread" ? threadStatus(v) : ticketStatus(v));
 
 export const ORG_STATUS: Record<OrgStatus, ToneLabel> = {
   PENDING_VERIFICATION: { label: "Pending verification", tone: "warning" },

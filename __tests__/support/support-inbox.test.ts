@@ -7,8 +7,7 @@
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    supportTicket: { findMany: jest.fn(), count: jest.fn() },
-    appointmentSupportThread: { findMany: jest.fn(), count: jest.fn() },
+    supportCase: { findMany: jest.fn(), count: jest.fn() },
   },
 }));
 
@@ -18,9 +17,7 @@ import { caseKeyOf } from "@/lib/support/case-key";
 import {
   averageFirstResponseMs,
   compareCasesBySla,
-  inboxThreadWhere,
-  inboxTicketWhere,
-  mergeCasePage,
+  inboxCaseWhere,
   parseInboxFilters,
 } from "@/lib/support/inbox-query";
 
@@ -28,55 +25,34 @@ const filters = (query: Record<string, string>) =>
   parseInboxFilters((k) => query[k] ?? null, "me");
 
 describe("inbox views", () => {
-  it("defaults to Needs reply and only lists unescalated conversations", () => {
+  it("uses canonical open human cases for Needs reply", () => {
     const f = filters({});
     expect(f.view).toBe("needs-reply");
-    expect(JSON.stringify(inboxThreadWhere(f))).toContain(
-      '"supportTicketId":null',
+    expect(inboxCaseWhere(f)).toEqual({
+      AND: [
+        { deletedAt: null },
+        { deletedAt: null, status: { notIn: ["RESOLVED", "CLOSED"] } },
+        { activeChannel: "HUMAN", awaitingUserSince: null },
+      ],
+    });
+  });
+  it("filters sessions, assignments, and self serve on the same model", () => {
+    expect(JSON.stringify(inboxCaseWhere(filters({ view: "mine" })))).toContain(
+      '"assignedToId":"me"',
     );
-    expect(JSON.stringify(inboxTicketWhere(f))).toContain(
-      '"awaitingUserSince":null',
-    );
-  });
-
-  it("routes each view to the tables that can hold it", () => {
-    expect(inboxTicketWhere(filters({ view: "self-serve" }))).toBeNull();
-    expect(inboxThreadWhere(filters({ view: "mine" }))).toBeNull();
     expect(
-      inboxThreadWhere(filters({ view: "all", priority: "HIGH" })),
-    ).toBeNull();
+      JSON.stringify(inboxCaseWhere(filters({ view: "self-serve" }))),
+    ).toContain('"activeChannel":"SELF_SERVE"');
     expect(
-      inboxThreadWhere(filters({ view: "all", scope: "platform" })),
-    ).toBeNull();
+      JSON.stringify(
+        inboxCaseWhere(filters({ view: "all", scope: "session" })),
+      ),
+    ).toContain('"appointmentId":{"not":null}');
     expect(
-      inboxTicketWhere(filters({ view: "all", status: "ESCALATED" })),
-    ).toBeNull();
-    expect(
-      JSON.stringify(inboxTicketWhere(filters({ view: "mine" }))),
-    ).toContain('"assignedToId":"me"');
-  });
-});
-
-describe("mergeCasePage", () => {
-  const at = (key: string, last: string | null, created: string) => ({
-    key,
-    lastMessageAt: last ? new Date(last) : null,
-    createdAt: new Date(created),
-  });
-
-  it("orders by last activity, never-active last, then pages the union", () => {
-    const tickets = [
-      at("t_b", "2026-09-03", "2026-09-01"),
-      at("t_a", null, "2026-09-05"),
-    ];
-    const threads = [at("s_c", "2026-09-04", "2026-09-02")];
-    expect(mergeCasePage(tickets, threads, 0, 2).map((r) => r.key)).toEqual([
-      "s_c",
-      "t_b",
-    ]);
-    expect(mergeCasePage(tickets, threads, 2, 2).map((r) => r.key)).toEqual([
-      "t_a",
-    ]);
+      JSON.stringify(
+        inboxCaseWhere(filters({ view: "all", scope: "platform" })),
+      ),
+    ).toContain('"appointmentId":null');
   });
 });
 
@@ -135,9 +111,12 @@ describe("readInboxPage SLA paging", () => {
     resolvedAt: null,
     awaitingUserSince: null,
     pausedSeconds: 0,
-    user: { id: "u", name: "U", email: null, phone: null, role: "USER" },
+    requester: { id: "u", name: "U" },
+    activeChannel: "HUMAN",
+    appointmentId: null,
+    callbackPhone: null,
     assignedTo: null,
-    appointmentSupportThread: null,
+    deletedAt: null,
   });
   // Acknowledged rows: ackDueAt order is the reverse of resolutionDueAt order.
   const fixtures = [
@@ -147,6 +126,7 @@ describe("readInboxPage SLA paging", () => {
 
   const matches = (r: Row, c: Cond): boolean =>
     Object.entries(c).every(([k, v]) => {
+      if (k === "AND") return (v as Cond[]).every((o) => matches(r, o));
       if (k === "OR") return (v as Cond[]).some((o) => matches(r, o));
       if (v === null) return r[k] === null;
       if (typeof v === "object" && v && "not" in v) return r[k] !== null;
@@ -170,7 +150,7 @@ describe("readInboxPage SLA paging", () => {
   };
 
   beforeEach(() => {
-    (prisma.supportTicket.findMany as jest.Mock).mockImplementation(
+    (prisma.supportCase.findMany as jest.Mock).mockImplementation(
       async (args: { where: Cond; orderBy?: Order[]; take?: number }) => {
         const ids = (args.where.id as { in?: string[] } | undefined)?.in;
         if (ids) return fixtures.filter((r) => ids.includes(r.id));
@@ -181,9 +161,7 @@ describe("readInboxPage SLA paging", () => {
           .slice(0, args.take);
       },
     );
-    (prisma.supportTicket.count as jest.Mock).mockResolvedValue(
-      fixtures.length,
-    );
+    (prisma.supportCase.count as jest.Mock).mockResolvedValue(fixtures.length);
   });
 
   it("pages are disjoint and together equal the full SLA order", async () => {
@@ -196,7 +174,7 @@ describe("readInboxPage SLA paging", () => {
       .map((r) => ({
         ...r,
         ackDueAt: r.acknowledgedAt ? null : r.ackDueAt,
-        key: caseKeyOf({ kind: "ticket", id: r.id }),
+        key: caseKeyOf({ kind: "case", id: r.id }),
       }))
       .sort(compareCasesBySla)
       .map((r) => r.key);

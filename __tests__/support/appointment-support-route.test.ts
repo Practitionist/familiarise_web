@@ -48,7 +48,7 @@ jest.mock("../../lib/api/appointment-access", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    appointmentSupportThread: { findUnique: jest.fn() },
+    supportCase: { findFirst: jest.fn(), findUnique: jest.fn() },
   },
 }));
 
@@ -81,8 +81,7 @@ import {
 } from "../../app/api/appointments/[appointmentId]/support/route";
 
 const mockedAuthorize = authorizeAppointment as jest.Mock;
-const mockedFindThread = prisma.appointmentSupportThread
-  .findUnique as jest.Mock;
+const mockedFindThread = prisma.supportCase.findFirst as jest.Mock;
 const mockedBuildContext = buildSupportContext as jest.Mock;
 const mockedRunTurn = runSupportTurn as jest.Mock;
 

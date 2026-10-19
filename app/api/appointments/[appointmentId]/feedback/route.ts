@@ -103,8 +103,16 @@ export async function GET(
     const [feedback, openSupportThread] = await Promise.all([
       prisma.appointmentFeedback.findMany({
         where: asProvider
-          ? { appointmentId: { in: scopeIds }, raterRole: "CONSULTEE" }
-          : { appointmentId: { in: scopeIds }, userId: auth.userId },
+          ? {
+              appointmentId: { in: scopeIds },
+              raterRole: "CONSULTEE",
+              deletedAt: null,
+            }
+          : {
+              appointmentId: { in: scopeIds },
+              userId: auth.userId,
+              deletedAt: null,
+            },
         select: {
           id: true,
           appointmentOccurrenceId: true,
@@ -119,18 +127,12 @@ export async function GET(
       // Only the caller's own case softens their prompt; another attendee's stays private.
       asProvider
         ? Promise.resolve(null)
-        : prisma.appointmentSupportThread.findFirst({
+        : prisma.supportCase.findFirst({
             where: {
               appointmentId,
-              userId: auth.userId,
-              OR: [
-                { status: { notIn: ["RESOLVED", "CLOSED"] } },
-                {
-                  supportTicket: {
-                    status: { in: ["OPEN", "IN_PROGRESS", "ON_HOLD"] },
-                  },
-                },
-              ],
+              requesterUserId: auth.userId,
+              deletedAt: null,
+              status: { in: ["OPEN", "IN_PROGRESS", "ON_HOLD", "ESCALATED"] },
             },
             select: { id: true },
           }),
@@ -280,8 +282,16 @@ export async function POST(
         appointmentOccurrenceId: ratedOccurrenceId,
         userId: auth.userId,
       },
-      select: { id: true, rating: true, comment: true },
+      select: { id: true, rating: true, comment: true, deletedAt: true },
     });
+    if (previous?.deletedAt) {
+      return supportError({
+        status: 409,
+        code: "CONFLICT",
+        message: "This rating was removed by our moderation team",
+        context: { route: FEEDBACK_ROUTE, action: "save", appointmentId },
+      });
+    }
     const opinionChanged =
       previous !== null &&
       (previous.rating !== body.data.rating ||
@@ -299,7 +309,7 @@ export async function POST(
     try {
       feedback = previous
         ? await prisma.appointmentFeedback.update({
-            where: { id: previous.id },
+            where: { id: previous.id, deletedAt: null },
             data: {
               rating: body.data.rating,
               comment: body.data.comment,
@@ -333,15 +343,15 @@ export async function POST(
             appointmentOccurrenceId: ratedOccurrenceId,
             userId: auth.userId,
           },
-          select: { id: true, rating: true, comment: true },
+          select: { id: true, rating: true, comment: true, deletedAt: true },
         });
-        if (concurrent) {
+        if (concurrent && !concurrent.deletedAt) {
           const concurrentOpinionChanged =
             concurrent.rating !== body.data.rating ||
             (body.data.comment !== undefined &&
               (concurrent.comment ?? "") !== body.data.comment);
           feedback = await prisma.appointmentFeedback.update({
-            where: { id: concurrent.id },
+            where: { id: concurrent.id, deletedAt: null },
             data: {
               rating: body.data.rating,
               comment: body.data.comment,

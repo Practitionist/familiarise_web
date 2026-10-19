@@ -39,6 +39,7 @@ export const REFUND_SUMMARY_SELECT = {
   status: true,
   reason: true,
   createdAt: true,
+  updatedAt: true,
 } as const;
 
 /** The buyer's refund details: the gateway refund id is the support reference;

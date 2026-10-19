@@ -89,6 +89,39 @@ afterEach(() => {
 });
 
 describe("1. stageBell(tx, ...) preference gating, routing mode & quiet hours", () => {
+  it("never schedules a delayed survey earlier than its explicit receipt window", async () => {
+    const tx = {
+      user: {
+        findMany: jest.fn(async () => [
+          {
+            id: "recipient",
+            timezone: "UTC",
+            notificationPreferences: {
+              allNotifications: true,
+              inAppEnabled: true,
+            },
+          },
+        ]),
+      },
+      notificationOutbox: {
+        upsert: jest.fn(async ({ create }) => ({ id: "scheduled", ...create })),
+      },
+    };
+    const notBefore = new Date(Date.now() + 24 * 3_600_000);
+    await stageBell(tx as never, {
+      workflowId: "support-ticket-update",
+      recipients: ["recipient"],
+      payload: { ticketId: "case", status: "Resolved" },
+      dedupeKey: "survey",
+      notBefore,
+    });
+    expect(tx.notificationOutbox.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ notBefore }),
+      }),
+    );
+  });
+
   it("filters out EMAIL_ONLY, NEITHER, allNotifications:false, inAppEnabled:false, and muted categories, computes quiet-hours notBefore, and returns null when all opt out", async () => {
     const txFindMany = jest.fn().mockResolvedValue([
       {

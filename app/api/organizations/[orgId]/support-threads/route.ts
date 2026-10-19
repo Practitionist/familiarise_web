@@ -17,21 +17,21 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { parsePagination } from "@/lib/enterprise/validators";
 import { OrgIdParams } from "@/schemas/support";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
-import {
-  SupportThreadCategoryEnum,
-  SupportThreadStatusEnum,
-} from "@/schemas/enums";
+import { SupportThreadCategoryEnum } from "@/schemas/enums";
 
 const ORG_THREADS_ROUTE = "organizations.support-threads";
 
 const QuerySchema = z.object({
-  status: SupportThreadStatusEnum.optional(),
+  status: z
+    .enum(["OPEN", "IN_PROGRESS", "ESCALATED", "RESOLVED", "CLOSED"])
+    .optional(),
   category: SupportThreadCategoryEnum.optional(),
 });
 
@@ -46,8 +46,8 @@ const THREAD_METADATA_SELECT = {
   createdAt: true,
   lastMessageAt: true,
   resolvedAt: true,
-  supportTicketId: true,
-  user: { select: { id: true, name: true } },
+  ownershipScope: true,
+  requester: { select: { id: true, name: true } },
   appointment: {
     select: {
       appointmentType: true,
@@ -66,7 +66,7 @@ const THREAD_METADATA_SELECT = {
       class: { select: { classPlan: { select: { title: true } } } },
     },
   },
-} satisfies Prisma.AppointmentSupportThreadSelect;
+} satisfies Prisma.SupportCaseSelect;
 
 export async function GET(
   req: NextRequest,
@@ -99,14 +99,16 @@ export async function GET(
     }
     const pagination = parsePagination(url);
 
-    const where: Prisma.AppointmentSupportThreadWhereInput = {
+    const where: Prisma.SupportCaseWhereInput = {
       organizationId: orgId,
+      deletedAt: null,
+      appointmentId: { not: null },
       ...(filters.data.status ? { status: filters.data.status } : {}),
       ...(filters.data.category ? { category: filters.data.category } : {}),
     };
 
     const [threads, total] = await Promise.all([
-      prisma.appointmentSupportThread.findMany({
+      prisma.supportCase.findMany({
         where,
         orderBy: [
           { lastMessageAt: { sort: "desc", nulls: "last" } },
@@ -116,7 +118,7 @@ export async function GET(
         take: pagination.pageSize,
         select: THREAD_METADATA_SELECT,
       }),
-      prisma.appointmentSupportThread.count({ where }),
+      prisma.supportCase.count({ where }),
     ]);
 
     return NextResponse.json({
@@ -129,16 +131,27 @@ export async function GET(
         createdAt: t.createdAt,
         lastMessageAt: t.lastMessageAt ?? t.createdAt,
         resolvedAt: t.resolvedAt,
-        supportTicketId: t.supportTicketId,
-        member: t.user,
+        canCorrespond:
+          t.ownershipScope === "ORG_OPERATIONS"
+            ? hasOrgPermission(
+                access.member.role,
+                "supportCases.operations.manage",
+              )
+            : t.ownershipScope === "ORG_BILLING"
+              ? hasOrgPermission(
+                  access.member.role,
+                  "supportCases.billing.manage",
+                )
+              : false,
+        member: t.requester,
         appointment: {
-          appointmentType: t.appointment.appointmentType,
-          startsAt: t.appointment.occurrences[0]?.startsAt ?? null,
+          appointmentType: t.appointment?.appointmentType,
+          startsAt: t.appointment?.occurrences[0]?.startsAt ?? null,
           planTitle:
-            t.appointment.consultation?.consultationPlan?.title ??
-            t.appointment.subscription?.subscriptionPlan?.title ??
-            t.appointment.webinar?.webinarPlan?.title ??
-            t.appointment.class?.classPlan?.title ??
+            t.appointment?.consultation?.consultationPlan?.title ??
+            t.appointment?.subscription?.subscriptionPlan?.title ??
+            t.appointment?.webinar?.webinarPlan?.title ??
+            t.appointment?.class?.classPlan?.title ??
             null,
         },
         // Deliberately NO transcript, NO last-message preview: metadata triage

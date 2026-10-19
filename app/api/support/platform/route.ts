@@ -39,6 +39,7 @@ import {
   findRecentOpenEscalation,
   raiseReusedTicketToHigh,
 } from "@/lib/support/create-ticket";
+import { appendSupportCaseTurn } from "@/lib/support/case-service";
 import { escalationPriority } from "@/lib/support/priority";
 import { recordFlowOutcome } from "@/lib/support/deflection";
 import {
@@ -50,6 +51,7 @@ import {
 const turnSchema = z
   .object({
     flowId: z.string().min(1).max(64),
+    clientTurnId: z.string().min(1).max(128).optional(),
     /** Client-held cursor; null/omitted = first turn (entry prompt). */
     nodeId: z.string().max(64).nullable().optional(),
     chosenOptionId: z.string().max(200).optional(),
@@ -246,8 +248,21 @@ async function handleEscalatedTurn(
     organizationId,
   );
   if (recent) {
+    const appended = await appendSupportCaseTurn({
+      caseId: recent.id,
+      authorUserId: userId,
+      sender: "USER",
+      body: description,
+      isInternal: false,
+      clientTurnId: input.clientTurnId,
+    });
+    if (!appended.ok)
+      return NextResponse.json(
+        { error: appended.error },
+        { status: appended.status },
+      );
     if (input.urgent) await raiseReusedTicketToHigh(prisma, recent.id);
-    const recentTicket = await prisma.supportTicket.findUnique({
+    const recentTicket = await prisma.supportCase.findUnique({
       where: { id: recent.id },
       select: { ackDueAt: true },
     });
@@ -269,6 +284,7 @@ async function handleEscalatedTurn(
 
   const ticket = await createSupportTicket({
     userId,
+    clientIntakeId: input.clientTurnId,
     title: `${flow.title}: ${reason.replaceAll("_", " ").toLowerCase()}`,
     description,
     priority,

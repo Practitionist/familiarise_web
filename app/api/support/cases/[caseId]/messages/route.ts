@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
+import prisma from "@/lib/prisma";
+import { requireApiAuth } from "@/lib/auth-helpers";
+import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import {
   spamLimiter as ticketResponseLimiter,
   applyRateLimit,
@@ -56,7 +58,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const auth = await requireApiAuth();
     if (auth.error) return auth.error;
     const { user } = auth.session;
-    const staff = isPrivileged(user.role);
+    const staff = hasBackofficePermission(user.role, "tickets.manage");
 
     if (!staff) {
       const rl = await applyRateLimit(
@@ -72,6 +74,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const access = await readSupportCaseForViewer(caseId, {
       userId: user.id,
       isStaff: staff,
+      role: user.role,
+      canReadPayments: hasBackofficePermission(user.role, "payments.read"),
+      canReadContact: hasBackofficePermission(user.role, "users.read"),
     });
     if (!access || access.filedByOrganizationNotice) {
       return NextResponse.json(
@@ -124,4 +129,59 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       context: { route: "support.case.messages", action: "create", caseId },
     });
   }
+}
+
+export async function GET(req: NextRequest, { params }: RouteParams) {
+  const auth = await requireApiAuth();
+  if (auth.error) return auth.error;
+  const id = await parseRouteParams(CaseIdParamsSchema, params, {
+    route: "support.case.messages",
+  });
+  if (!id.ok) return id.response;
+  const user = auth.session.user;
+  const staff = hasBackofficePermission(user.role, "tickets.manage");
+  const access = await readSupportCaseForViewer(id.data.caseId, {
+    userId: user.id,
+    role: user.role,
+    isStaff: staff,
+  });
+  if (!access || access.filedByOrganizationNotice)
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const input = z
+    .object({
+      beforeSeq: z.coerce.number().int().positive().optional(),
+      limit: z.coerce.number().int().min(1).max(200).default(200),
+    })
+    .safeParse({
+      beforeSeq: req.nextUrl.searchParams.get("beforeSeq") ?? undefined,
+      limit: req.nextUrl.searchParams.get("limit") ?? undefined,
+    });
+  if (!input.success)
+    return NextResponse.json({ error: "Invalid pagination" }, { status: 400 });
+  const rows = await prisma.supportCaseMessage.findMany({
+    where: {
+      caseId: id.data.caseId,
+      ...(!staff ? { isInternal: false } : {}),
+      ...(input.data.beforeSeq ? { seq: { lt: input.data.beforeSeq } } : {}),
+    },
+    orderBy: { seq: "asc" },
+    take: -(input.data.limit + 1),
+    select: {
+      id: true,
+      seq: true,
+      sender: true,
+      body: true,
+      isInternal: true,
+      createdAt: true,
+    },
+  });
+  const data = rows.slice(-input.data.limit);
+  return NextResponse.json(
+    {
+      data,
+      hasMore: rows.length > input.data.limit,
+      nextBeforeSeq: data[0]?.seq ?? null,
+    },
+    { headers: { "Cache-Control": "private, no-store" } },
+  );
 }

@@ -1,16 +1,5 @@
-/**
- * #1527 — one URL segment per support case. Pure: pages, routes, links and
- * jest read the same functions.
- *
- *   t_<ticketId>       a SupportTicket (platform, or escalated with its thread)
- *   s_<threadId>       a not-yet-escalated conversation (back office)
- *   b_<appointmentId>  the viewer's own conversation on a booking (user side)
- *
- * The user side keys a conversation by its booking: a thread is unique per
- * (appointment, user) and is only created by the first turn, so "Get help"
- * needs a URL before the row exists — and an unanswered click must not file
- * an empty conversation into the ops queue.
- */
+/** Canonical c_ URLs identify a SupportCase. Legacy t_/s_ URLs resolve through aliases.
+ * Booking b_ URLs can begin a conversation before its first turn creates a case. */
 
 export type CaseKind = "ticket" | "thread" | "booking" | "case";
 

@@ -34,41 +34,46 @@ export async function GET() {
       pendingAppointments,
     ] = await Promise.all([
       // Tickets resolved today
-      prisma.supportTicket.count({
+      prisma.supportCase.count({
         where: {
+          deletedAt: null,
           status: "RESOLVED",
           updatedAt: { gte: startOfToday },
         },
       }),
       // Tickets resolved this week
-      prisma.supportTicket.count({
+      prisma.supportCase.count({
         where: {
+          deletedAt: null,
           status: "RESOLVED",
           updatedAt: { gte: startOfWeek },
         },
       }),
       // Tickets resolved this month
-      prisma.supportTicket.count({
+      prisma.supportCase.count({
         where: {
+          deletedAt: null,
           status: "RESOLVED",
           updatedAt: { gte: startOfMonth },
         },
       }),
       // Open tickets
-      prisma.supportTicket.count({
+      prisma.supportCase.count({
         where: {
+          deletedAt: null,
           status: { in: ["OPEN", "IN_PROGRESS"] },
         },
       }),
       // Unique users helped this week (distinct users who had tickets resolved)
-      prisma.supportTicket
+      prisma.supportCase
         .findMany({
           where: {
+            deletedAt: null,
             status: "RESOLVED",
             updatedAt: { gte: startOfWeek },
           },
-          select: { userId: true },
-          distinct: ["userId"],
+          select: { requesterUserId: true },
+          distinct: ["requesterUserId"],
         })
         .then((tickets) => tickets.length),
       // Active users (users with payments this month)
@@ -99,15 +104,18 @@ export async function GET() {
       }),
     ]);
 
-    // Calculate average response time (simplified - time from ticket creation to first update)
-    const recentResolvedTickets = await prisma.supportTicket.findMany({
+    // Measure the first human reply rather than unrelated later edits.
+    const recentResolvedTickets = await prisma.supportCase.findMany({
       where: {
+        deletedAt: null,
+        firstAgentReplyAt: { not: null },
         status: "RESOLVED",
         updatedAt: { gte: startOfWeek },
       },
       select: {
         createdAt: true,
-        updatedAt: true,
+        receivedAt: true,
+        firstAgentReplyAt: true,
       },
       take: 100,
     });
@@ -116,8 +124,8 @@ export async function GET() {
     if (recentResolvedTickets.length > 0) {
       const totalHours = recentResolvedTickets.reduce((sum, ticket) => {
         const diffMs =
-          new Date(ticket.updatedAt).getTime() -
-          new Date(ticket.createdAt).getTime();
+          (ticket.firstAgentReplyAt ?? ticket.createdAt).getTime() -
+          (ticket.receivedAt ?? ticket.createdAt).getTime();
         return sum + diffMs / (1000 * 60 * 60);
       }, 0);
       avgResponseTimeHours =
@@ -144,7 +152,10 @@ export async function GET() {
       },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     console.error("Error fetching staff analytics:", error);
     return NextResponse.json(
       { error: "Failed to fetch analytics" },

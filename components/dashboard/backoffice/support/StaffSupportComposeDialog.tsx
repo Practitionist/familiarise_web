@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { z } from "zod";
+import { throwSupportError } from "@/lib/support/error-copy";
 import { Loader2, Send } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -47,6 +49,7 @@ export function StaffSupportComposeDialog({
   defaultTargetUserId?: string;
   onCreated?: (ticketId: string) => void;
 }>) {
+  const intakeId = useRef<string | null>(null);
   const queryClient = useQueryClient();
   const [targetUserId, setTargetUserId] = useState(defaultTargetUserId);
   const [title, setTitle] = useState("");
@@ -73,24 +76,30 @@ export function StaffSupportComposeDialog({
       issueType: OutboundIssueType;
       priority: SupportPriority;
     }) => {
-      const res = await fetch("/api/support/tickets", {
+      intakeId.current ??= crypto.randomUUID();
+      const res = await fetch("/api/support/cases", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          requesterUserId: payload.targetUserId,
+          title: payload.title,
+          description: payload.description,
+          issueType: payload.issueType,
+          category: payload.issueType,
+          priority: payload.priority,
+          activeChannel: "HUMAN",
+          clientIntakeId: intakeId.current,
+        }),
       });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(
-          (json as { error?: string; message?: string }).message ??
-            (json as { error?: string }).error ??
-            "Failed to create outbound support ticket",
-        );
-      }
-      return json as { id: string };
+      if (!res.ok) await throwSupportError(res, "outbound support request");
+      return z
+        .object({ data: z.object({ id: z.string() }) })
+        .parse(await res.json()).data;
     },
     onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: ["support-inbox"] });
       queryClient.invalidateQueries({ queryKey: ["support-inbox-stats"] });
+      intakeId.current = null;
       reset();
       onOpenChange(false);
       onCreated?.(created.id);
@@ -102,7 +111,7 @@ export function StaffSupportComposeDialog({
     setError(null);
     const trimmedTarget = targetUserId.trim();
     if (!trimmedTarget) {
-      setError("Target user ID or email is required.");
+      setError("Target user ID is required.");
       return;
     }
     const trimmedTitle = title.trim();
@@ -142,14 +151,12 @@ export function StaffSupportComposeDialog({
 
         <div className="space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor="outbound-target-user">
-              Target user email or ID *
-            </Label>
+            <Label htmlFor="outbound-target-user">Target user ID *</Label>
             <Input
               id="outbound-target-user"
               value={targetUserId}
               onChange={(e) => setTargetUserId(e.target.value)}
-              placeholder="user@example.com or user_123"
+              placeholder="User ID"
             />
           </div>
 
@@ -158,7 +165,21 @@ export function StaffSupportComposeDialog({
               <Label htmlFor="outbound-issue-type">Issue type *</Label>
               <Select
                 value={issueType}
-                onValueChange={(v) => setIssueType(v as OutboundIssueType)}
+                onValueChange={(v) =>
+                  setIssueType(
+                    z
+                      .enum([
+                        "GENERAL_INQUIRY",
+                        "ACCOUNT_ISSUE",
+                        "BILLING_QUESTION",
+                        "REFUND_REQUEST",
+                        "DOCUMENT_ISSUE",
+                        "TECHNICAL_ISSUES",
+                        "OTHER",
+                      ])
+                      .parse(v),
+                  )
+                }
               >
                 <SelectTrigger id="outbound-issue-type">
                   <SelectValue />
@@ -177,7 +198,11 @@ export function StaffSupportComposeDialog({
               <Label htmlFor="outbound-priority">Priority *</Label>
               <Select
                 value={priority}
-                onValueChange={(v) => setPriority(v as SupportPriority)}
+                onValueChange={(v) =>
+                  setPriority(
+                    z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).parse(v),
+                  )
+                }
               >
                 <SelectTrigger id="outbound-priority">
                   <SelectValue />

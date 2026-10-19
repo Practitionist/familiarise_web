@@ -6,7 +6,7 @@ import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { stageBell } from "@/lib/novu/stage-bell";
 import { deriveTransactionId, type StagedTrigger } from "@/lib/novu/outbox";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
-import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
+import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { getAppUrl } from "@/lib/url";
 import { DEFAULT_FROM_ADDRESS, deliver, EMAIL_BUDGET_MS } from "@/lib/email";
 import { reportSentryError } from "@/lib/observability/report";
@@ -38,6 +38,7 @@ interface SlaSweepCandidate {
   ackDueAt: Date | null;
   acknowledgedAt: Date | null;
   resolutionDueAt: Date | null;
+  statutoryDueAt?: Date | null;
   resolvedAt: Date | null;
   awaitingUserSince: Date | null;
   pausedSeconds: number;
@@ -70,15 +71,14 @@ function slaNoticeTransitions(
     ackDueAt: Date | null;
     acknowledgedAt: Date | null;
     resolutionDueAt: Date | null;
+    statutoryDueAt?: Date | null;
     resolvedAt: Date | null;
     awaitingUserSince: Date | null;
     pausedSeconds: number;
   },
   now: Date,
 ): Array<{ kind: SlaNoticeKind; level: SlaNoticeLevel }> {
-  if (row.awaitingUserSince !== null) return [];
   const state = slaStateOf(row, now);
-  if (state.paused) return [];
 
   const notices: Array<{ kind: SlaNoticeKind; level: SlaNoticeLevel }> = [];
 
@@ -221,91 +221,50 @@ async function fetchSlaSweepCandidates(
     },
   ];
 
-  const [breachTickets, warnTickets, breachCases, warnCases] =
-    await Promise.all([
-      prisma.supportTicket.findMany({
-        where: {
-          status: { notIn: ["RESOLVED", "CLOSED"] },
-          awaitingUserSince: null,
-          OR: breachOrFilter,
+  const cases = await prisma.supportCase.findMany({
+    where: {
+      status: { notIn: ["RESOLVED", "CLOSED"] },
+      deletedAt: null,
+      OR: [
+        ...breachOrFilter,
+        ...warnOrFilter,
+        {
+          statutoryDueAt: { gte: breachCutoff, lte: now },
+          resolvedAt: null,
+          ...(resBreachIds.length ? { id: { notIn: resBreachIds } } : {}),
         },
-        include: orgInclude,
-        orderBy: [{ ackDueAt: "asc" }, { resolutionDueAt: "asc" }],
-        take: limit,
-      }),
-      prisma.supportTicket.findMany({
-        where: {
-          status: { notIn: ["RESOLVED", "CLOSED"] },
-          awaitingUserSince: null,
-          OR: warnOrFilter,
+        {
+          statutoryDueAt: { gt: now, lte: resWarnHorizon },
+          resolvedAt: null,
+          ...(resWarnIds.length ? { id: { notIn: resWarnIds } } : {}),
         },
-        include: orgInclude,
-        orderBy: [{ ackDueAt: "asc" }, { resolutionDueAt: "asc" }],
-        take: limit,
-      }),
-      prisma.supportCase.findMany({
-        where: {
-          status: { notIn: ["RESOLVED", "CLOSED"] },
-          deletedAt: null,
-          awaitingUserSince: null,
-          OR: breachOrFilter,
-        },
-        include: orgInclude,
-        orderBy: [{ ackDueAt: "asc" }, { resolutionDueAt: "asc" }],
-        take: limit,
-      }),
-      prisma.supportCase.findMany({
-        where: {
-          status: { notIn: ["RESOLVED", "CLOSED"] },
-          deletedAt: null,
-          awaitingUserSince: null,
-          OR: warnOrFilter,
-        },
-        include: orgInclude,
-        orderBy: [{ ackDueAt: "asc" }, { resolutionDueAt: "asc" }],
-        take: limit,
-      }),
-    ]);
-
-  const ticketMap = new Map<string, (typeof breachTickets)[number]>();
-  for (const t of [...(breachTickets ?? []), ...(warnTickets ?? [])]) {
-    if (!ticketMap.has(t.id)) ticketMap.set(t.id, t);
-  }
-  const caseMap = new Map<string, (typeof breachCases)[number]>();
-  for (const c of [...(breachCases ?? []), ...(warnCases ?? [])]) {
-    if (!caseMap.has(c.id)) caseMap.set(c.id, c);
-  }
-
-  return [
-    ...[...ticketMap.values()].map((t) => ({
-      id: t.id,
-      referenceNumber: t.referenceNumber ?? t.id,
-      title: t.title,
-      status: t.status,
-      assignedToId: t.assignedToId,
-      ackDueAt: t.ackDueAt,
-      acknowledgedAt: t.acknowledgedAt,
-      resolutionDueAt: t.resolutionDueAt,
-      resolvedAt: t.resolvedAt,
-      awaitingUserSince: t.awaitingUserSince,
-      pausedSeconds: t.pausedSeconds,
-      escalationContactEmail: t.organization?.escalationContactEmail ?? null,
-    })),
-    ...[...caseMap.values()].map((c) => ({
-      id: c.id,
-      referenceNumber: c.referenceNumber,
-      title: c.title,
-      status: c.status,
-      assignedToId: c.assignedToId,
-      ackDueAt: c.ackDueAt,
-      acknowledgedAt: c.acknowledgedAt,
-      resolutionDueAt: c.resolutionDueAt,
-      resolvedAt: c.resolvedAt,
-      awaitingUserSince: c.awaitingUserSince,
-      pausedSeconds: c.pausedSeconds,
-      escalationContactEmail: c.organization?.escalationContactEmail ?? null,
-    })),
-  ];
+      ],
+    },
+    include: orgInclude,
+    orderBy: [
+      { statutoryDueAt: { sort: "asc", nulls: "last" } },
+      { ackDueAt: "asc" },
+    ],
+    take: limit,
+  });
+  return cases.map((c) => ({
+    id: c.id,
+    referenceNumber: c.referenceNumber,
+    title: c.title,
+    status: c.status,
+    assignedToId: c.assignedToId,
+    ackDueAt: c.ackDueAt,
+    acknowledgedAt: c.acknowledgedAt,
+    resolutionDueAt: c.resolutionDueAt,
+    statutoryDueAt: c.statutoryDueAt,
+    resolvedAt: c.resolvedAt,
+    awaitingUserSince: c.awaitingUserSince,
+    pausedSeconds: c.pausedSeconds,
+    escalationContactEmail:
+      c.ownershipScope === "PERSONAL"
+        ? null
+        : (c.organization?.escalationContactEmail ?? null),
+  }));
 }
 
 async function deliverSlaNoticeEmails(
@@ -513,70 +472,15 @@ async function autoCloseResolvedRows(
   errors: string[],
 ): Promise<number> {
   const autoCloseCutoff = new Date(now.getTime() - AUTO_CLOSE_DAYS_MS);
-  const [staleResolvedTickets, staleResolvedCases] = await Promise.all([
-    prisma.supportTicket.findMany({
-      where: {
-        status: "RESOLVED",
-        resolvedAt: { lte: autoCloseCutoff },
-      },
-      select: { id: true },
-      take: limit,
-    }),
-    prisma.supportCase.findMany({
-      where: {
-        status: "RESOLVED",
-        resolvedAt: { lte: autoCloseCutoff },
-        deletedAt: null,
-      },
-      select: { id: true },
-      take: limit,
-    }),
-  ]);
-
-  const ticketResults = await runSequential(
-    staleResolvedTickets ?? [],
-    async (t) => {
-      try {
-        return await prisma.$transaction(
-          async (tx) => {
-            const res = await tx.supportTicket.updateMany({
-              where: {
-                id: t.id,
-                status: "RESOLVED",
-                resolvedAt: { lte: autoCloseCutoff },
-              },
-              data: { status: "CLOSED", closedAt: now },
-            });
-            if (res.count > 0) {
-              await tx.appointmentSupportThread.updateMany({
-                where: { supportTicketId: t.id },
-                data: { status: "CLOSED", activeChannel: "SELF_SERVE" },
-              });
-              await tx.supportCaseEvent.create({
-                data: {
-                  legacyTicketId: t.id,
-                  kind: "AUTO_CLOSED",
-                  fromValue: "RESOLVED",
-                  toValue: "CLOSED",
-                  createdAt: now,
-                },
-              });
-            }
-            return res.count;
-          },
-          {
-            maxWait: ALLOCATION_TX_MAX_WAIT_MS,
-            timeout: ALLOCATION_TX_TIMEOUT_MS,
-          },
-        );
-      } catch (err) {
-        errors.push(
-          `auto-close ticket ${t.id}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        return 0;
-      }
+  const staleResolvedCases = await prisma.supportCase.findMany({
+    where: {
+      status: "RESOLVED",
+      resolvedAt: { lte: autoCloseCutoff },
+      deletedAt: null,
     },
-  );
+    select: { id: true },
+    take: limit,
+  });
 
   const caseResults = await runSequential(
     staleResolvedCases ?? [],
@@ -619,7 +523,7 @@ async function autoCloseResolvedRows(
     },
   );
 
-  return [...ticketResults, ...caseResults].reduce((sum, n) => sum + n, 0);
+  return caseResults.reduce((sum, n) => sum + n, 0);
 }
 
 async function processDisputeDeadlineAlerts(
@@ -810,6 +714,127 @@ export async function runSupportSlaSweep(opts?: {
       stagedBells,
     );
 
+    const noticeCutoff = new Date(now.getTime() - 30 * DAY_MS);
+    const moderationNotices = await prisma.notificationOutbox.findMany({
+      where: {
+        entityRef: { startsWith: "moderation-deadline:" },
+        createdAt: { gte: noticeCutoff },
+      },
+      select: { entityRef: true },
+    });
+    const reportNoticeIds = (level: "warn" | "breach") =>
+      moderationNotices.flatMap((notice) =>
+        notice.entityRef?.endsWith(`:${level}`)
+          ? [
+              notice.entityRef.slice(
+                "moderation-deadline:".length,
+                -`:${level}`.length,
+              ),
+            ]
+          : [],
+      );
+    const pendingReports = await prisma.moderationReport.findMany({
+      where: {
+        status: { in: ["PENDING", "UNDER_REVIEW", "ESCALATED"] },
+        OR: [
+          {
+            resolutionDueAt: { gte: noticeCutoff, lte: now },
+            id: { notIn: reportNoticeIds("breach") },
+          },
+          {
+            resolutionDueAt: {
+              gt: now,
+              lte: new Date(now.getTime() + RES_WARN_MS),
+            },
+            id: { notIn: reportNoticeIds("warn") },
+          },
+        ],
+      },
+      orderBy: { resolutionDueAt: "asc" },
+      take: limit,
+      select: { id: true, assignedToId: true, resolutionDueAt: true },
+    });
+    for (const report of pendingReports) {
+      const level =
+        report.resolutionDueAt && report.resolutionDueAt <= now
+          ? "breach"
+          : "warn";
+      try {
+        await prisma.$transaction(async (tx) => {
+          const notice = await stageBell(tx, {
+            workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
+            recipients: report.assignedToId
+              ? [report.assignedToId]
+              : operators.map((operator) => operator.id),
+            dedupeKey: `moderation-deadline:${report.id}:${level}`,
+            entityRef: `moderation-deadline:${report.id}:${level}`,
+            payload: {
+              ticketId: report.id,
+              ...notificationScope(null),
+              ticketTitle: "Moderation deadline",
+              status:
+                level === "breach"
+                  ? "Moderation deadline breached"
+                  : "Moderation deadline approaching",
+              dashboardUrl: "/dashboard",
+            },
+          });
+          if (notice) stagedBells.push(notice);
+        });
+      } catch (error) {
+        errors.push(
+          `moderation-deadline ${report.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    const evidenceNotices = await prisma.notificationOutbox.findMany({
+      where: {
+        entityRef: { startsWith: "evidence-overdue:" },
+        createdAt: { gte: noticeCutoff },
+      },
+      select: { entityRef: true },
+    });
+    const notifiedEvidenceIds = evidenceNotices.flatMap((notice) =>
+      notice.entityRef
+        ? [notice.entityRef.slice("evidence-overdue:".length)]
+        : [],
+    );
+    const overdueEvidence = await prisma.supportCaseEvidenceRequest.findMany({
+      where: {
+        id: { notIn: notifiedEvidenceIds },
+        dueAt: { gte: noticeCutoff, lte: now },
+        respondedAt: null,
+        cancelledAt: null,
+        supportCase: { resolvedAt: null, deletedAt: null },
+      },
+      take: limit,
+      orderBy: { dueAt: "asc" },
+      select: { id: true, requestedById: true, caseId: true },
+    });
+    for (const evidence of overdueEvidence) {
+      try {
+        await prisma.$transaction(async (tx) => {
+          const staged = await stageBell(tx, {
+            workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
+            recipients: [evidence.requestedById],
+            dedupeKey: `evidence-overdue:${evidence.id}`,
+            entityRef: `evidence-overdue:${evidence.id}`,
+            payload: {
+              ticketId: evidence.caseId,
+              ...notificationScope(null),
+              ticketTitle: "Evidence response overdue",
+              status: "Review overdue evidence request",
+              dashboardUrl: `/dashboard/support/c_${evidence.caseId}`,
+            },
+          });
+          if (staged) stagedBells.push(staged);
+        });
+      } catch (error) {
+        errors.push(
+          `evidence-overdue ${evidence.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
     await flushNotificationsAfter({ bells: stagedBells }, "support.sla-sweep");
 
     if (errors.length > 0) {

@@ -9,7 +9,7 @@
  * here anyway, so the UI and API enforce the same line).
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
@@ -42,6 +42,8 @@ import {
   SupportRequestError,
   throwSupportError,
 } from "@/lib/support/error-copy";
+import { MemberRole } from "@prisma/client";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { canRaiseAboutOrg } from "@/lib/support/about-org";
 import { SupportPriority } from "@prisma/client";
 import {
@@ -93,11 +95,15 @@ export function CreateTicketDialog({
   requestHref?: (ticketId: string) => string;
 }) {
   const router = useRouter();
+  const clientIntakeId = useRef<string | null>(null);
   const [open, setOpen] = useState(false);
   const [issueType, setIssueType] = useState<string>(defaults?.issueType ?? "");
   const [title, setTitle] = useState(defaults?.title ?? "");
   const [description, setDescription] = useState(defaults?.description ?? "");
   const [priority, setPriority] = useState<SupportPriority>("MEDIUM");
+  const [ownershipScope, setOwnershipScope] = useState<
+    "PERSONAL" | "ORG_OPERATIONS" | "ORG_BILLING"
+  >("PERSONAL");
   const [about, setAbout] = useState(defaults?.organizationId ?? ABOUT_ME);
   const [callbackRequested, setCallbackRequested] = useState(false);
   const [callbackPhone, setCallbackPhone] = useState("");
@@ -117,14 +123,26 @@ export function CreateTicketDialog({
     staleTime: 60_000,
   });
   const aboutOrgs = (memberships.data ?? []).filter(canRaiseAboutOrg);
+  const selectedOrg = aboutOrgs.find((m) => m.organizationId === about);
+  const parsedRole = z.nativeEnum(MemberRole).safeParse(selectedOrg?.role);
+  const canOwnOperations =
+    parsedRole.success &&
+    hasOrgPermission(parsedRole.data, "supportCases.operations.manage");
+  const canOwnBilling =
+    parsedRole.success &&
+    hasOrgPermission(parsedRole.data, "supportCases.billing.manage");
 
   const create = useMutation({
     mutationFn: async () => {
-      const res = await fetch("/api/user/support-tickets", {
+      clientIntakeId.current ??= crypto.randomUUID();
+      const res = await fetch("/api/support/cases", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           issueType,
+          category: issueType,
+          ownershipScope: about === ABOUT_ME ? "PERSONAL" : ownershipScope,
+          clientIntakeId: clientIntakeId.current,
           title: title.trim(),
           description: description.trim(),
           priority,
@@ -135,7 +153,8 @@ export function CreateTicketDialog({
         }),
       });
       if (!res.ok) await throwSupportError(res, "request create");
-      return CreatedTicket.parse(await res.json());
+      const payload = z.object({ data: CreatedTicket }).parse(await res.json());
+      return payload.data;
     },
     onSuccess: (ticket) => {
       toast({
@@ -146,6 +165,7 @@ export function CreateTicketDialog({
       });
       void qc.invalidateQueries({ queryKey: ["user-support-tickets"] });
       void qc.invalidateQueries({ queryKey: ["org-support-tickets"] });
+      clientIntakeId.current = null;
       setOpen(false);
       setIssueType(defaults?.issueType ?? "");
       setTitle(defaults?.title ?? "");
@@ -200,7 +220,13 @@ export function CreateTicketDialog({
           {aboutOrgs.length > 0 && (
             <div className="space-y-2">
               <Label htmlFor="new-ticket-about">About</Label>
-              <Select value={about} onValueChange={setAbout}>
+              <Select
+                value={about}
+                onValueChange={(value) => {
+                  setAbout(value);
+                  setOwnershipScope("PERSONAL");
+                }}
+              >
                 <SelectTrigger id="new-ticket-about">
                   <SelectValue />
                 </SelectTrigger>
@@ -214,9 +240,42 @@ export function CreateTicketDialog({
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                A request about an organization is also listed on its Support
-                page, subject only.
+                Choose whether this conversation belongs to you or an authorized
+                organization team.
               </p>
+            </div>
+          )}
+
+          {about !== ABOUT_ME && (canOwnOperations || canOwnBilling) && (
+            <div className="space-y-2">
+              <Label htmlFor="new-case-owner">Conversation owner</Label>
+              <Select
+                value={ownershipScope}
+                onValueChange={(value) =>
+                  setOwnershipScope(
+                    z
+                      .enum(["PERSONAL", "ORG_OPERATIONS", "ORG_BILLING"])
+                      .parse(value),
+                  )
+                }
+              >
+                <SelectTrigger id="new-case-owner">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="PERSONAL">Me</SelectItem>
+                  {canOwnOperations && (
+                    <SelectItem value="ORG_OPERATIONS">
+                      Organization operations team
+                    </SelectItem>
+                  )}
+                  {canOwnBilling && (
+                    <SelectItem value="ORG_BILLING">
+                      Organization billing team
+                    </SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
             </div>
           )}
 

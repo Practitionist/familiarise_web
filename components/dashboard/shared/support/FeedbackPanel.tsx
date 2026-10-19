@@ -27,7 +27,7 @@ export interface FeedbackPanelProps {
 
 export function FeedbackPanel({ profileId }: FeedbackPanelProps) {
   // Query-key namespace only — every fetch behind this hook is session-keyed
-  // (/api/user/feedbacks, /api/user/support-tickets). It is no longer always
+  // (/api/user/feedbacks). It is no longer always
   // a consultee: enterprise operators reach this same surface from
   // org-workspace, and they hold no consultee profile at all.
   const scopeId = profileId;

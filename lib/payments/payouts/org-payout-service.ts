@@ -64,6 +64,7 @@ import {
   DISPUTE_GATED_PAYMENT_WHERE,
   PayoutMakerCheckerError,
   REFUND_GATED_PAYMENT_WHERE,
+  SUPPORT_HOLD_GATED_PAYMENT_WHERE,
   resolveCompletionTdsWindow,
   resolvePayoutMsmeDeadline,
 } from "./shared-lifecycle";
@@ -226,6 +227,7 @@ export async function getOrgPayoutEligibility(
       organizationId: orgId,
       status: "READY",
       orgPayoutId: null,
+      payment: { NOT: SUPPORT_HOLD_GATED_PAYMENT_WHERE },
     },
     _sum: { orgSharePaise: true, refundedAmountPaise: true },
     _count: true,
@@ -348,6 +350,7 @@ export async function createOrgPayoutBatch(
                 organizationId: orgId,
                 status: "READY",
                 orgPayoutId: null,
+                payment: { NOT: SUPPORT_HOLD_GATED_PAYMENT_WHERE },
                 createdAt: { gte: periodStart, lt: periodEnd },
               },
               data: { orgPayoutId: created.id },
@@ -648,6 +651,12 @@ async function checkOrgPayoutDisputeOrRefundBlock(
   tx: Tx,
   payoutId: string,
 ): Promise<PayoutStatus | null> {
+  const supportHeldEarning = await tx.organizationEarnings.findFirst({
+    where: { orgPayoutId: payoutId, payment: SUPPORT_HOLD_GATED_PAYMENT_WHERE },
+    select: { id: true },
+  });
+  if (supportHeldEarning) return readOrgPayoutCurrentStatus(tx, payoutId);
+
   const disputedOrgEarning = await tx.organizationEarnings.findFirst({
     where: {
       orgPayoutId: payoutId,
@@ -2069,6 +2078,7 @@ export async function createOrgPayoutBatches(opts?: {
     where: {
       status: "READY",
       orgPayoutId: null,
+      payment: { NOT: SUPPORT_HOLD_GATED_PAYMENT_WHERE },
       createdAt: { gte: periodStart, lt: periodEnd },
     },
     _count: true,

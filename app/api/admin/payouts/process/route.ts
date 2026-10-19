@@ -23,10 +23,10 @@ export async function POST(_req: NextRequest) {
     const stale = requireFreshSession(auth.session);
     if (stale) return stale;
 
-    // #1846 N6 — a request-bound run: no new payout after the budget and a
-    // short lock, so a function killed at the Lambda limit cannot hold the
-    // payout lock for 35 minutes. Unstarted payouts stay APPROVED.
-    const results = await processApprovedPayouts(REQUEST_PAYOUT_RUN_BOUNDS);
+    const results = await processApprovedPayouts({
+      ...REQUEST_PAYOUT_RUN_BOUNDS,
+      triggeredByUserId: auth.session.user.id,
+    });
 
     const successful = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;

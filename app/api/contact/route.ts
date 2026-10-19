@@ -20,6 +20,9 @@ import { getSession } from "@/lib/auth-server";
 import { sendContactInquiryEmail } from "@/lib/email";
 import { applyRateLimit, getClientIp, spamLimiter } from "@/lib/rate-limit";
 import { allocateTicketReference } from "@/lib/support/reference";
+import { supportDeadline } from "@/lib/support/deadline-policy";
+import { stageBell } from "@/lib/novu/stage-bell";
+import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { slaDeadlinesFor } from "@/lib/support/sla";
 import { INQUIRY_CATEGORIES } from "@/app/(pages)/constants";
 
@@ -109,7 +112,7 @@ async function recordPublicGrievanceTicket(
     const now = new Date();
     const ref = await allocateTicketReference(tx, now);
     const name = `${data.firstName} ${data.lastName}`.trim();
-    await tx.supportTicket.create({
+    const supportCase = await tx.supportCase.create({
       data: {
         referenceNumber: ref,
         title: `[Grievance] ${data.subject || "Public Grievance"}`,
@@ -117,9 +120,43 @@ async function recordPublicGrievanceTicket(
         category: "GRIEVANCE",
         status: "OPEN",
         priority: "HIGH",
-        userId,
+        requesterUserId: userId,
+        submitterUserId: userId,
+        activeChannel: "HUMAN",
+        externalRequesterEmail: data.email,
+        externalRequesterName: name,
+        messageSeq: 1,
+        messages: {
+          create: {
+            seq: 1,
+            sender: "USER",
+            authorUserId: null,
+            body: data.message,
+            metadata: { origin: "public-grievance", email: data.email, name },
+          },
+        },
+        events: { create: { kind: "CREATED", toValue: "OPEN" } },
         lastMessageAt: now,
         ...slaDeadlinesFor("HIGH", now),
+        ...supportDeadline("GRIEVANCE", now),
+        receivedAt: now,
+      },
+    });
+    const operators = await tx.user.findMany({
+      where: { role: { in: ["STAFF", "ADMIN"] }, banned: false },
+      select: { id: true },
+    });
+    await stageBell(tx, {
+      workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_CREATED,
+      recipients: operators.map((operator) => operator.id),
+      dedupeKey: `public-grievance:${supportCase.id}`,
+      entityRef: `case-created:${supportCase.id}`,
+      payload: {
+        ticketId: supportCase.id,
+        reference: ref,
+        ticketTitle: supportCase.title,
+        dashboardUrl: `/dashboard/support/c_${supportCase.id}`,
+        ...notificationScope(null),
       },
     });
     return ref;
