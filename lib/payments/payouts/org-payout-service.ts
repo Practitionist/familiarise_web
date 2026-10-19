@@ -993,16 +993,26 @@ export interface OrgProcessingResult {
   errors: string[];
 }
 
-export async function processPendingOrgPayouts(): Promise<OrgProcessingResult> {
+/** `limit` caps the claims plus failures per pass; an unclaimable row does not count. */
+export async function processPendingOrgPayouts(
+  opts: { limit?: number } = {},
+): Promise<OrgProcessingResult> {
   const result: OrgProcessingResult = { scanned: 0, advanced: 0, errors: [] };
 
   const pending = await prisma.organizationPayout.findMany({
     where: { status: { in: PAYOUT_ALLOWED_FROM.PROCESSING } },
     select: { id: true },
+    orderBy: { createdAt: "asc" },
   });
   result.scanned = pending.length;
 
   for (const p of pending) {
+    if (
+      opts.limit !== undefined &&
+      result.advanced + result.errors.length >= opts.limit
+    ) {
+      break;
+    }
     try {
       const out = await processOrgPayout(p.id);
       if (out.claimed) {
@@ -1015,7 +1025,7 @@ export async function processPendingOrgPayouts(): Promise<OrgProcessingResult> {
     }
   }
 
-  const redrive = await redriveStaleProcessingOrgPayouts();
+  const redrive = await redriveStaleProcessingOrgPayouts(opts.limit);
   result.scanned += redrive.scanned;
   result.advanced += redrive.advanced;
   result.errors.push(...redrive.errors);
@@ -1094,14 +1104,16 @@ async function redriveSingleOrgPayoutRow(
   }
 }
 
-async function redriveStaleProcessingOrgPayouts(): Promise<OrgProcessingResult> {
+async function redriveStaleProcessingOrgPayouts(
+  limit = 100,
+): Promise<OrgProcessingResult> {
   const result: OrgProcessingResult = { scanned: 0, advanced: 0, errors: [] };
   const staleBefore = new Date(Date.now() - ORG_PROCESSING_REDRIVE_AFTER_MS);
   const stale = await prisma.organizationPayout.findMany({
     where: { status: "PROCESSING", updatedAt: { lt: staleBefore } },
     select: { id: true, gatewayPayoutId: true, paymentGateway: true },
     orderBy: { updatedAt: "asc" },
-    take: 100,
+    take: limit,
   });
   result.scanned = stale.length;
 
@@ -2040,19 +2052,26 @@ export interface OrgBatchResult {
   payoutsAlreadyExisted: number;
   totalAmount: number;
   skippedNotEligible: number;
+  /** Orgs whose batch threw something other than a lock or validation refusal. */
+  failed: number;
+  /** Eligible orgs this run did not reach because `limit` was spent. */
+  remaining: number;
   errors: string[];
 }
 
+/**
+ * The scheduled org batch. Each org's period starts at its oldest READY,
+ * unbatched earning before `periodEnd`, so a late-released or returned earning
+ * is still batched; the key is per org per `periodEnd`, one payout per window.
+ */
 export async function createOrgPayoutBatches(opts?: {
-  periodStart?: Date;
   periodEnd?: Date;
+  /** Caps the payouts created plus failures; already-batched and refused orgs do not count. */
+  limit?: number;
 }): Promise<OrgBatchResult> {
   const { createHash } = await import("crypto");
   const { getActiveOrgMaintenanceWindow } = await import("@/lib/maintenance");
   const periodEnd = opts?.periodEnd ?? new Date();
-  const periodStart =
-    opts?.periodStart ??
-    new Date(periodEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
 
   const result: OrgBatchResult = {
     success: false,
@@ -2061,6 +2080,8 @@ export async function createOrgPayoutBatches(opts?: {
     payoutsAlreadyExisted: 0,
     totalAmount: 0,
     skippedNotEligible: 0,
+    failed: 0,
+    remaining: 0,
     errors: [],
   };
 
@@ -2069,13 +2090,23 @@ export async function createOrgPayoutBatches(opts?: {
     where: {
       status: "READY",
       orgPayoutId: null,
-      createdAt: { gte: periodStart, lt: periodEnd },
+      createdAt: { lt: periodEnd },
     },
+    orderBy: { organizationId: "asc" },
     _count: true,
+    _min: { createdAt: true },
   });
   result.orgsScanned = eligible.length;
 
+  let visited = 0;
   for (const row of eligible) {
+    if (
+      opts?.limit !== undefined &&
+      result.payoutsCreated + result.failed >= opts.limit
+    ) {
+      break;
+    }
+    visited += 1;
     const orgId = row.organizationId;
     const orgMaint = await getActiveOrgMaintenanceWindow(orgId);
     if (orgMaint && orgMaint.phase === "OFFLINE") {
@@ -2086,8 +2117,9 @@ export async function createOrgPayoutBatches(opts?: {
       continue;
     }
 
+    const periodStart = row._min.createdAt ?? periodEnd;
     const idempotencyKey = createHash("sha256")
-      .update(`${orgId}:${periodStart.toISOString()}`)
+      .update(`scheduled:${orgId}:${periodEnd.toISOString()}`)
       .digest("hex");
 
     try {
@@ -2112,10 +2144,12 @@ export async function createOrgPayoutBatches(opts?: {
         continue;
       }
       const message = err instanceof Error ? err.message : String(err);
+      result.failed++;
       result.errors.push(`${orgId}: ${message}`);
     }
   }
 
+  result.remaining = eligible.length - visited;
   result.success = true;
   return result;
 }

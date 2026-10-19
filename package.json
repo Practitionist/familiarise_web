@@ -38,8 +38,6 @@
     "scripts:test-bucket": "npx tsx tests/typescript/test-bucket-creation.ts",
     "scripts:cleanup-abandoned-payments": "npx tsx scripts/payments/cleanup-abandoned-payments.ts",
     "scripts:release-earnings": "npx tsx scripts/earnings/release-earnings.ts",
-    "scripts:create-payout-batch": "npx tsx jobs/payouts/create-payout-batch.ts",
-    "scripts:process-payouts": "npx tsx jobs/payouts/process-payouts.ts",
     "test:race": "npx tsx tests/typescript/race-conditions/master-runner.ts",
     "test:race:parallel": "npx tsx tests/typescript/race-conditions/master-runner.ts parallel",
     "scripts:stream-sync": "npx tsx jobs/stream/stream-sync.ts",

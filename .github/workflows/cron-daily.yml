@@ -7,8 +7,6 @@ on:
   schedule:
     # Daily 03:00 UTC maintenance & reconciliation batch
     - cron: "0 3 * * *"
-    # Daily 23:30 UTC billing & dunning batch
-    - cron: "30 23 * * *"
   workflow_dispatch:
     inputs:
       job:
@@ -84,7 +82,7 @@ jobs:
           INPUT_JOB: ${{ inputs.job }}
         run: |
           case "${INPUT_JOB}" in
-            ""|all|cleanup-auth-tokens|generate-subscription-invoices|cleanup-abandoned-org-top-ups|advance-program-cycles|auto-renew-contracts|reconcile-document-storage|irp-uploader|sweep-abandoned-overage-charges|expire-recordings|prune-system-events|expire-contracts|prune-audit-logs|sweep-verification|prune-system-job-executions|alert-orphaned-payments|purge-deleted-documents|stream-sync|reconcile-ledgers|msme-payment-alerts|expire-event-channels|expire-stale-collaborator-invites|reconcile-orphaned-recordings|wind-down-deactivated-orgs|timeout-member-overages|dunning|wallet-low-balance|purge-unverified-users)
+            ""|all|cleanup-auth-tokens|reconcile-document-storage|expire-recordings|prune-system-events|prune-audit-logs|sweep-verification|prune-system-job-executions|purge-deleted-documents|stream-sync|reconcile-ledgers|expire-event-channels|expire-stale-collaborator-invites|reconcile-orphaned-recordings|wind-down-deactivated-orgs|purge-unverified-users)
               ;;
             *)
               echo "::error::Unknown daily job slug '${INPUT_JOB}'"
@@ -107,42 +105,6 @@ jobs:
             -X POST -H "Authorization: Bearer ${CRON_SECRET}" \
             "${APP_URL}/api/cleanup/auth-tokens"
 
-      - name: Generate subscription invoices
-        id: generate-subscription-invoices
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'generate-subscription-invoices'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/billing/generate-subscription-invoices.ts
-
-      - name: Cleanup abandoned org top-ups
-        id: cleanup-abandoned-org-top-ups
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'cleanup-abandoned-org-top-ups'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/cleanup/cleanup-abandoned-org-top-ups.ts
-
-      - name: Advance program cycles
-        id: advance-program-cycles
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'advance-program-cycles'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/billing/advance-program-cycles.ts
-
-      - name: Auto-renew contracts
-        id: auto-renew-contracts
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'auto-renew-contracts'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/contracts/auto-renew-contracts.ts
-
       - name: Reconcile document storage
         id: reconcile-document-storage
         if: >-
@@ -151,24 +113,6 @@ jobs:
         timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/cleanup/reconcile-document-storage.ts
-
-      - name: Run IRP uploader
-        id: irp-uploader
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'irp-uploader'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/compliance/irp-uploader.ts
-
-      - name: Sweep abandoned overage charges
-        id: sweep-abandoned-overage-charges
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'sweep-abandoned-overage-charges'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/cleanup/sweep-abandoned-overage-charges.ts
 
       - name: Expire recordings
         id: expire-recordings
@@ -187,15 +131,6 @@ jobs:
         timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/cleanup/prune-system-events.ts
-
-      - name: Expire contracts
-        id: expire-contracts
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'expire-contracts'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/contracts/expire-contracts.ts
 
       - name: Prune audit logs
         id: prune-audit-logs
@@ -223,15 +158,6 @@ jobs:
         timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/cleanup/prune-system-job-executions.ts
-
-      - name: Alert orphaned payments
-        id: alert-orphaned-payments
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'alert-orphaned-payments'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/alerts/alert-orphaned-payments.ts
 
       - name: Purge deleted documents
         id: purge-deleted-documents
@@ -265,15 +191,6 @@ jobs:
         timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/reconcile/reconcile-ledgers.ts
-
-      - name: MSME payment alerts
-        id: msme-payment-alerts
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'msme-payment-alerts'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/compliance/msme-payment-alerts.ts
 
       - name: Expire event channels
         id: expire-event-channels
@@ -317,33 +234,6 @@ jobs:
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/stream/wind-down-deactivated-orgs.ts
 
-      - name: Timeout member overages
-        id: timeout-member-overages
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '30 23 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'timeout-member-overages'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/billing/timeout-member-overages.ts
-
-      - name: Dunning
-        id: dunning
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '30 23 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'dunning'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/billing/dunning.ts
-
-      - name: Wallet low balance
-        id: wallet-low-balance
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '30 23 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'wallet-low-balance'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/billing/wallet-low-balance.ts
-
       - name: Purge unverified users
         id: purge-unverified-users
         if: >-
@@ -370,31 +260,19 @@ jobs:
           failed=0
           for entry in \
             "cleanup-auth-tokens:${{ steps.cleanup-auth-tokens.outcome }}" \
-            "generate-subscription-invoices:${{ steps.generate-subscription-invoices.outcome }}" \
-            "cleanup-abandoned-org-top-ups:${{ steps.cleanup-abandoned-org-top-ups.outcome }}" \
-            "advance-program-cycles:${{ steps.advance-program-cycles.outcome }}" \
-            "auto-renew-contracts:${{ steps.auto-renew-contracts.outcome }}" \
             "reconcile-document-storage:${{ steps.reconcile-document-storage.outcome }}" \
-            "irp-uploader:${{ steps.irp-uploader.outcome }}" \
-            "sweep-abandoned-overage-charges:${{ steps.sweep-abandoned-overage-charges.outcome }}" \
             "expire-recordings:${{ steps.expire-recordings.outcome }}" \
             "prune-system-events:${{ steps.prune-system-events.outcome }}" \
-            "expire-contracts:${{ steps.expire-contracts.outcome }}" \
             "prune-audit-logs:${{ steps.prune-audit-logs.outcome }}" \
             "sweep-verification:${{ steps.sweep-verification.outcome }}" \
             "prune-system-job-executions:${{ steps.prune-system-job-executions.outcome }}" \
-            "alert-orphaned-payments:${{ steps.alert-orphaned-payments.outcome }}" \
             "purge-deleted-documents:${{ steps.purge-deleted-documents.outcome }}" \
             "stream-sync:${{ steps.stream-sync.outcome }}" \
             "reconcile-ledgers:${{ steps.reconcile-ledgers.outcome }}" \
-            "msme-payment-alerts:${{ steps.msme-payment-alerts.outcome }}" \
             "expire-event-channels:${{ steps.expire-event-channels.outcome }}" \
             "expire-stale-collaborator-invites:${{ steps.expire-stale-collaborator-invites.outcome }}" \
             "reconcile-orphaned-recordings:${{ steps.reconcile-orphaned-recordings.outcome }}" \
             "wind-down-deactivated-orgs:${{ steps.wind-down-deactivated-orgs.outcome }}" \
-            "timeout-member-overages:${{ steps.timeout-member-overages.outcome }}" \
-            "dunning:${{ steps.dunning.outcome }}" \
-            "wallet-low-balance:${{ steps.wallet-low-balance.outcome }}" \
             "purge-unverified-users:${{ steps.purge-unverified-users.outcome }}"
           do
             job_name="${entry%%:*}"

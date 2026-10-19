@@ -18,11 +18,8 @@
  * is `@unique` — leaving a stale row would block a legitimate retry that
  * reuses the same client idempotency key.
  *
- * This module exports the core cleanup function. It is imported by:
- *   - jobs/cleanup/cleanup-abandoned-org-top-ups.ts (GitHub Actions wrapper)
- *   - app/api/cleanup/abandoned-org-top-ups/route.ts (HTTP endpoint)
- *
- * Schedule: Daily at 02:00 UTC (must NOT overlap generate-subscription-invoices at 01:00 UTC)
+ * Reached through the `abandoned-org-top-ups` cleanup twin, which the ticker
+ * runs in its daily window from 03:00 UTC.
  */
 
 import prisma from "../../lib/prisma";
@@ -40,8 +37,10 @@ export interface AbandonedOrgTopUpCleanupResult {
 }
 
 export interface AbandonedOrgTopUpCleanupOptions {
-  /** Override the grace window (hours). Defaults to 6h. */
+  /** Override the grace window (hours). Defaults to 48h. */
   graceHours?: number;
+  /** Oldest-first cap on the placeholders one run reaps. */
+  limit?: number;
 }
 
 /**
@@ -84,6 +83,8 @@ async function cleanupAbandonedOrgTopUpsUnlocked(
         capturedAt: null,
         createdAt: { lt: cutoff },
       },
+      orderBy: { createdAt: "asc" },
+      take: options.limit,
       select: {
         id: true,
         billingAccountId: true,
