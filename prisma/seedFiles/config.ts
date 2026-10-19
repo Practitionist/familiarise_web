@@ -317,15 +317,15 @@ export const DEFAULT_SEED_PASSWORD = "SeedPass123!";
 
 /**
  * Password for seeded ADMIN/STAFF accounts. It comes only from
- * `SEED_OPERATOR_PASSWORD`; there is no in-repo fallback, and an unset value
- * refuses the run before any row is written.
+ * `SEED_OPERATOR_PASSWORD`; there is no in-repo fallback, and an unset value or
+ * the committed default refuses the run before any row is written.
  */
 export function requireSeedOperatorPassword(): string {
   const value = process.env.SEED_OPERATOR_PASSWORD?.trim();
-  if (!value) {
+  if (!value || value === DEFAULT_SEED_PASSWORD) {
     throw new Error(
-      "Refusing to create or reset ADMIN/STAFF seed accounts: SEED_OPERATOR_PASSWORD is not set. " +
-        "Set it in your local .env (see .env.sample); operator accounts never use the committed seed default.",
+      "Refusing to create or reset ADMIN/STAFF seed accounts: SEED_OPERATOR_PASSWORD is unset or equals the committed seed default. " +
+        "Set a unique secret in your local .env (see .env.sample).",
     );
   }
   return value;

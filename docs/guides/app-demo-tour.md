@@ -165,5 +165,6 @@ Mostly visible through Admin → Payments/Invoices, Consultant → Earnings, and
 - Use the dev **"Mock Pay"** button at checkout — no real card needed.
 - If a screen needs an ID in the URL, just navigate from the dashboard — the app routes you.
 - Reset feeling stuck? Log out, or open a fresh Incognito window.
-- Every login uses the seeded `familiarise` dev database — the shared seed
-  default credential documented in `docs/team/mock-credentials.md`, never a real account.
+- Every login uses the seeded `familiarise` dev database. Non-operator logins use
+  the shared seed default in `docs/team/mock-credentials.md`; operator logins use
+  `SEED_OPERATOR_PASSWORD`. These are never real accounts.
