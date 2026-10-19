@@ -724,9 +724,9 @@ model SupportCaseMessage {
   authorUser   User?                @relation("SupportCaseMessageAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
   createdAt    DateTime             @default(now()) @db.Timestamptz
 
-  @@unique([caseId, clientTurnId])
   attachments SupportCaseAttachment[]
 
+  @@unique([caseId, clientTurnId])
   @@unique([caseId, seq])
   @@index([authorUserId])
 }
@@ -5859,8 +5859,6 @@ enum Platform {
 ////////////////////////////////////////////// PAYMENT STUFF ////////////////////////////////////////////////////
 
 model Payment {
-  supportHolds SupportPaymentHold[]
-  supportRecommendations SupportFinancialRecommendation[]
   id                   String         @id @default(uuid())
   amount               BigInt // in paise — final amount charged to gateway (after discounts + tax - credits)
   originalAmount       BigInt // in paise — original plan price before discounts/credits/tax (for earnings)
@@ -5933,6 +5931,9 @@ model Payment {
 
   refunds  Refund[] // Refunds associated with this payment
   disputes Dispute[] // Disputes associated with this payment
+
+  supportHolds           SupportPaymentHold[]
+  supportRecommendations SupportFinancialRecommendation[]
 
   incidentRemedies IncidentRemedy[]
 
@@ -6104,7 +6105,6 @@ enum PaymentStatus {
 }
 
 model Refund {
-  supportRecommendation SupportFinancialRecommendation?
   id                   String         @id @default(uuid())
   amountPaise          BigInt // Amount refunded in paise
   currency             Currency       @default(INR)
@@ -6119,6 +6119,8 @@ model Refund {
 
   payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   paymentId String
+
+  supportRecommendation SupportFinancialRecommendation?
 
   // Idempotency stamp for applyRefundCascade, claimed once by whichever path runs it.
   // reconcile-pending-refunds re-drives SUCCEEDED rows still null after 10 minutes.
@@ -7247,9 +7249,6 @@ enum SystemJobStatus {
 // Content Moderation Models
 
 model ModerationReport {
-  acknowledgementDueAt DateTime? @db.Timestamptz
-  resolutionDueAt DateTime? @db.Timestamptz
-  deadlinePolicy String? @db.VarChar(64)
   id          String                 @id @default(uuid())
   type        ModerationReportType
   status      ModerationReportStatus @default(PENDING)
@@ -7294,6 +7293,10 @@ model ModerationReport {
   resolvedAt DateTime?
   resolvedBy String? // Staff user ID
 
+  acknowledgementDueAt DateTime? @db.Timestamptz
+  resolutionDueAt      DateTime? @db.Timestamptz
+  deadlinePolicy       String?   @db.VarChar(64)
+
   actions ModerationAction[]
 
   createdAt DateTime @default(now())
@@ -7313,7 +7316,6 @@ model ModerationReport {
 }
 
 model ModerationAction {
-  supportAppeals SupportCase[]
   id         String               @id @default(uuid())
   actionType ModerationActionType
   notes      String?              @db.Text
@@ -7336,6 +7338,8 @@ model ModerationAction {
   // revoked, appointments cancelled, refund totals, per-step failures) —
   // best-effort steps can partially fail, and staff needs to see what stuck.
   sideEffects Json?
+
+  supportAppeals SupportCase[]
 
   createdAt DateTime @default(now())
 
