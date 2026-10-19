@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarDays, CreditCard, Send } from "lucide-react";
@@ -11,6 +11,10 @@ import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 import { Section } from "@/components/dashboard/Section";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { CaseCsat } from "@/components/support/CaseCsat";
+import { CaseResolutionPanel } from "@/components/support/CaseResolutionPanel";
+import { CaseAttachments } from "@/components/support/CaseAttachments";
+import { useCaseTimeline } from "@/components/support/useCaseTimeline";
 import { SupportBubble } from "@/components/support/SupportBubble";
 import {
   describeWait,
@@ -225,39 +229,6 @@ function ticketLiveAnnouncement(sending: boolean, offline: boolean): string {
   return "";
 }
 
-function TicketCsatPrompt({
-  effectiveCsat,
-  onRate,
-}: Readonly<{
-  effectiveCsat: number | null;
-  onRate: (star: number) => void;
-}>) {
-  return (
-    <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs">
-      <p className="font-medium text-foreground">
-        {effectiveCsat
-          ? "Thanks for rating how we handled your request."
-          : "How did our support team do on this request?"}
-      </p>
-      <div className="mt-1.5 flex items-center gap-1">
-        {[1, 2, 3, 4, 5].map((star) => (
-          <Button
-            key={star}
-            type="button"
-            size="sm"
-            variant={effectiveCsat === star ? "default" : "outline"}
-            className="h-7 w-7 p-0 text-xs"
-            aria-label={`Rate support ${star} out of 5`}
-            onClick={() => onRate(star)}
-          >
-            {star}★
-          </Button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function TicketComposer({
   closed,
   resolved,
@@ -334,12 +305,11 @@ function TicketRequest({
   const { toast } = useToast();
   const [draft, setDraft] = useState("");
   const [offline, setOffline] = useState(false);
-  const [csatChoice, setCsatChoice] = useState<number | null>(null);
-  const queryKey = ["user-support-ticket", ticketId];
+  const pendingTurns = useRef(new Map<string, string>());
+  const queryKey = ["user-support-case", ticketId];
 
   useEffect(() => {
     setDraft("");
-    setCsatChoice(null);
   }, [ticketId]);
 
   useEffect(() => {
@@ -357,7 +327,7 @@ function TicketRequest({
   const query = useQuery({
     queryKey,
     queryFn: async (): Promise<OwnTicketCase> => {
-      const res = await fetch(`/api/user/support-tickets/${ticketId}`);
+      const res = await fetch(`/api/support/requests/c_${ticketId}`);
       if (!res.ok) await throwSupportError(res, "request load");
       return ((await res.json()) as { data: OwnTicketCase }).data;
     },
@@ -367,18 +337,19 @@ function TicketRequest({
   });
   const reply = useMutation({
     mutationFn: async (message: string) => {
-      const res = await fetch(
-        `/api/user/support-tickets/${ticketId}/responses`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message }),
-        },
-      );
+      const clientTurnId =
+        pendingTurns.current.get(message) ?? crypto.randomUUID();
+      pendingTurns.current.set(message, clientTurnId);
+      const res = await fetch(`/api/support/cases/${ticketId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: message, clientTurnId }),
+      });
       if (!res.ok) await throwSupportError(res, "request reply");
+      pendingTurns.current.delete(message);
     },
-    onSuccess: () => {
-      setDraft("");
+    onSuccess: (_result, message) => {
+      setDraft((current) => (current.trim() === message ? "" : current));
       void qc.invalidateQueries({ queryKey });
       void qc.invalidateQueries({ queryKey: ["user-support-tickets"] });
     },
@@ -390,23 +361,13 @@ function TicketRequest({
       }),
   });
 
-  const submitCsat = async (rating: number) => {
-    try {
-      const res = await fetch(`/api/support/cases/${ticketId}/csat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rating }),
-      });
-      if (res.ok) {
-        setCsatChoice(rating);
-        void qc.invalidateQueries({ queryKey });
-      }
-    } catch {
-      // Best-effort rating submission.
-    }
-  };
-
   const data = query.data;
+  const history = useCaseTimeline(
+    ticketId,
+    data?.timeline ?? [],
+    data?.nextBeforeSeq,
+    data?.hasMore,
+  );
   useSetBreadcrumbLabel(data?.subject);
   if (query.isError && !data) {
     return (
@@ -427,12 +388,6 @@ function TicketRequest({
   }
   const closed = data.status === "CLOSED";
   const resolved = data.status === "RESOLVED";
-  const withinCsatWindow = Boolean(
-    data.resolvedAt &&
-    Date.now() - new Date(data.resolvedAt).getTime() <=
-      28 * 24 * 60 * 60 * 1000,
-  );
-  const effectiveCsat = csatChoice ?? data.csatRating ?? null;
   const paymentHref =
     data.payment && props.paymentsBase
       ? `${props.paymentsBase}/${data.payment.id}`
@@ -474,9 +429,28 @@ function TicketRequest({
               hrefLabel="Go to payment"
             />
           )}
+          {data.canReply && (
+            <CaseResolutionPanel caseId={data.caseId} customer />
+          )}
           <div className="flex flex-col rounded-lg border border-border bg-card">
             <div className="max-h-[60vh] min-h-[16rem] space-y-3 overflow-y-auto p-4">
-              {data.timeline.map((m) => (
+              {history.hasMore && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={history.loading}
+                  onClick={() => void history.loadOlder()}
+                >
+                  Load older messages
+                </Button>
+              )}
+              {data.filedByOrganizationNotice && (
+                <p className="text-sm text-muted-foreground">
+                  Your organization filed this request. The conversation is
+                  managed by its authorized team.
+                </p>
+              )}
+              {history.timeline.map((m) => (
                 <SupportBubble
                   key={m.id}
                   perspective="user"
@@ -491,10 +465,13 @@ function TicketRequest({
                   {describeWait(data.ackDueAt)}
                 </p>
               )}
-              {resolved && withinCsatWindow && (
-                <TicketCsatPrompt
-                  effectiveCsat={effectiveCsat}
-                  onRate={(star) => void submitCsat(star)}
+              {data.canReply && (
+                <CaseCsat
+                  key={data.caseId}
+                  caseId={data.caseId}
+                  status={data.status}
+                  resolvedAt={data.resolvedAt}
+                  rating={data.csatRating}
                 />
               )}
               <div aria-live="polite" className="sr-only">
@@ -517,16 +494,24 @@ function TicketRequest({
                 </div>
               )}
             </div>
-            <div className="border-t border-border p-4">
-              <TicketComposer
-                closed={closed}
-                resolved={resolved}
-                requestsHref={props.requestsHref}
-                draft={draft}
-                sending={reply.isPending}
-                onDraftChange={setDraft}
-                onSubmit={(msg) => reply.mutate(msg)}
+            {!data.filedByOrganizationNotice && (
+              <CaseAttachments
+                caseId={data.caseId}
+                canUpload={data.canReply && !closed}
               />
+            )}
+            <div className="border-t border-border p-4">
+              {data.canReply && (
+                <TicketComposer
+                  closed={closed}
+                  resolved={resolved}
+                  requestsHref={props.requestsHref}
+                  draft={draft}
+                  sending={reply.isPending}
+                  onDraftChange={setDraft}
+                  onSubmit={(msg) => reply.mutate(msg)}
+                />
+              )}
             </div>
           </div>
         </div>
@@ -549,10 +534,10 @@ export function SupportRequestView(props: Readonly<SupportRequestViewProps>) {
   return (
     <DashboardErrorBoundary>
       {ref?.kind === "booking" && (
-        <SessionRequest appointmentId={ref.id} props={props} />
+        <SessionRequest key={ref.id} appointmentId={ref.id} props={props} />
       )}
       {(ref?.kind === "ticket" || ref?.kind === "case") && (
-        <TicketRequest ticketId={ref.id} props={props} />
+        <TicketRequest key={ref.id} ticketId={ref.id} props={props} />
       )}
     </DashboardErrorBoundary>
   );

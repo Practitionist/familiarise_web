@@ -1035,6 +1035,12 @@ export function ModerationPage() {
                         </div>
                         <span className="text-xs text-muted-foreground/70">
                           {formatDate(report.createdAt)}
+                          {report.resolutionDueAt &&
+                            OPEN_REPORT_STATUSES.has(report.status) && (
+                              <span className="block text-xs text-muted-foreground">
+                                Review by {formatDate(report.resolutionDueAt)}
+                              </span>
+                            )}
                         </span>
                       </div>
                     </CardContent>

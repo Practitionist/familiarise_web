@@ -1,22 +1,6 @@
 "use client";
 
-/**
- * #support-hub — the Swiggy-style Support & Feedback hub: ONE role-agnostic
- * surface with two subtabs.
- *
- *  • Sessions — your recent sessions (tap → the session's request page)
- *    and every support conversation you've opened, bucketed by status, newest
- *    activity first.
- *  • Platform — flowchart intake for platform issues (stateless; escalates
- *    into a ticket) and your ticket list, same bucketing/sorting.
- *
- * The panels are deliberately scope-free: `/api/user/support-tickets`,
- * `/api/user/support-threads` and `/api/appointments` all key off the session,
- * so consultee, consultant, org operator and staff mount the same component.
- * #1527 — it is the Requests tab of the Support requests page; Feedback is
- * that page's sibling tab (deep-linked below). Articles live only in the
- * public Help Center.
- */
+/** Session and platform requests share canonical case readers across dashboard roles. */
 
 import { useMemo } from "react";
 import Link from "next/link";
@@ -162,7 +146,7 @@ function SessionsTab({ requestsBase }: Readonly<{ requestsBase: string }>) {
   const threads = useQuery({
     queryKey: ["user-support-threads"],
     queryFn: async (): Promise<ThreadRow[]> => {
-      const res = await fetch("/api/user/support-threads");
+      const res = await fetch("/api/support/requests?scope=session");
       if (!res.ok) await throwSupportError(res, "conversations load");
       const { data } = await res.json();
       return data;
@@ -391,7 +375,9 @@ function SessionsTab({ requestsBase }: Readonly<{ requestsBase: string }>) {
                                 : (STATUS_LABELS[t.status] ?? t.status)}
                             </Badge>
                             <Button variant="ghost" size="sm" asChild>
-                              <Link href={requestHref(t.appointmentId)}>
+                              <Link
+                                href={`${requestsBase}/${caseKeyOf({ kind: "case", id: t.id })}`}
+                              >
                                 View
                                 <ChevronRight className="ml-1 h-4 w-4" />
                               </Link>
@@ -425,13 +411,13 @@ function PlatformTab({
   requestsBase: string;
 }>) {
   const requestHref = (ticketId: string) =>
-    `${requestsBase}/${caseKeyOf({ kind: "ticket", id: ticketId })}`;
+    `${requestsBase}/${caseKeyOf({ kind: "case", id: ticketId })}`;
   const tickets = useQuery({
     queryKey: ["user-support-tickets"],
     queryFn: async (): Promise<TicketRow[]> => {
-      const res = await fetch("/api/user/support-tickets");
+      const res = await fetch("/api/support/requests?scope=platform");
       if (!res.ok) await throwSupportError(res, "requests load");
-      return res.json();
+      return (await res.json()).data;
     },
   });
 

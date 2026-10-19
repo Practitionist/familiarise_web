@@ -85,6 +85,7 @@ const paymentDisplaySelect = {
       status: true,
       refundId: true,
       createdAt: true,
+      updatedAt: true,
     },
   },
   disputes: { select: { status: true } },

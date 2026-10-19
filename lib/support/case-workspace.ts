@@ -1,33 +1,16 @@
+import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { findUserIssues } from "@/lib/observability/sentry-issues";
 import type {
-  CaseAuthor,
   CaseBooking,
-  CaseDuplicateRef,
-  CaseHistoryEvent,
   CasePayment,
   CaseWorkspace,
-  TimelineItem,
 } from "@/types/support-case";
-
-import { extractCallbackInfo } from "./callback-info";
-import { supportAttachmentHref } from "./attachment-href";
 import { caseKeyOf, type CaseRef } from "./case-key";
-import { PLAN_TITLE_SELECT, SLA_SELECT, planTitle } from "./case-read";
-import { threadTopic, ticketTopic } from "./case-topic";
-import { extractBotPromises } from "./escalation";
-import { MESSAGE_ORDER } from "./message-seq";
+import { PLAN_TITLE_SELECT, planTitle } from "./case-read";
+import { ticketTopic } from "./case-topic";
 import { slaStateOf } from "./sla";
-
-/**
- * #1527 — one support case's workspace, shaped for the back-office case page:
- * person, booking, payment and org context, past cases, and one timeline over
- * the thread's messages and the ticket's responses. Each source is bounded to
- * TIMELINE_LIMIT rows.
- */
-
 export const TIMELINE_LIMIT = 200;
-
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
 
 const BOOKING_SELECT = {
@@ -165,461 +148,191 @@ export async function readPayment(
     : null;
 }
 
-const isOperator = (role: string | null | undefined) =>
-  role === "STAFF" || role === "ADMIN";
-
-type MessageRow = {
-  id: string;
-  sender: CaseAuthor;
-  body: string;
-  createdAt: Date;
-  authorUser: { name: string | null } | null;
-};
-
-function messageItems(messages: MessageRow[]): TimelineItem[] {
-  return messages.map((m) => ({
-    id: m.id,
-    author: m.sender,
-    authorName: m.sender === "AGENT" ? (m.authorUser?.name ?? null) : null,
-    body: m.body,
-    internal: false,
-    at: m.createdAt.toISOString(),
-  }));
-}
-
-type ResponseRow = {
-  id: string;
-  message: string;
-  isInternal: boolean;
-  createdAt: Date;
-  user: { name: string | null; role: string | null };
-};
-
-export function responseItems(responses: ResponseRow[]): TimelineItem[] {
-  return responses.map((r) => ({
-    id: r.id,
-    author: isOperator(r.user.role) ? "AGENT" : "USER",
-    authorName: r.user.name,
-    body: r.message,
-    internal: r.isInternal,
-    at: r.createdAt.toISOString(),
-  }));
-}
-
-const MIRROR_DEDUPE_WINDOW_MS = 5_000;
-
-/** Pair-deduplicate non-internal user ticket replies mirrored into thread USER messages within 5s. */
-export function dedupeEscalatedResponses(
-  responses: ResponseRow[],
-  messages: MessageRow[],
-): ResponseRow[] {
-  const unmatchedUserMessages = messages.filter((m) => m.sender === "USER");
-  return responses.filter((r) => {
-    if (r.isInternal) return true;
-    if (isOperator(r.user.role)) return false;
-    const matchIdx = unmatchedUserMessages.findIndex(
-      (m) =>
-        m.body === r.message &&
-        Math.abs(r.createdAt.getTime() - m.createdAt.getTime()) <=
-          MIRROR_DEDUPE_WINDOW_MS,
-    );
-    if (matchIdx !== -1) {
-      unmatchedUserMessages.splice(matchIdx, 1);
-      return false;
-    }
-    return true;
-  });
-}
-
-export const byTime = (a: TimelineItem, b: TimelineItem) =>
-  a.at.localeCompare(b.at);
-
-const MESSAGE_SELECT = {
-  orderBy: MESSAGE_ORDER,
-  take: -TIMELINE_LIMIT,
-  select: {
-    id: true,
-    sender: true,
-    body: true,
-    createdAt: true,
-    authorUser: { select: { name: true } },
-  },
-} as const;
-
-export const RESPONSE_SELECT = {
-  select: {
-    id: true,
-    message: true,
-    isInternal: true,
-    createdAt: true,
-    user: { select: { name: true, role: true } },
-  },
-} as const;
-
-const PERSON_SELECT = {
-  id: true,
-  name: true,
-  email: true,
-  phone: true,
-  role: true,
-  createdAt: true,
-} as const;
-
-async function readPastCases(userId: string, exceptKey: string) {
-  const [tickets, threads] = await Promise.all([
-    prisma.supportTicket.findMany({
-      where: { userId },
-      orderBy: { createdAt: "desc" },
-      take: 6,
-      select: { id: true, title: true, status: true, createdAt: true },
-    }),
-    prisma.appointmentSupportThread.findMany({
-      where: { userId, supportTicketId: null },
-      orderBy: { createdAt: "desc" },
-      take: 6,
-      select: {
-        id: true,
-        status: true,
-        createdAt: true,
-        appointment: { select: PLAN_TITLE_SELECT },
-      },
-    }),
-  ]);
-  return [
-    ...tickets.map((t) => ({
-      key: caseKeyOf({ kind: "ticket", id: t.id }),
-      subject: t.title,
-      status: t.status,
-      at: t.createdAt.toISOString(),
-    })),
-    ...threads.map((t) => ({
-      key: caseKeyOf({ kind: "thread", id: t.id }),
-      subject: `Help with ${planTitle(t.appointment)}`,
-      status: t.status,
-      at: t.createdAt.toISOString(),
-    })),
-  ]
-    .filter((c) => c.key !== exceptKey)
-    .sort((a, b) => b.at.localeCompare(a.at))
-    .slice(0, 5);
-}
-
 export interface WorkspaceGrants {
   showEmail: boolean;
   showPayment: boolean;
+}
+
+/** Old links resolve through the import alias, never through a legacy table. */
+export async function resolveSupportCaseId(
+  ref: CaseRef,
+): Promise<string | null> {
+  if (ref.kind === "case") return ref.id;
+  if (ref.kind === "booking") return null;
+  const alias = await prisma.supportCaseLegacyAlias.findUnique({
+    where: { legacyKind_legacyId: { legacyKind: ref.kind, legacyId: ref.id } },
+    select: { caseId: true },
+  });
+  return alias?.caseId ?? null;
 }
 
 export async function readCaseWorkspace(
   ref: CaseRef,
   grants: WorkspaceGrants,
 ): Promise<CaseWorkspace | null> {
-  if (ref.kind === "ticket") return readTicketWorkspace(ref.id, grants);
-  if (ref.kind === "thread") return readThreadWorkspace(ref.id, grants);
-  if (ref.kind === "case") return null;
-  return null;
-}
-
-function isSystemEscalatedTicket(t: {
-  description: string;
-  appointmentSupportThread: { id: string } | null;
-  filedBy?: string;
-}): boolean {
-  if (t.filedBy === "system") return true;
-  if (t.filedBy && t.filedBy !== "system") return false;
-  if (t.appointmentSupportThread !== null) return true;
-  return (
-    (t.description.startsWith("Customer asked:") &&
-      t.description.includes("\nPath: ") &&
-      t.description.includes("\nTopic: ")) ||
-    t.description.startsWith("Escalation reason: ") ||
-    t.description.includes("\nEscalation reason: ")
-  );
-}
-
-async function readCaseEvents(ticketId: string): Promise<CaseHistoryEvent[]> {
-  const rows = await prisma.supportCaseEvent.findMany({
-    where: { legacyTicketId: ticketId },
-    orderBy: { createdAt: "asc" },
-    select: {
-      id: true,
-      kind: true,
-      fromValue: true,
-      toValue: true,
-      note: true,
-      createdAt: true,
-      actor: { select: { name: true } },
-    },
-  });
-  return rows.map((e) => ({
-    id: e.id,
-    kind: e.kind,
-    fromValue: e.fromValue,
-    toValue: e.toValue,
-    note: e.note,
-    actorName: e.actor?.name ?? null,
-    createdAt: e.createdAt.toISOString(),
-  }));
-}
-
-async function readDuplicateOpenCases(input: {
-  userId: string;
-  excludeTicketId: string;
-  paymentId: string | null;
-  appointmentId: string | null;
-}): Promise<CaseDuplicateRef[]> {
-  if (!input.paymentId && !input.appointmentId) return [];
-  const matchers: Array<
-    | { paymentId: string }
-    | { appointmentSupportThread: { appointmentId: string } }
-  > = [];
-  if (input.paymentId) matchers.push({ paymentId: input.paymentId });
-  if (input.appointmentId) {
-    matchers.push({
-      appointmentSupportThread: { appointmentId: input.appointmentId },
-    });
-  }
-  const rows = await prisma.supportTicket.findMany({
-    where: {
-      userId: input.userId,
-      id: { not: input.excludeTicketId },
-      status: { in: ["OPEN", "IN_PROGRESS"] },
-      OR: matchers,
-    },
-    orderBy: { createdAt: "desc" },
-    take: 5,
-    select: { id: true, referenceNumber: true, title: true, status: true },
-  });
-  return rows.map((r) => ({
-    id: r.id,
-    reference: r.referenceNumber ?? r.id,
-    title: r.title,
-    status: r.status,
-  }));
-}
-
-async function readTicketWorkspace(
-  ticketId: string,
-  grants: WorkspaceGrants,
-): Promise<CaseWorkspace | null> {
-  const t = await prisma.supportTicket.findUnique({
-    where: { id: ticketId },
-    select: {
-      id: true,
-      referenceNumber: true,
-      title: true,
-      description: true,
-      priority: true,
-      category: true,
-      issueType: true,
-      createdAt: true,
-      updatedAt: true,
-      lastMessageAt: true,
-      paymentId: true,
-      consultationId: true,
-      ...SLA_SELECT,
-      user: { select: PERSON_SELECT },
-      assignedTo: { select: { id: true, name: true } },
-      organization: { select: { id: true, name: true } },
-      attachments: {
-        orderBy: { uploadedAt: "desc" },
-        select: { id: true, originalName: true, fileSize: true },
-      },
-      responses: {
-        orderBy: { createdAt: "asc" },
-        take: -TIMELINE_LIMIT,
-        ...RESPONSE_SELECT,
-      },
-      appointmentSupportThread: {
-        select: { id: true, appointmentId: true, messages: MESSAGE_SELECT },
-      },
-    },
-  });
-  if (!t) return null;
-
-  const key = caseKeyOf({ kind: "ticket", id: t.id });
-  const thread = t.appointmentSupportThread;
-  const opener: TimelineItem = {
-    id: `${t.id}-description`,
-    author: "USER",
-    authorName: t.user.name,
-    body: t.description,
-    internal: false,
-    at: t.createdAt.toISOString(),
-  };
-  const timeline = thread
-    ? [
-        ...messageItems(thread.messages),
-        ...responseItems(
-          dedupeEscalatedResponses(t.responses, thread.messages),
-        ),
-      ]
-    : [opener, ...responseItems(t.responses)];
-
-  let appointmentId = thread?.appointmentId ?? null;
-  if (!appointmentId && t.consultationId) {
-    const c = await prisma.consultation.findUnique({
-      where: { id: t.consultationId },
-      select: { appointment: { select: { id: true } } },
-    });
-    appointmentId = c?.appointment?.id ?? null;
-  }
-  const [
-    booking,
-    payment,
-    pastCases,
-    sentryIssues,
-    duplicateOpenCases,
-    events,
-  ] = await Promise.all([
-    appointmentId ? readBooking(appointmentId, t.user.name) : null,
-    grants.showPayment ? readPayment(t.paymentId) : null,
-    readPastCases(t.user.id, key),
-    findUserIssues({ userId: t.user.id, limit: 5 }),
-    readDuplicateOpenCases({
-      userId: t.user.id,
-      excludeTicketId: t.id,
-      paymentId: t.paymentId,
-      appointmentId,
-    }),
-    readCaseEvents(t.id),
-  ]);
-
-  const cb = extractCallbackInfo(t.description, t.user.phone);
-  const botPromises = isSystemEscalatedTicket(t)
-    ? extractBotPromises(t.description)
-    : [];
-
-  return {
-    key,
-    kind: "ticket",
-    ticketId: t.id,
-    threadId: thread?.id ?? null,
-    subject: t.title,
-    reference: t.referenceNumber,
-    topic: ticketTopic(t),
-    status: t.status,
-    priority: t.priority,
-    channel: thread ? "HUMAN" : null,
-    assignee: t.assignedTo,
-    sla: slaStateOf(t),
-    ackDueAt: iso(t.ackDueAt),
-    resolutionDueAt: iso(t.resolutionDueAt),
-    lastMessageAt: iso(t.lastMessageAt),
-    createdAt: t.createdAt.toISOString(),
-    updatedAt: t.updatedAt.toISOString(),
-    handoffSummary: thread ? t.description || null : null,
-    botPromises,
-    duplicateOpenCases,
-    events,
-    person: {
-      id: t.user.id,
-      name: t.user.name,
-      role: t.user.role,
-      email: grants.showEmail ? t.user.email : null,
-      phone: cb.phone ?? t.user.phone,
-      callbackRequested: cb.callbackRequested,
-      joinedAt: t.user.createdAt.toISOString(),
-    },
-    booking,
-    payment,
-    organization: t.organization,
-    pastCases,
-    sentryIssues,
-    timeline: timeline.toSorted(byTime),
-    attachments: t.attachments.map((a) => ({
-      id: a.id,
-      name: a.originalName,
-      url: supportAttachmentHref(t.id, a.id),
-      size: a.fileSize,
-    })),
-  };
-}
-
-async function readThreadWorkspace(
-  threadId: string,
-  grants: WorkspaceGrants,
-): Promise<CaseWorkspace | null> {
-  const t = await prisma.appointmentSupportThread.findUnique({
-    where: { id: threadId },
-    select: {
-      id: true,
-      appointmentId: true,
-      status: true,
-      activeChannel: true,
-      category: true,
-      createdAt: true,
-      updatedAt: true,
-      supportTicketId: true,
-      user: { select: PERSON_SELECT },
-      organization: { select: { id: true, name: true } },
-      messages: MESSAGE_SELECT,
-      appointment: {
+  const caseId = await resolveSupportCaseId(ref);
+  if (!caseId) return null;
+  const c = await prisma.supportCase.findFirst({
+    where: { id: caseId, deletedAt: null },
+    include: {
+      requester: {
         select: {
-          payment: {
-            select: { id: true },
-            take: 1,
-            orderBy: { createdAt: "desc" },
-          },
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          role: true,
+          createdAt: true,
         },
       },
+      assignedTo: { select: { id: true, name: true } },
+      organization: { select: { id: true, name: true } },
+      subjects: true,
+      messages: {
+        orderBy: { seq: "asc" },
+        take: -(TIMELINE_LIMIT + 1),
+        include: { authorUser: { select: { name: true } } },
+      },
+      events: {
+        orderBy: { createdAt: "desc" },
+        take: 100,
+        include: { actor: { select: { name: true } } },
+      },
     },
   });
-  if (!t) return null;
-  const key = caseKeyOf({ kind: "thread", id: t.id });
-  const [booking, payment, pastCases, sentryIssues] = await Promise.all([
-    readBooking(t.appointmentId, t.user.name),
-    grants.showPayment
-      ? readPayment(t.appointment.payment[0]?.id ?? null)
-      : null,
-    readPastCases(t.user.id, key),
-    findUserIssues({ userId: t.user.id, limit: 5 }),
-  ]);
+  if (!c) return null;
+  const paymentId =
+    c.subjects.find((s) => s.subjectType === "PAYMENT")?.subjectId ?? null;
+  const [booking, payment, pastCases, sentryIssues, duplicates] =
+    await Promise.all([
+      c.appointmentId ? readBooking(c.appointmentId, c.requester.name) : null,
+      grants.showPayment ? readPayment(paymentId) : null,
+      prisma.supportCase.findMany({
+        where: {
+          requesterUserId: c.requesterUserId,
+          id: { not: c.id },
+          deletedAt: null,
+        },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        select: { id: true, title: true, status: true, createdAt: true },
+      }),
+      findUserIssues({ userId: c.requesterUserId, limit: 5 }),
+      c.appointmentId || paymentId
+        ? prisma.supportCase.findMany({
+            where: {
+              deletedAt: null,
+              id: { not: c.id },
+              requesterUserId: c.requesterUserId,
+              status: { notIn: ["RESOLVED", "CLOSED"] },
+              OR: [
+                ...(c.appointmentId
+                  ? [{ appointmentId: c.appointmentId }]
+                  : []),
+                ...(paymentId
+                  ? [
+                      {
+                        subjects: {
+                          some: {
+                            subjectType: "PAYMENT" as const,
+                            subjectId: paymentId,
+                          },
+                        },
+                      },
+                    ]
+                  : []),
+              ],
+            },
+            take: 5,
+            select: {
+              id: true,
+              referenceNumber: true,
+              title: true,
+              status: true,
+            },
+          })
+        : [],
+    ]);
+  const messages = c.messages.slice(-TIMELINE_LIMIT);
   return {
-    key,
-    kind: "thread",
-    ticketId: t.supportTicketId,
-    threadId: t.id,
-    subject: `Help with ${booking?.title ?? "a session"}`,
-    reference: null,
-    topic: threadTopic(t.category),
-    status: t.status,
-    priority: null,
-    channel: t.activeChannel,
-    assignee: null,
-    sla: null,
-    ackDueAt: null,
-    resolutionDueAt: null,
-    createdAt: t.createdAt.toISOString(),
-    updatedAt: t.updatedAt.toISOString(),
-    handoffSummary: null,
+    key: caseKeyOf({ kind: "case", id: c.id }),
+    kind: "case",
+    caseId: c.id,
+    subject: c.title,
+    reference: c.referenceNumber,
+    topic: ticketTopic(c),
+    status: c.status,
+    priority: c.priority,
+    channel: c.activeChannel,
+    assignee: c.assignedTo,
+    sla: slaStateOf(c),
+    ackDueAt: iso(c.ackDueAt),
+    resolutionDueAt: iso(c.resolutionDueAt),
+    lastMessageAt: iso(c.lastMessageAt),
+    createdAt: c.createdAt.toISOString(),
+    updatedAt: c.updatedAt.toISOString(),
+    handoffSummary: c.description || null,
+    duplicateOpenCases: duplicates.map((d) => ({
+      id: d.id,
+      reference: d.referenceNumber,
+      title: d.title,
+      status: d.status,
+    })),
+    events: c.events.reverse().map((e) => ({
+      id: e.id,
+      kind: e.kind,
+      fromValue: e.fromValue,
+      toValue: e.toValue,
+      note: e.note,
+      actorName: e.actor?.name ?? null,
+      createdAt: e.createdAt.toISOString(),
+    })),
+    botPromises: [
+      ...new Set(
+        c.messages.flatMap((message) => {
+          if (message.sender !== "BOT" && message.sender !== "SYSTEM")
+            return [];
+          const parsed = z
+            .object({ promises: z.array(z.string()) })
+            .safeParse(message.metadata);
+          return parsed.success ? parsed.data.promises : [];
+        }),
+      ),
+    ],
     person: {
-      id: t.user.id,
-      name: t.user.name,
-      role: t.user.role,
-      email: grants.showEmail ? t.user.email : null,
-      phone: t.user.phone,
-      joinedAt: t.user.createdAt.toISOString(),
+      id: c.requester.id,
+      name: c.externalRequesterName ?? c.requester.name,
+      role: c.requester.role,
+      email: grants.showEmail
+        ? (c.externalRequesterEmail ?? c.requester.email)
+        : null,
+      phone:
+        c.callbackPhone ??
+        (c.externalRequesterEmail ? null : c.requester.phone),
+      callbackRequested: Boolean(c.callbackPhone),
+      joinedAt: c.requester.createdAt.toISOString(),
     },
     booking,
     payment,
-    organization: t.organization,
-    pastCases,
+    organization: c.organization,
+    pastCases: pastCases.map((p) => ({
+      key: caseKeyOf({ kind: "case", id: p.id }),
+      subject: p.title,
+      status: p.status,
+      at: p.createdAt.toISOString(),
+    })),
     sentryIssues,
-    timeline: messageItems(t.messages),
+    timeline: messages.map((m) => ({
+      id: m.id,
+      seq: m.seq,
+      author: m.sender,
+      authorName: m.authorUser?.name ?? null,
+      body: m.body,
+      internal: m.isInternal,
+      at: m.createdAt.toISOString(),
+    })),
+    hasMore: c.messages.length > TIMELINE_LIMIT,
+    nextBeforeSeq: messages[0]?.seq ?? null,
     attachments: [],
   };
-}
-
-/**
- * The ticket an escalated conversation became, if any: its case is the
- * ticket (inbox-query.ts), so an `s_` link to it redirects there.
- */
-export async function escalatedTicketOf(
-  threadId: string,
-): Promise<string | null> {
-  const t = await prisma.appointmentSupportThread.findUnique({
-    where: { id: threadId },
-    select: { supportTicketId: true },
-  });
-  return t?.supportTicketId ?? null;
 }

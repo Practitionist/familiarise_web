@@ -66,7 +66,7 @@ function buildColumns(orgId: string): ResponsiveColumn<OrgTicketRow>[] {
       primary: true,
       cell: (t) => (
         <Link
-          href={`/dashboard/organization/${orgId}/support/requests/${caseKeyOf({ kind: "ticket", id: t.id })}`}
+          href={`/dashboard/organization/${orgId}/support/requests/${caseKeyOf({ kind: "case", id: t.id })}`}
           className="group block min-w-0"
         >
           <span className="block truncate font-medium text-foreground group-hover:underline">

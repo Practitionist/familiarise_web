@@ -1,28 +1,26 @@
 import type {
   Prisma,
   SupportPriority,
-  SupportThreadStatus,
-  SupportTicketStatus,
+  SupportCaseStatus,
 } from "@prisma/client";
 
 import {
   isCaseTopic,
-  threadTopicWhere,
-  ticketTopicWhere,
+  supportCaseTopicWhere,
   type CaseTopic,
 } from "./case-topic";
 import { slaStateOf, type SlaClock } from "./sla";
 
 /**
- * Back-office Support inbox: one list of CASES over two tables.
- * A case is a ticket (platform, or escalated with its thread folded in) or a
- * conversation that has not been escalated yet (`supportTicketId: null`), so
- * an escalated conversation appears once, as its ticket.
+ * Back-office Support inbox filters over the canonical SupportCase table.
  */
 
 export const INBOX_VIEWS = [
   "needs-reply",
   "sla-at-risk",
+  "evidence-overdue",
+  "financial-pending",
+  "appeals",
   "mine",
   "unassigned",
   "self-serve",
@@ -33,6 +31,9 @@ export type InboxView = (typeof INBOX_VIEWS)[number];
 export const INBOX_VIEW_LABEL: Record<InboxView, string> = {
   "needs-reply": "Needs reply",
   "sla-at-risk": "SLA at risk",
+  "evidence-overdue": "Evidence overdue",
+  "financial-pending": "Financial recommendation pending",
+  appeals: "Appeals",
   mine: "Mine",
   unassigned: "Unassigned",
   "self-serve": "Self-serve only",
@@ -45,11 +46,10 @@ export type InboxSort = (typeof INBOX_SORTS)[number];
 export const INBOX_SCOPES = ["session", "platform"] as const;
 export type InboxScope = (typeof INBOX_SCOPES)[number];
 
-/** Union of both status enums; each table filters on the values it has. */
+/** Supported canonical lifecycle statuses. */
 export const INBOX_STATUSES = [
   "OPEN",
   "IN_PROGRESS",
-  "ON_HOLD",
   "ESCALATED",
   "RESOLVED",
   "CLOSED",
@@ -77,7 +77,7 @@ export const INBOX_FILTER_KEYS = [
 export type InboxFilterKey = (typeof INBOX_FILTER_KEYS)[number];
 
 export const INBOX_PAGE_SIZE = 25;
-/** Deepest row a page may reach; the merge reads skip+take from each table. */
+/** Deepest row a page may reach. */
 export const INBOX_MAX_DEPTH = 1000;
 
 export interface InboxFilters {
@@ -128,42 +128,11 @@ export function parseInboxFilters(
   };
 }
 
-const SETTLED_TICKET: SupportTicketStatus[] = ["RESOLVED", "CLOSED"];
-const SETTLED_THREAD: SupportThreadStatus[] = ["RESOLVED", "CLOSED"];
-const TICKET_STATUSES = new Set<string>([
-  "OPEN",
-  "IN_PROGRESS",
-  "ON_HOLD",
-  "RESOLVED",
-  "CLOSED",
-]);
-const THREAD_STATUSES = new Set<string>([
-  "OPEN",
-  "IN_PROGRESS",
-  "ESCALATED",
-  "RESOLVED",
-  "CLOSED",
-]);
+const SETTLED: SupportCaseStatus[] = ["RESOLVED", "CLOSED"];
 
-/** The ball is in our court: unsettled and not waiting on the user. */
-export const TICKET_NEEDS_REPLY_WHERE: Prisma.SupportTicketWhereInput = {
-  status: { in: ["OPEN", "IN_PROGRESS"] },
-  awaitingUserSince: null,
-};
-
-/** Tickets still being worked: the "open cases" stat and the Mine/Unassigned base. */
-export const TICKET_OPEN_WHERE: Prisma.SupportTicketWhereInput = {
-  status: { notIn: SETTLED_TICKET },
-};
-
-/** A conversation that has not been escalated (else its ticket is the case). */
-export const THREAD_CASE_WHERE: Prisma.AppointmentSupportThreadWhereInput = {
-  supportTicketId: null,
-};
-
-export const THREAD_OPEN_WHERE: Prisma.AppointmentSupportThreadWhereInput = {
-  ...THREAD_CASE_WHERE,
-  status: { notIn: SETTLED_THREAD },
+export const CASE_OPEN_WHERE: Prisma.SupportCaseWhereInput = {
+  deletedAt: null,
+  status: { notIn: SETTLED },
 };
 
 function range(f: InboxFilters) {
@@ -179,40 +148,63 @@ function range(f: InboxFilters) {
 export const SLA_ACK_AT_RISK_MS = 6 * 3_600_000;
 export const SLA_RESOLUTION_AT_RISK_MS = 12 * 3_600_000;
 
-export function inboxTicketWhere(
+export function inboxCaseWhere(
   f: InboxFilters,
   now: Date = new Date(),
-): Prisma.SupportTicketWhereInput | null {
-  if (f.view === "self-serve") return null;
-  if (f.status && !TICKET_STATUSES.has(f.status)) return null;
-  const and: Prisma.SupportTicketWhereInput[] = [];
-  if (f.view === "needs-reply") and.push(TICKET_NEEDS_REPLY_WHERE);
-  if (f.view === "sla-at-risk") {
-    const ackThreshold = new Date(now.getTime() + SLA_ACK_AT_RISK_MS);
-    const resThreshold = new Date(now.getTime() + SLA_RESOLUTION_AT_RISK_MS);
-    and.push(TICKET_OPEN_WHERE, {
+): Prisma.SupportCaseWhereInput {
+  const and: Prisma.SupportCaseWhereInput[] = [{ deletedAt: null }];
+  if (f.view === "needs-reply") {
+    and.push(CASE_OPEN_WHERE, {
+      activeChannel: "HUMAN",
       awaitingUserSince: null,
+    });
+  }
+  if (f.view === "evidence-overdue")
+    and.push(CASE_OPEN_WHERE, {
+      evidenceRequests: {
+        some: { dueAt: { lte: now }, respondedAt: null, cancelledAt: null },
+      },
+    });
+  if (f.view === "financial-pending")
+    and.push({ recommendations: { some: { decidedAt: null } } });
+  if (f.view === "appeals")
+    and.push({
       OR: [
-        { acknowledgedAt: null, ackDueAt: { lte: ackThreshold } },
-        { resolutionDueAt: { lte: resThreshold } },
+        { appealOfDecisionId: { not: null } },
+        { appealOfModerationActionId: { not: null } },
+      ],
+    });
+  if (f.view === "sla-at-risk") {
+    and.push(CASE_OPEN_WHERE, {
+      OR: [
+        {
+          statutoryDueAt: {
+            lte: new Date(now.getTime() + SLA_RESOLUTION_AT_RISK_MS),
+          },
+        },
+        {
+          acknowledgedAt: null,
+          ackDueAt: { lte: new Date(now.getTime() + SLA_ACK_AT_RISK_MS) },
+        },
+        {
+          resolutionDueAt: {
+            lte: new Date(now.getTime() + SLA_RESOLUTION_AT_RISK_MS),
+          },
+        },
       ],
     });
   }
   if (f.view === "mine") and.push({ assignedToId: f.viewerId });
-  if (f.view === "unassigned") and.push({ assignedToId: null });
-  // Mine/Unassigned are work queues: settled cases drop out unless asked for.
-  if ((f.view === "mine" || f.view === "unassigned") && !f.status) {
-    and.push(TICKET_OPEN_WHERE);
-  }
-  if (f.status) and.push({ status: f.status as SupportTicketStatus });
+  if (f.view === "unassigned")
+    and.push({ assignedToId: null, activeChannel: "HUMAN" });
+  if (f.view === "self-serve") and.push({ activeChannel: "SELF_SERVE" });
+  if (["mine", "unassigned", "self-serve"].includes(f.view) && !f.status)
+    and.push(CASE_OPEN_WHERE);
+  if (f.status) and.push({ status: f.status });
   if (f.priority) and.push({ priority: f.priority });
-  if (f.topic) and.push(ticketTopicWhere(f.topic));
-  if (f.scope === "session") {
-    and.push({ appointmentSupportThread: { isNot: null } });
-  }
-  if (f.scope === "platform") {
-    and.push({ appointmentSupportThread: { is: null } });
-  }
+  if (f.topic) and.push(supportCaseTopicWhere(f.topic));
+  if (f.scope === "session") and.push({ appointmentId: { not: null } });
+  if (f.scope === "platform") and.push({ appointmentId: null });
   const window = range(f);
   if (window) and.push(window);
   if (f.q) {
@@ -223,47 +215,7 @@ export function inboxTicketWhere(
         { description: contains },
         { referenceNumber: contains },
         { id: contains },
-        { user: { OR: [{ name: contains }, { email: contains }] } },
-      ],
-    });
-  }
-  return and.length ? { AND: and } : {};
-}
-
-export function inboxThreadWhere(
-  f: InboxFilters,
-): Prisma.AppointmentSupportThreadWhereInput | null {
-  // Conversations are never assigned, carry no priority, and do not have
-  // statutory ticket SLA clocks; a platform case is not about a booking.
-  if (
-    f.view === "mine" ||
-    f.view === "unassigned" ||
-    f.view === "sla-at-risk"
-  ) {
-    return null;
-  }
-  if (f.priority || f.scope === "platform") return null;
-  if (f.status && !THREAD_STATUSES.has(f.status)) return null;
-  const and: Prisma.AppointmentSupportThreadWhereInput[] = [THREAD_CASE_WHERE];
-  // A person took over but no ticket holds it (the link was cleared).
-  if (f.view === "needs-reply") {
-    and.push({ activeChannel: "HUMAN", status: { notIn: SETTLED_THREAD } });
-  }
-  if (f.view === "self-serve") {
-    and.push({ activeChannel: { not: "HUMAN" } });
-    if (!f.status) and.push({ status: { notIn: SETTLED_THREAD } });
-  }
-  if (f.status) and.push({ status: f.status as SupportThreadStatus });
-  if (f.topic) and.push(threadTopicWhere(f.topic));
-  const window = range(f);
-  if (window) and.push(window);
-  if (f.q) {
-    const contains = { contains: f.q, mode: "insensitive" as const };
-    and.push({
-      OR: [
-        { id: contains },
-        { appointmentId: contains },
-        { user: { OR: [{ name: contains }, { email: contains }] } },
+        { requester: { OR: [{ name: contains }, { email: contains }] } },
       ],
     });
   }
@@ -275,7 +227,7 @@ export function inboxBadgeFilters(viewerId: string): InboxFilters {
   return parseInboxFilters(() => null, viewerId);
 }
 
-// ── Merging two sorted lists ────────────────────────────────────────────
+// ── Inbox ordering ────────────────────────────────────────────
 
 export interface SortKey {
   key: string;
@@ -284,27 +236,15 @@ export interface SortKey {
   acknowledgedAt?: Date | null;
   ackDueAt?: Date | null;
   resolutionDueAt?: Date | null;
+  statutoryDueAt?: Date | null;
 }
 
-/** Both reads order by this, so the merge reproduces a single ORDER BY. */
+/** Deterministic activity order shared by inbox pages. */
 export const CASE_ORDER_BY = [
   { lastMessageAt: { sort: "desc", nulls: "last" } },
   { createdAt: "desc" },
   { id: "desc" },
 ] as const;
-
-/** Mirrors CASE_ORDER_BY: latest activity first, never-active rows last. */
-export function compareCases(a: SortKey, b: SortKey): number {
-  if (Boolean(a.lastMessageAt) !== Boolean(b.lastMessageAt))
-    return a.lastMessageAt ? -1 : 1;
-  const byLast =
-    (b.lastMessageAt?.getTime() ?? 0) - (a.lastMessageAt?.getTime() ?? 0);
-  if (byLast !== 0) return byLast;
-  const byCreated = b.createdAt.getTime() - a.createdAt.getTime();
-  if (byCreated !== 0) return byCreated;
-  if (a.key === b.key) return 0;
-  return a.key < b.key ? 1 : -1;
-}
 
 export function compareCasesBySla(a: SortKey, b: SortKey): number {
   const aAck = a.acknowledgedAt ? null : (a.ackDueAt ?? null);
@@ -314,8 +254,12 @@ export function compareCasesBySla(a: SortKey, b: SortKey): number {
     const diff = aAck.getTime() - bAck.getTime();
     if (diff !== 0) return diff;
   }
-  const aRes = a.resolutionDueAt ?? null;
-  const bRes = b.resolutionDueAt ?? null;
+  const earliest = (row: SortKey) =>
+    [row.resolutionDueAt, row.statutoryDueAt]
+      .filter((date): date is Date => Boolean(date))
+      .sort((left, right) => left.getTime() - right.getTime())[0] ?? null;
+  const aRes = earliest(a);
+  const bRes = earliest(b);
   if (Boolean(aRes) !== Boolean(bRes)) return aRes ? -1 : 1;
   if (aRes && bRes) {
     const diff = aRes.getTime() - bRes.getTime();
@@ -325,18 +269,6 @@ export function compareCasesBySla(a: SortKey, b: SortKey): number {
   if (byCreated !== 0) return byCreated;
   if (a.key === b.key) return 0;
   return a.key < b.key ? -1 : 1;
-}
-
-/** One page of the union, given each table's first `skip + take` rows in order. */
-export function mergeCasePage<T extends SortKey>(
-  a: readonly T[],
-  b: readonly T[],
-  skip: number,
-  take: number,
-  sort: InboxSort = "activity",
-): T[] {
-  const cmp = sort === "sla" ? compareCasesBySla : compareCases;
-  return [...a, ...b].sort(cmp).slice(skip, skip + take);
 }
 
 // ── Team stats ──────────────────────────────────────────────────────────
@@ -358,13 +290,14 @@ export function averageFirstResponseMs(
 }
 
 /** Candidates whose raw deadline passed; the pause can only push it later. */
-export function slaCandidateWhere(now: Date): Prisma.SupportTicketWhereInput {
+export function slaCandidateWhere(now: Date): Prisma.SupportCaseWhereInput {
   return {
-    ...TICKET_OPEN_WHERE,
+    ...CASE_OPEN_WHERE,
     resolvedAt: null,
     OR: [
       { acknowledgedAt: null, ackDueAt: { lt: now } },
       { resolutionDueAt: { lt: now } },
+      { statutoryDueAt: { lt: now } },
     ],
   };
 }

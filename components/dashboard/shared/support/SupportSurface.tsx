@@ -12,6 +12,8 @@
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 
+import { EvidenceInbox } from "@/components/support/EvidenceInbox";
+import { ReportHistory } from "@/components/dashboard/shared/ReportHistory";
 import { SupportHub } from "./SupportHub";
 
 export function SupportSurface({ profileId }: { profileId: string }) {
@@ -26,6 +28,8 @@ export function SupportSurface({ profileId }: { profileId: string }) {
         requestsBase={`/dashboard/org-workspace/${profileId}/support/requests`}
         defaultView="platform"
       />
+      <EvidenceInbox />
+      <ReportHistory />
     </DashboardErrorBoundary>
   );
 }

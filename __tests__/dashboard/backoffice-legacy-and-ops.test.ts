@@ -24,9 +24,8 @@ import LegacyBackofficeCatchAll from "@/app/dashboard/(backoffice)/[tree]/[...le
 import { legacyBackofficeHref } from "@/lib/backoffice/legacy-routes";
 import { slaStatusBadge } from "@/lib/support/sla-hint";
 import {
-  inboxThreadWhere,
-  inboxTicketWhere,
-  mergeCasePage,
+  inboxCaseWhere,
+  compareCasesBySla,
   parseInboxFilters,
 } from "@/lib/support/inbox-query";
 import type { SlaState } from "@/lib/support/sla";
@@ -125,31 +124,24 @@ describe("support SLA status badges and sla-at-risk inbox query", () => {
     );
     expect(f.view).toBe("sla-at-risk");
     expect(f.sort).toBe("sla");
-    expect(inboxThreadWhere(f)).toBeNull();
-    expect(JSON.stringify(inboxTicketWhere(f))).toContain(
+    expect(JSON.stringify(inboxCaseWhere(f))).toContain(
       '"awaitingUserSince":null',
     );
 
-    const rows = mergeCasePage(
-      [
-        {
-          key: "t_later",
-          lastMessageAt: new Date("2026-10-06T05:00:00Z"),
-          createdAt: new Date("2026-10-05T00:00:00Z"),
-          ackDueAt: new Date("2026-10-06T18:00:00Z"),
-        },
-        {
-          key: "t_sooner",
-          lastMessageAt: new Date("2026-10-06T01:00:00Z"),
-          createdAt: new Date("2026-10-05T00:00:00Z"),
-          ackDueAt: new Date("2026-10-06T08:00:00Z"),
-        },
-      ],
-      [],
-      0,
-      10,
-      f.sort,
-    );
+    const rows = [
+      {
+        key: "t_later",
+        lastMessageAt: new Date("2026-10-06T05:00:00Z"),
+        createdAt: new Date("2026-10-05T00:00:00Z"),
+        ackDueAt: new Date("2026-10-06T18:00:00Z"),
+      },
+      {
+        key: "t_sooner",
+        lastMessageAt: new Date("2026-10-06T01:00:00Z"),
+        createdAt: new Date("2026-10-05T00:00:00Z"),
+        ackDueAt: new Date("2026-10-06T08:00:00Z"),
+      },
+    ].sort(compareCasesBySla);
     expect(rows.map((r) => r.key)).toEqual(["t_sooner", "t_later"]);
   });
 });

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireApiSession } from "@/lib/auth-helpers";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import { submitSupportCaseCsat } from "@/lib/support/case-service";
@@ -25,7 +25,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   const { caseId } = id.data;
 
   try {
-    const auth = await requireApiSession();
+    const auth = await requireApiAuth();
     if (auth.error) return auth.error;
     const userId = auth.session.user.id;
 

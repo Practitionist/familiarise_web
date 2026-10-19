@@ -34,6 +34,7 @@ interface TriageRow {
   activeChannel: string;
   lastMessageAt: string;
   createdAt: string;
+  canCorrespond?: boolean;
   submitterUserId?: string | null;
   member: { id: string; name: string | null };
   appointment: {
@@ -124,10 +125,10 @@ function OrgThreadRow({
         />
         <Button variant="outline" size="sm" asChild>
           <Link
-            href={`/dashboard/organization/${orgId}/support/requests/${caseKeyOf({ kind: "booking", id: t.appointmentId })}`}
+            href={`/dashboard/organization/${orgId}/support/requests/${caseKeyOf({ kind: t.canCorrespond ? "case" : "booking", id: t.canCorrespond ? t.id : t.appointmentId })}`}
           >
             <ShieldAlert className="mr-1.5 h-3.5 w-3.5" />
-            Raise concern
+            {t.canCorrespond ? "View request" : "Raise concern"}
           </Link>
         </Button>
       </div>
