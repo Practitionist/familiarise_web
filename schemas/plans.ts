@@ -189,6 +189,25 @@ export const planPositioningShape = {
   faqs: z.array(PlanFaqSchema).max(20, "At most 20 FAQs").default([]),
 };
 
+// Where a plan sits in its expert's public storefront, and whether it carries
+// the flagship badge. Shared by all four plan types so one authoring payload
+// shape covers them.
+//
+// Deliberately optional with NO default, matching `offeringPlanStatusSchema`:
+// absent means "unchanged" on update and falls back to the column default on
+// create. A `.default()` here would be applied by `safeParse` on every PUT,
+// so an editor that does not render these fields would silently reset the
+// expert's merchandising on each unrelated save.
+export const planMerchandisingShape = {
+  sortOrder: z
+    .number()
+    .int("Position must be a whole number")
+    .min(0, "Position cannot be negative")
+    .max(999, "Position cannot exceed 999")
+    .optional(),
+  isFeatured: z.boolean().optional(),
+};
+
 export const planLevelSchema = z
   .nativeEnum(PlanLevel)
   .default(PlanLevel.BEGINNER);
@@ -318,6 +337,7 @@ export const ConsultationPlanSchema = z.object({
   status: offeringPlanStatusSchema,
   ...recordingShape,
   ...planPositioningShape,
+  ...planMerchandisingShape,
 });
 
 export const SubscriptionPlanSchema = z.object({
@@ -374,6 +394,7 @@ export const SubscriptionPlanSchema = z.object({
   status: offeringPlanStatusSchema,
   ...recordingShape,
   ...planPositioningShape,
+  ...planMerchandisingShape,
 });
 
 // Base schema for common fields
@@ -411,6 +432,7 @@ const BaseEventPlanSchema = z.object({
   consultantProfile: z.any().optional().nullable(),
 
   ...planPositioningShape,
+  ...planMerchandisingShape,
 });
 
 // Webinar specific schema

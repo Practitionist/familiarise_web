@@ -7,6 +7,7 @@ import { ConsultationPlanEvent } from "@/types/planner-events";
 import {
   positioningPayload,
   priceToPaise,
+  merchandisingPayload,
   recordingPayload,
 } from "@/components/planner/services/shared/plan-payload";
 
@@ -115,6 +116,7 @@ export class ConsultationService {
         topics: plan.topics ?? [],
         ...positioningPayload(plan),
         ...recordingPayload(plan),
+        ...merchandisingPayload(plan),
         // #1527 Q4 — absent keeps the stored status (PUBLISHED on create).
         ...(plan.status ? { status: plan.status } : {}),
         consultantProfileId: consultantId,

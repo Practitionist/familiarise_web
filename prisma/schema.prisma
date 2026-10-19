@@ -3844,6 +3844,11 @@ model ConsultationPlan {
   imageUrl         String?
   // Reserved for SEO-friendly plan URLs. Nullable until routing lands (#696).
   slug             String?   @unique
+  // Author-set position of this plan within its expert's public storefront.
+  // The public profile sorts on this, so a low value outranks duration.
+  sortOrder        Int       @default(0)
+  // Badges the plan as the expert's flagship offer. Purely presentational.
+  isFeatured       Boolean   @default(false)
   topics           Topic[]   @relation("TopicToConsultationPlan")
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -3973,6 +3978,10 @@ model SubscriptionPlan {
   whatsIncluded          String[]         @default([])
   imageUrl               String?
   slug                   String?          @unique
+  // See ConsultationPlan.sortOrder.
+  sortOrder              Int              @default(0)
+  // See ConsultationPlan.isFeatured.
+  isFeatured             Boolean          @default(false)
   topics                 Topic[]          @relation("TopicToSubscriptionPlan")
 
   // Trial offer. Free by default ONLY until paid-trial checkout is
@@ -4267,6 +4276,10 @@ model WebinarPlan {
   whatsIncluded                   String[]  @default([])
   imageUrl                        String?
   slug                            String?   @unique
+  // See ConsultationPlan.sortOrder.
+  sortOrder                       Int       @default(0)
+  // See ConsultationPlan.isFeatured.
+  isFeatured                      Boolean   @default(false)
 
   // Nullable by design: org-curated catalog plans may have no single owning
   // consultant (the org is the owner), unlike ConsultationPlan/SubscriptionPlan
@@ -4396,6 +4409,10 @@ model ClassPlan {
   whatsIncluded                String[]         @default([])
   imageUrl                     String?
   slug                         String?          @unique
+  // See ConsultationPlan.sortOrder.
+  sortOrder                    Int              @default(0)
+  // See ConsultationPlan.isFeatured.
+  isFeatured                   Boolean          @default(false)
 
   // Nullable by design: org-curated catalog plans may have no single owning
   // consultant. See the mirror comment on WebinarPlan.

@@ -8,6 +8,7 @@ import {
   eventStatusPayload,
   positioningPayload,
   priceToPaise,
+  merchandisingPayload,
   recordingPayload,
 } from "@/components/planner/services/shared/plan-payload";
 import { WebinarRequestBody } from "../types";
@@ -206,6 +207,7 @@ export class WebinarService {
   ): WebinarRequestBody {
     const plan = webinarData.webinarPlan;
     const defaultRecording = recordingPayload(plan);
+    const storefront = merchandisingPayload(plan);
     const recordingFields = isUpdate
       ? {
           ...(plan?.recordingEnabled !== undefined
@@ -234,6 +236,7 @@ export class WebinarService {
       durationInHours: plan?.durationInHours ?? 1,
       maxParticipants: plan?.maxParticipants ?? 1,
       certificateProvided: plan?.certificateProvided,
+      ...storefront,
       ...recordingFields,
       language: plan?.language ?? undefined,
       level: plan?.level ?? undefined,

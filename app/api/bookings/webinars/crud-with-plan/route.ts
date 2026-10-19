@@ -180,6 +180,8 @@ export async function POST(request: NextRequest) {
       certificateProvided,
       recordingEnabled,
       shareRecordingsWithAllAttendees,
+      sortOrder,
+      isFeatured,
     } = validatedData;
 
     // Verify ownership - user must own this consultant profile
@@ -296,6 +298,8 @@ export async function POST(request: NextRequest) {
               certificateProvided,
               recordingEnabled,
               shareRecordingsWithAllAttendees,
+              sortOrder,
+              isFeatured,
               consultantProfile: { connect: { id: consultantProfileId } },
               topics:
                 topicIds.length > 0
@@ -533,6 +537,8 @@ export async function PATCH(request: NextRequest) {
       certificateProvided,
       recordingEnabled,
       shareRecordingsWithAllAttendees,
+      sortOrder,
+      isFeatured,
     } = validatedData;
 
     // Find or create topics by name if provided
@@ -736,6 +742,8 @@ export async function PATCH(request: NextRequest) {
           if (shareRecordingsWithAllAttendees !== undefined)
             updateData.shareRecordingsWithAllAttendees =
               shareRecordingsWithAllAttendees;
+          if (sortOrder !== undefined) updateData.sortOrder = sortOrder;
+          if (isFeatured !== undefined) updateData.isFeatured = isFeatured;
           if (learningOutcomes !== undefined)
             updateData.learningOutcomes = learningOutcomes;
           if (subtitle !== undefined) updateData.subtitle = subtitle;

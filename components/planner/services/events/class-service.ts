@@ -8,6 +8,7 @@ import {
   eventStatusPayload,
   positioningPayload,
   priceToPaise,
+  merchandisingPayload,
   recordingPayload,
 } from "@/components/planner/services/shared/plan-payload";
 import { ClassRequestBody, ClassContentInput } from "../types";
@@ -197,6 +198,7 @@ export class ClassService {
     }
 
     const defaultRecording = recordingPayload(plan);
+    const storefront = merchandisingPayload(plan);
     const recordingFields = isUpdate
       ? {
           ...(plan?.recordingEnabled !== undefined
@@ -219,6 +221,7 @@ export class ClassService {
       sessionDurationInHours: plan?.sessionDurationInHours,
       maxParticipants: plan?.maxParticipants ?? 1,
       certificateProvided: plan?.certificateProvided,
+      ...storefront,
       ...recordingFields,
       emailSupport: plan?.emailSupport,
       language: plan?.language ?? undefined,

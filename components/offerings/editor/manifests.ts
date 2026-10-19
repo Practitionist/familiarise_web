@@ -14,6 +14,7 @@ import {
   Gift,
   IndianRupee,
   Layers,
+  LayoutList,
   MessageSquareQuote,
   Video,
 } from "lucide-react";
@@ -334,6 +335,35 @@ export const TRIAL_FIELD_NAMES: readonly string[] = trialSection.fields.map(
   (f) => f.name,
 );
 
+/**
+ * Where this offering sits on the expert's public storefront. The profile
+ * sorts on `sortOrder` first and duration only breaks ties, so an expert can
+ * put their flagship offer above a longer, cheaper one.
+ */
+const storefrontSection: SectionSpec = {
+  id: "storefront",
+  title: "Storefront",
+  description: "How this appears on your public profile.",
+  icon: LayoutList,
+  fields: [
+    {
+      name: "sortOrder",
+      kind: "number",
+      label: "Position",
+      description:
+        "Lower shows first. Ties fall back to session length, so leave these equal to list by length.",
+      span: 3,
+    },
+    {
+      name: "isFeatured",
+      kind: "switch",
+      label: "Mark as popular",
+      description: "Adds a Popular badge to this offering on your profile.",
+      span: 3,
+    },
+  ],
+};
+
 export const CONSULTATION_MANIFEST: OfferingManifest = {
   type: "consultation",
   noun: "consultation",
@@ -347,6 +377,7 @@ export const CONSULTATION_MANIFEST: OfferingManifest = {
     },
     contentSection("consultation"),
     extrasSection(false),
+    storefrontSection,
     materialsSection,
     faqSection,
   ],
@@ -381,6 +412,7 @@ export const SUBSCRIPTION_MANIFEST: OfferingManifest = {
       slot: "roadmap",
       slotFields: ["subscriptionContents"],
     },
+    storefrontSection,
     materialsSection,
     faqSection,
   ],
@@ -428,6 +460,7 @@ export const WEBINAR_MANIFEST: OfferingManifest = {
       ],
     },
     collaboratorsSection,
+    storefrontSection,
     materialsSection,
     faqSection,
   ],
@@ -503,6 +536,7 @@ export const CLASS_MANIFEST: OfferingManifest = {
       slotFields: ["classContents"],
     },
     collaboratorsSection,
+    storefrontSection,
     materialsSection,
     faqSection,
   ],
