@@ -119,6 +119,8 @@ import {
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
+// Late-bound cycle: refund-owed reaches refundPayment through booking-refund.
+import { stampRefundOwed, type RefundOwedMarker } from "./refund-owed";
 
 import {
   applyCappedEarningReversal,
@@ -810,7 +812,6 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     consultantEarningsReversed: number;
     organizationEarningsReversed: number;
     clawbackInitiated: boolean;
-    memberOverageRefundDue: ApplyRefundCascadeResult["memberOverageRefundDue"];
     status: "SUCCEEDED" | "PENDING";
     gatewayRefundId: string | undefined;
   };
@@ -838,7 +839,6 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
               consultantEarningsReversed: 0,
               organizationEarningsReversed: 0,
               clawbackInitiated: false,
-              memberOverageRefundDue: null,
               status:
                 current?.status === RefundStatus.SUCCEEDED
                   ? ("SUCCEEDED" as const)
@@ -930,7 +930,6 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       consultantEarningsReversed: 0,
       organizationEarningsReversed: 0,
       clawbackInitiated: false,
-      memberOverageRefundDue: null,
       status:
         current?.status === RefundStatus.SUCCEEDED
           ? ("SUCCEEDED" as const)
@@ -948,63 +947,21 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     ),
   ]);
 
-  await refundMemberOverageSidePayment({
-    parentPaymentId: input.paymentId,
-    due: settled.memberOverageRefundDue,
-    initiatedByUserId: input.initiatedByUserId ?? null,
-  });
-
   return settled;
 }
 
-/**
- * Refunds a fully-refunded booking's CHARGE_MEMBER overage side-payments once the
- * parent's cascade has committed; best effort, so it never undoes the parent.
- */
-export async function refundMemberOverageSidePayment(input: {
-  parentPaymentId: string;
-  due: ApplyRefundCascadeResult["memberOverageRefundDue"];
-  initiatedByUserId: string | null;
-}): Promise<void> {
-  if (!input.due) return;
-  const failed: { sidePaymentId: string; err: unknown }[] = [];
-  for (const sidePaymentId of input.due.overagePaymentIds) {
-    try {
-      await refundPayment({
-        paymentId: sidePaymentId,
-        reason: `overage credit-back — parent booking ${input.parentPaymentId} refunded`,
-        initiatedByUserId: input.initiatedByUserId,
-      });
-    } catch (err) {
-      // ALREADY_FULLY_REFUNDED / PAYMENT_NOT_SUCCEEDED are benign re-drives the
-      // nested call already reported; anything else is a real credit-back gap.
-      if (
-        !(err instanceof RefundValidationError) ||
-        (err.code !== "ALREADY_FULLY_REFUNDED" &&
-          err.code !== "PAYMENT_NOT_SUCCEEDED")
-      ) {
-        failed.push({ sidePaymentId, err });
-      }
-    }
-  }
-  if (failed.length === 0) return;
-  reportSentryError(failed[0].err, {
-    subsystem: "payments",
-    tags: { feature: "overage-credit-back" },
-    extra: {
-      parentPaymentId: input.parentPaymentId,
-      sidePaymentIds: failed.map((f) => f.sidePaymentId),
-    },
-  });
-  for (const { sidePaymentId, err } of failed) {
-    await recordSystemErrorSafe({
-      organizationId: null,
-      category: "PAYMENT",
-      summary: `Overage credit-back refund failed for side-payment ${sidePaymentId}`,
-      err,
-      context: { parentPaymentId: input.parentPaymentId, sidePaymentId },
-    });
-  }
+/** The refund a fully-refunded booking owes on one CHARGE_MEMBER side-payment. */
+function overageCreditBackOwed(
+  parentPaymentId: string,
+  sidePaymentId: string,
+): RefundOwedMarker {
+  return {
+    paymentId: sidePaymentId,
+    amountPaise: null,
+    key: `overage-credit-back:${parentPaymentId}:${sidePaymentId}`,
+    reason: `overage credit-back — parent booking ${parentPaymentId} refunded`,
+    attempts: 0,
+  };
 }
 
 // ============================================================================
@@ -1024,12 +981,6 @@ export type ApplyRefundCascadeResult = {
   consultantEarningsReversed: number;
   organizationEarningsReversed: number;
   clawbackInitiated: boolean;
-  /**
-   * The side-payments of a fully-refunded booking's CHARGED CHARGE_MEMBER
-   * overages, one per over-cap batch. This cascade cannot touch them, so the
-   * orchestrator refunds each after the tx commits. Null when there are none.
-   */
-  memberOverageRefundDue: { overagePaymentIds: string[] } | null;
 };
 
 /**
@@ -1069,7 +1020,6 @@ export async function applyRefundCascade(
       consultantEarningsReversed: 0,
       organizationEarningsReversed: 0,
       clawbackInitiated: false,
-      memberOverageRefundDue: null,
     };
   }
 
@@ -1173,7 +1123,6 @@ export async function applyRefundCascade(
       consultantEarningsReversed: 0,
       organizationEarningsReversed: 0,
       clawbackInitiated: false,
-      memberOverageRefundDue: null,
     };
   }
 
@@ -1200,7 +1149,6 @@ export async function applyRefundCascade(
       consultantEarningsReversed: 0,
       organizationEarningsReversed: 0,
       clawbackInitiated: false,
-      memberOverageRefundDue: null,
     };
   }
 
@@ -1631,10 +1579,9 @@ export async function applyRefundCascade(
   //                  invoice was paid, so the credit note above returns it;
   //                  flip the event once the CN is actually minted.
   //   CHARGE_MEMBER — the marginal was a SEPARATE side-payment; this cascade
-  //                  can't touch it, so surface it for the orchestrator to
-  //                  refund post-commit (that refund's own cascade flips it).
+  //                  stamps it refund-owed; retryRefundsOwed refunds it, and
+  //                  that refund's own cascade flips its event.
   // -----------------------------------------------------------------------
-  let memberOverageRefundDue: { overagePaymentIds: string[] } | null = null;
   if (payment.bookingUtilization && completesFullRefund) {
     // One CHARGED event per over-cap batch; each is credited back on its own.
     const chargedEvents = await tx.overageEvent.findMany({
@@ -1650,7 +1597,6 @@ export async function applyRefundCascade(
       },
       orderBy: { createdAt: "asc" },
     });
-    const overagePaymentIds: string[] = [];
     for (const charged of chargedEvents) {
       // The wallet rail collected a CHARGE_ORG marginal inside this payment's
       // WALLET debit, which the leg reversal above has already credited back.
@@ -1671,11 +1617,11 @@ export async function applyRefundCascade(
         charged.overageBehavior === "CHARGE_MEMBER" &&
         charged.paymentId
       ) {
-        overagePaymentIds.push(charged.paymentId);
+        await stampRefundOwed(
+          tx,
+          overageCreditBackOwed(payment.id, charged.paymentId),
+        );
       }
-    }
-    if (overagePaymentIds.length > 0) {
-      memberOverageRefundDue = { overagePaymentIds };
     }
   }
 
@@ -1996,7 +1942,6 @@ export async function applyRefundCascade(
     consultantEarningsReversed,
     organizationEarningsReversed,
     clawbackInitiated,
-    memberOverageRefundDue,
   };
 }
 

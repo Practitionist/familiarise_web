@@ -75,7 +75,6 @@ jest.mock("../../lib/payments/operations/refund", () => ({
     .fn()
     .mockResolvedValue({ creditNoteId: null }),
   mintRefundCreditNote: jest.fn(),
-  refundMemberOverageSidePayment: jest.fn(),
   remainingOrgInvoiceCreditPaise: jest.fn().mockResolvedValue(100_000),
 }));
 jest.mock("../../lib/payments/ledger/post", () => ({

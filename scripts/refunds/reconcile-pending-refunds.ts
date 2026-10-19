@@ -42,11 +42,7 @@ import { getAppUrl } from "../../lib/url";
 import { goHref } from "@/lib/dashboard/go";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import {
-  applyRefundCascade,
-  refundMemberOverageSidePayment,
-  type ApplyRefundCascadeResult,
-} from "../../lib/payments/operations/refund";
+import { applyRefundCascade } from "../../lib/payments/operations/refund";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 
 // Threshold: Only reconcile refunds older than 1 hour
@@ -410,12 +406,9 @@ async function reconcilePendingRefundsUnlocked(
         // transactionId (lib/novu/outbox.ts) makes a re-drive safe.
         let bell: StagedTrigger | null = null;
         let emails: StagedRecipientEmail[] = [];
-        let overageDue: ApplyRefundCascadeResult["memberOverageRefundDue"] =
-          null;
         const claimed = await withSerializableRetry(() =>
           prisma.$transaction(
             async (tx) => {
-              overageDue = null;
               // Claim by status: a re-entrant run or a webhook that settled the
               // row first matches zero rows and stages nothing.
               const claim = await tx.refund.updateMany({
@@ -423,14 +416,13 @@ async function reconcilePendingRefundsUnlocked(
                 data: { status: RefundStatus.SUCCEEDED, updatedAt: new Date() },
               });
               if (claim.count !== 1) return false;
-              const cascade = await applyRefundCascade(tx, {
+              await applyRefundCascade(tx, {
                 paymentId: refund.payment.id,
                 refundId: refund.id,
                 amountPaise: refund.amountPaise,
                 reason: refund.reason ?? "Gateway refund reconciled",
                 initiatedByUserId: null,
               });
-              overageDue = cascade.memberOverageRefundDue;
               await reverseCreditsForPayment(
                 refund.payment.id,
                 tx,
@@ -468,11 +460,6 @@ async function reconcilePendingRefundsUnlocked(
           skippedCount++;
           continue;
         }
-        await refundMemberOverageSidePayment({
-          parentPaymentId: refund.payment.id,
-          due: overageDue,
-          initiatedByUserId: null,
-        });
         await attemptRefundNotice(bell, emails);
         console.log(
           `✅ Real-id refund ${refund.id} (${refund.refundId}) confirmed settled at gateway and cascaded`,
@@ -645,7 +632,7 @@ async function bindGatewayRefundToPlaceholder(
   let emails: StagedRecipientEmail[] = [];
 
   try {
-    const overageDue = await withSerializableRetry(() =>
+    await withSerializableRetry(() =>
       prisma.$transaction(
         async (tx) => {
           bell = null;
@@ -658,9 +645,9 @@ async function bindGatewayRefundToPlaceholder(
               metadata: mergedMetadata,
             },
           });
-          if (claim.count === 0) return null;
-          if (nextStatus !== RefundStatus.SUCCEEDED) return null;
-          const result = await applyRefundCascade(tx, {
+          if (claim.count === 0) return;
+          if (nextStatus !== RefundStatus.SUCCEEDED) return;
+          await applyRefundCascade(tx, {
             paymentId: cascade.paymentId,
             refundId: placeholderRowId,
             amountPaise: cascade.amountPaise,
@@ -691,16 +678,10 @@ async function bindGatewayRefundToPlaceholder(
             amountPaise: cascade.amountPaise,
             currency: cascade.currency,
           });
-          return result.memberOverageRefundDue;
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       ),
     );
-    await refundMemberOverageSidePayment({
-      parentPaymentId: cascade.paymentId,
-      due: overageDue,
-      initiatedByUserId: null,
-    });
     await attemptRefundNotice(bell, emails);
     return "bound";
   } catch (error) {
@@ -820,10 +801,10 @@ async function redriveStrandedRefunds(
     if (Date.now() - startedAt > STRANDED_BUDGET_MS) break;
     pass.scanned++;
     try {
-      const cascade = await withSerializableRetry(() =>
+      await withSerializableRetry(() =>
         prisma.$transaction(
           async (tx) => {
-            const result = await applyRefundCascade(tx, {
+            await applyRefundCascade(tx, {
               paymentId: refund.paymentId,
               refundId: refund.id,
               amountPaise: refund.amountPaise,
@@ -837,7 +818,6 @@ async function redriveStrandedRefunds(
               refund.payment.amount,
               refund.id,
             );
-            return result;
           },
           {
             isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -847,11 +827,6 @@ async function redriveStrandedRefunds(
         ),
       );
       pass.redriven++;
-      await refundMemberOverageSidePayment({
-        parentPaymentId: refund.paymentId,
-        due: cascade.memberOverageRefundDue,
-        initiatedByUserId: null,
-      });
     } catch (error) {
       pass.failed++;
       console.error(
