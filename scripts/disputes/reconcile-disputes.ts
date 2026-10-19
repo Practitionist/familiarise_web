@@ -34,6 +34,15 @@ const APPROACHING_DEADLINE_MS = 7 * 24 * 60 * 60 * 1000;
 // Flag disputes not updated in 24 hours as potentially stale
 const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000;
 
+/** Statuses whose adoption moves money (settleDisputeVerdict). */
+const VERDICT_STATUSES = new Set<DisputeStatus>([
+  DisputeStatus.WON,
+  DisputeStatus.LOST,
+  DisputeStatus.CHARGE_REFUNDED,
+  DisputeStatus.CLOSED,
+  DisputeStatus.WARNING_CLOSED,
+]);
+
 export interface DisputeReconciliationResult {
   success: boolean;
   totalProcessed: number;
@@ -172,53 +181,65 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
 
   console.log(`Found ${disputesToReconcile.length} disputes to reconcile`);
 
-  // Settle a freshly adopted LOST/CHARGE_REFUNDED through the webhook's money
-  // path. The webhook graph stays out of this job's load path — the shared
-  // helper is imported lazily and only on a CAS win. A settlement failure is
-  // reported, never thrown: the status adoption above already committed.
-  async function settleAdoptedLoss(
-    rowId: string,
-    disputeId: string,
-    amountPaise: number,
+  // Adopt a gateway status and settle its verdict in ONE transaction, through
+  // the webhook's settlement, so a failed settlement rolls the adoption back
+  // for the next tick and a later webhook replay finds nothing left to do.
+  async function adoptDisputeStatus(
+    dispute: (typeof disputesToReconcile)[number],
+    newStatus: DisputeStatus,
+    gatewayDispute: Awaited<ReturnType<typeof getRazorpayDispute>>,
     payment: { id: string; amount: number },
-  ): Promise<void> {
-    try {
-      const { settleLostDispute } = await import("@/app/api/webhooks/utils");
-      const settled = await withSerializableRetry(() =>
-        prisma.$transaction(
-          async (tx) =>
-            settleLostDispute(tx, {
-              id: rowId,
-              disputeId,
-              amountPaise,
-              paymentId: payment.id,
-              payment: { amount: payment.amount },
-            }),
-          {
-            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-            maxWait: 10_000,
-            timeout: 15_000,
-          },
-        ),
-      );
-      const page = settled.consultantClawbackPage;
-      if (page) {
-        void recordSystemErrorSafe({
-          organizationId: null,
-          category: "PAYOUT",
-          summary: `Chargeback clawback needed: ${page.earnings} PAID consultant earning(s) totalling ${page.amountPaise} paise on dispute ${page.disputeId} (adopted by reconcile-disputes)`,
-          err: new Error("CONSULTANT_PAID_EARNING_CLAWBACK"),
-          context: { ...page },
-        });
-      }
-      console.log(`💸 Settled lost dispute ${disputeId} adopted by poll`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      errors.push(
-        `Dispute ${disputeId}: settlement failed after adopting LOST: ${message}`,
-      );
-      console.error(`Error settling dispute ${disputeId}:`, message);
+  ): Promise<boolean> {
+    const settlement = VERDICT_STATUSES.has(newStatus)
+      ? (await import("@/app/api/webhooks/utils")).settleDisputeVerdict
+      : null;
+    const outcome = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          const { count } = await tx.dispute.updateMany({
+            where: { disputeId: dispute.disputeId, status: dispute.status },
+            data: {
+              status: newStatus,
+              evidence: gatewayDispute.evidence as Prisma.InputJsonValue,
+              isChargeRefundable: gatewayDispute.isChargeRefundable,
+              dueBy: gatewayDispute.dueBy,
+            },
+          });
+          if (count === 0) return null;
+          return settlement
+            ? settlement(
+                tx,
+                {
+                  id: dispute.id,
+                  disputeId: dispute.disputeId,
+                  amountPaise: dispute.amountPaise,
+                  paymentId: payment.id,
+                  payment: { amount: payment.amount },
+                },
+                newStatus,
+                gatewayDispute.amountDeductedPaise,
+              )
+            : { consultantClawbackPage: null };
+        },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          maxWait: 10_000,
+          timeout: 15_000,
+        },
+      ),
+    );
+    if (!outcome) return false;
+    const page = outcome.consultantClawbackPage;
+    if (page) {
+      void recordSystemErrorSafe({
+        organizationId: null,
+        category: "PAYOUT",
+        summary: `Chargeback clawback needed: ${page.earnings} PAID consultant earning(s) totalling ${page.amountPaise} paise on dispute ${page.disputeId} (adopted by reconcile-disputes)`,
+        err: new Error("CONSULTANT_PAID_EARNING_CLAWBACK"),
+        context: { ...page },
+      });
     }
+    return true;
   }
 
   for (const dispute of disputesToReconcile) {
@@ -277,16 +298,13 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
         continue;
       }
       if (newStatus !== dispute.status) {
-        const { count } = await prisma.dispute.updateMany({
-          where: casWhere,
-          data: {
-            status: newStatus,
-            evidence: gatewayDispute.evidence as Prisma.InputJsonValue,
-            isChargeRefundable: gatewayDispute.isChargeRefundable,
-            dueBy: gatewayDispute.dueBy,
-          },
-        });
-        if (count === 0) {
+        const adopted = await adoptDisputeStatus(
+          dispute,
+          newStatus,
+          gatewayDispute,
+          settlementPayment,
+        );
+        if (!adopted) {
           console.log(
             `⏭️ Dispute ${dispute.disputeId} moved off ${dispute.status} mid-run — left alone`,
           );
@@ -297,21 +315,6 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
           `✅ Reconciled dispute ${dispute.disputeId}: ${dispute.status} -> ${newStatus}`,
         );
         reconciledCount++;
-
-        // Adopting a LOST moves no money by itself — settle through the same
-        // path as the webhook, on the CAS win only, so a poll/webhook race
-        // still converges on one settlement.
-        if (
-          newStatus === DisputeStatus.LOST ||
-          newStatus === DisputeStatus.CHARGE_REFUNDED
-        ) {
-          await settleAdoptedLoss(
-            dispute.id,
-            dispute.disputeId,
-            dispute.amountPaise,
-            settlementPayment,
-          );
-        }
       } else {
         // Update dueBy and evidence even if status unchanged
         await prisma.dispute.updateMany({

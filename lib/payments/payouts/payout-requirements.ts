@@ -33,6 +33,7 @@ export type PayoutEligibilityReason =
   | "NO_ACCOUNT"
   | "UNVERIFIED"
   | PayoutAccountHoldReason
+  | "CLAWBACK_RECOVERY_PAUSE"
   | "BELOW_MINIMUM";
 
 export type PayoutAccountHoldReason =
@@ -171,6 +172,9 @@ export interface PayoutEligibilityGateInput {
   readyAmount: number;
   minimumAmount: number;
   now?: Date;
+  /** Unrecovered clawback receivable; above the pause line no payout is minted. */
+  outstandingClawbackPaise: number;
+  clawbackPausePaise: number;
 }
 
 /**
@@ -187,6 +191,9 @@ export function payoutEligibilityReason(
   if (!input.defaultAccount.isVerified) return "UNVERIFIED";
   const hold = payoutAccountHold(input.defaultAccount, input.now);
   if (hold) return hold;
+  if (input.outstandingClawbackPaise > input.clawbackPausePaise) {
+    return "CLAWBACK_RECOVERY_PAUSE";
+  }
   if (input.readyAmount < input.minimumAmount) return "BELOW_MINIMUM";
   return null;
 }

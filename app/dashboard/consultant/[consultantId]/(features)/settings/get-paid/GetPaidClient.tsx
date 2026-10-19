@@ -49,6 +49,8 @@ const REASON_LINE: Record<PayoutEligibilityReason, string> = {
     "Payouts are frozen on your account. Contact support to lift the freeze.",
   PAYOUT_ACCOUNT_COOLING_OFF:
     "Your payout account changed recently, so payouts to it start 48 hours after the change.",
+  CLAWBACK_RECOVERY_PAUSE:
+    "Payouts are paused while a refunded or charged-back amount you were already paid is recovered — support can tell you more.",
   BELOW_MINIMUM:
     "Payouts go out once your available balance reaches the minimum.",
 };

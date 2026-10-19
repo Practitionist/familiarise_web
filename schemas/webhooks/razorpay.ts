@@ -159,6 +159,8 @@ export const disputeUpdateEntitySchema = z
     respond_by: z.number().nullable().optional(),
     phase: z.string().nullable().optional(),
     amount: z.number().optional(),
+    /** Paise Razorpay pulled from the balance; 0 until the dispute is lost. */
+    amount_deducted: z.number().nullable().optional(),
     reason_code: z.string().nullable().optional(),
     reason_description: z.string().nullable().optional(),
   })

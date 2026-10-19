@@ -18,6 +18,7 @@ import {
   type PayoutRequirements,
 } from "@/lib/payments/payouts/payout-requirements";
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
+import { outstandingClawbackPaise } from "@/lib/payments/payouts/clawback-recovery";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { EarningStatus } from "@prisma/client";
 
@@ -120,6 +121,10 @@ export async function readConsultantPayoutSetup(consultantProfileId: string) {
   const readyAmount =
     sumPaise(readyAgg._sum.consultantSharePaise) -
     sumPaise(readyAgg._sum.refundedShareAmount);
+  const outstandingClawback = await outstandingClawbackPaise(prisma, {
+    rail: "CONSULTANT",
+    consultantProfileId,
+  });
   const eligibilityReason: PayoutEligibilityReason | null =
     payoutEligibilityReason({
       livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
@@ -127,6 +132,8 @@ export async function readConsultantPayoutSetup(consultantProfileId: string) {
       defaultAccount,
       readyAmount,
       minimumAmount: PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT,
+      outstandingClawbackPaise: outstandingClawback,
+      clawbackPausePaise: PAYOUT_CONSTANTS.CLAWBACK_RECOVERY_PAUSE_PAISE,
     });
 
   return {

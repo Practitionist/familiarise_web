@@ -1250,6 +1250,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS "OverageEvent_bookingUtilizationId_batchKey_ke
 -- SPLIT
 DROP INDEX IF EXISTS "OverageEvent_bookingUtilizationId_key";
 -- SPLIT
+-- An EarningsHold freezes exactly one earning, consultant or organisation.
+ALTER TABLE "EarningsHold" DROP CONSTRAINT IF EXISTS "earnings_hold_one_earning";
+-- SPLIT
+ALTER TABLE "EarningsHold" ADD CONSTRAINT "earnings_hold_one_earning"
+  CHECK (num_nonnulls("consultantEarningsId", "organizationEarningsId") = 1);
+-- SPLIT
+-- One active hold per (earning, reason, source); a released hold keeps its row.
+CREATE UNIQUE INDEX IF NOT EXISTS "earnings_hold_active_consultant_key"
+  ON "EarningsHold" ("consultantEarningsId", "reason", "sourceRef")
+  WHERE "releasedAt" IS NULL AND "consultantEarningsId" IS NOT NULL;
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "earnings_hold_active_org_key"
+  ON "EarningsHold" ("organizationEarningsId", "reason", "sourceRef")
+  WHERE "releasedAt" IS NULL AND "organizationEarningsId" IS NOT NULL;
+-- SPLIT
 -- I-4: a BATCHED earning always names the payout that batched it.
 ALTER TABLE "ConsultantEarnings" DROP CONSTRAINT IF EXISTS "consultant_earnings_batched_has_payout";
 -- SPLIT

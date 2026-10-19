@@ -25,9 +25,9 @@ const updateMany = jest.fn(async ({ where }: { where: { status: string } }) =>
   where.status === "UNDER_REVIEW" ? { count: 0 } : { count: 1 },
 );
 const update = jest.fn();
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
+jest.mock("../../lib/prisma", () => {
+  const db = {
+    $transaction: (fn: (tx: unknown) => unknown) => fn(db),
     dispute: {
       findMany: jest.fn(async () => [
         {
@@ -42,8 +42,9 @@ jest.mock("../../lib/prisma", () => ({
       updateMany: (...a: unknown[]) => updateMany(...(a as [never])),
       update: (...a: unknown[]) => update(...a),
     },
-  },
-}));
+  };
+  return { __esModule: true, default: db };
+});
 
 import { reconcileDisputes } from "../../scripts/disputes/reconcile-disputes";
 

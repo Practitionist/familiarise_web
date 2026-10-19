@@ -2,6 +2,7 @@ import type { Tx } from "@/lib/prisma";
 import {
   computeHoldUntil,
   holdHoursFor,
+  stampConsultantHolds,
 } from "@/lib/payments/payouts/earnings-hold";
 
 /**
@@ -22,10 +23,7 @@ export async function stampTrialEarningsHold(
     holdHours: holdHoursFor("SUBSCRIPTION"),
   });
   const waiting = { paymentId, holdUntil: null };
-  await db.consultantEarnings.updateMany({
-    where: waiting,
-    data: { holdUntil },
-  });
+  await stampConsultantHolds(db, waiting, holdUntil);
   await db.organizationEarnings.updateMany({
     where: waiting,
     data: { holdUntil },

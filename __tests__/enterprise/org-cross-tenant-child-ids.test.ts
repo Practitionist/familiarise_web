@@ -157,7 +157,7 @@ const CASES: Array<
       (
         await import("@/app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/route")
       ).PATCH,
-    { status: "VOID" },
+    { status: "CANCELLED" },
   ],
   [
     "billing-account/purchase-orders/[poId] PATCH",

@@ -109,6 +109,7 @@ jest.mock("../../lib/prisma", () => ({
     },
     consultantTaxInfo: { findUnique: async () => null },
     ledgerTransaction: { findMany: async () => [] },
+    ledgerEntry: { groupBy: async () => [] },
     consultantProfile: { findUnique: async () => null },
     consultantPayout: { findFirst: async () => null },
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => {

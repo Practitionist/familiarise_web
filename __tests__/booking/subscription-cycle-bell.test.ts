@@ -101,6 +101,7 @@ function makeTx(statuses: string[]) {
       // suite pins, so the stamp is a counted no-op here.
       consultantEarnings: {
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findMany: jest.fn().mockResolvedValue([]),
       },
       notificationOutbox: { upsert },
       membership: { findMany: jest.fn().mockResolvedValue([]) },
