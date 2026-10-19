@@ -131,14 +131,24 @@ export async function runSupportTurn(
     ? appt.organizationId
     : await seatOrganizationId(prisma, appt, userId);
 
-  const intakeId = `appointment:${appointmentId}:${userId}`;
-  const previous = await prisma.supportCase.findFirst({
+  // The intake key is scoped to the booking, so a case that was closed (by
+  // staff or by the 28-day sweep) can never be reopened under the same key:
+  // the unique (submitter, intake) pair would replay the closed row and the
+  // customer could never ask for help on this booking again. A closed case
+  // therefore starts a NEW one under a fresh key.
+  const baseIntake = `appointment:${appointmentId}:${userId}`;
+  const latest = await prisma.supportCase.findFirst({
     where: {
-      clientIntakeId: intakeId,
+      clientIntakeId: { startsWith: baseIntake },
       submitterUserId: userId,
       deletedAt: null,
     },
+    orderBy: { createdAt: "desc" },
   });
+  const previous = latest && !latest.closedAt ? latest : null;
+  const intakeId = latest?.closedAt
+    ? `${baseIntake}:after:${latest.id}`
+    : baseIntake;
   const thread =
     previous ??
     (

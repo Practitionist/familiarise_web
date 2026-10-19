@@ -3,7 +3,9 @@ import { stageBell } from "@/lib/novu/stage-bell";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { deliver } from "@/lib/email";
 import { DEFAULT_FROM_ADDRESS, EMAIL_BUDGET_MS } from "@/lib/email";
+import { goHref } from "@/lib/dashboard/go";
 import { escalateForMissedWindow } from "./actions";
+import { COMPLAINT_REDRESSAL_DAYS } from "./deadlines";
 
 /** HTML-escape, for the email bodies. */
 function escapeHtml(value: string): string {
@@ -96,7 +98,12 @@ export async function runDisputeSweep(options?: {
             reference: dispute.referenceNumber,
             ticketTitle: dispute.supportCase.title,
             status: "Escalated — our team is reviewing this now",
-            dashboardUrl: `/dashboard/admin/money/disputes`,
+            // The buyer's own claim, in the buyer's own dashboard: the admin
+            // queue is not a page a buyer can open.
+            dashboardUrl: goHref(
+              "client",
+              `disputes/${dispute.referenceNumber}`,
+            ),
           },
         });
         return true;
@@ -111,8 +118,11 @@ export async function runDisputeSweep(options?: {
 
   // 2. A claim nearing the statutory redressal deadline. The platform is
   // told, not the buyer: the buyer is told when there is an answer to give.
+  // The claim is due at createdAt + COMPLAINT_REDRESSAL_DAYS, so it is at
+  // risk within AT_RISK_DAYS of that — a cutoff in the PAST, measured back
+  // from now.
   const atRiskCutoff = new Date(
-    now.getTime() + AT_RISK_DAYS * 24 * 3_600_000,
+    now.getTime() - (COMPLAINT_REDRESSAL_DAYS - AT_RISK_DAYS) * 24 * 3_600_000,
   );
   const atRisk = await prisma.purchaseDispute.findMany({
     where: {
@@ -153,7 +163,8 @@ export async function runDisputeSweep(options?: {
               ticketId: dispute.supportCase.referenceNumber,
               reference: dispute.referenceNumber,
               ticketTitle: dispute.supportCase.title,
-              status: "This claim is approaching its statutory resolution deadline",
+              status:
+                "This claim is approaching its statutory resolution deadline",
               dashboardUrl: "/dashboard/admin/money/disputes",
             },
           });

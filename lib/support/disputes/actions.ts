@@ -132,9 +132,10 @@ export function mayPerform(
  * The status each action moves the dispute to, and the row it writes to the
  * append-only action log.
  */
-function targetOf(
-  action: DisputeAction,
-): { status: PurchaseDisputeStatus; kind: PurchaseDisputeActionKind } {
+function targetOf(action: DisputeAction): {
+  status: PurchaseDisputeStatus;
+  kind: PurchaseDisputeActionKind;
+} {
   switch (action.action) {
     case "RESPOND":
       return { status: "RESPONDED", kind: "RESPONDED" };
@@ -179,6 +180,20 @@ const DISPUTE_SELECT = {
   createdAt: true,
 } as const;
 
+/** A JSON object, or null for anything else (a scalar, an array, nothing). */
+function isJsonObject(
+  value: Prisma.JsonValue | null,
+): value is Prisma.JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The action an action-log row recorded, or null when it carries none. */
+function loggedAction(payload: Prisma.JsonValue | null): string | null {
+  if (!isJsonObject(payload)) return null;
+  const action = payload.action;
+  return typeof action === "string" ? action : null;
+}
+
 /**
  * Perform one protocol action.
  *
@@ -191,7 +206,11 @@ export async function performDisputeAction(
   disputeId: string,
   actor: DisputeActor,
   input: DisputeAction,
-): Promise<{ replayed: boolean; status: PurchaseDisputeStatus; version: number }> {
+): Promise<{
+  replayed: boolean;
+  status: PurchaseDisputeStatus;
+  version: number;
+}> {
   return withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
@@ -205,6 +224,9 @@ export async function performDisputeAction(
 
         // The idempotency replay. Same key, same action: this already
         // happened, so answer with what happened rather than doing it again.
+        // A key reused for a DIFFERENT action is refused: replaying it would
+        // report a success the caller never earned — an escalation that never
+        // happened, say.
         const replay = await tx.purchaseDisputeAction.findUnique({
           where: {
             disputeId_clientActionId: {
@@ -215,6 +237,13 @@ export async function performDisputeAction(
           select: { kind: true, toStatus: true, payload: true },
         });
         if (replay) {
+          if (loggedAction(replay.payload) !== input.action) {
+            throw new DisputeActionError(
+              "IDEMPOTENCY_KEY_REUSED",
+              "This request key was already used for a different action.",
+              409,
+            );
+          }
           const current = await tx.purchaseDispute.findUnique({
             where: { id: disputeId },
             select: { status: true, version: true },
@@ -250,7 +279,9 @@ export async function performDisputeAction(
             // answers 409 with a code, not 500.
             throw new DisputeActionError(
               "ILLEGAL_TRANSITION",
-              cause instanceof Error ? cause.message : "That move is not available on this dispute.",
+              cause instanceof Error
+                ? cause.message
+                : "That move is not available on this dispute.",
               409,
             );
           }
@@ -341,7 +372,10 @@ export async function performDisputeAction(
             "CONFLICT",
             "This dispute moved while you were working on it. Review the current state and try again.",
             409,
-            { currentStatus: current?.status, currentVersion: current?.version },
+            {
+              currentStatus: current?.status,
+              currentVersion: current?.version,
+            },
           );
         }
 

@@ -36,12 +36,16 @@ jest.mock("@sentry/nextjs", () => ({
   flush: jest.fn(async () => true),
 }));
 
+// The mock factories are hoisted above the declarations above, so the
+// module under test is given a client whose parts are reached through
+// `jest.requireMock` — the same shape the rest of this suite uses.
 jest.mock("../../lib/supabase-storage-core", () => ({
   adminStorage: () => ({
     from: () => ({
-      createSignedUploadUrl: mockCreateSignedUploadUrl,
-      createSignedUrl: mockCreateSignedUrl,
-      info: mockStorageInfo,
+      createSignedUploadUrl: (...args: unknown[]) =>
+        mockCreateSignedUploadUrl(...args),
+      createSignedUrl: (...args: unknown[]) => mockCreateSignedUrl(...args),
+      info: (...args: unknown[]) => mockStorageInfo(...args),
     }),
   }),
 }));
@@ -49,6 +53,16 @@ jest.mock("../../lib/supabase-storage-core", () => ({
 jest.mock("../../lib/auth-server", () => ({
   __esModule: true,
   getSession: () => mockSession(),
+}));
+
+jest.mock("../../lib/auth-helpers", () => ({
+  __esModule: true,
+  requireApiAuth: jest.fn(async () => ({
+    session: { user: { id: "u1", role: "CONSULTEE" } },
+  })),
+  requireApiSession: jest.fn(async () => ({
+    session: { user: { id: "u1", role: "CONSULTEE" } },
+  })),
 }));
 
 jest.mock("../../lib/rate-limit", () => ({
@@ -61,16 +75,30 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     supportCaseAttachment: {
-      findFirst: mockAttachmentFindFirst,
-      findMany: mockAttachmentFindMany,
-      count: mockAttachmentCount,
-      create: mockAttachmentCreate,
-      updateMany: mockAttachmentUpdateMany,
+      findFirst: (...args: unknown[]) => mockAttachmentFindFirst(...args),
+      findMany: (...args: unknown[]) => mockAttachmentFindMany(...args),
+      count: (...args: unknown[]) => mockAttachmentCount(...args),
+      create: (...args: unknown[]) => mockAttachmentCreate(...args),
+      updateMany: (...args: unknown[]) => mockAttachmentUpdateMany(...args),
     },
-    supportCase: { findFirst: mockCaseFindFirst },
-    supportCaseEvidenceRequest: { findFirst: mockEvidenceRequestFindFirst },
+    supportCase: {
+      findFirst: (...args: unknown[]) => mockCaseFindFirst(...args),
+    },
+    supportCaseEvidenceRequest: {
+      findFirst: (...args: unknown[]) => mockEvidenceRequestFindFirst(...args),
+    },
     supportCaseMessage: { findFirst: jest.fn(async () => null) },
-    $transaction: jest.fn(),
+    $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
+      fn({
+        supportCaseAttachment: {
+          findFirst: (...args: unknown[]) => mockAttachmentFindFirst(...args),
+          findMany: (...args: unknown[]) => mockAttachmentFindMany(...args),
+          count: (...args: unknown[]) => mockAttachmentCount(...args),
+          create: (...args: unknown[]) => mockAttachmentCreate(...args),
+          updateMany: (...args: unknown[]) => mockAttachmentUpdateMany(...args),
+        },
+      }),
+    ),
   },
 }));
 
@@ -109,10 +137,12 @@ beforeEach(() => {
   mockCaseFindFirst.mockResolvedValue(CASE);
   mockEvidenceRequestFindFirst.mockResolvedValue(null);
   mockAttachmentCount.mockResolvedValue(0);
-  mockAttachmentCreate.mockImplementation(async ({ data }: { data: { id: string } }) => ({
-    id: data.id,
-    storagePath: `support-cases/c-1/${data.id}`,
-  }));
+  mockAttachmentCreate.mockImplementation(
+    async ({ data }: { data: { id: string } }) => ({
+      id: data.id,
+      storagePath: `support-cases/c-1/${data.id}`,
+    }),
+  );
   mockCreateSignedUploadUrl.mockResolvedValue({
     data: { signedUrl: "https://storage.test/upload", token: "tok", path: "p" },
     error: null,
@@ -128,7 +158,11 @@ beforeEach(() => {
 describe("the upload", () => {
   it("mints a row and a signed upload URL", async () => {
     const res = await createAttachment(
-      post({ originalName: "proof.pdf", mimeType: "application/pdf", fileSize: 1024 }),
+      post({
+        originalName: "proof.pdf",
+        mimeType: "application/pdf",
+        fileSize: 1024,
+      }),
       { params: Promise.resolve({ caseId: "c-1" }) },
     );
     expect(res.status).toBe(201);
@@ -147,7 +181,11 @@ describe("the upload", () => {
 
   it("throttles a customer per person per case", async () => {
     await createAttachment(
-      post({ originalName: "proof.pdf", mimeType: "application/pdf", fileSize: 1024 }),
+      post({
+        originalName: "proof.pdf",
+        mimeType: "application/pdf",
+        fileSize: 1024,
+      }),
       { params: Promise.resolve({ caseId: "c-1" }) },
     );
     expect(applyRateLimit).toHaveBeenCalledWith(
@@ -159,7 +197,11 @@ describe("the upload", () => {
   it("refuses a file on a closed case", async () => {
     mockCaseFindFirst.mockResolvedValue({ ...CASE, status: "CLOSED" });
     const res = await createAttachment(
-      post({ originalName: "proof.pdf", mimeType: "application/pdf", fileSize: 1024 }),
+      post({
+        originalName: "proof.pdf",
+        mimeType: "application/pdf",
+        fileSize: 1024,
+      }),
       { params: Promise.resolve({ caseId: "c-1" }) },
     );
     expect(res.status).toBe(409);
@@ -169,7 +211,11 @@ describe("the upload", () => {
   it("refuses a twenty-first file", async () => {
     mockAttachmentCount.mockResolvedValue(20);
     const res = await createAttachment(
-      post({ originalName: "proof.pdf", mimeType: "application/pdf", fileSize: 1024 }),
+      post({
+        originalName: "proof.pdf",
+        mimeType: "application/pdf",
+        fileSize: 1024,
+      }),
       { params: Promise.resolve({ caseId: "c-1" }) },
     );
     expect(res.status).toBe(400);
@@ -178,7 +224,11 @@ describe("the upload", () => {
 
   it("refuses a file type it does not accept", async () => {
     const res = await createAttachment(
-      post({ originalName: "payload.exe", mimeType: "application/x-msdownload", fileSize: 10 }),
+      post({
+        originalName: "payload.exe",
+        mimeType: "application/x-msdownload",
+        fileSize: 10,
+      }),
       { params: Promise.resolve({ caseId: "c-1" }) },
     );
     expect(res.status).toBe(400);
@@ -282,7 +332,10 @@ describe("the download", () => {
     expect(res.status).toBe(200);
     expect(mockAttachmentFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ caseId: "c-1", completedAt: { not: null } }),
+        where: expect.objectContaining({
+          caseId: "c-1",
+          completedAt: { not: null },
+        }),
       }),
     );
   });

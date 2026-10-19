@@ -66,7 +66,12 @@ describe("the scope resolver", () => {
 
 describe("the matrix", () => {
   it("never lets an organisation execute a money act", () => {
-    for (const scope of ["org", "individual", "platform-money", "counterparty-org"] as CaseScope[]) {
+    for (const scope of [
+      "org",
+      "individual",
+      "platform-money",
+      "counterparty-org",
+    ] as CaseScope[]) {
       expect(canActOnCase(orgAdmin, scope, "execute")).toBe(false);
       expect(canActOnCase(orgMember, scope, "execute")).toBe(false);
     }
@@ -105,7 +110,12 @@ describe("the matrix", () => {
 
   it("gives a person with no organisation and no operator role nothing", () => {
     const stranger: CaseActor = { userId: "nobody", role: "CONSULTEE" };
-    for (const scope of ["org", "individual", "platform-money", "counterparty-org"] as CaseScope[]) {
+    for (const scope of [
+      "org",
+      "individual",
+      "platform-money",
+      "counterparty-org",
+    ] as CaseScope[]) {
       expect(canActOnCase(stranger, scope, "read")).toBe(false);
       expect(canActOnCase(stranger, scope, "decide")).toBe(false);
     }

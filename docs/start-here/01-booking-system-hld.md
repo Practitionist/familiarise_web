@@ -363,7 +363,7 @@ Latency-sensitive sweeps run on the Netlify scheduled ticker, `netlify/functions
 | `reschedule-proposals`                                                | 15 min, 25 rows         | Unanswered reschedule proposals, restored to their origin         |
 | `auto-complete-appointments`                                          | 30 min, 25 rows         | Session outcomes, then the earnings hold or a refund              |
 | `detect-consultant-no-shows`                                          | 30 min, 10 rows         | Consultant no-show cancellations with a full refund               |
-| `settle-cancelled-sessions`                                           | 30 min, 10 sessions     | One-unit refunds for host-cancelled class sessions nobody made up |
+| `settle-cancelled-sessions`                                           | 60 min, 10 sessions     | One-unit refunds for host-cancelled class sessions nobody made up |
 | `reconcile-payment-status`, `reconcile-refunds`, `retry-auto-refunds` | 15 min                  | Money healing against the gateway                                 |
 
 Every job is guarded by `withCronLock` (`lib/cron/with-cron-lock.ts`) and by a partial unique index on the lease table, so two runs of one job can never both hold the lease:

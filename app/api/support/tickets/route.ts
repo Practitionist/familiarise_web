@@ -24,8 +24,12 @@ export async function POST(req: NextRequest) {
     .clone()
     .json()
     .catch(() => null);
-  const target = z.object({ targetUserId: z.unknown() }).safeParse(peek);
-  if (!target.success) return retiredSupportEndpoint();
+  // A legacy body has no targetUserId at all: the key's PRESENCE is the
+  // contract, so a body that omits it is the retired shape, not a payload
+  // that happens to carry a bad value.
+  const hasTarget =
+    typeof peek === "object" && peek !== null && "targetUserId" in peek;
+  if (!hasTarget) return retiredSupportEndpoint();
 
   try {
     const auth = await requireBackofficeSurface("tickets.manage");

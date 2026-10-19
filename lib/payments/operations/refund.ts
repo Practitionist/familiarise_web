@@ -506,7 +506,13 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
               status: RefundStatus.PENDING,
               refundId: `pending_${globalThis.crypto.randomUUID()}`,
               dedupeKey: input.dedupeKey ?? null,
-              ...(input.supportRecommendationId ? { supportRecommendation: { connect: { id: input.supportRecommendationId } } } : {}),
+              ...(input.supportRecommendationId
+                ? {
+                    supportRecommendation: {
+                      connect: { id: input.supportRecommendationId },
+                    },
+                  }
+                : {}),
               paymentGateway: payment.paymentGateway,
               exchangeRateAtRefund: payment.exchangeRateAtCheckout,
               displayCurrency: payment.displayCurrencyAtCheckout,
@@ -740,6 +746,14 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           select: { metadata: true },
         });
         await prisma.$transaction([
+          // The case recommendation points at the placeholder we are about to
+          // retire, and its FK is Restrict — carry it onto the surviving row
+          // first, or the delete rolls this merge back after the gateway has
+          // already moved the money.
+          prisma.supportFinancialRecommendation.updateMany({
+            where: { refundId: reserved.id },
+            data: { refundId: winner.id },
+          }),
           prisma.refund.delete({ where: { id: reserved.id } }),
           prisma.refund.update({
             where: { id: winner.id },

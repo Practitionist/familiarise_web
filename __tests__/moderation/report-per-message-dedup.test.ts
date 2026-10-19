@@ -17,6 +17,7 @@ const mockCreate = jest.fn();
 const mockReview = jest.fn();
 const mockMembership = jest.fn();
 const mockSession = jest.fn();
+const mockCount = jest.fn(async () => 0);
 const mockFindFirst = jest.fn(
   // A rest parameter, not a fixed arity: the module mock forwards with a
   // spread, and TS will not spread into a fixed-arity tuple.
@@ -66,6 +67,7 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     moderationReport: {
       findFirst: (...args: unknown[]) => mockFindFirst(...args),
+      count: (...args: unknown[]) => mockCount(...args),
       create: (...args: unknown[]) => mockCreate(...args),
     },
     user: { findUnique: jest.fn(async () => ({ id: "target" })) },
@@ -119,6 +121,9 @@ beforeEach(() => {
     rows.push(row);
     return row;
   });
+  // The count of reports on the same content, which the route computes at
+  // write time rather than accumulating by folding rows together.
+  mockCount.mockImplementation(async () => rows.length);
 });
 
 it("gives each reporter a distinct receipt without changing anyone else's evidence", async () => {

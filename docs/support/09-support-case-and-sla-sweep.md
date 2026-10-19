@@ -53,11 +53,11 @@ Every route under `/api/support/cases*` and `/api/admin/support/*` enforces mand
 
 ## Background SLA, auto-close & dispute sweep
 
-`runSupportSlaSweep` (`lib/support/sla-sweep.ts`) runs every **30 minutes at offset `:10`** on `netlify/functions/cron-tick.mts` (`limit=20`), serialized by `withCronLock("support-sla-sweep")`:
+`runSupportSlaSweep` (`lib/support/sla-sweep.ts`) runs every **30 minutes at offset `:05`** on `netlify/functions/cron-tick.mts` (`limit=20`), serialized by `withCronLock("support-sla-sweep")`:
 
 ```mermaid
 flowchart LR
-    Tick["cron-tick.mts (*/30 at :10, limit=20)"] --> Lock["withCronLock('support-sla-sweep')"]
+    Tick["cron-tick.mts (*/30 at :05, limit=20)"] --> Lock["withCronLock('support-sla-sweep')"]
     Lock --> Arm1["Arm 1: SLA Warn/Breach (unpaused, <=30d)"]
     Lock --> Arm2["Arm 2: 28-Day Auto-Close + Thread Close"]
     Lock --> Arm3["Arm 3: Dispute Deadlines (T-72h / T-24h)"]

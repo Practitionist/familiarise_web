@@ -39,7 +39,7 @@ The rules below are enforced in code and, where marked, in Postgres. The reasoni
 
 ## Background jobs
 
-Two jobs run the programme. `vest-referral-credits` runs on the Netlify ticker every 30 minutes and decides each waiting referral. `expire-referral-credits` runs monthly from GitHub Actions through its `CRON_SECRET` HTTP twin and releases expired balances. See [01-architecture.md](./01-architecture.md) for details.
+Two jobs run the programme. `vest-referral-credits` runs on the Netlify ticker every 60 minutes and decides each waiting referral. `expire-referral-credits` runs monthly from GitHub Actions through its `CRON_SECRET` HTTP twin and releases expired balances. See [01-architecture.md](./01-architecture.md) for details.
 
 ## Switching the programme on
 

@@ -50,7 +50,10 @@ describe("consultant statutory PII is never returned by a bare include", () => {
     "app/api/user/reviews/[id]/route.ts",
     "app/api/dashboard/consultee/[consulteeId]/route.ts",
     "app/api/admin/earnings/route.ts",
-    "app/api/staff/support-tickets/[ticketId]/route.ts",
+    // The pre-cutover staff ticket route is retired (410); the canonical case
+    // workspace replaced it, and the ROUTE is a thin delegate — the
+    // projection lives in the read model it calls.
+    "lib/support/case-workspace.ts",
   ];
 
   it.each(ROUTES)("%s selects an allowlist", (rel) => {
@@ -60,11 +63,26 @@ describe("consultant statutory PII is never returned by a bare include", () => {
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "");
 
-    // Either the scalar allowlist itself or `publicReviewSelect`, which is
-    // built on it (asserted below) and is the whole-review allowlist.
-    expect(src).toMatch(/consultantPublicScalars|publicReviewSelect/);
+    // Either a shared allowlist constant, or an explicit per-field `select:`
+    // — both keep the statutory columns out. The dangerous shapes are the two
+    // the negative assertions below pin.
+    expect(
+      src.match(/consultantPublicScalars|publicReviewSelect/) ??
+        src.match(/consultantProfile\s*:\s*\{\s*select\s*:/),
+    ).not.toBeNull();
     expect(src).not.toMatch(/consultantProfile: true/);
     expect(src).not.toMatch(/consultantProfile: \{\s*\n\s*include:/);
+  });
+
+  it("the staff case workspace projects the consultant by name only", () => {
+    // The workspace serves a case's booking context, and the booking carries
+    // a ConsultantProfile. It must take the name and nothing else — the PII
+    // columns live on the same row.
+    const src = read("lib/support/case-workspace.ts")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    expect(src).not.toMatch(/consultantProfile: true/);
+    expect(src).not.toMatch(/panNumber|ibanOrAccount|swiftBic|udyamNumber/);
   });
 
   it("publicReviewSelect is built on the scalar allowlist", () => {

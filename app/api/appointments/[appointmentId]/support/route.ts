@@ -117,10 +117,26 @@ export async function GET(
     }
 
     return NextResponse.json({
+      // Only the fields the conversation UI reads. The full case row carries
+      // the staff hand-off brief in `description` plus internal columns, and
+      // this is the participant's own response.
       data: thread
         ? {
-            ...thread,
-            userId: thread.requesterUserId,
+            id: thread.id,
+            status: thread.status,
+            activeChannel: thread.activeChannel,
+            category: thread.category,
+            currentNodeId: thread.currentNodeId,
+            resolvedAt: thread.resolvedAt,
+            csatRating: thread.csatRating,
+            messages: thread.messages.map((message) => ({
+              id: message.id,
+              seq: message.seq,
+              sender: message.sender,
+              body: message.body,
+              metadata: message.metadata,
+              createdAt: message.createdAt,
+            })),
             supportTicketId:
               thread.activeChannel === "HUMAN" ? thread.id : null,
             supportTicket:

@@ -22,6 +22,7 @@
  * modified.
  */
 
+import { Prisma } from "@prisma/client";
 import { RefundError } from "@/lib/payments/core/types";
 
 // ---------------------------------------------------------------------------
@@ -45,6 +46,9 @@ type Store = {
   billingAccounts: Map<string, Row>;
   organizationInvoices: Map<string, Row>;
   orgAuditLogs: Row[];
+  // The support console's refund recommendations. Each one holds the id of
+  // the Refund row it was approved into.
+  supportFinancialRecommendations: Map<string, Row>;
 };
 
 let state: Store;
@@ -66,6 +70,7 @@ function newStore(): Store {
     billingAccounts: new Map(),
     organizationInvoices: new Map(),
     orgAuditLogs: [],
+    supportFinancialRecommendations: new Map(),
   };
 }
 
@@ -118,11 +123,29 @@ function txStub() {
       }),
     },
     refund: {
-      // #1780 — the dedupe lookup reads Refund by its unique key.
-      findUnique: jest.fn(
-        async ({ where }: { where: { dedupeKey?: string } }) =>
-          state.refunds.find((r) => r.dedupeKey === where.dedupeKey) ?? null,
-      ),
+      // #1780 — the dedupe lookup reads Refund by its unique key. The bind-race
+      // path reads it by the gateway id instead, and the settle path by its id.
+      findUnique: jest.fn(async ({ where }: any) => {
+        if (where?.dedupeKey !== undefined) {
+          return (
+            state.refunds.find((r) => r.dedupeKey === where.dedupeKey) ?? null
+          );
+        }
+        if (where?.refundId !== undefined) {
+          return (
+            state.refunds.find((r) => r.refundId === where.refundId) ?? null
+          );
+        }
+        if (where?.id !== undefined) {
+          return state.refunds.find((r) => r.id === where.id) ?? null;
+        }
+        return null;
+      }),
+      findUniqueOrThrow: jest.fn(async ({ where, select }: any) => {
+        const r = state.refunds.find((x) => x.id === where.id);
+        if (!r) throw new Error(`Refund ${where.id} not found`);
+        return select ? projectSelect(r, select) : r;
+      }),
       findMany: jest.fn(async ({ where, select }: any) => {
         const rows = state.refunds.filter((r) => {
           if (where.paymentId && r.paymentId !== where.paymentId) return false;
@@ -141,6 +164,18 @@ function txStub() {
           ...data,
         };
         state.refunds.push(created);
+        // A nested `supportRecommendation.connect` is the WRITE side of the
+        // one-to-one: it points SupportFinancialRecommendation.refundId at
+        // this row, and that FK is Restrict.
+        const recId = data?.supportRecommendation?.connect?.id;
+        if (recId) {
+          const rec = state.supportFinancialRecommendations.get(recId);
+          if (!rec)
+            throw new Error(
+              `SupportFinancialRecommendation ${recId} not found`,
+            );
+          rec.refundId = created.id;
+        }
         return created;
       }),
       update: jest.fn(async ({ where, data }: any) => {
@@ -149,14 +184,62 @@ function txStub() {
         Object.assign(r, data);
         return r;
       }),
+      // Refund.refundId is unique. A second row claiming the same gateway id
+      // is a P2002, exactly as Postgres raises it.
+      delete: jest.fn(async ({ where }: any) => {
+        const idx = state.refunds.findIndex((x) => x.id === where.id);
+        if (idx === -1) throw new Error(`Refund ${where.id} not found`);
+        // SupportFinancialRecommendation.refund is onDelete: Restrict, so a
+        // row a recommendation still points at cannot be deleted.
+        const held = Array.from(
+          state.supportFinancialRecommendations.values(),
+        ).find((rec) => rec.refundId === where.id);
+        if (held) {
+          throw new Error(
+            `Foreign key constraint violated: SupportFinancialRecommendation ${held.id} still points at Refund ${where.id}`,
+          );
+        }
+        const [removed] = state.refunds.splice(idx, 1);
+        return removed;
+      }),
       // #776 — applyRefundCascade's atomic idempotency claim (cascadedAt null→now).
       updateMany: jest.fn(async ({ where, data }: any) => {
+        if (data?.refundId !== undefined) {
+          const clash = state.refunds.find(
+            (r) =>
+              r.refundId === data.refundId && (!where?.id || r.id !== where.id),
+          );
+          if (clash) {
+            throw new Prisma.PrismaClientKnownRequestError(
+              "Unique constraint failed on the fields: (`refundId`)",
+              {
+                code: "P2002",
+                clientVersion: "test",
+                meta: { target: ["refundId"] },
+              },
+            );
+          }
+        }
         let count = 0;
         for (const r of state.refunds) {
           if (where.id && r.id !== where.id) continue;
           // cascadedAt: null matches an unset (undefined/null) stamp.
           if (where.cascadedAt === null && r.cascadedAt != null) continue;
           Object.assign(r, data);
+          count++;
+        }
+        return { count };
+      }),
+    },
+    // The support console's refund recommendations. `refundId` is unique and
+    // Restrict-constrained from the Refund side.
+    supportFinancialRecommendation: {
+      updateMany: jest.fn(async ({ where, data }: any) => {
+        let count = 0;
+        for (const rec of state.supportFinancialRecommendations.values()) {
+          if (where?.refundId !== undefined && rec.refundId !== where.refundId)
+            continue;
+          Object.assign(rec, data);
           count++;
         }
         return { count };
@@ -497,10 +580,18 @@ jest.mock("../../lib/prisma", () => {
       // pass. Snapshot `state` on entry, run the callback, and on throw restore
       // every collection IN PLACE (tests hold a live `state` reference), then
       // re-throw — mirroring Postgres rollback semantics.
-      $transaction: async (fn: any) => {
+      $transaction: async (arg: any) => {
         const snapshot = snapshotState();
         try {
-          return await fn(stub);
+          // The array form runs its statements in order, atomically. The stub
+          // methods mutate eagerly, so the ORDER of the array is what decides
+          // which write lands first — the same order Postgres applies.
+          if (Array.isArray(arg)) {
+            const results: unknown[] = [];
+            for (const statement of arg) results.push(await statement);
+            return results;
+          }
+          return await arg(stub);
         } catch (err) {
           restoreState(snapshot);
           throw err;
@@ -1153,6 +1244,67 @@ describe("refundPayment — M1 gateway wiring", () => {
     // FAILED rows don't consume the refundable balance — a retry succeeds.
     const retry = await refundPayment({ paymentId: "pay-1", reason: "retry" });
     expect(retry.status).toBe("SUCCEEDED");
+  });
+});
+
+describe("refundPayment — bind race with a case recommendation", () => {
+  it("carries the recommendation onto the surviving webhook row before retiring the placeholder", async () => {
+    seedSinglePartyWalletPayment({});
+    // The support console's recommendation, not yet attached to a refund row.
+    state.supportFinancialRecommendations.set("rec-1", {
+      id: "rec-1",
+      caseId: "case-1",
+      paymentId: "pay-1",
+      amountPaise: 10000,
+      refundId: null,
+      decidedAt: null,
+      approved: null,
+    });
+    // The gateway's own `refund.created` webhook commits its row while our
+    // gateway call is still in flight — the race the bind has to survive.
+    mockCreateGatewayRefund.mockImplementationOnce(async () => {
+      state.refunds.push({
+        id: "refund-webhook",
+        paymentId: "pay-1",
+        amountPaise: 10000,
+        currency: "INR",
+        reason: "customer request",
+        status: "PENDING",
+        refundId: "rfnd_gw_1",
+        dedupeKey: null,
+        paymentGateway: "RAZORPAY",
+        metadata: { reason: "customer request" },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      return {
+        refundId: "rfnd_gw_1",
+        amount: 10000,
+        currency: "INR",
+        status: "SUCCEEDED",
+      };
+    });
+
+    const result = await refundPayment({
+      paymentId: "pay-1",
+      reason: "customer request",
+      initiatedByUserId: "admin-1",
+      dedupeKey: "case-recommendation:rec-1",
+      supportRecommendationId: "rec-1",
+    });
+
+    // The placeholder is retired; the webhook's row survives and carries the
+    // Phase-1 audit keys and the dedupe key.
+    expect(state.refunds).toHaveLength(1);
+    expect(state.refunds[0]?.id).toBe("refund-webhook");
+    expect(state.refunds[0]?.dedupeKey).toBe("case-recommendation:rec-1");
+    expect(result.refundId).toBe("refund-webhook");
+    // The recommendation now points at the SURVIVING row. Its FK is Restrict,
+    // so it has to be re-pointed BEFORE the placeholder can be deleted —
+    // otherwise the delete rolls the whole merge back after the money moved.
+    expect(state.supportFinancialRecommendations.get("rec-1")?.refundId).toBe(
+      "refund-webhook",
+    );
   });
 });
 

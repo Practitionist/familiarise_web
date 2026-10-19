@@ -87,74 +87,6 @@ async function resolveReportedMessage(
   }
 }
 
-/**
- * Fold an additional reporter's statement onto an open report.
- *
- * The fold is a CAS loop: the count in the `WHERE` must match the count we
- * read, so two reporters folding at the same moment produce ONE increment
- * and one retry rather than a lost count. Three attempts is enough — the
- * third failure means genuine contention, and the caller falls through to
- * creating its own row, which is a safe outcome.
- *
- * TAIL-PRESERVING: the newest reporter's statement is appended and the
- * existing prefix is CLAMPED to fit, so the most recent reason is never the
- * one that gets truncated away.
- */
-const MAX_AGGREGATED_DESCRIPTION_LENGTH = 4000;
-
-async function foldAdditionalReporter(input: {
-  candidate: {
-    id: string;
-    reportCount: number;
-    description: string | null;
-    contentText: string | null;
-    status: string;
-  };
-  reason: string;
-  description: string;
-  backfillContentText: string | null;
-}): Promise<{ folded: boolean; reportId: string }> {
-  let candidate = input.candidate;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const currentCount = candidate.reportCount;
-    const newestLine = `\nReporter ${currentCount + 1} (${input.reason}): ${input.description.slice(0, 280)}`;
-    const keptPrefix = (candidate.description ?? "").slice(
-      0,
-      Math.max(0, MAX_AGGREGATED_DESCRIPTION_LENGTH - newestLine.length),
-    );
-    const moved = await prisma.moderationReport.updateMany({
-      where: {
-        id: candidate.id,
-        reportCount: currentCount,
-        status: { in: ["PENDING", "UNDER_REVIEW"] },
-      },
-      data: {
-        reportCount: { increment: 1 },
-        description: keptPrefix + newestLine,
-        ...(candidate.contentText === null && input.backfillContentText
-          ? { contentText: input.backfillContentText }
-          : {}),
-      },
-    });
-    if (moved.count > 0) {
-      return { folded: true, reportId: candidate.id };
-    }
-    // The count moved under us: re-read and try again with the new value.
-    const reloaded = await prisma.moderationReport.findUnique({
-      where: { id: candidate.id },
-    });
-    if (
-      !reloaded ||
-      (reloaded.status !== "PENDING" && reloaded.status !== "UNDER_REVIEW")
-    ) {
-      candidate = reloaded ?? candidate;
-      break;
-    }
-    candidate = reloaded;
-  }
-  return { folded: false, reportId: candidate.id };
-}
-
 export async function POST(req: NextRequest) {
   try {
     const session = await getSession();
@@ -367,53 +299,29 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // ONE ROW PER REPORTER.
+    //
+    // An earlier shape folded a second reporter's statement onto the first
+    // reporter's row. That broke three things the DSA statement-of-reasons
+    // duty depends on: the second reporter was handed the FIRST reporter's
+    // `RPT-` reference, which never appeared in their own report history
+    // (which filters on `reportedById`); the same reporter's repeat
+    // submission folded again and inflated the count, because the dedup only
+    // looked for rows they owned; and the first reporter's evidence was
+    // rewritten under them.
+    //
+    // So the count is computed instead of accumulated: the row records how
+    // many people have reported this content SO FAR, and the queue sorts by
+    // it. The count is a property of the CONTENT, not of the row.
+    const reportCount = await prisma.moderationReport.count({
+      where: { targetUserId: target, type, ...contentScope },
+    });
+
     let effectiveContentText = contentText;
     if (type === "REVIEW") {
       effectiveContentText = reviewSnapshotText ?? undefined;
     } else if (type === "MESSAGE") {
       effectiveContentText = verifiedMessage.messageText ?? undefined;
-    }
-
-    // A DIFFERENT reporter on the same content folds onto the open report
-    // rather than creating a second queue row: five people reporting one
-    // review is one item for the moderation team, with a count.
-    const openReport = await prisma.moderationReport.findFirst({
-      where: {
-        reportedById: { not: session.user.id },
-        targetUserId: target,
-        type,
-        ...contentScope,
-        status: { in: ["PENDING", "UNDER_REVIEW"] },
-      },
-      orderBy: { createdAt: "asc" },
-    });
-    if (openReport) {
-      const folded = await foldAdditionalReporter({
-        candidate: openReport,
-        // The GROUND, not the label: the description is an appended,
-        // machine-aggregated field, and the human label is already on the
-        // row's own `reason`.
-        reason: reasonCode,
-        description: description ?? "",
-        backfillContentText: effectiveContentText ?? null,
-      });
-      if (folded.folded) {
-        return NextResponse.json({
-          message: "Report submitted successfully",
-          reportId: folded.reportId,
-          reportReference: formatReportReference(folded.reportId),
-          aggregated: true,
-        });
-      }
-      if (
-        openReport.status === "PENDING" ||
-        openReport.status === "UNDER_REVIEW"
-      ) {
-        return NextResponse.json(
-          { error: "Concurrent report update conflict; please retry" },
-          { status: 409 },
-        );
-      }
     }
 
     // Create new report
@@ -431,6 +339,8 @@ export async function POST(req: NextRequest) {
         organizationId: resolvedOrganizationId,
         streamMessageId: verifiedMessage.streamMessageId,
         streamChannelCid: verifiedMessage.streamChannelCid,
+        // How many people have reported this content, this one included.
+        reportCount: reportCount + 1,
       },
     });
 

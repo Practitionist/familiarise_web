@@ -700,7 +700,9 @@ async function readDisputeAging(now: Date): Promise<DisputeAging> {
       noDeadlineCount += 1;
       continue;
     }
-    const daysLeft = Math.floor((d.dueBy.getTime() - now.getTime()) / 86_400_000);
+    const daysLeft = Math.floor(
+      (d.dueBy.getTime() - now.getTime()) / 86_400_000,
+    );
     const bucket = byKey.get(agingBucketFor(daysLeft));
     if (!bucket) continue;
     bucket.count += 1;
@@ -829,7 +831,8 @@ const LADDER_STATUS_LABEL: Record<LiabilityBucket["key"], string> = {
   later: "Later",
 };
 
-function emptyLadderBuckets(): LiabilityBucket[] {  return [
+function emptyLadderBuckets(): LiabilityBucket[] {
+  return [
     {
       key: "t0",
       label: "T+0 · payable today",
@@ -945,15 +948,19 @@ function daysBetween(now: Date, dueAt: Date): number {
 }
 
 /**
- * TDS withheld in the current financial year and not yet reported on
- * Form 26Q. Quarterly TDS is payable by the 7th of the month after the
- * quarter closes.
+ * TDS withheld in the current financial QUARTER and not yet reported on
+ * Form 26Q. `TDSRecord.quarter` is the reporting quarter (1=Apr-Jun …
+ * 4=Jan-Mar), so the query has to name it: filtering on the financial year
+ * alone would fold the other three quarters' deductions into this card.
+ * Quarterly TDS is payable by the 7th of the month after the quarter closes,
+ * except Q4, whose March deductions are due on 30 April of the same
+ * financial year.
  */
 async function readTdsCountdown(now: Date): Promise<StatutoryCountdown> {
   const financialYear = getIndianFinancialYear(now);
   const quarter = getIndianFYQuarter(now);
   const rows = await prisma.tDSRecord.findMany({
-    where: { financialYear },
+    where: { financialYear, quarter },
     select: { id: true, tdsDeducted: true, reportedInForm26Q: true },
   });
   let amountPaise = 0;
@@ -962,19 +969,25 @@ async function readTdsCountdown(now: Date): Promise<StatutoryCountdown> {
     amountPaise += r.tdsDeducted;
     if (!r.reportedInForm26Q) unfiled += 1;
   }
-  // Quarter end → the 7th of the following month, IST midnight.
-  // Q1 Apr-Jun → 7 Jul, Q2 Jul-Sep → 7 Oct, Q3 Oct-Dec → 7 Jan, Q4 Jan-Mar → 7 Apr.
+  // Quarter end → the payment deadline, IST midnight.
+  // Q1 Apr-Jun → 7 Jul, Q2 Jul-Sep → 7 Oct, Q3 Oct-Dec → 7 Jan (next year),
+  // Q4 Jan-Mar → 30 Apr of the same financial year.
   const ist = istParts(now);
-  const dueMonth = quarter === 1 ? 6 : quarter === 2 ? 9 : quarter === 3 ? 0 : 3;
-  const dueYear = quarter >= 3 ? ist.year + 1 : ist.year;
-  const dueAt = istMidnight(dueYear, dueMonth, 7);
+  const dueMonth =
+    quarter === 1 ? 6 : quarter === 2 ? 9 : quarter === 3 ? 0 : 3;
+  const dueYear = quarter === 3 ? ist.year + 1 : ist.year;
+  const dueDay = quarter === 4 ? 30 : 7;
+  const dueAt = istMidnight(dueYear, dueMonth, dueDay);
   return {
     label: `TDS withheld · FY ${financialYear} Q${quarter}`,
     amountPaise,
     count: unfiled,
     dueAt: dueAt.toISOString(),
     daysUntilDue: daysBetween(now, dueAt),
-    dueLabel: "Payment deadline — 7th of the month after this quarter",
+    dueLabel:
+      quarter === 4
+        ? "Payment deadline — 30 April"
+        : "Payment deadline — 7th of the month after this quarter",
   };
 }
 
@@ -1335,8 +1348,9 @@ export async function readMoneyOverview(
     ),
   ];
   const totalCreated = currentPayouts.length;
-  const totalCompleted = currentPayouts.filter((p) => p.status === "COMPLETED")
-    .length;
+  const totalCompleted = currentPayouts.filter(
+    (p) => p.status === "COMPLETED",
+  ).length;
   const totalFailed = currentPayouts.filter(
     (p) => p.status === "FAILED" || p.status === "REVERSED",
   ).length;
@@ -1380,10 +1394,15 @@ export async function readMoneyOverview(
       : prior.summary.netRevenuePaise / prior.summary.gmvPaise,
     "ratio",
   );
-  const refundedCurrent = current.refunds.reduce((s, r) => s + r.amountPaise, 0);
+  const refundedCurrent = current.refunds.reduce(
+    (s, r) => s + r.amountPaise,
+    0,
+  );
   const refundedPrior = prior.refunds.reduce((s, r) => s + r.amountPaise, 0);
   const refundRate = metric(
-    current.summary.gmvPaise === 0 ? 0 : refundedCurrent / current.summary.gmvPaise,
+    current.summary.gmvPaise === 0
+      ? 0
+      : refundedCurrent / current.summary.gmvPaise,
     prior.summary.gmvPaise === 0 ? 0 : refundedPrior / prior.summary.gmvPaise,
     "ratio",
   );
@@ -1439,7 +1458,10 @@ export async function readMoneyOverview(
     liabilityLadder,
     liabilities: { tds, gst },
     reconciliation,
-    needsHuman: { count: needsHumanItems.length, amountPaise: needsHumanAmountPaise },
+    needsHuman: {
+      count: needsHumanItems.length,
+      amountPaise: needsHumanAmountPaise,
+    },
     atRisk: {
       gatewayCount: gatewayOpen.length,
       gatewayAmountPaise,
@@ -1755,7 +1777,9 @@ async function drillLiability(now: Date): Promise<{
       label: `Expert earnings ${shortId(e.id)}`,
       detail: `payment ${shortId(e.paymentId)} · hold ends ${shortDate(e.holdUntil)}`,
       amountPaise: Math.max(0, e.consultantSharePaise - e.refundedShareAmount),
-      status: e.holdUntil ? LADDER_STATUS_LABEL[ladderBucketFor(e.holdUntil, now)] : "T+0",
+      status: e.holdUntil
+        ? LADDER_STATUS_LABEL[ladderBucketFor(e.holdUntil, now)]
+        : "T+0",
       at: e.holdUntil ? e.holdUntil.toISOString() : null,
     })),
     ...org.map((e) => ({
@@ -1763,7 +1787,9 @@ async function drillLiability(now: Date): Promise<{
       label: `Organisation earnings ${shortId(e.id)}`,
       detail: `payment ${shortId(e.paymentId)} · hold ends ${shortDate(e.holdUntil)}`,
       amountPaise: Math.max(0, e.orgSharePaise - e.refundedAmountPaise),
-      status: e.holdUntil ? LADDER_STATUS_LABEL[ladderBucketFor(e.holdUntil, now)] : "T+0",
+      status: e.holdUntil
+        ? LADDER_STATUS_LABEL[ladderBucketFor(e.holdUntil, now)]
+        : "T+0",
       at: e.holdUntil ? e.holdUntil.toISOString() : null,
     })),
   ].sort((a, b) => (a.at ?? "").localeCompare(b.at ?? ""));
@@ -1811,13 +1837,12 @@ export async function readMoneyDrill(input: {
     case "refund-rate":
     case "refund-reason": {
       // "" is the code for a refund with no reason recorded.
-      const reason = input.key === "refund-reason" ? (input.reason ?? "") : null;
+      const reason =
+        input.key === "refund-reason" ? (input.reason ?? "") : null;
       const { rows, truncated } = await drillRefunds(window, reason);
       return {
         key: input.key,
-        title: reason
-          ? `Refunds — ${reason}`
-          : "Refunds issued in this period",
+        title: reason ? `Refunds — ${reason}` : "Refunds issued in this period",
         description:
           "Every refund that left the till in the window, with the reason it was raised.",
         rows,
@@ -1871,21 +1896,23 @@ export async function readMoneyDrill(input: {
     }
     case "needs-human": {
       const items = await readRefundNeedsHuman();
-      const rows: MoneyDrillRow[] = items.map((i) => ({
-        id: i.id,
-        label: i.message,
-        detail: i.kind === "credit" ? "Credit to settle" : "Held paid seat",
-        amountPaise: i.unitPaise,
-        status: "Needs a human",
-        at: i.createdAt.toISOString(),
-      }));
+      const { rows, truncated } = capRows(
+        items.map((i) => ({
+          id: i.id,
+          label: i.message,
+          detail: i.kind === "credit" ? "Credit to settle" : "Held paid seat",
+          amountPaise: i.unitPaise,
+          status: "Needs a human",
+          at: i.createdAt.toISOString(),
+        })),
+      );
       return {
         key: input.key,
         title: "Money a person still has to handle",
         description:
           "Refund-adjacent money the automatic sweeps could not settle on their own.",
         rows,
-        truncated: rows.length > DRILL_ROW_CAP,
+        truncated,
       };
     }
     default:

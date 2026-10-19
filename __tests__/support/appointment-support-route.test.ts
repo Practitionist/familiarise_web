@@ -170,6 +170,63 @@ describe("GET /api/appointments/[appointmentId]/support", () => {
     expect(json.data.supportTicket.referenceNumber).toBe("FAM-2026-000042");
   });
 
+  it("returns only the conversation fields, never the internal case row", async () => {
+    // The staff hand-off brief lands in `description` ("Escalation reason:
+    // …", "Bot told the customer: …") and the queue's bookkeeping sits in the
+    // other columns. This is the PARTICIPANT's own response.
+    mockedFindCase.mockResolvedValue({
+      id: "c-1",
+      referenceNumber: "FAM-2026-000042",
+      status: "ESCALATED",
+      activeChannel: "HUMAN",
+      category: "OTHER",
+      currentNodeId: null,
+      resolvedAt: null,
+      csatRating: null,
+      description:
+        "Escalation reason: customer asked for a human\nBot told the customer: connecting you now",
+      assignedToId: "staff-9",
+      scopeKey: "ACCOUNT",
+      requesterUserId: "u1",
+      submitterUserId: "u1",
+      ackDueAt: new Date("2026-03-01T08:00:00Z"),
+      messages: [
+        {
+          id: "m-1",
+          seq: 1,
+          sender: "USER",
+          body: "hello?",
+          metadata: null,
+          createdAt: new Date("2026-03-01T07:00:00Z"),
+        },
+      ],
+    });
+    const res = await GET(req("GET"), {
+      params: Promise.resolve({ appointmentId: SLUG }),
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.data.description).toBeUndefined();
+    expect(json.data.assignedToId).toBeUndefined();
+    expect(json.data.scopeKey).toBeUndefined();
+    // The conversation the UI renders is all still there.
+    expect(json.data.id).toBe("c-1");
+    expect(json.data.status).toBe("ESCALATED");
+    expect(json.data.category).toBe("OTHER");
+    expect(json.data.currentNodeId).toBeNull();
+    expect(json.data.messages).toEqual([
+      {
+        id: "m-1",
+        seq: 1,
+        sender: "USER",
+        body: "hello?",
+        metadata: null,
+        createdAt: "2026-03-01T07:00:00.000Z",
+      },
+    ]);
+    expect(json.data.supportTicket.referenceNumber).toBe("FAM-2026-000042");
+  });
+
   it("400 INVALID_ID envelope on an over-long id — garbage never reaches Prisma", async () => {
     const long = "x".repeat(65);
     const res = await GET(req("GET"), {

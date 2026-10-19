@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
@@ -8,10 +8,6 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import {
-  DISPUTE_REASON_LABEL,
-  DISPUTE_STATUS_LABEL,
-} from "@/lib/support/disputes/protocol";
 
 /**
  * The dispute timeline.
@@ -110,12 +106,17 @@ function Turn({
 
 export function DisputeTimeline({
   referenceNumber,
-  disputeHref,
-}: Readonly<{ referenceNumber: string; disputeHref: string }>) {
+}: Readonly<{ referenceNumber: string }>) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [response, setResponse] = useState("");
   const [acceptRefund, setAcceptRefund] = useState(true);
+  /**
+   * One idempotency key per logical action, kept until the action succeeds.
+   * A retry after a lost response must carry the SAME key, or the server
+   * reads it as a new action and the version CAS refuses it as a conflict.
+   */
+  const actionIds = useRef(new Map<string, string>());
 
   const query = useQuery({
     queryKey: ["purchase-dispute", referenceNumber],
@@ -130,12 +131,15 @@ export function DisputeTimeline({
 
   const act = useMutation({
     mutationFn: async (body: Record<string, unknown>) => {
+      const key = JSON.stringify(body);
+      const clientActionId = actionIds.current.get(key) ?? crypto.randomUUID();
+      actionIds.current.set(key, clientActionId);
       const res = await fetch(
         `/api/purchases/disputes/${encodeURIComponent(referenceNumber)}/actions`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
+          body: JSON.stringify({ ...body, clientActionId }),
         },
       );
       if (!res.ok) {
@@ -144,7 +148,11 @@ export function DisputeTimeline({
         } | null;
         throw new Error(detail?.error ?? "That action did not go through.");
       }
-      return ActionResult.parse(await res.json()).data;
+      const result = ActionResult.parse(await res.json()).data;
+      // The action landed, so the key has done its job: the next one is a
+      // new action and gets a new key.
+      actionIds.current.delete(key);
+      return result;
     },
     onSuccess: (result) => {
       toast({
@@ -154,7 +162,9 @@ export function DisputeTimeline({
           : undefined,
       });
       setResponse("");
-      void qc.invalidateQueries({ queryKey: ["purchase-dispute", referenceNumber] });
+      void qc.invalidateQueries({
+        queryKey: ["purchase-dispute", referenceNumber],
+      });
     },
     onError: (error: unknown) => {
       toast({
@@ -271,7 +281,10 @@ export function DisputeTimeline({
           <h3 className="text-sm font-medium">Conversation</h3>
           <ul className="space-y-2">
             {d.case.messages.map((message) => (
-              <li key={message.id} className="rounded-md border border-border p-3">
+              <li
+                key={message.id}
+                className="rounded-md border border-border p-3"
+              >
                 <p className="text-xs text-muted-foreground">
                   {message.sender} ·{" "}
                   {new Date(message.createdAt).toLocaleString()}
@@ -318,7 +331,6 @@ export function DisputeTimeline({
                 response,
                 acceptRefund,
                 expectedVersion: d.version,
-                clientActionId: crypto.randomUUID(),
               })
             }
           >
@@ -342,7 +354,6 @@ export function DisputeTimeline({
                 act.mutate({
                   action: "BUYER_ACCEPT",
                   expectedVersion: d.version,
-                  clientActionId: crypto.randomUUID(),
                 })
               }
             >
@@ -355,7 +366,6 @@ export function DisputeTimeline({
                 act.mutate({
                   action: "BUYER_REJECT",
                   expectedVersion: d.version,
-                  clientActionId: crypto.randomUUID(),
                 })
               }
             >

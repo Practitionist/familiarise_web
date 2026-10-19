@@ -129,7 +129,7 @@ sequenceDiagram
 
 ## Background sweep (`runSupportSlaSweep`)
 
-Breach state is computed purely on read via `slaStateOf(clock, now)`. Proactive warnings, breach alerts, 28-day stale auto-closure, and actionable payment dispute reminders (`T-72h` / `T-24h`) execute every **30 minutes at offset `:10`** via `runSupportSlaSweep` (`lib/support/sla-sweep.ts`, `limit=20`, locked by `withCronLock("support-sla-sweep")`). See [03-ticket-references-and-sla.md](03-ticket-references-and-sla.md) and [09-support-case-and-sla-sweep.md](09-support-case-and-sla-sweep.md) for full clock math and sidecar constraints.
+Breach state is computed purely on read via `slaStateOf(clock, now)`. Proactive warnings, breach alerts, 28-day stale auto-closure, and actionable payment dispute reminders (`T-72h` / `T-24h`) execute every **30 minutes at offset `:05`** via `runSupportSlaSweep` (`lib/support/sla-sweep.ts`, `limit=20`, locked by `withCronLock("support-sla-sweep")`). See [03-ticket-references-and-sla.md](03-ticket-references-and-sla.md) and [09-support-case-and-sla-sweep.md](09-support-case-and-sla-sweep.md) for full clock math and sidecar constraints.
 
 ## Deliberately out of scope
 

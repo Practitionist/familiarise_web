@@ -79,7 +79,7 @@ stateDiagram-v2
 
 ## Background SLA, auto-close, and dispute sweep (`runSupportSlaSweep`)
 
-`runSupportSlaSweep` (`lib/support/sla-sweep.ts`) runs every **30 minutes at offset `:10`** on `netlify/functions/cron-tick.mts` (`limit=20`), serialized via `withCronLock("support-sla-sweep", { failMode: "open" }, ...)`:
+`runSupportSlaSweep` (`lib/support/sla-sweep.ts`) runs every **30 minutes at offset `:05`** on `netlify/functions/cron-tick.mts` (`limit=20`), serialized via `withCronLock("support-sla-sweep", { failMode: "open" }, ...)`:
 
 1. **Outbox pre-load & separate unpaused warn/breach candidate scans (`fetchSlaSweepCandidates`):**
    - Loads recent `NotificationOutbox` entries (`createdAt >= now - 35d`, `workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_ACTIVITY`, `entityRef: { startsWith: "sla:" }`) via `parseStagedSlaOutboxRows` into per-bucket ID exclusion sets (`ackBreachIds`, `resBreachIds`, `ackWarnIds`, `resWarnIds`, `stagedKeys`).

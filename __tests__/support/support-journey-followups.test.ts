@@ -191,6 +191,25 @@ describe("staff create-for-user entrypoint", () => {
     expect((await res.json()).code).toBe("VALIDATION_FAILED");
     expect(caseCreate).not.toHaveBeenCalled();
   });
+
+  it("answers a legacy body with no targetUserId as the retired endpoint", async () => {
+    // The retired shape is the body's MISSING targetUserId, so the check is
+    // the key's presence. A body that simply omits it must be told the
+    // endpoint moved (410), not that it lacks permission (403).
+    const res = await postStaffTicket(
+      new NextRequest("https://x.test/api/support/tickets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "Follow-up",
+          description: "Checking in",
+        }),
+      }),
+    );
+    expect(res.status).toBe(410);
+    expect((await res.json()).code).toBe("ENDPOINT_RETIRED");
+    expect(caseCreate).not.toHaveBeenCalled();
+  });
 });
 
 describe("validation copy", () => {

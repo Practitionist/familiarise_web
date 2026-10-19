@@ -66,7 +66,7 @@ Adding a parallel `route.ts` plus a `jobs/` wrapper plus a `scripts/` wrapper fo
 
 There are exactly two schedulers, and every job is reached by at least one of them:
 
-- `netlify/functions/cron-tick.mts` runs every five minutes and drives the **latency-sensitive recovery sweeps**. It currently dispatches 28 targets.
+- `netlify/functions/cron-tick.mts` runs every five minutes and drives the **latency-sensitive recovery sweeps**. It currently dispatches 29 targets.
 - The GitHub Actions cron workflows (`cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`) drive the **daily, weekly and statutory batch work**, where a delay of an hour or more is harmless.
 
 Most jobs sit on exactly one. A handful are deliberately on both — `alert-orphaned-payments` is a ticker target _and_ a daily Actions step, which buys fast recovery plus an unbounded safety net — and the shared Postgres lease makes the overlap safe: whichever runner loses answers 409.
@@ -137,7 +137,7 @@ The dispatch path is:
 
 ```mermaid
 flowchart LR
-    S1["Netlify ticker<br/>every 5 min · 28 targets"] --> R
+    S1["Netlify ticker<br/>every 5 min · 29 targets"] --> R
     S2["GitHub Actions<br/>daily / weekly / statutory"] --> R
     R["app/api/cleanup/[job]/route.ts<br/>CRON_SECRET"] --> G["assertNotInMaintenance(job)"]
     G --> L["withCronLock(jobName, failMode)"]

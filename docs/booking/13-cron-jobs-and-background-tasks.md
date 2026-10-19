@@ -31,7 +31,7 @@ Both paths call the same core function exported from `scripts/appointments/` (or
 | Cleanup abandoned payments  | Netlify ticker every 15 min, 10 payments                              | `scripts/payments/cleanup-abandoned-payments.ts`            | `/api/cleanup/abandoned-payments`                |
 | Reconcile slot availability | `cron-intra-day.yml` hourly (`17 * * * *`); detects only              | `scripts/appointments/reconcile-occurrence-availability.ts` | `/api/cleanup/reconcile-occurrence-availability` |
 | Detect consultant no-shows  | Netlify ticker every 30 min, 10-row bites until 16 s; no Actions twin | `scripts/appointments/detect-consultant-no-shows.ts`        | `/api/cleanup/detect-consultant-no-shows`        |
-| Settle cancelled sessions   | Netlify ticker every 30 min, 10 sessions                              | `scripts/appointments/settle-cancelled-sessions.ts`         | `/api/cleanup/settle-cancelled-sessions`         |
+| Settle cancelled sessions   | Netlify ticker every 60 min, 10 sessions                              | `scripts/appointments/settle-cancelled-sessions.ts`         | `/api/cleanup/settle-cancelled-sessions`         |
 | Settle platform incidents   | Netlify ticker hourly at :30, 10 remedies per bite; no Actions twin   | `scripts/appointments/settle-platform-incidents.ts`         | `/api/cleanup/settle-platform-incidents`         |
 
 The repository has four scheduled workflows only (`cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`, `cron-heartbeat.yml`), and of the jobs in this document only `reconcile-occurrence-availability` runs from one of them. Everything else runs on the ticker, and a ticker target that is missing from `TARGETS` in `netlify/functions/cron-tick.mts` runs nowhere.
@@ -273,9 +273,9 @@ The table below lists where this job runs and how it is invoked.
 | `appointment-reminders`                     | Send appointment reminders        | Every 15 minutes      | 20s              |
 | `tentative-occurrences`                     | Cleanup tentative slots           | Every 15 minutes      | 6s (default)     |
 | `expire-stale-requests`                     | Expire stale requests (section e) | Every 15 minutes      | 20s              |
-| `settle-cancelled-sessions`                 | Settle cancelled class sessions   | Every 30 minutes      | 20s              |
+| `settle-cancelled-sessions`                 | Settle cancelled class sessions   | Every 60 minutes      | 20s              |
 
-The ticker also drives `settle-cancelled-sessions` every 30 minutes with a batch of ten sessions on the 20-second tier, because it makes a gateway refund per seat, and it is a financial job that holds a fail-closed lock. `expire-unpaid-trials` now refunds too (a paid trial nobody answered within 48 hours), so it moved to a fail-closed lock and joined `FINANCIAL_JOB_NAMES`.
+The ticker also drives `settle-cancelled-sessions` every 60 minutes with a batch of ten sessions on the 20-second tier, because it makes a gateway refund per seat, and it is a financial job that holds a fail-closed lock. `expire-unpaid-trials` now refunds too (a paid trial nobody answered within 48 hours), so it moved to a fail-closed lock and joined `FINANCIAL_JOB_NAMES`.
 
 `appointment-reminders` and `expire-stale-requests` get the 20-second tier because their per-row cost does not fit the 6-second default on a cold instance: the reminder job stages an outbox row per matching booking, and the stale-request sweep routes SUCCEEDED payments through the refund front door. Both twins already wrap their core in `withCronLock` and answer 409 on overlap with a concurrent run, so overlapping ticker ticks can never double-execute the same cohort — the loser's 409 is counted as `lockHeld`, not `failed`. All five read the `limit` query parameter, and the ticker's `TARGET_LIMITS` map states each batch size: 25 reminders, 20 stale requests per arm, 25 proposals, 200 tentative slots and 25 unpaid trials. There is no Actions backstop for any of the five, nor for the pre-existing ticker targets (webhook sweeps, refund reconciliation, earnings sync).
 

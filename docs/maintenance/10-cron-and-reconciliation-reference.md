@@ -28,7 +28,7 @@ lib/cron/cleanup-route.ts             CRON_SECRET · ?limit= · maintenance gate
    ↑
 withCronLock()                        SystemJobExecution lease
    ↑
-   ├── netlify/functions/cron-tick.mts          every 5 min, 28 targets
+   ├── netlify/functions/cron-tick.mts          every 5 min, 29 targets
    └── .github/workflows/cron-*.yml             daily / weekly / statutory
 ```
 
@@ -115,17 +115,17 @@ Two consequences follow from that formula. A tick that fires up to four minutes 
 | `reconcile-orphaned-confirmations` | 15 min  | :05 :20 :35 :50             | 10            |
 | `expire-unpaid-trials`             | 15 min  | :05 :20 :35 :50             | 25            |
 | `drain-notification-outbox`        | 10 min  | :05 :15 :25 :35 :45 :55     | 20            |
-| `vest-referral-credits`            | 30 min  | :05 :35                     | 10            |
+| `vest-referral-credits`            | 60 min  | :10                         | 10            |
 | `reschedule-proposals`             | 15 min  | :10 :25 :40 :55             | 25            |
 | `appointment-reminders`            | 15 min  | :10 :25 :40 :55             | 25            |
 | `tentative-occurrences`            | 15 min  | :10 :25 :40 :55             | 200           |
 | `expire-stale-requests`            | 15 min  | :10 :25 :40 :55             | 20            |
 | `retry-auto-refunds`               | 15 min  | :10 :25 :40 :55             | 10            |
 | `reconcile-orphaned-payments`      | 30 min  | :10 :40                     | 10            |
-| `support-sla-sweep`                | 30 min  | :10 :40                     | 20            |
+| `support-sla-sweep`                | 30 min  | :05 :35                     | 20            |
 | `auto-complete-appointments`       | 30 min  | :15 :45                     | 25            |
 | `detect-consultant-no-shows`       | 30 min  | :20 :50                     | 10            |
-| `settle-cancelled-sessions`        | 30 min  | :25 :55                     | 10            |
+| `settle-cancelled-sessions`        | 60 min  | :40                         | 10            |
 | `retry-moderation-enforcement`     | 30 min  | :25 :55                     | n/a           |
 
 The stagger holds: **each of the twelve five-minute tick slots fires seven or eight targets** — `:00` fires seven, every other slot eight, which `__tests__/maintenance/cron-tick-targets.test.ts` pins between five and eight. Before offsets were introduced, nineteen targets fired simultaneously at `:00`, `:15`, `:30` and `:45`, which saturated the single-connection Postgres pool that Netlify functions run with.

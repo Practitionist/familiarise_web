@@ -23,6 +23,7 @@ export const CASE_TOPICS = [
   "account",
   "organisation",
   "tax",
+  "dispute",
   "other",
 ] as const;
 export type CaseTopic = (typeof CASE_TOPICS)[number];
@@ -38,6 +39,7 @@ export const CASE_TOPIC_LABEL: Record<CaseTopic, string> = {
   account: "Account",
   organisation: "Organisation",
   tax: "Tax & statutory",
+  dispute: "Dispute",
   other: "Other",
 };
 
@@ -85,6 +87,15 @@ const ISSUE_TOPIC: Record<SupportIssueType, CaseTopic> = {
   OTHER: "other",
 };
 
+/**
+ * The categories a case can carry that are not a thread category or an issue
+ * type. A buyer dispute files under `DISPUTE`, so the queue can filter for
+ * claims without a fourth taxonomy.
+ */
+export const CASE_CATEGORY_TOPIC: Record<string, CaseTopic> = {
+  DISPUTE: "dispute",
+};
+
 const THREAD_CATEGORIES = Object.keys(THREAD_TOPIC) as SupportThreadCategory[];
 
 const isThreadCategory = (v: string): v is SupportThreadCategory =>
@@ -104,6 +115,9 @@ export function ticketTopic(ticket: {
   if (ticket.category && isThreadCategory(ticket.category)) {
     return THREAD_TOPIC[ticket.category];
   }
+  if (ticket.category && ticket.category in CASE_CATEGORY_TOPIC) {
+    return CASE_CATEGORY_TOPIC[ticket.category];
+  }
   if (ticket.issueType && ticket.issueType in ISSUE_TOPIC) {
     return ISSUE_TOPIC[ticket.issueType as SupportIssueType];
   }
@@ -112,6 +126,16 @@ export function ticketTopic(ticket: {
 
 const threadCategoriesOf = (topic: CaseTopic) =>
   THREAD_CATEGORIES.filter((c) => THREAD_TOPIC[c] === topic);
+
+const KNOWN_CATEGORIES = [
+  ...THREAD_CATEGORIES,
+  ...Object.keys(CASE_CATEGORY_TOPIC),
+];
+
+const categoriesOf = (topic: CaseTopic) =>
+  Object.keys(CASE_CATEGORY_TOPIC).filter(
+    (c) => CASE_CATEGORY_TOPIC[c] === topic,
+  );
 
 const issueTypesOf = (topic: CaseTopic) =>
   (Object.keys(ISSUE_TOPIC) as SupportIssueType[]).filter(
@@ -123,7 +147,7 @@ export function ticketTopicWhere(
   topic: CaseTopic,
 ): Prisma.SupportTicketWhereInput {
   const noThreadCategory: Prisma.SupportTicketWhereInput = {
-    OR: [{ category: null }, { category: { notIn: THREAD_CATEGORIES } }],
+    OR: [{ category: null }, { category: { notIn: KNOWN_CATEGORIES } }],
   };
   const byIssue: Prisma.SupportTicketWhereInput[] = [
     { issueType: { in: issueTypesOf(topic) } },
@@ -131,7 +155,11 @@ export function ticketTopicWhere(
   if (topic === "other") byIssue.push({ issueType: null });
   return {
     OR: [
-      { category: { in: threadCategoriesOf(topic) } },
+      {
+        category: {
+          in: [...threadCategoriesOf(topic), ...categoriesOf(topic)],
+        },
+      },
       { AND: [noThreadCategory, { OR: byIssue }] },
     ],
   };
@@ -153,14 +181,15 @@ export function supportCaseTopicWhere(
   if (topic === "other") byIssue.push({ issueType: null });
   return {
     OR: [
-      { category: { in: threadCategoriesOf(topic) } },
+      {
+        category: {
+          in: [...threadCategoriesOf(topic), ...categoriesOf(topic)],
+        },
+      },
       {
         AND: [
           {
-            OR: [
-              { category: null },
-              { category: { notIn: THREAD_CATEGORIES } },
-            ],
+            OR: [{ category: null }, { category: { notIn: KNOWN_CATEGORIES } }],
           },
           { OR: byIssue },
         ],

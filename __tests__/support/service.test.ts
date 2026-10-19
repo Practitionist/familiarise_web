@@ -700,6 +700,47 @@ describe("runSupportTurn", () => {
     );
   });
 
+  it("starts a fresh case when the booking's last case was already closed", async () => {
+    // A closed case — a staff close, or the 28-day sweep — must not block the
+    // next request on the same booking. The intake key is unique per case, so
+    // a request after a close has to start a NEW case under a fresh key
+    // instead of replaying the closed row for ever.
+    mockPrisma.supportCase.findFirst.mockImplementation(
+      async (args: { where?: { clientIntakeId?: unknown } }) => {
+        const intake = args?.where?.clientIntakeId;
+        // The booking's latest case, read by its intake-key prefix.
+        if (intake && typeof intake === "object" && "startsWith" in intake) {
+          return caseRow({
+            id: "closed-case",
+            status: "CLOSED",
+            closedAt: new Date("2026-09-01T09:30:00Z"),
+          });
+        }
+        return null;
+      },
+    );
+    mockPrisma.supportCase.create.mockImplementation(
+      async (args: { data: Record<string, unknown> }) =>
+        caseRow({ ...args.data, id: "case-2" }),
+    );
+
+    const r = await runSupportTurn("appt1", "user1", {
+      category: "CANCEL_REFUND",
+    });
+
+    // A NEW case under a fresh intake key — not the closed one replayed.
+    expect(mockPrisma.supportCase.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          clientIntakeId: "appointment:appt1:user1:after:closed-case",
+        }),
+      }),
+    );
+    expect(r?.threadId).toBe("case-2");
+    expect(r?.accepted).not.toBe(false);
+    expect(r?.status).toBe("IN_PROGRESS");
+  });
+
   it("escalates a provider no-show at HIGH on the canonical case", async () => {
     // Turn one opened the case at the NO_SHOW entry prompt; turn two takes
     // the "the expert never showed up" chip, whose terminal escalates.

@@ -1,5 +1,4 @@
 import { notFound } from "next/navigation";
-import Link from "next/link";
 
 import prisma from "@/lib/prisma";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
@@ -7,10 +6,7 @@ import {
   DashboardContent,
   PageHeader,
 } from "@/components/dashboard/PageScaffold";
-import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { EmptyState } from "@/components/dashboard/EmptyState";
 import { DisputeTimeline } from "@/components/support/DisputeTimeline";
-import { formatCurrencyAmount } from "@/utils/formatting";
 import { isDisputeReference } from "@/lib/support/disputes/reference";
 
 type PageProps = {
@@ -54,10 +50,7 @@ export default async function DisputeDetailPage({
         }}
       />
       <div className="rounded-lg border border-border p-4">
-        <DisputeTimeline
-          referenceNumber={referenceNumber}
-          disputeHref={`/dashboard/consultee/${consulteeId}/disputes`}
-        />
+        <DisputeTimeline referenceNumber={referenceNumber} />
       </div>
     </DashboardContent>
   );

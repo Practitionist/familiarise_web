@@ -1784,6 +1784,11 @@ const TOPIC_ARTICLES: Record<CaseTopic, readonly string[]> = {
     "organizations/wallet-invoice-billing",
     "help/tickets-and-contact",
   ],
+  dispute: [
+    "booking/cancel-and-no-show",
+    "payments/refunds-explained",
+    "help/tickets-and-contact",
+  ],
   other: [
     "help/tickets-and-contact",
     "help/notification-preferences",

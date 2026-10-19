@@ -120,14 +120,21 @@ async function recordPublicGrievanceTicket(
         requesterUserId: userId,
         submitterUserId: userId,
         activeChannel: "HUMAN",
-        externalRequesterEmail: data.email,
-        externalRequesterName: name,
+        // The external-requester fields make the case invisible to its own
+        // filer, so they are set ONLY on the anonymous path, where the queue
+        // custodian owns it. A signed-in complainant owns theirs.
+        ...(sessionUserId
+          ? {}
+          : {
+              externalRequesterEmail: data.email,
+              externalRequesterName: name,
+            }),
         messageSeq: 1,
         messages: {
           create: {
             seq: 1,
             sender: "USER",
-            authorUserId: null,
+            authorUserId: sessionUserId ?? null,
             body: data.message,
             metadata: { origin: "public-grievance", email: data.email, name },
           },

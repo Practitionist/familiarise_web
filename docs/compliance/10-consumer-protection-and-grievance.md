@@ -39,7 +39,7 @@ sequenceDiagram
     participant ActionAPI as POST /api/staff/moderation/reports/[reportId]/action
     participant SideEffects as lib/moderation/side-effects.ts
 
-    Reporter->>ReportAPI: Flag content/review (3-attempt CAS fold <= 4000 chars)
+    Reporter->>ReportAPI: Flag content/review (one row per reporter, count computed)
     ModQueue->>ModQueue: Partition COERCION_OR_RETALIATION ahead of non-coercion pre-pagination
     ActionAPI->>SideEffects: applyTransactionalEffects + applyBestEffortEffects
     SideEffects->>SideEffects: moderationStatementOfReasons({ actionType, reportId, reportReason })
@@ -52,8 +52,10 @@ sequenceDiagram
   - States explicitly that **a human moderator reviewed the report and no automated decision was used**, and instructs the recipient to open a Support request quoting `RPT-XXXXXXXX` (`formatReportReference(reportId)`) to appeal.
 - **Pre-pagination `COERCION_OR_RETALIATION` priority (`GET /api/staff/moderation/reports`):**
   - Splits queries into `coercionWhere` (`reason: "COERCION_OR_RETALIATION"`) and `nonCoercionWhere` (`reason: { not: "COERCION_OR_RETALIATION" }`), computing exact cross-partition `skip` and `take` offsets before pagination so coercion, extortion, and retaliatory review flags always appear at the top of page 1 ahead of older or higher-count non-coercion reports.
-- **Tail-preserving `4000`-char second-reporter fold (`POST /api/report`):**
-  - When aggregating an additional report onto an existing `PENDING` or `UNDER_REVIEW` report, a 3-attempt CAS loop (`where: { id, reportCount: currentCount, status: { in: ["PENDING", "UNDER_REVIEW"] } }`) formats `\nReporter N+1 (reason): <280-char excerpt>` and clamps the existing prefix to `4000 - newestLine.length` (`MAX_AGGREGATED_DESCRIPTION_LENGTH = 4000`), guaranteeing the newest reporter's reason and excerpt are preserved intact at the tail.
+- **One row per reporter, with the count computed at write time (`POST /api/report`):**
+  - Every reporter gets their OWN `ModerationReport` row: their own `RPT-XXXXXXXX` reference, their own statement, and their own place in `/api/user/reports?scope=submitted` (which filters on `reportedById = viewer`). This is what the DSA Art. 16(5)/17(3) statement-of-reasons duty requires — the notice and the reference must belong to the person who filed the report.
+  - The number of people who have reported the same content is COMPUTED at write time (`count` over the same content scope) and stamped on the row as `reportCount`, rather than accumulated by folding one reporter's statement onto another's row. The queue sorts by it (`reportCount: "desc"`) and the console shows "N reports".
+  - An earlier shape folded a second reporter's statement onto the first reporter's row with a 3-attempt CAS and a 4000-character clamp. It was superseded: the second reporter was handed the FIRST reporter's reference (which never appeared in their own report history), the same reporter's repeat submission folded again and inflated the count (the dedup only looked for rows they owned), and the first reporter's evidence was rewritten under them.
 
 ## 4. Disputes & Chargeback Evidence Governance
 
@@ -67,23 +69,23 @@ sequenceDiagram
 ## 5. Buyer Disputes — the "consumer dispute" surface
 
 The gateway chargeback above is the CARD ISSUER disputing a payment. A
-**buyer dispute** is a different legal object: the *consumer* contesting the
+**buyer dispute** is a different legal object: the _consumer_ contesting the
 delivery of a service the platform sold. Consumer Protection Act 2019 s.2(8)
 draws the line exactly where the protocol does:
 
-> a *"consumer dispute"* means a dispute where the person against whom the
+> a _"consumer dispute"_ means a dispute where the person against whom the
 > complaint has been made **denies or disputes the allegations** contained in
 > the complaint.
 
 So the statutory character of a case changes when the respondent REFUSES,
 not when it is raised. The platform's protocol is built to match that:
 
-| Moment | What it triggers |
-|---|---|
-| The buyer raises a claim | the **complaint** clock starts: acknowledge within 48 hours, redress within one month (CP (E-Commerce) Rules 2020 r.4(4)–(5)) |
-| The respondent **denies** the claim | the **consumer dispute** exists from that moment (CP Act s.2(8)); the platform's own redressal duty is measured from the denial |
-| The respondent misses their three-business-day window | the claim escalates to the platform automatically (`dispute-window-sweep`) |
-| The buyer rejects the respondent's denial | the case goes to the platform for a decision, and the case's `SupportCaseDecision` records the verdict, the customer-facing explanation, and the staff-only private rationale |
+| Moment                                                | What it triggers                                                                                                                                                              |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The buyer raises a claim                              | the **complaint** clock starts: acknowledge within 48 hours, redress within one month (CP (E-Commerce) Rules 2020 r.4(4)–(5))                                                 |
+| The respondent **denies** the claim                   | the **consumer dispute** exists from that moment (CP Act s.2(8)); the platform's own redressal duty is measured from the denial                                               |
+| The respondent misses their three-business-day window | the claim escalates to the platform automatically (`dispute-window-sweep`)                                                                                                    |
+| The buyer rejects the respondent's denial             | the case goes to the platform for a decision, and the case's `SupportCaseDecision` records the verdict, the customer-facing explanation, and the staff-only private rationale |
 
 The 48-hour acknowledgement and the one-month redressal are enforced as
 **caps on the case's internal SLA**, not as aspirational targets:
@@ -95,15 +97,15 @@ The platform also publishes the mandatory e-commerce disclosures the Rules
 require — return and refund terms, the modes of payment, the charge-back
 route and the payment service provider's contact details, the grievance
 officer's name and contact details, and the nodal officer — on the public
-[refund](../(pages)/refund/page.tsx) and grievance pages.
+[refund](<../../app/(pages)/refund/page.tsx>) and grievance pages.
 
 The refund method is a statutory matter, not a preference: RBI's Payment
 Aggregator guidelines (§12.4) require a refund to go to the **original method
-of payment** unless the customer *specifically agrees* otherwise. The
+of payment** unless the customer _specifically agrees_ otherwise. The
 platform's protocol therefore defaults to `ORIGINAL_METHOD` and treats
 `PLATFORM_CREDITS` as a recorded opt-in — the buyer's agreement is written
 with the choice, and a PostgreSQL `CHECK` refuses a credits refund without
-it. A goodwill credit is an *additional* gesture the consumer may decline; it
+it. A goodwill credit is an _additional_ gesture the consumer may decline; it
 is never a substitute for a refund the platform owes.
 
 See [../support/10-buyer-disputes.md](../support/10-buyer-disputes.md) for
@@ -113,5 +115,6 @@ the protocol, the clocks, and the concurrency contract.
 
 - **Dead-MX `support@familiarisenow.com` address, `Bengaluru, Karnataka` jurisdiction, fabricated phone numbers, and mass-overwritten policy dates:** Superseded in `app/(pages)/constants.ts` by live-MX `resolveLiveMailbox()` (`support@practitionist.com`), registered jurisdiction `Haryana, India` for `Practitionist (OPC) Private Limited` (`CIN: U62012HR2026OPC146217`), conditional phone omission when `NEXT_PUBLIC_SUPPORT_PHONE` is unset, and preserved historical dates (`July 12, 2026` / `September 26, 2026`) on untouched legal documents.
 - **Unbacked public grievance emails without a `SupportTicket` or orphan sequence burns:** Previously, `/contactus?category=grievance` sent email without creating a tracked ticket, or allocated a `FAM-` reference before checking whether a `userId` existed. Superseded by atomic `recordPublicGrievanceTicket` inside `POST /api/contact`.
-- **Leaking raw internal moderator `notes` in user notifications, post-pagination report sorting, and truncating newest reporter context:** Superseded by `moderationStatementOfReasons` citing `reportReasonLabel(reason)`, pre-pagination `COERCION_OR_RETALIATION` partitioning, and tail-preserving `4000`-char CAS folding.
+- **Leaking raw internal moderator `notes` in user notifications and post-pagination report sorting:** Superseded by `moderationStatementOfReasons` citing `reportReasonLabel(reason)` and pre-pagination `COERCION_OR_RETALIATION` partitioning.
+- **Folding a second reporter's statement onto the first reporter's row (`4000`-char tail-preserving CAS fold):** Superseded by one row per reporter, with the count of reports on the content computed at write time. The fold handed the second reporter the first reporter's `RPT-` reference, inflated the count on a repeat submission, and rewrote the first reporter's evidence under them.
 - **Dropping overdue disputes (`dueBy >= now`) or exposing raw attendance/thread PII to non-`disputes.manage` staff:** Superseded by lower-bound-free `urgentDisputes` over `ACTIONABLE_OPEN_STATUSES` and `disputes.manage`-gated `evidencePack` redaction.

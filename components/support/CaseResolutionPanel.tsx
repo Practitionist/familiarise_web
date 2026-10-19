@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { throwSupportError } from "@/lib/support/error-copy";
+import { rupeesToPaise } from "@/lib/backoffice/rupees";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { humanizeEnum } from "@/lib/ui/tone";
 
@@ -234,7 +235,9 @@ export function CaseResolutionPanel({
   const busy = action.isPending || appeal.isPending;
   const canManage = data.canManage && !customer;
   const canMoney = data.canExecuteMoney && canManage;
-  const amountPaise = Math.round(Number(amount) * 100);
+  // Paise come from the shared decimal parser, never from float maths: a
+  // binary round of "1.005" lands a paise away from what the operator typed.
+  const amountPaise = rupeesToPaise(amount) ?? Number.NaN;
   return (
     <section
       aria-label="Case resolution"

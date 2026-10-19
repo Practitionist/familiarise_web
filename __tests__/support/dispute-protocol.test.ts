@@ -33,16 +33,28 @@ jest.mock("../../lib/prisma", () => ({
     supportCase: { findFirst: jest.fn() },
     user: { findUnique: jest.fn() },
     membership: { findFirst: jest.fn() },
+    payment: { findFirst: jest.fn() },
     $transaction: jest.fn(),
   },
   ALLOCATION_TX_MAX_WAIT_MS: 5000,
   ALLOCATION_TX_TIMEOUT_MS: 10000,
 }));
 
+// The case factory and the respondent resolver are the intake's two
+// collaborators; both are exercised here through their own seams.
+jest.mock("../../lib/support/case-service", () => ({
+  executeCreateOrReuseCaseTx: jest.fn(),
+}));
+
+jest.mock("../../lib/support/disputes/respondent", () => ({
+  resolveRespondent: jest.fn(),
+}));
+
+import { performDisputeAction } from "../../lib/support/disputes/actions";
 import {
-  DisputeActionError,
-  performDisputeAction,
-} from "../../lib/support/disputes/actions";
+  RaiseDisputeSchema,
+  raiseDispute,
+} from "../../lib/support/disputes/raise";
 import {
   isLegalDisputeTransition,
   TERMINAL_DISPUTE_STATUSES,
@@ -59,12 +71,21 @@ interface MockDb {
   supportCase: { findFirst: jest.Mock };
   user: { findUnique: jest.Mock };
   membership: { findFirst: jest.Mock };
+  payment: { findFirst: jest.Mock };
   $transaction: jest.Mock;
 }
 
 const mockDb = jest.requireMock<{ default: MockDb }>(
   "../../lib/prisma",
 ).default;
+
+const mockCreateOrReuseCaseTx = jest.requireMock<{
+  executeCreateOrReuseCaseTx: jest.Mock;
+}>("../../lib/support/case-service").executeCreateOrReuseCaseTx;
+
+const mockResolveRespondent = jest.requireMock<{
+  resolveRespondent: jest.Mock;
+}>("../../lib/support/disputes/respondent").resolveRespondent;
 
 /**
  * The dispute row as the mock holds it. `updateMany` APPLIES the data it is
@@ -113,15 +134,14 @@ const baseDispute: DisputeState = {
 
 let disputeState: DisputeState;
 
-const staff = { userId: "staff-1", role: "ADMIN" as const };
 const buyer = { userId: "buyer-1", role: "CONSULTEE" as const };
 const respondent = { userId: "resp-1", role: "CONSULTANT" as const };
 
 beforeEach(() => {
   jest.clearAllMocks();
   disputeState = { ...baseDispute };
-  mockDb.$transaction.mockImplementation(
-    async (fn: (tx: unknown) => unknown) => fn(mockDb),
+  mockDb.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
+    fn(mockDb),
   );
   mockDb.purchaseDispute.findUnique.mockImplementation(async () => ({
     ...disputeState,
@@ -143,7 +163,11 @@ beforeEach(() => {
         if (key === "version" && typeof value === "object" && value !== null) {
           const increment = (value as { increment?: number }).increment ?? 0;
           disputeState.version += increment;
-        } else if (key === "round" && typeof value === "object" && value !== null) {
+        } else if (
+          key === "round" &&
+          typeof value === "object" &&
+          value !== null
+        ) {
           const increment = (value as { increment?: number }).increment ?? 0;
           disputeState.round += increment;
         } else {
@@ -154,7 +178,10 @@ beforeEach(() => {
     },
   );
   mockDb.purchaseDisputeAction.create.mockResolvedValue({});
-  mockDb.supportCase.findFirst.mockResolvedValue({ id: "c-1", deletedAt: null });
+  mockDb.supportCase.findFirst.mockResolvedValue({
+    id: "c-1",
+    deletedAt: null,
+  });
   mockDb.user.findUnique.mockResolvedValue({
     id: "u1",
     role: "ADMIN",
@@ -177,7 +204,12 @@ describe("the legal transitions", () => {
 
   it("treats every terminal state as final", () => {
     for (const status of TERMINAL_DISPUTE_STATUSES) {
-      for (const to of ["OPEN", "RESPONDED", "ESCALATED", "RESOLVED"] as const) {
+      for (const to of [
+        "OPEN",
+        "RESPONDED",
+        "ESCALATED",
+        "RESOLVED",
+      ] as const) {
         expect(isLegalDisputeTransition(status, to)).toBe(false);
       }
     }
@@ -197,7 +229,11 @@ describe("the optimistic CAS", () => {
     expect(result.status).toBe("RESPONDED");
     expect(mockDb.purchaseDispute.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ id: "d-1", status: "OPEN", version: 3 }),
+        where: expect.objectContaining({
+          id: "d-1",
+          status: "OPEN",
+          version: 3,
+        }),
       }),
     );
   });
@@ -293,6 +329,56 @@ describe("the idempotency replay", () => {
       }),
     );
   });
+
+  it("refuses a key that was already used for a different action", async () => {
+    // The buyer accepted the answer with this key, and is now trying to
+    // reject it with the SAME key. Replaying the accept would report a
+    // success the caller never earned — and no escalation would happen.
+    mockDb.purchaseDisputeAction.findUnique.mockResolvedValue({
+      kind: "BUYER_ACCEPTED",
+      toStatus: "RESOLVED",
+      payload: { action: "BUYER_ACCEPT" },
+    });
+    disputeState.status = "RESPONDED";
+    disputeState.version = 4;
+
+    await expect(
+      performDisputeAction("d-1", buyer, {
+        action: "BUYER_REJECT",
+        expectedVersion: 3,
+        clientActionId: "act-1",
+      }),
+    ).rejects.toMatchObject({
+      code: "IDEMPOTENCY_KEY_REUSED",
+      status: 409,
+    });
+    expect(mockDb.purchaseDispute.updateMany).not.toHaveBeenCalled();
+    expect(mockDb.purchaseDisputeAction.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a key whose log row records no action at all", async () => {
+    // A row written by another writer carries no `action`, so the key cannot
+    // be shown to belong to this action: it is refused rather than replayed.
+    mockDb.purchaseDisputeAction.findUnique.mockResolvedValue({
+      kind: "ESCALATED",
+      toStatus: "ESCALATED",
+      payload: { reason: "RESPONDENT_WINDOW_PASSED" },
+    });
+
+    await expect(
+      performDisputeAction("d-1", respondent, {
+        action: "RESPOND",
+        response: "Held.",
+        acceptRefund: false,
+        expectedVersion: 3,
+        clientActionId: "act-sweep",
+      }),
+    ).rejects.toMatchObject({
+      code: "IDEMPOTENCY_KEY_REUSED",
+      status: 409,
+    });
+    expect(mockDb.purchaseDispute.updateMany).not.toHaveBeenCalled();
+  });
 });
 
 describe("who may move a dispute", () => {
@@ -365,5 +451,129 @@ describe("the refund method", () => {
       }),
     ).rejects.toMatchObject({ code: "CONSENT_REQUIRED", status: 400 });
     expect(mockDb.purchaseDispute.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The intake.
+ *
+ * A claim and its case are written in ONE transaction, so the intake has two
+ * failure modes worth a test of their own: the reuse of a case that already
+ * carries a claim, and a credits refund the buyer never agreed to.
+ */
+describe("the intake", () => {
+  const claim = {
+    paymentId: "pay-1",
+    reason: "NOT_DELIVERED",
+    remark: "The session never happened.",
+    clientActionId: "claim-1",
+  };
+
+  beforeEach(() => {
+    mockDb.payment.findFirst.mockResolvedValue({
+      id: "pay-1",
+      amount: 500000,
+      paymentStatus: "SUCCEEDED",
+      userId: "buyer-1",
+      appointmentId: "appt-1",
+      organizationId: null,
+      hostOrganizationId: null,
+      deletedAt: null,
+    });
+    mockResolveRespondent.mockResolvedValue({
+      type: "CONSULTANT",
+      userId: "resp-1",
+      name: "Respondent One",
+    });
+    mockDb.purchaseDispute.findFirst.mockResolvedValue(null);
+    mockDb.purchaseDispute.create.mockResolvedValue({
+      id: "d-new",
+      referenceNumber: "DSP-2026-000009",
+    });
+    mockCreateOrReuseCaseTx.mockResolvedValue({
+      supportCase: { id: "c-9", referenceNumber: "FAM-2026-000009" },
+      reused: false,
+      dedupeReason: null,
+    });
+  });
+
+  it("raises the claim and its case together", async () => {
+    const result = await raiseDispute("buyer-1", claim);
+    expect(result).toEqual({
+      disputeId: "d-new",
+      referenceNumber: "DSP-2026-000009",
+      caseId: "c-9",
+    });
+    expect(mockDb.purchaseDispute.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          supportCaseId: "c-9",
+          paymentId: "pay-1",
+          status: "OPEN",
+          amountAtStakePaise: 500000,
+        }),
+      }),
+    );
+  });
+
+  it("refuses a second claim on a case that already carries one", async () => {
+    // The buyer withdrew the first claim, so the payment has no LIVE
+    // dispute — but its case is still open, and the case factory dedupes
+    // onto that case. `supportCaseId` is unique, so the insert would be
+    // rejected as a raw 500; it is refused as the conflict it is.
+    mockCreateOrReuseCaseTx.mockResolvedValue({
+      supportCase: { id: "c-9", referenceNumber: "FAM-2026-000009" },
+      reused: true,
+      dedupeReason: "open_scope",
+    });
+    mockDb.purchaseDispute.findUnique.mockResolvedValue({ id: "d-old" });
+
+    await expect(
+      raiseDispute("buyer-1", { ...claim, clientActionId: "claim-2" }),
+    ).rejects.toMatchObject({
+      code: "CASE_HAS_DISPUTE",
+      status: 409,
+      details: {
+        supportCaseId: "c-9",
+        supportCaseReference: "FAM-2026-000009",
+        disputeId: "d-old",
+      },
+    });
+    expect(mockDb.purchaseDispute.create).not.toHaveBeenCalled();
+  });
+
+  it("raises the claim on a reused case that carries no claim yet", async () => {
+    // The buyer had a support case about this appointment and is now
+    // turning it into a claim: the case is reused, and it carries no
+    // dispute, so the claim is written on it.
+    mockCreateOrReuseCaseTx.mockResolvedValue({
+      supportCase: { id: "c-9", referenceNumber: "FAM-2026-000009" },
+      reused: true,
+      dedupeReason: "open_scope",
+    });
+    mockDb.purchaseDispute.findUnique.mockResolvedValue(null);
+
+    const result = await raiseDispute("buyer-1", claim);
+    expect(result.caseId).toBe("c-9");
+    expect(mockDb.purchaseDispute.create).toHaveBeenCalled();
+  });
+
+  it("refuses a platform-credit claim without the buyer's agreement", () => {
+    // The sidecar CHECK would reject the insert, so the intake refuses it
+    // first — as a validation failure, not a 500.
+    const parsed = RaiseDisputeSchema.safeParse({
+      ...claim,
+      refundMethod: "PLATFORM_CREDITS",
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("accepts a platform-credit claim the buyer agreed to", () => {
+    const parsed = RaiseDisputeSchema.safeParse({
+      ...claim,
+      refundMethod: "PLATFORM_CREDITS",
+      consentToCredits: true,
+    });
+    expect(parsed.success).toBe(true);
   });
 });

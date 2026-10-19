@@ -51,10 +51,7 @@ export default async function DisputeDetailPage({
       />
       <DashboardContent>
         <div className="rounded-lg border border-border p-4">
-          <DisputeTimeline
-            referenceNumber={referenceNumber}
-            disputeHref={`/dashboard/consultant/${consultantId}/disputes`}
-          />
+          <DisputeTimeline referenceNumber={referenceNumber} />
         </div>
       </DashboardContent>
     </>

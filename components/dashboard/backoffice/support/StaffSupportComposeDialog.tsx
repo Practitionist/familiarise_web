@@ -168,21 +168,15 @@ export function StaffSupportComposeDialog({
               <Label htmlFor="outbound-issue-type">Issue type *</Label>
               <Select
                 value={issueType}
-                onValueChange={(v) =>
-                  setIssueType(
-                    z
-                      .enum([
-                        "GENERAL_INQUIRY",
-                        "ACCOUNT_ISSUE",
-                        "BILLING_QUESTION",
-                        "REFUND_REQUEST",
-                        "DOCUMENT_ISSUE",
-                        "TECHNICAL_ISSUES",
-                        "OTHER",
-                      ])
-                      .parse(v),
-                  )
-                }
+                onValueChange={(v) => {
+                  // The accepted value comes from the option list itself, so a
+                  // new issue type cannot be offered and then rejected by a
+                  // hand-written enum.
+                  const match = OUTBOUND_ISSUE_TYPES.find(
+                    (option) => option.value === v,
+                  );
+                  if (match) setIssueType(match.value);
+                }}
               >
                 <SelectTrigger id="outbound-issue-type">
                   <SelectValue />

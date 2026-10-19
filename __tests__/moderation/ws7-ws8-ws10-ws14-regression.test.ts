@@ -6,6 +6,7 @@ import { NextRequest } from "next/server";
 const mockModerationReport = {
   findFirst: jest.fn(),
   findUnique: jest.fn(),
+  count: jest.fn(async () => 0),
   create: jest.fn(),
   update: jest.fn(),
   updateMany: jest.fn(),
@@ -223,7 +224,7 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     expect(res.status).toBe(400);
   });
 
-  test("POST /api/report enforces consultant or host OWNER/MAINTAINER gate on reviews and appends subsequent reporter statement", async () => {
+  test("POST /api/report enforces consultant or host OWNER/MAINTAINER gate on reviews and gives a second reporter their own row with the running count", async () => {
     mockGetSession.mockResolvedValue({
       user: { id: "outsider-user", role: "CONSULTEE" },
     });
@@ -256,15 +257,14 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
       user: { id: "org-admin-user", role: "CONSULTANT" },
     });
     mockMembership.findFirst.mockResolvedValue({ id: "mem-1" });
-    mockModerationReport.findFirst
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        id: "rep-open-1",
-        reportCount: 1,
-        description: "First reporter statement",
-        contentText: "Unfair review",
-      });
-    mockModerationReport.updateMany.mockResolvedValue({ count: 1 });
+    // No earlier report on this content from anyone: the count of reports
+    // starts at one (this reporter's own).
+    mockModerationReport.findFirst.mockResolvedValueOnce(null);
+    mockModerationReport.count.mockResolvedValue(1);
+    mockModerationReport.create.mockResolvedValueOnce({
+      id: "rep-new-2",
+      referenceNumber: "RPT-00000002",
+    });
 
     const secondReq = new NextRequest("http://localhost/api/report", {
       method: "POST",
@@ -278,19 +278,21 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
       }),
     });
     const secondRes = await createReportRoute(secondReq);
-    expect(secondRes.status).toBe(200);
-    expect(mockModerationReport.updateMany).toHaveBeenCalledWith({
-      where: {
-        id: "rep-open-1",
-        reportCount: 1,
-        status: { in: ["PENDING", "UNDER_REVIEW"] },
-      },
-      data: {
-        reportCount: { increment: 1 },
-        description:
-          "First reporter statement\nReporter 2 (COERCION_OR_RETALIATION): Demanded refund to remove 1-star",
-      },
-    });
+    expect(secondRes.status).toBe(201);
+    // The second reporter gets their OWN row — their own `RPT-` reference,
+    // their own evidence, and their own place in their report history. The
+    // first reporter's row is not rewritten, and nobody's count is inflated
+    // by a repeat submission.
+    expect(mockModerationReport.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          description: "Demanded refund to remove 1-star",
+          reportedById: "org-admin-user",
+          reportCount: 2,
+        }),
+      }),
+    );
+    expect(mockModerationReport.updateMany).not.toHaveBeenCalled();
   });
 
   test("DELETE /api/staff/moderation/reviews/[reviewId] returns alreadyRemoved without re-purging cache", async () => {
@@ -586,7 +588,7 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     expect(mockSupportCase.create).not.toHaveBeenCalled();
   });
 
-  test("POST /api/report preserves newest reporter statement when aggregated description exceeds 4000 chars", async () => {
+  test("POST /api/report stores the reporter's own statement in full and counts the reports on that content", async () => {
     mockGetSession.mockResolvedValue({
       user: { id: "org-admin-user", role: "CONSULTANT" },
     });
@@ -600,15 +602,13 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
       consulteeProfile: { userId: "reviewer-user" },
     });
     mockMembership.findFirst.mockResolvedValue({ id: "mem-1" });
-    mockModerationReport.findFirst
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        id: "rep-open-long",
-        reportCount: 15,
-        description: "A".repeat(3990),
-        contentText: "Long history review",
-      });
-    mockModerationReport.updateMany.mockResolvedValue({ count: 1 });
+    mockModerationReport.findFirst.mockResolvedValueOnce(null);
+    // Fifteen people have already reported this review.
+    mockModerationReport.count.mockResolvedValue(15);
+    mockModerationReport.create.mockResolvedValueOnce({
+      id: "rep-new-16",
+      referenceNumber: "RPT-00000016",
+    });
 
     const req = new NextRequest("http://localhost/api/report", {
       method: "POST",
@@ -622,16 +622,20 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
       }),
     });
     const res = await createReportRoute(req);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
 
-    const writtenDescription: string =
-      mockModerationReport.updateMany.mock.calls[0][0].data.description;
-    expect(writtenDescription).toHaveLength(4000);
-    expect(
-      writtenDescription.endsWith(
-        "\nReporter 16 (HARASSMENT_OR_ABUSE): Latest reporter statement must never be truncated away",
-      ),
-    ).toBe(true);
+    // The statement is the reporter's own, stored whole: nothing is
+    // aggregated onto another person's row, so there is nothing to clamp
+    // and nothing of theirs to truncate. The running count of reports on
+    // this content rides on the row.
+    expect(mockModerationReport.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          description: "Latest reporter statement must never be truncated away",
+          reportCount: 16,
+        }),
+      }),
+    );
   });
 
   test("PUT and DELETE on /api/user/reviews/[id] share reviewWriteLimiter and repeat author DELETE returns 200", async () => {

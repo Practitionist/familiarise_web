@@ -168,8 +168,11 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "appointment-reminders": 15,
   "tentative-occurrences": 15,
   "expire-stale-requests": 15,
-  "settle-cancelled-sessions": 30,
-  // Hourly at :30, the one slot with room under the 8-target cap every hour; the refunds wait 48 h anyway.
+  // 60, not 30: the make-up window closed 14 days ago, so another half hour
+  // on the refund is invisible — and a 30-minute pair is the unit the
+  // 8-target cap cannot spare (see the budget note in TARGET_OFFSET_MINUTES).
+  "settle-cancelled-sessions": 60,
+  // Hourly at :30 — the only slot no 30-minute pair uses; the refunds wait 48 h anyway.
   "settle-platform-incidents": 60,
   "retry-auto-refunds": 15,
   // #1775 — 30 minutes, not 15. Both jobs are latency-relevant but not
@@ -185,15 +188,25 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-orphaned-payments": 30,
   "process-data-exports": 10,
   "retry-moderation-enforcement": 30,
-  // 30, not 15: only the :05/:35 ticks have room under the 8-target cap, and a vest waits hours anyway.
-  "vest-referral-credits": 30,
+  // 60, not 30: a vest waits hours anyway, and the 8-target cap has no room
+  // for another 30-minute pair (see the budget note in TARGET_OFFSET_MINUTES).
+  "vest-referral-credits": 60,
   "support-sla-sweep": 30,
   "dispute-window-sweep": 30,
 };
 
 /**
  * Deterministic phase offsets (in minutes, modulo each target's interval)
- * stagger 10m, 15m, and 30m sweeps so no 5-minute tick fires more than 8 targets.
+ * stagger the 10m, 15m, 30m and 60m sweeps so no 5-minute tick fires more
+ * than 8 targets.
+ *
+ * The cap is a hard ceiling, not a preference: 8 targets × 12 ticks = 96 runs
+ * an hour, and the Sentry canary takes one of those slots in the four hours
+ * it fires, so the schedule below spends 95 of the 96. A new target only fits
+ * if something else gives a slot up, which is why the two jobs that wait hours
+ * anyway (a referral vest, a day-14 cancelled-session refund) are hourly.
+ *
+ * Per tick: :00 runs 7 targets (8 in the canary's hours), every other tick 8.
  */
 export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   // Phase 0 (:00, :15, :30, :45) — 6 targets + sentry-ingest-canary (00:00, 06:00, 12:00, 18:00 UTC)
@@ -213,23 +226,26 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-orphaned-confirmations": 5,
   "expire-unpaid-trials": 5,
   "drain-notification-outbox": 5,
-  // Phase 10 (:10, :25, :40, :55) — 5 targets + paired 30m sweeps at :10/:40 and :25/:55 (8 each)
+  // Phase 10 (:10, :25, :40, :55) — 5 targets
   "reschedule-proposals": 10,
   "appointment-reminders": 10,
   "tentative-occurrences": 10,
   "expire-stale-requests": 10,
-  "settle-cancelled-sessions": 25,
-  "settle-platform-incidents": 30,
   "retry-auto-refunds": 10,
-  // Thirty-minute session-outcome jobs and orphan healer on staggered slots
+  // The 30-minute sweeps ride staggered phases: a phase is a PAIR of ticks
+  // 30 minutes apart, so :25/:55 carries two of them.
   "auto-complete-appointments": 15,
   "detect-consultant-no-shows": 20,
   "reconcile-orphaned-payments": 10,
-  "process-data-exports": 0,
   "retry-moderation-enforcement": 25,
-  "vest-referral-credits": 5,
-  "support-sla-sweep": 10,
-  "dispute-window-sweep": 20,
+  "support-sla-sweep": 5,
+  "dispute-window-sweep": 25,
+  // The 10-minute drain, and the three hourly jobs — each on a slot the
+  // per-tick budget above has already roomed for.
+  "process-data-exports": 0,
+  "vest-referral-credits": 10,
+  "settle-cancelled-sessions": 40,
+  "settle-platform-incidents": 30,
 };
 
 /** The targets due on this tick; exported so a test can pin the cadence. */

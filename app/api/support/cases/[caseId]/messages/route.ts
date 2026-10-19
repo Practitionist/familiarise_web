@@ -122,7 +122,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       data: staff
         ? page
         : page.map(({ isInternal: _isInternal, ...message }) => message),
-      nextBeforeSeq: hasMore ? page[page.length - 1]?.seq ?? null : null,
+      // The cursor is EXCLUSIVE, so it is the OLDEST message on this page:
+      // the next request asks for everything below it. The newest message on
+      // the page would return this same page again.
+      nextBeforeSeq: hasMore ? (page[0]?.seq ?? null) : null,
       hasMore,
     },
     { headers: { "Cache-Control": "private, no-store" } },
