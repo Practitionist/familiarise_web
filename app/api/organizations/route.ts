@@ -197,6 +197,18 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Only the platform puts an org on INVOICE funding, through the admin billing-account door.
+  if (body.canSponsor && body.fundingSource === "INVOICE") {
+    return NextResponse.json(
+      {
+        error:
+          "Only Familiarise can switch an organization to invoice funding. Contact Familiarise support to change this.",
+        code: "INVOICE_FUNDING_PLATFORM_ONLY",
+      },
+      { status: 403 },
+    );
+  }
+
   // A sponsoring domestic org is invoiced B2B, so its GST state is mandatory.
   const gstStateCode =
     numericStateCode(body.gstin, null) ?? body.gstStateCode ?? null;
