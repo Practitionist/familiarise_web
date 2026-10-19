@@ -9,6 +9,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { outstandingPaiseByInvoice } from "@/lib/payments/billing/org-invoice-settlement";
 
 const InvoiceStatusSchema = z.enum([
   "DRAFT",
@@ -58,5 +59,12 @@ export async function GET(
     }),
   ]);
 
-  return NextResponse.json({ data: invoices, meta: { total, page, perPage } });
+  const outstanding = await outstandingPaiseByInvoice(prisma, invoices);
+  return NextResponse.json({
+    data: invoices.map((inv) => ({
+      ...inv,
+      outstandingPaise: outstanding.get(inv.id) ?? 0,
+    })),
+    meta: { total, page, perPage },
+  });
 }

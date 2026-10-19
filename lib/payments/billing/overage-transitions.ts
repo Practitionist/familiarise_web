@@ -9,6 +9,7 @@ import type { Tx } from "@/lib/prisma";
  * mutations of charged rows):
  *
  *   PENDING ─┬─▶ ACCRUED ──▶ CHARGED        (CHARGE_ORG: rollup → invoice paid)
+ *   ACCRUED ──▶ PENDING                      (CHARGE_ORG: invoice voided to re-bill)
  *            ├─▶ CHARGED                     (CHARGE_MEMBER: gateway webhook)
  *            ├─▶ FAILED ──▶ PENDING          (CHARGE_MEMBER: abandon → retry)
  *            └─▶ REVERSED                     (booking refunded)
@@ -28,7 +29,8 @@ import type { OverageChargeStatus, Prisma } from "@prisma/client";
 // WHERE so an illegal transition (e.g. re-charging a REVERSED event, or
 // downgrading a CHARGED one) simply matches zero rows — the guard IS the filter.
 const ALLOWED_FROM: Record<OverageChargeStatus, OverageChargeStatus[]> = {
-  PENDING: ["FAILED"], // member retry after an abandoned side-charge
+  // member retry after an abandoned side-charge; ACCRUED returns when its invoice is voided for re-billing
+  PENDING: ["FAILED", "ACCRUED"],
   ACCRUED: ["PENDING"], // CHARGE_ORG rolled onto an issued invoice
   CHARGED: ["PENDING", "ACCRUED", "FAILED"], // money collected (member webhook / invoice paid); FAILED→CHARGED recovers a charge the abandoned-sweep wrongly FAILed while its capture webhook was stuck (#785)
   FAILED: ["PENDING"], // member side-charge abandoned

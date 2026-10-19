@@ -3,6 +3,7 @@ import { OrgInvoiceStatus, type Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { outstandingPaiseByInvoice } from "@/lib/payments/billing/org-invoice-settlement";
 
 const VALID_B2B_STATUSES: ReadonlySet<string> = new Set<string>(
   Object.values(OrgInvoiceStatus),
@@ -190,8 +191,10 @@ export async function GET(request: NextRequest) {
       }),
     ]);
 
+    const outstanding = await outstandingPaiseByInvoice(prisma, rawInvoices);
     const invoices = rawInvoices.map((inv) => ({
       ...inv,
+      outstandingPaise: outstanding.get(inv.id) ?? 0,
       organization: {
         id: inv.organization.id,
         name: inv.organization.name,

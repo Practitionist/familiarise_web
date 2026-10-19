@@ -97,6 +97,7 @@ import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
 import { stampTrialEarningsOnCancel } from "@/lib/trials/cancellation";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
+import { restorePurchaseOrderForCredit } from "@/lib/payments/billing/purchase-order-draw";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
 import {
   COMMERCIAL_CREDIT_NOTE_REASON_PREFIX,
@@ -2107,6 +2108,7 @@ export async function mintRefundCreditNote(
       id: true,
       status: true,
       issuedAt: true,
+      purchaseOrderId: true,
       subtotalPaise: true,
       totalPaise: true,
       igstPaise: true,
@@ -2195,6 +2197,14 @@ export async function mintRefundCreditNote(
     },
     select: { id: true },
   });
+  await restorePurchaseOrderForCredit(tx, {
+    invoice,
+    credit: {
+      totalPaise: cnTotal,
+      subtotalPaise: cnSubtotal,
+      isCommercial: commercial,
+    },
+  });
   return { creditNoteId: cn.id };
 }
 
@@ -2280,15 +2290,18 @@ export async function mintInvoiceRefundCreditNote(
     exactSubtotalPaise?: number;
     reason: string;
   } & (
-    | { refundId: string; overageEventId?: never }
-    | { overageEventId: string; refundId?: never }
+    | { refundId: string; overageEventId?: never; voidedInvoiceId?: never }
+    | { overageEventId: string; refundId?: never; voidedInvoiceId?: never }
+    | { voidedInvoiceId: string; refundId?: never; overageEventId?: never }
   ),
 ): Promise<OrgCreditNoteMintResult> {
-  // Idempotent on whichever trigger raised it (both are @unique).
+  // Idempotent on whichever trigger raised it (each is @unique).
   const existing = await tx.creditNote.findUnique({
     where: params.overageEventId
       ? { overageEventId: params.overageEventId }
-      : { refundId: params.refundId },
+      : params.voidedInvoiceId
+        ? { voidedInvoiceId: params.voidedInvoiceId }
+        : { refundId: params.refundId },
     select: { id: true },
   });
   if (existing) return { creditNoteId: existing.id };
@@ -2301,6 +2314,7 @@ export async function mintInvoiceRefundCreditNote(
       status: true,
       issuedAt: true,
       billingCycleStart: true,
+      purchaseOrderId: true,
       subtotalPaise: true,
       totalPaise: true,
       igstPaise: true,
@@ -2331,7 +2345,8 @@ export async function mintInvoiceRefundCreditNote(
       organizationId: org.id,
       invoiceId: invoice.id,
       requestedPaise: params.amountPaise,
-      refundId: params.refundId ?? params.overageEventId,
+      refundId:
+        params.refundId ?? params.overageEventId ?? params.voidedInvoiceId,
     });
     return { creditNoteId: null, outcome: "FULLY_CREDITED" };
   }
@@ -2372,6 +2387,7 @@ export async function mintInvoiceRefundCreditNote(
       invoiceId: invoice.id,
       refundId: params.refundId ?? null,
       overageEventId: params.overageEventId ?? null,
+      voidedInvoiceId: params.voidedInvoiceId ?? null,
       reason: commercial
         ? `${COMMERCIAL_CREDIT_NOTE_REASON_PREFIX}${params.reason}`
         : params.reason,
@@ -2385,6 +2401,14 @@ export async function mintInvoiceRefundCreditNote(
       issuedAt: new Date(),
     },
     select: { id: true },
+  });
+  await restorePurchaseOrderForCredit(tx, {
+    invoice,
+    credit: {
+      totalPaise: cnTotal,
+      subtotalPaise: cnSubtotal,
+      isCommercial: commercial,
+    },
   });
   return { creditNoteId: cn.id };
 }

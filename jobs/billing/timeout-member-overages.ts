@@ -112,7 +112,7 @@ export async function runTimeoutMemberOverages(): Promise<TimeoutStats> {
       await recordSystemErrorSafe({
         organizationId: null,
         category: "OVERAGE",
-        summary: `Timed-out overage ${ev.id}: basePaise not restorable — parent already invoiced; manual billing adjustment needed`,
+        summary: `Timed-out overage ${ev.id}: basePaise not restorable — parent already invoiced; settle it to the org with POST /api/admin/organizations/<orgId>/overages/${ev.id}/settle-to-org`,
         err: new Error("OVERAGE_BASE_RESTORE_AFTER_INVOICE"),
         context: { overageEventId: ev.id },
       });

@@ -79,7 +79,7 @@ export async function settleInvoiceAccruals(): Promise<{
   });
 
   let invoicesCreated = 0;
-  const unbackedPo: { organizationId: string; invoiceNumber: string }[] = [];
+  const heldForPo: { organizationId: string; invoiceNumber: string }[] = [];
   const noGstState: string[] = [];
   for (const row of rows) {
     if (!row.organizationId) continue;
@@ -89,8 +89,8 @@ export async function settleInvoiceAccruals(): Promise<{
         issueImmediately: true,
       });
       if (r.skippedNoGstState) noGstState.push(row.organizationId);
-      if (r.unbackedPo && r.invoiceNumber) {
-        unbackedPo.push({
+      if (r.heldForPo && r.invoiceNumber) {
+        heldForPo.push({
           organizationId: row.organizationId,
           invoiceNumber: r.invoiceNumber,
         });
@@ -137,12 +137,12 @@ export async function settleInvoiceAccruals(): Promise<{
       context: { organizationIds: noGstState.slice(0, 50) },
     });
   }
-  if (unbackedPo.length > 0) {
+  if (heldForPo.length > 0) {
     await recordSystemEvent({
       category: "INVOICE",
       severity: "WARN",
-      message: `ROLLUP_PO_NOT_COVERED: ${unbackedPo.length} invoice(s) issued without a covering purchase order on orgs that require one`,
-      context: { invoices: unbackedPo.slice(0, 50) },
+      message: `ROLLUP_PO_NOT_COVERED: ${heldForPo.length} invoice(s) held as DRAFT because no active purchase order covers them; issue each with a PO from the admin console`,
+      context: { invoices: heldForPo.slice(0, 50) },
     });
   }
 

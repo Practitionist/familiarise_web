@@ -479,9 +479,31 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
           organization: { name: "Acme Corp" },
         })),
       };
+      const invoiceRow = {
+        id: "inv_1",
+        invoiceNumber: "INV-2026-001",
+        totalPaise: 125000,
+        status: "ISSUED",
+        displayCurrency: "INR",
+        organizationId: "org_1",
+        providerPaymentId: null,
+        organization: { name: "Acme Corp" },
+      };
       db.__tx.organizationInvoice = {
+        findUnique: jest.fn(async () => invoiceRow),
+        findUniqueOrThrow: jest.fn(async () => invoiceRow),
         updateMany: jest.fn(async () => ({ count: 1 })),
       };
+      db.__tx.organizationInvoiceReceipt = {
+        findUnique: jest.fn(async () => null),
+        create: jest.fn(async () => ({ id: "rcpt_1" })),
+        groupBy: jest.fn(async () => []),
+        aggregate: jest.fn(async () => ({
+          _sum: { amountPaise: BigInt(125000) },
+        })),
+      };
+      db.__tx.creditNote = { groupBy: jest.fn(async () => []) };
+      db.__tx.membership = { findMany: jest.fn(async () => []) };
       db.__tx.overageEvent = {
         updateMany: jest.fn(async () => ({ count: 0 })),
       };

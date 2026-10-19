@@ -1,3 +1,4 @@
+import type { Currency } from "@prisma/client";
 import { z } from "zod";
 
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
@@ -15,6 +16,7 @@ import {
 } from "@/lib/payments/billing/consumer-invoice";
 import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { postInvoiceIssuedJournal } from "@/lib/payments/billing/org-invoice-journal";
+import { transitionOrgInvoice } from "@/lib/enterprise/transitions";
 import { drawPurchaseOrder } from "@/lib/payments/billing/purchase-order-draw";
 
 const LineItemSchema = z.object({
@@ -38,6 +40,37 @@ export const CreateOrgInvoiceSchema = z.object({
 });
 
 export type CreateOrgInvoiceInput = z.infer<typeof CreateOrgInvoiceSchema>;
+
+/** Refuses a PO the org's invoice may not draw on: foreign, not ACTIVE, or in another currency. */
+async function assertInvoiceablePurchaseOrder(
+  tx: Tx,
+  args: { orgId: string; purchaseOrderId: string; currency: Currency },
+): Promise<void> {
+  const po = await tx.purchaseOrder.findUnique({
+    where: { id: args.purchaseOrderId },
+    select: { organizationId: true, status: true, currency: true },
+  });
+  if (!po || po.organizationId !== args.orgId) {
+    throw new OpsRefusal(
+      "PO_FOREIGN",
+      "PurchaseOrder does not belong to this organization",
+      400,
+    );
+  }
+  if (po.status !== "ACTIVE") {
+    throw new OpsRefusal(
+      "PO_NOT_ACTIVE",
+      `PurchaseOrder is ${po.status}; only ACTIVE POs can be invoiced against`,
+    );
+  }
+  // The draw-down spends paise-for-paise, so the currencies must match.
+  if (po.currency !== args.currency) {
+    throw new OpsRefusal(
+      "PO_CURRENCY_MISMATCH",
+      `PurchaseOrder is denominated in ${po.currency}; this invoice is in ${args.currency}. A PO can only be drawn down by an invoice in its own currency.`,
+    );
+  }
+}
 
 /**
  * Manually raise an org invoice inside `tx`. Refusals throw `OpsRefusal`
@@ -92,30 +125,11 @@ export async function createOrgInvoice(
   }
 
   if (input.purchaseOrderId) {
-    const po = await tx.purchaseOrder.findUnique({
-      where: { id: input.purchaseOrderId },
-      select: { organizationId: true, status: true, currency: true },
+    await assertInvoiceablePurchaseOrder(tx, {
+      orgId,
+      purchaseOrderId: input.purchaseOrderId,
+      currency: input.displayCurrency,
     });
-    if (!po || po.organizationId !== orgId) {
-      throw new OpsRefusal(
-        "PO_FOREIGN",
-        "PurchaseOrder does not belong to this organization",
-        400,
-      );
-    }
-    if (po.status !== "ACTIVE") {
-      throw new OpsRefusal(
-        "PO_NOT_ACTIVE",
-        `PurchaseOrder is ${po.status}; only ACTIVE POs can be invoiced against`,
-      );
-    }
-    // The draw-down below spends paise-for-paise, so the currencies must match.
-    if (po.currency !== input.displayCurrency) {
-      throw new OpsRefusal(
-        "PO_CURRENCY_MISMATCH",
-        `PurchaseOrder is denominated in ${po.currency}; this invoice is in ${input.displayCurrency}. A PO can only be drawn down by an invoice in its own currency.`,
-      );
-    }
   }
   if (input.contractId) {
     const contract = await tx.contract.findUnique({
@@ -298,49 +312,197 @@ export async function notifyCreatedOrgInvoice(
   input: CreateOrgInvoiceInput,
 ): Promise<void> {
   if (!input.issueImmediately) return;
+  await notifyIssuedOrgInvoice(origin, orgId, {
+    invoiceId: created.invoice.id,
+    invoiceNumber: created.invoice.invoiceNumber,
+    totalPaise: created.invoice.totalPaise,
+    currency: input.displayCurrency,
+    dueDate: input.dueDate,
+    orgName: created.orgName,
+  });
+}
+
+export interface IssuedOrgInvoiceNotice {
+  invoiceId: string;
+  invoiceNumber: string;
+  totalPaise: number;
+  currency: Currency;
+  dueDate: Date;
+  orgName: string;
+}
+
+/** After commit: the owners' invoice-issued bell and email. Never throws. */
+export async function notifyIssuedOrgInvoice(
+  origin: string,
+  orgId: string,
+  notice: IssuedOrgInvoiceNotice,
+): Promise<void> {
   try {
-    const { invoice, orgName } = created;
     const dashboardUrl = `${origin}/dashboard/organization/${orgId}/billing`;
-    const ownerRows = prisma.membership?.findMany
-      ? await prisma.membership.findMany({
-          where: { organizationId: orgId, status: "ACTIVE", role: "OWNER" },
-          select: { userId: true },
-        })
-      : [];
-    const ownerUserIds = ownerRows.map((r) => r.userId);
+    const ownerRows = await prisma.membership.findMany({
+      where: { organizationId: orgId, status: "ACTIVE", role: "OWNER" },
+      select: { userId: true },
+    });
     await Promise.all([
       Promise.resolve(
         notifyOrgInvoiceIssued(orgId, {
-          invoiceNumber: invoice.invoiceNumber,
-          orgName,
-          totalPaise: invoice.totalPaise,
-          currency: input.displayCurrency,
-          dueDate: input.dueDate.toISOString(),
+          invoiceNumber: notice.invoiceNumber,
+          orgName: notice.orgName,
+          totalPaise: notice.totalPaise,
+          currency: notice.currency,
+          dueDate: notice.dueDate.toISOString(),
           dashboardUrl,
-          pdfUrl: `${origin}/api/organizations/${orgId}/billing-account/invoices/${invoice.id}/pdf`,
+          pdfUrl: `${origin}/api/organizations/${orgId}/billing-account/invoices/${notice.invoiceId}/pdf`,
         }),
       ).catch((err) => {
-        console.error("[createOrgInvoice] notifyOrgInvoiceIssued failed:", err);
+        console.error("[org-invoice] notifyOrgInvoiceIssued failed:", err);
         return [];
       }),
       Promise.resolve(
         sendOrgBillingEmail({
-          recipientUserIds: ownerUserIds,
+          recipientUserIds: ownerRows.map((r) => r.userId),
           organizationId: orgId,
-          orgName,
+          orgName: notice.orgName,
           kind: "INVOICE_ISSUED",
-          amountPaise: invoice.totalPaise,
-          currency: input.displayCurrency,
-          invoiceId: invoice.id,
-          invoiceNumber: invoice.invoiceNumber,
-          dueDate: input.dueDate,
+          amountPaise: notice.totalPaise,
+          currency: notice.currency,
+          invoiceId: notice.invoiceId,
+          invoiceNumber: notice.invoiceNumber,
+          dueDate: notice.dueDate,
           dashboardUrl,
         }),
       ).catch((err) => {
-        console.error("[createOrgInvoice] sendOrgBillingEmail failed:", err);
+        console.error("[org-invoice] sendOrgBillingEmail failed:", err);
       }),
     ]);
   } catch (notifyErr) {
-    console.error("[createOrgInvoice] post-commit notify failed:", notifyErr);
+    console.error("[org-invoice] post-commit notify failed:", notifyErr);
   }
+}
+
+/**
+ * Issue a DRAFT org invoice, drawing a PO when one is given; an org that
+ * requires a PO must name one unless the draft already drew it. The due date
+ * keeps the draft's payment terms, counted from now.
+ */
+export async function issueDraftOrgInvoice(
+  tx: Tx,
+  args: {
+    orgId: string;
+    invoiceId: string;
+    purchaseOrderId: string | null;
+    actorMembershipId: string;
+  },
+): Promise<IssuedOrgInvoiceNotice & { purchaseOrderId: string | null }> {
+  const { orgId, invoiceId } = args;
+  const invoice = await tx.organizationInvoice.findFirst({
+    where: { id: invoiceId, organizationId: orgId },
+    select: {
+      id: true,
+      status: true,
+      invoiceNumber: true,
+      totalPaise: true,
+      displayCurrency: true,
+      purchaseOrderId: true,
+      dueDate: true,
+      createdAt: true,
+      contractId: true,
+      organization: { select: { name: true, requiresPO: true } },
+    },
+  });
+  if (!invoice) {
+    throw new OpsRefusal(
+      "INVOICE_NOT_FOUND",
+      "No such invoice for this organisation.",
+      404,
+    );
+  }
+  if (invoice.status !== "DRAFT") {
+    throw new OpsRefusal(
+      "INVOICE_NOT_DRAFT",
+      `Only a draft invoice can be issued; this one is ${invoice.status}.`,
+    );
+  }
+  if (
+    invoice.purchaseOrderId &&
+    args.purchaseOrderId &&
+    args.purchaseOrderId !== invoice.purchaseOrderId
+  ) {
+    throw new OpsRefusal(
+      "PO_ALREADY_DRAWN",
+      "This draft already draws on another purchase order.",
+    );
+  }
+  const drawNew = !invoice.purchaseOrderId && args.purchaseOrderId !== null;
+  const purchaseOrderId = invoice.purchaseOrderId ?? args.purchaseOrderId;
+  if (invoice.organization.requiresPO && !purchaseOrderId) {
+    throw new OpsRefusal(
+      "PO_REQUIRED",
+      "This organisation needs a purchase order on every invoice. Choose an active purchase order and try again.",
+    );
+  }
+
+  const issuedAt = new Date();
+  if (drawNew && purchaseOrderId) {
+    await assertInvoiceablePurchaseOrder(tx, {
+      orgId,
+      purchaseOrderId,
+      currency: invoice.displayCurrency,
+    });
+    const drawn = await drawPurchaseOrder(tx, {
+      purchaseOrderId,
+      organizationId: orgId,
+      currency: invoice.displayCurrency,
+      amountPaise: invoice.totalPaise,
+      now: issuedAt,
+    });
+    if (!drawn) {
+      throw new OpsRefusal(
+        "PO_BALANCE_EXCEEDED",
+        "PurchaseOrder balance insufficient or no longer ACTIVE",
+      );
+    }
+  }
+
+  const dueDate = new Date(
+    issuedAt.getTime() +
+      Math.max(0, invoice.dueDate.getTime() - invoice.createdAt.getTime()),
+  );
+  await transitionOrgInvoice(tx, {
+    where: { id: invoiceId, organizationId: orgId },
+    to: "ISSUED",
+    data: { issuedAt, dueDate, purchaseOrderId },
+    audit: {
+      organizationId: orgId,
+      actorMembershipId: args.actorMembershipId,
+      category: "INVOICE",
+      action: AUDIT_ACTIONS.INVOICE.INVOICE_ISSUED,
+      description: `Issued draft invoice ${invoice.invoiceNumber}`,
+      details: { invoiceId, purchaseOrderId },
+    },
+  });
+  await postInvoiceIssuedJournal(tx, invoiceId);
+  await dispatchWebhookEvent({
+    prisma: tx,
+    organizationId: orgId,
+    eventType: "invoice.issued",
+    payload: {
+      invoiceId,
+      invoiceNumber: invoice.invoiceNumber,
+      totalPaise: invoice.totalPaise,
+      displayCurrency: invoice.displayCurrency,
+      dueDate: dueDate.toISOString(),
+      purchaseOrderId,
+      contractId: invoice.contractId,
+    },
+  });
+  return {
+    invoiceId,
+    invoiceNumber: invoice.invoiceNumber,
+    totalPaise: invoice.totalPaise,
+    currency: invoice.displayCurrency,
+    dueDate,
+    orgName: invoice.organization.name,
+    purchaseOrderId,
+  };
 }
