@@ -912,9 +912,8 @@ export async function settleFailedMemberOverageAsOrg(
     },
   });
   if (
-    !event ||
-    event.programAssignment.program.contract.organizationId !==
-      args.organizationId
+    event?.programAssignment.program.contract.organizationId !==
+    args.organizationId
   ) {
     throw new OpsRefusal(
       "OVERAGE_NOT_FOUND",

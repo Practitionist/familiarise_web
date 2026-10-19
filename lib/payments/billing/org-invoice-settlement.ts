@@ -77,7 +77,10 @@ export async function invoiceOutstandingPaise(
 }
 
 /** Row-locks a payable invoice; false when it is no longer ISSUED or OVERDUE. */
-async function lockPayableInvoice(tx: Tx, invoiceId: string): Promise<boolean> {
+export async function lockPayableInvoice(
+  tx: Tx,
+  invoiceId: string,
+): Promise<boolean> {
   const locked = await tx.organizationInvoice.updateMany({
     where: { id: invoiceId, status: { in: [...PAYABLE_STATUSES] } },
     // A stale order was minted for the old outstanding; the next /pay mints afresh.
@@ -300,19 +303,27 @@ export async function applyOrgInvoiceCapture(
   };
 
   if (!invoice) return park("INVOICE_NOT_FOUND", {});
-  const applied = await tx.organizationInvoiceReceipt.findUnique({
-    where: {
-      organizationId_reference: {
-        organizationId: invoice.organizationId,
-        reference: gatewayPaymentId,
+  const organizationId = invoice.organizationId;
+  const alreadyApplied = async (): Promise<boolean> => {
+    const current = await tx.organizationInvoice.findUniqueOrThrow({
+      where: { id: invoiceId },
+      select: { providerPaymentId: true },
+    });
+    const receipt = await tx.organizationInvoiceReceipt.findUnique({
+      where: {
+        organizationId_reference: {
+          organizationId,
+          reference: gatewayPaymentId,
+        },
       },
-    },
-    select: { id: true },
-  });
-  if (applied || invoice.providerPaymentId === gatewayPaymentId) {
-    return { kind: "ALREADY_APPLIED" };
-  }
+      select: { id: true },
+    });
+    return receipt !== null || current.providerPaymentId === gatewayPaymentId;
+  };
+  if (await alreadyApplied()) return { kind: "ALREADY_APPLIED" };
   if (!(await lockPayableInvoice(tx, invoiceId))) {
+    // A concurrent delivery of this capture may have settled it while we waited on the lock.
+    if (await alreadyApplied()) return { kind: "ALREADY_APPLIED" };
     return park("INVOICE_NOT_PAYABLE", { status: invoice.status });
   }
   const outstandingPaise = await invoiceOutstandingPaise(tx, invoiceId);

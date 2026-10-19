@@ -54,6 +54,7 @@ type OverageTxOutcome =
       sideId: string;
       capturedPaise: number;
       organizationId: string | null;
+      reason: string;
     }
   | null;
 
@@ -234,6 +235,8 @@ async function settleOverageSidePaymentInTx(
       sideId: side.id,
       capturedPaise,
       organizationId: side.organizationId,
+      reason:
+        "Overage side-payment capture amount != expected; auto-refunding gateway truth",
     };
   }
 
@@ -307,15 +310,25 @@ async function settleOverageSidePaymentInTx(
   }
 
   if (moved === 0) {
-    await recordSystemErrorSafe({
-      db: tx,
-      organizationId: side.organizationId,
-      category: "OVERAGE",
-      summary: `Overage side-payment ${side.id} captured but its OverageEvent could not move to CHARGED (likely REVERSED mid-flight) — refund the side-payment`,
-      err: new Error("OVERAGE_CAPTURED_AFTER_REVERSAL"),
-      context: { sidePaymentId: side.id, paymentIntentId },
+    // The overage is no longer the member's to pay (reversed, or settled to the
+    // org): park the cash and auto-refund it after commit; the marker re-drives it.
+    await tx.payment.update({
+      where: { id: side.id },
+      data: {
+        description: autoRefundPendingDescription(
+          "captured after its overage was reversed",
+        ),
+      },
     });
-    return null;
+    await postUnappliedReceipt(tx, { paymentId: side.id, capturedPaise });
+    return {
+      kind: "mismatch_refund",
+      sideId: side.id,
+      capturedPaise,
+      organizationId: side.organizationId,
+      reason:
+        "Overage side-payment captured after its overage was reversed; auto-refunding",
+    };
   }
 
   await releaseOverageHeldParentEarnings(tx, side.parentPaymentId, side.id);
@@ -373,8 +386,7 @@ export async function handleOverageMemberSuccess(
       await refundBookingPayment({
         paymentId: txOutcome.sideId,
         amountPaise: txOutcome.capturedPaise,
-        reason:
-          "Overage side-payment capture amount != expected; auto-refunding gateway truth",
+        reason: txOutcome.reason,
         dedupeKey: `overage-mismatch:${txOutcome.sideId}`,
       });
     } catch (err) {

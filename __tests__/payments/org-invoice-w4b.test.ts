@@ -148,6 +148,7 @@ function invoiceWorld(init: {
       updateMany,
     },
     organizationInvoiceReceipt: {
+      count: jest.fn(async () => state.receipts.length),
       findUnique: jest.fn(
         async ({
           where,
@@ -222,6 +223,28 @@ describe("platform void", () => {
         actorMembershipId: "a",
       }),
     ).rejects.toMatchObject({ code: "INVOICE_PAID_USE_REFUND" });
+  });
+
+  it("counts receipts only under the row lock a bank transfer also takes", async () => {
+    const { tx, raw, state } = invoiceWorld({
+      status: "ISSUED",
+      totalPaise: 118_000,
+    });
+    // A transfer commits between the void's first read and its lock.
+    raw.organizationInvoice.updateMany.mockImplementationOnce(async () => {
+      state.receipts.push({ amountPaise: 18_000, reference: "UTR9" });
+      return { count: 1 };
+    });
+    await expect(
+      voidOrgInvoice(tx, {
+        organizationId: "org-1",
+        invoiceId: "inv-1",
+        mode: "FORGIVE",
+        reason: "duplicate",
+        actorMembershipId: "a",
+      }),
+    ).rejects.toMatchObject({ code: "INVOICE_PART_PAID_USE_REFUND" });
+    expect(state.status).toBe("ISSUED");
   });
 
   it("FORGIVE credits the invoice and writes the receivable off against GST and fee", async () => {
@@ -379,6 +402,32 @@ describe("gateway capture", () => {
     expect(await capture("pay_net", 100_000)).toEqual({
       kind: "ALREADY_APPLIED",
     });
+  });
+});
+
+describe("gateway capture redelivered concurrently", () => {
+  it("re-checks the receipt after losing the lock, so a settled capture is never parked", async () => {
+    const { tx, raw, state } = invoiceWorld({
+      status: "ISSUED",
+      totalPaise: 118_000,
+    });
+    // The other delivery settles the invoice while this one waits on the lock.
+    raw.organizationInvoice.updateMany.mockImplementationOnce(async () => {
+      state.receipts.push({ amountPaise: 118_000, reference: "pay_dup" });
+      state.status = "PAID";
+      return { count: 0 };
+    });
+
+    const out = await applyOrgInvoiceCapture(tx, {
+      invoiceId: "inv-1",
+      gatewayPaymentId: "pay_dup",
+      capturedPaise: 118_000,
+      notesOrganizationId: "org-1",
+    });
+
+    expect(out).toEqual({ kind: "ALREADY_APPLIED" });
+    expect(posted()).toHaveLength(0);
+    expect(mockSystemEvent).not.toHaveBeenCalled();
   });
 });
 

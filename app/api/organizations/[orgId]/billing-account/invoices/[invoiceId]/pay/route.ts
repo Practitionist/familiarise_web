@@ -175,6 +175,11 @@ export async function POST(
             razorpayOrderId = current.providerPaymentOrderId;
             return;
           }
+          // A receipt or parked capture cleared the stale order meanwhile; claim the empty slot.
+          await tx.organizationInvoice.updateMany({
+            where: { id: invoiceId, providerPaymentOrderId: null },
+            data: { providerPaymentOrderId: razorpayOrderId },
+          });
         }
         await tx.orgAuditLog.create({
           data: {

@@ -50,7 +50,7 @@ async function assertInvoiceablePurchaseOrder(
     where: { id: args.purchaseOrderId },
     select: { organizationId: true, status: true, currency: true },
   });
-  if (!po || po.organizationId !== args.orgId) {
+  if (po?.organizationId !== args.orgId) {
     throw new OpsRefusal(
       "PO_FOREIGN",
       "PurchaseOrder does not belong to this organization",

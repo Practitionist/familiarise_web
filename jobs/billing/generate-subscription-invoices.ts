@@ -31,17 +31,12 @@ import prisma from "@/lib/prisma";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { postInvoiceIssuedJournal } from "@/lib/payments/billing/org-invoice-journal";
+import { notifyIssuedOrgInvoice } from "@/lib/payments/billing/create-org-invoice";
 import { drawCoveringPurchaseOrder } from "@/lib/payments/billing/purchase-order-draw";
 import { supplierStateCode } from "@/lib/payments/billing/consumer-invoice";
 import { BILLABLE_ORG_STATUSES } from "@/lib/enterprise/org-status";
-import {
-  notifyOrgLicenseRenewalUpcoming,
-  notifyOrgInvoiceIssued,
-} from "@/lib/novu/org-workflows";
-import {
-  sendOrgBillingEmail,
-  sendOrgOperationalEmail,
-} from "@/lib/email/senders/money";
+import { notifyOrgLicenseRenewalUpcoming } from "@/lib/novu/org-workflows";
+import { sendOrgOperationalEmail } from "@/lib/email/senders/money";
 import { getAppUrl } from "@/lib/url";
 import { Currency, OrgInvoiceStatus, Prisma } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
@@ -311,56 +306,18 @@ async function generateSubscriptionInvoices(opts: {
         });
       } else if (result.claimed) {
         generated++;
-        try {
-          const origin = getAppUrl();
-          const orgId = sub.contract.organization.id;
-          const dashboardUrl = `${origin}/dashboard/organization/${orgId}/billing`;
-          const ownerRows = prisma.membership?.findMany
-            ? await prisma.membership.findMany({
-                where: {
-                  organizationId: orgId,
-                  status: "ACTIVE",
-                  role: "OWNER",
-                },
-                select: { userId: true },
-              })
-            : [];
-          const ownerUserIds = ownerRows.map((r) => r.userId);
-          await Promise.all([
-            Promise.resolve(
-              notifyOrgInvoiceIssued(orgId, {
-                invoiceNumber: result.invoiceNumber,
-                orgName: sub.contract.organization.name,
-                totalPaise: result.totalPaise,
-                currency: Currency.INR,
-                dueDate: dueDate.toISOString(),
-                dashboardUrl,
-                pdfUrl: `${origin}/api/organizations/${orgId}/billing-account/invoices/${result.invoiceId}/pdf`,
-              }),
-            ).catch((err) => {
-              console.error("[cron] notifyOrgInvoiceIssued failed:", err);
-              return [];
-            }),
-            Promise.resolve(
-              sendOrgBillingEmail({
-                recipientUserIds: ownerUserIds,
-                organizationId: orgId,
-                orgName: sub.contract.organization.name,
-                kind: "INVOICE_ISSUED",
-                amountPaise: result.totalPaise,
-                currency: Currency.INR,
-                invoiceId: result.invoiceId,
-                invoiceNumber: result.invoiceNumber,
-                dueDate,
-                dashboardUrl,
-              }),
-            ).catch((err) => {
-              console.error("[cron] sendOrgBillingEmail failed:", err);
-            }),
-          ]);
-        } catch (err) {
-          console.error("[cron] notifyOrgInvoiceIssued failed:", err);
-        }
+        await notifyIssuedOrgInvoice(
+          getAppUrl(),
+          sub.contract.organization.id,
+          {
+            invoiceId: result.invoiceId,
+            invoiceNumber: result.invoiceNumber,
+            totalPaise: result.totalPaise,
+            currency: Currency.INR,
+            dueDate,
+            orgName: sub.contract.organization.name,
+          },
+        );
       } else {
         console.log(
           `[cron] Subscription ${sub.id} already claimed by another worker, skipping`,
@@ -368,58 +325,8 @@ async function generateSubscriptionInvoices(opts: {
         skipped++;
       }
     } catch (err) {
-      // Unique-number collision (two parallel workers computed the same
-      // invoiceNumber while their claim-UPDATE was still in flight) is
-      // the one other failure mode worth handling gracefully. The cron
-      // is idempotent on its next run.
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
-      ) {
-        console.warn(
-          `[cron] Duplicate invoiceNumber for subscription ${sub.id}; will retry next run`,
-        );
-        // #1401 — no number burns: the counter reservation runs inside this
-        // same Serializable transaction, so the collision rolls the sequence
-        // back with it and the next run re-issues cleanly. What was missing is
-        // that nobody heard about it — a console.warn in a cron is not an
-        // alert, and a repeating collision means the claim UPDATE has stopped
-        // serialising the workers, which is worth waking someone for. Alerting
-        // only; the skip-and-retry behaviour is unchanged.
-        reportSentryError(err, {
-          subsystem: "jobs",
-          op: "generate-subscription-invoices",
-          level: "error",
-          extra: { subscriptionId: sub.id, competingInvoiceNumber },
-        });
-        // One capture, not two: recordSystemError escalates to Sentry itself,
-        // and its escalation drops `context`, so the collision extras would
-        // only survive on the reportSentryError event above. The durable row
-        // is written through recordSystemEvent directly instead. Awaited: the
-        // insert rides this job's Prisma client, and a fire-and-forget one
-        // loses the audit row to the `$disconnect()` at the end of `main`.
-        await recordSystemEventSafe({
-          organizationId: sub.contract.organization.id,
-          category: "INVOICE",
-          severity: "ERROR",
-          message: `Duplicate invoice number on subscription ${sub.id}: ${err.message}`,
-          context: {
-            subscriptionId: sub.id,
-            competingInvoiceNumber,
-            errorMessage: err.message,
-          },
-        });
-        failed++;
-        continue;
-      }
-      Sentry.captureException(err, {
-        tags: { subsystem: "jobs", job: "generate-subscription-invoices" },
-      });
-      console.error(
-        `[cron] Failed to generate invoice for subscription ${sub.id}:`,
-        err,
-      );
       failed++;
+      await reportSubscriptionFailure(sub, err, competingInvoiceNumber);
     }
   }
 
@@ -443,6 +350,57 @@ async function generateSubscriptionInvoices(opts: {
     remindersSent,
     remaining: dueSubs.length - visited,
   };
+}
+
+/**
+ * Unique-number collision (two parallel workers computed the same invoiceNumber
+ * while their claim-UPDATE was still in flight) is the one failure worth an
+ * alert of its own; the cron is idempotent on its next run.
+ */
+async function reportSubscriptionFailure(
+  sub: { id: string; contract: { organization: { id: string } } },
+  err: unknown,
+  competingInvoiceNumber: string | undefined,
+): Promise<void> {
+  if (
+    err instanceof Prisma.PrismaClientKnownRequestError &&
+    err.code === "P2002"
+  ) {
+    console.warn(
+      `[cron] Duplicate invoiceNumber for subscription ${sub.id}; will retry next run`,
+    );
+    // #1401 — no number burns: the counter reservation runs inside the same
+    // Serializable transaction, so the collision rolls the sequence back with
+    // it. A repeating collision means the claim UPDATE stopped serialising the
+    // workers, which is worth waking someone for.
+    reportSentryError(err, {
+      subsystem: "jobs",
+      op: "generate-subscription-invoices",
+      level: "error",
+      extra: { subscriptionId: sub.id, competingInvoiceNumber },
+    });
+    // One capture, not two: the durable row goes through recordSystemEvent,
+    // awaited so `$disconnect()` at the end of `main` cannot lose it.
+    await recordSystemEventSafe({
+      organizationId: sub.contract.organization.id,
+      category: "INVOICE",
+      severity: "ERROR",
+      message: `Duplicate invoice number on subscription ${sub.id}: ${err.message}`,
+      context: {
+        subscriptionId: sub.id,
+        competingInvoiceNumber,
+        errorMessage: err.message,
+      },
+    });
+    return;
+  }
+  Sentry.captureException(err, {
+    tags: { subsystem: "jobs", job: "generate-subscription-invoices" },
+  });
+  console.error(
+    `[cron] Failed to generate invoice for subscription ${sub.id}:`,
+    err,
+  );
 }
 
 async function sendRenewalReminders(

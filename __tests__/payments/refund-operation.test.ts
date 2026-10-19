@@ -1777,3 +1777,121 @@ describe("applyRefundCascade — #1766 one clawback over the tranches, newest fi
     );
   });
 });
+
+describe("applyRefundCascade — booking on a forgiven (VOID) invoice", () => {
+  it("returns the clawed-back shares to PLATFORM_FEE, not ORG_RECEIVABLE, and reverses no GST", async () => {
+    state.payments.set("pay-fv", {
+      id: "pay-fv",
+      amount: 11800,
+      originalAmount: 10000,
+      taxAmount: 1800,
+      currency: "INR",
+      paymentStatus: "SUCCEEDED",
+      paymentGateway: "RAZORPAY",
+      paymentIntent: "pay_intent_seed",
+      displayCurrencyAtCheckout: null,
+      exchangeRateAtCheckout: null,
+      organizationId: "org-1",
+      billingAccountId: "ba-1",
+      billableToOrgInvoiceId: "inv-void",
+    });
+    state.paymentLegs.push({
+      id: "leg-fv",
+      paymentId: "pay-fv",
+      source: "INVOICE_ACCRUAL",
+      amountPaise: 11800,
+      sourceRef: "asg-1",
+      createdAt: new Date(),
+    });
+    state.consultantEarnings.set("ce-fv", {
+      id: "ce-fv",
+      paymentId: "pay-fv",
+      consultantProfileId: "cp-1",
+      consultantSharePaise: 8000,
+      grossAmount: 10000,
+      platformFeePaise: 2000,
+      refundedShareAmount: 0,
+      status: "PENDING",
+    });
+    state.billingAccounts.set("ba-1", {
+      id: "ba-1",
+      walletBalance: 0,
+      currency: "INR",
+    });
+    state.organizationInvoices.set("inv-void", {
+      id: "inv-void",
+      status: "VOID",
+      issuedAt: new Date(),
+      totalPaise: 11800,
+      subtotalPaise: 10000,
+      igstPaise: 1800,
+      cgstPaise: 0,
+      sgstPaise: 0,
+    });
+    state.refunds.push({
+      id: "r-fv",
+      paymentId: "pay-fv",
+      amount: 11800,
+      status: "SUCCEEDED",
+      refundId: "rfnd_fv",
+    });
+    // The void wrote this receivable off; the void credit note took the invoice's whole value.
+    tx.ledgerTransaction.findUnique.mockImplementation(
+      async ({ where }: { where: { idempotencyKey: string } }) =>
+        where.idempotencyKey === "invoice-voided:inv-void"
+          ? { id: "lt-void" }
+          : null,
+    );
+    tx.$executeRaw = jest.fn(async () => 1);
+    tx.organization = {
+      findUnique: jest.fn(async () => ({
+        id: "org-1",
+        slug: "acme",
+        invoiceNumberPrefix: null,
+      })),
+    };
+    tx.creditNote = {
+      findUnique: jest.fn(async () => null),
+      aggregate: jest.fn(async () => ({
+        _sum: { totalPaise: BigInt(11800), subtotalPaise: BigInt(0) },
+      })),
+    };
+
+    try {
+      await applyRefundCascade(tx, {
+        paymentId: "pay-fv",
+        refundId: "r-fv",
+        amountPaise: 11800,
+        reason: "session refunded after the invoice was forgiven",
+      });
+    } finally {
+      tx.ledgerTransaction.findUnique.mockImplementation(async () => null);
+    }
+
+    type Entry = {
+      accountId: string;
+      direction: string;
+      amountPaise: number | bigint;
+    };
+    type TxnData = { idempotencyKey: string; entries: { create: Entry[] } };
+    const calls = (tx.ledgerTransaction.create as jest.Mock).mock
+      .calls as Array<[{ data: TxnData }]>;
+    const entries = calls.find(
+      ([arg]) => arg.data.idempotencyKey === "refund:r-fv",
+    )![0].data.entries.create;
+    expect(entries.some((e) => e.accountId.includes("ORG_RECEIVABLE"))).toBe(
+      false,
+    );
+    expect(entries.some((e) => e.accountId.includes("GST_PAYABLE"))).toBe(
+      false,
+    );
+    const net = (dir: string) =>
+      entries
+        .filter(
+          (e) => e.accountId.includes("PLATFORM_FEE") && e.direction === dir,
+        )
+        .reduce((s, e) => s + Number(e.amountPaise), 0);
+    // The platform absorbed the expert's share at the write-off; the clawback returns it.
+    expect(net("CREDIT") - net("DEBIT")).toBe(8000);
+  });
+});

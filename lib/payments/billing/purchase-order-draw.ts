@@ -85,11 +85,7 @@ export async function restorePurchaseOrderForCredit(
   const { invoice, credit } = input;
   if (!invoice.purchaseOrderId) return 0;
   const freed = credit.isCommercial
-    ? invoice.subtotalPaise > 0
-      ? Math.round(
-          (credit.subtotalPaise * invoice.totalPaise) / invoice.subtotalPaise,
-        )
-      : 0
+    ? grossedUpSubtotal(credit.subtotalPaise, invoice)
     : credit.totalPaise;
   const want = Math.min(freed, invoice.totalPaise);
   if (want <= 0) return 0;
@@ -116,5 +112,16 @@ export async function restorePurchaseOrderForCredit(
   }
   throw new Error(
     `PurchaseOrder ${invoice.purchaseOrderId} kept moving while a credit restored its draw`,
+  );
+}
+
+/** A tax-free commercial note's subtotal at the invoice's gross rate. */
+function grossedUpSubtotal(
+  subtotalPaise: number,
+  invoice: { totalPaise: number; subtotalPaise: number },
+): number {
+  if (invoice.subtotalPaise <= 0) return 0;
+  return Math.round(
+    (subtotalPaise * invoice.totalPaise) / invoice.subtotalPaise,
   );
 }

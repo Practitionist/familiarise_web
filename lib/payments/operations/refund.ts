@@ -98,6 +98,7 @@ import { stampTrialEarningsOnCancel } from "@/lib/trials/cancellation";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
 import { restorePurchaseOrderForCredit } from "@/lib/payments/billing/purchase-order-draw";
+import { invoiceVoidedKey } from "@/lib/payments/billing/org-invoice-journal";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
 import {
   COMMERCIAL_CREDIT_NOTE_REASON_PREFIX,
@@ -1200,6 +1201,16 @@ export async function applyRefundCascade(
         select: { status: true, issuedAt: true },
       })
     : null;
+  // A forgiven void already wrote this booking's receivable and GST off.
+  const forgivenInvoice =
+    linkedOrgInvoice?.status === "VOID" && payment.billableToOrgInvoiceId
+      ? (await tx.ledgerTransaction.findUnique({
+          where: {
+            idempotencyKey: invoiceVoidedKey(payment.billableToOrgInvoiceId),
+          },
+          select: { id: true },
+        })) !== null
+      : false;
 
   for (const { leg, reverse } of legAmounts) {
     if (reverse <= 0) continue;
@@ -1694,8 +1705,9 @@ export async function applyRefundCascade(
           break;
         case "INVOICE_ACCRUAL":
         case "OVERAGE_INVOICE_ACCRUAL":
-          kind = "ORG_RECEIVABLE";
-          organizationId = orgId;
+          // The clawed-back shares return to the platform that absorbed them.
+          kind = forgivenInvoice ? "PLATFORM_FEE" : "ORG_RECEIVABLE";
+          organizationId = forgivenInvoice ? null : orgId;
           break;
         case "REFERRAL_CREDIT":
           kind = "PLATFORM_PROMO";
@@ -1760,7 +1772,9 @@ export async function applyRefundCascade(
       const taxPaise = payment.taxAmount ?? 0;
       const cutoffSourceDate = linkedOrgInvoice?.issuedAt ?? payment.createdAt;
       const gstRev =
-        taxPaise > 0 && isPastGstCreditNoteCutoff(cutoffSourceDate, cascadeNow)
+        forgivenInvoice ||
+        (taxPaise > 0 &&
+          isPastGstCreditNoteCutoff(cutoffSourceDate, cascadeNow))
           ? 0
           : proportion(taxPaise);
       // #775 — a CHARGE_MEMBER side-payment refund: the member's capture
@@ -2296,12 +2310,16 @@ export async function mintInvoiceRefundCreditNote(
   ),
 ): Promise<OrgCreditNoteMintResult> {
   // Idempotent on whichever trigger raised it (each is @unique).
+  let trigger: Prisma.CreditNoteWhereUniqueInput = {
+    refundId: params.refundId,
+  };
+  if (params.overageEventId) {
+    trigger = { overageEventId: params.overageEventId };
+  } else if (params.voidedInvoiceId) {
+    trigger = { voidedInvoiceId: params.voidedInvoiceId };
+  }
   const existing = await tx.creditNote.findUnique({
-    where: params.overageEventId
-      ? { overageEventId: params.overageEventId }
-      : params.voidedInvoiceId
-        ? { voidedInvoiceId: params.voidedInvoiceId }
-        : { refundId: params.refundId },
+    where: trigger,
     select: { id: true },
   });
   if (existing) return { creditNoteId: existing.id };

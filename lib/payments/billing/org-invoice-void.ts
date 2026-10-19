@@ -15,6 +15,7 @@ import {
   invoiceIssuedKey,
   postInvoiceVoidedJournal,
 } from "./org-invoice-journal";
+import { lockPayableInvoice } from "./org-invoice-settlement";
 import { transitionOverage } from "./overage-transitions";
 
 /**
@@ -54,7 +55,7 @@ export async function voidOrgInvoice(
       totalPaise: true,
       subtotalPaise: true,
       irn: true,
-      _count: { select: { billedPayments: true, receipts: true } },
+      _count: { select: { billedPayments: true } },
     },
   });
   if (!invoice) {
@@ -76,8 +77,18 @@ export async function voidOrgInvoice(
       `Only an issued or overdue invoice can be voided; this one is ${invoice.status}.`,
     );
   }
+  // Taken before the receipt count: a bank transfer waits on the same row lock.
+  if (!(await lockPayableInvoice(tx, invoiceId))) {
+    throw new OpsRefusal(
+      "INVOICE_NOT_VOIDABLE",
+      "This invoice changed state; reload and try again.",
+    );
+  }
+  const receipts = await tx.organizationInvoiceReceipt.count({
+    where: { invoiceId },
+  });
   // Received money would be stranded by a void; it goes back through a refund.
-  if (invoice._count.receipts > 0) {
+  if (receipts > 0) {
     throw new OpsRefusal(
       "INVOICE_PART_PAID_USE_REFUND",
       "This invoice has recorded payments; refund them before voiding it.",
