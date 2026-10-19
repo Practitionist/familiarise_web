@@ -1,52 +1,46 @@
 /**
- * Admin Payout Processing API
- * Process all approved payouts
+ * POST /api/admin/payouts/process — disburse every APPROVED payout within a
+ * request-bound run. ADMIN, step-up, a reason and an ops log row; the caller is
+ * the disburser, so a payout they approved themselves is skipped (maker-checker).
+ * A retry is safe: each payout leaves APPROVED through its own CAS claim.
  */
 
-import * as Sentry from "@sentry/nextjs";
-import { NextRequest, NextResponse } from "next/server";
+import { withOpsAction } from "@/lib/backoffice/ops-action-log";
+import { assertMoneyOpsBudget } from "@/lib/backoffice/money-limit";
 import {
   processApprovedPayouts,
   REQUEST_PAYOUT_RUN_BOUNDS,
 } from "@/lib/payments/payouts";
-import { requireAdminAuth } from "@/lib/auth-helpers";
-import { requireFreshSession } from "@/lib/auth/step-up";
 
-/**
- * POST /api/admin/payouts/process
- * Process all approved payouts
- */
-export async function POST(_req: NextRequest) {
-  try {
-    const auth = await requireAdminAuth();
-    if (auth.error) return auth.error;
-    const stale = requireFreshSession(auth.session);
-    if (stale) return stale;
-
-    // #1846 N6 — a request-bound run: no new payout after the budget and a
-    // short lock, so a function killed at the Lambda limit cannot hold the
-    // payout lock for 35 minutes. Unstarted payouts stay APPROVED.
-    const results = await processApprovedPayouts(REQUEST_PAYOUT_RUN_BOUNDS);
-
-    const successful = results.filter((r) => r.success).length;
-    const failed = results.filter((r) => !r.success).length;
-
-    return NextResponse.json({
-      success: true,
-      processed: results.length,
-      successful,
-      failed,
-      results,
-    });
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "admin" } },
-    );
-    console.error("Error processing payouts:", error);
-    return NextResponse.json(
-      { error: "Failed to process payouts" },
-      { status: 500 },
-    );
-  }
-}
+export const POST = withOpsAction(
+  "payouts.manage",
+  "payout.process",
+  {},
+  {
+    mode: "gateway",
+    target: () => ({ kind: "PayoutRun", id: "approved" }),
+    run: async ({ actor }) => {
+      await assertMoneyOpsBudget(actor.userId);
+      // #1846 N6 — a short lock and a run budget keep the payout lock from
+      // outliving a Lambda killed at its limit; unstarted payouts stay APPROVED.
+      const results = await processApprovedPayouts({
+        ...REQUEST_PAYOUT_RUN_BOUNDS,
+        triggeredByUserId: actor.userId,
+      });
+      const successful = results.filter((r) => r.success).length;
+      const failed = results.filter((r) => !r.success).length;
+      return {
+        target: { kind: "PayoutRun", id: "approved" },
+        after: { processed: results.length, successful, failed },
+        response: {
+          success: true,
+          processed: results.length,
+          successful,
+          failed,
+          results,
+        },
+      };
+    },
+  },
+  { stepUp: true },
+);

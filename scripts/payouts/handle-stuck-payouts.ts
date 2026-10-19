@@ -202,7 +202,11 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
           if (claimed.count === 0) return { released: 0, claimed: false };
           const released = await tx.consultantEarnings.updateMany({
             where: { payoutId: payout.id, status: EarningStatus.BATCHED },
-            data: { payoutId: null, status: EarningStatus.READY },
+            data: {
+              payoutId: null,
+              status: EarningStatus.READY,
+              releasedFromPayoutId: payout.id,
+            },
           });
           await releaseClawbackRecovery(tx, payout.id);
           return { released: released.count, claimed: true };

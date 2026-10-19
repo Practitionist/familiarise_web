@@ -14,7 +14,12 @@
  * reversed is released (re-opened) in the transaction that makes that move.
  */
 
-import { PayoutStatus } from "@prisma/client";
+import {
+  PayoutStatus,
+  type LedgerAccountKind,
+  type LedgerDirection,
+  type LedgerTransactionKind,
+} from "@prisma/client";
 import type { PrismaLike, Tx } from "@/lib/prisma";
 import { PAN_FALLBACK_BPS } from "@/lib/compliance/tds";
 import {
@@ -31,6 +36,7 @@ export const ORG_CLAWBACK_KEY_PREFIX = "clawback:";
 export const CLAWBACK_RECOVERY_KEY_PREFIX = "clawback-recovery:";
 export const CLAWBACK_RECOVERY_RELEASE_KEY_PREFIX =
   "clawback-recovery-release:";
+export const CLAWBACK_VOID_KEY_PREFIX = "clawback-void:";
 
 /** Payout statuses whose recovery no longer stands. */
 export const RECOVERY_RELEASING_STATUSES: PayoutStatus[] = [
@@ -163,6 +169,50 @@ export async function clawbackRecoveredPaise(
   return (await clawbackRecoveredByPayout(db, [payoutId])).get(payoutId) ?? 0;
 }
 
+const MIRRORED_TXN_SELECT = {
+  idempotencyKey: true,
+  kind: true,
+  entries: {
+    select: {
+      direction: true,
+      amountPaise: true,
+      account: {
+        select: {
+          kind: true,
+          organizationId: true,
+          consultantProfileId: true,
+        },
+      },
+    },
+  },
+} as const;
+
+interface MirroredTxn {
+  kind: LedgerTransactionKind;
+  entries: Array<{
+    direction: LedgerDirection;
+    amountPaise: number | bigint;
+    account: {
+      kind: LedgerAccountKind;
+      organizationId: string | null;
+      consultantProfileId: string | null;
+    };
+  }>;
+}
+
+/** Every entry of `txn` with its direction flipped. */
+function mirrorPostings(txn: MirroredTxn): Posting[] {
+  return txn.entries.map((e): Posting => ({
+    account: {
+      kind: e.account.kind,
+      organizationId: e.account.organizationId,
+      consultantProfileId: e.account.consultantProfileId,
+    },
+    direction: e.direction === "DEBIT" ? "CREDIT" : "DEBIT",
+    amountPaise: sumPaise(e.amountPaise),
+  }));
+}
+
 /**
  * Re-opens the clawback recovered on a payout that did not complete, by
  * mirroring its recovery journal. Idempotent; a no-op when nothing was
@@ -182,23 +232,7 @@ export async function releaseClawbackRecovery(
         ],
       },
     },
-    select: {
-      idempotencyKey: true,
-      kind: true,
-      entries: {
-        select: {
-          direction: true,
-          amountPaise: true,
-          account: {
-            select: {
-              kind: true,
-              organizationId: true,
-              consultantProfileId: true,
-            },
-          },
-        },
-      },
-    },
+    select: MIRRORED_TXN_SELECT,
   });
   if (txns.length !== 1) return;
   const [recovery] = txns;
@@ -208,16 +242,70 @@ export async function releaseClawbackRecovery(
     kind: recovery.kind,
     payoutId,
     description: `Clawback recovery released: payout ${payoutId} did not complete`,
-    postings: recovery.entries.map((e): Posting => ({
-      account: {
-        kind: e.account.kind,
-        organizationId: e.account.organizationId,
-        consultantProfileId: e.account.consultantProfileId,
-      },
-      direction: e.direction === "DEBIT" ? "CREDIT" : "DEBIT",
-      amountPaise: sumPaise(e.amountPaise),
-    })),
+    postings: mirrorPostings(recovery),
   });
+}
+
+/**
+ * Voids the still-unrecovered part of each clawback raised against a consultant
+ * payout the bank returned: its earnings reopen net of the refund, so that part
+ * would net twice. Later payouts are taken to recover the oldest debits first.
+ * Returns what is voided and what had already been recovered and stays booked.
+ */
+export async function voidClawbacksRaisedOnPayout(
+  tx: PrismaLike,
+  input: { payoutId: string; consultantProfileId: string },
+): Promise<{ voidedPaise: number; alreadyRecoveredPaise: number }> {
+  const { payoutId } = input;
+  const raised = await tx.ledgerTransaction.findMany({
+    where: {
+      payoutId,
+      idempotencyKey: { startsWith: ORG_CLAWBACK_KEY_PREFIX },
+    },
+    select: { id: true, ...MIRRORED_TXN_SELECT },
+  });
+  if (raised.length === 0) return { voidedPaise: 0, alreadyRecoveredPaise: 0 };
+
+  const receivable: AccountRef = {
+    kind: "CONSULTANT_RECEIVABLE",
+    consultantProfileId: input.consultantProfileId,
+  };
+  const balance = Math.max(0, await ledgerBalancePaise(tx, receivable));
+  const debits = await tx.ledgerEntry.findMany({
+    where: { accountId: ledgerAccountId(receivable), direction: "DEBIT" },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { transactionId: true, amountPaise: true },
+  });
+
+  let voidedPaise = 0;
+  let alreadyRecoveredPaise = 0;
+  for (const txn of raised) {
+    const at = debits.findIndex((d) => d.transactionId === txn.id);
+    const raisedPaise = at === -1 ? 0 : sumPaise(debits[at].amountPaise);
+    const laterPaise = debits
+      .slice(at + 1)
+      .reduce((s, d) => s + sumPaise(d.amountPaise), 0);
+    const uniform = txn.entries.every(
+      (e) => sumPaise(e.amountPaise) === raisedPaise,
+    );
+    const voidPaise = uniform
+      ? Math.min(raisedPaise, Math.max(0, balance - laterPaise))
+      : 0;
+    alreadyRecoveredPaise += raisedPaise - voidPaise;
+    if (voidPaise <= 0) continue;
+    voidedPaise += voidPaise;
+    await postLedgerTxn(tx, {
+      idempotencyKey: `${CLAWBACK_VOID_KEY_PREFIX}${txn.idempotencyKey}`,
+      kind: txn.kind,
+      payoutId,
+      description: `Clawback voided: payout ${payoutId} was reversed by the bank`,
+      postings: mirrorPostings(txn).map((p) => ({
+        ...p,
+        amountPaise: voidPaise,
+      })),
+    });
+  }
+  return { voidedPaise, alreadyRecoveredPaise };
 }
 
 /**

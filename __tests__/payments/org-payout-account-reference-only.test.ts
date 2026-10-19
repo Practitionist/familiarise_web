@@ -12,6 +12,7 @@ const upsert = jest.fn(async () => ({
 const tx = {
   organizationPayoutAccount: { findUnique: jest.fn(async () => null), upsert },
   orgAuditLog: { create: jest.fn(async () => ({})) },
+  organizationEarnings: { count: jest.fn(async () => 0) },
 };
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,

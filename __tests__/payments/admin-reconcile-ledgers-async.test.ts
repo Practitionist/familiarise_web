@@ -16,19 +16,21 @@ jest.mock("@sentry/nextjs", () => ({
 
 jest.mock("../../lib/auth-helpers", () => ({
   requireBackofficeSurface: jest.fn(async () => ({
-    session: { user: { id: "admin_1" } },
+    session: {
+      user: { id: "admin_1", role: "ADMIN" },
+      session: { createdAt: new Date() },
+    },
   })),
 }));
 
-const findMany = jest.fn(
-  async (..._args: unknown[]): Promise<unknown[]> => [],
-);
+const findMany = jest.fn(async (..._args: unknown[]): Promise<unknown[]> => []);
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     ledgerReconciliationReport: {
       findMany: (...args: unknown[]) => findMany(...args),
     },
+    opsActionLog: { create: jest.fn(async () => ({ id: "ops_1" })) },
   },
 }));
 
@@ -49,11 +51,14 @@ import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 
 const fetchMock = jest.fn(async () => new Response(null, { status: 202 }));
 
-function post(body: unknown) {
+const REASON = { reason: "nightly drift check" };
+const ROUTE = { params: Promise.resolve({}) };
+
+function post(body: Record<string, unknown>) {
   return new NextRequest("https://x.test/api/admin/reconcile-ledgers", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...REASON, ...body }),
   });
 }
 
@@ -64,7 +69,7 @@ beforeEach(() => {
 
 describe("POST /api/admin/reconcile-ledgers", () => {
   it("runs a full-scope reconciliation in-process and answers 200 with the report", async () => {
-    const res = await POST(post({}));
+    const res = await POST(post({}), ROUTE);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -81,11 +86,12 @@ describe("POST /api/admin/reconcile-ledgers", () => {
       { id: "run_active", runAt: new Date(), summary: { status: "RUNNING" } },
     ]);
 
-    const res = await POST(post({}));
+    const res = await POST(post({}), ROUTE);
     const body = await res.json();
 
     expect(res.status).toBe(409);
-    expect(body.reportId).toBe("run_active");
+    expect(body.code).toBe("RUN_IN_PROGRESS");
+    expect(body.error).toContain("run_active");
     expect(runReconcileLedgers).not.toHaveBeenCalled();
   });
 
@@ -94,12 +100,24 @@ describe("POST /api/admin/reconcile-ledgers", () => {
       new CronLockHeldError("reconcile-ledgers"),
     );
 
-    const res = await POST(post({}));
+    const res = await POST(post({}), ROUTE);
     expect(res.status).toBe(409);
   });
 
+  it("refuses a run without a reason", async () => {
+    const res = await POST(
+      new NextRequest("https://x.test/api/admin/reconcile-ledgers", {
+        method: "POST",
+        body: "{}",
+      }),
+      ROUTE,
+    );
+    expect(res.status).toBe(400);
+    expect(runReconcileLedgers).not.toHaveBeenCalled();
+  });
+
   it("keeps an org-scoped run synchronous", async () => {
-    const res = await POST(post({ organizationId: "org_1" }));
+    const res = await POST(post({ organizationId: "org_1" }), ROUTE);
 
     expect(res.status).toBe(200);
     expect(runReconcileLedgers).toHaveBeenCalledWith({

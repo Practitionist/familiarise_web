@@ -1264,3 +1264,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS "earnings_hold_active_consultant_key"
 CREATE UNIQUE INDEX IF NOT EXISTS "earnings_hold_active_org_key"
   ON "EarningsHold" ("organizationEarningsId", "reason", "sourceRef")
   WHERE "releasedAt" IS NULL AND "organizationEarningsId" IS NOT NULL;
+-- SPLIT
+-- I-4: a BATCHED earning always names the payout that batched it.
+ALTER TABLE "ConsultantEarnings" DROP CONSTRAINT IF EXISTS "consultant_earnings_batched_has_payout";
+-- SPLIT
+ALTER TABLE "ConsultantEarnings" ADD CONSTRAINT "consultant_earnings_batched_has_payout"
+  CHECK ("status" <> 'BATCHED' OR "payoutId" IS NOT NULL);
+-- SPLIT
+ALTER TABLE "OrganizationEarnings" DROP CONSTRAINT IF EXISTS "org_earnings_batched_has_payout";
+-- SPLIT
+ALTER TABLE "OrganizationEarnings" ADD CONSTRAINT "org_earnings_batched_has_payout"
+  CHECK ("status" <> 'BATCHED' OR "orgPayoutId" IS NOT NULL);

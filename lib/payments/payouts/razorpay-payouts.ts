@@ -389,6 +389,33 @@ export function isDefinitiveGatewayRejection(error: unknown): boolean {
   );
 }
 
+type RazorpayXResponse = Pick<
+  Response,
+  "ok" | "status" | "statusText" | "json"
+>;
+
+interface EgressClient {
+  fetch: typeof import("undici").fetch;
+  dispatcher: import("undici").ProxyAgent;
+}
+
+let egressClient: Promise<EgressClient> | null = null;
+
+/** One proxy agent per process, with undici's own fetch so the dispatcher matches its client. */
+function razorpayXEgress(proxyUrl: string): Promise<EgressClient> {
+  egressClient ??= import("undici").then(
+    ({ ProxyAgent, fetch }) => ({
+      fetch,
+      dispatcher: new ProxyAgent(proxyUrl),
+    }),
+    (err: unknown) => {
+      egressClient = null;
+      throw err;
+    },
+  );
+  return egressClient;
+}
+
 export class RazorpayPayoutsService {
   private config: RazorpayXConfig;
   private baseUrl = "https://api.razorpay.com/v1";
@@ -423,13 +450,24 @@ export class RazorpayPayoutsService {
     body?: Record<string, unknown>,
     headers?: Record<string, string>,
   ): Promise<T> {
+    // Live RazorpayX answers only allowlisted IPs; a live key never leaves without the static-egress proxy.
+    const proxyUrl = process.env.RAZORPAYX_EGRESS_PROXY_URL;
+    if (!proxyUrl && this.config.keyId.startsWith("rzp_live_")) {
+      throw new PaymentError(
+        `RazorpayX live key in use but RAZORPAYX_EGRESS_PROXY_URL is unset; refusing ${method} ${endpoint}`,
+        "RAZORPAYX_EGRESS_NOT_CONFIGURED",
+        "RAZORPAY",
+      );
+    }
+
     const auth = Buffer.from(
       `${this.config.keyId}:${this.config.keySecret}`,
     ).toString("base64");
 
-    let response: Response;
+    let response: RazorpayXResponse;
     try {
-      response = await fetch(`${this.baseUrl}${endpoint}`, {
+      const url = `${this.baseUrl}${endpoint}`;
+      const init = {
         method,
         headers: {
           Authorization: `Basic ${auth}`,
@@ -447,7 +485,16 @@ export class RazorpayPayoutsService {
         // RazorpayX returns the original payout on retry rather than paying
         // twice.
         signal: AbortSignal.timeout(RAZORPAYX_REQUEST_TIMEOUT_MS),
-      });
+      };
+      if (proxyUrl) {
+        const egress = await razorpayXEgress(proxyUrl);
+        response = await egress.fetch(url, {
+          ...init,
+          dispatcher: egress.dispatcher,
+        });
+      } else {
+        response = await fetch(url, init);
+      }
     } catch (cause) {
       // AbortSignal.timeout rejects with a TimeoutError DOMException, and a
       // DNS/socket failure rejects with a TypeError. Neither says whether the

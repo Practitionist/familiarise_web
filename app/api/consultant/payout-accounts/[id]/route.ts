@@ -15,6 +15,11 @@ import {
   isRazorpayPayoutsConfigured,
 } from "@/lib/payments/payouts/razorpay-payouts";
 import { requireFreshSession } from "@/lib/auth/step-up";
+import {
+  consultantDefaultSwitchStamp,
+  consultantPayoutFreezeUrl,
+  emailPayoutAccountChanged,
+} from "@/lib/payments/payouts/payout-account-change";
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
@@ -130,8 +135,13 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     }
 
     // Handle setting as default (use transaction for atomicity)
-    if (body.isDefault === true) {
-      await prisma.$transaction(async (tx) => {
+    if (body.isDefault === true && !account.isDefault) {
+      const stamp = await prisma.$transaction(async (tx) => {
+        const next = await consultantDefaultSwitchStamp(
+          tx,
+          consultantProfile.id,
+          id,
+        );
         // Unset other defaults
         await tx.payoutAccount.updateMany({
           where: {
@@ -144,9 +154,16 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
         // Set this as default
         await tx.payoutAccount.update({
           where: { id },
-          data: { isDefault: true },
+          data: { isDefault: true, ...next },
         });
+        return next;
       });
+      if (stamp.payoutsAllowedAfter) {
+        await emailPayoutAccountChanged(
+          [session.user.id],
+          consultantPayoutFreezeUrl(),
+        );
+      }
     }
 
     const updatedAccount = await prisma.payoutAccount.findUnique({
@@ -224,28 +241,56 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
       );
     }
 
+    // Deleting a frozen account would lift the freeze, which only an admin may do.
+    if (account.payoutsFrozenAt) {
+      return NextResponse.json(
+        {
+          error: "Payouts are frozen on this account; contact support.",
+          code: "PAYOUT_ACCOUNT_FROZEN",
+        },
+        { status: 409 },
+      );
+    }
+
     // Delete the account and reassign default if needed (use transaction for atomicity)
-    await prisma.$transaction(async (tx) => {
+    const stamp = await prisma.$transaction(async (tx) => {
+      const anotherAccount = account.isDefault
+        ? await tx.payoutAccount.findFirst({
+            where: {
+              consultantProfileId: consultantProfile.id,
+              id: { not: id },
+            },
+            orderBy: { createdAt: "desc" },
+          })
+        : null;
+      const next = anotherAccount
+        ? await consultantDefaultSwitchStamp(
+            tx,
+            consultantProfile.id,
+            anotherAccount.id,
+          )
+        : {};
+
       // Delete the account
       await tx.payoutAccount.delete({
         where: { id },
       });
 
       // If this was default, set another as default
-      if (account.isDefault) {
-        const anotherAccount = await tx.payoutAccount.findFirst({
-          where: { consultantProfileId: consultantProfile.id },
-          orderBy: { createdAt: "desc" },
+      if (anotherAccount) {
+        await tx.payoutAccount.update({
+          where: { id: anotherAccount.id },
+          data: { isDefault: true, ...next },
         });
-
-        if (anotherAccount) {
-          await tx.payoutAccount.update({
-            where: { id: anotherAccount.id },
-            data: { isDefault: true },
-          });
-        }
       }
+      return next;
     });
+    if (stamp.payoutsAllowedAfter) {
+      await emailPayoutAccountChanged(
+        [session.user.id],
+        consultantPayoutFreezeUrl(),
+      );
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {

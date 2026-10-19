@@ -5,10 +5,7 @@
 /**
  * `POST /api/admin/refunds` executes a refund — it moves real money.
  *
- * It was guarded by `requirePrivilegedAuth`, which admits STAFF. The
- * dashboard only ever hid the button from staff, so a staff member could
- * still issue a refund by calling the route directly. This pins the fix: the
- * mutation now resolves `refunds.manage` through BACKOFFICE_PERMISSIONS,
+ * The mutation resolves `refunds.manage` through BACKOFFICE_PERMISSIONS,
  * which is ADMIN-only, while GET stays privileged so staff keep the money
  * read they need for ticket context.
  */
@@ -25,27 +22,23 @@ import {
 } from "@/lib/auth/backoffice-permissions";
 
 describe("refund execution is admin-only", () => {
-  it("route source guards POST on refunds.manage, not requirePrivilegedAuth", () => {
+  it("route source guards POST through the refunds.manage ops door, with step-up", () => {
     // Source-level assertion: the alternative is standing up the whole
-    // refundPayment path, and what matters here is which guard the mutation
-    // reaches for.
+    // refundPayment path, and what matters here is which guard the mutation uses.
     const src = readFileSync(
       join(process.cwd(), "app/api/admin/refunds/route.ts"),
       "utf8",
     );
 
-    const postBody = src.slice(src.indexOf("export async function POST"));
-    expect(postBody).toContain('requireBackofficeSurface("refunds.manage")');
-    expect(postBody).not.toContain("requirePrivilegedAuth()");
-    // The call on its own proves nothing: deleting the early return leaves
-    // both assertions above green while refunds stay open to STAFF — the exact
-    // regression this file exists to catch. Pin the short-circuit too.
-    expect(postBody).toMatch(/if\s*\(auth\.error\)\s*return\s+auth\.error;/);
+    const doorBody = src.slice(src.indexOf("const refundDoor"));
+    expect(doorBody).toMatch(/withOpsAction\(\s*"refunds\.manage"/);
+    expect(doorBody).toContain("{ stepUp: true }");
+    expect(doorBody).not.toContain("requirePrivilegedAuth()");
 
     // GET keeps the wider grant — staff read every money surface.
     const getBody = src.slice(
       src.indexOf("export async function GET"),
-      src.indexOf("export async function POST"),
+      src.indexOf("const refundDoor"),
     );
     expect(getBody).toContain("requirePrivilegedAuth()");
   });

@@ -106,13 +106,13 @@ const APPROVED = {
   method: "BANK_TRANSFER",
   idempotencyKey: null,
   retryCount: 0,
+  payoutAccount: {
+    razorpayFundAccId: "fa_x",
+    accountType: "BANK_ACCOUNT",
+    isVerified: true,
+    payoutsFrozenAt: null,
+  },
   consultantProfile: {
-    payoutAccounts: [
-      {
-        razorpayFundAccId: "fa_x",
-        accountType: "BANK_ACCOUNT",
-      },
-    ],
     user: { name: "Priya", email: "p@x.com" },
   },
 };
