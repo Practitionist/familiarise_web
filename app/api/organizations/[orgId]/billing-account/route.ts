@@ -7,12 +7,14 @@
  * limit. The wallet ledger lives under /wallet, invoices under
  * /invoices, purchase orders under /purchase-orders.
  *
- * A funding-source change is a serious lifecycle event — it switches
- * which downstream flow runs at checkout (WALLET→wallet debit,
- * INVOICE→accrual, LICENSE→no charge). `billing.fundingSource.switch`
- * (OWNER, BILLING_ADMIN — #1851 decision 7) changes it, each switch writes
- * its own audit row, and we only allow the change when there are no
- * outstanding invoices or non-zero wallet balance that would be orphaned.
+ * A funding-source change switches which flow runs at checkout
+ * (WALLET→wallet debit, INVOICE→accrual, LICENSE→no charge). It needs
+ * `billing.fundingSource.switch`, writes its own audit row, and is refused
+ * while a wallet balance or outstanding invoices would be orphaned.
+ *
+ * Only the platform extends credit: a tenant may lower its credit limit but
+ * not raise or remove it, nor switch to INVOICE funding. Ops do both through
+ * PATCH /api/admin/organizations/[orgId]/billing-account.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -21,8 +23,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
-import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { assertVerifiedDomainOrThrow } from "@/lib/enterprise/governance";
+import { recordBillingAccountUpdate } from "@/lib/enterprise/billing-account-audit";
 
 // PROJECT is reserved in the Prisma enum for v2 project-billing; the
 // API layer rejects it so callers can't quietly land a BillingAccount
@@ -50,6 +51,14 @@ const PatchBodySchema = z
   .refine((v) => Object.keys(v).length > 0, {
     message: "PATCH body must contain at least one field",
   });
+
+/** Unlimited (null) counts as the highest limit, so any finite limit lowers it. */
+function isCreditLimitLowering(
+  current: number | null,
+  next: number | null,
+): boolean {
+  return next !== null && (current === null || next <= current);
+}
 
 export async function GET(
   _req: NextRequest,
@@ -136,6 +145,26 @@ export async function PATCH(
         );
       }
 
+      if (
+        body.creditLimit !== undefined &&
+        !isCreditLimitLowering(ba.creditLimit, body.creditLimit)
+      ) {
+        throw Object.assign(
+          new Error(
+            "Only Familiarise can raise or remove a credit limit. Contact Familiarise support to change this.",
+          ),
+          { httpStatus: 403, code: "CREDIT_LIMIT_PLATFORM_ONLY" },
+        );
+      }
+      if (body.fundingSource === "INVOICE" && ba.fundingSource !== "INVOICE") {
+        throw Object.assign(
+          new Error(
+            "Only Familiarise can switch an organization to invoice funding. Contact Familiarise support to change this.",
+          ),
+          { httpStatus: 403, code: "INVOICE_FUNDING_PLATFORM_ONLY" },
+        );
+      }
+
       // The balance alert applies only to WALLET funding: the incoming
       // funding source if being changed, else the stored one.
       if (body.minBalancePaise !== undefined) {
@@ -148,11 +177,8 @@ export async function PATCH(
         }
       }
 
-      // Funding-source change guards. We only refuse the change when
-      // moving away from WALLET with a non-zero balance or away from
-      // INVOICE with outstanding invoices — either would orphan money
-      // in the old mode. The reverse transitions (INTO WALLET/INVOICE)
-      // are always fine because we're starting fresh in the new mode.
+      // Moving away from WALLET with a balance, or away from INVOICE with
+      // outstanding invoices, would orphan money in the old mode.
       if (body.fundingSource && body.fundingSource !== ba.fundingSource) {
         if (ba.fundingSource === "WALLET" && (ba.walletBalance ?? 0) > 0) {
           throw Object.assign(
@@ -172,18 +198,11 @@ export async function PATCH(
           if (outstanding > 0) {
             throw Object.assign(
               new Error(
-                `Cannot switch funding source with ${outstanding} outstanding invoice(s). Settle or void them first.`,
+                `Cannot switch funding source with ${outstanding} outstanding invoice(s). Settle them first.`,
               ),
               { httpStatus: 409 },
             );
           }
-        }
-        // K-02 / #687 — enabling INVOICE funding requires a verified domain
-        // (governance.ts documents this gate for the fundingSource→INVOICE
-        // transition). tx-scoped read: TOCTOU-safe against a concurrent
-        // verification rollback.
-        if (body.fundingSource === "INVOICE") {
-          await assertVerifiedDomainOrThrow(tx, orgId, "INVOICE_FUNDING");
         }
       }
 
@@ -211,42 +230,11 @@ export async function PATCH(
         },
       });
 
-      // #1851 decision 7 — a money category, so the finance audit readers
-      // see it and the operations-only readers never see a credit limit.
-      if (next.fundingSource !== ba.fundingSource) {
-        await tx.orgAuditLog.create({
-          data: {
-            organizationId: orgId,
-            actorMembershipId: access.member.id,
-            category: "INVOICE",
-            action: AUDIT_ACTIONS.INVOICE.FUNDING_SOURCE_CHANGED,
-            description: `Funding source: ${ba.fundingSource} → ${next.fundingSource}`,
-            details: { from: ba.fundingSource, to: next.fundingSource },
-          },
-        });
-      }
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId: orgId,
-          actorMembershipId: access.member.id,
-          category: "INVOICE",
-          action: AUDIT_ACTIONS.INVOICE.BILLING_ACCOUNT_UPDATED,
-          description: "BillingAccount updated",
-          details: {
-            from: {
-              fundingSource: ba.fundingSource,
-              currency: ba.currency,
-              creditLimit: ba.creditLimit,
-              minBalancePaise: ba.minBalancePaise,
-            },
-            to: {
-              fundingSource: next.fundingSource,
-              currency: next.currency,
-              creditLimit: next.creditLimit,
-              minBalancePaise: next.minBalancePaise,
-            },
-          },
-        },
+      await recordBillingAccountUpdate(tx, {
+        organizationId: orgId,
+        actorMembershipId: access.member.id,
+        before: ba,
+        after: next,
       });
 
       return next;
