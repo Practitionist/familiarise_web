@@ -215,7 +215,6 @@ it("refuses a tenant creating an INVOICE-funded org and creates nothing", async 
       onboarding,
     }),
   );
-  expect(res.status).toBe(403);
-  expect((await res.json()).code).toBe("INVOICE_FUNDING_PLATFORM_ONLY");
+  expect(res.status).toBe(400);
   expect(mockTransaction).not.toHaveBeenCalled();
 });

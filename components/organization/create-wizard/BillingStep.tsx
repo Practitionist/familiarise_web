@@ -24,6 +24,7 @@ import {
   FUNDING_SOURCE_LABEL,
   FUNDING_SOURCE_TAGLINE,
   SELF_SERVICE_FUNDING_SOURCES,
+  SelfServiceFundingSourceSchema,
   narrowFundingSource,
 } from "@/lib/labels/org-labels";
 
@@ -47,9 +48,11 @@ export function BillingStep({ onNext, onBack, initialData }: StepProps) {
     initialData.fundingSource === "PERSONAL",
   );
   const motivation = resolveFundingRailMotivation(fundingSource);
-  // INVOICE is platform-only; Familiarise sets it up after verification.
+  const selfServiceFallback = SelfServiceFundingSourceSchema.safeParse(
+    motivation.recommendedFallback,
+  );
   const goldenRails = SELF_SERVICE_FUNDING_SOURCES.filter(
-    (fs) => fs !== "PERSONAL" && fs !== "INVOICE",
+    (fs) => fs !== "PERSONAL",
   );
 
   const onSubmit = (data: BillingFormData) => onNext(data);
@@ -147,14 +150,12 @@ export function BillingStep({ onNext, onBack, initialData }: StepProps) {
           message={motivation.message}
           recommendation={motivation.recommendation}
           actionLabel={
-            motivation.recommendedFallback
-              ? "Switch to Prepaid Wallet"
-              : undefined
+            selfServiceFallback.success ? "Switch to Prepaid Wallet" : undefined
           }
           onAction={
-            motivation.recommendedFallback
+            selfServiceFallback.success
               ? () => {
-                  setValue("fundingSource", motivation.recommendedFallback!);
+                  setValue("fundingSource", selfServiceFallback.data);
                   setPersonalAcknowledged(false);
                 }
               : undefined

@@ -388,12 +388,6 @@ export function ReviewStep({
               {FUNDING_SOURCE_LABEL[fundingSource]}
             </Badge>
           </div>
-          {fundingSource === "INVOICE" && (
-            <p>
-              <strong>Payment terms:</strong> NET-
-              {initialData.paymentTermsDays ?? 60}
-            </p>
-          )}
           {initialData.gstStateCode && (
             <p>
               <strong>GST state:</strong>{" "}
