@@ -102,7 +102,7 @@ it("re-grants a late retry, refunds an unpurchasable replay and refunds a duplic
     where: { id: "rp-1", status: "FAILED" },
     data: { status: "SUCCEEDED", gatewayPaymentId: "pay_B" },
   });
-  // The CARD leg satisfies the commit-time leg trigger and makes a refund credit CASH.
+  // The CARD leg satisfies the commit-time leg trigger and makes a refund credit GATEWAY_CLEARING.
   expect(mockTx.payment.create.mock.calls[0][0].data).toMatchObject({
     amount: 99900,
     paymentIntent: "order_1",

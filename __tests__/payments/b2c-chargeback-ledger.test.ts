@@ -180,7 +180,7 @@ describe("#677 — applyB2cChargebackReversal (B2C lost-chargeback ledger leg)",
   it("posts the exact inverse of the booking journal for a full chargeback", async () => {
     const tx = makeTx({
       bookingEntries: [
-        dr("CASH", 12000),
+        dr("GATEWAY_CLEARING", 12000),
         cr("CONSULTANT_PAYABLE", 9000, { consultantProfileId: "c1" }),
         cr("PLATFORM_FEE", 1800),
         cr("GST_PAYABLE", 1200),
@@ -200,8 +200,8 @@ describe("#677 — applyB2cChargebackReversal (B2C lost-chargeback ledger leg)",
     expect(arg.kind).toBe("REFUND");
     expect(arg.paymentId).toBe("pay1");
 
-    // Exact negation of the booking: Cr CASH; Dr each value leg.
-    expect(sumBy(arg, "CASH", "CREDIT")).toBe(12000);
+    // Exact negation of the booking: Cr GATEWAY_CLEARING; Dr each value leg.
+    expect(sumBy(arg, "GATEWAY_CLEARING", "CREDIT")).toBe(12000);
     expect(sumBy(arg, "CONSULTANT_PAYABLE", "DEBIT")).toBe(9000);
     expect(sumBy(arg, "PLATFORM_FEE", "DEBIT")).toBe(1800);
     expect(sumBy(arg, "GST_PAYABLE", "DEBIT")).toBe(1200);
@@ -217,10 +217,10 @@ describe("#677 — applyB2cChargebackReversal (B2C lost-chargeback ledger leg)",
   });
 
   it("preserves multi-funding legs (referral credit) on a full chargeback", async () => {
-    // Booking funded by card (CASH) + referral credit (PLATFORM_PROMO contra-debit).
+    // Booking funded by card (GATEWAY_CLEARING) + referral credit (PLATFORM_PROMO contra-debit).
     const tx = makeTx({
       bookingEntries: [
-        dr("CASH", 8000),
+        dr("GATEWAY_CLEARING", 8000),
         dr("PLATFORM_PROMO", 2000),
         cr("CONSULTANT_PAYABLE", 8000, { consultantProfileId: "c1" }),
         cr("PLATFORM_FEE", 1000),
@@ -236,8 +236,8 @@ describe("#677 — applyB2cChargebackReversal (B2C lost-chargeback ledger leg)",
     });
 
     const arg = postLedgerTxn.mock.calls[0][1] as PostArg;
-    // Only the card portion returns as CASH; the promo portion reverses to PROMO.
-    expect(sumBy(arg, "CASH", "CREDIT")).toBe(8000);
+    // Only the card portion returns to GATEWAY_CLEARING; the promo portion reverses to PROMO.
+    expect(sumBy(arg, "GATEWAY_CLEARING", "CREDIT")).toBe(8000);
     expect(sumBy(arg, "PLATFORM_PROMO", "CREDIT")).toBe(2000);
     const { d, c } = balanced(arg);
     expect(d).toBe(c);
@@ -246,7 +246,7 @@ describe("#677 — applyB2cChargebackReversal (B2C lost-chargeback ledger leg)",
   it("scales proportionally and stays balanced for a partial chargeback", async () => {
     const tx = makeTx({
       bookingEntries: [
-        dr("CASH", 10000),
+        dr("GATEWAY_CLEARING", 10000),
         cr("CONSULTANT_PAYABLE", 7500, { consultantProfileId: "c1" }),
         cr("PLATFORM_FEE", 1500),
         cr("GST_PAYABLE", 1000),
@@ -271,7 +271,7 @@ describe("#677 — applyB2cChargebackReversal (B2C lost-chargeback ledger leg)",
   it("nets against prior SUCCEEDED refunds and skips when fully covered", async () => {
     const tx = makeTx({
       bookingEntries: [
-        dr("CASH", 5000),
+        dr("GATEWAY_CLEARING", 5000),
         cr("CONSULTANT_PAYABLE", 4000, { consultantProfileId: "c1" }),
         cr("PLATFORM_FEE", 1000),
       ],
@@ -291,7 +291,7 @@ describe("#677 — applyB2cChargebackReversal (B2C lost-chargeback ledger leg)",
   it("leaves GST_PAYABLE alone past the s.34(2) cutoff; PLATFORM_FEE absorbs it", async () => {
     const tx = makeTx({
       bookingEntries: [
-        dr("CASH", 11800),
+        dr("GATEWAY_CLEARING", 11800),
         cr("CONSULTANT_PAYABLE", 9000, { consultantProfileId: "c1" }),
         cr("PLATFORM_FEE", 1000),
         cr("GST_PAYABLE", 1800),
@@ -315,7 +315,7 @@ describe("#677 — applyB2cChargebackReversal (B2C lost-chargeback ledger leg)",
 
   it("is idempotent when the chargeback txn already exists", async () => {
     const tx = makeTx({
-      bookingEntries: [dr("CASH", 1000), cr("PLATFORM_FEE", 1000)],
+      bookingEntries: [dr("GATEWAY_CLEARING", 1000), cr("PLATFORM_FEE", 1000)],
       chargebackExists: true,
     });
 
