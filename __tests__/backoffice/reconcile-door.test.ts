@@ -10,7 +10,10 @@
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/auth-helpers", () => ({
   requireBackofficeSurface: jest.fn(async () => ({
-    session: { user: { id: "admin_1", role: "ADMIN" } },
+    session: {
+      user: { id: "admin_1", role: "ADMIN" },
+      session: { createdAt: new Date() },
+    },
   })),
 }));
 const create = jest.fn(async (_a: unknown) => ({ id: "row" }));
@@ -33,7 +36,7 @@ jest.mock("../../scripts/refunds/reconcile-pending-refunds", () => {
 });
 jest.mock("../../scripts/payments/reconcile-payment-status", () => ({}));
 jest.mock("../../scripts/earnings/sync-payment-earnings", () => ({}));
-jest.mock("../../app/api/admin/reconcile-ledgers/route", () => ({}));
+jest.mock("../../lib/backoffice/ledger-run", () => ({}));
 
 import { NextRequest } from "next/server";
 import { POST } from "../../app/api/admin/reconcile/[job]/route";

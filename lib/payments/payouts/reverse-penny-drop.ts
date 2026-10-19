@@ -21,6 +21,11 @@ import { PaymentError } from "@/lib/payments/core/types";
 import { PaymentGateway, PayoutAccountType, Prisma } from "@prisma/client";
 import { PAYOUT_ACCOUNT_SAFE_SELECT } from "@/lib/data/consultant-payout-setup";
 import {
+  consultantDefaultSwitchStamp,
+  consultantPayoutFreezeUrl,
+  emailPayoutAccountChanged,
+} from "./payout-account-change";
+import {
   getRazorpayPayoutsService,
   isRazorpayPayoutsConfigured,
   summariseFundAccountValidation,
@@ -180,6 +185,7 @@ async function persistVerifiedAccount(
   const profile = await prisma.consultantProfile.findUniqueOrThrow({
     where: { id: consultantProfileId },
     select: {
+      userId: true,
       user: { select: { name: true, email: true } },
       payoutAccounts: {
         select: { razorpayContactId: true },
@@ -236,16 +242,28 @@ async function persistVerifiedAccount(
     return { status: "verified", account };
   }
   // Two writes on the tx client only (PG_POOL_MAX=1): one default at a time.
-  const account = await prisma.$transaction(async (tx) => {
+  const { account, stamp } = await prisma.$transaction(async (tx) => {
+    const next = await consultantDefaultSwitchStamp(
+      tx,
+      consultantProfileId,
+      null,
+    );
     await tx.payoutAccount.updateMany({
       where: { consultantProfileId, isDefault: true },
       data: { isDefault: false },
     });
-    return tx.payoutAccount.create({
-      data,
+    const created = await tx.payoutAccount.create({
+      data: { ...data, ...next },
       select: PAYOUT_ACCOUNT_SAFE_SELECT,
     });
+    return { account: created, stamp: next };
   });
+  if (stamp.payoutsAllowedAfter) {
+    await emailPayoutAccountChanged(
+      [profile.userId],
+      consultantPayoutFreezeUrl(),
+    );
+  }
   return { status: "verified", account };
 }
 

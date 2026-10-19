@@ -26,6 +26,7 @@ function securityBellKind(
     case "backup-codes-regenerated":
     case "backup-code-used":
     case "two-factor-locked":
+    case "payout-account-changed":
       return "SECURITY_UPDATE";
   }
 }

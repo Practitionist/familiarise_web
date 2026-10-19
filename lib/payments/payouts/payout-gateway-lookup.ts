@@ -10,6 +10,7 @@
 import { PayoutStatus, PaymentGateway } from "@prisma/client";
 import {
   getRazorpayPayoutsService,
+  RazorpayXHttpError,
   resolveRazorpayXCredentials,
 } from "@/lib/payments/payouts/razorpay-payouts";
 import { handlePayoutWebhook } from "@/lib/payments/payouts";
@@ -26,20 +27,6 @@ export type PayoutLookup =
     }
   | { kind: "unknown_id"; detail: string }
   | { kind: "gateway_error"; detail: string };
-
-/** Razorpay's error body is `{ error: { code, description } }`; tolerate anything else. */
-async function razorpayErrorDescription(res: Response): Promise<string> {
-  try {
-    const body = (await res.json()) as {
-      error?: { code?: unknown; description?: unknown };
-    };
-    return [body?.error?.code, body?.error?.description]
-      .filter((v): v is string => typeof v === "string")
-      .join(": ");
-  } catch {
-    return "";
-  }
-}
 
 // #677 PM-15 — narrow PayoutStatus to the status union handlePayoutWebhook
 // accepts. mapGatewayStatus only ever returns these four, so the rest map to
@@ -62,12 +49,8 @@ export const WEBHOOK_STATUS_MAP: Partial<
 export async function getRazorpayPayoutStatus(
   providerPayoutId: string,
 ): Promise<PayoutLookup> {
-  // #1407 — the same resolver the disbursement path uses. Reading
-  // RAZORPAY_KEY_ID/RAZORPAY_SECRET here authenticated as the checkout
-  // merchant, not the RazorpayX one, so on an account with distinct X keys
-  // every lookup 401s and this reconciliation is silently dead while it
-  // looks green. (#677 PM-1 kept the RAZORPAY_SECRET fallback, inside the
-  // resolver now.)
+  // #1407 — the same resolver the disbursement path uses, so the lookup
+  // authenticates as the RazorpayX merchant rather than the checkout one.
   const { keyId, keySecret } = resolveRazorpayXCredentials();
 
   if (!keyId || !keySecret) {
@@ -79,45 +62,34 @@ export async function getRazorpayPayoutStatus(
   }
 
   try {
-    const response = await fetch(
-      `https://api.razorpay.com/v1/payouts/${providerPayoutId}`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
-        },
-        signal: AbortSignal.timeout(15_000),
-      },
-    );
-
-    if (!response.ok) {
-      // #1761 CodeRabbit — 404 is always unknown_id; a 400 is only unknown_id
-      // when the description names a missing/invalid id, else it's a real error.
-      const { status } = response;
-      const description = await razorpayErrorDescription(response);
-      const isMissingIdReason = /does not exist|not found|invalid id/i.test(
-        description,
-      );
-      if (status === 404 || (status === 400 && isMissingIdReason)) {
-        return { kind: "unknown_id", detail: `${status} ${description}` };
-      }
-      console.error(`RazorpayX API error: ${status} ${description}`);
-      return { kind: "gateway_error", detail: `${status} ${description}` };
-    }
-
-    const payout = await response.json();
+    const payout =
+      await getRazorpayPayoutsService().fetchPayout(providerPayoutId);
     return {
       kind: "status",
       status: payout.status,
       failureReason:
         payout.failure_reason ??
         payout.status_details?.description ??
-        payout.status_details?.reason,
+        payout.status_details?.reason ??
+        undefined,
       // #677 PM-15 — RazorpayX returns the bank UTR on a processed payout;
       // capture it so the COMPLETED delegation can persist the reference.
       utr: payout.utr,
     };
   } catch (error) {
+    // #1761 — 404 is always unknown_id; a 400 is only unknown_id when the
+    // description names a missing/invalid id, else it's a real error.
+    if (error instanceof RazorpayXHttpError) {
+      const isMissingIdReason = /does not exist|not found|invalid id/i.test(
+        error.message,
+      );
+      if (
+        error.httpStatus === 404 ||
+        (error.httpStatus === 400 && isMissingIdReason)
+      ) {
+        return { kind: "unknown_id", detail: error.message };
+      }
+    }
     console.error(`Failed to get RazorpayX payout status: ${error}`);
     return {
       kind: "gateway_error",

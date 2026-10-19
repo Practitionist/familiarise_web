@@ -148,3 +148,55 @@ CREATE CONSTRAINT TRIGGER payment_amount_vs_legs
   DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW
   EXECUTE FUNCTION assert_payment_legs_on_payment_update();
+-- SPLIT
+-- I-3: what left a payment never exceeds what came in. A Refund write commits only
+-- while Σ SUCCEEDED+PENDING refunds plus Σ lost chargebacks (LOST, CHARGE_REFUNDED:
+-- the set refundPayment nets) stay ≤ Payment.amount. Dispute writes are not
+-- guarded: a lost chargeback is the provider's verdict and must always be storable.
+CREATE OR REPLACE FUNCTION assert_payment_refunds_within_amount(p_payment_id TEXT) RETURNS void AS $$
+DECLARE
+  v_amount BIGINT;
+  v_refunded BIGINT;
+  v_charged_back BIGINT;
+BEGIN
+  -- Concurrent refund commits on one payment serialize here, so each sees the other's row.
+  SELECT "amount" INTO v_amount FROM "Payment" WHERE "id" = p_payment_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN;
+  END IF;
+
+  SELECT COALESCE(SUM("amountPaise"), 0) INTO v_refunded
+  FROM "Refund"
+  WHERE "paymentId" = p_payment_id
+    AND "status" IN ('SUCCEEDED', 'PENDING');
+
+  SELECT COALESCE(SUM("amountPaise"), 0) INTO v_charged_back
+  FROM "Dispute"
+  WHERE "paymentId" = p_payment_id
+    AND "status" IN ('LOST', 'CHARGE_REFUNDED');
+
+  IF v_refunded + v_charged_back > v_amount THEN
+    RAISE EXCEPTION 'payment_refunds_within_amount violated for payment %: refunds % + chargebacks % exceed Payment.amount %',
+      p_payment_id, v_refunded, v_charged_back, v_amount
+      USING ERRCODE = 'check_violation';
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+-- SPLIT
+CREATE OR REPLACE FUNCTION assert_payment_refunds_on_write() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW."paymentId" IS DISTINCT FROM OLD."paymentId" THEN
+    PERFORM assert_payment_refunds_within_amount(OLD."paymentId");
+  END IF;
+  PERFORM assert_payment_refunds_within_amount(NEW."paymentId");
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+-- SPLIT
+DROP TRIGGER IF EXISTS payment_refunds_within_amount ON "Refund";
+-- SPLIT
+CREATE CONSTRAINT TRIGGER payment_refunds_within_amount
+  AFTER INSERT OR UPDATE OF "status", "amountPaise", "paymentId" ON "Refund"
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW
+  EXECUTE FUNCTION assert_payment_refunds_on_write();

@@ -30,6 +30,7 @@ import {
   PAYOUT_CONSTANTS,
 } from "./constants";
 import {
+  payoutAccountHold,
   payoutEligibilityReason,
   type PayoutEligibilityReason,
 } from "./payout-requirements";
@@ -46,6 +47,7 @@ import {
   recoverClawbackOnPayout,
   recoverablePaise,
   releaseClawbackRecovery,
+  voidClawbacksRaisedOnPayout,
 } from "./clawback-recovery";
 import { postConsultantPayoutClawback } from "@/lib/payments/operations/reversal-engine";
 import { randomUUID } from "crypto";
@@ -55,7 +57,10 @@ import {
   isMockRedis,
   checkRedisHealth,
 } from "@/lib/redis";
-import { CronLockUnavailableError } from "@/lib/cron/with-cron-lock";
+import {
+  CronLockHeldError,
+  CronLockUnavailableError,
+} from "@/lib/cron/with-cron-lock";
 import { assertPayoutBalance } from "./balance-preflight";
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
 import { resolveEffectiveTdsRate } from "@/lib/compliance/tds";
@@ -208,7 +213,13 @@ export async function checkPayoutEligibility(
 
   const defaultAccount = await prisma.payoutAccount.findFirst({
     where: { consultantProfileId, isDefault: true },
-    select: { id: true, provider: true, isVerified: true },
+    select: {
+      id: true,
+      provider: true,
+      isVerified: true,
+      payoutsAllowedAfter: true,
+      payoutsFrozenAt: true,
+    },
   });
   const taxInfo = await prisma.consultantTaxInfo.findUnique({
     where: { consultantProfileId },
@@ -245,16 +256,25 @@ export async function checkPayoutEligibility(
 const PAYOUT_BATCH_LOCK_KEY = "lock:payout_batch_creation";
 const PAYOUT_BATCH_LOCK_TTL = 15 * 60_000;
 
+interface PayoutBatchRun {
+  batchId: string;
+  minted: number;
+  /** Consultants whose mint threw; the rest of the batch still ran. */
+  failed: number;
+}
+
 export async function createPayoutBatch(
   consultantProfileIds?: string[],
   opts?: { createdBy?: string },
-): Promise<string> {
-  return (await runPayoutBatch(consultantProfileIds, opts ?? {})).batchId;
+): Promise<PayoutBatchRun> {
+  const { batchId, minted, failed } = await runPayoutBatch(
+    consultantProfileIds,
+    opts ?? {},
+  );
+  return { batchId, minted, failed };
 }
 
-export interface PayoutBatchSlice {
-  batchId: string;
-  minted: number;
+export interface PayoutBatchSlice extends PayoutBatchRun {
   remaining: number;
 }
 
@@ -287,9 +307,7 @@ async function runPayoutBatch(
     PAYOUT_BATCH_LOCK_TTL,
   );
   if (!lockToken) {
-    throw new Error(
-      "Payout batch creation is already in progress. Please wait and try again.",
-    );
+    throw new CronLockHeldError("create-payout-batch");
   }
 
   try {
@@ -325,23 +343,41 @@ async function runPayoutBatch(
     // Only a minted payout spends the slice budget; a skipped consultant is a cheap read.
     let minted = 0;
     let visited = 0;
+    const failures: Array<{ consultantProfileId: string; error: string }> = [];
     for (const { consultantProfileId } of eligibleConsultants) {
       if (opts.limit !== undefined && minted >= opts.limit) break;
       visited += 1;
-      const payout = await mintConsultantPayout({
-        consultantProfileId,
-        batchId,
-        idempotencyKey: `payout_${consultantProfileId}_${batchId}`,
-        createdBy: opts.createdBy ?? "SYSTEM_CRON",
-        autoApprove: (amount) =>
-          amount < PAYOUT_CONSTANTS.AUTO_APPROVE_THRESHOLD,
+      try {
+        const payout = await mintConsultantPayout({
+          consultantProfileId,
+          batchId,
+          idempotencyKey: `payout_${consultantProfileId}_${batchId}`,
+          createdBy: opts.createdBy ?? "SYSTEM_CRON",
+          autoApprove: (amount) =>
+            amount < PAYOUT_CONSTANTS.AUTO_APPROVE_THRESHOLD,
+        });
+        if (payout) minted += 1;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(
+          `[Payouts] Mint failed for consultant ${consultantProfileId} in ${batchId}: ${message}`,
+        );
+        failures.push({ consultantProfileId, error: message.slice(0, 300) });
+      }
+    }
+
+    if (failures.length > 0) {
+      reportSentryMessage("payout-batch-mint-failures", {
+        subsystem: "payments",
+        level: "error",
+        extra: { batchId, failed: failures.length, failures },
       });
-      if (payout) minted += 1;
     }
 
     return {
       batchId,
       minted,
+      failed: failures.length,
       remaining: eligibleConsultants.length - visited,
     };
   } finally {
@@ -409,6 +445,12 @@ async function mintConsultantPayout(
     console.warn(
       `No verified payout account for consultant ${consultantProfileId}`,
     );
+    return null;
+  }
+
+  const hold = payoutAccountHold(account);
+  if (hold) {
+    console.warn(`Skipping consultant ${consultantProfileId}: ${hold}`);
     return null;
   }
 
@@ -490,6 +532,7 @@ async function mintConsultantPayout(
               : PayoutStatus.PENDING,
             method,
             batchId,
+            payoutAccountId: account.id,
             idempotencyKey: draft.idempotencyKey,
             kind: draft.kind ?? null,
             createdBy: resolvedCreatedBy,
@@ -859,13 +902,41 @@ const PAYOUT_PROCESS_LOCK_KEY = "lock:payout_processing";
 const PAYOUT_PROCESS_LOCK_TTL = 35 * 60_000;
 
 const APPROVED_PAYOUT_INCLUDE = {
+  payoutAccount: true,
   consultantProfile: {
     include: {
+      // Only for a payout minted before the snapshot existed (payoutAccountId null).
       payoutAccounts: { where: { isDefault: true, isVerified: true } },
       user: true,
     },
   },
 } satisfies Prisma.ConsultantPayoutInclude;
+
+type PayoutDestination = {
+  razorpayFundAccId: string | null;
+  accountType: string;
+  isVerified: boolean;
+  payoutsAllowedAfter: Date | null;
+  payoutsFrozenAt: Date | null;
+};
+
+/**
+ * The snapshotted account, or for a pre-snapshot payout the current default,
+ * which must also be out of cooling-off. Null when neither may be paid.
+ */
+function payableDestination(payout: {
+  payoutAccount: PayoutDestination | null;
+  consultantProfile: { payoutAccounts?: PayoutDestination[] };
+}): PayoutDestination | null {
+  const snapshot = payout.payoutAccount;
+  if (snapshot) {
+    return snapshot.isVerified && !snapshot.payoutsFrozenAt ? snapshot : null;
+  }
+  const fallback = payout.consultantProfile.payoutAccounts?.[0] ?? null;
+  return fallback?.isVerified && payoutAccountHold(fallback) === null
+    ? fallback
+    : null;
+}
 
 /** Execution bounds for an on-demand request run within Lambda timeout limits. */
 export const REQUEST_PAYOUT_RUN_BOUNDS = {
@@ -1302,7 +1373,11 @@ async function runConsultantPayoutClaimGate(
     if (failed.count > 0) {
       await db.consultantEarnings.updateMany({
         where: { payoutId, status: EarningStatus.BATCHED },
-        data: { payoutId: null, status: EarningStatus.READY },
+        data: {
+          payoutId: null,
+          status: EarningStatus.READY,
+          releasedFromPayoutId: payoutId,
+        },
       });
       await releaseClawbackRecovery(db, payoutId);
     }
@@ -1498,7 +1573,11 @@ async function handleProcessSinglePayoutError(
 
     await tx.consultantEarnings.updateMany({
       where: { payoutId, status: EarningStatus.BATCHED },
-      data: { payoutId: null, status: EarningStatus.READY },
+      data: {
+        payoutId: null,
+        status: EarningStatus.READY,
+        releasedFromPayoutId: payoutId,
+      },
     });
     await releaseClawbackRecovery(tx, payoutId);
 
@@ -1542,12 +1621,9 @@ async function processSinglePayout(
     currency: string;
     method: PayoutMethod;
     idempotencyKey: string | null;
+    payoutAccount: PayoutDestination | null;
     consultantProfile: {
-      payoutAccounts: Array<{
-        razorpayFundAccId: string | null;
-        accountType: string;
-        [key: string]: unknown;
-      }>;
+      payoutAccounts?: PayoutDestination[];
       user: {
         name: string | null;
         email: string | null;
@@ -1584,9 +1660,11 @@ async function processSinglePayout(
       return blockedResult;
     }
 
-    const account = payout.consultantProfile.payoutAccounts[0];
+    const account = payableDestination(payout);
     if (!account) {
-      throw new Error("No payout account found");
+      throw new Error(
+        "The payout's account is missing, unverified, frozen or cooling off",
+      );
     }
 
     const consultantTaxInfo = await prisma.consultantTaxInfo.findUnique({
@@ -2069,6 +2147,7 @@ async function failOrCancelConsultantPayoutInTx(
     data: {
       payoutId: null,
       status: EarningStatus.READY,
+      releasedFromPayoutId: payoutId,
     },
   });
 
@@ -2090,6 +2169,83 @@ async function failOrCancelConsultantPayoutInTx(
   });
 
   await releaseClawbackRecovery(tx, payoutId);
+}
+
+/**
+ * The gateway paid a payout we had already failed and released: re-attach the
+ * earnings still READY under it, and the completion shortfall claws back the rest.
+ */
+async function completeLocallyFailedPayoutInTx(
+  tx: Tx,
+  input: {
+    payoutId: string;
+    providerPayoutId: string;
+    gatewayUtr?: string;
+    stampProviderId: boolean;
+  },
+): Promise<StagedConsultantPayoutNotice | null> {
+  const { payoutId, providerPayoutId } = input;
+  const { count } = await tx.consultantPayout.updateMany({
+    where: {
+      id: payoutId,
+      status: PayoutStatus.FAILED,
+      ...(input.stampProviderId ? { providerPayoutId: null } : {}),
+    },
+    data: {
+      status: PayoutStatus.COMPLETED,
+      processedAt: new Date(),
+      ...(input.gatewayUtr ? { gatewayUtr: input.gatewayUtr } : {}),
+      ...(input.stampProviderId ? { providerPayoutId } : {}),
+    },
+  });
+  if (count === 0) return null;
+
+  const reattached = await tx.consultantEarnings.updateMany({
+    where: {
+      releasedFromPayoutId: payoutId,
+      status: EarningStatus.READY,
+      payoutId: null,
+    },
+    data: { payoutId, status: EarningStatus.BATCHED },
+  });
+  const row = await tx.consultantPayout.findUniqueOrThrow({
+    where: { id: payoutId },
+    include: { earnings: true },
+  });
+  const reattachedPaise = row.earnings.reduce(
+    (s, e) => s + Math.max(0, e.consultantSharePaise - e.refundedShareAmount),
+    0,
+  );
+  await completeConsultantPayoutInTx(tx, row);
+
+  const context = {
+    payoutId,
+    providerPayoutId,
+    reattachedEarnings: reattached.count,
+    clawbackPaise: Math.max(0, row.amount - reattachedPaise),
+    note: "TDS and clawback recovery staged at submission were cleared on failure; check the cash leg against the gateway amount",
+  };
+  await recordSystemEventSafe({
+    db: tx,
+    category: "PAYOUT",
+    severity: "ERROR",
+    message: `PAYOUT_COMPLETED_AFTER_LOCAL_FAILED: gateway processed ${providerPayoutId} for payout ${payoutId} already marked FAILED; re-attached ${reattached.count} earning(s), clawback ${context.clawbackPaise}p`,
+    context,
+  });
+  reportSentryMessage("PAYOUT_COMPLETED_AFTER_LOCAL_FAILED", {
+    subsystem: "payments",
+    level: "error",
+    extra: context,
+  });
+
+  return stageConsultantPayoutNotice(tx, {
+    consultantProfileId: row.consultantProfileId,
+    payoutId,
+    status: "COMPLETED",
+    amountPaise: row.amount,
+    currency: row.currency,
+    method: row.method,
+  });
 }
 
 export async function handlePayoutWebhook(
@@ -2202,19 +2358,13 @@ export async function handlePayoutWebhook(
                 select: { status: true },
               })) ?? matched;
             if (current.status === PayoutStatus.FAILED) {
-              await recordSystemEventSafe({
-                db: tx,
-                category: "PAYOUT",
-                severity: "ERROR",
-                message: `PAYOUT_COMPLETED_AFTER_LOCAL_FAILED: gateway processed ${providerPayoutId} for payout ${matched.id} already marked FAILED`,
-                context: { payoutId: matched.id, providerPayoutId },
+              stagedNotice = await completeLocallyFailedPayoutInTx(tx, {
+                payoutId: matched.id,
+                providerPayoutId,
+                gatewayUtr,
+                stampProviderId,
               });
-              reportSentryMessage("PAYOUT_COMPLETED_AFTER_LOCAL_FAILED", {
-                subsystem: "payments",
-                level: "error",
-                extra: { payoutId: matched.id, providerPayoutId },
-              });
-              return false;
+              return stagedNotice !== null;
             }
           }
           console.log(
@@ -2393,6 +2543,23 @@ export async function markConsultantPayoutReversed(
           }
 
           await releaseClawbackRecovery(tx, payout.id);
+          const voided = await voidClawbacksRaisedOnPayout(tx, {
+            payoutId: payout.id,
+            consultantProfileId: payout.consultantProfileId,
+          });
+          if (voided.alreadyRecoveredPaise > 0) {
+            await recordSystemEventSafe({
+              db: tx,
+              category: "PAYOUT",
+              severity: "ERROR",
+              message: `PAYOUT_REVERSED_CLAWBACK_ALREADY_RECOVERED: payout ${payout.id} was reversed after ${voided.alreadyRecoveredPaise}p of the clawbacks raised on it had been recovered from later payouts; that sum is owed back to the consultant`,
+              context: {
+                payoutId: payout.id,
+                consultantProfileId: payout.consultantProfileId,
+                ...voided,
+              },
+            });
+          }
 
           stagedNotice = await stageConsultantPayoutNotice(tx, {
             consultantProfileId: payout.consultantProfileId,

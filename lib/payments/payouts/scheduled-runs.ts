@@ -46,7 +46,7 @@ export async function runCreatePayoutBatches(opts: {
         batchId: consultant.batchId,
         consultantPayoutsMinted: consultant.minted,
         org,
-        failed: org.failed,
+        failed: consultant.failed + org.failed,
         remaining: consultant.remaining + org.remaining,
       };
     },
