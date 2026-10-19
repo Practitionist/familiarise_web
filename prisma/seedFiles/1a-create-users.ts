@@ -34,19 +34,12 @@ import {
   config,
   assertSeedPasswordSafeForEnv,
   assertStaffSeedAllowed,
+  DEFAULT_SEED_PASSWORD,
+  requireSeedOperatorPassword,
 } from "./config";
 import { buildSeedOperatorTwoFactorRow } from "./seed-two-factor";
 
-/**
- * #1927 — the default password is a published secret, so it may never be the
- * one used on a live database.
- *
- * Kept as a named default because local seeding wants a memorable value and
- * every seeded consultant/consumer shares it, which is the point of a fixture.
- * The refusal is in `assertSeedPasswordSafeForEnv` and runs before any row is
- * written; the privileged half of the same story is `config.withStaff`.
- */
-const DEFAULT_SEED_PASSWORD = "SeedPass123!";
+// Non-operator users share the fixture default; ADMIN/STAFF use SEED_OPERATOR_PASSWORD.
 const RAW_SEED_PASSWORD = process.env.SEED_PASSWORD?.trim();
 const SEED_PASSWORD = RAW_SEED_PASSWORD || DEFAULT_SEED_PASSWORD;
 
@@ -58,13 +51,7 @@ export type UserWithProfiles = User & {
 };
 
 // User distribution - configurable via SEED_MODE environment variable.
-//
-// #1927 — the staff and admin counts collapse to zero unless
-// `SEED_WITH_STAFF=true`. Previously every run created 4 STAFF and 3 ADMIN
-// faker accounts, every one of them holding `refunds.manage` /
-// `payouts.manage`, every one of them on `SeedPass123!` — a value committed to
-// this repository. See getSeedWithStaff() in ./config for the reasoning, and
-// scripts/bootstrap-admin.ts for the front door that replaced it.
+// Staff and admin counts are zero unless `SEED_WITH_STAFF=true`.
 const NUM_CONSULTANTS = config.volumes.users.consultants;
 const NUM_CONSULTEES = config.volumes.users.consultees;
 const NUM_STAFF = config.withStaff ? config.volumes.users.staff : 0;
@@ -530,14 +517,15 @@ function createAdminProfileData(_adminIndex: number): {
 }
 
 export async function createUsers(): Promise<UserWithProfiles[]> {
-  // #1927 — both refusals run BEFORE the first write, so a rejected run leaves
-  // the database byte-for-byte as it found it. Two independent reasons, either
-  // sufficient; see ./config for the full argument.
+  // Refusals run before the first write, so a rejected run changes nothing.
   assertSeedPasswordSafeForEnv(
     RAW_SEED_PASSWORD,
     SEED_PASSWORD === DEFAULT_SEED_PASSWORD,
   );
   assertStaffSeedAllowed(config.withStaff);
+  const operatorPassword = config.withStaff
+    ? requireSeedOperatorPassword()
+    : null;
 
   await createDomainsSubdomainsTags();
 
@@ -548,7 +536,12 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
   let adminIndex = 0;
 
   const hashedPassword = await bcrypt.hash(SEED_PASSWORD, 12);
-  console.log(`  Password for all seed users: ${SEED_PASSWORD}`);
+  const hashedOperatorPassword = operatorPassword
+    ? await bcrypt.hash(operatorPassword, 12)
+    : null;
+  console.log(
+    "  Non-operator seed users use the seed default (or SEED_PASSWORD); ADMIN/STAFF use SEED_OPERATOR_PASSWORD.",
+  );
 
   console.log(`Creating ${NUM_USERS} users...`);
   console.log(`  - ${NUM_CONSULTANTS} consultants`);
@@ -567,15 +560,8 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
   }
 
   for (let i = 0; i < NUM_USERS; i++) {
-    // Determine user role based on index.
-    //
-    // #1927 — the ADMIN arm is now an explicit throw rather than the
-    // `else`. It used to be the fallback, which meant the "no privileged
-    // accounts" case depended on `NUM_USERS` staying exactly equal to the sum
-    // of the other three: change that arithmetic by one and the seed quietly
-    // started minting admins again with a password from this file. Now the
-    // fallback cannot be reached without the loop overrunning its own budget,
-    // and if it somehow is, it says so instead of writing a role.
+    // Determine user role based on index. Overrunning the per-role budget
+    // throws rather than falling through to a privileged role.
     let userRole: UserRole;
     if (consultantIndex < NUM_CONSULTANTS) {
       userRole = "CONSULTANT";
@@ -725,7 +711,10 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
           userId: user.id,
           accountId: user.id,
           providerId: "credential",
-          password: hashedPassword,
+          password:
+            userRole === "ADMIN" || userRole === "STAFF"
+              ? hashedOperatorPassword
+              : hashedPassword,
         },
       });
 

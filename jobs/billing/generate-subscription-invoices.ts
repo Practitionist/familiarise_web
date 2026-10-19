@@ -1,8 +1,9 @@
 /**
  * Cron: generate BillingSubscription-driven invoices — REAL (Issue #681).
  *
- * Schedule: daily at 01:00 UTC (06:30 IST).
- * Scope: every `BillingSubscription` with `nextInvoiceDate <= now`.
+ * Schedule: the ticker's daily window from 03:00 UTC, in `limit`-sized slices.
+ * Scope: every `BillingSubscription` with `nextInvoiceDate <= windowStart`
+ * (or now for a manual run), so a later slice never bills a newly due cycle.
  *
  * Concurrency:
  *   Each due subscription is handled inside a Serializable `$transaction`.
@@ -27,7 +28,6 @@
  */
 
 import prisma from "@/lib/prisma";
-import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { postInvoiceIssuedJournal } from "@/lib/payments/billing/org-invoice-journal";
@@ -47,8 +47,6 @@ import { Currency, OrgInvoiceStatus, Prisma } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import * as Sentry from "@sentry/nextjs";
-import { runJob } from "@/lib/observability/job-sentry";
-import { logMoneyFlags } from "@/lib/feature-flags";
 import { reportSentryError } from "@/lib/observability/report";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 
@@ -56,18 +54,37 @@ import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 // per cycle (gated by BillingSubscription.renewalReminderSentAt).
 const RENEWAL_REMINDER_WINDOW_DAYS = 7;
 
-export async function runGenerateSubscriptionInvoices(): Promise<{
+export interface GenerateSubscriptionInvoicesResult {
   generated: number;
   skipped: number;
+  failed: number;
   remindersSent: number;
-}> {
-  await abortIfMaintenance("generate-subscription-invoices");
+  remaining: number;
+}
+
+/** `limit` caps the invoice claims attempted and, separately, the reminders sent. */
+export async function runGenerateSubscriptionInvoices(opts: {
+  limit?: number;
+  windowStart?: Date;
+}): Promise<GenerateSubscriptionInvoicesResult> {
+  return withCronLock(
+    "generate-subscription-invoices",
+    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
+    () => generateSubscriptionInvoices(opts),
+  );
+}
+
+async function generateSubscriptionInvoices(opts: {
+  limit?: number;
+  windowStart?: Date;
+}): Promise<GenerateSubscriptionInvoicesResult> {
   const now = new Date();
-  const remindersSent = await sendRenewalReminders(now);
+  const asOf = opts.windowStart ?? now;
+  const remindersSent = await sendRenewalReminders(now, opts.limit);
 
   const dueSubs = await prisma.billingSubscription.findMany({
     where: {
-      nextInvoiceDate: { lte: now },
+      nextInvoiceDate: { lte: asOf },
       contract: {
         organization: { status: { in: BILLABLE_ORG_STATUSES } },
         // E2E-audit P0 fix — only bill contracts that are ACTIVE and within
@@ -96,17 +113,23 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
       },
       billingAccount: true,
     },
+    orderBy: { nextInvoiceDate: "asc" },
   });
 
   let generated = 0;
   let skipped = 0;
   const heldForPo: { organizationId: string; invoiceNumber: string }[] = [];
+  let failed = 0;
+  let attempted = 0;
+  let visited = 0;
 
   // #1447 — GSTIN-first supplier state, resolved once; a GSTIN/env mismatch
   // throws here so no invoice in the run is issued under an ambiguous state.
   const supplierState = supplierStateCode();
 
   for (const sub of dueSubs) {
+    if (opts.limit !== undefined && attempted >= opts.limit) break;
+    visited += 1;
     const subtotal =
       sub.model === "FLAT_FEE"
         ? (sub.flatFeePaise ?? 0)
@@ -142,6 +165,7 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
     // been won and the counter reserved.
     let competingInvoiceNumber: string | undefined;
 
+    attempted += 1;
     try {
       const result = await prisma.$transaction(
         async (tx) => {
@@ -150,7 +174,7 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
           const claimed = await tx.billingSubscription.updateMany({
             where: {
               id: sub.id,
-              nextInvoiceDate: { lte: now },
+              nextInvoiceDate: { lte: asOf },
               // Re-checked AT CLAIM TIME: the contract may have terminated
               // (or its term ended) between the cohort read and this write.
               contract: {
@@ -385,7 +409,7 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
             errorMessage: err.message,
           },
         });
-        skipped++;
+        failed++;
         continue;
       }
       Sentry.captureException(err, {
@@ -395,7 +419,7 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
         `[cron] Failed to generate invoice for subscription ${sub.id}:`,
         err,
       );
-      skipped++;
+      failed++;
     }
   }
 
@@ -410,12 +434,21 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
   }
 
   console.log(
-    `[cron] generate-subscription-invoices: ${generated} invoices, ${skipped} skipped, ${remindersSent} renewal reminders`,
+    `[cron] generate-subscription-invoices: ${generated} invoices, ${skipped} skipped, ${failed} failed, ${remindersSent} renewal reminders`,
   );
-  return { generated, skipped, remindersSent };
+  return {
+    generated,
+    skipped,
+    failed,
+    remindersSent,
+    remaining: dueSubs.length - visited,
+  };
 }
 
-async function sendRenewalReminders(now: Date): Promise<number> {
+async function sendRenewalReminders(
+  now: Date,
+  limit: number | undefined,
+): Promise<number> {
   const horizon = new Date(now);
   horizon.setDate(horizon.getDate() + RENEWAL_REMINDER_WINDOW_DAYS);
 
@@ -434,6 +467,8 @@ async function sendRenewalReminders(now: Date): Promise<number> {
         },
       },
     },
+    orderBy: { nextInvoiceDate: "asc" },
+    take: limit,
   });
 
   let sent = 0;
@@ -515,28 +550,4 @@ async function sendRenewalReminders(now: Date): Promise<number> {
     }
   }
   return sent;
-}
-
-async function main() {
-  console.log(
-    `[generate-subscription-invoices] Starting at ${new Date().toISOString()}`,
-  );
-  Sentry.logger.info("job:generate-subscription-invoices started");
-  const result = await withCronLock(
-    "generate-subscription-invoices",
-    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
-    () => runGenerateSubscriptionInvoices(),
-  );
-  Sentry.logger.info("job:generate-subscription-invoices finished", {
-    generated: result?.generated,
-    skipped: result?.skipped,
-    remindersSent: result?.remindersSent,
-  });
-}
-
-if (require.main === module) {
-  runJob("generate-subscription-invoices", () => {
-    logMoneyFlags("generate-subscription-invoices");
-    return main().finally(() => prisma.$disconnect());
-  });
 }

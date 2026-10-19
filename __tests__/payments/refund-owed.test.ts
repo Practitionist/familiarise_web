@@ -157,7 +157,15 @@ const mockDb = {
       return { count: r ? 1 : 0 };
     }),
   },
-  consultantEarnings: { updateMany: jest.fn(async () => ({ count: 1 })) },
+  // One tenured payee waiting on the stamp (no new-expert days).
+  consultantEarnings: {
+    updateMany: jest.fn(async () => ({ count: 1 })),
+    findMany: jest.fn(async () => [{ consultantProfileId: "cp-1" }]),
+    findFirst: jest.fn(async () => ({ createdAt: new Date(0) })),
+    aggregate: jest.fn(async () => ({
+      _sum: { consultantSharePaise: 9e9, refundedShareAmount: 0 },
+    })),
+  },
   organizationEarnings: { updateMany: jest.fn(async () => ({ count: 0 })) },
   referralCreditUsage: { findMany: jest.fn(async () => []) },
   systemEvent: { findFirst: jest.fn(async () => null) },
@@ -511,7 +519,12 @@ describe("retry-auto-refunds: the owed cohort", () => {
     await retryAutoRefunds();
     expect(mockDb.consultantEarnings.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ paymentId: "t1", holdUntil: null }),
+        where: expect.objectContaining({
+          paymentId: "t1",
+          holdUntil: null,
+          consultantProfileId: "cp-1",
+        }),
+        data: { holdUntil: expect.any(Date) },
       }),
     );
   });

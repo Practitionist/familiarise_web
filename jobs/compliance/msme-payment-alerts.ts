@@ -14,17 +14,11 @@
  *   3. Emit a structured log line that Cloud Logging can route to the
  *      #finance-alerts channel via its built-in sink.
  *
- * Schedule: daily at 04:30 UTC (10:00 IST).
- * GH Actions: `.github/workflows/cron-daily.yml` (daily 03:00 UTC).
+ * Schedule: one ticker slot a day (03:40 UTC). The digest is a single
+ * bounded email and is not idempotent, so it never repeats inside its window.
  */
 
-// Why: tsx does not auto-load .env when this script runs outside the
-// Next.js runtime. Without dotenv/config, DATABASE_URL is undefined and
-// PrismaClient throws on the first query. See
-// docs/enterprise/50-operations/02-runbooks.md "Running cron jobs locally".
-import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
-import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
 import { deliver, EMAIL_BUDGET_MS, SENDERS } from "@/lib/email";
 import { OPS_EMAIL } from "@/lib/email/config";
@@ -32,7 +26,6 @@ import { sendComplianceAlertEmail } from "@/lib/email/senders/onboarding";
 import { notifyComplianceAlert } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { abortIfMaintenance } from "@/lib/maintenance-cron";
 
 const ALERT_WINDOW_DAYS = 5;
 const MAX_ROWS_IN_EMAIL = 20;
@@ -213,20 +206,4 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
     emailSent: result.emailSent,
   });
   return result;
-}
-
-// Self-execute when invoked directly via `npx tsx`. Allows imports for
-// unit tests without triggering the cron body.
-if (require.main === module) {
-  runJob("msme-payment-alerts", async () => {
-    await abortIfMaintenance("msme-payment-alerts");
-    try {
-      const r = await runMsmePaymentAlerts();
-      console.log(
-        `[MSME] cron done — alerted=${r.alerted} atRisk=${r.atRisk} emailSent=${r.emailSent}`,
-      );
-    } finally {
-      await prisma.$disconnect();
-    }
-  });
 }
