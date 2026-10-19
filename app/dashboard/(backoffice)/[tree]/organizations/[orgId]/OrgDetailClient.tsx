@@ -15,6 +15,7 @@ import { KeyValueList, Section } from "@/components/dashboard/Section";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { InvoiceComposer } from "@/components/organization/billing/InvoiceComposer";
 import { Button } from "@/components/ui/button";
+import { fetchWithReauth } from "@/lib/auth/reauth-client";
 import type { OrgDetail } from "@/lib/backoffice/org-detail";
 import { orgStatus } from "@/lib/labels/backoffice-labels";
 import { humanizeEnum } from "@/lib/ui/tone";
@@ -135,7 +136,7 @@ export function OrgDetailClient({ org }: Readonly<{ org: OrgDetail }>) {
                 confirmLabel="Unfreeze"
                 requireReason={{ label: "What was reconciled" }}
                 onConfirm={async ({ reason }) => {
-                  const res = await fetch(
+                  const res = await fetchWithReauth(
                     `/api/admin/billing-accounts/${org.billingAccount?.id}/unfreeze`,
                     {
                       method: "POST",

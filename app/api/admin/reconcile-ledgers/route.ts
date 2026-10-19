@@ -4,9 +4,9 @@
  *
  * Platform-admin-only ledger auditor.
  *
- *  - `POST` with `{ organizationId }` runs an org-scoped reconciliation
+ *  - `POST` with `{ organizationId, reason }` runs an org-scoped reconciliation
  *    synchronously and returns the resulting report.
- *  - `POST` with no body runs the full-scope reconciliation directly
+ *  - `POST` with only `{ reason }` runs the full-scope reconciliation directly
  *    in-process under the `reconcile-ledgers` cron lock (#1943). A full-scope
  *    run already RUNNING and younger than the stale window, or holding the
  *    cron lock, answers 409.
@@ -21,90 +21,41 @@
  * aggregate shapes that we don't want leaking through an in-app UI.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
-import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
-import {
-  isReconcileRunInProgress,
-  RECONCILE_RUN_STALE_MS,
-  runReconcileLedgers,
-} from "@/scripts/reconcile/reconcile-ledgers";
+import { withOpsAction } from "@/lib/backoffice/ops-action-log";
+import { startLedgerReconciliation } from "@/lib/backoffice/ledger-run";
 
-const RunBodySchema = z.object({
-  organizationId: z.string().min(1).optional(),
-});
-
-export async function POST(req: NextRequest) {
-  const auth = await requireBackofficeSurface("payouts.manage");
-  if (auth.error) return auth.error;
-
-  const raw = await req.json().catch(() => ({}));
-  const parsed = RunBodySchema.safeParse(raw ?? {});
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid body", detail: parsed.error.flatten() },
-      { status: 400 },
-    );
-  }
-
-  const { organizationId } = parsed.data;
-  // requirePrivilegedAuth returns the privileged session id so we can
-  // attribute the run in the report row. Fall back to null for service
-  // accounts / cli if the helper ever widens.
-  const triggeredById =
-    (auth as unknown as { session?: { user?: { id?: string } } }).session?.user
-      ?.id ?? null;
-
-  if (!organizationId) {
-    const recent = await prisma.ledgerReconciliationReport.findMany({
-      where: {
-        scope: "full",
-        runAt: { gte: new Date(Date.now() - RECONCILE_RUN_STALE_MS) },
-      },
-      orderBy: { runAt: "desc" },
-      take: 5,
-      select: { id: true, summary: true },
-    });
-    const inFlight = recent.find(isReconcileRunInProgress);
-    if (inFlight) {
-      return NextResponse.json(
-        { error: "RUN_IN_PROGRESS", reportId: inFlight.id },
-        { status: 409 },
-      );
-    }
-  }
-
-  try {
-    const report = await runReconcileLedgers({
-      scope: organizationId ? `org:${organizationId}` : "full",
-      ...(organizationId ? { organizationId } : {}),
-      triggeredById: triggeredById ?? undefined,
-    });
-    return NextResponse.json({ data: report });
-  } catch (err) {
-    if (err instanceof CronLockHeldError) {
-      return NextResponse.json(
-        { error: "RUN_IN_PROGRESS", message: err.message },
-        { status: 409 },
-      );
-    }
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "admin" } },
-    );
-    console.error("[admin/reconcile-ledgers] run failed", err);
-    return NextResponse.json(
-      {
-        error: "Reconciliation run failed",
-        message: err instanceof Error ? err.message : String(err),
-      },
-      { status: 500 },
-    );
-  }
-}
+/** A run can freeze wallets, so it is a money door: ADMIN, step-up, reason, ops log row. */
+export const POST = withOpsAction(
+  "payouts.manage",
+  "ledger.reconcile",
+  { organizationId: z.string().min(1).optional() },
+  {
+    mode: "gateway",
+    target: ({ body }) => ({
+      kind: "LedgerReconciliation",
+      id: body.organizationId ?? "full",
+    }),
+    run: async ({ body, actor }) => {
+      const report = await startLedgerReconciliation({
+        organizationId: body.organizationId,
+        triggeredById: actor.userId,
+      });
+      return {
+        target: {
+          kind: "LedgerReconciliation",
+          id: body.organizationId ?? "full",
+        },
+        after: { reportId: report.id, ok: report.ok },
+        response: { data: report },
+      };
+    },
+  },
+  { stepUp: true },
+);
 
 export async function GET(req: NextRequest) {
   const auth = await requireBackofficeSurface("payouts.manage");

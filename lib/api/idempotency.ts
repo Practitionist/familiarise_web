@@ -13,11 +13,8 @@
  *
  * Where it is actually mounted, and where it is not:
  *
- *   - `/api/admin/refunds` uses it. Note this is currently defence for a
- *     future caller: the refunds dashboard is read-only and nothing in the app
- *     POSTs to that route yet, so no client sends the header. With no header
- *     the wrapper is a pass-through, so mounting it costs nothing and means the
- *     protection exists the day a button does.
+ *   - `/api/admin/refunds` does NOT use it: the door requires the
+ *     `Idempotency-Key` header and turns it into `Refund.dedupeKey`.
  *   - Admin payout processing does NOT use it and does not need it — a Redis
  *     lock plus a per-payout APPROVED->PROCESSING CAS already make it
  *     exactly-once.

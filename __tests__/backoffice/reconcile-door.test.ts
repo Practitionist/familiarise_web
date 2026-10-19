@@ -33,7 +33,7 @@ jest.mock("../../scripts/refunds/reconcile-pending-refunds", () => {
 });
 jest.mock("../../scripts/payments/reconcile-payment-status", () => ({}));
 jest.mock("../../scripts/earnings/sync-payment-earnings", () => ({}));
-jest.mock("../../app/api/admin/reconcile-ledgers/route", () => ({}));
+jest.mock("../../lib/backoffice/ledger-run", () => ({}));
 
 import { NextRequest } from "next/server";
 import { POST } from "../../app/api/admin/reconcile/[job]/route";
