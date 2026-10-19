@@ -316,7 +316,7 @@ For member payment semantics, describe a parent-linked deferred side-payment and
 
 ## 13. Source map
 
-- Checkout: `lib/payments/checkout/org-funding.ts`, `lib/payments/checkout/orchestrate.ts`, `lib/payments/checkout/revalidate.ts`, `commit/payment-row.ts`, `commit/org-utilization.ts`, `commit/ledger.ts`.
+- Checkout: `lib/payments/checkout/org-funding.ts`, `lib/payments/checkout/orchestrate.ts`, `lib/payments/checkout/revalidate.ts`, `lib/payments/checkout/commit/payment-row.ts`, `lib/payments/checkout/commit/org-utilization.ts`, `lib/payments/checkout/commit/ledger.ts`.
 - Meter and reversal: `lib/api/organizations/program-helpers.ts`, `lib/booking/allocation/commit/subscription-cap.ts`.
 - Overage math and settlement: `lib/payments/billing/overage.ts`, `lib/payments/billing/overage-preview.ts`, `lib/payments/billing/overage-settlement.ts`, `lib/payments/billing/overage-base-carve.ts`, `lib/payments/billing/overage-transitions.ts`, `lib/payments/billing/overage-accrual-void.ts`.
 - Refund owed: `lib/payments/operations/refund-owed.ts`, `scripts/payments/retry-auto-refunds.ts`.

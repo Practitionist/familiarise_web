@@ -147,7 +147,7 @@ Stream webhooks are inbound; validate signature and retain the event receipt/ide
 
 ### Enterprise outbound webhooks
 
-The `OutboundWebhookDelivery` row is the durable queue. `dispatch.ts` writes pending deliveries in the same transaction as the org mutation; `worker.ts` claims due rows atomically and sends a signed POST. Current events include membership, invoice, payout, contract, and program lifecycle changes. A delivery ID remains stable across attempts so receivers can deduplicate.
+The `OutboundWebhookDelivery` row is the durable queue. `lib/enterprise/outbound-webhooks/dispatch.ts` writes pending deliveries in the same transaction as the org mutation; `lib/enterprise/outbound-webhooks/worker.ts` claims due rows atomically and sends a signed POST. Current events include membership, invoice, payout, contract, and program lifecycle changes. A delivery ID remains stable across attempts so receivers can deduplicate.
 
 ```mermaid
 sequenceDiagram
@@ -169,15 +169,15 @@ sequenceDiagram
   Note over Worker,DB: stale IN_FLIGHT rows are re-queued after the stale window
 ```
 
-Security controls are layered. Endpoint creation and each delivery validate the destination. `ssrf-guard.ts` requires HTTPS and port 443, blocks special/private IPv4 and IPv6 ranges, resolves DNS and pins a public address for the connection, and redirects are manual/disabled. This prevents redirect-based SSRF and DNS changes between validation and dial. Retain every layer when changing fetch/runtime code.
+Security controls are layered. Endpoint creation and each delivery validate the destination. `lib/enterprise/outbound-webhooks/ssrf-guard.ts` requires HTTPS and port 443, blocks special/private IPv4 and IPv6 ranges, resolves DNS and pins a public address for the connection, and redirects are manual/disabled. This prevents redirect-based SSRF and DNS changes between validation and dial. Retain every layer when changing fetch/runtime code.
 
-`signing.ts` uses HMAC-SHA256 over the timestamp and exact JSON body. Each attempt is signed with a fresh timestamp and the receiver's replay window is five minutes. Secret rotation dual-signs with old and new values for 24 hours. Transient retry backoff is jittered; permanent 4xx is terminal FAILED; exhausted transient attempts are DEAD_LETTER. A worker recovers stale `IN_FLIGHT` rows and uses a guarded claim so overlapping ticks do not double-send.
+`lib/enterprise/outbound-webhooks/signing.ts` uses HMAC-SHA256 over the timestamp and exact JSON body. Each attempt is signed with a fresh timestamp and the receiver's replay window is five minutes. Secret rotation dual-signs with old and new values for 24 hours. Transient retry backoff is jittered; permanent 4xx is terminal FAILED; exhausted transient attempts are DEAD_LETTER. A worker recovers stale `IN_FLIGHT` rows and uses a guarded claim so overlapping ticks do not double-send.
 
 **Documentation drift:** `docs/enterprise/40-compliance-and-data/04-outbound-webhooks.md` still says 9-hour replay tolerance, 10-second timeout, and describes exhausted retries as FAILED. Code uses five minutes, 4.5 seconds, and DEAD_LETTER for exhausted transient attempts. Reconcile the contract and operational tables to source. Endpoint and prior rotation secrets are stored in schema string fields; evaluate field-level protection and ensure event/audit logs do not expose the stored secret. Current worker events include endpoint URLs in some diagnostics, so ensure query strings cannot carry bearer data before logging them.
 
 The signed body includes an event type, creation time, delivery identifier, and event-specific data. Secret rotation is an operator action gated to OWNER and returns the new secret once. Receivers must accept either signature during the grace interval and deduplicate the delivery identifier. Redelivery should retain the original logical event identity or clearly create a new attempt identity according to the receiver contract. Pausing or disabling the endpoint stops queued work; document that the row fails and requires explicit re-delivery after reactivation.
 
-`ssrf-guard.ts` returns one resolved public address and the worker supplies it to the HTTP connection lookup. This matters because DNS resolution is repeated at send time: validating only at endpoint creation would allow the target to change later. Redirects remain disabled because a public endpoint could otherwise redirect to a private host after validation. Tests should retain cases for DNS rebinding, IPv4-mapped IPv6, IPv6 special blocks, malformed literals, redirects, and custom fetch behavior.
+`lib/enterprise/outbound-webhooks/ssrf-guard.ts` returns one resolved public address and the worker supplies it to the HTTP connection lookup. This matters because DNS resolution is repeated at send time: validating only at endpoint creation would allow the target to change later. Redirects remain disabled because a public endpoint could otherwise redirect to a private host after validation. Tests should retain cases for DNS rebinding, IPv4-mapped IPv6, IPv6 special blocks, malformed literals, redirects, and custom fetch behavior.
 
 ## Event channels and observability
 
@@ -272,17 +272,17 @@ When an operator can safely replay, expose the durable row identifier and provid
 
 Use these source surfaces when updating this design. The purpose of this table is to help a reviewer locate the enforcing boundary without duplicating every implementation detail.
 
-| Concern                                  | Source                                                                  | Existing test or check                                                                       |
-| ---------------------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Registry/slugs and scheduled entrypoints | `lib/cron/cleanup-registry.ts`, `netlify/functions/cron-tick.mts`       | `__tests__/maintenance/cron-lock-registry.test.ts`, `cron-tick-targets.test.ts`              |
-| Lease and timeout behavior               | `lib/cron/with-cron-lock.ts`, `prisma/sql/check-constraints.sql`        | `__tests__/maintenance/with-cron-lock.test.ts`                                               |
-| Webhook SSRF/signing/delivery            | `lib/enterprise/outbound-webhooks/`                                     | `__tests__/enterprise/webhooks/`                                                             |
-| Email staging and delivery guard         | `lib/email/deliver.ts`, `lib/email/delivery-guard.ts`                   | `__tests__/email/deliver.test.ts`, `delivery-guard.test.ts`                                  |
-| Novu outbox                              | `lib/novu/outbox.ts`, `jobs/notifications/drain-notification-outbox.ts` | `__tests__/security/novu-payload-allowlist.test.ts` and notification tests                   |
-| Erasure retry                            | `scripts/cleanup/retry-moderation-enforcement.ts`                       | `__tests__/moderation/retry-enforcement-sweep.test.ts`                                       |
-| Data export                              | `scripts/cleanup/process-data-exports.ts`, export routes                | `__tests__/enterprise/org-role-matrix.test.ts`, `org-cross-tenant-child-ids.test.ts`         |
-| System event projection                  | `lib/enterprise/system-events.ts`, `lib/enterprise/audit-sanitize.ts`   | `__tests__/enterprise/audit-sanitize.test.ts`                                                |
-| Host configuration                       | `lib/prisma.ts`, `next.config.mjs`, `netlify.toml`, `Dockerfile`        | inspect environment-specific build/deploy checks; do not run production DB mutation commands |
+| Concern                                  | Source                                                                  | Existing test or check                                                                                    |
+| ---------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Registry/slugs and scheduled entrypoints | `lib/cron/cleanup-registry.ts`, `netlify/functions/cron-tick.mts`       | `__tests__/maintenance/cron-lock-registry.test.ts`, `__tests__/maintenance/cron-tick-targets.test.ts`     |
+| Lease and timeout behavior               | `lib/cron/with-cron-lock.ts`, `prisma/sql/check-constraints.sql`        | `__tests__/maintenance/with-cron-lock.test.ts`                                                            |
+| Webhook SSRF/signing/delivery            | `lib/enterprise/outbound-webhooks/`                                     | `__tests__/enterprise/webhooks/`                                                                          |
+| Email staging and delivery guard         | `lib/email/deliver.ts`, `lib/email/delivery-guard.ts`                   | `__tests__/email/deliver.test.ts`, `__tests__/email/delivery-guard.test.ts`                               |
+| Novu outbox                              | `lib/novu/outbox.ts`, `jobs/notifications/drain-notification-outbox.ts` | `__tests__/security/novu-payload-allowlist.test.ts` and notification tests                                |
+| Erasure retry                            | `scripts/cleanup/retry-moderation-enforcement.ts`                       | `__tests__/moderation/retry-enforcement-sweep.test.ts`                                                    |
+| Data export                              | `scripts/cleanup/process-data-exports.ts`, export routes                | `__tests__/enterprise/org-role-matrix.test.ts`, `__tests__/enterprise/org-cross-tenant-child-ids.test.ts` |
+| System event projection                  | `lib/enterprise/system-events.ts`, `lib/enterprise/audit-sanitize.ts`   | `__tests__/enterprise/audit-sanitize.test.ts`                                                             |
+| Host configuration                       | `lib/prisma.ts`, `next.config.mjs`, `netlify.toml`, `Dockerfile`        | inspect environment-specific build/deploy checks; do not run production DB mutation commands              |
 
 These tests identify focused invariants; the full catalog was not run for this documentation change. Targeted overage accrual-void and member credit-back regressions were run to verify the newly merged refund paths. Run targeted tests and repository checks when the code changes; a documentation-only PR should still confirm formatting and that links/paths resolve.
 

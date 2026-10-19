@@ -303,7 +303,7 @@ be marked as proposed rather than described as current.
 ## 10. Implementation and test anchors
 
 - Nav policy: `lib/dashboard/nav/organization.ts` and `lib/auth/org-permissions.ts`.
-- Per-org shell and role landing: `app/dashboard/organization/[orgId]/layout.tsx`, `OrgDashboardShell.tsx`, and `[orgId]/page.tsx`.
+- Per-org shell and role landing: `app/dashboard/organization/[orgId]/layout.tsx`, `app/dashboard/organization/[orgId]/OrgDashboardShell.tsx`, and `app/dashboard/organization/[orgId]/page.tsx`.
 - Workspace identity guard: `app/dashboard/org-workspace/[orgWorkspaceId]/layout.tsx`.
 - Member and invitation flows: `app/dashboard/organization/[orgId]/members/**` and matching `app/api/organizations/[orgId]/members/**` and
   invitations routes.
