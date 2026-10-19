@@ -38,6 +38,10 @@ jest.mock("../../lib/payments/tax/tds-service", () => ({
 jest.mock("../../lib/novu/service", () => ({
   notifyPayoutProcessed: jest.fn(),
 }));
+jest.mock("../../lib/payments/payouts/clawback-recovery", () => ({
+  ...jest.requireActual("../../lib/payments/payouts/clawback-recovery"),
+  outstandingClawbackPaise: jest.fn().mockResolvedValue(0),
+}));
 
 import prisma from "@/lib/prisma";
 import {
@@ -126,12 +130,15 @@ describe("Y2-1 payoutEligibilityReason", () => {
     defaultAccount: { isVerified: true },
     readyAmount: 60_000,
     minimumAmount: 50_000,
+    outstandingClawbackPaise: 0,
+    clawbackPausePaise: 1_000_000,
   };
   it.each([
     ["LIVE_PAYOUTS_OFF", { livePayoutsEnabled: false }],
     ["NON_INDIA", { isIndianResident: false }],
     ["NO_ACCOUNT", { defaultAccount: null }],
     ["UNVERIFIED", { defaultAccount: { isVerified: false } }],
+    ["CLAWBACK_RECOVERY_PAUSE", { outstandingClawbackPaise: 1_000_001 }],
     ["BELOW_MINIMUM", { readyAmount: 100 }],
   ] as const)("%s", (reason, overrides) => {
     expect(payoutEligibilityReason({ ...eligible, ...overrides })).toBe(reason);

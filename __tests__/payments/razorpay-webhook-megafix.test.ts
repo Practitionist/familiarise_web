@@ -2,6 +2,7 @@
  * @jest-environment node
  */
 
+import { createEarningsHoldStore } from "../fixtures/earnings-hold-store";
 import { PaymentGateway, Prisma } from "@prisma/client";
 import {
   disputeUpdateEntitySchema,
@@ -410,8 +411,27 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
 
     it("keeps earnings HELD when one dispute wins while a sibling dispute remains open", async () => {
       const db = getMockDb();
-      const consultantUpdateMany = jest.fn(async () => ({ count: 0 }));
-      const orgUpdateMany = jest.fn(async () => ({ count: 0 }));
+      const holds = createEarningsHoldStore();
+      holds.consultant.push({
+        id: "ce_shared",
+        paymentId: "pay_shared",
+        status: "HELD",
+        preHoldStatus: "READY",
+        holdUntil: null,
+      });
+      for (const sourceRef of ["disp_row_1", "disp_row_2"]) {
+        holds.holds.push({
+          id: `h_${sourceRef}`,
+          consultantEarningsId: "ce_shared",
+          organizationEarningsId: null,
+          reason: "DISPUTE",
+          sourceRef,
+          placedAt: new Date(0),
+          releasedAt: null,
+          releasedById: null,
+          note: null,
+        });
+      }
 
       db.__tx.dispute = {
         findUnique: jest.fn(async () => ({
@@ -422,21 +442,22 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
           amountPaise: 50000,
           currency: "INR",
           reason: "duplicate",
-          payment: { id: "pay_shared", amount: 50000, organizationId: null },
+          payment: { id: "pay_shared", amount: 50000 },
         })),
         updateMany: jest.fn(async () => ({ count: 1 })),
-        count: jest.fn(async () => 1),
       };
-      db.__tx.consultantEarnings = { updateMany: consultantUpdateMany };
-      db.__tx.organizationEarnings = { updateMany: orgUpdateMany };
+      Object.assign(db.__tx, holds.db);
       db.__tx.payment = { findUnique: jest.fn(async () => null) };
 
       const { handleDisputeUpdated } =
         await import("../../app/api/webhooks/utils");
       await handleDisputeUpdated("disp_1", "won", null);
 
-      expect(consultantUpdateMany).not.toHaveBeenCalled();
-      expect(orgUpdateMany).not.toHaveBeenCalled();
+      expect(holds.consultant[0].status).toBe("HELD");
+      expect(holds.activeReasons("ce_shared")).toEqual(["DISPUTE"]);
+      expect(
+        holds.holds.find((h) => h.sourceRef === "disp_row_1")?.releasedAt,
+      ).not.toBeNull();
     });
   });
 

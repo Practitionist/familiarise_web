@@ -88,7 +88,7 @@ describe("deriveEarningPresentation — every EarningStatus lands in one bucket"
 
   it("a dispute hold reads plainly and stays out of Available; a null hold and a matured hold read honestly", () => {
     const held = deriveEarningPresentation(
-      earning("HELD", { preDisputeStatus: "READY" }),
+      earning("HELD", { holds: [{ reason: "DISPUTE" }] }),
       LIVE,
     );
     expect(held.line).toBe("On hold — payment under review");

@@ -15,6 +15,7 @@
 import { recordOverageAtCheckout } from "@/lib/payments/billing/overage-settlement";
 import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-carve";
 import { txDouble } from "../fixtures/tx-double";
+import { createEarningsHoldStore } from "../fixtures/earnings-hold-store";
 
 // jest.mock resolves via jest's resolver (no `@/` path mapping) — use relative
 // paths that resolve to the same module files the SUT imports as `@/…`.
@@ -70,9 +71,11 @@ function makeTx(opts: {
     if (!leg) throw new Error(`no ${src} leg`);
     return leg;
   };
+  const holds = createEarningsHoldStore();
   return {
     state: { legs, payment, children, childLegSums },
     tx: {
+      ...holds.db,
       organization: {
         findUnique: jest.fn().mockResolvedValue({ dataResidencyRegion: "IN" }),
       },
@@ -593,11 +596,27 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
     );
     walletDebit.mockClear();
 
-    const consultantUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
-    const orgUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const holds = createEarningsHoldStore();
+    holds.consultant.push({
+      id: "ce_wallet_1",
+      paymentId: "parent_wallet_1",
+      status: "HELD",
+      preHoldStatus: "PENDING",
+      holdUntil: null,
+    });
+    holds.holds.push({
+      id: "h1",
+      consultantEarningsId: "ce_wallet_1",
+      organizationEarningsId: null,
+      reason: "OVERAGE",
+      sourceRef: "parent_wallet_1",
+      placedAt: new Date(0),
+      releasedAt: null,
+      releasedById: null,
+      note: null,
+    });
     const paymentUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
     const legUpdate = jest.fn().mockResolvedValue({});
-
     const mockTx = {
       overageEvent: {
         findFirst: jest.fn().mockResolvedValue({
@@ -634,8 +653,7 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
       billingAccount: {
         updateMany: jest.fn(),
       },
-      consultantEarnings: { updateMany: consultantUpdateMany },
-      organizationEarnings: { updateMany: orgUpdateMany },
+      ...holds.db,
     };
 
     const outcome = await restoreOverageBaseCarve(mockTx as never, {
@@ -662,14 +680,11 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
       },
       data: { amountPaise: { increment: 40_000 } },
     });
-    expect(consultantUpdateMany).toHaveBeenCalledWith({
-      where: {
-        paymentId: "parent_wallet_1",
-        status: "HELD",
-        preDisputeStatus: "PENDING",
-      },
-      data: { status: "PENDING", preDisputeStatus: null },
+    expect(holds.consultant[0]).toMatchObject({
+      status: "PENDING",
+      preHoldStatus: null,
     });
+    expect(holds.activeReasons("ce_wallet_1")).toEqual([]);
   });
 
   it("LICENSE parent: leaves ₹0 LICENSE leg untouched and keeps parent earnings HELD when member side-charge fails", async () => {

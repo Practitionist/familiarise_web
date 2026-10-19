@@ -6,14 +6,28 @@ import {
   isLegalDisputeTransition,
   mapDisputeStatus,
 } from "@/lib/payments/dispute-status";
-import { Prisma, PaymentGateway, DisputeStatus } from "@prisma/client";
+import {
+  DisputeStatus,
+  EarningStatus,
+  EarningsHoldReason,
+  PaymentGateway,
+  Prisma,
+} from "@prisma/client";
 import {
   getRazorpayClient,
   withRazorpaySdkTimeout,
 } from "@/lib/payments/core/razorpay";
 import { handlePayoutWebhook } from "@/lib/payments/payouts";
 import { reportUnknownPayoutStatus } from "@/lib/payments/payouts/payout-service";
-import { applyCappedOrgEarningReversal } from "@/lib/payments/payouts/earning-reversal-cas";
+import {
+  applyCappedEarningReversal,
+  applyCappedOrgEarningReversal,
+} from "@/lib/payments/payouts/earning-reversal-cas";
+import {
+  HOLDABLE_EARNING_STATUSES,
+  placeEarningsHolds,
+  releaseEarningsHolds,
+} from "@/lib/payments/payouts/earnings-holds";
 import {
   notifyRefundProcessed,
   notifyDisputeCreated,
@@ -1367,6 +1381,119 @@ export async function handleRefundCreated(
 // Dispute Webhook Handlers
 // ============================================================================
 
+const DISPUTE_HOLDABLE: EarningStatus[] = [
+  ...HOLDABLE_EARNING_STATUSES,
+  EarningStatus.HELD,
+];
+
+/**
+ * Freezes the payment's unpaid earnings under this dispute's own hold. A share
+ * batched into a payout not yet sent is pulled out first: that payout is
+ * cancelled and its other earnings return to READY.
+ */
+async function placeDisputeHolds(
+  tx: Tx,
+  paymentId: string,
+  disputeRowId: string,
+  disputeId: string,
+): Promise<{ consultant: number; org: number }> {
+  const failureReason = `Cancelled: linked payment entered dispute ${disputeId}`;
+  const openConsultantPayoutIds = [
+    ...new Set(
+      (
+        await tx.consultantEarnings.findMany({
+          where: {
+            paymentId,
+            status: EarningStatus.BATCHED,
+            payout: { status: { in: ["PENDING", "APPROVED"] } },
+          },
+          select: { payoutId: true },
+        })
+      )
+        .map((r) => r.payoutId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  // Cancel first: only a payout the CAS moved may hand its earnings back.
+  const cancelledConsultant: string[] = [];
+  for (const id of openConsultantPayoutIds) {
+    const { count } = await tx.consultantPayout.updateMany({
+      where: { id, status: { in: ["PENDING", "APPROVED"] } },
+      data: { status: "CANCELLED", failureReason },
+    });
+    if (count === 1) cancelledConsultant.push(id);
+  }
+  if (cancelledConsultant.length > 0) {
+    await tx.consultantEarnings.updateMany({
+      where: {
+        payoutId: { in: cancelledConsultant },
+        status: EarningStatus.BATCHED,
+      },
+      data: { status: EarningStatus.READY, payoutId: null },
+    });
+    for (const id of cancelledConsultant) {
+      await releaseClawbackRecovery(tx, id);
+    }
+  }
+
+  const openOrgPayoutIds = [
+    ...new Set(
+      (
+        await tx.organizationEarnings.findMany({
+          where: {
+            paymentId,
+            status: EarningStatus.BATCHED,
+            orgPayout: { status: { in: ["PENDING", "APPROVED"] } },
+          },
+          select: { orgPayoutId: true },
+        })
+      )
+        .map((r) => r.orgPayoutId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const cancelledOrg: string[] = [];
+  for (const id of openOrgPayoutIds) {
+    const { count } = await tx.organizationPayout.updateMany({
+      where: { id, status: { in: ["PENDING", "APPROVED"] } },
+      data: { status: "CANCELLED", failureReason },
+    });
+    if (count === 1) cancelledOrg.push(id);
+  }
+  if (cancelledOrg.length > 0) {
+    await tx.organizationEarnings.updateMany({
+      where: {
+        orgPayoutId: { in: cancelledOrg },
+        status: EarningStatus.BATCHED,
+      },
+      data: { status: EarningStatus.READY, orgPayoutId: null },
+    });
+    for (const id of cancelledOrg) await releaseClawbackRecovery(tx, id);
+  }
+
+  const hold = { reason: EarningsHoldReason.DISPUTE, sourceRef: disputeRowId };
+  const consultantIds = (
+    await tx.consultantEarnings.findMany({
+      where: { paymentId, status: { in: DISPUTE_HOLDABLE } },
+      select: { id: true },
+    })
+  ).map((r) => r.id);
+  const orgIds = (
+    await tx.organizationEarnings.findMany({
+      where: { paymentId, status: { in: DISPUTE_HOLDABLE } },
+      select: { id: true },
+    })
+  ).map((r) => r.id);
+  const consultant = await placeEarningsHolds(
+    tx,
+    "consultant",
+    consultantIds,
+    hold,
+  );
+  const org = await placeEarningsHolds(tx, "org", orgIds, hold);
+  return { consultant: consultant.length, org: org.length };
+}
+
 /**
  * Handle dispute created event
  */
@@ -1461,7 +1588,7 @@ export async function handleDisputeCreated(
             `Unknown dispute status "${status}" for ${disputeId} — defaulting to NEEDS_RESPONSE`,
           );
         }
-        await tx.dispute.create({
+        const created = await tx.dispute.create({
           data: {
             amountPaise: amount,
             currency: toCurrencyEnum(currency),
@@ -1479,187 +1606,15 @@ export async function handleDisputeCreated(
           `✅ Dispute ${disputeId} created for payment ${payment.id}`,
         );
 
-        // M1 FIX: Hold consultant earnings to prevent payout of disputed funds.
-        // #1020-1 — two CAS groups (not one blind updateMany) so each row's
-        // PRIOR status rides along in preDisputeStatus: a WON/CLOSED release
-        // must restore a PENDING earning to PENDING, not force-mature it. The
-        // where-clauses exclude already-HELD rows, so a second dispute on the
-        // same payment can never clobber the first hold's recorded prior.
-        const heldReady = await tx.consultantEarnings.updateMany({
-          where: { paymentId: payment.id, status: "READY" },
-          data: { status: "HELD", preDisputeStatus: "READY" },
-        });
-        const heldPending = await tx.consultantEarnings.updateMany({
-          where: { paymentId: payment.id, status: "PENDING" },
-          data: { status: "HELD", preDisputeStatus: "PENDING" },
-        });
-        const heldPendingTrust = await tx.consultantEarnings.updateMany({
-          where: { paymentId: payment.id, status: "PENDING_TRUST" },
-          data: { status: "HELD", preDisputeStatus: "PENDING_TRUST" },
-        });
-
-        let heldBatchedCount = 0;
-        if (tx.consultantEarnings.findMany) {
-          const preflightBatched = await tx.consultantEarnings.findMany({
-            where: {
-              paymentId: payment.id,
-              status: "BATCHED",
-              payout: { status: { in: ["PENDING", "APPROVED"] } },
-            },
-            select: { id: true, payoutId: true },
-          });
-          if (preflightBatched.length > 0) {
-            const batchedPayoutIds = [
-              ...new Set(
-                preflightBatched
-                  .map((r) => r.payoutId)
-                  .filter((id): id is string => Boolean(id)),
-              ),
-            ];
-            const heldBatched = await tx.consultantEarnings.updateMany({
-              where: {
-                id: { in: preflightBatched.map((r) => r.id) },
-                status: "BATCHED",
-              },
-              data: {
-                status: "HELD",
-                preDisputeStatus: "READY",
-                payoutId: null,
-              },
-            });
-            heldBatchedCount = heldBatched.count;
-            if (batchedPayoutIds.length > 0) {
-              await tx.consultantEarnings.updateMany({
-                where: {
-                  payoutId: { in: batchedPayoutIds },
-                  status: "BATCHED",
-                },
-                data: { status: "READY", payoutId: null },
-              });
-              if (tx.consultantPayout?.updateMany) {
-                await tx.consultantPayout.updateMany({
-                  where: {
-                    id: { in: batchedPayoutIds },
-                    status: { in: ["PENDING", "APPROVED"] },
-                  },
-                  data: {
-                    status: "CANCELLED",
-                    failureReason: `Cancelled: linked payment entered dispute ${disputeId}`,
-                  },
-                });
-                const cancelled = await tx.consultantPayout.findMany({
-                  where: { id: { in: batchedPayoutIds }, status: "CANCELLED" },
-                  select: { id: true },
-                });
-                for (const { id } of cancelled) {
-                  await releaseClawbackRecovery(tx, id);
-                }
-              }
-            }
-          }
-        }
-
-        const heldResult = {
-          count:
-            heldReady.count +
-            heldPending.count +
-            heldPendingTrust.count +
-            heldBatchedCount,
-        };
-        if (heldResult.count > 0) {
+        const held = await placeDisputeHolds(
+          tx,
+          payment.id,
+          created.id,
+          disputeId,
+        );
+        if (held.consultant + held.org > 0) {
           console.log(
-            `🔒 ${heldResult.count} earnings held due to dispute ${disputeId}`,
-          );
-        }
-
-        // #1008 — hold the HOST org's earnings too (mirrors the consultant hold).
-        const orgHeldReady = await tx.organizationEarnings.updateMany({
-          where: { paymentId: payment.id, status: "READY" },
-          data: { status: "HELD", preDisputeStatus: "READY" },
-        });
-        const orgHeldPending = await tx.organizationEarnings.updateMany({
-          where: { paymentId: payment.id, status: "PENDING" },
-          data: { status: "HELD", preDisputeStatus: "PENDING" },
-        });
-        const orgHeldPendingTrust = await tx.organizationEarnings.updateMany({
-          where: { paymentId: payment.id, status: "PENDING_TRUST" },
-          data: { status: "HELD", preDisputeStatus: "PENDING_TRUST" },
-        });
-
-        let orgHeldBatchedCount = 0;
-        if (tx.organizationEarnings.findMany) {
-          const preflightOrgBatched = await tx.organizationEarnings.findMany({
-            where: {
-              paymentId: payment.id,
-              status: "BATCHED",
-              orgPayout: { status: { in: ["PENDING", "APPROVED"] } },
-            },
-            select: { id: true, orgPayoutId: true },
-          });
-          if (preflightOrgBatched.length > 0) {
-            const batchedOrgPayoutIds = [
-              ...new Set(
-                preflightOrgBatched
-                  .map((r) => r.orgPayoutId)
-                  .filter((id): id is string => Boolean(id)),
-              ),
-            ];
-            const orgHeldBatched = await tx.organizationEarnings.updateMany({
-              where: {
-                id: { in: preflightOrgBatched.map((r) => r.id) },
-                status: "BATCHED",
-              },
-              data: {
-                status: "HELD",
-                preDisputeStatus: "READY",
-                orgPayoutId: null,
-              },
-            });
-            orgHeldBatchedCount = orgHeldBatched.count;
-            if (batchedOrgPayoutIds.length > 0) {
-              await tx.organizationEarnings.updateMany({
-                where: {
-                  orgPayoutId: { in: batchedOrgPayoutIds },
-                  status: "BATCHED",
-                },
-                data: { status: "READY", orgPayoutId: null },
-              });
-              if (tx.organizationPayout?.updateMany) {
-                await tx.organizationPayout.updateMany({
-                  where: {
-                    id: { in: batchedOrgPayoutIds },
-                    status: { in: ["PENDING", "APPROVED"] },
-                  },
-                  data: {
-                    status: "CANCELLED",
-                    failureReason: `Cancelled: linked payment entered dispute ${disputeId}`,
-                  },
-                });
-                const cancelled = await tx.organizationPayout.findMany({
-                  where: {
-                    id: { in: batchedOrgPayoutIds },
-                    status: "CANCELLED",
-                  },
-                  select: { id: true },
-                });
-                for (const { id } of cancelled) {
-                  await releaseClawbackRecovery(tx, id);
-                }
-              }
-            }
-          }
-        }
-
-        const orgHeld = {
-          count:
-            orgHeldReady.count +
-            orgHeldPending.count +
-            orgHeldPendingTrust.count +
-            orgHeldBatchedCount,
-        };
-        if (orgHeld.count > 0) {
-          console.log(
-            `🔒 ${orgHeld.count} org earnings held due to dispute ${disputeId}`,
+            `🔒 ${held.consultant} earnings and ${held.org} org earnings held due to dispute ${disputeId}`,
           );
         }
 
@@ -1720,25 +1675,13 @@ export async function handleDisputeCreated(
   return result;
 }
 
-/**
- * Settle a LOST/CHARGE_REFUNDED dispute: the money half of a lost chargeback,
- * shared by the dispute webhook and the reconcile-disputes poll so a LOST
- * adopted by either path moves the same money exactly once.
- *
- * Idempotent: earnings flip out of HELD/PAID only (a re-run finds none), the
- * chargeback ledger posts are keyed `chargeback:<disputeId>`, and the credit
- * notes dedupe on the dispute. Returns the consultant clawback page for the
- * caller to dispatch post-commit — never paged from inside the tx.
- */
-export interface LostDisputeSettlementInput {
+/** The dispute a settlement acts on: the row id keys its holds and receivables. */
+export interface DisputeSettlementInput {
   id: string;
   disputeId: string;
   amountPaise: number;
   paymentId: string;
-  payment: {
-    amount: number;
-    organizationId?: string | null;
-  };
+  payment: { amount: number };
 }
 
 export interface LostDisputeSettlement {
@@ -1758,29 +1701,102 @@ export interface LostDisputeSettlement {
   } | null;
 }
 
+const NO_CLAWBACK_PAGE: LostDisputeSettlement = {
+  consultantClawbackPage: null,
+};
+
+/** Rows a lost chargeback reverses; PENDING/READY rows were frozen into HELD at creation. */
+const LOST_REVERSIBLE: EarningStatus[] = [
+  EarningStatus.HELD,
+  EarningStatus.BATCHED,
+  EarningStatus.PENDING_TRUST,
+  EarningStatus.PAID,
+];
+
+/** Legs that mean an organisation, not a card, funded the payment. */
+const ORG_RAIL_LEG_SOURCES = ["WALLET", "INVOICE_ACCRUAL", "LICENSE"] as const;
+
+async function releaseDisputeHolds(
+  tx: Tx,
+  dispute: DisputeSettlementInput,
+): Promise<void> {
+  const match = {
+    reasons: [EarningsHoldReason.DISPUTE],
+    sourceRef: dispute.id,
+  };
+  const consultantIds = (
+    await tx.consultantEarnings.findMany({
+      where: { paymentId: dispute.paymentId },
+      select: { id: true },
+    })
+  ).map((r) => r.id);
+  const orgIds = (
+    await tx.organizationEarnings.findMany({
+      where: { paymentId: dispute.paymentId },
+      select: { id: true },
+    })
+  ).map((r) => r.id);
+  const consultant = await releaseEarningsHolds(
+    tx,
+    "consultant",
+    consultantIds,
+    match,
+  );
+  const org = await releaseEarningsHolds(tx, "org", orgIds, match);
+  if (consultant.released.length + org.released.length > 0) {
+    console.log(
+      `🔓 dispute ${dispute.disputeId} released its holds on ${consultant.released.length} earnings and ${org.released.length} org earnings (${consultant.restored.size + org.restored.size} left HELD)`,
+    );
+  }
+}
+
+/** WON, or a closed early-fraud warning: the money stays, so release this dispute's holds. */
+export async function settleWonDispute(
+  tx: Tx,
+  dispute: DisputeSettlementInput,
+): Promise<LostDisputeSettlement> {
+  await releaseDisputeHolds(tx, dispute);
+  return NO_CLAWBACK_PAGE;
+}
+
+/**
+ * LOST / CHARGE_REFUNDED: reverse `lostAmountPaise / payment.amount` of every
+ * share, then release this dispute's hold, so a partial loss leaves the rest
+ * payable. A share goes REFUNDED only once its whole amount is reversed.
+ * Callers run it once, on the CAS that moves the dispute to its verdict.
+ */
 export async function settleLostDispute(
   tx: Tx,
-  dispute: LostDisputeSettlementInput,
+  dispute: DisputeSettlementInput,
+  lostAmountPaise: number,
 ): Promise<LostDisputeSettlement> {
   const { disputeId } = dispute;
+  const lostPaise = Math.max(0, lostAmountPaise);
+  if (lostPaise === 0) {
+    await releaseDisputeHolds(tx, dispute);
+    return NO_CLAWBACK_PAGE;
+  }
   let consultantClawbackPage: LostDisputeSettlement["consultantClawbackPage"] =
     null;
 
-  // Dispute lost — mark held earnings as REFUNDED, accounting for partial refunds.
-  // #1020-3 — a PARTIAL dispute used to refund the FULL share on both
-  // sides; every reversal here is now prorated to the disputed fraction
-  // of the payment (floored, capped at the remaining refundable).
-  // #1020-2 — the loops also include PAID rows: a fast payout followed
-  // by a late chargeback used to leave paid-out earnings untouched.
+  const orgFunded =
+    (await tx.paymentLeg.count({
+      where: {
+        paymentId: dispute.paymentId,
+        source: { in: [...ORG_RAIL_LEG_SOURCES] },
+      },
+    })) > 0;
+
+  // Floored per share and capped at what is left to reverse.
   const prorationFactor =
     dispute.payment.amount > 0
-      ? Math.min(dispute.amountPaise / dispute.payment.amount, 1)
+      ? Math.min(lostPaise / dispute.payment.amount, 1)
       : 1;
 
   const lostConsultantEarnings = await tx.consultantEarnings.findMany({
     where: {
       paymentId: dispute.paymentId,
-      status: { in: ["HELD", "BATCHED", "PENDING_TRUST", "PAID"] },
+      status: { in: LOST_REVERSIBLE },
     },
     select: {
       id: true,
@@ -1789,8 +1805,8 @@ export async function settleLostDispute(
       consultantProfileId: true,
       payoutId: true,
       status: true,
-      // #R-06 — only a COMPLETED payout has cash to claw back; gross
-      // `amount` + `tdsDeducted` scale the recovery to NET (W1a).
+      // Only a COMPLETED payout has cash to claw back; gross `amount` and
+      // `tdsDeducted` scale the recovery to NET.
       payout: {
         select: {
           status: true,
@@ -1811,43 +1827,22 @@ export async function settleLostDispute(
   >();
   const consultantClawbackKeys: string[] = [];
   for (const earning of lostConsultantEarnings) {
-    const alreadyRefunded = earning.refundedShareAmount ?? 0;
-    const remainingRefundable = Math.max(
-      earning.consultantSharePaise - alreadyRefunded,
-      0,
+    const { reversedPaise: reversalNow } = await applyCappedEarningReversal(
+      tx,
+      earning,
+      Math.floor(earning.consultantSharePaise * prorationFactor),
+      LOST_REVERSIBLE,
     );
-    const proratedReversal = Math.floor(
-      earning.consultantSharePaise * prorationFactor,
-    );
-    const reversalNow = Math.min(proratedReversal, remainingRefundable);
+    const consultantReversalApplied = reversalNow > 0;
 
-    // CAS: source status + pinned `refundedShareAmount`, absolute write.
-    // Side effects below run only when this write landed.
-    const { count: consultantReversalCount } =
-      await tx.consultantEarnings.updateMany({
-        where: {
-          id: earning.id,
-          status: { in: ["HELD", "BATCHED", "PENDING_TRUST", "PAID"] },
-          refundedShareAmount: alreadyRefunded,
-        },
-        data: {
-          status: "REFUNDED",
-          preDisputeStatus: null,
-          refundedShareAmount: alreadyRefunded + reversalNow,
-        },
-      });
-    const consultantReversalApplied = consultantReversalCount === 1;
-
-    // #738-B — statutory parity with the refund path: withholding that
-    // was deposited against a now-charged-back sale must net out of the
-    // next quarter's return. The shared helper's dedup cap prevents a
-    // double reversal when an app refund preceded the chargeback.
+    // Withholding deposited against a charged-back sale nets out of the next
+    // return; the helper's dedup cap stops a double reversal after a refund.
     if (earning.payoutId && consultantReversalApplied) {
       await recordTdsReversal(tx, {
         payoutId: earning.payoutId,
         consultantProfileId: earning.consultantProfileId,
         earningsId: earning.id,
-        refundAmountPaise: dispute.amountPaise,
+        refundAmountPaise: lostPaise,
         paymentAmountPaise: dispute.payment.amount,
       });
     }
@@ -1861,41 +1856,32 @@ export async function settleLostDispute(
       payoutGross > 0 ? Math.max(0, 1 - payoutTds / payoutGross) : 1;
     const netClawbackPaise = Math.floor(reversalNow * netFraction);
 
-    if (earning.status === "PAID" && reversalNow > 0) {
-      if (consultantReversalApplied) {
-        consultantManualRecoveryPaise += netClawbackPaise;
-        consultantGrossReversedPaise += reversalNow;
-        consultantManualRecoveryCount++;
-      } else {
-        console.warn(
-          `⚠️ Earnings ${earning.id}: dispute ${disputeId} LOST reversal lost the CAS (status or refundedShareAmount moved) — skipping the recovery page and clawback for this writer`,
-        );
-      }
-      // Only a COMPLETED payout moved cash, and only the CAS winner claws back.
-      // B2C only: on an org-funded payment the org already bore the
-      // chargeback (applyOrgChargeback), so no consultant receivable.
+    if (earning.status === "PAID" && consultantReversalApplied) {
+      consultantManualRecoveryPaise += netClawbackPaise;
+      consultantGrossReversedPaise += reversalNow;
+      consultantManualRecoveryCount++;
+      // Only a COMPLETED payout moved cash. An org-rail payment's funder bore
+      // the chargeback (applyOrgChargeback), so no consultant receivable.
       if (
-        consultantReversalApplied &&
-        !dispute.payment.organizationId &&
+        !orgFunded &&
         earning.payoutId &&
-        earning.payout?.status === "COMPLETED"
+        earning.payout?.status === "COMPLETED" &&
+        netClawbackPaise > 0
       ) {
-        if (netClawbackPaise > 0) {
-          const prior = consultantClawbacks.get(earning.payoutId);
-          if (prior) {
-            prior.amountPaise += netClawbackPaise;
-          } else {
-            consultantClawbacks.set(earning.payoutId, {
-              consultantProfileId: earning.consultantProfileId,
-              amountPaise: netClawbackPaise,
-            });
-          }
+        const prior = consultantClawbacks.get(earning.payoutId);
+        if (prior) {
+          prior.amountPaise += netClawbackPaise;
+        } else {
+          consultantClawbacks.set(earning.payoutId, {
+            consultantProfileId: earning.consultantProfileId,
+            amountPaise: netClawbackPaise,
+          });
         }
       }
     }
 
     console.log(
-      `💸 Earnings ${earning.id} refunded (${reversalNow} paise) — dispute ${disputeId} lost`,
+      `💸 Earnings ${earning.id} reversed ${reversalNow} paise — dispute ${disputeId} lost`,
     );
   }
   // One receivable per (dispute, payout).
@@ -1931,15 +1917,12 @@ export async function settleLostDispute(
     };
   }
 
-  // #1008 — HOST org earnings side (mirrors the consultant loop above).
-  // Held AND paid org earnings flip to REFUNDED; a share already paid out
-  // to the host org is clawed back through the reversal engine. This is the
-  // host-EARNINGS recovery — distinct from applyOrgChargeback below, which
-  // recovers the sponsor-FUNDER's money (different party, no double-count).
+  // The HOST org's earnings, mirroring the consultant loop. Distinct from
+  // applyOrgChargeback below, which recovers the sponsor-FUNDER's money.
   const lostOrgEarnings = await tx.organizationEarnings.findMany({
     where: {
       paymentId: dispute.paymentId,
-      status: { in: ["HELD", "BATCHED", "PENDING_TRUST", "PAID"] },
+      status: { in: LOST_REVERSIBLE },
     },
     select: {
       id: true,
@@ -1952,34 +1935,16 @@ export async function settleLostDispute(
     },
   });
   for (const oe of lostOrgEarnings) {
-    const alreadyRefunded = oe.refundedAmountPaise ?? 0;
-    const remaining = Math.max(oe.orgSharePaise - alreadyRefunded, 0);
-    const requested = Math.min(
-      Math.floor(oe.orgSharePaise * prorationFactor),
-      remaining,
-    );
+    // The shared CAS writer pins the prior amount and writes an absolute
+    // value, so two LOST disputes compose to min(share, a + b).
+    const orgApplied = (
+      await applyCappedOrgEarningReversal(
+        tx,
+        oe,
+        Math.floor(oe.orgSharePaise * prorationFactor),
+      )
+    ).reversedPaise;
 
-    // #CASC — the shared CAS writer pins the prior amount and writes an
-    // absolute value, so two LOST disputes compose to min(share, a + b).
-    const orgApplied = (await applyCappedOrgEarningReversal(tx, oe, requested))
-      .reversedPaise;
-
-    // Terminalised here, not by the helper: a LOST dispute makes the row
-    // terminal even when proration recovers less than the share. The
-    // status predicate makes exactly one writer win.
-    if (requested > 0) {
-      await tx.organizationEarnings.updateMany({
-        where: {
-          id: oe.id,
-          status: { in: ["HELD", "BATCHED", "PENDING_TRUST", "PAID"] },
-        },
-        data: { status: "REFUNDED", preDisputeStatus: null },
-      });
-    }
-
-    // #1906 — the journal takes the APPLIED amount. Before, a capped or
-    // lost-race reversal posted its full request, so the books recorded
-    // a clawback larger than the share reduction it accompanied.
     if (
       oe.orgPayoutId &&
       oe.orgPayout?.status === "COMPLETED" &&
@@ -1998,10 +1963,11 @@ export async function settleLostDispute(
     }
   }
 
-  // #776 §C — org-funded chargeback money-path. When the disputed booking
-  // was org-funded, the funder (the org) bears the chargeback, not the
-  // platform: debit the org wallet, falling back to an ORG_RECEIVABLE the
-  // dunning flow pursues if the wallet can't cover it.
+  await releaseDisputeHolds(tx, dispute);
+
+  // An org-rail payment's funder bears the chargeback: debit its wallet, or
+  // book an ORG_RECEIVABLE. A card payment, org-tagged or not, reverses the
+  // booking journal like any B2C sale.
   const disputedPayment = await tx.payment.findUnique({
     where: { id: dispute.paymentId },
     select: {
@@ -2013,36 +1979,29 @@ export async function settleLostDispute(
       appointmentId: true,
     },
   });
-  if (disputedPayment?.organizationId) {
+  if (orgFunded && disputedPayment?.organizationId) {
     await applyOrgChargeback(tx, {
       paymentId: disputedPayment.id,
       organizationId: disputedPayment.organizationId,
       billingAccountId: disputedPayment.billingAccountId,
-      amountPaise: dispute.amountPaise,
+      amountPaise: lostPaise,
       disputeId,
     });
   } else if (disputedPayment) {
-    // #677 — B2C (non-org) booking: the org path above posts the REFUND
-    // ledger leg via applyOrgChargeback; the B2C path historically posted
-    // nothing, so a lost chargeback left the booking journal's CASH-in +
-    // payable un-reversed (REVERSED_EARNING_WITHOUT_REFUND_TXN). Post the
-    // symmetric reversal so the journal clears when the bank pulls the cash.
     await applyB2cChargebackReversal(tx, {
       paymentId: disputedPayment.id,
       disputeId,
-      amountPaise: dispute.amountPaise,
+      amountPaise: lostPaise,
       paymentAmountPaise: disputedPayment.amount,
     });
   }
 
-  // #738-B — GST parity with the refund path: a lost chargeback reverses
-  // the sale, so the issued invoice needs a Sec 34 credit note exactly
-  // like a refund would. Idempotent on CreditNote.disputeId; no-op for
-  // non-invoiced (B2C card) payments.
+  // A lost chargeback reverses the sale: a s.34 credit note, idempotent on
+  // CreditNote.disputeId; a no-op for a payment with no org invoice.
   await mintRefundCreditNote(tx, {
     paymentId: dispute.paymentId,
     disputeId: dispute.id,
-    amountPaise: dispute.amountPaise,
+    amountPaise: lostPaise,
     reason: `chargeback lost (dispute ${disputeId})`,
   });
 
@@ -2051,84 +2010,69 @@ export async function settleLostDispute(
     await revokeReplayEntitlement(tx, disputedPayment.paymentIntent);
   }
 
-  // #1365 — the B2C sibling. A personal buyer's tax invoice is reversed
-  // by its own s.34 credit note on the platform series; idempotent on
-  // ConsumerCreditNote.disputeId, and a no-op when no consumer invoice
-  // was ever issued for the payment.
+  // The consumer invoice's own s.34 credit note; idempotent on
+  // ConsumerCreditNote.disputeId, a no-op when none was issued.
   await mintConsumerCreditNote(tx, {
     paymentId: dispute.paymentId,
     disputeId: dispute.id,
-    amountPaise: dispute.amountPaise,
+    amountPaise: lostPaise,
     reason: `chargeback lost (dispute ${disputeId})`,
   });
 
   return { consultantClawbackPage };
 }
 
+/** Razorpay `closed`: a loss for whatever it deducted, else a release. */
+export async function settleClosedDispute(
+  tx: Tx,
+  dispute: DisputeSettlementInput,
+  amountDeductedPaise: number | null,
+): Promise<LostDisputeSettlement> {
+  return amountDeductedPaise && amountDeductedPaise > 0
+    ? settleLostDispute(tx, dispute, amountDeductedPaise)
+    : settleWonDispute(tx, dispute);
+}
+
+/**
+ * The money half of a dispute verdict, shared by the webhook and the
+ * reconcile-disputes poll so both write the same rows. `amountDeductedPaise`
+ * is Razorpay's `amount_deducted`; a LOST without it falls back to the
+ * disputed amount.
+ */
+export async function settleDisputeVerdict(
+  tx: Tx,
+  dispute: DisputeSettlementInput,
+  verdict: DisputeStatus,
+  amountDeductedPaise: number | null,
+): Promise<LostDisputeSettlement> {
+  switch (verdict) {
+    case "WON":
+    case "WARNING_CLOSED":
+      return settleWonDispute(tx, dispute);
+    case "LOST":
+    case "CHARGE_REFUNDED":
+      return settleLostDispute(
+        tx,
+        dispute,
+        amountDeductedPaise ?? dispute.amountPaise,
+      );
+    case "CLOSED":
+      return settleClosedDispute(tx, dispute, amountDeductedPaise);
+    default:
+      return NO_CLAWBACK_PAGE;
+  }
+}
+
 /**
  * Handle dispute updated event (status change, evidence submitted, etc.)
  */
-const TERMINAL_DISPUTE_STATUSES: DisputeStatus[] = [
+const TERMINAL_DISPUTE_STATUSES = new Set<DisputeStatus>([
   "WON",
   "LOST",
   "CHARGE_REFUNDED",
   "CLOSED",
   "WARNING_CLOSED",
-];
-
-async function releaseHeldEarningsOnDisputeWon(
-  tx: Tx,
-  paymentId: string,
-  disputeRowId: string,
-  disputeId: string,
-): Promise<void> {
-  const openSiblingDisputes = tx.dispute.count
-    ? await tx.dispute.count({
-        where: {
-          paymentId,
-          id: { not: disputeRowId },
-          status: { notIn: TERMINAL_DISPUTE_STATUSES },
-        },
-      })
-    : 0;
-  if (openSiblingDisputes > 0) return;
-
-  const relPending = await tx.consultantEarnings.updateMany({
-    where: { paymentId, status: "HELD", preDisputeStatus: "PENDING" },
-    data: { status: "PENDING", preDisputeStatus: null },
-  });
-  const relTrust = await tx.consultantEarnings.updateMany({
-    where: { paymentId, status: "HELD", preDisputeStatus: "PENDING_TRUST" },
-    data: { status: "PENDING_TRUST", preDisputeStatus: null },
-  });
-  const released = await tx.consultantEarnings.updateMany({
-    where: { paymentId, status: "HELD" },
-    data: { status: "READY", preDisputeStatus: null },
-  });
-  if (relPending.count + released.count + relTrust.count > 0) {
-    console.log(
-      `🔓 ${released.count} earnings released (+${relPending.count} restored to PENDING, +${relTrust.count} restored to PENDING_TRUST) — dispute ${disputeId} won`,
-    );
-  }
-
-  const orgRelPending = await tx.organizationEarnings.updateMany({
-    where: { paymentId, status: "HELD", preDisputeStatus: "PENDING" },
-    data: { status: "PENDING", preDisputeStatus: null },
-  });
-  const orgRelTrust = await tx.organizationEarnings.updateMany({
-    where: { paymentId, status: "HELD", preDisputeStatus: "PENDING_TRUST" },
-    data: { status: "PENDING_TRUST", preDisputeStatus: null },
-  });
-  const orgReleased = await tx.organizationEarnings.updateMany({
-    where: { paymentId, status: "HELD" },
-    data: { status: "READY", preDisputeStatus: null },
-  });
-  if (orgReleased.count + orgRelPending.count + orgRelTrust.count > 0) {
-    console.log(
-      `🔓 ${orgReleased.count} org earnings released (+${orgRelPending.count} restored to PENDING, +${orgRelTrust.count} restored to PENDING_TRUST) — dispute ${disputeId} won`,
-    );
-  }
-}
+]);
 
 async function stageDisputeUpdatedNotification(
   tx: Tx,
@@ -2184,7 +2128,7 @@ async function stageDisputeUpdatedNotification(
     return { notification: notifications?.[0]?.staged ?? null, emails };
   }
 
-  if (TERMINAL_DISPUTE_STATUSES.includes(mappedStatus)) {
+  if (TERMINAL_DISPUTE_STATUSES.has(mappedStatus)) {
     const disputePayment = await tx.payment.findUnique({
       where: { id: dispute.paymentId },
     });
@@ -2225,21 +2169,14 @@ export async function handleDisputeUpdated(
   status: string,
   evidence: Prisma.InputJsonValue | null,
   respondBy?: number | null,
+  amountDeductedPaise: number | null = null,
 ) {
   const txOutcome = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
         const dispute = await tx.dispute.findUnique({
           where: { disputeId },
-          include: {
-            payment: {
-              select: {
-                id: true,
-                amount: true,
-                organizationId: true,
-              },
-            },
-          },
+          include: { payment: { select: { id: true, amount: true } } },
         });
 
         if (!dispute) {
@@ -2301,26 +2238,13 @@ export async function handleDisputeUpdated(
           });
         }
 
-        let clawbackPage: LostDisputeSettlement["consultantClawbackPage"] =
-          null;
-        if (
-          mappedStatus === "WON" ||
-          mappedStatus === "WARNING_CLOSED" ||
-          mappedStatus === "CLOSED"
-        ) {
-          await releaseHeldEarningsOnDisputeWon(
+        const { consultantClawbackPage: clawbackPage } =
+          await settleDisputeVerdict(
             tx,
-            dispute.paymentId,
-            dispute.id,
-            disputeId,
+            dispute,
+            mappedStatus,
+            amountDeductedPaise,
           );
-        } else if (
-          mappedStatus === "LOST" ||
-          mappedStatus === "CHARGE_REFUNDED"
-        ) {
-          const settlement = await settleLostDispute(tx, dispute);
-          clawbackPage = settlement.consultantClawbackPage;
-        }
 
         const stagedNotice = await stageDisputeUpdatedNotification(
           tx,

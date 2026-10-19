@@ -34,6 +34,7 @@ import {
 import { AppointmentType, PAYOUT_CONSTANTS } from "./constants";
 import {
   computeHoldUntil,
+  withNewExpertHold,
   holdHoursFor,
   resolveEarningsAnchor,
 } from "./earnings-hold";
@@ -1334,7 +1335,12 @@ async function createMultiPartyConsultantEarnings(
         shareBps: shareBpsList[i] ?? 0,
         appointmentOccurrenceId,
         status: initialEarningStatus,
-        holdUntil,
+        // The new-expert days follow each payee, never the owner's standing.
+        holdUntil: await withNewExpertHold(
+          tx,
+          p.consultantProfileId,
+          holdUntil,
+        ),
         currency: "INR",
       },
     });
@@ -1448,7 +1454,7 @@ async function createSingleOwnerConsultantEarnings(
       consultantSharePaise: totalConsultantPool,
       appointmentOccurrenceId,
       status: initialEarningStatus,
-      holdUntil,
+      holdUntil: await withNewExpertHold(tx, consultantProfileId, holdUntil),
       currency: "INR",
     },
   });
@@ -2439,6 +2445,7 @@ export async function getConsultantEarnings(
             processedAt: true,
           },
         },
+        holds: { where: { releasedAt: null }, select: { reason: true } },
       },
       orderBy: { createdAt: "desc" },
       take: limit,

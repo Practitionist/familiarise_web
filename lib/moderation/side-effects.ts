@@ -17,7 +17,7 @@ import type {
   ModerationActionType,
   ModerationReportType,
 } from "@prisma/client";
-import { EarningStatus } from "@prisma/client";
+import { EarningStatus, EarningsHoldReason } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   removeCollaboratorStanding,
@@ -29,7 +29,10 @@ import {
   isExpectedStreamError,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
-import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
+import {
+  HOLDABLE_EARNING_STATUSES,
+  placeEarningsHolds,
+} from "@/lib/payments/payouts/earnings-holds";
 import {
   notifyModerationWarning,
   notifyAccountSuspended,
@@ -103,12 +106,6 @@ export interface SideEffectSummary extends TransactionalEffectResult {
   collaboratorRevocationAttempts?: number;
   errors?: string[];
 }
-
-const HOLDABLE: EarningStatus[] = [
-  EarningStatus.PENDING,
-  EarningStatus.PENDING_TRUST,
-  EarningStatus.READY,
-];
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -365,15 +362,9 @@ async function banOrSuspendUser(
   return result;
 }
 
-// Hold the banned consultant's unpaid earnings for admin disposition; HELD is
-// skipped by the release-earnings cron. PAID/REFUNDED rows are untouchable by
-// doctrine — the guard below enforces it per row. Returns undefined when the
-// target has no consultant profile (earningsHeld stays unset, as before).
-//
-// #1020-1 — a ban records the row's PRIOR status in preDisputeStatus like the
-// dispute hold (one CAS group per source status), so release restores
-// PENDING_TRUST instead of READY. Every hold excludes HELD, so the first
-// freeze owns the column.
+// Freezes the banned consultant's unpaid earnings under a MODERATION hold for
+// admin disposition; rows another owner already holds gain this hold too.
+// Undefined when the target has no consultant profile.
 async function holdBannedConsultantEarnings(
   tx: Tx,
   targetUserId: string,
@@ -387,33 +378,17 @@ async function holdBannedConsultantEarnings(
   const holdable = await tx.consultantEarnings.findMany({
     where: {
       consultantProfileId: target.consultantProfileId,
-      status: { in: HOLDABLE },
+      status: { in: [...HOLDABLE_EARNING_STATUSES, EarningStatus.HELD] },
     },
-    select: { id: true, status: true },
+    select: { id: true },
   });
-  for (const row of holdable) {
-    assertEarningStatusTransitionLegal(row.id, row.status, EarningStatus.HELD);
-  }
-  const ids = holdable.map((r) => r.id);
-  const heldReady = await tx.consultantEarnings.updateMany({
-    where: { id: { in: ids }, status: EarningStatus.READY },
-    data: { status: EarningStatus.HELD, preDisputeStatus: EarningStatus.READY },
-  });
-  const heldPending = await tx.consultantEarnings.updateMany({
-    where: { id: { in: ids }, status: EarningStatus.PENDING },
-    data: {
-      status: EarningStatus.HELD,
-      preDisputeStatus: EarningStatus.PENDING,
-    },
-  });
-  const heldTrust = await tx.consultantEarnings.updateMany({
-    where: { id: { in: ids }, status: EarningStatus.PENDING_TRUST },
-    data: {
-      status: EarningStatus.HELD,
-      preDisputeStatus: EarningStatus.PENDING_TRUST,
-    },
-  });
-  return heldReady.count + heldPending.count + heldTrust.count;
+  const placed = await placeEarningsHolds(
+    tx,
+    "consultant",
+    holdable.map((r) => r.id),
+    { reason: EarningsHoldReason.MODERATION, sourceRef: targetUserId },
+  );
+  return placed.length;
 }
 
 async function unverifyProfiles(
