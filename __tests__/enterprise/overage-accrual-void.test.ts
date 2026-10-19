@@ -121,6 +121,12 @@ function world(invoicedChildIds: string[] = []) {
   const hasReversal = (c: Child) =>
     c.legs.some((l) => l.source === "OVERAGE_INVOICE_ACCRUAL_REVERSAL");
   const accounts = new Map<string, Entry["account"]>();
+  // Three one-session batches on a one-engagement seat: two went over cap.
+  const ledger = [false, true, true].map((wasOverage) => ({
+    engagementsConsumed: 1,
+    priceAtBookingPaise: wasOverage ? 0 : 2_360_000,
+    wasOverage,
+  }));
 
   const tx = txDouble({
     bookingUtilization: {
@@ -136,16 +142,11 @@ function world(invoicedChildIds: string[] = []) {
       })),
       update: jest.fn(async () => ({})),
     },
-    // Three one-session batches on a one-engagement seat: two went over cap.
     usageLedgerEntry: {
-      findMany: jest.fn(async () =>
-        [false, true, true].map((wasOverage) => ({
-          engagementsConsumed: 1,
-          priceAtBookingPaise: wasOverage ? 0 : 2_360_000,
-          wasOverage,
-        })),
+      findMany: jest.fn(async () => ledger),
+      create: jest.fn(async ({ data }: { data: (typeof ledger)[number] }) =>
+        ledger.push(data),
       ),
-      create: jest.fn(async () => ({})),
     },
     programAssignment: { updateMany: jest.fn(async () => ({ count: 1 })) },
     overageEvent: {
@@ -166,6 +167,12 @@ function world(invoicedChildIds: string[] = []) {
       ),
     },
     payment: {
+      findMany: jest.fn(
+        async ({ where }: { where: { id: { in: string[] } } }) =>
+          where.id.in
+            .map((id) => children.get(id)!)
+            .filter((c) => c.billableToOrgInvoiceId !== null),
+      ),
       updateMany: jest.fn(async ({ where }: { where: { id: string } }) => {
         const c = children.get(where.id);
         const ok =
@@ -304,6 +311,11 @@ describe("a cancelled LICENSE booking's CHARGE_ORG overage accruals", () => {
       });
     }
     expect(w.events.every((e) => e.chargeStatus === "REVERSED")).toBe(true);
+
+    // A replayed reversal finds the sale spent and voids nothing twice.
+    await reverseBookingUtilization(w.tx, { paymentId: PARENT });
+    expect(w.children.get("child-1")!.legs).toHaveLength(2);
+    expect(w.journals.size).toBe(4);
     expect(mockRecordSystemEvent).not.toHaveBeenCalled();
 
     const rollup = await rollupOrgInvoiceAccruals({
@@ -325,7 +337,10 @@ describe("a cancelled LICENSE booking's CHARGE_ORG overage accruals", () => {
     expect(mockRecordSystemEvent).toHaveBeenCalledTimes(1);
     expect(mockRecordSystemEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        context: expect.objectContaining({ childPaymentIds: ["child-2"] }),
+        context: expect.objectContaining({
+          childPaymentIds: ["child-2"],
+          invoiceIds: ["inv-1"],
+        }),
       }),
     );
   });

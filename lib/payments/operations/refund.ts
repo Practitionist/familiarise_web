@@ -992,9 +992,11 @@ export async function refundMemberOverageSidePayment(input: {
     overageCreditBackOwed(input.parentPaymentId, owed[0]),
     { initiatedByUserId: input.initiatedByUserId },
   );
-  // PAYMENT_NOT_SUCCEEDED is a benign re-drive the nested call already reported.
+  // A gateway failure is captured by refundPayment and PAYMENT_NOT_SUCCEEDED is
+  // a benign re-drive, so neither is captured again.
   if (
     outcome.kind !== "failed" ||
+    outcome.error instanceof RefundGatewayError ||
     (outcome.error instanceof RefundValidationError &&
       outcome.error.code === "PAYMENT_NOT_SUCCEEDED")
   ) {

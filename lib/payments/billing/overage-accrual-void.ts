@@ -78,16 +78,22 @@ export async function voidReversedOverageAccruals(
     });
   }
 
-  if (notVoided.length > 0) {
-    await recordSystemEventSafe({
-      db: tx,
-      category: "PAYMENT",
-      severity: "WARN",
-      message: `OVERAGE_ACCRUAL_INVOICED: ${notVoided.length} reversed overage accrual(s) of payment ${params.parentPaymentId} are already invoiced and need a credit note`,
-      context: {
-        parentPaymentId: params.parentPaymentId,
-        childPaymentIds: notVoided,
-      },
-    });
-  }
+  if (notVoided.length === 0) return;
+  // Only an invoiced child is still billed; a refunded or already-voided one is not.
+  const invoiced = await tx.payment.findMany({
+    where: { id: { in: notVoided }, billableToOrgInvoiceId: { not: null } },
+    select: { id: true, billableToOrgInvoiceId: true },
+  });
+  if (invoiced.length === 0) return;
+  await recordSystemEventSafe({
+    db: tx,
+    category: "PAYMENT",
+    severity: "WARN",
+    message: `OVERAGE_ACCRUAL_INVOICED: ${invoiced.length} reversed overage accrual(s) of payment ${params.parentPaymentId} are already invoiced and need a credit note`,
+    context: {
+      parentPaymentId: params.parentPaymentId,
+      childPaymentIds: invoiced.map((c) => c.id),
+      invoiceIds: invoiced.map((c) => c.billableToOrgInvoiceId),
+    },
+  });
 }

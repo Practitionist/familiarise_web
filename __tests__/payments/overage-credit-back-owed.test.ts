@@ -56,7 +56,18 @@ jest.mock("../../lib/prisma", () => ({
         return { count: hit.length };
       },
     },
-    refund: { findUnique: async () => null },
+    refund: {
+      findUnique: async ({ where }: { where: { dedupeKey: string } }) => {
+        const r = mockRefunds.find((x) => x.dedupeKey === where.dedupeKey);
+        return r
+          ? {
+              id: `rf-${r.paymentId}`,
+              amountPaise: 100_000,
+              status: "SUCCEEDED",
+            }
+          : null;
+      },
+    },
     systemEvent: { findFirst: async () => null },
   },
 }));
@@ -110,6 +121,7 @@ beforeEach(() => {
       return {
         refundId: `rf-${input.paymentId}`,
         amountRefundedPaise: 100_000,
+        status: "SUCCEEDED",
       };
     },
   );
@@ -133,6 +145,15 @@ describe("member overage credit-back on a full parent refund", () => {
     expect(swept.owed.refunded).toBe(2);
     expect(mockRefunds.map((r) => r.dedupeKey)).toEqual(SIDES.map(keyOf));
     expect([...mockRows.values()].every((r) => !r.refundOwedKey)).toBe(true);
+
+    // Replaying the inline drive and the sweep moves no money twice.
+    await refundMemberOverageSidePayment({
+      parentPaymentId: PARENT,
+      due,
+      initiatedByUserId: null,
+    });
+    await retryAutoRefunds({ limit: 10 });
+    expect(mockRefunds).toHaveLength(3);
   });
 
   it("keeps a failed inline attempt as a counted debt the sweep retries, reported once", async () => {
