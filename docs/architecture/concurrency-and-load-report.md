@@ -148,7 +148,7 @@ The following risks are ordered by estimated impact at launch-scale load. The mi
 
 **Current mitigation.** `lib/db/serializable-retry.ts` exists and is intended for this path. Whether it is actually applied to the `updateMany` call requires code-level verification.
 
-**Verification needed.** Confirm that the program-assignment increment in `lib/api/organizations/program-helpers.ts` is either (a) the lone SQL statement (no broader transaction, relying on Postgres row-level locking) or (b) wrapped in a SERIALIZABLE transaction via `serializableRetry`. The race-condition test suite at `tests/typescript/race-conditions/test-checkout-race-condition-fix.ts` should be run to confirm.
+**Verification needed.** Confirm that the program-assignment increment in `lib/api/organizations/program-helpers.ts` is either (a) the lone SQL statement (no broader transaction, relying on Postgres row-level locking) or (b) wrapped in a SERIALIZABLE transaction via `serializableRetry`. No scenario under `tests/typescript/race-conditions/` exercises this path — seat and program-assignment over-allocation is staged work under scenario 14c in the [chaos test runbook](../enterprise/50-operations/06-chaos-test-runbook.md) — so this stays a code-level verification until that scenario lands.
 
 ### Risk 3 — BillingAccount Wallet Over-Draft (Severity: HIGH)
 
@@ -621,14 +621,14 @@ The `connection_limit=1` parameter tells Prisma to open only one physical connec
 
 ### Action 2 — Run the Race-Condition Test Suite (Priority: High)
 
-The repository already contains race-condition tests at `tests/typescript/race-conditions/`. Run them against the dev database before launch to confirm that concurrent booking, concurrent wallet debits, and concurrent program-assignment increments all behave correctly:
+The repository already contains race-condition tests at `tests/typescript/race-conditions/`. Run them against the dev database before launch to confirm that concurrent booking behaves correctly — categories 01, 06, 07 and 11 cover it. Concurrent wallet debits and concurrent program-assignment increments are **not** covered by any scenario; see Risk 2 above and scenario 14c in the [chaos test runbook](../enterprise/50-operations/06-chaos-test-runbook.md):
 
 ```bash
-npx tsx tests/typescript/race-conditions/test-checkout-race-condition-fix.ts
+npm run test:race
 npx tsx tests/typescript/test-race-condition-fix.ts
 ```
 
-If either test fails (more than one booking succeeds, or a wallet goes negative), it indicates the serializable isolation guard is not applied correctly. The fix is to wrap the relevant Prisma calls in `serializableRetry(() => prisma.$transaction(..., { isolationLevel: 'Serializable' }))`.
+If either test fails — more than one booking succeeds — the serializable isolation guard is not applied correctly. The fix is to wrap the relevant Prisma calls in `serializableRetry(() => prisma.$transaction(..., { isolationLevel: 'Serializable' }))`.
 
 ### Action 3 — Upgrade to Netlify Pro Before Launch (Priority: High)
 
