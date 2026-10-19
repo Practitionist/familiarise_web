@@ -29,6 +29,16 @@ export const PAYOUT_CONSTANTS = {
 
   /** Maximum retry attempts for failed payouts */
   MAX_RETRY_ATTEMPTS: 3,
+
+  /** Extra hold days on a new expert's earnings. */
+  NEW_EXPERT_EXTRA_HOLD_DAYS: 7,
+  /** An expert is new while their first paid earning is younger than this. */
+  NEW_EXPERT_TENURE_DAYS: 30,
+  /** ...or while their lifetime non-refunded share is below this (₹50,000). */
+  NEW_EXPERT_LIFETIME_SHARE_PAISE: 5_000_000,
+
+  /** A consultant owing more than this clawback (₹10,000) is not paid out. */
+  CLAWBACK_RECOVERY_PAUSE_PAISE: 1_000_000,
 } as const;
 
 /**

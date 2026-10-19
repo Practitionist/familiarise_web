@@ -101,8 +101,8 @@ treat its findings as real review feedback anyway.
 ## 5. Verify against a running app with seeded data
 
 The practical loop is a background dev server plus real HTTP calls, not schema
-pushes. Every seeded user shares one password, `SeedPass123!`
-(`prisma/seedFiles/1a-create-users.ts`, overridable with `SEED_PASSWORD`), stored
+pushes. Every non-operator seeded user shares one password, the seed default
+(`prisma/seedFiles/1a-create-users.ts`, overridable with `SEED_PASSWORD`; ADMIN/STAFF use `SEED_OPERATOR_PASSWORD`), stored
 as a bcrypt hash on a BetterAuth `Account` row with `providerId: "credential"`.
 The credential roster lives in `docs/team/mock-credentials.md`; a reseed is a
 write against the shared project, with no production guard anywhere in

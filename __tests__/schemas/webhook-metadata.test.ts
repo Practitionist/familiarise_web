@@ -119,3 +119,24 @@ describe("validateWebhookMetadata — empty-string notes are absent fields", () 
     expect(parsed.endsAt).toBe(NEW_KEYS.endsAt);
   });
 });
+
+describe("validateWebhookMetadata — Better Auth user ids", () => {
+  const userId = "Xk9aQ2mPz7LrT4bN8vWc3HdY6sFj1GeU"; // 32-char base62, not a cuid
+  const SLOT = { startsAt: NEW_KEYS.startsAt, endsAt: NEW_KEYS.endsAt };
+  const cases: Record<string, Record<string, string>> = {
+    CONSULTATION: { planId: BASE.planId, ...SLOT },
+    SUBSCRIPTION: { planId: BASE.planId, ...SLOT },
+    WEBINAR: { eventId: BASE.planId },
+    CLASS: { eventId: BASE.planId },
+    TRIAL: { planId: BASE.planId, trialId: BASE.planId, ...SLOT },
+  };
+
+  it.each(Object.entries(cases))("accepts one for %s", (type, fields) => {
+    const parsed = validateWebhookMetadata({
+      appointmentType: type,
+      userId,
+      ...fields,
+    });
+    expect(parsed.userId).toBe(userId);
+  });
+});

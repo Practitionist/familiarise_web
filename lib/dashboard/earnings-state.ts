@@ -12,7 +12,11 @@
  */
 
 import { formatInTimeZone } from "date-fns-tz";
-import type { EarningStatus, PayoutStatus } from "@prisma/client";
+import type {
+  EarningStatus,
+  EarningsHoldReason,
+  PayoutStatus,
+} from "@prisma/client";
 import { toneBadge, type Tone } from "@/lib/dashboard/money-state";
 
 export type EarningBucket = "AVAILABLE" | "PENDING" | "PAID_OUT" | "REFUNDED";
@@ -37,7 +41,8 @@ export const SEGMENT_LABEL: Record<EarningBucket, string> = {
 export interface EarningRowInput {
   status: EarningStatus;
   holdUntil: Date | string | null;
-  preDisputeStatus?: EarningStatus | null;
+  /** The earning's active holds; a DISPUTE one names the payment review. */
+  holds?: ReadonlyArray<{ reason: EarningsHoldReason }>;
   consultantSharePaise: number;
   refundedShareAmount?: number;
   /** The sponsoring organisation when the booking was org-funded. */
@@ -173,7 +178,7 @@ export function deriveEarningPresentation(
         label: "On hold",
         tone: "caution",
         // #1771 row 8 — plain words; HELD stays out of AVAILABLE (bucketOf).
-        line: e.preDisputeStatus
+        line: e.holds?.some((h) => h.reason === "DISPUTE")
           ? "On hold — payment under review"
           : "Held for account review — support can tell you more",
         availableOn: null,

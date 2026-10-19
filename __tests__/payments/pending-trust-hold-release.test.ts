@@ -3,17 +3,9 @@
  */
 
 /**
- * #1020-1 — a freeze must remember where the row came from, whoever froze it.
- *
- * The dispute path has always recorded `preDisputeStatus` and restored it on a
- * WON/CLOSED release. Moderation's ban hold wrote the column for nobody, and the
- * operator release never read it, so a PENDING_TRUST row frozen by a ban came
- * back READY — money out to a consultant whose sponsoring org has never been
- * verified or paid, with the invoice-fraud park never seeing the row again.
- *
- * These pin the two halves: the ban records the prior, and the release honours
- * it (PENDING_TRUST → PENDING_TRUST, not READY), with the NULL-prior fallback
- * documented as the hold-window rule the release has always used.
+ * A hold remembers the row's prior status and each owner releases only its own
+ * hold: a ban-held PENDING_TRUST row returns to PENDING_TRUST, a NULL prior
+ * follows the hold-window rule, and a dispute release leaves a ban hold in place.
  */
 
 jest.mock("@sentry/nextjs", () => ({
@@ -72,9 +64,17 @@ jest.mock("../../lib/collaborators/service", () => ({
   revokeCollaboratorAccess: jest.fn(async () => ({ success: true })),
 }));
 
-import { EarningStatus } from "@prisma/client";
+import { EarningStatus, EarningsHoldReason } from "@prisma/client";
 import { applyTransactionalEffects } from "@/lib/moderation/side-effects";
 import { releaseHeldEarnings } from "@/lib/payments/payouts/earnings-hold-ops";
+import {
+  placeEarningsHolds,
+  releaseEarningsHolds,
+} from "@/lib/payments/payouts/earnings-holds";
+import {
+  createEarningsHoldStore,
+  type FakeEarning,
+} from "../fixtures/earnings-hold-store";
 
 const banInput = {
   actionType: "USER_BANNED" as const,
@@ -87,274 +87,161 @@ const banInput = {
   staffUserId: "admin-1",
 };
 
-// ── the ban hold ─────────────────────────────────────────────────────────────
+const HELD = EarningStatus.HELD;
+const matured = new Date(0);
+const notYet = new Date("2999-01-01");
 
-type HoldableRow = { id: string; status: EarningStatus };
+type Row = FakeEarning & {
+  consultantProfileId: string;
+  payment: { refunds: unknown[]; disputes: unknown[] };
+};
 
-function banTx(rows: HoldableRow[]) {
-  const state = rows.map((r) => ({ ...r }));
-  const updateMany = jest.fn(
-    async (args: {
-      where: { id: { in: string[] }; status: EarningStatus };
-      data: { status: EarningStatus; preDisputeStatus: EarningStatus };
-    }) => {
-      const matched = state.filter(
-        (r) =>
-          args.where.id.in.includes(r.id) && r.status === args.where.status,
-      );
-      for (const r of matched) r.status = args.data.status;
-      return { count: matched.length };
-    },
-  );
+function earning(
+  id: string,
+  status: EarningStatus,
+  over: Partial<Row> = {},
+): Row {
   return {
-    state,
-    updateMany,
-    tx: {
-      user: {
-        update: jest.fn(async () => ({})),
-        findUnique: jest.fn(async () => ({ consultantProfileId: "cp-1" })),
-      },
-      session: { deleteMany: jest.fn(async () => ({ count: 1 })) },
-      consultantEarnings: {
-        // Honours the HOLDABLE filter the real query carries.
-        findMany: jest.fn(
-          async (args: { where: { status: { in: EarningStatus[] } } }) =>
-            state
-              .filter((r) => args.where.status.in.includes(r.status))
-              .map((r) => ({ id: r.id, status: r.status })),
-        ),
-        updateMany,
-      },
-      collaborator: { updateManyAndReturn: jest.fn(async () => []) },
-    } as never,
+    id,
+    paymentId: "pay-1",
+    consultantProfileId: "cp-1",
+    status,
+    preHoldStatus: null,
+    holdUntil: matured,
+    payment: { refunds: [], disputes: [] },
+    ...over,
   };
 }
 
+function storeWith(rows: Row[]) {
+  const store = createEarningsHoldStore<Row>();
+  store.consultant.push(...rows);
+  const tx = {
+    ...store.db,
+    user: {
+      update: jest.fn(async () => ({})),
+      findUnique: jest.fn(async () => ({ consultantProfileId: "cp-1" })),
+    },
+    session: { deleteMany: jest.fn(async () => ({ count: 1 })) },
+    collaborator: { updateManyAndReturn: jest.fn(async () => []) },
+  };
+  return { store, tx: tx as never };
+}
+
+const byId = (
+  store: ReturnType<typeof createEarningsHoldStore<Row>>,
+  id: string,
+) => store.consultant.find((e) => e.id === id)!;
+
 describe("a ban hold records the row's prior status", () => {
-  it("stamps preDisputeStatus per source status, so the release can undo the hold exactly", async () => {
-    const { tx, updateMany, state } = banTx([
-      { id: "e-ready", status: EarningStatus.READY },
-      { id: "e-pending", status: EarningStatus.PENDING },
-      { id: "e-trust", status: EarningStatus.PENDING_TRUST },
+  it("freezes every holdable row under one MODERATION hold, keeping each prior", async () => {
+    const { store, tx } = storeWith([
+      earning("e-ready", EarningStatus.READY),
+      earning("e-pending", EarningStatus.PENDING),
+      earning("e-trust", EarningStatus.PENDING_TRUST),
     ]);
 
     const result = await applyTransactionalEffects(tx, banInput);
 
     expect(result.earningsHeld).toBe(3);
-    expect(state.map((r) => r.status)).toEqual([
-      EarningStatus.HELD,
-      EarningStatus.HELD,
-      EarningStatus.HELD,
+    expect(store.consultant.map((r) => [r.status, r.preHoldStatus])).toEqual([
+      [HELD, EarningStatus.READY],
+      [HELD, EarningStatus.PENDING],
+      [HELD, EarningStatus.PENDING_TRUST],
     ]);
-    // One CAS group per source status, each carrying that status as the prior —
-    // the shape the dispute hold uses in app/api/webhooks/utils.ts.
-    expect(updateMany.mock.calls.map(([a]) => a.data.preDisputeStatus)).toEqual(
-      [EarningStatus.READY, EarningStatus.PENDING, EarningStatus.PENDING_TRUST],
-    );
+    expect(store.holds.map((h) => [h.reason, h.sourceRef])).toEqual([
+      ["MODERATION", "u1"],
+      ["MODERATION", "u1"],
+      ["MODERATION", "u1"],
+    ]);
   });
 
-  it("cannot clobber a dispute hold: an already-HELD row is neither read nor rewritten", async () => {
-    const { tx, updateMany, state } = banTx([
-      { id: "e-trust", status: EarningStatus.PENDING_TRUST },
-      // A row the dispute webhook froze, with the prior it recorded there.
-      { id: "e-disputed", status: EarningStatus.HELD },
+  it("adds its hold to a dispute-held row without overwriting the dispute's prior", async () => {
+    const { store, tx } = storeWith([
+      earning("e-disputed", EarningStatus.READY),
+    ]);
+    await placeEarningsHolds(store.db as never, "consultant", ["e-disputed"], {
+      reason: EarningsHoldReason.DISPUTE,
+      sourceRef: "disp-row-1",
+    });
+
+    await applyTransactionalEffects(tx, banInput);
+
+    expect(byId(store, "e-disputed")).toMatchObject({
+      status: HELD,
+      preHoldStatus: EarningStatus.READY,
+    });
+    expect(store.activeReasons("e-disputed")).toEqual([
+      "DISPUTE",
+      "MODERATION",
     ]);
 
-    const result = await applyTransactionalEffects(tx, banInput);
-
-    expect(result.earningsHeld).toBe(1);
-    for (const [args] of updateMany.mock.calls) {
-      expect(args.where.status).not.toBe(EarningStatus.HELD);
-      expect(args.where.id.in).not.toContain("e-disputed");
-    }
-    expect(state.find((r) => r.id === "e-disputed")).toEqual({
-      id: "e-disputed",
-      status: EarningStatus.HELD,
-    });
+    // Releasing the dispute leaves the ban's hold, so the money stays frozen.
+    await releaseEarningsHolds(
+      store.db as never,
+      "consultant",
+      ["e-disputed"],
+      {
+        reasons: [EarningsHoldReason.DISPUTE],
+        sourceRef: "disp-row-1",
+      },
+    );
+    expect(byId(store, "e-disputed").status).toBe(HELD);
+    expect(store.activeReasons("e-disputed")).toEqual(["MODERATION"]);
   });
 });
 
-// ── the operator release ─────────────────────────────────────────────────────
-
-type FakeRow = {
-  id: string;
-  status: EarningStatus;
-  holdUntil: Date | null;
-  preDisputeStatus: EarningStatus | null;
-};
-
-const HELD = EarningStatus.HELD;
-
-function releaseDb(rows: FakeRow[]) {
-  const state = rows.map((r) => ({ ...r }));
-  const db = {
-    consultantEarnings: {
-      findMany: jest.fn(async () =>
-        state.map((r) => ({
-          id: r.id,
-          status: r.status,
-          holdUntil: r.holdUntil,
-          preDisputeStatus: r.preDisputeStatus,
-          payment: { refunds: [], disputes: [] },
-        })),
-      ),
-      // Honours the four predicates the release writes into each WHERE.
-      updateMany: jest.fn(
-        async (args: {
-          where: {
-            id: { in: string[] };
-            status: EarningStatus;
-            preDisputeStatus: EarningStatus | null;
-            holdUntil?: { lte: Date };
-          };
-          data: {
-            status: EarningStatus;
-            preDisputeStatus: EarningStatus | null;
-          };
-        }) => {
-          const matched = state.filter(
-            (r) =>
-              args.where.id.in.includes(r.id) &&
-              r.status === args.where.status &&
-              r.preDisputeStatus === args.where.preDisputeStatus &&
-              (args.where.holdUntil === undefined ||
-                (r.holdUntil !== null &&
-                  r.holdUntil <= args.where.holdUntil.lte)),
-          );
-          for (const r of matched) {
-            r.status = args.data.status;
-            r.preDisputeStatus = args.data.preDisputeStatus;
-          }
-          return { count: matched.length };
-        },
-      ),
-    },
-  };
-  return { db: db as never, state };
-}
-
-const matured = new Date(0);
-const notYet = new Date("2999-01-01");
-
 describe("releaseHeldEarnings restores the recorded prior", () => {
-  it("returns a ban-held PENDING_TRUST row to PENDING_TRUST, never to READY", async () => {
-    const { db, state } = releaseDb([
-      {
-        id: "e1",
-        status: HELD,
-        holdUntil: matured,
-        preDisputeStatus: EarningStatus.PENDING_TRUST,
-      },
-    ]);
+  async function opsHeld(rows: Row[]) {
+    const ctx = storeWith(rows);
+    for (const r of rows) {
+      await placeEarningsHolds(ctx.store.db as never, "consultant", [r.id], {
+        reason: EarningsHoldReason.OPERATOR,
+        sourceRef: `ops-${r.id}`,
+      });
+    }
+    return ctx;
+  }
 
-    const result = await releaseHeldEarnings(
-      db,
-      ["e1"],
-      "ban lifted, review clean",
-    );
+  it.each([
+    [EarningStatus.PENDING_TRUST, matured, EarningStatus.PENDING_TRUST],
+    [EarningStatus.PENDING_TRUST, notYet, EarningStatus.PENDING_TRUST],
+    [EarningStatus.PENDING, matured, EarningStatus.PENDING],
+    [EarningStatus.READY, notYet, EarningStatus.READY],
+  ])(
+    "a row held from %s (holdUntil %s) returns to %s",
+    async (from, holdUntil, to) => {
+      const { store, tx } = await opsHeld([earning("e1", from, { holdUntil })]);
 
-    expect(state[0].status).toBe(EarningStatus.PENDING_TRUST);
-    expect(result.trust).toEqual(["e1"]);
-    expect(result.ready).toEqual([]);
-    // The marker is cleared, as the dispute release does, so the next hold
-    // cannot inherit it.
-    expect(state[0].preDisputeStatus).toBeNull();
-  });
+      const out = await releaseHeldEarnings(tx, "e1", "review clean", "adm-1");
 
-  it("still restores a dispute-held row to its true prior (PENDING stays PENDING)", async () => {
-    const { db, state } = releaseDb([
-      {
-        id: "p",
-        status: HELD,
-        holdUntil: matured,
-        preDisputeStatus: EarningStatus.PENDING,
-      },
-      {
-        id: "r",
-        status: HELD,
-        holdUntil: matured,
-        preDisputeStatus: EarningStatus.READY,
-      },
-      {
-        id: "t",
-        status: HELD,
-        holdUntil: matured,
-        preDisputeStatus: EarningStatus.PENDING_TRUST,
-      },
-    ]);
-
-    const result = await releaseHeldEarnings(
-      db,
-      ["p", "r", "t"],
-      "dispute won",
-    );
-
-    expect(state.map((s) => s.status)).toEqual([
-      EarningStatus.PENDING,
-      EarningStatus.READY,
-      EarningStatus.PENDING_TRUST,
-    ]);
-    expect(result).toEqual({ ready: ["r"], pending: ["p"], trust: ["t"] });
-  });
+      expect(out).toEqual({ side: "consultant", status: to });
+      expect(byId(store, "e1")).toMatchObject({
+        status: to,
+        preHoldStatus: null,
+      });
+      expect(store.holds[0]).toMatchObject({ releasedById: "adm-1" });
+    },
+  );
 
   it("falls back to the hold-window rule for a NULL prior: READY once matured, PENDING until", async () => {
-    const { db, state } = releaseDb([
-      {
-        id: "matured-row",
-        status: HELD,
-        holdUntil: matured,
-        preDisputeStatus: null,
-      },
-      {
-        id: "waiting-row",
-        status: HELD,
-        holdUntil: notYet,
-        preDisputeStatus: null,
-      },
+    const { store, tx } = storeWith([
+      earning("matured-row", HELD, { holdUntil: matured }),
+      earning("waiting-row", HELD, { holdUntil: notYet }),
     ]);
+    for (const id of ["matured-row", "waiting-row"]) {
+      await placeEarningsHolds(store.db as never, "consultant", [id], {
+        reason: EarningsHoldReason.OPERATOR,
+        sourceRef: "seed",
+      });
+    }
 
-    const result = await releaseHeldEarnings(
-      db,
-      ["matured-row", "waiting-row"],
-      "operator hold lifted",
-    );
+    await releaseHeldEarnings(tx, "matured-row", "lifted", "adm-1");
+    await releaseHeldEarnings(tx, "waiting-row", "lifted", "adm-1");
 
-    expect(state.map((s) => s.status)).toEqual([
+    expect(store.consultant.map((s) => s.status)).toEqual([
       EarningStatus.READY,
       EarningStatus.PENDING,
     ]);
-    expect(result).toEqual({
-      ready: ["matured-row"],
-      pending: ["waiting-row"],
-      trust: [],
-    });
-  });
-
-  it("parks a trust-prior row back in the park even when its hold has matured", async () => {
-    // The gate is the PRIOR, not the clock: maturity is what force-readies a
-    // blank-prior row, and it must not become a maturity signal for a row whose
-    // prior says the sponsor has still never paid.
-    const { db, state } = releaseDb([
-      {
-        id: "e1",
-        status: HELD,
-        holdUntil: matured,
-        preDisputeStatus: EarningStatus.PENDING_TRUST,
-      },
-      {
-        id: "e2",
-        status: HELD,
-        holdUntil: notYet,
-        preDisputeStatus: EarningStatus.PENDING_TRUST,
-      },
-    ]);
-
-    const result = await releaseHeldEarnings(db, ["e1", "e2"], "un-hold");
-
-    expect(state.map((s) => s.status)).toEqual([
-      EarningStatus.PENDING_TRUST,
-      EarningStatus.PENDING_TRUST,
-    ]);
-    expect(result.trust).toEqual(["e1", "e2"]);
   });
 });

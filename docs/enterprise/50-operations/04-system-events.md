@@ -246,19 +246,18 @@ Wallet events capture prepaid-balance mutations: a top-up intent (`WALLET_TOPUP`
 
 INVOICE events record the full arc of an organization's billing document — from purchase-order creation and invoice generation through payment, overdue escalation, cancellation, and refund — and are the primary audit trail for GST compliance and dunning state.
 
-| action                                                                        | Emission point                                                                                                                                          |
-| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PURCHASE_ORDER_CREATED`                                                      | PO route                                                                                                                                                |
-| `INVOICE_GENERATED` / `INVOICE_ISSUED`                                        | `generate-subscription-invoices` (daily) + accrual rollup (`settle-invoice-accruals`, monthly)                                                          |
-| `INVOICE_OVERDUE` **(v2 #779)**                                               | `dunning` cron stage 1 (ISSUED→OVERDUE, stamps `markedOverdueAt`)                                                                                       |
-| `INVOICE_DUNNING_SUSPENDED` **(#812)**                                        | `dunning` cron stage 3 (`ENABLE_DUNNING_SUSPEND`-gated) when an OVERDUE invoice stays unpaid 7 days past the last reminder; stamps `dunningSuspendedAt` |
-| `INVOICE_PAYMENT_INITIATED` / `INVOICE_PAID`                                  | invoice pay flow                                                                                                                                        |
-| `INVOICE_CANCELLED` / `INVOICE_VOIDED` / `INVOICE_REFUNDED` / `REFUND_DENIED` | invoice admin actions                                                                                                                                   |
-| `FUNDING_SOURCE_CHANGED` / `BILLING_ACCOUNT_UPDATED` **(#1860)**              | billing-account PATCH; billing-account edits used to write a SETTINGS row and moved here so operations-only readers no longer see a credit limit        |
-| `PURCHASE_ORDER_UPDATED` / `PURCHASE_ORDER_DELETED` **(#1860)**               | PO money and term edits, and PO deletes                                                                                                                 |
-| `INVOICE_UPDATED` **(#1860)**                                                 | invoice due-date or PDF edits                                                                                                                           |
-| `REIMBURSEMENTS_EXPORTED` **(#1860)**                                         | the reimbursements export                                                                                                                               |
-| `INVOICE_ROLLED_UP`                                                           | accrual rollup in `settle-invoice-accruals` (parent rolls up child invoices), which absorbed the retired `consolidated-invoice-rollup` job (#813)       |
+| action                                                           | Emission point                                                                                                                                          |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PURCHASE_ORDER_CREATED`                                         | PO route                                                                                                                                                |
+| `INVOICE_GENERATED` / `INVOICE_ISSUED`                           | `generate-subscription-invoices` (daily) + accrual rollup (`settle-invoice-accruals`, monthly)                                                          |
+| `INVOICE_OVERDUE` **(v2 #779)**                                  | `dunning` cron stage 1 (ISSUED→OVERDUE, stamps `markedOverdueAt`)                                                                                       |
+| `INVOICE_DUNNING_SUSPENDED` **(#812)**                           | `dunning` cron stage 3 (`ENABLE_DUNNING_SUSPEND`-gated) when an OVERDUE invoice stays unpaid 7 days past the last reminder; stamps `dunningSuspendedAt` |
+| `INVOICE_PAYMENT_INITIATED` / `INVOICE_PAID`                     | invoice pay flow                                                                                                                                        |
+| `INVOICE_CANCELLED` / `INVOICE_REFUNDED` / `REFUND_DENIED`       | invoice admin actions                                                                                                                                   |
+| `FUNDING_SOURCE_CHANGED` / `BILLING_ACCOUNT_UPDATED` **(#1860)** | billing-account PATCH; billing-account edits used to write a SETTINGS row and moved here so operations-only readers no longer see a credit limit        |
+| `PURCHASE_ORDER_UPDATED` / `PURCHASE_ORDER_DELETED` **(#1860)**  | PO money and term edits, and PO deletes                                                                                                                 |
+| `REIMBURSEMENTS_EXPORTED` **(#1860)**                            | the reimbursements export                                                                                                                               |
+| `INVOICE_ROLLED_UP`                                              | accrual rollup in `settle-invoice-accruals` (parent rolls up child invoices), which absorbed the retired `consolidated-invoice-rollup` job (#813)       |
 
 > Dunning **stage 2** (escalation reminders, 7d cadence × max 3) does
 > **not** emit a distinct audit action — it bumps

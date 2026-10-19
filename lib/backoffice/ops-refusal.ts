@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { DomainVerificationRequiredError } from "@/lib/enterprise/governance";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import {
   CronLockHeldError,
@@ -31,6 +32,8 @@ export function refusalResponse(err: unknown): NextResponse | null {
   if (err instanceof RefundGatewayError)
     return body(err.code, err.message, 502);
   if (err instanceof IllegalTransitionError)
+    return body(err.code, err.message, err.httpStatus);
+  if (err instanceof DomainVerificationRequiredError)
     return body(err.code, err.message, err.httpStatus);
   if (err instanceof IllegalEarningStatusTransitionError)
     return body("ILLEGAL_EARNING_TRANSITION", err.message, 409);

@@ -9,6 +9,8 @@ import { scheduleAfter } from "@/lib/api/after-safe";
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import {
+  EarningStatus,
+  EarningsHoldReason,
   PaymentStatus,
   type Currency,
   type PaymentGateway,
@@ -22,6 +24,8 @@ import { walletCredit, walletDebit } from "@/lib/api/organizations/wallet";
 import { orgBuyerCountry } from "@/lib/compliance/gst";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { overageAccrualKey } from "@/lib/payments/billing/overage-accrual-void";
+import { lockHeldOverageEarnings } from "@/lib/payments/billing/overage-base-carve";
+import { placeEarningsHolds } from "@/lib/payments/payouts/earnings-holds";
 import { notifyOrgProgramOverageDue } from "@/lib/novu/org-workflows";
 import { sendOrgOverageDueEmail } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
@@ -501,22 +505,29 @@ async function recordMemberOverageCharge(
   const holdable = {
     paymentId,
     OR: [
-      { status: "PENDING" as const },
-      { status: "HELD" as const, preDisputeStatus: "PENDING" as const },
+      { status: EarningStatus.PENDING },
+      { status: EarningStatus.HELD, preHoldStatus: EarningStatus.PENDING },
     ],
   };
-  if (typeof tx.consultantEarnings?.updateMany === "function") {
-    await tx.consultantEarnings.updateMany({
+  const consultantIds = (
+    await tx.consultantEarnings.findMany({
       where: holdable,
-      data: { status: "HELD", preDisputeStatus: "PENDING" },
-    });
-  }
-  if (typeof tx.organizationEarnings?.updateMany === "function") {
-    await tx.organizationEarnings.updateMany({
+      select: { id: true },
+    })
+  ).map((r) => r.id);
+  const orgIds = (
+    await tx.organizationEarnings.findMany({
       where: holdable,
-      data: { status: "HELD", preDisputeStatus: "PENDING" },
-    });
-  }
+      select: { id: true },
+    })
+  ).map((r) => r.id);
+  await lockHeldOverageEarnings(tx, consultantIds, orgIds);
+  const overageHold = {
+    reason: EarningsHoldReason.OVERAGE,
+    sourceRef: paymentId,
+  };
+  await placeEarningsHolds(tx, "consultant", consultantIds, overageHold);
+  await placeEarningsHolds(tx, "org", orgIds, overageHold);
 
   return {
     userId,

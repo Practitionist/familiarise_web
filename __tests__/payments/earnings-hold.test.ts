@@ -12,6 +12,7 @@
 import {
   computeHoldUntil,
   recomputeEarningsHold,
+  withNewExpertHold,
 } from "@/lib/payments/payouts/earnings-hold";
 
 const HOUR = 60 * 60 * 1000;
@@ -148,5 +149,67 @@ describe("recomputeEarningsHold", () => {
 
     expect(await recomputeEarningsHold(client, "appt-1")).toBe(0);
     expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe("withNewExpertHold", () => {
+  const now = at("2026-10-20T00:00:00Z");
+  const hold = at("2026-10-21T00:00:00Z");
+  const db = (firstAt: Date | null, lifetimePaise: number, refunded = 0) =>
+    ({
+      consultantEarnings: {
+        findFirst: jest.fn(async () => firstAt && { createdAt: firstAt }),
+        aggregate: jest.fn(async () => ({
+          _sum: {
+            consultantSharePaise: BigInt(lifetimePaise),
+            refundedShareAmount: BigInt(refunded),
+          },
+        })),
+      },
+    }) as never;
+
+  it.each([
+    ["no paid earning yet", null, 0, 7],
+    [
+      "first paid earning under 30 days old",
+      at("2026-10-01T00:00:00Z"),
+      9e6,
+      7,
+    ],
+    [
+      "tenured but under ₹50,000 lifetime",
+      at("2026-01-01T00:00:00Z"),
+      4_999_999,
+      7,
+    ],
+    [
+      "tenured and over ₹50,000 lifetime",
+      at("2026-01-01T00:00:00Z"),
+      5_000_000,
+      0,
+    ],
+  ])("%s", async (_label, firstAt, lifetime, extraDays) => {
+    const out = await withNewExpertHold(
+      db(firstAt, lifetime),
+      "cp-1",
+      hold,
+      now,
+    );
+    expect(out!.getTime() - hold.getTime()).toBe(extraDays * 24 * HOUR);
+  });
+
+  it("counts the lifetime share net of partial refunds", async () => {
+    const tenured = at("2026-01-01T00:00:00Z");
+    const out = await withNewExpertHold(
+      db(tenured, 6_000_000, 1_500_000),
+      "cp-1",
+      hold,
+      now,
+    );
+    expect(out!.getTime() - hold.getTime()).toBe(7 * 24 * HOUR);
+  });
+
+  it("leaves an undelivered (null) hold null", async () => {
+    expect(await withNewExpertHold(db(null, 0), "cp-1", null, now)).toBeNull();
   });
 });

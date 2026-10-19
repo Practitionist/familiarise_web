@@ -28,7 +28,14 @@ it("completion stamps only the rows still waiting", async () => {
   const completedAt = new Date("2026-09-25T10:00:00Z");
   await stampTrialEarningsHold(
     {
-      consultantEarnings: { updateMany },
+      consultantEarnings: {
+        updateMany,
+        findMany: jest.fn().mockResolvedValue([{ consultantProfileId: "cp" }]),
+        findFirst: jest.fn().mockResolvedValue({ createdAt: new Date(0) }),
+        aggregate: jest.fn().mockResolvedValue({
+          _sum: { consultantSharePaise: 9e9, refundedShareAmount: 0 },
+        }),
+      },
       organizationEarnings: { updateMany },
     } as never,
     "pay_trial",
@@ -37,7 +44,11 @@ it("completion stamps only the rows still waiting", async () => {
   const [call] = updateMany.mock.calls as unknown as [
     { where: unknown; data: { holdUntil: Date } },
   ][];
-  expect(call[0].where).toEqual({ paymentId: "pay_trial", holdUntil: null });
+  expect(call[0].where).toEqual({
+    paymentId: "pay_trial",
+    holdUntil: null,
+    consultantProfileId: "cp",
+  });
   expect(call[0].data.holdUntil.getTime()).toBeGreaterThan(
     completedAt.getTime(),
   );

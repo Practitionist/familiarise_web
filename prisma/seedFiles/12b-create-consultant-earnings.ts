@@ -182,6 +182,13 @@ export async function createConsultantEarnings(): Promise<void> {
             status,
             holdUntil,
             paidAt,
+            // HELD is a projection of an active hold, so a seeded HELD row carries one.
+            ...(status === "HELD" && {
+              preHoldStatus: "PENDING",
+              holds: {
+                create: { reason: "OPERATOR", sourceRef: "seed", note: "seed" },
+              },
+            }),
           },
         });
         await postLedgerTxn(tx, {

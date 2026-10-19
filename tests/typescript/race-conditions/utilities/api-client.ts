@@ -16,7 +16,8 @@ import { join } from "node:path";
  */
 
 export const BASE_URL = process.env.CHAOS_BASE_URL ?? "http://localhost:3000";
-const SEED_PASSWORD = process.env.SEED_PASSWORD ?? "SeedPass123!";
+// Sign-in password for the seeded accounts; supplied via the environment.
+const SEED_PASSWORD = process.env.SEED_PASSWORD ?? "";
 
 /**
  * The simulated 01-06 categories run anywhere, but these real-API scenarios
