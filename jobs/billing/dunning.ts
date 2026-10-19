@@ -13,21 +13,17 @@
  * TODO(#1319): config-gated booking-suspend cascade once OVERDUE drags past
  * the grace window.
  *
- * Schedule: daily at 05:00 IST (`.github/workflows/dunning.yml`), after the
- * invoice-gen + expire-contracts crons so a freshly-issued/expired invoice
- * is in its final state before dunning reads it.
+ * Schedule: the ticker's daily window from 23:30 UTC. Every stage measures
+ * its cutoffs from the window start, so all slices of one window see one
+ * cohort, and the suspension cap is per window, not per slice.
  *
  * Idempotent: every stamp (markedOverdueAt / lastDunningReminderAt) is an
  * idempotency gate baked into the claim updateMany, so two cron replicas or
  * a same-day re-run can't double-notify.
- *
- * Usage:
- *   npx tsx jobs/billing/dunning.ts
  */
 
-import "dotenv/config";
 import prisma from "@/lib/prisma";
-import { ENABLE_DUNNING_SUSPEND, logMoneyFlags } from "@/lib/feature-flags";
+import { ENABLE_DUNNING_SUSPEND } from "@/lib/feature-flags";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   notifyOrgInvoiceOverdue,
@@ -37,10 +33,7 @@ import {
 import { sendOrgInvoiceOverdueEmail } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import * as Sentry from "@sentry/nextjs";
-import { runJob } from "@/lib/observability/job-sentry";
 
 // #779 — 7-day cadence between escalations, capped at 3 reminders.
 const REMINDER_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -54,7 +47,7 @@ const MAX_REMINDERS = 3;
 // lib/payments/checkout/org-funding.ts behind the SAME flag.
 const SUSPEND_ENABLED = ENABLE_DUNNING_SUSPEND;
 const SUSPEND_GRACE_MS = 7 * 24 * 60 * 60 * 1000; // 7d past the final reminder
-// Turning suspension on must not suspend the whole OVERDUE backlog in one tick.
+// Turning suspension on must not suspend the whole OVERDUE backlog in one window.
 const MAX_SUSPENSIONS_PER_RUN = 20;
 
 // #779 — only dun orgs that are still reachable. DEACTIVATED orgs are torn
@@ -71,6 +64,7 @@ interface DunningStats {
   scannedStage2: number;
   remindersSent: number;
   suspended: number;
+  failed: number;
 }
 
 /**
@@ -124,33 +118,59 @@ async function claimInvoiceGuarded(
   inv: { id: string },
   label: string,
   run: () => Promise<boolean>,
-): Promise<boolean> {
+): Promise<"claimed" | "lost" | "failed"> {
   try {
-    return await withSerializableRetry(run);
+    return (await withSerializableRetry(run)) ? "claimed" : "lost";
   } catch (err) {
     console.error(
       `[dunning] ${label} claim failed for invoice ${inv.id}:`,
       err,
     );
-    return false;
+    return "failed";
   }
 }
 
-export async function runDunning(): Promise<DunningStats> {
+export async function runDunning(opts: {
+  limit?: number;
+  windowStart?: Date;
+}): Promise<DunningStats> {
+  return withCronLock("dunning", { failMode: "closed" }, () => dunning(opts));
+}
+
+/** `limit` caps the claims attempted across all three stages. */
+async function dunning(opts: {
+  limit?: number;
+  windowStart?: Date;
+}): Promise<DunningStats> {
   const stats: DunningStats = {
     scannedStage1: 0,
     markedOverdue: 0,
     scannedStage2: 0,
     remindersSent: 0,
     suspended: 0,
+    failed: 0,
   };
   const now = new Date();
+  const asOf = opts.windowStart ?? now;
+  let attempted = 0;
+  const budgetLeft = () =>
+    opts.limit === undefined ? undefined : Math.max(0, opts.limit - attempted);
+  const claim = async (
+    inv: { id: string },
+    label: string,
+    run: () => Promise<boolean>,
+  ): Promise<boolean> => {
+    attempted += 1;
+    const outcome = await claimInvoiceGuarded(inv, label, run);
+    if (outcome === "failed") stats.failed += 1;
+    return outcome === "claimed";
+  };
 
   // ── Stage 1: ISSUED past due → OVERDUE first notice ────────────────────
   const newlyOverdue = await prisma.organizationInvoice.findMany({
     where: {
       status: "ISSUED",
-      dueDate: { lt: now },
+      dueDate: { lt: asOf },
       markedOverdueAt: null,
       organization: { status: { in: [...DUNNABLE_ORG_STATUSES] } },
     },
@@ -163,6 +183,8 @@ export async function runDunning(): Promise<DunningStats> {
       dueDate: true,
       organization: { select: { name: true } },
     },
+    orderBy: { dueDate: "asc" },
+    take: budgetLeft(),
   });
   stats.scannedStage1 = newlyOverdue.length;
 
@@ -170,7 +192,7 @@ export async function runDunning(): Promise<DunningStats> {
     // #1132 follow-up — transient P2034 aborts are retried by the house
     // helper; persistent failures skip this invoice so one bad row can't
     // kill the day's run.
-    const claimed = await claimInvoiceGuarded(inv, "stage", () =>
+    const claimed = await claim(inv, "stage", () =>
       prisma.$transaction(
         async (tx) => {
           // Claim the row only if still ISSUED + un-stamped so two replicas
@@ -220,31 +242,37 @@ export async function runDunning(): Promise<DunningStats> {
   }
 
   // ── Stage 2: OVERDUE escalation reminders (7-day cadence, cap 3) ────────
-  const cutoff = new Date(now.getTime() - REMINDER_INTERVAL_MS);
-  const dueForReminder = await prisma.organizationInvoice.findMany({
-    where: {
-      status: "OVERDUE",
-      dunningReminderCount: { lt: MAX_REMINDERS },
-      organization: { status: { in: [...DUNNABLE_ORG_STATUSES] } },
-      // next reminder when (now - (lastDunningReminderAt ?? markedOverdueAt)) > 7d
-      OR: [
-        { lastDunningReminderAt: { lt: cutoff } },
-        { lastDunningReminderAt: null, markedOverdueAt: { lt: cutoff } },
-      ],
-    },
-    select: {
-      id: true,
-      organizationId: true,
-      invoiceNumber: true,
-      totalPaise: true,
-      displayCurrency: true,
-      dueDate: true,
-      markedOverdueAt: true,
-      lastDunningReminderAt: true,
-      dunningReminderCount: true,
-      organization: { select: { name: true } },
-    },
-  });
+  const cutoff = new Date(asOf.getTime() - REMINDER_INTERVAL_MS);
+  const stage2Take = budgetLeft();
+  const dueForReminder =
+    stage2Take === 0
+      ? []
+      : await prisma.organizationInvoice.findMany({
+          where: {
+            status: "OVERDUE",
+            dunningReminderCount: { lt: MAX_REMINDERS },
+            organization: { status: { in: [...DUNNABLE_ORG_STATUSES] } },
+            // next reminder when (now - (lastDunningReminderAt ?? markedOverdueAt)) > 7d
+            OR: [
+              { lastDunningReminderAt: { lt: cutoff } },
+              { lastDunningReminderAt: null, markedOverdueAt: { lt: cutoff } },
+            ],
+          },
+          select: {
+            id: true,
+            organizationId: true,
+            invoiceNumber: true,
+            totalPaise: true,
+            displayCurrency: true,
+            dueDate: true,
+            markedOverdueAt: true,
+            lastDunningReminderAt: true,
+            dunningReminderCount: true,
+            organization: { select: { name: true } },
+          },
+          orderBy: { id: "asc" },
+          take: stage2Take,
+        });
   stats.scannedStage2 = dueForReminder.length;
 
   for (const inv of dueForReminder) {
@@ -256,7 +284,7 @@ export async function runDunning(): Promise<DunningStats> {
     // #1132 follow-up — transient P2034 aborts are retried by the house
     // helper; persistent failures skip this invoice so one bad row can't
     // kill the day's run.
-    const claimed = await claimInvoiceGuarded(inv, "stage", () =>
+    const claimed = await claim(inv, "stage", () =>
       prisma.$transaction(
         async (tx) => {
           const claim = await tx.organizationInvoice.updateMany({
@@ -299,31 +327,47 @@ export async function runDunning(): Promise<DunningStats> {
   // (both sides gated on the same ENABLE_DUNNING_SUSPEND flag). Paying the invoice (status leaves OVERDUE)
   // lifts the suspension naturally — nothing un-stamps a paid invoice.
   if (SUSPEND_ENABLED) {
-    const suspendCutoff = new Date(now.getTime() - SUSPEND_GRACE_MS);
-    const toSuspend = await prisma.organizationInvoice.findMany({
-      where: {
-        status: "OVERDUE",
-        dunningReminderCount: { gte: MAX_REMINDERS },
-        dunningSuspendedAt: null,
-        // #812 — grace measured from the LAST reminder, not the overdue stamp:
-        // the cap-3 reminders span ~21d, so gating on markedOverdueAt suspended
-        // the moment the 3rd reminder cleared. lastDunningReminderAt is the
-        // Stage-2 cadence anchor, so suspend only 7d past the final reminder.
-        lastDunningReminderAt: { lt: suspendCutoff },
-        organization: { status: { in: [...DUNNABLE_ORG_STATUSES] } },
-      },
-      select: {
-        id: true,
-        organizationId: true,
-        invoiceNumber: true,
-        totalPaise: true,
-        displayCurrency: true,
-        dueDate: true,
-        organization: { select: { name: true } },
-      },
-      orderBy: { lastDunningReminderAt: "asc" },
-      take: MAX_SUSPENSIONS_PER_RUN,
-    });
+    const suspendCutoff = new Date(asOf.getTime() - SUSPEND_GRACE_MS);
+    const suspendedThisWindow = opts.windowStart
+      ? await prisma.organizationInvoice.count({
+          where: { dunningSuspendedAt: { gte: opts.windowStart } },
+        })
+      : 0;
+    const left = budgetLeft();
+    const suspendTake = Math.max(
+      0,
+      Math.min(
+        MAX_SUSPENSIONS_PER_RUN - suspendedThisWindow,
+        left ?? MAX_SUSPENSIONS_PER_RUN,
+      ),
+    );
+    const toSuspend =
+      suspendTake === 0
+        ? []
+        : await prisma.organizationInvoice.findMany({
+            where: {
+              status: "OVERDUE",
+              dunningReminderCount: { gte: MAX_REMINDERS },
+              dunningSuspendedAt: null,
+              // #812 — grace measured from the LAST reminder, not the overdue stamp:
+              // the cap-3 reminders span ~21d, so gating on markedOverdueAt suspended
+              // the moment the 3rd reminder cleared. lastDunningReminderAt is the
+              // Stage-2 cadence anchor, so suspend only 7d past the final reminder.
+              lastDunningReminderAt: { lt: suspendCutoff },
+              organization: { status: { in: [...DUNNABLE_ORG_STATUSES] } },
+            },
+            select: {
+              id: true,
+              organizationId: true,
+              invoiceNumber: true,
+              totalPaise: true,
+              displayCurrency: true,
+              dueDate: true,
+              organization: { select: { name: true } },
+            },
+            orderBy: { lastDunningReminderAt: "asc" },
+            take: suspendTake,
+          });
     for (const inv of toSuspend) {
       // #812 — claim + audit in one Serializable tx, mirroring Stage 1, so two
       // replicas can't both stamp + log. Idempotent claim: only stamp a row
@@ -331,7 +375,7 @@ export async function runDunning(): Promise<DunningStats> {
       // #1132 follow-up — transient P2034 aborts are retried by the house
       // helper; persistent failures skip this invoice so one bad row can't
       // kill the day's run.
-      const claimed = await claimInvoiceGuarded(inv, "stage-3 suspend", () =>
+      const claimed = await claim(inv, "stage-3 suspend", () =>
         prisma.$transaction(
           async (tx) => {
             const claim = await tx.organizationInvoice.updateMany({
@@ -389,30 +433,4 @@ export async function runDunning(): Promise<DunningStats> {
   }
 
   return stats;
-}
-
-async function main() {
-  await abortIfMaintenance("dunning");
-  console.log(`[dunning] Starting at ${new Date().toISOString()}`);
-  Sentry.logger.info("job:dunning started");
-  const stats = await withCronLock("dunning", { failMode: "closed" }, () =>
-    runDunning(),
-  );
-  console.log(
-    `[dunning] Done. scannedStage1=${stats.scannedStage1} markedOverdue=${stats.markedOverdue} scannedStage2=${stats.scannedStage2} remindersSent=${stats.remindersSent} suspended=${stats.suspended}`,
-  );
-  Sentry.logger.info("job:dunning finished", {
-    scannedStage1: stats.scannedStage1,
-    markedOverdue: stats.markedOverdue,
-    scannedStage2: stats.scannedStage2,
-    remindersSent: stats.remindersSent,
-    suspended: stats.suspended,
-  });
-}
-
-if (require.main === module) {
-  runJob("dunning", () => {
-    logMoneyFlags("dunning");
-    return main().finally(() => prisma.$disconnect());
-  });
 }

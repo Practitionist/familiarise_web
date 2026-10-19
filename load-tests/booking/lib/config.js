@@ -58,9 +58,9 @@ export const AUTH_ORIGIN = optional("AUTH_ORIGIN", BASE_URL).replace(
   "",
 );
 
-/** Seed accounts that buy. `SeedPass123!` is the seed suite's password. */
+/** Seed accounts that buy. Set `BUYER_PASSWORD` to the seed suite's password. */
 export const BUYER_EMAILS = list("BUYER_EMAILS");
-export const BUYER_PASSWORD = optional("BUYER_PASSWORD", "SeedPass123!");
+export const BUYER_PASSWORD = optional("BUYER_PASSWORD", "");
 
 /**
  * Pre-minted `better-auth.session_token=...` cookie header values, one per

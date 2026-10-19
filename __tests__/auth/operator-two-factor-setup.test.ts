@@ -216,7 +216,7 @@ describe("TwoFactorSettings backup code gate & TwoFactorSetupPage escape hatch",
 
     await act(async () => {
       if (passwordInput instanceof HTMLInputElement) {
-        setReactInputValue(passwordInput, "SeedPass123!");
+        setReactInputValue(passwordInput, "example-default-password");
       }
     });
 

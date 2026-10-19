@@ -154,7 +154,7 @@ describe("seed password guard on non-local database hosts (#1487)", () => {
       /Refusing to seed with an empty or default SEED_PASSWORD/,
     );
     expect(() =>
-      assertSeedPasswordSafeForEnv("SeedPass123!", true, remoteUrl),
+      assertSeedPasswordSafeForEnv("example-default-password", true, remoteUrl),
     ).toThrow(/Refusing to seed with an empty or default SEED_PASSWORD/);
 
     expect(() =>
