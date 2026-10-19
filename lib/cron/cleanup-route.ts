@@ -247,15 +247,12 @@ export function cleanupRoute<T extends object>(opts: {
         );
         return { body: { error: error.message }, status: 503, ok: false };
       }
-      if (error instanceof InvalidLimitError) {
-        return { body: { error: "INVALID_LIMIT" }, status: 400, ok: true };
-      }
-      if (error instanceof InvalidWindowStartError) {
-        return {
-          body: { error: "INVALID_WINDOW_START" },
-          status: 400,
-          ok: true,
-        };
+      // Each message is its 400 error code.
+      if (
+        error instanceof InvalidLimitError ||
+        error instanceof InvalidWindowStartError
+      ) {
+        return { body: { error: error.message }, status: 400, ok: true };
       }
       if (error instanceof MaintenanceActiveError) {
         return {

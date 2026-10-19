@@ -38,7 +38,8 @@ describe("process-payouts job — flag off is not a failure (#1757)", () => {
   it("flag on + 3 APPROVED + [] → failed", () => {
     expect(classifyEmptyRun({ waiting: 3, livePayoutsEnabled: true })).toEqual({
       kind: "failed",
-      error: "3 APPROVED payouts waiting; processing lock unavailable",
+      error:
+        "3 APPROVED payouts waiting; processing lock held or RazorpayX balance short",
     });
   });
 

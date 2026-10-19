@@ -157,6 +157,9 @@ import { createPayoutBatchSlice } from "../../lib/payments/payouts/payout-servic
 import { settleInvoiceAccruals } from "@/jobs/billing/settle-invoice-accruals";
 
 beforeEach(() => {
+  earnings.clear();
+  payouts.length = 0;
+  billedOrgs.clear();
   jest.spyOn(console, "log").mockImplementation(() => {});
   jest.spyOn(console, "warn").mockImplementation(() => {});
 });

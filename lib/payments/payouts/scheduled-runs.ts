@@ -58,9 +58,9 @@ export async function runCreatePayoutBatches(opts: {
 }
 
 /**
- * The service returns [] both when ENABLE_LIVE_PAYOUTS is off (the freeze
- * parks APPROVED rows by design) and when the Redis lock is held; only the
- * latter is a fault.
+ * The service returns [] when ENABLE_LIVE_PAYOUTS is off (the freeze parks
+ * APPROVED rows by design), when the Redis lock is held, and when the balance
+ * preflight holds the slice; only the freeze is not a fault.
  */
 export function classifyEmptyRun(input: {
   waiting: number;
@@ -78,7 +78,7 @@ export function classifyEmptyRun(input: {
   }
   return {
     kind: "failed",
-    error: `${input.waiting} APPROVED payouts waiting; processing lock unavailable`,
+    error: `${input.waiting} APPROVED payouts waiting; processing lock held or RazorpayX balance short`,
   };
 }
 
@@ -95,7 +95,7 @@ export interface ProcessPayoutsRun {
 
 /**
  * The scheduled disbursement run, consultant then org, `limit` units per rail.
- * `success` is false only when APPROVED rows wait behind an unavailable lock;
+ * `success` is false only when APPROVED rows wait behind a held lock or a balance hold;
  * row failures are counted in `failed` and `orgErrors`.
  */
 export async function runProcessPayouts(opts: {

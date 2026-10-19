@@ -124,7 +124,7 @@ export function irpCandidateWhere(
   };
 }
 
-async function fetchIrpCandidates(
+function fetchIrpCandidates(
   thirtyDaysAgo: Date,
   opts: { limit?: number; windowStart?: Date },
 ) {

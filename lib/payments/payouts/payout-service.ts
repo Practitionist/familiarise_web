@@ -888,9 +888,13 @@ export async function processApprovedPayouts(
         retryCount: { lt: PAYOUT_CONSTANTS.MAX_RETRY_ATTEMPTS },
       },
       include: APPROVED_PAYOUT_INCLUDE,
+      orderBy: [{ approvedAt: "asc" }, { createdAt: "asc" }],
     });
 
-    const batchTotalPaise = approvedPayouts.reduce((s, p) => s + p.amount, 0);
+    // The balance must cover what this run can disburse: the oldest `limit` rows, or all of them.
+    const batchTotalPaise = approvedPayouts
+      .slice(0, opts.limit)
+      .reduce((s, p) => s + p.amount, 0);
     const preflight = await assertPayoutBalance(batchTotalPaise);
     if (!preflight.ok) {
       console.warn(`[Payouts] Holding approved batch — ${preflight.reason}`);
