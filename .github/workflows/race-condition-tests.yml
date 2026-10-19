@@ -33,7 +33,7 @@ jobs:
     env:
       # Use mock Redis by default to save Upstash quota
       # Set use_real_redis to 'true' in workflow_dispatch to test with real Redis
-      USE_MOCK_REDIS: ${{ github.event.inputs.use_real_redis == 'true' && 'false' || 'true' }}
+      USE_MOCK_REDIS: ${{ github.event.inputs.use_real_redis != 'true' }}
       # Real Redis credentials (only used when USE_MOCK_REDIS=false)
       UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
       UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
