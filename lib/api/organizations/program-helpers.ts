@@ -31,6 +31,7 @@ import type { Tx, PrismaLike } from "@/lib/prisma";
 
 import type { ProgramAssignment, ProgramType } from "@prisma/client";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
+import { voidReversedOverageAccruals } from "@/lib/payments/billing/overage-accrual-void";
 
 // #780 — reads come through the extended client (money as number); the raw
 // model type still says bigint.
@@ -722,8 +723,15 @@ export async function reverseBookingUtilization(
         reversalReason: params.reason ?? "Refund",
       },
     });
-    // Every still-uncollected batch overage is no longer owed; a CHARGED one
-    // is credited back by the refund cascade instead.
+    // Every still-uncollected batch overage is no longer owed, and its
+    // un-invoiced child accrual is voided; a CHARGED one is credited back by
+    // the refund cascade instead.
+    if (sale.overCapBatches > 0) {
+      await voidReversedOverageAccruals(tx, {
+        bookingUtilizationId: util.id,
+        parentPaymentId: params.paymentId,
+      });
+    }
     await transitionOverage(
       tx,
       { bookingUtilizationId: util.id },

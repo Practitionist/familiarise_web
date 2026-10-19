@@ -93,7 +93,6 @@ jest.mock("../../lib/payments/operations/refund", () => ({
   applyRefundCascade: jest.fn().mockResolvedValue({}),
   mintInvoiceRefundCreditNote: jest.fn(),
   mintRefundCreditNote: jest.fn(),
-  refundMemberOverageSidePayment: jest.fn(),
 }));
 
 // In-memory store for the tx stub.

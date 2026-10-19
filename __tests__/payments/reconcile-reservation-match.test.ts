@@ -74,11 +74,8 @@ jest.mock("../../lib/novu/service", () => ({
   notifyRefundProcessed: (...a: unknown[]) => mockNotifyRefundProcessed(...a),
 }));
 const mockApplyRefundCascade = jest.fn().mockResolvedValue({});
-const mockRefundSidePayment = jest.fn();
 jest.mock("../../lib/payments/operations/refund", () => ({
   applyRefundCascade: (...a: unknown[]) => mockApplyRefundCascade(...a),
-  refundMemberOverageSidePayment: (...a: unknown[]) =>
-    mockRefundSidePayment(...a),
 }));
 jest.mock("../../lib/referrals/service", () => ({
   reverseCreditsForPayment: jest.fn().mockResolvedValue(0),
@@ -606,7 +603,7 @@ describe("reconcilePendingRefunds — failed-refund notice", () => {
 });
 
 describe("reconcilePendingRefunds — stranded-refund backstop", () => {
-  test("re-drives with credits and the overage side-payment; a poison row rotates without failing the run", async () => {
+  test("re-drives with credits; a poison row rotates without failing the run", async () => {
     mockStrandedIds.mockResolvedValueOnce([
       { id: "ref_stranded" },
       { id: "ref_broken" },
@@ -633,9 +630,7 @@ describe("reconcilePendingRefunds — stranded-refund backstop", () => {
         },
       ]);
     mockApplyRefundCascade
-      .mockResolvedValueOnce({
-        memberOverageRefundDue: { overagePaymentIds: ["pay_side"] },
-      })
+      .mockResolvedValueOnce({})
       .mockRejectedValueOnce(new Error("ledger down"));
 
     const result = await reconcilePendingRefunds();
@@ -647,11 +642,6 @@ describe("reconcilePendingRefunds — stranded-refund backstop", () => {
       10_000,
       "ref_stranded",
     );
-    expect(mockRefundSidePayment).toHaveBeenCalledWith({
-      parentPaymentId: "pay_1",
-      due: { overagePaymentIds: ["pay_side"] },
-      initiatedByUserId: null,
-    });
     expect(refundTable.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "ref_broken", status: "SUCCEEDED", cascadedAt: null },

@@ -146,6 +146,7 @@ function txStub() {
     payment: {
       findUniqueOrThrow: jest.fn(async () => payment),
       findUnique: jest.fn(async () => payment),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     // W1c — the earnings REFUNDED writers moved from a plain `update` to a
     // CAS `updateMany` (source status in WHERE, `refundedShareAmount` pinned to
@@ -404,12 +405,12 @@ describe("charged batch overages on a partial refund then the remainder", () => 
       paymentId: PAYMENT_ID,
       invoiceLineItemId: null,
     },
-    {
-      id: "ov-member",
+    ...["side-1", "side-2", "side-3"].map((paymentId) => ({
+      id: `ov-${paymentId}`,
       overageBehavior: "CHARGE_MEMBER",
-      paymentId: "side-1",
+      paymentId,
       invoiceLineItemId: null,
-    },
+    })),
   ];
   const { transitionOverage } = jest.requireMock(
     "../../lib/payments/billing/overage-transitions",
@@ -431,13 +432,13 @@ describe("charged batch overages on a partial refund then the remainder", () => 
     });
     const partialTx = txStub();
     partialTx.overageEvent.findMany.mockResolvedValue(charged);
-    const partial = await applyRefundCascade(partialTx as never, {
+    await applyRefundCascade(partialTx as never, {
       paymentId: PAYMENT_ID,
       refundId: "rf-0",
       amountPaise: GROSS / 4,
       reason: "goodwill",
     });
-    expect(partial.memberOverageRefundDue).toBeNull();
+    expect(partialTx.payment.updateMany).not.toHaveBeenCalled();
     expect(transitionOverage).not.toHaveBeenCalledWith(
       expect.anything(),
       { id: "ov-org" },
@@ -456,7 +457,7 @@ describe("charged batch overages on a partial refund then the remainder", () => 
     });
     const restTx = txStub();
     restTx.overageEvent.findMany.mockResolvedValue(charged);
-    const rest = await applyRefundCascade(restTx as never, {
+    await applyRefundCascade(restTx as never, {
       paymentId: PAYMENT_ID,
       refundId: REFUND_ID,
       amountPaise: (GROSS * 3) / 4,
@@ -476,8 +477,15 @@ describe("charged batch overages on a partial refund then the remainder", () => 
         amountPaise: (GROSS * 3) / 4,
       }),
     );
-    expect(rest.memberOverageRefundDue).toEqual({
-      overagePaymentIds: ["side-1"],
-    });
+    // Every side-payment is stamped refund-owed in this tx; the sweep refunds them.
+    expect(
+      restTx.payment.updateMany.mock.calls.map(
+        ([arg]) => arg.data.refundOwedKey,
+      ),
+    ).toEqual(
+      ["side-1", "side-2", "side-3"].map(
+        (id) => `overage-credit-back:${PAYMENT_ID}:${id}`,
+      ),
+    );
   });
 });
