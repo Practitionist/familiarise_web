@@ -6,22 +6,23 @@
  * #1020 findings 1–3 — dispute → earnings hardening in handleDisputeCreated /
  * handleDisputeUpdated (app/api/webhooks/utils.ts).
  *
- * 1. preDisputeStatus — a dispute HELD a PENDING earning and a WON release
- *    force-matured it to READY. The hold now records the prior status and the
- *    release restores it; a second dispute can't clobber a first hold's
- *    marker because the hold CAS excludes already-HELD rows.
+ * 1. preHoldStatus — the first hold records the prior status and the last
+ *    release restores it; each dispute releases only its own EarningsHold.
  * 2. Paid-earning clawback — the LOST loops queried status:HELD only, missing
  *    earnings already paid out before the chargeback landed. Both loops now
  *    include PAID rows; the consultant rail has no auto-clawback, so it flips
  *    state truthfully and pages ops once per dispute with the total.
- * 3. Proration — a PARTIAL dispute used to reverse the FULL share on both
- *    sides; reversals are now floored to `share × dispute/payment`.
+ * 3. Proration — reversals are floored to `share × deducted/payment`, and a
+ *    partially reversed share stays payable for the rest.
+ * 4. The webhook and the reconcile-disputes poll settle a verdict through one
+ *    function, so either order lands the same rows.
  *
  * The tx stub is typed against real row interfaces (not string-keyed blobs):
  * every fixture field is compile-checked against what the handler reads.
  */
 
 import { Prisma, type DisputeStatus, type EarningStatus } from "@prisma/client";
+import { createEarningsHoldStore } from "../fixtures/earnings-hold-store";
 
 /** The payload shape recordSystemError receives (lib/enterprise/system-events). */
 interface SystemErrorPayload {
@@ -125,6 +126,16 @@ jest.mock("../../lib/payments/operations/refund", () => ({
   mintInvoiceRefundCreditNote: jest.fn(),
   mintRefundCreditNote: jest.fn().mockResolvedValue({ creditNoteId: null }),
 }));
+jest.mock("../../lib/cron/with-cron-lock", () => ({
+  LONG_JOB_TTL_MS: 1,
+  withCronLock: (_n: string, _o: unknown, fn: () => unknown) => fn(),
+}));
+const mockGetRazorpayDispute = jest.fn();
+jest.mock("../../lib/payments/core/razorpay-disputes", () => ({
+  ...jest.requireActual("../../lib/payments/core/razorpay-disputes"),
+  getRazorpayDispute: (...a: unknown[]) => mockGetRazorpayDispute(...a),
+}));
+const mockDisputeFindMany = jest.fn();
 // #1365 — the chargeback path now mints the B2C credit note beside the org one.
 jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
   mintConsumerCreditNote: jest
@@ -155,13 +166,18 @@ interface DisputeRow {
   status: DisputeStatus;
   amountPaise: number;
   paymentId: string;
+  evidence?: unknown;
+  paymentGateway?: string;
+  dueBy?: Date | null;
+  updatedAt?: Date;
 }
 
 interface ConsultantEarningRow {
   id: string;
   paymentId: string;
   status: EarningStatus;
-  preDisputeStatus?: EarningStatus | null;
+  preHoldStatus?: EarningStatus | null;
+  holdUntil?: Date | null;
   consultantSharePaise: number;
   refundedShareAmount: number;
   consultantProfileId: string;
@@ -172,7 +188,8 @@ interface OrgEarningRow {
   id: string;
   paymentId: string;
   status: EarningStatus;
-  preDisputeStatus?: EarningStatus | null;
+  preHoldStatus?: EarningStatus | null;
+  holdUntil?: Date | null;
   orgSharePaise: number;
   refundedAmountPaise: number;
   organizationId: string;
@@ -180,192 +197,37 @@ interface OrgEarningRow {
   orgPayout: { status: string } | null;
 }
 
-/** Prisma-style update payload the handler issues (increment ops included). */
-interface IncrementOp {
-  increment: number;
-}
-type EarningsUpdate = Partial<
-  Omit<ConsultantEarningRow, "refundedShareAmount" | "refundedAmountPaise">
-> & {
-  refundedShareAmount?: number | IncrementOp;
-  refundedAmountPaise?: number | IncrementOp;
-};
-
-/** The two WHERE shapes handleDispute* issues on earnings tables. */
-interface EarningsHoldWhere {
-  /** The dispute paths select by payment; the W1c LOST CAS selects by id. */
-  paymentId?: string;
-  id?: string;
-  status?: EarningStatus | { in: EarningStatus[] };
-  preDisputeStatus?: EarningStatus | null;
-  /**
-   * W1c — the optimistic half of the REFUNDED CAS. The WHERE pins the
-   * pre-read value so two concurrent reversals cannot both win, and the write
-   * is absolute rather than an `increment`.
-   */
-  refundedShareAmount?: number;
-  /** Same optimistic pin, org column. */
-  refundedAmountPaise?: number;
-}
-interface EarningsLostWhere {
-  paymentId?: string;
-  id?: string;
-  status?: { in: EarningStatus[] } | EarningStatus;
-  preDisputeStatus?: EarningStatus | null;
-  refundedAmountPaise?: number;
-}
-
-function isIncrement(value: unknown): value is IncrementOp {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    "increment" in (value as IncrementOp)
-  );
-}
-
-/** Apply a Prisma-style update (plain sets + `{increment}` ops) to a row. */
-function resolveUpdate(
-  row: ConsultantEarningRow | OrgEarningRow,
-  data: EarningsUpdate,
-): void {
-  const target = row as unknown as Record<string, unknown>;
-  for (const [key, value] of Object.entries(data)) {
-    const current = target[key];
-    target[key] = isIncrement(value)
-      ? (typeof current === "number" ? current : 0) + value.increment
-      : value;
-  }
-}
-
 // ---------------------------------------------------------------------------
-// Store + tx stub
+// Store + tx stub. The earnings and hold tables are the shared in-memory
+// double, so the real hold helper runs against them.
 // ---------------------------------------------------------------------------
 
-const store: {
-  payments: Map<string, PaymentRow>;
-  disputes: DisputeRow[];
-  consultantEarnings: ConsultantEarningRow[];
-  orgEarnings: OrgEarningRow[];
-} = {
-  payments: new Map(),
-  disputes: [],
-  consultantEarnings: [],
-  orgEarnings: [],
+const holds = createEarningsHoldStore<ConsultantEarningRow, OrgEarningRow>();
+
+const store = {
+  payments: new Map<string, PaymentRow>(),
+  disputes: [] as DisputeRow[],
+  consultantEarnings: holds.consultant,
+  orgEarnings: holds.org,
 };
 
 function resetStore(): void {
   store.payments.clear();
   store.disputes.length = 0;
-  store.consultantEarnings.length = 0;
-  store.orgEarnings.length = 0;
+  holds.consultant.length = 0;
+  holds.org.length = 0;
+  holds.holds.length = 0;
 }
 
-/**
- * Does a Prisma `status` filter (a bare status or `{ in: [...] }`) accept this
- * row's status? Typed on `unknown` because the two callers pass differently
- * narrow shapes and a direct property access cannot narrow a string/object
- * union.
- */
-function statusMatches(filter: unknown, actual: EarningStatus): boolean {
-  if (filter === null || filter === undefined) return true;
-  if (typeof filter === "object" && "in" in filter) {
-    const list = (filter as { in?: EarningStatus[] }).in;
-    return !!list && list.includes(actual);
-  }
-  return filter === actual;
-}
-
-function inList(
-  status: EarningsLostWhere["status"],
-  actual: EarningStatus,
-): boolean {
-  // Delegate rather than duplicate: the `in` operator rejects a `string`
-  // operand outright, so this cannot narrow the union itself.
-  return statusMatches(status, actual);
-}
-
-interface TxStub {
-  payment: {
-    findUnique: (args: {
-      where: { paymentIntent?: string; id?: string };
-    }) => Promise<PaymentRow | null>;
-    // #1353 — handleDisputeCreated resolves by either id through an `OR`.
-    findFirst: (args: {
-      where: { OR?: Array<Record<string, string | undefined>> };
-    }) => Promise<PaymentRow | null>;
-  };
-  dispute: {
-    findUnique: (args: {
-      where: { disputeId: string };
-    }) => Promise<(DisputeRow & { payment: PaymentRow | null }) | null>;
-    create: (args: { data: Omit<DisputeRow, "id"> }) => Promise<DisputeRow>;
-    update: (args: {
-      where: { disputeId: string };
-      data: Partial<DisputeRow>;
-    }) => Promise<DisputeRow | null>;
-  };
-  consultantEarnings: {
-    updateMany: (args: {
-      where: EarningsHoldWhere;
-      data: Record<string, unknown>;
-    }) => Promise<{ count: number }>;
-    findMany: (args: {
-      where: EarningsLostWhere;
-    }) => Promise<ConsultantEarningRow[]>;
-    update: (args: {
-      where: { id: string };
-      data: EarningsUpdate;
-    }) => Promise<ConsultantEarningRow | null>;
-  };
-  organizationEarnings: {
-    updateMany: (args: {
-      where: EarningsHoldWhere;
-      data: Record<string, unknown>;
-    }) => Promise<{ count: number }>;
-    findMany: (args: { where: EarningsLostWhere }) => Promise<OrgEarningRow[]>;
-    /** The CAS re-reads through this after a lost race. */
-    findUnique: (args: {
-      where: { id: string };
-    }) => Promise<OrgEarningRow | null>;
-    update: (args: {
-      where: { id: string };
-      data: EarningsUpdate;
-    }) => Promise<OrgEarningRow | null>;
-  };
-  refund: {
-    findUnique: () => Promise<null>;
-    update: () => Promise<Record<string, never>>;
-    create: () => Promise<Record<string, never>>;
-    aggregate: () => Promise<{ _sum: { amountPaise: number | null } }>;
-  };
-  billingAccount: { findFirst: () => Promise<null> };
-  ledgerTransaction: {
-    findUnique: () => Promise<null>;
-    create: () => Promise<Record<string, never>>;
-  };
-  orgAuditLog: { create: () => Promise<Record<string, never>> };
-}
-
-let tx: TxStub;
-
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: { $transaction: jest.fn() },
-}));
-
-import prisma from "../../lib/prisma";
-import {
-  handleDisputeCreated,
-  handleDisputeUpdated,
-} from "../../app/api/webhooks/utils";
-
-const mockedTransaction = prisma.$transaction as unknown as jest.Mock;
-
-/** Build the per-test stub against the live store. */
-function makeTxStub(): TxStub {
+function makeTxStub() {
   return {
+    ...holds.db,
     payment: {
-      findFirst: async ({ where }) => {
+      findFirst: async ({
+        where,
+      }: {
+        where: { OR?: Array<Record<string, string | undefined>> };
+      }) => {
         const clauses = where.OR ?? [];
         return (
           Array.from(store.payments.values()).find((p) =>
@@ -379,7 +241,11 @@ function makeTxStub(): TxStub {
           ) ?? null
         );
       },
-      findUnique: async ({ where }) => {
+      findUnique: async ({
+        where,
+      }: {
+        where: { paymentIntent?: string; id?: string };
+      }) => {
         if (where.paymentIntent) {
           return (
             Array.from(store.payments.values()).find(
@@ -391,13 +257,12 @@ function makeTxStub(): TxStub {
       },
     },
     dispute: {
-      findUnique: async ({ where }) => {
+      findUnique: async ({ where }: { where: { disputeId: string } }) => {
         const row = store.disputes.find((d) => d.disputeId === where.disputeId);
         if (!row) return null;
-        // Hydrate the include the handler selects (#738-B tax-parity read).
         return { ...row, payment: store.payments.get(row.paymentId) ?? null };
       },
-      create: async ({ data }) => {
+      create: async ({ data }: { data: Omit<DisputeRow, "id"> }) => {
         const created: DisputeRow = {
           id: `disp_row_${store.disputes.length + 1}`,
           ...data,
@@ -405,115 +270,27 @@ function makeTxStub(): TxStub {
         store.disputes.push(created);
         return created;
       },
-      update: async ({ where, data }) => {
-        const row = store.disputes.find((d) => d.disputeId === where.disputeId);
-        if (!row) return null;
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: { id?: string; disputeId?: string; status: DisputeStatus };
+        data: Partial<DisputeRow>;
+      }) => {
+        const row = store.disputes.find(
+          (d) =>
+            (where.id === undefined || d.id === where.id) &&
+            (where.disputeId === undefined ||
+              d.disputeId === where.disputeId) &&
+            d.status === where.status,
+        );
+        if (!row) return { count: 0 };
         Object.assign(row, data);
-        return row;
+        return { count: 1 };
       },
     },
-    consultantEarnings: {
-      updateMany: async ({ where, data }) => {
-        let count = 0;
-        for (const e of store.consultantEarnings) {
-          if (where.paymentId !== undefined && e.paymentId !== where.paymentId)
-            continue;
-          // W1c — the LOST branch's CAS predicates the row by `id`, a
-          // `status: { in: [...] }` set, and a pinned `refundedShareAmount`.
-          // Without these the mock matched nothing, the CAS reported a lost
-          // race, and the reversal silently never landed.
-          if (where.id !== undefined && e.id !== where.id) continue;
-          if (where.status !== undefined) {
-            if (typeof where.status === "string") {
-              if (e.status !== where.status) continue;
-            } else if (Array.isArray(where.status.in)) {
-              if (!where.status.in.includes(e.status)) continue;
-            }
-          }
-          if (
-            where.refundedShareAmount !== undefined &&
-            e.refundedShareAmount !== where.refundedShareAmount
-          ) {
-            continue;
-          }
-          if (
-            where.preDisputeStatus !== undefined &&
-            e.preDisputeStatus !== where.preDisputeStatus
-          )
-            continue;
-          resolveUpdate(e, data);
-          count++;
-        }
-        return { count };
-      },
-      findMany: async ({ where }) =>
-        // Snapshot copies — real Prisma returns detached row images, and the
-        // handler must not observe its own earlier update through them.
-        store.consultantEarnings
-          .filter(
-            (e) =>
-              e.paymentId === where.paymentId && inList(where.status, e.status),
-          )
-          .map((e) => ({ ...e })),
-      update: async ({ where, data }) => {
-        const row = store.consultantEarnings.find((e) => e.id === where.id);
-        if (!row) return null;
-        resolveUpdate(row, data);
-        return row;
-      },
-    },
-    organizationEarnings: {
-      // Handles BOTH WHERE shapes the org rail issues: the dispute paths
-      // select by `paymentId`, the shared CAS writer selects by `id` with the
-      // status set and the prior amount pinned. Without the pinned-amount and
-      // `id` branches the CAS matched zero rows, reported a lost race, and then
-      // re-read through a `findUnique` this stub did not define.
-      updateMany: async ({ where, data }) => {
-        let count = 0;
-        for (const e of store.orgEarnings) {
-          if (where.paymentId !== undefined && e.paymentId !== where.paymentId)
-            continue;
-          if (where.id !== undefined && e.id !== where.id) continue;
-          if (
-            where.status !== undefined &&
-            !statusMatches(where.status, e.status)
-          )
-            continue;
-          if (
-            where.preDisputeStatus !== undefined &&
-            e.preDisputeStatus !== where.preDisputeStatus
-          )
-            continue;
-          // The optimistic half of the CAS: the row must still carry the
-          // amount we read, or the write is a lost race.
-          if (
-            where.refundedAmountPaise !== undefined &&
-            e.refundedAmountPaise !== where.refundedAmountPaise
-          )
-            continue;
-          resolveUpdate(e, data);
-          count++;
-        }
-        return { count };
-      },
-      findUnique: async ({ where }: { where: { id: string } }) => {
-        const row = store.orgEarnings.find((e) => e.id === where.id);
-        return row ? { ...row } : null;
-      },
-      findMany: async ({ where }) =>
-        store.orgEarnings
-          .filter(
-            (e) =>
-              e.paymentId === where.paymentId && inList(where.status, e.status),
-          )
-          .map((e) => ({ ...e })),
-      update: async ({ where, data }) => {
-        const row = store.orgEarnings.find((e) => e.id === where.id);
-        if (!row) return null;
-        resolveUpdate(row, data);
-        return row;
-      },
-    },
+    // Card-funded unless a test says otherwise (FIN-21).
+    paymentLeg: { count: async () => 0 },
     // applyOrgChargeback / B2C-reversal net prior SUCCEEDED refunds against
     // the chargeback; the appliers are stubbed, so report zero history.
     refund: {
@@ -531,6 +308,28 @@ function makeTxStub(): TxStub {
   };
 }
 
+type TxStub = ReturnType<typeof makeTxStub>;
+
+let tx: TxStub;
+
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    $transaction: jest.fn(),
+    // reconcile-disputes reads the open disputes through the global client.
+    dispute: { findMany: (...a: unknown[]) => mockDisputeFindMany(...a) },
+  },
+}));
+
+import prisma from "../../lib/prisma";
+import {
+  handleDisputeCreated,
+  handleDisputeUpdated,
+} from "../../app/api/webhooks/utils";
+import { reconcileDisputes } from "../../scripts/disputes/reconcile-disputes";
+
+const mockedTransaction = prisma.$transaction as unknown as jest.Mock;
+
 beforeEach(() => {
   jest.clearAllMocks();
   resetStore();
@@ -541,6 +340,18 @@ beforeEach(() => {
     fn(tx),
   );
   razorpayPaymentsFetch.mockResolvedValue({ order_id: "order_ok" });
+  mockDisputeFindMany.mockImplementation(async () =>
+    store.disputes
+      .filter((d) => ["NEEDS_RESPONSE", "UNDER_REVIEW"].includes(d.status))
+      .map((d) => ({
+        ...d,
+        paymentGateway: "RAZORPAY",
+        payment: {
+          ...store.payments.get(d.paymentId),
+          gatewayPaymentId: "pay_charge_1",
+        },
+      })),
+  );
 });
 
 function seedPayment(amountPaise: number): void {
@@ -580,181 +391,220 @@ async function seedOpenDispute(amountPaise: number): Promise<void> {
   });
 }
 
-describe("#1020-1 — hold records the pre-dispute status", () => {
+function ce(
+  over: Partial<ConsultantEarningRow> & Pick<ConsultantEarningRow, "id">,
+): ConsultantEarningRow {
+  return {
+    paymentId: "pay_db_1",
+    status: "READY",
+    preHoldStatus: null,
+    holdUntil: null,
+    consultantSharePaise: 8_000,
+    refundedShareAmount: 0,
+    consultantProfileId: "cp_1",
+    payoutId: null,
+    ...over,
+  };
+}
+
+function oe(
+  over: Partial<OrgEarningRow> & Pick<OrgEarningRow, "id">,
+): OrgEarningRow {
+  return {
+    paymentId: "pay_db_1",
+    status: "READY",
+    preHoldStatus: null,
+    holdUntil: null,
+    orgSharePaise: 2_000,
+    refundedAmountPaise: 0,
+    organizationId: "org_1",
+    orgPayoutId: null,
+    orgPayout: null,
+    ...over,
+  };
+}
+
+const rowOf = (id: string) =>
+  [...store.consultantEarnings, ...store.orgEarnings].find((e) => e.id === id);
+
+describe("#1020-1 — a dispute hold records the prior status", () => {
   test("tags PENDING and READY rows with their own prior status", async () => {
     seedPayment(10_000);
     store.consultantEarnings.push(
-      {
-        id: "ce_pend",
-        paymentId: "pay_db_1",
-        status: "PENDING",
-        consultantSharePaise: 5_000,
-        refundedShareAmount: 0,
-        consultantProfileId: "cp_1",
-        payoutId: null,
-      },
-      {
-        id: "ce_ready",
-        paymentId: "pay_db_1",
-        status: "READY",
-        consultantSharePaise: 5_000,
-        refundedShareAmount: 0,
-        consultantProfileId: "cp_1",
-        payoutId: null,
-      },
+      ce({ id: "ce_pend", status: "PENDING" }),
+      ce({ id: "ce_ready", status: "READY" }),
     );
 
     await openDispute(5_000);
 
-    expect(
-      store.consultantEarnings.find((e) => e.id === "ce_pend"),
-    ).toMatchObject({
+    expect(rowOf("ce_pend")).toMatchObject({
       status: "HELD",
-      preDisputeStatus: "PENDING",
+      preHoldStatus: "PENDING",
     });
-    expect(
-      store.consultantEarnings.find((e) => e.id === "ce_ready"),
-    ).toMatchObject({
+    expect(rowOf("ce_ready")).toMatchObject({
       status: "HELD",
-      preDisputeStatus: "READY",
+      preHoldStatus: "READY",
     });
+    expect(holds.activeReasons("ce_pend")).toEqual(["DISPUTE"]);
   });
 
-  test("a second dispute on the same payment does NOT clobber the first hold's marker", async () => {
+  test("a second dispute adds its own hold without clobbering the first's prior", async () => {
     seedPayment(10_000);
-    store.consultantEarnings.push({
-      id: "ce_ready",
-      paymentId: "pay_db_1",
-      status: "READY",
-      consultantSharePaise: 8_000,
-      refundedShareAmount: 0,
-      consultantProfileId: "cp_1",
-      payoutId: null,
-    });
+    store.consultantEarnings.push(ce({ id: "ce_ready" }));
 
     await openDispute(5_000, "disp_a");
     await openDispute(2_000, "disp_b");
 
-    expect(store.consultantEarnings[0]).toMatchObject({
+    expect(rowOf("ce_ready")).toMatchObject({
       status: "HELD",
-      preDisputeStatus: "READY",
+      preHoldStatus: "READY",
     });
+    expect(holds.activeReasons("ce_ready")).toEqual(["DISPUTE", "DISPUTE"]);
   });
 });
 
-describe("#1020-1 — WON restores the true prior state", () => {
-  async function win(): Promise<void> {
+describe("#1020-1 — WON releases this dispute's hold and restores the prior", () => {
+  test.each([
+    ["PENDING", "PENDING"],
+    ["READY", "READY"],
+    ["PENDING_TRUST", "PENDING_TRUST"],
+  ] as const)("a %s row returns to %s", async (from, to) => {
     seedPayment(10_000);
-    await seedOpenDispute(5_000);
+    store.consultantEarnings.push(ce({ id: "ce_1", status: from }));
+    store.orgEarnings.push(oe({ id: "oe_1", status: from }));
+    await openDispute(5_000);
+
     await handleDisputeUpdated("disp_1", "won", null);
-  }
 
-  test("a PENDING-held earning returns to PENDING, not READY", async () => {
-    store.consultantEarnings.push({
-      id: "ce_1",
-      paymentId: "pay_db_1",
-      status: "HELD",
-      preDisputeStatus: "PENDING",
-      consultantSharePaise: 5_000,
-      refundedShareAmount: 0,
-      consultantProfileId: "cp_1",
-      payoutId: null,
-    });
-
-    await win();
-
-    expect(store.consultantEarnings[0]).toMatchObject({
-      status: "PENDING",
-      preDisputeStatus: null,
-    });
+    for (const id of ["ce_1", "oe_1"]) {
+      expect(rowOf(id)).toMatchObject({ status: to, preHoldStatus: null });
+      expect(holds.activeReasons(id)).toEqual([]);
+    }
   });
 
-  test("a READY-held earning returns to READY", async () => {
-    store.consultantEarnings.push({
-      id: "ce_1",
-      paymentId: "pay_db_1",
-      status: "HELD",
-      preDisputeStatus: "READY",
-      consultantSharePaise: 5_000,
-      refundedShareAmount: 0,
-      consultantProfileId: "cp_1",
-      payoutId: null,
-    });
+  test("a sibling dispute's hold keeps the row HELD", async () => {
+    seedPayment(10_000);
+    store.consultantEarnings.push(ce({ id: "ce_1" }));
+    await openDispute(5_000, "disp_1");
+    await openDispute(2_000, "disp_2");
 
-    await win();
+    await handleDisputeUpdated("disp_1", "won", null);
 
-    expect(store.consultantEarnings[0]).toMatchObject({
-      status: "READY",
-      preDisputeStatus: null,
-    });
-  });
-
-  test("legacy rows held before the column shipped still release to READY", async () => {
-    store.orgEarnings.push({
-      id: "oe_legacy",
-      paymentId: "pay_db_1",
-      status: "HELD",
-      preDisputeStatus: null,
-      orgSharePaise: 2_000,
-      refundedAmountPaise: 0,
-      organizationId: "org_1",
-      orgPayoutId: null,
-      orgPayout: null,
-    });
-
-    await win();
-
-    expect(store.orgEarnings[0]).toMatchObject({
-      status: "READY",
-      preDisputeStatus: null,
-    });
+    expect(rowOf("ce_1")?.status).toBe("HELD");
+    expect(holds.activeReasons("ce_1")).toEqual(["DISPUTE"]);
   });
 });
 
-describe("#1020-3 — LOST reversals are prorated to the disputed fraction", () => {
-  test("a half-amount dispute refunds HALF the consultant share, not all of it", async () => {
+describe("FIN-15 — a partial loss leaves the remainder payable", () => {
+  test("half deducted: half the share reversed, the row back to READY", async () => {
     seedPayment(10_000);
-    store.consultantEarnings.push({
-      id: "ce_1",
-      paymentId: "pay_db_1",
-      status: "HELD",
-      preDisputeStatus: "READY",
-      consultantSharePaise: 8_000,
-      refundedShareAmount: 0,
-      consultantProfileId: "cp_1",
-      payoutId: null,
-    });
-    await seedOpenDispute(5_000); // exactly half
+    store.consultantEarnings.push(ce({ id: "ce_1" }));
+    store.orgEarnings.push(oe({ id: "oe_1" }));
+    await openDispute(10_000);
 
-    await handleDisputeUpdated("disp_1", "lost", null);
+    await handleDisputeUpdated("disp_1", "lost", null, null, 5_000);
 
-    expect(store.consultantEarnings[0]).toMatchObject({
-      status: "REFUNDED",
+    expect(rowOf("ce_1")).toMatchObject({
+      status: "READY",
       refundedShareAmount: 4_000, // floor(8000 × 0.5)
     });
+    expect(rowOf("oe_1")).toMatchObject({
+      status: "READY",
+      refundedAmountPaise: 1_000,
+    });
+    expect(holds.activeReasons("ce_1")).toEqual([]);
   });
 
-  test("a full-amount dispute keeps reversing the whole remaining share", async () => {
+  test("a full loss reverses the whole remaining share and terminalises the row", async () => {
     seedPayment(10_000);
-    store.consultantEarnings.push({
-      id: "ce_1",
-      paymentId: "pay_db_1",
-      status: "HELD",
-      consultantSharePaise: 8_000,
-      refundedShareAmount: 500,
-      consultantProfileId: "cp_1",
-      payoutId: null,
-    });
-    await seedOpenDispute(10_000);
+    store.consultantEarnings.push(ce({ id: "ce_1", refundedShareAmount: 500 }));
+    await openDispute(10_000);
 
     await handleDisputeUpdated("disp_1", "lost", null);
 
-    // refundedShareAmount is CUMULATIVE: 500 already refunded from an app
-    // refund + the capped 7500 reversal now = the full share. The reversal
-    // itself was capped at remaining-refundable, not the gross proration.
-    expect(store.consultantEarnings[0]).toMatchObject({
+    expect(rowOf("ce_1")).toMatchObject({
+      status: "REFUNDED",
       refundedShareAmount: 8_000,
     });
+  });
+});
+
+describe("FIN-27 — Razorpay `closed` is a loss only for what it deducted", () => {
+  test("closed with nothing deducted releases the hold", async () => {
+    seedPayment(10_000);
+    store.consultantEarnings.push(ce({ id: "ce_1" }));
+    await openDispute(10_000);
+
+    await handleDisputeUpdated("disp_1", "closed", null, null, 0);
+
+    expect(rowOf("ce_1")).toMatchObject({
+      status: "READY",
+      refundedShareAmount: 0,
+    });
+  });
+
+  test("closed with an amount deducted reverses that amount", async () => {
+    seedPayment(10_000);
+    store.consultantEarnings.push(ce({ id: "ce_1" }));
+    await openDispute(10_000);
+
+    await handleDisputeUpdated("disp_1", "closed", null, null, 10_000);
+
+    expect(rowOf("ce_1")).toMatchObject({
+      status: "REFUNDED",
+      refundedShareAmount: 8_000,
+    });
+  });
+});
+
+describe("FIN-08 — the poll and the webhook settle a verdict identically", () => {
+  async function run(order: "webhook-then-poll" | "poll-then-webhook") {
+    resetStore();
+    jest.clearAllMocks();
+    seedPayment(10_000);
+    store.consultantEarnings.push(ce({ id: "ce_1" }));
+    store.orgEarnings.push(oe({ id: "oe_1" }));
+    await openDispute(10_000);
+    mockGetRazorpayDispute.mockResolvedValue({
+      disputeId: "disp_1",
+      status: "lost",
+      evidence: {},
+      isChargeRefundable: false,
+      dueBy: undefined,
+      paymentId: "pay_charge_1",
+      amountDeductedPaise: 5_000,
+    });
+    const webhook = () =>
+      handleDisputeUpdated("disp_1", "lost", null, null, 5_000);
+    const poll = () => reconcileDisputes();
+    for (const step of order === "webhook-then-poll"
+      ? [webhook, poll]
+      : [poll, webhook]) {
+      await step();
+    }
+    return {
+      dispute: store.disputes.map((d) => d.status),
+      earnings: [...store.consultantEarnings, ...store.orgEarnings].map(
+        (e) => ({ ...e }),
+      ),
+      holds: holds.holds.map((h) => ({
+        reason: h.reason,
+        sourceRef: h.sourceRef,
+        released: h.releasedAt !== null,
+      })),
+      reversals: applyReversal.mock.calls.length,
+      tdsReversals: recordTdsReversal.mock.calls.length,
+    };
+  }
+
+  test("webhook-then-poll and poll-then-webhook land the same rows", async () => {
+    const a = await run("webhook-then-poll");
+    const b = await run("poll-then-webhook");
+
+    expect(b).toEqual(a);
+    expect(a.dispute).toEqual(["LOST"]);
+    expect(a.earnings.map((e) => e.status)).toEqual(["READY", "READY"]);
+    expect(a.holds.every((h) => h.released)).toBe(true);
   });
 });
 
@@ -844,8 +694,9 @@ describe("#1020-2 — already-paid earnings enter the LOST clawback", () => {
 
     await handleDisputeUpdated("disp_1", "lost", null);
 
+    // Half reversed: the paid share stays PAID with the reversal recorded.
     expect(store.orgEarnings[0]).toMatchObject({
-      status: "REFUNDED",
+      status: "PAID",
       refundedAmountPaise: 1_000, // floor(2000 × 0.5)
     });
     expect(applyReversal).toHaveBeenCalledWith(

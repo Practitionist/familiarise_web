@@ -11,10 +11,14 @@
  * `earnings-service` pulls Stream, Razorpay and Novu through its imports.
  */
 
+import { EarningStatus } from "@prisma/client";
+
 import type { PrismaLike } from "@/lib/prisma";
+import { sumPaise } from "@/lib/payments/utils/money";
 import { PAYOUT_CONSTANTS, type AppointmentType } from "./constants";
 
 const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
 
 // #1569 — a voided session never anchors a hold: it was not delivered.
 const DEAD_OCCURRENCE_STATUSES = [
@@ -42,6 +46,44 @@ export function computeHoldUntil(args: {
     args.lastOccurrenceEndsAt?.getTime() ?? 0,
   );
   return new Date(anchor + args.holdHours * HOUR_MS);
+}
+
+/**
+ * `holdUntil` plus the new-expert days when the expert's first paid earning is
+ * under the tenure window old (or they have none yet) or their lifetime
+ * non-refunded share is below the threshold. A null hold stays null.
+ */
+export async function withNewExpertHold(
+  db: PrismaLike,
+  consultantProfileId: string | null,
+  holdUntil: Date | null,
+  now = new Date(),
+): Promise<Date | null> {
+  if (!holdUntil || !consultantProfileId) return holdUntil;
+  const first = await db.consultantEarnings.findFirst({
+    where: { consultantProfileId, payment: { paymentStatus: "SUCCEEDED" } },
+    orderBy: { createdAt: "asc" },
+    select: { createdAt: true },
+  });
+  let isNew =
+    !first ||
+    now.getTime() - first.createdAt.getTime() <
+      PAYOUT_CONSTANTS.NEW_EXPERT_TENURE_DAYS * DAY_MS;
+  if (!isNew) {
+    const lifetime = await db.consultantEarnings.aggregate({
+      where: { consultantProfileId, status: { not: EarningStatus.REFUNDED } },
+      _sum: { consultantSharePaise: true },
+    });
+    isNew =
+      sumPaise(lifetime._sum.consultantSharePaise) <
+      PAYOUT_CONSTANTS.NEW_EXPERT_LIFETIME_SHARE_PAISE;
+  }
+  return isNew
+    ? new Date(
+        holdUntil.getTime() +
+          PAYOUT_CONSTANTS.NEW_EXPERT_EXTRA_HOLD_DAYS * DAY_MS,
+      )
+    : holdUntil;
 }
 
 /** The end of the appointment's last live occurrence, or null when it has none. */

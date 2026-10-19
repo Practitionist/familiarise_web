@@ -69,6 +69,9 @@ jest.mock("../../lib/payments/pricing/platform-fee", () => ({
 jest.mock("../../lib/payments/payouts/earnings-hold", () => ({
   computeHoldUntil: jest.fn(() => new Date("2026-10-15T00:00:00Z")),
   holdHoursFor: jest.fn(() => 24),
+  withNewExpertHold: jest.fn(
+    async (_db: unknown, _id: unknown, at: unknown) => at,
+  ),
   resolveEarningsAnchor: jest.fn(async () => ({
     lastOccurrenceEndsAt: new Date("2026-10-14T00:00:00Z"),
     appointmentOccurrenceId: "occ-1",

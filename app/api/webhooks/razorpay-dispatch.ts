@@ -447,65 +447,27 @@ export async function processRazorpayWebhookEvent(
         break;
       }
 
-      case "payment.dispute.won": {
-        const disputeWonEvent = disputeUpdateEntitySchema.parse(
-          event.payload?.dispute?.entity,
-        );
-        const disputeWonResult =
-          disputeWonEvent.respond_by !== undefined &&
-          disputeWonEvent.respond_by !== null
-            ? await handleDisputeUpdated(
-                disputeWonEvent.id,
-                "won",
-                null,
-                disputeWonEvent.respond_by,
-              )
-            : await handleDisputeUpdated(disputeWonEvent.id, "won", null);
-        if (disputeWonResult instanceof DeferSignal) {
-          deferred = true;
-        }
-        break;
-      }
-
-      case "payment.dispute.lost": {
-        const disputeLostEvent = disputeUpdateEntitySchema.parse(
-          event.payload?.dispute?.entity,
-        );
-        const disputeLostResult =
-          disputeLostEvent.respond_by !== undefined &&
-          disputeLostEvent.respond_by !== null
-            ? await handleDisputeUpdated(
-                disputeLostEvent.id,
-                "lost",
-                null,
-                disputeLostEvent.respond_by,
-              )
-            : await handleDisputeUpdated(disputeLostEvent.id, "lost", null);
-        if (disputeLostResult instanceof DeferSignal) {
-          deferred = true;
-        }
-        break;
-      }
-
+      case "payment.dispute.won":
+      case "payment.dispute.lost":
       case "payment.dispute.closed": {
-        const disputeClosedEvent = disputeUpdateEntitySchema.parse(
+        const verdictEvent = disputeUpdateEntitySchema.parse(
           event.payload?.dispute?.entity,
         );
-        const disputeClosedResult =
-          disputeClosedEvent.respond_by !== undefined &&
-          disputeClosedEvent.respond_by !== null
-            ? await handleDisputeUpdated(
-                disputeClosedEvent.id,
-                disputeClosedEvent.status,
-                null,
-                disputeClosedEvent.respond_by,
-              )
-            : await handleDisputeUpdated(
-                disputeClosedEvent.id,
-                disputeClosedEvent.status,
-                null,
-              );
-        if (disputeClosedResult instanceof DeferSignal) {
+        // won/lost are the event's verdict; closed carries its own entity status.
+        const verdictStatus =
+          eventType === "payment.dispute.won"
+            ? "won"
+            : eventType === "payment.dispute.lost"
+              ? "lost"
+              : verdictEvent.status;
+        const verdictResult = await handleDisputeUpdated(
+          verdictEvent.id,
+          verdictStatus,
+          null,
+          verdictEvent.respond_by ?? null,
+          verdictEvent.amount_deducted ?? null,
+        );
+        if (verdictResult instanceof DeferSignal) {
           deferred = true;
         }
         break;

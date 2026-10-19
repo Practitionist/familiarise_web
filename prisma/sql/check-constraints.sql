@@ -1249,3 +1249,42 @@ CREATE UNIQUE INDEX IF NOT EXISTS "OverageEvent_bookingUtilizationId_batchKey_ke
   ON "OverageEvent" ("bookingUtilizationId", "batchKey");
 -- SPLIT
 DROP INDEX IF EXISTS "OverageEvent_bookingUtilizationId_key";
+-- SPLIT
+-- The hold's prior-status column is renamed in place, never dropped and
+-- re-added; run this block BEFORE `db push`, or the push drops the column.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'ConsultantEarnings' AND column_name = 'preDisputeStatus'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'ConsultantEarnings' AND column_name = 'preHoldStatus'
+  ) THEN
+    ALTER TABLE "ConsultantEarnings" RENAME COLUMN "preDisputeStatus" TO "preHoldStatus";
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'OrganizationEarnings' AND column_name = 'preDisputeStatus'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'OrganizationEarnings' AND column_name = 'preHoldStatus'
+  ) THEN
+    ALTER TABLE "OrganizationEarnings" RENAME COLUMN "preDisputeStatus" TO "preHoldStatus";
+  END IF;
+END $$;
+-- SPLIT
+-- An EarningsHold freezes exactly one earning, consultant or organisation.
+ALTER TABLE "EarningsHold" DROP CONSTRAINT IF EXISTS "earnings_hold_one_earning";
+-- SPLIT
+ALTER TABLE "EarningsHold" ADD CONSTRAINT "earnings_hold_one_earning"
+  CHECK (num_nonnulls("consultantEarningsId", "organizationEarningsId") = 1);
+-- SPLIT
+-- One active hold per (earning, reason, source); a released hold keeps its row.
+CREATE UNIQUE INDEX IF NOT EXISTS "earnings_hold_active_consultant_key"
+  ON "EarningsHold" ("consultantEarningsId", "reason", "sourceRef")
+  WHERE "releasedAt" IS NULL AND "consultantEarningsId" IS NOT NULL;
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "earnings_hold_active_org_key"
+  ON "EarningsHold" ("organizationEarningsId", "reason", "sourceRef")
+  WHERE "releasedAt" IS NULL AND "organizationEarningsId" IS NOT NULL;

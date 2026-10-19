@@ -215,6 +215,10 @@ export async function checkPayoutEligibility(
     select: { isIndianResident: true },
   });
   const verifiedAccount = defaultAccount?.isVerified ? defaultAccount : null;
+  const outstandingClawback = await outstandingClawbackPaise(prisma, {
+    rail: "CONSULTANT",
+    consultantProfileId,
+  });
 
   const reason = payoutEligibilityReason({
     livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
@@ -222,6 +226,8 @@ export async function checkPayoutEligibility(
     defaultAccount,
     readyAmount,
     minimumAmount: PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT,
+    outstandingClawbackPaise: outstandingClawback,
+    clawbackPausePaise: PAYOUT_CONSTANTS.CLAWBACK_RECOVERY_PAUSE_PAISE,
   });
 
   return {
@@ -388,6 +394,19 @@ async function mintConsultantPayout(
   );
 
   return prisma.$transaction(async (tx) => {
+    // CLAWBACK_RECOVERY_PAUSE: an expert owing more than the pause line is
+    // skipped, not netted, until the receivable comes down.
+    const owed = await outstandingClawbackPaise(tx, {
+      rail: "CONSULTANT",
+      consultantProfileId,
+    });
+    if (owed > PAYOUT_CONSTANTS.CLAWBACK_RECOVERY_PAUSE_PAISE) {
+      console.warn(
+        `Skipping consultant ${consultantProfileId}: ${owed} paise of clawback outstanding`,
+      );
+      return null;
+    }
+
     const readyEarnings = await tx.consultantEarnings.findMany({
       where: {
         consultantProfileId,

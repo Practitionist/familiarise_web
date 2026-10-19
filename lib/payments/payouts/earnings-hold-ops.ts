@@ -1,32 +1,52 @@
 /**
- * #1771 K-3 — an operator's hold and release of consultant earnings.
+ * An operator's hold and release of one earning, consultant or organisation.
  *
- * Hold: PENDING|READY → HELD. Release: HELD → the recorded preDisputeStatus
- * (#1020-1), else READY/PENDING by hold maturity; never while the payment has
- * an open refund or dispute. One CAS per status group; a short count is a 409.
+ * Hold places an OPERATOR hold on a PENDING or READY row. Release clears the
+ * operator and moderation holds (the ones an admin disposes of) and is refused
+ * while the payment has an open refund or dispute; a dispute or overage hold
+ * stays until its own settlement releases it.
  */
 
-import { EarningStatus, Prisma, RefundStatus } from "@prisma/client";
+import {
+  EarningStatus,
+  EarningsHoldReason,
+  Prisma,
+  RefundStatus,
+} from "@prisma/client";
 
-import type { Tx } from "@/lib/prisma";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
-import { assertEarningStatusTransitionLegal } from "./earning-status";
+import {
+  EarningsHoldRaceError,
+  placeEarningsHolds,
+  releaseEarningsHolds,
+  type EarningsHoldDb,
+  type EarningsSide,
+} from "./earnings-holds";
 
 const HOLDABLE_FROM: EarningStatus[] = [
   EarningStatus.PENDING,
   EarningStatus.READY,
 ];
 
-/** No refund in flight and no live dispute on the earning's payment. */
-export const NO_OPEN_CLAIM: Prisma.ConsultantEarningsWhereInput = {
-  payment: {
-    refunds: { none: { status: RefundStatus.PENDING, deletedAt: null } },
-    disputes: { none: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } } },
-  },
-};
+/** The holds an operator release may clear. */
+const OPERATOR_RELEASABLE: EarningsHoldReason[] = [
+  EarningsHoldReason.OPERATOR,
+  EarningsHoldReason.MODERATION,
+];
 
-type EarningsDb = Pick<Tx, "consultantEarnings">;
+const OPEN_CLAIMS = {
+  select: {
+    refunds: {
+      where: { status: RefundStatus.PENDING, deletedAt: null },
+      select: { id: true },
+    },
+    disputes: {
+      where: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
+      select: { id: true },
+    },
+  },
+} satisfies Prisma.PaymentDefaultArgs;
 
 function requireReason(reason: string) {
   if (reason.trim().length < 5) {
@@ -38,32 +58,25 @@ function requireReason(reason: string) {
   }
 }
 
-async function readRows(db: EarningsDb, ids: string[]) {
-  const rows = await db.consultantEarnings.findMany({
-    where: { id: { in: ids } },
-    select: {
-      id: true,
-      status: true,
-      holdUntil: true,
-      preDisputeStatus: true,
-      payment: {
-        select: {
-          refunds: {
-            where: { status: RefundStatus.PENDING, deletedAt: null },
-            select: { id: true },
-          },
-          disputes: {
-            where: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
-            select: { id: true },
-          },
-        },
-      },
-    },
+/** The earning and the table it lives in; consultant ids are tried first. */
+async function readEarning(db: EarningsHoldDb, id: string) {
+  const select = { id: true, status: true, payment: OPEN_CLAIMS } as const;
+  const consultant = await db.consultantEarnings.findUnique({
+    where: { id },
+    select,
   });
-  if (rows.length !== new Set(ids).size) {
+  const row =
+    consultant ??
+    (await db.organizationEarnings.findUnique({ where: { id }, select }));
+  if (!row) {
     throw new OpsRefusal("EARNING_NOT_FOUND", "Earning not found.", 404);
   }
-  return rows;
+  const side: EarningsSide = consultant ? "consultant" : "org";
+  return {
+    side,
+    status: row.status,
+    openClaims: row.payment.refunds.length + row.payment.disputes.length,
+  };
 }
 
 const raced = () =>
@@ -73,124 +86,66 @@ const raced = () =>
   );
 
 export async function holdEarnings(
-  db: EarningsDb,
-  ids: string[],
+  db: EarningsHoldDb,
+  id: string,
   reason: string,
-): Promise<{ held: number; before: { id: string; status: EarningStatus }[] }> {
+  opsActionId: string,
+): Promise<{ side: EarningsSide; before: EarningStatus }> {
   requireReason(reason);
-  const rows = await readRows(db, ids);
-  const stuck = rows.find((r) => !HOLDABLE_FROM.includes(r.status));
-  if (stuck) {
+  const row = await readEarning(db, id);
+  if (!HOLDABLE_FROM.includes(row.status)) {
     throw new OpsRefusal(
       "EARNING_NOT_HOLDABLE",
-      `Only pending or ready earnings can be held (this one is ${stuck.status}).`,
+      `Only pending or ready earnings can be held (this one is ${row.status}).`,
     );
   }
-  for (const r of rows)
-    assertEarningStatusTransitionLegal(r.id, r.status, EarningStatus.HELD);
-  const moved = await db.consultantEarnings.updateMany({
-    where: { id: { in: ids }, status: { in: HOLDABLE_FROM } },
-    data: { status: EarningStatus.HELD },
-  });
-  if (moved.count !== rows.length) throw raced();
-  return {
-    held: moved.count,
-    before: rows.map((r) => ({ id: r.id, status: r.status })),
-  };
+  try {
+    const placed = await placeEarningsHolds(db, row.side, [id], {
+      reason: EarningsHoldReason.OPERATOR,
+      sourceRef: opsActionId,
+      note: reason,
+    });
+    if (placed.length !== 1) throw raced();
+  } catch (err) {
+    if (err instanceof EarningsHoldRaceError) throw raced();
+    throw err;
+  }
+  return { side: row.side, before: row.status };
 }
 
 export async function releaseHeldEarnings(
-  db: EarningsDb,
-  ids: string[],
+  db: EarningsHoldDb,
+  id: string,
   reason: string,
+  actorUserId: string,
   now = new Date(),
-): Promise<{ ready: string[]; pending: string[]; trust: string[] }> {
+): Promise<{ side: EarningsSide; status: EarningStatus }> {
   requireReason(reason);
-  const rows = await readRows(db, ids);
-  if (rows.some((r) => r.status !== EarningStatus.HELD)) {
+  const row = await readEarning(db, id);
+  if (row.status !== EarningStatus.HELD) {
     throw new OpsRefusal(
       "EARNING_NOT_HELD",
       "Only held earnings can be released.",
     );
   }
-  if (
-    rows.some((r) => r.payment.refunds.length + r.payment.disputes.length > 0)
-  ) {
+  if (row.openClaims > 0) {
     throw new OpsRefusal(
       "EARNING_HAS_OPEN_CLAIM",
       "This payment has a refund or dispute still open — release once it settles.",
     );
   }
-
-  // #1020-1 — the recorded prior wins: a PENDING_TRUST freeze returns to
-  // PENDING_TRUST so the invoice-fraud gate keeps owning the release.
-  const trust: string[] = [];
-  const priorPending: string[] = [];
-  const priorReady: string[] = [];
-  const blankReady: string[] = [];
-  const blankPending: string[] = [];
-  for (const r of rows) {
-    switch (r.preDisputeStatus) {
-      case EarningStatus.PENDING_TRUST:
-        trust.push(r.id);
-        break;
-      case EarningStatus.PENDING:
-        priorPending.push(r.id);
-        break;
-      case EarningStatus.READY:
-        priorReady.push(r.id);
-        break;
-      default: {
-        // No recorded prior (operator hold, or pre-#1020): the hold-window rule,
-        // READY once holdUntil has passed, PENDING until then.
-        const matured = Boolean(r.holdUntil && r.holdUntil <= now);
-        (matured ? blankReady : blankPending).push(r.id);
-      }
-    }
-  }
-
-  // One CAS per group, with that group's own predicate repeated in the WHERE —
-  // a row the dispute release moved out from under us matches nothing and the
-  // count falls short of rows.length, which is the 409 below.
-  let moved = 0;
-  const restore = async (
-    group: string[],
-    to: EarningStatus,
-    prior: EarningStatus | null,
-    maturedOnly = false,
-  ) => {
-    if (group.length === 0) return;
-    for (const id of group)
-      assertEarningStatusTransitionLegal(id, EarningStatus.HELD, to);
-    const r = await db.consultantEarnings.updateMany({
-      where: {
-        id: { in: group },
-        status: EarningStatus.HELD,
-        preDisputeStatus: prior,
-        ...(maturedOnly ? { holdUntil: { lte: now } } : {}),
-        ...NO_OPEN_CLAIM,
-      },
-      // Cleared on every group, as the dispute release does: a marker left set
-      // would be read as the next hold's intent.
-      data: { status: to, preDisputeStatus: null },
-    });
-    moved += r.count;
-  };
-
-  await restore(
-    trust,
-    EarningStatus.PENDING_TRUST,
-    EarningStatus.PENDING_TRUST,
+  const out = await releaseEarningsHolds(
+    db,
+    row.side,
+    [id],
+    { reasons: OPERATOR_RELEASABLE },
+    { releasedById: actorUserId, now },
   );
-  await restore(priorPending, EarningStatus.PENDING, EarningStatus.PENDING);
-  await restore(priorReady, EarningStatus.READY, EarningStatus.READY);
-  await restore(blankReady, EarningStatus.READY, null, true);
-  await restore(blankPending, EarningStatus.PENDING, null);
-
-  if (moved !== rows.length) throw raced();
-  return {
-    ready: [...priorReady, ...blankReady],
-    pending: [...priorPending, ...blankPending],
-    trust,
-  };
+  if (out.released.length === 0) {
+    throw new OpsRefusal(
+      "EARNING_HELD_BY_SETTLEMENT",
+      "A dispute or an unpaid overage charge holds this earning; it is released when that settles.",
+    );
+  }
+  return { side: row.side, status: out.restored.get(id) ?? EarningStatus.HELD };
 }

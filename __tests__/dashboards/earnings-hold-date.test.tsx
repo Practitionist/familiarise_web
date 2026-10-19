@@ -60,7 +60,8 @@ const response = {
       // A future hold; a matured one reads "releasing shortly".
       holdUntil: new Date(Date.now() + 7 * 86_400_000).toISOString(),
       paidAt: null,
-      preDisputeStatus: null,
+      preHoldStatus: null,
+      holds: [],
       currency: "INR",
       createdAt: AT,
       updatedAt: AT,

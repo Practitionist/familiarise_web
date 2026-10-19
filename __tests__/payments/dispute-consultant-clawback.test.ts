@@ -171,7 +171,14 @@ const store: {
   payments: Map<string, PaymentRow>;
   disputes: DisputeRow[];
   consultantEarnings: ConsultantEarningRow[];
-} = { payments: new Map(), disputes: [], consultantEarnings: [] };
+  /** Org-rail (WALLET / INVOICE_ACCRUAL / LICENSE) legs on the payment. */
+  orgRailLegs: number;
+} = {
+  payments: new Map(),
+  disputes: [],
+  consultantEarnings: [],
+  orgRailLegs: 0,
+};
 
 function makeTxStub() {
   return {
@@ -200,7 +207,16 @@ function makeTxStub() {
         return row;
       },
     },
+    paymentLeg: { count: async () => store.orgRailLegs },
+    earningsHold: {
+      findMany: async () => [],
+      updateMany: async () => ({ count: 0 }),
+    },
     consultantEarnings: {
+      findUnique: async ({ where }: { where: { id: string } }) => {
+        const row = store.consultantEarnings.find((e) => e.id === where.id);
+        return row ? { ...row } : null;
+      },
       // W1c — the LOST branch writes through a CAS `updateMany` (source status
       // in WHERE, `refundedShareAmount` pinned to the pre-read). This stub
       // EVALUATES that predicate and applies the write, so a landed reversal
@@ -352,6 +368,7 @@ beforeEach(() => {
   store.payments.clear();
   store.disputes.length = 0;
   store.consultantEarnings.length = 0;
+  store.orgRailLegs = 0;
   tx = makeTxStub();
   mockedTransaction.mockImplementation(
     (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
@@ -366,9 +383,9 @@ describe("LOST dispute on a PAID consultant earning — the clawback", () => {
 
     await handleDisputeUpdated("disp_1", "lost", null);
 
-    // The earnings reversal is unchanged and still the source of truth.
+    // A partial loss reverses half the share; the row stays PAID, not REFUNDED.
     expect(store.consultantEarnings[0]).toMatchObject({
-      status: "REFUNDED",
+      status: "PAID",
       refundedShareAmount: 3_000, // floor(6000 × 0.5)
     });
 
@@ -549,6 +566,7 @@ describe("LOST dispute on an org-funded payment", () => {
   test("never books a consultant receivable: the org already bore the chargeback", async () => {
     seedPayment(10_000);
     store.payments.get("pay_db_1")!.organizationId = "org_1";
+    store.orgRailLegs = 1;
     // Prior refunds cover the dispute, so applyOrgChargeback no-ops here.
     tx.refund.aggregate = async () => ({ _sum: { amountPaise: 10_000 } });
     seedEarning({ id: "ce_paid", consultantSharePaise: 6_000 });
@@ -558,6 +576,17 @@ describe("LOST dispute on an org-funded payment", () => {
 
     expect(store.consultantEarnings[0].status).toBe("REFUNDED");
     expect(consultantClawbackCalls()).toHaveLength(0);
+  });
+
+  test("a card-paid booking tagged to an org claws back from the expert, as for B2C", async () => {
+    seedPayment(10_000);
+    store.payments.get("pay_db_1")!.organizationId = "org_1";
+    seedEarning({ id: "ce_paid", consultantSharePaise: 6_000 });
+    seedOpenDispute(10_000);
+
+    await handleDisputeUpdated("disp_1", "lost", null);
+
+    expect(consultantClawbackCalls()).toHaveLength(1);
   });
 });
 

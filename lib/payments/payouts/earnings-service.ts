@@ -34,6 +34,7 @@ import {
 import { AppointmentType, PAYOUT_CONSTANTS } from "./constants";
 import {
   computeHoldUntil,
+  withNewExpertHold,
   holdHoursFor,
   resolveEarningsAnchor,
 } from "./earnings-hold";
@@ -2020,7 +2021,6 @@ async function executeEarningsCreationInTx(
     scope,
     grossAmount,
     anchor,
-    holdUntil,
     preplanned,
   } = params;
   const hasPreplanned = preplanned !== null && preplanned !== undefined;
@@ -2037,6 +2037,12 @@ async function executeEarningsCreationInTx(
   if (existing.exists) {
     return existing.id;
   }
+
+  const holdUntil = await withNewExpertHold(
+    tx,
+    consultantProfileId,
+    params.holdUntil,
+  );
 
   const parkForTrust = await resolveInTxTrustPark(tx, payment, preplanned);
   const initialEarningStatus: EarningStatus = parkForTrust
@@ -2439,6 +2445,7 @@ export async function getConsultantEarnings(
             processedAt: true,
           },
         },
+        holds: { where: { releasedAt: null }, select: { reason: true } },
       },
       orderBy: { createdAt: "desc" },
       take: limit,
