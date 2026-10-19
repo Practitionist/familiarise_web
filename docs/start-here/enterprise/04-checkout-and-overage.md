@@ -1,7 +1,7 @@
 ---
 title: Enterprise checkout and overage settlement
 type: explanation
-band: index
+band: start-here
 audience: sde2
 status: partial
 last-reviewed: 2026-10-19
@@ -139,6 +139,8 @@ The surcharge is computed on the pass-through over-cap base:
     tax-exclusive overage = basePaise + surchargePaise
     charged overage = basePaise + surchargePaise + GST on surcharge
 
+Here, the “tax-exclusive overage” ceiling excludes the additional GST on the surcharge. The pass-through base itself is drawn from the parent booking's tax-inclusive amount; do not strip that original tax out a second time.
+
 GST is calculated by the tax engine from payer place of supply. The pass-through base is already part of the main booking's tax-inclusive price, so taxing it again would duplicate output tax. The percentage surcharge is a new consideration and receives GST. For org charge, organization tax context is used; for member side charge, the member buyer country and consumer state snapshot are carried to the child Payment.
 
 The preview endpoint returns an advisory result before payment. Distinguish mapper marginal (pre-GST, base+surcharge) from the actual tax-inclusive amount in the side Payment and persisted OverageEvent. Tests for preview parity are in `__tests__/enterprise/overage-preview.test.ts`.
@@ -228,6 +230,24 @@ When a wallet-funded booking is allocated lazily, the path also posts a separate
 
 The booking's LICENSE leg remains zero because the flat-fee contract absorbs covered usage. When a cap is crossed, the writer creates a separate SUCCEEDED ENTERPRISE_INVOICE_ACCRUAL Payment with an OVERAGE_INVOICE_ACCRUAL leg. It posts Dr ORG_RECEIVABLE and credits the overage platform amount and surcharge GST. The normal invoice rollup collects this child in a later OrganizationInvoice.
 
+If the booking is fully reversed before that child is invoiced, `reverseBookingUtilization()` voids the child inside the same reversal transaction. The void is conditional on the child still being SUCCEEDED and unbilled; it appends an `OVERAGE_INVOICE_ACCRUAL_REVERSAL` leg equal to the negative full child leg, then posts `overage-accrual-voided:<childPaymentId>` as the exact mirror of `overage-accrual:<childPaymentId>`. The invoice rollup sees the original leg plus its reversal as zero and excludes the voided child from the amount due. The OverageEvent also moves to REVERSED.
+
+For example, a ₹1,000 base + ₹100 surcharge + ₹18 GST child has an original leg of 111,800 paise and journal:
+
+    Dr ORG_RECEIVABLE(org) 111800
+       Cr PLATFORM_FEE     110000
+       Cr GST_PAYABLE        1800
+
+The void adds a -111,800 paise reversal leg and exact counter-journal:
+
+    Dr PLATFORM_FEE     110000
+    Dr GST_PAYABLE        1800
+       Cr ORG_RECEIVABLE(org) 111800
+
+These are two balanced journal transactions; net balance by account is zero. The void leaves the child Payment and its original leg unchanged. The append-only payment-leg reversal keeps the child out of a future invoice without rewriting the original payment.
+
+If the invoice rollup wins the race and stamps `billableToOrgInvoiceId` first, the void CAS does not mutate the issued child. It records `OVERAGE_ACCRUAL_INVOICED` with the child and invoice IDs; finance must handle the already-issued amount through the invoice credit-note path. That event is an operational warning, not an automatically issued credit note. The rollup stamp and void CAS serialize on the child row so only one side wins.
+
 ### PERSONAL program
 
 The dashboard can describe PERSONAL programs as card checkout with organization allowance metering. At the current commit site, only an org-sponsored booking calls recordOverageAtCheckout(); a PERSONAL card booking that passes the allowance meter does not create an OverageEvent or charge a second amount. Its regular card amount already includes the whole booking price. Therefore CHARGE_MEMBER is unnecessary economically for that path, while CHARGE_ORG is not currently routed to an org accrual. This is a code gap relative to the broad “all combinations settle” wording in older enterprise references.
@@ -247,7 +267,9 @@ For a partial cap example, booking value is ₹5,000 and remaining credit pool a
 
 For a WALLET member charge on the same booking, the original wallet debit first takes ₹5,000. The carve credits back ₹2,000, leaving ₹3,000 on the org wallet. The member side payment collects ₹2,236. On a successful capture, the member now funds the carved base and its surcharge/GST. On failure, the carve restoration re-debits or restores the proper parent-side amount under guarded updates.
 
-Refunds follow the parent booking and child event relationships. Wallet-origin refunds credit the BillingAccount cache and post a WALLET journal entry. Invoice accrual refunds append negative reversal legs and can issue a credit note. A collected member overage can be reversed when the booking is fully refunded; refund and dispute cascades must clamp cumulative amount so two independent refund causes never pay more than the remaining refundable value.
+Refunds follow the parent booking and child event relationships. Wallet-origin refunds credit the BillingAccount cache and post a WALLET journal entry. Invoice accrual refunds append negative reversal legs and can issue a credit note. When a full booking refund reverses an un-invoiced LICENSE-funded CHARGE_ORG child, the child accrual is voided with the exact counter-journal above; an already-invoiced child remains due until finance handles its credit note. A collected CHARGE_MEMBER overage is not refunded inline with the parent refund: the full-refund cascade stamps a durable refund-owed marker on each charged side Payment, then the retry worker refunds each child's remaining balance. Refund and dispute cascades must clamp cumulative amount so two independent refund causes never pay more than the remaining refundable value.
+
+The side Payment's marker key is `overage-credit-back:<parentPaymentId>:<sidePaymentId>` and its amount is null, which means refund the child's full remaining balance. `retry-auto-refunds` waits for its grace period, skips a child with a pending refund or live dispute, and drives the normal refund front door with that stable key. A successful or already-settled refund clears the marker; a gateway failure leaves it for another bounded attempt. The normal child-refund cascade moves the matching OverageEvent to REVERSED after confirmation. After three failed drives the marker is surfaced for an operator to refund manually. This keeps the parent's confirmed refund independent from a later child-refund outage while retaining retry identity and preventing duplicate credit-back.
 
 ## 10. Failure handling and idempotency
 
@@ -259,6 +281,8 @@ Refunds follow the parent booking and child event relationships. Wallet-origin r
 - Invoice accrual rollup race: Serializable read/create/stamp transaction plus retry ensures two runners do not bill the same Payment twice.
 - Member side order retries: parent Payment plus synthetic child intent and client idempotency key support resume; webhook CAS ensures duplicate capture delivery is a no-op.
 - Member charge timeout and recovery: failed/timed-out events restore base carve when safe; parent already invoiced prevents mutation of a statutory issued document.
+- Full booking reversal: un-invoiced LICENSE overage children receive a full reversal leg plus mirrored journal; invoiced children are left intact and emit `OVERAGE_ACCRUAL_INVOICED` for credit-note handling.
+- Member overage credit-back: a full parent refund stamps `refundOwedKey` on each charged side Payment; `scripts/payments/retry-auto-refunds.ts` drains the markers with stable dedupe keys and bounded retries.
 - Deferred PaymentLeg trigger: leg sums are validated at COMMIT, after all parent/child writes in the transaction.
 - Ledger entries and transactions are immutable; reversal posts a counter-entry rather than editing history.
 
@@ -294,11 +318,12 @@ For member payment semantics, describe a parent-linked deferred side-payment and
 
 - Checkout: `lib/payments/checkout/org-funding.ts`, `lib/payments/checkout/orchestrate.ts`, `lib/payments/checkout/revalidate.ts`, `commit/payment-row.ts`, `commit/org-utilization.ts`, `commit/ledger.ts`.
 - Meter and reversal: `lib/api/organizations/program-helpers.ts`, `lib/booking/allocation/commit/subscription-cap.ts`.
-- Overage math and settlement: `lib/payments/billing/overage.ts`, `lib/payments/billing/overage-preview.ts`, `lib/payments/billing/overage-settlement.ts`, `lib/payments/billing/overage-base-carve.ts`, `lib/payments/billing/overage-transitions.ts`.
+- Overage math and settlement: `lib/payments/billing/overage.ts`, `lib/payments/billing/overage-preview.ts`, `lib/payments/billing/overage-settlement.ts`, `lib/payments/billing/overage-base-carve.ts`, `lib/payments/billing/overage-transitions.ts`, `lib/payments/billing/overage-accrual-void.ts`.
+- Refund owed: `lib/payments/operations/refund-owed.ts`, `scripts/payments/retry-auto-refunds.ts`.
 - Pay-link and webhook: app/dashboard/overage, `lib/payments/webhooks/overage-handlers.ts`.
 - Invoice: `lib/payments/billing/invoice-rollup.ts`, `lib/payments/billing/purchase-order-draw.ts`, `lib/payments/billing/create-org-invoice.ts`.
 - Ledger rules: `prisma/sql/payment-legs-triggers.sql`, `prisma/sql/check-constraints.sql`, `prisma/sql/ledger-triggers.sql`.
-- Tests: `__tests__/enterprise/overage-calculator.test.ts`, `__tests__/enterprise/overage-preview.test.ts`, `__tests__/enterprise/overage-settlement-legsum.test.ts`, `__tests__/enterprise/overage-base-carve.test.ts`, `__tests__/enterprise/overage-member-webhook.test.ts`, `__tests__/enterprise/credit-pool-meter.test.ts`, `__tests__/enterprise/wallet-null-cached-balance.test.ts`; `__tests__/payments/checkout-pool-1-nesting.test.ts` and `__tests__/payments/org-invoice-journal.test.ts`.
+- Tests: `__tests__/enterprise/overage-calculator.test.ts`, `__tests__/enterprise/overage-preview.test.ts`, `__tests__/enterprise/overage-settlement-legsum.test.ts`, `__tests__/enterprise/overage-base-carve.test.ts`, `__tests__/enterprise/overage-member-webhook.test.ts`, `__tests__/enterprise/overage-accrual-void.test.ts`, `__tests__/enterprise/credit-pool-meter.test.ts`, `__tests__/enterprise/wallet-null-cached-balance.test.ts`; `__tests__/payments/checkout-pool-1-nesting.test.ts`, `__tests__/payments/org-invoice-journal.test.ts`, and `__tests__/payments/overage-credit-back-owed.test.ts`.
 
 ## Glossary
 

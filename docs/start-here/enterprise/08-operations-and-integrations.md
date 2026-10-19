@@ -1,6 +1,7 @@
 ---
 title: Enterprise Operations & External Integrations System Design
 type: explanation
+band: start-here
 audience: sde3
 status: partial
 last-reviewed: 2026-10-19
@@ -283,7 +284,7 @@ Use these source surfaces when updating this design. The purpose of this table i
 | System event projection                  | `lib/enterprise/system-events.ts`, `lib/enterprise/audit-sanitize.ts`   | `__tests__/enterprise/audit-sanitize.test.ts`                                                |
 | Host configuration                       | `lib/prisma.ts`, `next.config.mjs`, `netlify.toml`, `Dockerfile`        | inspect environment-specific build/deploy checks; do not run production DB mutation commands |
 
-These tests exist as evidence of focused invariants. This documentation task did not execute them. Run targeted tests and repository checks when the code changes; a documentation-only PR should still confirm formatting and that links/paths resolve.
+These tests identify focused invariants; the full catalog was not run for this documentation change. Targeted overage accrual-void and member credit-back regressions were run to verify the newly merged refund paths. Run targeted tests and repository checks when the code changes; a documentation-only PR should still confirm formatting and that links/paths resolve.
 
 The most important review boundary is the durable state. A scheduler, alert, email, or provider response is only one observation; operators should close an incident after confirming the local row, external reference, and customer-facing record agree.
 

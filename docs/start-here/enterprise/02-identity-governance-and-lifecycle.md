@@ -1,7 +1,7 @@
 ---
 title: Enterprise identity, governance and lifecycle
 type: explanation
-band: index
+band: start-here
 audience: sde2
 status: partial
 last-reviewed: 2026-10-19

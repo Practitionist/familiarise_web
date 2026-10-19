@@ -1,7 +1,7 @@
 ---
 title: Enterprise ledger, billing, earnings, and settlement
 type: explanation
-band: index
+band: start-here
 audience: sde2
 status: partial
 last-reviewed: 2026-10-19
@@ -105,6 +105,10 @@ sequenceDiagram
 
 The invoicing module uses per-organization sequential invoice numbers, issue-time fiscal year and GST fields. Invoice rendering and tax calculation are statutory document concerns; they do not alter the original payment leg.
 
+An un-invoiced LICENSE overage is a separate child `Payment`, even though its parent booking has a zero-value LICENSE leg. When the parent booking is fully reversed, `voidReversedOverageAccruals()` conditionally appends a full `OVERAGE_INVOICE_ACCRUAL_REVERSAL` funding leg and mirrors the child's original `overage-accrual:<childPaymentId>` journal using `overage-accrual-voided:<childPaymentId>`. For a child of ₹1,118 (₹1,000 base + ₹100 surcharge + ₹18 GST), original posting is Dr ORG_RECEIVABLE ₹1,118 / Cr PLATFORM_FEE ₹1,100 / Cr GST_PAYABLE ₹18; the void is Dr PLATFORM_FEE ₹1,100 / Dr GST_PAYABLE ₹18 / Cr ORG_RECEIVABLE ₹1,118. Thus both journals balance and their per-account net is zero. The void leaves the original child Payment and leg unchanged; the equal negative leg makes the future invoice rollup net to zero.
+
+Invoice issue and child void race on `Payment.billableToOrgInvoiceId`: the void's conditional update requires null, and the rollup stamps the invoice in its serializable transaction. If issue wins, the void preserves the billed child and reports `OVERAGE_ACCRUAL_INVOICED` with invoice identity; it does not silently rewrite an issued invoice or mint a credit note. Finance must use the invoice credit-note procedure. `__tests__/enterprise/overage-accrual-void.test.ts` covers both outcomes, idempotent replay, balanced mirror postings, and the zero-bill rollup after a void.
+
 ## 6. Purchase orders and credit exposure
 
 A PurchaseOrder is a spending authorization attached to an organization, not a fifth FundingSource. It has totalAmountPaise and remainingAmountPaise. drawPurchaseOrder() in `lib/payments/billing/purchase-order-draw.ts` decrements remaining value with a conditional updateMany only when the order is ACTIVE, not expired, currency-matched, and large enough for the invoice.
@@ -124,6 +128,8 @@ The current finance doctrine treats the platform as principal supplier for GST. 
 For program or subscription charges that are not in a booking journal, invoice issue creates the receivable/platform fee/GST journal. Voiding such a fee invoice reverses that journal. Refunds write credit notes and reverse the appropriate fee and tax according to the cumulative refund cap and statutory credit-note cutoff.
 
 Overage is special only for the tax base: the base is an already-taxed slice of the parent's booking price, while the surcharge is new consideration. Hence output GST is charged once on base and once on surcharge, never twice on base. For invoices, the surcharge tax is carried in Payment.taxAmount and the tax-inclusive accrual leg.
+
+For a LICENSE booking whose CHARGE_ORG overage was minted as a child accrual, a full booking reversal before invoice issue reverses that child with a negative `OVERAGE_INVOICE_ACCRUAL_REVERSAL` leg and the exact mirror journal, including GST_PAYABLE. The rollup nets the reversal before creating an invoice. If the child was already attached to an issued invoice, it remains intact for the credit-note path and the reversal records an operational warning with the affected invoice IDs; this code does not issue that credit note itself. See [checkout and overage](04-checkout-and-overage.md) for the ₹1,118 example and race sequence.
 
 The principal-supplier model is a product/accounting decision in ADR 26 and remains subject to CA review. The compliance reference calls the pairing of principal-supplier GST and 194-O withholding as an e-commerce operator deliberate and unusual. A documentation chapter should state implemented treatment and point to the open CA question rather than declaring a universal legal rule.
 
@@ -185,6 +191,10 @@ Open disputes can move earnings to HELD and store preDisputeStatus. A WON or CLO
 CHARGE_MEMBER overage uses HELD for a separate purpose. It holds parent booking earnings until a distinct side-payment captures or fails. It is not the same release rule as a dispute. Documentation should identify the cause of hold and the process that returns the row to its prior eligible state.
 
 Refunds are two-phase. A Refund record reserves an amount before a gateway call; ledger reversal and earnings clawback occur only when the gateway confirms the refund. The refund cascade clamps against already-returned refunds and lost/charge-refunded disputes. Invoice credits are cumulative and cannot reverse more than the original charged amount.
+
+When a confirmed refund fully reverses a booking with collected CHARGE_MEMBER overage batches, the cascade does not make nested gateway calls inside that transaction or try to reverse the side charge as if it shared the parent's tender. Instead, it stamps `Payment.refundOwedKey` on each charged side Payment in the same transaction that completes the parent cascade. The stable key is `overage-credit-back:<parentPaymentId>:<sidePaymentId>`; null `refundOwedPaise` means the child's full remaining refundable balance. This state-as-outbox marker survives process failure and is later driven through the ordinary refund front door by `scripts/payments/retry-auto-refunds.ts`.
+
+The owed-refund worker waits 15 minutes, skips a payment with an existing PENDING refund or a live dispute, and uses the marker key as the refund dedupe key. Success/replay clears the marker; a still-PENDING gateway refund remains owned by refund reconciliation; failures are counted on the payment and retried until the third failed drive, when an operator is asked to refund manually. A marker older than two hours is surfaced in an operations event. `__tests__/payments/overage-credit-back-owed.test.ts` checks multiple child payments, idempotent replay, and retry after a gateway failure. A partial parent refund does not trigger this full-booking overage credit-back; the new marker branch is guarded by full completion of the parent refund.
 
 ## 12. Organization payout batch
 
@@ -271,6 +281,8 @@ Do not infer that every seeded consultation has a payout row or a particular rat
 
 - **Invoice rollup retry:** transaction serialization retries; on a second pass, billableToOrgInvoiceId prevents duplicate issue.
 - **Overage event orphan:** rollup records orphan findings after transaction commit rather than referencing an invoice rolled back with the tx.
+- **Un-invoiced LICENSE overage reversed:** append a full reversal leg, mirror the child accrual journal under a distinct key, and let rollup net to zero; if invoice issue won the race, preserve the invoice and emit `OVERAGE_ACCRUAL_INVOICED` for finance's credit-note work.
+- **CHARGE_MEMBER overage credit-back:** the full parent refund stamps a stable refund-owed marker on each successful side Payment; the retry-auto-refunds worker drives each later refund and leaves gateway failures durable for bounded retry or manual action.
 - **Gateway payout callback replay:** payout status CAS makes completion a no-op after terminal state; journal key also provides idempotency.
 - **Completed payout reversal:** separate REVERSED state, inverse journal key, TDS reversal and earnings reopen.
 - **Refund fails:** no booking ledger reversal is posted until gateway confirms; failed refund has failure fields and a notification/reconcile route.
@@ -285,11 +297,11 @@ The operational sweeps only reconcile across external gateway or cache boundarie
 - Earnings split and booking journal: `lib/payments/payouts/earnings-service.ts`, `lib/payments/checkout/commit/ledger.ts`, `lib/payments/ledger/post.ts`.
 - Wallet: `lib/api/organizations/wallet.ts`; `lib/payments/billing/overage-settlement.ts`; `jobs/billing/wallet-low-balance.ts`.
 - Invoice rollup and PO: `lib/payments/billing/invoice-rollup.ts`, `lib/payments/billing/create-org-invoice.ts`, `lib/payments/billing/purchase-order-draw.ts`, app/api/organizations/[orgId]/billing-account/invoices.
-- Subscriptions and refunds: `lib/booking/subscription-cycle.ts`, `lib/payments/payouts/earnings-reversal.ts`, `lib/payments/operations/refund.ts`.
+- Subscriptions and refunds: `lib/booking/subscription-cycle.ts`, `lib/payments/payouts/earnings-reversal.ts`, `lib/payments/operations/refund.ts`, `lib/payments/operations/refund-owed.ts`, `lib/payments/billing/overage-accrual-void.ts`, `scripts/payments/retry-auto-refunds.ts`.
 - Payout and TDS: `lib/payments/payouts/org-payout-service.ts`, `lib/compliance/tds.ts`, app/api/organizations/[orgId]/payouts.
 - Webhooks: `lib/payments/webhooks/handlers.ts`, `lib/payments/webhooks/overage-handlers.ts`, app/api/webhooks/razorpay.
 - Sidecars: `prisma/sql/check-constraints.sql`, `prisma/sql/ledger-triggers.sql`, `prisma/sql/payment-legs-triggers.sql`.
-- Tests: `__tests__/enterprise/org-payout-service.test.ts`, `__tests__/enterprise/org-payout-withholding-postings.test.ts`, `__tests__/enterprise/tds-org-payout-input.test.ts`, `__tests__/enterprise/collaborator-org-earnings.test.ts`, `__tests__/enterprise/po-balance-enforcement.test.ts`, `__tests__/enterprise/wallet-null-cached-balance.test.ts`, `__tests__/enterprise/ledger-invariants.test.ts`; `__tests__/payments/org-invoice-journal.test.ts`, `__tests__/payments/earnings-per-cycle.test.ts`, `__tests__/payments/multi-party-booking-journal.test.ts`, `__tests__/payments/dispute-earnings-hardening.test.ts`, `__tests__/payments/dispute-refund-correctness.test.ts`.
+- Tests: `__tests__/enterprise/org-payout-service.test.ts`, `__tests__/enterprise/org-payout-withholding-postings.test.ts`, `__tests__/enterprise/tds-org-payout-input.test.ts`, `__tests__/enterprise/collaborator-org-earnings.test.ts`, `__tests__/enterprise/po-balance-enforcement.test.ts`, `__tests__/enterprise/wallet-null-cached-balance.test.ts`, `__tests__/enterprise/ledger-invariants.test.ts`, `__tests__/enterprise/overage-accrual-void.test.ts`; `__tests__/payments/org-invoice-journal.test.ts`, `__tests__/payments/earnings-per-cycle.test.ts`, `__tests__/payments/multi-party-booking-journal.test.ts`, `__tests__/payments/dispute-earnings-hardening.test.ts`, `__tests__/payments/dispute-refund-correctness.test.ts`, `__tests__/payments/overage-credit-back-owed.test.ts`.
 
 ## Glossary
 

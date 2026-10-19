@@ -11,7 +11,7 @@ last-reviewed: 2026-10-19
 
 This chapter turns the system design into explicit engineering and product choices. It describes what the reviewed implementation establishes, recommends an option, explains the alternatives, and identifies evidence that would justify a different decision. **Every proposed change below is a recommendation, not a behavior implemented by this documentation PR.**
 
-The baseline is `dev` commit `dd0f8a3a0`, reviewed on 19 October 2026. The supporting chapters cite the schema, routes, helpers, workers and tests. No production configuration, live database, regulator approval, or vendor account was audited. Questions of commercial intent remain product decisions even when the underlying arithmetic is unambiguous.
+The baseline is `dev` commit `29fbe05bc`, reviewed on 19 October 2026. The supporting chapters cite the schema, routes, helpers, workers and tests. No production configuration, live database, regulator approval, or vendor account was audited. Questions of commercial intent remain product decisions even when the underlying arithmetic is unambiguous.
 
 ## How to evaluate a choice
 

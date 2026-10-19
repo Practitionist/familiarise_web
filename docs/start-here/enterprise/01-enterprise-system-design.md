@@ -13,7 +13,7 @@ Familiarise's enterprise subsystem lets an organization buy services for its peo
 
 This chapter explains the whole system before the later chapters examine its parts. The design is derived from `prisma/schema.prisma`, the existing enterprise documentation, and the application and test code at the review baseline. Existing prose is background material; when it disagrees with the schema or a reachable call site, the implemented call site wins.
 
-**Evidence boundary.** “Current” means present in the reviewed source, based on `dev` commit `dd0f8a3a0`. It does not mean that a feature flag is enabled in production, a SQL sidecar is installed in the shared database, a vendor contract is signed, or a scheduled job has recently succeeded. This documentation does not inspect production data or change the database. “Recommended” and “planned” identify design proposals; the docs PR implements none of them.
+**Evidence boundary.** “Current” means present in the reviewed source, based on `dev` commit `29fbe05bc`. It does not mean that a feature flag is enabled in production, a SQL sidecar is installed in the shared database, a vendor contract is signed, or a scheduled job has recently succeeded. This documentation does not inspect production data or change the database. “Recommended” and “planned” identify design proposals; the docs PR implements none of them.
 
 ## The business questions that define the architecture
 

@@ -1,7 +1,7 @@
 ---
 title: Enterprise dashboards and user journeys
 type: explanation
-band: index
+band: start-here
 audience: sde1
 status: partial
 last-reviewed: 2026-10-19

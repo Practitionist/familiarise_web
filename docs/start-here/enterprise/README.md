@@ -11,7 +11,7 @@ last-reviewed: 2026-10-19
 
 This collection explains Familiarise's entire enterprise subsystem in nine chapters. It starts with the Prisma model, traces the existing enterprise documentation, and follows the implemented UI, API, transactional helpers, scheduled workers and tests. It includes individual component designs, sequence and data diagrams, numerical examples, failure behavior, and recommendations with alternatives and reasons.
 
-The source baseline is `dev` commit `dd0f8a3a0`, reviewed on 19 October 2026. “Current” means implemented in that source, with any gate or integration limitation identified. It does not certify production configuration, live database sidecar installation, vendor readiness or legal compliance. Proposed changes are explicitly recommendations; this is a documentation-only change.
+The source baseline is `dev` commit `29fbe05bc`, reviewed on 19 October 2026. “Current” means implemented in that source, with any gate or integration limitation identified. It does not certify production configuration, live database sidecar installation, vendor readiness or legal compliance. Proposed changes are explicitly recommendations; this is a documentation-only change.
 
 ## The nine chapters
 

@@ -1,6 +1,7 @@
 ---
 title: Enterprise Compliance, Privacy & Data System Design
 type: explanation
+band: start-here
 audience: sde3
 status: partial
 last-reviewed: 2026-10-19
