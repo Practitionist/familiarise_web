@@ -2225,7 +2225,7 @@ model OrganizationEarnings {
   status        EarningStatus
   holdUntil     DateTime?      @db.Timestamptz
   // The status the first active EarningsHold froze; the last release restores it.
-  preHoldStatus EarningStatus?
+  preHoldStatus EarningStatus? @map("preDisputeStatus")
   holds         EarningsHold[]
 
   orgPayoutId String?
@@ -6123,7 +6123,7 @@ model ConsultantEarnings {
   holdUntil     DateTime?      @db.Timestamptz
   paidAt        DateTime?      @db.Timestamptz
   // The status the first active EarningsHold froze; the last release restores it.
-  preHoldStatus EarningStatus?
+  preHoldStatus EarningStatus? @map("preDisputeStatus")
   holds         EarningsHold[]
 
   // Currency (always INR for MVP, extensible for multi-currency)
@@ -6150,8 +6150,7 @@ model ConsultantEarnings {
 /// (unreleased) hold; lib/payments/payouts/earnings-holds.ts is the only writer.
 /// Exactly one earnings FK is set (`earnings_hold_one_earning`), and one active
 /// hold per (earning, reason, sourceRef) (`earnings_hold_active_*_key`), both
-/// in prisma/sql/check-constraints.sql. `preHoldStatus` is renamed in place by
-/// prisma/sql/pre-push.sql, which must run before this schema is pushed.
+/// in prisma/sql/check-constraints.sql.
 model EarningsHold {
   id                     String                @id @default(uuid())
   consultantEarningsId   String?
