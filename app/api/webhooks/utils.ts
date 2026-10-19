@@ -1,5 +1,6 @@
 import type { Tx } from "@/lib/prisma";
 import prisma from "../../../lib/prisma";
+import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { sumPaise } from "@/lib/payments/utils/money";
 import {
@@ -399,7 +400,7 @@ export async function handleOrgPaymentSuccess(
               invoiceId,
               postings: [
                 {
-                  account: { kind: "CASH" },
+                  account: gatewayCashAccount(),
                   direction: "DEBIT",
                   amountPaise: gatewayAmountPaise,
                 },
@@ -806,7 +807,7 @@ export async function handleRefundCreated(
                 where: { id: topUp.billingAccountId },
                 select: { currency: true, ownerOrgId: true },
               });
-              // Reverse the top-up's double-entry: Dr WALLET / Cr CASH. The
+              // Reverse the top-up's double-entry: Dr WALLET / Cr GATEWAY_CLEARING. The
               // wallet liability we owe the org shrinks; platform cash returns
               // to the gateway. postLedgerTxn is idempotent on idempotencyKey,
               // so a webhook redelivery (or two racing workers) is a no-op —
@@ -833,7 +834,7 @@ export async function handleRefundCreated(
                     amountPaise: refundAmt,
                   },
                   {
-                    account: { kind: "CASH" },
+                    account: gatewayCashAccount(),
                     direction: "CREDIT",
                     amountPaise: refundAmt,
                   },
@@ -1021,7 +1022,7 @@ export async function handleRefundCreated(
                   ),
                 );
               // Balanced reversal journal. The credit side goes wherever the
-              // value went: back to CASH when the gateway returns the money, or
+              // value went: back to GATEWAY_CLEARING when the gateway returns the money, or
               // to the org's WALLET when the refund is granted as in-app credit
               // (fundingSource WALLET). The debit side comes from invoiceRefundDebits.
               //
@@ -1059,7 +1060,7 @@ export async function handleRefundCreated(
                         amountPaise: amount,
                       }
                     : {
-                        account: { kind: "CASH" },
+                        account: gatewayCashAccount(),
                         direction: "CREDIT",
                         amountPaise: amount,
                       },
@@ -1177,10 +1178,11 @@ export async function handleRefundCreated(
             // or out-of-order delivery (e.g. `refund.created` with status
             // "pending" redelivered after `refund.processed`) must never
             // downgrade a settled refund into the unsweepable real-id-PENDING
-            // limbo class, nor resurrect a failed one. (The old guard compared
-            // the Prisma enum against the RAW gateway string, so it never
-            // short-circuited and every redelivery rewrote the row.)
-            if (existingRefund.status !== "PENDING") {
+            // limbo class. A late success on a locally FAILED row is the one
+            // exception: the money left, so it settles and cascades once (`cascadedAt`).
+            const lateSuccess =
+              existingRefund.status === "FAILED" && newStatus === "SUCCEEDED";
+            if (existingRefund.status !== "PENDING" && !lateSuccess) {
               console.log(
                 `↩️ Refund ${refundId} already ${existingRefund.status}; ignoring ${status} event`,
               );
@@ -1188,7 +1190,7 @@ export async function handleRefundCreated(
             }
 
             const claimed = await tx.refund.updateMany({
-              where: { id: existingRefund.id, status: "PENDING" },
+              where: { id: existingRefund.id, status: existingRefund.status },
               data: {
                 status: newStatus,
                 updatedAt: new Date(),
@@ -2296,7 +2298,7 @@ export async function handleDisputeUpdated(
  * #776 §C — settle a lost chargeback on an org-funded booking. The org funded
  * the booking, so the org bears the chargeback: debit its wallet. If the wallet
  * can't cover it (or there's no wallet), record the amount as an ORG_RECEIVABLE
- * the dunning flow pursues. Either way the platform's CASH (pulled by the bank)
+ * the dunning flow pursues. Either way the gateway clearing (pulled by the bank)
  * is balanced by the org side. Idempotent on `chargeback:<disputeId>`.
  */
 async function applyOrgChargeback(
@@ -2357,7 +2359,7 @@ async function applyOrgChargeback(
     }
   }
 
-  // Balanced counter-post: the bank pulled CASH; recover it from the funder.
+  // Balanced counter-post: the gateway deducted the chargeback; recover it from the funder.
   await postLedgerTxn(tx, {
     idempotencyKey: `chargeback:${disputeId}`,
     kind: "REFUND",
@@ -2371,7 +2373,7 @@ async function applyOrgChargeback(
         amountPaise: settlePaise,
       },
       {
-        account: { kind: "CASH" },
+        account: gatewayCashAccount(),
         direction: "CREDIT",
         amountPaise: settlePaise,
       },

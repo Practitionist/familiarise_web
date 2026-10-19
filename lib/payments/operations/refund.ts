@@ -85,6 +85,7 @@ import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import { allocateCycleClawback } from "@/lib/payments/payouts/earnings-reversal";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 // Late-bound cycle: reversal-engine imports applyRefundCascade from here.
 import { postPayoutClawback } from "./reversal-engine";
@@ -1680,7 +1681,7 @@ export async function applyRefundCascade(
       let organizationId: string | null = null;
       switch (leg.source) {
         case "CARD":
-          kind = "CASH";
+          kind = gatewayCashAccount().kind;
           break;
         case "WALLET":
           kind = "WALLET";

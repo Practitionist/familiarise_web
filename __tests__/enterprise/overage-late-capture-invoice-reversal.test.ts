@@ -185,7 +185,7 @@ describe("late capture after the parent was invoiced", () => {
       paymentId: "side1",
       postings: [
         {
-          account: { kind: "CASH" },
+          account: { kind: "GATEWAY_CLEARING" },
           direction: "DEBIT",
           amountPaise: MARGINAL,
         },

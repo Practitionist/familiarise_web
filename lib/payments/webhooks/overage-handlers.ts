@@ -11,7 +11,7 @@
  *
  * Money model (org-relief, DECIDED #775): the org funded the covered portion
  * of the booking and the consultant was paid once at booking; the member's
- * marginal relieves the org. Capture posts `Dr CASH / Cr ORG_PAYABLE(org) /
+ * marginal relieves the org. Capture posts `Dr GATEWAY_CLEARING / Cr ORG_PAYABLE(org) /
  * Cr GST_PAYABLE`: the org is credited base + surcharge, the side-payment's
  * `taxAmount` (GST on the surcharge) goes to GST_PAYABLE, and the org credit is REALIZED AT
  * ORG PAYOUT — it flows to the org through the next payout batch like any
@@ -30,6 +30,7 @@ import prisma from "@/lib/prisma";
 import type { Tx } from "@/lib/prisma";
 import { PaymentStatus, Prisma } from "@prisma/client";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import {
@@ -151,7 +152,7 @@ async function postOverageMemberLedgerEntries(
   const taxPaise = Math.min(side.taxAmount, side.amount);
   const postings: Posting[] = [
     {
-      account: { kind: "CASH" },
+      account: gatewayCashAccount(),
       direction: "DEBIT",
       amountPaise: side.amount,
     },

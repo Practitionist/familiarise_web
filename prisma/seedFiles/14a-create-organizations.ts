@@ -55,6 +55,7 @@ import {
 import prisma from "../../lib/prisma";
 import { buildConsentArtifact } from "../../lib/compliance/dpdp";
 import { PURPOSE_CODES } from "../../lib/compliance/purpose-codes";
+import { gatewayCashAccount } from "../../lib/payments/ledger/gateway-account";
 import { postLedgerTxn } from "../../lib/payments/ledger/post";
 import type { UserWithProfiles } from "./1a-create-users";
 import { DEFAULT_SEED_PASSWORD, assertSeedPasswordSafeForEnv } from "./config";
@@ -637,7 +638,7 @@ async function seedIit(params: {
       kind: "TOPUP",
       postings: [
         {
-          account: { kind: "CASH", currency: "INR" },
+          account: gatewayCashAccount(),
           direction: "DEBIT",
           amountPaise: TOPUP_PAISE,
         },
