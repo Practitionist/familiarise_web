@@ -204,6 +204,8 @@ This band collects the architecture decision records (`01` through `36`): each o
 
 ### Cross-Rail Explainers — `docs/start-here/`
 
+For the full component-by-component enterprise design, start with the [enterprise system design](../start-here/07-enterprise-system-design.md). It traces the current schema through the code, includes worked examples, distinguishes three-, five- and seven-axis views, and records recommendations and implementation boundaries.
+
 | File                                                                                         | Purpose                                                                                                                                                                                                                                                       |
 | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [start-here/03-booking-and-money-machinery](../start-here/03-booking-and-money-machinery.md) | Canonical end-to-end visual guide combining booking lifecycle, organizational scoping (`?orgScope=`), role & permission matrices, funding/program/overage permutations, all 20 double-entry ledger permutations, and worked numeric examples with seeded cast |
