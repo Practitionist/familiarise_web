@@ -103,8 +103,9 @@ export const POST = withOpsAction(
         response: {
           success: true,
           batchId: run.batchId,
-          payoutsCreated: payouts.length,
+          minted: run.minted,
           failed: run.failed,
+          payoutsCreated: payouts.length,
           payouts: payouts.map((p) => ({
             id: p.id,
             consultantName: p.consultantProfile.user.name,

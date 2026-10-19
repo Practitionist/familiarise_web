@@ -98,6 +98,8 @@ import {
 import { voidClawbacksRaisedOnPayout } from "../../lib/payments/payouts/clawback-recovery";
 import { payoutEligibilityReason } from "../../lib/payments/payouts/payout-requirements";
 import { RazorpayPayoutsService } from "../../lib/payments/payouts/razorpay-payouts";
+import { NextRequest } from "next/server";
+import { isSameOriginJsonRequest } from "../../lib/api/same-origin";
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -338,5 +340,49 @@ describe("F1: RazorpayX static egress", () => {
     expect(proxyAgents).toEqual(["http://proxy.test:3128"]);
     expect(undiciFetch).toHaveBeenCalledTimes(2);
     expect(undiciFetch.mock.calls[0][1]).toHaveProperty("dispatcher");
+  });
+});
+
+describe("F4: the freeze POST accepts only this site's own origins", () => {
+  const send = (origin: string | null, host = "familiarisenow.com") =>
+    isSameOriginJsonRequest(
+      new NextRequest(
+        "https://6ad0f1--familiarise.netlify.app/api/consultant/payout-accounts/freeze",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            host,
+            ...(origin ? { origin } : {}),
+          },
+          body: "{}",
+        },
+      ),
+    );
+  beforeEach(() => {
+    process.env.BETTER_AUTH_TRUSTED_ORIGINS =
+      "https://familiarisenow.com, https://www.familiarisenow.com";
+  });
+  afterEach(() => {
+    delete process.env.BETTER_AUTH_TRUSTED_ORIGINS;
+  });
+
+  it("accepts the production origin even when the request reached the deploy-id host", () => {
+    expect(
+      send("https://familiarisenow.com", "6ad0f1--familiarise.netlify.app"),
+    ).toBe(true);
+  });
+
+  it("accepts a preview alias the request itself reached", () => {
+    const alias = "deploy-preview-2239--familiarise.netlify.app";
+    expect(send(`https://${alias}`, alias)).toBe(true);
+  });
+
+  it("refuses a foreign origin", () => {
+    expect(send("https://evil.example")).toBe(false);
+  });
+
+  it("refuses a request without an Origin header", () => {
+    expect(send(null)).toBe(false);
   });
 });
