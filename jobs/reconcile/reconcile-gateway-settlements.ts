@@ -29,8 +29,7 @@ import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { sumPaise } from "@/lib/payments/utils/money";
 
-const RECONCILE_GATEWAY_SETTLEMENTS_JOB =
-  "reconcile-gateway-settlements";
+const RECONCILE_GATEWAY_SETTLEMENTS_JOB = "reconcile-gateway-settlements";
 
 /** Razorpay's maximum `count` for the recon endpoint. */
 const PAGE_SIZE = 1000;
@@ -436,6 +435,7 @@ async function postSettlementJournals(
 
 async function reconcileGatewaySettlements(
   now: Date,
+  startedAt: number,
 ): Promise<SettlementReconResult> {
   const result: SettlementReconResult = {
     success: true,
@@ -448,7 +448,7 @@ async function reconcileGatewaySettlements(
   };
   const client = getRazorpayClient();
   if (!client) return { ...result, skipped: "NO_GATEWAY_CLIENT", done: true };
-  const isPastDeadline = startDeadline();
+  const isPastDeadline = startDeadline(startedAt);
 
   for (const daysBack of DAYS_BACK) {
     if (isPastDeadline()) return result;
@@ -486,13 +486,15 @@ function reportMismatches(result: SettlementReconResult): void {
   });
 }
 
+/** `startedAt` is when the request reached the route, so the drain deadline counts the cold boot. */
 export async function runReconcileGatewaySettlements(
-  now: Date = new Date(),
+  startedAt: number = Date.now(),
+  now: Date = new Date(startedAt),
 ): Promise<SettlementReconResult> {
   const result = await withCronLock(
     "reconcile-gateway-settlements",
     { failMode: "closed" },
-    () => reconcileGatewaySettlements(now),
+    () => reconcileGatewaySettlements(now, startedAt),
   );
   reportMismatches(result);
   return result;

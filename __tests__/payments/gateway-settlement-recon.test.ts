@@ -126,7 +126,7 @@ it("books the missing fee, flags the mismatch once, and settles the net to CASH"
     },
   ]);
 
-  const first = await runReconcileGatewaySettlements(now);
+  const first = await runReconcileGatewaySettlements(Date.now(), now);
   expect(first).toMatchObject({ inserted: 2, feesPosted: 1, done: false });
   expect(first.byStatus).toMatchObject({ MATCHED: 1, AMOUNT_MISMATCH: 1 });
   expect(mockPost).toHaveBeenCalledWith(
@@ -156,7 +156,7 @@ it("books the missing fee, flags the mismatch once, and settles the net to CASH"
 
   // Both days now read empty: the day is complete and its settlement posts once.
   mockPost.mockClear();
-  const second = await runReconcileGatewaySettlements(now);
+  const second = await runReconcileGatewaySettlements(Date.now(), now);
   expect(second).toMatchObject({ settlementsPosted: 1, done: true });
   expect(mockPost).toHaveBeenCalledTimes(1);
   expect(mockPost).toHaveBeenCalledWith(

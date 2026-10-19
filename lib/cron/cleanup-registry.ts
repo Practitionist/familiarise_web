@@ -768,10 +768,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "reconcile-gateway-settlements": () =>
       cleanupRoute({
         job: "reconcile-gateway-settlements",
-        run: async () => {
+        run: async (_req, { startedAt }) => {
           const { runReconcileGatewaySettlements } =
             await import("@/jobs/reconcile/reconcile-gateway-settlements");
-          return runReconcileGatewaySettlements();
+          return runReconcileGatewaySettlements(startedAt);
         },
         status: (r) =>
           statusFor(
