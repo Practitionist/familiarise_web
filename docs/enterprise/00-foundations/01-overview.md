@@ -162,8 +162,8 @@ the journey — each entry links to the band doc that carries the full story.
   `WalletTopUp`; `walletBalance` became a derived cache asserted by the
   reconciler. See [money-model-overview](../10-money-and-ledger/01-money-model-overview.md).
 - **#776 — v1 money core (+ #785 review hardening).** The reversal engine,
-  credit notes, refund-cascade unification, idempotency keys, and the
-  `LedgerAccountBalance` O(1) snapshot. See [money-model-overview](../10-money-and-ledger/01-money-model-overview.md)
+  credit notes, refund-cascade unification and idempotency keys (its O(1)
+  balance snapshot was later removed; balances aggregate from the journal). See [money-model-overview](../10-money-and-ledger/01-money-model-overview.md)
   and [ledger-integrity](../10-money-and-ledger/13-ledger-integrity.md).
 - **#777 — v2 customer experience (shipped as PR #787).** The state-aware
   `/home` activation + action center, field-level RBAC on org PATCH, and the

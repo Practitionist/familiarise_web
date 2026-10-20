@@ -307,7 +307,6 @@ For the platform-wide diagrams: `docs/prisma/schema-map.md`.
 | `LedgerAccount` | `"LedgerAccount"` | Money journal — deterministic composite ids |
 | `LedgerTransaction` | `"LedgerTransaction"` | Money journal — `idempotencyKey @unique` |
 | `LedgerEntry` | `"LedgerEntry"` | Money journal — immutable postings |
-| `LedgerAccountBalance` | `"LedgerAccountBalance"` | Materialized per-account balance |
 | `LedgerReconciliationReport` | `ledger_reconciliation_reports` | `@@map` |
 | `ConsentArtifact` | `"ConsentArtifact"` | DPDP grants; SHA-256 `hash` |
 | `DataBreach` | `"DataBreach"` | 72h DPDP reporting deadline |
