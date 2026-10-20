@@ -113,6 +113,37 @@ it("re-points by CAS on the prior intent and tombstones the replaced order", asy
   });
 });
 
+it("first mint over the overage placeholder intent writes no tombstone and no leg", async () => {
+  mockPrisma.overageEvent.findUnique.mockResolvedValue({
+    id: "ev1",
+    overageBehavior: "CHARGE_MEMBER",
+    chargeStatus: "PENDING",
+    marginalPaise: 129_500,
+    currency: "INR",
+    payment: {
+      ...sidePayment,
+      paymentStatus: "PENDING",
+      paymentIntent: "overage:ev1",
+      gatewayPaymentId: null,
+    },
+  });
+  tx.payment.updateMany.mockResolvedValue({ count: 1 });
+
+  const res = await call();
+
+  expect(res.status).toBe(200);
+  expect(tx.payment.updateMany).toHaveBeenCalledWith(
+    expect.objectContaining({
+      where: expect.objectContaining({
+        paymentIntent: "overage:ev1",
+        gatewayPaymentId: null,
+      }),
+    }),
+  );
+  expect(mockTombstone).not.toHaveBeenCalled();
+  expect(tx.paymentLeg.create).not.toHaveBeenCalled();
+});
+
 it.each([
   ["PENDING", "OVERAGE_ORDER_RACED"],
   ["SUCCEEDED", undefined],

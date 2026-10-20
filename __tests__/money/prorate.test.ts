@@ -67,6 +67,14 @@ describe("prorate", () => {
     expect(prorate(-7, 1, 2, "ceil")).toBe(-3);
   });
 
+  it.each(["floor", "round", "ceil"] as const)(
+    "a zero amount prorates to zero (%s)",
+    (mode) => {
+      expect(prorate(0, 7, 3, mode)).toBe(0);
+      expect(prorate(0, 0, 3, mode)).toBe(0);
+    },
+  );
+
   it("throws on a non-integer input or an unsafe result", () => {
     expect(() => prorate(10.5, 1, 2)).toThrow("not a safe integer");
     expect(() => prorate(100, 1, 0)).toThrow("non-positive denominator");
