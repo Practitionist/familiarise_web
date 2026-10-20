@@ -4,7 +4,7 @@ type: explanation
 band: index
 audience: sde2
 status: live
-last-reviewed: 2026-10-17
+last-reviewed: 2026-10-20
 ---
 
 # Money System — High-Level Design
@@ -16,8 +16,8 @@ This document is the finance counterpart of [01-booking-system-hld.md](./01-book
 ```text
  price derivation ──► order mint ──► capture webhook ──► payment legs ──► double-entry ledger
  deriveCheckoutAmount  handleCheckout   handlePaymentSuccess  PaymentLeg rows    postLedgerTxn
- (pure, integer paise) (Razorpay order  (the only writer of   + funding-sum      (booking:<paymentId>)
-                        or synthetic     SUCCEEDED)            trigger at COMMIT   │
+ (pure, integer paise) (Razorpay order  (booking capture      + funding-sum      (booking:<paymentId>)
+                        or synthetic     writer)               trigger at COMMIT   │
                         org intent)                                                ▼
                                                                          earnings (hold window)
                                                                                    │
@@ -27,7 +27,15 @@ This document is the finance counterpart of [01-booking-system-hld.md](./01-book
  cascade: legs, earnings, utilization, credit note, ledger reversal      reconcilers heal every external boundary
 ```
 
-Three rules hold the pipeline together. There is one checkout function, `handleCheckout()` in `lib/payments/checkout/orchestrate.ts`. There is one writer of `SUCCEEDED` for gateway captures, `handlePaymentSuccess()` in `lib/payments/webhooks/handlers.ts`; the sponsored and free rails create their payment as `SUCCEEDED` inline inside checkout's own transaction because no gateway is involved. And there is one append-only journal, written only through `postLedgerTxn()` in `lib/payments/ledger/post.ts`. Consumer and enterprise flows differ only in which `PaymentLeg` rows fund the payment and whether an organisation claims a host share.
+Three rules hold the pipeline together. There is one checkout function, `handleCheckout()` in `lib/payments/checkout/orchestrate.ts`. `Payment.paymentStatus = SUCCEEDED` has several writers, listed below, and each one is either a compare-and-set on the prior status or the transaction that creates the row together with its legs. And there is one append-only journal, written only through `postLedgerTxn()` in `lib/payments/ledger/post.ts`. Consumer and enterprise flows differ only in which `PaymentLeg` rows fund the payment and whether an organisation claims a host share.
+
+The writers of `SUCCEEDED` are these five:
+
+1. `handlePaymentSuccess()` in `lib/payments/webhooks/handlers.ts` confirms a booking capture. The capture-race stamps in the same file also write `SUCCEEDED` when a late or mismatched capture must be kept and auto-refunded.
+2. `handleOverageMemberSuccess()` in `lib/payments/webhooks/overage-handlers.ts` confirms a member's overage side-payment.
+3. `handleRecordingPurchaseSuccess()` in `lib/payments/webhooks/recording-purchase.ts` confirms a replay purchase.
+4. The payment row that `handleCheckout()` commits (`lib/payments/checkout/commit/payment-row.ts`) is born `SUCCEEDED` on the wallet, invoice, licence and free rails, because no gateway is involved.
+5. `mintChildOverageAccrualPayment()` in `lib/payments/billing/overage-settlement.ts` creates the child accrual payment of an invoiced overage already `SUCCEEDED`, so the next invoice rollup bills it.
 
 ## 2. End-to-end architecture
 
@@ -58,7 +66,7 @@ flowchart TB
   subgraph Rail_Gateway["3A. Gateway Rail (B2C / PERSONAL Org Tag / Member Overage)"]
     GW_PEND["Payment status = PENDING (expiresAt = +30m) - Occurrence isTentative = true - Participant status = HELD - Razorpay Order minted"]
     GW_DOORS["4 Confirmation Doors: 1. Webhook payment.captured  2. /checkout/verify-signature  3. /checkout/verify?sync=true  4. Cron reconcile-payment-status"]
-    SINGLE_WRITER["Single Writer: handlePaymentSuccess() - Phase 1 (Serializable Tx): Amount parity check -> CAS PENDING to SUCCEEDED -> isTentative = false -> Participant HELD to CONFIRMED -> Request APPROVED"]
+    SINGLE_WRITER["Booking capture writer: handlePaymentSuccess() - Phase 1 (Serializable Tx): Amount parity check -> CAS PENDING to SUCCEEDED -> isTentative = false -> Participant HELD to CONFIRMED -> Request APPROVED"]
     GW_PEND --> GW_DOORS --> SINGLE_WRITER
   end
 
@@ -76,11 +84,11 @@ flowchart TB
     direction TB
     SETTLE["Phase 2 Settlement: createEarningsFromPayment() - Resolves RateCard (10/10/80) or Marketplace (20/80) + Collaborator bps - Writes ConsultantEarnings + OrganizationEarnings - Calls postLedgerTxn(booking:paymentId)"]
     TRIG2["DB Constraint Trigger at COMMIT: ledger_txn_balanced (Sum DEBIT == Sum CREDIT)"]
-    HOLD["Earnings Hold Window - 24h Consultation and Class / 48h Webinar / 168h Subscription, anchored on the later of capture and last session end - PENDING (or PENDING_TRUST) -> READY"]
-    PAYOUTS["Payout Pipeline (Weekly Batch) - ConsultantPayout (<Rs 5k auto-approve) & OrganizationPayout (2-person approval) - Computes TDS 194-O (0.1% or 5% no-PAN) -> RazorpayX -> postLedgerTxn(payout:id)"]
+    HOLD["Earnings Hold Window - 24h Consultation and Class / 48h Webinar / 168h Subscription (+7 days for a new expert), anchored on the later of capture and last session end - PENDING (or PENDING_TRUST) -> READY - EarningsHold rows freeze it"]
+    PAYOUTS["Payout Pipeline (Monday ticker window, hourly disbursement) - ConsultantPayout (<Rs 5k auto-approve) & OrganizationPayout (2-person approval, plus platform co-approval above Rs 50k) - Computes TDS 194-O (0.1% or 5% no-PAN) -> RazorpayX via static egress -> postLedgerTxn(payout:id)"]
     INVOICES["B2B Monthly Rollup (settle-invoice-accruals) - Sums INVOICE_ACCRUAL legs -> OrganizationInvoice (ISSUED, NET-60) - Dunning cron (3x 7d reminders -> suspend) -> Paid: postLedgerTxn(invoicepaid:id)"]
     REFUNDS["Refunds, Voids & Disputes - quoteBookingRefund() -> Two-Phase Gateway Refund -> applyRefundCascade() - Reverses PaymentLegs, Utilization, Earnings, Overage, issues CreditNote, posts refund:id"]
-    RECON["Nightly Control Loop (reconcile-ledgers) - Re-derives the cached balances from the LedgerEntry journal - Auto-freezes drifted org wallets (freezeWalletSpend)"]
+    RECON["Nightly Control Loop (reconcile-ledgers) - Read-only audit of the cached balances against the LedgerEntry journal - Every door that runs it freezes drifted org wallets (freezeDriftedWallets); nothing is repaired"]
 
     SETTLE --> TRIG2 --> HOLD --> PAYOUTS
     TRIG2 --> INVOICES
@@ -116,7 +124,7 @@ The platform fee, the host-organisation share and the expert share are always ca
 - On the approval path, `createApprovalPaymentIntent()` in `lib/payments/operations/approval-payment.ts` mints a card order for an approved request. It writes a `PENDING` row with a `premint_<uuid>` intent and its card leg first, calls the gateway, then fills the real order id by compare-and-swap on the pre-mint marker. A gateway failure expires the pre-mint row. The order's Razorpay `notes` carry `familiarisePaymentId`, so if neither the fill nor the tombstone lands, the capture webhook adopts the named row by compare-and-swap on its pre-mint intent. The sweeps never send a `premint_` intent to Razorpay.
 - When a buyer re-buys a webinar or class seat after an `EXPIRED` or `FAILED` payment, checkout re-mints the same row in place by compare-and-swap and parks the old order on an `EXPIRED` tombstone (`lib/payments/operations/prior-intent-tombstone.ts`) that carries the old legs, so a late capture on the old order is auto-refunded.
 
-## 5. Capture: four doors, one writer
+## 5. Capture: four doors, one booking writer
 
 Four doors converge on `routeCapturedPayment()` and then `handlePaymentSuccess()`: the Razorpay webhook (`app/api/webhooks/razorpay/route.ts`), `POST /api/checkout/verify-signature`, `GET /api/checkout/verify?sync=true`, and the `reconcile-payment-status` sweep for payments pending longer than fifteen minutes.
 
@@ -169,7 +177,9 @@ The daily `reconcile-gateway-settlements` job (`jobs/reconcile/reconcile-gateway
 
 ## 8. Earnings, the hold window and the money state machines
 
-Settlement writes `ConsultantEarnings` (and `OrganizationEarnings` for host organisations) as `PENDING`. They become `READY` once `holdUntil` passes, where `holdUntil = max(capture time, end of the last live occurrence) + hold hours` (`lib/payments/payouts/earnings-hold.ts`). The hold hours are in `PAYOUT_CONSTANTS.HOLD_PERIOD_HOURS`: 24 for a consultation, 48 for a webinar, 168 for a subscription and 24 for a class. Earnings for a booking sponsored by an unverified, never-invoiced organisation park in `PENDING_TRUST` instead (see [ADR 12](../enterprise/70-design-decisions/12-pending-trust-earnings-parking.md)).
+Settlement writes `ConsultantEarnings` (and `OrganizationEarnings` for host organisations) as `PENDING`. They become `READY` once `holdUntil` passes, where `holdUntil = max(capture time, end of the last live occurrence) + hold hours` (`lib/payments/payouts/earnings-hold.ts`). The hold hours are in `PAYOUT_CONSTANTS.HOLD_PERIOD_HOURS`: 24 for a consultation, 48 for a webinar, 168 for a subscription and 24 for a class. The `release-earnings` sweep on the ticker makes the `PENDING` to `READY` move every fifteen minutes. Earnings for a booking sponsored by an unverified, never-invoiced organisation park in `PENDING_TRUST` instead (see [ADR 12](../enterprise/70-design-decisions/12-pending-trust-earnings-parking.md)).
+
+**A new expert waits seven days longer.** `withNewExpertHold()` adds `NEW_EXPERT_EXTRA_HOLD_DAYS` (7) to `holdUntil` when the expert's first earning on a succeeded payment is younger than 30 days (or they have none yet), or when their lifetime share, net of refunds, is under ₹50,000 (5,000,000 paise). The test runs per consultant payee. Deferred holds (subscription tranches, trial cancellations and the settlement of cancelled sessions) get the same extra days through `stampConsultantHolds()`. For example, Hannah Anderson, an independent consultant with no earlier earnings, delivers a ₹1,000 consultation on Mon 26 Oct 2026, 10:00 to 11:00 IST. The normal hold ends Tue 27 Oct 11:00 IST, and the new-expert hold ends Tue 3 Nov 11:00 IST.
 
 ```text
   PaymentStatus:
@@ -180,9 +190,9 @@ Settlement writes `ConsultantEarnings` (and `OrganizationEarnings` for host orga
   EarningsStatus (ConsultantEarnings & OrganizationEarnings):
     PENDING / PENDING_TRUST
        ├──(holdUntil elapsed)──────────────────────────────────────────▶ READY
-       ├──(dispute.created or session VOIDED/UNVERIFIED)──────────────▶ HELD ──(won/resolved)──▶ READY
-       └──(full refund before payout)─────────────────────────────────▶ REFUNDED
-    READY ──(claimed by weekly batch)──▶ BATCHED ──(payout.processed)──▶ PAID ──(payout.reversed)──▶ READY
+       ├──(first active EarningsHold placed)───────────────────────────▶ HELD ──(last hold released)──▶ back to the prior status
+       └──(fully reversed by a refund or a lost dispute)───────────────▶ REFUNDED
+    READY ──(claimed by the Monday batch)──▶ BATCHED ──(payout.processed)──▶ PAID ──(payout.reversed)──▶ READY
 
   PayoutStatus:
     PENDING ──(under 5,000 rupees auto, or admin / two-person organisation approval)──▶ APPROVED ──▶ PROCESSING ──▶ COMPLETED / FAILED / REVERSED
@@ -193,9 +203,38 @@ Settlement writes `ConsultantEarnings` (and `OrganizationEarnings` for host orga
 
 Every transition on `Payment`, `Appointment`, `Refund` and `Payout` is a conditional `updateMany` with the expected prior status in the `WHERE`.
 
+### 8.1 Reason-scoped earnings holds
+
+An earning is `HELD` exactly when it carries at least one active `EarningsHold` row, and each hold names its reason and its source:
+
+| Reason       | Placed by                                                                | Source reference      | Released by                                                     |
+| :----------- | :----------------------------------------------------------------------- | :-------------------- | :-------------------------------------------------------------- |
+| `DISPUTE`    | `placeDisputeHolds()` when a dispute opens (`app/api/webhooks/utils.ts`) | The `Dispute` row id  | The settlement of that same dispute, whatever its verdict       |
+| `MODERATION` | A ban of the consultant (`lib/moderation/side-effects.ts`)               | The banned user's id  | An admin through the operator release door                      |
+| `OPERATOR`   | An admin through `POST /api/admin/earnings/[id]/hold`                    | The ops-log row id    | An admin through `POST /api/admin/earnings/[id]/release`        |
+| `OVERAGE`    | An unpaid member overage (`lib/payments/billing/overage-settlement.ts`)  | The parent payment id | The overage being paid, reversed or settled to the organisation |
+
+`lib/payments/payouts/earnings-holds.ts` (`placeEarningsHolds()` and `releaseEarningsHolds()`) is the only writer of the `HELD` status. The first hold stores the row's prior status in `preHoldStatus`, and the last release restores it, so releasing one owner's hold never frees money another owner still holds. A dispute that settles cannot free a moderation, operator or overage hold, and the operator release door clears only `OPERATOR` and `MODERATION` holds and refuses while the payment has an open refund or dispute. The database keeps one active hold per earning, reason and source (the partial unique indexes `earnings_hold_active_consultant_key` and `earnings_hold_active_org_key`) and requires each hold to name exactly one earning (`earnings_hold_one_earning`), all in `prisma/sql/check-constraints.sql`.
+
+### 8.2 Dispute settlement
+
+When a dispute opens, `placeDisputeHolds()` first cancels any `PENDING` or `APPROVED` payout that already batched one of the payment's earnings (a compare-and-set on the payout, and only the payouts it actually cancelled hand their other earnings back to `READY`), then places a `DISPUTE` hold on the unpaid earnings.
+
+The verdict is settled by one function, `settleDisputeVerdict()` in `app/api/webhooks/utils.ts`, which both the Razorpay webhook (`handleDisputeUpdated()`) and the `reconcile-disputes` poll call. The poll adopts the gateway status and settles the verdict in a single Serializable transaction, so a failed settlement rolls the adoption back for the next run, and a later webhook replay finds the dispute already in its verdict and does nothing. The rules are:
+
+- **Won, or a closed early-fraud warning.** The money stays, and only this dispute's hold is released.
+- **Lost or charge refunded.** `settleLostDispute()` reverses `amount_deducted / payment.amount` of every share, floored per share and capped at what is left to reverse, then releases this dispute's hold. Razorpay's `amount_deducted` is used, and the disputed amount is the fallback when it is absent. A partial loss therefore leaves the remainder payable, and a share goes `REFUNDED` only once its whole amount is reversed.
+- **Closed.** `settleClosedDispute()` follows `amount_deducted`: a positive amount is settled as a loss for that amount, and zero or none is settled as a release.
+- **Who bears it.** A paid consultant earning on a completed payout raises a clawback receivable (`CONSULTANT_RECEIVABLE`) for the net-of-TDS cash, and the withholding is reversed separately. The sponsoring organisation bears the chargeback only when the payment was funded on an organisation rail (a `WALLET`, `INVOICE_ACCRUAL` or `LICENSE` leg exists). A card payment that is merely tagged to an organisation follows the consumer path.
+- **Documents.** A lost chargeback mints a credit note for the lost amount (`CreditNote.disputeId`, unique), and a replay purchase loses its playback entitlement.
+
+For example, Charlotte Brown pays ₹1,180 (118,000 paise) by card for Hannah Anderson's ₹1,000 consultation, and Hannah's share is ₹800 (80,000 paise). The bank opens a dispute and her earning goes `HELD` under a `DISPUTE` hold. Razorpay later reports the dispute lost with `amount_deducted` of ₹590 (59,000 paise). The factor is 59,000 / 118,000 = 0.5, so ₹400 (40,000 paise) of Hannah's share is reversed, the dispute's hold is released, and the remaining ₹400 returns to the status it had before the hold and stays payable. If that earning had already been paid out, the ₹400 (less the TDS fraction of that payout) becomes a clawback receivable that her next payouts net.
+
 ## 9. Payouts and TDS
 
-The weekly workflow `cron-weekly.yml` creates consultant and organisation payout batches on Mondays at 20:00 UTC and processes the approved ones at 21:00 UTC. A consultant payout below `AUTO_APPROVE_THRESHOLD` (5,000 rupees) is approved by the system; larger ones wait for an admin, and organisation payouts need two approvers. Claiming is claim-first: `READY` earnings move to `BATCHED` before the payout is computed.
+The payout jobs run on the five-minute Netlify ticker (`netlify/functions/cron-tick.mts`), not in GitHub Actions. `create-payout-batch` fires on its slots inside a window that opens on Mondays at 20:00 UTC and lasts three hours, minting at most ten consultant payouts and ten organisation payouts per slice. `process-payouts` fires hourly at minute :00 and disburses at most five approved payouts per rail per run, so an approved payout leaves within the hour rather than waiting for a weekly run. Disbursement is still gated on `ENABLE_LIVE_PAYOUTS`. A consultant payout below `AUTO_APPROVE_THRESHOLD` (5,000 rupees) is approved by the system; larger ones wait for an admin. Organisation payouts need an organisation approver, and sometimes a Familiarise admin as well (see section 9.4). Claiming is claim-first: `READY` earnings move to `BATCHED` before the payout is computed, and a database check (`consultant_earnings_batched_has_payout` and `org_earnings_batched_has_payout`, defined in `prisma/sql/check-constraints.sql`) requires a `BATCHED` earning to name its payout.
+
+A windowed job sends its window start with every slice, and each slice treats its cohort as of that instant, so a later slice of the same window finds nothing new to do. Every money job reads the `limit` it is given, runs under `withCronLock`, and answers 207 when some rows failed, which the ticker counts as a failed run. The other windowed money jobs are `settle-invoice-accruals` (the 1st of each month from 04:00 UTC), `expire-referral-credits` (the 1st from 03:10 UTC), `generate-subscription-invoices`, `abandoned-org-top-ups`, `advance-program-cycles`, `auto-renew-contracts`, `irp-uploader`, `sweep-abandoned-overage-charges` and `expire-contracts` (daily 03:00 to 20:00 UTC), `msme-payment-alerts` (once a day, between 03:00 and 04:00 UTC), and `timeout-member-overages`, `dunning` and `wallet-low-balance` (daily from 23:30 UTC for three hours). The ledger audit, `reconcile-disputes`, `reconcile-payout-status` and `handle-stuck-payouts` stay in GitHub Actions.
 
 TDS is computed in `computeTdsForPayout` (`lib/compliance/tds.ts`), which applies the rate to the taxable base that `resolve194OTaxablePaise` (`lib/compliance/tds-194o.ts`) returns under the section 194-O rules (section 393 of the Income-tax Act 2025). The base is the gross sale amount, not the expert's net share. An individual or HUF with a PAN on file is exempt while the financial-year gross stays at or below 5,00,000 rupees; every other payee is withheld from the first rupee. The rate is 10 basis points with a PAN and 500 basis points without one.
 
@@ -215,6 +254,28 @@ Four rules sit on top of the running total. They are pending CA confirmation (#1
 For example, a ₹300 payout (`30,000` paise) that owes the ₹510 catch-up withholds ₹300, carries ₹210 (`tdsCarryPaise` = `21,000`) and moves no cash. The expert's next ₹20,000 gross payout withholds ₹230: ₹20 of its own plus the ₹210 carried.
 
 Withholding posts to `TDS_PAYABLE` in the payout journal (`payout:<id>`), and a bank-returned payout posts `payout-reversal:<id>` with a negative `TDSRecord`. A refund or lost dispute on an already-paid earning raises a clawback that the next payout nets in its creation transaction (`lib/payments/payouts/clawback-recovery.ts`).
+
+### 9.1 Payout safety rules
+
+- **A failed mint does not stop the batch.** If minting one consultant's payout throws, the batch collects the failure, reports it to Sentry once for the run, counts it, and carries on, so the ticker sees a 207.
+- **Clawback pause.** `mintConsultantPayout()` skips an expert whose unrecovered clawback receivable is above `CLAWBACK_RECOVERY_PAUSE_PAISE` (₹10,000, 1,000,000 paise) instead of netting it, until the receivable comes down. The mint runs Serializable with bounded retries, so a clawback that commits after the pause read forces a retry rather than slipping through. The expert sees the reason `CLAWBACK_RECOVERY_PAUSE` on the payout-eligibility panel (`payoutEligibilityReason()` in `lib/payments/payouts/payout-requirements.ts`).
+- **The gateway paid a payout we had already failed.** `completeLocallyFailedPayoutInTx()` completes the payout, re-attaches the earnings that are still `READY` (each failed payout stamps `ConsultantEarnings.releasedFromPayoutId`), books `payout:<id>`, and raises a clawback receivable for whatever part of the paid amount is no longer backed by an earning. It also records a `SystemEvent` and a Sentry message for an operator.
+- **A bank-reversed payout voids its own clawbacks.** `voidClawbacksRaisedOnPayout()` voids the still-unrecovered part of every clawback raised on that payout, because its earnings reopen as `READY` and would otherwise be netted twice. Any part that later payouts already recovered stays booked and raises an alert that this sum is owed back to the expert.
+- **Refunds and chargebacks stay within the payment.** The deferred constraint trigger `payment_refunds_within_amount` in `prisma/sql/payment-legs-triggers.sql` rejects at COMMIT a refund write that would take the sum of pending and succeeded refunds plus lost chargebacks above `Payment.amount`, and it locks the payment row so concurrent refunds serialise. Dispute rows are deliberately not guarded, because a lost chargeback is the bank's verdict and must always be storable. The trigger is defined in the sidecar and takes effect where the sidecar has been applied.
+
+### 9.2 Payout account changes, cooling-off and freeze
+
+A payout goes only to an account that has been the default for 48 hours. When a consultant or an organisation makes a new account the default, the account is stamped with `payoutsAllowedAfter` (now plus `PAYOUT_ACCOUNT_COOLING_OFF_MS`, 48 hours), and the payee gets one security email (`emailPayoutAccountChanged()` in `lib/payments/payouts/payout-account-change.ts`) with a link to a confirm page. Only the page's same-origin POST (`POST /api/consultant/payout-accounts/freeze` or `POST /api/organizations/[orgId]/payout-account/freeze`) sets `payoutsFrozenAt`, so a cross-site link cannot freeze anything. A payee's first account is exempt only while no payout exists and no earning has accrued. A freeze the payee placed carries over to whatever account becomes the default next, and only an admin lifts it, through `POST /api/admin/payout-accounts/unfreeze` (ADMIN, step-up, reason, ops-log row).
+
+Mint skips a default account that is cooling off or frozen. At mint, the payout records the account it will use (`payoutAccountId` on `ConsultantPayout`, `orgPayoutAccountId` on `OrganizationPayout`), and disbursement sends to exactly that account and refuses it if it has since been frozen or is unverified. A payout minted before the snapshot existed falls back to the payee's current default account, which must also be out of cooling-off. An organisation's payout account is edited in place, so an organisation payout whose account changed after mint is failed and its earnings are re-batched.
+
+### 9.3 RazorpayX static egress
+
+Live RazorpayX APIs answer only requests from allowlisted IP addresses, and Netlify has no static egress address. Every RazorpayX call therefore goes through `apiRequest()` in `lib/payments/payouts/razorpay-payouts.ts`, which sends it through an undici proxy agent when `RAZORPAYX_EGRESS_PROXY_URL` is set. With a live key (`rzp_live_`) and no proxy URL, the call is refused with `RAZORPAYX_EGRESS_NOT_CONFIGURED` before any request leaves. Payment-gateway calls (checkout, refunds, disputes) do not use the proxy.
+
+### 9.4 Organisation payouts: co-approval and platform hold
+
+An organisation payout needs an approver at the organisation, who cannot be the person who created the batch while the organisation has a second approver. It also needs a Familiarise admin's co-approval when its amount is above ₹50,000 (`ORG_PAYOUT_PLATFORM_APPROVAL_ABOVE_PAISE`, 5,000,000 paise) or when it was minted within seven days of its payout account changing. In that case the organisation's approval leaves the payout `PENDING` with `platformApprovalRequiredAt` set, and `POST /api/admin/org-payouts/[id]/approve` (`approveOrgPayout()`) moves it to `APPROVED`. The admin cannot be the batch's creator or its organisation approver. That door also falls under the second-admin rule in section 14 when the net amount is above ₹25,000. Independently of approval, an admin can place a platform hold on a `PENDING` or `APPROVED` payout (`POST /api/admin/org-payouts/[id]/hold`) and clear it (`.../release`); the payout run refuses a held payout. `GET /api/admin/org-payouts` lists them for the Money console (staff may read it).
 
 ## 10. Refunds
 
@@ -271,48 +332,77 @@ Application sweeps reconcile only across vendor boundaries; invariants that Post
 | Razorpay settlements                | `reconcile-gateway-settlements` (`jobs/reconcile/reconcile-gateway-settlements.ts`)                                            | Ticker, 06:30–12:30 UTC  |
 | Cached balances against the journal | `reconcile-ledgers` (`scripts/reconcile/reconcile-ledgers.ts`)                                                                 | `cron-daily.yml`         |
 
-`reconcile-ledgers` re-derives every cached balance from `LedgerEntry` rows and writes a `LedgerReconciliationReport`. Its checks fall into four groups: journal soundness, money caches against the journal (including `WALLET_BALANCE_DRIFT`, which freezes the organisation's wallet spend and pages), usage and program counters, and tax and filing coherence. The checks, by group, are:
+`reconcile-ledgers` (`scripts/reconcile/reconcile-ledgers.ts`) is a read-only auditor. It compares cached balances and counters with the `LedgerEntry` journal and with each other, and writes one `LedgerReconciliationReport` holding its findings. It repairs nothing. The nightly job (`jobs/reconcile/reconcile-ledgers.ts`, in `cron-daily.yml`) reports the findings to the system-event log and to Sentry and exits with code 2 so that the workflow turns red. For `WALLET_BALANCE_DRIFT` alone, every door that runs a reconcile freezes spend on the drifted organisation's wallet through `freezeDriftedWallets()` in `lib/payments/wallet-freeze.ts`: the nightly job, the `CRON_SECRET` twin `POST /api/cleanup/reconcile-ledgers` and an admin run (`POST /api/admin/reconcile-ledgers`, full scope or one organisation). The nightly job also pages. A wallet stays frozen until an admin reconciles the drift and calls `POST /api/admin/billing-accounts/[billingAccountId]/unfreeze`, which re-reads that wallet first and answers `409 WALLET_STILL_DRIFTED` if the cache and the journal still disagree. The checks, by group, are:
 
 ```text
-Reconciliation engine: set-based invariant checks in four groups
+Reconciliation checks (one report per run; findings only, no repairs)
   |
-  +-- Group 1: Journal Soundness (Full-Scope Only)
-  |     |-- LEDGER_TXN_IMBALANCE: Sum(DEBIT) - Sum(CREDIT) == 0
-  |     +-- REFUND_BOOKING_COHERENCE: Refunded bookings have released capacity
+  +-- Group 1: Journal coherence
+  |     |-- REFUND_BOOKING_COHERENCE: refunded bookings have released capacity (full scope only)
+  |     |-- EARNINGS_WITHOUT_BOOKING_TXN: earnings rows with no booking journal
+  |     |-- REVERSED_EARNING_WITHOUT_REFUND_TXN: a reversed earning has no REFUND journal
+  |     |-- COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN: a completed payout has no payout journal
+  |     |-- LEDGER_DUAL_WRITE_GAP: payout clawbacks match the posted entries
+  |     +-- SPLIT_SUM_MISMATCH: platform + organisation + expert shares add up to the paise
   |
-  +-- Group 2: Money Caches vs. Journal
-  |     |-- WALLET_BALANCE_DRIFT: Calls freezeWalletSpend(isWalletFrozen=true) & Pages P0
-  |     |-- EARNINGS_LEDGER_DRIFT: ConsultantEarnings == Journal payables
-  |     |-- EARNINGS_WITHOUT_BOOKING_TXN: Earnings rows with no booking journal
-  |     |-- PAYMENT_LEG_SUM_MISMATCH: Sum(Legs) == Payment.amount
-  |     |-- ORG_PAYOUT_TOTAL_MISMATCH: Batched earnings sum == netPayoutPaise
-  |     +-- LEDGER_DUAL_WRITE_GAP: Payout clawbacks match posted CASH debits
+  +-- Group 2: Money caches against the journal
+  |     |-- WALLET_BALANCE_DRIFT: BillingAccount.walletBalance vs the WALLET account (every reconcile door freezes spend)
+  |     |-- EARNINGS_LEDGER_DRIFT: earnings rows vs the journal payables
+  |     |-- ORG_PAYOUT_TOTAL_MISMATCH: batched earnings add up to the payout's net amount
+  |     |-- REFERRAL_CREDIT_LIABILITY_DRIFT: the liability account vs vested, unredeemed credit
+  |     +-- UNAPPLIED_RECEIPTS_RESIDUE: a settled refund of a parked capture left a balance
   |
-  +-- Group 3: Usage & Program Counters
-  |     |-- PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT: Sum(UsageLedger) == engagementsUsed
-  |     |-- CREDIT_POOL_CONSUMED_DRIFT: Sum(UsageLedger.paise) == consumedPaise
-  |     |-- OVERAGE_COUNT_DRIFT: Active events count == overageCount
-  |     |-- OVERAGE_CHARGESTATUS_INTEGRITY: CHARGED events have side-payments
-  |     +-- ACTIVE_SEAT_COUNT_DRIFT: Active assignments == activeSeatCount
+  +-- Group 3: Usage and program counters
+  |     |-- PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT, CREDIT_POOL_CONSUMED_DRIFT, OVERAGE_COUNT_DRIFT
+  |     |-- OVERAGE_CHARGESTATUS_INTEGRITY, OVERAGE_SETTLEMENT_MISMATCH
+  |     +-- ACTIVE_SEAT_COUNT_DRIFT
   |
-  +-- Group 4: Tax & Filing Compliance
-        |-- INVOICE_TOTAL_MISMATCH: Total == Subtotal + CGST + SGST + IGST
-        +-- OVERAGE_RECARVE_COHERENCE: Every overage-recarve-invoice matches CreditNote
+  +-- Group 4: Tax and standing items
+        |-- ORG_INVOICE_GST_MISMATCH: an invoice's output tax vs the GST its bookings posted
+        |-- PENDING_TRUST_PARK_STALE: a trust park older than 24 hours (detect-only)
+        +-- CLAWBACK_RECEIVABLE_STALE: clawbacks unrecovered after 90 days
 ```
 
 INR-only currency is not a reconcile check: the sidecar CHECKs `*_currency_inr` in `prisma/sql/check-constraints.sql` reject a non-INR `LedgerAccount`, `Payment`, `Refund`, `Dispute`, `ConsultantEarnings` or `ConsultantPayout` row at write time.
 
 An earnings row and its `booking:<paymentId>` journal commit in one transaction, so there is no grace window for a fresh payment.
 
-## 13. Glossary
+## 13. B2B invoicing and organisation credit
+
+Only the platform extends credit and changes invoices. The tenant doors that used to do so are gone, and the platform doors are all `withOpsAction()` doors (section 14).
+
+- **Credit.** An organisation's owner or billing admin may lower the credit limit, but cannot raise or remove it and cannot switch the organisation to `INVOICE` funding (`403 CREDIT_LIMIT_PLATFORM_ONLY` and `403 INVOICE_FUNDING_PLATFORM_ONLY` from the tenant `PATCH /api/organizations/[orgId]/billing-account`). Ops do both through `PATCH /api/admin/organizations/[orgId]/billing-account`.
+- **Invoices.** A tenant can only cancel a `DRAFT` invoice (`403 INVOICE_CHANGE_PLATFORM_ONLY` for anything else), and there is no tenant door that raises one. The platform raises a manual invoice (`POST /api/admin/organizations/[orgId]/invoices`) or lets the billing crons raise it.
+- **Purchase-order coverage.** When an organisation requires a purchase order and none covers a rollup or subscription invoice, the job leaves that invoice as a `DRAFT` and records one `SystemEvent` for the run (`ROLLUP_PO_NOT_COVERED` or `SUBSCRIPTION_PO_NOT_COVERED`). An admin issues it with the purchase order it draws on through `POST .../invoices/[invoiceId]/issue`. Every credit note returns its share of the purchase-order draw.
+- **Void is a credit note.** `voidOrgInvoice()` (`lib/payments/billing/org-invoice-void.ts`) moves an `ISSUED` or `OVERDUE` invoice to `VOID` with a compare-and-set, mints a credit note for what the invoice still carries (keyed by `CreditNote.voidedInvoiceId`, one of the four mutually exclusive triggers enforced by `credit_note_trigger_xor`), and takes one of two modes. `REBILL` clears the bookings' `billableToOrgInvoiceId` so the next rollup bills them again, and reverses no revenue. `FORGIVE` writes the receivable off in the journal `invoice-voided:<invoiceId>` against the note's GST and the platform fee, and the experts keep their share. A paid invoice answers `INVOICE_PAID_USE_REFUND`, and an invoice with recorded receipts answers `INVOICE_PART_PAID_USE_REFUND`.
+- **Bank-transfer receipts.** `OrganizationInvoiceReceipt` records each payment against an invoice, either a bank transfer (the UTR is unique per organisation) or a gateway capture. `recordBankTransferReceipt()` writes the receipt and the journal `invoicereceipt:<receiptId>` (`Dr CASH / Cr ORG_RECEIVABLE`), and once nothing is outstanding it settles the invoice through `settleOrgInvoicePaid()`, the same transition the gateway webhook uses.
+- **`/pay` charges what is outstanding.** The tenant `POST .../invoices/[invoiceId]/pay` mints an order for `invoiceOutstandingPaise()`, which is the invoice total less issued credit notes and receipts, and reuses a cached order only while it is unpaid and for that amount. A capture that does not equal the outstanding amount cannot settle the invoice. It is parked in `UNAPPLIED_RECEIPTS` with one `SystemEvent` (`ORG_INVOICE_CAPTURE_UNAPPLIED`) for an operator, and it is never auto-refunded. An organisation awaiting verification may pay, and a suspended one may not.
+- **Overage the member never paid.** When a member's overage payment fails and its base cannot go back to the organisation's accrual (the parent payment is already invoiced, or the organisation is licence-funded), an admin settles it to the organisation through `POST .../overages/[overageEventId]/settle-to-org`. That accrues a `CHARGE_ORG` child to the next rollup and releases the parent's `OVERAGE` hold.
+
+For example, Wipro Limited's rollup invoice totals ₹1,18,000 (11,800,000 paise): ₹1,00,000 plus ₹18,000 GST. If ops void it as `REBILL`, a credit note for 11,800,000 paise is minted, the purchase-order draw comes back, and the bookings roll into next month's invoice. If ops void it as `FORGIVE`, the same credit note is minted and the journal posts `Cr ORG_RECEIVABLE 11,800,000`, `Dr GST_PAYABLE 1,800,000` and `Dr PLATFORM_FEE 10,000,000`. If instead Wipro pays by bank transfer, Patrick Brown records ₹50,000 (UTR from the bank statement) and the invoice stays `ISSUED` with ₹68,000 (6,800,000 paise) outstanding, so `/pay` now charges ₹68,000. A second transfer of ₹68,000 settles it.
+
+## 14. Admin money doors and second-admin approval
+
+Every back-office door that moves money follows one rule, applied by `withOpsAction()` in `lib/backoffice/ops-action-log.ts`. The caller must hold an ADMIN-only surface in `lib/auth/backoffice-permissions.ts` (`payments.manage`, `refunds.manage`, `payouts.manage` or `invoices.manage`; staff only read), must have re-authenticated within the last 15 minutes (`STEP_UP_WINDOW_MS`), must give a typed reason of at least five characters, and produces exactly one `OpsActionLog` row (in the door's own transaction, or right after the gateway call for a gateway door). The doors under this rule are admin refunds (the console's `refunds/issue` and the legacy `POST /api/admin/refunds`), payout batch creation, payout processing, payout approve and reject, wallet unfreeze, wallet adjustment, wallet refund-remaining, the ledger run and the console's reconcile job, payout-account unfreeze, org-payout approve, hold and release, the admin refund-credit door, payment recovery, and every invoice, receipt, void, issue, credit and overage door in section 13. The operator earnings hold and release doors use the same shell with a reason and an ops-log row but without the step-up requirement. Two details are worth knowing. The legacy refund door requires an `Idempotency-Key` header of 10 to 255 characters and builds the refund's `dedupeKey` from the admin, the payment and that key, so a reused key cannot answer for another payment. Payout processing records the caller as `triggeredByUserId`, so an approver cannot disburse their own approval.
+
+**Second-admin approval.** When at least two ADMINs are active, a door that would move more than ₹25,000 (`SECOND_APPROVAL_THRESHOLD_PAISE`, 2,500,000 paise) does not act. It answers `202` with a `PROPOSED` row in `ops_action_proposals` (`OpsActionProposal`), and a different ADMIN must approve it through `POST /api/admin/ops-proposals/[id]/approve` (step-up and a reason). The approval replays the stored request through the same door as the approver, links the door's `OpsActionLog` row to the proposal and marks it `EXECUTED`. A failed replay leaves the proposal `APPROVED` with the failure noted. `POST .../reject` closes a proposal without running it, and the proposer may withdraw their own. A proposal expires after 24 hours, which is read at query time, so no sweep runs. The partial unique index `ops_action_proposal_one_open_key` allows one open proposal per action and target. An amount that cannot be priced counts as above the threshold, and the Money console's Approvals tab lists proposals with approve and reject buttons. The doors that take a second approver are: both refund doors, invoice void, invoice issue, the bank-transfer receipt, overage settle-to-org, the credit-limit door (a switch to `INVOICE` funding counts as raising the limit from zero, and an unlimited limit is unbounded), and the org-payout approve door (priced at the payout's net amount), the wallet adjustment (priced at its absolute amount) and wallet refund-remaining (priced at the whole cached balance).
+
+For example, with three active admins, Olivia Brown asks to refund ₹40,000 (4,000,000 paise) on Wed 21 Oct 2026 at 11:00 IST. The door answers `202` and the proposal expires at 11:00 IST on Thu 22 Oct. Patrick Brown approves at 15:30 IST on the Wednesday after a fresh step-up. The refund then runs as Patrick, under his own dedupe key. A refund of exactly ₹25,000 would have run at once, and if nobody approved by Thursday 11:00 IST, Olivia would have to propose it again.
+
+**Wallet doors.** Two admin doors change an organisation's wallet, both `payments.manage`, step-up and second-approver doors. `POST /api/admin/billing-accounts/[billingAccountId]/wallet-adjustment` takes a non-zero `amountPaise` and a UUID `idempotencyKey`, and posts the journal `walletadj:<billingAccountId>:<idempotencyKey>` (kind `WALLET_ADJUSTMENT`) together with the cached balance in one transaction. A credit is `Dr PLATFORM_PROMO / Cr WALLET` and a debit is `Dr WALLET / Cr PLATFORM_FEE`. A repeated key replays, the same key with a different amount is `409 IDEMPOTENCY_KEY_REUSED`, and a debit larger than the balance is `409 WALLET_INSUFFICIENT_FUNDS`. `POST .../refund-remaining` returns the balance as gateway refunds against the organisation's CONFIRMED top-ups, newest first, each keyed `wallet-refund:<billingAccountId>:<topUpId>`. Each refund books the journal `topup-refund:<refundId>` (`Dr WALLET / Cr GATEWAY_CLEARING`), the same key the Razorpay refund webhook books, so whichever arrives second is a no-op. A drifted wallet is refused with `409 WALLET_DRIFTED` before any money moves, and wallet spend stays frozen for the run. Above ₹25,000 both doors answer `202` with a second-admin proposal.
+
+## 15. Glossary
 
 The booking terms (hold, tentative, CAS-in-WHERE and sweep) are defined in [the booking HLD's glossary](./01-booking-system-hld.md#10-glossary).
 
 - **Pre-mint.** A `PENDING` payment row written before its Razorpay order exists, carrying a `premint_<uuid>` intent (`PRE_MINT_INTENT_PREFIX` in `lib/payments/pre-mint-intent.ts`). `createApprovalPaymentIntent()` writes it first, so an order can never exist at the gateway without a row that names it.
 - **Tombstone.** An `EXPIRED` payment with `appointmentId: null` that keeps an old gateway order and its legs after the live row has moved on (`tombstonePriorIntent()` in `lib/payments/operations/prior-intent-tombstone.ts`). A late capture on the old order lands on the tombstone and is auto-refunded instead of confirming anything.
-- **Dedupe key.** The optional unique `Refund.dedupeKey` column. A caller that must never refund twice names its refund, for example `event-cancel:<eventId>:pay:<paymentId>` in `lib/payments/operations/event-refunds.ts`, and Postgres refuses a second row with that name, so a retried call returns the first refund instead of paying twice. Landing in Wave 0 (W0-3), the cancel route will pass the key `cancel:<appointmentId>`.
+- **Dedupe key.** The optional unique `Refund.dedupeKey` column. A caller that must never refund twice names its refund, for example `event-cancel:<eventId>:pay:<paymentId>` in `lib/payments/operations/event-refunds.ts`, and Postgres refuses a second row with that name, so a retried call returns the first refund instead of paying twice. The cancel route passes `cancel:<appointmentId>:<paymentId>`.
 - **Leg.** A `PaymentLeg` row that says how part of a payment is funded (`CARD`, `WALLET`, `INVOICE_ACCRUAL`, `LICENSE`, `REFERRAL_CREDIT`, or a negative reversal). The deferred trigger `payment_legs_sum_to_amount` in `prisma/sql/payment-legs-triggers.sql` rejects a payment whose legs do not add up at COMMIT.
-- **Earnings hold.** The window after delivery during which an expert's earnings stay `PENDING` before they become `READY` for a payout: 24 hours for consultations and classes, 48 hours for webinars and 168 hours for subscriptions (`HOLD_PERIOD_HOURS` in `lib/payments/payouts/constants.ts`), counted from the later of capture and the last session end (`computeHoldUntil()` in `lib/payments/payouts/earnings-hold.ts`). The `release-earnings` sweep makes the move.
+- **Earnings hold window.** The window after delivery during which an expert's earnings stay `PENDING` before they become `READY` for a payout: 24 hours for consultations and classes, 48 hours for webinars and 168 hours for subscriptions (`HOLD_PERIOD_HOURS` in `lib/payments/payouts/constants.ts`), counted from the later of capture and the last session end (`computeHoldUntil()` in `lib/payments/payouts/earnings-hold.ts`), plus seven days for a new expert. The `release-earnings` sweep makes the move.
+- **`EarningsHold`.** A row that freezes one earning for one reason (`DISPUTE`, `MODERATION`, `OPERATOR` or `OVERAGE`). An earning is `HELD` while at least one hold is active, and each owner releases only its own hold (`lib/payments/payouts/earnings-holds.ts`).
+- **Ops proposal.** A money-door request held in `ops_action_proposals` until a second ADMIN approves it, because it moves more than ₹25,000.
+- **Cooling-off.** The 48 hours a newly default payout account waits before a payout may be sent to it, during which the payee can freeze payouts from the change email.
 - **Credit note.** The GST document that reverses the refunded part of a tax invoice, minted once per refund by `mintRefundCreditNote()` in `lib/payments/operations/refund.ts`. Past the section 34(2) cut-off it becomes a commercial credit note with no tax.
 
 ## Related issues
@@ -330,3 +420,8 @@ Program umbrella #2137. Pull requests: #2141 (merged), #2142 (merged). Platform 
 7. **Withholding only the excess over 5,00,000 rupees on the crossing payout** was replaced by withholding on the whole year-to-date gross, pending CA confirmation. Counting queued, untaxed batches in the prior gross was dropped with it, because under the whole-gross reading it double-counted their gross. Failing a crossing payout whose net could not cover the catch-up was replaced by the carry, and reversing a payout's TDS pro rata to the refund was replaced by reversing only the refunded booking's own share.
 8. **Gateway captures, refunds and chargebacks posted straight to `CASH`**, with no account for the gateway fee, were replaced by `GATEWAY_CLEARING`, the `gatewayfee:` journal and the daily `settlement:` journal. Journals posted before the change stay on `CASH`, because entries are immutable.
 9. **The `LEDGER_ACCOUNT_NON_INR` reconcile check** was documented but never implemented; the sidecar `*_currency_inr` CHECKs replaced it.
+10. **A single dispute-time `HELD` flip with a `preDisputeStatus` column** let one dispute release money that a ban or an operator still held. It was replaced by `EarningsHold` rows with a reason, and the column is now mapped as `preHoldStatus`. Settling a lost dispute in full (the whole earning `REFUNDED`) and treating Razorpay's `closed` as always a release were replaced by pro-rata reversal and by following `amount_deducted`.
+11. **Weekly GitHub Actions payout jobs** (`create-payout-batch` and `process-payouts` as Monday workflows) moved to the ticker, together with the other money batch jobs.
+12. **Reconcile checks that Postgres now enforces** (`LEDGER_TXN_IMBALANCE`, `PAYMENT_LEG_SUM_MISMATCH`, `INVOICE_TOTAL_MISMATCH`, `OVERAGE_RECARVE_COHERENCE`) were deleted from the auditor; the deferred triggers and CHECK constraints are the enforcers.
+13. **Tenant-side credit raises, `INVOICE` funding switches, manual invoice creation and invoice voiding** were removed from the organisation routes. Only the platform doors in section 13 do these.
+14. **Treating a payment's `SUCCEEDED` write as a single-function privilege.** Section 1 lists the five real writers; a rule that assumes one will miss four of them.

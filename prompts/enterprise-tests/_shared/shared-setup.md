@@ -61,9 +61,9 @@ version of this table swapped the IIT/LearnPro shapes and listed
 Owner/expert/learner accounts are picked deterministically from the
 index-based user pool (`firstname.lastname@<domain>` addresses such as
 `samantha.anderson@yahoo.com`), so the full per-org credential roster is
-maintained in ONE place:
-[`docs/enterprise/90-audits/03-verification-guide.md`](../../../docs/enterprise/90-audits/03-verification-guide.md)
-— use it as the login table for these cases.
+derived from the seed files (`prisma/seedFiles/1a-create-users.ts` and
+`prisma/seedFiles/14a-create-organizations.ts`) — read the owner of each org
+from there for the login.
 
 Password for every seeded account: the `SEED_PASSWORD` env (default
 `SeedPass123!`).

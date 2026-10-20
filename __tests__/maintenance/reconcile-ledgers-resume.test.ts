@@ -5,7 +5,7 @@
 /**
  * #1943 — `POST /api/cleanup/reconcile-ledgers` runs a full-scope ledger
  * reconciliation directly via `runReconcileLedgers({ scope: "full" })` under
- * its cron lock.
+ * its cron lock and freezes the wallets it finds drifted.
  */
 
 jest.mock("@sentry/nextjs", () => ({
@@ -33,7 +33,9 @@ const runReconcileLedgers = jest.fn(async (args: Args) => ({
   summary: { discrepanciesCount: 0 },
   findings: [] as unknown[],
 }));
-const freezeDriftingWallets = jest.fn(async (..._a: unknown[]) => undefined);
+const freezeDriftingWallets = jest.fn(
+  async (..._a: unknown[]): Promise<unknown[]> => [],
+);
 const respondToLedgerDrift = jest.fn(async (..._a: unknown[]) => undefined);
 jest.mock("../../scripts/reconcile/ledger-drift-response", () => ({
   freezeDriftingWallets: (...a: unknown[]) => freezeDriftingWallets(...a),
@@ -67,18 +69,33 @@ beforeEach(() => {
 });
 
 describe("POST /api/cleanup/reconcile-ledgers", () => {
-  it("runs a full-scope ledger reconciliation and answers OK", async () => {
+  it("runs a full-scope audit, freezes from its wallet step and reports the frozen wallets", async () => {
+    const drift = { kind: "WALLET_BALANCE_DRIFT", billingAccountId: "ba_1" };
+    freezeDriftingWallets.mockResolvedValueOnce([{ billingAccountId: "ba_1" }]);
+    runReconcileLedgers.mockImplementationOnce(async (args: Args) => {
+      await args.onWalletDrift?.("rep_full", [drift]);
+      return {
+        id: "rep_full",
+        scope: args.scope,
+        ok: false,
+        summary: { discrepanciesCount: 1 },
+        findings: [drift],
+      };
+    });
     const res = await POST(invokeReconcile(), {
       params: Promise.resolve({ job: "reconcile-ledgers" }),
     });
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(207);
     expect(runReconcileLedgers).toHaveBeenCalledWith(
       expect.objectContaining({ scope: "full" }),
     );
+    expect(freezeDriftingWallets).toHaveBeenCalledWith("rep_full", [drift]);
+    expect(respondToLedgerDrift).toHaveBeenCalledTimes(1);
     expect(await res.json()).toMatchObject({
       status: "OK",
-      report: { id: "rep_full", scope: "full", ok: true },
+      report: { id: "rep_full", scope: "full", ok: false },
+      frozenWallets: [{ billingAccountId: "ba_1" }],
     });
   });
 

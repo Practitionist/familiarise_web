@@ -2,6 +2,7 @@
 // committed with the payment in the checkout tx.
 
 import type { Tx } from "@/lib/prisma";
+import { assertWalletDebitJournaled } from "@/lib/api/organizations/wallet";
 import { recordReferralCaptureInSavepoint } from "@/lib/referrals/capture";
 import {
   createEarningsFromPayment,
@@ -34,6 +35,9 @@ export async function recordSynchronousEarnings(
         appointmentType: resolvedEarnings.earningsAppointmentType,
         tx,
       });
+    }
+    if (input.isOrgWalletPayment) {
+      await assertWalletDebitJournaled(tx, payment.id);
     }
     await recordReferralCaptureInSavepoint(tx, {
       paymentId: payment.id,

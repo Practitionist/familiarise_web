@@ -9,7 +9,10 @@ import * as Sentry from "@sentry/nextjs";
 
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
-import { freezeWalletSpend } from "@/lib/payments/wallet-freeze";
+import {
+  freezeDriftedWallets,
+  type FrozenWallet,
+} from "@/lib/payments/wallet-freeze";
 
 import type { Finding, ReconcileReport } from "./reconcile-ledgers";
 
@@ -66,45 +69,13 @@ export async function respondToLedgerDrift(
 export async function freezeDriftingWallets(
   reportId: string,
   findings: Finding[],
-): Promise<void> {
+): Promise<FrozenWallet[]> {
   const walletDrift = findings.filter(
     (f) => f.kind === "WALLET_BALANCE_DRIFT" && f.billingAccountId,
   );
-  const frozenWallets: Array<{
-    billingAccountId: string | null;
-    organizationId: string | null;
-    deltaPaise: number;
-    newlyFrozen: boolean;
-  }> = [];
-  const failures: unknown[] = [];
+  const frozenWallets: FrozenWallet[] = [];
   try {
-    for (const f of walletDrift) {
-      if (!f.billingAccountId) continue;
-      try {
-        const froze = await freezeWalletSpend({
-          billingAccountId: f.billingAccountId,
-          organizationId: f.organizationId ?? null,
-          reason: `ledger reconcile ${reportId}: wallet cache ${f.actualPaise}p ≠ journal ${f.expectedPaise}p (Δ${f.deltaPaise}p)`,
-        });
-        frozenWallets.push({
-          billingAccountId: f.billingAccountId,
-          organizationId: f.organizationId ?? null,
-          deltaPaise: Number(f.deltaPaise),
-          newlyFrozen: froze,
-        });
-      } catch (err) {
-        // One failed freeze must not leave the remaining drifting wallets spendable.
-        failures.push(err);
-      }
-    }
-    if (failures.length > 0) {
-      throw new AggregateError(
-        failures,
-        `Wallet freeze failed for ${failures.length} of ${walletDrift.length} drifting account(s): ${failures
-          .map((e) => (e instanceof Error ? e.message : String(e)))
-          .join("; ")}`,
-      );
-    }
+    await freezeDriftedWallets({ id: reportId, findings }, frozenWallets);
   } finally {
     // One fatal per run, keyed on detected drift so a freeze that throws still pages.
     if (walletDrift.length > 0) {
@@ -128,4 +99,5 @@ export async function freezeDriftingWallets(
       );
     }
   }
+  return frozenWallets;
 }

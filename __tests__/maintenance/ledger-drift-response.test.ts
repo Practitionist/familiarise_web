@@ -25,9 +25,16 @@ jest.mock("../../lib/observability/standing-finding", () => ({
   reportStandingFinding: (a: unknown, r: () => void) =>
     reportStandingFinding(a, r),
 }));
-const freezeWalletSpend = jest.fn(async (_a: unknown) => true);
-jest.mock("../../lib/payments/wallet-freeze", () => ({
-  freezeWalletSpend: (a: unknown) => freezeWalletSpend(a),
+// The real freeze helper runs; a freeze is one WALLET_FREEZE SystemEvent insert.
+const createFreezeEvent = jest.fn(async (_a: unknown) => ({}));
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    systemEvent: {
+      findFirst: async () => null,
+      create: (a: unknown) => createFreezeEvent(a),
+    },
+  },
 }));
 
 import {
@@ -78,7 +85,7 @@ describe("respondToLedgerDrift", () => {
     await respondToLedgerDrift(report([walletDrift, seatDrift]));
 
     expect(recordSystemEvent).toHaveBeenCalledTimes(1);
-    expect(freezeWalletSpend).not.toHaveBeenCalled();
+    expect(createFreezeEvent).not.toHaveBeenCalled();
     expect(captureException).toHaveBeenCalledTimes(1);
   });
 });
@@ -87,20 +94,20 @@ describe("freezeDriftingWallets", () => {
   it("freezes each drifting wallet and pages fatal once", async () => {
     await freezeDriftingWallets("rep_1", [walletDrift, seatDrift]);
 
-    expect(freezeWalletSpend).toHaveBeenCalledTimes(1);
-    expect(freezeWalletSpend).toHaveBeenCalledWith(
-      expect.objectContaining({
-        billingAccountId: "ba_1",
+    expect(createFreezeEvent).toHaveBeenCalledTimes(1);
+    expect(createFreezeEvent).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        correlationId: "wallet-freeze:ba_1",
         organizationId: "org_1",
-        reason: expect.stringContaining("rep_1"),
+        message: expect.stringContaining("rep_1"),
       }),
-    );
+    });
     const levels = captureException.mock.calls.map((c) => c[1]?.level);
     expect(levels).toEqual(["fatal"]);
   });
 
   it("pages for the frozen wallets already done when a freeze throws", async () => {
-    freezeWalletSpend.mockRejectedValueOnce(new Error("db down"));
+    createFreezeEvent.mockRejectedValueOnce(new Error("db down"));
 
     await expect(freezeDriftingWallets("rep_1", [walletDrift])).rejects.toThrow(
       "db down",
@@ -109,15 +116,15 @@ describe("freezeDriftingWallets", () => {
   });
 
   it("still freezes later wallets when one freeze throws, then rejects", async () => {
-    freezeWalletSpend.mockRejectedValueOnce(new Error("db down"));
+    createFreezeEvent.mockRejectedValueOnce(new Error("db down"));
     const second = { ...walletDrift, billingAccountId: "ba_2" };
 
     await expect(
       freezeDriftingWallets("rep_1", [walletDrift, second]),
     ).rejects.toBeInstanceOf(AggregateError);
-    expect(freezeWalletSpend).toHaveBeenCalledTimes(2);
-    expect(freezeWalletSpend.mock.calls[1]?.[0]).toMatchObject({
-      billingAccountId: "ba_2",
+    expect(createFreezeEvent).toHaveBeenCalledTimes(2);
+    expect(createFreezeEvent.mock.calls[1]?.[0]).toMatchObject({
+      data: { correlationId: "wallet-freeze:ba_2" },
     });
     expect(captureException).toHaveBeenCalledTimes(1);
     expect(captureException.mock.calls[0]?.[1]?.contexts.wallet).toMatchObject({
@@ -137,7 +144,7 @@ describe("freezeDriftingWallets", () => {
       },
     ]);
 
-    expect(freezeWalletSpend).not.toHaveBeenCalled();
+    expect(createFreezeEvent).not.toHaveBeenCalled();
     expect(captureException).not.toHaveBeenCalled();
   });
 });

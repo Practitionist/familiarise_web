@@ -31,7 +31,8 @@ import prisma from "@/lib/prisma";
 
 const FREEZE_CATEGORY = "WALLET_FREEZE";
 const UNFREEZE_CATEGORY = "WALLET_UNFREEZE";
-const freezeKey = (billingAccountId: string) => `wallet-freeze:${billingAccountId}`;
+const freezeKey = (billingAccountId: string) =>
+  `wallet-freeze:${billingAccountId}`;
 
 export class WalletFrozenError extends Error {
   public readonly httpStatus = 409;
@@ -71,7 +72,10 @@ function freezeEventData(params: FreezeWriteParams & { reason: string }) {
     category: FREEZE_CATEGORY,
     severity: "ERROR" as const,
     message: `Wallet spend FROZEN for billing account ${params.billingAccountId}: ${params.reason}`,
-    context: { billingAccountId: params.billingAccountId, reason: params.reason } as Prisma.InputJsonObject,
+    context: {
+      billingAccountId: params.billingAccountId,
+      reason: params.reason,
+    } as Prisma.InputJsonObject,
     correlationId: freezeKey(params.billingAccountId),
   };
 }
@@ -79,9 +83,11 @@ function freezeEventData(params: FreezeWriteParams & { reason: string }) {
 /** Freeze wallet spend for one account. Idempotent — no-op if already frozen.
  *  Write failures PROPAGATE (see #1205-triage note above); the reconcile job's
  *  own error handling pages on them. Returns true when it wrote a new event. */
-export async function freezeWalletSpend(params: FreezeWriteParams & {
-  reason: string;
-}): Promise<boolean> {
+export async function freezeWalletSpend(
+  params: FreezeWriteParams & {
+    reason: string;
+  },
+): Promise<boolean> {
   if (await isWalletFrozen(prisma, params.billingAccountId)) return false;
   await prisma.systemEvent.create({ data: freezeEventData(params) });
   return true;
@@ -99,10 +105,12 @@ export async function freezeWalletSpend(params: FreezeWriteParams & {
  *  being silently cleared by a later-dated UNFREEZE. Returns false (409 at
  *  the route) when not frozen or when the concurrent-write abort fires.
  *  Write failures propagate. */
-export async function unfreezeWalletSpend(params: FreezeWriteParams & {
-  actorUserId: string;
-  reason: string;
-}): Promise<boolean> {
+export async function unfreezeWalletSpend(
+  params: FreezeWriteParams & {
+    actorUserId: string;
+    reason: string;
+  },
+): Promise<boolean> {
   try {
     return await prisma.$transaction(
       async (tx) => {
@@ -136,4 +144,60 @@ export async function unfreezeWalletSpend(params: FreezeWriteParams & {
     }
     throw err;
   }
+}
+
+export interface FrozenWallet {
+  billingAccountId: string;
+  organizationId: string | null;
+  deltaPaise: number;
+  newlyFrozen: boolean;
+}
+
+/**
+ * Freezes spend on every WALLET_BALANCE_DRIFT account of one reconcile report,
+ * the same for every door that runs a reconcile. Appends to `frozen` as it goes;
+ * one failed freeze does not stop the rest, and the failures throw together at the end.
+ */
+export async function freezeDriftedWallets(
+  report: {
+    id: string;
+    findings: ReadonlyArray<{
+      kind: string;
+      billingAccountId?: string;
+      organizationId?: string;
+      expectedPaise: number;
+      actualPaise: number;
+      deltaPaise: number;
+    }>;
+  },
+  frozen: FrozenWallet[] = [],
+): Promise<FrozenWallet[]> {
+  const failures: unknown[] = [];
+  for (const f of report.findings) {
+    if (f.kind !== "WALLET_BALANCE_DRIFT" || !f.billingAccountId) continue;
+    try {
+      const newlyFrozen = await freezeWalletSpend({
+        billingAccountId: f.billingAccountId,
+        organizationId: f.organizationId ?? null,
+        reason: `ledger reconcile ${report.id}: wallet cache ${f.actualPaise}p ≠ journal ${f.expectedPaise}p (Δ${f.deltaPaise}p)`,
+      });
+      frozen.push({
+        billingAccountId: f.billingAccountId,
+        organizationId: f.organizationId ?? null,
+        deltaPaise: Number(f.deltaPaise),
+        newlyFrozen,
+      });
+    } catch (err) {
+      failures.push(err);
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      `Wallet freeze failed for ${failures.length} drifting account(s): ${failures
+        .map((e) => (e instanceof Error ? e.message : String(e)))
+        .join("; ")}`,
+    );
+  }
+  return frozen;
 }

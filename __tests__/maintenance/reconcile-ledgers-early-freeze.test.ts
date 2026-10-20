@@ -15,27 +15,32 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 const programAssignmentFindMany = jest.fn(async (_a: unknown) => {
   throw new Error("cut off");
 });
+const db = {
+  ledgerReconciliationReport: {
+    create: async () => ({ id: "rep_1" }),
+  },
+  billingAccount: {
+    findMany: async () => [
+      {
+        id: "ba_1",
+        walletBalance: 500,
+        ownerOrgId: "org_1",
+        currency: "INR",
+      },
+    ],
+  },
+  ledgerAccount: { findMany: async () => [] },
+  ledgerEntry: { groupBy: async () => [] },
+  programAssignment: {
+    findMany: (a: unknown) => programAssignmentFindMany(a),
+  },
+  $executeRaw: async () => 0,
+  $transaction: (fn: (tx: unknown) => unknown) => fn(db),
+};
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: {
-    ledgerReconciliationReport: {
-      create: async () => ({ id: "rep_1" }),
-    },
-    billingAccount: {
-      findMany: async () => [
-        {
-          id: "ba_1",
-          walletBalance: 500,
-          ownerOrgId: "org_1",
-          currency: "INR",
-        },
-      ],
-    },
-    ledgerAccount: { findMany: async () => [] },
-    ledgerEntry: { groupBy: async () => [] },
-    programAssignment: {
-      findMany: (a: unknown) => programAssignmentFindMany(a),
-    },
+  get default() {
+    return db;
   },
 }));
 

@@ -61,15 +61,15 @@ The failure reason is sanitised on the server before the payload leaves (`buildC
 
 ## Weekly Batch Creation
 
-The `create-payout-batch.ts` script runs **every Monday at 1:30 AM IST** (Sunday 8:00 PM UTC).
+The `create-payout-batch` job runs on the Netlify ticker (`netlify/functions/cron-tick.mts`) in a **window that opens every Monday at 20:00 UTC (Tuesday 01:30 IST) and lasts three hours**. It fires every 15 minutes inside the window, and each slice mints at most 10 consultant payouts and 10 organisation payouts. The ticker sends the window start with every slice, so each slice works on the cohort as of that instant and a later slice finds nothing new for experts already minted. A slice that fails some rows answers 207, which the ticker counts as a failed run.
 
 ```mermaid
 sequenceDiagram
-    participant GH as GitHub Actions
+    participant GH as Netlify ticker
     participant PS as PayoutService
     participant DB as Database
 
-    GH->>PS: createPayoutBatch()
+    GH->>PS: createPayoutBatchSlice()
 
     PS->>DB: Find unique consultants with READY earnings
     DB-->>PS: consultant list
@@ -84,13 +84,15 @@ sequenceDiagram
         alt Total < ₹500 (minimum)
             PS->>PS: Skip - below minimum
         else Total >= ₹500
+            PS->>DB: Outstanding clawback above Rs 10,000?
+            Note over PS: Yes - skip (clawback recovery pause)
             PS->>DB: Get default PayoutAccount
             DB-->>PS: account details
 
-            alt No verified account
-                PS->>PS: Skip - no payout account
+            alt No verified account, frozen, or still cooling off
+                PS->>PS: Skip - no payable payout account
             else Has verified account
-                PS->>PS: Determine payout method
+                PS->>PS: Determine payout method and snapshot the account on the payout
                 Note over PS: UPI / BANK_TRANSFER / STRIPE_TRANSFER
 
                 alt Amount < ₹5000
@@ -113,6 +115,8 @@ sequenceDiagram
     PS-->>GH: Batch complete
 ```
 
+> A consultant whose mint throws does not abort the batch. The failure is collected, reported to Sentry once for the run, and counted, so the ticker sees a 207. The mint itself runs Serializable with bounded retries, so a clawback that commits after the pause check forces a retry.
+
 > **Batch Integrity (Mar 2026):** Each consultant's payout is now wrapped in a `$transaction` that re-queries exact READY earnings, sums them, creates the payout, and links earnings by ID while moving them to `BATCHED` (the cash has not left yet, so they are not yet `PAID`) -- all atomically. A count-mismatch guard ensures the number of linked earnings matches expectations, preventing partial batches from concurrent modifications.
 
 ### Eligibility Criteria
@@ -127,7 +131,11 @@ flowchart TD
     F -->|No| G[Skip - no account]
     F -->|Yes| H{Is account default?}
     H -->|No| I[Skip - no default account]
-    H -->|Yes| J[Create Payout]
+    H -->|Yes| H2{Frozen or inside the 48 h cooling-off?}
+    H2 -->|Yes| I2[Skip - account on hold]
+    H2 -->|No| H3{Clawback owed above Rs 10,000?}
+    H3 -->|Yes| I3[Skip - clawback recovery pause]
+    H3 -->|No| J[Create Payout]
 
     J --> K{Amount < ₹5000?}
     K -->|Yes| L[Auto-Approve]
@@ -178,6 +186,8 @@ sequenceDiagram
     end
 ```
 
+Every admin decision on this page is a money door: ADMIN only (`payouts.manage`), a session re-authenticated within 15 minutes, a typed reason of at least five characters, and one `OpsActionLog` row. Payout batch creation (`POST /api/admin/payouts`) and processing (`POST /api/admin/payouts/process`) are doors in the same shape, and processing passes the caller as `triggeredByUserId` so that an approver cannot disburse their own approval.
+
 ### Approval Thresholds
 
 | Amount Range | Approval                        |
@@ -193,15 +203,15 @@ An expert can be paid their READY earnings at once, free and at most once per IS
 
 `createInstantPayout` in `payout-service.ts` answers every anticipated refusal as a typed `InstantPayoutError` (a `Refusal`), which the table below lists.
 
-| Code                    | Status | When                                                                               |
-| ----------------------- | ------ | ---------------------------------------------------------------------------------- |
-| `PAYOUTS_DISABLED`      | 503    | `ENABLE_LIVE_PAYOUTS` is off.                                                      |
-| `NOTHING_AVAILABLE`     | 409    | There are no READY earnings.                                                       |
-| `PAYOUT_NOT_ELIGIBLE`   | 409    | `checkPayoutEligibility` names a reason, which the response carries as `reason`.   |
-| `PAYOUT_BUSY`           | 409    | The Monday batch holds the batch lock ("A payout run is in progress — try again"). |
-| `INSTANT_ALREADY_TODAY` | 409    | Today's instant payout already exists.                                             |
+| Code                    | Status | When                                                                                                                                                                                      |
+| ----------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PAYOUTS_DISABLED`      | 503    | `ENABLE_LIVE_PAYOUTS` is off.                                                                                                                                                             |
+| `NOTHING_AVAILABLE`     | 409    | There are no READY earnings.                                                                                                                                                              |
+| `PAYOUT_NOT_ELIGIBLE`   | 409    | `checkPayoutEligibility` names a reason, which the response carries as `reason`. The reasons include `PAYOUT_ACCOUNT_FROZEN`, `PAYOUT_ACCOUNT_COOLING_OFF` and `CLAWBACK_RECOVERY_PAUSE`. |
+| `PAYOUT_BUSY`           | 409    | A batch run holds the batch lock ("A payout run is in progress — try again").                                                                                                             |
+| `INSTANT_ALREADY_TODAY` | 409    | Today's instant payout already exists.                                                                                                                                                    |
 
-The instant payout takes the Monday batch's own Redis lock and mints through the same per-consultant internals (`mintConsultantPayout`), so the READY-to-BATCHED compare-and-set with its count check decides which of the two a READY row joins. Its idempotency key is `instant_<consultantProfileId>_<YYYYMMDD>` on the IST date, and the unique index on `ConsultantPayout.idempotencyKey` is what enforces once a day; the RazorpayX header is folded to 36 characters by `boundPayoutIdempotencyKey`. The row carries `kind: 'INSTANT'`, where a null `kind` means the Monday batch. A payout at or below `INSTANT_PAYOUT_AUTO_APPROVE_PAISE` (₹25,000 by default, overridable by environment) is approved and disbursed at once through `processPayoutById`, which runs the `processSinglePayout` core under the processing lock with `assertPayoutBalance` on that one amount, so the per-payout TDS path reads the financial-year running total serially. A larger payout is created PENDING and joins the admin approval queue, and the response says `awaitingApproval: true`. The mode is IMPS or UPI through `determinePayoutMode`.
+The instant payout takes the batch's own Redis lock and mints through the same per-consultant internals (`mintConsultantPayout`), so the READY-to-BATCHED compare-and-set with its count check decides which of the two a READY row joins. Its idempotency key is `instant_<consultantProfileId>_<YYYYMMDD>` on the IST date, and the unique index on `ConsultantPayout.idempotencyKey` is what enforces once a day; the RazorpayX header is folded to 36 characters by `boundPayoutIdempotencyKey`. The row carries `kind: 'INSTANT'`, where a null `kind` means the Monday batch. A payout at or below `INSTANT_PAYOUT_AUTO_APPROVE_PAISE` (₹25,000 by default, overridable by environment) is approved and disbursed at once through `processPayoutById`, which runs the `processSinglePayout` core under the processing lock with `assertPayoutBalance` on that one amount, so the per-payout TDS path reads the financial-year running total serially. A larger payout is created PENDING and joins the admin approval queue, and the response says `awaitingApproval: true`. The mode is IMPS or UPI through `determinePayoutMode`.
 
 The routes are `POST /api/consultant/payouts/instant` and `GET /api/consultant/payouts/instant/preview`, both session-scoped to the expert's own profile and answered with `Cache-Control: no-store`; the POST is rate-limited by `moneyOpsLimiter` and refused in DEGRADED mode. The preview returns the READY total, a TDS estimate at the 194-O rate, the net amount, the label "Free · once a day" and `nextAllowedAt`, which is the next IST midnight once today's instant payout has been used.
 
@@ -209,11 +219,11 @@ The routes are `POST /api/consultant/payouts/instant` and `GET /api/consultant/p
 
 ## Payout Processing
 
-The `process-payouts.ts` script runs **every Monday at 2:30 AM IST** (Monday 9:00 PM UTC).
+The `process-payouts` job runs on the ticker **every hour at minute :00**, not weekly, and disburses at most five approved payouts per rail per run. It is still gated on `ENABLE_LIVE_PAYOUTS`, and all RazorpayX calls go through the static-egress proxy (`RAZORPAYX_EGRESS_PROXY_URL`; a live key without it is refused with `RAZORPAYX_EGRESS_NOT_CONFIGURED`). The payout goes to the account it recorded when it was created (`ConsultantPayout.payoutAccountId`), and the run refuses that account if it has since been frozen or is unverified. A payout created before the snapshot existed falls back to the consultant's current default account, which must also be out of cooling-off.
 
 ```mermaid
 sequenceDiagram
-    participant GH as GitHub Actions
+    participant GH as Netlify ticker
     participant PS as PayoutService
     participant DB as Database
     participant RX as RazorpayX
@@ -253,6 +263,15 @@ sequenceDiagram
 
     PS-->>GH: Processing complete
 ```
+
+### When the gateway disagrees with our books
+
+- **The gateway paid a payout we already failed.** `completeLocallyFailedPayoutInTx()` completes the payout, re-attaches the earnings that are still `READY` (each failed payout stamps `ConsultantEarnings.releasedFromPayoutId`), books `payout:<id>`, and raises a clawback receivable for whatever the paid amount exceeds those earnings by. It records a `SystemEvent` and a Sentry message for an operator.
+- **The bank returns a completed payout.** `markConsultantPayoutReversed` reopens the earnings as `READY` and `voidClawbacksRaisedOnPayout()` voids the still-unrecovered part of the clawbacks raised on that payout, so the reopened earnings are not netted twice. A part that later payouts already recovered stays booked and raises an alert, because that sum is owed back to the expert.
+
+### Payout account changes
+
+A new default payout account cannot be paid for 48 hours (`PAYOUT_ACCOUNT_COOLING_OFF_MS`). The payee gets one email with a link to a confirm page, and that page's same-origin POST (`POST /api/consultant/payout-accounts/freeze`) freezes the payee's payout accounts. Mint skips a frozen or cooling-off default account, and only an admin lifts a freeze (`POST /api/admin/payout-accounts/unfreeze`: ADMIN, step-up, reason). A freeze the payee placed carries over to whichever account becomes the default next. The first account is exempt only while the payee has no payout and no accrued earning. The mechanism is in `lib/payments/payouts/payout-account-change.ts` and `payoutAccountHold()` in `lib/payments/payouts/payout-requirements.ts`.
 
 ---
 
@@ -341,14 +360,14 @@ An unknown provider status never downgrades a payout (R-5). The RazorpayX and St
 
 ### Webhook Events
 
-| Provider  | Event               | Our Action          |
-| --------- | ------------------- | ------------------- |
-| RazorpayX | `payout.processed`  | Mark COMPLETED      |
-| RazorpayX | `payout.failed`     | Mark FAILED, retry  |
+| Provider  | Event               | Our Action                                       |
+| --------- | ------------------- | ------------------------------------------------ |
+| RazorpayX | `payout.processed`  | Mark COMPLETED                                   |
+| RazorpayX | `payout.failed`     | Mark FAILED, retry                               |
 | RazorpayX | `payout.reversed`   | Mark FAILED before settlement, REVERSED after it |
-| Stripe    | `transfer.created`  | Mark COMPLETED      |
-| Stripe    | `transfer.failed`   | Mark FAILED, retry  |
-| Stripe    | `transfer.reversed` | Mark FAILED, refund |
+| Stripe    | `transfer.created`  | Mark COMPLETED                                   |
+| Stripe    | `transfer.failed`   | Mark FAILED, retry                               |
+| Stripe    | `transfer.reversed` | Mark FAILED, refund                              |
 
 ---
 
@@ -359,7 +378,7 @@ All payout requests use idempotency keys to prevent duplicates.
 ```mermaid
 flowchart TD
     A[Create Payout Request] --> B[Generate Idempotency Key]
-    B --> C[payout_{payoutId}]
+    B --> C["payout_&lt;payoutId&gt;"]
     C --> D[Send to Provider]
     D --> E{Duplicate Request?}
     E -->|Yes| F[Return Original Response]

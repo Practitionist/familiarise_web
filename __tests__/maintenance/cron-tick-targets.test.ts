@@ -370,6 +370,9 @@ describe("cron-tick bucketFor", () => {
     expect(bucketFor(200)).toBe("ok");
     expect(bucketFor(207, false, "process-payouts")).toBe("failed");
     expect(bucketFor(207, false, "dunning")).toBe("failed");
+    expect(bucketFor(207, false, "sweep-orphaned-topup-captures")).toBe(
+      "failed",
+    );
     expect(bucketFor(207, false, "reconcile-payment-status")).toBe("ok");
     expect(bucketFor(500)).toBe("failed");
     expect(bucketFor(0)).toBe("failed");
