@@ -1,6 +1,7 @@
 import { EarningStatus, EarningsHoldReason } from "@prisma/client";
 
 import type { Tx } from "@/lib/prisma";
+import { prorate } from "@/lib/payments/utils/money";
 import {
   releaseEarningsHolds,
   type EarningsHoldDb,
@@ -273,10 +274,10 @@ function computeRecarvedDraftInvoiceTotals(
   let newTax = 0;
   if (oldTax > 0 && newSubtotal > 0) {
     const matchesStandardGst =
-      Math.round((oldSubtotal * standardGstRateBps) / 10_000) === oldTax;
+      prorate(oldSubtotal, standardGstRateBps, 10_000, "round") === oldTax;
     newTax = matchesStandardGst
-      ? Math.round((newSubtotal * standardGstRateBps) / 10_000)
-      : Math.round((oldTax * newSubtotal) / Math.max(1, oldSubtotal));
+      ? prorate(newSubtotal, standardGstRateBps, 10_000, "round")
+      : prorate(oldTax, newSubtotal, Math.max(1, oldSubtotal), "round");
   }
   const interState = oldIgst > 0;
   const newIgst = interState ? newTax : 0;

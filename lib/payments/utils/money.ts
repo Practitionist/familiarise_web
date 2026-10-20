@@ -11,12 +11,14 @@ export function sumPaise(v: bigint | number | null | undefined): number {
   return n;
 }
 
-/** floor(amount × numerator / denominator) in BigInt, so the product may exceed
- *  2^53; throws unless every input and the result are safe integers. */
+/** amount × numerator / denominator rounded exactly in BigInt, so the product may exceed
+ *  2^53; "round" is half toward +∞ like Math.round (−2.5 → −2). Throws unless every
+ *  input and the result are safe integers. */
 export function prorate(
   amountPaise: number,
   numerator: number,
   denominator: number,
+  mode: "floor" | "round" | "ceil" = "floor",
 ): number {
   if (denominator <= 0) {
     throw new Error(`prorate: non-positive denominator ${denominator}`);
@@ -28,6 +30,14 @@ export function prorate(
   }
   const product = BigInt(amountPaise) * BigInt(numerator);
   const den = BigInt(denominator);
-  const q = product / den;
-  return sumPaise(product % den < BigInt(0) ? q - BigInt(1) : q);
+  if (mode === "ceil") return floorDiv(product + den - BigInt(1), den);
+  if (mode === "round") {
+    return floorDiv(BigInt(2) * product + den, BigInt(2) * den);
+  }
+  return floorDiv(product, den);
+}
+
+function floorDiv(n: bigint, d: bigint): number {
+  const q = n / d;
+  return sumPaise(n % d < BigInt(0) ? q - BigInt(1) : q);
 }

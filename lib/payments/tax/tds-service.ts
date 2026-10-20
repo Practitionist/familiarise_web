@@ -238,7 +238,7 @@ export async function calculateTDS(params: {
     taxableAmount = cumulativeAfterPayout - TDS_THRESHOLD_PAISE;
   }
 
-  const tdsAmount = Math.round((taxableAmount * tdsRate) / 100);
+  const tdsAmount = prorate(taxableAmount, tdsRate, 100, "round");
 
   return {
     tdsAmount,

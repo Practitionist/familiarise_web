@@ -11,7 +11,7 @@ import {
   getFYDateRange,
   TDS_THRESHOLD_PAISE,
 } from "@/lib/payments/tax/tds-service";
-import { sumPaise } from "@/lib/payments/utils/money";
+import { prorate, sumPaise } from "@/lib/payments/utils/money";
 import { computeResidentPayoutTds } from "./shared-lifecycle";
 
 /** Payouts whose staged TDS counts toward the expert's history. */
@@ -81,8 +81,11 @@ function subtractProportionalGrossRefund(
     return Math.max(0, grossPaise);
   }
   if (sharePaise > 0) {
-    const proportionalGrossRefund = Math.round(
-      (grossPaise * refundedSharePaise) / sharePaise,
+    const proportionalGrossRefund = prorate(
+      grossPaise,
+      refundedSharePaise,
+      sharePaise,
+      "round",
     );
     return Math.max(0, grossPaise - proportionalGrossRefund);
   }

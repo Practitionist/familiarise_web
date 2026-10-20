@@ -8,6 +8,7 @@
 
 import type { Currency } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
+import { prorate } from "@/lib/payments/utils/money";
 
 export async function drawPurchaseOrder(
   tx: Tx,
@@ -121,7 +122,10 @@ function grossedUpSubtotal(
   invoice: { totalPaise: number; subtotalPaise: number },
 ): number {
   if (invoice.subtotalPaise <= 0) return 0;
-  return Math.round(
-    (subtotalPaise * invoice.totalPaise) / invoice.subtotalPaise,
+  return prorate(
+    subtotalPaise,
+    invoice.totalPaise,
+    invoice.subtotalPaise,
+    "round",
   );
 }

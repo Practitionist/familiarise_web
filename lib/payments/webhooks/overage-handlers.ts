@@ -47,6 +47,7 @@ import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import { postUnappliedReceipt } from "@/lib/payments/ledger/unapplied-receipts";
 import { autoRefundPendingDescription } from "@/lib/payments/webhooks/auto-refund-marker";
+import { prorate } from "@/lib/payments/utils/money";
 
 type OverageTxOutcome =
   | { kind: "settled"; sideId: string }
@@ -480,7 +481,7 @@ async function neutraliseInvoicedOverageBase(
     : 0;
   const grossBasePaise =
     invoice && invoice.subtotalPaise > 0
-      ? basePaise + Math.round((basePaise * taxPaise) / invoice.subtotalPaise)
+      ? basePaise + prorate(basePaise, taxPaise, invoice.subtotalPaise, "round")
       : basePaise;
 
   const { creditNoteId, outcome } = await mintInvoiceRefundCreditNote(tx, {

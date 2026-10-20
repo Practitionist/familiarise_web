@@ -16,6 +16,7 @@
 
 import { TAX_CONSTANTS } from "@/lib/payments/payouts/constants";
 import { hasValidPlatformLut } from "@/lib/compliance/lut";
+import { prorate } from "@/lib/payments/utils/money";
 
 // ============================================================================
 // Types
@@ -59,7 +60,7 @@ export function determineTax(params: {
   if (buyerCountry === "IN") {
     const taxRate = TAX_CONSTANTS.GST_RATE;
     const sacCode = getSacCode(serviceType);
-    const taxAmount = Math.round((baseAmountPaise * taxRate) / 100);
+    const taxAmount = prorate(baseAmountPaise, taxRate, 100, "round");
 
     return {
       taxRate,
@@ -84,7 +85,7 @@ export function determineTax(params: {
     const taxRate = TAX_CONSTANTS.GST_RATE;
     return {
       taxRate,
-      taxAmount: Math.round((baseAmountPaise * taxRate) / 100),
+      taxAmount: prorate(baseAmountPaise, taxRate, 100, "round"),
       isZeroRated: false,
       jurisdiction: "IN-GST",
       sacCode,

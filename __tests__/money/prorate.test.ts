@@ -1,3 +1,4 @@
+import fc from "fast-check";
 import { prorate } from "@/lib/payments/utils/money";
 
 describe("prorate", () => {
@@ -28,6 +29,40 @@ describe("prorate", () => {
     for (const [a, n, d] of cases) {
       expect(prorate(a, n, d)).toBe(Math.floor((a * n) / d));
     }
+  });
+
+  // Up to 2^52 the double quotient's error stays under half a 1/d step, so the old maths was exact.
+  it("floor, round and ceil match the double maths for products up to 2^52", () => {
+    const parity = fc.property(
+      fc.integer({ min: 0, max: 2 ** 32 }),
+      fc.integer({ min: 0, max: 2 ** 20 - 1 }),
+      fc.integer({ min: 1, max: 2 ** 32 }),
+      (a, n, d) =>
+        prorate(a, n, d) === Math.floor((a * n) / d) &&
+        prorate(a, n, d, "round") === Math.round((a * n) / d) &&
+        prorate(a, n, d, "ceil") === Math.ceil((a * n) / d),
+    );
+    expect(() =>
+      fc.assert(parity, { seed: 2230, numRuns: 2000 }),
+    ).not.toThrow();
+  });
+
+  it("stays exact where the double quotient drifts", () => {
+    // 5731111359479352 / 5 is …870.4; the double quotient lands on …870.5.
+    expect(prorate(1_967_048_328, 2_913_559, 5, "round")).toBe(
+      1_146_222_271_895_870,
+    );
+    expect(prorate(5_000_000_000_000_003, 3, 2, "round")).toBe(
+      7_500_000_000_000_005,
+    );
+    expect(prorate(5_000_000_000_000_001, 5, 4, "ceil")).toBe(
+      6_250_000_000_000_002,
+    );
+  });
+
+  it("round goes half toward +infinity for negatives, like Math.round", () => {
+    expect(prorate(-5, 1, 2, "round")).toBe(Math.round(-2.5));
+    expect(prorate(-13, 1, 5, "round")).toBe(Math.round(-2.6));
   });
 
   it("throws on a non-integer input or an unsafe result", () => {

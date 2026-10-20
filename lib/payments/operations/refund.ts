@@ -1988,9 +1988,11 @@ export async function remainingOrgInvoiceCreditPaise(
   // A commercial note carries no tax, so it consumes its value grossed up at the invoice's rate.
   const commercialGross =
     invoice.subtotalPaise > 0
-      ? Math.round(
-          (sumPaise(commercialNotes._sum.subtotalPaise) * invoice.totalPaise) /
-            invoice.subtotalPaise,
+      ? prorate(
+          sumPaise(commercialNotes._sum.subtotalPaise),
+          invoice.totalPaise,
+          invoice.subtotalPaise,
+          "round",
         )
       : 0;
   return (
@@ -2145,7 +2147,7 @@ export async function mintRefundCreditNote(
   // The accrual legs are tax-inclusive (they sum to Payment.amount), so the
   // reversed slice carries the payment's own tax share.
   const taxShare = (paise: number): number =>
-    Math.round((paise * (payment.taxAmount ?? 0)) / payment.amount);
+    prorate(paise, payment.taxAmount ?? 0, payment.amount, "round");
   let cnTotal = invoicedReverse;
   let cnTax = taxShare(cnTotal);
   let cnSubtotal = cnTotal - cnTax;
@@ -2261,12 +2263,12 @@ async function computeCreditNoteAmounts(
     if (cnSubtotal <= 0) return null;
     cnTax =
       invoiceSubtotal > 0
-        ? Math.round((cnSubtotal * invoiceTax) / invoiceSubtotal)
+        ? prorate(cnSubtotal, invoiceTax, invoiceSubtotal, "round")
         : 0;
     cnTotal = cnSubtotal + cnTax;
     if (cnTotal > remaining) {
       cnTotal = remaining;
-      cnTax = Math.round((cnTotal * invoiceTax) / invoice.totalPaise);
+      cnTax = prorate(cnTotal, invoiceTax, invoice.totalPaise, "round");
       cnSubtotal = cnTotal - cnTax;
     }
   } else {

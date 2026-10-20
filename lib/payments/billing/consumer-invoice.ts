@@ -31,7 +31,7 @@ import {
   recordSystemErrorSafe,
 } from "@/lib/enterprise/system-events";
 import { numericStateCode } from "@/lib/compliance/state-codes";
-import { sumPaise } from "@/lib/payments/utils/money";
+import { prorate, sumPaise } from "@/lib/payments/utils/money";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { TAX_CONSTANTS } from "@/lib/payments/payouts/constants";
 import {
@@ -600,10 +600,11 @@ export async function mintConsumerCreditNote(
   // A commercial note carries no tax, so it consumes its value grossed up at the invoice's rate.
   const commercialGross =
     invoice.taxableValuePaise > 0
-      ? Math.round(
-          (sumPaise(commercialNotes._sum.taxableValuePaise) *
-            invoice.totalPaise) /
-            invoice.taxableValuePaise,
+      ? prorate(
+          sumPaise(commercialNotes._sum.taxableValuePaise),
+          invoice.totalPaise,
+          invoice.taxableValuePaise,
+          "round",
         )
       : 0;
   const derived = deriveConsumerCreditNoteAmounts({
