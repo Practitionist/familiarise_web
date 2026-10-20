@@ -40,9 +40,6 @@ export const CONSULTEE_SETTINGS_SECTIONS: readonly ConsulteeSettingsSection[] =
     },
   ];
 
-/** `settings?view=sections` is the mobile list of sections, not a redirect. */
-export const CONSULTEE_SETTINGS_LIST_VIEW = "sections";
-
 export function consulteeSettingsHref(
   consulteeId: string,
   section: Pick<ConsulteeSettingsSection, "slug">,

@@ -18,7 +18,6 @@ export default function WorkspaceSettingsLayout({
       description="Preferences across all your organizations. Each organization's own settings live in its avatar menu entry."
       groups={workspaceSettingsGroups(orgWorkspaceId)}
       basePath={basePath}
-      listHref={`${basePath}?view=sections`}
     >
       {children}
     </SettingsLayout>

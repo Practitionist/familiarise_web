@@ -26,8 +26,6 @@ export default function OrgSettingsLayout({
       description="Profile, sign-in, billing contacts and integrations."
       groups={orgSettingsGroups(orgId, role)}
       basePath={orgSettingsHref(orgId)}
-      // The explicit list URL also supports existing section-list bookmarks.
-      listHref={`${orgSettingsHref(orgId)}?view=sections`}
     >
       {children}
     </SettingsLayout>

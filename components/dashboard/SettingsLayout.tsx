@@ -38,8 +38,6 @@ export interface SettingsLayoutProps {
   groups: SettingsNavGroup[];
   /** The hub root; with no section open it shows the section list. */
   basePath: string;
-  /** Where the "Settings" back link goes; defaults to `basePath`. */
-  listHref?: string;
   children: ReactNode;
 }
 
@@ -102,7 +100,6 @@ export function SettingsLayout({
   description,
   groups,
   basePath,
-  listHref,
   children,
 }: Readonly<SettingsLayoutProps>) {
   const pathname = usePathname();
@@ -131,7 +128,7 @@ export function SettingsLayout({
   return (
     <div className="max-w-3xl">
       <Link
-        href={listHref ?? basePath}
+        href={basePath}
         className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
         <ChevronLeft className="h-4 w-4" aria-hidden />

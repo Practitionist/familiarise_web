@@ -3,11 +3,7 @@
 import { useParams } from "next/navigation";
 import type { ReactNode } from "react";
 import { SettingsLayout } from "@/components/dashboard/SettingsLayout";
-import {
-  SETTINGS_LIST_VIEW,
-  settingsSectionGroups,
-  settingsSectionHref,
-} from "./settings";
+import { settingsSectionGroups, settingsSectionHref } from "./settings";
 
 /** Settings uses a grouped hub and a dedicated URL for each permitted form. */
 export default function ConsultantSettingsLayout({
@@ -31,7 +27,6 @@ export default function ConsultantSettingsLayout({
       description="Your account, public profile and business settings"
       groups={groups}
       basePath={`${basePath}/settings`}
-      listHref={`${basePath}/settings?view=${SETTINGS_LIST_VIEW}`}
     >
       {children}
     </SettingsLayout>
