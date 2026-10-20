@@ -34,6 +34,7 @@ type EnvKey =
   | "RAZORPAYX_KEY_ID"
   | "RAZORPAYX_KEY_SECRET"
   | "RAZORPAYX_ACCOUNT_NUMBER"
+  | "RAZORPAYX_EGRESS_PROXY_URL"
   | "ENABLE_LIVE_PAYOUTS"
   | "RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION";
 
@@ -45,6 +46,7 @@ const ENV_KEYS: EnvKey[] = [
   "RAZORPAYX_KEY_ID",
   "RAZORPAYX_KEY_SECRET",
   "RAZORPAYX_ACCOUNT_NUMBER",
+  "RAZORPAYX_EGRESS_PROXY_URL",
   "ENABLE_LIVE_PAYOUTS",
   "RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION",
 ];
@@ -84,12 +86,15 @@ function captureThrow(fn: () => unknown): { message: string; code?: string } {
   throw new Error("expected the call to throw");
 }
 
-// Relative requires on purpose (repo convention for jest.resetModules tests —
-// see __tests__/lib/feature-flags.test.ts): the alias does not resolve inside
-// a dynamic require, and resetModules needs a fresh registry entry per test.
-const requireCoreModule = () => require("../../lib/payments/core/razorpay");
+// Relative paths on purpose: resetModules needs a fresh registry entry per test.
+const requireCoreModule = () =>
+  jest.requireActual<typeof import("../../lib/payments/core/razorpay")>(
+    "../../lib/payments/core/razorpay",
+  );
 const requirePayoutsFactory = () =>
-  require("../../lib/payments/payouts/razorpay-payouts") as typeof import("../../lib/payments/payouts/razorpay-payouts");
+  jest.requireActual<
+    typeof import("../../lib/payments/payouts/razorpay-payouts")
+  >("../../lib/payments/payouts/razorpay-payouts");
 
 describe("core checkout/refund client (lib/payments/core/razorpay.ts)", () => {
   it("prod posture + rzp_test_ key → throws at init, naming RAZORPAY_KEY_ID and the fix", () => {
@@ -150,6 +155,20 @@ describe("core checkout/refund client (lib/payments/core/razorpay.ts)", () => {
     process.env.NEXT_PHASE = "phase-production-build";
     process.env.RAZORPAY_KEY_ID = "rzp_test_buildkey";
     process.env.RAZORPAY_SECRET = "testsecret";
+    expect(() => requireCoreModule()).not.toThrow();
+  });
+
+  it("live RazorpayX key without the egress proxy → throws at init", () => {
+    process.env.RAZORPAYX_KEY_ID = "rzp_live_xkey";
+    delete process.env.RAZORPAYX_EGRESS_PROXY_URL;
+
+    const thrown = captureThrow(() => requireCoreModule());
+
+    expect(thrown.message).toMatch(/RAZORPAYX_EGRESS_PROXY_URL is unset/);
+    expect(thrown.code).toBe("RAZORPAYX_EGRESS_NOT_CONFIGURED");
+
+    process.env.RAZORPAYX_EGRESS_PROXY_URL = "http://proxy:3128";
+    jest.resetModules();
     expect(() => requireCoreModule()).not.toThrow();
   });
 

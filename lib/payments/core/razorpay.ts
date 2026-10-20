@@ -73,6 +73,18 @@ import {
       );
     }
   }
+  // Live RazorpayX answers only allowlisted IPs, so a live key without the static-egress proxy fails boot.
+  if (
+    process.env.NEXT_PHASE !== "phase-production-build" &&
+    process.env.RAZORPAYX_KEY_ID?.startsWith("rzp_live_") &&
+    !process.env.RAZORPAYX_EGRESS_PROXY_URL
+  ) {
+    throw new PaymentError(
+      "RazorpayX live key in use but RAZORPAYX_EGRESS_PROXY_URL is unset; refusing to boot",
+      "RAZORPAYX_EGRESS_NOT_CONFIGURED",
+      "RAZORPAY",
+    );
+  }
 }
 
 // L2 FIX: Removed module-load console.warn — per-call errors are more actionable
