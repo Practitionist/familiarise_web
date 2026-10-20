@@ -157,29 +157,43 @@ async function reconcileDisputesUnlocked(opts: {
   let urgentCount = 0;
   let razorpayManualReviewCount = 0;
 
-  // Find disputes needing reconciliation
-  const disputesToReconcile = await prisma.dispute.findMany({
-    where: {
-      status: {
-        in: [
-          DisputeStatus.NEEDS_RESPONSE,
-          DisputeStatus.WARNING_NEEDS_RESPONSE,
-          DisputeStatus.UNDER_REVIEW,
-          DisputeStatus.WARNING_UNDER_REVIEW,
-        ],
-      },
-      OR: [
-        { dueBy: { lte: approachingDeadline } },
-        { updatedAt: { lt: staleThreshold } },
+  // Every pass writes the row (or another writer moved it), so ordering by
+  // updatedAt rotates a limited run; deadline-window rows go before the stale rest.
+  const base = {
+    paymentGateway: PaymentGateway.RAZORPAY,
+    status: {
+      in: [
+        DisputeStatus.NEEDS_RESPONSE,
+        DisputeStatus.WARNING_NEEDS_RESPONSE,
+        DisputeStatus.UNDER_REVIEW,
+        DisputeStatus.WARNING_UNDER_REVIEW,
       ],
     },
-    include: {
-      payment: true,
-    },
-    // Least recently touched first: every polled row has its updatedAt bumped, so a limited run rotates through the cohort.
+  } satisfies Prisma.DisputeWhereInput;
+  const query = {
+    include: { payment: true },
     orderBy: [{ updatedAt: "asc" }, { dueBy: "asc" }],
+  } satisfies Omit<Prisma.DisputeFindManyArgs, "where">;
+  const nearDeadline = await prisma.dispute.findMany({
+    ...query,
+    where: { ...base, dueBy: { lte: approachingDeadline } },
     ...(opts.limit === undefined ? {} : { take: opts.limit }),
   });
+  const room =
+    opts.limit === undefined ? undefined : opts.limit - nearDeadline.length;
+  const stale =
+    room === 0
+      ? []
+      : await prisma.dispute.findMany({
+          ...query,
+          where: {
+            ...base,
+            updatedAt: { lt: staleThreshold },
+            OR: [{ dueBy: null }, { dueBy: { gt: approachingDeadline } }],
+          },
+          ...(room === undefined ? {} : { take: room }),
+        });
+  const disputesToReconcile = [...nearDeadline, ...stale];
 
   console.log(`Found ${disputesToReconcile.length} disputes to reconcile`);
 
@@ -255,13 +269,6 @@ async function reconcileDisputesUnlocked(opts: {
         console.warn(
           `⚠️ URGENT: Dispute ${dispute.disputeId} due by ${dispute.dueBy.toISOString()}`,
         );
-      }
-
-      if (dispute.paymentGateway !== PaymentGateway.RAZORPAY) {
-        console.log(
-          `⏭️ Skipping dispute ${dispute.disputeId} - unsupported gateway: ${dispute.paymentGateway}`,
-        );
-        continue;
       }
 
       const gatewayDispute = await getRazorpayDispute(dispute.disputeId);
@@ -342,6 +349,13 @@ async function reconcileDisputesUnlocked(opts: {
         razorpayManualReviewCount++;
         continue;
       }
+      // Touch the row so a dispute that keeps failing rotates behind the rest of the batch.
+      await prisma.dispute
+        .updateMany({
+          where: { disputeId: dispute.disputeId, status: dispute.status },
+          data: { updatedAt: new Date() },
+        })
+        .catch(() => undefined);
       razorpayManualReviewCount++;
       errors.push(`Dispute ${dispute.disputeId}: ${errorMessage}`);
       console.error(

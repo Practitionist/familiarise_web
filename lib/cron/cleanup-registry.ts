@@ -795,15 +795,20 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
             await import("@/scripts/reconcile/reconcile-ledgers");
           const triggeredById =
             req.nextUrl.searchParams.get("triggeredById") ?? undefined;
+          const { respondToLedgerDrift, freezeDriftingWallets } =
+            await import("@/scripts/reconcile/ledger-drift-response");
+          // Freeze from the wallet step so a run cut off later has already frozen; a freeze failure fails the route once the audit completes.
+          let freezeError: unknown = null;
           const report = await runReconcileLedgers({
             scope: "full",
             triggeredById,
+            onWalletDrift: (reportId, findings) =>
+              freezeDriftingWallets(reportId, findings).catch((err) => {
+                freezeError = err;
+              }),
           });
-          if (!report.ok) {
-            const { respondToLedgerDrift } =
-              await import("@/scripts/reconcile/ledger-drift-response");
-            await respondToLedgerDrift(report);
-          }
+          if (!report.ok) await respondToLedgerDrift(report);
+          if (freezeError) throw freezeError;
           return {
             success: true,
             runId: report.id,

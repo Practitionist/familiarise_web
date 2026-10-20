@@ -1,7 +1,8 @@
 /**
  * What the nightly ledger reconcile does when the auditor finds drift: a system
  * event, a deduplicated Sentry page, and a spend freeze on each wallet whose
- * cache disagrees with the journal. Called by the `reconcile-ledgers` twin.
+ * cache disagrees with the journal. Called by the `reconcile-ledgers` twin,
+ * which freezes from the audit's wallet step, before the rest of the audit runs.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -10,7 +11,7 @@ import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { freezeWalletSpend } from "@/lib/payments/wallet-freeze";
 
-import type { ReconcileReport } from "./reconcile-ledgers";
+import type { Finding, ReconcileReport } from "./reconcile-ledgers";
 
 /** A finding set that repeats nightly pages Sentry once a week, or sooner when a new finding appears. */
 const LEDGER_FINDING_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -59,9 +60,14 @@ export async function respondToLedgerDrift(
         },
       }),
   );
+}
 
-  // Only WALLET_BALANCE_DRIFT freezes spend, per account; other kinds page but do not gate it.
-  const walletDrift = report.findings.filter(
+/** Freezes spend on each WALLET_BALANCE_DRIFT account and pages fatal once; other kinds page but do not gate spend. */
+export async function freezeDriftingWallets(
+  reportId: string,
+  findings: Finding[],
+): Promise<void> {
+  const walletDrift = findings.filter(
     (f) => f.kind === "WALLET_BALANCE_DRIFT" && f.billingAccountId,
   );
   const frozenWallets: Array<{
@@ -76,7 +82,7 @@ export async function respondToLedgerDrift(
       const froze = await freezeWalletSpend({
         billingAccountId: f.billingAccountId,
         organizationId: f.organizationId ?? null,
-        reason: `ledger reconcile ${report.id}: wallet cache ${f.actualPaise}p ≠ journal ${f.expectedPaise}p (Δ${f.deltaPaise}p)`,
+        reason: `ledger reconcile ${reportId}: wallet cache ${f.actualPaise}p ≠ journal ${f.expectedPaise}p (Δ${f.deltaPaise}p)`,
       });
       frozenWallets.push({
         billingAccountId: f.billingAccountId,
@@ -98,7 +104,7 @@ export async function respondToLedgerDrift(
           fingerprint: ["reconcile-ledgers-wallet-drift"],
           contexts: {
             wallet: {
-              reportId: report.id,
+              reportId,
               driftingWallets: walletDrift.length,
               frozenWallets: frozenWallets.length,
               sample: frozenWallets.slice(0, 10),

@@ -25,21 +25,24 @@ const updateMany = jest.fn(async ({ where }: { where: { status: string } }) =>
   where.status === "UNDER_REVIEW" ? { count: 0 } : { count: 1 },
 );
 const update = jest.fn();
-const findMany = jest.fn(async (_args: unknown) => [
-  {
-    disputeId: "dp_1",
-    status: "UNDER_REVIEW",
-    paymentGateway: "RAZORPAY",
-    dueBy: null,
-    evidence: null,
-    payment: { id: "p1", amount: 1000, gatewayPaymentId: "pay_1" },
-  },
-]);
+type FindArgs = { where: { OR?: unknown }; take?: number; orderBy?: unknown };
+const row = (disputeId: string, status = "UNDER_REVIEW") => ({
+  disputeId,
+  status,
+  paymentGateway: "RAZORPAY",
+  dueBy: null,
+  evidence: null,
+  payment: { id: "p1", amount: 1000, gatewayPaymentId: "pay_1" },
+});
+// The second (stale-rotation) query carries the `OR`; the deadline-window query does not.
+const findMany = jest.fn(async (args: FindArgs) =>
+  args.where.OR ? [row("dp_1")] : [],
+);
 jest.mock("../../lib/prisma", () => {
   const db = {
     $transaction: (fn: (tx: unknown) => unknown) => fn(db),
     dispute: {
-      findMany: (a: unknown) => findMany(a),
+      findMany: (a: FindArgs) => findMany(a),
       updateMany: (...a: unknown[]) => updateMany(...(a as [never])),
       update: (...a: unknown[]) => update(...a),
     },
@@ -78,28 +81,63 @@ describe("dispute reconciliation is a CAS on the status it read", () => {
 });
 
 describe("dispute reconciliation honours the ticker's limit", () => {
-  it("takes at most `limit` rows, least recently touched first", async () => {
+  beforeEach(() =>
     mockGetRazorpayDispute.mockResolvedValue({
       paymentId: "pay_1",
       status: "needs_response",
       evidence: {},
       isChargeRefundable: true,
       dueBy: null,
-    });
+    }),
+  );
+
+  it("polls deadline-window rows first and fills the rest from the stale rotation", async () => {
+    findMany.mockImplementationOnce(async () => [row("dp_due")]);
 
     await reconcileDisputes({ limit: 10 });
 
-    expect(findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        take: 10,
-        orderBy: [{ updatedAt: "asc" }, { dueBy: "asc" }],
-      }),
-    );
+    const [due, stale] = findMany.mock.calls.map((c) => c[0]);
+    expect(due).toMatchObject({
+      where: { paymentGateway: "RAZORPAY", dueBy: { lte: expect.any(Date) } },
+      orderBy: [{ updatedAt: "asc" }, { dueBy: "asc" }],
+      take: 10,
+    });
+    expect(stale).toMatchObject({
+      where: {
+        paymentGateway: "RAZORPAY",
+        updatedAt: { lt: expect.any(Date) },
+      },
+      take: 9,
+    });
+  });
+
+  it("skips the stale query when deadline-window rows fill the limit", async () => {
+    findMany.mockImplementationOnce(async () => [row("dp_a"), row("dp_b")]);
+
+    await reconcileDisputes({ limit: 2 });
+
+    expect(findMany).toHaveBeenCalledTimes(1);
   });
 
   it("is unbounded without a limit", async () => {
     await reconcileDisputes().catch(() => undefined);
 
-    expect(findMany.mock.calls[0][0]).not.toHaveProperty("take");
+    for (const [args] of findMany.mock.calls) {
+      expect(args).not.toHaveProperty("take");
+    }
+  });
+});
+
+describe("a dispute whose poll fails rotates behind the batch", () => {
+  it("touches updatedAt under the status CAS and reports the error", async () => {
+    mockGetRazorpayDispute.mockRejectedValueOnce(new Error("gateway 502"));
+
+    const result = await reconcileDisputes({ limit: 10 });
+
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { disputeId: "dp_1", status: "UNDER_REVIEW" },
+      data: { updatedAt: expect.any(Date) },
+    });
+    expect(result.errors).toEqual(["Dispute dp_1: gateway 502"]);
   });
 });
