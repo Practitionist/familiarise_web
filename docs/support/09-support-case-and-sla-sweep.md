@@ -2,7 +2,7 @@
 
 `SupportCase` owns every active support conversation. Personal, organization and
 operator dashboards read the same ordered timeline, with authorization applied
-before message serialization. See [production architecture and cutover](10-productionization-and-cutover.md)
+before message serialization. See [production architecture](10-production-architecture.md)
 for the complete workflow and deployment procedure.
 
 ## Canonical records

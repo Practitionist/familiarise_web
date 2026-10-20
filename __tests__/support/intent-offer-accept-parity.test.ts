@@ -23,7 +23,7 @@ import { ALL_FLOWS } from "@/lib/support/flows";
 import { ALL_PLATFORM_FLOWS } from "@/lib/support/platform-flows";
 import {
   SupportThreadCategoryEnum,
-  SupportThreadStatusEnum,
+  SupportCaseStatusEnum,
 } from "@/schemas/enums";
 
 describe("intent offer/accept parity", () => {
@@ -51,8 +51,8 @@ describe("intent offer/accept parity", () => {
     expect(SupportThreadCategoryEnum.safeParse("NOT_A_CATEGORY").success).toBe(
       false,
     );
-    expect(SupportThreadStatusEnum.safeParse("ESCALATED").success).toBe(true);
-    expect(SupportThreadStatusEnum.safeParse("ON_HOLD").success).toBe(false);
+    expect(SupportCaseStatusEnum.safeParse("ESCALATED").success).toBe(true);
+    expect(SupportCaseStatusEnum.safeParse("ON_HOLD").success).toBe(false);
   });
 
   it("gives every appointment flow a distinct entry node and a title to echo", () => {

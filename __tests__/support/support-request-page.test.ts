@@ -9,30 +9,25 @@ import { requestStage } from "@/lib/support/request-stage";
 
 describe("requestStage", () => {
   it.each([
-    [{ kind: "ticket", status: "OPEN" }, 0, "Resolved"],
-    [{ kind: "ticket", status: "ON_HOLD" }, 1, "Resolved"],
-    [{ kind: "ticket", status: "CLOSED" }, 2, "Closed"],
-    [
-      { kind: "thread", status: "IN_PROGRESS", channel: "SELF_SERVE" },
-      0,
-      "Resolved",
-    ],
-    [{ kind: "thread", status: "ESCALATED", channel: "HUMAN" }, 1, "Resolved"],
-    [{ kind: "thread", status: null, channel: null }, 0, "Resolved"],
-    [{ kind: "thread", status: "RESOLVED", channel: "HUMAN" }, 2, "Resolved"],
+    [{ status: "OPEN" }, 0, "Resolved"],
+    [{ status: "IN_PROGRESS" }, 1, "Resolved"],
+    [{ status: "CLOSED" }, 2, "Closed"],
+    [{ status: "IN_PROGRESS" }, 1, "Resolved"],
+    [{ status: "ESCALATED" }, 1, "Resolved"],
+    [{ status: null }, 0, "Resolved"],
+    [{ status: "RESOLVED" }, 2, "Resolved"],
   ] as const)("%j → step %s", (request, step, settledLabel) => {
     expect(requestStage(request)).toEqual({ step, settledLabel });
   });
 });
 
 describe("supportRequestHref", () => {
-  it("links the canonical case page, which bounces to the viewer's own dashboard", () => {
-    // One canonical link for every surface. /dashboard/support/[caseKey]
-    // resolves the case and redirects to the side the viewer belongs on, so a
-    // single notification payload is right for every recipient.
-    expect(supportRequestHref("t_1")).toMatch(/\/dashboard\/support\/t_1$/);
-    expect(supportRequestHref("t_1", "org9")).toMatch(
-      /\/dashboard\/support\/t_1$/,
+  it("links the request page in the right dashboard", () => {
+    expect(supportRequestHref("c_1")).toMatch(
+      /\/dashboard\/go\/auto\/support\/requests\/c_1$/,
+    );
+    expect(supportRequestHref("c_1", "org9")).toMatch(
+      /\/dashboard\/organization\/org9\/support\/requests\/c_1$/,
     );
   });
 });

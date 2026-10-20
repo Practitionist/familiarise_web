@@ -7,8 +7,6 @@ import { assertBodySize } from "@/lib/validation/limits";
 import { supportError } from "@/lib/api/support-http";
 import { createOutboundStaffSupportTicket } from "@/lib/support/create-ticket";
 import { stripCallbackTags } from "@/lib/validation/phone";
-export { GET } from "@/app/api/user/support-tickets/route";
-import { POST as postUserSupportTicket } from "@/app/api/user/support-tickets/route";
 
 const STAFF_OUTBOUND_ROUTE = "staff.support-tickets";
 
@@ -25,10 +23,12 @@ export async function POST(req: NextRequest) {
     .json()
     .catch(() => null);
   const target = z.object({ targetUserId: z.unknown() }).safeParse(peek);
-  // The user-facing intake moved to /api/support/cases; this route now serves
-  // only the staff outbound path, so anything without a target is the retired
-  // endpoint's 410.
-  if (!target.success) return postUserSupportTicket();
+  if (!target.success)
+    return supportError({
+      status: 400,
+      code: "VALIDATION_FAILED",
+      message: "Choose a customer for this outbound message.",
+    });
 
   try {
     const auth = await requireBackofficeSurface("tickets.manage");

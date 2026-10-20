@@ -405,7 +405,7 @@ export function CaseWorkspace({
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <StatusBadge {...caseStatus(data.kind, data.status)} />
+          <StatusBadge {...caseStatus(data.status)} />
           {!isTicket && data.channel !== "HUMAN" && (
             <StatusBadge
               label="With the assistant"

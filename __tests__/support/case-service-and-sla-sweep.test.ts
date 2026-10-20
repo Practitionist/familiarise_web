@@ -33,7 +33,7 @@ jest.mock("../../lib/prisma", () => {
       findUnique: jest.fn(),
     },
     membership: { findUnique: jest.fn(), findMany: jest.fn(async () => []) },
-    supportTicketCounter: { upsert: jest.fn(async () => ({ nextSeq: 2 })) },
+    supportCaseCounter: { upsert: jest.fn(async () => ({ nextSeq: 2 })) },
     $transaction: jest.fn(),
   };
   db.$transaction.mockImplementation((callback: (tx: typeof db) => unknown) =>

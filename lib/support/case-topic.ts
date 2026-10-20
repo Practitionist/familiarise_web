@@ -113,31 +113,6 @@ const issueTypesOf = (topic: CaseTopic) =>
     (t) => ISSUE_TOPIC[t] === topic,
   );
 
-/** The `where` that selects exactly the tickets `ticketTopic` files under `topic`. */
-export function ticketTopicWhere(
-  topic: CaseTopic,
-): Prisma.SupportTicketWhereInput {
-  const noThreadCategory: Prisma.SupportTicketWhereInput = {
-    OR: [{ category: null }, { category: { notIn: THREAD_CATEGORIES } }],
-  };
-  const byIssue: Prisma.SupportTicketWhereInput[] = [
-    { issueType: { in: issueTypesOf(topic) } },
-  ];
-  if (topic === "other") byIssue.push({ issueType: null });
-  return {
-    OR: [
-      { category: { in: threadCategoriesOf(topic) } },
-      { AND: [noThreadCategory, { OR: byIssue }] },
-    ],
-  };
-}
-
-export function threadTopicWhere(
-  topic: CaseTopic,
-): Prisma.AppointmentSupportThreadWhereInput {
-  return { category: { in: threadCategoriesOf(topic) } };
-}
-
 /** Match the same category and issue precedence used by ticketTopic. */
 export function supportCaseTopicWhere(
   topic: CaseTopic,

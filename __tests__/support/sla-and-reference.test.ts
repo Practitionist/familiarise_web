@@ -166,13 +166,13 @@ describe("ticket reference", () => {
     // allocates seq 1 — an off-by-one here would hand two tickets the same
     // number on the very first day of a year.
     const tx = {
-      supportTicketCounter: {
+      supportCaseCounter: {
         upsert: jest.fn().mockResolvedValue({ nextSeq: 2 }),
       },
     };
     return allocateTicketReference(tx as never, T0).then((ref) => {
       expect(ref).toBe("FAM-2026-000001");
-      const args = tx.supportTicketCounter.upsert.mock.calls[0][0];
+      const args = tx.supportCaseCounter.upsert.mock.calls[0][0];
       // Uniqueness comes from the DB doing the increment, not from us reading
       // and writing back — that read-modify-write is the race.
       expect(args.update).toEqual({ nextSeq: { increment: 1 } });
@@ -183,7 +183,7 @@ describe("ticket reference", () => {
   it("hands concurrent allocators distinct numbers", async () => {
     let next = 1;
     const tx = {
-      supportTicketCounter: {
+      supportCaseCounter: {
         upsert: jest.fn().mockImplementation(async () => ({ nextSeq: ++next })),
       },
     };

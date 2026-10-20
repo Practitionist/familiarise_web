@@ -1,9 +1,10 @@
-# Support and trust production cutover
+# Support and trust production architecture
 
-The application reads and writes `SupportCase` for appointment help, account help,
-organization correspondence, and grievances. `SupportTicket` and
-`AppointmentSupportThread` are migration sources. Their historical URLs resolve
-through `SupportCaseLegacyAlias`; retired mutation APIs return `410`.
+`SupportCase` is the only persistence model for appointment help, account help,
+organization correspondence and grievances. Messages, evidence, decisions,
+financial recommendations and appeals attach to that case. The database contains
+mock data during pre-MVP development; obsolete support tables and compatibility
+paths have been removed rather than migrated.
 
 ## Runtime design
 
@@ -49,7 +50,7 @@ The case links the service investigation to its payment and refund.
   foreign keys identify queue custody, not the complainant. Those cases are
   staff-only; external replies use the guarded email outbox.
 - `/dashboard/support/c_<id>` resolves a notification to the viewer's authorized
-  workspace. Historical ticket/thread links resolve aliases before authorization.
+  workspace. Case access is checked before choosing the destination.
 
 ### Decisions, evidence and appeals
 
@@ -74,6 +75,17 @@ front door reserves and links the refund using the recommendation as its stable
 operation identity. A retry resumes that operation. Gateway acceptance and bank
 receipt are distinct states in the UI.
 
+Refund review uses the shared admin money door: a fresh session, a reason of at
+least five characters, the per-admin money-action budget and an `OpsActionLog`
+row. A refund above ₹25,000 waits in Money → Approvals when at least two admins
+are active; a different admin approves the stored request before execution. A
+single active admin can execute it directly. The recommendation remains
+undecided while approval is pending. Execution retains the case access,
+independent appeal review, case version and previewed refundable-balance checks.
+Declining a recommendation or retrieving its existing keyed refund moves no new money and
+requires no second approval. The case panel labels a pending approval separately
+from a sent refund.
+
 `SupportPaymentHold` independently blocks linked unpaid earnings during batching
 and disbursement. Releasing a service hold does not release a chargeback or refund
 reservation. An in-flight payout requires investigation; completed payouts cannot
@@ -84,8 +96,7 @@ be recalled by creating a hold.
 Evidence uses private `support-attachments` storage, direct signed uploads, and
 server verification of the stored type and size before completion. Downloads
 recheck access and issue short-lived signed URLs. Submitted evidence is retained
-with the case; pending uploads can be withdrawn. Storage objects are not copied
-when legacy attachment metadata is migrated.
+with the case; pending uploads can be withdrawn.
 
 Case metadata uses optimistic concurrency. Messages have ordered sequences and
 client retry identities. Financial operations retain existing Serializable
@@ -102,47 +113,21 @@ there is no additional scheduler. The public policy and applicability of statuto
 categories remain accountable legal/business inputs, not an automatic compliance
 certification. The implemented tax model and INR settlement are unchanged.
 
-## Ordered deployment
+## Schema and deployment
 
-1. Record the release SHA and take a recoverable database backup. Review the
-   additive Prisma schema and sidecar SQL against read-only drift output.
-2. Rehearse on a throwaway database. Expand the schema without replacing the
-   open-case partial index until existing subject keys have been initialized.
-3. Set `SUPPORT_MIGRATION_DATABASE_URL` explicitly. The script never falls back
-   to `DATABASE_URL` or reads a local `.env` implicitly.
-4. Run `npx tsx scripts/db/migrate-support-cases.ts --dry-run --prepare-only`.
-   Its JSON report contains identifiers and counts, not transcripts or credentials.
-5. Enter the bounded support-write maintenance window; stop case-producing jobs
-   and drain instances running old support writers.
-6. Run the same script with `--apply --prepare-only --ack-host=<exact host:port>`.
-   Repeat preparation batches until that phase reports `complete: true`. This
-   initializes subject keys, deadline snapshots and closed timestamps before
-   replacing the old open-case index.
-7. Apply and assert the reviewed sidecars, including the ownership-aware open-case
-   index. Resolve existing open-scope or reporter/content uniqueness collisions
-   explicitly; never silently merge private correspondence.
-8. Run `npx tsx scripts/db/migrate-support-cases.ts --dry-run`, then run with
-   `--apply --ack-host=<exact host:port>` against the reviewed target. Each apply
-   invocation imports up to 1,000 source cases in batches of 50 by default; reruns
-   select remaining unaliased sources. Use `--max-sources=N` for a larger audited
-   dry run. Resolve every collision or failed source before continuing.
-9. Require migration-phase `complete: true`: zero failed sources and zero missing
-   ticket/thread aliases. Verify per-source message, event, attachment and alias
-   counts. Confirm next-reference allocation exceeds retained references.
-10. Switch active application readers/writers together, verify receipts and
-    attachment aliases, then resume the scheduler and support traffic.
+The Prisma schema and SQL sidecars describe the complete current system. Seed
+phase `9b-create-support-cases.ts` creates canonical cases with ordered messages,
+reference allocation, receipt deadlines and audit events. There is no import,
+backfill, alias registry or dual-write phase.
 
-Each source group is transactional: a linked ticket and thread become one case.
-Message ordering preserves original thread sequence for equal timestamps and
-records provenance. Private notes retain visibility. Existing references and
-original timestamps survive. Legacy closed rows without `closedAt` must be
-normalized before the open-case unique index is validated.
-
-After new unified writes begin, roll forward. Returning to old writers without a
-reviewed reverse migration would strand new correspondence. Keep source tables
-inert until recovery verification and an explicitly reviewed contract release.
-Do not run the migration, push schema, seed, or replay money against the shared
-project from a worktree.
+For the authorized pre-MVP cleanup, Supabase migrations removed obsolete mock
+support tables and added the case evidence, decision, recommendation and hold
+schema. Schema changes were restricted to support and related moderation fields;
+unrelated money tables and their sidecar invariants were preserved. Generate the
+Prisma client after schema edits. CI recreates the schema and sidecars in a
+throwaway database; local servers, builds, lint and test runs are not required for
+this change. Once customer data exists, destructive changes need a reviewed
+migration and deployment sequence.
 
 ## Release evidence
 
@@ -158,12 +143,9 @@ not filed returns. Do not label future-effective obligations already operative.
 
 ## Deprecated & Superseded Approaches
 
-Legacy ticket/thread runtime reads, cross-reporter report aggregation and
-operator attachment access without mandatory 2FA are retired. Historical source
-tables remain solely for the reviewed migration/recovery window. There is no
-legacy dual-write path or second support queue.
-
-A universal 15-day resolution clock with customer-wait extensions is superseded
-by category-specific absolute deadlines. Internal service complaints remain
-separate from issuing-bank chargebacks. A single report row no longer represents
-multiple reporters' private statements or consumes their separate appeal rights.
+Separate ticket/thread tables, legacy aliases, migration scripts, retired API
+stubs and dual-parent events were removed while all data was disposable. New
+features must attach directly to the canonical case. A universal pausing
+resolution deadline is superseded by category-specific absolute deadlines;
+internal wait accounting cannot extend them. Service complaints remain separate
+from issuing-bank chargebacks.

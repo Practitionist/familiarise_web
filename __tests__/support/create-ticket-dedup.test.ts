@@ -41,7 +41,7 @@ describe("findRecentOpenEscalation", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           organizationId: "org-1",
-          status: { in: ["OPEN", "IN_PROGRESS", "ESCALATED", "ON_HOLD"] },
+          status: { in: ["OPEN", "IN_PROGRESS", "ESCALATED"] },
         }),
       }),
     );

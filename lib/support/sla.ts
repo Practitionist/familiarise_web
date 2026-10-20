@@ -1,10 +1,6 @@
 /** Internal response targets are capped by category-specific, non-pausing statutory deadlines. */
 
-import type {
-  SupportCaseStatus,
-  SupportPriority,
-  SupportTicketStatus,
-} from "@prisma/client";
+import type { SupportCaseStatus, SupportPriority } from "@prisma/client";
 
 /** The statutory ceilings. Nothing here may exceed these. */
 export const STATUTORY_ACK_HOURS = 24;
@@ -96,7 +92,7 @@ export function tightenDeadlinesForPriorityRaise(
 
 /** The subset of a ticket or unified support case the clock reads. */
 export interface SlaClock {
-  status: SupportTicketStatus | SupportCaseStatus;
+  status: SupportCaseStatus;
   ackDueAt: Date | null;
   acknowledgedAt: Date | null;
   resolutionDueAt: Date | null;

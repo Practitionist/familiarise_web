@@ -57,7 +57,7 @@ function CaseRow({
           <span className="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
             {CASE_TOPIC_LABEL[row.topic]}
           </span>
-          <StatusBadge {...caseStatus(row.kind, row.status)} size="sm" />
+          <StatusBadge {...caseStatus(row.status)} size="sm" />
           {selfServe && (
             <StatusBadge label="Self-serve" tone="neutral" variant="dot" />
           )}

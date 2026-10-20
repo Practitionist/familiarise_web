@@ -1,8 +1,5 @@
 import { z } from "zod";
-import type {
-  SupportThreadCategory,
-  SupportThreadStatus,
-} from "@prisma/client";
+import type { SupportThreadCategory, SupportCaseStatus } from "@prisma/client";
 
 /**
  * Support-thread intents and statuses — ONE definition, previously transcribed
@@ -32,16 +29,16 @@ const SUPPORT_THREAD_CATEGORIES = [
   "OTHER",
 ] as const satisfies readonly SupportThreadCategory[];
 
-const SUPPORT_THREAD_STATUSES = [
+const SUPPORT_CASE_STATUSES = [
   "OPEN",
   "IN_PROGRESS",
   "ESCALATED",
   "RESOLVED",
   "CLOSED",
-] as const satisfies readonly SupportThreadStatus[];
+] as const satisfies readonly SupportCaseStatus[];
 
 export const SupportThreadCategoryEnum = z.enum(SUPPORT_THREAD_CATEGORIES);
-export const SupportThreadStatusEnum = z.enum(SUPPORT_THREAD_STATUSES);
+export const SupportCaseStatusEnum = z.enum(SUPPORT_CASE_STATUSES);
 
 export const CancellationReasonEnum = z.enum([
   "SCHEDULE_CONFLICT",
@@ -61,14 +58,6 @@ export const ProfileVerificationStatusEnum = z.enum([
   "APPROVED",
   "REJECTED",
   "NEEDS_INFO",
-]);
-
-export const SupportTicketStatusEnum = z.enum([
-  "OPEN",
-  "IN_PROGRESS",
-  "ON_HOLD",
-  "RESOLVED",
-  "CLOSED",
 ]);
 
 export const SupportPriorityEnum = z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]);

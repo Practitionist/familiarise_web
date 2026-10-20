@@ -6,7 +6,7 @@
  * holds the cursor for the length of one sitting and replays it to the server
  * each turn; the server validates every transition against this registry. A
  * terminal either self-serves (resolved — nothing persisted) or escalates,
- * which is the ONLY write: a `SupportTicket` created via the shared factory
+ * which is the ONLY write: a `SupportCase` created via the shared factory
  * with the walked path summarized into the description.
  *
  * Reuses the appointment scope's FlowNode/FlowOption node shapes and the same

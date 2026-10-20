@@ -62,7 +62,6 @@ export const SupportCaseStatusSchema = z.enum([
   "OPEN",
   "IN_PROGRESS",
   "ESCALATED",
-  "ON_HOLD",
   "RESOLVED",
   "CLOSED",
 ]);
@@ -213,7 +212,7 @@ function resolveReopenedUserTurnStatus(
   currentStatus: z.infer<typeof SupportCaseStatusSchema>,
   assignedToId: string | null,
 ): z.infer<typeof SupportCaseStatusSchema> {
-  if (currentStatus === "RESOLVED" || currentStatus === "ON_HOLD") {
+  if (currentStatus === "RESOLVED") {
     return assignedToId ? "IN_PROGRESS" : "OPEN";
   }
   return currentStatus;
@@ -716,7 +715,7 @@ async function advanceUserTurnState(
   });
   if ((moved?.count ?? 0) === 0) return false;
 
-  if (existingCase.status === "RESOLVED" || existingCase.status === "ON_HOLD") {
+  if (existingCase.status === "RESOLVED") {
     await tx.supportCaseEvent.create({
       data: {
         caseId: input.caseId,
@@ -1503,16 +1502,6 @@ export function patchSupportCaseLifecycle(
   now: Date = new Date(),
 ) {
   const input = PatchSupportCaseSchema.parse(rawInput);
-
-  if (input.status === "ON_HOLD") {
-    return Promise.resolve({
-      ok: false as const,
-      status: 400 as const,
-      code: "STATUS_NOT_SUPPORTED" as const,
-      error:
-        "On hold is not supported; use Waiting on customer or leave an internal note.",
-    });
-  }
 
   return prisma.$transaction((tx) => executePatchLifecycleTx(tx, input, now), {
     maxWait: ALLOCATION_TX_MAX_WAIT_MS,

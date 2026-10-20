@@ -106,7 +106,7 @@ describe("applyErrorBudget", () => {
     // Repeat schema drift across another route within throttle window collapses to same family key.
     const p2021 = applyErrorBudget(
       thrown(
-        "The table `public.SupportTicketAttachment` does not exist in the current database.",
+        "The table `public.SupportCaseAttachment` does not exist in the current database.",
         "otherRouteHandler",
       ),
     );
