@@ -65,7 +65,7 @@ flowchart LR
 
 1. **Arm 1 — SLA acknowledgement & resolution warnings/breaches:** Queries open, unpaused (`awaitingUserSince === null`) cases and tickets due within the last 30 days (`ackWarn <= 2h`, `resWarn <= 24h`, or breached `<= now`). Stages idempotent outbox notices (`dedupeKey: sla:{id}:{ack|res}:{warn|breach}`) on `NOVU_WORKFLOWS.SUPPORT_TICKET_ACTIVITY` and emails operators (`deliver()`). Organization `escalationContactEmail` is emailed **strictly on `"breach"`**, never on `"warn"`.
 2. **Arm 2 — 28-day auto-close (`RESOLVED` -> `CLOSED`):** Transitions rows resolved `>= 28` days ago via conditional `updateMany` (`status: "RESOLVED"`), writes an `AUTO_CLOSED` event row, and atomically closes linked `AppointmentSupportThread` rows (`status: "CLOSED"`, `activeChannel: "SELF_SERVE"`).
-3. **Arm 3 — Actionable dispute deadline reminders:** Alerts `ADMIN` users on disputes in `NEEDS_RESPONSE` or `WARNING_NEEDS_RESPONSE` at `T-72h` and `T-24h` (`dedupeKey: dispute-due:{id}:{72|24}` on `NOVU_WORKFLOWS.DISPUTE_UPDATED`).
+3. **Arm 3 — Actionable dispute deadline reminders:** Alerts `ADMIN` users on disputes in `NEEDS_RESPONSE` or `WARNING_NEEDS_RESPONSE` with `now - 24h <= dueBy <= now + 72h` at `T-72h` and `T-24h` (`dedupeKey: dispute-due:{id}:{72|24}` on `NOVU_WORKFLOWS.DISPUTE_UPDATED`, linking to `/dashboard/admin/disputes/{id}`), and raises one `reportStandingFinding` page per run (`dispute-deadline:critical`) for disputes due within 12 h or past due. See [disputes §5](../enterprise/10-money-and-ledger/11-disputes.md).
 
 Row-level errors are collected across all three arms and reported to Sentry at most once per run (`op: "support-sla-sweep"`).
 
