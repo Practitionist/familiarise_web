@@ -19,6 +19,10 @@
  * member who created a batch cannot approve it while another ACTIVE
  * `payouts.approve` holder exists. A one-person org self-approves by typing
  * its slug (`confirmSelfApproval`), and the audit row says so.
+ *
+ * A payout above ₹50,000, or minted within 7 days of the payout account
+ * changing, stays PENDING after the org's approval until a Familiarise admin
+ * co-approves it (`POST /api/admin/org-payouts/[id]/approve`).
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -38,6 +42,7 @@ import {
   transitionOrgPayout,
 } from "@/lib/enterprise/transitions";
 import { requireFreshSession } from "@/lib/auth/step-up";
+import { orgPayoutNeedsPlatformApproval } from "@/lib/payments/payouts/payout-requirements";
 
 const PatchStatusSchema = z.enum(["APPROVED", "CANCELLED"]);
 
@@ -237,6 +242,14 @@ export async function PATCH(
         );
       }
 
+      if (body.status === "APPROVED" && current.platformApprovalRequiredAt) {
+        throw refusal(
+          "This payout is already approved by your organisation and is waiting for Familiarise's co-approval.",
+          409,
+          "PAYOUT_AWAITING_PLATFORM_APPROVAL",
+        );
+      }
+
       // #1851 decision 4 — the second pair of eyes.
       const selfApproved =
         body.status === "APPROVED" &&
@@ -248,10 +261,67 @@ export async function PATCH(
           confirmSelfApproval: body.confirmSelfApproval,
         }));
 
-      if (body.status) {
+      const needsPlatform =
+        body.status === "APPROVED" &&
+        orgPayoutNeedsPlatformApproval(
+          current,
+          await tx.organizationPayoutAccount.findUnique({
+            where: { organizationId: orgId },
+            select: { payoutsAllowedAfter: true },
+          }),
+        );
+
+      if (needsPlatform) {
+        // Stays PENDING, so the payout run cannot claim it until an admin co-approves.
+        const stamped = await tx.organizationPayout.updateMany({
+          where: {
+            id: payoutId,
+            organizationId: orgId,
+            status: "PENDING",
+            platformApprovalRequiredAt: null,
+          },
+          data: {
+            platformApprovalRequiredAt: new Date(),
+            orgApprovedBy: access.session.user.id,
+          },
+        });
+        if (stamped.count === 0) {
+          throw refusal(
+            "Another decision on this payout landed first — reload the list.",
+            409,
+            "PAYOUT_CHANGED",
+          );
+        }
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: orgId,
+            actorMembershipId: access.member.id,
+            category: "PAYOUT",
+            action: AUDIT_ACTIONS.PAYOUT.PAYOUT_STATUS_OVERRIDDEN,
+            description: `Payout ${payoutId}: approved by the organisation, awaiting platform co-approval`,
+            details: {
+              payoutId,
+              from: current.status,
+              to: current.status,
+              platformApprovalRequired: true,
+              notes: body.notes ?? null,
+              ...(selfApproved && { selfApproved: true }),
+            },
+          },
+        });
+      } else if (body.status) {
         await transitionOrgPayout(tx, {
-          where: { id: payoutId, organizationId: orgId },
+          where: {
+            id: payoutId,
+            organizationId: orgId,
+            ...(body.status === "APPROVED" && {
+              platformApprovalRequiredAt: null,
+            }),
+          },
           to: body.status,
+          ...(body.status === "APPROVED" && {
+            data: { orgApprovedBy: access.session.user.id },
+          }),
           audit: {
             organizationId: orgId,
             actorMembershipId: access.member.id,

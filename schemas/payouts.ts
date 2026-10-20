@@ -29,6 +29,14 @@ export const adminPayoutsQuerySchema = z.object({
 
 export type AdminPayoutsQuery = z.infer<typeof adminPayoutsQuerySchema>;
 
+/** GET /api/admin/org-payouts — the org payouts console's filters. */
+export const adminOrgPayoutsQuerySchema = z.object({
+  status: z.nativeEnum(PayoutStatus).nullish(),
+  orgId: z.string().max(128).nullish(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
 /** PATCH /api/consultant/payout-accounts/[id] — only two mutations exist
  *  (reverify, set-default); unknown keys are stripped, wrong types 400. */
 export const payoutAccountPatchSchema = z.object({

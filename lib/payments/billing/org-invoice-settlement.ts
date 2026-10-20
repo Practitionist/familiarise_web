@@ -21,6 +21,7 @@ import {
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import { notifyOrgInvoicePaid } from "@/lib/novu/org-workflows";
 import type { PrismaLike, Tx } from "@/lib/prisma";
+import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { postUnappliedInvoiceReceipt } from "@/lib/payments/ledger/unapplied-receipts";
 import { sumPaise } from "@/lib/payments/utils/money";
@@ -348,7 +349,7 @@ export async function applyOrgInvoiceCapture(
     invoiceId,
     postings: [
       {
-        account: { kind: "CASH" },
+        account: gatewayCashAccount(),
         direction: "DEBIT",
         amountPaise: capturedPaise,
       },

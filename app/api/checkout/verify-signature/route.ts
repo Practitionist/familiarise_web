@@ -178,7 +178,7 @@ export async function POST(req: NextRequest) {
       // With a non-zero auto-capture delay configured on the account, the modal
       // handler fires while the payment is still `authorized`. Running the
       // pipeline on that would confirm the booking, create earnings, and post a
-      // CASH debit for money we have not received; Razorpay then voids the
+      // clearing debit for money we have not received; Razorpay then voids the
       // authorization a few days later and the journal is simply wrong.
       if (gatewayPayment.status !== "captured") {
         console.warn(

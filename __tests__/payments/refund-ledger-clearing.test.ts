@@ -109,7 +109,7 @@ beforeEach(() => {
   mockPostLedgerTxn.mockResolvedValue({ transactionId: "t", created: true });
 });
 
-it("a partial refund of a parked capture debits UNAPPLIED_RECEIPTS and credits CASH only", async () => {
+it("a partial refund of a parked capture debits UNAPPLIED_RECEIPTS and credits GATEWAY_CLEARING only", async () => {
   const tx = txStub(cardPayment([]), true);
   await applyRefundCascade(asTx(tx), {
     paymentId: "pay-1",
@@ -129,7 +129,11 @@ it("a partial refund of a parked capture debits UNAPPLIED_RECEIPTS and credits C
       direction: "DEBIT",
       amountPaise: 50_000,
     },
-    { account: { kind: "CASH" }, direction: "CREDIT", amountPaise: 50_000 },
+    {
+      account: { kind: "GATEWAY_CLEARING" },
+      direction: "CREDIT",
+      amountPaise: 50_000,
+    },
   ]);
   expect(tx.consumerInvoice.findUnique).not.toHaveBeenCalled();
 });
@@ -158,7 +162,7 @@ it("a booked payment keeps the fee, GST and payable reversal and never reads the
   const kinds = postings().map((p) => `${p.direction}:${p.account.kind}`);
   expect(kinds).toEqual(
     expect.arrayContaining([
-      "CREDIT:CASH",
+      "CREDIT:GATEWAY_CLEARING",
       "DEBIT:GST_PAYABLE",
       "DEBIT:CONSULTANT_PAYABLE",
       "DEBIT:PLATFORM_FEE",
@@ -206,7 +210,7 @@ it("a recovery releases only what is still parked after a partial refund", async
       amountPaise: AMOUNT - 30_000,
     },
     {
-      account: { kind: "CASH" },
+      account: { kind: "GATEWAY_CLEARING" },
       direction: "CREDIT",
       amountPaise: AMOUNT - 30_000,
     },

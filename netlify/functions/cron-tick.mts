@@ -95,6 +95,7 @@ const TARGETS = [
   "timeout-member-overages",
   "dunning",
   "wallet-low-balance",
+  "reconcile-gateway-settlements",
 ] as const;
 
 type Target = (typeof TARGETS)[number];
@@ -172,6 +173,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "timeout-member-overages": 25,
   dunning: 25,
   "wallet-low-balance": 25,
+  // One recon page per slice; the route takes no limit.
+  "reconcile-gateway-settlements": null,
 };
 
 /**
@@ -233,6 +236,7 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "timeout-member-overages": 60,
   dunning: 60,
   "wallet-low-balance": 60,
+  "reconcile-gateway-settlements": 60,
 };
 
 /**
@@ -294,6 +298,8 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "timeout-member-overages": 35,
   dunning: 40,
   "wallet-low-balance": 45,
+  // Daily 06:30 window, on the one minute no other window uses.
+  "reconcile-gateway-settlements": 55,
 };
 
 /** The most targets one tick may fire; pinned by the cadence test. */
@@ -344,6 +350,8 @@ const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
   "timeout-member-overages": DAILY_2330,
   dunning: DAILY_2330,
   "wallet-low-balance": DAILY_2330,
+  // After Razorpay's T+1/T+2 settlements land; six hourly slices of one recon page each.
+  "reconcile-gateway-settlements": { startMinuteUtc: 390, windowMinutes: 360 },
 };
 
 /**
@@ -430,6 +438,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "timeout-member-overages": 20_000,
   dunning: 20_000,
   "wallet-low-balance": 20_000,
+  "reconcile-gateway-settlements": 20_000,
 };
 
 /**

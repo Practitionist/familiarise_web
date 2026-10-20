@@ -62,6 +62,8 @@ export const FINANCIAL_JOB_NAMES = new Set([
   // Referral vest and breakage post to the referral-credit liability ledger.
   "vest-referral-credits",
   "expire-referral-credits",
+  // Posts gateway-fee and settlement journals from Razorpay's settlement report.
+  "reconcile-gateway-settlements",
 ]);
 
 /**

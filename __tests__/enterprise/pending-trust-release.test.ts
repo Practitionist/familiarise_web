@@ -48,6 +48,7 @@ const tx = {
   orgAuditLog: {
     create: (...a: unknown[]) => orgAuditLogCreate(...a),
   },
+  opsActionLog: { create: jest.fn(async () => ({ id: "ops_1" })) },
 };
 
 jest.mock("../../lib/prisma", () => ({
@@ -64,8 +65,11 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 jest.mock("../../lib/auth-helpers", () => ({
-  requireAdminAuth: jest.fn(async () => ({
-    session: { user: { id: "admin_1" } },
+  requireBackofficeSurface: jest.fn(async () => ({
+    session: {
+      user: { id: "admin_1", role: "ADMIN" },
+      session: { createdAt: new Date() },
+    },
   })),
 }));
 
@@ -113,7 +117,7 @@ describe("Inline PENDING_TRUST -> PENDING earnings promotion (#1915 P3)", () => 
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "VERIFY" }),
+        body: JSON.stringify({ action: "VERIFY", reason: "documents ok" }),
       },
     );
 
@@ -122,8 +126,12 @@ describe("Inline PENDING_TRUST -> PENDING earnings promotion (#1915 P3)", () => 
     });
 
     expect(res.status).toBe(200);
+    // Keyed on the payment's sponsor, never on the earning org.
     expect(orgEarningsUpdateMany).toHaveBeenCalledWith({
-      where: { organizationId: "org_1", status: "PENDING_TRUST" },
+      where: {
+        payment: { organizationId: "org_1" },
+        status: "PENDING_TRUST",
+      },
       data: { status: "PENDING" },
     });
     expect(consultantEarningsUpdateMany).toHaveBeenCalledWith({
@@ -152,7 +160,7 @@ describe("Inline PENDING_TRUST -> PENDING earnings promotion (#1915 P3)", () => 
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "SUSPEND" }),
+        body: JSON.stringify({ action: "SUSPEND", reason: "fraud review" }),
       },
     );
 

@@ -16,7 +16,7 @@
  *   3. Webhook calls `confirmTopUp(providerOrderId, providerPaymentId)`.
  *   4. `confirmTopUp` atomically: flips the WalletTopUp PENDING → CONFIRMED
  *      (idempotent claim), bumps walletBalance, and posts the top-up's
- *      double-entry txn (Dr CASH / Cr WALLET) — all in one transaction.
+ *      double-entry txn (Dr GATEWAY_CLEARING / Cr WALLET) — all in one transaction.
  *
  * Booking debit flow (at checkout):
  *   1. `walletDebit` atomically decrements the cached balance.
@@ -28,6 +28,7 @@
 import type { WalletReason } from "@prisma/client";
 
 import prisma, { type Db, type Tx } from "@/lib/prisma";
+import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 
 /**
@@ -185,8 +186,8 @@ export async function walletCredit(
 
   // #771 D1/D5 / #772 B3 — double-entry is now the sole record (WalletEntry
   // removed). A top-up is a complete 2-leg txn:
-  // platform CASH rises and we now owe the org a WALLET balance.
-  //   Dr CASH(platform)   Cr WALLET(org)
+  // the gateway holds the cash for us and we now owe the org a WALLET balance.
+  //   Dr GATEWAY_CLEARING(platform)   Cr WALLET(org)
   // Booking-debit and refund WALLET legs post from the settlement / refund
   // layer (where the full split is known), not here.
   if (params.reason === "TOPUP") {
@@ -197,7 +198,7 @@ export async function walletCredit(
       postings: [
         {
           // #783 — ledger is INR-only; never key accounts by acct.currency.
-          account: { kind: "CASH" },
+          account: gatewayCashAccount(),
           direction: "DEBIT",
           amountPaise: params.amountPaise,
         },

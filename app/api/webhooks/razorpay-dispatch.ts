@@ -47,6 +47,7 @@ import {
   withRazorpaySdkTimeout,
 } from "@/lib/payments/core/razorpay";
 import prisma from "@/lib/prisma";
+import { postGatewayFee } from "@/lib/payments/ledger/gateway-fee";
 import { type WebhookClaim, permanentFailure } from "@/lib/webhooks/event-log";
 import { errorMessageOf, reportSentryError } from "@/lib/observability/report";
 import { z, ZodError } from "zod";
@@ -92,6 +93,14 @@ const payoutEntitySchema = z.object({
   reference_id: z.string().nullable().optional(),
 });
 
+function payloadFee(entity: {
+  fee?: number | null;
+  tax?: number | null;
+}): { feePaise: number; taxPaise: number } | undefined {
+  if (entity.fee === null || entity.fee === undefined) return undefined;
+  return { feePaise: entity.fee, taxPaise: entity.tax ?? 0 };
+}
+
 /**
  * Route a captured payment to the handler its `notes.type` selects.
  *
@@ -119,6 +128,24 @@ export async function routeCapturedPayment(params: {
    * and on `order.paid` when its payment entity is shipped (#1582 F-P0-01);
    * absent, `handleOrgPaymentSuccess` refuses to mark an invoice PAID.
    */
+  gatewayPaymentId?: string;
+  /** Gateway fee (GST included) and its GST, from the webhook's payment entity only. */
+  fee?: { feePaise: number; taxPaise: number };
+}): Promise<void> {
+  await dispatchCapturedPayment(params);
+  // Outside the capture transaction; the settlement job books it under the same key when absent.
+  if (params.gatewayPaymentId && params.fee) {
+    await postGatewayFee(prisma, {
+      gatewayPaymentId: params.gatewayPaymentId,
+      ...params.fee,
+    });
+  }
+}
+
+async function dispatchCapturedPayment(params: {
+  orderId: string;
+  notes: Record<string, string>;
+  amountPaise?: number;
   gatewayPaymentId?: string;
 }): Promise<void> {
   const { orderId, notes, amountPaise, gatewayPaymentId } = params;
@@ -204,11 +231,13 @@ export async function processRazorpayWebhookEvent(
     switch (eventType) {
       case "payment.captured": {
         const capturedEvent = razorpayPaymentCapturedEventSchema.parse(event);
+        const capturedEntity = capturedEvent.payload.payment.entity;
         await routeCapturedPayment({
-          orderId: capturedEvent.payload.payment.entity.order_id ?? "",
-          notes: capturedEvent.payload.payment.entity.notes,
-          amountPaise: capturedEvent.payload.payment.entity.amount,
-          gatewayPaymentId: capturedEvent.payload.payment.entity.id,
+          orderId: capturedEntity.order_id ?? "",
+          notes: capturedEntity.notes,
+          amountPaise: capturedEntity.amount,
+          gatewayPaymentId: capturedEntity.id,
+          fee: payloadFee(capturedEntity),
         });
         break;
       }
@@ -221,6 +250,7 @@ export async function processRazorpayWebhookEvent(
           notes: paidEvent.payload.order.entity.notes,
           amountPaise: paidEntity?.amount,
           gatewayPaymentId: paidEntity?.id,
+          fee: paidEntity ? payloadFee(paidEntity) : undefined,
         });
         break;
       }

@@ -2,6 +2,7 @@ import { faker } from "@faker-js/faker";
 import { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { sumPaise } from "../../lib/payments/utils/money";
+import { gatewayCashAccount } from "../../lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "../../lib/payments/ledger/post";
 import {
   calculatePlatformFee,
@@ -146,7 +147,7 @@ export async function createConsultantEarnings(): Promise<void> {
         if (p.amountPaise > 0) postings.push(p);
       };
       push({
-        account: { kind: "CASH" },
+        account: gatewayCashAccount(),
         direction: "DEBIT",
         amountPaise: fundingPaise,
       });

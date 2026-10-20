@@ -67,6 +67,7 @@ type PrismaStub = {
     updateMany: jest.Mock;
   };
   consultantEarnings: { updateMany: jest.Mock };
+  organizationPayout: { findMany: jest.Mock };
   $disconnect: jest.Mock;
 };
 
@@ -85,6 +86,7 @@ jest.mock("../../lib/prisma", () => {
     consultantEarnings: {
       updateMany: jest.fn(async () => ({ count: 0 })),
     },
+    organizationPayout: { findMany: jest.fn(async () => []) },
     $disconnect: jest.fn(async () => {}),
   };
   return { __esModule: true, default: prismaStub };

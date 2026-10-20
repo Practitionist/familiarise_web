@@ -107,10 +107,10 @@ Platform Fee (20% of grossAmount): Rs.   200.00  (platform absorbs Razorpay PG f
 Consultant Earnings (80% of base): Rs.   800.00  (subject to 0.1% Sec 194-O TDS at payout if > Rs. 5L/yr)
 ```
 
-| Component                  | Amount (INR)  | Share of Base (`grossAmount`) | Notes                                                                                  |
-| -------------------------- | ------------- | ----------------------------- | -------------------------------------------------------------------------------------- |
-| **Base Plan Price**        | **Rs. 1,000** | **100%**                      | Stored in `Payment.originalAmount` (100,000 paise)                                     |
-| **Platform Commission**    | **Rs. 200**   | **20%** (default marketplace) | Governed by `PlatformFeeSchedule` (`marketplaceBps` / `ownLinkBps`) or `0%` on waiver  |
+| Component                  | Amount (INR)  | Share of Base (`grossAmount`) | Notes                                                                                                   |
+| -------------------------- | ------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------- |
+| **Base Plan Price**        | **Rs. 1,000** | **100%**                      | Stored in `Payment.originalAmount` (100,000 paise)                                                      |
+| **Platform Commission**    | **Rs. 200**   | **20%** (default marketplace) | Governed by `PlatformFeeSchedule` (`marketplaceBps` / `ownLinkBps`) or `0%` on waiver                   |
 | **Consultant Gross Share** | **Rs. 800**   | **80%**                       | Stored in `ConsultantEarnings`; Razorpay PG fee (~2.36% cards / 0% UPI) is NOT deducted from consultant |
 
 **Sources**: `lib/payments/pricing/platform-fee.ts`, `lib/payments/payouts/earnings-service.ts`, and `lib/payments/payouts/constants.ts`
@@ -156,45 +156,46 @@ In our system, these map to `PaymentStatus`: `PENDING` (created/authorized), `SU
 
 ### Razorpay Payment, Refund & Dispute Events
 
-| Event                             | When It Fires                                       | What We Do                                                                                      |
-| --------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `payment.authorized`              | Payment authorized (prior to capture)               | Log and record payment authorization metadata                                                   |
-| `payment.captured`                | Payment successfully captured                       | Single-writer confirmation: update `Payment` to `SUCCEEDED`, create earnings, issue GST invoice |
-| `order.paid`                      | Order fully paid (carries both `order` & `payment`) | Confirm payment via single-writer pipeline if `payment.captured` has not already settled it     |
-| `payment.failed`                  | Payment declined/errored                            | Update `Payment` to `FAILED` (if not already `SUCCEEDED`), notify consultee                     |
-| `refund.created`                  | Refund initiated                                    | Ensure `Refund` record is tracked in `PENDING` status                                           |
+| Event                             | When It Fires                                       | What We Do                                                                                                 |
+| --------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `payment.authorized`              | Payment authorized (prior to capture)               | Log and record payment authorization metadata                                                              |
+| `payment.captured`                | Payment successfully captured                       | Single-writer confirmation: update `Payment` to `SUCCEEDED`, create earnings, issue GST invoice            |
+| `order.paid`                      | Order fully paid (carries both `order` & `payment`) | Confirm payment via single-writer pipeline if `payment.captured` has not already settled it                |
+| `payment.failed`                  | Payment declined/errored                            | Update `Payment` to `FAILED` (if not already `SUCCEEDED`), notify consultee                                |
+| `refund.created`                  | Refund initiated                                    | Ensure `Refund` record is tracked in `PENDING` status                                                      |
 | `refund.processed`                | Refund completed by bank/network                    | Update `Refund` to `SUCCEEDED`, record ARN (`acquirer_data.arn`), reverse earnings & issue GST Credit Note |
-| `refund.failed`                   | Refund processing failed                            | Update `Refund` to `FAILED` and alert operations                                                |
-| `refund.speed_changed`            | Instant (`optimum`) refund downgraded to `normal`   | Update refund metadata (`speed_processed`)                                                      |
-| `payment.dispute.created`         | Customer raised chargeback/dispute                  | Upsert `Dispute` (`OPEN`), freeze linked earnings (`HELD`), notify admin                        |
-| `payment.dispute.under_review`    | Evidence submitted; under bank review               | Update `Dispute` status to `UNDER_REVIEW`                                                       |
-| `payment.dispute.action_required` | Additional evidence requested before `respond_by`   | Update `Dispute` status to `NEEDS_RESPONSE`, alert admin                                        |
-| `payment.dispute.won`             | Merchant won the dispute                            | Update `Dispute` to `WON`, release held earnings back to normal schedule                        |
-| `payment.dispute.lost`            | Customer won the dispute                            | Update `Dispute` to `LOST`, debit ledger/earnings, issue GST Credit Note                        |
-| `payment.dispute.closed`          | Dispute closed (`status` indicates won/lost/closed) | Finalize `Dispute` and reconcile earnings                                                       |
+| `refund.failed`                   | Refund processing failed                            | Update `Refund` to `FAILED` and alert operations                                                           |
+| `refund.speed_changed`            | Instant (`optimum`) refund downgraded to `normal`   | Update refund metadata (`speed_processed`)                                                                 |
+| `payment.dispute.created`         | Customer raised chargeback/dispute                  | Upsert `Dispute` (`OPEN`), freeze linked earnings (`HELD`), notify admin                                   |
+| `payment.dispute.under_review`    | Evidence submitted; under bank review               | Update `Dispute` status to `UNDER_REVIEW`                                                                  |
+| `payment.dispute.action_required` | Additional evidence requested before `respond_by`   | Update `Dispute` status to `NEEDS_RESPONSE`, alert admin                                                   |
+| `payment.dispute.won`             | Merchant won the dispute                            | Update `Dispute` to `WON`, release held earnings back to normal schedule                                   |
+| `payment.dispute.lost`            | Customer won the dispute                            | Update `Dispute` to `LOST`, debit ledger/earnings, issue GST Credit Note                                   |
+| `payment.dispute.closed`          | Dispute closed (`status` indicates won/lost/closed) | Finalize `Dispute` and reconcile earnings                                                                  |
 
 ### RazorpayX Payout & Validation Events
 
-| Event                               | When It Fires                                   | What We Do                                                                                     |
-| ----------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `payout.initiated`                  | Payout left queue and entered `processing`      | Update `Payout` status to `PROCESSING`                                                         |
-| `payout.updated`                    | Payout metadata/UTR or status updated           | Sync `Payout` status and UTR                                                                   |
-| `payout.processed`                  | Payout completed (`utr` assigned)               | Update `Payout` to `COMPLETED`, mark earnings `PAID`, post ledger settlement                   |
-| `payout.failed`                     | Transfer failed at bank or gateway              | Update `Payout` to `FAILED` (reading `status_details`), restore earnings to `READY`            |
-| `payout.reversed`                   | Bank returned funds after processing            | Update `Payout` to `FAILED`, reverse ledger/TDS and restore earnings to `READY`                |
-| `payout.rejected`                   | Approval rejected in RazorpayX workflow         | Update `Payout` to `FAILED`, alert admin                                                       |
-| `payout.queued`                     | Queued due to low balance (`queue_if_low_balance`)| Keep `Payout` in `PENDING`                                                                   |
-| `payout.pending`                    | Awaiting approval workflow                      | Keep `Payout` in `PENDING`                                                                     |
-| `payout.cancelled`                  | Queued payout cancelled                         | Update `Payout` to `CANCELLED`, restore earnings to `READY`                                    |
-| `fund_account.validation.completed` | Penny Drop / FAV finished (`fav_...`)           | Check `results.account_status === "active"`; mark `PayoutAccount` verified or rejected         |
-| `fund_account.validation.failed`    | Penny Drop / FAV request failed                 | Record validation failure on `PayoutAccount`                                                   |
+| Event                               | When It Fires                                      | What We Do                                                                             |
+| ----------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `payout.initiated`                  | Payout left queue and entered `processing`         | Update `Payout` status to `PROCESSING`                                                 |
+| `payout.updated`                    | Payout metadata/UTR or status updated              | Sync `Payout` status and UTR                                                           |
+| `payout.processed`                  | Payout completed (`utr` assigned)                  | Update `Payout` to `COMPLETED`, mark earnings `PAID`, post ledger settlement           |
+| `payout.failed`                     | Transfer failed at bank or gateway                 | Update `Payout` to `FAILED` (reading `status_details`), restore earnings to `READY`    |
+| `payout.reversed`                   | Bank returned funds after processing               | Update `Payout` to `FAILED`, reverse ledger/TDS and restore earnings to `READY`        |
+| `payout.rejected`                   | Approval rejected in RazorpayX workflow            | Update `Payout` to `FAILED`, alert admin                                               |
+| `payout.queued`                     | Queued due to low balance (`queue_if_low_balance`) | Keep `Payout` in `PENDING`                                                             |
+| `payout.pending`                    | Awaiting approval workflow                         | Keep `Payout` in `PENDING`                                                             |
+| `payout.cancelled`                  | Queued payout cancelled                            | Update `Payout` to `CANCELLED`, restore earnings to `READY`                            |
+| `fund_account.validation.completed` | Penny Drop / FAV finished (`fav_...`)              | Check `results.account_status === "active"`; mark `PayoutAccount` verified or rejected |
+| `fund_account.validation.failed`    | Penny Drop / FAV request failed                    | Record validation failure on `PayoutAccount`                                           |
 
 **Sources**: `app/api/webhooks/razorpay/route.ts`, `app/api/webhooks/razorpay-dispatch.ts`, `schemas/webhooks/razorpay.ts`
 
 ### Webhook Idempotency
 
 Inbound webhooks are deduplicated via the `WebhookEvent` table (`lib/webhooks/webhook-Deduplication.ts`):
-- **Body-derived key (security invariant)**: `app/api/webhooks/razorpay/route.ts` deliberately **ignores** the unsigned `x-razorpay-event-id` HTTP header (which is not covered by `x-razorpay-signature` and could otherwise be spoofed to poison deduplication) and instead derives `eventId` deterministically from the HMAC-verified body (`${eventType}:${entityId}`, plus `:${bodyDigest}` on `payout.updated` so status and subsequent UTR updates do not collide, or `body_${bodyDigest}` when no entity ID is present).
+
+- **Event-id key**: `app/api/webhooks/razorpay/route.ts` keys `eventId` as `${eventType}:${entityId}:${x-razorpay-event-id}`, falling back to a 16-character SHA-256 digest of the raw body when the header is absent or malformed. Razorpay holds the event id stable across retries and dashboard replays; the event type and entity id come from the HMAC-verified body.
 
 ---
 

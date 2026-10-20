@@ -47,6 +47,35 @@ export interface PayoutAccountHoldInput {
   payoutsFrozenAt?: Date | string | null;
 }
 
+/** When the destination last changed, read off the cooling-off stamp it set; null when never stamped. */
+export function payoutAccountChangedAt(
+  account: PayoutAccountHoldInput,
+): number | null {
+  return account.payoutsAllowedAfter
+    ? new Date(account.payoutsAllowedAfter).getTime() -
+        PAYOUT_ACCOUNT_COOLING_OFF_MS
+    : null;
+}
+
+/** An org payout above this also needs a Familiarise admin's co-approval. */
+export const ORG_PAYOUT_PLATFORM_APPROVAL_ABOVE_PAISE = 5_000_000;
+/** So does one minted within this long after its payout account changed. */
+export const ORG_PAYOUT_ACCOUNT_CHANGE_REVIEW_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function orgPayoutNeedsPlatformApproval(
+  payout: { amountPaise: number; createdAt: Date },
+  account: PayoutAccountHoldInput | null,
+): boolean {
+  if (payout.amountPaise > ORG_PAYOUT_PLATFORM_APPROVAL_ABOVE_PAISE) {
+    return true;
+  }
+  const changedAt = account ? payoutAccountChangedAt(account) : null;
+  return (
+    changedAt !== null &&
+    payout.createdAt.getTime() - changedAt < ORG_PAYOUT_ACCOUNT_CHANGE_REVIEW_MS
+  );
+}
+
 /** Why mint must skip this default account right now, or null when it may pay it. */
 export function payoutAccountHold(
   account: PayoutAccountHoldInput,

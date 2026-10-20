@@ -2305,13 +2305,19 @@ model OrganizationPayout {
   fxRateUsed        Decimal?            @db.Decimal(18, 6)
   firceRef          String?
 
-  payoutReference String?
-  failureReason   String?
-  processedAt     DateTime? @db.Timestamptz
-  failedAt        DateTime? @db.Timestamptz
-  createdBy       String?
-  approvedAt      DateTime? @db.Timestamptz
-  approvedBy      String?
+  payoutReference            String?
+  failureReason              String?
+  processedAt                DateTime? @db.Timestamptz
+  failedAt                   DateTime? @db.Timestamptz
+  createdBy                  String?
+  approvedAt                 DateTime? @db.Timestamptz
+  approvedBy                 String?
+  /// The org member (user id) whose approval moved this payout on.
+  orgApprovedBy              String?
+  /// Set when the org approved a payout that still needs a Familiarise admin's co-approval; it stays PENDING until then.
+  platformApprovalRequiredAt DateTime? @db.Timestamptz
+  /// A Familiarise hold: processing never sends this payout while set.
+  platformHeldAt             DateTime? @db.Timestamptz
 
   /// A1: live RazorpayX submission response.
   /// `gatewayPayoutId` is the RazorpayX payout id. UTR — Unique Transaction Reference; the bank/RBI
@@ -2966,6 +2972,9 @@ enum LedgerAccountKind {
   TDS_PAYABLE // TDS withheld, owed to the government
   GST_PAYABLE // GST collected, owed to the government
   UNAPPLIED_RECEIPTS // a capture staged for auto-refund, owed back to the payer
+  GATEWAY_CLEARING // PG captures the gateway holds for us until it settles them to CASH
+  GATEWAY_FEE // expense: the gateway's fee net of its GST
+  GST_INPUT_CREDIT // asset: GST charged on the gateway fee, claimable as input tax credit
 }
 
 enum LedgerDirection {
@@ -3030,6 +3039,8 @@ enum LedgerTransactionKind {
   GRANT
   REFERRAL_CREDIT // vest, restore, reversal and breakage of referral promotional credit
   UNAPPLIED_RECEIPT // a parked capture's cash, or its release when an operator recovers the booking
+  GATEWAY_FEE // the gateway's fee and its GST on one capture, out of GATEWAY_CLEARING
+  GATEWAY_SETTLEMENT // one settlement's net moved from GATEWAY_CLEARING to CASH
 }
 
 model LedgerTransaction {
@@ -3070,6 +3081,54 @@ model LedgerEntry {
 
   @@index([accountId, createdAt])
   @@index([transactionId])
+}
+
+/// One row of the gateway's settlement recon report, matched against our money
+/// rows by `reconcile-gateway-settlements`. A mismatch is reported, never auto-edited.
+model GatewaySettlementLine {
+  id            String                      @id @default(cuid())
+  provider      PaymentGateway              @default(RAZORPAY)
+  /// Razorpay entity id: `pay_…`, `rfnd_…`, `adj_…` or `trf_…`.
+  entityId      String
+  /// Razorpay row type, verbatim: payment, refund, transfer or adjustment.
+  type          String
+  settlementId  String?
+  settlementUtr String?
+  settledAt     DateTime?
+  amountPaise   BigInt
+  feePaise      BigInt
+  taxPaise      BigInt
+  debitPaise    BigInt
+  creditPaise   BigInt
+  orderId       String?
+  paymentId     String?
+  disputeId     String?
+  matchedKind   GatewaySettlementMatchKind?
+  matchedId     String?
+  status        GatewaySettlementLineStatus
+  note          String?
+  fetchedAt     DateTime                    @default(now())
+
+  @@unique([provider, entityId, type])
+  @@index([status, fetchedAt])
+  @@index([settlementId])
+  @@index([settledAt])
+}
+
+enum GatewaySettlementMatchKind {
+  PAYMENT
+  REFUND
+  DISPUTE
+  TOPUP
+  INVOICE
+  NONE
+}
+
+enum GatewaySettlementLineStatus {
+  MATCHED
+  AMOUNT_MISMATCH
+  FEE_MISMATCH
+  UNMATCHED
 }
 
 // Snapshot output of the ledger reconciliation auditor
