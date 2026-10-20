@@ -728,6 +728,11 @@ async function processDisputeDeadlineAlerts(
   return stagedFlags.reduce((sum: number, n: number) => sum + n, 0);
 }
 
+function moderationNoticeLevel(dueAt: Date | null, now: Date): SlaNoticeLevel {
+  if (dueAt && dueAt <= now) return "breach";
+  return "warn";
+}
+
 function moderationDeadlineIds(
   notices: { entityRef: string | null }[],
   level: "warn" | "breach",
@@ -852,10 +857,7 @@ export async function runSupportSlaSweep(opts?: {
     });
     // Bound database writes to one leased invocation; each notice commits before the next.
     for (const report of pendingReports) {
-      const level =
-        report.resolutionDueAt && report.resolutionDueAt <= now
-          ? "breach"
-          : "warn";
+      const level = moderationNoticeLevel(report.resolutionDueAt, now);
       try {
         await prisma.$transaction(async (tx) => {
           const notice = await stageBell(tx, {
