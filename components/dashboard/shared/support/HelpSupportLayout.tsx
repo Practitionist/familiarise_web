@@ -60,23 +60,20 @@ export function HelpSupportLayout({
       : []),
   ];
   return (
-    <div className="grid min-w-0 gap-6 lg:grid-cols-[12rem_minmax(0,1fr)] lg:gap-8">
-      <nav aria-label="Help and support pages" className="space-y-5">
-        <div>
-          <p className="mb-2 px-2 text-xs font-medium text-muted-foreground">
-            {organization ? "Organization help & support" : "Help & support"}
-          </p>
-          <ul className="flex flex-wrap gap-1 lg:flex-col">
+    <div className="min-w-0 space-y-6">
+      <nav aria-label="Help and support pages" className="min-w-0 space-y-3">
+        <div className="overflow-x-auto pb-1">
+          <ul className="inline-flex w-max items-center gap-1 rounded-lg bg-muted p-1">
             {items.map(({ label, href, icon: Icon }) => (
-              <li key={href}>
+              <li key={href} className="shrink-0">
                 <Link
                   href={href}
                   aria-current={pathname === href ? "page" : undefined}
                   className={cn(
-                    "flex items-center gap-2 rounded-lg px-2 py-2 text-sm transition-colors hover:bg-muted/50",
+                    "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                     pathname === href
-                      ? "bg-muted font-medium text-foreground"
-                      : "text-muted-foreground",
+                      ? "bg-background text-foreground shadow"
+                      : "text-muted-foreground hover:text-foreground",
                   )}
                 >
                   <Icon className="h-4 w-4 shrink-0" aria-hidden />
@@ -87,18 +84,18 @@ export function HelpSupportLayout({
           </ul>
         </div>
         {organization && (
-          <div className="space-y-2 border-t border-border px-2 pt-4 text-sm">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
             <p className="text-xs font-medium text-muted-foreground">
               Your personal workspace
             </p>
             <Link
-              className="block underline underline-offset-4"
+              className="underline underline-offset-4"
               href={goHref("auto", "support/reports")}
             >
               Personal reports & appeals
             </Link>
             <Link
-              className="block underline underline-offset-4"
+              className="underline underline-offset-4"
               href={goHref("auto", "support/feedback")}
             >
               Your product feedback

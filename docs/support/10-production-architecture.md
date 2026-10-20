@@ -76,7 +76,7 @@ see [Razorpay’s dispute documentation](https://razorpay.com/docs/payments/disp
 Every active personal, workspace and organization dashboard exposes an Operations
 group with Help & support and the Settings destination permitted in that scope.
 Personal help uses separate routed pages for Support requests, Evidence requests,
-Reports & appeals, and Product feedback. A shared secondary menu navigates pages;
+Reports & appeals, and Product feedback. One horizontal section-navigation row links these pages above the main content;
 context and status filters narrow the paginated personal case inbox. Product
 feedback is a separate form/history module, not a support conversation. Session
 ratings stay on appointments and experts' received public reviews stay in Business.
@@ -94,6 +94,12 @@ and product feedback are explicitly linked into the viewer's personal workspace,
 never rendered as organization-owned records. Member support activity is a separate
 operations-only page. Settings remains available from the avatar as a shortcut;
 the mobile menu includes each Settings destination once.
+
+The main dashboard navigation stays vertical and scrolls independently, with
+keyboard focus and fixed header/find controls. Page-level status and context are
+filters; only a view of the same records uses tabs. Settings uses a grouped hub
+leading to individual form pages with a back link, rather than an inner sidebar
+and another row of nested tabs.
 
 Recent-appointment pickers use booking title, date, time, kind and organization
 when available. No generated thread summary is used. Reports use the same shared

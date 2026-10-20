@@ -41,7 +41,7 @@ Collaborators and co-hosts see only appointments they are a party to. See [sessi
 
 ## The Settings hub
 
-Settings still renders through the shared `SettingsLayout` primitive (a titled left nav at `md`+, a scrollable segmented strip below it, one URL per section), now shared with the consultee, org and back-office trees rather than being consultant-specific. `SETTINGS_SECTIONS` in `settings/settings.ts` reads:
+Settings still renders through the shared `SettingsLayout` primitive (a grouped hub leading to individual full-width forms with a Settings back link, one URL per section), now shared with the consultee, org and back-office trees rather than being consultant-specific. `SETTINGS_SECTIONS` in `settings/settings.ts` reads:
 
 | Group          | Section                | URL                       |
 | -------------- | ---------------------- | ------------------------- |

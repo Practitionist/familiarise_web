@@ -728,6 +728,22 @@ async function processDisputeDeadlineAlerts(
   return stagedFlags.reduce((sum: number, n: number) => sum + n, 0);
 }
 
+function moderationDeadlineIds(
+  notices: { entityRef: string | null }[],
+  level: "warn" | "breach",
+): string[] {
+  return notices.flatMap((notice) =>
+    notice.entityRef?.endsWith(`:${level}`)
+      ? [
+          notice.entityRef.slice(
+            "moderation-deadline:".length,
+            -`:${level}`.length,
+          ),
+        ]
+      : [],
+  );
+}
+
 /**
  * Single background sweep for support SLA warnings/breaches, 28-day RESOLVED auto-close,
  * T-72h / T-24h dispute deadlines and one page for disputes due within 12 h or past due.
@@ -813,31 +829,20 @@ export async function runSupportSlaSweep(opts?: {
       },
       select: { entityRef: true },
     });
-    const reportNoticeIds = (level: "warn" | "breach") =>
-      moderationNotices.flatMap((notice) =>
-        notice.entityRef?.endsWith(`:${level}`)
-          ? [
-              notice.entityRef.slice(
-                "moderation-deadline:".length,
-                -`:${level}`.length,
-              ),
-            ]
-          : [],
-      );
     const pendingReports = await prisma.moderationReport.findMany({
       where: {
         status: { in: ["PENDING", "UNDER_REVIEW", "ESCALATED"] },
         OR: [
           {
             resolutionDueAt: { gte: noticeCutoff, lte: now },
-            id: { notIn: reportNoticeIds("breach") },
+            id: { notIn: moderationDeadlineIds(moderationNotices, "breach") },
           },
           {
             resolutionDueAt: {
               gt: now,
               lte: new Date(now.getTime() + RES_WARN_MS),
             },
-            id: { notIn: reportNoticeIds("warn") },
+            id: { notIn: moderationDeadlineIds(moderationNotices, "warn") },
           },
         ],
       },
