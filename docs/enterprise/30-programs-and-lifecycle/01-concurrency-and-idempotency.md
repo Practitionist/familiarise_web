@@ -10,7 +10,7 @@ last-reviewed: 2026-06-05
 
 This document covers the atomic patterns that keep enterprise mutations correct under concurrency, and the idempotency keys that let every side-effect survive a duplicate call. It merges the former concurrency-and-locking and idempotency-keys documents into one reference.
 
-The layer leans on Prisma transactions plus a few conditional `updateMany` compare-and-set writes for its hottest mutations. These are point mutations on rows whose identity is already known, so a Redis lock would add latency for no safety gain, and the enterprise write paths therefore take none. Two clarifications, because an earlier revision of this page overstated both (corrected in #1132): the CAS writes go through the Prisma ORM rather than `$executeRaw`, and Redis locks *are* used elsewhere in the codebase — every cron wraps in `withCronLock`, and the booking checkout takes slot, consultee and event locks. ADR 13 describes those as its Layer 4. Money idempotency is anchored by `LedgerTransaction.idempotencyKey @unique` together with a handful of other unique constraints.
+The layer leans on Prisma transactions plus a few conditional `updateMany` compare-and-set writes for its hottest mutations. These are point mutations on rows whose identity is already known, so a Redis lock would add latency for no safety gain, and the enterprise write paths therefore take none. Two clarifications, because an earlier revision of this page overstated both (corrected in #1132): the CAS writes go through the Prisma ORM rather than `$executeRaw`, and Redis locks _are_ used elsewhere in the codebase — every cron wraps in `withCronLock`, and the booking checkout takes slot, consultee and event locks. ADR 13 describes those as its Layer 4. Money idempotency is anchored by `LedgerTransaction.idempotencyKey @unique` together with a handful of other unique constraints.
 
 ## How this band fits together
 
@@ -47,6 +47,7 @@ WHERE "id" = :billingAccountId
   AND "walletBalance" IS NOT NULL
   AND "walletBalance" >= :amountPaise
 ```
+
 The `>= :amountPaise` predicate **is** the lock: Postgres takes a row-level write lock for the UPDATE, so two concurrent debits can't both satisfy it. Zero rows updated → `WalletInsufficientFundsError`. This moves only the **cache** ([money model §4](../10-money-and-ledger/01-money-model-overview.md)); the authoritative `Dr WALLET` leg posts later inside the `booking:<paymentId>` transaction, where the full split is known. Both run in the same Prisma transaction as the rest of checkout, so any downstream failure rolls back the decrement.
 
 ## Program-assignment claim (upsert on composite unique)
@@ -57,7 +58,7 @@ The claim helper is `lib/api/organizations/program-helpers.ts#claimProgramAssign
 
 `recordBookingUtilization` runs as one transaction. It first claims cap headroom with a guarded conditional UPDATE (`updateMany WHERE engagementsUsed <= cap - :n`, so the cap check and the increment can't race), then create `BookingUtilization` + its `UsageLedgerEntry` twin (`consumedPaise` is the CREDIT_POOL twin, metered against `creditBudgetPerCycle × 100`). When the guarded update matches zero rows the booking is over-cap: either checkout refuses (`BLOCK` → `ProgramAssignmentLimitError`) or the overage path bills it (`wasOverage = true`, persists an `OverageEvent`). The reconciler's `PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT` is the backstop ([ledger integrity](../10-money-and-ledger/13-ledger-integrity.md)).
 
-**The race, drawn.** Picture the last covered seat on a Wipro learner's BLOCK assignment (`coveredEngagementsPerCycle - engagementsUsed == 1`) and two browser tabs hitting *Book* in the same millisecond. Both transactions read the same stable config and the same `engagementsUsed`; the correctness hinges entirely on the conditional UPDATE, because Postgres takes a row-level write lock the instant the first `updateMany` touches the row. The second transaction blocks on that lock, and when it unblocks it re-evaluates `WHERE engagementsUsed <= cap - 1` against the *already-incremented* value — which no longer matches — so it gets `count === 0` and throws. There is no read-then-write window to lose:
+**The race, drawn.** Picture the last covered seat on a Wipro learner's BLOCK assignment (`coveredEngagementsPerCycle - engagementsUsed == 1`) and two browser tabs hitting _Book_ in the same millisecond. Both transactions read the same stable config and the same `engagementsUsed`; the correctness hinges entirely on the conditional UPDATE, because Postgres takes a row-level write lock the instant the first `updateMany` touches the row. The second transaction blocks on that lock, and when it unblocks it re-evaluates `WHERE engagementsUsed <= cap - 1` against the _already-incremented_ value — which no longer matches — so it gets `count === 0` and throws. There is no read-then-write window to lose:
 
 ```mermaid
 sequenceDiagram
@@ -78,7 +79,7 @@ sequenceDiagram
   Note over L1,L2: never two winners — the predicate IS the mutex
 ```
 
-Swap `BLOCK` for `CHARGE_ORG` (Wipro's actual seed config) and tab B doesn't 402 — it takes the unconditional `update` branch, reads the post-increment value, sees `engagementsUsedAfter (13) > cap (12)`, flags `wasOverage` and persists an `OverageEvent` instead. Same lock, different verdict: the routing happens *after* the lock decides who crossed the cap, never before.
+Swap `BLOCK` for `CHARGE_ORG` (Wipro's actual seed config) and tab B doesn't 402 — it takes the unconditional `update` branch, reads the post-increment value, sees `engagementsUsedAfter (13) > cap (12)`, flags `wasOverage` and persists an `OverageEvent` instead. Same lock, different verdict: the routing happens _after_ the lock decides who crossed the cap, never before.
 
 ## Rate-card bump (two-step in one transaction)
 
@@ -98,7 +99,7 @@ Audit writes are append-only — a single `.create()` runs inside the business t
 
 ## What the layer avoids
 
-The layer deliberately sidesteps three heavier mechanisms. It avoids Redis locks *on these row-scoped mutations* because they do not need slot-discovery locking — the cron and booking layers do take them. It avoids Postgres advisory locks because they are out of scope for this transactional surface. And it avoids serializable isolation on the hot paths, relying instead on conditional UPDATEs, unique constraints, and immutable ledger rows rather than raising the isolation level (the nightly lifecycle crons are the exception — each runs its per-row claim inside a `Serializable` transaction, covered below).
+The layer deliberately sidesteps three heavier mechanisms. It avoids Redis locks _on these row-scoped mutations_ because they do not need slot-discovery locking — the cron and booking layers do take them. It avoids Postgres advisory locks because they are out of scope for this transactional surface. And it avoids serializable isolation on the hot paths, relying instead on conditional UPDATEs, unique constraints, and immutable ledger rows rather than raising the isolation level (the nightly lifecycle crons are the exception — each runs its per-row claim inside a `Serializable` transaction, covered below).
 
 ---
 
@@ -110,24 +111,24 @@ The governing rule is that every side-effect entry point derives its idempotency
 
 Every cash event posts through `postLedgerTxn`, which is idempotent on a structured, unique key. A repeat call is a no-op that returns `{ created: false }`; a racing duplicate hits the `@unique` `P2002`, aborts its transaction, and the retry lands on the fast path (see [ledger & postings §2](../10-money-and-ledger/03-ledger-and-postings.md)). The keys each money flow derives are listed below.
 
-| Flow | Key |
-|---|---|
-| top-up | `topup:<providerOrderId>` |
-| booking | `booking:<paymentId>` |
-| invoice paid | `invoicepaid:<invoiceId>` |
-| top-up refund | `topup-refund:<providerPaymentId>` |
-| booking refund | `refund:<refundId>` |
-| consultant payout | `payout:<payoutId>` |
-| host-org payout | `orgpayout:<payoutId>` |
+| Flow              | Key                              |
+| ----------------- | -------------------------------- |
+| top-up            | `topup:<providerOrderId>`        |
+| booking           | `booking:<paymentId>`            |
+| invoice paid      | `invoicepaid:<invoiceId>`        |
+| top-up refund     | `topup-refund:<gatewayRefundId>` |
+| booking refund    | `refund:<refundId>`              |
+| consultant payout | `payout:<payoutId>`              |
+| host-org payout   | `orgpayout:<payoutId>`           |
 
 ## Webhooks
 
 Inbound webhooks dedupe on the vendor's own event id, falling back to a deterministic body hash when one isn't supplied, as the table records.
 
-| Source | Key | Storage |
-|---|---|---|
+| Source            | Key                 | Storage                       |
+| ----------------- | ------------------- | ----------------------------- |
 | Razorpay / Stripe | `event.id` (vendor) | `WebhookEvent.id` (permanent) |
-| fallback | `sha256(raw_body)` | `WebhookEvent.id` |
+| fallback          | `sha256(raw_body)`  | `WebhookEvent.id`             |
 
 Using a deterministic body-hash fallback rather than `Date.now()` plus a random value is what makes replays truly idempotent.
 
@@ -135,11 +136,11 @@ Using a deterministic body-hash fallback rather than `Date.now()` plus a random 
 
 Payment-order and top-up flows key off the provider order id that the server itself minted, and each has a unique constraint that catches a duplicate POST, as summarised below.
 
-| Operation | Key | Collision handling |
-|---|---|---|
-| Wallet top-up | `providerOrderId` (mint on create-order) | `P2002` on `WalletTopUp.providerOrderId` unique → POST returns the existing row |
-| Invoice payment | `razorpay_order_id` | `P2002` on `OrganizationInvoice.providerPaymentOrderId` |
-| One-time / day-pass checkout | `razorpay_order_id` | same |
+| Operation                    | Key                                      | Collision handling                                                              |
+| ---------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------- |
+| Wallet top-up                | `providerOrderId` (mint on create-order) | `P2002` on `WalletTopUp.providerOrderId` unique → POST returns the existing row |
+| Invoice payment              | `razorpay_order_id`                      | `P2002` on `OrganizationInvoice.providerPaymentOrderId`                         |
+| One-time / day-pass checkout | `razorpay_order_id`                      | same                                                                            |
 
 The server never accepts a client-supplied key — it reuses the `razorpay_order_id` it minted. Top-up confirmation is doubly idempotent: the `WalletTopUp` claim is `updateMany WHERE status='PENDING'` (exactly one delivery wins) **and** the `topup:` ledger key dedupes the posting ([wallet & top-ups](../10-money-and-ledger/04-wallet-and-topups.md)).
 
@@ -151,19 +152,19 @@ The subscription cron computes `invoiceNumber` from `subscriptionId + billingCyc
 
 The nightly lifecycle crons run on GitHub Actions (`.github/workflows/*.yml`, calling into `jobs/**`) and can double-fire, either through an overlapping replica or a same-day re-run. Each one gates on a timestamp-or-status column that it stamps inside a `Serializable` `$transaction` via a conditional `updateMany`, so the claim itself is the distributed lock: when `count === 0` another replica has already won and the run skips cleanly. A second unique constraint backstops the rare case of a run slipping past the claim. The crons and their gates are tabulated below.
 
-| Cron (`jobs/…`) | Claim gate (`updateMany WHERE …`) | Backstop unique |
-|---|---|---|
-| `billing/advance-program-cycles` (ROLL/CLOSE) | `status='ACTIVE' AND rolledAt IS NULL` → set `status`, `rolledAt` | successor mint: `rolledToAssignmentId @unique` + `@@unique([programId, membershipId, periodStart])` → `P2002` |
-| `contracts/auto-renew-contracts` | `status='ACTIVE' AND autoRenewedAt IS NULL` → set `autoRenewedAt` | `Contract.supersededByContractId @unique` → `P2002` |
-| `contracts/expire-contracts` | `status='ACTIVE'` → set `status='EXPIRED'` | (idempotent on status alone) |
-| `billing/timeout-member-overages` | `chargeStatus='PENDING' AND chargeTimedOutAt IS NULL` → set `chargeStatus='FAILED'`, `chargeTimedOutAt` | (PENDING→FAILED is the only legal target; a paid/swept row no longer matches) |
-| `billing/wallet-low-balance` (auto-top-up) | rate-limited per account by `autoTopUpLastFiredAt` | gateway recurring-charge idempotency |
-| `billing/dunning` stage 1 | `status='ISSUED' AND markedOverdueAt IS NULL` → set `status='OVERDUE'`, `markedOverdueAt` | (idempotent on status + stamp) |
-| `billing/dunning` stage 2 | `status='OVERDUE' AND lastDunningReminderAt = <value-read> AND dunningReminderCount < 3` → set `lastDunningReminderAt`, `increment dunningReminderCount` | the read-then-match on `lastDunningReminderAt` is the optimistic-lock (concurrent reminder loses) |
+| Cron (`jobs/…`)                               | Claim gate (`updateMany WHERE …`)                                                                                                                        | Backstop unique                                                                                               |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `billing/advance-program-cycles` (ROLL/CLOSE) | `status='ACTIVE' AND rolledAt IS NULL` → set `status`, `rolledAt`                                                                                        | successor mint: `rolledToAssignmentId @unique` + `@@unique([programId, membershipId, periodStart])` → `P2002` |
+| `contracts/auto-renew-contracts`              | `status='ACTIVE' AND autoRenewedAt IS NULL` → set `autoRenewedAt`                                                                                        | `Contract.supersededByContractId @unique` → `P2002`                                                           |
+| `contracts/expire-contracts`                  | `status='ACTIVE'` → set `status='EXPIRED'`                                                                                                               | (idempotent on status alone)                                                                                  |
+| `billing/timeout-member-overages`             | `chargeStatus='PENDING' AND chargeTimedOutAt IS NULL` → set `chargeStatus='FAILED'`, `chargeTimedOutAt`                                                  | (PENDING→FAILED is the only legal target; a paid/swept row no longer matches)                                 |
+| `billing/wallet-low-balance` (auto-top-up)    | rate-limited per account by `autoTopUpLastFiredAt`                                                                                                       | none today (notify-only cron); gateway recurring-charge idempotency is **(planned)** with auto-debit          |
+| `billing/dunning` stage 1                     | `status='ISSUED' AND markedOverdueAt IS NULL` → set `status='OVERDUE'`, `markedOverdueAt`                                                                | (idempotent on status + stamp)                                                                                |
+| `billing/dunning` stage 2                     | `status='OVERDUE' AND lastDunningReminderAt = <value-read> AND dunningReminderCount < 3` → set `lastDunningReminderAt`, `increment dunningReminderCount` | the read-then-match on `lastDunningReminderAt` is the optimistic-lock (concurrent reminder loses)             |
 
 The successor-mint chain (`rolledToAssignmentId @unique` + the zeroed-counter `ACTIVE` row) is the rollover idempotency anchor; `autoRenewedAt` is the contract-renewal anchor; `chargeTimedOutAt` is the member-overage-timeout anchor; `markedOverdueAt` / `lastDunningReminderAt` are the dunning anchors. None of these crons writes a `PAUSED` assignment (🟡 designed-not-active). Full state-machine detail: [cycle engine](08-cycle-engine-and-rollover.md), [contract lifecycle](07-contract-lifecycle.md).
 
-**Why "the claim *is* the lock" survives a double-fire.** GitHub Actions can re-run a workflow, and an overlapping replica can pick the same `ProgramAssignment` whose `periodEnd` just passed. Both `advance-program-cycles` instances see the row in their `findMany` candidate set; the safety lives in the per-row `Serializable` `$transaction` that *claims* the row with `updateMany WHERE status='ACTIVE' AND rolledAt IS NULL`. Exactly one claim flips `ACTIVE → ROLLED`; the other gets `count === 0` and returns `skipped` without minting anything. The `rolledToAssignmentId @unique` + successor `@@unique([programId, membershipId, periodStart])` are the belt-and-braces below that — if two runs ever slipped past the claim (they can't, but constraints don't trust prose), the second `create` trips `P2002`, which is caught and skipped:
+**Why "the claim _is_ the lock" survives a double-fire.** GitHub Actions can re-run a workflow, and an overlapping replica can pick the same `ProgramAssignment` whose `periodEnd` just passed. Both `advance-program-cycles` instances see the row in their `findMany` candidate set; the safety lives in the per-row `Serializable` `$transaction` that _claims_ the row with `updateMany WHERE status='ACTIVE' AND rolledAt IS NULL`. Exactly one claim flips `ACTIVE → ROLLED`; the other gets `count === 0` and returns `skipped` without minting anything. The `rolledToAssignmentId @unique` + successor `@@unique([programId, membershipId, periodStart])` are the belt-and-braces below that — if two runs ever slipped past the claim (they can't, but constraints don't trust prose), the second `create` trips `P2002`, which is caught and skipped:
 
 ```mermaid
 sequenceDiagram
@@ -195,13 +196,16 @@ Outbound email sets `X-Entity-Ref-ID` from immutable content — `orgId + mustPa
 ---
 
 ## Anti-patterns
+
 - ❌ **Client-supplied idempotency keys for money** — a chosen collision forces a replayed success. Derive from immutable content.
 - ❌ **`Date.now() + Math.random()` fallback** — replays aren't deduped; explicitly removed from webhook handlers.
 - ❌ **Keys in the URL path** — caches/CDN may dedupe on path; keep keys in the body.
 - ❌ **"Merge the duplicate later"** — a duplicate ledger posting double-counts a balance (balances are sums). Reject at write time with the `@unique` `P2002`; never reconcile two rows after the fact.
 
 ## Testing idempotency
+
 Every money-touching path has a replay test: run the happy path, retry the identical request, assert **zero** additional mutations.
+
 ```ts
 it("is idempotent on replay", async () => {
   const before = await prisma.ledgerTransaction.count();
@@ -217,6 +221,7 @@ it("is idempotent on replay", async () => {
 ---
 
 ### Related docs
+
 - [Wallet & top-ups](../10-money-and-ledger/04-wallet-and-topups.md) — the debit/credit + top-up idempotency specifics.
 - [Ledger & postings](../10-money-and-ledger/03-ledger-and-postings.md) — `postLedgerTxn` idempotency.
 - [Programs](02-programs.md) — the assignment-claim flow.

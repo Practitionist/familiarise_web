@@ -158,7 +158,7 @@ No scenario under `tests/typescript/race-conditions/` exercises this path, so th
 
 **What can go wrong.** The `BillingAccount.walletBalance` field is a denormalized cache of the sum of all ledger entries for that account. If the debit path is a read-then-write (fetch balance → check balance >= amount → write debit), two concurrent requests can both read the same balance, both pass the check, and both write, resulting in a negative balance.
 
-**Current mitigation.** The code is expected to use a conditional `UPDATE billingaccounts SET walletBalance = walletBalance - amount WHERE walletBalance >= amount` as a single statement. The `LedgerAccountBalance.entrySeq` monotonic counter is a double-apply guard.
+**Current mitigation.** The code is expected to use a conditional `UPDATE billingaccounts SET walletBalance = walletBalance - amount WHERE walletBalance >= amount` as a single statement. A replayed posting is refused by `LedgerTransaction.idempotencyKey @unique`.
 
 **Verification needed.** Locate the wallet debit function in `lib/payments/` and confirm the UPDATE is atomic and not a two-step fetch-then-write.
 

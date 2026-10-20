@@ -146,6 +146,14 @@ jest.mock(
 jest.mock("../../app/api/admin/org-payouts/[id]/approve/route", () =>
   mockOther(7),
 );
+jest.mock(
+  "../../app/api/admin/billing-accounts/[billingAccountId]/wallet-adjustment/route",
+  () => mockOther(8),
+);
+jest.mock(
+  "../../app/api/admin/billing-accounts/[billingAccountId]/refund-remaining/route",
+  () => mockOther(9),
+);
 
 import { NextRequest } from "next/server";
 import { POST as refund } from "../../app/api/admin/refunds/issue/route";

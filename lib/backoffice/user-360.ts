@@ -1,6 +1,10 @@
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
 import { findUserIssues } from "@/lib/observability/sentry-issues";
+import {
+  personNamesMatch,
+  verifiedPayoutHolderName,
+} from "@/lib/payments/tax/pan-verification";
 
 /**
  * #1527 Q5 — User 360: one person across every back-office queue. Ten rows
@@ -44,6 +48,27 @@ async function readProfile(userId: string) {
       },
     },
   });
+}
+
+/** The PAN state the 194-O rate reads, and the names the Verify PAN door compares. */
+async function readPanState(consultantProfileId: string, name: string) {
+  const taxInfo = await prisma.consultantTaxInfo.findUnique({
+    where: { consultantProfileId },
+    select: { panEncrypted: true, panLast4: true, panVerified: true },
+  });
+  const payoutHolderName = await verifiedPayoutHolderName(
+    prisma,
+    consultantProfileId,
+  );
+  let state: "VERIFIED" | "PENDING" | "NOT_PROVIDED" = "NOT_PROVIDED";
+  if (taxInfo?.panEncrypted)
+    state = taxInfo.panVerified ? "VERIFIED" : "PENDING";
+  return {
+    state,
+    panLast4: taxInfo?.panLast4 ?? null,
+    payoutHolderName,
+    namesMatch: personNamesMatch(name, payoutHolderName),
+  };
 }
 
 export async function readUser360(userId: string) {
@@ -115,6 +140,9 @@ export async function readUser360(userId: string) {
         },
       })
     : [];
+  const pan = profile.consultantProfile
+    ? await readPanState(profile.consultantProfile.id, profile.name)
+    : null;
 
   // Sentry triage. The last thing that asks an external service, and the only
   // one that can fail, so it runs after every DB section has already resolved
@@ -132,6 +160,7 @@ export async function readUser360(userId: string) {
     tickets,
     reports,
     verifications,
+    pan,
     sentryIssues,
   });
 }

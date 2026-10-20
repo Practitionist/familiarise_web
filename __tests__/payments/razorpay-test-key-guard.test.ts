@@ -34,6 +34,7 @@ type EnvKey =
   | "RAZORPAYX_KEY_ID"
   | "RAZORPAYX_KEY_SECRET"
   | "RAZORPAYX_ACCOUNT_NUMBER"
+  | "RAZORPAYX_EGRESS_PROXY_URL"
   | "ENABLE_LIVE_PAYOUTS"
   | "RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION";
 
@@ -45,6 +46,7 @@ const ENV_KEYS: EnvKey[] = [
   "RAZORPAYX_KEY_ID",
   "RAZORPAYX_KEY_SECRET",
   "RAZORPAYX_ACCOUNT_NUMBER",
+  "RAZORPAYX_EGRESS_PROXY_URL",
   "ENABLE_LIVE_PAYOUTS",
   "RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION",
 ];
@@ -84,12 +86,15 @@ function captureThrow(fn: () => unknown): { message: string; code?: string } {
   throw new Error("expected the call to throw");
 }
 
-// Relative requires on purpose (repo convention for jest.resetModules tests —
-// see __tests__/lib/feature-flags.test.ts): the alias does not resolve inside
-// a dynamic require, and resetModules needs a fresh registry entry per test.
-const requireCoreModule = () => require("../../lib/payments/core/razorpay");
+// Relative paths on purpose: resetModules needs a fresh registry entry per test.
+const requireCoreModule = () =>
+  jest.requireActual<typeof import("../../lib/payments/core/razorpay")>(
+    "../../lib/payments/core/razorpay",
+  );
 const requirePayoutsFactory = () =>
-  require("../../lib/payments/payouts/razorpay-payouts") as typeof import("../../lib/payments/payouts/razorpay-payouts");
+  jest.requireActual<
+    typeof import("../../lib/payments/payouts/razorpay-payouts")
+  >("../../lib/payments/payouts/razorpay-payouts");
 
 describe("core checkout/refund client (lib/payments/core/razorpay.ts)", () => {
   it("prod posture + rzp_test_ key → throws at init, naming RAZORPAY_KEY_ID and the fix", () => {
@@ -152,6 +157,37 @@ describe("core checkout/refund client (lib/payments/core/razorpay.ts)", () => {
     process.env.RAZORPAY_SECRET = "testsecret";
     expect(() => requireCoreModule()).not.toThrow();
   });
+
+  it.each(["RAZORPAYX_KEY_ID", "RAZORPAY_KEY_ID"] as const)(
+    "live RazorpayX key via %s without the egress proxy → boots, reports once, payouts still refuse",
+    async (keyVar) => {
+      delete process.env.RAZORPAYX_KEY_ID;
+      process.env[keyVar] = "rzp_live_xkey";
+      delete process.env.RAZORPAYX_EGRESS_PROXY_URL;
+      const report = jest.fn();
+      jest.doMock("../../lib/observability/report", () => ({
+        reportSentryError: report,
+        reportSentryMessage: jest.fn(),
+      }));
+
+      expect(() => requireCoreModule()).not.toThrow();
+      requireCoreModule();
+      expect(report).toHaveBeenCalledTimes(1);
+      expect(report.mock.calls[0][0]).toMatchObject({
+        code: "RAZORPAYX_EGRESS_NOT_CONFIGURED",
+      });
+
+      const { RazorpayPayoutsService } = requirePayoutsFactory();
+      await expect(
+        new RazorpayPayoutsService({
+          keyId: "rzp_live_xkey",
+          keySecret: "s",
+          accountNumber: "acc",
+        }).fetchPayout("pout_1"),
+      ).rejects.toMatchObject({ code: "RAZORPAYX_EGRESS_NOT_CONFIGURED" });
+      jest.dontMock("../../lib/observability/report");
+    },
+  );
 
   it("production + rzp_live_ key → initializes fine (the guard only fires on test keys)", () => {
     setNodeEnvForGuard("production");

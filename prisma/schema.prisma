@@ -2986,37 +2986,19 @@ model LedgerAccount {
   // Deterministic id: "<kind>|<orgId|_>|<membershipId|_>|<currency>" so
   // resolveAccountId() upserts dedupe per scope without the Postgres
   // nullable-unique gotcha (a unique index doesn't dedupe NULLs).
-  id                  String                @id
+  id                  String            @id
   // Scope: platform-wide accounts leave both owners null; org / consultant
   // sub-ledgers set the relevant owner. One account per (owner, kind, currency).
   organizationId      String?
   consultantProfileId String?
   kind                LedgerAccountKind
-  currency            Currency              @default(INR)
+  currency            Currency          @default(INR)
   entries             LedgerEntry[]
-  balance             LedgerAccountBalance?
 
   createdAt DateTime @default(now())
 
   @@unique([organizationId, consultantProfileId, kind, currency])
   @@index([kind])
-}
-
-// #776 — maintained running balance per account, folded inside postLedgerTxn's
-// transaction. Replaces the O(n) groupBy scan in ledgerBalancePaise() (hot in
-// reconcile/dashboards/credit-limit checks). The append-only LedgerEntry
-// journal stays the source-of-truth audit trail; this is a derived cache the
-// reconcile cron validates (LEDGER_BALANCE_SNAPSHOT_DRIFT). No backfill — a
-// fresh seed populates it as postings land.
-model LedgerAccountBalance {
-  // 1:1 with LedgerAccount; shares its deterministic id.
-  accountId    String        @id
-  account      LedgerAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  // Signed Σ(DEBIT) − Σ(CREDIT) in paise; callers interpret sign per kind.
-  balancePaise BigInt        @default(0)
-  // Monotonic count of entries folded in — a cheap double-apply guard.
-  entrySeq     BigInt        @default(0)
-  updatedAt    DateTime      @updatedAt
 }
 
 // #778 §B — typed txn kind (was free String). A typo ("BOOKNG") silently broke
@@ -3041,6 +3023,7 @@ enum LedgerTransactionKind {
   UNAPPLIED_RECEIPT // a parked capture's cash, or its release when an operator recovers the booking
   GATEWAY_FEE // the gateway's fee and its GST on one capture, out of GATEWAY_CLEARING
   GATEWAY_SETTLEMENT // one settlement's net moved from GATEWAY_CLEARING to CASH
+  WALLET_ADJUSTMENT // an operator's signed wallet correction, against PLATFORM_PROMO or PLATFORM_FEE
 }
 
 model LedgerTransaction {
@@ -3137,10 +3120,10 @@ enum GatewaySettlementLineStatus {
 //
 // The auditor is READ-ONLY: it never mutates the journal
 // (LedgerTransaction/LedgerEntry) or the derived caches
-// (LedgerAccountBalance, BillingAccount.walletBalance, OrganizationInvoice
-// status). The three single-entry logs this comment used to name —
-// FundingLedgerEntry, WalletEntry, SettlementLedgerEntry — were collapsed
-// into the journal by #772 and no longer exist.
+// (BillingAccount.walletBalance, OrganizationInvoice status). The three
+// single-entry logs this comment used to name — FundingLedgerEntry,
+// WalletEntry, SettlementLedgerEntry — were collapsed into the journal by #772
+// and no longer exist.
 //
 // Remediation is never a patch to a cache: a finding is a symptom, the fix
 // is upstream, and a money correction is a counter-transaction. #837 added

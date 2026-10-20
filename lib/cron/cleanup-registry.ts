@@ -7,6 +7,7 @@ import {
   statusFor,
 } from "@/lib/cron/cleanup-route";
 import { reportSentryError } from "@/lib/observability/report";
+import type { FrozenWallet } from "@/lib/payments/wallet-freeze";
 
 export type CleanupRouteHandlers = {
   GET: (req: NextRequest) => Promise<NextResponse>;
@@ -66,10 +67,16 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         run: async (req) => {
           const { cleanupAbandonedOrgTopUps } =
             await import("@/scripts/cleanup/cleanup-abandoned-org-top-ups");
-          return cleanupAbandonedOrgTopUps({ limit: parseLimitParam(req) });
+          // One gateway read per row, so an unparameterised call stays bounded too.
+          return cleanupAbandonedOrgTopUps({
+            limit: parseLimitParamOrDefault(req, MAX_ORG_LIFECYCLE_CLAIMS),
+          });
         },
         summarize: (r) => ({
           reaped: r.reaped,
+          confirmed: r.confirmed,
+          kept: r.kept,
+          errors: r.errors.length,
           graceHours: r.graceHours,
           success: r.success,
         }),
@@ -706,10 +713,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "reconcile-disputes": () =>
       cleanupRoute({
         job: "reconcile-disputes",
-        run: async () => {
+        run: async (req) => {
           const { reconcileDisputes } =
             await import("@/scripts/disputes/reconcile-disputes");
-          const result = await reconcileDisputes();
+          const result = await reconcileDisputes({
+            limit: parseLimitParam(req),
+          });
           if (result.urgentCount > 0) {
             console.warn(
               `ALERT: ${result.urgentCount} disputes require immediate attention!`,
@@ -793,16 +802,31 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
             await import("@/scripts/reconcile/reconcile-ledgers");
           const triggeredById =
             req.nextUrl.searchParams.get("triggeredById") ?? undefined;
+          const { respondToLedgerDrift, freezeDriftingWallets } =
+            await import("@/scripts/reconcile/ledger-drift-response");
+          // Freeze from the wallet step so a run cut off later has already frozen; a freeze failure fails the route once the audit completes.
+          let freezeError: unknown = null;
+          let frozenWallets: FrozenWallet[] = [];
           const report = await runReconcileLedgers({
             scope: "full",
             triggeredById,
+            onWalletDrift: async (reportId, findings) => {
+              try {
+                frozenWallets = await freezeDriftingWallets(reportId, findings);
+              } catch (err) {
+                freezeError = err;
+              }
+            },
           });
+          if (!report.ok) await respondToLedgerDrift(report);
+          if (freezeError) throw freezeError;
           return {
             success: true,
             runId: report.id,
             scope: report.scope,
             status: "OK" as const,
             report,
+            frozenWallets,
           };
         },
         summarize: (r) => ({
@@ -810,6 +834,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           status: r.status,
           ok: r.report.ok,
           discrepanciesCount: r.report.summary?.discrepanciesCount ?? 0,
+          frozenWallets: r.frozenWallets.length,
         }),
         status: (r) => statusFor(r, !r.report.ok),
         failureMessage: "Failed to run ledger reconciliation",

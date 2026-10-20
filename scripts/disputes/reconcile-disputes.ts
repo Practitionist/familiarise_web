@@ -7,10 +7,8 @@
  * - Webhooks were missed or delayed
  * - Dispute status changed but webhook wasn't received
  *
- * This module exports the core reconciliation function.
- * It is imported by:
- * - jobs/reconcile-disputes.ts (GitHub Actions)
- * - app/api/cleanup/reconcile-disputes/route.ts (API endpoint)
+ * This module exports the core reconciliation function, driven by the
+ * `/api/cleanup/reconcile-disputes` twin on the Netlify ticker.
  */
 
 import prisma from "../../lib/prisma";
@@ -137,15 +135,19 @@ async function flagDisputeForManualReview(
  */
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
-export async function reconcileDisputes(): Promise<DisputeReconciliationResult> {
+export async function reconcileDisputes(
+  opts: { limit?: number } = {},
+): Promise<DisputeReconciliationResult> {
   return withCronLock(
     "reconcile-disputes",
     { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
-    () => reconcileDisputesUnlocked(),
+    () => reconcileDisputesUnlocked(opts),
   );
 }
 
-async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult> {
+async function reconcileDisputesUnlocked(opts: {
+  limit?: number;
+}): Promise<DisputeReconciliationResult> {
   const approachingDeadline = new Date(Date.now() + APPROACHING_DEADLINE_MS);
   const staleThreshold = new Date(Date.now() - STALE_THRESHOLD_MS);
   const urgentThreshold = new Date(Date.now() + 48 * 60 * 60 * 1000);
@@ -155,29 +157,54 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
   let urgentCount = 0;
   let razorpayManualReviewCount = 0;
 
-  // Find disputes needing reconciliation
-  const disputesToReconcile = await prisma.dispute.findMany({
-    where: {
-      status: {
-        in: [
-          DisputeStatus.NEEDS_RESPONSE,
-          DisputeStatus.WARNING_NEEDS_RESPONSE,
-          DisputeStatus.UNDER_REVIEW,
-          DisputeStatus.WARNING_UNDER_REVIEW,
-        ],
-      },
-      OR: [
-        { dueBy: { lte: approachingDeadline } },
-        { updatedAt: { lt: staleThreshold } },
+  // Every pass writes the row (or another writer moved it), so ordering by
+  // updatedAt rotates a limited run.
+  const base = {
+    paymentGateway: PaymentGateway.RAZORPAY,
+    status: {
+      in: [
+        DisputeStatus.NEEDS_RESPONSE,
+        DisputeStatus.WARNING_NEEDS_RESPONSE,
+        DisputeStatus.UNDER_REVIEW,
+        DisputeStatus.WARNING_UNDER_REVIEW,
       ],
     },
-    include: {
-      payment: true,
-    },
-    orderBy: {
-      dueBy: "asc",
-    },
+  } satisfies Prisma.DisputeWhereInput;
+  const query = {
+    include: { payment: true },
+    orderBy: [{ updatedAt: "asc" }, { dueBy: "asc" }],
+  } satisfies Omit<Prisma.DisputeFindManyArgs, "where">;
+  // A bounded run reserves a third for the stale cohort, since UNDER_REVIEW rows keep
+  // a past dueBy for weeks; whichever cohort is short hands its share to the other.
+  const limit = opts.limit;
+  const staleReserve =
+    limit !== undefined && limit >= 2 ? Math.ceil(limit / 3) : 0;
+  const deadlineRows = await prisma.dispute.findMany({
+    ...query,
+    where: { ...base, dueBy: { lte: approachingDeadline } },
+    ...(limit === undefined ? {} : { take: limit }),
   });
+  const room =
+    limit === undefined
+      ? undefined
+      : limit - Math.min(deadlineRows.length, limit - staleReserve);
+  const stale =
+    room === 0
+      ? []
+      : await prisma.dispute.findMany({
+          ...query,
+          where: {
+            ...base,
+            updatedAt: { lt: staleThreshold },
+            OR: [{ dueBy: null }, { dueBy: { gt: approachingDeadline } }],
+          },
+          ...(room === undefined ? {} : { take: room }),
+        });
+  const nearDeadline =
+    limit === undefined
+      ? deadlineRows
+      : deadlineRows.slice(0, limit - stale.length);
+  const disputesToReconcile = [...nearDeadline, ...stale];
 
   console.log(`Found ${disputesToReconcile.length} disputes to reconcile`);
 
@@ -253,13 +280,6 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
         console.warn(
           `⚠️ URGENT: Dispute ${dispute.disputeId} due by ${dispute.dueBy.toISOString()}`,
         );
-      }
-
-      if (dispute.paymentGateway !== PaymentGateway.RAZORPAY) {
-        console.log(
-          `⏭️ Skipping dispute ${dispute.disputeId} - unsupported gateway: ${dispute.paymentGateway}`,
-        );
-        continue;
       }
 
       const gatewayDispute = await getRazorpayDispute(dispute.disputeId);
@@ -340,6 +360,13 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
         razorpayManualReviewCount++;
         continue;
       }
+      // Touch the row so a dispute that keeps failing rotates behind the rest of the batch.
+      await prisma.dispute
+        .updateMany({
+          where: { disputeId: dispute.disputeId, status: dispute.status },
+          data: { updatedAt: new Date() },
+        })
+        .catch(() => undefined);
       razorpayManualReviewCount++;
       errors.push(`Dispute ${dispute.disputeId}: ${errorMessage}`);
       console.error(
