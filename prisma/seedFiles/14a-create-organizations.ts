@@ -55,13 +55,12 @@ import {
 import prisma from "../../lib/prisma";
 import { buildConsentArtifact } from "../../lib/compliance/dpdp";
 import { PURPOSE_CODES } from "../../lib/compliance/purpose-codes";
+import { gatewayCashAccount } from "../../lib/payments/ledger/gateway-account";
 import { postLedgerTxn } from "../../lib/payments/ledger/post";
 import type { UserWithProfiles } from "./1a-create-users";
-import { assertSeedPasswordSafeForEnv } from "./config";
+import { DEFAULT_SEED_PASSWORD, assertSeedPasswordSafeForEnv } from "./config";
 
-// Same source-of-truth as 1a-create-users.ts so the tour-owner credential
-// matches every other seed user; tour scripts and docs reference this.
-const DEFAULT_SEED_PASSWORD = "SeedPass123!";
+// The tour owner is ORG_WORKSPACE (not an operator): it shares the seed default.
 const RAW_SEED_PASSWORD = process.env.SEED_PASSWORD?.trim();
 const SEED_PASSWORD = RAW_SEED_PASSWORD || DEFAULT_SEED_PASSWORD;
 
@@ -639,7 +638,7 @@ async function seedIit(params: {
       kind: "TOPUP",
       postings: [
         {
-          account: { kind: "CASH", currency: "INR" },
+          account: gatewayCashAccount(),
           direction: "DEBIT",
           amountPaise: TOPUP_PAISE,
         },
@@ -932,7 +931,7 @@ async function seedTourOwner(): Promise<void> {
   }
 
   console.log(
-    `[15a]   ✓ Tour owner seeded: ${TOUR_OWNER_EMAIL} (password: ${SEED_PASSWORD}) — OWNER of ${wipro.name}`,
+    `[15a]   ✓ Tour owner seeded: ${TOUR_OWNER_EMAIL} — OWNER of ${wipro.name}`,
   );
 }
 

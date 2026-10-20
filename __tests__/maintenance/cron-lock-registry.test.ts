@@ -38,13 +38,6 @@ const WORKFLOW_DIR = path.join(ROOT, ".github", "workflows");
  * names the mechanism that replaces it — "no lock" is never an accepted reason.
  */
 const LOCK_EXEMPT: Record<string, string> = {
-  // Two bespoke Redis locks predate withCronLock and additionally guard the
-  // HTTP approval path, which withCronLock's key shape does not reach. See
-  // lib/payments/payouts/payout-service.ts.
-  "cron-weekly.yml#process-payouts":
-    "lock:payout_processing in payout-service.ts",
-  "cron-weekly.yml#create-payout-batch":
-    "lock:payout_batch_creation in payout-service.ts",
   // The dead-man switch itself. Locking it through Redis would make the
   // watchdog depend on the infrastructure it exists to report on, and the
   // check is read-only, so a double-run costs nothing.
@@ -443,6 +436,9 @@ describe("cleanup twins and the DEGRADED money gate (#1599)", () => {
     // Re-drives a booking confirmation from an already-settled capture and
     // moves no money; #1686 keeps it on every ticker slot for the buyer.
     "reconcile-orphaned-confirmations": "booking re-drive from settled money",
+    // A read-only audit whose one write is the wallet-spend freeze, which
+    // blocks spend rather than moving money; the nightly job runs in DEGRADED too.
+    "reconcile-ledgers": "audit plus a spend freeze, moves no money",
   };
 
   interface Twin {

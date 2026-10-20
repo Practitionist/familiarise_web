@@ -2,7 +2,7 @@
  * #771 / #749 — monthly consolidated rollup cron: roll each org's unbilled
  * INVOICE_ACCRUAL / OVERAGE_INVOICE_ACCRUAL bookings into one
  * OrganizationInvoice per org. Thin wrapper over `rollupOrgInvoiceAccruals`,
- * scheduled monthly alongside `generate-subscription-invoices`.
+ * run by the ticker in a monthly window from the 1st, 04:00 UTC.
  *
  * E2E-audit P0 fix — this job is now ENABLED BY DEFAULT (opt-out via
  * ENABLE_CONSOLIDATED_INVOICE="false"). It shipped default-off while being
@@ -11,11 +11,10 @@
  * forever, grew unbounded credit-limit exposure in checkout, and produced no
  * GST document — a money black hole.
  *
- * #813 — two real defences against double-billing, not the unimplemented
- * "lock discipline" the old docstring claimed: (1) the workflow `concurrency`
- * block serialises job-level runs, and (2) `rollupOrgInvoiceAccruals` reads
- * the unstamped set inside a Serializable tx, so overlapping per-org runs
- * either abort (P2034) or see the empty set.
+ * Two defences against double-billing: (1) the `withCronLock` lease
+ * serialises runs, and (2) `rollupOrgInvoiceAccruals` reads the unstamped set
+ * inside a Serializable tx, so overlapping per-org runs either abort (P2034)
+ * or see the empty set.
  *
  * #1347 — the rollup now retries a P2034 itself. One reaching this job means
  * the retries were exhausted, which is no longer a benign skip: the org goes
@@ -25,21 +24,104 @@
  */
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
-import { abortIfMaintenance } from "@/lib/maintenance-cron";
-import { rollupOrgInvoiceAccruals } from "@/lib/payments/billing/invoice-rollup";
+import {
+  rollupOrgInvoiceAccruals,
+  type RollupResult,
+} from "@/lib/payments/billing/invoice-rollup";
 import {
   recordSystemError,
   recordSystemEvent,
 } from "@/lib/enterprise/system-events";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
-import { runJob } from "@/lib/observability/job-sentry";
-import { logMoneyFlags } from "@/lib/feature-flags";
 
-export async function settleInvoiceAccruals(): Promise<{
+export interface SettleInvoiceAccrualsResult {
   orgsProcessed: number;
   invoicesCreated: number;
-}> {
+  failed: number;
+  remaining: number;
+}
+
+interface RollupGaps {
+  heldForPo: { organizationId: string; invoiceNumber: string }[];
+  noGstState: string[];
+}
+
+/** Records the expected gaps a rollup reported; true when it issued an invoice. */
+function noteRollupResult(
+  organizationId: string,
+  r: RollupResult,
+  gaps: RollupGaps,
+): boolean {
+  if (r.skippedNoGstState) gaps.noGstState.push(organizationId);
+  if (r.heldForPo && r.invoiceNumber) {
+    gaps.heldForPo.push({ organizationId, invoiceNumber: r.invoiceNumber });
+  }
+  if (!r.invoiceId) return false;
+  console.log(
+    `[settle-invoice-accruals] org ${organizationId}: invoice ${r.invoiceNumber} for ${r.billedPaymentCount} bookings (₹${(r.totalPaise / 100).toFixed(2)})`,
+  );
+  return true;
+}
+
+/**
+ * #1347 — a P2034 that survived the rollup's bounded retries leaves the org
+ * unbilled this cycle, so it is recorded; the next org still runs.
+ */
+async function reportRollupFailure(
+  organizationId: string,
+  err: unknown,
+): Promise<void> {
+  if (
+    err instanceof Prisma.PrismaClientKnownRequestError &&
+    err.code === "P2034"
+  ) {
+    await recordSystemError({
+      organizationId,
+      category: "INVOICE",
+      summary: `Consolidated invoice rollup exhausted its serialization retries for org ${organizationId} — its unbilled accruals were NOT invoiced this cycle and will be retried on the next run`,
+      err,
+      context: { organizationId, prismaCode: "P2034" },
+    });
+    return;
+  }
+  console.error(
+    `[settle-invoice-accruals] org ${organizationId} failed:`,
+    err instanceof Error ? err.message : err,
+  );
+  Sentry.captureException(err, {
+    tags: { subsystem: "jobs", job: "settle-invoice-accruals" },
+  });
+}
+
+/** One row per run for each expected gap; ops fixes the org, not the cron. */
+async function reportRollupGaps(gaps: RollupGaps): Promise<void> {
+  if (gaps.noGstState.length > 0) {
+    await recordSystemEvent({
+      category: "INVOICE",
+      severity: "WARN",
+      message: `ROLLUP_GST_STATE_MISSING: ${gaps.noGstState.length} domestic org(s) have no GST state or GSTIN, so their accruals were not invoiced this cycle`,
+      context: { organizationIds: gaps.noGstState.slice(0, 50) },
+    });
+  }
+  if (gaps.heldForPo.length > 0) {
+    await recordSystemEvent({
+      category: "INVOICE",
+      severity: "WARN",
+      message: `ROLLUP_PO_NOT_COVERED: ${gaps.heldForPo.length} invoice(s) held as DRAFT because no active purchase order covers them; issue each with a PO from the admin console`,
+      context: { invoices: gaps.heldForPo.slice(0, 50) },
+    });
+  }
+}
+
+/**
+ * `limit` caps the invoices issued plus failures per run; an org the rollup
+ * skips does not count. With `windowStart`, only orgs holding an accrual from
+ * before it are selected, so a later slice never re-invoices a billed org.
+ */
+export async function settleInvoiceAccruals(
+  opts: { limit?: number; windowStart?: Date } = {},
+): Promise<SettleInvoiceAccrualsResult> {
   if (process.env.ENABLE_CONSOLIDATED_INVOICE === "false") {
     console.log(
       '[settle-invoice-accruals] ENABLE_CONSOLIDATED_INVOICE === "false" — skipping (explicit opt-out)',
@@ -54,7 +136,7 @@ export async function settleInvoiceAccruals(): Promise<{
       err: new Error("ENABLE_CONSOLIDATED_INVOICE=false explicit opt-out"),
       context: { flag: "ENABLE_CONSOLIDATED_INVOICE=false" },
     });
-    return { orgsProcessed: 0, invoicesCreated: 0 };
+    return { orgsProcessed: 0, invoicesCreated: 0, failed: 0, remaining: 0 };
   }
 
   // Distinct orgs with at least one unbilled accrual. Include
@@ -66,6 +148,7 @@ export async function settleInvoiceAccruals(): Promise<{
       billableToOrgInvoiceId: null,
       paymentStatus: "SUCCEEDED",
       organizationId: { not: null },
+      ...(opts.windowStart ? { createdAt: { lt: opts.windowStart } } : {}),
       // #1744 row 6 — a wound-down org is never billed again.
       organization: { status: { not: "DEACTIVATED" }, deletedAt: null },
       legs: {
@@ -76,118 +159,48 @@ export async function settleInvoiceAccruals(): Promise<{
     },
     select: { organizationId: true },
     distinct: ["organizationId"],
+    orderBy: { organizationId: "asc" },
   });
 
   let invoicesCreated = 0;
-  const unbackedPo: { organizationId: string; invoiceNumber: string }[] = [];
-  const noGstState: string[] = [];
+  let failed = 0;
+  let visited = 0;
+  const gaps: RollupGaps = { heldForPo: [], noGstState: [] };
   for (const row of rows) {
+    if (opts.limit !== undefined && invoicesCreated + failed >= opts.limit) {
+      break;
+    }
+    visited += 1;
     if (!row.organizationId) continue;
     try {
       const r = await rollupOrgInvoiceAccruals({
         organizationId: row.organizationId,
         issueImmediately: true,
       });
-      if (r.skippedNoGstState) noGstState.push(row.organizationId);
-      if (r.unbackedPo && r.invoiceNumber) {
-        unbackedPo.push({
-          organizationId: row.organizationId,
-          invoiceNumber: r.invoiceNumber,
-        });
-      }
-      if (r.invoiceId) {
-        invoicesCreated++;
-        console.log(
-          `[settle-invoice-accruals] org ${row.organizationId}: invoice ${r.invoiceNumber} for ${r.billedPaymentCount} bookings (₹${(r.totalPaise / 100).toFixed(2)})`,
-        );
-      }
+      if (noteRollupResult(row.organizationId, r, gaps)) invoicesCreated++;
     } catch (err) {
-      // #1347 — a P2034 that survived the rollup's bounded retries. Skip
-      // semantics are kept (the next org still runs) but the org is left
-      // unbilled for this cycle, so it is reported, not logged away.
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2034"
-      ) {
-        await recordSystemError({
-          organizationId: row.organizationId,
-          category: "INVOICE",
-          summary: `Consolidated invoice rollup exhausted its serialization retries for org ${row.organizationId} — its unbilled accruals were NOT invoiced this cycle and will be retried on the next run`,
-          err,
-          context: { organizationId: row.organizationId, prismaCode: "P2034" },
-        });
-        continue;
-      }
-      console.error(
-        `[settle-invoice-accruals] org ${row.organizationId} failed:`,
-        err instanceof Error ? err.message : err,
-      );
-      Sentry.captureException(err, {
-        tags: { subsystem: "jobs", job: "settle-invoice-accruals" },
-      });
+      failed++;
+      await reportRollupFailure(row.organizationId, err);
     }
   }
+  await reportRollupGaps(gaps);
 
-  // One row per run for each expected gap; ops fixes the org, not the cron.
-  if (noGstState.length > 0) {
-    await recordSystemEvent({
-      category: "INVOICE",
-      severity: "WARN",
-      message: `ROLLUP_GST_STATE_MISSING: ${noGstState.length} domestic org(s) have no GST state or GSTIN, so their accruals were not invoiced this cycle`,
-      context: { organizationIds: noGstState.slice(0, 50) },
-    });
-  }
-  if (unbackedPo.length > 0) {
-    await recordSystemEvent({
-      category: "INVOICE",
-      severity: "WARN",
-      message: `ROLLUP_PO_NOT_COVERED: ${unbackedPo.length} invoice(s) issued without a covering purchase order on orgs that require one`,
-      context: { invoices: unbackedPo.slice(0, 50) },
-    });
-  }
-
-  return { orgsProcessed: rows.length, invoicesCreated };
+  return {
+    orgsProcessed: visited,
+    invoicesCreated,
+    failed,
+    remaining: rows.length - visited,
+  };
 }
 
-/**
- * The locked core both entry points share — the Actions run below and the
- * CRON_SECRET twin at `app/api/cleanup/settle-invoice-accruals/route.ts`. The
- * lock has to live here rather than in `main`, or the HTTP call would bill the
- * same accrual set alongside a scheduled run. The maintenance guard does NOT:
- * `abortIfMaintenance` exits the process, which inside the Next server would
- * take the instance down, so each entry point applies its own flavour
- * (`abortIfMaintenance` here, `assertNotInMaintenance` in `cleanupRoute`).
- */
-export async function runSettleInvoiceAccruals(): Promise<{
-  orgsProcessed: number;
-  invoicesCreated: number;
-}> {
+/** The locked core the `/api/cleanup/settle-invoice-accruals` twin runs. */
+export async function runSettleInvoiceAccruals(opts: {
+  limit?: number;
+  windowStart?: Date;
+}): Promise<SettleInvoiceAccrualsResult> {
   return withCronLock(
     "settle-invoice-accruals",
     { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
-    () => settleInvoiceAccruals(),
+    () => settleInvoiceAccruals(opts),
   );
-}
-
-async function main() {
-  console.log(
-    `[settle-invoice-accruals] Starting at ${new Date().toISOString()}`,
-  );
-  Sentry.logger.info("job:settle-invoice-accruals started");
-  await abortIfMaintenance("settle-invoice-accruals");
-  const r = await runSettleInvoiceAccruals();
-  console.log(
-    `[settle-invoice-accruals] Done. orgsProcessed=${r.orgsProcessed} invoicesCreated=${r.invoicesCreated}`,
-  );
-  Sentry.logger.info("job:settle-invoice-accruals finished", {
-    orgsProcessed: r.orgsProcessed,
-    invoicesCreated: r.invoicesCreated,
-  });
-}
-
-if (require.main === module) {
-  runJob("settle-invoice-accruals", () => {
-    logMoneyFlags("settle-invoice-accruals");
-    return main().finally(() => prisma.$disconnect());
-  });
 }

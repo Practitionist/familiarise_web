@@ -74,6 +74,18 @@ front door reserves and links the refund using the recommendation as its stable
 operation identity. A retry resumes that operation. Gateway acceptance and bank
 receipt are distinct states in the UI.
 
+Refund review uses the shared admin money door: a fresh session, a reason of at
+least five characters, the per-admin money-action budget and an `OpsActionLog`
+row. A refund above ₹25,000 waits in Money → Approvals when at least two admins
+are active; a different admin approves the stored request before execution. A
+single active admin can execute it directly. The recommendation remains
+undecided while approval is pending. Execution retains the case access,
+independent appeal review, case version and previewed refundable-balance checks.
+Declining a
+recommendation or retrieving its existing keyed refund moves no new money and
+requires no second approval. The case panel labels a pending approval separately
+from a sent refund.
+
 `SupportPaymentHold` independently blocks linked unpaid earnings during batching
 and disbursement. Releasing a service hold does not release a chargeback or refund
 reservation. An in-flight payout requires investigation; completed payouts cannot

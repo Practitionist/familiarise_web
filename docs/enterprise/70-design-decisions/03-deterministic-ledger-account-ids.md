@@ -11,7 +11,7 @@ last-reviewed: 2026-06-05
 ## Context
 
 Every posting through `postLedgerTxn` names the accounts its legs touch by
-*scope*, not by id: "the wallet account for this org," "the
+_scope_, not by id: "the wallet account for this org," "the
 consultant-payable account for this consultant," "the platform's cash
 account." Those accounts have to exist before a leg can reference them,
 and under concurrency several postings can be the first to touch the same
@@ -33,7 +33,7 @@ scope rather than a UUID. The id is computed by `ledgerAccountId(ref)` in
 "_"}|${consultantProfileId ?? "_"}|${currency}` — the account kind, the
 org id (or the sentinel `_`), the consultant-profile id (or `_`), and the
 currency, joined by pipes. Because the id is a pure function of the scope,
-two concurrent posts to the same scope compute the *same* id, and account
+two concurrent posts to the same scope compute the _same_ id, and account
 creation becomes `db.ledgerAccount.upsert({ where: { id }, create: {…},
 update: {} })` in `resolveAccountId`: the first writer creates the row,
 every subsequent writer is a no-op update, and there is no window in which
@@ -45,7 +45,7 @@ This sidesteps the Postgres nullable-unique gotcha directly. The model
 does also carry `@@unique([organizationId, consultantProfileId, kind,
 currency])` as a belt, but a Postgres unique index treats two `NULL`s as
 distinct, so for platform-scoped accounts (both owners null) that index
-does *not* dedupe — two platform `CASH` rows would both satisfy it. The
+does _not_ dedupe — two platform `CASH` rows would both satisfy it. The
 deterministic id is the suspenders that actually guarantee one row per
 scope, because `CASH|_|_|INR` is a single concrete string that the
 primary-key constraint deduplicates whether or not the owner columns are
@@ -58,7 +58,7 @@ is INR paise, and `displayCurrencyAtCheckout` is a cosmetic buyer label,
 not the settlement currency — so in practice the segment is always `INR`
 today. It is in the id ahead of need so that a future multi-currency
 ledger does not have to migrate every account key; until that future
-arrives, the `LEDGER_ACCOUNT_NON_INR` reconcile guard enforces INR-only,
+arrives, the `ledger_account_currency_inr` CHECK in `prisma/sql/check-constraints.sql` enforces INR-only,
 and the `AccountRef.currency` docblock instructs callers to leave the
 field unset so it defaults to INR.
 
@@ -94,13 +94,14 @@ longer and human-legible rather than opaque, which is a feature for
 debugging but means they leak the scope structure into logs.
 
 A second consequence is that the `currency` segment is dead weight while
-the ledger stays INR-only — every id ends in `|INR` and the reconciler
-actively forbids anything else. That is deliberate forward-provisioning,
+the ledger stays INR-only — every id ends in `|INR` and the database
+forbids anything else (the `ledger_account_currency_inr` CHECK in
+`prisma/sql/check-constraints.sql`). That is deliberate forward-provisioning,
 not an active capability.
 
 Revisit this decision if the ledger genuinely goes multi-currency: at that
 point the `currency` segment starts carrying real variance, the
-`LEDGER_ACCOUNT_NON_INR` guard has to be retired, and the question of FX
+`ledger_account_currency_inr` CHECK has to be retired, and the question of FX
 conversion before posting (explicitly out of scope today per the
 `AccountRef.currency` docblock) has to be answered before the
 deterministic id can be trusted across currencies.

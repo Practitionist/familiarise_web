@@ -89,14 +89,12 @@ export const AUDIT_ACTIONS = {
     // PO lifecycle — the PATCH route previously wrote no audit row at all.
     PURCHASE_ORDER_CLOSED: "PURCHASE_ORDER_CLOSED",
     PURCHASE_ORDER_CANCELLED: "PURCHASE_ORDER_CANCELLED",
-    // #1851 decision 7 — BILLING_ADMIN keeps full billing control, audited:
-    // PO amounts and dates, PO hard delete, the funding-source switch, other
-    // billing-account money settings, and invoice due date / PDF edits.
+    // Audited billing changes: PO amounts and dates, PO hard delete, the
+    // funding-source switch and the other billing-account money settings.
     PURCHASE_ORDER_UPDATED: "PURCHASE_ORDER_UPDATED",
     PURCHASE_ORDER_DELETED: "PURCHASE_ORDER_DELETED",
     FUNDING_SOURCE_CHANGED: "FUNDING_SOURCE_CHANGED",
     BILLING_ACCOUNT_UPDATED: "BILLING_ACCOUNT_UPDATED",
-    INVOICE_UPDATED: "INVOICE_UPDATED",
     // #1851 — the reimbursements CSV self-audits like the invoice register.
     REIMBURSEMENTS_EXPORTED: "REIMBURSEMENTS_EXPORTED",
     INVOICE_GENERATED: "INVOICE_GENERATED",
@@ -110,6 +108,8 @@ export const AUDIT_ACTIONS = {
     INVOICE_DUNNING_SUSPENDED: "INVOICE_DUNNING_SUSPENDED",
     INVOICE_PAYMENT_INITIATED: "INVOICE_PAYMENT_INITIATED",
     INVOICE_PAID: "INVOICE_PAID",
+    // A platform admin recorded a bank transfer (UTR) against an invoice.
+    INVOICE_RECEIPT_RECORDED: "INVOICE_RECEIPT_RECORDED",
     INVOICE_CANCELLED: "INVOICE_CANCELLED",
     INVOICE_VOIDED: "INVOICE_VOIDED",
     INVOICE_REFUNDED: "INVOICE_REFUNDED",

@@ -47,9 +47,15 @@ import {
   withRazorpaySdkTimeout,
 } from "@/lib/payments/core/razorpay";
 import prisma from "@/lib/prisma";
+import { postGatewayFee } from "@/lib/payments/ledger/gateway-fee";
 import { type WebhookClaim, permanentFailure } from "@/lib/webhooks/event-log";
 import { errorMessageOf, reportSentryError } from "@/lib/observability/report";
 import { z, ZodError } from "zod";
+
+const DISPUTE_EVENT_VERDICT: Partial<Record<string, string>> = {
+  "payment.dispute.won": "won",
+  "payment.dispute.lost": "lost",
+};
 
 const refundEntitySchema = z.object({
   id: z.string(),
@@ -87,6 +93,14 @@ const payoutEntitySchema = z.object({
   reference_id: z.string().nullable().optional(),
 });
 
+function payloadFee(entity: {
+  fee?: number | null;
+  tax?: number | null;
+}): { feePaise: number; taxPaise: number } | undefined {
+  if (entity.fee === null || entity.fee === undefined) return undefined;
+  return { feePaise: entity.fee, taxPaise: entity.tax ?? 0 };
+}
+
 /**
  * Route a captured payment to the handler its `notes.type` selects.
  *
@@ -114,6 +128,24 @@ export async function routeCapturedPayment(params: {
    * and on `order.paid` when its payment entity is shipped (#1582 F-P0-01);
    * absent, `handleOrgPaymentSuccess` refuses to mark an invoice PAID.
    */
+  gatewayPaymentId?: string;
+  /** Gateway fee (GST included) and its GST, from the webhook's payment entity only. */
+  fee?: { feePaise: number; taxPaise: number };
+}): Promise<void> {
+  await dispatchCapturedPayment(params);
+  // Outside the capture transaction; the settlement job books it under the same key when absent.
+  if (params.gatewayPaymentId && params.fee) {
+    await postGatewayFee(prisma, {
+      gatewayPaymentId: params.gatewayPaymentId,
+      ...params.fee,
+    });
+  }
+}
+
+async function dispatchCapturedPayment(params: {
+  orderId: string;
+  notes: Record<string, string>;
+  amountPaise?: number;
   gatewayPaymentId?: string;
 }): Promise<void> {
   const { orderId, notes, amountPaise, gatewayPaymentId } = params;
@@ -199,11 +231,13 @@ export async function processRazorpayWebhookEvent(
     switch (eventType) {
       case "payment.captured": {
         const capturedEvent = razorpayPaymentCapturedEventSchema.parse(event);
+        const capturedEntity = capturedEvent.payload.payment.entity;
         await routeCapturedPayment({
-          orderId: capturedEvent.payload.payment.entity.order_id ?? "",
-          notes: capturedEvent.payload.payment.entity.notes,
-          amountPaise: capturedEvent.payload.payment.entity.amount,
-          gatewayPaymentId: capturedEvent.payload.payment.entity.id,
+          orderId: capturedEntity.order_id ?? "",
+          notes: capturedEntity.notes,
+          amountPaise: capturedEntity.amount,
+          gatewayPaymentId: capturedEntity.id,
+          fee: payloadFee(capturedEntity),
         });
         break;
       }
@@ -216,6 +250,7 @@ export async function processRazorpayWebhookEvent(
           notes: paidEvent.payload.order.entity.notes,
           amountPaise: paidEntity?.amount,
           gatewayPaymentId: paidEntity?.id,
+          fee: paidEntity ? payloadFee(paidEntity) : undefined,
         });
         break;
       }
@@ -447,65 +482,23 @@ export async function processRazorpayWebhookEvent(
         break;
       }
 
-      case "payment.dispute.won": {
-        const disputeWonEvent = disputeUpdateEntitySchema.parse(
-          event.payload?.dispute?.entity,
-        );
-        const disputeWonResult =
-          disputeWonEvent.respond_by !== undefined &&
-          disputeWonEvent.respond_by !== null
-            ? await handleDisputeUpdated(
-                disputeWonEvent.id,
-                "won",
-                null,
-                disputeWonEvent.respond_by,
-              )
-            : await handleDisputeUpdated(disputeWonEvent.id, "won", null);
-        if (disputeWonResult instanceof DeferSignal) {
-          deferred = true;
-        }
-        break;
-      }
-
-      case "payment.dispute.lost": {
-        const disputeLostEvent = disputeUpdateEntitySchema.parse(
-          event.payload?.dispute?.entity,
-        );
-        const disputeLostResult =
-          disputeLostEvent.respond_by !== undefined &&
-          disputeLostEvent.respond_by !== null
-            ? await handleDisputeUpdated(
-                disputeLostEvent.id,
-                "lost",
-                null,
-                disputeLostEvent.respond_by,
-              )
-            : await handleDisputeUpdated(disputeLostEvent.id, "lost", null);
-        if (disputeLostResult instanceof DeferSignal) {
-          deferred = true;
-        }
-        break;
-      }
-
+      case "payment.dispute.won":
+      case "payment.dispute.lost":
       case "payment.dispute.closed": {
-        const disputeClosedEvent = disputeUpdateEntitySchema.parse(
+        const verdictEvent = disputeUpdateEntitySchema.parse(
           event.payload?.dispute?.entity,
         );
-        const disputeClosedResult =
-          disputeClosedEvent.respond_by !== undefined &&
-          disputeClosedEvent.respond_by !== null
-            ? await handleDisputeUpdated(
-                disputeClosedEvent.id,
-                disputeClosedEvent.status,
-                null,
-                disputeClosedEvent.respond_by,
-              )
-            : await handleDisputeUpdated(
-                disputeClosedEvent.id,
-                disputeClosedEvent.status,
-                null,
-              );
-        if (disputeClosedResult instanceof DeferSignal) {
+        // won/lost are the event's verdict; closed carries its own entity status.
+        const verdictStatus =
+          DISPUTE_EVENT_VERDICT[eventType] ?? verdictEvent.status;
+        const verdictResult = await handleDisputeUpdated(
+          verdictEvent.id,
+          verdictStatus,
+          null,
+          verdictEvent.respond_by ?? null,
+          verdictEvent.amount_deducted ?? null,
+        );
+        if (verdictResult instanceof DeferSignal) {
           deferred = true;
         }
         break;

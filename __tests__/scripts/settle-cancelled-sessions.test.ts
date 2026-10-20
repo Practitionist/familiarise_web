@@ -47,6 +47,8 @@ const state = {
   undecided: 0,
 };
 const stamp = jest.fn(async () => ({ count: 1 }));
+const consultantHoldStamp = jest.fn(async () => ({ count: 1 }));
+const orgHoldStamp = jest.fn(async () => ({ count: 0 }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -97,6 +99,21 @@ jest.mock("../../lib/prisma", () => ({
       }: {
         data: { correlationId: string; context: unknown };
       }) => state.events.push(data),
+    },
+    // The plan-end hold on the subscription's earnings, one payee.
+    consultantEarnings: {
+      findMany: async () => [{ consultantProfileId: "cp-1" }],
+      findFirst: async () => ({ createdAt: new Date("2020-01-01T00:00:00Z") }),
+      aggregate: async () => ({
+        _sum: {
+          consultantSharePaise: BigInt(1_000_000_000),
+          refundedShareAmount: BigInt(0),
+        },
+      }),
+      updateMany: (...a: unknown[]) => consultantHoldStamp(...(a as [])),
+    },
+    organizationEarnings: {
+      updateMany: (...a: unknown[]) => orgHoldStamp(...(a as [])),
     },
     refund: {
       // pay-a skipped the make-up already: its key is spent.
@@ -230,6 +247,19 @@ it("#1834 — a replayed plan-end void refund pays nothing twice and still settl
   const result = await settleCancelledSessions();
   expect(refundBookingPayment).not.toHaveBeenCalled();
   expect(result.stamped).toBe(1);
+  // Settling the plan's last owed void defers its earnings under the subscription hold.
+  expect(consultantHoldStamp).toHaveBeenCalledWith({
+    where: {
+      paymentId: { in: ["pay-a", "pay-b"] },
+      holdUntil: null,
+      status: { in: ["PENDING", "PENDING_TRUST"] },
+      consultantProfileId: "cp-1",
+    },
+    data: { holdUntil: expect.any(Date) },
+  });
+  expect(orgHoldStamp).toHaveBeenCalledWith(
+    expect.objectContaining({ data: { holdUntil: expect.any(Date) } }),
+  );
 });
 
 it("#1569 D4 — the refundable voids are the latest ones, whatever order the sweep takes them in", async () => {

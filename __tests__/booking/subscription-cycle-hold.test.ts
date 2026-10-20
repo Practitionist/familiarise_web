@@ -69,13 +69,21 @@ function wrapperWith(statuses: string[]) {
   };
 }
 
-function makeTx(statuses: string[]) {
+/** One payee; tenured unless `firstPaidAt` says otherwise (the new-expert hold). */
+function makeTx(statuses: string[], firstPaidAt = new Date("2020-01-01")) {
   const updateMany = jest.fn().mockResolvedValue({ count: 1 });
   const tx = {
     appointment: {
       findUnique: jest.fn().mockResolvedValue(wrapperWith(statuses)),
     },
-    consultantEarnings: { updateMany },
+    consultantEarnings: {
+      updateMany,
+      findMany: jest.fn().mockResolvedValue([{ consultantProfileId: "cp-1" }]),
+      findFirst: jest.fn().mockResolvedValue({ createdAt: firstPaidAt }),
+      aggregate: jest.fn().mockResolvedValue({
+        _sum: { consultantSharePaise: 9e9, refundedShareAmount: 0 },
+      }),
+    },
     notificationOutbox: {
       upsert: jest.fn().mockResolvedValue({
         id: "outbox-1",
@@ -120,6 +128,21 @@ it("the 4th completion stamps tranche 0 only, anchored on that session's end plu
   );
 });
 
+it("a new expert's tranche waits the extra seven days", async () => {
+  const { tx, updateMany } = makeTx(completed(4), new Date());
+  await settleSubscriptionCycle(tx as never, {
+    appointmentId: "apt-1",
+    now: NOW,
+  });
+
+  const fourthEnd = row(3, "COMPLETED").endsAt.getTime();
+  expect(stampCall(updateMany).data.holdUntil).toEqual(
+    new Date(
+      Math.max(fourthEnd, NOW.getTime()) + HOLD_HOURS * HOUR + 7 * 24 * HOUR,
+    ),
+  );
+});
+
 it("the 8th completion stamps up to tranche 1; the 3rd stamps nothing", async () => {
   const eighth = makeTx(completed(8));
   await settleSubscriptionCycle(eighth.tx as never, {
@@ -157,6 +180,7 @@ it("cancel after 6: tranche 0 matured and untouched, tranche 1 keeps a stamped r
   };
   expect(cancel.where).toEqual({
     paymentId: "pay-1",
+    consultantProfileId: "cp-1",
     cycleOrdinal: { not: null },
     holdUntil: null,
     status: { in: ["PENDING", "PENDING_TRUST"] },

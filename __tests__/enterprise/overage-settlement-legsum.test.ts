@@ -15,6 +15,7 @@
 import { recordOverageAtCheckout } from "@/lib/payments/billing/overage-settlement";
 import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-carve";
 import { txDouble } from "../fixtures/tx-double";
+import { createEarningsHoldStore } from "../fixtures/earnings-hold-store";
 
 // jest.mock resolves via jest's resolver (no `@/` path mapping) — use relative
 // paths that resolve to the same module files the SUT imports as `@/…`.
@@ -28,8 +29,12 @@ jest.mock("../../lib/novu/org-workflows", () => ({
   notifyOrgProgramOverageDue: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock("../../lib/api/organizations/wallet", () => ({
-  walletDebit: jest.fn().mockResolvedValue(undefined),
-  walletCredit: jest.fn().mockResolvedValue(undefined),
+  walletDebit: jest
+    .fn()
+    .mockResolvedValue({ balanceAfter: 0, ownerOrgId: "org_w" }),
+  walletCredit: jest
+    .fn()
+    .mockResolvedValue({ balanceAfter: 0, ownerOrgId: "org_w" }),
 }));
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: jest.fn().mockResolvedValue({ created: true }),
@@ -51,6 +56,8 @@ function makeTx(opts: {
   baseSource?: "INVOICE_ACCRUAL" | "WALLET" | "LICENSE";
   /** #1744 row 1 — a base leg that holds less than the price. */
   baseLegPaise?: number;
+  /** Whether the parent's `booking:<id>` journal has already posted. */
+  bookingJournal?: boolean;
 }) {
   const legs: Leg[] = [
     {
@@ -65,14 +72,18 @@ function makeTx(opts: {
   /** Σ legs each child Payment is created with: what the deferred leg-sum trigger sees. */
   const childLegSums: number[] = [];
   let childSeq = 0;
+  /** Payment.paymentIntent is @unique: a repeated intent fails like Postgres does. */
+  const intents = new Set<string>();
   const legOf = (src: string): Leg => {
     const leg = legs.find((l) => l.source === src);
     if (!leg) throw new Error(`no ${src} leg`);
     return leg;
   };
+  const holds = createEarningsHoldStore();
   return {
     state: { legs, payment, children, childLegSums },
     tx: {
+      ...holds.db,
       organization: {
         findUnique: jest.fn().mockResolvedValue({ dataResidencyRegion: "IN" }),
       },
@@ -96,6 +107,13 @@ function makeTx(opts: {
       },
       bookingUtilization: {
         findUnique: jest.fn().mockResolvedValue({ id: "bu1" }),
+      },
+      ledgerTransaction: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue(
+            opts.bookingJournal ? { id: "txn_booking" } : null,
+          ),
       },
       paymentLeg: {
         findUnique: jest.fn(async ({ where }: LegWhere) => {
@@ -122,8 +140,18 @@ function makeTx(opts: {
           async ({
             data,
           }: {
-            data: { amount: number; legs?: { create: Leg } };
+            data: {
+              amount: number;
+              paymentIntent?: string;
+              legs?: { create: Leg };
+            };
           }) => {
+            if (data.paymentIntent && intents.has(data.paymentIntent)) {
+              throw Object.assign(new Error("Unique constraint failed"), {
+                code: "P2002",
+              });
+            }
+            if (data.paymentIntent) intents.add(data.paymentIntent);
             children.push({ amount: data.amount });
             childLegSums.push(data.legs?.create.amountPaise ?? 0);
             return { id: `child${++childSeq}` };
@@ -336,6 +364,7 @@ describe("recordOverageAtCheckout — CHARGE_ORG on the WALLET and LICENSE rails
       used: 5,
       surchargeBps: 2500,
       baseSource: "WALLET",
+      bookingJournal: true,
     });
     await recordOverageAtCheckout({
       tx: txDouble(tx),
@@ -354,7 +383,7 @@ describe("recordOverageAtCheckout — CHARGE_ORG on the WALLET and LICENSE rails
         paymentId: "pay1",
         postings: [
           {
-            account: { kind: "WALLET", organizationId: "org1" },
+            account: { kind: "WALLET", organizationId: "org_w" },
             direction: "DEBIT",
             amountPaise: 29_500,
           },
@@ -371,6 +400,46 @@ describe("recordOverageAtCheckout — CHARGE_ORG on the WALLET and LICENSE rails
         ],
       }),
     );
+  });
+
+  it("WALLET + CHARGE_ORG surcharge journals against the wallet's owner even with a null organizationId, or leaves it to an unposted booking journal", async () => {
+    const { postLedgerTxn } = jest.requireMock(
+      "../../lib/payments/ledger/post",
+    );
+    const run = (bookingJournal: boolean) => {
+      postLedgerTxn.mockClear();
+      const { tx } = makeTx({
+        price: 100_000,
+        cap: 5,
+        used: 5,
+        surchargeBps: 2500,
+        baseSource: "WALLET",
+        bookingJournal,
+      });
+      return recordOverageAtCheckout({
+        tx: txDouble(tx),
+        ...callArgs(100_000),
+        organizationId: null,
+      });
+    };
+
+    await run(true);
+    expect(postLedgerTxn).toHaveBeenCalledTimes(1);
+    expect(postLedgerTxn.mock.calls[0][1]).toMatchObject({
+      idempotencyKey: "overage-accrual:ev1",
+      postings: [
+        {
+          account: { kind: "WALLET", organizationId: "org_w" },
+          direction: "DEBIT",
+          amountPaise: 29_500,
+        },
+        { account: { kind: "PLATFORM_FEE" }, amountPaise: 25_000 },
+        { account: { kind: "GST_PAYABLE" }, amountPaise: 4_500 },
+      ],
+    });
+
+    await run(false);
+    expect(postLedgerTxn).not.toHaveBeenCalled();
   });
 
   it("LICENSE + CHARGE_ORG mints a standalone child accrual payment (incl. GST on surcharge) without mutating the 0-paise LICENSE parent", async () => {
@@ -586,6 +655,90 @@ describe("recordOverageAtCheckout — CHARGE_MEMBER parent carve (#785)", () => 
   });
 });
 
+describe("recordOverageAtCheckout — CHARGE_MEMBER carve on a WALLET parent", () => {
+  const carveCreditCalls = () =>
+    (
+      jest.requireMock("../../lib/payments/ledger/post")
+        .postLedgerTxn as jest.Mock
+    ).mock.calls.filter(([, txn]) =>
+      String(txn.idempotencyKey).startsWith("overage-carve-credit:"),
+    );
+  const memberWalletTx = (bookingJournal: boolean) =>
+    makeTx({
+      price: 100_000,
+      cap: 5,
+      used: 5,
+      overageBehavior: "CHARGE_MEMBER",
+      baseSource: "WALLET",
+      bookingJournal,
+    });
+
+  beforeEach(() => {
+    jest
+      .requireMock("../../lib/payments/ledger/post")
+      .postLedgerTxn.mockClear();
+    jest
+      .requireMock("../../lib/api/organizations/wallet")
+      .walletCredit.mockClear();
+  });
+
+  it("credits the carved base back with a balanced Dr DISCOUNT / Cr WALLET line against the wallet's owner", async () => {
+    const { state, tx } = memberWalletTx(true);
+    await recordOverageAtCheckout({ tx: txDouble(tx), ...callArgs(100_000) });
+
+    expect(state.legs).toEqual([{ source: "WALLET", amountPaise: 0 }]);
+    expect(
+      jest.requireMock("../../lib/api/organizations/wallet").walletCredit,
+    ).toHaveBeenCalledWith(expect.anything(), {
+      billingAccountId: "ba1",
+      amountPaise: 100_000,
+      reason: "REFUND",
+      paymentId: "pay1",
+    });
+    expect(carveCreditCalls()).toEqual([
+      [
+        expect.anything(),
+        expect.objectContaining({
+          idempotencyKey: "overage-carve-credit:ev1",
+          paymentId: "pay1",
+          postings: [
+            {
+              account: { kind: "DISCOUNT" },
+              direction: "DEBIT",
+              amountPaise: 100_000,
+            },
+            {
+              account: { kind: "WALLET", organizationId: "org_w" },
+              direction: "CREDIT",
+              amountPaise: 100_000,
+            },
+          ],
+        }),
+      ],
+    ]);
+  });
+
+  it("posts no line before the booking journal, which tallies the post-carve leg", async () => {
+    const { tx } = memberWalletTx(false);
+    await recordOverageAtCheckout({ tx: txDouble(tx), ...callArgs(100_000) });
+    expect(carveCreditCalls()).toEqual([]);
+  });
+
+  it("refuses a second run of the same batch at its batch-keyed side payment, before any second line", async () => {
+    const { state, tx } = memberWalletTx(true);
+    const run = () =>
+      recordOverageAtCheckout({ tx: txDouble(tx), ...callArgs(100_000) });
+    await run();
+    state.legs[0].amountPaise = 100_000;
+
+    await expect(run()).rejects.toMatchObject({ code: "P2002" });
+    expect(tx.payment.create.mock.calls[1][0].data.paymentIntent).toBe(
+      "overage:pay1:ule-1",
+    );
+    expect(carveCreditCalls()).toHaveLength(1);
+  });
+});
+
 describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
   it("WALLET parent: re-debits wallet, increments parent WALLET leg + amount, and releases overage-held earnings", async () => {
     const { walletDebit } = jest.requireMock(
@@ -593,11 +746,27 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
     );
     walletDebit.mockClear();
 
-    const consultantUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
-    const orgUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const holds = createEarningsHoldStore();
+    holds.consultant.push({
+      id: "ce_wallet_1",
+      paymentId: "parent_wallet_1",
+      status: "HELD",
+      preHoldStatus: "PENDING",
+      holdUntil: null,
+    });
+    holds.holds.push({
+      id: "h1",
+      consultantEarningsId: "ce_wallet_1",
+      organizationEarningsId: null,
+      reason: "OVERAGE",
+      sourceRef: "parent_wallet_1",
+      placedAt: new Date(0),
+      releasedAt: null,
+      releasedById: null,
+      note: null,
+    });
     const paymentUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
     const legUpdate = jest.fn().mockResolvedValue({});
-
     const mockTx = {
       overageEvent: {
         findFirst: jest.fn().mockResolvedValue({
@@ -631,12 +800,15 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
           ),
         update: legUpdate,
       },
-      billingAccount: {
-        updateMany: jest.fn(),
+      ledgerTransaction: {
+        findUnique: jest.fn().mockResolvedValue({ id: "txn_booking" }),
       },
-      consultantEarnings: { updateMany: consultantUpdateMany },
-      organizationEarnings: { updateMany: orgUpdateMany },
+      ...holds.db,
     };
+    const { postLedgerTxn } = jest.requireMock(
+      "../../lib/payments/ledger/post",
+    );
+    postLedgerTxn.mockClear();
 
     const outcome = await restoreOverageBaseCarve(mockTx as never, {
       sidePaymentId: "side_wallet_1",
@@ -662,14 +834,36 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
       },
       data: { amountPaise: { increment: 40_000 } },
     });
-    expect(consultantUpdateMany).toHaveBeenCalledWith({
-      where: {
-        paymentId: "parent_wallet_1",
-        status: "HELD",
-        preDisputeStatus: "PENDING",
-      },
-      data: { status: "PENDING", preDisputeStatus: null },
+    expect(holds.consultant[0]).toMatchObject({
+      status: "PENDING",
+      preHoldStatus: null,
     });
+    expect(holds.activeReasons("ce_wallet_1")).toEqual([]);
+    // The re-debit carries its own balanced journal, moving the base off DISCOUNT.
+    expect(postLedgerTxn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        idempotencyKey: "overage-restore:oe_wallet_1",
+        postings: [
+          {
+            account: { kind: "WALLET", organizationId: "org_w" },
+            direction: "DEBIT",
+            amountPaise: 40_000,
+          },
+          {
+            account: { kind: "DISCOUNT" },
+            direction: "CREDIT",
+            amountPaise: 40_000,
+          },
+        ],
+      }),
+    );
+    postLedgerTxn.mockResolvedValueOnce({ created: false });
+    await expect(
+      restoreOverageBaseCarve(mockTx as never, {
+        sidePaymentId: "side_wallet_1",
+      }),
+    ).rejects.toThrow(/already restored/);
   });
 
   it("LICENSE parent: leaves ₹0 LICENSE leg untouched and keeps parent earnings HELD when member side-charge fails", async () => {

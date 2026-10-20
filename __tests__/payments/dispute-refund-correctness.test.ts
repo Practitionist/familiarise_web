@@ -170,6 +170,7 @@ function txStub() {
     },
     consultantEarnings: {
       updateMany: jest.fn(async () => ({ count: 0 })),
+      findMany: jest.fn(async () => []),
     },
     // #1008 — org earnings hold/release/refund mirror the consultant side.
     organizationEarnings: {

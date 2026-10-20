@@ -35,7 +35,7 @@ jest.mock("../../lib/payments/core/razorpay", () => ({
 
 const mockSettleLostDispute = jest.fn();
 jest.mock("../../app/api/webhooks/utils", () => ({
-  settleLostDispute: (...a: unknown[]) =>
+  settleDisputeVerdict: (...a: unknown[]) =>
     (mockSettleLostDispute as jest.Mock)(...a),
 }));
 
@@ -81,22 +81,20 @@ const store: {
 const mockDisputeFindMany = jest.fn();
 const mockDisputeUpdateMany = jest.fn();
 const mockPaymentFindFirst = jest.fn();
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
+jest.mock("../../lib/prisma", () => {
+  const db = {
     dispute: {
-      findMany: (...a: unknown[]) =>
-        (mockDisputeFindMany as jest.Mock)(...a),
+      findMany: (...a: unknown[]) => (mockDisputeFindMany as jest.Mock)(...a),
       updateMany: (...a: unknown[]) =>
         (mockDisputeUpdateMany as jest.Mock)(...a),
     },
     payment: {
-      findFirst: (...a: unknown[]) =>
-        (mockPaymentFindFirst as jest.Mock)(...a),
+      findFirst: (...a: unknown[]) => (mockPaymentFindFirst as jest.Mock)(...a),
     },
-    $transaction: (fn: (tx: unknown) => unknown) => fn({}),
-  },
-}));
+    $transaction: (fn: (tx: unknown) => unknown) => fn(db),
+  };
+  return { __esModule: true, default: db };
+});
 
 import { RazorpayDisputeError } from "../../lib/payments/core/razorpay-disputes";
 import { reconcileDisputes } from "../../scripts/disputes/reconcile-disputes";
@@ -210,6 +208,7 @@ describe("razorpay dispute reconcile", () => {
       isChargeRefundable: false,
       dueBy: undefined,
       paymentId: "pay_rzp_1",
+      amountDeductedPaise: null,
     });
 
     const first = await reconcileDisputes();
@@ -221,6 +220,8 @@ describe("razorpay dispute reconcile", () => {
     expect(mockSettleLostDispute).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ disputeId: "disp_1", paymentId: "pay_1" }),
+      "LOST",
+      null,
     );
     expect(store.earnings[0].status).toBe("REFUNDED");
     expect(mockRazorpayPaymentsFetch).not.toHaveBeenCalled();
@@ -263,6 +264,7 @@ describe("razorpay dispute reconcile", () => {
       isChargeRefundable: false,
       dueBy: undefined,
       paymentId: "pay_rzp_9",
+      amountDeductedPaise: null,
     });
     mockRazorpayPaymentsFetch.mockResolvedValue({ order_id: "order_9" });
 
@@ -273,6 +275,8 @@ describe("razorpay dispute reconcile", () => {
     expect(mockSettleLostDispute).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ disputeId: "disp_9", paymentId: "pay_9" }),
+      "LOST",
+      null,
     );
     expect(result.errors).toEqual([]);
   });

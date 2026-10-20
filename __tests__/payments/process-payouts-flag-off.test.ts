@@ -11,21 +11,22 @@
  */
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { consultantPayout: { count: jest.fn() }, $disconnect: jest.fn() },
+  default: { consultantPayout: { count: jest.fn() } },
 }));
-jest.mock("../../lib/payments/payouts", () => ({
-  PAYOUT_CONSTANTS: { MAX_RETRY_ATTEMPTS: 3 },
+jest.mock("../../lib/cron/with-cron-lock", () => ({
+  withCronLock: jest.fn(),
+}));
+jest.mock("../../lib/payments/payouts/payout-service", () => ({
+  createPayoutBatchSlice: jest.fn(),
   processApprovedPayouts: jest.fn(),
+  REQUEST_PAYOUT_RUN_BOUNDS: {},
+}));
+jest.mock("../../lib/payments/payouts/org-payout-service", () => ({
+  createOrgPayoutBatches: jest.fn(),
   processPendingOrgPayouts: jest.fn(),
 }));
-jest.mock("../../lib/maintenance-cron", () => ({
-  abortIfMaintenance: jest.fn(),
-}));
-jest.mock("../../lib/observability/job-sentry", () => ({
-  runJob: jest.fn(),
-}));
 
-import { classifyEmptyRun } from "../../jobs/payouts/process-payouts";
+import { classifyEmptyRun } from "../../lib/payments/payouts/scheduled-runs";
 
 describe("process-payouts job — flag off is not a failure (#1757)", () => {
   it("flag off + 3 APPROVED → parked notice, no error", () => {
@@ -37,7 +38,8 @@ describe("process-payouts job — flag off is not a failure (#1757)", () => {
   it("flag on + 3 APPROVED + [] → failed", () => {
     expect(classifyEmptyRun({ waiting: 3, livePayoutsEnabled: true })).toEqual({
       kind: "failed",
-      error: "3 APPROVED payouts waiting; processing lock unavailable",
+      error:
+        "3 APPROVED payouts waiting; processing lock held or RazorpayX balance short",
     });
   });
 

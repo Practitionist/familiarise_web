@@ -1,30 +1,15 @@
 /**
- * GET  /api/organizations/[orgId]/billing-account/invoices
- * POST /api/organizations/[orgId]/billing-account/invoices
+ * GET /api/organizations/[orgId]/billing-account/invoices
  *
- * POST manually generates an invoice (vs the daily cron at
- * jobs/billing/generate-subscription-invoices.ts which auto-generates
- * from BillingSubscription.nextInvoiceDate). Useful for one-off line
- * items or for re-issuing a voided invoice. Platform ops raise the same
- * invoice through the audited POST /api/admin/organizations/[orgId]/invoices.
- *
- * Every invoice carries its GST breakdown + IRN placeholder. The IRN
- * stays PENDING until the IRP uploader cron (stubbed) populates it.
+ * The org's invoice register. Only the platform raises an invoice, through
+ * POST /api/admin/organizations/[orgId]/invoices or the billing crons.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
-import {
-  createOrgInvoice,
-  CreateOrgInvoiceSchema,
-  notifyCreatedOrgInvoice,
-} from "@/lib/payments/billing/create-org-invoice";
-import { scheduleAfter } from "@/lib/api/after-safe";
-import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
+import { outstandingPaiseByInvoice } from "@/lib/payments/billing/org-invoice-settlement";
 
 const InvoiceStatusSchema = z.enum([
   "DRAFT",
@@ -74,65 +59,12 @@ export async function GET(
     }),
   ]);
 
-  return NextResponse.json({ data: invoices, meta: { total, page, perPage } });
-}
-
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ orgId: string }> },
-) {
-  const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, {
-    permission: "billing.manage",
-    canSponsor: true,
-    requireActive: true,
+  const outstanding = await outstandingPaiseByInvoice(prisma, invoices);
+  return NextResponse.json({
+    data: invoices.map((inv) => ({
+      ...inv,
+      outstandingPaise: outstanding.get(inv.id) ?? 0,
+    })),
+    meta: { total, page, perPage },
   });
-  if (access.error) return access.error;
-
-  // Invoice generation is a statutory-document write.
-  const limited = await applyRateLimit(
-    moneyOpsLimiter,
-    access.member?.id ?? orgId,
-  );
-  if (limited) return limited;
-
-  const raw = await req.json().catch(() => null);
-  const parsed = CreateOrgInvoiceSchema.safeParse(raw);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid body", detail: parsed.error.flatten() },
-      { status: 400 },
-    );
-  }
-  const body = parsed.data;
-
-  let created;
-  try {
-    created = await prisma.$transaction((tx) =>
-      createOrgInvoice(tx, {
-        orgId,
-        actorMembershipId: access.member.id,
-        input: body,
-      }),
-    );
-  } catch (err) {
-    if (err instanceof OpsRefusal) {
-      return NextResponse.json(
-        { error: err.message, code: err.code },
-        { status: err.httpStatus },
-      );
-    }
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "enterprise" } },
-    );
-    throw err;
-  }
-
-  const origin = new URL(req.url).origin;
-  scheduleAfter(
-    () => notifyCreatedOrgInvoice(origin, orgId, created, body),
-    "org-invoice.notify",
-  );
-  return NextResponse.json({ invoice: created.invoice }, { status: 201 });
 }

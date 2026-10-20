@@ -13,7 +13,7 @@ import { needsTypedConfirm } from "@/lib/ui/typed-confirm";
 import type { PaymentDetail } from "@/types/payments";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { useToast } from "@/hooks/use-toast";
-import { callOpsDoor } from "./ops-door";
+import { callOpsDoor, isProposed, PROPOSED_TOAST } from "./ops-door";
 
 export type RefundDoor = "issue" | "override" | "credits";
 
@@ -187,13 +187,17 @@ export function RefundDoorDialog({
       onConfirm={async ({ reason }) => {
         const problem = validationError();
         if (problem) throw new Error(problem);
-        await callOpsDoor(
+        const result = await callOpsDoor(
           door === "credits"
             ? "/api/admin/refunds/credits"
             : "/api/admin/refunds/issue",
           { ...body(), idempotencyKey, reason },
         );
-        toast({ title: "Done — the refund is on its way" });
+        toast({
+          title: isProposed(result)
+            ? PROPOSED_TOAST
+            : "Done — the refund is on its way",
+        });
         for (const key of INVALIDATE)
           void queryClient.invalidateQueries({ queryKey: key });
         onClose();

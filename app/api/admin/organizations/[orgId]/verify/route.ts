@@ -10,16 +10,19 @@
  * DEACTIVATED is terminal and not reversible from this endpoint.
  */
 
-import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import prisma from "@/lib/prisma";
-import { requireAdminAuth } from "@/lib/auth-helpers";
+import { withOpsAction } from "@/lib/backoffice/ops-action-log";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { purgeOrgSurfaces } from "@/lib/data/public-cache";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   IllegalTransitionError,
   transitionOrganization,
 } from "@/lib/enterprise/transitions";
+import {
+  releaseSponsorTrustPark,
+  type TrustParkRelease,
+} from "@/lib/payments/payouts/trust-park";
 
 // #779 §A — `REJECT` added (admin bounces a PENDING org back with a reason;
 // stays PENDING_VERIFICATION). Action is upper-cased + defaults to VERIFY so
@@ -32,50 +35,27 @@ const ActionSchema = z.enum([
   "DEACTIVATE",
 ]);
 
-const BodySchema = z
-  .object({
+/** An org lifecycle door: ADMIN, step-up, a reason (the owner sees it on REJECT) and an ops log row. */
+export const POST = withOpsAction(
+  "organizations.manage",
+  (body) => `organization.${body.action.toLowerCase()}`,
+  {
     action: z
       .preprocess(
         (v) => (typeof v === "string" ? v.toUpperCase() : v),
         ActionSchema,
       )
       .default("VERIFY"),
-    reason: z.string().max(2000).optional(),
-  })
-  // Reject requires a reason — it's what the OWNER sees to fix + resubmit.
-  .refine((b) => b.action !== "REJECT" || (b.reason && b.reason.length > 0), {
-    message: "reason is required when rejecting",
-    path: ["reason"],
-  });
-
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ orgId: string }> },
-) {
-  const auth = await requireAdminAuth();
-  if (auth.error) return auth.error;
-
-  const { orgId } = await params;
-
-  const raw = await req.json().catch(() => null);
-  const parsed = BodySchema.safeParse(raw);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid body", detail: parsed.error.flatten() },
-      { status: 400 },
-    );
-  }
-  const body = parsed.data;
-
-  try {
-    const updated = await prisma.$transaction(async (tx) => {
+  },
+  {
+    mode: "tx",
+    run: async (tx, { params, body, actor }) => {
+      const orgId = params.orgId;
       const current = await tx.organization.findUnique({
         where: { id: orgId },
       });
       if (!current) {
-        throw Object.assign(new Error("Organization not found"), {
-          httpStatus: 404,
-        });
+        throw new OpsRefusal("ORG_NOT_FOUND", "Organization not found", 404);
       }
 
       // Friendly pre-check only — names the offending action/state in the
@@ -91,11 +71,9 @@ export async function POST(
       };
       const allowed = allowedFrom[current.status] ?? [];
       if (!allowed.includes(body.action)) {
-        throw Object.assign(
-          new Error(
-            `Cannot ${body.action} an organization in ${current.status} state`,
-          ),
-          { httpStatus: 409 },
+        throw new OpsRefusal(
+          "ORG_ACTION_NOT_ALLOWED",
+          `Cannot ${body.action} an organization in ${current.status} state`,
         );
       }
 
@@ -110,6 +88,8 @@ export async function POST(
                 ? AUDIT_ACTIONS.SYSTEM.REACTIVATED
                 : AUDIT_ACTIONS.SYSTEM.DEACTIVATED;
 
+      let nextStatus = current.status;
+      let released: TrustParkRelease | null = null;
       if (body.action === "REJECT") {
         // #779 §A — REJECT stamps the resubmit sub-state, not a status move.
         // Guarded on still-PENDING so a concurrent VERIFY can't be overwritten
@@ -132,20 +112,20 @@ export async function POST(
             action: actionKey,
             description: `Admin reject: stays ${current.status}`,
             details: {
-              adminUserId: auth.session.user.id,
+              adminUserId: actor.userId,
               from: current.status,
               to: current.status,
-              reason: body.reason ?? null,
+              reason: body.reason,
             },
           },
         });
       } else {
-        const nextStatus =
+        nextStatus =
           body.action === "VERIFY" || body.action === "REACTIVATE"
-            ? ("ACTIVE" as const)
+            ? "ACTIVE"
             : body.action === "SUSPEND"
-              ? ("SUSPENDED" as const)
-              : ("DEACTIVATED" as const);
+              ? "SUSPENDED"
+              : "DEACTIVATED";
 
         await transitionOrganization(tx, {
           where: { id: orgId },
@@ -166,45 +146,37 @@ export async function POST(
             action: actionKey,
             description: `Admin ${body.action.toLowerCase()}: ${current.status} → ${nextStatus}`,
             details: {
-              adminUserId: auth.session.user.id,
+              adminUserId: actor.userId,
               from: current.status,
               to: nextStatus,
-              reason: body.reason ?? null,
+              reason: body.reason,
             },
           },
         });
 
+        // The trust park is keyed on the payment's sponsor, not the earner.
         if (body.action === "VERIFY") {
-          await tx.organizationEarnings.updateMany({
-            where: { organizationId: orgId, status: "PENDING_TRUST" },
-            data: { status: "PENDING" },
-          });
-          await tx.consultantEarnings?.updateMany({
-            where: {
-              payment: { organizationId: orgId },
-              status: "PENDING_TRUST",
-            },
-            data: { status: "PENDING" },
-          });
+          released = await releaseSponsorTrustPark(tx, orgId);
         }
       }
 
       // updateMany returns no row — re-read in-tx for the response body.
-      return tx.organization.findUniqueOrThrow({ where: { id: orgId } });
-    });
-
-    // ACTIVE is half the public gate: VERIFY/REACTIVATE put the org into the
-    // directory, SUSPEND/DEACTIVATE take it out. (REJECT only stamps sub-state
-    // and leaves the org PENDING, so it never reaches here.)
-    purgeOrgSurfaces(updated.slug);
-
-    return NextResponse.json({ organization: updated });
-  } catch (err) {
-    if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
-    }
-    throw err;
-  }
-}
+      const updated = await tx.organization.findUniqueOrThrow({
+        where: { id: orgId },
+      });
+      return {
+        target: { kind: "Organization", id: orgId },
+        before: { status: current.status },
+        after: {
+          status: nextStatus,
+          ...(released && { trustParkReleased: { ...released } }),
+        },
+        response: { organization: updated },
+        // ACTIVE is half the public gate: VERIFY/REACTIVATE put the org into
+        // the directory, SUSPEND/DEACTIVATE take it out.
+        afterCommit: () => purgeOrgSurfaces(updated.slug),
+      };
+    },
+  },
+  { stepUp: true },
+);

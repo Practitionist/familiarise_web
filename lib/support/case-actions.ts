@@ -15,6 +15,7 @@ import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { caseKeyOf } from "./case-key";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { refundInFlightOr } from "@/lib/backoffice/refund-doors";
+import { CaseRefundReviewSchema } from "@/schemas/support-refund-review";
 import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
@@ -53,13 +54,7 @@ export const CaseActionSchema = z.discriminatedUnion("action", [
     amountPaise: z.number().int().nonnegative().safe(),
     reason,
   }),
-  base.extend({
-    action: z.literal("REVIEW_REFUND"),
-    recommendationId: id,
-    approve: z.boolean(),
-    reason,
-    expectedRefundablePaise: z.number().int().nonnegative().safe().optional(),
-  }),
+  CaseRefundReviewSchema,
   base.extend({ action: z.literal("APPLY_HOLD"), paymentId: id, reason }),
   base.extend({ action: z.literal("RELEASE_HOLD"), holdId: id, reason }),
   base.extend({ action: z.literal("HANDOVER"), reason }),

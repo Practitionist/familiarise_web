@@ -3,9 +3,11 @@ import { RefundsPage } from "@/components/dashboard/shared/RefundsPage";
 import { DisputesPage } from "@/components/dashboard/shared/DisputesPage";
 import { PayoutsBoard } from "@/components/dashboard/backoffice/payouts/PayoutsBoard";
 import { EarningsTab } from "./EarningsTab";
+import { OrgPayoutsTab } from "./OrgPayoutsTab";
 import { RefundDoorsPanel } from "./RefundsTab";
 import { ReconcileTab } from "./ReconcileTab";
 import { IncidentsTab } from "./IncidentsTab";
+import { ApprovalsTab } from "./ApprovalsTab";
 import { AuditTab } from "./AuditTab";
 import { readOpsLog } from "@/lib/backoffice/ops-log-read";
 import { can, type BackofficeCapability } from "@/lib/backoffice/capability";
@@ -45,6 +47,8 @@ export async function MoneyTabBody({
       );
     case "payouts":
       return <PayoutsBoard />;
+    case "org-payouts":
+      return <OrgPayoutsTab />;
     case "earnings":
       return <EarningsTab />;
     case "disputes":
@@ -61,6 +65,8 @@ export async function MoneyTabBody({
       );
     case "reconcile":
       return <ReconcileTab />;
+    case "approvals":
+      return <ApprovalsTab viewerId={viewer.userId} />;
     case "incidents":
       return <IncidentsTab canDeclare={can(cap, "incidents.declare")} />;
     case "audit":

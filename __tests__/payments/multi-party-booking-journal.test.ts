@@ -8,7 +8,7 @@
  * `createEarningsFromPayment` must post ONE balanced `booking:<paymentId>`
  * transaction covering owner + every collaborator + their host orgs:
  *
- *   Dr funding legs (CASH/…/DISCOUNT plug)
+ *   Dr funding legs (GATEWAY_CLEARING/…/DISCOUNT plug)
  *     == Cr PLATFORM_FEE (primary fee + settled collabs' org-card fee slices)
  *      + Cr CONSULTANT_PAYABLE per party (settled collabs NET of org cut)
  *      + Cr ORG_PAYABLE per host org (primary + per-collab)
@@ -314,8 +314,8 @@ describe("#773 multi-party booking journal", () => {
     expect(debit).toBe(118_000);
     expect(credit).toBe(118_000);
 
-    // Funding side: legacy CASH (no PaymentLegs), no discount gap.
-    expect(legAmount(txn, "DEBIT", "CASH|_|_|INR")).toBe(118_000);
+    // Funding side: gateway clearing (no PaymentLegs), no discount gap.
+    expect(legAmount(txn, "DEBIT", "GATEWAY_CLEARING|_|_|INR")).toBe(118_000);
 
     // Single fee per slice: 5_000 (owner) + 3_000 (hosted collab) + 4_000 (indep collab) = 12_000.
     expect(legAmount(txn, "CREDIT", "PLATFORM_FEE|_|_|INR")).toBe(12_000);

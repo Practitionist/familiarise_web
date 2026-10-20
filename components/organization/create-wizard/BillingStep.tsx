@@ -4,7 +4,6 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -25,12 +24,12 @@ import {
   FUNDING_SOURCE_LABEL,
   FUNDING_SOURCE_TAGLINE,
   SELF_SERVICE_FUNDING_SOURCES,
+  SelfServiceFundingSourceSchema,
   narrowFundingSource,
 } from "@/lib/labels/org-labels";
 
 export function BillingStep({ onNext, onBack, initialData }: StepProps) {
   const {
-    register,
     handleSubmit,
     setValue,
     watch,
@@ -49,6 +48,9 @@ export function BillingStep({ onNext, onBack, initialData }: StepProps) {
     initialData.fundingSource === "PERSONAL",
   );
   const motivation = resolveFundingRailMotivation(fundingSource);
+  const selfServiceFallback = SelfServiceFundingSourceSchema.safeParse(
+    motivation.recommendedFallback,
+  );
   const goldenRails = SELF_SERVICE_FUNDING_SOURCES.filter(
     (fs) => fs !== "PERSONAL",
   );
@@ -94,6 +96,9 @@ export function BillingStep({ onNext, onBack, initialData }: StepProps) {
             </button>
           ))}
         </div>
+        <p className="text-xs text-zinc-500">
+          Invoice billing is set up by Familiarise — contact support.
+        </p>
 
         <AdvancedPermutationGate
           isActivePermutation={fundingSource === "PERSONAL"}
@@ -145,14 +150,12 @@ export function BillingStep({ onNext, onBack, initialData }: StepProps) {
           message={motivation.message}
           recommendation={motivation.recommendation}
           actionLabel={
-            motivation.recommendedFallback
-              ? "Switch to Prepaid Wallet"
-              : undefined
+            selfServiceFallback.success ? "Switch to Prepaid Wallet" : undefined
           }
           onAction={
-            motivation.recommendedFallback
+            selfServiceFallback.success
               ? () => {
-                  setValue("fundingSource", motivation.recommendedFallback!);
+                  setValue("fundingSource", selfServiceFallback.data);
                   setPersonalAcknowledged(false);
                 }
               : undefined
@@ -160,28 +163,6 @@ export function BillingStep({ onNext, onBack, initialData }: StepProps) {
           compact
         />
       </div>
-
-      {fundingSource === "INVOICE" && (
-        <div className="space-y-2">
-          <Label htmlFor="paymentTermsDays">Payment terms (days)</Label>
-          <Input
-            id="paymentTermsDays"
-            type="number"
-            min={1}
-            max={120}
-            {...register("paymentTermsDays")}
-          />
-          {errors.paymentTermsDays && (
-            <p className="text-sm text-red-500">
-              {errors.paymentTermsDays.message}
-            </p>
-          )}
-          <p className="text-xs text-zinc-500">
-            NET-{watch("paymentTermsDays") || 60} — monthly invoices are due
-            within this window. India Net-60 is the default.
-          </p>
-        </div>
-      )}
 
       <div className="space-y-2">
         <Label>GST state</Label>

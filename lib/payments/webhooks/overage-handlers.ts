@@ -11,7 +11,7 @@
  *
  * Money model (org-relief, DECIDED #775): the org funded the covered portion
  * of the booking and the consultant was paid once at booking; the member's
- * marginal relieves the org. Capture posts `Dr CASH / Cr ORG_PAYABLE(org) /
+ * marginal relieves the org. Capture posts `Dr GATEWAY_CLEARING / Cr ORG_PAYABLE(org) /
  * Cr GST_PAYABLE`: the org is credited base + surcharge, the side-payment's
  * `taxAmount` (GST on the surcharge) goes to GST_PAYABLE, and the org credit is REALIZED AT
  * ORG PAYOUT — it flows to the org through the next payout batch like any
@@ -30,6 +30,7 @@ import prisma from "@/lib/prisma";
 import type { Tx } from "@/lib/prisma";
 import { PaymentStatus, Prisma } from "@prisma/client";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import {
@@ -54,6 +55,7 @@ type OverageTxOutcome =
       sideId: string;
       capturedPaise: number;
       organizationId: string | null;
+      reason: string;
     }
   | null;
 
@@ -151,7 +153,7 @@ async function postOverageMemberLedgerEntries(
   const taxPaise = Math.min(side.taxAmount, side.amount);
   const postings: Posting[] = [
     {
-      account: { kind: "CASH" },
+      account: gatewayCashAccount(),
       direction: "DEBIT",
       amountPaise: side.amount,
     },
@@ -234,6 +236,8 @@ async function settleOverageSidePaymentInTx(
       sideId: side.id,
       capturedPaise,
       organizationId: side.organizationId,
+      reason:
+        "Overage side-payment capture amount != expected; auto-refunding gateway truth",
     };
   }
 
@@ -307,15 +311,25 @@ async function settleOverageSidePaymentInTx(
   }
 
   if (moved === 0) {
-    await recordSystemErrorSafe({
-      db: tx,
-      organizationId: side.organizationId,
-      category: "OVERAGE",
-      summary: `Overage side-payment ${side.id} captured but its OverageEvent could not move to CHARGED (likely REVERSED mid-flight) — refund the side-payment`,
-      err: new Error("OVERAGE_CAPTURED_AFTER_REVERSAL"),
-      context: { sidePaymentId: side.id, paymentIntentId },
+    // The overage is no longer the member's to pay (reversed, or settled to the
+    // org): park the cash and auto-refund it after commit; the marker re-drives it.
+    await tx.payment.update({
+      where: { id: side.id },
+      data: {
+        description: autoRefundPendingDescription(
+          "captured after its overage was reversed",
+        ),
+      },
     });
-    return null;
+    await postUnappliedReceipt(tx, { paymentId: side.id, capturedPaise });
+    return {
+      kind: "mismatch_refund",
+      sideId: side.id,
+      capturedPaise,
+      organizationId: side.organizationId,
+      reason:
+        "Overage side-payment captured after its overage was reversed; auto-refunding",
+    };
   }
 
   await releaseOverageHeldParentEarnings(tx, side.parentPaymentId, side.id);
@@ -373,8 +387,7 @@ export async function handleOverageMemberSuccess(
       await refundBookingPayment({
         paymentId: txOutcome.sideId,
         amountPaise: txOutcome.capturedPaise,
-        reason:
-          "Overage side-payment capture amount != expected; auto-refunding gateway truth",
+        reason: txOutcome.reason,
         dedupeKey: `overage-mismatch:${txOutcome.sideId}`,
       });
     } catch (err) {

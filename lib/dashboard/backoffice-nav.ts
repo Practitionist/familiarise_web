@@ -94,8 +94,10 @@ const MONEY_ICONS: Record<MoneyTabKey, LucideIcon> = {
   refunds: RotateCcw,
   disputes: Scale,
   payouts: Banknote,
+  "org-payouts": Landmark,
   earnings: Coins,
   reconcile: ArrowLeftRight,
+  approvals: ListChecks,
   incidents: Siren,
   audit: ScrollText,
 };

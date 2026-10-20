@@ -41,6 +41,7 @@ import {
 import {
   computeHoldUntil,
   holdHoursFor,
+  stampConsultantHolds,
 } from "@/lib/payments/payouts/earnings-hold";
 
 export type TrialRefundOutcome = {
@@ -119,7 +120,10 @@ export async function softCancelTrialAppointmentInTx(
  */
 export async function stampTrialEarningsOnCancel(
   tx: {
-    consultantEarnings?: Pick<Tx["consultantEarnings"], "updateMany">;
+    consultantEarnings?: Pick<
+      Tx["consultantEarnings"],
+      "findMany" | "findFirst" | "aggregate" | "updateMany"
+    >;
     organizationEarnings?: Pick<Tx["organizationEarnings"], "updateMany">;
   },
   args: { paymentId?: string; appointmentId?: string | null; now?: Date },
@@ -139,14 +143,17 @@ export async function stampTrialEarningsOnCancel(
     lastOccurrenceEndsAt: null,
     holdHours: holdHoursFor("SUBSCRIPTION"),
   });
-  const res = await tx.consultantEarnings?.updateMany?.({
-    where: {
-      ...whereScope,
-      holdUntil: null,
-      status: { in: ["PENDING", "PENDING_TRUST"] },
-    },
-    data: { holdUntil },
-  });
+  const stamped = tx.consultantEarnings
+    ? await stampConsultantHolds(
+        { consultantEarnings: tx.consultantEarnings },
+        {
+          ...whereScope,
+          holdUntil: null,
+          status: { in: ["PENDING", "PENDING_TRUST"] },
+        },
+        holdUntil,
+      )
+    : 0;
   await tx.organizationEarnings?.updateMany?.({
     where: {
       ...whereScope,
@@ -155,7 +162,7 @@ export async function stampTrialEarningsOnCancel(
     },
     data: { holdUntil },
   });
-  return res?.count ?? 0;
+  return stamped;
 }
 
 /**

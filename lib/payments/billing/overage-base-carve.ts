@@ -1,4 +1,10 @@
+import { EarningStatus, EarningsHoldReason } from "@prisma/client";
+
 import type { Tx } from "@/lib/prisma";
+import {
+  releaseEarningsHolds,
+  type EarningsHoldDb,
+} from "@/lib/payments/payouts/earnings-holds";
 /**
  * #812 §P0 / #775 / #782 — basePaise carve bookkeeping for CHARGE_MEMBER
  * overage side-charges.
@@ -28,52 +34,43 @@ export type CarveOutcome = "restored" | "recarved" | "none" | "invoiced";
 
 type CarveRef = { overageEventId: string } | { sidePaymentId: string };
 
-type RestoreCarveTx = Pick<Tx, "overageEvent" | "payment" | "paymentLeg"> &
-  Partial<
-    Pick<
-      Tx,
-      | "dispute"
-      | "consultantEarnings"
-      | "organizationEarnings"
-      | "billingAccount"
-      | "ledgerTransaction"
-      | "ledgerAccount"
-      | "ledgerAccountBalance"
-    >
-  >;
-
 /**
- * Release the parent's overage-held earnings once no other member overage on
- * it is unpaid. A FAILED one still holds on a LICENSE parent, whose base was
- * never restored to the org.
+ * Release the parent's OVERAGE holds once no other member overage on it is
+ * unpaid. A FAILED one still holds on a LICENSE parent, whose base was never
+ * restored to the org, until it is charged, settled to the org or reversed.
+ * Other owners' holds on the same earnings stay.
  */
 export async function releaseOverageHeldParentEarnings(
-  tx: Pick<Tx, "overageEvent" | "paymentLeg"> &
-    Partial<
-      Pick<Tx, "dispute" | "consultantEarnings" | "organizationEarnings">
-    >,
+  tx: Pick<Tx, "overageEvent" | "paymentLeg"> & EarningsHoldDb,
   parentPaymentId: string,
-  settledSidePaymentId: string,
+  settledSidePaymentId?: string,
 ): Promise<void> {
-  const held = {
+  const overageHeld = {
     paymentId: parentPaymentId,
-    status: "HELD" as const,
-    preDisputeStatus: "PENDING" as const,
+    holds: {
+      some: {
+        reason: EarningsHoldReason.OVERAGE,
+        sourceRef: parentPaymentId,
+        releasedAt: null,
+      },
+    },
   };
+  const consultantIds = (
+    await tx.consultantEarnings.findMany({
+      where: overageHeld,
+      select: { id: true },
+    })
+  ).map((r) => r.id);
+  const orgIds = (
+    await tx.organizationEarnings.findMany({
+      where: overageHeld,
+      select: { id: true },
+    })
+  ).map((r) => r.id);
+  if (consultantIds.length + orgIds.length === 0) return;
   // Lock the held rows before counting: a batch holding them concurrently is
   // then either committed and counted, or forces this transaction to retry.
-  if (typeof tx.consultantEarnings?.updateMany === "function") {
-    await tx.consultantEarnings.updateMany({
-      where: held,
-      data: { status: "HELD" },
-    });
-  }
-  if (typeof tx.organizationEarnings?.updateMany === "function") {
-    await tx.organizationEarnings.updateMany({
-      where: held,
-      data: { status: "HELD" },
-    });
-  }
+  await lockHeldOverageEarnings(tx, consultantIds, orgIds);
   const licenseLeg = await tx.paymentLeg.findUnique({
     where: {
       paymentId_source: { paymentId: parentPaymentId, source: "LICENSE" },
@@ -84,33 +81,37 @@ export async function releaseOverageHeldParentEarnings(
     where: {
       overageBehavior: "CHARGE_MEMBER",
       chargeStatus: { in: licenseLeg ? ["PENDING", "FAILED"] : ["PENDING"] },
-      paymentId: { not: settledSidePaymentId },
+      ...(settledSidePaymentId && { paymentId: { not: settledSidePaymentId } }),
       payment: { parentPaymentId },
     },
   });
   if (unpaidSiblings > 0) return;
 
-  const openDisputes =
-    typeof tx.dispute?.count === "function"
-      ? await tx.dispute.count({
-          where: {
-            paymentId: parentPaymentId,
-            status: { notIn: ["WON", "LOST"] },
-          },
-        })
-      : 0;
-  if (openDisputes > 0) return;
+  const match = {
+    reasons: [EarningsHoldReason.OVERAGE],
+    sourceRef: parentPaymentId,
+  };
+  await releaseEarningsHolds(tx, "consultant", consultantIds, match);
+  await releaseEarningsHolds(tx, "org", orgIds, match);
+}
 
-  if (typeof tx.consultantEarnings?.updateMany === "function") {
+/** A no-op write on the parent's HELD earnings, taken by both the overage place and release. */
+export async function lockHeldOverageEarnings(
+  tx: EarningsHoldDb,
+  consultantIds: string[],
+  orgIds: string[],
+): Promise<void> {
+  const held = { status: EarningStatus.HELD };
+  if (consultantIds.length > 0) {
     await tx.consultantEarnings.updateMany({
-      where: held,
-      data: { status: "PENDING", preDisputeStatus: null },
+      where: { id: { in: consultantIds }, ...held },
+      data: held,
     });
   }
-  if (typeof tx.organizationEarnings?.updateMany === "function") {
+  if (orgIds.length > 0) {
     await tx.organizationEarnings.updateMany({
-      where: held,
-      data: { status: "PENDING", preDisputeStatus: null },
+      where: { id: { in: orgIds }, ...held },
+      data: held,
     });
   }
 }
@@ -151,6 +152,53 @@ async function loadCarveContext(
 }
 
 /**
+ * The Dr WALLET line for a base restored onto a wallet-funded parent. The
+ * parent's booking journal funded the carved base from its DISCOUNT plug, so
+ * the restore moves it: Dr WALLET / Cr DISCOUNT, once per overage event. A
+ * parent whose booking journal has not posted yet tallies the restored leg itself.
+ */
+async function journalWalletBaseRestore(
+  tx: Tx,
+  args: {
+    parentPaymentId: string;
+    ownerOrgId: string;
+    overageEventId: string;
+    basePaise: number;
+  },
+): Promise<void> {
+  const booking = await tx.ledgerTransaction.findUnique({
+    where: { idempotencyKey: `booking:${args.parentPaymentId}` },
+    select: { id: true },
+  });
+  if (!booking) return;
+  const { postLedgerTxn } = await import("@/lib/payments/ledger/post");
+  const posted = await postLedgerTxn(tx, {
+    idempotencyKey: `overage-restore:${args.overageEventId}`,
+    kind: "OVERAGE_MEMBER",
+    paymentId: args.parentPaymentId,
+    description: `Abandoned member overage ${args.overageEventId}: base restored onto the org wallet`,
+    postings: [
+      {
+        account: { kind: "WALLET", organizationId: args.ownerOrgId },
+        direction: "DEBIT",
+        amountPaise: args.basePaise,
+      },
+      {
+        account: { kind: "DISCOUNT" },
+        direction: "CREDIT",
+        amountPaise: args.basePaise,
+      },
+    ],
+  });
+  // The wallet was just debited again; without a fresh journal line that is drift.
+  if (!posted.created) {
+    throw new Error(
+      `restoreOverageBaseCarve: overage ${args.overageEventId} was already restored onto the wallet; refusing an unjournaled second debit`,
+    );
+  }
+}
+
+/**
  * FAILED edge: return the carved basePaise to the parent's INVOICE_ACCRUAL
  * or WALLET leg + amount and release any overage-held earnings on the parent
  * payment. For LICENSE parents (whose booking leg is ₹0 and cannot absorb the
@@ -159,7 +207,7 @@ async function loadCarveContext(
  * same tx.
  */
 export async function restoreOverageBaseCarve(
-  tx: RestoreCarveTx,
+  tx: Tx,
   ref: CarveRef,
 ): Promise<CarveOutcome> {
   const ctx = await loadCarveContext(tx, ref);
@@ -174,56 +222,57 @@ export async function restoreOverageBaseCarve(
     return "none";
   }
 
-  if (typeof tx.paymentLeg?.findUnique === "function") {
-    const licenseLeg = await tx.paymentLeg.findUnique({
-      where: {
-        paymentId_source: { paymentId: ctx.parent.id, source: "LICENSE" },
-      },
-      select: { amountPaise: true },
-    });
-    if (licenseLeg) {
-      // LICENSE booking legs carry ₹0 (prepaid at contract level), so an
-      // abandoned member side-charge has no parent accrual or wallet leg to
-      // restore basePaise onto; keep parent earnings held until resolved.
-      return "none";
-    }
+  const licenseLeg = await tx.paymentLeg.findUnique({
+    where: {
+      paymentId_source: { paymentId: ctx.parent.id, source: "LICENSE" },
+    },
+    select: { amountPaise: true },
+  });
+  if (licenseLeg) {
+    // LICENSE booking legs carry ₹0 (prepaid at contract level), so an
+    // abandoned member side-charge has no parent accrual or wallet leg to
+    // restore basePaise onto; keep parent earnings held until resolved.
+    return "none";
+  }
 
-    const walletLeg = await tx.paymentLeg.findUnique({
+  const walletLeg = await tx.paymentLeg.findUnique({
+    where: {
+      paymentId_source: { paymentId: ctx.parent.id, source: "WALLET" },
+    },
+    select: { amountPaise: true },
+  });
+  if (walletLeg) {
+    if (ctx.parent.billingAccountId) {
+      const { walletDebit } = await import("@/lib/api/organizations/wallet");
+      const { ownerOrgId } = await walletDebit(tx, {
+        billingAccountId: ctx.parent.billingAccountId,
+        amountPaise: ctx.event.basePaise,
+        reason: "BOOKING",
+        paymentId: ctx.parent.id,
+      });
+      await journalWalletBaseRestore(tx, {
+        parentPaymentId: ctx.parent.id,
+        ownerOrgId,
+        overageEventId: ctx.event.id,
+        basePaise: ctx.event.basePaise,
+      });
+    }
+    await tx.payment.updateMany({
+      where: { id: ctx.parent.id },
+      data: { amount: { increment: ctx.event.basePaise } },
+    });
+    await tx.paymentLeg.update({
       where: {
         paymentId_source: { paymentId: ctx.parent.id, source: "WALLET" },
       },
-      select: { amountPaise: true },
+      data: { amountPaise: { increment: ctx.event.basePaise } },
     });
-    if (walletLeg) {
-      if (
-        ctx.parent.billingAccountId &&
-        typeof tx.billingAccount?.updateMany === "function"
-      ) {
-        const { walletDebit } = await import("@/lib/api/organizations/wallet");
-        await walletDebit(tx as unknown as Tx, {
-          billingAccountId: ctx.parent.billingAccountId,
-          amountPaise: ctx.event.basePaise,
-          reason: "BOOKING",
-          paymentId: ctx.parent.id,
-        });
-      }
-      await tx.payment.updateMany({
-        where: { id: ctx.parent.id },
-        data: { amount: { increment: ctx.event.basePaise } },
-      });
-      await tx.paymentLeg.update({
-        where: {
-          paymentId_source: { paymentId: ctx.parent.id, source: "WALLET" },
-        },
-        data: { amountPaise: { increment: ctx.event.basePaise } },
-      });
-      await releaseOverageHeldParentEarnings(
-        tx,
-        ctx.parent.id,
-        ctx.sidePaymentId,
-      );
-      return "restored";
-    }
+    await releaseOverageHeldParentEarnings(
+      tx,
+      ctx.parent.id,
+      ctx.sidePaymentId,
+    );
+    return "restored";
   }
 
   // Guarded parent-first write: the invoiced check rides the UPDATE's WHERE

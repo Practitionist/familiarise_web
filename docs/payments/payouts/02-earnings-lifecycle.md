@@ -15,14 +15,16 @@ stateDiagram-v2
     PENDING --> READY: Hold Period Expires
     PENDING --> REFUNDED: Payment Refunded
 
-    READY --> HELD: Dispute Opened
+    PENDING --> HELD: A hold is placed
+    READY --> HELD: A hold is placed
     READY --> BATCHED: Rolled into payout batch
 
     BATCHED --> PAID: Payout Completed (COMPLETED + UTR)
     BATCHED --> READY: Batch failed or rejected
 
-    HELD --> READY: Dispute Resolved (favor consultant)
-    HELD --> REFUNDED: Dispute Resolved (favor customer)
+    HELD --> PENDING: Last hold released (was PENDING)
+    HELD --> READY: Last hold released (was READY)
+    HELD --> REFUNDED: Fully reversed (refund or lost dispute)
 
     PAID --> [*]
     REFUNDED --> [*]
@@ -38,8 +40,8 @@ stateDiagram-v2
     end note
 
     note right of HELD
-        Awaiting dispute
-        resolution
+        At least one active
+        EarningsHold
     end note
 ```
 
@@ -51,7 +53,7 @@ stateDiagram-v2
 | ------------ | --------------------------------------------------------------------- | ----------------------- |
 | **PENDING**  | Earnings created, within hold period                                  | Wait for hold expiry    |
 | **READY**    | Hold period passed, eligible for payout                               | Include in batch        |
-| **HELD**     | Frozen due to dispute                                                 | Await resolution        |
+| **HELD**     | Frozen while at least one `EarningsHold` is active                    | Await each hold's owner |
 | **BATCHED**  | Rolled into a payout batch, but cash has not left yet                 | Await payout completion |
 | **PAID**     | Successfully paid to consultant (payout reached COMPLETED with a UTR) | Terminal state          |
 | **REFUNDED** | Payment was refunded                                                  | Terminal state          |
@@ -107,11 +109,11 @@ const earnings = {
 
 ## Hold Period Release
 
-The `release-earnings.ts` script runs **hourly** via GitHub Actions.
+The `release-earnings` sweep runs on the five-minute Netlify ticker **every 15 minutes** (`netlify/functions/cron-tick.mts`), not in GitHub Actions.
 
 ```mermaid
 flowchart TD
-    A[Cron Trigger: Hourly] --> B[Find PENDING earnings]
+    A[Ticker: every 15 minutes] --> B[Find PENDING earnings]
     B --> C{holdUntil < now?}
     C -->|Yes| D[Update to READY]
     C -->|No| E[Skip - still in hold]
@@ -175,6 +177,10 @@ gantt
 | **Class**        | 24 hours    | Similar to consultation               |
 | **Webinar**      | 48 hours    | Allow time for participant feedback   |
 | **Subscription** | 7 days      | Longer commitment, higher refund risk |
+
+### New experts wait 7 days longer
+
+`withNewExpertHold()` in `lib/payments/payouts/earnings-hold.ts` adds `NEW_EXPERT_EXTRA_HOLD_DAYS` (7) to `holdUntil` when the expert's first earning on a succeeded payment is under `NEW_EXPERT_TENURE_DAYS` (30) old or they have none, or when their lifetime consultant share net of refunds is under `NEW_EXPERT_LIFETIME_SHARE_PAISE` (₹50,000, 5,000,000 paise). The check is per consultant payee. Earnings whose hold is stamped later (subscription tranches, trial cancellations and the settlement of cancelled sessions) get the extra days through `stampConsultantHolds()`. For example, Hannah Anderson delivers a ₹1,000 consultation on Mon 26 Oct 2026, 10:00 to 11:00 IST. Her share is ₹800, and with no earlier earnings it turns READY on Tue 3 Nov 2026 at 11:00 IST instead of Tue 27 Oct 11:00 IST.
 
 ---
 
@@ -265,55 +271,51 @@ sequenceDiagram
 
 ---
 
-## Dispute Handling
+## Holds and Dispute Handling
 
-When a dispute is opened, earnings are frozen until resolution.
+An earning is `HELD` while it carries at least one active `EarningsHold`. A hold names a reason (`DISPUTE`, `MODERATION`, `OPERATOR` or `OVERAGE`) and a source reference, and each owner places and releases only its own hold. `lib/payments/payouts/earnings-holds.ts` (`placeEarningsHolds()` and `releaseEarningsHolds()`) is the only writer of the `HELD` status. The first hold stores the earning's prior status in `preHoldStatus`, and the last release restores it, so a PENDING earning that is held and released goes back to PENDING and a READY one back to READY.
+
+| Reason       | Placed when                               | Released when                                       |
+| ------------ | ----------------------------------------- | --------------------------------------------------- |
+| `DISPUTE`    | A dispute opens on the payment            | That dispute settles, whatever the verdict          |
+| `MODERATION` | The consultant is banned                  | An admin releases it                                |
+| `OPERATOR`   | An admin holds the earning                | An admin releases it                                |
+| `OVERAGE`    | A member overage on the payment is unpaid | The overage is paid, reversed or settled to the org |
 
 ```mermaid
 flowchart TD
-    A[Dispute Opened] --> B{Earnings Status?}
-    B -->|PENDING| C[Hold in PENDING]
-    B -->|READY| D[Move to HELD]
+    A[Dispute opened] --> P{A payout already batched this payment?}
+    P -->|PENDING or APPROVED| Q[Cancel that payout by CAS, its other earnings return to READY]
+    P -->|No| H
+    Q --> H[Place a DISPUTE hold on the unpaid earnings]
+    H --> V{Verdict}
+    V -->|Won or warning closed| W[Release this dispute's hold only]
+    V -->|Lost or charge refunded| L[Reverse amount_deducted / payment.amount of each share, then release]
+    V -->|Closed| C{amount_deducted > 0?}
+    C -->|Yes| L
+    C -->|No| W
+    W --> R[Earning returns to its prior status]
+    L --> M[Remainder returns to its prior status and stays payable; a share fully reversed is REFUNDED]
 
-    D --> E{Resolution}
-    E -->|Consultant Wins| F[Return to READY]
-    E -->|Customer Wins| G[Mark as REFUNDED]
-
-    F --> H[Continue to Payout]
-    G --> I[No Payout]
-
-    style D fill:#f59e0b,color:#fff
-    style F fill:#10b981,color:#fff
-    style G fill:#ef4444,color:#fff
+    style H fill:#f59e0b,color:#fff
+    style W fill:#10b981,color:#fff
+    style L fill:#ef4444,color:#fff
 ```
 
-### Dispute Functions
+### Dispute settlement functions
 
-The freeze and release around a dispute are no longer named service functions. Both transitions are inline CAS `updateMany` writes inside the dispute webhook handler in `app/api/webhooks/utils.ts`, run directly against `ConsultantEarnings` and `OrganizationEarnings`:
+The webhook (`handleDisputeUpdated()`) and the `reconcile-disputes` poll both settle a verdict through `settleDisputeVerdict()` in `app/api/webhooks/utils.ts`, which calls `settleWonDispute()`, `settleLostDispute()` or `settleClosedDispute()`. The poll adopts the gateway status and settles in one Serializable transaction, so a later webhook replay finds nothing left to do.
 
 ```typescript
-// Freeze earnings on dispute creation (inline in app/api/webhooks/utils.ts)
-await tx.consultantEarnings.updateMany({
-  where: { paymentId, status: "READY" },
-  data: { status: "HELD", preDisputeStatus: "READY" },
-});
-// Status: READY → HELD
+// Lost: reverse the lost fraction of every share, then release this dispute's hold.
+// prorationFactor = min(amount_deducted / payment.amount, 1); each share is floored.
+await settleLostDispute(tx, dispute, amountDeductedPaise);
 
-// Resolve in consultant's favor (inline in app/api/webhooks/utils.ts)
-await tx.consultantEarnings.updateMany({
-  where: { paymentId, status: "HELD" },
-  data: { status: "READY" },
-});
-// Status: HELD → READY
-
-// Resolve in customer's favor (standard)
-await refundEarnings(paymentId);
-// Status: HELD → REFUNDED
-
-// Lost dispute on already-PAID earnings (Mar 2026)
-await refundEarnings(paymentId, { forceRefund: true });
-// Writes a negative isReversal TDSRecord via recordTdsReversal (capped, #813), decrements totalRevenue
+// Razorpay "closed": a loss for what it deducted, otherwise a release.
+await settleClosedDispute(tx, dispute, amountDeductedPaise);
 ```
+
+For example, Charlotte Brown pays ₹1,180 (118,000 paise) for Hannah Anderson's ₹1,000 consultation, and Hannah's share is ₹800 (80,000 paise). A dispute is opened and the earning is held. Razorpay reports it lost with `amount_deducted` of ₹590 (59,000 paise). The factor is 0.5, so ₹400 (40,000 paise) of the share is reversed (`refundedShareAmount` = 40,000), the hold is released, and the other ₹400 returns to its prior status and stays payable. If the earning had already been paid on a completed payout, the ₹400 less the TDS fraction of that payout becomes a clawback receivable, and the withheld tax is reversed through `recordTdsReversal`.
 
 ---
 
@@ -384,6 +386,8 @@ model ConsultantEarnings {
   status               EarningStatus      @default(PENDING)
   holdUntil            DateTime           // When PENDING → READY
   paidAt               DateTime?          // When status became PAID
+  preHoldStatus        EarningStatus?     // Status to restore when the last hold is released (column preDisputeStatus)
+  releasedFromPayoutId String?            // The failed payout that last released this earning
 
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
@@ -392,7 +396,7 @@ model ConsultantEarnings {
 enum EarningStatus {
   PENDING   // Within hold period
   READY     // Eligible for payout
-  HELD      // Frozen due to dispute
+  HELD      // At least one active EarningsHold (dispute, moderation, operator or overage)
   BATCHED   // Rolled into a payout batch; cash has not been disbursed yet
   PAID      // Payout completed (reached COMPLETED with a UTR)
   REFUNDED  // Payment was refunded

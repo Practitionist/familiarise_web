@@ -1,8 +1,9 @@
 /**
  * Cron: generate BillingSubscription-driven invoices — REAL (Issue #681).
  *
- * Schedule: daily at 01:00 UTC (06:30 IST).
- * Scope: every `BillingSubscription` with `nextInvoiceDate <= now`.
+ * Schedule: the ticker's daily window from 03:00 UTC, in `limit`-sized slices.
+ * Scope: every `BillingSubscription` with `nextInvoiceDate <= windowStart`
+ * (or now for a manual run), so a later slice never bills a newly due cycle.
  *
  * Concurrency:
  *   Each due subscription is handled inside a Serializable `$transaction`.
@@ -27,27 +28,20 @@
  */
 
 import prisma from "@/lib/prisma";
-import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { postInvoiceIssuedJournal } from "@/lib/payments/billing/org-invoice-journal";
+import { notifyIssuedOrgInvoice } from "@/lib/payments/billing/create-org-invoice";
+import { drawCoveringPurchaseOrder } from "@/lib/payments/billing/purchase-order-draw";
 import { supplierStateCode } from "@/lib/payments/billing/consumer-invoice";
 import { BILLABLE_ORG_STATUSES } from "@/lib/enterprise/org-status";
-import {
-  notifyOrgLicenseRenewalUpcoming,
-  notifyOrgInvoiceIssued,
-} from "@/lib/novu/org-workflows";
-import {
-  sendOrgBillingEmail,
-  sendOrgOperationalEmail,
-} from "@/lib/email/senders/money";
+import { notifyOrgLicenseRenewalUpcoming } from "@/lib/novu/org-workflows";
+import { sendOrgOperationalEmail } from "@/lib/email/senders/money";
 import { getAppUrl } from "@/lib/url";
 import { Currency, OrgInvoiceStatus, Prisma } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import * as Sentry from "@sentry/nextjs";
-import { runJob } from "@/lib/observability/job-sentry";
-import { logMoneyFlags } from "@/lib/feature-flags";
 import { reportSentryError } from "@/lib/observability/report";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 
@@ -55,18 +49,37 @@ import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 // per cycle (gated by BillingSubscription.renewalReminderSentAt).
 const RENEWAL_REMINDER_WINDOW_DAYS = 7;
 
-export async function runGenerateSubscriptionInvoices(): Promise<{
+export interface GenerateSubscriptionInvoicesResult {
   generated: number;
   skipped: number;
+  failed: number;
   remindersSent: number;
-}> {
-  await abortIfMaintenance("generate-subscription-invoices");
+  remaining: number;
+}
+
+/** `limit` caps the invoice claims attempted and, separately, the reminders sent. */
+export async function runGenerateSubscriptionInvoices(opts: {
+  limit?: number;
+  windowStart?: Date;
+}): Promise<GenerateSubscriptionInvoicesResult> {
+  return withCronLock(
+    "generate-subscription-invoices",
+    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
+    () => generateSubscriptionInvoices(opts),
+  );
+}
+
+async function generateSubscriptionInvoices(opts: {
+  limit?: number;
+  windowStart?: Date;
+}): Promise<GenerateSubscriptionInvoicesResult> {
   const now = new Date();
-  const remindersSent = await sendRenewalReminders(now);
+  const asOf = opts.windowStart ?? now;
+  const remindersSent = await sendRenewalReminders(now, opts.limit);
 
   const dueSubs = await prisma.billingSubscription.findMany({
     where: {
-      nextInvoiceDate: { lte: now },
+      nextInvoiceDate: { lte: asOf },
       contract: {
         organization: { status: { in: BILLABLE_ORG_STATUSES } },
         // E2E-audit P0 fix — only bill contracts that are ACTIVE and within
@@ -87,6 +100,7 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
               name: true,
               slug: true,
               invoiceNumberPrefix: true,
+              requiresPO: true,
               taxInfo: { select: { gstStateCode: true, gstin: true } },
             },
           },
@@ -94,16 +108,23 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
       },
       billingAccount: true,
     },
+    orderBy: { nextInvoiceDate: "asc" },
   });
 
   let generated = 0;
   let skipped = 0;
+  const heldForPo: { organizationId: string; invoiceNumber: string }[] = [];
+  let failed = 0;
+  let attempted = 0;
+  let visited = 0;
 
   // #1447 — GSTIN-first supplier state, resolved once; a GSTIN/env mismatch
   // throws here so no invoice in the run is issued under an ambiguous state.
   const supplierState = supplierStateCode();
 
   for (const sub of dueSubs) {
+    if (opts.limit !== undefined && attempted >= opts.limit) break;
+    visited += 1;
     const subtotal =
       sub.model === "FLAT_FEE"
         ? (sub.flatFeePaise ?? 0)
@@ -139,6 +160,7 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
     // been won and the counter reserved.
     let competingInvoiceNumber: string | undefined;
 
+    attempted += 1;
     try {
       const result = await prisma.$transaction(
         async (tx) => {
@@ -147,7 +169,7 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
           const claimed = await tx.billingSubscription.updateMany({
             where: {
               id: sub.id,
-              nextInvoiceDate: { lte: now },
+              nextInvoiceDate: { lte: asOf },
               // Re-checked AT CLAIM TIME: the contract may have terminated
               // (or its term ended) between the cohort read and this write.
               contract: {
@@ -181,13 +203,26 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
           );
           competingInvoiceNumber = invoiceNumber;
 
+          // An org that requires a PO gets a DRAFT for an admin to issue with one.
+          const purchaseOrderId = sub.contract.organization.requiresPO
+            ? await drawCoveringPurchaseOrder(tx, {
+                organizationId: sub.contract.organization.id,
+                currency: Currency.INR,
+                amountPaise: gst.totalPaise,
+                now,
+              })
+            : null;
+          const issue =
+            !sub.contract.organization.requiresPO || purchaseOrderId !== null;
+
           const invoice = await tx.organizationInvoice.create({
             data: {
               billingAccountId: sub.billingAccountId,
               organizationId: sub.contract.organization.id,
+              purchaseOrderId,
               invoiceNumber,
               fiscalYear,
-              status: OrgInvoiceStatus.ISSUED,
+              status: issue ? OrgInvoiceStatus.ISSUED : OrgInvoiceStatus.DRAFT,
               displayCurrency: Currency.INR,
               inrEquivalentPaise: gst.totalPaise,
               subtotalPaise: gst.subtotalPaise,
@@ -216,13 +251,22 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
                   },
                 ],
               },
-              issuedAt: now,
+              issuedAt: issue ? now : null,
               dueDate,
               billingCycleStart: sub.currentCycleStart,
               billingCycleEnd: sub.currentCycleEnd,
               autoGenerated: true,
             },
           });
+          if (!issue) {
+            return {
+              claimed: true as const,
+              issued: false as const,
+              invoiceId: invoice.id,
+              invoiceNumber,
+              totalPaise: gst.totalPaise,
+            };
+          }
           // A licence fee is billed once, so its GST is booked here and nowhere else.
           await postInvoiceIssuedJournal(tx, invoice.id);
 
@@ -236,13 +280,14 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
               totalPaise: gst.totalPaise,
               displayCurrency: Currency.INR,
               dueDate: dueDate.toISOString(),
-              purchaseOrderId: null,
+              purchaseOrderId,
               contractId: sub.contract.id,
             },
           });
 
           return {
             claimed: true as const,
+            issued: true as const,
             invoiceId: invoice.id,
             invoiceNumber,
             totalPaise: gst.totalPaise,
@@ -253,58 +298,26 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
         },
       );
 
-      if (result.claimed) {
+      if (result.claimed && !result.issued) {
         generated++;
-        try {
-          const origin = getAppUrl();
-          const orgId = sub.contract.organization.id;
-          const dashboardUrl = `${origin}/dashboard/organization/${orgId}/billing`;
-          const ownerRows = prisma.membership?.findMany
-            ? await prisma.membership.findMany({
-                where: {
-                  organizationId: orgId,
-                  status: "ACTIVE",
-                  role: "OWNER",
-                },
-                select: { userId: true },
-              })
-            : [];
-          const ownerUserIds = ownerRows.map((r) => r.userId);
-          await Promise.all([
-            Promise.resolve(
-              notifyOrgInvoiceIssued(orgId, {
-                invoiceNumber: result.invoiceNumber,
-                orgName: sub.contract.organization.name,
-                totalPaise: result.totalPaise,
-                currency: Currency.INR,
-                dueDate: dueDate.toISOString(),
-                dashboardUrl,
-                pdfUrl: `${origin}/api/organizations/${orgId}/billing-account/invoices/${result.invoiceId}/pdf`,
-              }),
-            ).catch((err) => {
-              console.error("[cron] notifyOrgInvoiceIssued failed:", err);
-              return [];
-            }),
-            Promise.resolve(
-              sendOrgBillingEmail({
-                recipientUserIds: ownerUserIds,
-                organizationId: orgId,
-                orgName: sub.contract.organization.name,
-                kind: "INVOICE_ISSUED",
-                amountPaise: result.totalPaise,
-                currency: Currency.INR,
-                invoiceId: result.invoiceId,
-                invoiceNumber: result.invoiceNumber,
-                dueDate,
-                dashboardUrl,
-              }),
-            ).catch((err) => {
-              console.error("[cron] sendOrgBillingEmail failed:", err);
-            }),
-          ]);
-        } catch (err) {
-          console.error("[cron] notifyOrgInvoiceIssued failed:", err);
-        }
+        heldForPo.push({
+          organizationId: sub.contract.organization.id,
+          invoiceNumber: result.invoiceNumber,
+        });
+      } else if (result.claimed) {
+        generated++;
+        await notifyIssuedOrgInvoice(
+          getAppUrl(),
+          sub.contract.organization.id,
+          {
+            invoiceId: result.invoiceId,
+            invoiceNumber: result.invoiceNumber,
+            totalPaise: result.totalPaise,
+            currency: Currency.INR,
+            dueDate,
+            orgName: sub.contract.organization.name,
+          },
+        );
       } else {
         console.log(
           `[cron] Subscription ${sub.id} already claimed by another worker, skipping`,
@@ -312,68 +325,88 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
         skipped++;
       }
     } catch (err) {
-      // Unique-number collision (two parallel workers computed the same
-      // invoiceNumber while their claim-UPDATE was still in flight) is
-      // the one other failure mode worth handling gracefully. The cron
-      // is idempotent on its next run.
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
-      ) {
-        console.warn(
-          `[cron] Duplicate invoiceNumber for subscription ${sub.id}; will retry next run`,
-        );
-        // #1401 — no number burns: the counter reservation runs inside this
-        // same Serializable transaction, so the collision rolls the sequence
-        // back with it and the next run re-issues cleanly. What was missing is
-        // that nobody heard about it — a console.warn in a cron is not an
-        // alert, and a repeating collision means the claim UPDATE has stopped
-        // serialising the workers, which is worth waking someone for. Alerting
-        // only; the skip-and-retry behaviour is unchanged.
-        reportSentryError(err, {
-          subsystem: "jobs",
-          op: "generate-subscription-invoices",
-          level: "error",
-          extra: { subscriptionId: sub.id, competingInvoiceNumber },
-        });
-        // One capture, not two: recordSystemError escalates to Sentry itself,
-        // and its escalation drops `context`, so the collision extras would
-        // only survive on the reportSentryError event above. The durable row
-        // is written through recordSystemEvent directly instead. Awaited: the
-        // insert rides this job's Prisma client, and a fire-and-forget one
-        // loses the audit row to the `$disconnect()` at the end of `main`.
-        await recordSystemEventSafe({
-          organizationId: sub.contract.organization.id,
-          category: "INVOICE",
-          severity: "ERROR",
-          message: `Duplicate invoice number on subscription ${sub.id}: ${err.message}`,
-          context: {
-            subscriptionId: sub.id,
-            competingInvoiceNumber,
-            errorMessage: err.message,
-          },
-        });
-        skipped++;
-        continue;
-      }
-      Sentry.captureException(err, {
-        tags: { subsystem: "jobs", job: "generate-subscription-invoices" },
-      });
-      console.error(
-        `[cron] Failed to generate invoice for subscription ${sub.id}:`,
-        err,
-      );
-      skipped++;
+      failed++;
+      await reportSubscriptionFailure(sub, err, competingInvoiceNumber);
     }
   }
 
+  // One row per run; ops issues each DRAFT with a PO from the admin console.
+  if (heldForPo.length > 0) {
+    await recordSystemEventSafe({
+      category: "INVOICE",
+      severity: "WARN",
+      message: `SUBSCRIPTION_PO_NOT_COVERED: ${heldForPo.length} subscription invoice(s) held as DRAFT because no active purchase order covers them`,
+      context: { invoices: heldForPo.slice(0, 50) },
+    });
+  }
+
   console.log(
-    `[cron] generate-subscription-invoices: ${generated} invoices, ${skipped} skipped, ${remindersSent} renewal reminders`,
+    `[cron] generate-subscription-invoices: ${generated} invoices, ${skipped} skipped, ${failed} failed, ${remindersSent} renewal reminders`,
   );
-  return { generated, skipped, remindersSent };
+  return {
+    generated,
+    skipped,
+    failed,
+    remindersSent,
+    remaining: dueSubs.length - visited,
+  };
 }
 
-async function sendRenewalReminders(now: Date): Promise<number> {
+/**
+ * Unique-number collision (two parallel workers computed the same invoiceNumber
+ * while their claim-UPDATE was still in flight) is the one failure worth an
+ * alert of its own; the cron is idempotent on its next run.
+ */
+async function reportSubscriptionFailure(
+  sub: { id: string; contract: { organization: { id: string } } },
+  err: unknown,
+  competingInvoiceNumber: string | undefined,
+): Promise<void> {
+  if (
+    err instanceof Prisma.PrismaClientKnownRequestError &&
+    err.code === "P2002"
+  ) {
+    console.warn(
+      `[cron] Duplicate invoiceNumber for subscription ${sub.id}; will retry next run`,
+    );
+    // #1401 — no number burns: the counter reservation runs inside the same
+    // Serializable transaction, so the collision rolls the sequence back with
+    // it. A repeating collision means the claim UPDATE stopped serialising the
+    // workers, which is worth waking someone for.
+    reportSentryError(err, {
+      subsystem: "jobs",
+      op: "generate-subscription-invoices",
+      level: "error",
+      extra: { subscriptionId: sub.id, competingInvoiceNumber },
+    });
+    // One capture, not two: the durable row goes through recordSystemEvent,
+    // awaited so `$disconnect()` at the end of `main` cannot lose it.
+    await recordSystemEventSafe({
+      organizationId: sub.contract.organization.id,
+      category: "INVOICE",
+      severity: "ERROR",
+      message: `Duplicate invoice number on subscription ${sub.id}: ${err.message}`,
+      context: {
+        subscriptionId: sub.id,
+        competingInvoiceNumber,
+        errorMessage: err.message,
+      },
+    });
+    return;
+  }
+  Sentry.captureException(err, {
+    tags: { subsystem: "jobs", job: "generate-subscription-invoices" },
+  });
+  console.error(
+    `[cron] Failed to generate invoice for subscription ${sub.id}:`,
+    err,
+  );
+}
+
+async function sendRenewalReminders(
+  now: Date,
+  limit: number | undefined,
+): Promise<number> {
   const horizon = new Date(now);
   horizon.setDate(horizon.getDate() + RENEWAL_REMINDER_WINDOW_DAYS);
 
@@ -392,6 +425,8 @@ async function sendRenewalReminders(now: Date): Promise<number> {
         },
       },
     },
+    orderBy: { nextInvoiceDate: "asc" },
+    take: limit,
   });
 
   let sent = 0;
@@ -473,28 +508,4 @@ async function sendRenewalReminders(now: Date): Promise<number> {
     }
   }
   return sent;
-}
-
-async function main() {
-  console.log(
-    `[generate-subscription-invoices] Starting at ${new Date().toISOString()}`,
-  );
-  Sentry.logger.info("job:generate-subscription-invoices started");
-  const result = await withCronLock(
-    "generate-subscription-invoices",
-    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
-    () => runGenerateSubscriptionInvoices(),
-  );
-  Sentry.logger.info("job:generate-subscription-invoices finished", {
-    generated: result?.generated,
-    skipped: result?.skipped,
-    remindersSent: result?.remindersSent,
-  });
-}
-
-if (require.main === module) {
-  runJob("generate-subscription-invoices", () => {
-    logMoneyFlags("generate-subscription-invoices");
-    return main().finally(() => prisma.$disconnect());
-  });
 }

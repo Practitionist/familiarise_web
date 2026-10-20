@@ -14,6 +14,11 @@ import {
   isRazorpayPayoutsConfigured,
 } from "@/lib/payments/payouts";
 import { requireFreshSession } from "@/lib/auth/step-up";
+import {
+  consultantDefaultSwitchStamp,
+  consultantPayoutFreezeUrl,
+  emailPayoutAccountChanged,
+} from "@/lib/payments/payouts/payout-account-change";
 
 // Validation schemas
 const createBankAccountSchema = z.object({
@@ -198,6 +203,9 @@ export async function POST(req: NextRequest) {
 
     // Set as default if first account
     const isFirst = consultantProfile.payoutAccounts.length === 0;
+    const stamp = isFirst
+      ? await consultantDefaultSwitchStamp(prisma, consultantProfile.id, null)
+      : {};
 
     // Create payout account record
     const payoutAccount = await prisma.payoutAccount.create({
@@ -215,8 +223,15 @@ export async function POST(req: NextRequest) {
         isDefault: isFirst,
         // False until a penny-drop returns "valid"; the PATCH reverify action retries.
         isVerified: pennyDropVerified,
+        ...stamp,
       },
     });
+    if (stamp.payoutsAllowedAfter) {
+      await emailPayoutAccountChanged(
+        [session.user.id],
+        consultantPayoutFreezeUrl(),
+      );
+    }
 
     return NextResponse.json({
       success: true,

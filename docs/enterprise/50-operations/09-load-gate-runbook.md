@@ -118,7 +118,7 @@ numbers are recorded.
 
 ### Seed users
 
-The seed suite's password is `SeedPass123!`. The harness needs three kinds of
+The harness takes the seed suite's password from `LOAD_GATE_BUYER_PASSWORD` (see `prisma/seedFiles/1a-create-users.ts` for the seed default; operator accounts use `SEED_OPERATOR_PASSWORD` from your local `.env`, ask the lead). The harness needs three kinds of
 credential:
 
 - **Buyers.** The accounts that check out, cancel and reschedule. More is
@@ -206,7 +206,7 @@ These must exist as repository secrets before the workflow can run.
 | `LOAD_GATE_AUTH_ORIGIN`      | Yes when the target is a preview | The production URL, which is what `BETTER_AUTH_TRUSTED_ORIGINS` contains.                                                                                                                                  |
 | `LOAD_GATE_BUYER_EMAILS`     | Fallback                         | Comma-separated seed e-mails, used only when no cookies are supplied.                                                                                                                                      |
 | `LOAD_GATE_ORG_ADMIN_EMAILS` | Fallback                         | The same for org admins.                                                                                                                                                                                   |
-| `LOAD_GATE_BUYER_PASSWORD`   | Fallback                         | Defaults to `SeedPass123!` when unset.                                                                                                                                                                     |
+| `LOAD_GATE_BUYER_PASSWORD`   | Fallback                         | Empty when unset; set it to the seed password.                                                                                                                                                             |
 
 ## How to dispatch
 

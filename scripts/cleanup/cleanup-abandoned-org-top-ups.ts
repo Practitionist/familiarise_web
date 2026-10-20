@@ -1,38 +1,35 @@
 /**
  * Abandoned Organization Wallet Top-Up Cleanup — Core Logic
  *
- * Reaps pending `WalletTopUp` rows that never received a
- * webhook confirmation within the grace window. These occur when:
- *   - The user closes the Razorpay popup without completing payment.
- *   - The webhook never fires (gateway outage, our webhook endpoint
- *     returning 5xx past retry budget).
- *   - The top-up route created the placeholder but the Razorpay order
- *     failed afterwards and the rollback DELETE didn't commit.
+ * Settles pending `WalletTopUp` rows older than the grace window against the
+ * gateway: a captured order is handed to `confirmTopUp`, an order holding no
+ * payment is hard-deleted (`providerOrderId @unique` would otherwise block a
+ * retry under the same client key), and anything else is kept.
  *
- * Invariant for a pending top-up:
- *   - `status = PENDING` (never confirmed by the webhook)
- *   - `providerPaymentId IS NULL`
- *   - `createdAt < now - GRACE_HOURS`
+ * Never deletes a top-up whose gateway order is not proven empty: a row with no
+ * minted order id is never a candidate, and a gateway failure skips the row.
  *
- * We hard-delete (not soft-delete) because `WalletTopUp.providerOrderId`
- * is `@unique` — leaving a stale row would block a legitimate retry that
- * reuses the same client idempotency key.
- *
- * This module exports the core cleanup function. It is imported by:
- *   - jobs/cleanup/cleanup-abandoned-org-top-ups.ts (GitHub Actions wrapper)
- *   - app/api/cleanup/abandoned-org-top-ups/route.ts (HTTP endpoint)
- *
- * Schedule: Daily at 02:00 UTC (must NOT overlap generate-subscription-invoices at 01:00 UTC)
+ * Reached through the `abandoned-org-top-ups` cleanup twin, which the ticker
+ * runs in its daily window from 03:00 UTC.
  */
 
 import prisma from "../../lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import {
+  confirmTopUp,
+  parseMintedOrderId,
+} from "@/lib/api/organizations/wallet";
+import { readRazorpayOrderHolding } from "@/lib/payments/core/razorpay";
 
 const DEFAULT_GRACE_HOURS = 48; // exceeds Razorpay 24h webhook exponential retry SLA
 
 export interface AbandonedOrgTopUpCleanupResult {
   success: boolean;
   reaped: number;
+  /** Captured at the gateway and credited by this run. */
+  confirmed: number;
+  /** Left in place: a payment still live at the gateway, or a row that changed underneath. */
+  kept: number;
   graceHours: number;
   cutoff: string;
   errors: string[];
@@ -40,15 +37,16 @@ export interface AbandonedOrgTopUpCleanupResult {
 }
 
 export interface AbandonedOrgTopUpCleanupOptions {
-  /** Override the grace window (hours). Defaults to 6h. */
+  /** Override the grace window (hours). Defaults to 48h. */
   graceHours?: number;
+  /** Oldest-first cap on the placeholders one run settles. */
+  limit?: number;
 }
 
 /**
- * Reap pending wallet top-up placeholders older than the grace window.
+ * Settle pending wallet top-up placeholders older than the grace window.
  */
-// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
-// mutual exclusion; fail-closed: money state must not double-run unlocked.
+// Locked at the core so every entry shares one mutual exclusion; fail-closed.
 export async function cleanupAbandonedOrgTopUps(
   options: AbandonedOrgTopUpCleanupOptions = {},
 ): Promise<AbandonedOrgTopUpCleanupResult> {
@@ -59,96 +57,80 @@ export async function cleanupAbandonedOrgTopUps(
   );
 }
 
+type Outcome = "reaped" | "confirmed" | "kept";
+
+async function settleOne(c: {
+  id: string;
+  providerOrderId: string;
+  amountPaise: number;
+  notes: string | null;
+}): Promise<Outcome> {
+  const orderId = parseMintedOrderId(c.notes);
+  if (!orderId) return "kept";
+  const holding = await readRazorpayOrderHolding(orderId);
+  if (holding.kind === "captured") {
+    const { confirmed } = await confirmTopUp(prisma, {
+      providerOrderId: c.providerOrderId,
+      providerPaymentId: holding.paymentId,
+      amountPaise: holding.amountPaise,
+    });
+    return confirmed ? "confirmed" : "kept";
+  }
+  if (holding.kind === "live") return "kept";
+  // The predicate rides the DELETE so a webhook confirming in between wins.
+  const deleted = await prisma.walletTopUp.deleteMany({
+    where: {
+      id: c.id,
+      status: "PENDING",
+      providerPaymentId: null,
+      capturedAt: null,
+    },
+  });
+  return deleted.count === 1 ? "reaped" : "kept";
+}
+
 async function cleanupAbandonedOrgTopUpsUnlocked(
   options: AbandonedOrgTopUpCleanupOptions = {},
 ): Promise<AbandonedOrgTopUpCleanupResult> {
   const graceHours = options.graceHours ?? DEFAULT_GRACE_HOURS;
   const cutoff = new Date(Date.now() - graceHours * 60 * 60 * 1000);
   const errors: string[] = [];
-  let reaped = 0;
-
-  console.log("🧹 Starting abandoned org wallet top-up cleanup...");
-  console.log(
-    `   Cutoff: ${cutoff.toISOString()} (${graceHours}h grace window)`,
-  );
+  const counts: Record<Outcome, number> = { reaped: 0, confirmed: 0, kept: 0 };
 
   try {
-    // Identify candidates first so we can log per-row context for ops.
     const candidates = await prisma.walletTopUp.findMany({
       where: {
         status: "PENDING",
         providerPaymentId: null,
-        // #785 — never reap a gateway-captured top-up whose confirm/ledger post
-        // rolled back (capturedAt set, still PENDING); the
-        // sweep-orphaned-topup-captures reconciler re-credits those.
+        // A captured row whose confirm rolled back belongs to sweep-orphaned-topup-captures.
         capturedAt: null,
         createdAt: { lt: cutoff },
+        // Only a minted order can be proven empty; the rest never leave the table.
+        notes: { contains: "razorpay_order=order_" },
       },
+      orderBy: { createdAt: "asc" },
+      take: options.limit,
       select: {
         id: true,
         billingAccountId: true,
         providerOrderId: true,
-        createdAt: true,
+        amountPaise: true,
+        notes: true,
       },
     });
 
-    if (candidates.length === 0) {
-      console.log("   No pending top-ups to reap.");
-      return {
-        success: true,
-        reaped: 0,
-        graceHours,
-        cutoff: cutoff.toISOString(),
-        errors,
-        timestamp: new Date().toISOString(),
-      };
-    }
-
-    console.log(`   Found ${candidates.length} candidates to reap.`);
-
-    // Delete in a single statement so the whole batch commits or none.
-    // We cannot soft-delete — `providerOrderId @unique` would keep the slot
-    // reserved and block a legitimate retry with the same client idempotency key.
-    // #776 — re-assert the PENDING/unpaid predicate in the DELETE itself: a
-    // webhook can confirm a candidate (PENDING→CONFIRMED, providerPaymentId set,
-    // wallet credited + ledger posted) between the findMany and here. Filtering
-    // by id alone would then hard-delete a CONFIRMED, paid top-up — losing the
-    // org's money with no audit trail (deletion-policy: a confirmed top-up is
-    // never reaped).
     for (const c of candidates) {
-      console.log(
-        `   Reap candidate WalletTopUp ${c.id} (billingAccount ${c.billingAccountId}, order ${c.providerOrderId}, created ${c.createdAt.toISOString()})`,
-      );
-    }
-    const deleted = await prisma.walletTopUp.deleteMany({
-      where: {
-        id: { in: candidates.map((c) => c.id) },
-        status: "PENDING",
-        providerPaymentId: null,
-        capturedAt: null,
-      },
-    });
-    reaped = deleted.count;
-    // A deleted placeholder is otherwise forensically invisible (hard-delete
-    // frees the @unique providerOrderId slot). Per-row "reaped" logs fire
-    // only when every candidate was actually deleted: a webhook can confirm
-    // a candidate between the read and the conditional delete, and logging
-    // that row as reaped would forge an audit record for a paid top-up.
-    if (reaped === candidates.length) {
-      for (const c of candidates) {
+      try {
+        const outcome = await settleOne(c);
+        counts[outcome] += 1;
         console.log(
-          `   Reaped WalletTopUp ${c.id} (order ${c.providerOrderId})`,
+          `   WalletTopUp ${c.id} (billingAccount ${c.billingAccountId}, order ${c.providerOrderId}): ${outcome}`,
         );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`${c.providerOrderId}: ${message}`);
       }
-    } else {
-      console.log(
-        `   Reaped ${reaped} of ${candidates.length} candidates — the remaining candidates changed or were removed concurrently`,
-      );
     }
-
-    console.log(
-      `   Reaped ${reaped} pending WalletTopUp rows older than ${graceHours}h`,
-    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     errors.push(`Cleanup failed: ${message}`);
@@ -157,7 +139,7 @@ async function cleanupAbandonedOrgTopUpsUnlocked(
 
   return {
     success: errors.length === 0,
-    reaped,
+    ...counts,
     graceHours,
     cutoff: cutoff.toISOString(),
     errors,

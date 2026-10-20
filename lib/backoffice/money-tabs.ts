@@ -16,8 +16,10 @@ export type MoneyTabKey =
   | "refunds"
   | "disputes"
   | "payouts"
+  | "org-payouts"
   | "earnings"
   | "reconcile"
+  | "approvals"
   | "incidents"
   | "audit";
 
@@ -54,6 +56,14 @@ export const MONEY_TABS: readonly MoneyTab[] = [
     surface: "payouts.read",
   },
   {
+    key: "org-payouts",
+    label: "Org payouts",
+    description:
+      "Organisation payouts, with platform co-approval, hold and release.",
+    // The section is the approve/hold/release doors, so admin.
+    surface: "payouts.manage",
+  },
+  {
     key: "earnings",
     label: "Earnings",
     description: "Consultant earnings, with hold and release.",
@@ -66,6 +76,13 @@ export const MONEY_TABS: readonly MoneyTab[] = [
     label: "Reconcile",
     description: "Run the reconcile jobs now and see when each last ran.",
     surface: "payouts.manage",
+  },
+  {
+    key: "approvals",
+    label: "Approvals",
+    description:
+      "Money actions above ₹25,000 waiting for a second admin's approval.",
+    surface: "payments.manage",
   },
   {
     key: "incidents",

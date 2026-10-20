@@ -1,6 +1,6 @@
 /**
  * Issue-time journal for an org invoice whose GST no booking journal posted:
- * `Dr ORG_RECEIVABLE / Cr PLATFORM_FEE / Cr GST_PAYABLE`, reversed exactly on void.
+ * `Dr ORG_RECEIVABLE / Cr PLATFORM_FEE / Cr GST_PAYABLE`.
  * An invoice that bills bookings (its rollup stamped `billedPayments`) never
  * posts here — those bookings already credited GST_PAYABLE.
  */
@@ -77,16 +77,58 @@ export async function postInvoiceIssuedJournal(
   return "POSTED";
 }
 
-/** Post the exact mirror of `invoice-issued:<id>`; a no-op when the invoice never posted one. */
-export function postInvoiceVoidedJournal(
+/**
+ * A forgiven void: clears the receivable the invoice still carries, against the
+ * void credit note's GST and fee income for the rest. With no earlier credit and
+ * a tax-bearing note this is the exact mirror of the issue journal.
+ */
+export async function postInvoiceVoidedJournal(
   tx: Tx,
-  invoiceId: string,
-): Promise<boolean> {
-  return postJournalMirror(tx, {
-    sourceKey: invoiceIssuedKey(invoiceId),
-    idempotencyKey: invoiceVoidedKey(invoiceId),
-    invoiceId,
-    description: "Org invoice voided: reverses its issue journal",
+  params: {
+    invoiceId: string;
+    organizationId: string;
+    receivablePaise: number;
+    creditNoteId: string;
+  },
+): Promise<void> {
+  const note = await tx.creditNote.findUniqueOrThrow({
+    where: { id: params.creditNoteId },
+    select: { igstPaise: true, cgstPaise: true, sgstPaise: true },
+  });
+  const gstPaise = Math.min(
+    params.receivablePaise,
+    note.igstPaise + note.cgstPaise + note.sgstPaise,
+  );
+  const postings: Posting[] = [
+    {
+      account: {
+        kind: "ORG_RECEIVABLE",
+        organizationId: params.organizationId,
+      },
+      direction: "CREDIT",
+      amountPaise: params.receivablePaise,
+    },
+  ];
+  if (gstPaise > 0) {
+    postings.push({
+      account: { kind: "GST_PAYABLE" },
+      direction: "DEBIT",
+      amountPaise: gstPaise,
+    });
+  }
+  if (params.receivablePaise - gstPaise > 0) {
+    postings.push({
+      account: { kind: "PLATFORM_FEE" },
+      direction: "DEBIT",
+      amountPaise: params.receivablePaise - gstPaise,
+    });
+  }
+  await postLedgerTxn(tx, {
+    idempotencyKey: invoiceVoidedKey(params.invoiceId),
+    kind: "INVOICE_ISSUED",
+    invoiceId: params.invoiceId,
+    description: "Org invoice voided: receivable written off by credit note",
+    postings,
   });
 }
 

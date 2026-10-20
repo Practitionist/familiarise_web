@@ -2,8 +2,9 @@
  * Cron: transition `Contract.status` from `ACTIVE` to `EXPIRED` for any
  * contract whose `effectiveTo` has passed.
  *
- * Schedule: daily at 03:10 UTC / 08:40 IST (`.github/workflows/expire-contracts.yml`, #709 minute map).
- * Quiet slot — does not race with the 00:00 / 01:00 / 02:00 cron clusters.
+ * Schedule: the ticker's daily window from 03:00 UTC, on a slot after
+ * auto-renew-contracts; both select contracts ended by the window start, and
+ * an un-renewed autoRenew contract is left to auto-renew for one day.
  *
  * Soft enforcement: contract expiry does NOT take the org offline. The
  * `requireOrgAccess` helper continues to honour the org regardless of
@@ -19,21 +20,14 @@
  *
  * Idempotent: only flips rows still in `ACTIVE`. Re-running on the same
  * day is a no-op.
- *
- * Usage:
- *   npx tsx jobs/contracts/expire-contracts.ts
  */
 
-import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { closeContractSeats } from "@/lib/api/organizations/seat-count";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { abortIfMaintenance } from "@/lib/maintenance-cron";
-import * as Sentry from "@sentry/nextjs";
-import { runJob } from "@/lib/observability/job-sentry";
 import { EMAIL_BUDGET_MS } from "@/lib/email/config";
 import type { StagedRecipientEmail as StagedEmail } from "@/lib/email/send-to-recipients";
 import { attemptStaged } from "@/lib/email/send-to-recipients";
@@ -130,18 +124,48 @@ async function notifyExpiredContract(
   }
 }
 
-export async function runExpireContracts(): Promise<ExpireStats> {
+/** How long auto-renew owns an un-renewed autoRenew contract before expiry may take it. */
+const AUTO_RENEW_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The expiry cohort and claim filter: ACTIVE contracts ended by `asOf`, minus
+ * autoRenew contracts auto-renew has not stamped yet and that ended inside the grace.
+ */
+export function expiryCohortWhere(asOf: Date): Prisma.ContractWhereInput {
+  return {
+    status: "ACTIVE",
+    effectiveTo: { lte: asOf, not: null },
+    NOT: {
+      autoRenew: true,
+      autoRenewedAt: null,
+      effectiveTo: { gt: new Date(asOf.getTime() - AUTO_RENEW_GRACE_MS) },
+    },
+  };
+}
+
+// fail-closed: expiry withdraws the sponsorship the checkout resolver reads.
+export async function runExpireContracts(opts: {
+  limit?: number;
+  windowStart?: Date;
+}): Promise<ExpireStats> {
+  return withCronLock("expire-contracts", { failMode: "closed" }, () =>
+    expireContracts(opts),
+  );
+}
+
+async function expireContracts(opts: {
+  limit?: number;
+  windowStart?: Date;
+}): Promise<ExpireStats> {
   const stats: ExpireStats = { scanned: 0, expired: 0, assignmentsClosed: 0 };
   const now = new Date();
 
-  // Find every contract still ACTIVE whose effectiveTo is in the past.
-  // `effectiveTo` is optional — null means open-ended, which never
-  // expires automatically.
+  // Oldest first; a claimed row leaves the cohort. Null effectiveTo never expires.
+  const cohort = expiryCohortWhere(opts.windowStart ?? now);
   const due = await prisma.contract.findMany({
-    where: {
-      status: "ACTIVE",
-      effectiveTo: { lte: now, not: null },
-    },
+    where: cohort,
+    orderBy: { effectiveTo: "asc" },
+    take: opts.limit,
     select: {
       id: true,
       organizationId: true,
@@ -170,7 +194,7 @@ export async function runExpireContracts(): Promise<ExpireStats> {
           // cron replicas don't double-process. Doubles as the distributed
           // lock; loser sees `claim.count === 0` and skips.
           const claim = await tx.contract.updateMany({
-            where: { id: c.id, status: "ACTIVE" },
+            where: { id: c.id, ...cohort },
             data: { status: "EXPIRED" },
           });
           if (claim.count === 0) {
@@ -235,31 +259,4 @@ export async function runExpireContracts(): Promise<ExpireStats> {
   }
 
   return stats;
-}
-
-async function main() {
-  await abortIfMaintenance("expire-contracts");
-  Sentry.logger.info("job:expire-contracts started");
-  console.log(`[expire-contracts] Starting at ${new Date().toISOString()}`);
-  // fail-closed since #1169 lists it as financial: expiry withdraws the
-  // sponsorship the checkout resolver reads.
-  const stats = await withCronLock(
-    "expire-contracts",
-    { failMode: "closed" },
-    () => runExpireContracts(),
-  );
-  console.log(
-    `[expire-contracts] Done. scanned=${stats.scanned} expired=${stats.expired} assignmentsClosed=${stats.assignmentsClosed}`,
-  );
-  Sentry.logger.info("job:expire-contracts finished", {
-    scanned: stats.scanned,
-    expired: stats.expired,
-    assignmentsClosed: stats.assignmentsClosed,
-  });
-}
-
-// Only run when invoked directly (allows the function to be imported and
-// unit-tested without spinning up the cron entry-point).
-if (require.main === module) {
-  runJob("expire-contracts", () => main().finally(() => prisma.$disconnect()));
 }

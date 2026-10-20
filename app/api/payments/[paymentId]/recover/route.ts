@@ -1,22 +1,24 @@
 /**
  * Payment Recovery Endpoint
  *
- * Admin endpoint to manually trigger appointment creation for payments
- * that succeeded but failed to create appointments due to metadata validation errors.
- *
- * Use case: When webhook metadata is malformed, payment is marked as SUCCEEDED
- * but appointment creation is blocked. This endpoint allows admins to manually
- * provide corrected metadata and retry appointment creation.
+ * Builds the appointment for a SUCCEEDED capture whose gateway metadata failed
+ * validation, from corrected metadata an admin supplies. The booking target
+ * (appointment type, plan, event, trial) must equal the server-minted notes on
+ * the payment's Razorpay order, so a recovery cannot book a different expert.
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { PaymentStatus, UserRole } from "@prisma/client";
+import { PaymentGateway, PaymentStatus, UserRole } from "@prisma/client";
 import { validateWebhookMetadata } from "@/schemas/webhooks/metadata";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 
 import { getSession } from "@/lib/auth-server";
+import { withOpsAction } from "@/lib/backoffice/ops-action-log";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
+import { fetchRazorpayOrder } from "@/lib/payments/core/razorpay";
+import { isMockPaymentId } from "@/lib/payments/operations/mock";
 // ============================================================================
 // GET - Fetch payment details for recovery
 // ============================================================================
@@ -96,137 +98,161 @@ export async function GET(
 // POST - Recover payment by creating appointment with corrected metadata
 // ============================================================================
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ paymentId: string }> },
-) {
+/** The keys that pick what is booked and who earns from it. */
+const RECOVER_TARGET_KEYS = [
+  "appointmentType",
+  "planId",
+  "eventId",
+  "trialId",
+] as const;
+
+/** Empty notes are absent fields, as in `validateWebhookMetadata`. */
+const noteValue = (notes: Record<string, string>, key: string) =>
+  notes[key] || undefined;
+
+/** The checkout-time notes Razorpay holds for this payment's order. */
+async function checkoutNotes(payment: {
+  paymentIntent: string;
+  paymentGateway: PaymentGateway;
+}): Promise<Record<string, string>> {
+  const unverifiable = () =>
+    new OpsRefusal(
+      "RECOVER_TARGET_UNVERIFIABLE",
+      "This payment has no Razorpay order whose checkout notes name the booking, so it cannot be recovered here.",
+    );
+  if (
+    payment.paymentGateway !== PaymentGateway.RAZORPAY ||
+    !payment.paymentIntent.startsWith("order_") ||
+    isMockPaymentId(payment.paymentIntent)
+  ) {
+    throw unverifiable();
+  }
+  let order;
   try {
-    // Authenticate admin/staff
-    const session = await getSession();
-    if (
-      !session?.user?.id ||
-      (session.user.role !== UserRole.ADMIN &&
-        session.user.role !== UserRole.STAFF)
-    ) {
-      return NextResponse.json(
-        { error: "Unauthorized - Admin access required" },
-        { status: 403 },
-      );
-    }
+    order = await fetchRazorpayOrder(payment.paymentIntent);
+  } catch {
+    throw new OpsRefusal(
+      "GATEWAY_UNAVAILABLE",
+      "Razorpay could not return the checkout order. Try again shortly.",
+      502,
+    );
+  }
+  if (order?.id !== payment.paymentIntent) throw unverifiable();
+  const notes = order.notes;
+  if (
+    !noteValue(notes, "appointmentType") ||
+    (!noteValue(notes, "planId") && !noteValue(notes, "eventId"))
+  ) {
+    throw unverifiable();
+  }
+  return notes;
+}
 
-    const { paymentId } = await params;
-    const body = await req.json();
+const recoveryNotConfirmed = (outcome: string) =>
+  new OpsRefusal(
+    "RECOVERY_NOT_CONFIRMED",
+    `Recovery could not place the booking (${outcome}); the payment is being refunded.`,
+  );
 
-    // Validate request body
-    if (!body.metadata || typeof body.metadata !== "object") {
-      return NextResponse.json(
-        { error: "metadata object is required in request body" },
-        { status: 400 },
-      );
-    }
+const alreadyRecovered = () =>
+  new OpsRefusal(
+    "ALREADY_RECOVERED",
+    "Payment already has an appointment linked",
+  );
 
-    // Fetch payment
-    const payment = await prisma.payment.findUnique({
-      where: { id: paymentId },
-      include: {
-        user: {
-          include: {
-            consulteeProfile: true,
-          },
+export const POST = withOpsAction(
+  "payments.manage",
+  "payment.recover",
+  { metadata: z.record(z.string(), z.string()) },
+  {
+    mode: "gateway",
+    target: ({ params }) => ({ kind: "Payment", id: params.paymentId }),
+    run: async ({ params, body }) => {
+      const payment = await prisma.payment.findUnique({
+        where: { id: params.paymentId },
+        select: {
+          id: true,
+          paymentIntent: true,
+          paymentGateway: true,
+          paymentStatus: true,
+          appointmentId: true,
         },
-        appointment: true,
-      },
-    });
-
-    if (!payment) {
-      return NextResponse.json({ error: "Payment not found" }, { status: 404 });
-    }
-
-    // Check payment status
-    if (payment.paymentStatus !== PaymentStatus.SUCCEEDED) {
-      return NextResponse.json(
-        {
-          error: `Payment status is ${payment.paymentStatus}. Can only recover SUCCEEDED payments.`,
-        },
-        { status: 400 },
-      );
-    }
-
-    // Already linked: the same answer the CAS miss gives below (qa-1753).
-    if (payment.appointmentId) {
-      return NextResponse.json(
-        {
-          error: "Payment already has an appointment linked",
-          code: "ALREADY_RECOVERED",
-        },
-        { status: 409 },
-      );
-    }
-
-    // Validate metadata
-    try {
-      validateWebhookMetadata(body.metadata);
-    } catch (validationError) {
-      const errorMessage =
-        validationError instanceof ZodError
-          ? validationError.errors
-              .map((e) => `${e.path.join(".")}: ${e.message}`)
-              .join("; ")
-          : validationError instanceof Error
-            ? validationError.message
-            : String(validationError);
-
-      return NextResponse.json(
-        {
-          error: "Metadata validation failed",
-          details: errorMessage,
-        },
-        { status: 400 },
-      );
-    }
-
-    // Import handlePaymentSuccess dynamically to avoid circular dependencies
-    const { handlePaymentSuccess, RecoveryAlreadyDoneError } =
-      await import("@/lib/payments/webhooks/handlers");
-
-    // Retry appointment creation with corrected metadata
-    try {
-      // #1440 — `recover: true` is what lets a SUCCEEDED, unlinked row past the
-      // idempotency short-circuit; without it this call was a no-op. The link
-      // write's CAS (ADR 21) is the single-writer guard, so two concurrent
-      // recoveries build one appointment: the loser answers 409 below.
-      const outcome = await handlePaymentSuccess(
-        payment.paymentIntent,
-        body.metadata,
-        undefined,
-        undefined,
-        { recover: true },
-      );
-      if (outcome === null) {
-        return NextResponse.json(
-          {
-            error: "Payment already has an appointment linked",
-            code: "ALREADY_RECOVERED",
-          },
-          { status: 409 },
+      });
+      if (!payment) {
+        throw new OpsRefusal("PAYMENT_NOT_FOUND", "Payment not found", 404);
+      }
+      if (payment.paymentStatus !== PaymentStatus.SUCCEEDED) {
+        throw new OpsRefusal(
+          "PAYMENT_NOT_SUCCEEDED",
+          `Payment status is ${payment.paymentStatus}. Can only recover SUCCEEDED payments.`,
+          400,
         );
       }
+      // Already linked: the same answer the CAS miss gives below (qa-1753).
+      if (payment.appointmentId) throw alreadyRecovered();
+
+      try {
+        validateWebhookMetadata(body.metadata);
+      } catch (validationError) {
+        const details =
+          validationError instanceof ZodError
+            ? validationError.errors
+                .map((e) => `${e.path.join(".")}: ${e.message}`)
+                .join("; ")
+            : validationError instanceof Error
+              ? validationError.message
+              : String(validationError);
+        throw new OpsRefusal(
+          "INVALID_METADATA",
+          `Metadata validation failed: ${details}`,
+          400,
+        );
+      }
+
+      const notes = await checkoutNotes(payment);
+      const mismatched = RECOVER_TARGET_KEYS.filter(
+        (key) => noteValue(notes, key) !== noteValue(body.metadata, key),
+      );
+      if (mismatched.length > 0) {
+        throw new OpsRefusal(
+          "RECOVER_TARGET_MISMATCH",
+          `The recovery must book what the buyer paid for; ${mismatched.join(", ")} differ from the checkout order.`,
+        );
+      }
+
+      // Import handlePaymentSuccess dynamically to avoid circular dependencies
+      const { handlePaymentSuccess, RecoveryAlreadyDoneError } =
+        await import("@/lib/payments/webhooks/handlers");
+
+      // `recover: true` lets a SUCCEEDED, unlinked row past the idempotency
+      // short-circuit; the link write's CAS makes two concurrent recoveries
+      // build one appointment, and the loser answers ALREADY_RECOVERED.
+      let outcome;
+      try {
+        outcome = await handlePaymentSuccess(
+          payment.paymentIntent,
+          body.metadata,
+          undefined,
+          undefined,
+          { recover: true },
+        );
+      } catch (recoveryError) {
+        if (recoveryError instanceof RecoveryAlreadyDoneError) {
+          throw new OpsRefusal(
+            recoveryError.code,
+            recoveryError.message,
+            recoveryError.httpStatus,
+          );
+        }
+        throw recoveryError;
+      }
+      if (outcome === null) throw alreadyRecovered();
       // Any other outcome is Phase 1 refusing the booking (overlap, released
-      // hold, amount mismatch) with Phase 2 refunding the money — not a recovery.
-      if (outcome !== "confirmed") {
-        return NextResponse.json(
-          {
-            error: `Recovery could not place the booking (${outcome}); the payment is being refunded.`,
-            code: "RECOVERY_NOT_CONFIRMED",
-            outcome,
-          },
-          { status: 409 },
-        );
-      }
+      // hold, amount mismatch) with Phase 2 refunding the money.
+      if (outcome !== "confirmed") throw recoveryNotConfirmed(outcome);
 
-      // Fetch updated payment
       const updatedPayment = await prisma.payment.findUnique({
-        where: { id: paymentId },
+        where: { id: params.paymentId },
         include: {
           appointment: {
             include: {
@@ -239,46 +265,21 @@ export async function POST(
         },
       });
 
-      return NextResponse.json({
-        success: true,
-        message: "Payment recovered successfully - appointment created",
-        payment: {
-          id: updatedPayment?.id,
-          appointmentId: updatedPayment?.appointmentId,
-          paymentStatus: updatedPayment?.paymentStatus,
+      return {
+        target: { kind: "Payment", id: payment.id },
+        after: { appointmentId: updatedPayment?.appointmentId ?? null },
+        response: {
+          success: true,
+          message: "Payment recovered successfully - appointment created",
+          payment: {
+            id: updatedPayment?.id,
+            appointmentId: updatedPayment?.appointmentId,
+            paymentStatus: updatedPayment?.paymentStatus,
+          },
+          appointment: updatedPayment?.appointment,
         },
-        appointment: updatedPayment?.appointment,
-      });
-    } catch (recoveryError) {
-      if (recoveryError instanceof RecoveryAlreadyDoneError) {
-        return NextResponse.json(
-          { error: recoveryError.message, code: recoveryError.code },
-          { status: recoveryError.httpStatus },
-        );
-      }
-      Sentry.captureException(
-        recoveryError instanceof Error
-          ? recoveryError
-          : new Error(String(recoveryError)),
-        { tags: { subsystem: "payments" } },
-      );
-      console.error("Error during payment recovery:", recoveryError);
-      return NextResponse.json(
-        {
-          error: "Failed to create appointment",
-          details:
-            recoveryError instanceof Error
-              ? recoveryError.message
-              : String(recoveryError),
-        },
-        { status: 500 },
-      );
-    }
-  } catch (error) {
-    console.error("Error recovering payment:", error);
-    return NextResponse.json(
-      { error: "Failed to recover payment" },
-      { status: 500 },
-    );
-  }
-}
+      };
+    },
+  },
+  { stepUp: true },
+);
