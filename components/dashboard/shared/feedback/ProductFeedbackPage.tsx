@@ -50,6 +50,7 @@ export function ProductFeedbackPage() {
   const queryKey = ["product-feedback", session?.user.id];
   const query = useQuery({
     queryKey,
+    refetchOnMount: "always",
     enabled: Boolean(session?.user.id),
     queryFn: async () => {
       const response = await fetch("/api/user/feedbacks");

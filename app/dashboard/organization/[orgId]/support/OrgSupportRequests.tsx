@@ -139,6 +139,7 @@ export function OrgSupportRequests({ orgId }: Readonly<{ orgId: string }>) {
       return res.json();
     },
     placeholderData: keepPreviousData,
+    refetchOnMount: "always",
   });
 
   return (

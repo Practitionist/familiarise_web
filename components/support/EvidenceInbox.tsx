@@ -59,6 +59,7 @@ export function EvidenceInbox({
   const [status, setStatus] = useState("all");
   const query = useQuery({
     queryKey: ["support-evidence", session?.user.id, organizationId],
+    refetchOnMount: "always",
     enabled: Boolean(session?.user.id),
     queryFn: async () => {
       const response = await fetch(

@@ -16,6 +16,10 @@ export default async function OrganizationSupportPage({
   const access = await requireOrgAccess(orgId, { readOnly: true });
   if (access.error) notFound();
   const canRead = hasOrgPermission(access.member.role, "supportRequests.org");
+  const canCreate =
+    canRead &&
+    access.session.user.role !== "ADMIN" &&
+    access.session.user.role !== "STAFF";
   const ownershipScope = hasOrgPermission(
     access.member.role,
     "supportCases.operations.manage",
@@ -28,7 +32,7 @@ export default async function OrganizationSupportPage({
         title="Support requests"
         description="Your organization’s operations and billing conversations with the Familiarise team."
         actions={
-          canRead ? (
+          canCreate ? (
             <CreateTicketDialog
               defaults={{ organizationId: orgId, ownershipScope }}
             />
