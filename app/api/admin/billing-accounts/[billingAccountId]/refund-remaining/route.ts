@@ -86,5 +86,22 @@ export const POST = withOpsAction(
       };
     },
   },
-  { stepUp: true },
+  {
+    stepUp: true,
+    secondApprover: {
+      route: "/api/admin/billing-accounts/[billingAccountId]/refund-remaining",
+      target: ({ params }) => ({
+        kind: "BillingAccount",
+        id: params.billingAccountId,
+      }),
+      // What the run would return: the whole cached balance.
+      amountPaise: async (_body, { params }) => {
+        const account = await prisma.billingAccount.findUnique({
+          where: { id: params.billingAccountId },
+          select: { walletBalance: true },
+        });
+        return account?.walletBalance ?? 0;
+      },
+    },
+  },
 );

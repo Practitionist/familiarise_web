@@ -89,5 +89,15 @@ export const POST = withOpsAction(
       }
     },
   },
-  { stepUp: true },
+  {
+    stepUp: true,
+    secondApprover: {
+      route: "/api/admin/billing-accounts/[billingAccountId]/wallet-adjustment",
+      target: ({ params }) => ({
+        kind: "BillingAccount",
+        id: params.billingAccountId,
+      }),
+      amountPaise: (body) => Math.abs(body.amountPaise),
+    },
+  },
 );
