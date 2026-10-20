@@ -10,6 +10,7 @@ import {
 import { PaymentStatus } from "@prisma/client";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import { recarveOverageBase } from "@/lib/payments/billing/overage-base-carve";
+import { tombstonePriorIntent } from "@/lib/payments/operations/prior-intent-tombstone";
 
 /**
  * #775 — resume-checkout for a CHARGE_MEMBER overage side-charge.
@@ -48,6 +49,11 @@ export async function POST(
           paymentStatus: true,
           // Needed to reuse an already-minted order instead of stamping a second one.
           paymentIntent: true,
+          gatewayPaymentId: true,
+          amount: true,
+          originalAmount: true,
+          taxAmount: true,
+          paymentGateway: true,
         },
       },
     },
@@ -224,25 +230,46 @@ export async function POST(
     },
   });
 
-  // Stamp the real gateway order onto the side-Payment so the webhook can find
-  // it; reset to PENDING if a prior attempt FAILED.
-  //
-  // CAS on "not already settled". The SUCCEEDED guard above ran before an
-  // outbound order-creation round trip, and the capture webhook can land inside
-  // that window — an unconditional write would then downgrade a settled payment
-  // back to PENDING and point it at an unpaid order, which is the same orphan
-  // the reuse branch exists to prevent, arrived at from the other direction.
-  const stamped = await prisma.payment.updateMany({
-    where: {
-      id: event.payment.id,
-      paymentStatus: { not: PaymentStatus.SUCCEEDED },
-    },
-    data: { paymentIntent: order.id, paymentStatus: PaymentStatus.PENDING },
+  // Re-point the side-Payment to the new order (FAILED resets to PENDING) by CAS on
+  // its prior intent and "not settled"; a replaced gateway order moves to a tombstone.
+  const sidePayment = event.payment;
+  const stamped = await prisma.$transaction(async (tx) => {
+    const cas = await tx.payment.updateMany({
+      where: {
+        id: sidePayment.id,
+        paymentIntent: sidePayment.paymentIntent,
+        paymentStatus: { not: PaymentStatus.SUCCEEDED },
+      },
+      data: { paymentIntent: order.id, paymentStatus: PaymentStatus.PENDING },
+    });
+    if (cas.count !== 1) return false;
+    if (sidePayment.paymentIntent.startsWith("order_")) {
+      await tombstonePriorIntent(tx, sidePayment, "overage charge re-minted");
+      await tx.paymentLeg.create({
+        data: {
+          paymentId: sidePayment.id,
+          source: "CARD",
+          amountPaise: sidePayment.amount,
+          sourceRef: order.id,
+        },
+      });
+    }
+    return true;
   });
 
-  if (stamped.count === 0) {
+  if (!stamped) {
+    const current = await prisma.payment.findUnique({
+      where: { id: sidePayment.id },
+      select: { paymentStatus: true },
+    });
     return NextResponse.json(
-      { error: "This overage has already been paid" },
+      current?.paymentStatus === PaymentStatus.SUCCEEDED
+        ? { error: "This overage has already been paid" }
+        : {
+            error:
+              "This charge changed while we were preparing it. Please retry.",
+            code: "OVERAGE_ORDER_RACED",
+          },
       { status: 409 },
     );
   }
