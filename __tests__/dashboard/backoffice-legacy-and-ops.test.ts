@@ -124,9 +124,13 @@ describe("support SLA status badges and sla-at-risk inbox query", () => {
     );
     expect(f.view).toBe("sla-at-risk");
     expect(f.sort).toBe("sla");
-    expect(JSON.stringify(inboxCaseWhere(f))).toContain(
-      '"awaitingUserSince":null',
-    );
+    // The at-risk view is deadline-driven: the statutory deadline is
+    // absolute, so a user wait cannot push it out, and the effective
+    // deadline's pause is shown per row rather than hidden by the filter.
+    const atRisk = JSON.stringify(inboxCaseWhere(f));
+    expect(atRisk).toContain('"statutoryDueAt"');
+    expect(atRisk).toContain('"ackDueAt"');
+    expect(atRisk).toContain('"resolutionDueAt"');
 
     const rows = [
       {
