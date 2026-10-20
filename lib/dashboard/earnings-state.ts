@@ -334,6 +334,20 @@ export function moneyWalk(p: PayoutRowInput): MoneyWalk {
   };
 }
 
+/** The soonest future hold among Pending rows; trust-parked rows wait on the organisation, not a date. */
+export function nextClearDate(
+  rows: ReadonlyArray<Pick<EarningRowInput, "status" | "holdUntil">>,
+  now: Date,
+): Date | null {
+  let soonest: Date | null = null;
+  for (const row of rows) {
+    if (row.status === "PENDING_TRUST" || !row.holdUntil) continue;
+    const at = toDate(row.holdUntil);
+    if (at > now && (!soonest || at < soonest)) soonest = at;
+  }
+  return soonest;
+}
+
 /** What the consultant will actually receive from a row: the share less what was refunded. */
 const netShare = (e: EarningRowInput) =>
   e.consultantSharePaise - (e.refundedShareAmount ?? 0);

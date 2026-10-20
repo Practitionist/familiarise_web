@@ -7,6 +7,7 @@
  */
 
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
+import { formatCurrencyAmount } from "@/utils/formatting";
 
 const rupees = (paise: number) =>
   `₹${Math.round(paise / 100).toLocaleString("en-IN")}`;
@@ -34,5 +35,7 @@ export const ORG_PAYOUTS_PARKED_COPY =
 /** The org "Paid out (after TDS)" tile's second line. */
 export function paidOutHint(payoutCount: number, tdsPaise: number): string {
   const count = `${payoutCount} payouts`;
-  return tdsPaise > 0 ? `${count} · ${rupees(tdsPaise)} TDS withheld` : count;
+  return tdsPaise > 0
+    ? `${count} · ${formatCurrencyAmount(tdsPaise, "INR")} TDS withheld`
+    : count;
 }

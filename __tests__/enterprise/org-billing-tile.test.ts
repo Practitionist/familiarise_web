@@ -103,3 +103,34 @@ it("reports pendingCharges net of refund reversal legs, the figure the credit-li
     ]),
   );
 });
+
+it.each([null, 0])(
+  "reports zero pendingCharges when the net accrual sums to %p",
+  async (amountPaise) => {
+    (prisma.billingAccount.findFirst as jest.Mock).mockResolvedValueOnce({
+      id: "ba-1",
+      fundingSource: "INVOICE",
+      creditLimit: null,
+    });
+    (prisma.payment.aggregate as jest.Mock).mockResolvedValue({
+      _sum: { amount: 0 },
+      _count: { _all: 0 },
+    });
+    (prisma.refund.aggregate as jest.Mock).mockResolvedValue({
+      _sum: { amountPaise: 0 },
+    });
+    (prisma.paymentLeg.aggregate as jest.Mock).mockResolvedValueOnce({
+      _sum: { amountPaise },
+    });
+
+    const res = await GET(
+      new NextRequest("https://x.test/api/organizations/org-1/billing"),
+      { params: Promise.resolve({ orgId: "org-1" }) },
+    );
+
+    expect((await res.json()).pendingCharges).toEqual({
+      amount: 0,
+      paymentCount: 0,
+    });
+  },
+);

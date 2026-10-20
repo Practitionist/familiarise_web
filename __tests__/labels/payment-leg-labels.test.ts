@@ -27,5 +27,14 @@ describe("payment leg labels", () => {
     expect(paymentLegLabel("LICENSE")).toBe(
       "Covered by your organisation's licence",
     );
+    expect(paymentLegLabel("INVOICE_ACCRUAL_REVERSAL")).toBe(
+      "Removed from your organisation's charge",
+    );
+    for (const source of [
+      "INVOICE_ACCRUAL_REVERSAL",
+      "OVERAGE_INVOICE_ACCRUAL_REVERSAL",
+    ] as const) {
+      expect(paymentLegLabel(source)).not.toMatch(/billed|refund/i);
+    }
   });
 });

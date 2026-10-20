@@ -17,6 +17,7 @@ import {
   deriveEarningPresentation,
   derivePayoutPresentation,
   moneyWalk,
+  nextClearDate,
   nextPayoutCopy,
   sanitizePayoutFailure,
   sumEarningBuckets,
@@ -191,6 +192,33 @@ describe("nextPayoutCopy and the tile sums", () => {
       recovered: 0,
       net: 99_900,
     });
+  });
+
+  it("a partly refunded trust-parked row counts only its remaining share", () => {
+    expect(
+      sumEarningBuckets(
+        [earning("PENDING_TRUST", { refundedShareAmount: 30_000 })],
+        [],
+      ).awaitingOrg,
+    ).toBe(50_000);
+  });
+
+  it("the next clearance date skips trust-parked rows, past holds and rows with no hold", () => {
+    const IN_2D = new Date("2026-09-22T09:12:00Z");
+    expect(
+      nextClearDate(
+        [
+          earning("PENDING_TRUST", { holdUntil: IN_2D }),
+          earning("PENDING", { holdUntil: "2026-09-19T00:00:00Z" }),
+          earning("HELD", { holdUntil: null }),
+          earning("PENDING"),
+        ],
+        NOW,
+      ),
+    ).toEqual(IN_5D);
+    expect(
+      nextClearDate([earning("PENDING_TRUST", { holdUntil: IN_2D })], NOW),
+    ).toBeNull();
   });
 
   it("a zero row and a zero payout add nothing; a row refunded to its share nets to zero", () => {

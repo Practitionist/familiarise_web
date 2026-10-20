@@ -43,6 +43,7 @@ import {
   SEGMENT_LABEL,
   deriveEarningPresentation,
   derivePayoutPresentation,
+  nextClearDate,
   nextPayoutCopy,
   payoutNet,
   presentationBadge,
@@ -291,17 +292,6 @@ export function EarningsSkeleton() {
       </div>
     </DashboardContent>
   );
-}
-
-/** The soonest hold that clears, among Pending rows (#1827: "with the date"). */
-function nextClearDate(rows: EarningRow[], now: Date): Date | null {
-  let soonest: Date | null = null;
-  for (const row of rows) {
-    if (!row.holdUntil) continue;
-    const at = new Date(row.holdUntil);
-    if (at > now && (!soonest || at < soonest)) soonest = at;
-  }
-  return soonest;
 }
 
 /**

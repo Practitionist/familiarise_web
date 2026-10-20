@@ -26,6 +26,8 @@ describe("hold copy", () => {
 
   it("shows the TDS withheld beside the after-TDS paid-out figure only when there is some", () => {
     expect(paidOutHint(3, 0)).toBe("3 payouts");
-    expect(paidOutHint(3, 125_000)).toBe("3 payouts · ₹1,250 TDS withheld");
+    expect(paidOutHint(3, 125_000)).toBe("3 payouts · ₹1,250.00 TDS withheld");
+    expect(paidOutHint(1, 105)).toBe("1 payouts · ₹1.05 TDS withheld");
+    expect(paidOutHint(1, 40)).toBe("1 payouts · ₹0.40 TDS withheld");
   });
 });
