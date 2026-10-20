@@ -36,15 +36,7 @@ type CarveRef = { overageEventId: string } | { sidePaymentId: string };
 
 type RestoreCarveTx = Pick<Tx, "overageEvent" | "payment" | "paymentLeg"> &
   EarningsHoldDb &
-  Partial<
-    Pick<
-      Tx,
-      | "billingAccount"
-      | "ledgerTransaction"
-      | "ledgerAccount"
-      | "ledgerAccountBalance"
-    >
-  >;
+  Partial<Pick<Tx, "billingAccount" | "ledgerTransaction" | "ledgerAccount">>;
 
 /**
  * Release the parent's OVERAGE holds once no other member overage on it is

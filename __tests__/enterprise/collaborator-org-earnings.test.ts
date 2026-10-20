@@ -111,7 +111,6 @@ jest.mock("../../lib/prisma", () => {
           id: where.id,
         })),
     },
-    ledgerAccountBalance: { upsert: jest.fn().mockResolvedValue({}) },
     paymentLeg: {
       findMany: jest.fn().mockResolvedValue([]),
     },

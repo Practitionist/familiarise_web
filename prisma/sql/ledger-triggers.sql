@@ -44,10 +44,9 @@ CREATE CONSTRAINT TRIGGER ledger_txn_balanced
   EXECUTE FUNCTION assert_ledger_txn_balanced();
 -- SPLIT
 -- #1582 A-P0-02 (owner decision Q5) — the journal is append-only. Nothing in
--- the codebase UPDATEs or DELETEs a LedgerEntry / LedgerTransaction (the
--- balance fold in lib/payments/ledger/post.ts upserts LedgerAccountBalance,
--- never an entry), so a raise trigger costs nothing and makes an edit
--- impossible via raw SQL or a future code path. Same shape as
+-- the codebase UPDATEs or DELETEs a LedgerEntry / LedgerTransaction, so a
+-- raise trigger costs nothing and makes an edit impossible via raw SQL or a
+-- future code path. Same shape as
 -- review_revision_immutable in check-constraints.sql.
 DROP TRIGGER IF EXISTS ledger_entry_immutable ON "LedgerEntry";
 -- SPLIT

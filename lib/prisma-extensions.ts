@@ -96,10 +96,6 @@ export const moneyResultExtensions = {
     remainingAmountPaise: f("remainingAmountPaise"),
   },
   usageLedgerEntry: { priceAtBookingPaise: f("priceAtBookingPaise") },
-  ledgerAccountBalance: {
-    balancePaise: f("balancePaise"),
-    entrySeq: f("entrySeq"),
-  },
   ledgerEntry: { amountPaise: f("amountPaise") },
   gatewaySettlementLine: {
     amountPaise: f("amountPaise"),
