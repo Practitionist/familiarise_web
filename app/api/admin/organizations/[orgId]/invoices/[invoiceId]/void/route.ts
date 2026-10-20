@@ -10,7 +10,7 @@
 import { z } from "zod";
 
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
-import { orgInvoiceTotalPaise } from "@/lib/backoffice/ops-proposals";
+import { orgInvoiceTotalPaise } from "@/lib/backoffice/ops-proposal-amounts";
 import { voidOrgInvoice } from "@/lib/payments/billing/org-invoice-void";
 
 export const POST = withOpsAction(

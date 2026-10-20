@@ -47,6 +47,7 @@ export function useOpsDoor(opts: {
   success: string;
   invalidate: readonly (readonly unknown[])[];
   onDone?: (data: Record<string, unknown>) => void;
+  onFailed?: () => void;
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -60,15 +61,20 @@ export function useOpsDoor(opts: {
     }) => callOpsDoor(url, body),
     onSuccess: (data) => {
       toast({ title: isProposed(data) ? PROPOSED_TOAST : opts.success });
-      for (const key of opts.invalidate)
-        void queryClient.invalidateQueries({ queryKey: [...key] });
       opts.onDone?.(data);
     },
-    onError: (err: Error) =>
+    onError: (err: Error) => {
       toast({
         title: "Not done",
         description: err.message,
         variant: "destructive",
-      }),
+      });
+      opts.onFailed?.();
+    },
+    // A refused door can still have moved state (a failed approval stays APPROVED).
+    onSettled: () => {
+      for (const key of opts.invalidate)
+        void queryClient.invalidateQueries({ queryKey: [...key] });
+    },
   });
 }

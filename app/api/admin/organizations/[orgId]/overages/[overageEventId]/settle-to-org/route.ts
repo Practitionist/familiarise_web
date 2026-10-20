@@ -8,7 +8,7 @@
  */
 
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
-import { overageMarginalPaise } from "@/lib/backoffice/ops-proposals";
+import { overageSettlementPaise } from "@/lib/backoffice/ops-proposal-amounts";
 import { settleFailedMemberOverageAsOrg } from "@/lib/payments/billing/overage-settlement";
 
 export const POST = withOpsAction(
@@ -44,7 +44,7 @@ export const POST = withOpsAction(
         id: params.overageEventId,
       }),
       amountPaise: (_body, { params }) =>
-        overageMarginalPaise(params.overageEventId),
+        overageSettlementPaise(params.orgId, params.overageEventId),
     },
   },
 );

@@ -75,8 +75,8 @@ export interface PendingOverageNotification {
 }
 
 /** GST on a CHARGE_ORG surcharge: the org is the payer, so its own place of supply decides. */
-async function orgSurchargeTaxPaise(
-  tx: Tx,
+export async function orgSurchargeTaxPaise(
+  tx: Pick<Tx, "organization">,
   organizationId: string | null,
   surchargePaise: number,
 ): Promise<number> {

@@ -1,6 +1,6 @@
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
-import { orgPayoutNetPaise } from "@/lib/backoffice/ops-proposals";
+import { orgPayoutNetPaise } from "@/lib/backoffice/ops-proposal-amounts";
 import {
   approveOrgPayout,
   PayoutValidationError,

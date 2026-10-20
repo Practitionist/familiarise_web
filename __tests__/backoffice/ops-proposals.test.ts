@@ -29,9 +29,14 @@ const mockState = { admins: 2, seq: 0 };
 
 function mockMatches(row: Row, where: Record<string, unknown>): boolean {
   return Object.entries(where).every(([key, want]) => {
-    if (key === "NOT") {
-      const not = want as Record<string, unknown>;
-      return Object.entries(not).every(([k, v]) => row[k] !== v);
+    if (key === "OR") {
+      return (want as Record<string, unknown>[]).some((w) =>
+        mockMatches(row, w),
+      );
+    }
+    if (want && typeof want === "object" && "not" in want) {
+      // SQL: NULL <> x is not true, so `not` never matches a NULL column.
+      return (row[key] ?? null) !== null && row[key] !== want.not;
     }
     if (key === "expiresAt") {
       const { gt, lte } = want as { gt?: Date; lte?: Date };
@@ -218,4 +223,18 @@ it("rejects without running, and refuses an expired proposal", async () => {
   expect(expired.status).toBe(409);
   expect((await expired.json()).code).toBe("PROPOSAL_EXPIRED");
   expect(mockRan).not.toHaveBeenCalled();
+});
+
+it("leaves a failed replay APPROVED with its code, and frees the target", async () => {
+  const id = (await propose(5_000_000)).json.proposalId as string;
+  mockRan.mockImplementationOnce(() => {
+    throw new Error("gateway down");
+  });
+  mockViewer = "admin_b";
+  expect((await call(approve, {}, { id })).status).toBe(500);
+  expect(mockRows.get(id)).toMatchObject({
+    status: "APPROVED",
+    decisionReason: expect.stringContaining("execution failed: FAILED"),
+  });
+  expect((await propose(5_000_000)).status).toBe(202);
 });

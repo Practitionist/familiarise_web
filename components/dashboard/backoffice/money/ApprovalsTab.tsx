@@ -47,6 +47,7 @@ export function ApprovalsTab({ viewerId }: Readonly<{ viewerId: string }>) {
     success: deciding?.decision === "approve" ? "Approved and run" : "Rejected",
     invalidate: STATUSES.map(queryKey),
     onDone: () => setDeciding(null),
+    onFailed: () => setDeciding(null),
   });
   const proposals = data ?? [];
 

@@ -9,7 +9,7 @@
 import { z } from "zod";
 
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
-import { orgInvoiceTotalPaise } from "@/lib/backoffice/ops-proposals";
+import { orgInvoiceTotalPaise } from "@/lib/backoffice/ops-proposal-amounts";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import {
   issueDraftOrgInvoice,

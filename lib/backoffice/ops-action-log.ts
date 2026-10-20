@@ -247,7 +247,9 @@ export function withOpsAction<S extends z.ZodRawShape>(
         );
       }
     }
-    if (result.afterCommit) scheduleAfter(result.afterCommit, `ops:${action}`);
+    if (result.afterCommit) {
+      void scheduleAfter(result.afterCommit, `ops:${action}`);
+    }
     return result;
   };
 
@@ -377,6 +379,7 @@ async function proposeIfRequired<B>(
   const amountPaise = await secondApprover.amountPaise(ctx.body, ctx);
   if (!(await requiresSecondApprover(prisma, amountPaise))) return null;
   const target = secondApprover.target(ctx);
+  // A JSON round-trip, not a clone: the row holds exactly what the replay re-parses.
   const requestBody: Prisma.InputJsonValue = JSON.parse(
     JSON.stringify(ctx.body),
   );
