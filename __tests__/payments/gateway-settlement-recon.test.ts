@@ -33,6 +33,7 @@ const mockJournals = new Map<string, number>([
   ["invoice-refund:rfnd_iw", 6_000],
   ["topup-refund:rfnd_t2", 2_000],
   ["invoice-refund:rfnd_i2", 1_500],
+  ["topup-refund:rfnd_neg", 2_000],
 ]);
 const mockTopUps = [
   {
@@ -318,4 +319,34 @@ it("matches top-up and org-invoice refunds by their journal, keeping a missed on
     UNMATCHED: 0,
   });
   expect(mockReport).not.toHaveBeenCalled();
+});
+
+it("never matches a zero or negative refund line, even against a booked journal", async () => {
+  mockReport.mockClear();
+  const now = new Date("2027-01-20T02:30:00Z");
+  const settledAt = Math.floor(Date.parse("2027-01-19T10:00:00+05:30") / 1000);
+  const line = (entity_id: string, amount: number) => ({
+    entity_id,
+    payment_id: "pay_t",
+    amount,
+    type: "refund",
+    settlement_id: "setl_3",
+    settled_at: settledAt,
+    debit: amount,
+  });
+  mockPages.push([line("rfnd_zero", 0), line("rfnd_neg", -2_000)]);
+
+  const result = await runReconcileGatewaySettlements(Date.now(), now);
+
+  const stored = (id: string) => mockLines.find((x) => x.entityId === id);
+  expect(stored("rfnd_zero")).toMatchObject({
+    status: "AMOUNT_MISMATCH",
+    note: "gateway 0 vs ours unbooked",
+  });
+  expect(stored("rfnd_neg")).toMatchObject({
+    status: "AMOUNT_MISMATCH",
+    note: "gateway -2000 vs ours 2000",
+  });
+  expect(result.byStatus).toMatchObject({ MATCHED: 0, AMOUNT_MISMATCH: 2 });
+  expect(mockReport).toHaveBeenCalledTimes(1);
 });
