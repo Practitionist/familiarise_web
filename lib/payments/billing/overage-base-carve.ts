@@ -34,18 +34,6 @@ export type CarveOutcome = "restored" | "recarved" | "none" | "invoiced";
 
 type CarveRef = { overageEventId: string } | { sidePaymentId: string };
 
-type RestoreCarveTx = Pick<Tx, "overageEvent" | "payment" | "paymentLeg"> &
-  EarningsHoldDb &
-  Partial<
-    Pick<
-      Tx,
-      | "billingAccount"
-      | "ledgerTransaction"
-      | "ledgerAccount"
-      | "ledgerAccountBalance"
-    >
-  >;
-
 /**
  * Release the parent's OVERAGE holds once no other member overage on it is
  * unpaid. A FAILED one still holds on a LICENSE parent, whose base was never
@@ -173,7 +161,7 @@ async function journalWalletBaseRestore(
   tx: Tx,
   args: {
     parentPaymentId: string;
-    billingAccountId: string;
+    ownerOrgId: string;
     overageEventId: string;
     basePaise: number;
   },
@@ -183,10 +171,6 @@ async function journalWalletBaseRestore(
     select: { id: true },
   });
   if (!booking) return;
-  const { ownerOrgId } = await tx.billingAccount.findUniqueOrThrow({
-    where: { id: args.billingAccountId },
-    select: { ownerOrgId: true },
-  });
   const { postLedgerTxn } = await import("@/lib/payments/ledger/post");
   const posted = await postLedgerTxn(tx, {
     idempotencyKey: `overage-restore:${args.overageEventId}`,
@@ -195,7 +179,7 @@ async function journalWalletBaseRestore(
     description: `Abandoned member overage ${args.overageEventId}: base restored onto the org wallet`,
     postings: [
       {
-        account: { kind: "WALLET", organizationId: ownerOrgId },
+        account: { kind: "WALLET", organizationId: args.ownerOrgId },
         direction: "DEBIT",
         amountPaise: args.basePaise,
       },
@@ -223,7 +207,7 @@ async function journalWalletBaseRestore(
  * same tx.
  */
 export async function restoreOverageBaseCarve(
-  tx: RestoreCarveTx,
+  tx: Tx,
   ref: CarveRef,
 ): Promise<CarveOutcome> {
   const ctx = await loadCarveContext(tx, ref);
@@ -238,62 +222,57 @@ export async function restoreOverageBaseCarve(
     return "none";
   }
 
-  if (typeof tx.paymentLeg?.findUnique === "function") {
-    const licenseLeg = await tx.paymentLeg.findUnique({
-      where: {
-        paymentId_source: { paymentId: ctx.parent.id, source: "LICENSE" },
-      },
-      select: { amountPaise: true },
-    });
-    if (licenseLeg) {
-      // LICENSE booking legs carry ₹0 (prepaid at contract level), so an
-      // abandoned member side-charge has no parent accrual or wallet leg to
-      // restore basePaise onto; keep parent earnings held until resolved.
-      return "none";
-    }
+  const licenseLeg = await tx.paymentLeg.findUnique({
+    where: {
+      paymentId_source: { paymentId: ctx.parent.id, source: "LICENSE" },
+    },
+    select: { amountPaise: true },
+  });
+  if (licenseLeg) {
+    // LICENSE booking legs carry ₹0 (prepaid at contract level), so an
+    // abandoned member side-charge has no parent accrual or wallet leg to
+    // restore basePaise onto; keep parent earnings held until resolved.
+    return "none";
+  }
 
-    const walletLeg = await tx.paymentLeg.findUnique({
+  const walletLeg = await tx.paymentLeg.findUnique({
+    where: {
+      paymentId_source: { paymentId: ctx.parent.id, source: "WALLET" },
+    },
+    select: { amountPaise: true },
+  });
+  if (walletLeg) {
+    if (ctx.parent.billingAccountId) {
+      const { walletDebit } = await import("@/lib/api/organizations/wallet");
+      const { ownerOrgId } = await walletDebit(tx, {
+        billingAccountId: ctx.parent.billingAccountId,
+        amountPaise: ctx.event.basePaise,
+        reason: "BOOKING",
+        paymentId: ctx.parent.id,
+      });
+      await journalWalletBaseRestore(tx, {
+        parentPaymentId: ctx.parent.id,
+        ownerOrgId,
+        overageEventId: ctx.event.id,
+        basePaise: ctx.event.basePaise,
+      });
+    }
+    await tx.payment.updateMany({
+      where: { id: ctx.parent.id },
+      data: { amount: { increment: ctx.event.basePaise } },
+    });
+    await tx.paymentLeg.update({
       where: {
         paymentId_source: { paymentId: ctx.parent.id, source: "WALLET" },
       },
-      select: { amountPaise: true },
+      data: { amountPaise: { increment: ctx.event.basePaise } },
     });
-    if (walletLeg) {
-      if (
-        ctx.parent.billingAccountId &&
-        typeof tx.billingAccount?.updateMany === "function"
-      ) {
-        const { walletDebit } = await import("@/lib/api/organizations/wallet");
-        await walletDebit(tx as unknown as Tx, {
-          billingAccountId: ctx.parent.billingAccountId,
-          amountPaise: ctx.event.basePaise,
-          reason: "BOOKING",
-          paymentId: ctx.parent.id,
-        });
-        await journalWalletBaseRestore(tx as unknown as Tx, {
-          parentPaymentId: ctx.parent.id,
-          billingAccountId: ctx.parent.billingAccountId,
-          overageEventId: ctx.event.id,
-          basePaise: ctx.event.basePaise,
-        });
-      }
-      await tx.payment.updateMany({
-        where: { id: ctx.parent.id },
-        data: { amount: { increment: ctx.event.basePaise } },
-      });
-      await tx.paymentLeg.update({
-        where: {
-          paymentId_source: { paymentId: ctx.parent.id, source: "WALLET" },
-        },
-        data: { amountPaise: { increment: ctx.event.basePaise } },
-      });
-      await releaseOverageHeldParentEarnings(
-        tx,
-        ctx.parent.id,
-        ctx.sidePaymentId,
-      );
-      return "restored";
-    }
+    await releaseOverageHeldParentEarnings(
+      tx,
+      ctx.parent.id,
+      ctx.sidePaymentId,
+    );
+    return "restored";
   }
 
   // Guarded parent-first write: the invoiced check rides the UPDATE's WHERE

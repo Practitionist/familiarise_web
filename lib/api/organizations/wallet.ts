@@ -108,7 +108,7 @@ export async function walletDebit(
     membershipId?: string;
     notes?: string;
   },
-): Promise<{ balanceAfter: number }> {
+): Promise<{ balanceAfter: number; ownerOrgId: string }> {
   if (params.amountPaise <= 0) {
     throw new Error(
       `walletDebit requires positive amountPaise, got ${params.amountPaise}`,
@@ -138,11 +138,11 @@ export async function walletDebit(
   }
   const acct = await tx.billingAccount.findUniqueOrThrow({
     where: { id: params.billingAccountId },
-    select: { walletBalance: true, currency: true },
+    select: { walletBalance: true, ownerOrgId: true },
   });
   const balanceAfter = readCachedBalance(params.billingAccountId, acct);
-  // Every caller must post the matching Dr WALLET line in this same transaction.
-  return { balanceAfter };
+  // Every caller must post the matching Dr WALLET line, against ownerOrgId, in this same transaction.
+  return { balanceAfter, ownerOrgId: acct.ownerOrgId };
 }
 
 /** A checkout wallet debit whose booking journal carries no Dr WALLET line. */
