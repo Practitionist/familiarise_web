@@ -163,11 +163,88 @@ async function cachedBalance(billingAccountId: string): Promise<number> {
   return Number(acct.walletBalance ?? 0);
 }
 
+type RefundableTopUp = {
+  id: string;
+  billingAccountId: string;
+  amountPaise: number;
+  providerOrderId: string;
+  providerPaymentId: string;
+};
+type GatewayRefund = Awaited<ReturnType<typeof listRazorpayRefunds>>[number];
+type ListedTopUp = {
+  topUp: RefundableTopUp;
+  existing: GatewayRefund[];
+  /** This door's refund for the top-up, found by its dedupe key. */
+  prior: GatewayRefund | undefined;
+};
+
+const sumAmounts = (rows: GatewayRefund[]) =>
+  rows.reduce((sum, r) => sum + r.amount, 0);
+
+/** Where the walk stopped; gateway calls report their own RefundError, anything else reports here, once per run. */
+function stoppedAt(
+  topUp: RefundableTopUp,
+  error: unknown,
+): NonNullable<RefundRemainingResult["stoppedOn"]> {
+  if (error instanceof RefundError) {
+    return { topUpId: topUp.id, code: error.code };
+  }
+  reportSentryError(error, {
+    subsystem: "payments",
+    op: "wallet-refund-remaining",
+    extra: { billingAccountId: topUp.billingAccountId, topUpId: topUp.id },
+  });
+  return { topUpId: topUp.id, code: "REFUND_STEP_FAILED" };
+}
+
+const lineOf = (
+  topUp: RefundableTopUp,
+  refund: GatewayRefund,
+  reused: boolean,
+): WalletRefundLine => ({
+  topUpId: topUp.id,
+  providerPaymentId: topUp.providerPaymentId,
+  refundId: refund.refundId,
+  amountPaise: refund.amount,
+  status: refund.status,
+  reused,
+});
+
+/** Issues one new refund of `min(available, top-up refundable)`; null when there is nothing to send. */
+async function issueTopUpRefund(
+  listed: ListedTopUp,
+  availablePaise: number,
+  reason: string,
+): Promise<WalletRefundLine | null> {
+  const { topUp, existing } = listed;
+  const refundedPaise = sumAmounts(
+    existing.filter((r) => r.status === "SUCCEEDED" || r.status === "PENDING"),
+  );
+  const amountPaise = Math.min(
+    availablePaise,
+    topUp.amountPaise - refundedPaise,
+  );
+  if (amountPaise <= 0) return null;
+  const created = await createRazorpayRefund({
+    paymentIntentId: topUp.providerPaymentId,
+    amount: amountPaise,
+    reason,
+    metadata: {
+      walletRefundKey: walletRefundKey(topUp.billingAccountId, topUp.id),
+    },
+    // Razorpay keys allow no colons; the top-up id alone fixes the account.
+    idempotencyKey: `wallet-refund_${topUp.id}`,
+  });
+  return lineOf(topUp, created, false);
+}
+
 /**
- * Refunds `min(remaining, top-up refundable)` against each CONFIRMED top-up,
- * newest first, until the balance is spoken for. A gateway refund already
- * carrying this top-up's dedupe key is reused, never repeated; the walk stops
- * at the first gateway failure. Callers freeze wallet spend around it.
+ * Refunds `min(available, top-up refundable)` against each CONFIRMED top-up,
+ * newest first, until the balance is spoken for. Every top-up's gateway
+ * refunds are read before any money moves, so a refund still in flight on any
+ * of them reserves its share of the balance. A refund already carrying a
+ * top-up's dedupe key is reused, never repeated; the walk stops at the first
+ * failure. Callers freeze wallet spend around it.
  */
 export async function refundRemainingWalletBalance(params: {
   billingAccountId: string;
@@ -175,7 +252,7 @@ export async function refundRemainingWalletBalance(params: {
 }): Promise<RefundRemainingResult> {
   const { billingAccountId } = params;
   const startingBalancePaise = await cachedBalance(billingAccountId);
-  const topUps = await prisma.walletTopUp.findMany({
+  const rows = await prisma.walletTopUp.findMany({
     where: {
       billingAccountId,
       status: "CONFIRMED",
@@ -190,87 +267,66 @@ export async function refundRemainingWalletBalance(params: {
       providerPaymentId: true,
     },
   });
+  const topUps = rows.flatMap((t) =>
+    t.providerPaymentId
+      ? [{ ...t, providerPaymentId: t.providerPaymentId }]
+      : [],
+  );
 
   const refunds: WalletRefundLine[] = [];
-  let pendingPaise = 0;
-  let stoppedOn: RefundRemainingResult["stoppedOn"] = null;
-
-  for (const topUp of topUps) {
-    const balancePaise = await cachedBalance(billingAccountId);
-    if (balancePaise - pendingPaise <= 0) break;
-    const providerPaymentId = topUp.providerPaymentId;
-    if (!providerPaymentId) continue;
-    const dedupeKey = walletRefundKey(billingAccountId, topUp.id);
-    try {
-      const existing = await listRazorpayRefunds(providerPaymentId, 100);
-      const prior = existing.find(
-        (r) => r.metadata?.walletRefundKey === dedupeKey,
-      );
-      // Another refund still in flight on this payment will debit the wallet when it lands.
-      pendingPaise += existing
-        .filter((r) => r !== prior && r.status === "PENDING")
-        .reduce((sum, r) => sum + r.amount, 0);
-      let line: WalletRefundLine;
-      if (prior) {
-        line = {
-          topUpId: topUp.id,
-          providerPaymentId,
-          refundId: prior.refundId,
-          amountPaise: prior.amount,
-          status: prior.status,
-          reused: true,
-        };
-      } else {
-        const refundedPaise = existing
-          .filter((r) => r.status === "SUCCEEDED" || r.status === "PENDING")
-          .reduce((sum, r) => sum + r.amount, 0);
-        const amountPaise = Math.min(
-          balancePaise - pendingPaise,
-          topUp.amountPaise - refundedPaise,
-        );
-        if (amountPaise <= 0) continue;
-        const created = await createRazorpayRefund({
-          paymentIntentId: providerPaymentId,
-          amount: amountPaise,
-          reason: params.reason,
-          metadata: { walletRefundKey: dedupeKey },
-          // Razorpay keys allow no colons; the top-up id alone fixes the account.
-          idempotencyKey: `wallet-refund_${topUp.id}`,
-        });
-        line = {
-          topUpId: topUp.id,
-          providerPaymentId,
-          refundId: created.refundId,
-          amountPaise: created.amount,
-          status: created.status,
-          reused: false,
-        };
-      }
-      await bookIfSucceeded(line, topUp);
-      if (line.status === "PENDING") pendingPaise += line.amountPaise;
-      refunds.push(line);
-    } catch (error) {
-      // Gateway calls report their own RefundError; the walk stops, so this fires once per run.
-      if (!(error instanceof RefundError)) {
-        reportSentryError(error, {
-          subsystem: "payments",
-          op: "wallet-refund-remaining",
-          extra: { billingAccountId, topUpId: topUp.id },
-        });
-      }
-      stoppedOn = {
-        topUpId: topUp.id,
-        code: error instanceof RefundError ? error.code : "REFUND_STEP_FAILED",
-      };
-      break;
-    }
-  }
-
-  return {
+  const result = async (
+    pendingPaise: number,
+    stoppedOn: RefundRemainingResult["stoppedOn"],
+  ): Promise<RefundRemainingResult> => ({
     startingBalancePaise,
     balanceAfterPaise: await cachedBalance(billingAccountId),
     pendingPaise,
     refunds,
     stoppedOn,
-  };
+  });
+
+  // Phase 1: read every top-up's gateway refunds before sizing anything.
+  const listed: ListedTopUp[] = [];
+  for (const topUp of topUps) {
+    try {
+      const existing = await listRazorpayRefunds(topUp.providerPaymentId, 100);
+      const key = walletRefundKey(billingAccountId, topUp.id);
+      const prior = existing.find((r) => r.metadata?.walletRefundKey === key);
+      listed.push({ topUp, existing, prior });
+    } catch (error) {
+      return result(0, stoppedAt(topUp, error));
+    }
+  }
+  // Every refund still in flight debits the wallet when it lands.
+  let pendingPaise = sumAmounts(
+    listed.flatMap((l) => l.existing.filter((r) => r.status === "PENDING")),
+  );
+
+  // Phase 2: book this door's earlier refunds, then issue new ones newest first.
+  for (const l of listed) {
+    if (!l.prior) continue;
+    const line = lineOf(l.topUp, l.prior, true);
+    try {
+      await bookIfSucceeded(line, l.topUp);
+    } catch (error) {
+      return result(pendingPaise, stoppedAt(l.topUp, error));
+    }
+    refunds.push(line);
+  }
+  for (const l of listed) {
+    if (l.prior) continue;
+    const availablePaise =
+      (await cachedBalance(billingAccountId)) - pendingPaise;
+    if (availablePaise <= 0) break;
+    try {
+      const line = await issueTopUpRefund(l, availablePaise, params.reason);
+      if (!line) continue;
+      await bookIfSucceeded(line, l.topUp);
+      if (line.status === "PENDING") pendingPaise += line.amountPaise;
+      refunds.push(line);
+    } catch (error) {
+      return result(pendingPaise, stoppedAt(l.topUp, error));
+    }
+  }
+  return result(pendingPaise, null);
 }

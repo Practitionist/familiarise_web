@@ -318,11 +318,8 @@ export async function adjustWallet(
       },
       select: { direction: true, amountPaise: true },
     });
-    const priorSigned =
-      prior === null
-        ? null
-        : (prior.direction === "CREDIT" ? 1 : -1) * Number(prior.amountPaise);
-    if (priorSigned !== amountPaise) {
+    const priorSign = prior?.direction === "CREDIT" ? 1 : -1;
+    if (!prior || priorSign * Number(prior.amountPaise) !== amountPaise) {
       throw new WalletAdjustmentKeyReusedError(params.idempotencyKey);
     }
     const acct = await tx.billingAccount.findUniqueOrThrow({

@@ -66,7 +66,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         run: async (req) => {
           const { cleanupAbandonedOrgTopUps } =
             await import("@/scripts/cleanup/cleanup-abandoned-org-top-ups");
-          return cleanupAbandonedOrgTopUps({ limit: parseLimitParam(req) });
+          // One gateway read per row, so an unparameterised call stays bounded too.
+          return cleanupAbandonedOrgTopUps({
+            limit: parseLimitParamOrDefault(req, MAX_ORG_LIFECYCLE_CLAIMS),
+          });
         },
         summarize: (r) => ({
           reaped: r.reaped,
