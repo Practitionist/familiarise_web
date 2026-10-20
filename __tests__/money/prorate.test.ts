@@ -11,6 +11,12 @@ describe("prorate", () => {
     );
   });
 
+  it("returns the full amount for a full-amount proration past 2^53", () => {
+    expect(prorate(416_029_418, 2_869_922_706, 2_869_922_706)).toBe(
+      416_029_418,
+    );
+  });
+
   it("matches Math.floor on ordinary values, including negatives", () => {
     const cases: Array<[number, number, number]> = [
       [8000, 5, 8],
