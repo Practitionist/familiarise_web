@@ -73,16 +73,20 @@ import {
       );
     }
   }
-  // Live RazorpayX answers only allowlisted IPs, so a live key without the static-egress proxy fails boot.
+  // A live RazorpayX key without the static-egress proxy is reported once per process at
+  // load; collections keep booting and each payout call refuses on its own.
   if (
     process.env.NEXT_PHASE !== "phase-production-build" &&
     process.env.RAZORPAYX_KEY_ID?.startsWith("rzp_live_") &&
     !process.env.RAZORPAYX_EGRESS_PROXY_URL
   ) {
-    throw new PaymentError(
-      "RazorpayX live key in use but RAZORPAYX_EGRESS_PROXY_URL is unset; refusing to boot",
-      "RAZORPAYX_EGRESS_NOT_CONFIGURED",
-      "RAZORPAY",
+    reportSentryError(
+      new PaymentError(
+        "RazorpayX live key in use but RAZORPAYX_EGRESS_PROXY_URL is unset; payouts will refuse",
+        "RAZORPAYX_EGRESS_NOT_CONFIGURED",
+        "RAZORPAY",
+      ),
+      { subsystem: "payments", op: "razorpayx-egress-boot-check" },
     );
   }
 }

@@ -158,18 +158,31 @@ describe("core checkout/refund client (lib/payments/core/razorpay.ts)", () => {
     expect(() => requireCoreModule()).not.toThrow();
   });
 
-  it("live RazorpayX key without the egress proxy → throws at init", () => {
+  it("live RazorpayX key without the egress proxy → boots, reports once, payouts still refuse", async () => {
     process.env.RAZORPAYX_KEY_ID = "rzp_live_xkey";
     delete process.env.RAZORPAYX_EGRESS_PROXY_URL;
+    const report = jest.fn();
+    jest.doMock("../../lib/observability/report", () => ({
+      reportSentryError: report,
+      reportSentryMessage: jest.fn(),
+    }));
 
-    const thrown = captureThrow(() => requireCoreModule());
-
-    expect(thrown.message).toMatch(/RAZORPAYX_EGRESS_PROXY_URL is unset/);
-    expect(thrown.code).toBe("RAZORPAYX_EGRESS_NOT_CONFIGURED");
-
-    process.env.RAZORPAYX_EGRESS_PROXY_URL = "http://proxy:3128";
-    jest.resetModules();
     expect(() => requireCoreModule()).not.toThrow();
+    requireCoreModule();
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(report.mock.calls[0][0]).toMatchObject({
+      code: "RAZORPAYX_EGRESS_NOT_CONFIGURED",
+    });
+
+    const { RazorpayPayoutsService } = requirePayoutsFactory();
+    await expect(
+      new RazorpayPayoutsService({
+        keyId: "rzp_live_xkey",
+        keySecret: "s",
+        accountNumber: "acc",
+      }).fetchPayout("pout_1"),
+    ).rejects.toMatchObject({ code: "RAZORPAYX_EGRESS_NOT_CONFIGURED" });
+    jest.dontMock("../../lib/observability/report");
   });
 
   it("production + rzp_live_ key → initializes fine (the guard only fires on test keys)", () => {
