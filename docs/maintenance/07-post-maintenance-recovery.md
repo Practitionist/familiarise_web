@@ -86,8 +86,11 @@ npx tsx jobs/earnings/sync-payment-earnings.ts
 
 ```bash
 # Sync dispute status changes that occurred during maintenance
-npx tsx jobs/disputes/reconcile-disputes.ts
+curl -X POST "$APP_URL/api/cleanup/reconcile-disputes?limit=10" \
+  -H "Authorization: Bearer $CRON_SECRET"
 ```
+
+The Netlify ticker also runs this job hourly at `:00`; the call above is only needed to avoid waiting for the next hour. The admin system-jobs console can run it as well.
 
 - [ ] Verify output: all dispute statuses match gateway state
 

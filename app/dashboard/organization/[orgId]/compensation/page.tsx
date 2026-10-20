@@ -32,6 +32,7 @@ import { EmptyState } from "@/components/dashboard/EmptyState";
 import { Section } from "@/components/dashboard/Section";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { humanizeEnum } from "@/lib/ui/tone";
+import { AWAITING_ORG_LABEL } from "@/lib/dashboard/hold-copy";
 
 import { OrgScopedEarnings } from "./OrgScopedEarnings";
 
@@ -47,7 +48,7 @@ const EARNING_STATUS_LABEL: Record<string, string> = {
   READY: "Ready to settle",
   HELD: "On hold",
   PENDING: "Pending (hold window)",
-  PENDING_TRUST: "Pending (trust window)",
+  PENDING_TRUST: AWAITING_ORG_LABEL,
   BATCHED: "Processing payout", // #837 — batched, cash not yet disbursed
   PAID: "Paid",
   REFUNDED: "Refunded",

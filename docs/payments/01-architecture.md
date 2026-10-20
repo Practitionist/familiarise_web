@@ -235,11 +235,11 @@ All payment, refund, dispute, and payout cleanup/reconciliation jobs are registe
 | `abandoned-payments`                      | `scripts/appointments/cleanup-tentative-slots.ts` | Every 5 min (`cron-tick.mts`)                              |
 | `approval-payments`                       | `scripts/appointments/cleanup-tentative-slots.ts` | Every 15 min (`cron-tick.mts`)                             |
 | `reconcile-refunds`                       | `scripts/refunds/reconcile-refunds.ts`            | Every 15 min (`cron-tick.mts`) & 6h (`cron-intra-day.yml`) |
-| `reconcile-disputes`                      | `scripts/disputes/reconcile-disputes.ts`          | Every 6 hours (`cron-intra-day.yml`)                       |
+| `reconcile-disputes`                      | `scripts/disputes/reconcile-disputes.ts`          | Hourly at `:00` (`cron-tick.mts`)                          |
 | `reconcile-payment-status`                | `scripts/payments/reconcile-payment-status.ts`    | Every 15 min (`cron-tick.mts`) & 2h (`cron-intra-day.yml`) |
 | `sync-payment-earnings`                   | `scripts/payments/sync-payment-earnings.ts`       | Every 15 min (`cron-tick.mts`) & 4h (`cron-intra-day.yml`) |
 | `reconcile-payouts`                       | `scripts/payouts/reconcile-payouts.ts`            | Every 6 hours (`cron-intra-day.yml`)                       |
-| `reconcile-ledgers`                       | `scripts/reconcile/reconcile-ledgers.ts`          | Daily (`cron-daily.yml`)                                   |
+| `reconcile-ledgers`                       | `scripts/reconcile/reconcile-ledgers.ts`          | Daily at 03:55 UTC (`cron-tick.mts`)                       |
 
 ### Payment Core, Payouts & Ledger Files
 
@@ -1062,9 +1062,9 @@ Settlement is INR-only by design, per [ADR 15](../enterprise/70-design-decisions
 
 ```
 +-----------------------------------------------------------------------------------+
-|  CRON: Every 6 hours                                                              |
-|  GET /api/cleanup/reconcile-disputes                                              |
-|  File: app/api/cleanup/reconcile-disputes/route.ts                                |
+|  CRON: Hourly at :00 (Netlify ticker, limit=10)                                   |
+|  POST /api/cleanup/reconcile-disputes                                             |
+|  File: app/api/cleanup/[job]/route.ts (twin: reconcile-disputes)                  |
 +-----------------------------------------------------------------------------------+
                                         |
                                         v
@@ -1249,7 +1249,7 @@ Settlement is INR-only by design, per [ADR 15](../enterprise/70-design-decisions
 |                                                                                   |
 |  +-------------------------------------------------------------------------+      |
 |  |  */15 * * * *  ->  GET /api/cleanup/reconcile-refunds                   |      |
-|  |  0 */6 * * *   ->  GET /api/cleanup/reconcile-disputes                  |      |
+|  |  hourly :00    ->  POST /api/cleanup/reconcile-disputes?limit=10        |      |
 |  |  0 * * * *     ->  GET /api/cleanup/approval-payments                   |      |
 |  +-------------------------------------------------------------------------+      |
 |                                                                                   |

@@ -20,11 +20,14 @@ import { Button } from "@/components/ui/button";
 import { BillingBlockBanner } from "@/components/billing/BillingBlockBanner";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
+import { paidOutHint } from "@/lib/dashboard/hold-copy";
+
 import { fetchBilling } from "../billing/billing-api";
 
 interface PayoutStats {
   stats: {
     totalPaidPaise: number;
+    totalTdsPaise: number;
     pendingPaise: number;
     counts: Record<string, number>;
   };
@@ -127,9 +130,9 @@ function HostFinance({ orgId }: Readonly<{ orgId: string }>) {
         href={href}
       />
       <Stat
-        label="Paid out"
+        label="Paid out (after TDS)"
         value={formatCurrencyAmount(stats.totalPaidPaise, "INR")}
-        hint={`${stats.counts.COMPLETED ?? 0} payouts`}
+        hint={paidOutHint(stats.counts.COMPLETED ?? 0, stats.totalTdsPaise)}
         href={href}
       />
     </StatRow>

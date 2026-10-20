@@ -13,6 +13,10 @@ import {
 } from "@/components/ui/responsive-table";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import {
+  AWAITING_ORG_HINT,
+  AWAITING_ORG_LABEL,
+} from "@/lib/dashboard/hold-copy";
 
 interface OrgEarningRow {
   id: string;
@@ -44,6 +48,7 @@ const EARNING_STATUS: Record<string, { label: string; tone: Tone }> = {
   READY: { label: "Ready for a batch", tone: "info" },
   BATCHED: { label: "In a payout batch", tone: "info" },
   PAID: { label: "Paid out", tone: "success" },
+  PENDING_TRUST: { label: AWAITING_ORG_LABEL, tone: "caution" },
   REFUNDED: { label: "Refunded", tone: "neutral" },
 };
 
@@ -129,9 +134,10 @@ export function OrgEarningsPanel({ orgId }: Readonly<{ orgId: string }>) {
   }
 
   const aggs = data.aggregates;
+  const awaitingOrg = sumShare(aggs, ["PENDING_TRUST"]);
   return (
     <>
-      <StatRow columns={3}>
+      <StatRow columns={awaitingOrg > 0 ? 4 : 3}>
         <Stat
           label="On hold"
           value={formatCurrencyAmount(
@@ -148,9 +154,17 @@ export function OrgEarningsPanel({ orgId }: Readonly<{ orgId: string }>) {
           )}
           tone="info"
         />
+        {awaitingOrg > 0 && (
+          <Stat
+            label={AWAITING_ORG_LABEL}
+            value={formatCurrencyAmount(awaitingOrg, "INR")}
+            hint={AWAITING_ORG_HINT}
+          />
+        )}
         <Stat
-          label="Paid out"
+          label="Paid out (before TDS)"
           value={formatCurrencyAmount(sumShare(aggs, ["PAID"]), "INR")}
+          hint="The organisation's share; the amount received after TDS is on Runs"
           tone="success"
         />
       </StatRow>

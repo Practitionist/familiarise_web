@@ -34,23 +34,21 @@ export function assertWithinInvoiceCreditLimit(
 }
 
 /**
- * #1591 J3-P1-01 — an org's open invoice exposure: unbilled accruals NET of
- * their refund reversal legs (mirrors invoice-rollup.ts, which bills the net),
- * plus invoices already issued and unpaid. Both credit-limit gates read this.
+ * An org's unbilled invoice accruals NET of their refund reversal legs
+ * (mirrors invoice-rollup.ts, which bills the net). The credit-limit exposure
+ * and the billing page's "not yet invoiced" figure both read this.
  */
-export async function readInvoiceExposurePaise(
-  db: Pick<Tx, "paymentLeg" | "organizationInvoice">,
+export async function readUnbilledAccrualPaise(
+  db: Pick<Tx, "paymentLeg">,
   organizationId: string,
 ): Promise<number> {
-  // Sequential (never Promise.all on `tx`): under PG_POOL_MAX=1 a single
-  // interactive-tx connection cannot serve concurrent queries (#1435).
   const accrualAgg = await db.paymentLeg.aggregate({
     where: {
       source: {
         in: [
           "INVOICE_ACCRUAL",
           "OVERAGE_INVOICE_ACCRUAL",
-          // Refunds append negative *_REVERSAL siblings (#786); without them
+          // Refunds append negative *_REVERSAL siblings; without them
           // a refunded seat kept counting against the limit.
           "INVOICE_ACCRUAL_REVERSAL",
           "OVERAGE_INVOICE_ACCRUAL_REVERSAL",
@@ -64,6 +62,21 @@ export async function readInvoiceExposurePaise(
     },
     _sum: { amountPaise: true },
   });
+  return sumPaise(accrualAgg._sum.amountPaise);
+}
+
+/**
+ * An org's open invoice exposure: unbilled accruals NET of
+ * their refund reversal legs, plus invoices already issued and unpaid. Both
+ * credit-limit gates read this.
+ */
+export async function readInvoiceExposurePaise(
+  db: Pick<Tx, "paymentLeg" | "organizationInvoice">,
+  organizationId: string,
+): Promise<number> {
+  // Sequential (never Promise.all on `tx`): under PG_POOL_MAX=1 a single
+  // interactive-tx connection cannot serve concurrent queries.
+  const accrued = await readUnbilledAccrualPaise(db, organizationId);
   const outstandingAgg = await db.organizationInvoice.aggregate({
     where: {
       organizationId,
@@ -71,10 +84,7 @@ export async function readInvoiceExposurePaise(
     },
     _sum: { totalPaise: true },
   });
-  return (
-    sumPaise(accrualAgg._sum.amountPaise) +
-    sumPaise(outstandingAgg._sum.totalPaise)
-  );
+  return accrued + sumPaise(outstandingAgg._sum.totalPaise);
 }
 
 /**
