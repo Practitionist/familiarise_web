@@ -1,10 +1,12 @@
 /**
  * Starts one ledger reconciliation in-process, shared by the reconcile-ledgers
  * door and the console's reconcile job. A full-scope run already going is a 409.
+ * Drifted wallets are frozen exactly as the nightly run freezes them.
  */
 
 import prisma from "@/lib/prisma";
 import { OpsRefusal } from "./ops-refusal-error";
+import { freezeDriftedWallets } from "@/lib/payments/wallet-freeze";
 import {
   isReconcileRunInProgress,
   RECONCILE_RUN_STALE_MS,
@@ -35,9 +37,11 @@ export async function startLedgerReconciliation(input: {
       );
     }
   }
-  return runReconcileLedgers({
+  const report = await runReconcileLedgers({
     scope: organizationId ? `org:${organizationId}` : "full",
     ...(organizationId ? { organizationId } : {}),
     triggeredById: input.triggeredById,
   });
+  const frozenWallets = await freezeDriftedWallets(report);
+  return { ...report, frozenWallets };
 }

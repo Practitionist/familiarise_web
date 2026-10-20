@@ -269,8 +269,8 @@ Subscriptions keep billing but the local `BillingSubscription` state lags.
 admin dashboard shows a `LedgerReconciliationReport` with `ok=false`.
 
 **Impact:** A money-journal or usage-ledger invariant (see
-`ledger-and-postings`) is not holding. A `LedgerTransaction` may be
-unbalanced, the `BillingAccount.walletBalance` cache may have drifted from
+`ledger-and-postings`) is not holding. A `LedgerTransaction` is never
+unbalanced (Postgres rejects it at COMMIT), but the `BillingAccount.walletBalance` cache may have drifted from
 the WALLET account, or an aggregate (earnings / seats / org-payout) no
 longer matches its journal postings.
 
@@ -292,18 +292,12 @@ longer matches its journal postings.
      pages P0, so no further checkout debits draw down an untrusted
      balance until an operator reconciles the drift and clears the
      freeze with a `WALLET_UNFREEZE`. Top-up credits are not gated.
-   - `LEDGER_TXN_IMBALANCE` — a `LedgerTransaction` has
-     `Σ DEBIT ≠ Σ CREDIT` across its `LedgerEntry` rows. Should be
-     impossible (`postLedgerTxn` rejects unbalanced postings) — a hit
-     means a row was hand-edited or partially written.
    - `EARNINGS_LEDGER_DRIFT` — `OrganizationEarnings` aggregates
      disagree with the `CONSULTANT_PAYABLE`/`ORG_PAYABLE` journal legs.
    - `PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT` — `ProgramAssignment`
      engagement counters disagree with the `UsageLedgerEntry` rows.
    - `ACTIVE_SEAT_COUNT_DRIFT` — cached active-seat count disagrees
      with live `ProgramAssignment` membership.
-   - `PAYMENT_LEG_SUM_MISMATCH` — a `Payment`'s amount disagrees with
-     the sum of its attributed journal legs.
    - `ORG_PAYOUT_TOTAL_MISMATCH` — an `OrganizationPayout` total
      disagrees with its `ORG_PAYABLE`/`PAYOUT` postings.
 3. For each finding, identify the root cause — nearly always a

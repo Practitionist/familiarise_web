@@ -7,9 +7,9 @@ on:
   schedule:
     # Every 30 minutes: orphaned meeting sessions reconciliation
     - cron: "25,55 * * * *"
-    # Hourly: dispute deadlines, DPDP breach deadline alerts, occurrence availability
+    # Hourly: DPDP breach deadline alerts, occurrence availability
     - cron: "17 * * * *"
-    # Every 6 hours: dispute status sync, recording copy to R2
+    # Every 6 hours: recording copy to R2
     - cron: "33 */6 * * *"
   workflow_dispatch:
     inputs:
@@ -81,7 +81,7 @@ jobs:
           INPUT_JOB: ${{ inputs.job }}
         run: |
           case "${INPUT_JOB}" in
-            ""|all|reconcile-orphaned-sessions|databreach-deadline-alerts|reconcile-occurrence-availability|reconcile-disputes|transfer-recordings)
+            ""|all|reconcile-orphaned-sessions|databreach-deadline-alerts|reconcile-occurrence-availability|transfer-recordings)
               ;;
             *)
               echo "::error::Unknown intra-day job slug '${INPUT_JOB}'"
@@ -116,15 +116,6 @@ jobs:
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/appointments/reconcile-occurrence-availability.ts
 
-      - name: Reconcile disputes
-        id: reconcile-disputes
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '33 */6 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'reconcile-disputes'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/disputes/reconcile-disputes.ts
-
       - name: Transfer recordings
         id: transfer-recordings
         if: >-
@@ -147,7 +138,6 @@ jobs:
             "reconcile-orphaned-sessions:${{ steps.reconcile-orphaned-sessions.outcome }}" \
             "databreach-deadline-alerts:${{ steps.databreach-deadline-alerts.outcome }}" \
             "reconcile-occurrence-availability:${{ steps.reconcile-occurrence-availability.outcome }}" \
-            "reconcile-disputes:${{ steps.reconcile-disputes.outcome }}" \
             "transfer-recordings:${{ steps.transfer-recordings.outcome }}"
           do
             job_name="${entry%%:*}"

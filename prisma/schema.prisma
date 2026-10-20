@@ -3044,6 +3044,7 @@ enum LedgerTransactionKind {
   UNAPPLIED_RECEIPT // a parked capture's cash, or its release when an operator recovers the booking
   GATEWAY_FEE // the gateway's fee and its GST on one capture, out of GATEWAY_CLEARING
   GATEWAY_SETTLEMENT // one settlement's net moved from GATEWAY_CLEARING to CASH
+  WALLET_ADJUSTMENT // an operator's signed wallet correction, against PLATFORM_PROMO or PLATFORM_FEE
 }
 
 model LedgerTransaction {
