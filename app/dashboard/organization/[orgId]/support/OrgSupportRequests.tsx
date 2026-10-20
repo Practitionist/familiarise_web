@@ -1,9 +1,6 @@
 "use client";
 
-/**
- * Org Support › Organization requests (#1527): platform requests members
- * tagged "About: this org". Subject and metadata only (ADR 20).
- */
+/** Organization-owned correspondence, filtered by current operations/billing grants. */
 
 import Link from "next/link";
 import { useMemo } from "react";
@@ -158,7 +155,7 @@ export function OrgSupportRequests({ orgId }: Readonly<{ orgId: string }>) {
           <EmptyState
             icon={Inbox}
             title="No organization requests"
-            description="Requests members raise about this organization appear here. The conversation stays between them and our team."
+            description="Your organization’s operations and billing requests appear here. Authorized teammates can follow the conversation with the platform team."
           />
         }
       />

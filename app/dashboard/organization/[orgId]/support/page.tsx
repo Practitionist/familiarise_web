@@ -13,14 +13,7 @@ import { ReportHistory } from "@/components/dashboard/shared/ReportHistory";
 import { OrgSupportTriage } from "./OrgSupportTriage";
 import { OrgSupportRequests } from "./OrgSupportRequests";
 
-/**
- * #support-hub — org Support (#1527), two URL tabs gated apart:
- * Session conversations (`operations.read`): CSAT aggregate + members'
- * conversation metadata (never transcripts, ADR 20) + the org-party dispute
- * entry. Organization requests (`supportRequests.org`, ops OR finance):
- * platform requests members tagged "About" this org.
- * ORG-12 (#1527): the page guards on the server like its API routes.
- */
+/** Organization correspondence and session activity use separate server-side grants. */
 export default async function OrgSupportPage({
   params,
 }: {
@@ -40,8 +33,8 @@ export default async function OrgSupportPage({
         title="Support"
         description={
           triage
-            ? "How members rate sessions, their support conversations, and requests raised about this organization."
-            : "Requests members raised about this organization."
+            ? "Session quality, member support activity, and your organization’s own requests."
+            : "Your organization’s operations and billing requests."
         }
       />
       <DashboardContent>
@@ -49,7 +42,7 @@ export default async function OrgSupportPage({
           tabs={[
             {
               value: "conversations",
-              label: "Session conversations",
+              label: "Session support activity",
               content: <OrgSupportTriage orgId={orgId} />,
               show: triage,
             },
