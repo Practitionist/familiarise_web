@@ -12,7 +12,11 @@ import {
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { assertMoneyOpsBudget } from "@/lib/backoffice/money-limit";
-import { refundInFlightOr } from "@/lib/backoffice/refund-doors";
+import {
+  refundableEventPaise,
+  refundablePaymentPaise,
+  refundInFlightOr,
+} from "@/lib/backoffice/refund-doors";
 
 export async function GET(req: NextRequest) {
   try {
@@ -99,87 +103,104 @@ const IDEMPOTENCY_KEY = z.string().trim().min(10).max(255);
 // whole class/webinar (every attendee). Both go through the refund front doors
 // (#1319): a single payment via refundBookingPayment, which splits gateway,
 // org-funded (in-ledger) and credit rails; events fan out through the reversal engine.
-const refundDoor = (idempotencyKey: string) =>
-  withOpsAction(
-    "refunds.manage",
-    (b) => (b.paymentId ? "refund.issue" : "refund.event"),
-    {
-      paymentId: z.string().min(1).optional(),
-      classId: z.string().min(1).optional(),
-      webinarId: z.string().min(1).optional(),
-      amountPaise: z.number().int().positive().optional(),
-    },
-    {
-      mode: "gateway",
-      target: ({ body }) => refundTarget(body),
-      run: async ({ body, actor }) => {
-        const targets = [body.paymentId, body.classId, body.webinarId];
-        if (targets.filter(Boolean).length !== 1) {
-          throw new OpsRefusal(
-            "INVALID_BODY",
-            "Provide exactly one of paymentId, classId, webinarId",
-            400,
-          );
-        }
-        if (body.amountPaise && !body.paymentId) {
-          throw new OpsRefusal(
-            "INVALID_BODY",
-            "amountPaise applies only to a single paymentId refund",
-            400,
-          );
-        }
-        await assertMoneyOpsBudget(actor.userId);
-
-        if (body.paymentId) {
-          // A replay of one dialog collapses on `Refund.dedupeKey @unique`; a key
-          // reused for another payment or by another admin can never match it.
-          const dedupeKey = `admin-refund:${actor.userId}:${body.paymentId}:${idempotencyKey}`;
-          const result = await refundBookingPayment({
-            paymentId: body.paymentId,
-            amountPaise: body.amountPaise,
-            reason: `admin refund: ${body.reason}`,
-            initiatedByUserId: actor.userId,
-            dedupeKey,
-          }).catch((err: unknown) => refundInFlightOr(err, dedupeKey));
-          return {
-            target: refundTarget(body),
-            after: { ...result },
-            response: { kind: "payment", result },
-          };
-        }
-
-        const eventKind = body.classId ? "class" : "webinar";
-        const eventId = (body.classId ?? body.webinarId)!;
-        // #1780 D-5 — the class ledger nets each seat to what the series did
-        // not deliver; a webinar refunds in full by design, so it has none.
-        const ledgers = body.classId ? await classSeriesLedgers(eventId) : null;
-        const summary = await refundWholeEventPayments(
-          eventKind,
-          eventId,
-          `admin whole-event refund: ${body.reason}`,
-          actor.userId,
-          {
-            ledgers: ledgers ?? undefined,
-            // This door's own per-payment keys: a retry reuses them, and they
-            // never collide with the series-cancel doors' keys.
-            dedupeKeyPrefix: "admin-event-refund",
-          },
+// `idempotencyKey` is the Idempotency-Key header, carried in the body so a proposal replays it.
+const refundDoor = withOpsAction(
+  "refunds.manage",
+  (b) => (b.paymentId ? "refund.issue" : "refund.event"),
+  {
+    idempotencyKey: IDEMPOTENCY_KEY,
+    paymentId: z.string().min(1).optional(),
+    classId: z.string().min(1).optional(),
+    webinarId: z.string().min(1).optional(),
+    amountPaise: z.number().int().positive().optional(),
+  },
+  {
+    mode: "gateway",
+    target: ({ body }) => refundTarget(body),
+    run: async ({ body, actor }) => {
+      const targets = [body.paymentId, body.classId, body.webinarId];
+      if (targets.filter(Boolean).length !== 1) {
+        throw new OpsRefusal(
+          "INVALID_BODY",
+          "Provide exactly one of paymentId, classId, webinarId",
+          400,
         );
-        // #1583 C-P0-03 — every rail clamps to the refundable balance, so a
-        // repeat answers 200 with nothing refunded, never a second cascade.
-        const alreadyRefunded =
-          summary.alreadyRefunded && summary.refundsIssued === 0;
+      }
+      if (body.amountPaise && !body.paymentId) {
+        throw new OpsRefusal(
+          "INVALID_BODY",
+          "amountPaise applies only to a single paymentId refund",
+          400,
+        );
+      }
+      await assertMoneyOpsBudget(actor.userId);
+
+      if (body.paymentId) {
+        // A replay of one dialog collapses on `Refund.dedupeKey @unique`; a key
+        // reused for another payment or by another admin can never match it.
+        const dedupeKey = `admin-refund:${actor.userId}:${body.paymentId}:${body.idempotencyKey}`;
+        const result = await refundBookingPayment({
+          paymentId: body.paymentId,
+          amountPaise: body.amountPaise,
+          reason: `admin refund: ${body.reason}`,
+          initiatedByUserId: actor.userId,
+          dedupeKey,
+        }).catch((err: unknown) => refundInFlightOr(err, dedupeKey));
         return {
           target: refundTarget(body),
-          after: { refundsIssued: summary.refundsIssued, alreadyRefunded },
-          response: alreadyRefunded
-            ? { kind: eventKind, summary, alreadyRefunded: true, refunded: 0 }
-            : { kind: eventKind, summary },
+          after: { ...result },
+          response: { kind: "payment", result },
         };
+      }
+
+      const eventKind = body.classId ? "class" : "webinar";
+      const eventId = (body.classId ?? body.webinarId)!;
+      // #1780 D-5 — the class ledger nets each seat to what the series did
+      // not deliver; a webinar refunds in full by design, so it has none.
+      const ledgers = body.classId ? await classSeriesLedgers(eventId) : null;
+      const summary = await refundWholeEventPayments(
+        eventKind,
+        eventId,
+        `admin whole-event refund: ${body.reason}`,
+        actor.userId,
+        {
+          ledgers: ledgers ?? undefined,
+          // This door's own per-payment keys: a retry reuses them, and they
+          // never collide with the series-cancel doors' keys.
+          dedupeKeyPrefix: "admin-event-refund",
+        },
+      );
+      // #1583 C-P0-03 — every rail clamps to the refundable balance, so a
+      // repeat answers 200 with nothing refunded, never a second cascade.
+      const alreadyRefunded =
+        summary.alreadyRefunded && summary.refundsIssued === 0;
+      return {
+        target: refundTarget(body),
+        after: { refundsIssued: summary.refundsIssued, alreadyRefunded },
+        response: alreadyRefunded
+          ? { kind: eventKind, summary, alreadyRefunded: true, refunded: 0 }
+          : { kind: eventKind, summary },
+      };
+    },
+  },
+  {
+    stepUp: true,
+    secondApprover: {
+      route: "/api/admin/refunds",
+      target: ({ body }) => refundTarget(body),
+      amountPaise: (body) => {
+        if (body.paymentId) {
+          return body.amountPaise ?? refundablePaymentPaise(body.paymentId);
+        }
+        if (body.classId) return refundableEventPaise("class", body.classId);
+        if (body.webinarId) {
+          return refundableEventPaise("webinar", body.webinarId);
+        }
+        return 0;
       },
     },
-    { stepUp: true },
-  );
+  },
+);
 
 function refundTarget(body: {
   paymentId?: string;
@@ -191,24 +212,38 @@ function refundTarget(body: {
   return { kind: "Webinar", id: body.webinarId ?? "unknown" };
 }
 
+const jsonObject = z.record(z.unknown());
+
 /**
  * POST — ADMIN, step-up, a typed reason, an ops log row, and a required
  * `Idempotency-Key` header that becomes the refund's dedupe key.
  */
-export async function POST(
-  req: NextRequest,
-  route: { params: Promise<unknown> },
-) {
-  const key = IDEMPOTENCY_KEY.safeParse(req.headers.get("idempotency-key"));
-  if (!key.success) {
-    return NextResponse.json(
-      {
-        error:
-          "An Idempotency-Key header (10–255 characters) is required, one per refund dialog.",
-        code: "IDEMPOTENCY_KEY_REQUIRED",
-      },
-      { status: 400 },
-    );
-  }
-  return refundDoor(key.data)(req, route);
-}
+export const POST = Object.assign(
+  async (req: NextRequest, route: { params: Promise<unknown> }) => {
+    const key = IDEMPOTENCY_KEY.safeParse(req.headers.get("idempotency-key"));
+    if (!key.success) {
+      return NextResponse.json(
+        {
+          error:
+            "An Idempotency-Key header (10–255 characters) is required, one per refund dialog.",
+          code: "IDEMPOTENCY_KEY_REQUIRED",
+        },
+        { status: 400 },
+      );
+    }
+    const body = jsonObject.safeParse(await req.json().catch(() => ({})));
+    const forwarded = new NextRequest(req.url, {
+      method: "POST",
+      headers: req.headers,
+      body: JSON.stringify({
+        ...(body.success ? body.data : {}),
+        idempotencyKey: key.data,
+      }),
+    });
+    return refundDoor(forwarded, route);
+  },
+  {
+    proposalRoute: refundDoor.proposalRoute,
+    executeApproved: refundDoor.executeApproved,
+  },
+);

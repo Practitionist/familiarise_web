@@ -35,11 +35,19 @@ export async function callOpsDoor(
   return json;
 }
 
+/** Above ₹25,000 with two admins, a money door answers 202 and waits for another admin. */
+export const PROPOSED_TOAST = "Sent to another admin for approval";
+
+export function isProposed(data: Record<string, unknown>): boolean {
+  return data.status === "PROPOSED";
+}
+
 /** A door as a mutation: toasts the outcome and refreshes the given reads. */
 export function useOpsDoor(opts: {
   success: string;
   invalidate: readonly (readonly unknown[])[];
   onDone?: (data: Record<string, unknown>) => void;
+  onFailed?: () => void;
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -52,16 +60,21 @@ export function useOpsDoor(opts: {
       body: Record<string, unknown>;
     }) => callOpsDoor(url, body),
     onSuccess: (data) => {
-      toast({ title: opts.success });
-      for (const key of opts.invalidate)
-        void queryClient.invalidateQueries({ queryKey: [...key] });
+      toast({ title: isProposed(data) ? PROPOSED_TOAST : opts.success });
       opts.onDone?.(data);
     },
-    onError: (err: Error) =>
+    onError: (err: Error) => {
       toast({
         title: "Not done",
         description: err.message,
         variant: "destructive",
-      }),
+      });
+      opts.onFailed?.();
+    },
+    // A refused door can still have moved state (a failed approval stays APPROVED).
+    onSettled: () => {
+      for (const key of opts.invalidate)
+        void queryClient.invalidateQueries({ queryKey: [...key] });
+    },
   });
 }

@@ -32,6 +32,9 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     $transaction: (fn: (t: typeof tx) => unknown) => transaction(fn),
+    // The second-approval read: one active admin, so the raise runs directly.
+    billingAccount: { findFirst: async () => ({ creditLimit: 1_00_000 }) },
+    user: { count: async () => 1 },
   },
 }));
 jest.mock("../../lib/auth-helpers", () => ({

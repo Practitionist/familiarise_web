@@ -5,6 +5,7 @@
  */
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal";
+import { countActiveAdmins } from "@/lib/backoffice/ops-proposals";
 import {
   feeScheduleApprovalRefusal,
   SELF_APPROVAL_WAIT_MS,
@@ -37,9 +38,7 @@ export const POST = withOpsAction(
         makerUserId: row.makerUserId,
         checkerUserId: ctx.actor.userId,
         createdAt: row.createdAt,
-        activeAdmins: selfApproval
-          ? await tx.user.count({ where: { role: "ADMIN", banned: false } })
-          : 0,
+        activeAdmins: selfApproval ? await countActiveAdmins(tx) : 0,
         now,
       });
       if (refusal) {

@@ -19,6 +19,7 @@ export type MoneyTabKey =
   | "org-payouts"
   | "earnings"
   | "reconcile"
+  | "approvals"
   | "incidents"
   | "audit";
 
@@ -75,6 +76,13 @@ export const MONEY_TABS: readonly MoneyTab[] = [
     label: "Reconcile",
     description: "Run the reconcile jobs now and see when each last ran.",
     surface: "payouts.manage",
+  },
+  {
+    key: "approvals",
+    label: "Approvals",
+    description:
+      "Money actions above ₹25,000 waiting for a second admin's approval.",
+    surface: "payments.manage",
   },
   {
     key: "incidents",
