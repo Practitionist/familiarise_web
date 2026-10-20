@@ -29,7 +29,7 @@ export async function canCorrespondOnCase(
   if (!supportCase.organizationId) return false;
   const member = await db.membership.findUnique({
     where: {
-      organizationId_userId: {
+      userId_organizationId: {
         organizationId: supportCase.organizationId,
         userId: viewer.userId,
       },
