@@ -21,7 +21,7 @@ being sent, or a refund. Each of those tables was internally coherent on
 its own terms — its rows summed, its running balance advanced — and that
 was precisely the problem. Nothing in the schema forced the three to agree
 with each other. Reconciliation meant joining all three across JSON
-columns and date heuristics and *hoping* the answer they produced for "how
+columns and date heuristics and _hoping_ the answer they produced for "how
 much money is where" was the same. There was no structural guarantee, only
 the accident of three writers having stayed in step. For a B2B platform
 that owes real money to host organizations, consultants, and the tax
@@ -54,8 +54,10 @@ The payoff is that "the books are wrong" collapses from a three-way
 cross-join into a single per-transaction predicate. Because every
 transaction balances and every balance is a sum of the same rows, one
 invariant — `Σdebit == Σcredit` — guarantees the books tie out, and the
-nightly reconciler re-proves it as the `LEDGER_TXN_IMBALANCE` check rather
-than comparing three logs and guessing. The reconciliation question
+deferred constraint trigger `ledger_txn_balanced`
+(`prisma/sql/ledger-triggers.sql`) refuses an unbalanced transaction at
+COMMIT, so no reconcile check has to re-prove it, rather than comparing
+three logs and guessing. The reconciliation question
 changed shape, not just table count: from "do these three independent logs
 happen to agree?" to "re-sum one journal."
 
@@ -64,7 +66,7 @@ happen to agree?" to "re-sum one journal."
 We considered keeping the three logs but adding a reconciliation job that
 cross-checked them. This is what we already effectively had, and it lost
 on the structural point: a cross-check between three independently-signed
-logs can only ever report a *discrepancy after the fact*; it cannot make
+logs can only ever report a _discrepancy after the fact_; it cannot make
 agreement a property the schema enforces at write time. Three logs that
 each balance internally can still disagree with each other, and no amount
 of nightly comparison changes that the disagreement was always possible.
@@ -87,20 +89,15 @@ eliminating. We derive balances instead, with one deliberate exception
 
 ## Consequences
 
-The real cost we pay is write amplification and a maintained snapshot.
-Every cash event now writes a `LedgerTransaction`, two or more
-`LedgerEntry` rows, and folds the signed deltas into a
-`LedgerAccountBalance` snapshot (the O(1) cache added in #776 so
-dashboards and credit-limit checks don't re-scan the journal).
-`postLedgerTxn` sorts account ids before locking the snapshot rows so
-concurrent posts touching shared accounts like `CASH` or `PLATFORM_FEE`
-acquire locks in a consistent order and don't deadlock — a subtlety that
-did not exist when each log was a simple append. We also accept one
+The real cost we pay is write amplification. Every cash event now writes a
+`LedgerTransaction` and two or more `LedgerEntry` rows. No per-account
+balance snapshot is maintained: `postLedgerTxn` writes only those rows, and
+balances are summed from the journal when read. We also accept one
 principled exception to "balances are derived":
 `BillingAccount.walletBalance` survives as a cache so the booking
 overdraft guard can be a single conditional `UPDATE … WHERE walletBalance
->= amount`; the reconciler asserts it against `balance(WALLET)` via
-`WALLET_BALANCE_DRIFT`.
+
+> = amount`; the reconciler asserts it against `balance(WALLET)`via`WALLET_BALANCE_DRIFT`.
 
 A second real cost is documentation and mental debt across the codebase:
 references to the removed models linger in stale docblocks. The
@@ -114,7 +111,7 @@ returning `ok: true` with zero findings across a full database reseed on
 the journal (`db7d4649`). Revisit this decision only if that gate stops
 being cheap to re-prove — for example, if a future multi-currency ledger
 makes a single `Σdebit == Σcredit` insufficient (today the
-`LEDGER_ACCOUNT_NON_INR` guard keeps the journal INR-only precisely so the
-invariant stays this simple). Until then, any change that reintroduces a
+`ledger_account_currency_inr` CHECK in `prisma/sql/check-constraints.sql`
+keeps the journal INR-only precisely so the invariant stays this simple). Until then, any change that reintroduces a
 parallel money log should be treated as reversing this ADR and must say so
 explicitly.

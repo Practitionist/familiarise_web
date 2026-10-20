@@ -28,7 +28,7 @@
 2. **Money & State Transitions**:
    - All money columns are `BigInt` paise in Postgres (mapped to `number` at the Prisma client boundary in `lib/prisma.ts`). Settlement is INR-only.
    - Every status transition on `Payment`, `Appointment`, `Refund`, or `Payout` must use conditional `updateMany` with the expected prior status in `WHERE` (CAS-in-WHERE), never read-then-update.
-   - `Payment.paymentStatus = SUCCEEDED` is written only by the payment confirmation pipeline (`lib/payments/webhooks/handlers.ts`).
+   - Gateway card captures are confirmed only by `handlePaymentSuccess` (`lib/payments/webhooks/handlers.ts`), reached from the webhook, client verify, the reconcile sweep and the admin recover door. The only other `SUCCEEDED` writers are the no-gateway rails and the overage and replay side-payments: `payment-row.ts`, `overage-handlers.ts`, `overage-settlement.ts` and `recording-purchase.ts` (full list in `docs/start-here/02-money-system-hld.md` §1).
 3. **Schema & Sidecar Discipline (`prisma/schema.prisma` + `prisma/sql/*.sql`)**:
    - One Postgres database serves dev and prod across worktrees. **Never** run `prisma db push` or `npm run db:*` autonomously.
    - Check live-DB drift read-only with `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`; a plain `db push` would drop the `prisma/sql` sidecar uniques.
