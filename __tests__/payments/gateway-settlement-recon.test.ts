@@ -31,6 +31,8 @@ const mockJournals = new Map<string, number>([
   ["topup-refund-shortfall:rfnd_t", 3_000],
   ["invoice-refund:rfnd_i", 7_000],
   ["invoice-refund:rfnd_iw", 6_000],
+  ["topup-refund:rfnd_t2", 2_000],
+  ["invoice-refund:rfnd_i2", 1_500],
 ]);
 const mockTopUps = [
   {
@@ -77,7 +79,10 @@ jest.mock("../../lib/prisma", () => ({
         async ({ where }) =>
           mockLines.filter((l) => mockInRange(l, where)).length,
       ),
-      findMany: jest.fn(async () => []),
+      findMany: jest.fn(
+        async ({ where }: { where: { entityId: { in: string[] } } }) =>
+          mockLines.filter((l) => where.entityId.in.includes(l.entityId)),
+      ),
       createMany: jest.fn(async ({ data }: { data: Line[] }) => {
         mockLines.push(...data);
         return { count: data.length };
@@ -280,17 +285,34 @@ it("matches top-up and org-invoice refunds by their journal, keeping a missed on
   });
   expect(mockReport).toHaveBeenCalledTimes(1);
 
-  // A page of only matched refunds reports nothing.
+  // Partial refunds: each further refund on the same payment matches its own journal only.
   mockReport.mockClear();
-  const clean = new Date("2026-12-20T02:30:00Z");
-  const cleanAt = Math.floor(Date.parse("2026-12-19T10:00:00+05:30") / 1000);
-  mockPages.push([
-    { ...refund("rfnd_t", "pay_t", 5_000), settled_at: cleanAt },
-    { ...refund("rfnd_i", "pay_i", 7_000), settled_at: cleanAt },
-  ]);
-  const cleanRun = await runReconcileGatewaySettlements(Date.now(), clean);
-  expect(cleanRun.byStatus).toEqual({
+  const later = new Date("2026-12-20T02:30:00Z");
+  const laterAt = Math.floor(Date.parse("2026-12-19T10:00:00+05:30") / 1000);
+  const partialPage = () => [
+    { ...refund("rfnd_t2", "pay_t", 2_000), settled_at: laterAt },
+    { ...refund("rfnd_i2", "pay_i", 1_500), settled_at: laterAt },
+  ];
+  mockPages.push(partialPage());
+  const partialRun = await runReconcileGatewaySettlements(Date.now(), later);
+  expect(stored("rfnd_t2")).toEqual(["TOPUP", "tu1", "MATCHED", null]);
+  expect(stored("rfnd_i2")).toEqual(["INVOICE", "inv1", "MATCHED", null]);
+  expect(partialRun.byStatus).toEqual({
     MATCHED: 2,
+    AMOUNT_MISMATCH: 0,
+    FEE_MISMATCH: 0,
+    UNMATCHED: 0,
+  });
+  expect(mockReport).not.toHaveBeenCalled();
+
+  // Replaying the same page stores nothing and counts nothing.
+  const before = mockLines.length;
+  mockPages.push(partialPage());
+  const replay = await runReconcileGatewaySettlements(Date.now(), later);
+  expect(replay.inserted).toBe(0);
+  expect(mockLines).toHaveLength(before);
+  expect(replay.byStatus).toEqual({
+    MATCHED: 0,
     AMOUNT_MISMATCH: 0,
     FEE_MISMATCH: 0,
     UNMATCHED: 0,
