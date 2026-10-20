@@ -162,6 +162,10 @@ async function handleStuckPayoutsUnlocked(
     stuckPayouts,
     stampConsultantPayoutsReconciled,
     pastDeadline,
+    (payout, err) =>
+      errors.push(
+        `Payout ${payout.id}: ${err instanceof Error ? err.message : String(err)}`,
+      ),
     async (payout) => {
       console.log(
         `\nProcessing stuck payout ${payout.id} for ${payout.consultantProfile.user.name || "Unknown"}`,
@@ -504,6 +508,10 @@ async function handleStuckOrgPayouts(
     stuck,
     stampOrgPayoutsReconciled,
     pastDeadline,
+    (payout, err) =>
+      run.errors.push(
+        `OrgPayout ${payout.id}: ${err instanceof Error ? err.message : String(err)}`,
+      ),
     async (payout) => {
       try {
         await reconcileStuckOrgPayout(payout, run);

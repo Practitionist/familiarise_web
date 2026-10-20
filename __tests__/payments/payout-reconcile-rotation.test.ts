@@ -284,3 +284,21 @@ it("bounds every cohort at 100 rows when the caller passes no limit", async () =
   expect(takes).toHaveLength(5);
   expect(new Set(takes)).toEqual(new Set([100]));
 });
+
+it("one row's thrown poll is recorded, stamped, and never stops the rows or the org pass behind it", async () => {
+  tables.ConsultantPayout = rows("e", "PROCESSING", 2);
+  tables.OrganizationPayout = rows("f", "PROCESSING", 1);
+  jest
+    .mocked(getRazorpayPayoutStatus)
+    .mockRejectedValueOnce(new Error("gateway down"))
+    .mockImplementation(async () => ({ kind: "status", status: "processing" }));
+
+  const result = await handleStuckPayouts({ limit: 2 });
+
+  expect(visits["ConsultantPayout:PROCESSING"]).toEqual([["e0", "e1"]]);
+  expect(visits["OrganizationPayout:PROCESSING"]).toEqual([["f0"]]);
+  expect(result.success).toBe(false);
+  expect(result.errors).toEqual(
+    expect.arrayContaining([expect.stringContaining("e0: gateway down")]),
+  );
+});

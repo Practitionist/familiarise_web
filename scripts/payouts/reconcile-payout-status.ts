@@ -135,6 +135,10 @@ async function reconcilePayoutStatusUnlocked(
     stalePayouts,
     stampConsultantPayoutsReconciled,
     pastDeadline,
+    (payout, err) =>
+      errors.push(
+        `Payout ${payout.id}: ${err instanceof Error ? err.message : String(err)}`,
+      ),
     async (payout) => {
       console.log(`\nReconciling payout ${payout.id}`);
       console.log(`   Provider: ${payout.provider}`);
@@ -292,6 +296,10 @@ async function reconcilePayoutStatusUnlocked(
     recentCompletedPayouts,
     stampConsultantPayoutsReconciled,
     pastDeadline,
+    (completed, err) =>
+      errors.push(
+        `Completed payout check failed for ${completed.id}: ${err instanceof Error ? err.message : String(err)}`,
+      ),
     async (completed) => {
       if (
         !completed.providerPayoutId ||
@@ -348,6 +356,10 @@ async function reconcilePayoutStatusUnlocked(
     recentCompletedOrgPayouts,
     stampOrgPayoutsReconciled,
     pastDeadline,
+    (orgCompleted, err) =>
+      errors.push(
+        `Completed org payout check failed for ${orgCompleted.id}: ${err instanceof Error ? err.message : String(err)}`,
+      ),
     async (orgCompleted) => {
       if (!orgCompleted.gatewayPayoutId) return;
       try {

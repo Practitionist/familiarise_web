@@ -31,12 +31,14 @@ export async function stampOrgPayoutsReconciled(ids: string[]): Promise<void> {
 
 /**
  * Polls `rows` in order, starting none once `pastDeadline()`, and stamps each row
- * as its poll ends, thrown or not. Returns how many rows were started.
+ * as its poll ends, thrown or not. A failed poll or stamp goes to `onError` and
+ * never stops the rows behind it. Returns how many rows were started.
  */
 export async function pollInRotation<T extends { id: string }>(
   rows: readonly T[],
   stamp: (ids: string[]) => Promise<void>,
   pastDeadline: () => boolean,
+  onError: (row: T, err: unknown) => void,
   poll: (row: T) => Promise<void>,
 ): Promise<number> {
   let started = 0;
@@ -45,8 +47,13 @@ export async function pollInRotation<T extends { id: string }>(
     started++;
     try {
       await poll(row);
-    } finally {
+    } catch (err) {
+      onError(row, err);
+    }
+    try {
       await stamp([row.id]);
+    } catch (err) {
+      onError(row, err);
     }
   }
   return started;
