@@ -637,7 +637,6 @@ flowchart TD
 | Enterprise overview    | `docs/enterprise/00-foundations/01-overview.md`                          |
 | Enterprise scenarios   | `docs/enterprise/60-scenarios-and-verdicts/01-scenarios-and-examples.md` |
 | Funding & programs     | `docs/enterprise/00-foundations/03-funding-and-programs.md`              |
-| Enterprise readiness   | `docs/enterprise/90-audits/01-readiness-audit.md`                        |
 | Slot allocation engine | `lib/booking/allocation/` (entry point `allocate.ts`)                    |
 | Checkout orchestration | `lib/payments/checkout/` (entry point `orchestrate.ts`)                  |
 | Webhook handlers       | `lib/payments/webhooks/handlers.ts`                                      |

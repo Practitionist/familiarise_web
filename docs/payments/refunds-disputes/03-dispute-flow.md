@@ -344,15 +344,27 @@ const urgentDisputes = await prisma.dispute.count({
 
 ---
 
-## Lost Dispute Handling (Mar 2026)
+## Dispute Settlement and Earnings Holds
 
-When a dispute is resolved in the customer's favor (status: `LOST`), the lost-dispute settlement (`settleLostDispute`, shared by the `handleDisputeUpdated` webhook and the `reconcile-disputes` poll that adopts a missed LOST) runs the canonical reversal instead of manual inline logic. There is no `handle-lost-disputes` cron. This ensures:
+**What happens when a dispute opens.** `placeDisputeHolds()` (`app/api/webhooks/utils.ts`) first cancels any `PENDING` or `APPROVED` payout that already batched one of the payment's earnings, by compare-and-set on the payout, and returns that payout's other earnings to `READY`. It then places a `DISPUTE` hold, an `EarningsHold` row whose source is the dispute row, on the payment's unpaid consultant and organisation earnings. An earning is `HELD` while it has any active hold, and a ban, an operator or an unpaid overage can hold the same earning independently. Releasing the dispute's hold never frees them. `lib/payments/payouts/earnings-holds.ts` is the only writer of the `HELD` status.
 
-1. **TDS reversal records** are correctly created for already-paid earnings, via the shared `recordTdsReversal` helper, which writes a negative `isReversal` `TDSRecord` (#813)
-2. **`totalRevenue`** is decremented on the consultant profile for PAID earnings
-3. **Consistent behavior** with the refund flow (proportional reversal, `refundedShareAmount` tracking)
+**One settlement for every route to a verdict.** `settleDisputeVerdict()` is shared by the webhook (`handleDisputeUpdated()`) and the `reconcile-disputes` poll (`scripts/disputes/reconcile-disputes.ts`). The poll adopts the gateway's status and settles the verdict in one Serializable transaction. If the settlement fails, the adoption rolls back and the next run retries. A later webhook replay finds the dispute already in its verdict and does nothing.
 
-Previously, lost-dispute handling used manual logic that could miss TDS reversals and leave `totalRevenue` stale. Because `recordTdsReversal` caps cumulative reversals at the original withholding, an app-side refund followed by a lost chargeback on the same payment no longer double-reverses the TDS — the second cascade adds nothing once the first has reversed it.
+| Gateway verdict (our status)              | What is settled                                                                                                                                                          |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `WON`, `WARNING_CLOSED`                   | Only this dispute's hold is released. Each earning returns to its status before the hold if no other hold remains.                                                       |
+| `LOST`, `CHARGE_REFUNDED`                 | `settleLostDispute()` reverses `amount_deducted / payment.amount` of every share, then releases the hold. A missing `amount_deducted` falls back to the disputed amount. |
+| `CLOSED` (Razorpay ended with no verdict) | `settleClosedDispute()` follows `amount_deducted`: a positive amount is settled as a loss for that amount, zero or none as a release.                                    |
+
+**Partial losses keep the remainder payable.** Each share is reversed by `floor(share × lost / payment.amount)`, capped at what is left to reverse, and it goes `REFUNDED` only once its whole amount is reversed. For example, Charlotte Brown pays ₹1,180 (118,000 paise) for Hannah Anderson's ₹1,000 consultation, so Hannah's share is ₹800 (80,000 paise). If Razorpay reports the dispute lost with `amount_deducted` of ₹590 (59,000 paise), the factor is 0.5 and ₹400 (40,000 paise) of her share is reversed. The remaining ₹400 returns to its prior status and stays payable.
+
+**Money already paid out.** When a reversed share was already paid on a `COMPLETED` payout, the part net of that payout's TDS fraction becomes a `CONSULTANT_RECEIVABLE` clawback that the expert's next payouts net, and `recordTdsReversal()` writes a negative `TDSRecord` for the withheld tax. A clawback above ₹10,000 pauses that expert's payouts until it comes down.
+
+**Who bears the loss.** The sponsoring organisation bears a lost chargeback only when the payment was funded on an organisation rail (it has a `WALLET`, `INVOICE_ACCRUAL` or `LICENSE` leg): its wallet is debited or an `ORG_RECEIVABLE` is booked. A card payment that is merely tagged to an organisation follows the consumer path and reverses the booking journal like any other sale.
+
+**Documents.** A lost chargeback mints a credit note for the lost amount (`CreditNote.disputeId` and `ConsumerCreditNote.disputeId`, both idempotent), and a lost replay purchase revokes the playback entitlement. A database trigger (`payment_refunds_within_amount`, defined in `prisma/sql/payment-legs-triggers.sql`) keeps refunds plus lost chargebacks within `Payment.amount`.
+
+There is no `handle-lost-disputes` cron. `recordTdsReversal` caps cumulative reversals at the original withholding, so an app-side refund followed by a lost chargeback on the same payment does not reverse the TDS twice.
 
 ---
 
