@@ -8,7 +8,7 @@
  * Pins the settlement contract the OVERAGE_SETTLEMENT_MISMATCH reconcile
  * invariant asserts: a capture flips the side-Payment → SUCCEEDED, moves the
  * event PENDING/FAILED → CHARGED, and ONLY THEN posts the org-relief journal
- * (`overage:<sidePaymentId>`: Dr CASH / Cr ORG_PAYABLE == marginalPaise).
+ * (`overage:<sidePaymentId>`: Dr GATEWAY_CLEARING / Cr ORG_PAYABLE == marginalPaise).
  * If the event can't legally reach CHARGED (REVERSED mid-flight), no org
  * credit is posted: the cash is parked and auto-refunded after commit.
  */
@@ -89,7 +89,7 @@ beforeEach(() => {
 });
 
 describe("handleOverageMemberSuccess", () => {
-  it("capture: SUCCEEDED + CHARGED, then Dr CASH / Cr ORG_PAYABLE + Cr GST_PAYABLE", async () => {
+  it("capture: SUCCEEDED + CHARGED, then Dr GATEWAY_CLEARING / Cr ORG_PAYABLE + Cr GST_PAYABLE", async () => {
     tx.payment.findUnique.mockResolvedValue(side);
     mockTransition.mockResolvedValue(1);
 
@@ -119,7 +119,11 @@ describe("handleOverageMemberSuccess", () => {
       kind: "OVERAGE_MEMBER",
       paymentId: "side1",
       postings: [
-        { account: { kind: "CASH" }, direction: "DEBIT", amountPaise: 129_500 },
+        {
+          account: { kind: "GATEWAY_CLEARING" },
+          direction: "DEBIT",
+          amountPaise: 129_500,
+        },
         {
           account: { kind: "ORG_PAYABLE", organizationId: "org1" },
           direction: "CREDIT",

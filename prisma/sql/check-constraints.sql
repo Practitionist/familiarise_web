@@ -1275,3 +1275,28 @@ ALTER TABLE "OrganizationEarnings" DROP CONSTRAINT IF EXISTS "org_earnings_batch
 -- SPLIT
 ALTER TABLE "OrganizationEarnings" ADD CONSTRAINT "org_earnings_batched_has_payout"
   CHECK ("status" <> 'BATCHED' OR "orgPayoutId" IS NOT NULL);
+-- SPLIT
+-- Settlement is INR-only: every ledger account and money row carries INR.
+ALTER TABLE "LedgerAccount" DROP CONSTRAINT IF EXISTS "ledger_account_currency_inr";
+-- SPLIT
+ALTER TABLE "LedgerAccount" ADD CONSTRAINT "ledger_account_currency_inr" CHECK ("currency" = 'INR');
+-- SPLIT
+ALTER TABLE "Payment" DROP CONSTRAINT IF EXISTS "payment_currency_inr";
+-- SPLIT
+ALTER TABLE "Payment" ADD CONSTRAINT "payment_currency_inr" CHECK ("currency" = 'INR');
+-- SPLIT
+ALTER TABLE "Refund" DROP CONSTRAINT IF EXISTS "refund_currency_inr";
+-- SPLIT
+ALTER TABLE "Refund" ADD CONSTRAINT "refund_currency_inr" CHECK ("currency" = 'INR');
+-- SPLIT
+ALTER TABLE "Dispute" DROP CONSTRAINT IF EXISTS "dispute_currency_inr";
+-- SPLIT
+ALTER TABLE "Dispute" ADD CONSTRAINT "dispute_currency_inr" CHECK ("currency" = 'INR');
+-- SPLIT
+ALTER TABLE "ConsultantEarnings" DROP CONSTRAINT IF EXISTS "consultant_earnings_currency_inr";
+-- SPLIT
+ALTER TABLE "ConsultantEarnings" ADD CONSTRAINT "consultant_earnings_currency_inr" CHECK ("currency" = 'INR');
+-- SPLIT
+ALTER TABLE "ConsultantPayout" DROP CONSTRAINT IF EXISTS "consultant_payout_currency_inr";
+-- SPLIT
+ALTER TABLE "ConsultantPayout" ADD CONSTRAINT "consultant_payout_currency_inr" CHECK ("currency" = 'INR');

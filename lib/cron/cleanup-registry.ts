@@ -764,6 +764,26 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to reconcile document storage",
       }),
 
+    // @cleanup-twin reconcile-gateway-settlements
+    "reconcile-gateway-settlements": () =>
+      cleanupRoute({
+        job: "reconcile-gateway-settlements",
+        run: async (_req, { startedAt }) => {
+          const { runReconcileGatewaySettlements } =
+            await import("@/jobs/reconcile/reconcile-gateway-settlements");
+          return runReconcileGatewaySettlements(startedAt);
+        },
+        status: (r) =>
+          statusFor(
+            r,
+            r.byStatus.AMOUNT_MISMATCH +
+              r.byStatus.FEE_MISMATCH +
+              r.byStatus.UNMATCHED >
+              0,
+          ),
+        failureMessage: "Failed to reconcile gateway settlements",
+      }),
+
     // @cleanup-twin reconcile-ledgers
     "reconcile-ledgers": () =>
       cleanupRoute({

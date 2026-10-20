@@ -1,4 +1,5 @@
 import type { Tx } from "@/lib/prisma";
+import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { sumPaise } from "@/lib/payments/utils/money";
 
@@ -13,7 +14,7 @@ const unappliedReceiptKey = (paymentId: string): string =>
 const releasedReceiptKey = (paymentId: string): string =>
   `unapplied-released:${paymentId}`;
 
-/** Dr CASH / Cr UNAPPLIED_RECEIPTS for the captured paise, in the capture's own transaction. */
+/** Dr GATEWAY_CLEARING / Cr UNAPPLIED_RECEIPTS for the captured paise, in the capture's own transaction. */
 export async function postUnappliedReceipt(
   tx: Tx,
   input: { paymentId: string; capturedPaise: number },
@@ -26,7 +27,7 @@ export async function postUnappliedReceipt(
     paymentId: input.paymentId,
     postings: [
       {
-        account: { kind: "CASH" },
+        account: gatewayCashAccount(),
         direction: "DEBIT",
         amountPaise: input.capturedPaise,
       },
@@ -40,8 +41,8 @@ export async function postUnappliedReceipt(
 }
 
 /**
- * Dr CASH / Cr UNAPPLIED_RECEIPTS for an org-invoice capture no invoice can
- * claim, keyed by the gateway `pay_…` id. True only when newly parked.
+ * Dr GATEWAY_CLEARING / Cr UNAPPLIED_RECEIPTS for an org-invoice capture no
+ * invoice can claim, keyed by the gateway `pay_…` id. True only when newly parked.
  */
 export async function postUnappliedInvoiceReceipt(
   tx: Tx,
@@ -59,7 +60,7 @@ export async function postUnappliedInvoiceReceipt(
     invoiceId: input.invoiceId,
     postings: [
       {
-        account: { kind: "CASH" },
+        account: gatewayCashAccount(),
         direction: "DEBIT",
         amountPaise: input.capturedPaise,
       },
@@ -91,8 +92,8 @@ export async function hasUnappliedReceipt(
 }
 
 /**
- * Dr UNAPPLIED_RECEIPTS / Cr CASH for the parked paise, so the booking journal
- * that follows debits CASH once. A no-op when nothing was parked.
+ * Dr UNAPPLIED_RECEIPTS / Cr GATEWAY_CLEARING for the parked paise, so the
+ * booking journal that follows debits the clearing once. A no-op when nothing was parked.
  */
 export async function releaseUnappliedReceipt(
   tx: Tx,
@@ -127,7 +128,7 @@ export async function releaseUnappliedReceipt(
         amountPaise: remainingPaise,
       },
       {
-        account: { kind: "CASH" },
+        account: gatewayCashAccount(),
         direction: "CREDIT",
         amountPaise: remainingPaise,
       },
@@ -135,7 +136,7 @@ export async function releaseUnappliedReceipt(
   });
 }
 
-/** Dr UNAPPLIED_RECEIPTS / Cr CASH: the refund of a parked capture returns only the cash. */
+/** Dr UNAPPLIED_RECEIPTS / Cr GATEWAY_CLEARING: the refund of a parked capture returns only the cash. */
 export async function postUnappliedRefund(
   tx: Tx,
   input: { paymentId: string; refundId: string; amountPaise: number },
@@ -151,7 +152,7 @@ export async function postUnappliedRefund(
         amountPaise: input.amountPaise,
       },
       {
-        account: { kind: "CASH" },
+        account: gatewayCashAccount(),
         direction: "CREDIT",
         amountPaise: input.amountPaise,
       },
