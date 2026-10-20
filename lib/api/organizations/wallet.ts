@@ -21,8 +21,9 @@
  * Booking debit flow (at checkout):
  *   1. `walletDebit` atomically decrements the cached balance.
  *   2. Throws `WalletInsufficientFundsError` if balance would go negative.
- *   3. The accounting leg (Dr WALLET) posts from the settlement layer where
- *      the full fee/payable split is known (createEarningsFromPayment).
+ *   3. The Dr WALLET line posts in the same checkout transaction, inside the
+ *      `booking:<paymentId>` journal; `assertWalletDebitJournaled` refuses the
+ *      checkout when that journal did not post.
  */
 
 import type { WalletReason } from "@prisma/client";
@@ -140,12 +141,38 @@ export async function walletDebit(
     select: { walletBalance: true, currency: true },
   });
   const balanceAfter = readCachedBalance(params.billingAccountId, acct);
-
-  // #772 B3 — WalletEntry removed. The wallet-balance cache is decremented
-  // above; the booking-debit's accounting leg (Dr WALLET) posts to the
-  // double-entry journal from the settlement layer (createEarningsFromPayment),
-  // which is also the wallet-history record.
+  // Every caller must post the matching Dr WALLET line in this same transaction.
   return { balanceAfter };
+}
+
+/** A checkout wallet debit whose booking journal carries no Dr WALLET line. */
+export class WalletDebitUnjournaledError extends Error {
+  public readonly code = "WALLET_DEBIT_UNJOURNALED";
+  constructor(public readonly paymentId: string) {
+    super(
+      `Wallet debit for payment ${paymentId} has no Dr WALLET line in booking:${paymentId}; refusing the checkout`,
+    );
+    this.name = "WalletDebitUnjournaledError";
+  }
+}
+
+/**
+ * The checkout's wallet debit commits only with its Dr WALLET journal line, so
+ * an earnings early return rolls the cache move back instead of drifting it.
+ */
+export async function assertWalletDebitJournaled(
+  tx: Tx,
+  paymentId: string,
+): Promise<void> {
+  const line = await tx.ledgerEntry.findFirst({
+    where: {
+      direction: "DEBIT",
+      account: { kind: "WALLET" },
+      transaction: { idempotencyKey: `booking:${paymentId}` },
+    },
+    select: { id: true },
+  });
+  if (!line) throw new WalletDebitUnjournaledError(paymentId);
 }
 
 /**
@@ -218,6 +245,120 @@ export async function walletCredit(
   // when the payment itself carries no organizationId (#835 — the wallet is
   // the org's money regardless of how the payment was tagged).
   return { balanceAfter, ownerOrgId: acct.ownerOrgId };
+}
+
+/** An adjustment key replayed with a different signed amount. */
+export class WalletAdjustmentKeyReusedError extends Error {
+  public readonly code = "WALLET_ADJUSTMENT_KEY_REUSED";
+  constructor(public readonly idempotencyKey: string) {
+    super(
+      `Wallet adjustment key ${idempotencyKey} was already used for a different amount`,
+    );
+    this.name = "WalletAdjustmentKeyReusedError";
+  }
+}
+
+/**
+ * An operator's signed wallet correction: the balanced journal and the cache
+ * move commit in the caller's transaction. A credit is Dr PLATFORM_PROMO / Cr
+ * WALLET, a debit Dr WALLET / Cr PLATFORM_FEE; a debit never overdraws.
+ * Idempotent on `walletadj:<idempotencyKey>`.
+ */
+export async function adjustWallet(
+  tx: Tx,
+  params: {
+    billingAccountId: string;
+    amountPaise: number;
+    idempotencyKey: string;
+    description: string;
+  },
+): Promise<{ replayed: boolean; balanceAfter: number; ownerOrgId: string }> {
+  const { billingAccountId, amountPaise } = params;
+  if (!Number.isSafeInteger(amountPaise) || amountPaise === 0) {
+    throw new Error(
+      `adjustWallet requires a non-zero whole paise amount, got ${amountPaise}`,
+    );
+  }
+  const { ownerOrgId } = await tx.billingAccount.findUniqueOrThrow({
+    where: { id: billingAccountId },
+    select: { ownerOrgId: true },
+  });
+  const isCredit = amountPaise > 0;
+  const magnitude = Math.abs(amountPaise);
+  const wallet = { kind: "WALLET" as const, organizationId: ownerOrgId };
+  const idempotencyKey = `walletadj:${params.idempotencyKey}`;
+  const posted = await postLedgerTxn(tx, {
+    idempotencyKey,
+    kind: "WALLET_ADJUSTMENT",
+    description: params.description,
+    postings: isCredit
+      ? [
+          {
+            account: { kind: "PLATFORM_PROMO" },
+            direction: "DEBIT",
+            amountPaise: magnitude,
+          },
+          { account: wallet, direction: "CREDIT", amountPaise: magnitude },
+        ]
+      : [
+          { account: wallet, direction: "DEBIT", amountPaise: magnitude },
+          {
+            account: { kind: "PLATFORM_FEE" },
+            direction: "CREDIT",
+            amountPaise: magnitude,
+          },
+        ],
+  });
+
+  if (!posted.created) {
+    const prior = await tx.ledgerEntry.findFirst({
+      where: {
+        transactionId: posted.transactionId,
+        account: { kind: "WALLET" },
+      },
+      select: { direction: true, amountPaise: true },
+    });
+    const priorSigned =
+      prior === null
+        ? null
+        : (prior.direction === "CREDIT" ? 1 : -1) * Number(prior.amountPaise);
+    if (priorSigned !== amountPaise) {
+      throw new WalletAdjustmentKeyReusedError(params.idempotencyKey);
+    }
+    const acct = await tx.billingAccount.findUniqueOrThrow({
+      where: { id: billingAccountId },
+      select: { walletBalance: true },
+    });
+    return {
+      replayed: true,
+      balanceAfter: acct.walletBalance ?? 0,
+      ownerOrgId,
+    };
+  }
+
+  await seedNullWalletBalance(tx, billingAccountId);
+  const moved = await tx.billingAccount.updateMany({
+    where: isCredit
+      ? { id: billingAccountId }
+      : { id: billingAccountId, walletBalance: { gte: magnitude } },
+    data: {
+      walletBalance: isCredit
+        ? { increment: magnitude }
+        : { decrement: magnitude },
+    },
+  });
+  if (moved.count === 0) {
+    throw new WalletInsufficientFundsError(billingAccountId, magnitude);
+  }
+  const acct = await tx.billingAccount.findUniqueOrThrow({
+    where: { id: billingAccountId },
+    select: { walletBalance: true },
+  });
+  return {
+    replayed: false,
+    balanceAfter: readCachedBalance(billingAccountId, acct),
+    ownerOrgId,
+  };
 }
 
 /**

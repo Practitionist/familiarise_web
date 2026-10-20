@@ -155,78 +155,107 @@ type StepCtx = {
 };
 
 // --- (A): per BillingAccount wallet balance vs derived WALLET account (set-based) ---
-async function stepWalletBalance(ctx: StepCtx): Promise<void> {
-  const accounts = await prisma.billingAccount.findMany({
-    where: ctx.opts.organizationId
-      ? { ownerOrgId: ctx.opts.organizationId }
-      : {},
-    select: {
-      id: true,
-      walletBalance: true,
-      ownerOrgId: true,
-      currency: true,
-    },
-  });
-  ctx.counts.accountsChecked = accounts.length;
-  if (accounts.length === 0) return;
+/** A full-scope snapshot reads every WALLET entry; the 5 s interactive default is too short. */
+const WALLET_SNAPSHOT_TIMEOUT_MS = 120_000;
 
-  const walletLedgerAccounts = await prisma.ledgerAccount.findMany({
-    where: {
-      kind: "WALLET",
-      ...(ctx.opts.organizationId
-        ? { organizationId: ctx.opts.organizationId }
-        : {}),
-    },
-    select: { id: true, organizationId: true, currency: true },
-  });
-
-  const walletAccountIds = walletLedgerAccounts.map((a) => a.id);
-  const netByAccountId = new Map<string, number>();
-  for (let i = 0; i < walletAccountIds.length; i += CHUNK) {
-    const sums = await prisma.ledgerEntry.groupBy({
-      by: ["accountId", "direction"],
-      where: { accountId: { in: walletAccountIds.slice(i, i + CHUNK) } },
-      _sum: { amountPaise: true },
-    });
-    for (const row of sums) {
-      const amt = sumPaise(row._sum.amountPaise);
-      const cur = netByAccountId.get(row.accountId) ?? 0;
-      // WALLET is a credit-normal liability: amount owed = Σ CREDIT − Σ DEBIT
-      netByAccountId.set(
-        row.accountId,
-        row.direction === "CREDIT" ? cur + amt : cur - amt,
-      );
-    }
-  }
-
-  const walletTotalByOrgCurrency = new Map<string, number>();
-  for (const wa of walletLedgerAccounts) {
-    if (!wa.organizationId) continue;
-    const key = `${wa.organizationId}:${wa.currency}`;
-    walletTotalByOrgCurrency.set(
-      key,
-      (walletTotalByOrgCurrency.get(key) ?? 0) +
-        (netByAccountId.get(wa.id) ?? 0),
-    );
-  }
-
-  for (const acct of accounts) {
-    const walletTotal = acct.ownerOrgId
-      ? (walletTotalByOrgCurrency.get(`${acct.ownerOrgId}:${acct.currency}`) ??
-        0)
-      : 0;
-    const bal = acct.walletBalance ?? 0;
-    if (walletTotal !== bal) {
-      ctx.findings.push({
-        kind: "WALLET_BALANCE_DRIFT",
-        billingAccountId: acct.id,
-        organizationId: acct.ownerOrgId ?? undefined,
-        expectedPaise: walletTotal,
-        actualPaise: bal,
-        deltaPaise: bal - walletTotal,
+/**
+ * Cached wallet balances against their WALLET journal sums, read in ONE
+ * read-only REPEATABLE READ snapshot so a booking committing mid-read is not
+ * drift. Scoped to an org, to one billing account, or to every account.
+ */
+export async function walletDriftFindings(scope: {
+  organizationId?: string;
+  billingAccountId?: string;
+}): Promise<{ findings: Finding[]; accountsChecked: number }> {
+  return prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+      const accounts = await tx.billingAccount.findMany({
+        where: {
+          ...(scope.organizationId ? { ownerOrgId: scope.organizationId } : {}),
+          ...(scope.billingAccountId ? { id: scope.billingAccountId } : {}),
+        },
+        select: {
+          id: true,
+          walletBalance: true,
+          ownerOrgId: true,
+          currency: true,
+        },
       });
-    }
-  }
+      if (accounts.length === 0) return { findings: [], accountsChecked: 0 };
+
+      const orgFilter =
+        scope.organizationId ??
+        (scope.billingAccountId ? accounts[0].ownerOrgId : undefined);
+      const walletLedgerAccounts = await tx.ledgerAccount.findMany({
+        where: {
+          kind: "WALLET",
+          ...(orgFilter ? { organizationId: orgFilter } : {}),
+        },
+        select: { id: true, organizationId: true, currency: true },
+      });
+
+      const walletAccountIds = walletLedgerAccounts.map((a) => a.id);
+      const netByAccountId = new Map<string, number>();
+      for (let i = 0; i < walletAccountIds.length; i += CHUNK) {
+        const sums = await tx.ledgerEntry.groupBy({
+          by: ["accountId", "direction"],
+          where: { accountId: { in: walletAccountIds.slice(i, i + CHUNK) } },
+          _sum: { amountPaise: true },
+        });
+        for (const row of sums) {
+          const amt = sumPaise(row._sum.amountPaise);
+          const cur = netByAccountId.get(row.accountId) ?? 0;
+          // WALLET is a credit-normal liability: amount owed = Σ CREDIT − Σ DEBIT
+          netByAccountId.set(
+            row.accountId,
+            row.direction === "CREDIT" ? cur + amt : cur - amt,
+          );
+        }
+      }
+
+      const walletTotalByOrgCurrency = new Map<string, number>();
+      for (const wa of walletLedgerAccounts) {
+        if (!wa.organizationId) continue;
+        const key = `${wa.organizationId}:${wa.currency}`;
+        walletTotalByOrgCurrency.set(
+          key,
+          (walletTotalByOrgCurrency.get(key) ?? 0) +
+            (netByAccountId.get(wa.id) ?? 0),
+        );
+      }
+
+      const findings: Finding[] = [];
+      for (const acct of accounts) {
+        const walletTotal = acct.ownerOrgId
+          ? (walletTotalByOrgCurrency.get(
+              `${acct.ownerOrgId}:${acct.currency}`,
+            ) ?? 0)
+          : 0;
+        const bal = acct.walletBalance ?? 0;
+        if (walletTotal !== bal) {
+          findings.push({
+            kind: "WALLET_BALANCE_DRIFT",
+            billingAccountId: acct.id,
+            organizationId: acct.ownerOrgId ?? undefined,
+            expectedPaise: walletTotal,
+            actualPaise: bal,
+            deltaPaise: bal - walletTotal,
+          });
+        }
+      }
+      return { findings, accountsChecked: accounts.length };
+    },
+    { isolationLevel: "RepeatableRead", timeout: WALLET_SNAPSHOT_TIMEOUT_MS },
+  );
+}
+
+async function stepWalletBalance(ctx: StepCtx): Promise<void> {
+  const { findings, accountsChecked } = await walletDriftFindings({
+    organizationId: ctx.opts.organizationId,
+  });
+  ctx.counts.accountsChecked = accountsChecked;
+  ctx.findings.push(...findings);
 }
 
 // --- (E): per ProgramAssignment engagement / credit-pool / overage meters (set-based) ---

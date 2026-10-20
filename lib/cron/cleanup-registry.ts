@@ -70,6 +70,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         },
         summarize: (r) => ({
           reaped: r.reaped,
+          confirmed: r.confirmed,
+          kept: r.kept,
+          errors: r.errors.length,
           graceHours: r.graceHours,
           success: r.success,
         }),
