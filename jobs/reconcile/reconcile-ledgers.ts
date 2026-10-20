@@ -24,7 +24,10 @@ import {
   recordSystemError,
 } from "../../lib/enterprise/system-events";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
-import { freezeWalletSpend } from "../../lib/payments/wallet-freeze";
+import {
+  freezeDriftedWallets,
+  type FrozenWallet,
+} from "../../lib/payments/wallet-freeze";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "../../lib/observability/job-sentry";
 import { reportStandingFinding } from "../../lib/observability/standing-finding";
@@ -135,27 +138,9 @@ async function main(): Promise<void> {
       // One fatal per run, not per wallet: the count and a sample of
       // ids are the fact. `finally` so a freeze that throws mid-loop still
       // pages for the wallets already frozen. Freeze behaviour is unchanged.
-      const frozenWallets: Array<{
-        billingAccountId: string | null;
-        organizationId: string | null;
-        deltaPaise: number;
-        newlyFrozen: boolean;
-      }> = [];
+      const frozenWallets: FrozenWallet[] = [];
       try {
-        for (const f of walletDrift) {
-          const froze = await freezeWalletSpend({
-            billingAccountId: f.billingAccountId!,
-            organizationId: f.organizationId ?? null,
-            reason: `ledger reconcile ${report.id}: wallet cache ${f.actualPaise}p ≠ journal ${f.expectedPaise}p (Δ${f.deltaPaise}p)`,
-          });
-          frozenWallets.push({
-            billingAccountId: f.billingAccountId ?? null,
-            organizationId: f.organizationId ?? null,
-            // JSON can't serialize BigInt; deltaPaise is BigInt at runtime.
-            deltaPaise: Number(f.deltaPaise),
-            newlyFrozen: froze,
-          });
-        }
+        await freezeDriftedWallets(report, frozenWallets);
       } finally {
         // Keyed on detected drift, not completed freezes: a first freeze that
         // throws must still page.

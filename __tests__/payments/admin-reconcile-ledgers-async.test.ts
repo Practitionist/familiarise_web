@@ -37,6 +37,7 @@ jest.mock("../../lib/prisma", () => ({
 const runReconcileLedgers = jest.fn(async (..._args: unknown[]) => ({
   id: "rep_1",
   ok: true,
+  findings: [],
 }));
 jest.mock("../../scripts/reconcile/reconcile-ledgers", () => ({
   runReconcileLedgers: (...args: unknown[]) => runReconcileLedgers(...args),
@@ -73,7 +74,12 @@ describe("POST /api/admin/reconcile-ledgers", () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.data).toEqual({ id: "rep_1", ok: true });
+    expect(body.data).toEqual({
+      id: "rep_1",
+      ok: true,
+      findings: [],
+      frozenWallets: [],
+    });
     expect(runReconcileLedgers).toHaveBeenCalledWith({
       scope: "full",
       triggeredById: "admin_1",

@@ -49,7 +49,11 @@ export const POST = withOpsAction(
           kind: "LedgerReconciliation",
           id: body.organizationId ?? "full",
         },
-        after: { reportId: report.id, ok: report.ok },
+        after: {
+          reportId: report.id,
+          ok: report.ok,
+          frozenWallets: report.frozenWallets.length,
+        },
         response: { data: report },
       };
     },

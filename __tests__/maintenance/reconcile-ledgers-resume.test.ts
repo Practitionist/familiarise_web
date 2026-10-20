@@ -5,7 +5,7 @@
 /**
  * #1943 — `POST /api/cleanup/reconcile-ledgers` runs a full-scope ledger
  * reconciliation directly via `runReconcileLedgers({ scope: "full" })` under
- * its cron lock.
+ * its cron lock and freezes the wallets it finds drifted.
  */
 
 jest.mock("@sentry/nextjs", () => ({
@@ -25,8 +25,15 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 const runReconcileLedgers = jest.fn(async (args: { scope: string }) => ({
   id: "rep_full",
   scope: args.scope,
-  ok: true,
-  summary: { discrepanciesCount: 0 },
+  ok: false,
+  summary: { discrepanciesCount: 1 },
+  findings: [{ kind: "WALLET_BALANCE_DRIFT", billingAccountId: "ba_1" }],
+}));
+const freezeDriftedWallets = jest.fn(async (..._args: unknown[]) => [
+  { billingAccountId: "ba_1" },
+]);
+jest.mock("../../lib/payments/wallet-freeze", () => ({
+  freezeDriftedWallets: (...args: unknown[]) => freezeDriftedWallets(...args),
 }));
 jest.mock("../../scripts/reconcile/reconcile-ledgers", () => {
   const actual = jest.requireActual<
@@ -62,11 +69,16 @@ describe("POST /api/cleanup/reconcile-ledgers", () => {
       params: Promise.resolve({ job: "reconcile-ledgers" }),
     });
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(207);
     expect(runReconcileLedgers).toHaveBeenCalledWith({ scope: "full" });
+    // The cleanup twin freezes drifted wallets exactly like the nightly job.
+    expect(freezeDriftedWallets).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "rep_full" }),
+    );
     expect(await res.json()).toMatchObject({
       status: "OK",
-      report: { id: "rep_full", scope: "full", ok: true },
+      report: { id: "rep_full", scope: "full", ok: false },
+      frozenWallets: [{ billingAccountId: "ba_1" }],
     });
   });
 });
