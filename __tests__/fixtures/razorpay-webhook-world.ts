@@ -5,6 +5,7 @@
  * repeat in their CAS writes, so a stub that ignored them cannot pass.
  */
 
+import { Prisma } from "@prisma/client";
 import { createEarningsHoldStore } from "./earnings-hold-store";
 import { applyData, matchesWhere, type Row, type Where } from "./mem-db";
 
@@ -64,8 +65,9 @@ export const paymentApi = {
     const hit = [...world.payments.values()].find((r) =>
       matchesWhere(r, args.where),
     );
-    if (hit) applyData(hit, args.data);
-    return hit ? { ...hit } : null;
+    if (!hit) throw new Error("Record to update not found");
+    applyData(hit, args.data);
+    return { ...hit };
   }),
 };
 
@@ -120,6 +122,23 @@ const txStub = {
   organizationPayout: noPayouts,
 };
 
+/** Deep-copies every collection the tx stub writes; the returned fn restores them in place. */
+function snapshotTxState(): () => void {
+  const payments = structuredClone([...world.payments.entries()]);
+  const arrays: Array<[Row[], Row[]]> = [
+    world.refunds,
+    world.disputes,
+    holdStore.consultant,
+    holdStore.org,
+    holdStore.holds,
+  ].map((rows) => [rows as Row[], structuredClone(rows as Row[])]);
+  return () => {
+    world.payments.clear();
+    for (const [k, v] of payments) world.payments.set(k, structuredClone(v));
+    for (const [rows, copy] of arrays) rows.splice(0, rows.length, ...copy);
+  };
+}
+
 export const prismaStub = {
   user: { findFirst: async () => ({ id: "u-health" }) },
   payment: paymentApi,
@@ -130,6 +149,16 @@ export const prismaStub = {
       return hit ? { ...hit } : null;
     },
     create: async (args: { data: Row }) => {
+      if (world.events.has(String(args.data.eventId))) {
+        throw new Prisma.PrismaClientKnownRequestError(
+          "Unique constraint failed on the fields: (`eventId`)",
+          {
+            code: "P2002",
+            clientVersion: Prisma.prismaVersion.client,
+            meta: { target: ["eventId"] },
+          },
+        );
+      }
       const row = {
         id: `evt-row-${world.events.size + 1}`,
         processed: false,
@@ -153,12 +182,19 @@ export const prismaStub = {
     },
     update: async (args: { where: { eventId: string }; data: Row }) => {
       const r = world.events.get(args.where.eventId);
-      if (r) applyData(r, args.data);
+      if (!r) throw new Error("Record to update not found");
+      applyData(r, args.data);
       return r;
     },
   },
   $transaction: async (fn: (tx: typeof txStub) => Promise<unknown>) => {
     world.transactions++;
-    return fn(txStub);
+    const restore = snapshotTxState();
+    try {
+      return await fn(txStub);
+    } catch (err) {
+      restore();
+      throw err;
+    }
   },
 };

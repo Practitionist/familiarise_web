@@ -161,33 +161,46 @@ function journaled<
             Object.keys(args.data).map((k) => [k, row[k]]),
           ),
         }));
-      const out = await table.updateMany(args);
+      // memTable writes synchronously, so the written values are readable before the await.
+      const pending = table.updateMany(args);
+      const written = hits.map(({ row }) =>
+        Object.fromEntries(Object.keys(args.data).map((k) => [k, row[k]])),
+      );
+      const out = await pending;
       undo.push(() =>
-        hits.forEach(({ row, prev }) => Object.assign(row, prev)),
+        hits.forEach(({ row, prev }, i) => {
+          for (const k of Object.keys(prev)) {
+            if (Object.is(row[k], written[i][k])) row[k] = prev[k];
+          }
+        }),
       );
       return out;
     },
     create: async (args: { data: Row }) => {
-      const before = new Set(rows);
-      const out = await table.create(args);
-      undo.push(() => {
-        for (let i = rows.length - 1; i >= 0; i--) {
-          if (!before.has(rows[i])) rows.splice(i, 1);
-        }
-      });
+      const start = rows.length;
+      const pending = table.create(args);
+      const added = rows.slice(start);
+      const out = await pending;
+      undo.push(() => removeRows(rows, added));
       return out;
     },
     createMany: async (args: { data: Row[] }) => {
-      const before = new Set(rows);
-      const out = await table.createMany(args);
-      undo.push(() => {
-        for (let i = rows.length - 1; i >= 0; i--) {
-          if (!before.has(rows[i])) rows.splice(i, 1);
-        }
-      });
+      const start = rows.length;
+      const pending = table.createMany(args);
+      const added = rows.slice(start);
+      const out = await pending;
+      undo.push(() => removeRows(rows, added));
       return out;
     },
   };
+}
+
+/** Removes exactly these row objects, leaving rows a rival transaction added. */
+function removeRows(rows: Row[], gone: Row[]) {
+  for (const row of gone) {
+    const i = rows.indexOf(row);
+    if (i >= 0) rows.splice(i, 1);
+  }
 }
 
 function buildTx(undo: Undo[]) {

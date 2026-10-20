@@ -351,13 +351,23 @@ describe("duplicate delivery of the same x-razorpay-event-id", () => {
   it("a redelivery that lands while the first is still in flight is dropped, not run concurrently", async () => {
     seedPayment({ paymentStatus: "EXPIRED" });
 
-    await deliver(capturedEvent(), { eventId: "evt_inflight" });
-    const racer = await deliver(capturedEvent(), { eventId: "evt_inflight" });
-    expect(await racer.json()).toEqual({ status: "ok", duplicate: true });
+    const [a, b] = await Promise.all([
+      deliver(capturedEvent(), { eventId: "evt_inflight" }),
+      deliver(capturedEvent(), { eventId: "evt_inflight" }),
+    ]);
+    const bodies = await Promise.all([a.json(), b.json()]);
+    expect(bodies).toHaveLength(2);
+    expect(bodies).toEqual(
+      expect.arrayContaining([
+        { status: "ok" },
+        { status: "ok", duplicate: true },
+      ]),
+    );
 
     expect(afterCallbacks).toHaveLength(1);
     await flushAfter();
 
+    expect(eventRows("payment.captured")).toHaveLength(1);
     expect(refundBookingPayment).toHaveBeenCalledTimes(1);
     expect(postUnappliedReceipt).toHaveBeenCalledTimes(1);
   });
