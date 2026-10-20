@@ -24,8 +24,6 @@ erDiagram
         billingAccountId string FK
         createdAt datetime
         name string
-        slug string UK
-        version int
     }
     Membership {
         id string PK
@@ -34,8 +32,6 @@ erDiagram
         userId string FK
         organizationId string FK
         consulteeProfileId string FK
-        consultantProfileId string FK
-        rateCardOverrideId string FK
     }
     Invitation {
         id string PK
@@ -44,8 +40,6 @@ erDiagram
         organizationId string FK
         inviterId string FK
         userId string FK
-        createdAt datetime
-        email string
     }
     OrganizationTaxInfo {
         organizationId string PK
@@ -54,8 +48,6 @@ erDiagram
         gstStateCode string
         gstRegStatus gstregstatus
         panEncrypted bytes
-        panLast4 string
-        hsnDefault string
     }
     OrganizationMsmeInfo {
         organizationId string PK
@@ -69,7 +61,6 @@ erDiagram
         enforceSSO boolean
         defaultRoleForAutoJoin memberrole
         version int
-        updatedAt datetime
     }
     OrgDomainClaim {
         id string PK
@@ -86,8 +77,6 @@ erDiagram
         actorMembershipId string
         targetMembershipId string
         category orgauditcategory
-        action string
-        description string
     }
     OrgBrandingProfile {
         organizationId string PK
@@ -96,8 +85,6 @@ erDiagram
         bannerImage string
         primaryColor string
         secondaryColor string
-        description string
-        industry string
     }
     User {
         id string PK
@@ -105,24 +92,9 @@ erDiagram
     ConsultantProfile {
         id string PK
     }
-    ConsulteeProfile {
-        id string PK
-    }
-    BillingAccount {
-        id string PK
-    }
-    RateCard {
-        id string PK
-    }
-    Domain {
-        id string PK
-    }
-    Organization }o--o| BillingAccount : "billingAccount"
     Membership }o--|| User : "user"
     Membership }o--|| Organization : "organization"
-    Membership }o--o| ConsulteeProfile : "consulteeProfile"
     Membership }o--o| ConsultantProfile : "consultantProfile"
-    Membership }o--o| RateCard : "rateCardOverride"
     Invitation }o--|| Organization : "organization"
     Invitation }o--|| User : "inviter"
     Invitation }o--o| User : "user"
@@ -132,18 +104,16 @@ erDiagram
     OrgDomainClaim }o--|| Organization : "organization"
     OrgAuditLog }o--|| Organization : "organization"
     OrgBrandingProfile }o--|| Organization : "organization"
-    ConsultantProfile }o--|| Domain : "domain"
     ConsultantProfile }o--|| User : "user"
-    ConsulteeProfile }o--|| User : "user"
 ```
 
 - **`Membership` is typed, not a join table.** `MemberRole` and `MemberStatus` decide what the member may do and whether the seat is live; `Membership.status = ERASED` is what an erasure request flips every active row to.
 - **A verified domain claim is unique per domain.** `org_domain_claims_verified_domain_key` means a domain can be claimed by exactly one organisation, so an SSO assertion can be trusted to identify one tenant.
 - **The organisation's own tax and MSME data is separate from the consultant's.** An organisation is a `principal supplier` to the platform and files its own GST, so its registration and MSME standing live on `OrganizationTaxInfo` and `OrganizationMsmeInfo`, not on `ConsultantTaxInfo`.
 
-## 2. Enterprise Billing, Programs & Wallets
+## 2. Enterprise Commercial Spine
 
-The commercial spine: `BillingAccount` → `Contract` → `Program` → `ProgramAssignment` → `BookingUtilization`. Each link adds a layer of budget control. `BillingSubscription` is the billing cycle, `WalletTopUp` is the top-up lifecycle, `RateCard` is the three-way basis-point split, `LicensedSeatConfig` and `CreditPoolConfig` are the two overage shapes, `OverageEvent` is the append-only over-cap charge ledger, and `PurchaseOrder` is the org's pre-authorisation.
+The commercial spine an organisation buys on: `BillingAccount` → `Contract` → `BillingSubscription`. `BillingAccount` is the funding rail and the wallet, `Contract` is the governing agreement, `BillingSubscription` is the billing cycle, `WalletTopUp` is the top-up lifecycle, and `RateCard` is the three-way basis-point split between platform, organisation and consultant.
 
 ```mermaid
 erDiagram
@@ -154,8 +124,6 @@ erDiagram
         ownerOrgId string UK
         billingEmail string
         currency currency
-        fundingSource fundingsource
-        creditLimit bigint
     }
     Contract {
         id string PK
@@ -164,8 +132,6 @@ erDiagram
         billingAccountId string FK
         purchaseOrderId string FK
         rateCardId string FK
-        supersededByContractId string FK
-        createdAt datetime
     }
     BillingSubscription {
         id string PK
@@ -174,8 +140,6 @@ erDiagram
         billingAccountId string FK
         createdAt datetime
         model subscriptionmodel
-        cycle billingcycle
-        flatFeePaise bigint
     }
     WalletTopUp {
         id string PK
@@ -184,8 +148,6 @@ erDiagram
         billingAccountId string FK
         createdAt datetime
         providerOrderId string UK
-        providerPaymentId string
-        currency currency
     }
     RateCard {
         id string PK
@@ -194,9 +156,37 @@ erDiagram
         ownerContractId string FK
         createdAt datetime
         planType coveredplantype
-        planId string
-        maxGrossPaise bigint
     }
+    Organization {
+        id string PK
+    }
+    Membership {
+        id string PK
+    }
+    Contract }o--|| Organization : "organization"
+    Contract }o--|| BillingAccount : "billingAccount"
+    Contract }o--o| RateCard : "rateCard"
+    Contract }o--o| Contract : "supersededByContract"
+    BillingSubscription }o--|| Contract : "contract"
+    BillingSubscription }o--|| BillingAccount : "billingAccount"
+    WalletTopUp }o--|| BillingAccount : "billingAccount"
+    RateCard }o--o| Organization : "ownerOrg"
+    RateCard }o--o| Contract : "ownerContract"
+    Organization }o--o| BillingAccount : "billingAccount"
+    Membership }o--|| Organization : "organization"
+    Membership }o--o| RateCard : "rateCardOverride"
+```
+
+- **The wallet balance is a liability account in the double-entry ledger, not a standalone table.** `BillingAccount.walletBalance` is retained only as a denormalised cache for the atomic-debit guard, and the nightly reconciliation asserts it equals the `WALLET` account balance. `billing_account_wallet_nonnegative` refuses a negative balance.
+- **A contract is superseded, never edited.** `Contract.supersededByContractId` is a self-relation with a `ContractSupersessionReason`, and `contract_one_active_per_billing_account_idx` keeps exactly one active contract per billing account.
+- **The rate card must divide the whole.** `rate_card_bps_sum_is_whole` refuses a split that is not exactly 10,000 bps across platform, organisation and consultant, and `rate_card_one_open_window` keeps one open validity window at a time.
+
+## 3. Enterprise Programs & Usage
+
+What a contract makes available and how it is spent. `Program` → `ProgramAssignment` → `BookingUtilization` is the chain: a program is attached to a contract, an assignment attaches a member to a program, and a booking consumes it. `LicensedSeatConfig` and `CreditPoolConfig` are the two overage shapes, `OverageEvent` is the append-only over-cap charge ledger, `PurchaseOrder` is the organisation's pre-authorisation, and `OrgInvoiceCounter` allocates the per-organisation, per-fiscal-year invoice number.
+
+```mermaid
+erDiagram
     Program {
         id string PK
         status programstatus
@@ -204,8 +194,6 @@ erDiagram
         contractId string FK
         createdAt datetime
         name string
-        coveredPlanTypes coveredplantype
-        allowedCategories string
     }
     ProgramAssignment {
         id string PK
@@ -214,8 +202,6 @@ erDiagram
         programId string FK
         membershipId string FK
         rolledToAssignmentId string FK
-        createdAt datetime
-        periodStart datetime
     }
     ProgramConsultantAllowlist {
         id string PK
@@ -230,8 +216,6 @@ erDiagram
         coveredEngagementsPerCycle int
         overageBehavior overagebehavior
         activeSeatCount int
-        priceCapPerEngagementPaise bigint
-        overageSurchargeBps int
     }
     CreditPoolConfig {
         programId string PK
@@ -240,7 +224,6 @@ erDiagram
         priceCapPerEngagementPaise bigint
         overageBehavior overagebehavior
         overageSurchargeBps int
-        maxOveragePerCyclePaise bigint
     }
     BookingUtilization {
         id string PK
@@ -249,8 +232,6 @@ erDiagram
         paymentId string FK
         createdAt datetime
         engagementsConsumed int
-        wasOverage boolean
-        platformBpsAtBooking int
     }
     OverageEvent {
         id string PK
@@ -259,8 +240,6 @@ erDiagram
         bookingUtilizationId string FK
         paymentId string FK
         invoiceLineItemId string FK
-        createdAt datetime
-        batchKey string
     }
     PurchaseOrder {
         id string PK
@@ -269,8 +248,6 @@ erDiagram
         organizationId string FK
         createdAt datetime
         poNumber string
-        poDate datetime
-        validUntil datetime
     }
     OrgInvoiceCounter {
         organizationId string FK
@@ -278,89 +255,28 @@ erDiagram
         nextSeq int
         updatedAt datetime
     }
-    Organization {
-        id string PK
-    }
     Membership {
         id string PK
     }
-    Payment {
+    BillingAccount {
         id string PK
     }
-    ConsultantProfile {
-        id string PK
-    }
-    InvoiceLineItem {
-        id string PK
-    }
-    User {
-        id string PK
-    }
-    ConsulteeProfile {
-        id string PK
-    }
-    Referral {
-        id string PK
-    }
-    Appointment {
-        id string PK
-    }
-    DiscountCode {
-        id string PK
-    }
-    OrganizationInvoice {
-        id string PK
-    }
-    Contract }o--|| Organization : "organization"
-    Contract }o--|| BillingAccount : "billingAccount"
-    Contract }o--o| PurchaseOrder : "purchaseOrder"
-    Contract }o--o| RateCard : "rateCard"
-    Contract }o--o| Contract : "supersededByContract"
-    BillingSubscription }o--|| Contract : "contract"
-    BillingSubscription }o--|| BillingAccount : "billingAccount"
-    WalletTopUp }o--|| BillingAccount : "billingAccount"
-    RateCard }o--o| Organization : "ownerOrg"
-    RateCard }o--o| Contract : "ownerContract"
-    Program }o--|| Contract : "contract"
     ProgramAssignment }o--|| Program : "program"
     ProgramAssignment }o--|| Membership : "membership"
     ProgramAssignment }o--o| ProgramAssignment : "rolledToAssignment"
     ProgramConsultantAllowlist }o--|| Program : "program"
-    ProgramConsultantAllowlist }o--|| ConsultantProfile : "consultantProfile"
     LicensedSeatConfig }o--|| Program : "program"
     CreditPoolConfig }o--|| Program : "program"
     BookingUtilization }o--|| ProgramAssignment : "programAssignment"
-    BookingUtilization }o--|| Payment : "payment"
     OverageEvent }o--|| ProgramAssignment : "programAssignment"
     OverageEvent }o--|| BookingUtilization : "bookingUtilization"
-    OverageEvent }o--o| Payment : "payment"
-    OverageEvent }o--o| InvoiceLineItem : "invoiceLineItem"
-    PurchaseOrder }o--|| Organization : "organization"
-    OrgInvoiceCounter }o--|| Organization : "organization"
-    Organization }o--o| BillingAccount : "billingAccount"
-    Membership }o--|| User : "user"
-    Membership }o--|| Organization : "organization"
-    Membership }o--o| ConsulteeProfile : "consulteeProfile"
-    Membership }o--o| ConsultantProfile : "consultantProfile"
-    Membership }o--o| RateCard : "rateCardOverride"
-    Payment }o--o| Referral : "attributionReferral"
-    Payment }o--|| User : "user"
-    Payment }o--o| Appointment : "appointment"
-    Payment }o--o| DiscountCode : "discountCode"
-    Payment }o--o| Organization : "organization"
-    Payment }o--o| Organization : "hostOrganization"
-    Payment }o--o| BillingAccount : "billingAccount"
-    Payment }o--o| OrganizationInvoice : "billableToOrgInvoice"
-    Payment }o--o| Payment : "parentPayment"
 ```
 
-- **The wallet balance is a liability account in the double-entry ledger, not a standalone table.** `BillingAccount.walletBalance` is retained only as a denormalised cache for the atomic-debit guard, and the nightly reconciliation asserts it equals the `WALLET` account balance. `billing_account_wallet_nonnegative` refuses a negative balance.
-- **A contract is superseded, never edited.** `Contract.supersededByContractId` is a self-relation with a `ContractSupersessionReason`, and `contract_one_active_per_billing_account_idx` keeps exactly one active contract per billing account.
 - **A program assignment cannot overlap itself.** `program_assignment_no_active_overlap` refuses two active assignments for the same member and program, and `ProgramAssignment.rolledToAssignmentId` is the one-way link when a cycle rolls over.
-- **The rate card must divide the whole.** `rate_card_bps_sum_is_whole` refuses a split that is not exactly 10,000 bps across platform, organisation and consultant, and `rate_card_one_open_window` keeps one open validity window at a time.
 - **Overage is a formula, not a number.** `overage_marginal_is_base_plus_surcharge` refuses a marginal charge that is not the base plus its surcharge, so the two can never drift apart.
+- **The invoice number is per organisation and per fiscal year.** `OrgInvoiceCounter` allocates it with an insert-on-conflict update, so two concurrent invoices cannot read the same next sequence.
 
-## 3. Enterprise Invoicing, Receipts & Organisation Payouts
+## 4. Enterprise Invoicing, Receipts & Organisation Payouts
 
 Month-end invoicing for the organisation side. `OrganizationInvoice` is the tax invoice, `InvoiceLineItem` its lines, `OrganizationInvoiceReceipt` the money received against it, `OrganizationEarnings` the organisation's share of a host booking, `OrganizationPayout` the batch that disburses it, `OrganizationPayoutAccount` the destination, and `CreditNote` the Section 34 / CGST Rule 53 document that cancels or reduces an invoice.
 
@@ -373,8 +289,6 @@ erDiagram
         billingAccountId string FK
         organizationId string FK
         purchaseOrderId string FK
-        contractId string FK
-        paymentId string FK
     }
     OrganizationInvoiceReceipt {
         id string PK
@@ -383,8 +297,6 @@ erDiagram
         invoiceId string FK
         createdAt datetime
         method invoicereceiptmethod
-        reference string
-        receivedOn datetime
     }
     InvoiceLineItem {
         id string PK
@@ -393,8 +305,6 @@ erDiagram
         paymentId string FK
         createdAt datetime
         position int
-        description string
-        quantity int
     }
     OrganizationEarnings {
         id string PK
@@ -403,8 +313,6 @@ erDiagram
         grossAmountPaise bigint
         organizationId string FK
         paymentId string FK
-        consultantProfileId string FK
-        orgPayoutId string FK
     }
     OrganizationPayout {
         id string PK
@@ -413,8 +321,6 @@ erDiagram
         organizationId string FK
         orgPayoutAccountId string FK
         createdAt datetime
-        currency currency
-        paymentGateway paymentgateway
     }
     OrganizationPayoutAccount {
         id string PK
@@ -423,8 +329,6 @@ erDiagram
         createdAt datetime
         accountHolderName string
         accountNumberEncrypted string
-        accountNumberLast4 string
-        bankName string
     }
     CreditNote {
         id string PK
@@ -433,8 +337,6 @@ erDiagram
         organizationId string FK
         invoiceId string FK
         createdAt datetime
-        creditNoteNumber string
-        fiscalYear int
     }
     OrgCreditNoteCounter {
         organizationId string FK
@@ -451,37 +353,11 @@ erDiagram
     Refund {
         id string PK
     }
-    Dispute {
-        id string PK
-    }
     BillingAccount {
-        id string PK
-    }
-    PurchaseOrder {
-        id string PK
-    }
-    Contract {
-        id string PK
-    }
-    ConsultantProfile {
-        id string PK
-    }
-    Referral {
-        id string PK
-    }
-    User {
-        id string PK
-    }
-    Appointment {
-        id string PK
-    }
-    DiscountCode {
         id string PK
     }
     OrganizationInvoice }o--|| BillingAccount : "billingAccount"
     OrganizationInvoice }o--|| Organization : "organization"
-    OrganizationInvoice }o--o| PurchaseOrder : "purchaseOrder"
-    OrganizationInvoice }o--o| Contract : "contract"
     OrganizationInvoice }o--o| Payment : "payment"
     OrganizationInvoiceReceipt }o--|| Organization : "organization"
     OrganizationInvoiceReceipt }o--|| OrganizationInvoice : "invoice"
@@ -489,7 +365,6 @@ erDiagram
     InvoiceLineItem }o--o| Payment : "payment"
     OrganizationEarnings }o--|| Organization : "organization"
     OrganizationEarnings }o--|| Payment : "payment"
-    OrganizationEarnings }o--o| ConsultantProfile : "consultantProfile"
     OrganizationEarnings }o--o| OrganizationPayout : "orgPayout"
     OrganizationPayout }o--|| Organization : "organization"
     OrganizationPayout }o--o| OrganizationPayoutAccount : "orgPayoutAccount"
@@ -498,18 +373,12 @@ erDiagram
     CreditNote }o--o| OrganizationInvoice : "invoice"
     OrgCreditNoteCounter }o--|| Organization : "organization"
     Organization }o--o| BillingAccount : "billingAccount"
-    Payment }o--o| Referral : "attributionReferral"
-    Payment }o--|| User : "user"
-    Payment }o--o| Appointment : "appointment"
-    Payment }o--o| DiscountCode : "discountCode"
     Payment }o--o| Organization : "organization"
     Payment }o--o| Organization : "hostOrganization"
     Payment }o--o| BillingAccount : "billingAccount"
     Payment }o--o| OrganizationInvoice : "billableToOrgInvoice"
     Payment }o--o| Payment : "parentPayment"
     Refund }o--|| Payment : "payment"
-    Dispute }o--|| Payment : "payment"
-    Dispute }o--o| User : "assignedTo"
 ```
 
 - **An invoice is paid when its receipts and credit notes cover its total.** A bank transfer is recorded as a `BANK_TRANSFER` receipt with a UTR; a gateway capture is a `GATEWAY` receipt with the gateway payment id. `organizationId` plus `reference` is unique, so the same UTR cannot be recorded twice.
@@ -517,7 +386,7 @@ erDiagram
 - **The invoice number is per-organisation and per fiscal year.** `OrgInvoiceCounter` allocates it with an insert-on-conflict update, and the format is `<PREFIX>-<FY>-<SEQ>` under CGST Rule 46.
 - **The organisation's split must fit inside the gross.** `org_earnings_split_within_gross` refuses a split whose platform fee plus consultant share exceeds the gross, and `organization_earnings_split_key` stops the same split being recorded twice.
 
-## 4. Double-Entry Ledger & Gateway Settlement
+## 5. Double-Entry Ledger & Gateway Settlement
 
 The single source of truth for cash. Every cash event is one `LedgerTransaction` whose `LedgerEntry` rows satisfy the sum-of-debits-equals-sum-of-credits identity, and each `LedgerAccount` balance is derived from those postings. `UsageLedgerEntry` counts non-cash engagement consumption and is deliberately outside the cash journal. `GatewaySettlementLine` holds the gateway's own settlement report for matching, and `LedgerReconciliationReport` is the nightly audit output.
 
@@ -538,8 +407,6 @@ erDiagram
         description string
         paymentId string
         invoiceId string
-        payoutId string
-        postedAt datetime
     }
     LedgerEntry {
         id string PK
@@ -556,8 +423,6 @@ erDiagram
         programAssignmentId string
         membershipId string
         paymentId string
-        engagementsConsumed int
-        minutesConsumed int
     }
     LedgerReconciliationReport {
         id string PK
@@ -566,8 +431,6 @@ erDiagram
         summary json
         findings json
         ok boolean
-        durationMs int
-        triggeredById string
     }
     GatewaySettlementLine {
         id string PK
@@ -576,8 +439,6 @@ erDiagram
         provider paymentgateway
         entityId string
         type string
-        settlementId string
-        settlementUtr string
     }
     Payment {
         id string PK
@@ -588,45 +449,12 @@ erDiagram
     Organization {
         id string PK
     }
-    ConsultantProfile {
-        id string PK
-    }
-    Referral {
-        id string PK
-    }
-    User {
-        id string PK
-    }
-    Appointment {
-        id string PK
-    }
-    DiscountCode {
-        id string PK
-    }
-    BillingAccount {
-        id string PK
-    }
-    OrganizationInvoice {
-        id string PK
-    }
-    Domain {
-        id string PK
-    }
     LedgerEntry }o--|| LedgerTransaction : "transaction"
     LedgerEntry }o--|| LedgerAccount : "account"
-    Payment }o--o| Referral : "attributionReferral"
-    Payment }o--|| User : "user"
-    Payment }o--o| Appointment : "appointment"
-    Payment }o--o| DiscountCode : "discountCode"
     Payment }o--o| Organization : "organization"
     Payment }o--o| Organization : "hostOrganization"
-    Payment }o--o| BillingAccount : "billingAccount"
-    Payment }o--o| OrganizationInvoice : "billableToOrgInvoice"
     Payment }o--o| Payment : "parentPayment"
     Refund }o--|| Payment : "payment"
-    Organization }o--o| BillingAccount : "billingAccount"
-    ConsultantProfile }o--|| Domain : "domain"
-    ConsultantProfile }o--|| User : "user"
 ```
 
 - **Balances are derived, not stored.** There is no balance table on `dev`: the balance is the sum of the postings, and the reconciliation job recomputes it. The earlier `LedgerAccountBalance` cache was removed in #2251 in favour of computing the balance from the journal.

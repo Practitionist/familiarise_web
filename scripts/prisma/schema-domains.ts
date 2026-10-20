@@ -118,13 +118,7 @@ export const domains: Domain[] = [
     id: "collaborators",
     title: "Collaborators & Revenue Splits",
     models: ["Collaborator"],
-    anchors: [
-      "ConsultantProfile",
-      "ConsultationPlan",
-      "SubscriptionPlan",
-      "WebinarPlan",
-      "ClassPlan",
-    ],
+    anchors: ["ConsultantProfile", "ConsultationPlan", "WebinarPlan"],
     intro:
       "One `Collaborator` row per co-host, teaching assistant or guest speaker on a plan, with a revenue share in basis points. The row is polymorphic across the plan types and the collaborator tiers are role-specific.",
     notes: [
@@ -155,10 +149,8 @@ export const domains: Domain[] = [
     anchors: [
       "User",
       "ConsultantProfile",
-      "ConsulteeProfile",
       "ConsultationPlan",
       "SubscriptionPlan",
-      "Organization",
       "Payment",
     ],
     intro:
@@ -177,7 +169,6 @@ export const domains: Domain[] = [
       "ConsultantProfile",
       "WebinarPlan",
       "ClassPlan",
-      "Organization",
       "Appointment",
     ],
     intro:
@@ -195,16 +186,7 @@ export const domains: Domain[] = [
       "AppointmentOccurrence",
       "BookingStatusHistory",
     ],
-    anchors: [
-      "User",
-      "ConsultantProfile",
-      "Consultation",
-      "Subscription",
-      "Webinar",
-      "Class",
-      "Trial",
-      "Organization",
-    ],
+    anchors: ["User", "Consultation", "Subscription", "Webinar", "Class"],
     intro:
       "`Appointment` is the pivot that every booking type resolves to. A one-to-one consultation has exactly one; a subscription has one per session; a webinar has one shared by all registrants; a class has one per session; a trial has one. `AppointmentOccurrence` is a concrete time slot inside it, `AppointmentParticipant` is the per-person seat row, and `BookingStatusHistory` is the append-only record of every status transition.",
     notes: [
@@ -221,13 +203,7 @@ export const domains: Domain[] = [
       "RescheduleRequest",
       "RescheduleProposedTime",
     ],
-    anchors: [
-      "User",
-      "ConsultantProfile",
-      "Appointment",
-      "Consultation",
-      "Subscription",
-    ],
+    anchors: ["User", "ConsultantProfile", "Appointment", "Consultation"],
     intro:
       "The refund-shape side of a booking. `CancellationPolicy` is a published, versioned document owned by the consultant; `CancellationPolicyTier` is the percentage ladder inside it. `RescheduleRequest` is the ask, and `RescheduleProposedTime` holds the candidate windows the consultant offers back.",
     notes: [
@@ -246,7 +222,7 @@ export const domains: Domain[] = [
       "RecordingConsent",
       "RecordingPurchase",
     ],
-    anchors: ["AppointmentOccurrence", "Appointment", "Organization", "User"],
+    anchors: ["AppointmentOccurrence", "Appointment", "Organization"],
     intro:
       "The Stream.io video layer and the recording store. `Meeting` is the live call for one occurrence. `MeetingAttendance` and `MeetingPresence` are two different attendance records — one is the settled record, one is the live signal. `Recording` is the media asset; `RecordingConsent` is the publish-time redistribution attestation; `RecordingPurchase` is a replay purchase.",
     notes: [
@@ -310,7 +286,7 @@ export const domains: Domain[] = [
       "ConsultantPayout",
       "PayoutAccount",
     ],
-    anchors: ["User", "ConsultantProfile", "Payment", "Refund"],
+    anchors: ["ConsultantProfile", "Payment", "Refund"],
     intro:
       "The lifecycle from a captured payment to money in a bank account. `ConsultantEarnings` is the per-occurrence earning row; `EarningsHold` is a reason-scoped block on it; `ConsultantPayout` is a batch that settles a set of earnings; `PayoutAccount` is a verified destination.",
     notes: [
@@ -370,7 +346,7 @@ export const domains: Domain[] = [
     id: "experts",
     title: "Expert–Customer Relationships",
     models: ["ExpertCustomerRelationship"],
-    anchors: ["User", "ConsultantProfile", "Organization"],
+    anchors: ["User", "ConsultantProfile"],
     intro:
       "The durable record that a user has bought from an expert, with the source that owns the relationship. It is what a consultant's client list and an organisation's spend history are both read from, without re-deriving either from payments.",
     notes: [
@@ -391,7 +367,7 @@ export const domains: Domain[] = [
       "OrgAuditLog",
       "OrgBrandingProfile",
     ],
-    anchors: ["User", "ConsultantProfile", "ConsulteeProfile"],
+    anchors: ["User", "ConsultantProfile"],
     intro:
       "An `Organization` can sponsor employees (`canSponsor`), host consultants (`canHost`), or both. `Membership` is the only membership table in the system: it joins a `User` to an `Organization` with a role, a status and a payout recipient. `Invitation` covers both the organisation-scoped and the platform-scoped operator door. `OrganizationTaxInfo` and `OrganizationMsmeInfo` carry the statutory profile; `OrgSSOSettings` and `OrgDomainClaim` carry the identity perimeter; `OrgAuditLog` is the trail; `OrgBrandingProfile` is the white-label surface.",
     notes: [
@@ -402,13 +378,27 @@ export const domains: Domain[] = [
   },
   {
     id: "enterprise-billing",
-    title: "Enterprise Billing, Programs & Wallets",
+    title: "Enterprise Commercial Spine",
     models: [
       "BillingAccount",
       "Contract",
       "BillingSubscription",
       "WalletTopUp",
       "RateCard",
+    ],
+    anchors: ["Organization", "Membership"],
+    intro:
+      "The commercial spine an organisation buys on: `BillingAccount` → `Contract` → `BillingSubscription`. `BillingAccount` is the funding rail and the wallet, `Contract` is the governing agreement, `BillingSubscription` is the billing cycle, `WalletTopUp` is the top-up lifecycle, and `RateCard` is the three-way basis-point split between platform, organisation and consultant.",
+    notes: [
+      "**The wallet balance is a liability account in the double-entry ledger, not a standalone table.** `BillingAccount.walletBalance` is retained only as a denormalised cache for the atomic-debit guard, and the nightly reconciliation asserts it equals the `WALLET` account balance. `billing_account_wallet_nonnegative` refuses a negative balance.",
+      "**A contract is superseded, never edited.** `Contract.supersededByContractId` is a self-relation with a `ContractSupersessionReason`, and `contract_one_active_per_billing_account_idx` keeps exactly one active contract per billing account.",
+      "**The rate card must divide the whole.** `rate_card_bps_sum_is_whole` refuses a split that is not exactly 10,000 bps across platform, organisation and consultant, and `rate_card_one_open_window` keeps one open validity window at a time.",
+    ],
+  },
+  {
+    id: "enterprise-programs",
+    title: "Enterprise Programs & Usage",
+    models: [
       "Program",
       "ProgramAssignment",
       "ProgramConsultantAllowlist",
@@ -419,15 +409,13 @@ export const domains: Domain[] = [
       "PurchaseOrder",
       "OrgInvoiceCounter",
     ],
-    anchors: ["Organization", "Membership", "Payment"],
+    anchors: ["Membership", "BillingAccount"],
     intro:
-      "The commercial spine: `BillingAccount` → `Contract` → `Program` → `ProgramAssignment` → `BookingUtilization`. Each link adds a layer of budget control. `BillingSubscription` is the billing cycle, `WalletTopUp` is the top-up lifecycle, `RateCard` is the three-way basis-point split, `LicensedSeatConfig` and `CreditPoolConfig` are the two overage shapes, `OverageEvent` is the append-only over-cap charge ledger, and `PurchaseOrder` is the org's pre-authorisation.",
+      "What a contract makes available and how it is spent. `Program` → `ProgramAssignment` → `BookingUtilization` is the chain: a program is attached to a contract, an assignment attaches a member to a program, and a booking consumes it. `LicensedSeatConfig` and `CreditPoolConfig` are the two overage shapes, `OverageEvent` is the append-only over-cap charge ledger, `PurchaseOrder` is the organisation's pre-authorisation, and `OrgInvoiceCounter` allocates the per-organisation, per-fiscal-year invoice number.",
     notes: [
-      "**The wallet balance is a liability account in the double-entry ledger, not a standalone table.** `BillingAccount.walletBalance` is retained only as a denormalised cache for the atomic-debit guard, and the nightly reconciliation asserts it equals the `WALLET` account balance. `billing_account_wallet_nonnegative` refuses a negative balance.",
-      "**A contract is superseded, never edited.** `Contract.supersededByContractId` is a self-relation with a `ContractSupersessionReason`, and `contract_one_active_per_billing_account_idx` keeps exactly one active contract per billing account.",
       "**A program assignment cannot overlap itself.** `program_assignment_no_active_overlap` refuses two active assignments for the same member and program, and `ProgramAssignment.rolledToAssignmentId` is the one-way link when a cycle rolls over.",
-      "**The rate card must divide the whole.** `rate_card_bps_sum_is_whole` refuses a split that is not exactly 10,000 bps across platform, organisation and consultant, and `rate_card_one_open_window` keeps one open validity window at a time.",
       "**Overage is a formula, not a number.** `overage_marginal_is_base_plus_surcharge` refuses a marginal charge that is not the base plus its surcharge, so the two can never drift apart.",
+      "**The invoice number is per organisation and per fiscal year.** `OrgInvoiceCounter` allocates it with an insert-on-conflict update, so two concurrent invoices cannot read the same next sequence.",
     ],
   },
   {
@@ -443,7 +431,7 @@ export const domains: Domain[] = [
       "CreditNote",
       "OrgCreditNoteCounter",
     ],
-    anchors: ["Organization", "Payment", "Refund", "Dispute", "BillingAccount"],
+    anchors: ["Organization", "Payment", "Refund", "BillingAccount"],
     intro:
       "Month-end invoicing for the organisation side. `OrganizationInvoice` is the tax invoice, `InvoiceLineItem` its lines, `OrganizationInvoiceReceipt` the money received against it, `OrganizationEarnings` the organisation's share of a host booking, `OrganizationPayout` the batch that disburses it, `OrganizationPayoutAccount` the destination, and `CreditNote` the Section 34 / CGST Rule 53 document that cancels or reduces an invoice.",
     notes: [
@@ -464,7 +452,7 @@ export const domains: Domain[] = [
       "LedgerReconciliationReport",
       "GatewaySettlementLine",
     ],
-    anchors: ["Payment", "Refund", "Organization", "ConsultantProfile"],
+    anchors: ["Payment", "Refund", "Organization"],
     intro:
       "The single source of truth for cash. Every cash event is one `LedgerTransaction` whose `LedgerEntry` rows satisfy the sum-of-debits-equals-sum-of-credits identity, and each `LedgerAccount` balance is derived from those postings. `UsageLedgerEntry` counts non-cash engagement consumption and is deliberately outside the cash journal. `GatewaySettlementLine` holds the gateway's own settlement report for matching, and `LedgerReconciliationReport` is the nightly audit output.",
     notes: [
@@ -504,14 +492,7 @@ export const domains: Domain[] = [
       "SupportCaseMessage",
       "SupportCaseEvent",
     ],
-    anchors: [
-      "User",
-      "Appointment",
-      "AppointmentOccurrence",
-      "Organization",
-      "Payment",
-      "Refund",
-    ],
+    anchors: ["User", "Appointment", "Organization", "Payment"],
     intro:
       "`SupportCase` is the canonical record from intake through private evidence, decisions, appeals and resolution. It owns the transcript (`SupportCaseMessage`), the event trail (`SupportCaseEvent`), and the links to whatever the case is about (`SupportCaseSubject`, which names the subject type and id rather than a foreign key per type).",
     notes: [
@@ -524,13 +505,7 @@ export const domains: Domain[] = [
     id: "feedback",
     title: "Feedback & Ratings",
     models: ["AppointmentFeedback"],
-    anchors: [
-      "Appointment",
-      "AppointmentOccurrence",
-      "User",
-      "ConsultantProfile",
-      "Organization",
-    ],
+    anchors: ["Appointment", "User", "ConsultantProfile", "Organization"],
     intro:
       "The private per-call rating, distinct from the public `ConsultantReview`. It covers calls that a public review does not, such as a webinar or a class, and it feeds the organisation-level quality aggregate. The rater's role is recorded so a consultant's rating of their own session can be excluded.",
     notes: [
@@ -550,7 +525,7 @@ export const domains: Domain[] = [
       "PlatformIncident",
       "IncidentRemedy",
     ],
-    anchors: ["User", "ConsultantProfile", "ConsulteeProfile", "Appointment"],
+    anchors: ["User", "ConsultantProfile", "Appointment"],
     intro:
       "The public reputation rail and the machinery around it. `ConsultantReview` is a public review of a consultant; `ConsultantReviewRevision` is the append-only chain of superseded versions of its text. `ModerationReport` is a report against content or a person; `ModerationAction` is every enforcement step and it can exist without a report behind it since #1562. `PlatformFeedback` is feedback about the platform rather than a rating of a call. `PlatformIncident` and `IncidentRemedy` are the declared-incident record.",
     notes: [
@@ -595,7 +570,7 @@ export const domains: Domain[] = [
   },
   {
     id: "system",
-    title: "System, Operations & Notification Delivery",
+    title: "System & Operations Record",
     models: [
       "SystemEvent",
       "SystemJobExecution",
@@ -605,19 +580,30 @@ export const domains: Domain[] = [
       "MaintenanceWindow",
       "WebhookEndpoint",
       "OutboundWebhookDelivery",
-      "FailedEmail",
-      "FailedEmailBatch",
+    ],
+    anchors: ["User"],
+    intro:
+      "The operational record. `SystemEvent` and `SystemJobExecution` are what the platform did and when, `OpsActionLog` is the audit of every privileged action, and `OpsActionProposal` is the second-admin queue for money doors above the threshold. `Announcement` and `MaintenanceWindow` are what the platform tells people, and `WebhookEndpoint` with `OutboundWebhookDelivery` are the platform's own outbound webhooks.",
+    notes: [
+      "**A money door above the threshold is a proposal, not an execution.** `OpsActionProposal` holds the validated request body and the route it was proposed against, so the approver's run replays exactly what the proposer saw. `ops_action_proposal_one_open_key` allows only one open proposal per action and target.",
+      "**A processed webhook is either processed or failed, never both.** `webhook_event_processed_error_exclusive` refuses a row that claims both, and `webhook_event_processed_timestamp_consistent` requires the processed stamp to exist whenever the processed flag is set.",
+    ],
+  },
+  {
+    id: "notifications",
+    title: "Notification Delivery",
+    models: [
       "NotificationOutbox",
       "EmailEvent",
       "EmailSuppression",
+      "FailedEmail",
+      "FailedEmailBatch",
     ],
-    anchors: ["User", "Payment"],
+    anchors: ["User"],
     intro:
-      "The operational substrate. `SystemEvent` and `SystemJobExecution` are the observability record, `OpsActionLog` is the audit of every privileged action, and `OpsActionProposal` is the second-admin queue for money doors above the threshold. `NotificationOutbox` is the durable outbox every notification is written to, with `EmailEvent`, `EmailSuppression`, `FailedEmail` and `FailedEmailBatch` recording what happened to each send. `WebhookEndpoint` and `OutboundWebhookDelivery` are the platform's own outbound webhooks.",
+      "How a message leaves the platform. `NotificationOutbox` is the durable outbox every notification is written to, `EmailEvent` is the record of each email, `EmailSuppression` is the list of addresses that must not be sent to, and `FailedEmail` with `FailedEmailBatch` is what happens when a send does not go through.",
     notes: [
       "**Notifications are written to an outbox, not sent inline.** A row lands in `NotificationOutbox` in the same transaction as the event that caused it, and a leased sweep delivers it. That is why a delivery failure never loses the message, and why `FailedEmail_active_outbox_idx` and `NotificationOutbox_active_outbox_idx` are partial indexes over the active rows only.",
-      "**A money door above the threshold is a proposal, not an execution.** `OpsActionProposal` holds the validated request body and the route it was proposed against, so the approver's run replays exactly what the proposer saw. `ops_action_proposal_one_open_key` allows only one open proposal per action and target.",
-      "**A processed webhook is either processed or failed, never both.** `webhook_event_processed_error_exclusive` refuses a row that claims both, and `webhook_event_processed_timestamp_consistent` requires the processed stamp to exist whenever the processed flag is set.",
     ],
   },
 ];

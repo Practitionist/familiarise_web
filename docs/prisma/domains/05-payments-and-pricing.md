@@ -24,8 +24,6 @@ erDiagram
         userId string FK
         appointmentId string FK
         discountCodeId string FK
-        organizationId string FK
-        hostOrganizationId string FK
     }
     PaymentLeg {
         id string PK
@@ -42,8 +40,6 @@ erDiagram
         paymentId string FK
         createdAt datetime
         currency currency
-        reason string
-        refundId string UK
     }
     Dispute {
         id string PK
@@ -52,8 +48,6 @@ erDiagram
         paymentId string FK
         assignedToUserId string FK
         createdAt datetime
-        currency currency
-        reason string
     }
     IdempotencyRecord {
         id string PK
@@ -62,8 +56,6 @@ erDiagram
         key string
         userId string
         requestHash string
-        responseBody json
-        responseStatus int
     }
     WebhookEvent {
         id string PK
@@ -72,8 +64,6 @@ erDiagram
         eventType string
         payload json
         signature string
-        processed boolean
-        processedAt datetime
     }
     DiscountCode {
         id string PK
@@ -82,8 +72,6 @@ erDiagram
         description string
         discountType discounttype
         discountValue int
-        currency currency
-        isActive boolean
     }
     User {
         id string PK
@@ -97,45 +85,17 @@ erDiagram
     BillingAccount {
         id string PK
     }
-    Referral {
-        id string PK
-    }
-    OrganizationInvoice {
-        id string PK
-    }
-    CancellationPolicy {
-        id string PK
-    }
-    Consultation {
-        id string PK
-    }
-    Subscription {
-        id string PK
-    }
-    Webinar {
-        id string PK
-    }
-    ClassBatch {
-        id string PK
-    }
-    Payment }o--o| Referral : "attributionReferral"
     Payment }o--|| User : "user"
     Payment }o--o| Appointment : "appointment"
     Payment }o--o| DiscountCode : "discountCode"
     Payment }o--o| Organization : "organization"
     Payment }o--o| Organization : "hostOrganization"
     Payment }o--o| BillingAccount : "billingAccount"
-    Payment }o--o| OrganizationInvoice : "billableToOrgInvoice"
     Payment }o--o| Payment : "parentPayment"
     PaymentLeg }o--|| Payment : "payment"
     Refund }o--|| Payment : "payment"
     Dispute }o--|| Payment : "payment"
     Dispute }o--o| User : "assignedTo"
-    Appointment }o--o| CancellationPolicy : "cancellationPolicy"
-    Appointment }o--o| Consultation : "consultation"
-    Appointment }o--o| Subscription : "subscription"
-    Appointment }o--o| Webinar : "webinar"
-    Appointment }o--o| ClassBatch : "class"
     Appointment }o--o| Organization : "organization"
     Organization }o--o| BillingAccount : "billingAccount"
 ```
@@ -163,8 +123,6 @@ erDiagram
         ownLinkBps int
         effectiveFrom datetime
         makerUserId string
-        checkerUserId string
-        approvedAt datetime
     }
     ConsultantFeeWaiver {
         id string PK
@@ -173,24 +131,11 @@ erDiagram
         createdAt datetime
         reason consultantfeewaiverreason
         sessionsRemaining int
-        expiresAt datetime
     }
     ConsultantProfile {
         id string PK
     }
-    Referral {
-        id string PK
-    }
-    Domain {
-        id string PK
-    }
-    User {
-        id string PK
-    }
     ConsultantFeeWaiver }o--|| ConsultantProfile : "consultantProfile"
-    ConsultantFeeWaiver }o--|| Referral : "referral"
-    ConsultantProfile }o--|| Domain : "domain"
-    ConsultantProfile }o--|| User : "user"
 ```
 
 - **Fee policy is versioned by validity window, not edited.** `platform_fee_schedule_valid` refuses a schedule whose window or basis points are nonsense, and the pricing code reads the schedule effective on the booking date, not the newest one.

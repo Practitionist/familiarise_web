@@ -24,8 +24,6 @@ erDiagram
         organizationId string FK
         userId string FK
         assignedToId string FK
-        createdAt datetime
-        title string
     }
     SupportTicketCounter {
         year int PK
@@ -39,7 +37,6 @@ erDiagram
         createdAt datetime
         message string
         isInternal boolean
-        updatedAt datetime
     }
     SupportTicketAttachment {
         id string PK
@@ -48,8 +45,6 @@ erDiagram
         originalName string
         fileSize int
         mimeType string
-        fileUrl string
-        storagePath string
     }
     AppointmentSupportThread {
         id string PK
@@ -58,8 +53,6 @@ erDiagram
         userId string FK
         organizationId string FK
         supportTicketId string FK
-        createdAt datetime
-        category supportthreadcategory
     }
     SupportMessage {
         id string PK
@@ -68,8 +61,6 @@ erDiagram
         createdAt datetime
         sender supportmessagesender
         body string
-        metadata json
-        seq int
     }
     SupportFlowOutcome {
         id string PK
@@ -78,8 +69,6 @@ erDiagram
         createdAt datetime
         scope string
         flowKey string
-        terminalNodeId string
-        reason string
     }
     User {
         id string PK
@@ -88,24 +77,6 @@ erDiagram
         id string PK
     }
     Organization {
-        id string PK
-    }
-    CancellationPolicy {
-        id string PK
-    }
-    Consultation {
-        id string PK
-    }
-    Subscription {
-        id string PK
-    }
-    Webinar {
-        id string PK
-    }
-    ClassBatch {
-        id string PK
-    }
-    BillingAccount {
         id string PK
     }
     SupportTicket }o--o| Organization : "organization"
@@ -122,13 +93,7 @@ erDiagram
     SupportMessage }o--o| User : "authorUser"
     SupportFlowOutcome }o--|| User : "user"
     SupportFlowOutcome }o--o| Organization : "organization"
-    Appointment }o--o| CancellationPolicy : "cancellationPolicy"
-    Appointment }o--o| Consultation : "consultation"
-    Appointment }o--o| Subscription : "subscription"
-    Appointment }o--o| Webinar : "webinar"
-    Appointment }o--o| ClassBatch : "class"
     Appointment }o--o| Organization : "organization"
-    Organization }o--o| BillingAccount : "billingAccount"
 ```
 
 - **The reference number is year-scoped and forward-only.** `SupportTicketCounter` allocates it with an insert-on-conflict update. A unique index permits unlimited nulls, so tickets that predate the column keep their uuid and no backfill is owed.
@@ -148,8 +113,6 @@ erDiagram
         problemCaseId string FK
         requesterUserId string FK
         submitterUserId string FK
-        organizationId string FK
-        appointmentId string FK
     }
     SupportCaseSubject {
         id string PK
@@ -166,8 +129,6 @@ erDiagram
         createdAt datetime
         seq int
         sender supportmessagesender
-        body string
-        isInternal boolean
     }
     SupportCaseEvent {
         id string PK
@@ -176,16 +137,11 @@ erDiagram
         legacyTicketId string FK
         actorId string FK
         createdAt datetime
-        fromValue string
-        toValue string
     }
     User {
         id string PK
     }
     Appointment {
-        id string PK
-    }
-    AppointmentOccurrence {
         id string PK
     }
     Organization {
@@ -194,70 +150,23 @@ erDiagram
     Payment {
         id string PK
     }
-    Refund {
-        id string PK
-    }
-    SupportTicket {
-        id string PK
-    }
-    CancellationPolicy {
-        id string PK
-    }
-    Consultation {
-        id string PK
-    }
-    Subscription {
-        id string PK
-    }
-    Webinar {
-        id string PK
-    }
-    ClassBatch {
-        id string PK
-    }
-    BillingAccount {
-        id string PK
-    }
-    Referral {
-        id string PK
-    }
-    DiscountCode {
-        id string PK
-    }
-    OrganizationInvoice {
-        id string PK
-    }
     SupportCase }o--o| SupportCase : "problemCase"
     SupportCase }o--|| User : "requester"
     SupportCase }o--|| User : "submitter"
     SupportCase }o--o| Organization : "organization"
     SupportCase }o--o| Appointment : "appointment"
-    SupportCase }o--o| AppointmentOccurrence : "occurrence"
     SupportCase }o--o| User : "assignedTo"
     SupportCaseSubject }o--|| SupportCase : "supportCase"
     SupportCaseMessage }o--|| SupportCase : "supportCase"
     SupportCaseMessage }o--o| User : "authorUser"
     SupportCaseEvent }o--o| SupportCase : "supportCase"
-    SupportCaseEvent }o--o| SupportTicket : "legacyTicket"
     SupportCaseEvent }o--o| User : "actor"
-    Appointment }o--o| CancellationPolicy : "cancellationPolicy"
-    Appointment }o--o| Consultation : "consultation"
-    Appointment }o--o| Subscription : "subscription"
-    Appointment }o--o| Webinar : "webinar"
-    Appointment }o--o| ClassBatch : "class"
     Appointment }o--o| Organization : "organization"
-    AppointmentOccurrence }o--|| Appointment : "appointment"
-    Organization }o--o| BillingAccount : "billingAccount"
-    Payment }o--o| Referral : "attributionReferral"
     Payment }o--|| User : "user"
     Payment }o--o| Appointment : "appointment"
-    Payment }o--o| DiscountCode : "discountCode"
     Payment }o--o| Organization : "organization"
     Payment }o--o| Organization : "hostOrganization"
-    Payment }o--o| BillingAccount : "billingAccount"
-    Payment }o--o| OrganizationInvoice : "billableToOrgInvoice"
     Payment }o--o| Payment : "parentPayment"
-    Refund }o--|| Payment : "payment"
 ```
 
 - **The case is addressed by scope, not by a free-text key.** `ownershipScope` and `scopeKey` say whose conversation this is — a personal account, organisation operations, or organisation billing — and `support_case_open_scope_key` keeps exactly one open case per scope tuple. `support_case_scope_and_shape_chk` refuses a case whose scope and its columns disagree.
@@ -277,13 +186,8 @@ erDiagram
         userId string FK
         organizationId string FK
         createdAt datetime
-        consultantProfileId string
-        coPresenterProfileId string
     }
     Appointment {
-        id string PK
-    }
-    AppointmentOccurrence {
         id string PK
     }
     User {
@@ -295,41 +199,11 @@ erDiagram
     Organization {
         id string PK
     }
-    CancellationPolicy {
-        id string PK
-    }
-    Consultation {
-        id string PK
-    }
-    Subscription {
-        id string PK
-    }
-    Webinar {
-        id string PK
-    }
-    ClassBatch {
-        id string PK
-    }
-    Domain {
-        id string PK
-    }
-    BillingAccount {
-        id string PK
-    }
-    AppointmentFeedback }o--o| AppointmentOccurrence : "occurrence"
     AppointmentFeedback }o--|| Appointment : "appointment"
     AppointmentFeedback }o--|| User : "user"
     AppointmentFeedback }o--o| Organization : "organization"
-    Appointment }o--o| CancellationPolicy : "cancellationPolicy"
-    Appointment }o--o| Consultation : "consultation"
-    Appointment }o--o| Subscription : "subscription"
-    Appointment }o--o| Webinar : "webinar"
-    Appointment }o--o| ClassBatch : "class"
     Appointment }o--o| Organization : "organization"
-    AppointmentOccurrence }o--|| Appointment : "appointment"
-    ConsultantProfile }o--|| Domain : "domain"
     ConsultantProfile }o--|| User : "user"
-    Organization }o--o| BillingAccount : "billingAccount"
 ```
 
 - **One rating per person per call, and one per person per whole appointment.** That is a unique index on `(appointmentId, appointmentOccurrenceId, userId)` where nulls are distinct, which Prisma cannot express — so it lives in `prisma/sql/check-constraints.sql` as `appointment_feedback_level_key`.
@@ -348,8 +222,6 @@ erDiagram
         appointmentId string FK
         createdAt datetime
         rating int
-        reviewDescription string
-        ratingUnitId string
     }
     ConsultantReviewRevision {
         id string PK
@@ -358,7 +230,6 @@ erDiagram
         rating int
         reviewDescription string
         supersededAt datetime
-        afterPublicReply boolean
     }
     ModerationReport {
         id string PK
@@ -367,8 +238,6 @@ erDiagram
         reportedById string FK
         targetUserId string FK
         organizationId string FK
-        reviewId string FK
-        createdAt datetime
     }
     ModerationAction {
         id string PK
@@ -377,8 +246,6 @@ erDiagram
         reviewId string FK
         feedbackId string FK
         takenById string FK
-        createdAt datetime
-        notes string
     }
     PlatformFeedback {
         id string PK
@@ -387,8 +254,6 @@ erDiagram
         createdAt datetime
         title string
         description string
-        rating int
-        category string
     }
     PlatformIncident {
         id string PK
@@ -397,8 +262,6 @@ erDiagram
         startsAt datetime
         endsAt datetime
         reason string
-        enumeratedAt datetime
-        reportedAt datetime
     }
     IncidentRemedy {
         id string PK
@@ -407,8 +270,6 @@ erDiagram
         occurrenceId string FK
         userId string FK
         paymentId string FK
-        rebookedOccurrenceId string FK
-        createdAt datetime
     }
     User {
         id string PK
@@ -416,70 +277,23 @@ erDiagram
     ConsultantProfile {
         id string PK
     }
-    ConsulteeProfile {
-        id string PK
-    }
     Appointment {
         id string PK
     }
-    Organization {
-        id string PK
-    }
-    AppointmentFeedback {
-        id string PK
-    }
-    AppointmentOccurrence {
-        id string PK
-    }
-    Payment {
-        id string PK
-    }
-    Domain {
-        id string PK
-    }
-    CancellationPolicy {
-        id string PK
-    }
-    Consultation {
-        id string PK
-    }
-    Subscription {
-        id string PK
-    }
-    Webinar {
-        id string PK
-    }
-    ClassBatch {
-        id string PK
-    }
     ConsultantReview }o--|| ConsultantProfile : "consultantProfile"
-    ConsultantReview }o--|| ConsulteeProfile : "consulteeProfile"
     ConsultantReview }o--o| Appointment : "appointment"
     ConsultantReviewRevision }o--|| ConsultantReview : "review"
     ModerationReport }o--|| User : "reportedBy"
     ModerationReport }o--|| User : "targetUser"
-    ModerationReport }o--o| Organization : "organization"
     ModerationReport }o--o| ConsultantReview : "review"
     ModerationAction }o--o| ModerationReport : "report"
     ModerationAction }o--o| ConsultantReview : "review"
-    ModerationAction }o--o| AppointmentFeedback : "feedback"
     ModerationAction }o--o| User : "takenBy"
     PlatformFeedback }o--|| User : "user"
     PlatformIncident }o--o| User : "declaredByUser"
     IncidentRemedy }o--|| PlatformIncident : "incident"
-    IncidentRemedy }o--|| AppointmentOccurrence : "occurrence"
     IncidentRemedy }o--|| User : "user"
-    IncidentRemedy }o--o| Payment : "payment"
-    IncidentRemedy }o--o| AppointmentOccurrence : "rebookedOccurrence"
-    ConsultantProfile }o--|| Domain : "domain"
     ConsultantProfile }o--|| User : "user"
-    ConsulteeProfile }o--|| User : "user"
-    Appointment }o--o| CancellationPolicy : "cancellationPolicy"
-    Appointment }o--o| Consultation : "consultation"
-    Appointment }o--o| Subscription : "subscription"
-    Appointment }o--o| Webinar : "webinar"
-    Appointment }o--o| ClassBatch : "class"
-    Appointment }o--o| Organization : "organization"
 ```
 
 - **An action must name its target, and the target must match the action type.** `moderation_action_has_target` and `moderation_action_target_matches_type` refuse a row that points at nothing, or at the wrong kind of thing for the action it claims to be.

@@ -24,8 +24,6 @@ erDiagram
         name string
         email string UK
         emailVerified boolean
-        image string
-        phone string UK
     }
     Account {
         id string PK
@@ -34,8 +32,6 @@ erDiagram
         accountId string
         providerId string
         accessToken string
-        refreshToken string
-        accessTokenExpiresAt datetime
     }
     Session {
         id string PK
@@ -44,8 +40,6 @@ erDiagram
         token string UK
         expiresAt datetime
         ipAddress string
-        userAgent string
-        updatedAt datetime
     }
     Verification {
         id string PK
@@ -62,7 +56,6 @@ erDiagram
         backupCodes string
         verified boolean
         failedVerificationCount int
-        lockedUntil datetime
     }
     Passkey {
         id string PK
@@ -71,8 +64,6 @@ erDiagram
         name string
         publicKey string
         credentialID string UK
-        counter int
-        deviceType string
     }
     SsoProvider {
         id string PK
@@ -81,8 +72,6 @@ erDiagram
         createdAt datetime
         issuer string
         oidcConfig string
-        samlConfig string
-        providerId string
     }
     CookiePreference {
         id string PK
@@ -91,8 +80,6 @@ erDiagram
         essential boolean
         analytics boolean
         marketing boolean
-        functional boolean
-        consentGivenAt datetime
     }
     NotificationPreference {
         id string PK
@@ -101,8 +88,6 @@ erDiagram
         inAppEnabled boolean
         emailEnabled boolean
         pushEnabled boolean
-        mentions boolean
-        directMessages boolean
     }
     OnboardingDraft {
         id string PK
@@ -111,18 +96,12 @@ erDiagram
         createdAt datetime
         currentStep int
         payload json
-        version int
-        updatedAt datetime
-    }
-    Organization {
-        id string PK
     }
     Account }o--|| User : "user"
     Session }o--|| User : "user"
     TwoFactor }o--|| User : "user"
     Passkey }o--|| User : "user"
     SsoProvider }o--o| User : "user"
-    SsoProvider }o--o| Organization : "organization"
     CookiePreference }o--o| User : "user"
     NotificationPreference }o--|| User : "user"
     OnboardingDraft }o--|| User : "user"
@@ -145,8 +124,6 @@ erDiagram
         domainId string FK
         userId string FK
         createdAt datetime
-        deletedAt datetime
-        description string
     }
     ConsulteeProfile {
         id string PK
@@ -155,8 +132,6 @@ erDiagram
         aboutMe string
         preferredLanguage string
         goals string
-        careerStage careerstage
-        skillsToDevelop string
     }
     StaffProfile {
         id string PK
@@ -180,8 +155,6 @@ erDiagram
         defaultLandingOrganizationId string
         notificationRoutingMode notificationroutingmode
         locale string
-        currencyDisplayCode string
-        updatedAt datetime
     }
     OrgKybVerification {
         organizationId string PK
@@ -191,19 +164,11 @@ erDiagram
     User {
         id string PK
     }
-    Domain {
-        id string PK
-    }
-    Organization {
-        id string PK
-    }
-    ConsultantProfile }o--|| Domain : "domain"
     ConsultantProfile }o--|| User : "user"
     ConsulteeProfile }o--|| User : "user"
     StaffProfile }o--|| User : "user"
     AdminProfile }o--|| User : "user"
     OrgWorkspaceProfile }o--|| User : "user"
-    OrgKybVerification }o--|| Organization : "organization"
 ```
 
 - **`ConsultantProfile` is the revenue root.** Earnings, payouts, tax records, plan authorship and availability all key off `consultantProfileId`, never off `User.id` directly. That is why the earnings ledger and the org side can be joined on one identifier without a profile lookup.
@@ -222,8 +187,6 @@ erDiagram
         company string
         companyDomain string
         title string
-        location string
-        startDate datetime
     }
     Certification {
         id string PK
@@ -232,8 +195,6 @@ erDiagram
         name string
         issuingOrganization string
         issueDate datetime
-        expiryDate datetime
-        credentialId string
     }
     Education {
         id string PK
@@ -242,8 +203,6 @@ erDiagram
         institution string
         institutionDomain string
         degree string
-        fieldOfStudy string
-        startYear int
     }
     Achievement {
         id string PK
@@ -252,8 +211,6 @@ erDiagram
         title string
         description string
         url string
-        imageUrl string
-        achievementType achievementtype
     }
     ConsultantProfileVerification {
         id string PK
@@ -262,8 +219,6 @@ erDiagram
         createdAt datetime
         submittedAt datetime
         notes string
-        reviewedAt datetime
-        reviewedById string
     }
     ProfileVerificationDocument {
         id string PK
@@ -272,16 +227,11 @@ erDiagram
         fileName string
         originalName string
         fileSize int
-        mimeType string
-        fileUrl string
     }
     User {
         id string PK
     }
     ConsultantProfile {
-        id string PK
-    }
-    Domain {
         id string PK
     }
     WorkExperience }o--|| User : "user"
@@ -291,7 +241,6 @@ erDiagram
     ConsultantProfileVerification }o--|| ConsultantProfile : "consultantProfile"
     ProfileVerificationDocument }o--o| ConsultantProfileVerification : "verification"
     ProfileVerificationDocument }o--o| User : "uploadedBy"
-    ConsultantProfile }o--|| Domain : "domain"
     ConsultantProfile }o--|| User : "user"
 ```
 
@@ -332,13 +281,9 @@ erDiagram
     ConsultantProfile {
         id string PK
     }
-    User {
-        id string PK
-    }
     SubDomain }o--|| Domain : "domain"
     Tag }o--|| Domain : "domain"
     ConsultantProfile }o--|| Domain : "domain"
-    ConsultantProfile }o--|| User : "user"
 ```
 
 - **A plan's `Topic` set and a consultant's `Domain` set are separate vocabularies on purpose.** The marketplace filter needs a flat topic, while a consultant's expertise is hierarchical. Collapsing them would force a taxonomy change to become a data migration.

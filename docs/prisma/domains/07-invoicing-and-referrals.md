@@ -24,8 +24,6 @@ erDiagram
         userId string FK
         createdAt datetime
         invoiceNumber string UK
-        fiscalYear int
-        supplierName string
     }
     ConsumerCreditNote {
         id string PK
@@ -34,8 +32,6 @@ erDiagram
         createdAt datetime
         creditNoteNumber string UK
         fiscalYear int
-        refundId string UK
-        disputeId string UK
     }
     PlatformInvoiceCounter {
         fiscalYear int PK
@@ -56,35 +52,10 @@ erDiagram
     Refund {
         id string PK
     }
-    Referral {
-        id string PK
-    }
-    Appointment {
-        id string PK
-    }
-    DiscountCode {
-        id string PK
-    }
-    Organization {
-        id string PK
-    }
-    BillingAccount {
-        id string PK
-    }
-    OrganizationInvoice {
-        id string PK
-    }
     ConsumerInvoice }o--|| Payment : "payment"
     ConsumerInvoice }o--|| User : "user"
     ConsumerCreditNote }o--|| ConsumerInvoice : "consumerInvoice"
-    Payment }o--o| Referral : "attributionReferral"
     Payment }o--|| User : "user"
-    Payment }o--o| Appointment : "appointment"
-    Payment }o--o| DiscountCode : "discountCode"
-    Payment }o--o| Organization : "organization"
-    Payment }o--o| Organization : "hostOrganization"
-    Payment }o--o| BillingAccount : "billingAccount"
-    Payment }o--o| OrganizationInvoice : "billableToOrgInvoice"
     Payment }o--o| Payment : "parentPayment"
     Refund }o--|| Payment : "payment"
 ```
@@ -105,8 +76,6 @@ erDiagram
         createdAt datetime
         code string UK
         customCode string UK
-        referrerReward bigint
-        refereeReward bigint
     }
     Referral {
         id string PK
@@ -115,8 +84,6 @@ erDiagram
         referralCodeId string FK
         referredUserId string FK
         qualifyingPaymentId string FK
-        qualifyingOccurrenceId string FK
-        organizationId string FK
     }
     ReferralCredit {
         id string PK
@@ -125,8 +92,6 @@ erDiagram
         createdAt datetime
         currency currency
         source creditsource
-        referralId string
-        usedAmount bigint
     }
     ReferralCreditUsage {
         id string PK
@@ -135,7 +100,6 @@ erDiagram
         paymentId string FK
         createdAt datetime
         originalAmount bigint
-        restoredAmount bigint
     }
     ReferralProgramConfig {
         id string PK
@@ -144,8 +108,6 @@ erDiagram
         isActive boolean
         paused boolean
         currentPeriod string
-        currentMonthSpentPaise bigint
-        referrerRewardPaise bigint
     }
     User {
         id string PK
@@ -153,28 +115,8 @@ erDiagram
     Payment {
         id string PK
     }
-    AppointmentOccurrence {
-        id string PK
-    }
-    Organization {
-        id string PK
-    }
-    Appointment {
-        id string PK
-    }
-    DiscountCode {
-        id string PK
-    }
-    BillingAccount {
-        id string PK
-    }
-    OrganizationInvoice {
-        id string PK
-    }
     ReferralCode }o--|| User : "user"
     Referral }o--o| Payment : "qualifyingPayment"
-    Referral }o--o| AppointmentOccurrence : "qualifyingOccurrence"
-    Referral }o--o| Organization : "organization"
     Referral }o--|| ReferralCode : "referralCode"
     Referral }o--|| User : "referredUser"
     ReferralCredit }o--|| User : "user"
@@ -182,12 +124,6 @@ erDiagram
     ReferralCreditUsage }o--|| Payment : "payment"
     Payment }o--o| Referral : "attributionReferral"
     Payment }o--|| User : "user"
-    Payment }o--o| Appointment : "appointment"
-    Payment }o--o| DiscountCode : "discountCode"
-    Payment }o--o| Organization : "organization"
-    Payment }o--o| Organization : "hostOrganization"
-    Payment }o--o| BillingAccount : "billingAccount"
-    Payment }o--o| OrganizationInvoice : "billableToOrgInvoice"
     Payment }o--o| Payment : "parentPayment"
 ```
 
@@ -214,24 +150,9 @@ erDiagram
     ConsultantProfile {
         id string PK
     }
-    Organization {
-        id string PK
-    }
-    Payment {
-        id string PK
-    }
-    Domain {
-        id string PK
-    }
-    BillingAccount {
-        id string PK
-    }
     ExpertCustomerRelationship }o--|| ConsultantProfile : "consultantProfile"
     ExpertCustomerRelationship }o--|| User : "buyer"
-    ExpertCustomerRelationship }o--|| Payment : "firstPayment"
-    ConsultantProfile }o--|| Domain : "domain"
     ConsultantProfile }o--|| User : "user"
-    Organization }o--o| BillingAccount : "billingAccount"
 ```
 
 - **The relationship is a projection, not the money record.** `Payment` remains the source of truth for what was paid; this table answers "who has bought from whom" without a join across the payment tables.

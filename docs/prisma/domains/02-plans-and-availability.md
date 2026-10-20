@@ -24,8 +24,6 @@ erDiagram
         consultantProfileId string FK
         organizationId string FK
         createdAt datetime
-        title string
-        subtitle string
     }
     SubscriptionPlan {
         id string PK
@@ -34,8 +32,6 @@ erDiagram
         consultantProfileId string FK
         organizationId string FK
         createdAt datetime
-        title string
-        subtitle string
     }
     WebinarPlan {
         id string PK
@@ -44,8 +40,6 @@ erDiagram
         organizationId string FK
         createdAt datetime
         title string
-        subtitle string
-        description string
     }
     ClassPlan {
         id string PK
@@ -54,8 +48,6 @@ erDiagram
         organizationId string FK
         createdAt datetime
         title string
-        subtitle string
-        description string
     }
     PlanMaterial {
         id string PK
@@ -64,8 +56,6 @@ erDiagram
         webinarPlanId string FK
         classPlanId string FK
         organizationId string FK
-        fileName string
-        originalName string
     }
     PlanFaq {
         id string PK
@@ -74,8 +64,6 @@ erDiagram
         webinarPlanId string FK
         classPlanId string FK
         createdAt datetime
-        question string
-        answer string
     }
     SubscriptionContent {
         id string PK
@@ -84,8 +72,6 @@ erDiagram
         title string
         description string
         contentType string
-        contentUrl string
-        order int
     }
     ClassContent {
         id string PK
@@ -94,22 +80,11 @@ erDiagram
         title string
         description string
         contentType string
-        contentUrl string
-        order int
     }
     ConsultantProfile {
         id string PK
     }
     Organization {
-        id string PK
-    }
-    Domain {
-        id string PK
-    }
-    User {
-        id string PK
-    }
-    BillingAccount {
         id string PK
     }
     ConsultationPlan }o--|| ConsultantProfile : "consultantProfile"
@@ -131,9 +106,6 @@ erDiagram
     PlanFaq }o--o| ClassPlan : "classPlan"
     SubscriptionContent }o--|| SubscriptionPlan : "subscriptionPlan"
     ClassContent }o--|| ClassPlan : "classPlan"
-    ConsultantProfile }o--|| Domain : "domain"
-    ConsultantProfile }o--|| User : "user"
-    Organization }o--o| BillingAccount : "billingAccount"
 ```
 
 - **`archivedAt` withdraws a plan from sale without deleting the terms past bookings still resolve against.** A booking references the plan row; deleting the plan would orphan the booking's price, policy and cancellation tier.
@@ -153,8 +125,6 @@ erDiagram
         revenueShareBps int
         consultantProfileId string FK
         webinarPlanId string FK
-        classPlanId string FK
-        invitedById string FK
     }
     ConsultantProfile {
         id string PK
@@ -162,38 +132,14 @@ erDiagram
     ConsultationPlan {
         id string PK
     }
-    SubscriptionPlan {
-        id string PK
-    }
     WebinarPlan {
-        id string PK
-    }
-    ClassPlan {
-        id string PK
-    }
-    Domain {
-        id string PK
-    }
-    User {
-        id string PK
-    }
-    Organization {
         id string PK
     }
     Collaborator }o--|| ConsultantProfile : "consultantProfile"
     Collaborator }o--o| WebinarPlan : "webinarPlan"
-    Collaborator }o--o| ClassPlan : "classPlan"
     Collaborator }o--o| ConsultantProfile : "invitedBy"
-    ConsultantProfile }o--|| Domain : "domain"
-    ConsultantProfile }o--|| User : "user"
     ConsultationPlan }o--|| ConsultantProfile : "consultantProfile"
-    ConsultationPlan }o--o| Organization : "organization"
-    SubscriptionPlan }o--|| ConsultantProfile : "consultantProfile"
-    SubscriptionPlan }o--o| Organization : "organization"
     WebinarPlan }o--o| ConsultantProfile : "consultantProfile"
-    WebinarPlan }o--o| Organization : "organization"
-    ClassPlan }o--o| ConsultantProfile : "consultantProfile"
-    ClassPlan }o--o| Organization : "organization"
 ```
 
 - **Four database constraints police this one table.** `collaborator_plan_xor` refuses zero or multiple plan foreign keys; `collaborator_role_matches_plan_type` refuses a webinar-only role on a class plan; `collaborator_tier_matches_role` refuses a role that outranks its tier; `collaborator_share_bps_in_range` keeps the split inside 0–10,000 bps. Two partial uniques — `collaborator_one_presenter_webinar` and `collaborator_one_presenter_class` — guarantee exactly one presenter per event type.
@@ -211,8 +157,6 @@ erDiagram
         startDay dayofweek
         startTimeUtc int
         endDay dayofweek
-        endTimeUtc int
-        utcOffsetMinutes int
     }
     AvailabilityWindowCustom {
         id string PK
@@ -229,8 +173,6 @@ erDiagram
         userId string FK
         createdAt datetime
         windowStart datetime
-        windowEnd datetime
-        planKind appointmentstype
     }
     Waitlist {
         id string PK
@@ -239,8 +181,6 @@ erDiagram
         createdAt datetime
         email string UK
         name string
-        source waitlistsource
-        tags string
     }
     ConsultantProfile {
         id string PK
@@ -248,15 +188,11 @@ erDiagram
     User {
         id string PK
     }
-    Domain {
-        id string PK
-    }
     AvailabilityWindowWeekly }o--|| ConsultantProfile : "consultantProfile"
     AvailabilityWindowCustom }o--|| ConsultantProfile : "consultantProfile"
     WindowBackupInterest }o--|| ConsultantProfile : "consultantProfile"
     WindowBackupInterest }o--|| User : "user"
     Waitlist }o--o| User : "user"
-    ConsultantProfile }o--|| Domain : "domain"
     ConsultantProfile }o--|| User : "user"
 ```
 

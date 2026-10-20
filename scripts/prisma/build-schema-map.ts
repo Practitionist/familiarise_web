@@ -272,7 +272,7 @@ const STATE_COLUMNS = [
   "verificationStatus",
 ];
 
-const MAX_ATTRIBUTES = 8;
+const MAX_ATTRIBUTES = 6;
 
 function pickFields(model: Model, enumNames: Set<string>): string[] {
   const out: string[] = [];
@@ -333,22 +333,19 @@ function erDiagram(
   const focal = new Set<string>([...domainModels, ...anchors]);
   const entityNames = new Set<string>(focal);
 
-  // Cross-domain foreign-key targets become stubs so the diagram is
-  // self-contained: a reader sees where the key lands without following it.
-  for (const n of focal) {
-    for (const r of models.get(n)!.relations) {
-      if (r.fk.length && !focal.has(r.model)) entityNames.add(r.model);
-    }
-  }
+  // A key that points outside the diagram is left pointing outside. An
+  // empty box for it says nothing a reader can act on, and the prose
+  // already names the neighbours; a diagram is worth more when it is small
+  // enough to read than when it is complete.
 
   const lines: string[] = ["erDiagram"];
 
   for (const n of entityNames) {
     const model = models.get(n);
     if (!model) continue;
-    // Only a domain's OWN models are drawn in full. An anchor and a
-    // cross-domain target are context: the reader needs to see that the key
-    // lands somewhere, not that model's whole column list.
+    // Only a domain's OWN models are drawn in full. An anchor is context:
+    // the reader needs to see that the key lands somewhere, not that
+    // model's whole column list.
     const isStub = !domainModels.includes(n);
     const fields = isStub
       ? model.scalars
@@ -453,6 +450,7 @@ const PARTS: Part[] = [
     domainIds: [
       "enterprise-core",
       "enterprise-billing",
+      "enterprise-programs",
       "enterprise-invoicing",
       "ledger",
     ],
@@ -469,7 +467,7 @@ const PARTS: Part[] = [
     title: "Compliance & System",
     summary:
       "Consent, erasure and the operational substrate everything else runs on.",
-    domainIds: ["leads", "compliance", "system"],
+    domainIds: ["leads", "compliance", "system", "notifications"],
   },
 ];
 

@@ -9,7 +9,7 @@ Every model in the database, how they relate, which state machine each enum
 encodes, and which rule the database itself refuses to let you break.
 
 **Scale.** 165 models, 151 enums, across
-31 domains.
+33 domains.
 
 **The map is split.** The domain diagrams live in
 [`domains/`](./domains/) — one file per topic — because a single file
@@ -71,22 +71,24 @@ drifted from the schema. The domain grouping and the prose live in
 | 27. | [Expert–Customer Relationships](./domains/07-invoicing-and-referrals.md#3-expertcustomer-relationships)                                   |                                                                                                 |
 | 28. | [Enterprise](./domains/08-enterprise.md)                                                                                                  | The organisation, what it buys, what it is billed, and the ledger underneath.                   |
 | 29. | [Enterprise Core — Organisation & Membership](./domains/08-enterprise.md#1-enterprise-core--organisation--membership)                     |                                                                                                 |
-| 30. | [Enterprise Billing, Programs & Wallets](./domains/08-enterprise.md#2-enterprise-billing-programs--wallets)                               |                                                                                                 |
-| 31. | [Enterprise Invoicing, Receipts & Organisation Payouts](./domains/08-enterprise.md#3-enterprise-invoicing-receipts--organisation-payouts) |                                                                                                 |
-| 32. | [Double-Entry Ledger & Gateway Settlement](./domains/08-enterprise.md#4-double-entry-ledger--gateway-settlement)                          |                                                                                                 |
-| 33. | [Support & Moderation](./domains/09-support-and-moderation.md)                                                                            | The case a support conversation becomes, the rating that follows, and the moderation over both. |
-| 34. | [Support — Legacy Queues & Self-Serve Threads](./domains/09-support-and-moderation.md#1-support--legacy-queues--self-serve-threads)       |                                                                                                 |
-| 35. | [Support — The Canonical Case](./domains/09-support-and-moderation.md#2-support--the-canonical-case)                                      |                                                                                                 |
-| 36. | [Feedback & Ratings](./domains/09-support-and-moderation.md#3-feedback--ratings)                                                          |                                                                                                 |
-| 37. | [Moderation, Trust & Incidents](./domains/09-support-and-moderation.md#4-moderation-trust--incidents)                                     |                                                                                                 |
-| 38. | [Compliance & System](./domains/10-compliance-and-system.md)                                                                              | Consent, erasure and the operational substrate everything else runs on.                         |
-| 39. | [Leads](./domains/10-compliance-and-system.md#1-leads)                                                                                    |                                                                                                 |
-| 40. | [Compliance — DPDP Consent, Erasure & Data Rights](./domains/10-compliance-and-system.md#2-compliance--dpdp-consent-erasure--data-rights) |                                                                                                 |
-| 41. | [System, Operations & Notification Delivery](./domains/10-compliance-and-system.md#3-system-operations--notification-delivery)            |                                                                                                 |
+| 30. | [Enterprise Commercial Spine](./domains/08-enterprise.md#2-enterprise-commercial-spine)                                                   |                                                                                                 |
+| 31. | [Enterprise Programs & Usage](./domains/08-enterprise.md#3-enterprise-programs--usage)                                                    |                                                                                                 |
+| 32. | [Enterprise Invoicing, Receipts & Organisation Payouts](./domains/08-enterprise.md#4-enterprise-invoicing-receipts--organisation-payouts) |                                                                                                 |
+| 33. | [Double-Entry Ledger & Gateway Settlement](./domains/08-enterprise.md#5-double-entry-ledger--gateway-settlement)                          |                                                                                                 |
+| 34. | [Support & Moderation](./domains/09-support-and-moderation.md)                                                                            | The case a support conversation becomes, the rating that follows, and the moderation over both. |
+| 35. | [Support — Legacy Queues & Self-Serve Threads](./domains/09-support-and-moderation.md#1-support--legacy-queues--self-serve-threads)       |                                                                                                 |
+| 36. | [Support — The Canonical Case](./domains/09-support-and-moderation.md#2-support--the-canonical-case)                                      |                                                                                                 |
+| 37. | [Feedback & Ratings](./domains/09-support-and-moderation.md#3-feedback--ratings)                                                          |                                                                                                 |
+| 38. | [Moderation, Trust & Incidents](./domains/09-support-and-moderation.md#4-moderation-trust--incidents)                                     |                                                                                                 |
+| 39. | [Compliance & System](./domains/10-compliance-and-system.md)                                                                              | Consent, erasure and the operational substrate everything else runs on.                         |
+| 40. | [Leads](./domains/10-compliance-and-system.md#1-leads)                                                                                    |                                                                                                 |
+| 41. | [Compliance — DPDP Consent, Erasure & Data Rights](./domains/10-compliance-and-system.md#2-compliance--dpdp-consent-erasure--data-rights) |                                                                                                 |
+| 42. | [System & Operations Record](./domains/10-compliance-and-system.md#3-system--operations-record)                                           |                                                                                                 |
+| 43. | [Notification Delivery](./domains/10-compliance-and-system.md#4-notification-delivery)                                                    |                                                                                                 |
 
 ## 1. Master domain map
 
-The 31 domains below, and how the identity and money layers cut
+The 33 domains below, and how the identity and money layers cut
 across them.
 
 ```mermaid

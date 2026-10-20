@@ -24,8 +24,6 @@ erDiagram
         publishedByUserId string FK
         createdAt datetime
         version int
-        consultantInitiatedBps int
-        policyText string
     }
     CancellationPolicyTier {
         id string PK
@@ -40,8 +38,6 @@ erDiagram
         initiatedById string FK
         resolvedById string FK
         organizationId string FK
-        createdAt datetime
-        initiatorRole rescheduleinitiatorrole
     }
     RescheduleProposedTime {
         id string PK
@@ -50,7 +46,6 @@ erDiagram
         createdAt datetime
         startsAt datetime
         endsAt datetime
-        round int
     }
     User {
         id string PK
@@ -64,54 +59,17 @@ erDiagram
     Consultation {
         id string PK
     }
-    Subscription {
-        id string PK
-    }
-    Organization {
-        id string PK
-    }
-    Domain {
-        id string PK
-    }
-    Webinar {
-        id string PK
-    }
-    ClassBatch {
-        id string PK
-    }
-    ConsultationPlan {
-        id string PK
-    }
-    ConsulteeProfile {
-        id string PK
-    }
-    SubscriptionPlan {
-        id string PK
-    }
-    CancellationPolicy }o--o| Organization : "organization"
     CancellationPolicy }o--o| User : "publishedBy"
     CancellationPolicyTier }o--|| CancellationPolicy : "policy"
     RescheduleRequest }o--|| Appointment : "appointment"
     RescheduleRequest }o--|| User : "initiatedBy"
     RescheduleRequest }o--o| User : "resolvedBy"
-    RescheduleRequest }o--o| Organization : "organization"
     RescheduleProposedTime }o--|| RescheduleRequest : "rescheduleRequest"
     RescheduleProposedTime }o--|| User : "proposedBy"
-    ConsultantProfile }o--|| Domain : "domain"
     ConsultantProfile }o--|| User : "user"
     Appointment }o--o| CancellationPolicy : "cancellationPolicy"
     Appointment }o--o| Consultation : "consultation"
-    Appointment }o--o| Subscription : "subscription"
-    Appointment }o--o| Webinar : "webinar"
-    Appointment }o--o| ClassBatch : "class"
-    Appointment }o--o| Organization : "organization"
-    Consultation }o--|| ConsultationPlan : "consultationPlan"
-    Consultation }o--|| ConsulteeProfile : "requestedBy"
     Consultation }o--o| User : "cancelledByUser"
-    Subscription }o--|| ConsulteeProfile : "requestedBy"
-    Subscription }o--o| User : "cancelledByUser"
-    Subscription }o--|| SubscriptionPlan : "subscriptionPlan"
-    Subscription }o--o| Subscription : "renewedFrom"
 ```
 
 - **A booking snapshots the policy version it was sold under.** The policy is versioned rather than edited, so a policy change never retroactively re-dates an existing booking's refund tier.
@@ -130,8 +88,6 @@ erDiagram
         createdAt datetime
         streamCallId string UK
         platform platform
-        passcode string
-        hostKeys string
     }
     MeetingAttendance {
         id string PK
@@ -140,8 +96,6 @@ erDiagram
         createdAt datetime
         userId string
         firstJoinedAt datetime
-        lastLeftAt datetime
-        joinCount int
     }
     MeetingPresence {
         id string PK
@@ -150,8 +104,6 @@ erDiagram
         createdAt datetime
         userId string
         userSessionId string
-        joinedAt datetime
-        leftAt datetime
     }
     Recording {
         id string PK
@@ -160,8 +112,6 @@ erDiagram
         consentAttestedById string FK
         meetingId string FK
         organizationId string FK
-        createdAt datetime
-        title string
     }
     RecordingConsent {
         id string PK
@@ -170,8 +120,6 @@ erDiagram
         userId string
         decision recordingconsentdecision
         decidedAt datetime
-        noticeVersion int
-        updatedAt datetime
     }
     RecordingPurchase {
         id string PK
@@ -180,8 +128,6 @@ erDiagram
         recordingId string FK
         buyerId string FK
         createdAt datetime
-        gatewayOrderId string UK
-        gatewayPaymentId string
     }
     AppointmentOccurrence {
         id string PK
@@ -192,47 +138,18 @@ erDiagram
     Organization {
         id string PK
     }
-    User {
-        id string PK
-    }
-    CancellationPolicy {
-        id string PK
-    }
-    Consultation {
-        id string PK
-    }
-    Subscription {
-        id string PK
-    }
-    Webinar {
-        id string PK
-    }
-    ClassBatch {
-        id string PK
-    }
-    BillingAccount {
-        id string PK
-    }
     Meeting }o--|| AppointmentOccurrence : "occurrence"
     Meeting }o--o| Organization : "organization"
     MeetingAttendance }o--|| Meeting : "meeting"
     MeetingAttendance }o--|| AppointmentOccurrence : "occurrence"
     MeetingPresence }o--|| Meeting : "meeting"
     MeetingPresence }o--|| AppointmentOccurrence : "occurrence"
-    Recording }o--o| User : "consentAttestedBy"
     Recording }o--|| Meeting : "meeting"
     Recording }o--o| Organization : "organization"
     RecordingConsent }o--|| Meeting : "meeting"
     RecordingPurchase }o--|| Recording : "recording"
-    RecordingPurchase }o--|| User : "buyer"
     AppointmentOccurrence }o--|| Appointment : "appointment"
-    Appointment }o--o| CancellationPolicy : "cancellationPolicy"
-    Appointment }o--o| Consultation : "consultation"
-    Appointment }o--o| Subscription : "subscription"
-    Appointment }o--o| Webinar : "webinar"
-    Appointment }o--o| ClassBatch : "class"
     Appointment }o--o| Organization : "organization"
-    Organization }o--o| BillingAccount : "billingAccount"
 ```
 
 - **Dual storage.** `STREAM_S3` is temporary (the free tier's two-week window); `SUPABASE` is permanent on the premium path. The `RecordingStatus` lifecycle runs `RECORDING` → `PROCESSING` → `READY` → `TRANSFERRING` → `AVAILABLE`, and `Recording_storage_and_publish_check` refuses a row that claims a permanent path without having transferred to it.
@@ -251,8 +168,6 @@ erDiagram
         rootDocumentId string FK
         appointmentId string FK
         deletedById string FK
-        fileName string
-        originalName string
     }
     Appointment {
         id string PK
@@ -260,35 +175,11 @@ erDiagram
     User {
         id string PK
     }
-    CancellationPolicy {
-        id string PK
-    }
-    Consultation {
-        id string PK
-    }
-    Subscription {
-        id string PK
-    }
-    Webinar {
-        id string PK
-    }
-    ClassBatch {
-        id string PK
-    }
-    Organization {
-        id string PK
-    }
     AppointmentDocument }o--o| User : "reviewedBy"
     AppointmentDocument }o--o| AppointmentDocument : "responseToDocument"
     AppointmentDocument }o--o| AppointmentDocument : "rootDocument"
     AppointmentDocument }o--|| Appointment : "appointment"
     AppointmentDocument }o--o| User : "deletedBy"
-    Appointment }o--o| CancellationPolicy : "cancellationPolicy"
-    Appointment }o--o| Consultation : "consultation"
-    Appointment }o--o| Subscription : "subscription"
-    Appointment }o--o| Webinar : "webinar"
-    Appointment }o--o| ClassBatch : "class"
-    Appointment }o--o| Organization : "organization"
 ```
 
 - **Deletion is a soft-delete with a named deleter.** `deletedAt` plus `documentsDeleted` on `User` keep the audit trail; `appointment_doc_thread_version_unique` keeps a version number unique inside one thread.

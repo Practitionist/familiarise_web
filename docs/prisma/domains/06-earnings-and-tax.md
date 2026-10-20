@@ -24,8 +24,6 @@ erDiagram
         grossAmount bigint
         consultantProfileId string FK
         paymentId string FK
-        payoutId string FK
-        createdAt datetime
     }
     EarningsHold {
         id string PK
@@ -34,8 +32,6 @@ erDiagram
         reason earningsholdreason
         sourceRef string
         placedAt datetime
-        releasedAt datetime
-        releasedById string
     }
     ConsultantPayout {
         id string PK
@@ -44,8 +40,6 @@ erDiagram
         consultantProfileId string FK
         payoutAccountId string FK
         createdAt datetime
-        provider paymentgateway
-        providerPayoutId string UK
     }
     PayoutAccount {
         id string PK
@@ -54,11 +48,6 @@ erDiagram
         provider paymentgateway
         accountType payoutaccounttype
         accountHolderName string
-        bankName string
-        accountNumberLast4 string
-    }
-    User {
-        id string PK
     }
     ConsultantProfile {
         id string PK
@@ -69,48 +58,13 @@ erDiagram
     Refund {
         id string PK
     }
-    OrganizationEarnings {
-        id string PK
-    }
-    Domain {
-        id string PK
-    }
-    Referral {
-        id string PK
-    }
-    Appointment {
-        id string PK
-    }
-    DiscountCode {
-        id string PK
-    }
-    Organization {
-        id string PK
-    }
-    BillingAccount {
-        id string PK
-    }
-    OrganizationInvoice {
-        id string PK
-    }
     ConsultantEarnings }o--|| ConsultantProfile : "consultantProfile"
     ConsultantEarnings }o--|| Payment : "payment"
     ConsultantEarnings }o--o| ConsultantPayout : "payout"
     EarningsHold }o--o| ConsultantEarnings : "consultantEarnings"
-    EarningsHold }o--o| OrganizationEarnings : "organizationEarnings"
     ConsultantPayout }o--|| ConsultantProfile : "consultantProfile"
     ConsultantPayout }o--o| PayoutAccount : "payoutAccount"
     PayoutAccount }o--|| ConsultantProfile : "consultantProfile"
-    ConsultantProfile }o--|| Domain : "domain"
-    ConsultantProfile }o--|| User : "user"
-    Payment }o--o| Referral : "attributionReferral"
-    Payment }o--|| User : "user"
-    Payment }o--o| Appointment : "appointment"
-    Payment }o--o| DiscountCode : "discountCode"
-    Payment }o--o| Organization : "organization"
-    Payment }o--o| Organization : "hostOrganization"
-    Payment }o--o| BillingAccount : "billingAccount"
-    Payment }o--o| OrganizationInvoice : "billableToOrgInvoice"
     Payment }o--o| Payment : "parentPayment"
     Refund }o--|| Payment : "payment"
 ```
@@ -132,8 +86,6 @@ erDiagram
         panEncrypted bytes
         panLast4 string
         panVerified boolean
-        gstin string
-        gstinVerified boolean
     }
     TDSRecord {
         id string PK
@@ -142,8 +94,6 @@ erDiagram
         organizationId string FK
         payoutId string FK
         orgPayoutId string FK
-        createdAt datetime
-        financialYear string
     }
     TdsRate {
         id string PK
@@ -152,8 +102,6 @@ erDiagram
         lawCode tdslawcode
         section string
         paymentCode string
-        rateBps int
-        noPanRateBps int
     }
     TdsAdjustment {
         id string PK
@@ -162,8 +110,6 @@ erDiagram
         organizationId string FK
         createdAt datetime
         tdsRecordId string
-        payoutId string
-        orgPayoutId string
     }
     ConsultantProfile {
         id string PK
@@ -174,36 +120,11 @@ erDiagram
     Refund {
         id string PK
     }
-    Organization {
-        id string PK
-    }
-    OrganizationPayout {
-        id string PK
-    }
-    Domain {
-        id string PK
-    }
-    User {
-        id string PK
-    }
-    PayoutAccount {
-        id string PK
-    }
-    Payment {
-        id string PK
-    }
     ConsultantTaxInfo }o--|| ConsultantProfile : "consultantProfile"
     TDSRecord }o--o| ConsultantProfile : "consultantProfile"
-    TDSRecord }o--o| Organization : "organization"
     TDSRecord }o--o| ConsultantPayout : "payout"
-    TDSRecord }o--o| OrganizationPayout : "orgPayout"
     TdsAdjustment }o--o| ConsultantProfile : "consultantProfile"
-    TdsAdjustment }o--o| Organization : "organization"
-    ConsultantProfile }o--|| Domain : "domain"
-    ConsultantProfile }o--|| User : "user"
     ConsultantPayout }o--|| ConsultantProfile : "consultantProfile"
-    ConsultantPayout }o--o| PayoutAccount : "payoutAccount"
-    Refund }o--|| Payment : "payment"
 ```
 
 - **The rate is looked up by date, not stored on the consultant.** `tds_rate_bps_and_window_sane` and `tds_rate_bps_bounds` keep the rate table honest, and `tds_record_financial_year_format` keeps the FY stamp in the `2026-27` shape the Form 26Q filing expects.
