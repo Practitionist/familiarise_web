@@ -169,7 +169,7 @@ step for the ones that need real sandbox creds):
   in `PROCESSING` that were already submitted continue to settle via webhook
   (you can't un-send a transfer — that's a clawback, see §C reversal engine).
 - A stuck `PROCESSING` row (submitted, no terminal webhook) is handled by
-  `jobs/payouts/handle-stuck-payouts` (reconcile against the gateway, retry, or
+  `handle-stuck-payouts` (reconcile against the gateway, retry, or
   fail). It now emits to the telemetry sink on permanent failure.
 - A wrong disbursement is recovered via the reversal engine's `PAYOUT_CLAWBACK`
   source (`lib/payments/operations/reversal-engine.ts`) — ledger clawback is

@@ -378,7 +378,7 @@ emitters — the ones that actually call `recordSystemEvent` /
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
 | `WEBHOOK`     | `app/api/webhooks/razorpay/route.ts` (HMAC verification failed, WARN — both Razorpay + RazorpayX secret paths); `jobs/cleanup/dispatch-outbound-webhooks.ts` (outbound queue backlog > 200, WARN) | inbound tamper/misconfig + outbound queue health |
 | `RECONCILE`   | `jobs/reconcile/reconcile-ledgers.ts` (discrepancies found → ERROR; auditor crashed → ERROR)                                                                                                      | money-integrity drift                            |
-| `PAYOUT`      | `jobs/payouts/handle-stuck-payouts.ts` (`recordSystemEvent` breadcrumb + `recordSystemError` on permanent failure)                                                                                | stuck/failed disbursement                        |
+| `PAYOUT`      | `scripts/payouts/handle-stuck-payouts.ts` (`recordSystemEvent` on permanent failure + `recordSystemError` on crash)                                                                               | stuck/failed disbursement                        |
 | `DATA_EXPORT` | DPDP §11 worker failure path (the canonical clean-prose-vs-raw-stack split below)                                                                                                                 | `correlationId = OrgDataExportJob.id`            |
 
 Additional `recordSystemError` callsites that flow through the same sink

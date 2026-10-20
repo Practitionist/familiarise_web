@@ -18,14 +18,14 @@ gateway transfer the moment each earning becomes payable — a stream of one
 transfer per earning. The alternative is to let earnings accumulate and
 sweep them into one transfer per recipient per period. Two forces push
 hard against streaming. First, India's tax-deducted-at-source regime is
-computed *per period*, not per transaction: TDS under Section 194-O is a
+computed _per period_, not per transaction: TDS under Section 194-O is a
 rate applied to the payee's earnings, and computing and depositing it
 correctly is a per-period, per-payee operation, not something you want to
 recompute and round on every individual booking. Second, the RazorpayX
 Payouts API has been hardened around idempotency and balance management in
 ways that reward few large calls over many small ones — every
 Create-Payout request has carried a mandatory `X-Payout-Idempotency`
-header since 2025-03-15, and an underfunded account silently *queues*
+header since 2025-03-15, and an underfunded account silently _queues_
 payouts rather than erroring, so the fewer gateway calls you make, the
 fewer idempotency slots and queued-balance edge cases you have to manage
 (research bundle G, RazorpayX payout mechanics).
@@ -93,7 +93,7 @@ surfaced in the dashboard's "you have ₹X ready" eligibility probe
 (`getOrgPayoutEligibility`).
 
 A second cost is the reconciliation surface of the batch lifecycle. A
-batch can fail at the gateway and have to *release* its earnings back to
+batch can fail at the gateway and have to _release_ its earnings back to
 `READY` (`markOrgPayoutFailedInternal` does exactly this, the inverse of
 the claim), and that release path has to be exactly correct or earnings
 are either double-paid or stranded. Batches also park in `PROCESSING`
@@ -117,6 +117,6 @@ On 2026-09-20 the owner decided that the RazorpayX transfer fee for an instant p
 
 Two follow-ups to the dashboard overhaul (#1527) changed how a batch is settled and when it may be paid, and neither reintroduces streaming.
 
-The first is #1853 (bucket B of #1846). A batch payout's idempotency key names its batch, so a payout that was wrongly marked FAILED released its earnings into next week's batch under a new key, and a RazorpayX submit that had only timed out could therefore pay the consultant twice. Since #1853, once the gateway request has left, only a definitive rejection (a 4xx other than 408, 409 or 429) may fail the payout. Any other error keeps the payout PROCESSING with its earnings BATCHED, and the webhook or the four-hourly `handle-stuck-payouts` sweep settles it by looking the payout up at RazorpayX by its reference id, which is our row id, before anything is resubmitted or failed. [Payout processing](../../payments/payouts/03-payout-processing.md) describes the mechanics.
+The first is #1853 (bucket B of #1846). A batch payout's idempotency key names its batch, so a payout that was wrongly marked FAILED released its earnings into next week's batch under a new key, and a RazorpayX submit that had only timed out could therefore pay the consultant twice. Since #1853, once the gateway request has left, only a definitive rejection (a 4xx other than 408, 409 or 429) may fail the payout. Any other error keeps the payout PROCESSING with its earnings BATCHED, and the webhook or the two-hourly `handle-stuck-payouts` sweep settles it by looking the payout up at RazorpayX by its reference id, which is our row id, before anything is resubmitted or failed. [Payout processing](../../payments/payouts/03-payout-processing.md) describes the mechanics.
 
 The second is #1860 (#1851 owner decision 4). #1853 had made an org batch payable from PENDING or APPROVED, so sign-off was optional. The owner then decided that an org batch is paid only after approval: `PAYOUT_ALLOWED_FROM.PROCESSING` holds APPROVED alone, the approver must hold `payouts.approve`, the member who created a batch cannot approve it while the org has a second approver, and a one-person org approves its own batch by typing its slug. Cancel is allowed only before approval, and a FAILED org payout is final. Consultant payouts keep their own model, an automatic approval under ₹5,000 and a platform-admin approval above it. The [payout pipeline](../10-money-and-ledger/07-payout-pipeline.md) holds the org state machine, and [how payouts work](../../payments/payouts/00-how-payouts-work.md) explains both rails in plain language.

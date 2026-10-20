@@ -109,7 +109,7 @@ Official citations:
    - Terminal `COMPLETED` transitions strictly exclude terminal rows (`COMPLETED`, `CANCELLED`, `REVERSED`, `FAILED`) in their CAS `WHERE` guard, ensuring a reversed or failed payout can never flip to `COMPLETED` after its earnings were reopened to `READY`.
 3. **`OrganizationPayout` `reference_id` Fallback & Post-Completion Reversal Reconciliation**:
    - In `handleRazorpayPayoutWebhook`, organization payouts resolve by `gatewayPayoutId: payout.id` **first**, falling back to `id: payout.reference_id` (`where: { id: payout.reference_id, gatewayPayoutId: null }`) and atomically binding `gatewayPayoutId = payout.id` — closing the lost-HTTP-reply window across both `OrganizationPayout` and `ConsultantPayout`.
-   - Furthermore, `reconcile-payout-status` runs bounded scans (`orderBy: { processedAt: "asc" }, take: 100`) across recent `COMPLETED` `ConsultantPayout` (`providerPayoutId`) and `OrganizationPayout` (`gatewayPayoutId`) records so missed `payout.reversed` webhooks are detected via `getRazorpayPayoutStatus` and settled atomically through `markConsultantPayoutReversed` and `markOrgPayoutReversed`.
+   - Furthermore, `reconcile-payout-status` runs bounded scans (least-recently-reconciled first on `lastReconciledAt`, then newest `processedAt`, `take: limit`) across recent `COMPLETED` `ConsultantPayout` (`providerPayoutId`) and `OrganizationPayout` (`gatewayPayoutId`) records so missed `payout.reversed` webhooks are detected via `getRazorpayPayoutStatus` and settled atomically through `markConsultantPayoutReversed` and `markOrgPayoutReversed`.
 4. **Deprecated `failure_reason` Fallback**:
    - Reads `payout.failure_reason ?? payout.status_details?.description ?? payout.status_details?.reason`.
 
