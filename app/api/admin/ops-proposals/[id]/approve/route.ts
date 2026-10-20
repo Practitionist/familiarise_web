@@ -21,6 +21,7 @@ import { POST as invoiceIssue } from "@/app/api/admin/organizations/[orgId]/invo
 import { POST as invoiceBankTransfer } from "@/app/api/admin/organizations/[orgId]/invoices/[invoiceId]/payments/route";
 import { POST as overageSettleToOrg } from "@/app/api/admin/organizations/[orgId]/overages/[overageEventId]/settle-to-org/route";
 import { PATCH as billingAccount } from "@/app/api/admin/organizations/[orgId]/billing-account/route";
+import { POST as orgPayoutApprove } from "@/app/api/admin/org-payouts/[id]/approve/route";
 
 const PROPOSABLE_DOORS: ReadonlyMap<string, ProposableOpsDoor> = new Map(
   [
@@ -31,6 +32,7 @@ const PROPOSABLE_DOORS: ReadonlyMap<string, ProposableOpsDoor> = new Map(
     invoiceBankTransfer,
     overageSettleToOrg,
     billingAccount,
+    orgPayoutApprove,
   ].map((door) => [door.proposalRoute, door]),
 );
 

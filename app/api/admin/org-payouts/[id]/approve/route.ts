@@ -1,5 +1,6 @@
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
+import { orgPayoutNetPaise } from "@/lib/backoffice/ops-proposals";
 import {
   approveOrgPayout,
   PayoutValidationError,
@@ -38,5 +39,12 @@ export const POST = withOpsAction(
       };
     },
   },
-  { stepUp: true },
+  {
+    stepUp: true,
+    secondApprover: {
+      route: "/api/admin/org-payouts/[id]/approve",
+      target: ({ params }) => ({ kind: "OrganizationPayout", id: params.id }),
+      amountPaise: (_body, { params }) => orgPayoutNetPaise(params.id),
+    },
+  },
 );
