@@ -205,7 +205,8 @@ plus a separate entitlement ledger:
   `ProgramAssignment.engagementsUsed`.
 
 Cached balances (`BillingAccount.walletBalance`) are derived views over the
-journal, checked nightly by `jobs/reconcile/reconcile-ledgers.ts`, which
+journal, checked nightly by the `reconcile-ledgers` twin on the Netlify ticker
+(`scripts/reconcile/reconcile-ledgers.ts`), which
 writes `LedgerReconciliationReport` rows and freezes wallet spend on a
 `WALLET_BALANCE_DRIFT` finding. See ADR 01
 (`docs/enterprise/70-design-decisions/01-double-entry-over-three-logs.md`)
