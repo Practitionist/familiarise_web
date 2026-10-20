@@ -2,6 +2,7 @@ import type { Tx } from "@/lib/prisma";
 import prisma from "../../../lib/prisma";
 import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
+import { bookTopUpRefund } from "@/lib/payments/operations/wallet-refund";
 import { sumPaise } from "@/lib/payments/utils/money";
 import {
   isLegalDisputeTransition,
@@ -559,129 +560,24 @@ export async function handleRefundCreated(
           if (topUp) {
             const mapped = mapGatewayRefundStatus(status);
             if (mapped === "SUCCEEDED") {
-              // Clamp: cannot refund more than was credited to this wallet.
-              const refundAmt = Math.min(amount, topUp.amountPaise);
-              const acct = await tx.billingAccount.findUniqueOrThrow({
-                where: { id: topUp.billingAccountId },
-                select: { currency: true, ownerOrgId: true },
+              // The refund-remaining door books the same key first when it issued this refund.
+              const booked = await bookTopUpRefund(tx, {
+                topUp,
+                refundId,
+                amountPaise: amount,
               });
-              // Reverse the top-up's double-entry: Dr WALLET / Cr GATEWAY_CLEARING. The
-              // wallet liability we owe the org shrinks; platform cash returns
-              // to the gateway. postLedgerTxn is idempotent on idempotencyKey,
-              // so a webhook redelivery (or two racing workers) is a no-op —
-              // this replaces the old "already booked?" WalletEntry probe.
-              //
-              // Keyed on the GATEWAY REFUND id, not the payment: Razorpay allows
-              // N partial refunds per payment, and a payment-scoped key made the
-              // second partial refund a silent no-op — real cash left via the
-              // gateway with no WALLET debit and no receivable (platform loss).
-              const posted = await postLedgerTxn(tx, {
-                idempotencyKey: `topup-refund:${refundId}`,
-                kind: "TOPUP_REFUND",
-                description: `Refund for top-up ${topUp.providerOrderId} (gateway refund ${refundId})`,
-                // #783 — ledger is INR-only; never key accounts by acct.currency.
-                // Must mirror the INR-keyed top-up posting (lib/api/organizations/
-                // wallet.ts) so the refund reversal nets against the same account.
-                postings: [
-                  {
-                    account: {
-                      kind: "WALLET",
-                      organizationId: acct.ownerOrgId,
-                    },
-                    direction: "DEBIT",
-                    amountPaise: refundAmt,
-                  },
-                  {
-                    account: gatewayCashAccount(),
-                    direction: "CREDIT",
-                    amountPaise: refundAmt,
-                  },
-                ],
-              });
-              if (!posted.created) {
+              if (!booked.booked) {
                 console.log(
                   `💸 Top-up refund already booked for payment ${providerPaymentId}, skipping`,
                 );
                 return;
               }
-              // Decrement the cached wallet balance to match the journal. This
-              // can drive the balance negative if the org already spent the
-              // credited funds — that is a real reconcile signal (the org owes
-              // back more than it holds), not an error to swallow here.
-              //
-              // Intentionally NOT inserting a `Refund` row for org-level
-              // refunds: Refund.paymentId is NOT NULL and is scoped to the B2C
-              // `Payment` table. The TOPUP_REFUND journal transaction
-              // (idempotencyKey topup-refund:<gateway refund id>) is the
-              // authoritative record; reconcile jobs index on it.
-              // #1093 §2 (decision 2026-08-13) — the wallet floor WINS. The old
-              // unconditional decrement could drive walletBalance below zero when
-              // the org had already spent the credited funds, which the
-              // billing_account_wallet_nonnegative CHECK rejects — rolling this
-              // webhook back and redelivering it into the same failure forever.
-              // Claw back only what the wallet still holds; the shortfall books
-              // as an ORG_RECEIVABLE posting (the org owes the platform), which
-              // reconciliation actually consumes — a negative cached balance is a
-              // signal nothing reads.
-              const account = await tx.billingAccount.findUniqueOrThrow({
-                where: { id: topUp.billingAccountId },
-                select: { walletBalance: true, ownerOrgId: true },
-              });
-              const balancePaise = Number(account.walletBalance ?? 0);
-              const desiredClawbackPaise = Math.min(
-                Math.max(balancePaise, 0),
-                refundAmt,
-              );
-              // Conditional decrement, not read-modify-write: under contention
-              // the balance may have moved below our snapshot. If the guard
-              // misses, treat the whole refund as shortfall (receivable) rather
-              // than relying on the nonnegative CHECK to abort the tx.
-              let clawbackPaise = desiredClawbackPaise;
-              if (desiredClawbackPaise > 0) {
-                const decremented = await tx.billingAccount.updateMany({
-                  where: {
-                    id: topUp.billingAccountId,
-                    walletBalance: { gte: desiredClawbackPaise },
-                  },
-                  data: { walletBalance: { decrement: desiredClawbackPaise } },
-                });
-                if (decremented.count === 0) {
-                  clawbackPaise = 0;
-                }
-              }
-              const shortfallPaise = refundAmt - clawbackPaise;
-              if (shortfallPaise > 0 && account.ownerOrgId) {
-                await postLedgerTxn(tx, {
-                  idempotencyKey: `topup-refund-shortfall:${refundId}`,
-                  kind: "TOPUP_REFUND",
-                  description:
-                    "Top-up refunded after the credited funds were spent — unrecovered portion receivable from the org",
-                  postings: [
-                    {
-                      account: {
-                        kind: "ORG_RECEIVABLE",
-                        organizationId: account.ownerOrgId,
-                      },
-                      direction: "DEBIT",
-                      amountPaise: shortfallPaise,
-                    },
-                    {
-                      account: {
-                        kind: "WALLET",
-                        organizationId: account.ownerOrgId,
-                      },
-                      direction: "CREDIT",
-                      amountPaise: shortfallPaise,
-                    },
-                  ],
-                });
-              }
               const shortfallNote =
-                shortfallPaise > 0
-                  ? `; ${shortfallPaise} paise booked as ORG_RECEIVABLE`
+                booked.shortfallPaise > 0
+                  ? `; ${booked.shortfallPaise} paise booked as ORG_RECEIVABLE`
                   : "";
               console.log(
-                `💸 Top-up refund ${refundId} booked: -${clawbackPaise} paise on billingAccount ${topUp.billingAccountId}${shortfallNote}`,
+                `💸 Top-up refund ${refundId} booked: -${booked.clawbackPaise} paise on billingAccount ${topUp.billingAccountId}${shortfallNote}`,
               );
             }
             return;

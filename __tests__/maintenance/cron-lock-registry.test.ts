@@ -436,6 +436,9 @@ describe("cleanup twins and the DEGRADED money gate (#1599)", () => {
     // Re-drives a booking confirmation from an already-settled capture and
     // moves no money; #1686 keeps it on every ticker slot for the buyer.
     "reconcile-orphaned-confirmations": "booking re-drive from settled money",
+    // A read-only audit whose one write is the wallet-spend freeze, which
+    // blocks spend rather than moving money; the nightly job runs in DEGRADED too.
+    "reconcile-ledgers": "audit plus a spend freeze, moves no money",
   };
 
   interface Twin {

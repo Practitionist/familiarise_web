@@ -3,7 +3,7 @@ title: SystemEvent — engineering-facing operational events
 band: 50-operations
 audience: sde3
 status: partial
-last-reviewed: 2026-06-05
+last-reviewed: 2026-10-20
 ---
 
 # SystemEvent — engineering-facing operational events
@@ -252,8 +252,10 @@ INVOICE events record the full arc of an organization's billing document — fro
 | `INVOICE_GENERATED` / `INVOICE_ISSUED`                           | `generate-subscription-invoices` (daily) + accrual rollup (`settle-invoice-accruals`, monthly)                                                          |
 | `INVOICE_OVERDUE` **(v2 #779)**                                  | `dunning` cron stage 1 (ISSUED→OVERDUE, stamps `markedOverdueAt`)                                                                                       |
 | `INVOICE_DUNNING_SUSPENDED` **(#812)**                           | `dunning` cron stage 3 (`ENABLE_DUNNING_SUSPEND`-gated) when an OVERDUE invoice stays unpaid 7 days past the last reminder; stamps `dunningSuspendedAt` |
-| `INVOICE_PAYMENT_INITIATED` / `INVOICE_PAID`                     | invoice pay flow                                                                                                                                        |
-| `INVOICE_CANCELLED` / `INVOICE_REFUNDED` / `REFUND_DENIED`       | invoice admin actions                                                                                                                                   |
+| `INVOICE_PAYMENT_INITIATED` / `INVOICE_PAID`                     | invoice pay flow (`/pay` initiates; the gateway capture or the last bank-transfer receipt writes `INVOICE_PAID` through `settleOrgInvoicePaid()`)       |
+| `INVOICE_RECEIPT_RECORDED`                                       | a platform admin recorded a bank transfer (UTR) against an invoice, `POST /api/admin/organizations/[orgId]/invoices/[invoiceId]/payments`               |
+| `INVOICE_VOIDED`                                                 | the platform void of an `ISSUED` or `OVERDUE` invoice as a credit note (`voidOrgInvoice()`); `details.mode` is `REBILL` or `FORGIVE`                    |
+| `INVOICE_CANCELLED` / `INVOICE_REFUNDED` / `REFUND_DENIED`       | a tenant cancelling a `DRAFT`, and invoice refund actions                                                                                               |
 | `FUNDING_SOURCE_CHANGED` / `BILLING_ACCOUNT_UPDATED` **(#1860)** | billing-account PATCH; billing-account edits used to write a SETTINGS row and moved here so operations-only readers no longer see a credit limit        |
 | `PURCHASE_ORDER_UPDATED` / `PURCHASE_ORDER_DELETED` **(#1860)**  | PO money and term edits, and PO deletes                                                                                                                 |
 | `REIMBURSEMENTS_EXPORTED` **(#1860)**                            | the reimbursements export                                                                                                                               |
@@ -279,6 +281,7 @@ PAYOUT events trace the full disbursement lifecycle — from batch creation and 
 | `PAYOUT_RECIPIENT_CHANGED` **(#1854)**                                                              | where an EXPERT's org share is paid changed, from the member PATCH or the Org › Payouts expert-routing section, through `auditPayoutRecipientChange`                                                                                                                                                                                                                                  |
 | `PAYOUT_CLAWBACK`                                                                                   | `applyRefundCascade` when a refund hits an already-COMPLETED payout (recovered from the next payout)                                                                                                                                                                                                                                                                                  |
 | `PAYOUT_REVERSED`                                                                                   | `payout.reversed` webhook (bank rejected a submitted transfer). On the org side `markOrgPayoutReversed` writes this audit action; the consultant side `markConsultantPayoutReversed` claims COMPLETED→REVERSED, posts the inverse PAYOUT journal, and re-opens its earnings to READY but has no consultant-scoped audit table, so it logs the equivalent as structured output (#812). |
+| `PAYOUT_ACCOUNT_UPDATED`                                                                            | an organisation payout account is replaced, or frozen from the bank-change email (`POST …/payout-account/freeze`)                                                                                                                                                                                                                                                                     |
 
 ### `SETTINGS`
 
@@ -345,8 +348,7 @@ half of the two-stream split — which subsystem writes which `category`,
 and where those rows are read. Use it to answer "I'm seeing `PAYOUT`
 ERROR events, who emits those?" without grepping. (The customer-facing
 half — `OrgAuditLog` actions by category — is the catalogue two sections
-up.) Only the four categories with a **live emitter** are shown; `CRON`
-and `HRIS_SYNC` are reserved vocabulary nothing writes yet.
+up.) The diagram shows four of the categories with a **live emitter**; the table below lists the rest, including `INVOICE`. `CRON` and `HRIS_SYNC` are reserved vocabulary nothing writes yet.
 
 ```mermaid
 flowchart LR
@@ -372,14 +374,15 @@ flowchart LR
 `SystemEvent.category` is a free-form string (new workers add values
 without a migration). The conventional values and their current
 emitters — the ones that actually call `recordSystemEvent` /
-`recordSystemError` today (grep verified 2026-06-05):
+`recordSystemError` today (grep verified 2026-10-20):
 
-| category      | Emitters (callsites)                                                                                                                                                                              | Notes                                            |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `WEBHOOK`     | `app/api/webhooks/razorpay/route.ts` (HMAC verification failed, WARN — both Razorpay + RazorpayX secret paths); `jobs/cleanup/dispatch-outbound-webhooks.ts` (outbound queue backlog > 200, WARN) | inbound tamper/misconfig + outbound queue health |
-| `RECONCILE`   | `jobs/reconcile/reconcile-ledgers.ts` (discrepancies found → ERROR; auditor crashed → ERROR)                                                                                                      | money-integrity drift                            |
-| `PAYOUT`      | `jobs/payouts/handle-stuck-payouts.ts` (`recordSystemEvent` breadcrumb + `recordSystemError` on permanent failure)                                                                                | stuck/failed disbursement                        |
-| `DATA_EXPORT` | DPDP §11 worker failure path (the canonical clean-prose-vs-raw-stack split below)                                                                                                                 | `correlationId = OrgDataExportJob.id`            |
+| category      | Emitters (callsites)                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Notes                                                                                            |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `WEBHOOK`     | `app/api/webhooks/razorpay/route.ts` (HMAC verification failed, WARN — both Razorpay + RazorpayX secret paths); `jobs/cleanup/dispatch-outbound-webhooks.ts` (outbound queue backlog > 200, WARN)                                                                                                                                                                                                                                                                        | inbound tamper/misconfig + outbound queue health                                                 |
+| `RECONCILE`   | `jobs/reconcile/reconcile-ledgers.ts` (discrepancies found → ERROR; auditor crashed → ERROR)                                                                                                                                                                                                                                                                                                                                                                             | money-integrity drift                                                                            |
+| `PAYOUT`      | `jobs/payouts/handle-stuck-payouts.ts` (`recordSystemEvent` breadcrumb + `recordSystemError` on permanent failure); `lib/payments/payouts/payout-service.ts` (`PAYOUT_COMPLETED_AFTER_LOCAL_FAILED`, ERROR: the gateway paid a payout already marked `FAILED`; `PAYOUT_REVERSED_CLAWBACK_ALREADY_RECOVERED`, ERROR: a reversed payout's clawbacks were already recovered); `app/api/consultant/payout-accounts/freeze/route.ts` (`PAYOUT_ACCOUNT_FROZEN_BY_PAYEE`, WARN) | stuck/failed disbursement                                                                        |
+| `INVOICE`     | `jobs/billing/settle-invoice-accruals.ts` (`ROLLUP_PO_NOT_COVERED`, `ROLLUP_GST_STATE_MISSING`, WARN); `jobs/billing/generate-subscription-invoices.ts` (`SUBSCRIPTION_PO_NOT_COVERED`, WARN); `lib/payments/billing/org-invoice-settlement.ts` (`ORG_INVOICE_CAPTURE_UNAPPLIED`, ERROR: a capture that could not settle its invoice is parked in `UNAPPLIED_RECEIPTS`)                                                                                                  | an invoice held for a purchase order, a missing GST state, or a parked capture needs an operator |
+| `DATA_EXPORT` | DPDP §11 worker failure path (the canonical clean-prose-vs-raw-stack split below)                                                                                                                                                                                                                                                                                                                                                                                        | `correlationId = OrgDataExportJob.id`                                                            |
 
 Additional `recordSystemError` callsites that flow through the same sink
 (they pass their own `category`): `lib/payments/operations/refund.ts`,

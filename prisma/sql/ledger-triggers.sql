@@ -9,7 +9,7 @@
 --
 -- prisma db push / migrate do NOT manage triggers, so this file is applied
 -- separately: `npm run db:triggers` (idempotent) after every push/reset. See
--- docs/enterprise/10-money-and-ledger/13-ledger-integrity.md + docs/enterprise/90-audits/03-verification-guide.md.
+-- docs/enterprise/10-money-and-ledger/13-ledger-integrity.md.
 --
 -- Statements are separated by `-- SPLIT` because Prisma's $executeRawUnsafe runs a
 -- single statement per call (extended protocol); the apply script splits on it.
@@ -43,10 +43,10 @@ CREATE CONSTRAINT TRIGGER ledger_txn_balanced
   FOR EACH ROW
   EXECUTE FUNCTION assert_ledger_txn_balanced();
 -- SPLIT
--- #1582 A-P0-02 (owner decision Q5) — the journal is append-only. Nothing in
--- the codebase UPDATEs or DELETEs a LedgerEntry / LedgerTransaction, so a
--- raise trigger costs nothing and makes an edit impossible via raw SQL or a
--- future code path. Same shape as
+-- The journal is append-only. Nothing in the codebase UPDATEs or DELETEs a
+-- LedgerEntry / LedgerTransaction (postLedgerTxn in lib/payments/ledger/post.ts
+-- only inserts them), so a raise trigger costs nothing and makes an edit
+-- impossible via raw SQL or a future code path. Same shape as
 -- review_revision_immutable in check-constraints.sql.
 DROP TRIGGER IF EXISTS ledger_entry_immutable ON "LedgerEntry";
 -- SPLIT

@@ -66,10 +66,16 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         run: async (req) => {
           const { cleanupAbandonedOrgTopUps } =
             await import("@/scripts/cleanup/cleanup-abandoned-org-top-ups");
-          return cleanupAbandonedOrgTopUps({ limit: parseLimitParam(req) });
+          // One gateway read per row, so an unparameterised call stays bounded too.
+          return cleanupAbandonedOrgTopUps({
+            limit: parseLimitParamOrDefault(req, MAX_ORG_LIFECYCLE_CLAIMS),
+          });
         },
         summarize: (r) => ({
           reaped: r.reaped,
+          confirmed: r.confirmed,
+          kept: r.kept,
+          errors: r.errors.length,
           graceHours: r.graceHours,
           success: r.success,
         }),
@@ -797,12 +803,17 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
             scope: "full",
             triggeredById,
           });
+          // Same freeze as the nightly job and the admin door.
+          const { freezeDriftedWallets } =
+            await import("@/lib/payments/wallet-freeze");
+          const frozenWallets = await freezeDriftedWallets(report);
           return {
             success: true,
             runId: report.id,
             scope: report.scope,
             status: "OK" as const,
             report,
+            frozenWallets,
           };
         },
         summarize: (r) => ({
@@ -810,6 +821,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           status: r.status,
           ok: r.report.ok,
           discrepanciesCount: r.report.summary?.discrepanciesCount ?? 0,
+          frozenWallets: r.frozenWallets.length,
         }),
         status: (r) => statusFor(r, !r.report.ok),
         failureMessage: "Failed to run ledger reconciliation",

@@ -179,7 +179,7 @@ the journey — each entry links to the band doc that carries the full story.
   (`dc85f8ef`); diagrams + engineering narrative were layered on next.
 
 For the audit-by-audit verdict (what each `#NNN` checked, what it left
-`🟡`/`❌`), see [subsystem-checklist](../90-audits/02-subsystem-checklist.md).
+open), see the umbrella issues on GitHub.
 
 ### Schema map — Organization at the centre
 

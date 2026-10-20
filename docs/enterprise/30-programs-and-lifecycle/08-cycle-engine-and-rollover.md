@@ -29,13 +29,13 @@ stateDiagram-v2
 
 Each `AssignmentStatus` value, what it means, and which code path sets it are summarised in the table below.
 
-| Status | Meaning | Who sets it |
-|---|---|---|
-| `ACTIVE` | drawing from cap this cycle | claim helper (assign / successor mint) |
-| `ROLLED` | cycle advanced; successor minted | `advance-program-cycles` (ROLL) |
-| `CLOSED` | contract expired/terminated, or roll declined | `advance-program-cycles` (CLOSE), expire-contracts, contract terminate cascade |
-| `CANCELLED` | ended mid-cycle without rolling | assignment early-cancel PATCH; member-removal cascade |
-| `PAUSED` | frozen by an org-suspend cascade | 🟡 **designed-not-active** — enum value exists; no code path sets it yet |
+| Status      | Meaning                                       | Who sets it                                                                    |
+| ----------- | --------------------------------------------- | ------------------------------------------------------------------------------ |
+| `ACTIVE`    | drawing from cap this cycle                   | claim helper (assign / successor mint)                                         |
+| `ROLLED`    | cycle advanced; successor minted              | `advance-program-cycles` (ROLL)                                                |
+| `CLOSED`    | contract expired/terminated, or roll declined | `advance-program-cycles` (CLOSE), expire-contracts, contract terminate cascade |
+| `CANCELLED` | ended mid-cycle without rolling               | assignment early-cancel PATCH; member-removal cascade                          |
+| `PAUSED`    | frozen by an org-suspend cascade              | 🟡 **designed-not-active** — enum value exists; no code path sets it yet       |
 
 > 🟡 **PAUSED is reserved, not wired.** The `AssignmentStatus` enum carries
 > `PAUSED` for the org-suspend cascade described in the schema comment, but no
@@ -83,7 +83,7 @@ enum AssignmentStatus {
 `jobs/billing/advance-program-cycles.ts` (GitHub Action
 `.github/workflows/advance-program-cycles.yml`, daily `15 2 * * *` UTC) runs
 **ahead of** auto-renew-contracts (`30 2`) and expire-contracts (`0 3`) so an
-assignment whose contract is still ACTIVE rolls into its next period *before*
+assignment whose contract is still ACTIVE rolls into its next period _before_
 any contract-side state moves under it.
 
 A row is a candidate when `status = ACTIVE`, `rolledAt = null`, and `periodEnd <= now`, and its program is still live (`program.status = ACTIVE` with `archivedAt = null`). Each run is bounded to `BATCH_SIZE = 500` candidates, and the next nightly tick drains any remainder.
@@ -96,7 +96,7 @@ runs `decideCycleTransition`, then applies the decision inside a per-row
 - **ROLL** — claim `ACTIVE → ROLLED` (+ `rolledAt`) via conditional
   `updateMany` (`count === 0` ⇒ another replica won → skip), mint the successor
   `ACTIVE` row for the next cycle, then link `old.rolledToAssignmentId =
-  successor.id`. Emits `PROGRAM_ASSIGNMENT_ROLLED`.
+successor.id`. Emits `PROGRAM_ASSIGNMENT_ROLLED`.
 - **CLOSE** — claim `ACTIVE → CLOSED` (+ `rolledAt`); no successor. Emits the
   same audit action with `closed: true` + `reason`.
 
@@ -120,12 +120,12 @@ would spill into March), it pins to the last day of the intended month
 no IO) so the month-end / clamp / roll-vs-close edges are unit-testable without
 a DB. It evaluates **in this order**:
 
-| # | Condition | Decision | Reason |
-|---|---|---|---|
-| 1 | `contractStatus !== "ACTIVE"` | **CLOSE** | `CONTRACT_INACTIVE` |
-| 2 | `contractAutoRenew === false` | **CLOSE** | `AUTORENEW_OFF` |
-| 3 | `effectiveTo !== null && successorPeriodEnd > effectiveTo` | **CLOSE** | `CLAMPED` |
-| 4 | else | **ROLL** | `AUTORENEW` |
+| #   | Condition                                                  | Decision  | Reason              |
+| --- | ---------------------------------------------------------- | --------- | ------------------- |
+| 1   | `contractStatus !== "ACTIVE"`                              | **CLOSE** | `CONTRACT_INACTIVE` |
+| 2   | `contractAutoRenew === false`                              | **CLOSE** | `AUTORENEW_OFF`     |
+| 3   | `effectiveTo !== null && successorPeriodEnd > effectiveTo` | **CLOSE** | `CLAMPED`           |
+| 4   | else                                                       | **ROLL**  | `AUTORENEW`         |
 
 The **clamp** (row 3) is the subtle one: a successor whose end would exceed the
 contract's hard `effectiveTo` would bill past the term, so the engine closes
@@ -155,17 +155,17 @@ month closed. On the night of 2026-04-01 the cron sees `periodEnd <= now`, runs
 `decideCycleTransition` → **ROLL** (contract ACTIVE, autoRenew on, successor end
 `2026-05-01` is within `effectiveTo`), and in one Serializable tx writes:
 
-| | old row `A₁` (March) | successor `A₂` (April) |
-|---|---|---|
-| `id` | `…aaa1` | `…bbb2` (fresh) |
-| `periodStart` | `2026-03-01` | `2026-04-01` (= old `periodEnd`) |
-| `periodEnd` | `2026-04-01` | `2026-05-01` (`nextPeriodEnd`, MONTHLY) |
-| `status` | `ACTIVE → ROLLED` | `ACTIVE` |
-| `consumedPaise` | `630000` (frozen) | `0` (zeroed) |
-| `engagementsUsed` | (its count, frozen) | `0` |
-| `overageCount` | (frozen) | `0` |
-| `rolledAt` | `null → 2026-04-01T02:15Z` | `null` |
-| `rolledToAssignmentId` | `null → …bbb2` | `null` |
+|                        | old row `A₁` (March)       | successor `A₂` (April)                  |
+| ---------------------- | -------------------------- | --------------------------------------- |
+| `id`                   | `…aaa1`                    | `…bbb2` (fresh)                         |
+| `periodStart`          | `2026-03-01`               | `2026-04-01` (= old `periodEnd`)        |
+| `periodEnd`            | `2026-04-01`               | `2026-05-01` (`nextPeriodEnd`, MONTHLY) |
+| `status`               | `ACTIVE → ROLLED`          | `ACTIVE`                                |
+| `consumedPaise`        | `630000` (frozen)          | `0` (zeroed)                            |
+| `engagementsUsed`      | (its count, frozen)        | `0`                                     |
+| `overageCount`         | (frozen)                   | `0`                                     |
+| `rolledAt`             | `null → 2026-04-01T02:15Z` | `null`                                  |
+| `rolledToAssignmentId` | `null → …bbb2`             | `null`                                  |
 
 Then a `PROGRAM_ASSIGNMENT_ROLLED` audit row lands. The March row's
 `consumedPaise = 630000` is **preserved**, not reset — that's the cycle's
@@ -238,7 +238,7 @@ check ([ledger integrity](../10-money-and-ledger/13-ledger-integrity.md)) is the
   four conditions evaluate top-down (`cycle-engine.ts`): contract not ACTIVE →
   CLOSE; autoRenew off → CLOSE; successor end > `effectiveTo` → CLOSE (`CLAMPED`);
   else ROLL. The first two are obvious; the **clamp** is the one that bites — a
-  contract that's ACTIVE *and* auto-renewing still CLOSEs the assignment if the
+  contract that's ACTIVE _and_ auto-renewing still CLOSEs the assignment if the
   next period would end past the contract's hard `effectiveTo`, because rolling
   would bill a cycle the term doesn't cover. An open-ended contract
   (`effectiveTo = null`) never clamps. Keeping the function pure (no Prisma, no
@@ -255,20 +255,17 @@ period for the member to draw against — the entitlement just silently rotted.
 Every consumer had to re-derive liveness, and any one that forgot the
 `periodEnd < now` check would read a dead row as live.
 
-`#779 §A/§B` (commit `52a6d37f`, whose message is literally *"cycle engine +
-contract auto-renew (kills the zombie assignments)"*) replaced inference with an
-explicit `AssignmentStatus` and a nightly job that *moves* every ended period:
+`#779 §A/§B` (commit `52a6d37f`, whose message is literally _"cycle engine +
+contract auto-renew (kills the zombie assignments)"_) replaced inference with an
+explicit `AssignmentStatus` and a nightly job that _moves_ every ended period:
 
-| Before | After |
-|---|---|
-| "Live?" inferred from `periodEnd < now` everywhere | explicit `AssignmentStatus`, one source of truth |
-| Ended periods lingered as silent `ACTIVE`-by-default | nightly cron ROLLs or CLOSEs every ended period |
-| Contract expiry left assignments untouched | expire/terminate cascade closes them in-tx |
-| No idempotent successor minting | `rolledAt` + `rolledToAssignmentId @unique` |
+| Before                                               | After                                            |
+| ---------------------------------------------------- | ------------------------------------------------ |
+| "Live?" inferred from `periodEnd < now` everywhere   | explicit `AssignmentStatus`, one source of truth |
+| Ended periods lingered as silent `ACTIVE`-by-default | nightly cron ROLLs or CLOSEs every ended period  |
+| Contract expiry left assignments untouched           | expire/terminate cascade closes them in-tx       |
+| No idempotent successor minting                      | `rolledAt` + `rolledToAssignmentId @unique`      |
 
-The subsystem checklist still tracks this as the line item *"Cycle auto-rollover
-at `periodEnd` … (kills zombie assignments)"*
-([90-audits/02-subsystem-checklist.md](../90-audits/02-subsystem-checklist.md)).
 The status column is now the single source of truth: a read site checks
 `status = ACTIVE`, never re-derives liveness from dates, and the cron guarantees
 no ended period stays `ACTIVE` past one nightly tick.
