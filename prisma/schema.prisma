@@ -145,49 +145,49 @@ model User {
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
-  invitations                   Invitation[]
-  twoFactor                     TwoFactor?
-  passkeys                      Passkey[]
-  ssoproviders                  SsoProvider[]
-  erasureRequests               ErasureRequest[]
+  invitations                    Invitation[]
+  twoFactor                      TwoFactor?
+  passkeys                       Passkey[]
+  ssoproviders                   SsoProvider[]
+  erasureRequests                ErasureRequest[]
   /// Erasure requests this user processed as an admin. Named relation
   /// distinguishes it from `erasureRequests` above (requests filed
   /// against this user) — Prisma requires the disambiguation since
   /// both edges target ErasureRequest.
-  erasureRequestsProcessed      ErasureRequest[]              @relation("ErasureRequestProcessor")
+  erasureRequestsProcessed       ErasureRequest[]                 @relation("ErasureRequestProcessor")
   // Disputes this admin owns (#269).
-  disputesAssigned              Dispute[]                     @relation("DisputeAssignee")
-  opsActions                    OpsActionLog[]
-  declaredIncidents             PlatformIncident[]
-  incidentRemedies              IncidentRemedy[]
+  disputesAssigned               Dispute[]                        @relation("DisputeAssignee")
+  opsActions                     OpsActionLog[]
+  declaredIncidents              PlatformIncident[]
+  incidentRemedies               IncidentRemedy[]
   // A8 — documents this consultant reviewed (back-relation for the FK-ified
   // AppointmentDocument.reviewedById; named to avoid the implicit-relation guess).
-  documentsReviewed             AppointmentDocument[]         @relation("DocumentReviewer")
+  documentsReviewed              AppointmentDocument[]            @relation("DocumentReviewer")
   // Soft-delete audit — who tombstoned an appointment document.
-  documentsDeleted              AppointmentDocument[]         @relation("DocumentDeleter")
+  documentsDeleted               AppointmentDocument[]            @relation("DocumentDeleter")
   // #366 — publish-time redistribution-consent attestations made by consultants.
-  recordingsConsentAttested     Recording[]                   @relation("RecordingConsentAttestor")
+  recordingsConsentAttested      Recording[]                      @relation("RecordingConsentAttestor")
   // #366 — replay purchases this user made.
-  recordingPurchases            RecordingPurchase[]           @relation("RecordingPurchaseBuyer")
+  recordingPurchases             RecordingPurchase[]              @relation("RecordingPurchaseBuyer")
   // #1499 — cancellation-policy versions this OWNER published, for the audit trail.
-  publishedCancellationPolicies CancellationPolicy[]          @relation("CancellationPolicyPublisher")
+  publishedCancellationPolicies  CancellationPolicy[]             @relation("CancellationPolicyPublisher")
   // Verification documents this user uploaded (owner column, #1224).
-  verificationDocumentsUploaded ProfileVerificationDocument[] @relation("VerificationDocumentUploader")
+  verificationDocumentsUploaded  ProfileVerificationDocument[]    @relation("VerificationDocumentUploader")
   // #1778 — the held windows this user asked to hear about when they free.
-  windowBackupInterests         WindowBackupInterest[]
-  supportCasesRequested         SupportCase[]                 @relation("SupportCaseRequester")
-  supportCasesSubmitted         SupportCase[]                 @relation("SupportCaseSubmitter")
-  supportCasesAssigned          SupportCase[]                 @relation("SupportCaseAssignee")
-  supportCaseMessagesAuthored   SupportCaseMessage[]          @relation("SupportCaseMessageAuthor")
-  supportCaseEventsActed        SupportCaseEvent[]            @relation("SupportCaseEventActor")
-  supportEvidenceReceived SupportCaseEvidenceRequest[] @relation("SupportEvidenceRecipient")
-  supportEvidenceRequested SupportCaseEvidenceRequest[] @relation("SupportEvidenceRequester")
-  supportDecisions SupportCaseDecision[]
-  supportRecommendations SupportFinancialRecommendation[] @relation("SupportRecommendationAuthor")
+  windowBackupInterests          WindowBackupInterest[]
+  supportCasesRequested          SupportCase[]                    @relation("SupportCaseRequester")
+  supportCasesSubmitted          SupportCase[]                    @relation("SupportCaseSubmitter")
+  supportCasesAssigned           SupportCase[]                    @relation("SupportCaseAssignee")
+  supportCaseMessagesAuthored    SupportCaseMessage[]             @relation("SupportCaseMessageAuthor")
+  supportCaseEventsActed         SupportCaseEvent[]               @relation("SupportCaseEventActor")
+  supportEvidenceReceived        SupportCaseEvidenceRequest[]     @relation("SupportEvidenceRecipient")
+  supportEvidenceRequested       SupportCaseEvidenceRequest[]     @relation("SupportEvidenceRequester")
+  supportDecisions               SupportCaseDecision[]
+  supportRecommendations         SupportFinancialRecommendation[] @relation("SupportRecommendationAuthor")
   supportRecommendationDecisions SupportFinancialRecommendation[] @relation("SupportRecommendationDecider")
-  supportHoldsApplied SupportPaymentHold[] @relation("SupportHoldApplier")
-  supportHoldsReleased SupportPaymentHold[] @relation("SupportHoldReleaser")
-  supportAttachments SupportCaseAttachment[]
+  supportHoldsApplied            SupportPaymentHold[]             @relation("SupportHoldApplier")
+  supportHoldsReleased           SupportPaymentHold[]             @relation("SupportHoldReleaser")
+  supportAttachments             SupportCaseAttachment[]
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -656,23 +656,23 @@ model SupportCase {
   csatRating Int?      @db.SmallInt
   csatAt     DateTime? @db.Timestamptz
 
-  externalRequesterEmail String? @db.VarChar(320)
-  externalRequesterName String? @db.VarChar(200)
-  ownershipScope SupportCaseOwnership @default(PERSONAL)
-  scopeKey String @default("ACCOUNT") @db.VarChar(200)
-  receivedAt DateTime? @db.Timestamptz
-  statutoryDueAt DateTime? @db.Timestamptz
-  deadlinePolicy String? @db.VarChar(64)
-  appealOfDecisionId String?
-  appealOfDecision SupportCaseDecision? @relation("CaseDecisionAppeals", fields: [appealOfDecisionId], references: [id], onDelete: Restrict)
+  externalRequesterEmail     String?                          @db.VarChar(320)
+  externalRequesterName      String?                          @db.VarChar(200)
+  ownershipScope             SupportCaseOwnership             @default(PERSONAL)
+  scopeKey                   String                           @default("ACCOUNT") @db.VarChar(200)
+  receivedAt                 DateTime?                        @db.Timestamptz
+  statutoryDueAt             DateTime?                        @db.Timestamptz
+  deadlinePolicy             String?                          @db.VarChar(64)
+  appealOfDecisionId         String?
+  appealOfDecision           SupportCaseDecision?             @relation("CaseDecisionAppeals", fields: [appealOfDecisionId], references: [id], onDelete: Restrict)
   appealOfModerationActionId String?
-  appealOfModerationAction ModerationAction? @relation(fields: [appealOfModerationActionId], references: [id], onDelete: Restrict)
-  legacyAliases SupportCaseLegacyAlias[]
-  evidenceRequests SupportCaseEvidenceRequest[]
-  decisions SupportCaseDecision[] @relation("CaseDecisions")
-  recommendations SupportFinancialRecommendation[]
-  paymentHolds SupportPaymentHold[]
-  attachments SupportCaseAttachment[]
+  appealOfModerationAction   ModerationAction?                @relation(fields: [appealOfModerationActionId], references: [id], onDelete: Restrict)
+  legacyAliases              SupportCaseLegacyAlias[]
+  evidenceRequests           SupportCaseEvidenceRequest[]
+  decisions                  SupportCaseDecision[]            @relation("CaseDecisions")
+  recommendations            SupportFinancialRecommendation[]
+  paymentHolds               SupportPaymentHold[]
+  attachments                SupportCaseAttachment[]
 
   subjects SupportCaseSubject[]
   messages SupportCaseMessage[]
@@ -757,74 +757,78 @@ enum SupportCaseOwnership {
 }
 
 model SupportCaseLegacyAlias {
-  id String @id @default(uuid())
-  legacyKind String @db.VarChar(16)
-  legacyId String @db.VarChar(64)
-  caseId String
+  id          String      @id @default(uuid())
+  legacyKind  String      @db.VarChar(16)
+  legacyId    String      @db.VarChar(64)
+  caseId      String
   supportCase SupportCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
   @@unique([legacyKind, legacyId])
   @@index([caseId])
 }
 
 model SupportCaseEvidenceRequest {
-  id String @id @default(uuid())
-  caseId String
-  supportCase SupportCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
-  recipientUserId String
-  recipient User @relation("SupportEvidenceRecipient", fields: [recipientUserId], references: [id], onDelete: Restrict)
-  requestedById String
-  requestedBy User @relation("SupportEvidenceRequester", fields: [requestedById], references: [id], onDelete: Restrict)
-  clientActionId String @db.VarChar(128)
-  prompt String @db.Text
-  dueAt DateTime @db.Timestamptz
-  responseBody String? @db.Text
-  responseClientId String? @db.VarChar(128)
-  respondedAt DateTime? @db.Timestamptz
-  cancelledAt DateTime? @db.Timestamptz
-  createdAt DateTime @default(now()) @db.Timestamptz
-  attachments SupportCaseAttachment[]
+  id               String                  @id @default(uuid())
+  caseId           String
+  supportCase      SupportCase             @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  recipientUserId  String
+  recipient        User                    @relation("SupportEvidenceRecipient", fields: [recipientUserId], references: [id], onDelete: Restrict)
+  requestedById    String
+  requestedBy      User                    @relation("SupportEvidenceRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  clientActionId   String                  @db.VarChar(128)
+  prompt           String                  @db.Text
+  dueAt            DateTime                @db.Timestamptz
+  responseBody     String?                 @db.Text
+  responseClientId String?                 @db.VarChar(128)
+  respondedAt      DateTime?               @db.Timestamptz
+  cancelledAt      DateTime?               @db.Timestamptz
+  createdAt        DateTime                @default(now()) @db.Timestamptz
+  attachments      SupportCaseAttachment[]
+
   @@unique([caseId, clientActionId])
   @@index([recipientUserId, respondedAt])
   @@index([dueAt, respondedAt, cancelledAt])
 }
 
 model SupportCaseDecision {
-  id String @id @default(uuid())
-  caseId String
-  supportCase SupportCase @relation("CaseDecisions", fields: [caseId], references: [id], onDelete: Restrict)
-  decidedById String
-  decidedBy User @relation(fields: [decidedById], references: [id], onDelete: Restrict)
-  clientActionId String @db.VarChar(128)
-  outcome String @db.VarChar(32)
-  explanation String @db.Text
-  privateRationale String? @db.Text
-  appealUntil DateTime @db.Timestamptz
-  createdAt DateTime @default(now()) @db.Timestamptz
-  appeals SupportCase[] @relation("CaseDecisionAppeals")
+  id               String        @id @default(uuid())
+  caseId           String
+  supportCase      SupportCase   @relation("CaseDecisions", fields: [caseId], references: [id], onDelete: Restrict)
+  decidedById      String
+  decidedBy        User          @relation(fields: [decidedById], references: [id], onDelete: Restrict)
+  clientActionId   String        @db.VarChar(128)
+  outcome          String        @db.VarChar(32)
+  explanation      String        @db.Text
+  privateRationale String?       @db.Text
+  appealUntil      DateTime      @db.Timestamptz
+  createdAt        DateTime      @default(now()) @db.Timestamptz
+  appeals          SupportCase[] @relation("CaseDecisionAppeals")
+
   @@unique([caseId, clientActionId])
   @@index([caseId, createdAt])
   @@index([decidedById])
 }
 
 model SupportFinancialRecommendation {
-  id String @id @default(uuid())
-  caseId String
-  supportCase SupportCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
-  paymentId String
-  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-  proposedById String
-  proposedBy User @relation("SupportRecommendationAuthor", fields: [proposedById], references: [id], onDelete: Restrict)
-  clientActionId String @db.VarChar(128)
-  amountPaise BigInt
-  reason String @db.Text
-  decidedAt DateTime? @db.Timestamptz
-  decidedById String?
-  decidedBy User? @relation("SupportRecommendationDecider", fields: [decidedById], references: [id], onDelete: Restrict)
-  decisionReason String? @db.Text
-  approved Boolean?
-  refundId String? @unique
-  refund Refund? @relation(fields: [refundId], references: [id], onDelete: Restrict)
-  createdAt DateTime @default(now()) @db.Timestamptz
+  id             String      @id @default(uuid())
+  caseId         String
+  supportCase    SupportCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  paymentId      String
+  payment        Payment     @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  proposedById   String
+  proposedBy     User        @relation("SupportRecommendationAuthor", fields: [proposedById], references: [id], onDelete: Restrict)
+  clientActionId String      @db.VarChar(128)
+  amountPaise    BigInt
+  reason         String      @db.Text
+  decidedAt      DateTime?   @db.Timestamptz
+  decidedById    String?
+  decidedBy      User?       @relation("SupportRecommendationDecider", fields: [decidedById], references: [id], onDelete: Restrict)
+  decisionReason String?     @db.Text
+  approved       Boolean?
+  refundId       String?     @unique
+  refund         Refund?     @relation(fields: [refundId], references: [id], onDelete: Restrict)
+  createdAt      DateTime    @default(now()) @db.Timestamptz
+
   @@unique([caseId, clientActionId])
   @@index([caseId, decidedAt])
   @@index([paymentId])
@@ -833,19 +837,20 @@ model SupportFinancialRecommendation {
 }
 
 model SupportPaymentHold {
-  id String @id @default(uuid())
-  caseId String
-  supportCase SupportCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
-  paymentId String
-  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-  appliedById String
-  appliedBy User @relation("SupportHoldApplier", fields: [appliedById], references: [id], onDelete: Restrict)
-  reason String @db.Text
-  createdAt DateTime @default(now()) @db.Timestamptz
-  releasedAt DateTime? @db.Timestamptz
-  releasedById String?
-  releasedBy User? @relation("SupportHoldReleaser", fields: [releasedById], references: [id], onDelete: Restrict)
-  releaseReason String? @db.Text
+  id            String      @id @default(uuid())
+  caseId        String
+  supportCase   SupportCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  paymentId     String
+  payment       Payment     @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  appliedById   String
+  appliedBy     User        @relation("SupportHoldApplier", fields: [appliedById], references: [id], onDelete: Restrict)
+  reason        String      @db.Text
+  createdAt     DateTime    @default(now()) @db.Timestamptz
+  releasedAt    DateTime?   @db.Timestamptz
+  releasedById  String?
+  releasedBy    User?       @relation("SupportHoldReleaser", fields: [releasedById], references: [id], onDelete: Restrict)
+  releaseReason String?     @db.Text
+
   @@index([paymentId, releasedAt])
   @@index([caseId])
   @@index([appliedById])
@@ -853,23 +858,24 @@ model SupportPaymentHold {
 }
 
 model SupportCaseAttachment {
-  id String @id @default(uuid())
-  legacyAttachmentId String? @unique
-  caseId String
-  supportCase SupportCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
-  messageId String?
-  message SupportCaseMessage? @relation(fields: [messageId], references: [id], onDelete: Restrict)
-  evidenceRequestId String?
-  evidenceRequest SupportCaseEvidenceRequest? @relation(fields: [evidenceRequestId], references: [id], onDelete: Restrict)
-  uploadedById String
-  uploadedBy User @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
-  originalName String
-  mimeType String
-  fileSize Int
-  storagePath String @unique
-  completedAt DateTime? @db.Timestamptz
-  deletedAt DateTime? @db.Timestamptz
-  createdAt DateTime @default(now()) @db.Timestamptz
+  id                 String                      @id @default(uuid())
+  legacyAttachmentId String?                     @unique
+  caseId             String
+  supportCase        SupportCase                 @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  messageId          String?
+  message            SupportCaseMessage?         @relation(fields: [messageId], references: [id], onDelete: Restrict)
+  evidenceRequestId  String?
+  evidenceRequest    SupportCaseEvidenceRequest? @relation(fields: [evidenceRequestId], references: [id], onDelete: Restrict)
+  uploadedById       String
+  uploadedBy         User                        @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+  originalName       String
+  mimeType           String
+  fileSize           Int
+  storagePath        String                      @unique
+  completedAt        DateTime?                   @db.Timestamptz
+  deletedAt          DateTime?                   @db.Timestamptz
+  createdAt          DateTime                    @default(now()) @db.Timestamptz
+
   @@index([caseId])
   @@index([messageId])
   @@index([evidenceRequestId])
@@ -918,7 +924,7 @@ enum SupportCaseEventKind {
 // ConsultantReview. Gives webinar/class a feedback path they lack today and
 // feeds the org-level quality signal. One per (appointment, user).
 model AppointmentFeedback {
-  id String @id @default(uuid())
+  id        String    @id @default(uuid())
   deletedAt DateTime? @db.Timestamptz
 
   // #1554 — the held call being rated; NULL means the rating is about the
