@@ -19,6 +19,7 @@ import { reportSentryError } from "@/lib/observability/report";
 import { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import {
   postLedgerTxn,
   type AccountRef,
@@ -1616,7 +1617,7 @@ async function resolveBookingJournalDebits(
     overageAccrualPaise = tallied.overageAccrualPaise;
     hasWalletSurcharge =
       tallied.wallet > payment.originalAmount + (payment.taxAmount ?? 0);
-    pushDebit({ kind: "CASH" }, tallied.card);
+    pushDebit(gatewayCashAccount(), tallied.card);
 
     let walletLegOrgId = orgId;
     if (!walletLegOrgId && tallied.wallet > 0 && payment.billingAccountId) {
@@ -1639,7 +1640,7 @@ async function resolveBookingJournalDebits(
     );
     pushDebit({ kind: "PLATFORM_PROMO" }, tallied.promo);
   } else {
-    pushDebit({ kind: "CASH" }, payment.amount);
+    pushDebit(gatewayCashAccount(), payment.amount);
   }
 
   const fundingDebitTotal = debits.reduce((s, d) => s + d.amountPaise, 0);

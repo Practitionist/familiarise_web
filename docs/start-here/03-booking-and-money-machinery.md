@@ -16,7 +16,7 @@ last-reviewed: 2026-10-17
 
 ## 1. Cast of Real Seeded People & Organizations
 
-All examples below use the canonical seed cohort from `prisma/seedFiles/1a-create-users.ts`, `prisma/seedFiles/14a-create-organizations.ts`, and [`docs/team/mock-credentials.md`](../team/mock-credentials.md) (universal dev password: `SeedPass123!`). All money in the database is stored as **integer paise** (`BigInt` in Postgres, converted to JS `number` via `lib/prisma.ts`, where `₹1 = 100 paise`), and all percentage splits are stored in **basis points** (`10,000 bps = 100%`).
+All examples below use the canonical seed cohort from `prisma/seedFiles/1a-create-users.ts`, `prisma/seedFiles/14a-create-organizations.ts`, and [`docs/team/mock-credentials.md`](../team/mock-credentials.md) (non-operator dev password: the seed default in `prisma/seedFiles/1a-create-users.ts`; operator accounts use `SEED_OPERATOR_PASSWORD` from your local `.env`, ask the lead). All money in the database is stored as **integer paise** (`BigInt` in Postgres, converted to JS `number` via `lib/prisma.ts`, where `₹1 = 100 paise`), and all percentage splits are stored in **basis points** (`10,000 bps = 100%`).
 
 ### 1.1 Organizations Cohort
 

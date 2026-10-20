@@ -12,6 +12,7 @@
 import { recordSubscriptionAllocationCap } from "@/lib/booking/allocation/commit/subscription-cap";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { txDouble } from "../fixtures/tx-double";
+import { createEarningsHoldStore } from "../fixtures/earnings-hold-store";
 
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 jest.mock("../../lib/novu/org-workflows", () => ({
@@ -113,7 +114,18 @@ function world(program: Program, parentLeg: "WALLET" | "LICENSE") {
       s.meter[k] = stepped(s.meter[k], data[k]);
   };
 
+  // The parent payment's one consultant earning, waiting out its hold.
+  const holds = createEarningsHoldStore();
+  holds.consultant.push({
+    id: "ce-1",
+    paymentId: "pay-1",
+    status: "PENDING",
+    preHoldStatus: null,
+    holdUntil: null,
+  });
+
   const tx = txDouble({
+    ...holds.db,
     subscription: {
       findUnique: jest.fn(async () => ({
         id: "sub-1",
@@ -336,7 +348,7 @@ function world(program: Program, parentLeg: "WALLET" | "LICENSE") {
     s.live = replace ? [...ids] : [...s.live, ...ids];
     return recordSubscriptionAllocationCap(tx, "sub-1", "consultee-1", ids);
   };
-  return { s, tx, allocate };
+  return { s, tx, allocate, holds };
 }
 
 describe("a CREDIT_POOL subscription meters each batch per session", () => {
@@ -429,6 +441,15 @@ describe("a LICENSED_SEAT subscription that charges the member", () => {
       [w.s.ledger[2].id, 100_000],
     ]);
     expect(w.s.intents.size).toBe(2);
+    // The parent's earning waits on the unpaid member charges: one OVERAGE
+    // hold keyed on the parent, however many batches went over the cap.
+    expect(w.holds.consultant[0]).toMatchObject({
+      status: "HELD",
+      preHoldStatus: "PENDING",
+    });
+    expect(
+      w.holds.holds.map((h) => [h.reason, h.sourceRef, h.releasedAt]),
+    ).toEqual([["OVERAGE", "pay-1", null]]);
   });
 });
 

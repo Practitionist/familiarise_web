@@ -24,8 +24,18 @@ const tx = {
     findUniqueOrThrow: (...a: unknown[]) => orgFindUniqueOrThrow(...a),
   },
   organizationInvoice: {
+    findUnique: (...a: unknown[]) => orgInvoiceFindUnique(...a),
+    findUniqueOrThrow: (...a: unknown[]) => orgInvoiceFindUnique(...a),
     updateMany: (...a: unknown[]) => orgInvoiceUpdateMany(...a),
   },
+  organizationInvoiceReceipt: {
+    findUnique: jest.fn(async () => null),
+    create: jest.fn(async () => ({ id: "rcpt_1" })),
+    groupBy: jest.fn(async () => []),
+    aggregate: jest.fn(async () => ({ _sum: { amountPaise: BigInt(50_000) } })),
+  },
+  creditNote: { groupBy: jest.fn(async () => []) },
+  membership: { findMany: jest.fn(async () => []) },
   overageEvent: {
     updateMany: (...a: unknown[]) => overageEventUpdateMany(...a),
   },
@@ -38,6 +48,7 @@ const tx = {
   orgAuditLog: {
     create: (...a: unknown[]) => orgAuditLogCreate(...a),
   },
+  opsActionLog: { create: jest.fn(async () => ({ id: "ops_1" })) },
 };
 
 jest.mock("../../lib/prisma", () => ({
@@ -54,8 +65,11 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 jest.mock("../../lib/auth-helpers", () => ({
-  requireAdminAuth: jest.fn(async () => ({
-    session: { user: { id: "admin_1" } },
+  requireBackofficeSurface: jest.fn(async () => ({
+    session: {
+      user: { id: "admin_1", role: "ADMIN" },
+      session: { createdAt: new Date() },
+    },
   })),
 }));
 
@@ -103,7 +117,7 @@ describe("Inline PENDING_TRUST -> PENDING earnings promotion (#1915 P3)", () => 
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "VERIFY" }),
+        body: JSON.stringify({ action: "VERIFY", reason: "documents ok" }),
       },
     );
 
@@ -112,8 +126,12 @@ describe("Inline PENDING_TRUST -> PENDING earnings promotion (#1915 P3)", () => 
     });
 
     expect(res.status).toBe(200);
+    // Keyed on the payment's sponsor, never on the earning org.
     expect(orgEarningsUpdateMany).toHaveBeenCalledWith({
-      where: { organizationId: "org_1", status: "PENDING_TRUST" },
+      where: {
+        payment: { organizationId: "org_1" },
+        status: "PENDING_TRUST",
+      },
       data: { status: "PENDING" },
     });
     expect(consultantEarningsUpdateMany).toHaveBeenCalledWith({
@@ -142,7 +160,7 @@ describe("Inline PENDING_TRUST -> PENDING earnings promotion (#1915 P3)", () => 
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "SUSPEND" }),
+        body: JSON.stringify({ action: "SUSPEND", reason: "fraud review" }),
       },
     );
 
@@ -154,21 +172,19 @@ describe("Inline PENDING_TRUST -> PENDING earnings promotion (#1915 P3)", () => 
     expect(orgEarningsUpdateMany).not.toHaveBeenCalled();
   });
 
+  // An org still awaiting verification can pay (FIN-24); paying releases its trust hold.
   it("promotes PENDING_TRUST earnings when an organization invoice is marked PAID", async () => {
-    orgInvoiceFindUnique
-      .mockResolvedValueOnce({
-        id: "inv_1",
-        totalPaise: 50_000,
-        status: "ISSUED",
-        displayCurrency: "INR",
-        organizationId: "org_1",
-      })
-      .mockResolvedValueOnce({
-        invoiceNumber: "INV-001",
-        paidAt: new Date("2026-10-01T00:00:00Z"),
-        organization: { name: "Acme" },
-      });
-    orgInvoiceUpdateMany.mockResolvedValueOnce({ count: 1 });
+    orgInvoiceFindUnique.mockResolvedValue({
+      id: "inv_1",
+      invoiceNumber: "INV-001",
+      totalPaise: 50_000,
+      status: "ISSUED",
+      displayCurrency: "INR",
+      organizationId: "org_1",
+      providerPaymentId: null,
+      organization: { name: "Acme", status: "PENDING_VERIFICATION" },
+    });
+    orgInvoiceUpdateMany.mockResolvedValue({ count: 1 });
 
     await handleOrgPaymentSuccess(
       {

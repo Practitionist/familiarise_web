@@ -3,6 +3,7 @@ import {
   cleanupRoute,
   parseLimitParam,
   parseLimitParamOrDefault,
+  parseWindowStartParam,
   statusFor,
 } from "@/lib/cron/cleanup-route";
 import { reportSentryError } from "@/lib/observability/report";
@@ -36,6 +37,16 @@ const MAX_REFERRAL_VESTS = 50;
 const MAX_REFERRAL_BREAKAGE = 500;
 /** Abandoned onboarding drafts are deleted after this many idle days. */
 const ONBOARDING_DRAFT_TTL_DAYS = 90;
+/** Payouts minted per rail per batch slice; each is one transaction. */
+const MAX_PAYOUT_BATCH_UNITS = 10;
+/** Disbursements per rail per run; each is a gateway round trip. */
+const MAX_PAYOUT_DISBURSEMENTS = 5;
+/** Org invoice rollups per run; each is one Serializable transaction. */
+const MAX_ACCRUAL_ROLLUPS = 10;
+/** Per-row claims for the daily org billing and contract jobs. */
+const MAX_ORG_LIFECYCLE_CLAIMS = 25;
+/** IRN submissions per run; each is a GSP round trip. */
+const MAX_IRP_UPLOADS = 10;
 
 /**
  * Registry of `/api/cleanup/[job]` HTTP twins.
@@ -52,10 +63,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "abandoned-org-top-ups": () =>
       cleanupRoute({
         job: "cleanup-abandoned-org-top-ups",
-        run: async () => {
+        run: async (req) => {
           const { cleanupAbandonedOrgTopUps } =
             await import("@/scripts/cleanup/cleanup-abandoned-org-top-ups");
-          return cleanupAbandonedOrgTopUps();
+          return cleanupAbandonedOrgTopUps({ limit: parseLimitParam(req) });
         },
         summarize: (r) => ({
           reaped: r.reaped,
@@ -164,6 +175,22 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to check for orphaned payments",
       }),
 
+    // @cleanup-twin advance-program-cycles
+    "advance-program-cycles": () =>
+      cleanupRoute({
+        job: "advance-program-cycles",
+        run: async (req) => {
+          const { runAdvanceProgramCycles } =
+            await import("@/jobs/billing/advance-program-cycles");
+          return runAdvanceProgramCycles({
+            limit: parseLimitParamOrDefault(req, MAX_ORG_LIFECYCLE_CLAIMS),
+            windowStart: parseWindowStartParam(req),
+          });
+        },
+        status: (r) => statusFor({}, r.failed > 0),
+        failureMessage: "Failed to advance program cycles",
+      }),
+
     // @cleanup-twin appointment-reminders
     "appointment-reminders": () =>
       cleanupRoute({
@@ -223,6 +250,22 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to cleanup auth tokens",
       }),
 
+    // @cleanup-twin auto-renew-contracts
+    "auto-renew-contracts": () =>
+      cleanupRoute({
+        job: "auto-renew-contracts",
+        run: async (req) => {
+          const { runAutoRenewContracts } =
+            await import("@/jobs/contracts/auto-renew-contracts");
+          return runAutoRenewContracts({
+            limit: parseLimitParamOrDefault(req, MAX_ORG_LIFECYCLE_CLAIMS),
+            windowStart: parseWindowStartParam(req),
+          });
+        },
+        status: (r) => statusFor({}, r.failed > 0),
+        failureMessage: "Failed to auto-renew contracts",
+      }),
+
     // @cleanup-twin auto-complete-appointments
     "auto-complete-appointments": () =>
       cleanupRoute({
@@ -253,11 +296,22 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "create-payout-batch": () =>
       cleanupRoute({
         job: "create-payout-batch",
-        run: async () => {
-          const { createPayoutBatch } = await import("@/lib/payments/payouts");
-          return { success: true, batchId: await createPayoutBatch() };
+        run: async (req) => {
+          const { runCreatePayoutBatches } =
+            await import("@/lib/payments/payouts/scheduled-runs");
+          return runCreatePayoutBatches({
+            limit: parseLimitParamOrDefault(req, MAX_PAYOUT_BATCH_UNITS),
+            windowStart: parseWindowStartParam(req),
+          });
         },
-        summarize: (r) => ({ batchId: r.batchId }),
+        summarize: (r) => ({
+          batchId: r.batchId,
+          consultantPayoutsMinted: r.consultantPayoutsMinted,
+          orgPayoutsCreated: r.org.payoutsCreated,
+          failed: r.failed,
+          remaining: r.remaining,
+        }),
+        status: (r) => statusFor(r, r.failed > 0),
         failureMessage: "Failed to create payout batch",
       }),
 
@@ -323,6 +377,36 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         status: (r) => (r.errors.length > 0 ? 500 : 200),
         unauthorizedMessage: "Provide a valid Bearer CRON_SECRET",
         failureMessage: "Notification outbox drain failed",
+      }),
+
+    // @cleanup-twin dunning
+    dunning: () =>
+      cleanupRoute({
+        job: "dunning",
+        run: async (req) => {
+          const { runDunning } = await import("@/jobs/billing/dunning");
+          return runDunning({
+            limit: parseLimitParamOrDefault(req, MAX_ORG_LIFECYCLE_CLAIMS),
+            windowStart: parseWindowStartParam(req),
+          });
+        },
+        status: (r) => statusFor({}, r.failed > 0),
+        failureMessage: "Failed to run dunning",
+      }),
+
+    // @cleanup-twin expire-contracts
+    "expire-contracts": () =>
+      cleanupRoute({
+        job: "expire-contracts",
+        run: async (req) => {
+          const { runExpireContracts } =
+            await import("@/jobs/contracts/expire-contracts");
+          return runExpireContracts({
+            limit: parseLimitParamOrDefault(req, MAX_ORG_LIFECYCLE_CLAIMS),
+            windowStart: parseWindowStartParam(req),
+          });
+        },
+        failureMessage: "Failed to expire contracts",
       }),
 
     // @cleanup-twin expire-recordings
@@ -462,6 +546,22 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to export the GST outward-supplies register",
       }),
 
+    // @cleanup-twin generate-subscription-invoices
+    "generate-subscription-invoices": () =>
+      cleanupRoute({
+        job: "generate-subscription-invoices",
+        run: async (req) => {
+          const { runGenerateSubscriptionInvoices } =
+            await import("@/jobs/billing/generate-subscription-invoices");
+          return runGenerateSubscriptionInvoices({
+            limit: parseLimitParamOrDefault(req, MAX_ORG_LIFECYCLE_CLAIMS),
+            windowStart: parseWindowStartParam(req),
+          });
+        },
+        status: (r) => statusFor({}, r.failed > 0),
+        failureMessage: "Failed to generate subscription invoices",
+      }),
+
     // @cleanup-twin handle-stuck-payouts
     "handle-stuck-payouts": () =>
       cleanupRoute({
@@ -478,6 +578,34 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           failedCount: r.failedCount,
         }),
         failureMessage: "Failed to handle stuck payouts",
+      }),
+
+    // @cleanup-twin irp-uploader
+    "irp-uploader": () =>
+      cleanupRoute({
+        job: "irp-uploader",
+        run: async (req) => {
+          const { runIrpUploader } =
+            await import("@/jobs/compliance/irp-uploader");
+          return runIrpUploader({
+            limit: parseLimitParamOrDefault(req, MAX_IRP_UPLOADS),
+            windowStart: parseWindowStartParam(req),
+          });
+        },
+        status: (r) => statusFor({}, r.failed > 0),
+        failureMessage: "Failed to upload invoices to the IRP",
+      }),
+
+    // @cleanup-twin msme-payment-alerts
+    "msme-payment-alerts": () =>
+      cleanupRoute({
+        job: "msme-payment-alerts",
+        run: async () => {
+          const { runMsmePaymentAlerts } =
+            await import("@/jobs/compliance/msme-payment-alerts");
+          return runMsmePaymentAlerts();
+        },
+        failureMessage: "Failed to send MSME payment alerts",
       }),
 
     // @cleanup-twin process-data-exports
@@ -501,27 +629,22 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "process-payouts": () =>
       cleanupRoute({
         job: "process-payouts",
-        run: async () => {
-          const { processApprovedPayouts, REQUEST_PAYOUT_RUN_BOUNDS } =
-            await import("@/lib/payments/payouts");
-          const results = await processApprovedPayouts(
-            REQUEST_PAYOUT_RUN_BOUNDS,
-          );
-          const succeeded = results.filter((r) => r.success).length;
-          const failed = results.filter((r) => !r.success).length;
-          return {
-            success: failed === 0,
-            processed: results.length,
-            succeeded,
-            failed,
-            results,
-          };
+        run: async (req) => {
+          const { runProcessPayouts } =
+            await import("@/lib/payments/payouts/scheduled-runs");
+          return runProcessPayouts({
+            limit: parseLimitParamOrDefault(req, MAX_PAYOUT_DISBURSEMENTS),
+          });
         },
         summarize: (r) => ({
           succeeded: r.succeeded,
           failed: r.failed,
           processed: r.processed,
+          orgAdvanced: r.orgAdvanced,
+          orgErrors: r.orgErrors,
+          notice: r.notice,
         }),
+        status: (r) => statusFor(r, r.failed > 0 || r.orgErrors > 0),
         failureMessage: "Failed to process payouts",
       }),
 
@@ -639,6 +762,26 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         }),
         status: (r) => statusFor(r, r.missingFilesFound > 0),
         failureMessage: "Failed to reconcile document storage",
+      }),
+
+    // @cleanup-twin reconcile-gateway-settlements
+    "reconcile-gateway-settlements": () =>
+      cleanupRoute({
+        job: "reconcile-gateway-settlements",
+        run: async (_req, { startedAt }) => {
+          const { runReconcileGatewaySettlements } =
+            await import("@/jobs/reconcile/reconcile-gateway-settlements");
+          return runReconcileGatewaySettlements(startedAt);
+        },
+        status: (r) =>
+          statusFor(
+            r,
+            r.byStatus.AMOUNT_MISMATCH +
+              r.byStatus.FEE_MISMATCH +
+              r.byStatus.UNMATCHED >
+              0,
+          ),
+        failureMessage: "Failed to reconcile gateway settlements",
       }),
 
     // @cleanup-twin reconcile-ledgers
@@ -1066,16 +1209,21 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "settle-invoice-accruals": () =>
       cleanupRoute({
         job: "settle-invoice-accruals",
-        run: async () => {
+        run: async (req) => {
           const { runSettleInvoiceAccruals } =
             await import("@/jobs/billing/settle-invoice-accruals");
-          return runSettleInvoiceAccruals();
+          return runSettleInvoiceAccruals({
+            limit: parseLimitParamOrDefault(req, MAX_ACCRUAL_ROLLUPS),
+            windowStart: parseWindowStartParam(req),
+          });
         },
         summarize: (r) => ({
           orgsProcessed: r.orgsProcessed,
           invoicesCreated: r.invoicesCreated,
+          failed: r.failed,
+          remaining: r.remaining,
         }),
-        status: () => 200,
+        status: (r) => statusFor({}, r.failed > 0),
         failureMessage: "Failed to settle invoice accruals",
       }),
 
@@ -1208,6 +1356,21 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to sync payment earnings",
       }),
 
+    // @cleanup-twin timeout-member-overages
+    "timeout-member-overages": () =>
+      cleanupRoute({
+        job: "timeout-member-overages",
+        run: async (req) => {
+          const { runTimeoutMemberOverages } =
+            await import("@/jobs/billing/timeout-member-overages");
+          return runTimeoutMemberOverages({
+            limit: parseLimitParamOrDefault(req, MAX_ORG_LIFECYCLE_CLAIMS),
+            windowStart: parseWindowStartParam(req),
+          });
+        },
+        failureMessage: "Failed to time out member overages",
+      }),
+
     // @cleanup-twin tds-return-draft
     "tds-return-draft": () =>
       cleanupRoute({
@@ -1287,6 +1450,20 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           failed: r.failed,
         }),
         failureMessage: "Failed to vest referral credits",
+      }),
+
+    // @cleanup-twin wallet-low-balance
+    "wallet-low-balance": () =>
+      cleanupRoute({
+        job: "wallet-low-balance",
+        run: async (req) => {
+          const { runWalletLowBalance } =
+            await import("@/jobs/billing/wallet-low-balance");
+          return runWalletLowBalance({
+            limit: parseLimitParamOrDefault(req, MAX_ORG_LIFECYCLE_CLAIMS),
+          });
+        },
+        failureMessage: "Failed to run the wallet low-balance check",
       }),
 
     // @cleanup-twin wind-down-deactivated-orgs

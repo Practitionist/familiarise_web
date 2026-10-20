@@ -32,8 +32,64 @@ export type PayoutEligibilityReason =
   | "NON_INDIA"
   | "NO_ACCOUNT"
   | "UNVERIFIED"
+  | PayoutAccountHoldReason
   | "CLAWBACK_RECOVERY_PAUSE"
   | "BELOW_MINIMUM";
+
+export type PayoutAccountHoldReason =
+  "PAYOUT_ACCOUNT_FROZEN" | "PAYOUT_ACCOUNT_COOLING_OFF";
+
+/** A changed payout destination waits this long before a payout may reach it. */
+export const PAYOUT_ACCOUNT_COOLING_OFF_MS = 48 * 60 * 60 * 1000;
+
+export interface PayoutAccountHoldInput {
+  payoutsAllowedAfter?: Date | string | null;
+  payoutsFrozenAt?: Date | string | null;
+}
+
+/** When the destination last changed, read off the cooling-off stamp it set; null when never stamped. */
+export function payoutAccountChangedAt(
+  account: PayoutAccountHoldInput,
+): number | null {
+  return account.payoutsAllowedAfter
+    ? new Date(account.payoutsAllowedAfter).getTime() -
+        PAYOUT_ACCOUNT_COOLING_OFF_MS
+    : null;
+}
+
+/** An org payout above this also needs a Familiarise admin's co-approval. */
+export const ORG_PAYOUT_PLATFORM_APPROVAL_ABOVE_PAISE = 5_000_000;
+/** So does one minted within this long after its payout account changed. */
+export const ORG_PAYOUT_ACCOUNT_CHANGE_REVIEW_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function orgPayoutNeedsPlatformApproval(
+  payout: { amountPaise: number; createdAt: Date },
+  account: PayoutAccountHoldInput | null,
+): boolean {
+  if (payout.amountPaise > ORG_PAYOUT_PLATFORM_APPROVAL_ABOVE_PAISE) {
+    return true;
+  }
+  const changedAt = account ? payoutAccountChangedAt(account) : null;
+  return (
+    changedAt !== null &&
+    payout.createdAt.getTime() - changedAt < ORG_PAYOUT_ACCOUNT_CHANGE_REVIEW_MS
+  );
+}
+
+/** Why mint must skip this default account right now, or null when it may pay it. */
+export function payoutAccountHold(
+  account: PayoutAccountHoldInput,
+  now: Date = new Date(),
+): PayoutAccountHoldReason | null {
+  if (account.payoutsFrozenAt) return "PAYOUT_ACCOUNT_FROZEN";
+  if (
+    account.payoutsAllowedAfter &&
+    new Date(account.payoutsAllowedAfter).getTime() > now.getTime()
+  ) {
+    return "PAYOUT_ACCOUNT_COOLING_OFF";
+  }
+  return null;
+}
 
 export interface PayoutRequirementsInput {
   consultantProfileId: string;
@@ -141,9 +197,10 @@ export function payoutRequirements(
 export interface PayoutEligibilityGateInput {
   livePayoutsEnabled: boolean;
   isIndianResident: boolean;
-  defaultAccount: { isVerified: boolean } | null;
+  defaultAccount: ({ isVerified: boolean } & PayoutAccountHoldInput) | null;
   readyAmount: number;
   minimumAmount: number;
+  now?: Date;
   /** Unrecovered clawback receivable; above the pause line no payout is minted. */
   outstandingClawbackPaise: number;
   clawbackPausePaise: number;
@@ -161,6 +218,8 @@ export function payoutEligibilityReason(
   if (!input.isIndianResident) return "NON_INDIA";
   if (!input.defaultAccount) return "NO_ACCOUNT";
   if (!input.defaultAccount.isVerified) return "UNVERIFIED";
+  const hold = payoutAccountHold(input.defaultAccount, input.now);
+  if (hold) return hold;
   if (input.outstandingClawbackPaise > input.clawbackPausePaise) {
     return "CLAWBACK_RECOVERY_PAUSE";
   }

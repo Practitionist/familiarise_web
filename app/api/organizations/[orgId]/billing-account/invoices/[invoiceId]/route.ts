@@ -12,6 +12,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionOrgInvoice } from "@/lib/enterprise/transitions";
+import { invoiceOutstandingPaise } from "@/lib/payments/billing/org-invoice-settlement";
 
 const PatchBodySchema = z.object({ status: z.literal("CANCELLED") }).strict();
 
@@ -68,7 +69,8 @@ export async function GET(
   if (!invoice) {
     return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
   }
-  return NextResponse.json({ invoice });
+  const outstandingPaise = await invoiceOutstandingPaise(prisma, invoice.id);
+  return NextResponse.json({ invoice: { ...invoice, outstandingPaise } });
 }
 
 export async function PATCH(

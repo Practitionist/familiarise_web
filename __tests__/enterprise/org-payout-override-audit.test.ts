@@ -17,7 +17,7 @@ jest.mock("@sentry/nextjs", () => ({
 jest.mock("../../lib/auth-helpers", () => ({
   requireOrgAccess: jest.fn(async () => ({
     member: { id: "mem_1", role: "OWNER" },
-    session: { session: { createdAt: new Date() } },
+    session: { user: { id: "user_1" }, session: { createdAt: new Date() } },
     org: { slug: "acme" },
   })),
 }));
@@ -29,11 +29,20 @@ jest.mock("../../lib/prisma", () => ({
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
         organizationPayout: {
-          findFirst: async () => ({ id: "po_1", status: "PENDING" }),
+          findFirst: async () => ({
+            id: "po_1",
+            status: "PENDING",
+            amountPaise: 100_000,
+            createdAt: new Date(),
+            platformApprovalRequiredAt: null,
+          }),
           updateMany: async () => ({ count: 1 }),
           findUniqueOrThrow: async () => ({ id: "po_1", status: "APPROVED" }),
         },
         organizationEarnings: { updateMany: async () => ({ count: 0 }) },
+        organizationPayoutAccount: {
+          findUnique: async () => ({ payoutsAllowedAfter: null }),
+        },
         // No PAYOUT_INITIATED actor: a cron-built batch has no human creator,
         // so the two-person rule (#1851 decision 4) does not apply.
         orgAuditLog: { create: auditCreate, findFirst: async () => null },

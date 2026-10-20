@@ -8,15 +8,16 @@
  * Pins the settlement contract the OVERAGE_SETTLEMENT_MISMATCH reconcile
  * invariant asserts: a capture flips the side-Payment → SUCCEEDED, moves the
  * event PENDING/FAILED → CHARGED, and ONLY THEN posts the org-relief journal
- * (`overage:<sidePaymentId>`: Dr CASH / Cr ORG_PAYABLE == marginalPaise).
+ * (`overage:<sidePaymentId>`: Dr GATEWAY_CLEARING / Cr ORG_PAYABLE == marginalPaise).
  * If the event can't legally reach CHARGED (REVERSED mid-flight), no org
- * credit is posted and the collected money is escalated for refund.
+ * credit is posted: the cash is parked and auto-refunded after commit.
  */
 
 jest.mock("../../lib/prisma", () => {
   const tx = {
     payment: {
       findUnique: jest.fn(),
+      update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     paymentLeg: { updateMany: jest.fn() },
@@ -31,6 +32,10 @@ jest.mock("../../lib/prisma", () => {
 });
 jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
   mintConsumerInvoiceBestEffort: jest.fn().mockResolvedValue({}),
+}));
+const mockRefund = jest.fn().mockResolvedValue({ status: "SUCCEEDED" });
+jest.mock("../../lib/payments/operations/booking-refund", () => ({
+  refundBookingPayment: (...a: unknown[]) => mockRefund(...a),
 }));
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: jest.fn().mockResolvedValue(undefined),
@@ -84,7 +89,7 @@ beforeEach(() => {
 });
 
 describe("handleOverageMemberSuccess", () => {
-  it("capture: SUCCEEDED + CHARGED, then Dr CASH / Cr ORG_PAYABLE + Cr GST_PAYABLE", async () => {
+  it("capture: SUCCEEDED + CHARGED, then Dr GATEWAY_CLEARING / Cr ORG_PAYABLE + Cr GST_PAYABLE", async () => {
     tx.payment.findUnique.mockResolvedValue(side);
     mockTransition.mockResolvedValue(1);
 
@@ -114,7 +119,11 @@ describe("handleOverageMemberSuccess", () => {
       kind: "OVERAGE_MEMBER",
       paymentId: "side1",
       postings: [
-        { account: { kind: "CASH" }, direction: "DEBIT", amountPaise: 129_500 },
+        {
+          account: { kind: "GATEWAY_CLEARING" },
+          direction: "DEBIT",
+          amountPaise: 129_500,
+        },
         {
           account: { kind: "ORG_PAYABLE", organizationId: "org1" },
           direction: "CREDIT",
@@ -143,18 +152,20 @@ describe("handleOverageMemberSuccess", () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
-  it("capture racing a reversal (event REVERSED): no org credit, escalates for refund", async () => {
+  it("capture racing a reversal (event REVERSED): no org credit, cash parked and auto-refunded", async () => {
     tx.payment.findUnique.mockResolvedValue(side);
     mockTransition.mockResolvedValue(0); // REVERSED not in CHARGED's allowed-from
 
     await handleOverageMemberSuccess("order_abc", 129_500);
 
-    expect(mockPost).not.toHaveBeenCalled();
-    expect(mockSystemError).toHaveBeenCalledWith(
+    const keys = mockPost.mock.calls.map((c) => c[1].idempotencyKey);
+    expect(keys).toEqual(["unapplied:side1"]);
+    expect(mockSystemError).not.toHaveBeenCalled();
+    expect(mockRefund).toHaveBeenCalledWith(
       expect.objectContaining({
-        organizationId: "org1",
-        category: "OVERAGE",
-        context: expect.objectContaining({ sidePaymentId: "side1" }),
+        paymentId: "side1",
+        amountPaise: 129_500,
+        dedupeKey: "overage-mismatch:side1",
       }),
     );
   });

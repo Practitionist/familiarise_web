@@ -10,16 +10,9 @@
  * There is NO money movement here and NO WalletTopUp row is created: it
  * detects, tells finance, and stamps the cooldown.
  *
- * Schedule: daily at 05:15 IST (`.github/workflows/wallet-low-balance.yml`).
- * Quiet slot — after the 23:30 UTC dunning cron, no other cron at 23:xx.
- *
- * Usage:
- *   npx tsx jobs/billing/wallet-low-balance.ts
+ * Schedule: the ticker's daily window from 23:30 UTC, on a slot after dunning.
  */
 
-import "dotenv/config";
-import * as Sentry from "@sentry/nextjs";
-import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
 import {
   notifyOrgWalletLow,
@@ -29,7 +22,6 @@ import {
 import { sendOrgWalletLowEmail } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { abortIfMaintenance } from "@/lib/maintenance-cron";
 
 const COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
@@ -38,7 +30,18 @@ interface WalletLowStats {
   notified: number;
 }
 
-export async function runWalletLowBalance(): Promise<WalletLowStats> {
+export async function runWalletLowBalance(opts: {
+  limit?: number;
+}): Promise<WalletLowStats> {
+  return withCronLock("wallet-low-balance", { failMode: "open" }, () =>
+    walletLowBalance(opts),
+  );
+}
+
+/** `limit` caps the cooldown claims; an account above its floor is skipped in memory. */
+async function walletLowBalance(opts: {
+  limit?: number;
+}): Promise<WalletLowStats> {
   const stats: WalletLowStats = { scanned: 0, notified: 0 };
   const now = new Date();
   const cooldownCutoff = new Date(now.getTime() - COOLDOWN_MS);
@@ -67,6 +70,7 @@ export async function runWalletLowBalance(): Promise<WalletLowStats> {
   });
 
   for (const ba of candidates) {
+    if (opts.limit !== undefined && stats.scanned >= opts.limit) break;
     const balance = ba.walletBalance ?? 0;
     const minimum = ba.minBalancePaise ?? 0;
     if (balance >= minimum) continue;
@@ -111,28 +115,4 @@ export async function runWalletLowBalance(): Promise<WalletLowStats> {
   }
 
   return stats;
-}
-
-async function main() {
-  await abortIfMaintenance("wallet-low-balance");
-  console.log(`[wallet-low-balance] Starting at ${new Date().toISOString()}`);
-  Sentry.logger.info("job:wallet-low-balance started");
-  const stats = await withCronLock(
-    "wallet-low-balance",
-    { failMode: "open" },
-    () => runWalletLowBalance(),
-  );
-  console.log(
-    `[wallet-low-balance] Done. scanned=${stats.scanned} notified=${stats.notified}`,
-  );
-  Sentry.logger.info("job:wallet-low-balance finished", {
-    scanned: stats.scanned,
-    notified: stats.notified,
-  });
-}
-
-if (require.main === module) {
-  runJob("wallet-low-balance", () =>
-    main().finally(() => prisma.$disconnect()),
-  );
 }

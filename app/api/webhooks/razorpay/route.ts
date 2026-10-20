@@ -25,6 +25,9 @@ import {
 
 export const runtime = "nodejs";
 
+/** Razorpay event ids are short alphanumerics; anything else falls back to the body hash. */
+const RAZORPAY_EVENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
 export async function POST(req: NextRequest) {
   const declaredBytes = Number(req.headers.get("content-length"));
   if (
@@ -152,30 +155,10 @@ export async function POST(req: NextRequest) {
     Sentry.getCurrentScope().setTag("gatewayOrderId", gatewayOrderId);
   }
 
-  // Razorpay sends `x-razorpay-event-id`, and it is tempting as the dedup key.
-  // This repo deliberately does NOT use it — see
-  // .claude/skills/finance/references/razorpay/references/webhooks.md.
-  //
-  // Two reasons, and the second is the one that matters. First, the synthesized
-  // key dedups on the *business fact* rather than the delivery, so two distinct
-  // deliveries describing the same state transition collapse to one. Second,
-  // and decisively: the HMAC covers the BODY ONLY. A header is unsigned, so
-  // keying on it would let anyone holding one captured (body, signature) pair
-  // replay it N times under N invented header values and get N full dispatches.
-  // The key below is derived entirely from signature-covered material — an
-  // entity id from the payload, or a hash of the raw body — which is what makes
-  // the dedup boundary tamper-proof rather than merely convenient.
-  //
-  // Every downstream handler is separately idempotent, so the amplification
-  // would not have moved money; it would have removed a defence-in-depth layer
-  // for no correctness gain. If you change this, you are changing what "already
-  // processed" means AND weakening a trust boundary.
-  // #1132 — refund/dispute MUST be probed before payment. Razorpay sends
-  // `contains: ["refund","payment"]` on refund events, so a payment-first chain
-  // keyed every refund on a given payment to the same id. The second partial
-  // refund then matched as a duplicate and never reached handleRefundCreated —
-  // no Refund row, no earnings reversal, no credit note, no ledger posting,
-  // while the money had already left. Most-specific entity wins.
+  // Razorpay keeps `x-razorpay-event-id` across retries and dashboard replays,
+  // so it keys dedupe when present; the body hash is the fallback. The event type
+  // and entity id come from the signed body. Refund/dispute are probed before
+  // payment because refund events also carry the payment entity.
   const bodyHash = crypto
     .createHash("sha256")
     .update(body)
@@ -191,7 +174,11 @@ export async function POST(req: NextRequest) {
     event.payload?.order?.entity?.id ||
     event.account_id ||
     `body_${bodyHash}`;
-  const eventId = `${eventType}:${entityId}:${bodyHash}`;
+  const headerEventId = req.headers.get("x-razorpay-event-id")?.trim() ?? "";
+  const razorpayEventId = RAZORPAY_EVENT_ID.test(headerEventId)
+    ? headerEventId
+    : bodyHash;
+  const eventId = `${eventType}:${entityId}:${razorpayEventId}`;
 
   // Idempotency check (synchronous — must complete before returning 200)
   const { isNew, claim } = await logWebhookEvent(

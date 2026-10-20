@@ -2,10 +2,11 @@
  * Netlify scheduled ticker — ADR 27 (docs/enterprise/70-design-decisions/27-state-as-outbox-and-scheduled-ticker.md).
  *
  * Every five minutes this POSTs the `/api/cleanup/*` routes listed in
- * {@link TARGETS}: the money sweeps, the ledger reconcile, the Novu and email
- * outbox relays, the booking sweeps, the session-outcome jobs, the data-export
- * drain (every 10 min) and the moderation/erasure retry drain (every 30 min).
- * GitHub Actions runs the daily/weekly batch jobs and is NOT a backstop for a
+ * {@link TARGETS}: the money sweeps, the Novu and email outbox relays, the
+ * booking sweeps, the session-outcome jobs, the drains, hourly payout
+ * processing, and the money batch jobs inside their calendar windows
+ * ({@link TARGET_WINDOWS}). GitHub Actions runs only the ledger reconcile, the
+ * statutory exports and non-money batch jobs, and is NOT a backstop for a
  * ticker target: a target missing here runs nowhere unless a workflow names it.
  * It never writes money state itself: every target is `CRON_SECRET`-gated and
  * wraps its core in `withCronLock`, so overlapping runs answer 409 from the
@@ -77,6 +78,24 @@ const TARGETS = [
   "vest-referral-credits",
   // Support SLA warn/breach outbox alerts, 28-day RESOLVED auto-close, and T-72h/T-24h dispute alerts.
   "support-sla-sweep",
+  // Disburses APPROVED consultant and org payouts hourly; still gated on ENABLE_LIVE_PAYOUTS.
+  "process-payouts",
+  // Money batch jobs: each fires only inside its TARGET_WINDOWS entry.
+  "create-payout-batch",
+  "settle-invoice-accruals",
+  "expire-referral-credits",
+  "generate-subscription-invoices",
+  "abandoned-org-top-ups",
+  "advance-program-cycles",
+  "auto-renew-contracts",
+  "irp-uploader",
+  "sweep-abandoned-overage-charges",
+  "expire-contracts",
+  "msme-payment-alerts",
+  "timeout-member-overages",
+  "dunning",
+  "wallet-low-balance",
+  "reconcile-gateway-settlements",
 ] as const;
 
 type Target = (typeof TARGETS)[number];
@@ -137,6 +156,25 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   // Gateway polls per PENDING row plus a Serializable cascade per stranded row.
   "reconcile-refunds": 10,
   "support-sla-sweep": 20,
+  // Units per rail: a gateway call per disbursement, a transaction per minted payout.
+  "process-payouts": 5,
+  "create-payout-batch": 10,
+  "settle-invoice-accruals": 10,
+  "expire-referral-credits": 50,
+  "generate-subscription-invoices": 10,
+  "abandoned-org-top-ups": 200,
+  "advance-program-cycles": 25,
+  "auto-renew-contracts": 10,
+  "irp-uploader": 10,
+  "sweep-abandoned-overage-charges": 25,
+  "expire-contracts": 10,
+  // One bounded digest email; the route takes no limit.
+  "msme-payment-alerts": null,
+  "timeout-member-overages": 25,
+  dunning: 25,
+  "wallet-low-balance": 25,
+  // One recon page per slice; the route takes no limit.
+  "reconcile-gateway-settlements": null,
 };
 
 /**
@@ -183,11 +221,30 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   // 30, not 15: only the :05/:35 ticks have room under the 8-target cap, and a vest waits hours anyway.
   "vest-referral-credits": 30,
   "support-sla-sweep": 30,
+  "process-payouts": 60,
+  "create-payout-batch": 15,
+  "settle-invoice-accruals": 60,
+  "expire-referral-credits": 60,
+  "generate-subscription-invoices": 60,
+  "abandoned-org-top-ups": 60,
+  "advance-program-cycles": 60,
+  "auto-renew-contracts": 60,
+  "irp-uploader": 60,
+  "sweep-abandoned-overage-charges": 60,
+  "expire-contracts": 60,
+  "msme-payment-alerts": 60,
+  "timeout-member-overages": 60,
+  dunning: 60,
+  "wallet-low-balance": 60,
+  "reconcile-gateway-settlements": 60,
 };
 
 /**
- * Deterministic phase offsets (in minutes, modulo each target's interval)
- * stagger 10m, 15m, and 30m sweeps so no 5-minute tick fires more than 8 targets.
+ * Deterministic phase offsets (in minutes, modulo each target's interval).
+ * Interval targets fill 95 of the 96 slots an hour under 8 per tick; the one
+ * free slot (:00) takes process-payouts, and windowed targets sit on non-:00
+ * minutes with at most one per tick, so no tick fires more than
+ * {@link MAX_TARGETS_PER_TICK}.
  */
 export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   // Phase 0 (:00, :15, :30, :45) — 6 targets + sentry-ingest-canary (00:00, 06:00, 12:00, 18:00 UTC)
@@ -223,12 +280,115 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "retry-moderation-enforcement": 25,
   "vest-referral-credits": 5,
   "support-sla-sweep": 10,
+  "process-payouts": 0,
+  "create-payout-batch": 5,
+  // Daily 03:00 window, in the order the Actions fleet ran them.
+  "generate-subscription-invoices": 5,
+  "abandoned-org-top-ups": 10,
+  "advance-program-cycles": 15,
+  "auto-renew-contracts": 20,
+  "irp-uploader": 25,
+  "sweep-abandoned-overage-charges": 30,
+  "expire-contracts": 35,
+  "msme-payment-alerts": 40,
+  // Monthly windows on the 1st, on minutes the daily window leaves free.
+  "settle-invoice-accruals": 45,
+  "expire-referral-credits": 50,
+  // Daily 23:30 window.
+  "timeout-member-overages": 35,
+  dunning: 40,
+  "wallet-low-balance": 45,
+  // Daily 06:30 window, on the one minute no other window uses.
+  "reconcile-gateway-settlements": 55,
 };
+
+/** The most targets one tick may fire; pinned by the cadence test. */
+export const MAX_TARGETS_PER_TICK = 9;
+
+/**
+ * A UTC calendar window. Inside it the target fires on its every/offset slots;
+ * outside it never. `weekdayUtc` (0 = Sunday) or `dayOfMonthUtc` is checked
+ * against the window's start, so a window may run past midnight.
+ */
+interface CalendarWindow {
+  startMinuteUtc: number;
+  windowMinutes: number;
+  weekdayUtc?: number;
+  dayOfMonthUtc?: number;
+}
+
+// Runs to 20:00 so seventeen hourly slices drain the day's cohort before the Monday payout window opens.
+const DAILY_0300: CalendarWindow = { startMinuteUtc: 180, windowMinutes: 1020 };
+const DAILY_2330: CalendarWindow = { startMinuteUtc: 1410, windowMinutes: 180 };
+
+/** Every windowed target re-runs on its slots until the window closes; each run is a bounded, claim-based slice. */
+const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
+  "create-payout-batch": {
+    weekdayUtc: 1,
+    startMinuteUtc: 1200,
+    windowMinutes: 180,
+  },
+  "settle-invoice-accruals": {
+    dayOfMonthUtc: 1,
+    startMinuteUtc: 240,
+    windowMinutes: 960,
+  },
+  "expire-referral-credits": {
+    dayOfMonthUtc: 1,
+    startMinuteUtc: 190,
+    windowMinutes: 180,
+  },
+  "generate-subscription-invoices": DAILY_0300,
+  "abandoned-org-top-ups": DAILY_0300,
+  "advance-program-cycles": DAILY_0300,
+  "auto-renew-contracts": DAILY_0300,
+  "irp-uploader": DAILY_0300,
+  "sweep-abandoned-overage-charges": DAILY_0300,
+  "expire-contracts": DAILY_0300,
+  // One slot: the digest email is not idempotent, so it must not repeat.
+  "msme-payment-alerts": { startMinuteUtc: 180, windowMinutes: 60 },
+  "timeout-member-overages": DAILY_2330,
+  dunning: DAILY_2330,
+  "wallet-low-balance": DAILY_2330,
+  // After Razorpay's T+1/T+2 settlements land; six hourly slices of one recon page each.
+  "reconcile-gateway-settlements": { startMinuteUtc: 390, windowMinutes: 360 },
+};
+
+/**
+ * The start of the window `now` falls in, or null when the target is windowed
+ * and `now` is outside it. Exported so a test can pin the calendar gate.
+ */
+export function windowStartFor(name: Target, now: Date): Date | null {
+  const w = TARGET_WINDOWS[name];
+  if (!w) return null;
+  const minuteOfDay = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const sinceStart = (((minuteOfDay - w.startMinuteUtc) % 1440) + 1440) % 1440;
+  if (sinceStart >= w.windowMinutes) return null;
+  const start = new Date(
+    Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      0,
+      minuteOfDay - sinceStart,
+    ),
+  );
+  if (w.weekdayUtc !== undefined && start.getUTCDay() !== w.weekdayUtc) {
+    return null;
+  }
+  if (w.dayOfMonthUtc !== undefined && start.getUTCDate() !== w.dayOfMonthUtc) {
+    return null;
+  }
+  return start;
+}
 
 /** The targets due on this tick; exported so a test can pin the cadence. */
 export function dueTargets(now: Date): Target[] {
   const minuteOfDay = now.getUTCHours() * 60 + now.getUTCMinutes();
   return TARGETS.filter((name) => {
+    if (name in TARGET_WINDOWS && windowStartFor(name, now) === null) {
+      return false;
+    }
     const every = TARGET_EVERY_MINUTES[name];
     if (every === undefined) return true;
     const offset = TARGET_OFFSET_MINUTES[name] ?? 0;
@@ -264,16 +424,37 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "reconcile-orphaned-payments": 20_000,
   "process-data-exports": 20_000,
   "retry-moderation-enforcement": 20_000,
+  "process-payouts": 24_000,
+  "create-payout-batch": 20_000,
+  "settle-invoice-accruals": 20_000,
+  "expire-referral-credits": 20_000,
+  "generate-subscription-invoices": 20_000,
+  "advance-program-cycles": 20_000,
+  "auto-renew-contracts": 20_000,
+  "irp-uploader": 20_000,
+  "sweep-abandoned-overage-charges": 20_000,
+  "expire-contracts": 20_000,
+  "msme-payment-alerts": 20_000,
+  "timeout-member-overages": 20_000,
+  dunning: 20_000,
+  "wallet-low-balance": 20_000,
+  "reconcile-gateway-settlements": 20_000,
 };
 
-/** The request one target gets; exported so a test can pin it without a Netlify runtime. */
+/**
+ * The request one target gets; exported so a test can pin it without a Netlify
+ * runtime. A windowed target also carries its window start, from `now`.
+ */
 export function targetRequest(
   baseUrl: string,
   name: Target,
+  now?: Date,
 ): { url: string; timeoutMs: number } {
   const limit = name in TARGET_LIMITS ? TARGET_LIMITS[name] : DEFAULT_LIMIT;
+  const windowStart = now ? windowStartFor(name, now) : null;
   const query = [
     limit === null || limit === undefined ? null : `limit=${limit}`,
+    windowStart ? `windowStart=${windowStart.toISOString()}` : null,
     TARGET_QUERIES[name] ?? null,
   ]
     .filter((q): q is string => q !== null)
@@ -302,8 +483,8 @@ interface TickBody {
  * one re-firing every due target. With `reconcile-payment-status` failing on
  * every tick, the ticker ran at 3× for weeks. A 5xx buys three invocations and
  * nothing else — the target's own route has already logged its failure, the
- * GitHub Actions twin is the backstop, and a warm-tick failure is read from the
- * `failed` list in the JSON line this function logs, not from the status.
+ * next due tick retries it, and a warm-tick failure is read from the `failed`
+ * list in the JSON line this function logs, not from the status.
  */
 export function statusFor(_failed: TickBody["failed"]): number {
   return 200;
@@ -352,13 +533,14 @@ async function hitTarget(
   baseUrl: string,
   secret: string,
   name: Target,
+  now: Date,
 ): Promise<{
   name: string;
   status: number;
   maintenance?: boolean;
   errorBody?: string;
 }> {
-  const { url, timeoutMs } = targetRequest(baseUrl, name);
+  const { url, timeoutMs } = targetRequest(baseUrl, name, now);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -405,17 +587,28 @@ async function hitTarget(
   }
 }
 
+/** Targets whose 207 means some rows failed; every other target's 207 is a successful run that flagged rows. */
+const PARTIAL_FAILURE_TARGETS: ReadonlySet<string> = new Set([
+  "process-payouts",
+  ...Object.keys(TARGET_WINDOWS),
+]);
+
 /**
  * Which bucket a target's status lands in; exported so a test can pin it.
  * 409 is the cron lock's loser; a 503 whose body carries the maintenance
  * `phase` is a twin refusing inside a hold — both expected, neither a failure.
- * A bare 503 has no such marker and stays failed (#1598 P1-W03).
+ * A bare 503 has no such marker and stays failed. A 207 is failed only for
+ * {@link PARTIAL_FAILURE_TARGETS}.
  */
 export function bucketFor(
   status: number,
   maintenance = false,
+  name = "",
 ): "ok" | "held" | "failed" {
-  if (status === 200 || status === 207) return "ok";
+  if (status === 200) return "ok";
+  if (status === 207) {
+    return PARTIAL_FAILURE_TARGETS.has(name) ? "failed" : "ok";
+  }
   if (status === 409 || (status === 503 && maintenance)) return "held";
   return "failed";
 }
@@ -651,7 +844,7 @@ export default async function cronTick(_req: Request): Promise<Response> {
   const targets = dueTargets(tickDate);
 
   const settled = await Promise.allSettled(
-    targets.map((name) => hitTarget(baseUrl, secret, name)),
+    targets.map((name) => hitTarget(baseUrl, secret, name, tickDate)),
   );
 
   const ok: string[] = [];
@@ -669,7 +862,7 @@ export default async function cronTick(_req: Request): Promise<Response> {
       result.status === "fulfilled" && result.value.maintenance === true;
     const errorBody =
       result.status === "fulfilled" ? result.value.errorBody : undefined;
-    const bucket = bucketFor(status, maintenance);
+    const bucket = bucketFor(status, maintenance, name);
     if (bucket === "ok") ok.push(name);
     else if (bucket === "held") lockHeld.push(name);
     else {

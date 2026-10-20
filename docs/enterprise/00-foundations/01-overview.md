@@ -816,7 +816,7 @@ across `prisma migrate reset`). Source: `prisma/seedFiles/14a-create-organizatio
 | Arjun's solo org (`arjun-anderson-coaching-…`) | Host (canSponsor=false, canHost=true)    | —       | —             | Single-consultant convenience org; dynamic slug.         |
 
 **Tour owner:** `tour-owner@familiarise.dev`, password from
-`SEED_PASSWORD` (default `SeedPass123!`). Created with
+`SEED_PASSWORD` (default: the seed default in `prisma/seedFiles/1a-create-users.ts`). Created with
 `UserRole = ORG_WORKSPACE` and `OrgWorkspaceProfile`; OWNER of `wipro` so
 the operator portfolio (`/dashboard/org-workspace/<id>/home`) renders
 populated on first sign-in.

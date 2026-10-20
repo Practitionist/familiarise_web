@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import * as Sentry from "@sentry/nextjs";
+import { z } from "zod";
 import {
   CronLockHeldError,
   CronLockUnavailableError,
@@ -95,6 +96,30 @@ export function parseLimitParamOrDefault(
   fallback: number,
 ): number {
   return parseLimitParam(req) ?? fallback;
+}
+
+/** Thrown by {@link parseWindowStartParam} for a `?windowStart=` that is not an ISO instant in the past. */
+export class InvalidWindowStartError extends Error {
+  constructor() {
+    super("INVALID_WINDOW_START");
+    this.name = "InvalidWindowStartError";
+  }
+}
+
+const windowStartSchema = z.string().datetime();
+
+/**
+ * The calendar window start the ticker sends with a windowed target; a slice
+ * treats its cohort as of this instant. Absent for manual callers.
+ */
+export function parseWindowStartParam(req: NextRequest): Date | undefined {
+  const raw = req.nextUrl.searchParams.get("windowStart");
+  if (raw === null) return undefined;
+  const parsed = windowStartSchema.safeParse(raw);
+  if (!parsed.success) throw new InvalidWindowStartError();
+  const at = new Date(parsed.data);
+  if (at.getTime() > Date.now()) throw new InvalidWindowStartError();
+  return at;
 }
 
 /**
@@ -222,8 +247,12 @@ export function cleanupRoute<T extends object>(opts: {
         );
         return { body: { error: error.message }, status: 503, ok: false };
       }
-      if (error instanceof InvalidLimitError) {
-        return { body: { error: "INVALID_LIMIT" }, status: 400, ok: true };
+      // Each message is its 400 error code.
+      if (
+        error instanceof InvalidLimitError ||
+        error instanceof InvalidWindowStartError
+      ) {
+        return { body: { error: error.message }, status: 400, ok: true };
       }
       if (error instanceof MaintenanceActiveError) {
         return {

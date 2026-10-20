@@ -8,13 +8,9 @@ All permutations: platform roles × enterprise org roles × org types.
 
 ---
 
-## Universal Seed Password
+## Seed Passwords
 
-All users seeded via `prisma/seedFiles/1a-create-users.ts` share one password:
-
-```
-SeedPass123!
-```
+Non-operator users seeded via `prisma/seedFiles/1a-create-users.ts` share the seed default password (see that file). ADMIN and STAFF accounts use the `SEED_OPERATOR_PASSWORD` value from your local `.env`; ask the lead.
 
 Three manually-created test accounts (`owner-test`, `learner-test`, `a@gmail.com`) and the five `tour-2026-04-26-*` accounts were created outside the seed script — their passwords are **unknown**. Reset them via `/auth/forgot-password` or the Supabase Auth dashboard if needed.
 
@@ -36,28 +32,28 @@ Three manually-created test accounts (`owner-test`, `learner-test`, `a@gmail.com
 
 ### ADMIN accounts
 
-| Name          | Email                       | Password       |
-| ------------- | --------------------------- | -------------- |
-| Olivia Brown  | olivia.brown@protonmail.com | `SeedPass123!` |
-| Patrick Brown | patrick.brown@gmail.com     | `SeedPass123!` |
-| Priya Brown   | priya.brown@outlook.com     | `SeedPass123!` |
+| Name          | Email                       | Password                 |
+| ------------- | --------------------------- | ------------------------ |
+| Olivia Brown  | olivia.brown@protonmail.com | `SEED_OPERATOR_PASSWORD` |
+| Patrick Brown | patrick.brown@gmail.com     | `SEED_OPERATOR_PASSWORD` |
+| Priya Brown   | priya.brown@outlook.com     | `SEED_OPERATOR_PASSWORD` |
 
 ---
 
 ### STAFF accounts
 
-| Name          | Email                     | Password       |
-| ------------- | ------------------------- | -------------- |
-| Maria Brown   | maria.brown@gmail.com     | `SeedPass123!` |
-| Michael Brown | michael.brown@outlook.com | `SeedPass123!` |
-| Natalie Brown | natalie.brown@yahoo.com   | `SeedPass123!` |
-| Nathan Brown  | nathan.brown@hotmail.com  | `SeedPass123!` |
+| Name          | Email                     | Password                 |
+| ------------- | ------------------------- | ------------------------ |
+| Maria Brown   | maria.brown@gmail.com     | `SEED_OPERATOR_PASSWORD` |
+| Michael Brown | michael.brown@outlook.com | `SEED_OPERATOR_PASSWORD` |
+| Natalie Brown | natalie.brown@yahoo.com   | `SEED_OPERATOR_PASSWORD` |
+| Nathan Brown  | nathan.brown@hotmail.com  | `SEED_OPERATOR_PASSWORD` |
 
 ---
 
 ### CONSULTANT accounts (independent + org-linked)
 
-All passwords: `SeedPass123!`
+All passwords: the seed default password
 
 | Name               | Email                             | Enterprise context                                             |
 | ------------------ | --------------------------------- | -------------------------------------------------------------- |
@@ -91,7 +87,7 @@ All passwords: `SeedPass123!`
 
 ### CONSULTEE accounts (marketplace + org-linked)
 
-All passwords: `SeedPass123!`
+All passwords: the seed default password
 
 | Name              | Email                          | Enterprise context                                        |
 | ----------------- | ------------------------------ | --------------------------------------------------------- |
@@ -125,11 +121,11 @@ All passwords: `SeedPass123!`
 
 ### ORG_WORKSPACE accounts
 
-| Name       | Email                        | Password       | Orgs owned                                       | PayoutRecipient on membership |
-| ---------- | ---------------------------- | -------------- | ------------------------------------------------ | ----------------------------- |
-| charlotte  | charlotte.anderson@gmail.com | `SeedPass123!` | IIT Madras (HYBRID)                              | ORGANIZATION                  |
-| a          | a@gmail.com                  | **Unknown**    | LearnPro Test (HOST)                             | SELF                          |
-| owner-test | owner-test@example.com       | **Unknown**    | Wipro test (SPONSOR), GitHub India Test (HYBRID) | SELF                          |
+| Name       | Email                        | Password     | Orgs owned                                       | PayoutRecipient on membership |
+| ---------- | ---------------------------- | ------------ | ------------------------------------------------ | ----------------------------- |
+| charlotte  | charlotte.anderson@gmail.com | seed default | IIT Madras (HYBRID)                              | ORGANIZATION                  |
+| a          | a@gmail.com                  | **Unknown**  | LearnPro Test (HOST)                             | SELF                          |
+| owner-test | owner-test@example.com       | **Unknown**  | Wipro test (SPONSOR), GitHub India Test (HYBRID) | SELF                          |
 
 ---
 
@@ -170,12 +166,12 @@ A platform `ADMIN` gets a **read-only** synthetic OWNER stub (`__admin_stub_<use
 
 **Funding:** INVOICE · **Program:** LICENSED_SEAT · **PO required:** yes · **Payment terms:** 60 days
 
-| Member            | Email                        | Password       | MemberRole | UserRole  | PayoutRecipient |
-| ----------------- | ---------------------------- | -------------- | ---------- | --------- | --------------- |
-| Samantha Anderson | samantha.anderson@yahoo.com  | `SeedPass123!` | **OWNER**  | CONSULTEE | SELF            |
-| Olivia Anderson   | olivia.anderson@gmail.com    | `SeedPass123!` | LEARNER    | CONSULTEE | SELF            |
-| Patrick Anderson  | patrick.anderson@outlook.com | `SeedPass123!` | LEARNER    | CONSULTEE | SELF            |
-| Priya Anderson    | priya.anderson@yahoo.com     | `SeedPass123!` | LEARNER    | CONSULTEE | SELF            |
+| Member            | Email                        | Password     | MemberRole | UserRole  | PayoutRecipient |
+| ----------------- | ---------------------------- | ------------ | ---------- | --------- | --------------- |
+| Samantha Anderson | samantha.anderson@yahoo.com  | seed default | **OWNER**  | CONSULTEE | SELF            |
+| Olivia Anderson   | olivia.anderson@gmail.com    | seed default | LEARNER    | CONSULTEE | SELF            |
+| Patrick Anderson  | patrick.anderson@outlook.com | seed default | LEARNER    | CONSULTEE | SELF            |
+| Priya Anderson    | priya.anderson@yahoo.com     | seed default | LEARNER    | CONSULTEE | SELF            |
 
 ---
 
@@ -183,14 +179,14 @@ A platform `ADMIN` gets a **read-only** synthetic OWNER stub (`__admin_stub_<use
 
 **RateCard:** 10/10/80 default · **PayoutAccount:** present · No billing/sponsor side
 
-| Member          | Email                          | Password       | MemberRole | UserRole   | PayoutRecipient |
-| --------------- | ------------------------------ | -------------- | ---------- | ---------- | --------------- |
-| Daniel Anderson | daniel.anderson@outlook.com    | `SeedPass123!` | **OWNER**  | CONSULTANT | SELF            |
-| Aarav Anderson  | aarav.anderson@gmail.com       | `SeedPass123!` | EXPERT     | CONSULTANT | SELF            |
-| Aditi Anderson  | aditi.anderson@outlook.com     | `SeedPass123!` | EXPERT     | CONSULTANT | SELF            |
-| Alex Anderson   | alex.anderson@yahoo.com        | `SeedPass123!` | EXPERT     | CONSULTANT | SELF            |
-| Amit Anderson   | amit.anderson@hotmail.com      | `SeedPass123!` | EXPERT     | CONSULTANT | SELF            |
-| Ananya Anderson | ananya.anderson@protonmail.com | `SeedPass123!` | EXPERT     | CONSULTANT | SELF            |
+| Member          | Email                          | Password     | MemberRole | UserRole   | PayoutRecipient |
+| --------------- | ------------------------------ | ------------ | ---------- | ---------- | --------------- |
+| Daniel Anderson | daniel.anderson@outlook.com    | seed default | **OWNER**  | CONSULTANT | SELF            |
+| Aarav Anderson  | aarav.anderson@gmail.com       | seed default | EXPERT     | CONSULTANT | SELF            |
+| Aditi Anderson  | aditi.anderson@outlook.com     | seed default | EXPERT     | CONSULTANT | SELF            |
+| Alex Anderson   | alex.anderson@yahoo.com        | seed default | EXPERT     | CONSULTANT | SELF            |
+| Amit Anderson   | amit.anderson@hotmail.com      | seed default | EXPERT     | CONSULTANT | SELF            |
+| Ananya Anderson | ananya.anderson@protonmail.com | seed default | EXPERT     | CONSULTANT | SELF            |
 
 ---
 
@@ -198,18 +194,18 @@ A platform `ADMIN` gets a **read-only** synthetic OWNER stub (`__admin_stub_<use
 
 **Funding:** WALLET · **Program:** CREDIT_POOL · **Both billing + payout flows active**
 
-| Member             | Email                             | Password       | MemberRole | UserRole      | PayoutRecipient             |
-| ------------------ | --------------------------------- | -------------- | ---------- | ------------- | --------------------------- |
-| charlotte          | charlotte.anderson@gmail.com      | `SeedPass123!` | **OWNER**  | ORG_WORKSPACE | ORGANIZATION                |
-| Andrew Anderson    | andrew.anderson@gmail.com         | `SeedPass123!` | EXPERT     | CONSULTANT    | **ORGANIZATION** (salaried) |
-| Angela Anderson    | angela.anderson@outlook.com       | `SeedPass123!` | EXPERT     | CONSULTANT    | **ORGANIZATION** (salaried) |
-| Arjun Anderson     | arjun.anderson@yahoo.com          | `SeedPass123!` | EXPERT     | CONSULTANT    | SELF (marketplace share)    |
-| Benjamin Anderson  | benjamin.anderson@hotmail.com     | `SeedPass123!` | EXPERT     | CONSULTANT    | SELF                        |
-| Catherine Anderson | catherine.anderson@protonmail.com | `SeedPass123!` | EXPERT     | CONSULTANT    | SELF                        |
-| Rachel Anderson    | rachel.anderson@hotmail.com       | `SeedPass123!` | LEARNER    | CONSULTEE     | SELF                        |
-| Raj Anderson       | raj.anderson@protonmail.com       | `SeedPass123!` | LEARNER    | CONSULTEE     | SELF                        |
-| Rebecca Anderson   | rebecca.anderson@gmail.com        | `SeedPass123!` | LEARNER    | CONSULTEE     | SELF                        |
-| Robert Anderson    | robert.anderson@outlook.com       | `SeedPass123!` | LEARNER    | CONSULTEE     | SELF                        |
+| Member             | Email                             | Password     | MemberRole | UserRole      | PayoutRecipient             |
+| ------------------ | --------------------------------- | ------------ | ---------- | ------------- | --------------------------- |
+| charlotte          | charlotte.anderson@gmail.com      | seed default | **OWNER**  | ORG_WORKSPACE | ORGANIZATION                |
+| Andrew Anderson    | andrew.anderson@gmail.com         | seed default | EXPERT     | CONSULTANT    | **ORGANIZATION** (salaried) |
+| Angela Anderson    | angela.anderson@outlook.com       | seed default | EXPERT     | CONSULTANT    | **ORGANIZATION** (salaried) |
+| Arjun Anderson     | arjun.anderson@yahoo.com          | seed default | EXPERT     | CONSULTANT    | SELF (marketplace share)    |
+| Benjamin Anderson  | benjamin.anderson@hotmail.com     | seed default | EXPERT     | CONSULTANT    | SELF                        |
+| Catherine Anderson | catherine.anderson@protonmail.com | seed default | EXPERT     | CONSULTANT    | SELF                        |
+| Rachel Anderson    | rachel.anderson@hotmail.com       | seed default | LEARNER    | CONSULTEE     | SELF                        |
+| Raj Anderson       | raj.anderson@protonmail.com       | seed default | LEARNER    | CONSULTEE     | SELF                        |
+| Rebecca Anderson   | rebecca.anderson@gmail.com        | seed default | LEARNER    | CONSULTEE     | SELF                        |
+| Robert Anderson    | robert.anderson@outlook.com       | seed default | LEARNER    | CONSULTEE     | SELF                        |
 
 ---
 
@@ -217,9 +213,9 @@ A platform `ADMIN` gets a **read-only** synthetic OWNER stub (`__admin_stub_<use
 
 Single-consultant convenience org.
 
-| Member         | Email                    | Password       | MemberRole | UserRole   | PayoutRecipient |
-| -------------- | ------------------------ | -------------- | ---------- | ---------- | --------------- |
-| Arjun Anderson | arjun.anderson@yahoo.com | `SeedPass123!` | **OWNER**  | CONSULTANT | SELF            |
+| Member         | Email                    | Password     | MemberRole | UserRole   | PayoutRecipient |
+| -------------- | ------------------------ | ------------ | ---------- | ---------- | --------------- |
+| Arjun Anderson | arjun.anderson@yahoo.com | seed default | **OWNER**  | CONSULTANT | SELF            |
 
 ---
 
@@ -242,10 +238,10 @@ Single-consultant convenience org.
 
 ### LearnPro Test — HOST (`learnpro-test`)
 
-| Member         | Email                      | Password       | MemberRole | UserRole      | PayoutRecipient |
-| -------------- | -------------------------- | -------------- | ---------- | ------------- | --------------- |
-| a              | a@gmail.com                | **Unknown**    | **OWNER**  | ORG_WORKSPACE | SELF            |
-| Aditi Anderson | aditi.anderson@outlook.com | `SeedPass123!` | EXPERT     | CONSULTANT    | SELF            |
+| Member         | Email                      | Password     | MemberRole | UserRole      | PayoutRecipient |
+| -------------- | -------------------------- | ------------ | ---------- | ------------- | --------------- |
+| a              | a@gmail.com                | **Unknown**  | **OWNER**  | ORG_WORKSPACE | SELF            |
+| Aditi Anderson | aditi.anderson@outlook.com | seed default | EXPERT     | CONSULTANT    | SELF            |
 
 ---
 

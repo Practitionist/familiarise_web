@@ -1,10 +1,10 @@
 /**
  * #779 §A — Cron: advance ProgramAssignment cycles.
  *
- * Schedule: daily at 02:15 UTC (`.github/workflows/advance-program-cycles.yml`)
- * — ahead of auto-renew-contracts (02:30) and expire-contracts (03:00) so an
- * assignment whose contract is still ACTIVE rolls into its next period before
- * any contract-side state moves under it.
+ * Schedule: the ticker's daily window from 03:00 UTC, on a slot ahead of
+ * auto-renew-contracts and expire-contracts so an assignment whose contract is
+ * still ACTIVE rolls into its next period before any contract-side state moves
+ * under it.
  *
  * Per assignment whose period has ended (status ACTIVE, rolledAt null,
  * periodEnd<=now) on a live program:
@@ -19,16 +19,12 @@
  * won, skip) → side effects in same tx → OrgAuditLog row. Mirrors
  * jobs/contracts/expire-contracts.ts.
  *
- * Usage:
- *   npx tsx jobs/billing/advance-program-cycles.ts
- *
  * Deferred (#777): CREDIT_POOL `minimumCreditsPerPeriod` shortfall billing
  * ("unconsumed commitment rolls into the next invoice") is NOT handled here —
  * it needs a per-program cycle-close concept (assignments roll individually),
  * so it ships with its own design when a customer commits to minimums.
  */
 
-import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { releaseSeatsForClosedAssignments } from "@/lib/api/organizations/seat-count";
@@ -40,9 +36,7 @@ import {
 import { Prisma } from "@prisma/client";
 import { BILLABLE_ORG_STATUSES, isBillable } from "@/lib/enterprise/org-status";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
-import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
-import { runJob } from "@/lib/observability/job-sentry";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { EMAIL_BUDGET_MS } from "@/lib/email/config";
 import type { StagedRecipientEmail as StagedEmail } from "@/lib/email/send-to-recipients";
@@ -55,7 +49,7 @@ import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import { notifyOrgSeatRevoked } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
 
-// Bounded scan — one batch per run; the next tick drains the remainder.
+// Bounded scan; `limit` then caps the claims a run attempts.
 const BATCH_SIZE = 500;
 
 interface AdvanceStats {
@@ -63,6 +57,8 @@ interface AdvanceStats {
   rolled: number;
   closed: number;
   skipped: number;
+  failed: number;
+  remaining: number;
 }
 
 type TxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
@@ -196,16 +192,39 @@ async function dispatchClosedSeatNotifications(
   }
 }
 
-export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
-  const stats: AdvanceStats = { scanned: 0, rolled: 0, closed: 0, skipped: 0 };
+/** With `windowStart`, only periods ended by it are due, so every slice of a window sees one cohort. */
+export async function runAdvanceProgramCycles(opts: {
+  limit?: number;
+  windowStart?: Date;
+}): Promise<AdvanceStats> {
+  return withCronLock(
+    "advance-program-cycles",
+    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
+    () => advanceProgramCycles(opts),
+  );
+}
+
+async function advanceProgramCycles(opts: {
+  limit?: number;
+  windowStart?: Date;
+}): Promise<AdvanceStats> {
+  const stats: AdvanceStats = {
+    scanned: 0,
+    rolled: 0,
+    closed: 0,
+    skipped: 0,
+    failed: 0,
+    remaining: 0,
+  };
   const now = new Date();
+  const asOf = opts.windowStart ?? now;
 
   // Candidates: ended periods on live programs, not yet processed.
   const due = await prisma.programAssignment.findMany({
     where: {
       status: "ACTIVE",
       rolledAt: null,
-      periodEnd: { lte: now },
+      periodEnd: { lte: asOf },
       // E2E-audit P1 fix — never roll assignments for an org that is no
       // longer billable (SUSPENDED/DEACTIVATED). A suspended org used to get
       // fresh successor cycles minted every period end.
@@ -217,6 +236,7 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
         },
       },
     },
+    orderBy: { periodEnd: "asc" },
     take: BATCH_SIZE,
     select: {
       id: true,
@@ -246,7 +266,11 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
   });
   stats.scanned = due.length;
 
+  let attempted = 0;
+  let visited = 0;
   for (const a of due) {
+    if (opts.limit !== undefined && attempted >= opts.limit) break;
+    visited += 1;
     const cycle = resolveProgramCycle(a.program);
     if (cycle === null) {
       // Malformed program (no money-config) — nothing to compute a period from.
@@ -261,6 +285,7 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
 
     const orgId = a.program.contract.organizationId;
 
+    attempted += 1;
     try {
       // #1132 follow-up — transient P2034 aborts now retry; persistent ones
       // still fall through to the outer catch's skip-with-Sentry semantics.
@@ -415,38 +440,10 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
       Sentry.captureException(err, {
         tags: { subsystem: "jobs", job: "advance-program-cycles" },
       });
-      stats.skipped += 1;
+      stats.failed += 1;
     }
   }
 
+  stats.remaining = due.length - visited;
   return stats;
-}
-
-async function main() {
-  await abortIfMaintenance("advance-program-cycles");
-  console.log(
-    `[advance-program-cycles] Starting at ${new Date().toISOString()}`,
-  );
-  Sentry.logger.info("job:advance-program-cycles started");
-  const stats = await withCronLock(
-    "advance-program-cycles",
-    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
-    () => runAdvanceProgramCycles(),
-  );
-  Sentry.logger.info("job:advance-program-cycles finished", {
-    scanned: stats.scanned,
-    rolled: stats.rolled,
-    closed: stats.closed,
-    skipped: stats.skipped,
-  });
-  console.log(
-    `[advance-program-cycles] Done. scanned=${stats.scanned} rolled=${stats.rolled} closed=${stats.closed} skipped=${stats.skipped}`,
-  );
-}
-
-// Self-execute only when invoked directly (importable for unit tests).
-if (require.main === module) {
-  runJob("advance-program-cycles", () =>
-    main().finally(() => prisma.$disconnect()),
-  );
 }

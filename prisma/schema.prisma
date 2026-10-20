@@ -1349,7 +1349,8 @@ model Organization {
   maintenanceWindows MaintenanceWindow[]
 
   // #778 §D — GST credit notes (Sec 34) issued against this org's invoices.
-  creditNotes CreditNote[]
+  creditNotes     CreditNote[]
+  invoiceReceipts OrganizationInvoiceReceipt[]
 
   // #appt-support — org-scoped read views over members' per-appointment support
   // threads + CSAT (denormalized org tag; org admins triage / see quality).
@@ -2181,8 +2182,15 @@ model OrganizationPayoutAccount {
   /// Optimistic-lock clock — same CAS contract as Organization.version.
   version    Int                    @default(1)
 
+  /// Mint skips this account until then; stamped when the destination changes.
+  payoutsAllowedAfter DateTime? @db.Timestamptz
+  /// The org froze payouts from the change email; only an admin clears it.
+  payoutsFrozenAt     DateTime? @db.Timestamptz
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  payouts OrganizationPayout[]
 }
 
 enum OrgPayoutAccountStatus {
@@ -2295,13 +2303,19 @@ model OrganizationPayout {
   fxRateUsed        Decimal?            @db.Decimal(18, 6)
   firceRef          String?
 
-  payoutReference String?
-  failureReason   String?
-  processedAt     DateTime? @db.Timestamptz
-  failedAt        DateTime? @db.Timestamptz
-  createdBy       String?
-  approvedAt      DateTime? @db.Timestamptz
-  approvedBy      String?
+  payoutReference            String?
+  failureReason              String?
+  processedAt                DateTime? @db.Timestamptz
+  failedAt                   DateTime? @db.Timestamptz
+  createdBy                  String?
+  approvedAt                 DateTime? @db.Timestamptz
+  approvedBy                 String?
+  /// The org member (user id) whose approval moved this payout on.
+  orgApprovedBy              String?
+  /// Set when the org approved a payout that still needs a Familiarise admin's co-approval; it stays PENDING until then.
+  platformApprovalRequiredAt DateTime? @db.Timestamptz
+  /// A Familiarise hold: processing never sends this payout while set.
+  platformHeldAt             DateTime? @db.Timestamptz
 
   /// A1: live RazorpayX submission response.
   /// `gatewayPayoutId` is the RazorpayX payout id. UTR — Unique Transaction Reference; the bank/RBI
@@ -2325,6 +2339,10 @@ model OrganizationPayout {
   /// window. Manual / route-driven payouts leave this null. Unique when
   /// present so two cron runs cannot both insert the same key.
   idempotencyKey String? @unique
+
+  /// The destination snapshotted at mint; processing sends to exactly this account.
+  orgPayoutAccountId String?
+  orgPayoutAccount   OrganizationPayoutAccount? @relation(fields: [orgPayoutAccountId], references: [id], onDelete: SetNull)
 
   earnings   OrganizationEarnings[]
   tdsRecords TDSRecord[]
@@ -2467,6 +2485,7 @@ model OrganizationInvoice {
 
   // #778 §D — GST credit notes (Sec 34) adjusting this invoice.
   creditNotes CreditNote[]
+  receipts    OrganizationInvoiceReceipt[]
 
   /// #779 §A — DUNNING lifecycle. The dunning cron flips ISSUED→OVERDUE when
   /// dueDate passes (no new status value — OVERDUE exists), then escalates.
@@ -2496,6 +2515,31 @@ model OrganizationInvoice {
   @@index([billingAccountId])
   @@index([contractId])
   @@index([purchaseOrderId])
+}
+
+/// Money received against an org invoice; the invoice is PAID once these and its credit notes cover the total.
+model OrganizationInvoiceReceipt {
+  id             String               @id @default(cuid())
+  organizationId String
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  invoiceId      String
+  invoice        OrganizationInvoice  @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  amountPaise    BigInt
+  method         InvoiceReceiptMethod
+  /// The bank UTR, or the gateway `pay_…` id.
+  reference      String               @db.VarChar(64)
+  receivedOn     DateTime             @db.Date
+  /// The admin who recorded a bank transfer; null for a gateway capture.
+  recordedById   String?
+  createdAt      DateTime             @default(now()) @db.Timestamptz
+
+  @@unique([organizationId, reference])
+  @@index([invoiceId])
+}
+
+enum InvoiceReceiptMethod {
+  BANK_TRANSFER
+  GATEWAY
 }
 
 // Typed line items for OrganizationInvoice — replaces the `items` Json
@@ -2926,6 +2970,9 @@ enum LedgerAccountKind {
   TDS_PAYABLE // TDS withheld, owed to the government
   GST_PAYABLE // GST collected, owed to the government
   UNAPPLIED_RECEIPTS // a capture staged for auto-refund, owed back to the payer
+  GATEWAY_CLEARING // PG captures the gateway holds for us until it settles them to CASH
+  GATEWAY_FEE // expense: the gateway's fee net of its GST
+  GST_INPUT_CREDIT // asset: GST charged on the gateway fee, claimable as input tax credit
 }
 
 enum LedgerDirection {
@@ -2990,6 +3037,8 @@ enum LedgerTransactionKind {
   GRANT
   REFERRAL_CREDIT // vest, restore, reversal and breakage of referral promotional credit
   UNAPPLIED_RECEIPT // a parked capture's cash, or its release when an operator recovers the booking
+  GATEWAY_FEE // the gateway's fee and its GST on one capture, out of GATEWAY_CLEARING
+  GATEWAY_SETTLEMENT // one settlement's net moved from GATEWAY_CLEARING to CASH
 }
 
 model LedgerTransaction {
@@ -3030,6 +3079,54 @@ model LedgerEntry {
 
   @@index([accountId, createdAt])
   @@index([transactionId])
+}
+
+/// One row of the gateway's settlement recon report, matched against our money
+/// rows by `reconcile-gateway-settlements`. A mismatch is reported, never auto-edited.
+model GatewaySettlementLine {
+  id            String                      @id @default(cuid())
+  provider      PaymentGateway              @default(RAZORPAY)
+  /// Razorpay entity id: `pay_…`, `rfnd_…`, `adj_…` or `trf_…`.
+  entityId      String
+  /// Razorpay row type, verbatim: payment, refund, transfer or adjustment.
+  type          String
+  settlementId  String?
+  settlementUtr String?
+  settledAt     DateTime?
+  amountPaise   BigInt
+  feePaise      BigInt
+  taxPaise      BigInt
+  debitPaise    BigInt
+  creditPaise   BigInt
+  orderId       String?
+  paymentId     String?
+  disputeId     String?
+  matchedKind   GatewaySettlementMatchKind?
+  matchedId     String?
+  status        GatewaySettlementLineStatus
+  note          String?
+  fetchedAt     DateTime                    @default(now())
+
+  @@unique([provider, entityId, type])
+  @@index([status, fetchedAt])
+  @@index([settlementId])
+  @@index([settledAt])
+}
+
+enum GatewaySettlementMatchKind {
+  PAYMENT
+  REFUND
+  DISPUTE
+  TOPUP
+  INVOICE
+  NONE
+}
+
+enum GatewaySettlementLineStatus {
+  MATCHED
+  AMOUNT_MISMATCH
+  FEE_MISMATCH
+  UNMATCHED
 }
 
 // Snapshot output of the ledger reconciliation auditor
@@ -6116,15 +6213,18 @@ model ConsultantEarnings {
   cycleOrdinal Int?
 
   // Status tracking
-  status        EarningStatus  @default(PENDING)
+  status               EarningStatus  @default(PENDING)
   /// #1569 — max(capture time, last live occurrence endsAt) + the hold hours;
   /// recomputed when a reschedule moves the call. #1766 — NULL = tranche not
   /// yet delivered; stamped by the completion path.
-  holdUntil     DateTime?      @db.Timestamptz
-  paidAt        DateTime?      @db.Timestamptz
+  holdUntil            DateTime?      @db.Timestamptz
+  paidAt               DateTime?      @db.Timestamptz
   // The status the first active EarningsHold froze; the last release restores it.
-  preHoldStatus EarningStatus? @map("preDisputeStatus")
-  holds         EarningsHold[]
+  preHoldStatus        EarningStatus? @map("preDisputeStatus")
+  holds                EarningsHold[]
+  /// The last payout that released this row back to READY on failure, so a late
+  /// gateway completion of that payout can find what it actually paid.
+  releasedFromPayoutId String?
 
   // Currency (always INR for MVP, extensible for multi-currency)
   currency Currency @default(INR)
@@ -6242,7 +6342,11 @@ model ConsultantPayout {
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
+  /// The destination snapshotted at mint; processing sends to exactly this account.
+  payoutAccountId String?
+
   consultantProfile ConsultantProfile    @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Restrict)
+  payoutAccount     PayoutAccount?       @relation(fields: [payoutAccountId], references: [id], onDelete: SetNull)
   earnings          ConsultantEarnings[]
   tdsRecords        TDSRecord[]
 
@@ -6275,10 +6379,16 @@ model PayoutAccount {
   isVerified Boolean @default(false)
   isDefault  Boolean @default(false)
 
+  /// Mint skips this account as the default until then; stamped when the default changes.
+  payoutsAllowedAfter DateTime? @db.Timestamptz
+  /// The payee froze payouts from the change email; only an admin clears it.
+  payoutsFrozenAt     DateTime? @db.Timestamptz
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Restrict)
+  consultantProfile ConsultantProfile  @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Restrict)
+  payouts           ConsultantPayout[]
 
   @@index([consultantProfileId])
   @@index([isDefault])
@@ -6445,26 +6555,28 @@ model CreditNote {
   creditNoteNumber String
   fiscalYear       Int    @default(0)
 
-  organizationId String
-  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  organizationId  String
+  organization    Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   // Original invoice this CN adjusts (Sec 34 requires the linkage). Nullable for
   // B2C/unregistered cases where no GST invoice was issued.
-  invoiceId      String?
-  invoice        OrganizationInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  invoiceId       String?
+  invoice         OrganizationInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
   // Triggering refund, when the CN arises from one. @unique (#776) makes
   // refund-driven minting idempotent: one credit note per refund, so a webhook
   // redelivery / cron retry / app re-run can't mint a duplicate or burn a
   // gapless sequence number. Postgres allows many NULLs, so manual CNs are fine.
-  refundId       String?              @unique
+  refundId        String?              @unique
   // #738-B — triggering dispute (chargeback LOST), when the CN arises from one.
   // Same idempotency discipline as refundId: one credit note per dispute.
-  disputeId      String?              @unique
+  disputeId       String?              @unique
   // #1894 — non-refund trigger: an overage base already invoiced and credited
   // back. A statutory document must name its real trigger, not borrow refundId.
-  overageEventId String?              @unique
-  reason         String?
+  overageEventId  String?              @unique
+  /// Set when the platform voided the invoice this note cancels; one per invoice.
+  voidedInvoiceId String?              @unique
+  reason          String?
   /// Issued past the CGST s.34(2) cutoff: no tax reversed, so it stays out of GSTR-1.
-  isCommercial   Boolean              @default(false)
+  isCommercial    Boolean              @default(false)
 
   // #778 §D — IRP reports credit/debit notes as their own document types for
   // in-scope (AATO ≥ ₹5cr) taxpayers; ≥ ₹10cr adds a 30-day reporting window.

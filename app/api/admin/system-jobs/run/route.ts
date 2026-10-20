@@ -145,14 +145,11 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
     };
   },
   "create-payout-batch": async (actorUserId?: string) => {
-    const batchId = await createPayoutBatchService(
+    const run = await createPayoutBatchService(
       undefined,
       actorUserId ? { createdBy: actorUserId } : undefined,
     );
-    return {
-      success: true,
-      batchId,
-    };
+    return { success: true, ...run };
   },
   "process-payouts": async (actorUserId?: string) => {
     const results = await processApprovedPayoutsService(

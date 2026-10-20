@@ -149,6 +149,9 @@ function world(invoicedChildIds: string[] = []) {
       ),
     },
     programAssignment: { updateMany: jest.fn(async () => ({ count: 1 })) },
+    // No member overage holds the parent's earnings here.
+    consultantEarnings: { findMany: jest.fn(async () => []) },
+    organizationEarnings: { findMany: jest.fn(async () => []) },
     overageEvent: {
       findMany: jest.fn(
         async ({ where }: { where: { chargeStatus: { in: string[] } } }) =>

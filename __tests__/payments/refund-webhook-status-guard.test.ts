@@ -12,8 +12,9 @@
  * PENDING — manufacturing the unsweepable real-id-PENDING limbo class.
  *
  * Guard under test:
- *   - PENDING is the only state a gateway event may leave;
- *   - SUCCEEDED / FAILED / CANCELLED are terminal (log-and-return);
+ *   - PENDING is the only state a gateway event may leave, except that a late
+ *     `refund.processed` settles a FAILED row (the money left after all);
+ *   - otherwise SUCCEEDED / FAILED / CANCELLED are terminal (log-and-return);
  *   - PENDING → SUCCEEDED still runs the cascade side effects exactly once.
  *
  * Modeled on dispute-refund-correctness.test.ts's in-memory tx stub.
@@ -226,7 +227,7 @@ describe("handleRefundCreated status transition guard", () => {
     expect(applyRefundCascade).not.toHaveBeenCalled();
   });
 
-  test("a redelivered refund.processed cannot resurrect a FAILED refund", async () => {
+  test("a late refund.processed settles a FAILED refund and cascades exactly once", async () => {
     store.refunds.push({
       id: "row_1",
       refundId: "rfnd_1",
@@ -235,6 +236,25 @@ describe("handleRefundCreated status transition guard", () => {
     });
 
     await handleRefundCreated("rfnd_1", "order_1", 10_000, "INR", "processed");
+    await handleRefundCreated("rfnd_1", "order_1", 10_000, "INR", "processed");
+
+    expect(store.refunds[0].status).toBe("SUCCEEDED");
+    expect(applyRefundCascade).toHaveBeenCalledTimes(1);
+    expect(applyRefundCascade).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ paymentId: "pay_1", refundId: "row_1" }),
+    );
+  });
+
+  test("a stale refund.created cannot reopen a FAILED refund", async () => {
+    store.refunds.push({
+      id: "row_1",
+      refundId: "rfnd_1",
+      status: "FAILED",
+      paymentId: "pay_1",
+    });
+
+    await handleRefundCreated("rfnd_1", "order_1", 10_000, "INR", "pending");
 
     expect(store.refunds[0].status).toBe("FAILED");
     expect(applyRefundCascade).not.toHaveBeenCalled();

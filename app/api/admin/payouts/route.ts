@@ -4,27 +4,22 @@
  *
  * GET is a thin shell — listing/aggregation logic lives in
  * `lib/api/operators/payouts.ts`; staff read it too (`payouts.read`).
- *
- * POST (batch creation) stays inline because staff does not have it.
  */
 
 import { PARTY_PROFILE_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import {
-  classifyError,
-  logClassifiedError,
-} from "@/lib/errors/classification/payment-error-classification";
 import { createPayoutBatch } from "@/lib/payments/payouts";
-import { requireAdminAuth, requireBackofficeSurface } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { getOperatorPayouts } from "@/lib/api/operators";
-import { parseRequestBody, parseJsonRequest } from "@/lib/api/parse";
+import { parseRequestBody } from "@/lib/api/parse";
+import { withOpsAction } from "@/lib/backoffice/ops-action-log";
+import { assertMoneyOpsBudget } from "@/lib/backoffice/money-limit";
 import {
   adminPayoutBatchSchema,
   adminPayoutsQuerySchema,
 } from "@/schemas/payouts";
-import { requireFreshSession } from "@/lib/auth/step-up";
 
 /**
  * GET /api/admin/payouts
@@ -78,61 +73,48 @@ export async function GET(req: NextRequest) {
 }
 
 /**
- * POST /api/admin/payouts
- * Create a new payout batch for one or more consultants. Admin-only — staff
- * does not have a parallel endpoint, so this stays inline rather than being
- * extracted into the shared operator module. Gated with `requireAdminAuth`
- * because batch creation triggers real money movement; staff is read-only.
+ * POST /api/admin/payouts — mint a payout batch for the named consultants.
+ * ADMIN, step-up, a reason and an ops log row; a retry re-mints nothing,
+ * because the first run already claimed every READY earning.
  */
-export async function POST(req: NextRequest) {
-  try {
-    const auth = await requireAdminAuth();
-    if (auth.error) return auth.error;
-    const stale = requireFreshSession(auth.session);
-    if (stale) return stale;
-
-    const { data, error } = await parseJsonRequest(adminPayoutBatchSchema, req);
-    if (error) return error;
-    const { consultantProfileIds } = data;
-
-    // Create payout batch
-    const batchId = await createPayoutBatch(consultantProfileIds, {
-      createdBy: auth.session.user.id,
-    });
-
-    // Get created payouts
-    const payouts = await prisma.consultantPayout.findMany({
-      where: { batchId },
-      include: {
-        consultantProfile: PARTY_PROFILE_SELECT,
-      },
-    });
-
-    return NextResponse.json({
-      success: true,
-      batchId,
-      payoutsCreated: payouts.length,
-      payouts: payouts.map((p) => ({
-        id: p.id,
-        consultantName: p.consultantProfile.user.name,
-        amount: p.amount,
-        status: p.status,
-      })),
-    });
-  } catch (error) {
-    const classified = classifyError(error, "Failed to create payout batch");
-    logClassifiedError("Payouts", classified, error);
-
-    if (classified.httpStatus >= 500) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "admin" } },
-      );
-    }
-
-    return NextResponse.json(
-      { error: classified.errorMessage },
-      { status: classified.httpStatus },
-    );
-  }
-}
+export const POST = withOpsAction(
+  "payouts.manage",
+  "payout.batchCreate",
+  adminPayoutBatchSchema.shape,
+  {
+    mode: "gateway",
+    target: () => ({ kind: "PayoutBatch", id: "new" }),
+    run: async ({ body, actor }) => {
+      await assertMoneyOpsBudget(actor.userId);
+      const run = await createPayoutBatch(body.consultantProfileIds, {
+        createdBy: actor.userId,
+      });
+      const payouts = await prisma.consultantPayout.findMany({
+        where: { batchId: run.batchId },
+        include: { consultantProfile: PARTY_PROFILE_SELECT },
+      });
+      return {
+        target: { kind: "PayoutBatch", id: run.batchId },
+        after: {
+          minted: run.minted,
+          failed: run.failed,
+          totalPaise: payouts.reduce((s, p) => s + Number(p.amount), 0),
+        },
+        response: {
+          success: true,
+          batchId: run.batchId,
+          minted: run.minted,
+          failed: run.failed,
+          payoutsCreated: payouts.length,
+          payouts: payouts.map((p) => ({
+            id: p.id,
+            consultantName: p.consultantProfile.user.name,
+            amount: p.amount,
+            status: p.status,
+          })),
+        },
+      };
+    },
+  },
+  { stepUp: true },
+);

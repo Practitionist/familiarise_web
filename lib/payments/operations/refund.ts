@@ -85,6 +85,7 @@ import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import { allocateCycleClawback } from "@/lib/payments/payouts/earnings-reversal";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 // Late-bound cycle: reversal-engine imports applyRefundCascade from here.
 import { postPayoutClawback } from "./reversal-engine";
@@ -97,6 +98,8 @@ import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
 import { stampTrialEarningsOnCancel } from "@/lib/trials/cancellation";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
+import { restorePurchaseOrderForCredit } from "@/lib/payments/billing/purchase-order-draw";
+import { invoiceVoidedKey } from "@/lib/payments/billing/org-invoice-journal";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
 import {
   COMMERCIAL_CREDIT_NOTE_REASON_PREFIX,
@@ -1199,6 +1202,16 @@ export async function applyRefundCascade(
         select: { status: true, issuedAt: true },
       })
     : null;
+  // A forgiven void already wrote this booking's receivable and GST off.
+  const forgivenInvoice =
+    linkedOrgInvoice?.status === "VOID" && payment.billableToOrgInvoiceId
+      ? (await tx.ledgerTransaction.findUnique({
+          where: {
+            idempotencyKey: invoiceVoidedKey(payment.billableToOrgInvoiceId),
+          },
+          select: { id: true },
+        })) !== null
+      : false;
 
   for (const { leg, reverse } of legAmounts) {
     if (reverse <= 0) continue;
@@ -1680,7 +1693,7 @@ export async function applyRefundCascade(
       let organizationId: string | null = null;
       switch (leg.source) {
         case "CARD":
-          kind = "CASH";
+          kind = gatewayCashAccount().kind;
           break;
         case "WALLET":
           kind = "WALLET";
@@ -1693,8 +1706,9 @@ export async function applyRefundCascade(
           break;
         case "INVOICE_ACCRUAL":
         case "OVERAGE_INVOICE_ACCRUAL":
-          kind = "ORG_RECEIVABLE";
-          organizationId = orgId;
+          // The clawed-back shares return to the platform that absorbed them.
+          kind = forgivenInvoice ? "PLATFORM_FEE" : "ORG_RECEIVABLE";
+          organizationId = forgivenInvoice ? null : orgId;
           break;
         case "REFERRAL_CREDIT":
           kind = "PLATFORM_PROMO";
@@ -1759,7 +1773,9 @@ export async function applyRefundCascade(
       const taxPaise = payment.taxAmount ?? 0;
       const cutoffSourceDate = linkedOrgInvoice?.issuedAt ?? payment.createdAt;
       const gstRev =
-        taxPaise > 0 && isPastGstCreditNoteCutoff(cutoffSourceDate, cascadeNow)
+        forgivenInvoice ||
+        (taxPaise > 0 &&
+          isPastGstCreditNoteCutoff(cutoffSourceDate, cascadeNow))
           ? 0
           : proportion(taxPaise);
       // #775 — a CHARGE_MEMBER side-payment refund: the member's capture
@@ -2107,6 +2123,7 @@ export async function mintRefundCreditNote(
       id: true,
       status: true,
       issuedAt: true,
+      purchaseOrderId: true,
       subtotalPaise: true,
       totalPaise: true,
       igstPaise: true,
@@ -2195,6 +2212,14 @@ export async function mintRefundCreditNote(
     },
     select: { id: true },
   });
+  await restorePurchaseOrderForCredit(tx, {
+    invoice,
+    credit: {
+      totalPaise: cnTotal,
+      subtotalPaise: cnSubtotal,
+      isCommercial: commercial,
+    },
+  });
   return { creditNoteId: cn.id };
 }
 
@@ -2280,15 +2305,22 @@ export async function mintInvoiceRefundCreditNote(
     exactSubtotalPaise?: number;
     reason: string;
   } & (
-    | { refundId: string; overageEventId?: never }
-    | { overageEventId: string; refundId?: never }
+    | { refundId: string; overageEventId?: never; voidedInvoiceId?: never }
+    | { overageEventId: string; refundId?: never; voidedInvoiceId?: never }
+    | { voidedInvoiceId: string; refundId?: never; overageEventId?: never }
   ),
 ): Promise<OrgCreditNoteMintResult> {
-  // Idempotent on whichever trigger raised it (both are @unique).
+  // Idempotent on whichever trigger raised it (each is @unique).
+  let trigger: Prisma.CreditNoteWhereUniqueInput = {
+    refundId: params.refundId,
+  };
+  if (params.overageEventId) {
+    trigger = { overageEventId: params.overageEventId };
+  } else if (params.voidedInvoiceId) {
+    trigger = { voidedInvoiceId: params.voidedInvoiceId };
+  }
   const existing = await tx.creditNote.findUnique({
-    where: params.overageEventId
-      ? { overageEventId: params.overageEventId }
-      : { refundId: params.refundId },
+    where: trigger,
     select: { id: true },
   });
   if (existing) return { creditNoteId: existing.id };
@@ -2301,6 +2333,7 @@ export async function mintInvoiceRefundCreditNote(
       status: true,
       issuedAt: true,
       billingCycleStart: true,
+      purchaseOrderId: true,
       subtotalPaise: true,
       totalPaise: true,
       igstPaise: true,
@@ -2331,7 +2364,8 @@ export async function mintInvoiceRefundCreditNote(
       organizationId: org.id,
       invoiceId: invoice.id,
       requestedPaise: params.amountPaise,
-      refundId: params.refundId ?? params.overageEventId,
+      refundId:
+        params.refundId ?? params.overageEventId ?? params.voidedInvoiceId,
     });
     return { creditNoteId: null, outcome: "FULLY_CREDITED" };
   }
@@ -2372,6 +2406,7 @@ export async function mintInvoiceRefundCreditNote(
       invoiceId: invoice.id,
       refundId: params.refundId ?? null,
       overageEventId: params.overageEventId ?? null,
+      voidedInvoiceId: params.voidedInvoiceId ?? null,
       reason: commercial
         ? `${COMMERCIAL_CREDIT_NOTE_REASON_PREFIX}${params.reason}`
         : params.reason,
@@ -2385,6 +2420,14 @@ export async function mintInvoiceRefundCreditNote(
       issuedAt: new Date(),
     },
     select: { id: true },
+  });
+  await restorePurchaseOrderForCredit(tx, {
+    invoice,
+    credit: {
+      totalPaise: cnTotal,
+      subtotalPaise: cnSubtotal,
+      isCommercial: commercial,
+    },
   });
   return { creditNoteId: cn.id };
 }

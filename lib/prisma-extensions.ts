@@ -86,6 +86,7 @@ export const moneyResultExtensions = {
     sgstPaise: f("sgstPaise"),
     totalPaise: f("totalPaise"),
   },
+  organizationInvoiceReceipt: { amountPaise: f("amountPaise") },
   invoiceLineItem: {
     unitPricePaise: f("unitPricePaise"),
     taxPaise: fn("taxPaise"),
@@ -100,6 +101,13 @@ export const moneyResultExtensions = {
     entrySeq: f("entrySeq"),
   },
   ledgerEntry: { amountPaise: f("amountPaise") },
+  gatewaySettlementLine: {
+    amountPaise: f("amountPaise"),
+    feePaise: f("feePaise"),
+    taxPaise: f("taxPaise"),
+    debitPaise: f("debitPaise"),
+    creditPaise: f("creditPaise"),
+  },
   consultationPlan: { price: f("price") },
   subscriptionPlan: {
     price: f("price"),

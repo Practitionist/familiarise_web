@@ -93,6 +93,7 @@ beforeEach(() => {
   payoutRow = { ...STALE_PAYOUT };
   process.env.RAZORPAY_KEY_ID = "k";
   process.env.RAZORPAY_SECRET = "s";
+  process.env.RAZORPAYX_ACCOUNT_NUMBER = "acc";
   (global as unknown as { fetch: jest.Mock }).fetch = jest
     .fn()
     .mockResolvedValue({

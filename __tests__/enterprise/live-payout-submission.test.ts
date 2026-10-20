@@ -115,6 +115,12 @@ function wireTxAsPassthrough() {
   });
 }
 
+const SNAPSHOT_ACCOUNT = {
+  status: "VERIFIED",
+  razorpayFundAccountId: FUND_ACCT,
+  payoutsFrozenAt: null,
+};
+
 function setupHappyClaim() {
   // Row was PENDING — claim succeeds.
   mockedPrisma.organizationPayout.updateMany.mockResolvedValue({ count: 1 });
@@ -125,6 +131,7 @@ function setupHappyClaim() {
     currency: "INR",
     paymentGateway: "RAZORPAY",
     payoutReference: null,
+    orgPayoutAccount: SNAPSHOT_ACCOUNT,
   });
 }
 
@@ -264,6 +271,7 @@ describe("processOrgPayout — live submission gating", () => {
         currency: "INR",
         paymentGateway: "RAZORPAY",
         payoutReference: null,
+        orgPayoutAccount: SNAPSHOT_ACCOUNT,
       })
       // second call: inside submitOrgPayoutToGateway
       .mockResolvedValueOnce({
@@ -273,6 +281,7 @@ describe("processOrgPayout — live submission gating", () => {
         currency: "INR",
         paymentGateway: "RAZORPAY",
         payoutReference: null,
+        orgPayoutAccount: SNAPSHOT_ACCOUNT,
       })
       // third call: inside markPayoutFailedFromSubmission
       .mockResolvedValueOnce({ organizationId: ORG_ID });
@@ -348,6 +357,7 @@ describe("processOrgPayout — live submission gating", () => {
           currency: "INR",
           paymentGateway: "RAZORPAY",
           payoutReference: null,
+          orgPayoutAccount: SNAPSHOT_ACCOUNT,
         })
         .mockResolvedValueOnce({
           id: PAYOUT_ID,
@@ -356,6 +366,7 @@ describe("processOrgPayout — live submission gating", () => {
           currency: "INR",
           paymentGateway: "RAZORPAY",
           payoutReference: null,
+          orgPayoutAccount: SNAPSHOT_ACCOUNT,
         });
       mockedPrisma.organizationEarnings.updateMany.mockClear();
 
@@ -428,9 +439,10 @@ describe("processOrgPayout — live submission gating", () => {
       mockedPrisma.organizationPayout.findMany.mock.calls[0][0].where,
     ).toEqual({
       status: payable,
+      platformHeldAt: null,
     });
     expect(mockedPrisma.organizationPayout.updateMany).toHaveBeenCalledWith({
-      where: { id: PAYOUT_ID, status: payable },
+      where: { id: PAYOUT_ID, status: payable, platformHeldAt: null },
       data: { status: "PROCESSING" },
     });
     expect(run.advanced).toBe(1);
@@ -465,7 +477,9 @@ describe("processOrgPayout — live submission gating", () => {
       where: { id: PAYOUT_ID, status: "PROCESSING" },
       data: expect.objectContaining({
         status: "FAILED",
-        failureReason: expect.stringContaining("SHORTFALL_BEFORE_DISBURSEMENT:"),
+        failureReason: expect.stringContaining(
+          "SHORTFALL_BEFORE_DISBURSEMENT:",
+        ),
         failedAt: expect.any(Date),
       }),
     });

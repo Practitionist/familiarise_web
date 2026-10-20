@@ -428,11 +428,11 @@ ALTER TABLE "CreditNote" ADD CONSTRAINT "credit_note_amounts_nonnegative"
   );
 -- SPLIT
 -- #1582 C-P0-01 — exactly one trigger keys an org credit note: a Refund, a
--- Dispute, or an OverageEvent reversal.
+-- Dispute, an OverageEvent reversal, or the platform's void of its invoice.
 ALTER TABLE "CreditNote" DROP CONSTRAINT IF EXISTS "credit_note_trigger_xor";
 -- SPLIT
 ALTER TABLE "CreditNote" ADD CONSTRAINT "credit_note_trigger_xor"
-  CHECK (num_nonnulls("refundId", "disputeId", "overageEventId") = 1);
+  CHECK (num_nonnulls("refundId", "disputeId", "overageEventId", "voidedInvoiceId") = 1);
 -- SPLIT
 ALTER TABLE "WalletTopUp" DROP CONSTRAINT IF EXISTS "wallet_topup_amount_positive";
 -- SPLIT
@@ -1264,3 +1264,39 @@ CREATE UNIQUE INDEX IF NOT EXISTS "earnings_hold_active_consultant_key"
 CREATE UNIQUE INDEX IF NOT EXISTS "earnings_hold_active_org_key"
   ON "EarningsHold" ("organizationEarningsId", "reason", "sourceRef")
   WHERE "releasedAt" IS NULL AND "organizationEarningsId" IS NOT NULL;
+-- SPLIT
+-- I-4: a BATCHED earning always names the payout that batched it.
+ALTER TABLE "ConsultantEarnings" DROP CONSTRAINT IF EXISTS "consultant_earnings_batched_has_payout";
+-- SPLIT
+ALTER TABLE "ConsultantEarnings" ADD CONSTRAINT "consultant_earnings_batched_has_payout"
+  CHECK ("status" <> 'BATCHED' OR "payoutId" IS NOT NULL);
+-- SPLIT
+ALTER TABLE "OrganizationEarnings" DROP CONSTRAINT IF EXISTS "org_earnings_batched_has_payout";
+-- SPLIT
+ALTER TABLE "OrganizationEarnings" ADD CONSTRAINT "org_earnings_batched_has_payout"
+  CHECK ("status" <> 'BATCHED' OR "orgPayoutId" IS NOT NULL);
+-- SPLIT
+-- Settlement is INR-only: every ledger account and money row carries INR.
+ALTER TABLE "LedgerAccount" DROP CONSTRAINT IF EXISTS "ledger_account_currency_inr";
+-- SPLIT
+ALTER TABLE "LedgerAccount" ADD CONSTRAINT "ledger_account_currency_inr" CHECK ("currency" = 'INR');
+-- SPLIT
+ALTER TABLE "Payment" DROP CONSTRAINT IF EXISTS "payment_currency_inr";
+-- SPLIT
+ALTER TABLE "Payment" ADD CONSTRAINT "payment_currency_inr" CHECK ("currency" = 'INR');
+-- SPLIT
+ALTER TABLE "Refund" DROP CONSTRAINT IF EXISTS "refund_currency_inr";
+-- SPLIT
+ALTER TABLE "Refund" ADD CONSTRAINT "refund_currency_inr" CHECK ("currency" = 'INR');
+-- SPLIT
+ALTER TABLE "Dispute" DROP CONSTRAINT IF EXISTS "dispute_currency_inr";
+-- SPLIT
+ALTER TABLE "Dispute" ADD CONSTRAINT "dispute_currency_inr" CHECK ("currency" = 'INR');
+-- SPLIT
+ALTER TABLE "ConsultantEarnings" DROP CONSTRAINT IF EXISTS "consultant_earnings_currency_inr";
+-- SPLIT
+ALTER TABLE "ConsultantEarnings" ADD CONSTRAINT "consultant_earnings_currency_inr" CHECK ("currency" = 'INR');
+-- SPLIT
+ALTER TABLE "ConsultantPayout" DROP CONSTRAINT IF EXISTS "consultant_payout_currency_inr";
+-- SPLIT
+ALTER TABLE "ConsultantPayout" ADD CONSTRAINT "consultant_payout_currency_inr" CHECK ("currency" = 'INR');

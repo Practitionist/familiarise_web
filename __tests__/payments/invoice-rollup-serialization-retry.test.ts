@@ -374,3 +374,34 @@ describe("rollupOrgInvoiceAccruals — buyer GSTIN drives the tax head", () => {
     expect(mockTransaction).not.toHaveBeenCalled();
   });
 });
+
+describe("rollupOrgInvoiceAccruals — PO coverage", () => {
+  it("holds a requiresPO org's rollup as an unannounced DRAFT when no PO covers it", async () => {
+    mockOrgFindUnique.mockResolvedValueOnce({
+      id: "org_1",
+      name: "Acme",
+      slug: "acme",
+      status: "ACTIVE",
+      deletedAt: null,
+      invoiceNumberPrefix: null,
+      billingAccountId: "ba_1",
+      dataResidencyRegion: "IN",
+      paymentTermsDays: 30,
+      requiresPO: true,
+      taxInfo: { gstStateCode: "29", gstin: null, hsnDefault: null },
+    });
+    const { tx, invoiceCreate } = issuingTx({});
+    mockTransaction.mockImplementation(async (fn) => fn(tx));
+
+    const r = await rollupOrgInvoiceAccruals({ organizationId: "org_1" });
+
+    expect(r.heldForPo).toBe(true);
+    expect(invoiceCreate.mock.calls[0][0].data).toMatchObject({
+      status: "DRAFT",
+      issuedAt: null,
+      purchaseOrderId: null,
+    });
+    expect(mockNotifyIssued).not.toHaveBeenCalled();
+    expect(mockDispatchWebhook).not.toHaveBeenCalled();
+  });
+});
