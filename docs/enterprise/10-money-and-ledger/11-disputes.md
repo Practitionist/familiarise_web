@@ -88,7 +88,7 @@ An earlier revision of this section documented three real defects in the dispatc
 
 **Gap 2 (resolved under #789) — `payment.dispute.under_review` was never dispatched.** The dispatcher now routes it (together with `action_required`) through `handleDisputeUpdated`, so a contested dispute advances to `UNDER_REVIEW` while the bank reviews the evidence.
 
-**Gap 3 (resolved under #789) — `payment.dispute.action_required` was dropped.** It now dispatches through the same progress path and lands the dispute back in `NEEDS_RESPONSE`. This event is the urgent one: Razorpay's published guidance allows roughly **three business days** to respond before the right to contest lapses, and the hourly `alert-dispute-deadlines` cron surfaces the `respond_by` window (48-hour warning, 12-hour critical).
+**Gap 3 (resolved under #789) — `payment.dispute.action_required` was dropped.** It now dispatches through the same progress path and lands the dispute back in `NEEDS_RESPONSE`. This event is the urgent one: Razorpay's published guidance allows roughly **three business days** to respond before the right to contest lapses, and the dispute-deadline section of the 30-minute support SLA sweep (§5) alerts admins at T-72h and T-24h and pages once a dispute is within 12 hours of `respond_by` or past it.
 
 A related but lower-severity observation still stands: `open` is not explicitly mapped — it works today only because the `default` branch happens to return `NEEDS_RESPONSE`. An explicit `case "open"` would make the mapping intentional and resilient to a future default change.
 
@@ -98,7 +98,19 @@ A related but lower-severity observation still stands: `open` is not explicitly 
 
 Scheduled jobs keep dispute state honest when webhooks are missed or deadlines approach.
 
-The **reconcile-disputes** cron (`scripts/disputes/reconcile-disputes.ts`, run by the Netlify five-minute ticker hourly at `:00` through `/api/cleanup/reconcile-disputes?limit=10`, ten disputes per run) re-queries the gateway for disputes that are still `NEEDS_RESPONSE`/`UNDER_REVIEW` (or their warning variants) and either approaching their `dueBy` deadline or stale for 24 hours, then adopts any changed status. It reconciles **Stripe** disputes live and **Razorpay** disputes via `GET /v1/disputes/:id`; a Razorpay row the poll cannot adopt (unknown gateway id, unmapped status, unlinked payment) counts toward manual review instead. The **alert-dispute-deadlines** cron (hourly) finds `NEEDS_RESPONSE`/`WARNING_NEEDS_RESPONSE` disputes whose `dueBy` falls within 48 hours, escalating to critical within 12 hours, and flags any past-due disputes. There is no `handle-lost-disputes` cron: the backstop for a missed `payment.dispute.lost` webhook is the same reconcile run — every verdict the poll adopts settles through the shared `settleDisputeVerdict(tx, dispute, verdict, amountDeducted)` (`app/api/webhooks/utils.ts`), the exact same money path `handleDisputeUpdated` uses. The poll adopts the status and settles in one Serializable transaction, so a failed settlement rolls the adoption back for the next run and a later webhook replay finds nothing left to do.
+The **reconcile-disputes** cron (`scripts/disputes/reconcile-disputes.ts`, run by the Netlify five-minute ticker hourly at `:00` through `/api/cleanup/reconcile-disputes?limit=10`, ten disputes per run) re-queries the gateway for disputes that are still `NEEDS_RESPONSE`/`UNDER_REVIEW` (or their warning variants) and either approaching their `dueBy` deadline or stale for 24 hours, then adopts any changed status. It reconciles **Stripe** disputes live and **Razorpay** disputes via `GET /v1/disputes/:id`; a Razorpay row the poll cannot adopt (unknown gateway id, unmapped status, unlinked payment) counts toward manual review instead. There is no `handle-lost-disputes` cron: the backstop for a missed `payment.dispute.lost` webhook is the same reconcile run — every verdict the poll adopts settles through the shared `settleDisputeVerdict(tx, dispute, verdict, amountDeducted)` (`app/api/webhooks/utils.ts`), the exact same money path `handleDisputeUpdated` uses. The poll adopts the status and settles in one Serializable transaction, so a failed settlement rolls the adoption back for the next run and a later webhook replay finds nothing left to do.
+
+### Deadline alerts (inside the support SLA sweep)
+
+Deadline alerting is not a cron of its own. `processDisputeDeadlineAlerts` in `lib/support/sla-sweep.ts` runs inside `runSupportSlaSweep`, which the Netlify ticker fires every 30 minutes at `:10` through `/api/cleanup/support-sla-sweep?limit=20`. Each run:
+
+1. **Selects** `NEEDS_RESPONSE`/`WARNING_NEEDS_RESPONSE` disputes with `now − 24h ≤ dueBy ≤ now + 72h`, earliest `dueBy` first, up to the limit. The lower bound matters: a dispute past due by more than a day was already alerted in both windows by earlier runs, and without the bound a backlog of such rows would fill every slot and hide disputes about to come due. A dispute that arrives already past due by under a day is still alerted.
+2. **Alerts admins per window.** A dispute due within 24 hours (or past due) falls in window `24`, otherwise `72`. Each `(dispute, window)` pair stages one `NOVU_WORKFLOWS.DISPUTE_UPDATED` bell to every `ADMIN` user with `dedupeKey: dispute-due:{id}:{72|24}`; the `NotificationOutbox` row is checked inside the same transaction, so a later run finds it and sends nothing. Only a newly staged pair sends one `deliver()` email to each admin. The bell links to the admin dispute detail page, `/dashboard/admin/disputes/{id}`.
+3. **Pages once for critical deadlines.** The disputes in the batch that are due within 12 hours or already past due go to a single `reportStandingFinding` call (`key: dispute-deadline:critical`, ids = the dispute row ids) whose callback raises one Sentry message (`subsystem: payments`, `op: dispute-deadline-critical`). The standing finding stays quiet for 24 hours while the set holds only ids it has already reported, and pages again when a new dispute enters it.
+
+Worked example: at 12:00 a backlog of 25 disputes sits two or more days past due, one dispute is due at 22:00 and one was due at 10:00. The stale 25 fall outside the lower bound, so the batch holds the 22:00 and 10:00 disputes; both are in window `24`, so each admin gets one bell and one email per dispute, and the sweep raises one page naming both. At 12:30 the outbox and the standing finding already hold both, so nothing is sent.
+
+Row errors from this section join the sweep's shared error list, which reaches Sentry at most once per run.
 
 When a dispute is lost, `settleLostDispute(tx, dispute, lostAmountPaise)` executes inside the caller's Serializable transaction and fans the reversal out across consultant earnings, host-org earnings, completed payouts (via `lib/payments/operations/reversal-engine.ts`), and the sponsoring org (via `applyOrgChargeback`):
 
@@ -161,4 +173,10 @@ An earning is `HELD` while it carries at least one active `EarningsHold` (`lib/p
 - [Payout pipeline](07-payout-pipeline.md) — why held earnings must not pay out and how `clawbackAmountPaise` is tracked.
 - [Payment webhooks](12-payment-webhooks.md) — the inbound `payment.dispute.*` events and the dispatch switch.
 - B2C / gateway-generic details: [`docs/payments/refunds-disputes/`](../../payments/refunds-disputes/README.md).
-- Ground truth: `app/api/webhooks/utils.ts` (`settleLostDispute`, `applyOrgChargeback`), `lib/payments/operations/reversal-engine.ts`, `lib/payments/dispute-status.ts`, `app/api/webhooks/razorpay-dispatch.ts`, `scripts/disputes/*.ts`.
+- Ground truth: `app/api/webhooks/utils.ts` (`settleLostDispute`, `applyOrgChargeback`), `lib/payments/operations/reversal-engine.ts`, `lib/payments/dispute-status.ts`, `app/api/webhooks/razorpay-dispatch.ts`, `scripts/disputes/*.ts`, `lib/support/sla-sweep.ts` (deadline alerts).
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Standalone `alert-dispute-deadlines` cron (hourly, 48 h warning / 12 h critical, Sentry-only):** retired; deadline alerting lives in the support SLA sweep described in §5, which also reaches admins by bell and email.

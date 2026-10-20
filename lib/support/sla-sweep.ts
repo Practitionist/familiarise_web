@@ -9,7 +9,11 @@ import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { getAppUrl } from "@/lib/url";
 import { DEFAULT_FROM_ADDRESS, deliver, EMAIL_BUDGET_MS } from "@/lib/email";
-import { reportSentryError } from "@/lib/observability/report";
+import {
+  reportSentryError,
+  reportSentryMessage,
+} from "@/lib/observability/report";
+import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { slaStateOf } from "./sla";
 
 const HOUR_MS = 3_600_000;
@@ -17,6 +21,10 @@ const DAY_MS = 24 * HOUR_MS;
 const ACK_WARN_MS = 2 * HOUR_MS;
 const RES_WARN_MS = 24 * HOUR_MS;
 const AUTO_CLOSE_DAYS_MS = 28 * DAY_MS;
+const DISPUTE_HORIZON_MS = 72 * HOUR_MS;
+const DISPUTE_CRITICAL_MS = 12 * HOUR_MS;
+// Past due by more than a day, earlier sweeps already fired both windows; the bound keeps those rows from filling the batch.
+const DISPUTE_LOOKBACK_MS = DAY_MS;
 
 type SlaNoticeKind = "ack" | "res";
 type SlaNoticeLevel = "warn" | "breach";
@@ -622,6 +630,45 @@ async function autoCloseResolvedRows(
   return [...ticketResults, ...caseResults].reduce((sum, n) => sum + n, 0);
 }
 
+/** One page per run for disputes due within 12 h or already past due; new ids re-page, repeats stay quiet for 24 h. */
+async function pageCriticalDisputeDeadlines(
+  now: Date,
+  disputes: { id: string; disputeId: string; dueBy: Date | null }[],
+  errors: string[],
+): Promise<void> {
+  const critical = disputes.filter(
+    (d) => d.dueBy && d.dueBy.getTime() - now.getTime() <= DISPUTE_CRITICAL_MS,
+  );
+  if (critical.length === 0) return;
+  const message = `${critical.length} dispute(s) due within 12 h or past due with no response`;
+  try {
+    await reportStandingFinding(
+      {
+        key: "dispute-deadline:critical",
+        ids: critical.map((d) => d.id),
+        message,
+      },
+      () =>
+        reportSentryMessage(message, {
+          subsystem: "payments",
+          op: "dispute-deadline-critical",
+          level: "error",
+          extra: {
+            disputes: critical.map((d) => ({
+              id: d.id,
+              disputeId: d.disputeId,
+              dueBy: d.dueBy?.toISOString(),
+            })),
+          },
+        }),
+    );
+  } catch (err) {
+    errors.push(
+      `dispute-deadline critical page: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 async function processDisputeDeadlineAlerts(
   now: Date,
   limit: number,
@@ -629,15 +676,19 @@ async function processDisputeDeadlineAlerts(
   errors: string[],
   stagedBells: StagedTrigger[],
 ): Promise<number> {
-  const disputeHorizon = new Date(now.getTime() + 72 * HOUR_MS);
   const actionableDisputes = await prisma.dispute.findMany({
     where: {
       status: { in: ["NEEDS_RESPONSE", "WARNING_NEEDS_RESPONSE"] },
-      dueBy: { lte: disputeHorizon },
+      dueBy: {
+        gte: new Date(now.getTime() - DISPUTE_LOOKBACK_MS),
+        lte: new Date(now.getTime() + DISPUTE_HORIZON_MS),
+      },
     },
     orderBy: { dueBy: "asc" },
     take: limit,
   });
+
+  await pageCriticalDisputeDeadlines(now, actionableDisputes ?? [], errors);
 
   if (admins.length === 0) return 0;
   const recipients = admins.map((a) => a.id);
@@ -662,7 +713,7 @@ async function processDisputeDeadlineAlerts(
           reason: d.reason,
           dueBy: dueByIso,
           windowHours: Number(window),
-          dashboardUrl: "/dashboard/staff/moderation",
+          dashboardUrl: `${getAppUrl()}/dashboard/admin/disputes/${d.id}`,
         };
         const transactionId = deriveTransactionId(
           NOVU_WORKFLOWS.DISPUTE_UPDATED,
@@ -736,7 +787,8 @@ async function processDisputeDeadlineAlerts(
 
 /**
  * Single background sweep for support SLA warnings/breaches, 28-day RESOLVED auto-close,
- * and T-72h / T-24h dispute deadlines. Collects row errors and reports to Sentry at most once.
+ * T-72h / T-24h dispute deadlines and one page for disputes due within 12 h or past due.
+ * Collects row errors and reports to Sentry at most once.
  */
 export async function runSupportSlaSweep(opts?: {
   limit?: number;
