@@ -104,6 +104,10 @@ interface PageLookups {
   topUps: Map<string, { id: string; amountPaise: number }>;
   invoices: Map<string, { id: string; bookedPaise: number | null }>;
   refunds: Map<string, { id: string; amountPaise: number }>;
+  /** CONFIRMED top-ups by `pay_` id, for refunds that have no `Refund` row. */
+  refundTopUps: Map<string, { id: string }>;
+  /** Σ DEBIT of each `topup-refund:` / `invoice-refund:` journal, by key. */
+  refundJournals: Map<string, number>;
   disputes: Map<string, { id: string; amountPaise: number }>;
   bookedFees: Map<string, number>;
 }
@@ -128,11 +132,18 @@ async function debitTotalsByKey(keys: string[]): Promise<Map<string, number>> {
   return out;
 }
 
+const topUpRefundKey = (refundId: string) => `topup-refund:${refundId}`;
+const invoiceRefundKey = (refundId: string) => `invoice-refund:${refundId}`;
+
 async function loadPageLookups(rows: ReconRow[]): Promise<PageLookups> {
   const ids = (type: string) =>
     rows.filter((r) => r.type === type).map((r) => r.entity_id);
   const paymentIds = ids("payment");
   const refundIds = ids("refund");
+  const refundPaymentIds = rows.flatMap((r) =>
+    r.type === "refund" && r.payment_id ? [r.payment_id] : [],
+  );
+  const providerPaymentIds = [...paymentIds, ...refundPaymentIds];
   const disputeIds = rows
     .filter((r) => r.type === "adjustment" && r.dispute_id)
     .map((r) => r.dispute_id as string);
@@ -142,11 +153,16 @@ async function loadPageLookups(rows: ReconRow[]): Promise<PageLookups> {
     select: { id: true, gatewayPaymentId: true, amount: true },
   });
   const topUps = await prisma.walletTopUp.findMany({
-    where: { providerPaymentId: { in: paymentIds } },
-    select: { id: true, providerPaymentId: true, amountPaise: true },
+    where: { providerPaymentId: { in: providerPaymentIds } },
+    select: {
+      id: true,
+      providerPaymentId: true,
+      amountPaise: true,
+      status: true,
+    },
   });
   const invoices = await prisma.organizationInvoice.findMany({
-    where: { providerPaymentId: { in: paymentIds } },
+    where: { providerPaymentId: { in: providerPaymentIds } },
     select: { id: true, providerPaymentId: true },
   });
   const refunds = await prisma.refund.findMany({
@@ -161,6 +177,24 @@ async function loadPageLookups(rows: ReconRow[]): Promise<PageLookups> {
     invoices.map((i) => `invoicepaid:${i.id}`),
   );
   const fees = await debitTotalsByKey(paymentIds.map(gatewayFeeKey));
+  // Same order as the refund webhook: a CONFIRMED top-up wins over an invoice.
+  const refundTopUps = new Map(
+    topUps.flatMap((t) =>
+      t.providerPaymentId && t.status === "CONFIRMED"
+        ? [[t.providerPaymentId, { id: t.id }] as const]
+        : [],
+    ),
+  );
+  const invoicePayIds = new Set(invoices.map((i) => i.providerPaymentId));
+  const refundJournals = await debitTotalsByKey(
+    rows.flatMap((r) => {
+      if (r.type !== "refund" || !r.payment_id) return [];
+      if (refundTopUps.has(r.payment_id)) return [topUpRefundKey(r.entity_id)];
+      return invoicePayIds.has(r.payment_id)
+        ? [invoiceRefundKey(r.entity_id)]
+        : [];
+    }),
+  );
 
   return {
     payments: new Map(
@@ -203,6 +237,8 @@ async function loadPageLookups(rows: ReconRow[]): Promise<PageLookups> {
         { id: r.id, amountPaise: r.amountPaise },
       ]),
     ),
+    refundTopUps,
+    refundJournals,
     disputes: new Map(
       disputes.map((d) => [
         d.disputeId,
@@ -265,9 +301,30 @@ function matchLine(row: ReconRow, lookups: PageLookups): LineMatch {
   }
   if (row.type === "refund") {
     const refund = lookups.refunds.get(row.entity_id);
-    return refund
-      ? amountCheck("REFUND", refund.id, row.amount, refund.amountPaise)
-      : unmatched;
+    if (refund) {
+      return amountCheck("REFUND", refund.id, row.amount, refund.amountPaise);
+    }
+    // Top-up and org-invoice refunds have no `Refund` row; their journal is the record.
+    if (!row.payment_id) return unmatched;
+    const topUp = lookups.refundTopUps.get(row.payment_id);
+    if (topUp) {
+      return amountCheck(
+        "TOPUP",
+        topUp.id,
+        row.amount,
+        lookups.refundJournals.get(topUpRefundKey(row.entity_id)) ?? null,
+      );
+    }
+    const invoice = lookups.invoices.get(row.payment_id);
+    if (invoice) {
+      return amountCheck(
+        "INVOICE",
+        invoice.id,
+        row.amount,
+        lookups.refundJournals.get(invoiceRefundKey(row.entity_id)) ?? null,
+      );
+    }
+    return unmatched;
   }
   if (row.type === "adjustment" && row.dispute_id) {
     const dispute = lookups.disputes.get(row.dispute_id);
