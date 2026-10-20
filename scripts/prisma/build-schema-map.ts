@@ -475,13 +475,23 @@ const PARTS: Part[] = [
 
 // ------------------------------------------------------------------ build
 
-/** GitHub's heading-slug rules: lowercase, drop punctuation, spaces to hyphens. */
+/**
+ * GitHub's heading-slug rules, as `github-slugger` implements them: lowercase,
+ * drop everything that is not a letter, a digit, a space, a hyphen or an
+ * underscore, then turn EACH space into one hyphen.
+ *
+ * The space handling is the part that bites. A heading like
+ * "1. Identity & Authentication" loses the `.` and the `&` and is left with
+ * two spaces where the ampersand was, so GitHub's anchor is
+ * `1-identity--authentication` with a double hyphen. Collapsing runs of
+ * whitespace into one hyphen produces an anchor that does not exist, and the
+ * link silently lands at the top of the page.
+ */
 function ghAnchor(heading: string): string {
   return heading
     .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "-");
+    .replace(/[^a-z0-9\s_-]/g, "")
+    .replace(/ /g, "-");
 }
 
 interface BuiltFile {
@@ -690,7 +700,49 @@ ${MASTER_MAP()}
   });
 
   for (const f of files) f.content = await formatFile(f.path, f.content);
+  assertLinksResolve(files);
   return files;
+}
+
+/**
+ * Every in-page link the index makes must land on a heading that exists.
+ *
+ * A link to a heading that is not there still renders as a link and still
+ * passes a naive "is the path valid" check, so it has to be checked against
+ * the target file's own headings.
+ */
+function assertLinksResolve(files: BuiltFile[]): void {
+  const byPath = new Map(
+    files.map((f) => [f.path.replace(/\\/g, "/"), f.content]),
+  );
+  const broken: string[] = [];
+
+  for (const f of files) {
+    for (const m of f.content.matchAll(/\]\((\.[^)\s]*)\)/g)) {
+      const target = m[1];
+      if (!target.includes("#")) continue;
+      const [filePart, anchor] = target.split("#");
+      const dir = path.posix.dirname(f.path.replace(/\\/g, "/"));
+      const resolved = path.posix.normalize(path.posix.join(dir, filePart));
+      const content = byPath.get(resolved);
+      if (content === undefined) {
+        broken.push(`${f.path} -> ${target} (no such file)`);
+        continue;
+      }
+      const headings = [...content.matchAll(/^#{2,3}\s+(.+)$/gm)].map((h) =>
+        ghAnchor(h[1].trim()),
+      );
+      if (!headings.includes(anchor)) {
+        broken.push(`${f.path} -> ${target} (no such heading)`);
+      }
+    }
+  }
+
+  if (broken.length) {
+    throw new Error(
+      `The generated map links to headings that do not exist:\n  ${broken.join("\n  ")}`,
+    );
+  }
 }
 
 function MASTER_MAP(): string {
