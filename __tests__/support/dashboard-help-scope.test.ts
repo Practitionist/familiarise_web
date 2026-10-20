@@ -1,5 +1,5 @@
 /** @jest-environment node */
-jest.mock("@/lib/auth-helpers", () => ({
+jest.mock("../../lib/auth-helpers", () => ({
   requireApiAuth: jest.fn(async () => ({
     session: { user: { id: "viewer" } },
   })),
@@ -7,24 +7,24 @@ jest.mock("@/lib/auth-helpers", () => ({
     member: { status: "ACTIVE", role: "OWNER" },
   })),
 }));
-jest.mock("@/lib/support/case-actions", () => ({
+jest.mock("../../lib/support/case-actions", () => ({
   evidenceRecipients: jest.fn(async () => [{ id: "viewer", name: "Expert" }]),
 }));
-jest.mock("@/lib/support/case-access", () => ({
+jest.mock("../../lib/support/case-access", () => ({
   visibleCaseWhere: jest.fn(async () => ({
     deletedAt: null,
     submitterUserId: "viewer",
   })),
 }));
-jest.mock("@/lib/support/case-read", () => ({
+jest.mock("../../lib/support/case-read", () => ({
   PLAN_TITLE_SELECT: {},
   planTitle: jest.fn(() => "Session"),
 }));
-jest.mock("@/lib/api/support-http", () => ({
+jest.mock("../../lib/api/support-http", () => ({
   supportError: ({ status }: { status: number }) =>
     new Response(JSON.stringify({ error: "Invalid request" }), { status }),
 }));
-jest.mock("@/lib/prisma", () => ({
+jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     supportCaseEvidenceRequest: {
@@ -88,11 +88,9 @@ it("keeps organization evidence recipient-only and matches sponsor or delivery h
 });
 
 it("refuses organization evidence before reading requests when membership access is denied", async () => {
-  jest
-    .mocked(requireOrgAccess)
-    .mockResolvedValueOnce({
-      error: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
-    });
+  jest.mocked(requireOrgAccess).mockResolvedValueOnce({
+    error: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+  });
   const response = await evidenceList(
     new NextRequest(
       "https://example.test/api/support/evidence?organizationId=org-1",

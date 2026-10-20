@@ -60,7 +60,7 @@ function row(
     paymentGateway: "RAZORPAY",
     appointmentType: "CONSULTATION",
     appointmentId: `appt-${id}`,
-    hasSupportThread: false,
+    hasSupportCase: false,
     planTitle: `Plan ${id}`,
     consultantName: "Asha Rao",
     organizationId: null,
