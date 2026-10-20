@@ -10,6 +10,7 @@ import {
 } from "@/lib/support/case-actions";
 import { assertBodySize } from "@/lib/validation/limits";
 import { supportError } from "@/lib/api/support-http";
+import { reviewSupportRefundDoor } from "@/lib/support/refund-door";
 import { sessionRole } from "@/lib/auth/session-role";
 
 const Params = z.object({ caseId: z.string().min(1).max(64) });
@@ -41,10 +42,17 @@ export async function POST(req: NextRequest, context: Context) {
   const parsed = CaseActionSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success || !params.success)
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
+  if (parsed.data.action === "REVIEW_REFUND")
+    return reviewSupportRefundDoor(
+      new NextRequest(req.url, {
+        method: "POST",
+        headers: req.headers,
+        body: JSON.stringify(parsed.data),
+      }),
+      context,
+    );
   if (
-    ["REVIEW_REFUND", "APPLY_HOLD", "RELEASE_HOLD"].includes(
-      parsed.data.action,
-    ) ||
+    ["APPLY_HOLD", "RELEASE_HOLD"].includes(parsed.data.action) ||
     (parsed.data.action === "DECIDE" && parsed.data.outcome === "OVERTURNED")
   ) {
     const stale = requireFreshSession(auth.session);

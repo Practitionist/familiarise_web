@@ -20,6 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { throwSupportError } from "@/lib/support/error-copy";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { humanizeEnum } from "@/lib/ui/tone";
+import { fetchWithReauth } from "@/lib/auth/reauth-client";
 
 const Outcome = z.enum([
   "NO_REMEDY",
@@ -91,15 +92,24 @@ const Preview = z.object({
 type RefundPreview = z.infer<typeof Preview>["data"] & {
   recommendationId: string;
 };
+const ProposedRefund = z.object({
+  status: z.literal("PROPOSED"),
+  proposalId: z.string(),
+  expiresAt: z.string().datetime(),
+});
+type RefundProposal = z.infer<typeof ProposedRefund>;
+type PendingRefund = RefundProposal & { recommendationId: string };
 
-async function post(url: string, body: object) {
-  const response = await fetch(url, {
+async function post(url: string, body: object): Promise<RefundProposal | null> {
+  const response = await fetchWithReauth(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   if (!response.ok) await throwSupportError(response, "support action");
-  return response.json();
+  return response.status === 202
+    ? ProposedRefund.parse(await response.json())
+    : null;
 }
 
 export function CaseResolutionPanel({
@@ -120,6 +130,9 @@ export function CaseResolutionPanel({
   const [amount, setAmount] = useState("");
   const [preview, setPreview] = useState<RefundPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [refundProposal, setRefundProposal] = useState<PendingRefund | null>(
+    null,
+  );
   const [appealing, setAppealing] = useState<string | null>(null);
   const actionIds = useRef(new Map<string, string>());
   const query = useQuery({
@@ -138,26 +151,42 @@ export function CaseResolutionPanel({
       const key = JSON.stringify(payload);
       const clientActionId = actionIds.current.get(key) ?? crypto.randomUUID();
       actionIds.current.set(key, clientActionId);
-      await post(endpoint, {
+      const result = await post(endpoint, {
         ...payload,
         expectedUpdatedAt: data.updatedAt,
         clientActionId,
       });
       actionIds.current.delete(key);
+      return result
+        ? {
+            ...result,
+            recommendationId: z.string().parse(payload.recommendationId),
+          }
+        : null;
     },
-    onSuccess: () => {
+    onSuccess: (proposal) => {
       setReason("");
       setPrompt("");
       setExplanation("");
       setPrivateRationale("");
       setPreview(null);
-      toast({ title: "Case updated" });
+      setRefundProposal(proposal);
+      toast(
+        proposal
+          ? {
+              title: "Sent to another admin for approval",
+              description:
+                "The refund has not been sent. Track it in Money → Approvals.",
+            }
+          : { title: "Case updated" },
+      );
       for (const key of [
         queryKey,
         ["support-case"],
         ["user-support-case"],
         ["support-inbox"],
         ["support-inbox-stats"],
+        ["money-approvals"],
       ])
         void qc.invalidateQueries({ queryKey: key });
     },
@@ -242,6 +271,28 @@ export function CaseResolutionPanel({
       className="space-y-4 rounded-lg border border-border bg-card p-3 text-sm"
     >
       <h3 className="font-semibold">Resolution and review</h3>
+      {canMoney &&
+        refundProposal &&
+        data.recommendations.some(
+          (rec) => rec.id === refundProposal.recommendationId && !rec.decidedAt,
+        ) && (
+          <div
+            role="status"
+            className="space-y-1 rounded border border-border p-3"
+          >
+            <p className="font-medium">Waiting for another admin’s approval</p>
+            <p className="text-xs text-muted-foreground">
+              The refund has not been sent. This request expires{" "}
+              {new Date(refundProposal.expiresAt).toLocaleString()}.
+            </p>
+            <a
+              className="text-xs underline"
+              href="/dashboard/admin/money/approvals"
+            >
+              View money approvals
+            </a>
+          </div>
+        )}
       {customer && (
         <a
           className="text-sm underline"
@@ -487,7 +538,9 @@ export function CaseResolutionPanel({
                         <Button
                           size="sm"
                           variant="outline"
-                          disabled={busy || previewLoading || !reason.trim()}
+                          disabled={
+                            busy || previewLoading || reason.trim().length < 5
+                          }
                           onClick={() => void loadPreview(rec.id)}
                         >
                           {rec.approved
@@ -498,7 +551,7 @@ export function CaseResolutionPanel({
                           <Button
                             size="sm"
                             variant="ghost"
-                            disabled={busy || !reason.trim()}
+                            disabled={busy || reason.trim().length < 5}
                             onClick={() =>
                               action.mutate({
                                 action: "REVIEW_REFUND",
@@ -609,6 +662,13 @@ export function CaseResolutionPanel({
           placeholder="Reason for a financial action, cancellation, or handover"
         />
       )}
+      {canMoney && (
+        <p className="text-xs text-muted-foreground">
+          Reviewing a refund needs a reason of at least 5 characters. Refunds
+          over ₹25,000 need another admin’s approval when at least two admins
+          are active.
+        </p>
+      )}
       {data.ownershipScope !== "PERSONAL" && (
         <Button
           size="sm"
@@ -629,7 +689,7 @@ export function CaseResolutionPanel({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Confirm refund</AlertDialogTitle>
+            <AlertDialogTitle>Review refund</AlertDialogTitle>
             <AlertDialogDescription>
               {preview &&
                 (preview.rail === "CREDITS"
@@ -637,6 +697,10 @@ export function CaseResolutionPanel({
                   : `${formatCurrencyAmount(preview.amountPaise, "INR")} through ${preview.rail}. Current refundable balance: ${formatCurrencyAmount(preview.refundablePaise, "INR")}.`)}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <p className="text-xs text-muted-foreground">
+            If another admin’s approval is required, this creates an approval
+            request and the refund waits for their decision.
+          </p>
           {preview?.blockedReason && (
             <p role="alert" className="text-sm text-destructive">
               {preview.blockedReason}
@@ -647,7 +711,9 @@ export function CaseResolutionPanel({
             <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
             <Button
               disabled={
-                busy || Boolean(preview?.blockedReason) || !reason.trim()
+                busy ||
+                Boolean(preview?.blockedReason) ||
+                reason.trim().length < 5
               }
               onClick={() => {
                 if (preview)
@@ -660,7 +726,7 @@ export function CaseResolutionPanel({
                   });
               }}
             >
-              Approve refund
+              Confirm refund review
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
