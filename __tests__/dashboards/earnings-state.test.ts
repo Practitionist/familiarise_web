@@ -167,7 +167,7 @@ describe("nextPayoutCopy and the tile sums", () => {
     );
   });
 
-  it("Available nets refunds, Pending gathers the three waiting states, Paid out is net of TDS", () => {
+  it("Available nets refunds, Pending gathers the waiting states, trust-parked money has its own sum, Paid out is net of TDS", () => {
     const rows = [
       earning("READY", { refundedShareAmount: 5_000 }),
       earning("BATCHED"),
@@ -180,8 +180,9 @@ describe("nextPayoutCopy and the tile sums", () => {
     const payouts = [payout("COMPLETED"), payout("FAILED"), payout("PENDING")];
     expect(sumEarningBuckets(rows, payouts)).toEqual({
       available: 155_000,
-      pending: 240_000,
+      pending: 160_000,
       paidOut: 99_900,
+      awaitingOrg: 80_000,
     });
     expect(moneyWalk(payout("COMPLETED", { netAmount: null }))).toEqual({
       share: 100_000,
@@ -198,7 +199,7 @@ describe("nextPayoutCopy and the tile sums", () => {
         [earning("READY", { consultantSharePaise: 0 })],
         [payout("COMPLETED", { amount: 0, tdsDeducted: 0, netAmount: 0 })],
       ),
-    ).toEqual({ available: 0, pending: 0, paidOut: 0 });
+    ).toEqual({ available: 0, pending: 0, paidOut: 0, awaitingOrg: 0 });
     // refundEarnings caps the reversal at the share (earnings-service.ts), so
     // the floor a row can reach is exactly zero.
     expect(

@@ -17,6 +17,7 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     billingAccount: { findFirst: jest.fn(async () => null) },
+    paymentLeg: { aggregate: jest.fn() },
     payment: { aggregate: jest.fn() },
     refund: { aggregate: jest.fn() },
     organizationInvoice: {
@@ -66,5 +67,39 @@ it("counts only org-rail payments and reports them net of refunds", async () => 
       status: "SUCCEEDED",
       payment: paymentWhere,
     },
+  );
+});
+
+it("reports pendingCharges net of refund reversal legs, the figure the credit-limit exposure reads", async () => {
+  (prisma.billingAccount.findFirst as jest.Mock).mockResolvedValueOnce({
+    id: "ba-1",
+    fundingSource: "INVOICE",
+    creditLimit: null,
+  });
+  (prisma.payment.aggregate as jest.Mock).mockResolvedValue({
+    _sum: { amount: 0 },
+    _count: { _all: 3 },
+  });
+  (prisma.refund.aggregate as jest.Mock).mockResolvedValue({
+    _sum: { amountPaise: 0 },
+  });
+  (prisma.paymentLeg.aggregate as jest.Mock).mockResolvedValue({
+    _sum: { amountPaise: 70_000 },
+  });
+
+  const res = await GET(
+    new NextRequest("https://x.test/api/organizations/org-1/billing"),
+    { params: Promise.resolve({ orgId: "org-1" }) },
+  );
+  const body = await res.json();
+
+  expect(body.pendingCharges).toEqual({ amount: 70_000, paymentCount: 3 });
+  const where = (prisma.paymentLeg.aggregate as jest.Mock).mock.calls[0][0]
+    .where;
+  expect(where.source.in).toEqual(
+    expect.arrayContaining([
+      "INVOICE_ACCRUAL_REVERSAL",
+      "OVERAGE_INVOICE_ACCRUAL_REVERSAL",
+    ]),
   );
 });

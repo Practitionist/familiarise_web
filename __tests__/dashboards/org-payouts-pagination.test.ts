@@ -76,7 +76,9 @@ describe("GET /api/organizations/[orgId]/payouts — pagination + stats", () => 
 
   it("returns org-wide totalPaidPaise/pendingPaise/counts unaffected by the status filter", async () => {
     mockedAggregate
-      .mockResolvedValueOnce({ _sum: { amountPaise: BigInt(50_000) } }) // COMPLETED
+      .mockResolvedValueOnce({
+        _sum: { amountPaise: BigInt(50_000), tdsAmountPaise: BigInt(500) },
+      }) // COMPLETED
       .mockResolvedValueOnce({ _sum: { amountPaise: BigInt(12_000) } }); // in-flight
     mockedGroupBy.mockResolvedValue([
       { status: "COMPLETED", _count: { id: 4 } },
@@ -91,11 +93,16 @@ describe("GET /api/organizations/[orgId]/payouts — pagination + stats", () => 
     const body = await res.json();
 
     expect(body.stats.totalPaidPaise).toBe(50000);
+    expect(body.stats.totalTdsPaise).toBe(500);
     expect(body.stats.pendingPaise).toBe(12000);
     expect(body.stats.counts).toEqual({ COMPLETED: 4, PENDING: 2, total: 6 });
 
     // The status filter narrows the *list* query, not the org-wide aggregates.
     const aggregateCall = mockedAggregate.mock.calls[0][0];
+    expect(aggregateCall._sum).toEqual({
+      amountPaise: true,
+      tdsAmountPaise: true,
+    });
     expect(aggregateCall.where).toEqual({
       organizationId: "org1",
       status: "COMPLETED",

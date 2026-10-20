@@ -30,6 +30,11 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { IndiaOnlyPayoutNotice } from "@/components/payouts/IndiaOnlyPayoutNotice";
 import { cn } from "@/utils/tailwind";
+import {
+  AWAITING_ORG_HINT,
+  AWAITING_ORG_LABEL,
+  newExpertHoldCopy,
+} from "@/lib/dashboard/hold-copy";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import {
   BUCKET_LABEL,
@@ -411,6 +416,20 @@ export function EarningsSummary({
           hint="Everything you've earned, before TDS"
         />
       </StatRow>
+
+      {sums.awaitingOrg > 0 && (
+        <StatRow columns={2}>
+          <Stat
+            label={AWAITING_ORG_LABEL}
+            value={inr(sums.awaitingOrg)}
+            hint={AWAITING_ORG_HINT}
+          />
+        </StatRow>
+      )}
+
+      {sums.pending > 0 && (
+        <p className="text-xs text-muted-foreground">{newExpertHoldCopy()}</p>
+      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <p className="text-sm text-foreground">

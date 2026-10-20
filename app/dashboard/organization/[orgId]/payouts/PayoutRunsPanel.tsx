@@ -31,6 +31,10 @@ import {
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 import { fetchWithReauth } from "@/lib/auth/reauth-client";
+import {
+  ORG_PAYOUTS_PARKED_COPY,
+  paidOutHint,
+} from "@/lib/dashboard/hold-copy";
 
 interface PayoutItem {
   id: string;
@@ -64,6 +68,7 @@ interface PayoutsResponse {
   // narrowed/paged.
   stats: {
     totalPaidPaise: number;
+    totalTdsPaise: number;
     pendingPaise: number;
     counts: Record<string, number>;
   };
@@ -264,14 +269,16 @@ export function PayoutRunsPanel({
     ? Math.max(1, Math.ceil(pagination.total / PAGE_SIZE))
     : 1;
 
-  // #997 secondary findings — server-aggregated org-wide totals. "Total paid
-  // out" counts only COMPLETED payouts; "In flight" rolls up the rest.
+  // Server-aggregated org-wide totals. "Paid out" counts only COMPLETED
+  // payouts; "In flight" rolls up the rest.
   const stats = data?.stats;
   const totalPaid = stats?.totalPaidPaise ?? 0;
+  const totalTds = stats?.totalTdsPaise ?? 0;
   const pendingAmount = stats?.pendingPaise ?? 0;
   const completedCount = stats?.counts.COMPLETED ?? 0;
   const totalPayoutsCount = stats?.counts.total ?? 0;
-  const hasProcessingPayouts = (stats?.counts.PROCESSING ?? 0) > 0;
+  const hasParkedPayouts =
+    (stats?.counts.PROCESSING ?? 0) + (stats?.counts.APPROVED ?? 0) > 0;
   const awaitingApproval = stats?.counts.PENDING ?? 0;
 
   // The list itself is now server-paginated + server-filtered (`status`
@@ -303,9 +310,9 @@ export function PayoutRunsPanel({
     <>
       <StatRow columns={3}>
         <Stat
-          label="Total paid out"
+          label="Paid out (after TDS)"
           value={formatCurrencyAmount(totalPaid, "INR")}
-          hint={`${completedCount} payouts`}
+          hint={paidOutHint(completedCount, totalTds)}
           tone="success"
         />
         <Stat
@@ -340,14 +347,10 @@ export function PayoutRunsPanel({
       {/* #776 §B: disbursement is gated until live payouts go-live;
                 say so honestly rather than letting PROCESSING rows imply
                 money is moving. */}
-      {!livePayoutsEnabled && hasProcessingPayouts && (
+      {!livePayoutsEnabled && hasParkedPayouts && (
         <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
           <PauseCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>
-            Bank transfers from the platform aren&apos;t switched on yet.
-            Payouts in a run are calculated and held for you, not failed, and
-            are sent as soon as transfers go live.
-          </p>
+          <p>{ORG_PAYOUTS_PARKED_COPY}</p>
         </div>
       )}
 
@@ -428,11 +431,13 @@ export function PayoutRunsPanel({
                 <tbody>
                   {visiblePayouts.map((payout) => {
                     const cfg = statusOf(payout);
-                    // #776 §B: while live payouts are off, a PROCESSING
-                    // row is held at the platform, not in flight — label
-                    // it as such so we never imply money is moving.
+                    // While live payouts are off, an APPROVED or PROCESSING
+                    // row is parked at the platform, not in flight.
                     const heldForEnablement =
-                      payout.status === "PROCESSING" && !livePayoutsEnabled;
+                      !livePayoutsEnabled &&
+                      (payout.status === "PROCESSING" ||
+                        (payout.status === "APPROVED" &&
+                          !payout.platformHeldAt));
                     // #1132 follow-up — the Net column shows the cash
                     // actually disbursed (amountPaise = net after TDS),
                     // not netPayoutPaise (pre-TDS org share). The
