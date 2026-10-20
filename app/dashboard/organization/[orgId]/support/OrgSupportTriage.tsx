@@ -1,18 +1,6 @@
 "use client";
 
-/**
- * #support-hub — ORG SUPPORT TRIAGE (per-org dashboard, `operations.read`).
- *
- * Three things live here, all metadata-level by ADR 20:
- *  1. CSAT aggregate — the "org quality signal" (avg + count; no per-member
- *     rows exist to show, deliberately).
- *  2. Members' support conversations — status/category/who/when. NO
- *     transcripts: a member's support chat is content, and content belongs to
- *     the participant (and, once escalated, the platform's team).
- *  3. Raise concern — the org-party thread entry: an operator opens THEIR OWN
- *     conversation on a specific session (ORG_ADMIN_DISPUTE / sponsorship
- *     intents, served and enforced server-side).
- */
+/** Session quality aggregates and scoped support activity; member correspondence stays private. */
 
 import { useState } from "react";
 import Link from "next/link";
@@ -308,8 +296,7 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
       <section>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-            <MessageSquareText className="h-4 w-4" /> Members&apos; support
-            conversations
+            <MessageSquareText className="h-4 w-4" /> Member support activity
           </h2>
           <div className="flex gap-1">
             <Button
@@ -347,9 +334,10 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
           </ul>
         )}
         <p className="mt-2 text-xs text-muted-foreground">
-          Conversations are shown as status only — what a member discusses with
-          support stays between them and the platform. &quot;Raise concern&quot;
-          opens your organization&apos;s own conversation about that session.
+          Member requests show status only; their conversations stay private.
+          Authorized teammates can open organization-owned requests. &quot;Raise
+          concern&quot; starts your organization&apos;s own request about that
+          session.
         </p>
       </section>
     </div>
