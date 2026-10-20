@@ -10,6 +10,7 @@ import { SettingsSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { toneBadge, type Tone } from "@/lib/dashboard/money-state";
+import { newExpertHoldCopy } from "@/lib/dashboard/hold-copy";
 import type {
   PayoutEligibilityReason,
   Requirement,
@@ -361,6 +362,9 @@ export function GetPaidView({
           currentlyDue={requirements.currentlyDue}
           eventuallyDue={requirements.eventuallyDue}
         />
+        <p className="mt-3 text-xs text-muted-foreground">
+          {newExpertHoldCopy()}
+        </p>
       </section>
       <AccountCard consultantId={consultantId} setup={setup} />
       <TaxCard consultantId={consultantId} setup={setup} />

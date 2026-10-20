@@ -9,6 +9,7 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { toneBadge } from "@/lib/dashboard/money-state";
 import { caseKeyOf } from "@/lib/support/case-key";
+import { paymentLegLabel } from "@/lib/labels/payment-leg-labels";
 import { humanizeEnum, toneTextClass } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import type { ConsulteePaymentDetail } from "@/lib/data/consultee-payment-detail";
@@ -49,7 +50,9 @@ function chargeFacts(detail: ConsulteePaymentDetail, money: Money) {
           {
             label: "Paid with",
             value: detail.legs
-              .map((l) => `${humanizeEnum(l.source)} ${money(l.amountPaise)}`)
+              .map(
+                (l) => `${paymentLegLabel(l.source)} ${money(l.amountPaise)}`,
+              )
               .join(" · "),
           },
         ]

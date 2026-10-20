@@ -402,7 +402,7 @@ function MoneyStats({ data }: Readonly<{ data: OrgAnalytics }>) {
       )}
       {hasEarnings && (
         <Stat
-          label="Earnings paid out"
+          label="Earnings paid out (before TDS)"
           value={formatCurrencyAmount(paidEarnings, currency)}
           hint={
             refundedEarnings > 0

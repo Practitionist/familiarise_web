@@ -17,6 +17,7 @@ import {
   deriveEarningPresentation,
   derivePayoutPresentation,
   moneyWalk,
+  nextClearDate,
   nextPayoutCopy,
   sanitizePayoutFailure,
   sumEarningBuckets,
@@ -167,7 +168,7 @@ describe("nextPayoutCopy and the tile sums", () => {
     );
   });
 
-  it("Available nets refunds, Pending gathers the three waiting states, Paid out is net of TDS", () => {
+  it("Available nets refunds, Pending gathers the waiting states, trust-parked money has its own sum, Paid out is net of TDS", () => {
     const rows = [
       earning("READY", { refundedShareAmount: 5_000 }),
       earning("BATCHED"),
@@ -180,8 +181,9 @@ describe("nextPayoutCopy and the tile sums", () => {
     const payouts = [payout("COMPLETED"), payout("FAILED"), payout("PENDING")];
     expect(sumEarningBuckets(rows, payouts)).toEqual({
       available: 155_000,
-      pending: 240_000,
+      pending: 160_000,
       paidOut: 99_900,
+      awaitingOrg: 80_000,
     });
     expect(moneyWalk(payout("COMPLETED", { netAmount: null }))).toEqual({
       share: 100_000,
@@ -192,13 +194,40 @@ describe("nextPayoutCopy and the tile sums", () => {
     });
   });
 
+  it("a partly refunded trust-parked row counts only its remaining share", () => {
+    expect(
+      sumEarningBuckets(
+        [earning("PENDING_TRUST", { refundedShareAmount: 30_000 })],
+        [],
+      ).awaitingOrg,
+    ).toBe(50_000);
+  });
+
+  it("the next clearance date skips trust-parked rows, past holds and rows with no hold", () => {
+    const IN_2D = new Date("2026-09-22T09:12:00Z");
+    expect(
+      nextClearDate(
+        [
+          earning("PENDING_TRUST", { holdUntil: IN_2D }),
+          earning("PENDING", { holdUntil: "2026-09-19T00:00:00Z" }),
+          earning("HELD", { holdUntil: null }),
+          earning("PENDING"),
+        ],
+        NOW,
+      ),
+    ).toEqual(IN_5D);
+    expect(
+      nextClearDate([earning("PENDING_TRUST", { holdUntil: IN_2D })], NOW),
+    ).toBeNull();
+  });
+
   it("a zero row and a zero payout add nothing; a row refunded to its share nets to zero", () => {
     expect(
       sumEarningBuckets(
         [earning("READY", { consultantSharePaise: 0 })],
         [payout("COMPLETED", { amount: 0, tdsDeducted: 0, netAmount: 0 })],
       ),
-    ).toEqual({ available: 0, pending: 0, paidOut: 0 });
+    ).toEqual({ available: 0, pending: 0, paidOut: 0, awaitingOrg: 0 });
     // refundEarnings caps the reversal at the share (earnings-service.ts), so
     // the floor a row can reach is exactly zero.
     expect(
