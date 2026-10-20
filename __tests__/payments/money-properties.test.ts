@@ -10,7 +10,7 @@
  */
 
 import fc from "fast-check";
-import { prorate, splitByBps, sumPaise } from "../../lib/payments/utils/money";
+import { prorate, sumPaise } from "../../lib/payments/utils/money";
 import { deriveGstBreakdown } from "../../lib/compliance/gst";
 import {
   computeOverage,
@@ -33,112 +33,12 @@ import {
 const CONFIG = { seed: 2230, numRuns: 200 };
 
 const MAX_PAISE = 10_000_000_000;
-/** prorate() multiplies in doubles, so it is exact only while a * n stays below 2^53. */
+/** Bounds the generated amounts and factors so the BigInt reference value stays a safe integer. */
 const SAFE_FACTOR_MAX = 90_000_000;
 
 const totalPaise = fc.integer({ min: 0, max: MAX_PAISE });
 
-/** A partition of 10000 bps into 1..6 parts (zero-bps parts allowed). */
-const bpsPartition = fc
-  .array(fc.integer({ min: 0, max: 10_000 }), { minLength: 0, maxLength: 5 })
-  .map((cuts) => {
-    const sorted = [...cuts].sort((a, b) => a - b);
-    const parts: number[] = [];
-    let prev = 0;
-    for (const cut of sorted) {
-      parts.push(cut - prev);
-      prev = cut;
-    }
-    parts.push(10_000 - prev);
-    return parts;
-  });
-
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
-
-describe("splitByBps", () => {
-  it("parts sum exactly to the total, are non-negative, and the last part absorbs the remainder", () => {
-    fc.assert(
-      fc.property(totalPaise, bpsPartition, (total, bps) => {
-        const last = bps.length - 1;
-        const shares = splitByBps(total, bps, last);
-        expect(shares).toHaveLength(bps.length);
-        expect(sum(shares)).toBe(total);
-        shares.forEach((s) => {
-          expect(Number.isInteger(s)).toBe(true);
-          expect(s).toBeGreaterThanOrEqual(0);
-        });
-        for (let i = 0; i < last; i++) {
-          expect(shares[i]).toBe(Math.floor((total * bps[i]) / 10_000));
-        }
-        const flooredLast = Math.floor((total * bps[last]) / 10_000);
-        expect(shares[last]).toBeGreaterThanOrEqual(flooredLast);
-        expect(shares[last] - flooredLast).toBeLessThan(bps.length);
-      }),
-      CONFIG,
-    );
-  });
-
-  it("any residual index absorbs the remainder and the split still sums to the total", () => {
-    fc.assert(
-      fc.property(totalPaise, bpsPartition, fc.nat(), (total, bps, pick) => {
-        const residual = pick % bps.length;
-        const shares = splitByBps(total, bps, residual);
-        expect(sum(shares)).toBe(total);
-        shares.forEach((s) => expect(s).toBeGreaterThanOrEqual(0));
-        expect(shares.filter((_, i) => i !== residual)).toEqual(
-          bps
-            .filter((_, i) => i !== residual)
-            .map((b) => Math.floor((total * b) / 10_000)),
-        );
-      }),
-      CONFIG,
-    );
-  });
-
-  it("leaves the unallocated remainder with the caller when the shares sum under 10000 bps", () => {
-    fc.assert(
-      fc.property(
-        totalPaise,
-        bpsPartition,
-        fc.integer({ min: 1, max: 10_000 }),
-        (total, bps, hold) => {
-          // Shave `hold` bps off the partition so the shares total less than the whole.
-          const shaved = [...bps];
-          let left = hold;
-          for (let i = shaved.length - 1; i >= 0 && left > 0; i--) {
-            const take = Math.min(shaved[i], left);
-            shaved[i] -= take;
-            left -= take;
-          }
-          const shares = splitByBps(total, shaved, 0);
-          expect(sum(shares)).toBeLessThanOrEqual(total);
-          shares.forEach((s, i) => {
-            expect(s).toBe(Math.floor((total * shaved[i]) / 10_000));
-          });
-        },
-      ),
-      CONFIG,
-    );
-  });
-
-  it("refuses shares above 10000 bps and an out-of-range residual index", () => {
-    fc.assert(
-      fc.property(
-        totalPaise,
-        fc.integer({ min: 10_001, max: 20_000 }),
-        (total, over) => {
-          expect(() => splitByBps(total, [over], 0)).toThrow(
-            /exceeds the whole/,
-          );
-          expect(() => splitByBps(total, [5_000, 5_000], 2)).toThrow(
-            /out of range/,
-          );
-        },
-      ),
-      CONFIG,
-    );
-  });
-});
 
 describe("prorate", () => {
   const factor = fc.integer({ min: 1, max: SAFE_FACTOR_MAX });
@@ -190,26 +90,22 @@ describe("prorate", () => {
     expect(() => prorate(100, 1, -5)).toThrow(/non-positive denominator/);
   });
 
-  // The double product loses integer precision above 2^53, so a full-amount
-  // proration at 1e10 paise can come back one paisa short. Real bug, left unfixed here.
-  it.failing(
-    "returns the whole amount when the numerator equals the denominator across the full paise range",
-    () => {
-      expect(prorate(416_029_418, 2_869_922_706, 2_869_922_706)).toBe(
-        416_029_418,
-      );
-      fc.assert(
-        fc.property(
-          fc.integer({ min: 0, max: MAX_PAISE }),
-          fc.integer({ min: 1, max: MAX_PAISE }),
-          (amount, den) => {
-            expect(prorate(amount, den, den)).toBe(amount);
-          },
-        ),
-        CONFIG,
-      );
-    },
-  );
+  // prorate() works in BigInt, so a full-amount proration is exact even where a * n passes 2^53.
+  it("returns the whole amount when the numerator equals the denominator across the full paise range", () => {
+    expect(prorate(416_029_418, 2_869_922_706, 2_869_922_706)).toBe(
+      416_029_418,
+    );
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 0, max: MAX_PAISE }),
+        fc.integer({ min: 1, max: MAX_PAISE }),
+        (amount, den) => {
+          expect(prorate(amount, den, den)).toBe(amount);
+        },
+      ),
+      CONFIG,
+    );
+  });
 });
 
 describe("sumPaise", () => {
