@@ -98,6 +98,8 @@ jest.mock("../../lib/prisma", () => ({
         data: { correlationId: string; context: unknown };
       }) => state.events.push(data),
     },
+    // No deferred earnings await a plan-end hold.
+    consultantEarnings: { findMany: async () => [] },
     refund: {
       // pay-a skipped the make-up already: its key is spent.
       findUnique: async ({ where }: { where: { dedupeKey: string } }) =>
