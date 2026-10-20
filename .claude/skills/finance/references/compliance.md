@@ -54,7 +54,7 @@ Every fiscal-year and monthly-period boundary in the compliance pipeline — `in
 
 ## Open questions for the chartered accountant
 
-The five questions ADR 26 records are unresolved by design, not by oversight, and any change to GST or referral-credit handling should check whether it depends on one of these answers before shipping: (1) whether the principal-for-GST plus 194-O-operator pairing holds for a marketplace where the platform sets the commission but the consultant sets the price; (2) whether a referral credit reduces the taxable value or is third-party consideration; (3) whether 999293 or 998311/998399 is the correct SAC code; (4) whether the Section 12(2)(b) default is acceptable without a mandatory state field at checkout; (5) whether Section 52 TCS registration is required at all under this model.
+The five questions ADR 26 records are unresolved by design, not by oversight, and any change to GST or referral-credit handling should check whether it depends on one of these answers before shipping: (1) whether the principal-for-GST plus 194-O-operator pairing holds for a marketplace where the platform sets the commission but the consultant sets the price; (2) whether a referral credit reduces the taxable value or is third-party consideration; (3) whether 999293 or 998311/998399 is the correct SAC code; (4) whether the Section 12(2)(b) default is acceptable without a mandatory state field at checkout; (5) whether Section 52 TCS registration is required at all under this model. The full 14-question research memo, with the current code status for each answer, is `docs/compliance/18-tax-research-memo-oct-2026.md`.
 
 ## Sources
 
