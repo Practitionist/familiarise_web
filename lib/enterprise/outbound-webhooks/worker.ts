@@ -43,7 +43,7 @@ import type { PrismaLike } from "@/lib/prisma";
  */
 
 import { randomInt } from "node:crypto";
-import vm from "node:vm";
+import type { LookupFunction } from "node:net";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   SIGNATURE_HEADER,
@@ -56,75 +56,28 @@ import { recordSystemEvent } from "@/lib/enterprise/system-events";
 export const DELIVERY_ID_HEADER = "X-Familiarise-Delivery-Id";
 export const EVENT_HEADER = "X-Familiarise-Event";
 
-const NATIVE_FETCH = globalThis.fetch;
-const UNDICI_DISPATCHER_SYMBOL = Symbol.for("undici.globalDispatcher.1");
+let undiciModule: Promise<typeof import("undici")> | null = null;
 
-interface PinnedDispatcher {
-  close?: () => Promise<void> | void;
-  destroy?: () => void;
+/** Undici's Agent only works with undici's own fetch, so both come from the same package. */
+function loadUndici(): Promise<typeof import("undici")> {
+  undiciModule ??= import("undici").catch((err: unknown) => {
+    undiciModule = null;
+    throw err;
+  });
+  return undiciModule;
 }
 
-type PinnedLookupFn = (
-  hostname: string,
-  opts: unknown,
-  cb: (err: Error | null, address: string, family: number) => void,
-) => void;
-
-type BuiltinUndiciAgentCtor = new (opts: {
-  connect: { lookup: PinnedLookupFn };
-}) => PinnedDispatcher;
-
-type UndiciModule = { Agent: BuiltinUndiciAgentCtor };
-
-function isUndiciAgentCtor(value: unknown): value is BuiltinUndiciAgentCtor {
-  return typeof value === "function";
-}
-
-function extractGlobalDispatcherCtor(): BuiltinUndiciAgentCtor | undefined {
-  const builtInDispatcher =
-    Reflect.get(globalThis, UNDICI_DISPATCHER_SYMBOL) ??
-    Reflect.get(vm.runInThisContext("globalThis"), UNDICI_DISPATCHER_SYMBOL);
-  if (
-    typeof builtInDispatcher === "object" &&
-    builtInDispatcher !== null &&
-    "constructor" in builtInDispatcher &&
-    isUndiciAgentCtor(builtInDispatcher.constructor)
-  ) {
-    return builtInDispatcher.constructor;
-  }
-  return undefined;
-}
-
-async function resolveUndiciAgentCtor(): Promise<BuiltinUndiciAgentCtor> {
-  const builtinUndici: Partial<UndiciModule> | undefined =
-    process.getBuiltinModule("undici");
-  if (builtinUndici && isUndiciAgentCtor(builtinUndici.Agent)) {
-    return builtinUndici.Agent;
-  }
-
-  let ctor = extractGlobalDispatcherCtor();
-  if (!ctor && typeof NATIVE_FETCH === "function") {
-    const ac = new AbortController();
-    ac.abort();
-    await NATIVE_FETCH("http://localhost", { signal: ac.signal }).catch(
-      () => undefined,
-    );
-    ctor = extractGlobalDispatcherCtor();
-  }
-  if (!ctor) {
-    throw new Error("Built-in Undici Agent constructor unavailable");
-  }
-  return ctor;
-}
-
-async function createPinnedDispatcher(resolved: {
+/** A single-use client whose connections dial only the SSRF-validated address. */
+async function createPinnedClient(resolved: {
   address: string;
   family: 4 | 6;
-}): Promise<PinnedDispatcher> {
-  const lookup: PinnedLookupFn = (_hostname, _opts, cb) =>
-    cb(null, resolved.address, resolved.family);
-  const AgentCtor = await resolveUndiciAgentCtor();
-  return new AgentCtor({ connect: { lookup } });
+}) {
+  const { Agent, fetch } = await loadUndici();
+  const lookup: LookupFunction = (_hostname, opts, cb) =>
+    opts.all
+      ? cb(null, [{ address: resolved.address, family: resolved.family }])
+      : cb(null, resolved.address, resolved.family);
+  return { fetch, dispatcher: new Agent({ connect: { lookup } }) };
 }
 
 const MAX_BATCH = 50;
@@ -228,14 +181,6 @@ type DeliveryRow = {
   endpoint: DeliveryEndpointInfo;
 };
 
-async function closeDispatcher(dispatcher: PinnedDispatcher | undefined) {
-  if (dispatcher?.close) {
-    await Promise.resolve(dispatcher.close()).catch(() => {});
-  } else if (dispatcher?.destroy) {
-    dispatcher.destroy();
-  }
-}
-
 async function executeWebhookHttpAttempt(args: {
   url: string;
   body: string;
@@ -246,19 +191,18 @@ async function executeWebhookHttpAttempt(args: {
   hasCustomFetch: boolean;
   assertUrl: (url: string) => Promise<void>;
 }): Promise<{ httpStatusCode?: number; networkError?: string }> {
-  let dispatcher: PinnedDispatcher | undefined;
+  let pinned: Awaited<ReturnType<typeof createPinnedClient>> | undefined;
   try {
     if (args.hasCustomFetch) {
       await args.assertUrl(args.url);
     } else {
-      const resolved = await resolvePublicUrl(args.url);
-      dispatcher = await createPinnedDispatcher(resolved);
+      pinned = await createPinnedClient(await resolvePublicUrl(args.url));
     }
 
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
     try {
-      const res = await args.fetchImpl(args.url, {
+      const init = {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -270,13 +214,18 @@ async function executeWebhookHttpAttempt(args: {
         body: args.body,
         signal: ac.signal,
         redirect: "manual",
-        ...(dispatcher ? { dispatcher } : {}),
-      });
+      } as const;
+      const res = pinned
+        ? await pinned.fetch(args.url, {
+            ...init,
+            dispatcher: pinned.dispatcher,
+          })
+        : await args.fetchImpl(args.url, init);
       await res.body?.cancel().catch(() => {});
       return { httpStatusCode: res.status };
     } finally {
       clearTimeout(timer);
-      await closeDispatcher(dispatcher);
+      await pinned?.dispatcher.close().catch(() => {});
     }
   } catch (err) {
     return {
