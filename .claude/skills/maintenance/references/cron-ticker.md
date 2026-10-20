@@ -16,7 +16,9 @@ Scheduled HTTP jobs are registered in `lib/cron/cleanup-registry.ts` (`CLEANUP_J
 
 `netlify/functions/cron-tick.mts` runs every five minutes and POSTs latency-sensitive recovery sweeps to `/api/cleanup/<job>?limit=N` with `CRON_SECRET`. Sub-hourly recovery sweeps run **only** on the Netlify ticker (their duplicate GitHub Actions YAML twins were removed in `#1920` after handlers were updated to loop within a time budget).
 
-GitHub Actions is retained only for daily, weekly, and monthly batch crons and manual `workflow_dispatch` runs. When a job is already running, `withCronLock` returns `409`, which the ticker records as `lockHeld` rather than `failed`. Only a response outside `200`, `207`, and `409` counts as `failed`.
+Money reconcilers, money batch jobs and the TDS draft export also run on the ticker: `reconcile-disputes` hourly, `reconcile-ledgers` daily at 03:55 UTC, and `tds-return-draft` on the 5th of Jan/Apr/Jul/Oct (windows in `TARGET_WINDOWS`). Each tick first reads the Upstash key `ops:active_cron_platform` (one GET) and skips every target when it names another host; an absent key or a Redis failure runs the tick.
+
+GitHub Actions is retained only for the GST register export, the two payout reconcilers and the other non-money batch crons, plus manual `workflow_dispatch` runs; GitHub Actions is currently budget-blocked, so those jobs are not running. When a job is already running, `withCronLock` returns `409`, which the ticker records as `lockHeld` rather than `failed`. Only a response outside `200`, `207`, and `409` counts as `failed`.
 
 The ticker always returns HTTP `200` so Netlify does not retry the entire tick 3x on a single target failure; failures are logged on the structured `{"event":"cron-tick",...}` line.
 
@@ -34,7 +36,7 @@ Every scheduled GitHub Actions workflow declares `concurrency: { group: ${{ gith
 
 1. **Single implementation**: Put the job logic in one domain module and register it in `lib/cron/cleanup-registry.ts` (`CLEANUP_JOB_BUILDERS`) wrapped in `withCronLock`.
 2. **Never create 3-layer wrappers**: Do not add parallel `app/api/cleanup/<job>/route.ts` + `jobs/<domain>/<job>.ts` + `scripts/<domain>/<job>.ts` files.
-3. **Single scheduler**: Put sub-hourly recovery sweeps in `netlify/functions/cron-tick.mts` (`TARGETS`), and daily/weekly/monthly jobs in GitHub Actions — never both.
+3. **Single scheduler**: Put sub-hourly recovery sweeps in `netlify/functions/cron-tick.mts` (`TARGETS`), and daily/weekly/monthly jobs in a `TARGET_WINDOWS` slot or, if they cannot run bounded inside the ticker's timeout, in GitHub Actions — never both. Every tick must stay at or under `MAX_TARGETS_PER_TICK`.
 4. **Financial jobs**: If the job mutates money or payouts, include its slug in `FINANCIAL_JOB_NAMES` (`lib/cron/financial-jobs.ts`).
 
 ## Sources

@@ -32,6 +32,8 @@ export type ReconcileScope = {
   organizationId?: string;
   /** Membership id that initiated this run (null for scheduled cron). */
   triggeredById?: string;
+  /** Awaited as soon as the wallet step finds drift, so a run cut off later in the audit has already acted on it. */
+  onWalletDrift?: (reportId: string, findings: Finding[]) => Promise<void>;
 };
 
 export type Finding = {
@@ -1516,7 +1518,10 @@ async function stepReferralCreditLiability(ctx: StepCtx): Promise<void> {
   }
 }
 
-async function executeSteps(opts: ReconcileScope): Promise<{
+async function executeSteps(
+  opts: ReconcileScope,
+  reportId: string,
+): Promise<{
   ctx: StepCtx;
   durationMs: number;
 }> {
@@ -1529,6 +1534,12 @@ async function executeSteps(opts: ReconcileScope): Promise<{
   };
 
   await stepWalletBalance(ctx);
+  const walletDrift = ctx.findings.filter(
+    (f) => f.kind === "WALLET_BALANCE_DRIFT",
+  );
+  if (opts.onWalletDrift && walletDrift.length > 0) {
+    await opts.onWalletDrift(reportId, walletDrift);
+  }
   await stepAssignmentMeters(ctx);
   await stepOverageIntegrity(ctx);
   await stepPayoutTotals(ctx);
@@ -1576,7 +1587,7 @@ async function runReconcileLedgersUnlocked(
     },
     select: { id: true },
   });
-  const { ctx, durationMs } = await executeSteps(opts);
+  const { ctx, durationMs } = await executeSteps(opts, row.id);
   const ok = ctx.findings.length === 0;
   const summary = {
     ...ctx.counts,

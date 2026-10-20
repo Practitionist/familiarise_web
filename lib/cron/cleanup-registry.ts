@@ -7,6 +7,7 @@ import {
   statusFor,
 } from "@/lib/cron/cleanup-route";
 import { reportSentryError } from "@/lib/observability/report";
+import type { FrozenWallet } from "@/lib/payments/wallet-freeze";
 
 export type CleanupRouteHandlers = {
   GET: (req: NextRequest) => Promise<NextResponse>;
@@ -712,10 +713,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "reconcile-disputes": () =>
       cleanupRoute({
         job: "reconcile-disputes",
-        run: async () => {
+        run: async (req) => {
           const { reconcileDisputes } =
             await import("@/scripts/disputes/reconcile-disputes");
-          const result = await reconcileDisputes();
+          const result = await reconcileDisputes({
+            limit: parseLimitParam(req),
+          });
           if (result.urgentCount > 0) {
             console.warn(
               `ALERT: ${result.urgentCount} disputes require immediate attention!`,
@@ -799,14 +802,24 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
             await import("@/scripts/reconcile/reconcile-ledgers");
           const triggeredById =
             req.nextUrl.searchParams.get("triggeredById") ?? undefined;
+          const { respondToLedgerDrift, freezeDriftingWallets } =
+            await import("@/scripts/reconcile/ledger-drift-response");
+          // Freeze from the wallet step so a run cut off later has already frozen; a freeze failure fails the route once the audit completes.
+          let freezeError: unknown = null;
+          let frozenWallets: FrozenWallet[] = [];
           const report = await runReconcileLedgers({
             scope: "full",
             triggeredById,
+            onWalletDrift: async (reportId, findings) => {
+              try {
+                frozenWallets = await freezeDriftingWallets(reportId, findings);
+              } catch (err) {
+                freezeError = err;
+              }
+            },
           });
-          // Same freeze as the nightly job and the admin door.
-          const { freezeDriftedWallets } =
-            await import("@/lib/payments/wallet-freeze");
-          const frozenWallets = await freezeDriftedWallets(report);
+          if (!report.ok) await respondToLedgerDrift(report);
+          if (freezeError) throw freezeError;
           return {
             success: true,
             runId: report.id,

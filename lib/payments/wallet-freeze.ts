@@ -155,8 +155,8 @@ export interface FrozenWallet {
 
 /**
  * Freezes spend on every WALLET_BALANCE_DRIFT account of one reconcile report,
- * the same for every door that runs a reconcile. Appends to `frozen` as it goes,
- * so a throw mid-loop still leaves the caller the wallets already frozen.
+ * the same for every door that runs a reconcile. Appends to `frozen` as it goes;
+ * one failed freeze does not stop the rest, and the failures throw together at the end.
  */
 export async function freezeDriftedWallets(
   report: {
@@ -172,19 +172,32 @@ export async function freezeDriftedWallets(
   },
   frozen: FrozenWallet[] = [],
 ): Promise<FrozenWallet[]> {
+  const failures: unknown[] = [];
   for (const f of report.findings) {
     if (f.kind !== "WALLET_BALANCE_DRIFT" || !f.billingAccountId) continue;
-    const newlyFrozen = await freezeWalletSpend({
-      billingAccountId: f.billingAccountId,
-      organizationId: f.organizationId ?? null,
-      reason: `ledger reconcile ${report.id}: wallet cache ${f.actualPaise}p ≠ journal ${f.expectedPaise}p (Δ${f.deltaPaise}p)`,
-    });
-    frozen.push({
-      billingAccountId: f.billingAccountId,
-      organizationId: f.organizationId ?? null,
-      deltaPaise: Number(f.deltaPaise),
-      newlyFrozen,
-    });
+    try {
+      const newlyFrozen = await freezeWalletSpend({
+        billingAccountId: f.billingAccountId,
+        organizationId: f.organizationId ?? null,
+        reason: `ledger reconcile ${report.id}: wallet cache ${f.actualPaise}p ≠ journal ${f.expectedPaise}p (Δ${f.deltaPaise}p)`,
+      });
+      frozen.push({
+        billingAccountId: f.billingAccountId,
+        organizationId: f.organizationId ?? null,
+        deltaPaise: Number(f.deltaPaise),
+        newlyFrozen,
+      });
+    } catch (err) {
+      failures.push(err);
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      `Wallet freeze failed for ${failures.length} drifting account(s): ${failures
+        .map((e) => (e instanceof Error ? e.message : String(e)))
+        .join("; ")}`,
+    );
   }
   return frozen;
 }
