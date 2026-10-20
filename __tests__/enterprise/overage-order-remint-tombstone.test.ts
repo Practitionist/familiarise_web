@@ -51,7 +51,7 @@ const sidePayment = {
   currency: "INR",
   paymentStatus: "FAILED",
   paymentIntent: "order_old",
-  gatewayPaymentId: null,
+  gatewayPaymentId: "pay_old",
   amount: 129_500,
   originalAmount: 125_000,
   taxAmount: 4_500,
@@ -85,13 +85,22 @@ it("re-points by CAS on the prior intent and tombstones the replaced order", asy
     where: {
       id: "side1",
       paymentIntent: "order_old",
+      gatewayPaymentId: "pay_old",
       paymentStatus: { not: "SUCCEEDED" },
     },
-    data: { paymentIntent: "order_new", paymentStatus: "PENDING" },
+    data: {
+      paymentIntent: "order_new",
+      paymentStatus: "PENDING",
+      gatewayPaymentId: null,
+    },
   });
   expect(mockTombstone).toHaveBeenCalledWith(
     tx,
-    expect.objectContaining({ id: "side1", paymentIntent: "order_old" }),
+    expect.objectContaining({
+      id: "side1",
+      paymentIntent: "order_old",
+      gatewayPaymentId: "pay_old",
+    }),
     "overage charge re-minted",
   );
   expect(tx.paymentLeg.create).toHaveBeenCalledWith({
@@ -104,12 +113,20 @@ it("re-points by CAS on the prior intent and tombstones the replaced order", asy
   });
 });
 
-it("writes no tombstone when the CAS loses", async () => {
-  tx.payment.updateMany.mockResolvedValue({ count: 0 });
-  mockPrisma.payment.findUnique.mockResolvedValue({ paymentStatus: "PENDING" });
+it.each([
+  ["PENDING", "OVERAGE_ORDER_RACED"],
+  ["SUCCEEDED", undefined],
+])(
+  "writes no tombstone when the CAS loses to a %s row",
+  async (status, code) => {
+    tx.payment.updateMany.mockResolvedValue({ count: 0 });
+    mockPrisma.payment.findUnique.mockResolvedValue({ paymentStatus: status });
 
-  const res = await call();
+    const res = await call();
 
-  expect(res.status).toBe(409);
-  expect(mockTombstone).not.toHaveBeenCalled();
-});
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe(code);
+    expect(mockTombstone).not.toHaveBeenCalled();
+    expect(tx.paymentLeg.create).not.toHaveBeenCalled();
+  },
+);

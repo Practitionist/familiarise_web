@@ -109,7 +109,7 @@ function PanDoor({
       description={
         verify
           ? "Payouts then withhold TDS at the with-PAN rate."
-          : "Payouts keep withholding TDS at the no-PAN rate."
+          : "Payouts then withhold TDS at the no-PAN rate."
       }
       confirmLabel={verify ? "Verify PAN" : "Reject PAN"}
       tone={verify ? "default" : "destructive"}
@@ -538,20 +538,12 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
             variant="card"
             actions={
               canManagePayouts && data.pan.state !== "NOT_PROVIDED" ? (
-                <div className="flex gap-2">
-                  {data.pan.state === "PENDING" && (
-                    <PanDoor
-                      userId={profile.id}
-                      decision="VERIFY"
-                      pan={data.pan}
-                    />
-                  )}
-                  <PanDoor
-                    userId={profile.id}
-                    decision="REJECT"
-                    pan={data.pan}
-                  />
-                </div>
+                <PanDoor
+                  key={data.pan.state}
+                  userId={profile.id}
+                  decision={data.pan.state === "VERIFIED" ? "REJECT" : "VERIFY"}
+                  pan={data.pan}
+                />
               ) : undefined
             }
           >

@@ -230,17 +230,22 @@ export async function POST(
     },
   });
 
-  // Re-point the side-Payment to the new order (FAILED resets to PENDING) by CAS on
-  // its prior intent and "not settled"; a replaced gateway order moves to a tombstone.
+  // Re-point the side-Payment to the new order (FAILED resets to PENDING) by CAS on its prior
+  // gateway ids and "not settled"; the tombstone takes those unique ids, so the live row drops them.
   const sidePayment = event.payment;
   const stamped = await prisma.$transaction(async (tx) => {
     const cas = await tx.payment.updateMany({
       where: {
         id: sidePayment.id,
         paymentIntent: sidePayment.paymentIntent,
+        gatewayPaymentId: sidePayment.gatewayPaymentId,
         paymentStatus: { not: PaymentStatus.SUCCEEDED },
       },
-      data: { paymentIntent: order.id, paymentStatus: PaymentStatus.PENDING },
+      data: {
+        paymentIntent: order.id,
+        paymentStatus: PaymentStatus.PENDING,
+        gatewayPaymentId: null,
+      },
     });
     if (cas.count !== 1) return false;
     if (sidePayment.paymentIntent.startsWith("order_")) {

@@ -63,10 +63,13 @@ describe("prorate", () => {
   it("round goes half toward +infinity for negatives, like Math.round", () => {
     expect(prorate(-5, 1, 2, "round")).toBe(Math.round(-2.5));
     expect(prorate(-13, 1, 5, "round")).toBe(Math.round(-2.6));
+    expect(prorate(-7, 1, 2)).toBe(-4);
+    expect(prorate(-7, 1, 2, "ceil")).toBe(-3);
   });
 
   it("throws on a non-integer input or an unsafe result", () => {
     expect(() => prorate(10.5, 1, 2)).toThrow("not a safe integer");
+    expect(() => prorate(100, 1, 0)).toThrow("non-positive denominator");
     expect(() => prorate(Number.MAX_SAFE_INTEGER, 4, 1)).toThrow(
       "outside Number safe range",
     );

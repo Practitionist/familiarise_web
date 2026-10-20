@@ -70,7 +70,7 @@ const verifyPan = (body: Record<string, unknown>) =>
     { params: Promise.resolve({ userId: "u_1" }) },
   );
 
-function consultant(name: string, holder: string | null) {
+function consultant(name: string, holder: string | null, panVerified = false) {
   tx.consultantProfile.findUnique.mockResolvedValue({
     id: "cp_1",
     user: { name },
@@ -78,7 +78,7 @@ function consultant(name: string, holder: string | null) {
       id: "ti_1",
       panEncrypted: PAN,
       panLast4: "234F",
-      panVerified: false,
+      panVerified,
     },
   });
   tx.payoutAccount.findFirst.mockResolvedValue(
@@ -140,8 +140,14 @@ describe("POST /api/admin/users/[userId]/tax-info/verify-pan", () => {
     },
   );
 
-  it("rejects without a name check", async () => {
+  it("answers 409 PAN_NOT_VERIFIED on a pending PAN, and rejects a verified one without a name check", async () => {
     consultant("Asha Rao", null);
+    const refused = await verifyPan({ decision: "REJECT" });
+    expect(refused.status).toBe(409);
+    expect((await refused.json()).code).toBe("PAN_NOT_VERIFIED");
+    expect(tx.consultantTaxInfo.updateMany).not.toHaveBeenCalled();
+
+    consultant("Asha Rao", null, true);
     const res = await verifyPan({ decision: "REJECT" });
     expect(res.status).toBe(200);
     expect(tx.consultantTaxInfo.updateMany).toHaveBeenCalledWith(

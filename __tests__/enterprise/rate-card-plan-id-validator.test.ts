@@ -4,10 +4,10 @@
 
 // ConsultationPlan ids are cuids, so the rate-card planId filter must accept one.
 
-const mockFindMany = jest.fn(async () => []);
+const mockFindMany = jest.fn(async (_args: unknown) => []);
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { rateCard: { findMany: () => mockFindMany() } },
+  default: { rateCard: { findMany: (args: unknown) => mockFindMany(args) } },
 }));
 jest.mock("../../lib/auth-helpers", () => ({
   requireOrgAccess: jest.fn(async () => ({ member: { id: "m1" } })),
@@ -24,5 +24,12 @@ it("accepts a cuid planId", async () => {
     { params: Promise.resolve({ orgId: "org1" }) },
   );
   expect(res.status).toBe(200);
-  expect(mockFindMany).toHaveBeenCalled();
+  expect(mockFindMany).toHaveBeenCalledWith(
+    expect.objectContaining({
+      where: expect.objectContaining({
+        ownerOrgId: "org1",
+        planId: "clx9f3k2a0000qz8h1b2c3d4e",
+      }),
+    }),
+  );
 });

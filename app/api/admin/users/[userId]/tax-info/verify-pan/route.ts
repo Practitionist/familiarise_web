@@ -52,6 +52,13 @@ export const POST = withOpsAction(
       }
 
       const verify = body.decision === "VERIFY";
+      // An unverified PAN already takes the no-PAN rate, so rejecting it would change nothing.
+      if (!verify && !taxInfo.panVerified) {
+        throw new OpsRefusal(
+          "PAN_NOT_VERIFIED",
+          "This PAN is not verified, so there is nothing to reject.",
+        );
+      }
       let nameCheck: Prisma.InputJsonObject = {};
       if (verify) {
         const payoutHolderName = await verifiedPayoutHolderName(tx, profile.id);

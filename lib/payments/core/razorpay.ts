@@ -73,11 +73,13 @@ import {
       );
     }
   }
-  // A live RazorpayX key without the static-egress proxy is reported once per process at
-  // load; collections keep booting and each payout call refuses on its own.
+  // A live RazorpayX key (resolved as in resolveRazorpayXCredentials) without the egress proxy is
+  // reported once per process at load; collections keep booting and each payout call refuses.
   if (
     process.env.NEXT_PHASE !== "phase-production-build" &&
-    process.env.RAZORPAYX_KEY_ID?.startsWith("rzp_live_") &&
+    (process.env.RAZORPAYX_KEY_ID || process.env.RAZORPAY_KEY_ID)?.startsWith(
+      "rzp_live_",
+    ) &&
     !process.env.RAZORPAYX_EGRESS_PROXY_URL
   ) {
     reportSentryError(

@@ -2274,9 +2274,7 @@ async function computeCreditNoteAmounts(
   } else {
     cnTotal = Math.min(amountPaise, invoice.totalPaise, remaining);
     if (cnTotal <= 0) return null;
-    const taxFraction =
-      invoice.totalPaise > 0 ? invoiceTax / invoice.totalPaise : 0;
-    cnTax = Math.round(cnTotal * taxFraction);
+    cnTax = prorate(cnTotal, invoiceTax, invoice.totalPaise, "round");
     cnSubtotal = cnTotal - cnTax;
   }
 
