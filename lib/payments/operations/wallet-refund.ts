@@ -238,6 +238,74 @@ async function issueTopUpRefund(
   return lineOf(topUp, created, false);
 }
 
+type Stop = NonNullable<RefundRemainingResult["stoppedOn"]>;
+type WalkState = {
+  billingAccountId: string;
+  reason: string;
+  /** Gateway refunds still in flight; each debits the wallet when it lands. */
+  pendingPaise: number;
+  refunds: WalletRefundLine[];
+};
+
+/** Every top-up's gateway refunds, read before anything is sized. */
+async function listTopUpRefunds(
+  topUps: RefundableTopUp[],
+): Promise<{ listed: ListedTopUp[]; stoppedOn: Stop | null }> {
+  const listed: ListedTopUp[] = [];
+  for (const topUp of topUps) {
+    try {
+      const existing = await listRazorpayRefunds(topUp.providerPaymentId, 100);
+      const key = walletRefundKey(topUp.billingAccountId, topUp.id);
+      const prior = existing.find((r) => r.metadata?.walletRefundKey === key);
+      listed.push({ topUp, existing, prior });
+    } catch (error) {
+      return { listed, stoppedOn: stoppedAt(topUp, error) };
+    }
+  }
+  return { listed, stoppedOn: null };
+}
+
+/** Books this door's earlier refunds, found by their dedupe keys. */
+async function bookPriorRefunds(
+  listed: ListedTopUp[],
+  state: WalkState,
+): Promise<Stop | null> {
+  for (const l of listed) {
+    if (!l.prior) continue;
+    const line = lineOf(l.topUp, l.prior, true);
+    try {
+      await bookIfSucceeded(line, l.topUp);
+    } catch (error) {
+      return stoppedAt(l.topUp, error);
+    }
+    state.refunds.push(line);
+  }
+  return null;
+}
+
+/** Issues new refunds newest first while the balance net of in-flight refunds lasts. */
+async function issueNewRefunds(
+  listed: ListedTopUp[],
+  state: WalkState,
+): Promise<Stop | null> {
+  for (const l of listed) {
+    if (l.prior) continue;
+    const availablePaise =
+      (await cachedBalance(state.billingAccountId)) - state.pendingPaise;
+    if (availablePaise <= 0) break;
+    try {
+      const line = await issueTopUpRefund(l, availablePaise, state.reason);
+      if (!line) continue;
+      await bookIfSucceeded(line, l.topUp);
+      if (line.status === "PENDING") state.pendingPaise += line.amountPaise;
+      state.refunds.push(line);
+    } catch (error) {
+      return stoppedAt(l.topUp, error);
+    }
+  }
+  return null;
+}
+
 /**
  * Refunds `min(available, top-up refundable)` against each CONFIRMED top-up,
  * newest first, until the balance is spoken for. Every top-up's gateway
@@ -273,60 +341,27 @@ export async function refundRemainingWalletBalance(params: {
       : [],
   );
 
-  const refunds: WalletRefundLine[] = [];
-  const result = async (
-    pendingPaise: number,
-    stoppedOn: RefundRemainingResult["stoppedOn"],
-  ): Promise<RefundRemainingResult> => ({
+  const state: WalkState = {
+    billingAccountId,
+    reason: params.reason,
+    pendingPaise: 0,
+    refunds: [],
+  };
+  const { listed, stoppedOn: listStop } = await listTopUpRefunds(topUps);
+  let stoppedOn = listStop;
+  if (!stoppedOn) {
+    state.pendingPaise = sumAmounts(
+      listed.flatMap((l) => l.existing.filter((r) => r.status === "PENDING")),
+    );
+    stoppedOn =
+      (await bookPriorRefunds(listed, state)) ??
+      (await issueNewRefunds(listed, state));
+  }
+  return {
     startingBalancePaise,
     balanceAfterPaise: await cachedBalance(billingAccountId),
-    pendingPaise,
-    refunds,
+    pendingPaise: state.pendingPaise,
+    refunds: state.refunds,
     stoppedOn,
-  });
-
-  // Phase 1: read every top-up's gateway refunds before sizing anything.
-  const listed: ListedTopUp[] = [];
-  for (const topUp of topUps) {
-    try {
-      const existing = await listRazorpayRefunds(topUp.providerPaymentId, 100);
-      const key = walletRefundKey(billingAccountId, topUp.id);
-      const prior = existing.find((r) => r.metadata?.walletRefundKey === key);
-      listed.push({ topUp, existing, prior });
-    } catch (error) {
-      return result(0, stoppedAt(topUp, error));
-    }
-  }
-  // Every refund still in flight debits the wallet when it lands.
-  let pendingPaise = sumAmounts(
-    listed.flatMap((l) => l.existing.filter((r) => r.status === "PENDING")),
-  );
-
-  // Phase 2: book this door's earlier refunds, then issue new ones newest first.
-  for (const l of listed) {
-    if (!l.prior) continue;
-    const line = lineOf(l.topUp, l.prior, true);
-    try {
-      await bookIfSucceeded(line, l.topUp);
-    } catch (error) {
-      return result(pendingPaise, stoppedAt(l.topUp, error));
-    }
-    refunds.push(line);
-  }
-  for (const l of listed) {
-    if (l.prior) continue;
-    const availablePaise =
-      (await cachedBalance(billingAccountId)) - pendingPaise;
-    if (availablePaise <= 0) break;
-    try {
-      const line = await issueTopUpRefund(l, availablePaise, params.reason);
-      if (!line) continue;
-      await bookIfSucceeded(line, l.topUp);
-      if (line.status === "PENDING") pendingPaise += line.amountPaise;
-      refunds.push(line);
-    } catch (error) {
-      return result(pendingPaise, stoppedAt(l.topUp, error));
-    }
-  }
-  return result(pendingPaise, null);
+  };
 }
