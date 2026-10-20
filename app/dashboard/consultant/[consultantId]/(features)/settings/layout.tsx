@@ -9,12 +9,7 @@ import {
   settingsSectionHref,
 } from "./settings";
 
-/**
- * The consultant Settings hub (#1785 L-2) on the shared SettingsLayout
- * (#1527): grouped left nav from `md` up, list → detail below it. Every
- * section is its own URL. Bare `/settings` still 308s to the first section,
- * so the mobile back link targets the list view instead.
- */
+/** Settings uses a grouped hub and a dedicated URL for each permitted form. */
 export default function ConsultantSettingsLayout({
   children,
 }: Readonly<{ children: ReactNode }>) {

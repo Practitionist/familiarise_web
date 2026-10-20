@@ -7,13 +7,7 @@ import {
   orgSettingsSectionsFor,
 } from "@/lib/dashboard/org-settings-sections";
 
-/**
- * /dashboard/organization/[orgId]/settings (#1527) has no body: it sends the
- * viewer to a section — a retired `?tab=<key>` to that section, otherwise the
- * first one the role may open. `?tab=notifications` goes to the viewer's own
- * Settings › Notifications, where it moved. `?view=sections` is the mobile
- * list the layout renders.
- */
+/** The permitted settings hub renders in the layout; old tab links resolve to a form. */
 export default async function OrgSettingsPage({
   params,
   searchParams,
@@ -35,7 +29,7 @@ export default async function OrgSettingsPage({
   }
   const sections = orgSettingsSectionsFor(access.member.role);
   if (sections.length === 0) redirect(`/dashboard/organization/${orgId}/home`);
-  if (sp.view === "sections") return null;
+  if (!tab) return null;
   const target = sections.find((s) => s.key === tab) ?? sections[0];
   redirect(orgSettingsHref(orgId, target.key));
 }

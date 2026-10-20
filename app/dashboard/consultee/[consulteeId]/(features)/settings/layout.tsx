@@ -8,11 +8,7 @@ import {
   consulteeSettingsGroups,
 } from "./settings";
 
-/**
- * The consultee Settings hub on the shared SettingsLayout (#1527 §14): Account,
- * Notifications and Learning profile, each its own URL. Bare `/settings` 308s
- * to Account, so the mobile back link targets the list view instead.
- */
+/** Settings uses a grouped hub and a dedicated URL for each permitted form. */
 export default function ConsulteeSettingsLayout({
   children,
 }: Readonly<{ children: ReactNode }>) {
