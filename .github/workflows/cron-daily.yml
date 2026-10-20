@@ -82,7 +82,7 @@ jobs:
           INPUT_JOB: ${{ inputs.job }}
         run: |
           case "${INPUT_JOB}" in
-            ""|all|cleanup-auth-tokens|reconcile-document-storage|expire-recordings|prune-system-events|prune-audit-logs|sweep-verification|prune-system-job-executions|purge-deleted-documents|stream-sync|reconcile-ledgers|expire-event-channels|expire-stale-collaborator-invites|reconcile-orphaned-recordings|wind-down-deactivated-orgs|purge-unverified-users)
+            ""|all|cleanup-auth-tokens|reconcile-document-storage|expire-recordings|prune-system-events|prune-audit-logs|sweep-verification|prune-system-job-executions|purge-deleted-documents|stream-sync|expire-event-channels|expire-stale-collaborator-invites|reconcile-orphaned-recordings|wind-down-deactivated-orgs|purge-unverified-users)
               ;;
             *)
               echo "::error::Unknown daily job slug '${INPUT_JOB}'"
@@ -183,15 +183,6 @@ jobs:
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/stream/stream-sync.ts
 
-      - name: Reconcile ledgers
-        id: reconcile-ledgers
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'reconcile-ledgers'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/reconcile/reconcile-ledgers.ts
-
       - name: Expire event channels
         id: expire-event-channels
         if: >-
@@ -268,7 +259,6 @@ jobs:
             "prune-system-job-executions:${{ steps.prune-system-job-executions.outcome }}" \
             "purge-deleted-documents:${{ steps.purge-deleted-documents.outcome }}" \
             "stream-sync:${{ steps.stream-sync.outcome }}" \
-            "reconcile-ledgers:${{ steps.reconcile-ledgers.outcome }}" \
             "expire-event-channels:${{ steps.expire-event-channels.outcome }}" \
             "expire-stale-collaborator-invites:${{ steps.expire-stale-collaborator-invites.outcome }}" \
             "reconcile-orphaned-recordings:${{ steps.reconcile-orphaned-recordings.outcome }}" \

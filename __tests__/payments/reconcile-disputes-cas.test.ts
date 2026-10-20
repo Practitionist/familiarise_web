@@ -25,20 +25,24 @@ const updateMany = jest.fn(async ({ where }: { where: { status: string } }) =>
   where.status === "UNDER_REVIEW" ? { count: 0 } : { count: 1 },
 );
 const update = jest.fn();
+type FindArgs = { where: { OR?: unknown }; take?: number; orderBy?: unknown };
+const row = (disputeId: string, status = "UNDER_REVIEW") => ({
+  disputeId,
+  status,
+  paymentGateway: "RAZORPAY",
+  dueBy: null,
+  evidence: null,
+  payment: { id: "p1", amount: 1000, gatewayPaymentId: "pay_1" },
+});
+// The second (stale-rotation) query carries the `OR`; the deadline-window query does not.
+const findMany = jest.fn(async (args: FindArgs) =>
+  args.where.OR ? [row("dp_1")] : [],
+);
 jest.mock("../../lib/prisma", () => {
   const db = {
     $transaction: (fn: (tx: unknown) => unknown) => fn(db),
     dispute: {
-      findMany: jest.fn(async () => [
-        {
-          disputeId: "dp_1",
-          status: "UNDER_REVIEW",
-          paymentGateway: "RAZORPAY",
-          dueBy: null,
-          evidence: null,
-          payment: { id: "p1", amount: 1000, gatewayPaymentId: "pay_1" },
-        },
-      ]),
+      findMany: (a: FindArgs) => findMany(a),
       updateMany: (...a: unknown[]) => updateMany(...(a as [never])),
       update: (...a: unknown[]) => update(...a),
     },
@@ -73,5 +77,82 @@ describe("dispute reconciliation is a CAS on the status it read", () => {
     // The miss is a skip, not a reconciliation and not an error.
     expect(result.reconciledCount).toBe(0);
     expect(result.errors).toEqual([]);
+  });
+});
+
+describe("dispute reconciliation honours the ticker's limit", () => {
+  beforeEach(() =>
+    mockGetRazorpayDispute.mockResolvedValue({
+      paymentId: "pay_1",
+      status: "needs_response",
+      evidence: {},
+      isChargeRefundable: true,
+      dueBy: null,
+    }),
+  );
+
+  it("polls deadline-window rows first and fills the rest from the stale rotation", async () => {
+    findMany.mockImplementationOnce(async () => [row("dp_due")]);
+
+    await reconcileDisputes({ limit: 10 });
+
+    const [due, stale] = findMany.mock.calls.map((c) => c[0]);
+    expect(due).toMatchObject({
+      where: { paymentGateway: "RAZORPAY", dueBy: { lte: expect.any(Date) } },
+      orderBy: [{ updatedAt: "asc" }, { dueBy: "asc" }],
+      take: 10,
+    });
+    expect(stale).toMatchObject({
+      where: {
+        paymentGateway: "RAZORPAY",
+        updatedAt: { lt: expect.any(Date) },
+      },
+      take: 9,
+    });
+  });
+
+  it("skips the stale query when deadline-window rows fill a limit of one", async () => {
+    findMany.mockImplementationOnce(async () => [row("dp_a")]);
+
+    await reconcileDisputes({ limit: 1 });
+
+    expect(findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("reserves room for a null-dueBy row when deadline-window rows exceed the limit", async () => {
+    findMany
+      .mockImplementationOnce(async (args: FindArgs) =>
+        Array.from({ length: args.take ?? 0 }, (_, i) => row(`dp_due${i}`)),
+      )
+      .mockImplementationOnce(async () => [row("dp_null")]);
+
+    await reconcileDisputes({ limit: 3 });
+
+    expect(findMany.mock.calls[1]?.[0]).toMatchObject({ take: 1 });
+    const polled = mockGetRazorpayDispute.mock.calls.map((c) => c[0]);
+    expect(polled).toHaveLength(3);
+    expect(polled).toContain("dp_null");
+  });
+
+  it("is unbounded without a limit", async () => {
+    await reconcileDisputes().catch(() => undefined);
+
+    for (const [args] of findMany.mock.calls) {
+      expect(args).not.toHaveProperty("take");
+    }
+  });
+});
+
+describe("a dispute whose poll fails rotates behind the batch", () => {
+  it("touches updatedAt under the status CAS and reports the error", async () => {
+    mockGetRazorpayDispute.mockRejectedValueOnce(new Error("gateway 502"));
+
+    const result = await reconcileDisputes({ limit: 10 });
+
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { disputeId: "dp_1", status: "UNDER_REVIEW" },
+      data: { updatedAt: expect.any(Date) },
+    });
+    expect(result.errors).toEqual(["Dispute dp_1: gateway 502"]);
   });
 });
