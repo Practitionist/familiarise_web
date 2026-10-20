@@ -25,6 +25,8 @@ const DISPUTE_HORIZON_MS = 72 * HOUR_MS;
 const DISPUTE_CRITICAL_MS = 12 * HOUR_MS;
 // Past due by more than a day, earlier sweeps already fired both windows; the bound keeps those rows from filling the batch.
 const DISPUTE_LOOKBACK_MS = DAY_MS;
+// Open disputes due within the four-day window; far above any real backlog, it only bounds the read.
+const DISPUTE_WINDOW_CAP = 500;
 
 type SlaNoticeKind = "ack" | "res";
 type SlaNoticeLevel = "warn" | "breach";
@@ -676,31 +678,55 @@ async function processDisputeDeadlineAlerts(
   errors: string[],
   stagedBells: StagedTrigger[],
 ): Promise<number> {
-  const actionableDisputes = await prisma.dispute.findMany({
-    where: {
-      status: { in: ["NEEDS_RESPONSE", "WARNING_NEEDS_RESPONSE"] },
-      dueBy: {
-        gte: new Date(now.getTime() - DISPUTE_LOOKBACK_MS),
-        lte: new Date(now.getTime() + DISPUTE_HORIZON_MS),
+  // The whole window, so the page and the unsent-pair filter see every dispute; `limit` caps only the sends.
+  const actionableDisputes =
+    (await prisma.dispute.findMany({
+      where: {
+        status: { in: ["NEEDS_RESPONSE", "WARNING_NEEDS_RESPONSE"] },
+        dueBy: {
+          gte: new Date(now.getTime() - DISPUTE_LOOKBACK_MS),
+          lte: new Date(now.getTime() + DISPUTE_HORIZON_MS),
+        },
       },
-    },
-    orderBy: { dueBy: "asc" },
-    take: limit,
-  });
+      orderBy: { dueBy: "asc" },
+      take: DISPUTE_WINDOW_CAP,
+    })) ?? [];
 
-  await pageCriticalDisputeDeadlines(now, actionableDisputes ?? [], errors);
+  await pageCriticalDisputeDeadlines(now, actionableDisputes, errors);
 
   if (admins.length === 0) return 0;
   const recipients = admins.map((a) => a.id);
 
+  const pairs = actionableDisputes.flatMap((d) => {
+    if (!d.dueBy) return [];
+    const window: "24" | "72" =
+      d.dueBy.getTime() - now.getTime() <= 24 * HOUR_MS ? "24" : "72";
+    const dedupeKey = `dispute-due:${d.id}:${window}`;
+    // With a dedupeKey the payload does not enter the id, so this matches what stageBell writes.
+    const transactionId = deriveTransactionId(
+      NOVU_WORKFLOWS.DISPUTE_UPDATED,
+      recipients,
+      {},
+      dedupeKey,
+    );
+    return [{ d, dueBy: d.dueBy, window, dedupeKey, transactionId }];
+  });
+  const alreadyStaged = new Set(
+    (
+      (await prisma.notificationOutbox.findMany({
+        where: { transactionId: { in: pairs.map((p) => p.transactionId) } },
+        select: { transactionId: true },
+      })) ?? []
+    ).map((r) => r.transactionId),
+  );
+  const unsent = pairs
+    .filter((p) => !alreadyStaged.has(p.transactionId))
+    .slice(0, limit);
+
   const stagedFlags = await runSequential(
-    actionableDisputes ?? [],
-    async (d) => {
-      if (!d.dueBy) return 0;
-      const dueByIso = d.dueBy.toISOString();
-      const msLeft = d.dueBy.getTime() - now.getTime();
-      const window: "24" | "72" = msLeft <= 24 * HOUR_MS ? "24" : "72";
-      const dedupeKey = `dispute-due:${d.id}:${window}`;
+    unsent,
+    async ({ d, dueBy, window, dedupeKey, transactionId }) => {
+      const dueByIso = dueBy.toISOString();
       const subject = `[Dispute Due T-${window}h] ${d.disputeId}`;
       const escapedDisputeId = escapeHtml(d.disputeId);
 
@@ -715,12 +741,6 @@ async function processDisputeDeadlineAlerts(
           windowHours: Number(window),
           dashboardUrl: `${getAppUrl()}/dashboard/admin/disputes/${d.id}`,
         };
-        const transactionId = deriveTransactionId(
-          NOVU_WORKFLOWS.DISPUTE_UPDATED,
-          recipients,
-          payload,
-          dedupeKey,
-        );
 
         const txResult = await prisma.$transaction(
           async (tx) => {

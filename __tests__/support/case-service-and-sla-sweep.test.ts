@@ -269,6 +269,8 @@ import {
 } from "../../lib/support/case-service";
 import { readOwnTicket } from "../../lib/support/own-case-read";
 import { runSupportSlaSweep } from "../../lib/support/sla-sweep";
+import { deriveTransactionId } from "../../lib/novu/outbox";
+import { NOVU_WORKFLOWS } from "../../lib/novu/workflows";
 import {
   GET as getCases,
   POST as postCases,
@@ -990,6 +992,48 @@ describe("WS1/WS2/WS4/WS6/WS9 Support Backend & SLA Engine", () => {
       expect([...args.ids].sort()).toEqual(["due-10h", "past-2h"]);
       expect(mockReportSentryMessage).toHaveBeenCalledTimes(1);
       expect(stagedDisputeKeys()).toHaveLength(4);
+    });
+
+    it("pairs already staged do not use up the batch", async () => {
+      seedDisputes([
+        dispute("sent-a", 5),
+        dispute("sent-b", 6),
+        dispute("new-c", 40),
+      ]);
+      mockPrisma.notificationOutbox.findMany.mockImplementation(
+        async (args: { where: { transactionId?: { in: string[] } } }) =>
+          (args.where.transactionId?.in ?? [])
+            .filter((id) =>
+              ["sent-a", "sent-b"].some(
+                (d) =>
+                  id ===
+                  deriveTransactionId(
+                    NOVU_WORKFLOWS.DISPUTE_UPDATED,
+                    ["admin-1"],
+                    {},
+                    `dispute-due:${d}:24`,
+                  ),
+              ),
+            )
+            .map((transactionId) => ({ transactionId })),
+      );
+
+      await runSupportSlaSweep({ now, limit: 1 });
+
+      expect(stagedDisputeKeys()).toEqual(["dispute-due:new-c:72"]);
+    });
+
+    it("pages every critical dispute even when the send batch is smaller", async () => {
+      seedDisputes([dispute("c1", 1), dispute("c2", 2), dispute("c3", 3)]);
+
+      await runSupportSlaSweep({ now, limit: 1 });
+
+      const [args] = mockReportStandingFinding.mock.calls[0] as [
+        { ids: string[] },
+        () => void,
+      ];
+      expect([...args.ids].sort()).toEqual(["c1", "c2", "c3"]);
+      expect(stagedDisputeKeys()).toEqual(["dispute-due:c1:24"]);
     });
 
     it("links the alert to the admin dispute detail page", async () => {
