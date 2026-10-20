@@ -45,7 +45,12 @@ export function buyerRow(id = "buyer") {
 export function buildCheckoutInput(
   overrides: Pick<CheckoutInput, "appointmentType"> & Partial<CheckoutInput>,
 ): CheckoutInput {
-  return { planId: "plan-1", paymentGateway: "RAZORPAY", ...overrides };
+  return {
+    planId: "plan-1",
+    paymentGateway: "RAZORPAY",
+    consumerStateCode: "29",
+    ...overrides,
+  };
 }
 
 /** The gateway mints order `id` for the next checkout. */

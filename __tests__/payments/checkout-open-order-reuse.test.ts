@@ -336,6 +336,7 @@ function checkoutInput(overrides: Record<string, unknown> = {}) {
     eventId: "evt-1",
     paymentGateway: "RAZORPAY",
     clientIdempotencyKey: "remount-tab-key-0002",
+    consumerStateCode: "29",
     ...overrides,
   } as unknown as Parameters<typeof handleCheckout>[0];
 }
@@ -387,7 +388,7 @@ beforeEach(() => {
 function userRow() {
   return {
     id: "user-1",
-    consulteeProfile: { id: "cprof-1" },
+    consulteeProfile: { id: "cprof-1", billingStateCode: "29" },
     consultantProfile: null,
   };
 }

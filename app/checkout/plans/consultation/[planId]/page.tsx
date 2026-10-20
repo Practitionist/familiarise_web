@@ -159,12 +159,15 @@ export default function ConsultationCheckoutPage({
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [useReferralCredits, setUseReferralCredits] = useState(false);
-  // #1365 — GST place of supply. Blank is the statutory s.12(2)(b) default, so
-  // this never blocks checkout.
-  const billingState = useBillingState(checkoutTaxContext.billingStateCode);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<
     string | null
   >(null);
+  const billingState = useBillingState({
+    initial: checkoutTaxContext.billingStateCode,
+    isInternational: checkoutTaxContext.isInternational,
+    organizationId: selectedOrganizationId,
+  });
+  const { validate: validateBillingState } = billingState;
   const { data: session } = useSession();
   // #1863 — the refund rail, derived from the buyer's own funding choice so the
   // promise under the price moves with it.
@@ -454,6 +457,8 @@ export default function ConsultationCheckoutPage({
         return;
       }
 
+      if (!validateBillingState()) return;
+
       // Prevent double-clicks: ref provides synchronous guard (React state is async)
       if (isProcessingRef.current || isCheckoutProcessing) {
         return;
@@ -569,6 +574,7 @@ export default function ConsultationCheckoutPage({
       useReferralCredits,
       selectedOrganizationId,
       billingState.bodyField,
+      validateBillingState,
       validatedSearchParams,
       currency,
       handleCheckoutError,
@@ -813,6 +819,8 @@ export default function ConsultationCheckoutPage({
         <BillingStateSelect
           value={billingState.value}
           onChange={billingState.onChange}
+          required={billingState.required}
+          error={billingState.error}
         />
         <Separator className="bg-border" />
         <div className="grid gap-4">
@@ -1029,6 +1037,7 @@ export default function ConsultationCheckoutPage({
                           }
                           disabled={isMaintenanceBlocked}
                           onBeforeCheckout={async () => {
+                            if (!validateBillingState()) return false;
                             writeHoldMarker(holdMarkerKey);
                             return true;
                           }}

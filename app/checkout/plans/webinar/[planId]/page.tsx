@@ -141,12 +141,15 @@ export default function WebinarCheckoutPage({
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [useReferralCredits, setUseReferralCredits] = useState(false);
-  // #1365 — GST place of supply. Blank is the statutory s.12(2)(b) default, so
-  // this never blocks checkout.
-  const billingState = useBillingState(checkoutTaxContext.billingStateCode);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<
     string | null
   >(null);
+  const billingState = useBillingState({
+    initial: checkoutTaxContext.billingStateCode,
+    isInternational: checkoutTaxContext.isInternational,
+    organizationId: selectedOrganizationId,
+  });
+  const { validate: validateBillingState } = billingState;
 
   // #1863 — derived from the buyer's own funding choices rather than passed in,
   // so the refund-rail promise under the price moves the moment they change how
@@ -302,6 +305,8 @@ export default function WebinarCheckoutPage({
         return;
       }
 
+      if (!validateBillingState()) return;
+
       // Prevent double-clicks: ref provides synchronous guard (React state is async)
       if (isProcessingRef.current || isCheckoutProcessing) {
         return;
@@ -426,6 +431,7 @@ export default function WebinarCheckoutPage({
       useReferralCredits,
       selectedOrganizationId,
       billingState.bodyField,
+      validateBillingState,
       validatedSearchParams,
       currency,
     ],
@@ -765,6 +771,8 @@ export default function WebinarCheckoutPage({
         <BillingStateSelect
           value={billingState.value}
           onChange={billingState.onChange}
+          required={billingState.required}
+          error={billingState.error}
         />
         <Separator className="bg-border" />
         <div className="grid gap-4">
@@ -981,7 +989,10 @@ export default function WebinarCheckoutPage({
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
-                          onBeforeCheckout={revalidateSeatsBeforePayment}
+                          onBeforeCheckout={async () =>
+                            validateBillingState() &&
+                            revalidateSeatsBeforePayment()
+                          }
                           disabled={isMaintenanceBlocked || isSoldOut}
                         />
                       ) : null}

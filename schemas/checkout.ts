@@ -18,6 +18,24 @@ const GST_STATE_CODES: ReadonlySet<string> = new Set(
   GST_STATE_OPTIONS.map((option) => option.code),
 );
 
+export const BUYER_STATE_REQUIRED_MESSAGE =
+  "Select your billing state. It is needed for your GST invoice.";
+
+const consumerStateCodeSchema = z
+  .string({ required_error: BUYER_STATE_REQUIRED_MESSAGE })
+  .length(2)
+  .refine((code) => GST_STATE_CODES.has(code), {
+    message: "Not a valid GST state code",
+  });
+
+/**
+ * A domestic, buyer-paid checkout must declare the buyer's state: CGST Rule
+ * 46(f) proviso requires it on every invoice for a service supplied online.
+ */
+export const consumerBuyerStateSchema = z.object({
+  consumerStateCode: consumerStateCodeSchema,
+});
+
 // Base schemas for individual components
 export const appointmentTypeSchema = z.enum([
   "CONSULTATION",
@@ -118,17 +136,9 @@ export const checkoutSchema = z
       .string()
       .max(256, "Booking notes must be 256 characters or fewer")
       .optional(),
-    // #1365 — the buyer's GST state (2-digit numeric), declared at checkout.
-    // Optional by design: Sec 12(2)(b) IGST Act places a B2C supply at the
-    // supplier's own location when no address is on record, so a blank field
-    // is the statutory default rather than a missing answer.
-    consumerStateCode: z
-      .string()
-      .length(2)
-      .refine((code) => GST_STATE_CODES.has(code), {
-        message: "Not a valid GST state code",
-      })
-      .optional(),
+    // The buyer's GST state (2-digit numeric). Optional here because org-funded
+    // and international checkouts have none; `handleCheckout` requires it otherwise.
+    consumerStateCode: consumerStateCodeSchema.optional(),
     useReferralCredits: z.boolean().optional(), // Apply available referral credits
     // Enterprise: optional org context. When set, the payment is tagged with
     // organizationId and billing is routed per the BillingAccount's

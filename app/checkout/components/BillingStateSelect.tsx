@@ -1,14 +1,12 @@
 "use client";
 
 /**
- * Billing-state picker for the GST place of supply (#1365).
+ * Billing-state picker for the GST place of supply.
  *
- * Deliberately optional and off the critical path: under s.12(2)(b) of the
- * IGST Act a B2C supply with no address of the recipient on record is supplied
- * at the SUPPLIER's own location, so leaving this blank produces a correct
- * intra-state tax invoice rather than an incomplete one. It exists so a buyer
- * in another state gets an IGST invoice their accountant will accept, not so
- * that checkout can demand an answer before taking money.
+ * Required on a domestic buyer-paid checkout: CGST Rule 46(f) proviso puts the
+ * recipient's state on every invoice for a service supplied online, and the
+ * server refuses the checkout without it. Org-funded and international
+ * checkouts get no consumer invoice, so there the field stays optional.
  *
  * Submits the 2-digit NUMERIC code, which is what the GST portal, the invoice
  * and `lib/compliance/gst.ts` all compare on. Once a buyer picks a state,
@@ -26,22 +24,29 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useSession } from "@/lib/auth-client";
 import { GST_STATE_OPTIONS } from "@/lib/compliance/state-codes";
+import { BUYER_STATE_REQUIRED_MESSAGE } from "@/schemas/checkout";
 
 export interface BillingStateSelectProps {
   /** The 2-digit numeric state code, or null when nothing has been chosen. */
   value: string | null;
   onChange: (stateCode: string | null) => void;
+  required: boolean;
+  /** Shown under the field once a submit was blocked on it. */
+  error: string | null;
   disabled?: boolean;
 }
 
 /** Sentinel for the "no answer" option. Radix Select forbids an empty-string
- *  item value, and null is what the API wants for the statutory default. */
+ *  item value. */
 const NOT_SPECIFIED = "__unspecified__";
 
 export function BillingStateSelect({
   value,
   onChange,
+  required,
+  error,
   disabled,
 }: Readonly<BillingStateSelectProps>) {
   return (
@@ -51,12 +56,20 @@ export function BillingStateSelect({
         value={value ?? NOT_SPECIFIED}
         onValueChange={(next) => onChange(next === NOT_SPECIFIED ? null : next)}
         disabled={disabled}
+        required={required}
       >
-        <SelectTrigger id="billing-state" className="w-full">
-          <SelectValue placeholder="Optional" />
+        <SelectTrigger
+          id="billing-state"
+          className="w-full"
+          aria-invalid={error ? true : undefined}
+          aria-describedby="billing-state-help"
+        >
+          <SelectValue placeholder="Select your state" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value={NOT_SPECIFIED}>Not specified</SelectItem>
+          {required ? null : (
+            <SelectItem value={NOT_SPECIFIED}>Not specified</SelectItem>
+          )}
           {GST_STATE_OPTIONS.map((option) => (
             <SelectItem key={option.code} value={option.code}>
               {option.name}
@@ -64,60 +77,98 @@ export function BillingStateSelect({
           ))}
         </SelectContent>
       </Select>
-      <p className="text-xs text-muted-foreground">
-        Optional. We use this only to decide the place of supply on your tax
-        invoice. If you leave it blank, the invoice is issued at our own
-        location, as the GST rules provide.
-      </p>
+      {error ? (
+        <p id="billing-state-help" className="text-xs text-destructive">
+          {error}
+        </p>
+      ) : (
+        <p id="billing-state-help" className="text-xs text-muted-foreground">
+          {required
+            ? "Needed for your GST invoice."
+            : "Optional for this booking."}
+        </p>
+      )}
     </div>
   );
 }
 
 export interface UseBillingStateResult {
-  /** The 2-digit numeric code, or null for the statutory default. */
+  /** The 2-digit numeric code, or null when nothing has been chosen. */
   value: string | null;
   onChange: (stateCode: string | null) => void;
+  /** True when this checkout mints a consumer invoice and so needs a state. */
+  required: boolean;
+  error: string | null;
+  /** Shows the inline error and returns false when a required state is missing. */
+  validate: () => boolean;
   /**
-   * Spread straight into a checkout POST body. Omits the key entirely when no
-   * state is on record, because the API treats an absent field and an explicit
-   * null identically and `undefined` is what the shared `createCheckoutData`
-   * helper expects for "not answered".
+   * Spread straight into a checkout POST body. Omits the key when no state is
+   * chosen, which is what `createCheckoutData` expects for "not answered".
    */
   bodyField: { consumerStateCode?: string };
 }
 
 /**
  * Owns the billing-state answer for one checkout page: the local value, the
- * pre-fill from the buyer's remembered profile state, and the body field the
- * page sends.
+ * pre-fill from the buyer's remembered profile state, whether the rail needs
+ * one, and the body field the page sends.
  *
- * Every checkout page needs exactly this, and had grown its own copy of it.
  * The pre-fill needs the latch: the checkout context resolves after first
  * paint, so without one, a buyer who answers before it lands would have their
  * answer overwritten by the stored value a moment later.
- *
- * @param initial the remembered state from the checkout context, if any.
  */
-export function useBillingState(
-  initial?: string | null,
-): UseBillingStateResult {
+export function useBillingState(params: {
+  /** The remembered state from the checkout context, if any. */
+  initial?: string | null;
+  isInternational: boolean;
+  /** The org the buyer chose to bill, or null for a personal payment. */
+  organizationId: string | null;
+}): UseBillingStateResult {
+  const { initial, isInternational, organizationId } = params;
   const [value, setValue] = useState<string | null>(null);
   const [answered, setAnswered] = useState(false);
+  const [submitBlocked, setSubmitBlocked] = useState(false);
+  const { data: session } = useSession();
 
   useEffect(() => {
     if (answered) return;
     setValue(initial ?? null);
   }, [initial, answered]);
 
+  // Only WALLET/INVOICE/LICENSE bill the org; an org with no rail falls back to PERSONAL.
+  const orgFunded = useMemo(() => {
+    if (!organizationId) return false;
+    const fundingSource = session?.user?.organizationMemberships?.find(
+      (m) => m.organizationId === organizationId,
+    )?.fundingSource;
+    return (
+      fundingSource === "WALLET" ||
+      fundingSource === "INVOICE" ||
+      fundingSource === "LICENSE"
+    );
+  }, [organizationId, session?.user?.organizationMemberships]);
+  const required = !isInternational && !orgFunded;
+
   const onChange = useCallback((stateCode: string | null) => {
     setAnswered(true);
     setValue(stateCode);
   }, []);
+
+  const validate = useCallback(() => {
+    const ok = !required || value !== null;
+    setSubmitBlocked(!ok);
+    return ok;
+  }, [required, value]);
 
   const bodyField = useMemo(
     () => (value ? { consumerStateCode: value } : {}),
     [value],
   );
 
-  return { value, onChange, bodyField };
+  const error =
+    submitBlocked && required && value === null
+      ? BUYER_STATE_REQUIRED_MESSAGE
+      : null;
+
+  return { value, onChange, required, error, validate, bodyField };
 }
