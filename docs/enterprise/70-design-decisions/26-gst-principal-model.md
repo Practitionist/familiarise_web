@@ -43,6 +43,8 @@ The pairing of principal-for-GST with operator-for-income-tax is defensible but 
 4. **Resolved.** Is the Section 12(2)(b) supplier-state default acceptable for consumers who decline to declare a state, or must the checkout collect a state before payment? CBIC Circular 242/36/2024-GST (31 Dec 2024) and the CGST Rule 46(f) proviso require the recipient's state on every invoice for a service supplied online, whatever its value, so checkout now requires the buyer's state; the default remains only for older payments with none on record.
 5. Confirm that Section 52 TCS registration is not required while the platform is the supplier of record.
 
+The full 14-question research memo, with code status, is [docs/compliance/18-tax-research-memo-oct-2026.md](../../compliance/18-tax-research-memo-oct-2026.md).
+
 ## Related
 
 - ADR 21 (single writer for payment confirmation) — the invoice is minted inside the same pipeline, never by a second writer.

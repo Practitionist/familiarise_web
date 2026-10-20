@@ -15,8 +15,12 @@
  * PAN fallback (old Section 206AA — Section 397(2) of the IT Act 2025
  * for deductions on/after 1 Apr 2026):
  *   - If `panNumber` is null OR doesn't match /^[A-Z]{5}[0-9]{4}[A-Z]$/,
- *     withhold at the 20% punitive rate. This wins over both DTAA and
- *     section default (it's the higher-of rule).
+ *     withhold at the no-PAN rate: 5% for 194-O (s.397(2), `NO_PAN_BPS_194O`),
+ *     20% only for the 194J/194C fallback (`PAN_FALLBACK_BPS`). On the resident
+ *     paths this wins over the section default (it's the higher-of rule).
+ *     s.397(2) exempts some non-resident payments from the no-PAN rate when the
+ *     deductee furnishes the Rule 217 documents; not modelled, since
+ *     non-resident payouts are blocked.
  *   - #785: callers whose PAN is encrypted at rest pass `panOnFile: true`
  *     (validated at collection) instead of the ciphertext — passing the
  *     ciphertext as `panNumber` fails the regex and wrongly hits the fallback.
