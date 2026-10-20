@@ -458,7 +458,7 @@ export async function createOrgPayoutBatch(
             );
             const tds = computeResidentPayoutTds(
               netPayout,
-              orgForCompliance?.taxInfo?.panEncrypted,
+              !!orgForCompliance?.taxInfo?.panEncrypted,
               resolvedRate,
             );
             const recoveredPaise = await recoverClawbackOnPayout(tx, {

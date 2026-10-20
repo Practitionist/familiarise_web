@@ -285,6 +285,35 @@ describe("cumulative credit-note cap (#1582 C-P0-01)", () => {
     expect(issued).toEqual([118_000, 118_000]);
   });
 
+  it("rounds a pro-rata tax share of exactly x.5p up, as integer arithmetic does", async () => {
+    // 102 × 31 / 204 = 15.5p, but the double 102 × (31 / 204) lands just below it.
+    const tx = mockTx({
+      payment: null,
+      invoice: {
+        id: "inv1",
+        organizationId: "org1",
+        status: "ISSUED",
+        issuedAt: new Date("2026-05-01T00:00:00.000Z"),
+        subtotalPaise: 173,
+        totalPaise: 204,
+        igstPaise: 31,
+        cgstPaise: 0,
+        sgstPaise: 0,
+      },
+    });
+    await mintInvoiceRefundCreditNote(tx as never, {
+      invoiceId: "inv1",
+      refundId: "ref_half",
+      amountPaise: 102,
+      reason: "half",
+    });
+    expect(tx._creditNoteCreate.mock.calls[0][0].data).toMatchObject({
+      igstPaise: 16,
+      subtotalPaise: 86,
+      totalPaise: 102,
+    });
+  });
+
   it("preserves exactSubtotalPaise without 1-paise reverse-proration drift when unclamped (#1900)", async () => {
     // Choose an odd subtotal where grossing up then reverse-prorating would drift by 1p
     // without exactSubtotalPaise: e.g. invoice subtotal 300_000, cgst 27_000, sgst 27_000, total 354_000.
@@ -324,4 +353,3 @@ describe("cumulative credit-note cap (#1582 C-P0-01)", () => {
     ).toBe(created.totalPaise);
   });
 });
-

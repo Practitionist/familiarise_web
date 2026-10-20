@@ -66,6 +66,8 @@ is real money on the first run — so the prerequisites below are hard gates.
       and the same page takes the PAN and entity type that Section 194-O
       withholding reads. Neither validation runs in RazorpayX test mode, so a
       consultant verified on a preview is a consultant verified by hand.
+- [ ] Every payable consultant has a verified PAN (admin Verify PAN door);
+      unverified PANs withhold at the no-PAN rate.
 - [ ] **TDS + MSME fields populated** on the payouts (`tdsAmountPaise`,
       `mustPayByDate` — both payout paths stamp these as of #776).
 - [ ] **Idempotency keys present** (`payout_<profile>_<batch>`, NOT NULL) so a

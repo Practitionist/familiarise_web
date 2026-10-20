@@ -29,7 +29,7 @@ import {
   type AccountRef,
   type Posting,
 } from "@/lib/payments/ledger/post";
-import { sumPaise } from "@/lib/payments/utils/money";
+import { prorate, sumPaise } from "@/lib/payments/utils/money";
 
 /** The org clawback journal `clawback:<driver>:<payoutId>` written by the reversal engine. */
 export const ORG_CLAWBACK_KEY_PREFIX = "clawback:";
@@ -121,7 +121,7 @@ export function recoverablePaise(
 ): number {
   const withholdingRoom = withholdingKnown
     ? 0
-    : Math.ceil((payablePaise * PAN_FALLBACK_BPS) / 10_000);
+    : prorate(payablePaise, PAN_FALLBACK_BPS, 10_000, "ceil");
   return Math.max(0, payablePaise - minimumPayoutPaise - withholdingRoom);
 }
 

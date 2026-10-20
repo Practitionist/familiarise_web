@@ -45,7 +45,7 @@ const CoveredPlanTypeSchema = z.enum([
 const QuerySchema = z.object({
   scope: z.enum(["current", "all"]).default("current"),
   planType: CoveredPlanTypeSchema.optional(),
-  planId: z.string().uuid().optional(),
+  planId: z.string().min(1).optional(),
   contractId: z.string().uuid().optional(),
 });
 
@@ -53,7 +53,7 @@ const CreateBodySchema = z
   .object({
     contractId: z.string().uuid().nullable().optional(),
     planType: CoveredPlanTypeSchema.nullable().optional(),
-    planId: z.string().uuid().nullable().optional(),
+    planId: z.string().min(1).nullable().optional(),
     platformBps: z.coerce.number().int().min(0).max(10_000),
     orgBps: z.coerce.number().int().min(0).max(10_000),
     consultantBps: z.coerce.number().int().min(0).max(10_000),

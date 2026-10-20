@@ -109,7 +109,7 @@ import {
   recordSystemEventSafe,
   recordSystemErrorSafe,
 } from "@/lib/enterprise/system-events";
-import { sumPaise } from "@/lib/payments/utils/money";
+import { prorate, sumPaise } from "@/lib/payments/utils/money";
 import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
@@ -1155,12 +1155,8 @@ export async function applyRefundCascade(
     };
   }
 
-  // Proportional ratio expressed as numerator/denominator so we can do
-  // exact integer math (no float drift on large amounts).
-  const num = input.amountPaise;
-  const den = payment.amount;
   const proportion = (original: number): number =>
-    Math.floor((original * num) / den);
+    prorate(original, input.amountPaise, payment.amount);
 
   // -----------------------------------------------------------------------
   // Step 4: Reverse PaymentLegs proportionally with last-leg-absorbs-remainder.
@@ -1992,9 +1988,11 @@ export async function remainingOrgInvoiceCreditPaise(
   // A commercial note carries no tax, so it consumes its value grossed up at the invoice's rate.
   const commercialGross =
     invoice.subtotalPaise > 0
-      ? Math.round(
-          (sumPaise(commercialNotes._sum.subtotalPaise) * invoice.totalPaise) /
-            invoice.subtotalPaise,
+      ? prorate(
+          sumPaise(commercialNotes._sum.subtotalPaise),
+          invoice.totalPaise,
+          invoice.subtotalPaise,
+          "round",
         )
       : 0;
   return (
@@ -2107,7 +2105,7 @@ export async function mintRefundCreditNote(
   // Proportional reversal of the invoice-accrual legs (no remainder-absorb —
   // a credit note is a tax document; strict proportion is correct).
   const proportion = (original: number): number =>
-    Math.floor((original * params.amountPaise) / payment.amount);
+    prorate(original, params.amountPaise, payment.amount);
   const invoicedReverse = payment.legs
     .filter(
       (l) =>
@@ -2149,7 +2147,7 @@ export async function mintRefundCreditNote(
   // The accrual legs are tax-inclusive (they sum to Payment.amount), so the
   // reversed slice carries the payment's own tax share.
   const taxShare = (paise: number): number =>
-    Math.round((paise * (payment.taxAmount ?? 0)) / payment.amount);
+    prorate(paise, payment.taxAmount ?? 0, payment.amount, "round");
   let cnTotal = invoicedReverse;
   let cnTax = taxShare(cnTotal);
   let cnSubtotal = cnTotal - cnTax;
@@ -2265,20 +2263,18 @@ async function computeCreditNoteAmounts(
     if (cnSubtotal <= 0) return null;
     cnTax =
       invoiceSubtotal > 0
-        ? Math.round((cnSubtotal * invoiceTax) / invoiceSubtotal)
+        ? prorate(cnSubtotal, invoiceTax, invoiceSubtotal, "round")
         : 0;
     cnTotal = cnSubtotal + cnTax;
     if (cnTotal > remaining) {
       cnTotal = remaining;
-      cnTax = Math.round((cnTotal * invoiceTax) / invoice.totalPaise);
+      cnTax = prorate(cnTotal, invoiceTax, invoice.totalPaise, "round");
       cnSubtotal = cnTotal - cnTax;
     }
   } else {
     cnTotal = Math.min(amountPaise, invoice.totalPaise, remaining);
     if (cnTotal <= 0) return null;
-    const taxFraction =
-      invoice.totalPaise > 0 ? invoiceTax / invoice.totalPaise : 0;
-    cnTax = Math.round(cnTotal * taxFraction);
+    cnTax = prorate(cnTotal, invoiceTax, invoice.totalPaise, "round");
     cnSubtotal = cnTotal - cnTax;
   }
 

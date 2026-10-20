@@ -23,6 +23,7 @@ import {
   type TaxDetermination,
 } from "@/lib/payments/tax/tax-engine";
 import { MIN_CREDIT_REDEMPTION_PAISE } from "@/lib/referrals/constants";
+import { prorate } from "@/lib/payments/utils/money";
 import {
   computeWelcomeDiscountPaise,
   creditCapPaise,
@@ -112,9 +113,7 @@ export function computeDiscountPaise(
         `Invalid discount code: percentage value must be between 1 and 100, got ${discount.discountValue}`,
       );
     }
-    // Multiply first: the integer product divides exactly to a half-paise
-    // boundary, where `value / 100` as a float can land on either side.
-    const raw = Math.round((basePaise * discount.discountValue) / 100);
+    const raw = prorate(basePaise, discount.discountValue, 100, "round");
     const cap = discount.maxDiscount;
     return cap !== null && cap !== undefined && raw > cap ? cap : raw;
   }

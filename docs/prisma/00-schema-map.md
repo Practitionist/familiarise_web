@@ -1598,8 +1598,8 @@ erDiagram
 > into ONE balanced double-entry journal: every cash event is a
 > `LedgerTransaction` whose `LedgerEntry` rows satisfy Σ(DEBIT) == Σ(CREDIT),
 > and balances are DERIVED (sum of entries on a `LedgerAccount`). The append-only
-> `LedgerEntry` journal is the source of truth; `LedgerAccountBalance` is a
-> derived running-balance cache the reconcile cron validates.
+> `LedgerEntry` journal is the source of truth; account balances are
+> aggregated from it, never stored.
 > `UsageLedgerEntry` (non-cash engagement counts) stays separate.
 > `BillingAccount.walletBalance` is retained only as a denormalized cache for the
 > atomic-debit guard, asserted equal to the WALLET account balance nightly.
@@ -1622,11 +1622,6 @@ erDiagram
         string consultantProfileId
         LedgerAccountKind kind
         Currency currency
-    }
-    LedgerAccountBalance {
-        string accountId
-        bigint balancePaise
-        bigint entrySeq
     }
     LedgerTransaction {
         string id
@@ -1654,7 +1649,6 @@ erDiagram
         datetime runAt
     }
 
-    LedgerAccount ||--o| LedgerAccountBalance : "derived balance cache"
     LedgerAccount ||--o{ LedgerEntry : "postings"
     LedgerTransaction ||--o{ LedgerEntry : "balanced legs (ΣDr==ΣCr)"
 ```
@@ -1665,7 +1659,6 @@ erDiagram
 | `LedgerAccount`              | Finance   | One account per (owner, `LedgerAccountKind`, currency) — CASH, WALLET, PLATFORM_FEE, ORG_PAYABLE, TDS_PAYABLE, GST_PAYABLE, etc. |
 | `LedgerTransaction`          | Finance   | One balanced cash event; `idempotencyKey` @unique makes posting retry-safe                                                       |
 | `LedgerEntry`                | Finance   | Immutable DEBIT/CREDIT legs (reversals are counter-transactions, never row edits)                                                |
-| `LedgerAccountBalance`       | Finance   | Derived running balance (Σ Dr − Σ Cr); reconcile validates against the journal                                                   |
 | `LedgerReconciliationReport` | Admin/Ops | Nightly audit output — READ ONLY, never mutates the ledger                                                                       |
 
 ---
