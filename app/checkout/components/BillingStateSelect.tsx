@@ -53,7 +53,7 @@ export function BillingStateSelect({
     <div className="grid gap-2">
       <Label htmlFor="billing-state">Billing state (for GST)</Label>
       <Select
-        value={value ?? NOT_SPECIFIED}
+        value={value ?? (required ? "" : NOT_SPECIFIED)}
         onValueChange={(next) => onChange(next === NOT_SPECIFIED ? null : next)}
         disabled={disabled}
         required={required}
