@@ -109,7 +109,7 @@ import {
   recordSystemEventSafe,
   recordSystemErrorSafe,
 } from "@/lib/enterprise/system-events";
-import { sumPaise } from "@/lib/payments/utils/money";
+import { prorate, sumPaise } from "@/lib/payments/utils/money";
 import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
@@ -1155,12 +1155,8 @@ export async function applyRefundCascade(
     };
   }
 
-  // Proportional ratio expressed as numerator/denominator so we can do
-  // exact integer math (no float drift on large amounts).
-  const num = input.amountPaise;
-  const den = payment.amount;
   const proportion = (original: number): number =>
-    Math.floor((original * num) / den);
+    prorate(original, input.amountPaise, payment.amount);
 
   // -----------------------------------------------------------------------
   // Step 4: Reverse PaymentLegs proportionally with last-leg-absorbs-remainder.
@@ -2107,7 +2103,7 @@ export async function mintRefundCreditNote(
   // Proportional reversal of the invoice-accrual legs (no remainder-absorb —
   // a credit note is a tax document; strict proportion is correct).
   const proportion = (original: number): number =>
-    Math.floor((original * params.amountPaise) / payment.amount);
+    prorate(original, params.amountPaise, payment.amount);
   const invoicedReverse = payment.legs
     .filter(
       (l) =>

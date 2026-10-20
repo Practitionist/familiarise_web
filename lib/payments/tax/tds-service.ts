@@ -55,7 +55,7 @@
  */
 
 import prisma, { type Tx } from "@/lib/prisma";
-import { sumPaise } from "@/lib/payments/utils/money";
+import { prorate, sumPaise } from "@/lib/payments/utils/money";
 
 // ============================================================================
 // Constants
@@ -328,9 +328,10 @@ export async function recordTdsReversal(
 
   // A refunded earning reverses at most its own TDS (rate × refunded gross), so a
   // year-to-date catch-up on the same payout stays withheld. Floors throughout.
-  const proportionalPaise = Math.floor(
-    (original.tdsDeducted * params.refundAmountPaise) /
-      params.paymentAmountPaise,
+  const proportionalPaise = prorate(
+    original.tdsDeducted,
+    params.refundAmountPaise,
+    params.paymentAmountPaise,
   );
   const earning = params.earningsId
     ? await tx.consultantEarnings.findUnique({
@@ -342,13 +343,14 @@ export async function recordTdsReversal(
     earning && earning.grossAmount > 0
       ? Math.min(
           proportionalPaise,
-          Math.floor(
-            (Math.floor(
-              (earning.grossAmount * params.refundAmountPaise) /
-                params.paymentAmountPaise,
-            ) *
-              original.tdsRateBps) /
-              10_000,
+          prorate(
+            prorate(
+              earning.grossAmount,
+              params.refundAmountPaise,
+              params.paymentAmountPaise,
+            ),
+            original.tdsRateBps,
+            10_000,
           ),
         )
       : proportionalPaise;
@@ -533,8 +535,10 @@ export async function recordOrgTdsReversal(
     const { refundAmountPaise, payoutAmountPaise } = params.reversalBasis;
     if (payoutAmountPaise <= 0) return null;
     // Integer paise proportion (floor — never reverse more than the refund earns).
-    tdsToReverse = Math.floor(
-      (original.tdsDeducted * refundAmountPaise) / payoutAmountPaise,
+    tdsToReverse = prorate(
+      original.tdsDeducted,
+      refundAmountPaise,
+      payoutAmountPaise,
     );
   }
   if (tdsToReverse <= 0) return null;
