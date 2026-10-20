@@ -535,6 +535,36 @@ describe("readInvoiceExposurePaise nets accrual reversals", () => {
     expect(exposure).toBe(35_000);
   });
 
+  it("a partial reversal leaves the rest of the accrual counting", async () => {
+    const legs = [
+      { source: "INVOICE_ACCRUAL", amountPaise: 100_000 },
+      { source: "INVOICE_ACCRUAL_REVERSAL", amountPaise: -30_000 },
+    ];
+    const db = {
+      paymentLeg: {
+        aggregate: jest.fn(
+          async ({ where }: { where: { source: { in: string[] } } }) => ({
+            _sum: {
+              amountPaise: legs
+                .filter((l) => where.source.in.includes(l.source))
+                .reduce((s, l) => s + l.amountPaise, 0),
+            },
+          }),
+        ),
+      },
+      organizationInvoice: {
+        aggregate: jest.fn(async () => ({ _sum: { totalPaise: 0 } })),
+      },
+    };
+
+    const exposure = await readInvoiceExposurePaise(
+      db as unknown as Parameters<typeof readInvoiceExposurePaise>[0],
+      "org-1",
+    );
+
+    expect(exposure).toBe(70_000);
+  });
+
   // #1744 row 4 — the booking itself counts, and the copy is in rupees.
   it("₹49,999 outstanding + a ₹10 booking is refused against a ₹50,000 limit", () => {
     expect(() =>

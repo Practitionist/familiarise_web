@@ -164,7 +164,7 @@ These cron jobs keep the outbound webhook queue drained, heal stuck inbound even
 | `cleanup-abandoned-org-top-ups` | `jobs/cleanup/cleanup-abandoned-org-top-ups.ts` | `0 2 * * *`                        | Reaps never-completed org wallet top-up intents past the grace window.                                                                                                                                                                                                                                                                                                                                                |
 | `cascade-refund-earnings`       | `jobs/refunds/cascade-refund-earnings.ts`       | `*/15 * * * *`                     | Idempotent refund→earnings cascade (`mintRefundCreditNote`; `Refund.cascadedAt` gate).                                                                                                                                                                                                                                                                                                                                |
 | `reconcile-pending-refunds`     | `jobs/refunds/reconcile-pending-refunds.ts`     | `*/15 * * * *`                     | Reconciles PENDING refunds against the gateway; notifies on failed refunds (no more silent stuck money).                                                                                                                                                                                                                                                                                                              |
-| `reconcile-ledgers`             | `jobs/reconcile/reconcile-ledgers.ts`           | `45 3 * * *`                       | Nightly money-integrity audit. Exit 2 + `RECONCILE`/ERROR `SystemEvent` on discrepancies, exit 1 + `recordSystemError` on crash. See _🚨 Ledger reconciler flagged discrepancies_.                                                                                                                                                                                                                                    |
+| `reconcile-ledgers`             | `scripts/reconcile/reconcile-ledgers.ts`        | Ticker, `03:55` daily              | Nightly money-integrity audit, run by the Netlify ticker through `/api/cleanup/reconcile-ledgers`. Answers `207` + `RECONCILE`/ERROR `SystemEvent` on discrepancies and `500` on failure. See _🚨 Ledger reconciler flagged discrepancies_.                                                                                                                                                                           |
 | `reconcile-document-storage`    | `jobs/cleanup/reconcile-document-storage.ts`    | `0 2 * * *`                        | Reconciles `OrganizationDocument` rows against object storage (orphaned + missing files).                                                                                                                                                                                                                                                                                                                             |
 
 ### Payouts & earnings
@@ -196,7 +196,7 @@ Regulatory jobs in this group handle e-invoice IRN generation, DPDP breach-deadl
 
 ### Non-enterprise crons (for completeness)
 
-Disputes (`alert-dispute-deadlines` hourly, `reconcile-disputes` every 6h), appointments, waitlist, Stream recording
+Disputes (`alert-dispute-deadlines` hourly; `reconcile-disputes` hourly on the Netlify ticker), appointments, waitlist, Stream recording
 retention (`expire-recordings`, `transfer-recordings`), discount expiry, and the auth-token /
 empty-folder / tentative-slot cleanups all live under the same
 `.github/workflows` + `jobs/**` convention but are outside the
@@ -264,8 +264,9 @@ Subscriptions keep billing but the local `BillingSubscription` state lags.
 
 ## 🚨 Ledger reconciler flagged discrepancies
 
-**Symptoms:** Nightly `reconcile-ledgers` cron (see
-`.github/workflows/reconcile-ledgers.yml`) exits with code `2`, or the
+**Symptoms:** The nightly `reconcile-ledgers` run (the Netlify ticker's
+03:55 UTC call to `/api/cleanup/reconcile-ledgers`) answers `207`, a
+`RECONCILE` `SystemEvent` or Sentry page appears, or the
 admin dashboard shows a `LedgerReconciliationReport` with `ok=false`.
 
 **Impact:** A money-journal or usage-ledger invariant (see
@@ -282,11 +283,10 @@ longer matches its journal postings.
      -H "Authorization: Bearer $PRIVILEGED_TOKEN" | jq .
    ```
 2. Each `finding.kind` maps to a known invariant (codes defined in
-   `scripts/reconcile/reconcile-ledgers.ts`; same set in the
-   `jobs/reconcile/reconcile-ledgers.ts` cron entry point):
+   `scripts/reconcile/reconcile-ledgers.ts`):
    - `WALLET_BALANCE_DRIFT` — `BillingAccount.walletBalance` cache
      disagrees with the signed balance of the org's WALLET
-     `LedgerAccount` (`ledgerBalancePaise`). The nightly cron fails
+     `LedgerAccount` (`ledgerBalancePaise`). The nightly run fails
      closed on this finding (#837): it freezes that `BillingAccount`'s
      discretionary wallet spend (a `WALLET_FREEZE` `SystemEvent`) and
      pages P0, so no further checkout debits draw down an untrusted

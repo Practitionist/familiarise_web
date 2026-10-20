@@ -5,9 +5,19 @@ import { useQuery } from "@tanstack/react-query";
 import { Stat, StatRow, StatSkeleton } from "@/components/dashboard/Stat";
 import { ErrorState } from "@/components/dashboard/ErrorState";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import {
+  AWAITING_ORG_HINT,
+  AWAITING_ORG_LABEL,
+  newExpertHoldCopy,
+} from "@/lib/dashboard/hold-copy";
 
 interface EarningsTotals {
-  totals: { available: number; pending: number; paidOut: number };
+  totals: {
+    available: number;
+    pending: number;
+    paidOut: number;
+    awaitingOrg: number;
+  };
 }
 
 /**
@@ -48,22 +58,34 @@ export function OrgScopedEarnings({
     );
   }
   return (
-    <StatRow columns={3}>
-      <Stat
-        label="Available"
-        value={formatCurrencyAmount(data.totals.available, "INR")}
-        hint={`Earned under ${orgName}, ready for your next payout`}
-      />
-      <Stat
-        label="Pending"
-        value={formatCurrencyAmount(data.totals.pending, "INR")}
-        hint="Inside the refund window"
-      />
-      <Stat
-        label="Paid out"
-        value={formatCurrencyAmount(data.totals.paidOut, "INR")}
-        hint="Across all your payouts"
-      />
-    </StatRow>
+    <>
+      <StatRow columns={data.totals.awaitingOrg > 0 ? 4 : 3}>
+        <Stat
+          label="Available"
+          value={formatCurrencyAmount(data.totals.available, "INR")}
+          hint={`Earned under ${orgName}, ready for your next payout`}
+        />
+        <Stat
+          label="Pending"
+          value={formatCurrencyAmount(data.totals.pending, "INR")}
+          hint="Inside the refund window"
+        />
+        {data.totals.awaitingOrg > 0 && (
+          <Stat
+            label={AWAITING_ORG_LABEL}
+            value={formatCurrencyAmount(data.totals.awaitingOrg, "INR")}
+            hint={AWAITING_ORG_HINT}
+          />
+        )}
+        <Stat
+          label="Paid out (after TDS)"
+          value={formatCurrencyAmount(data.totals.paidOut, "INR")}
+          hint="Across all your payouts"
+        />
+      </StatRow>
+      {data.totals.pending > 0 && (
+        <p className="text-xs text-muted-foreground">{newExpertHoldCopy()}</p>
+      )}
+    </>
   );
 }

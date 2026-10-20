@@ -96,6 +96,8 @@ export interface BucketSums {
   available: number;
   pending: number;
   paidOut: number;
+  /** PENDING_TRUST: earned from an organisation not yet verified; in no other tile. */
+  awaitingOrg: number;
 }
 
 /**
@@ -332,19 +334,39 @@ export function moneyWalk(p: PayoutRowInput): MoneyWalk {
   };
 }
 
+/** The soonest future hold among Pending rows; trust-parked rows wait on the organisation, not a date. */
+export function nextClearDate(
+  rows: ReadonlyArray<Pick<EarningRowInput, "status" | "holdUntil">>,
+  now: Date,
+): Date | null {
+  let soonest: Date | null = null;
+  for (const row of rows) {
+    if (row.status === "PENDING_TRUST" || !row.holdUntil) continue;
+    const at = toDate(row.holdUntil);
+    if (at > now && (!soonest || at < soonest)) soonest = at;
+  }
+  return soonest;
+}
+
 /** What the consultant will actually receive from a row: the share less what was refunded. */
 const netShare = (e: EarningRowInput) =>
   e.consultantSharePaise - (e.refundedShareAmount ?? 0);
 
-/** The three tile sums; Paid out is what reached the bank, after TDS. */
+/** The tile sums; Paid out is what reached the bank, after TDS. */
 export function sumEarningBuckets(
   rows: ReadonlyArray<EarningRowInput>,
   payouts: ReadonlyArray<PayoutRowInput>,
 ): BucketSums {
-  const sums: BucketSums = { available: 0, pending: 0, paidOut: 0 };
+  const sums: BucketSums = {
+    available: 0,
+    pending: 0,
+    paidOut: 0,
+    awaitingOrg: 0,
+  };
   for (const row of rows) {
     const bucket = bucketOf(row.status);
-    if (bucket === "AVAILABLE") sums.available += netShare(row);
+    if (row.status === "PENDING_TRUST") sums.awaitingOrg += netShare(row);
+    else if (bucket === "AVAILABLE") sums.available += netShare(row);
     else if (bucket === "PENDING") sums.pending += netShare(row);
   }
   for (const p of payouts) {

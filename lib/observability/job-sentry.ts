@@ -10,8 +10,7 @@
  * cron process exits the instant its work is done, well before the transport
  * drains. So this module owns BOTH halves — init before the body, flush in a
  * `finally` after it — instead of leaving 58 entrypoints to each remember the
- * second one. jobs/reconcile/reconcile-ledgers.ts had already hand-rolled a
- * flush (#837) and now inherits it like everything else.
+ * second one.
  *
  * Corollary the whole mechanism rests on: a job body must never call
  * `process.exit()`. It tears the process down synchronously, so the flush —

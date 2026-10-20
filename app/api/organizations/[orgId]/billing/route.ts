@@ -24,7 +24,8 @@
  *
  * `pendingCharges` is non-null only for INVOICE-funded orgs (where
  * Payment rows accrue with `billableToOrgInvoiceId = null` until the
- * monthly cron rolls them into an OrganizationInvoice).
+ * monthly cron rolls them into an OrganizationInvoice). Its amount is net of
+ * refund reversal legs, the same figure the credit-limit exposure reads.
  *
  * #1427/#1430 — `walletFrozen` and `dunningSuspended` were previously only
  * ever read inside checkout's own block predicates, so an org hit a wall at
@@ -41,6 +42,7 @@ import { sumPaise } from "@/lib/payments/utils/money";
 import { isWalletFrozen } from "@/lib/payments/wallet-freeze";
 import { ENABLE_DUNNING_SUSPEND } from "@/lib/feature-flags";
 import { orgFundedPaymentWhere } from "@/lib/data/org-sponsored-seats";
+import { readUnbilledAccrualPaise } from "@/lib/payments/checkout/org-funding";
 
 export async function GET(
   _req: NextRequest,
@@ -75,6 +77,7 @@ export async function GET(
     monthRefundAgg,
     outstandingAgg,
     pendingAgg,
+    pendingAccruedPaise,
     licenseContract,
   ] = await Promise.all([
     prisma.payment.aggregate({
@@ -102,10 +105,12 @@ export async function GET(
             billableToOrgInvoiceId: null,
             paymentStatus: "SUCCEEDED",
           },
-          _sum: { amount: true },
           _count: { _all: true },
         })
       : Promise.resolve(null),
+    billingAccount?.fundingSource === "INVOICE"
+      ? readUnbilledAccrualPaise(prisma, orgId)
+      : Promise.resolve(0),
     // Surface the active LICENSE contract + its BillingSubscription for
     // the Annual License panel on /billing. T5 (#756 GS-1) wires the
     // contract create flow to atomically insert a BillingSubscription;
@@ -190,7 +195,7 @@ export async function GET(
     },
     pendingCharges: pendingAgg
       ? {
-          amount: sumPaise(pendingAgg._sum.amount),
+          amount: pendingAccruedPaise,
           paymentCount: pendingAgg._count._all,
         }
       : null,
