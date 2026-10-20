@@ -31,6 +31,7 @@ export type ConsultantTdsInput = {
   taxInfo: {
     taxEntityType?: string | null;
     panEncrypted?: Uint8Array | string | null;
+    panVerified: boolean;
   } | null;
   resolvedRate: ResolvedTdsRate;
   /** False after losing the one-catch-up-per-FY race; the payout then pays on its own gross. */
@@ -88,6 +89,11 @@ function subtractProportionalGrossRefund(
   return Math.max(0, grossPaise - refundedSharePaise);
 }
 
+// A PAN counts as on file for 194-O only once it is verified; an unverified PAN takes the no-PAN rate.
+function consultantPanOnFile(taxInfo: ConsultantTdsInput["taxInfo"]): boolean {
+  return !!taxInfo?.panEncrypted && taxInfo.panVerified === true;
+}
+
 /**
  * Plans a consultant payout's TDS: the threshold due from the engine, plus any
  * carry owed by earlier payouts, settled against what this payout can absorb.
@@ -96,7 +102,7 @@ export async function planConsultantPayoutTds(
   db: PrismaLike,
   input: ConsultantTdsInput,
 ): Promise<ConsultantTdsPlan> {
-  const pan = input.taxInfo?.panEncrypted;
+  const pan = consultantPanOnFile(input.taxInfo);
   const tdsOn = (paise: number) =>
     computeResidentPayoutTds(paise, pan, input.resolvedRate).tdsAmountPaise;
   const own = computeResidentPayoutTds(
@@ -155,7 +161,7 @@ async function resolveDueTds(
     grossBeforePaise: await priorFyGrossPaise(db, input),
     grossThisPayoutPaise: input.grossThisPayoutPaise,
     entityType: input.taxInfo?.taxEntityType ?? null,
-    panOnFile: !!input.taxInfo?.panEncrypted,
+    panOnFile: consultantPanOnFile(input.taxInfo),
   });
 
   if (!ENABLE_TDS_194O_GROSS || process.env.ENABLE_TDS_194O_GROSS === "false") {

@@ -27,6 +27,12 @@ type Where = Record<string, unknown> & {
 const mockPayoutFindMany = jest.fn();
 const mockPayoutUpdateMany = jest.fn();
 const mockZeroCashCompletion = jest.fn();
+const mockTaxInfo = jest.fn().mockResolvedValue({
+  isIndianResident: true,
+  taxEntityType: "INDIVIDUAL",
+  panEncrypted: Buffer.from("pan"),
+  panVerified: true,
+});
 let mockTable: PayoutRow[] = [];
 let mockBasePriorGross: Record<string, number> = {};
 let mockOwnGross = 2_000_000;
@@ -104,13 +110,7 @@ jest.mock("../../lib/prisma", () => {
         return sums((mockBasePriorGross[fy] ?? 0) + fromTable);
       },
     },
-    consultantTaxInfo: {
-      findUnique: jest.fn().mockResolvedValue({
-        isIndianResident: true,
-        taxEntityType: "INDIVIDUAL",
-        panEncrypted: Buffer.from("pan"),
-      }),
-    },
+    consultantTaxInfo: { findUnique: (...a: unknown[]) => mockTaxInfo(...a) },
     payoutAccount: {
       findFirst: async () => ({
         id: "pa_1",
@@ -254,6 +254,19 @@ it("withholds on its own gross after the crossing", async () => {
     tdsDeducted: 2_000,
     tdsCatchUpFy: null,
   });
+});
+
+it.each([
+  ["unverified", { panEncrypted: Buffer.from("pan"), panVerified: false }],
+  ["absent", { panEncrypted: null, panVerified: false }],
+])("a %s PAN takes the no-PAN rate", async (_label, pan) => {
+  mockTaxInfo.mockResolvedValueOnce({
+    isIndianResident: true,
+    taxEntityType: "INDIVIDUAL",
+    ...pan,
+  });
+  mockTable = [row({})];
+  expect((await stage("po_next")).tdsDeducted).toBe(100_000);
 });
 
 it("recomputes the same catch-up when the crossing payout is retried", async () => {

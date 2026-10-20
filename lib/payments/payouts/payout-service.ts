@@ -1228,7 +1228,7 @@ export async function previewInstantPayout(
     }),
     prisma.consultantTaxInfo.findUnique({
       where: { consultantProfileId },
-      select: { panEncrypted: true, taxEntityType: true },
+      select: { panEncrypted: true, panVerified: true, taxEntityType: true },
     }),
   ]);
   const readyPaise = Math.max(eligibility.readyAmount, 0);
