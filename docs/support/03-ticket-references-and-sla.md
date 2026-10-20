@@ -22,6 +22,9 @@ the effective deadline remains bounded by the absolute category deadline.
 The existing leased sweep processes bounded overdue/warning batches, pending
 evidence reminders and moderation deadlines. Dedupe keys prevent repeated notices
 for the same event. Resolved cases close after the configured 28-day interval.
+Provider dispute alerts cover the window from 24 hours past due through 72 hours
+ahead. Previously staged threshold pairs are excluded before applying the send
+limit; disputes due within 12 hours also raise one deduplicated operator page.
 See [sweep implementation](09-support-case-and-sla-sweep.md).
 
 ## Deprecated & Superseded Approaches

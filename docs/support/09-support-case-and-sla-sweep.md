@@ -38,8 +38,8 @@ a human acknowledgement.
 
 The backoffice and customer readers return the newest 200 messages with an older
 sequence cursor. Internal notes and private investigation events stay with staff.
-Old ticket/thread references resolve explicit migration aliases, while retired
-mutation APIs return `410`.
+Only canonical case references are accepted; the pre-MVP ticket/thread tables,
+aliases and retired mutation routes have been removed.
 
 ## Clocks and lifecycle
 
@@ -71,6 +71,14 @@ job lease. It does not add another scheduler or Redis cron lock. Its bounded wor
 covers acknowledgement/resolution notices, 28-day resolved-case auto-close,
 provider dispute deadlines, overdue evidence and moderation deadlines.
 
+Provider dispute reminders scan `now - 24h <= dueBy <= now + 72h`. Threshold
+identities (`dispute-due:{id}:{72|24}`) are stored as outbox `entityRef`s so
+already-staged pairs do not consume the send limit, even if notification policy
+changes the recipient list. The transaction rechecks that identity before
+staging. Alerts link to the admin dispute detail. Disputes due within 12 hours or
+past due in that window produce one `reportStandingFinding` page per run; repeated
+unchanged findings remain quiet for 24 hours.
+
 Notice identities live in the durable outbox. Candidate queries exclude already
 notified thresholds so old overdue records cannot repeatedly consume the batch.
 Warnings and breaches have separate identities; approaching deadlines can still
@@ -86,7 +94,6 @@ the existing vendor-boundary storage cleanup, and abandoned reservations expire.
 ## Deprecated & Superseded Approaches
 
 Separate live ticket and appointment-thread queues, legacy CSAT fallbacks and
-mixed-table monthly reporting are retired. Their tables remain migration sources
-only. A universal 15-day clock with customer-wait extensions is replaced by fixed
+mixed-table monthly reporting and migration aliases are removed. A universal 15-day clock with customer-wait extensions is replaced by fixed
 category deadlines. Backoffice canonical case reads are active; there is no
 future cutover flag or dual-read fallback.
