@@ -95,9 +95,9 @@ balance snapshot is maintained: `postLedgerTxn` writes only those rows, and
 balances are summed from the journal when read. We also accept one
 principled exception to "balances are derived":
 `BillingAccount.walletBalance` survives as a cache so the booking
-overdraft guard can be a single conditional `UPDATE … WHERE walletBalance
-
-> = amount`; the reconciler asserts it against `balance(WALLET)`via`WALLET_BALANCE_DRIFT`.
+overdraft guard can be a single conditional
+`UPDATE … WHERE walletBalance >= amount`. The reconciler asserts it
+against `balance(WALLET)` via `WALLET_BALANCE_DRIFT`.
 
 A second real cost is documentation and mental debt across the codebase:
 references to the removed models linger in stale docblocks. The

@@ -94,8 +94,9 @@ longer and human-legible rather than opaque, which is a feature for
 debugging but means they leak the scope structure into logs.
 
 A second consequence is that the `currency` segment is dead weight while
-the ledger stays INR-only — every id ends in `|INR` and the reconciler
-actively forbids anything else. That is deliberate forward-provisioning,
+the ledger stays INR-only — every id ends in `|INR` and the database
+forbids anything else (the `ledger_account_currency_inr` CHECK in
+`prisma/sql/check-constraints.sql`). That is deliberate forward-provisioning,
 not an active capability.
 
 Revisit this decision if the ledger genuinely goes multi-currency: at that
