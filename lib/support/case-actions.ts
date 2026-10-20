@@ -65,7 +65,7 @@ export const CaseActionSchema = z.discriminatedUnion("action", [
   base.extend({ action: z.literal("HANDOVER"), reason }),
 ]);
 export type CaseAction = z.infer<typeof CaseActionSchema>;
-export type CaseActor = { userId: string; role: UserRole };
+export type CaseActor = { userId: string; role: UserRole | null };
 
 export class CaseActionError extends Error {
   constructor(

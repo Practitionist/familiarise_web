@@ -50,9 +50,11 @@ async function resolveReportedMessage(
       };
     }
     // Server credentials bypass channel permissions; require the reporter's membership explicitly.
+    // `cid` is captured because a property narrowing does not survive into a closure.
+    const cid = message.cid;
     const channels = await withStreamCircuitBreaker(() =>
       client.queryChannels(
-        { cid: { $eq: message.cid }, members: { $in: [reporterUserId] } },
+        { cid: { $eq: cid }, members: { $in: [reporterUserId] } },
         {},
         { limit: 1, state: false, watch: false },
       ),
@@ -64,7 +66,12 @@ async function resolveReportedMessage(
         status: 403,
       };
     }
-    const organization = channel.data?.organization_id;
+    // The organisation is a custom channel field the enterprise wiring writes at
+    // creation time; the SDK's channel type does not declare it.
+    const channelData = channel.data as Record<string, unknown> | undefined;
+    const channelCustom = channelData?.custom as
+      Record<string, unknown> | undefined;
+    const organization = channelCustom?.organization_id;
     return {
       data: {
         streamMessageId: message.id,

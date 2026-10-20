@@ -664,7 +664,10 @@ export async function migrateLegacySource(
   }
 }
 
-export function migrationOptions(argv: string[], env: NodeJS.ProcessEnv) {
+export function migrationOptions(
+  argv: string[],
+  env: Record<string, string | undefined>,
+) {
   const args = z
     .object({
       apply: z.boolean(),
@@ -674,7 +677,13 @@ export function migrationOptions(argv: string[], env: NodeJS.ProcessEnv) {
       ackHost: z.string().optional(),
     })
     .parse(
-      argv.reduce(
+      argv.reduce<{
+        apply: boolean;
+        prepareOnly: boolean;
+        batchSize: number | string;
+        maxSources: number | string;
+        ackHost?: string;
+      }>(
         (options, arg) => {
           if (arg === "--apply") return { ...options, apply: true };
           if (arg === "--dry-run") return options;

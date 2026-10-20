@@ -10,6 +10,7 @@ import {
   stageCaseNotice,
 } from "@/lib/support/case-actions";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { sessionRole } from "@/lib/auth/session-role";
 interface Context {
   params: Promise<{ requestId: string }>;
 }
@@ -24,7 +25,10 @@ export async function GET(_req: NextRequest, context: Context) {
   const row = await prisma.supportCaseEvidenceRequest.findFirst({
     where: {
       id: requestId,
-      ...(!hasBackofficePermission(auth.session.user.role, "tickets.manage")
+      ...(!hasBackofficePermission(
+        sessionRole(auth.session.user.role),
+        "tickets.manage",
+      )
         ? { recipientUserId: auth.session.user.id }
         : {}),
     },
@@ -43,7 +47,10 @@ export async function GET(_req: NextRequest, context: Context) {
     row &&
     (await attachmentCaseAccess(
       row.caseId,
-      { userId: auth.session.user.id, role: auth.session.user.role },
+      {
+        userId: auth.session.user.id,
+        role: sessionRole(auth.session.user.role),
+      },
       requestId,
     ));
   if (!authorized || !row)

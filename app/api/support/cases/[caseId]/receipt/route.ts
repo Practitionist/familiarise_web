@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
 import { canCorrespondOnCase } from "@/lib/support/case-access";
+import { sessionRole } from "@/lib/auth/session-role";
 export async function GET(
   _req: NextRequest,
   context: { params: Promise<{ caseId: string }> },
@@ -34,7 +35,7 @@ export async function GET(
     !row ||
     !(await canCorrespondOnCase(row, {
       userId: auth.session.user.id,
-      role: auth.session.user.role,
+      role: sessionRole(auth.session.user.role),
     }))
   )
     return NextResponse.json({ error: "Not found" }, { status: 404 });

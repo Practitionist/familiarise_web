@@ -12,6 +12,7 @@ import {
   SUPPORT_EVIDENCE_BUCKET,
 } from "@/lib/support/case-attachments";
 import { supportError } from "@/lib/api/support-http";
+import { sessionRole } from "@/lib/auth/session-role";
 interface Context {
   params: Promise<{ caseId: string }>;
 }
@@ -24,7 +25,7 @@ export async function GET(req: NextRequest, context: Context) {
     req.nextUrl.searchParams.get("evidenceRequestId") ?? undefined;
   const access = await attachmentCaseAccess(
     caseId,
-    { userId: auth.session.user.id, role: auth.session.user.role },
+    { userId: auth.session.user.id, role: sessionRole(auth.session.user.role) },
     evidenceRequestId,
   );
   if (!access)
@@ -75,7 +76,10 @@ export async function POST(req: NextRequest, context: Context) {
     );
   const { caseId } = await context.params;
   const input = parsed.data;
-  const actor = { userId: auth.session.user.id, role: auth.session.user.role };
+  const actor = {
+    userId: auth.session.user.id,
+    role: sessionRole(auth.session.user.role),
+  };
   const access = await attachmentCaseAccess(
     caseId,
     actor,
@@ -198,7 +202,10 @@ export async function PUT(req: NextRequest, context: Context) {
     !attachment ||
     !(await attachmentCaseAccess(
       caseId,
-      { userId: auth.session.user.id, role: auth.session.user.role },
+      {
+        userId: auth.session.user.id,
+        role: sessionRole(auth.session.user.role),
+      },
       attachment.evidenceRequestId ?? undefined,
     ))
   )

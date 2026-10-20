@@ -19,7 +19,7 @@ export async function canCorrespondOnCase(
     submitterUserId: string;
     requesterUserId: string;
   },
-  viewer: { userId: string; role: UserRole },
+  viewer: { userId: string; role: UserRole | null },
   db: Pick<Tx, "membership"> = prisma,
 ): Promise<boolean> {
   if (hasBackofficePermission(viewer.role, "tickets.manage")) return true;
@@ -29,9 +29,9 @@ export async function canCorrespondOnCase(
   if (!supportCase.organizationId) return false;
   const member = await db.membership.findUnique({
     where: {
-      organizationId_userId: {
-        organizationId: supportCase.organizationId,
+      userId_organizationId: {
         userId: viewer.userId,
+        organizationId: supportCase.organizationId,
       },
     },
     select: { role: true, status: true },
@@ -65,7 +65,7 @@ export async function caseCorrespondentIds(
 
 export async function visibleCaseWhere(viewer: {
   userId: string;
-  role: UserRole;
+  role: UserRole | null;
 }) {
   if (hasBackofficePermission(viewer.role, "tickets.manage"))
     return { deletedAt: null };

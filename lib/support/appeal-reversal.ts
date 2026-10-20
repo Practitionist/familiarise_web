@@ -7,7 +7,7 @@ import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 export async function reverseAppealedModeration(
   tx: Tx,
   actionId: string,
-  actor: { userId: string; role: UserRole },
+  actor: { userId: string; role: UserRole | null },
   rationale: string,
 ) {
   if (!hasBackofficePermission(actor.role, "users.moderate"))

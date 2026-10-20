@@ -19,6 +19,7 @@ import {
   patchSupportCaseLifecycle,
   readSupportCaseForViewer,
 } from "@/lib/support/case-service";
+import { sessionRole } from "@/lib/auth/session-role";
 
 const CaseIdParamsSchema = z.object({
   caseId: z.string().min(1).max(64),
@@ -47,10 +48,19 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 
     const view = await readSupportCaseForViewer(caseId, {
       userId: user.id,
-      isStaff: hasBackofficePermission(user.role, "tickets.manage"),
-      role: user.role,
-      canReadPayments: hasBackofficePermission(user.role, "payments.read"),
-      canReadContact: hasBackofficePermission(user.role, "users.read"),
+      isStaff: hasBackofficePermission(
+        sessionRole(user.role),
+        "tickets.manage",
+      ),
+      role: sessionRole(user.role),
+      canReadPayments: hasBackofficePermission(
+        sessionRole(user.role),
+        "payments.read",
+      ),
+      canReadContact: hasBackofficePermission(
+        sessionRole(user.role),
+        "users.read",
+      ),
     });
 
     if (!view) {

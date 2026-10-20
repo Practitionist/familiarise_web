@@ -14,6 +14,7 @@ import {
   appendSupportCaseTurn,
   readSupportCaseForViewer,
 } from "@/lib/support/case-service";
+import { sessionRole } from "@/lib/auth/session-role";
 
 const CaseIdParamsSchema = z.object({
   caseId: z.string().min(1).max(64),
@@ -58,7 +59,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const auth = await requireApiAuth();
     if (auth.error) return auth.error;
     const { user } = auth.session;
-    const staff = hasBackofficePermission(user.role, "tickets.manage");
+    const staff = hasBackofficePermission(
+      sessionRole(user.role),
+      "tickets.manage",
+    );
 
     if (!staff) {
       const rl = await applyRateLimit(
@@ -74,9 +78,15 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const access = await readSupportCaseForViewer(caseId, {
       userId: user.id,
       isStaff: staff,
-      role: user.role,
-      canReadPayments: hasBackofficePermission(user.role, "payments.read"),
-      canReadContact: hasBackofficePermission(user.role, "users.read"),
+      role: sessionRole(user.role),
+      canReadPayments: hasBackofficePermission(
+        sessionRole(user.role),
+        "payments.read",
+      ),
+      canReadContact: hasBackofficePermission(
+        sessionRole(user.role),
+        "users.read",
+      ),
     });
     if (!access || access.filedByOrganizationNotice) {
       return NextResponse.json(
@@ -139,10 +149,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   });
   if (!id.ok) return id.response;
   const user = auth.session.user;
-  const staff = hasBackofficePermission(user.role, "tickets.manage");
+  const staff = hasBackofficePermission(
+    sessionRole(user.role),
+    "tickets.manage",
+  );
   const access = await readSupportCaseForViewer(id.data.caseId, {
     userId: user.id,
-    role: user.role,
+    role: sessionRole(user.role),
     isStaff: staff,
   });
   if (!access || access.filedByOrganizationNotice)

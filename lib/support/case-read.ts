@@ -175,7 +175,10 @@ export async function readInboxPage(
     kind: "case",
     scope: c.appointmentId ? "session" : "platform",
     requester: {
-      ...c.requester,
+      // Spelled out rather than spread: a list row names the requester only,
+      // and contact fields belong to the case detail. The projection, not the
+      // query's select, is what keeps them out of the inbox.
+      id: c.requester.id,
       name: c.externalRequesterName ?? c.requester.name,
       callbackRequested: Boolean(c.callbackPhone),
     },

@@ -38,7 +38,7 @@ export const AttachmentUploadSchema = z
 
 export async function attachmentCaseAccess(
   caseId: string,
-  actor: { userId: string; role: UserRole },
+  actor: { userId: string; role: UserRole | null },
   evidenceRequestId?: string,
 ) {
   const supportCase = await prisma.supportCase.findFirst({
@@ -67,7 +67,7 @@ export async function attachmentCaseAccess(
 
 export async function attachmentDownload(
   attachmentId: string,
-  actor: { userId: string; role: UserRole },
+  actor: { userId: string; role: UserRole | null },
 ) {
   const attachment = await prisma.supportCaseAttachment.findFirst({
     where: { id: attachmentId, completedAt: { not: null }, deletedAt: null },

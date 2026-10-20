@@ -5,7 +5,7 @@ const mockCreateCase = jest.fn();
 const mockResolve = jest.fn();
 const mockDecision = jest.fn();
 const mockSeat = jest.fn();
-const mockNotify = jest.fn(async () => undefined);
+const mockNotify = jest.fn(async (..._args: unknown[]) => undefined);
 const mockCase = {
   id: "canonical-case",
   requesterUserId: "requester",

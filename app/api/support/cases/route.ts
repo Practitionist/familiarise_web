@@ -20,6 +20,7 @@ import {
   readSupportCaseForViewer,
   refineCreateSupportCaseInput,
 } from "@/lib/support/case-service";
+import { sessionRole } from "@/lib/auth/session-role";
 
 const ALLOWED_ORG_SUBMITTER_ROLES: ReadonlySet<MemberRole> = new Set([
   "OWNER",
@@ -62,7 +63,10 @@ export async function GET(req: NextRequest) {
     const auth = await requireApiAuth();
     if (auth.error) return auth.error;
     const { user } = auth.session;
-    const staff = hasBackofficePermission(user.role, "tickets.manage");
+    const staff = hasBackofficePermission(
+      sessionRole(user.role),
+      "tickets.manage",
+    );
 
     const parsedStatus = SupportCaseStatusSchema.safeParse(
       req.nextUrl.searchParams.get("status"),
@@ -73,7 +77,10 @@ export async function GET(req: NextRequest) {
       : 50;
 
     const where = {
-      ...(await visibleCaseWhere({ userId: user.id, role: user.role })),
+      ...(await visibleCaseWhere({
+        userId: user.id,
+        role: sessionRole(user.role),
+      })),
       ...(parsedStatus.success ? { status: parsedStatus.data } : {}),
     };
 
@@ -337,7 +344,10 @@ export async function POST(req: NextRequest) {
     const auth = await requireApiAuth();
     if (auth.error) return auth.error;
     const { user } = auth.session;
-    const staff = hasBackofficePermission(user.role, "tickets.manage");
+    const staff = hasBackofficePermission(
+      sessionRole(user.role),
+      "tickets.manage",
+    );
 
     const rl = await applyRateLimit(spamLimiter, `support-cases:${user.id}`);
     if (rl) return rl;
@@ -439,9 +449,15 @@ export async function POST(req: NextRequest) {
     const viewerCase = await readSupportCaseForViewer(result.supportCase.id, {
       userId: user.id,
       isStaff: staff,
-      role: user.role,
-      canReadPayments: hasBackofficePermission(user.role, "payments.read"),
-      canReadContact: hasBackofficePermission(user.role, "users.read"),
+      role: sessionRole(user.role),
+      canReadPayments: hasBackofficePermission(
+        sessionRole(user.role),
+        "payments.read",
+      ),
+      canReadContact: hasBackofficePermission(
+        sessionRole(user.role),
+        "users.read",
+      ),
     });
     if (!viewerCase) {
       return supportError({

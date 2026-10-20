@@ -10,6 +10,14 @@ interface ReportRow {
   contentText: string | null;
   status: string;
 }
+interface ReportWhere {
+  reportedById: string;
+  targetUserId: string;
+  type: string;
+  reviewId: string | null;
+  streamMessageId: string | null;
+  status: { in: string[] };
+}
 const rows: ReportRow[] = [];
 const mockGetMessage = jest.fn();
 const mockQueryChannels = jest.fn();
@@ -18,7 +26,7 @@ const mockReview = jest.fn();
 const mockMembership = jest.fn();
 const mockSession = jest.fn();
 const mockFindFirst = jest.fn(
-  async ({ where }) =>
+  async ({ where }: { where: ReportWhere }) =>
     rows.find(
       (row) =>
         row.reportedById === where.reportedById &&
@@ -50,7 +58,8 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     moderationReport: {
-      findFirst: (...args: unknown[]) => mockFindFirst(...args),
+      findFirst: (arg: Parameters<typeof mockFindFirst>[0]) =>
+        mockFindFirst(arg),
       create: (...args: unknown[]) => mockCreate(...args),
     },
     user: { findUnique: jest.fn(async () => ({ id: "target" })) },
@@ -201,8 +210,10 @@ it("requires a canonical message identity", async () => {
 });
 
 it("derives organization from the verified channel and refuses a forged organization", async () => {
+  // Stream files an unknown channel key under the channel's `custom` object,
+  // which is where the enterprise wiring writes `organization_id`.
   mockQueryChannels.mockResolvedValue([
-    { data: { organization_id: "real-org" } },
+    { data: { custom: { organization_id: "real-org" } } },
   ]);
   expect((await post({ organizationId: "forged-org" })).status).toBe(403);
   expect(mockCreate).not.toHaveBeenCalled();

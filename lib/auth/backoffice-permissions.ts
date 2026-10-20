@@ -178,9 +178,16 @@ export const BACKOFFICE_PERMISSIONS: Record<
   "newsletter.send": ADMIN_ONLY,
 };
 
+/**
+ * Whether a role holds a backoffice surface.
+ *
+ * The role is nullable because the session carries it as a string that may
+ * name a role the schema does not define; such a role holds no surface, so it
+ * is refused rather than forced into a valid enum member.
+ */
 export function hasBackofficePermission(
-  role: UserRole,
+  role: UserRole | null,
   surface: BackofficeSurface,
 ): boolean {
-  return BACKOFFICE_PERMISSIONS[surface].has(role);
+  return role !== null && BACKOFFICE_PERMISSIONS[surface].has(role);
 }

@@ -37,7 +37,7 @@ it("paginates the list and computes totals over all buyer and host disputes", as
     .mockResolvedValueOnce(80)
     .mockResolvedValueOnce(50);
   (groupBy as jest.Mock).mockResolvedValue([
-    { currency: "INR", _sum: { amountPaise: 90000n } },
+    { currency: "INR", _sum: { amountPaise: BigInt(90_000) } },
   ]);
   const response = await get("?limit=10&offset=25&status=LOST");
   const body = await response.json();

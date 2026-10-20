@@ -25,7 +25,10 @@ export async function POST(req: NextRequest) {
     .json()
     .catch(() => null);
   const target = z.object({ targetUserId: z.unknown() }).safeParse(peek);
-  if (!target.success) return postUserSupportTicket(req);
+  // The user-facing intake moved to /api/support/cases; this route now serves
+  // only the staff outbound path, so anything without a target is the retired
+  // endpoint's 410.
+  if (!target.success) return postUserSupportTicket();
 
   try {
     const auth = await requireBackofficeSurface("tickets.manage");

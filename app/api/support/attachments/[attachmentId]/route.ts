@@ -5,6 +5,7 @@ import {
   attachmentDownload,
   attachmentCaseAccess,
 } from "@/lib/support/case-attachments";
+import { sessionRole } from "@/lib/auth/session-role";
 interface Context {
   params: Promise<{ attachmentId: string }>;
 }
@@ -14,7 +15,7 @@ export async function GET(_req: NextRequest, context: Context) {
   const { attachmentId } = await context.params;
   const href = await attachmentDownload(attachmentId, {
     userId: auth.session.user.id,
-    role: auth.session.user.role,
+    role: sessionRole(auth.session.user.role),
   });
   return href
     ? NextResponse.redirect(href, {
@@ -42,7 +43,10 @@ export async function DELETE(_req: NextRequest, context: Context) {
     !row ||
     !(await attachmentCaseAccess(
       row.caseId,
-      { userId: auth.session.user.id, role: auth.session.user.role },
+      {
+        userId: auth.session.user.id,
+        role: sessionRole(auth.session.user.role),
+      },
       row.evidenceRequestId ?? undefined,
     ))
   )

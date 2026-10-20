@@ -1529,7 +1529,7 @@ export async function readSupportCaseForViewer(
   viewer: {
     userId: string;
     isStaff: boolean;
-    role?: UserRole;
+    role?: UserRole | null;
     canReadPayments?: boolean;
     canReadContact?: boolean;
   },

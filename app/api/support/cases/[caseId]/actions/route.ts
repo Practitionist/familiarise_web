@@ -10,6 +10,7 @@ import {
 } from "@/lib/support/case-actions";
 import { assertBodySize } from "@/lib/validation/limits";
 import { supportError } from "@/lib/api/support-http";
+import { sessionRole } from "@/lib/auth/session-role";
 
 const Params = z.object({ caseId: z.string().min(1).max(64) });
 interface Context {
@@ -24,7 +25,7 @@ export async function GET(_req: NextRequest, context: Context) {
     return NextResponse.json({ error: "Invalid case" }, { status: 400 });
   const data = await readCaseResolution(parsed.data.caseId, {
     userId: auth.session.user.id,
-    role: auth.session.user.role,
+    role: sessionRole(auth.session.user.role),
   });
   return data
     ? NextResponse.json({ data })
@@ -52,7 +53,10 @@ export async function POST(req: NextRequest, context: Context) {
   try {
     const data = await performCaseAction(
       params.data.caseId,
-      { userId: auth.session.user.id, role: auth.session.user.role },
+      {
+        userId: auth.session.user.id,
+        role: sessionRole(auth.session.user.role),
+      },
       parsed.data,
     );
     return NextResponse.json({ data });

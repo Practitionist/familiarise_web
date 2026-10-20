@@ -13,14 +13,29 @@ jest.mock("../../hooks/use-toast", () => ({
 
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SessionConversation } from "../../components/dashboard/shared/support/SessionConversation";
 
 type ThreadState = Parameters<typeof SessionConversation>[0]["t"];
+
+function render(t: ThreadState): string {
+  return renderToStaticMarkup(
+    <QueryClientProvider client={new QueryClient()}>
+      <SessionConversation t={t} />
+    </QueryClientProvider>,
+  );
+}
 
 function thread(over: Partial<ThreadState>): ThreadState {
   const base = {
     query: { isError: false, isFetching: false, refetch: jest.fn() },
     messages: [],
+    history: {
+      timeline: [],
+      hasMore: false,
+      loading: false,
+      loadOlder: jest.fn(),
+    },
     availableIntents: [
       { category: "RECORDING_ACCESS", label: "Recording access" },
       { category: "OTHER", label: "Talk to a person", escalates: true },
@@ -43,16 +58,14 @@ function thread(over: Partial<ThreadState>): ThreadState {
 
 describe("SessionConversation", () => {
   it("offers Talk to a person beside a mid-flow prompt's options", () => {
-    const html = renderToStaticMarkup(<SessionConversation t={thread({})} />);
+    const html = render(thread({}));
     expect(html).toContain("I can&#x27;t find the recording");
     expect(html).toContain("Talk to a person");
   });
 
   it("hides the exit once a person has the case, and says a reply reopens a resolved one", () => {
-    const html = renderToStaticMarkup(
-      <SessionConversation
-        t={thread({ isHuman: true, isResolved: true, options: [] })}
-      />,
+    const html = render(
+      thread({ isHuman: true, isResolved: true, options: [] }),
     );
     expect(html).not.toContain("Talk to a person");
     expect(html).toContain("Replying reopens it");

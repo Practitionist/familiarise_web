@@ -26,12 +26,13 @@ describe("requestStage", () => {
 });
 
 describe("supportRequestHref", () => {
-  it("links the request page in the right dashboard", () => {
-    expect(supportRequestHref("t_1")).toMatch(
-      /\/dashboard\/go\/auto\/support\/requests\/t_1$/,
-    );
+  it("links the canonical case page, which bounces to the viewer's own dashboard", () => {
+    // One canonical link for every surface. /dashboard/support/[caseKey]
+    // resolves the case and redirects to the side the viewer belongs on, so a
+    // single notification payload is right for every recipient.
+    expect(supportRequestHref("t_1")).toMatch(/\/dashboard\/support\/t_1$/);
     expect(supportRequestHref("t_1", "org9")).toMatch(
-      /\/dashboard\/organization\/org9\/support\/requests\/t_1$/,
+      /\/dashboard\/support\/t_1$/,
     );
   });
 });

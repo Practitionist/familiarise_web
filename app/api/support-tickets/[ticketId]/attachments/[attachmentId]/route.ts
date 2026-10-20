@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { attachmentDownload } from "@/lib/support/case-attachments";
+import { sessionRole } from "@/lib/auth/session-role";
 export async function GET(
   _req: NextRequest,
   context: { params: Promise<{ ticketId: string; attachmentId: string }> },
@@ -31,7 +32,7 @@ export async function GET(
     );
   const href = await attachmentDownload(legacy.id, {
     userId: auth.session.user.id,
-    role: auth.session.user.role,
+    role: sessionRole(auth.session.user.role),
   });
   return href
     ? NextResponse.redirect(href, {

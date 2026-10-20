@@ -106,7 +106,7 @@ async function main() {
       }),
     );
     assert.equal(
-      staleUpdates.reduce((sum, count) => sum + (count ?? 0), 0),
+      staleUpdates.reduce<number>((sum, count) => sum + (count ?? 0), 0),
       1,
       "Stale metadata changes must not overwrite each other",
     );
@@ -140,7 +140,7 @@ async function main() {
       }),
     );
     assert.equal(
-      responseRace.reduce((sum, count) => sum + (count ?? 0), 0),
+      responseRace.reduce<number>((sum, count) => sum + (count ?? 0), 0),
       1,
       "Cancellation and submission must have one winner",
     );

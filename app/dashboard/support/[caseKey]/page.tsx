@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { requireOnboarded } from "@/lib/auth-guard";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
+import { sessionRole } from "@/lib/auth/session-role";
 import { parseCaseKey } from "@/lib/support/case-key";
 import { resolveSupportCaseId } from "@/lib/support/case-workspace";
 import { readSupportCaseForViewer } from "@/lib/support/case-service";
@@ -15,10 +16,13 @@ export default async function CaseLink({
   if (!ref || ref.kind === "booking") notFound();
   const caseId = await resolveSupportCaseId(ref);
   if (!caseId) notFound();
-  const staff = hasBackofficePermission(user.role, "tickets.manage");
+  const staff = hasBackofficePermission(
+    sessionRole(user.role),
+    "tickets.manage",
+  );
   const view = await readSupportCaseForViewer(caseId, {
     userId: user.id,
-    role: user.role,
+    role: sessionRole(user.role),
     isStaff: staff,
   });
   if (!view) notFound();

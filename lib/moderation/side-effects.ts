@@ -309,6 +309,11 @@ async function applyActionEffects(
     case "USER_REINSTATED":
     case "REVIEW_REMOVED":
     case "REVIEW_REPLY_REMOVED":
+    case "REVIEW_RESTORED":
+    case "REVIEW_REPLY_RESTORED":
+    case "RATING_REINSTATED":
+      // A restoration undoes an earlier removal, so it carries no enforcement
+      // effect of its own; the reversal itself runs in the appeal path.
       return {};
   }
 }
@@ -891,6 +896,10 @@ async function triggerModerationNotification(
     case "REVIEW_REMOVED":
     case "REVIEW_EXCLUDED_FROM_AGGREGATE":
     case "FEEDBACK_EXCLUDED_FROM_AGGREGATE":
+    case "REVIEW_RESTORED":
+    case "REVIEW_REPLY_RESTORED":
+    case "RATING_REINSTATED":
+      // A restoration is the inverse of a removal, so it raises no bell.
       return Promise.resolve(null);
   }
 }
