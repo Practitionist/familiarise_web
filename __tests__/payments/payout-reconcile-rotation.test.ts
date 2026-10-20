@@ -2,9 +2,9 @@
  * @jest-environment node
  *
  * The bounded payout reconcilers rotate on `lastReconciledAt`: with a limit of
- * N, repeated runs visit every row of a cohort before revisiting one, the stamp
- * is raw SQL that leaves `updatedAt` alone, and the aging predicates are the
- * same 24 h / 48 h-30 d windows as before.
+ * N, repeated runs visit every row of a cohort before revisiting one, a row is
+ * stamped only once its poll ends, the stamp is raw SQL that leaves `updatedAt`
+ * alone, and the aging predicates are the same 24 h / 48 h-30 d windows as before.
  */
 
 jest.mock("../../lib/cron/with-cron-lock", () => ({
@@ -63,9 +63,10 @@ const tables: Record<"ConsultantPayout" | "OrganizationPayout", Row[]> = {
   ConsultantPayout: [],
   OrganizationPayout: [],
 };
-/** Per cohort, the ids each run stamped, one batch per run. */
+/** Per cohort, the ids each run stamped, indexed by `runNo`. */
 const visits: Record<string, string[][]> = {};
 let clock = 0;
+let runNo = 0;
 
 /** Applies the status filter, then each orderBy key in turn, then `take`. */
 function find(rows: Row[], { where, take, orderBy }: FindArgs): Row[] {
@@ -107,7 +108,9 @@ const db = {
       const batch = tables[table].filter((r) => ids.includes(r.id));
       for (const row of batch) row.lastReconciledAt = new Date(clock);
       if (batch.length > 0) {
-        (visits[`${table}:${batch[0].status}`] ??= []).push(ids);
+        ((visits[`${table}:${batch[0].status}`] ??= [])[runNo] ??= []).push(
+          ...ids,
+        );
       }
       return ids.length;
     },
@@ -122,6 +125,7 @@ jest.mock("../../lib/prisma", () => ({
 
 import { handleStuckPayouts } from "../../scripts/payouts/handle-stuck-payouts";
 import { reconcilePayoutStatus } from "../../scripts/payouts/reconcile-payout-status";
+import { getRazorpayPayoutStatus } from "../../lib/payments/payouts/payout-gateway-lookup";
 
 const NOW = Date.UTC(2026, 9, 20, 12, 0);
 const HOUR = 60 * 60 * 1000;
@@ -157,6 +161,7 @@ beforeEach(() => {
   jest.spyOn(console, "log").mockImplementation(() => {});
   jest.spyOn(console, "warn").mockImplementation(() => {});
   for (const k of Object.keys(visits)) delete visits[k];
+  runNo = 0;
   db.consultantPayout.findMany.mockClear();
   db.organizationPayout.findMany.mockClear();
 });
@@ -166,7 +171,7 @@ it("handle-stuck-payouts visits every stuck row before revisiting one, and keeps
   tables.OrganizationPayout = rows("o", "PROCESSING", 3);
   const before = tables.ConsultantPayout.map((r) => r.updatedAt.getTime());
 
-  for (let run = 0; run < 5; run++) await handleStuckPayouts({ limit: 2 });
+  for (runNo = 0; runNo < 5; runNo++) await handleStuckPayouts({ limit: 2 });
 
   expectFullRotation(
     visits["ConsultantPayout:PROCESSING"],
@@ -200,7 +205,9 @@ it("reconcile-payout-status rotates the stale cohort and both reversal sweeps, a
   ];
   tables.OrganizationPayout = rows("g", "COMPLETED", 3);
 
-  for (let run = 0; run < 4; run++) await reconcilePayoutStatus({ limit: 2 });
+  for (runNo = 0; runNo < 4; runNo++) {
+    await reconcilePayoutStatus({ limit: 2 });
+  }
 
   expectFullRotation(
     visits["ConsultantPayout:PROCESSING"],
@@ -224,4 +231,56 @@ it("reconcile-payout-status rotates the stale cohort and both reversal sweeps, a
     lt: new Date(NOW - 48 * HOUR),
     gte: new Date(NOW - 30 * 24 * HOUR),
   });
+});
+
+it("a run killed mid-poll stamps only the rows it finished, so the next run starts at the first unfinished row", async () => {
+  tables.ConsultantPayout = rows("c", "PROCESSING", 3);
+  tables.OrganizationPayout = [];
+  jest
+    .mocked(getRazorpayPayoutStatus)
+    .mockImplementationOnce(async () => ({
+      kind: "status",
+      status: "processing",
+    }))
+    .mockImplementationOnce(() => new Promise(() => {}));
+
+  void handleStuckPayouts({ limit: 3 });
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+  expect(visits["ConsultantPayout:PROCESSING"]).toEqual([["c0"]]);
+
+  runNo = 1;
+  await handleStuckPayouts({ limit: 2 });
+  expect(visits["ConsultantPayout:PROCESSING"][1]).toEqual(["c1", "c2"]);
+});
+
+it("starts no row once 16 s have passed since startedAt, leaving the rest unstamped", async () => {
+  tables.ConsultantPayout = rows("s", "PROCESSING", 3);
+  tables.OrganizationPayout = rows("g", "COMPLETED", 2);
+  let now = NOW;
+  jest.spyOn(Date, "now").mockImplementation(() => now);
+  jest.mocked(getRazorpayPayoutStatus).mockImplementation(async () => {
+    now += 10_000;
+    return { kind: "status", status: "processing" };
+  });
+
+  const result = await reconcilePayoutStatus({ limit: 3, startedAt: NOW });
+
+  expect(result.totalProcessed).toBe(2);
+  expect(visits["ConsultantPayout:PROCESSING"]).toEqual([["s0", "s1"]]);
+  expect(visits["OrganizationPayout:COMPLETED"]).toBeUndefined();
+});
+
+it("bounds every cohort at 100 rows when the caller passes no limit", async () => {
+  tables.ConsultantPayout = [];
+  tables.OrganizationPayout = [];
+
+  await reconcilePayoutStatus();
+  await handleStuckPayouts();
+
+  const takes = [
+    ...db.consultantPayout.findMany.mock.calls,
+    ...db.organizationPayout.findMany.mock.calls,
+  ].map(([a]) => a.take);
+  expect(takes).toHaveLength(5);
+  expect(new Set(takes)).toEqual(new Set([100]));
 });

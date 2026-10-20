@@ -10,7 +10,8 @@
  * - Gateway status changed without webhook
  *
  * Driven by the `/api/cleanup/reconcile-payout-status` twin with a per-cohort
- * `limit`; every cohort rotates on `lastReconciledAt` (see reconcile-cursor.ts).
+ * `limit` and the request's `startedAt`; every cohort rotates on
+ * `lastReconciledAt` (see reconcile-cursor.ts).
  */
 
 import prisma from "../../lib/prisma";
@@ -30,10 +31,13 @@ import {
   retireUnknownGatewayPayout,
 } from "@/lib/payments/payouts/payout-gateway-lookup";
 import {
+  DEFAULT_RECONCILE_LIMIT,
   LEAST_RECENTLY_RECONCILED,
+  pollInRotation,
   stampConsultantPayoutsReconciled,
   stampOrgPayoutsReconciled,
 } from "@/lib/payments/payouts/reconcile-cursor";
+import { startDeadline } from "@/lib/cron/run-deadline";
 import { reportSentryMessage } from "@/lib/observability/report";
 
 // Only reconcile payouts older than 48 hours (give webhooks time)
@@ -62,17 +66,20 @@ export interface PayoutReconciliationResult {
  */
 // Fail-closed: money state must not double-run unlocked.
 export async function reconcilePayoutStatus(
-  opts: { limit?: number } = {},
+  opts: { limit?: number; startedAt?: number } = {},
 ): Promise<PayoutReconciliationResult> {
+  const limit = opts.limit ?? DEFAULT_RECONCILE_LIMIT;
+  const pastDeadline = startDeadline(opts.startedAt);
   return withCronLock(
     "reconcile-payout-status",
     { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
-    () => reconcilePayoutStatusUnlocked(opts.limit),
+    () => reconcilePayoutStatusUnlocked(limit, pastDeadline),
   );
 }
 
 async function reconcilePayoutStatusUnlocked(
-  limit: number | undefined,
+  limit: number,
+  pastDeadline: () => boolean,
 ): Promise<PayoutReconciliationResult> {
   const errors: string[] = [];
   const discrepancies: string[] = [];
@@ -107,7 +114,6 @@ async function reconcilePayoutStatusUnlocked(
     orderBy: [LEAST_RECENTLY_RECONCILED, { updatedAt: "asc" }],
     take: limit,
   });
-  await stampConsultantPayoutsReconciled(stalePayouts.map((p) => p.id));
 
   // #1407 — the pre-flight gate has to test the credentials the lookup will
   // actually send, or it reports "configured" and every lookup still 401s.
@@ -125,137 +131,144 @@ async function reconcilePayoutStatusUnlocked(
     `Found ${stalePayouts.length} stale PENDING/PROCESSING payouts to reconcile`,
   );
 
-  for (const payout of stalePayouts) {
-    console.log(`\nReconciling payout ${payout.id}`);
-    console.log(`   Provider: ${payout.provider}`);
-    console.log(`   Provider Payout ID: ${payout.providerPayoutId}`);
-    console.log(`   Current Status: ${payout.status}`);
-    console.log(
-      `   Consultant: ${payout.consultantProfile.user.name || "Unknown"}`,
-    );
-    console.log(
-      `   Amount: ${payout.currency} ${(payout.amount / 100).toFixed(2)}`,
-    );
-    console.log(`   Last updated: ${payout.updatedAt.toISOString()}`);
-
-    // Skip if no provider payout ID
-    if (!payout.providerPayoutId) {
-      console.log(`   Skipping - no provider payout ID`);
-      skippedCount++;
-      continue;
-    }
-
-    // Query gateway for actual status
-    let lookup: PayoutLookup | null = null;
-
-    if (payout.provider === PaymentGateway.RAZORPAY) {
-      if (!razorpayConfigured) {
-        console.log(`   Skipping - Razorpay credentials not configured`);
-        skippedCount++;
-        continue;
-      }
-      lookup = await getRazorpayPayoutStatus(payout.providerPayoutId);
-    } else {
-      console.log(`   Skipping - unsupported gateway: ${payout.provider}`);
-      skippedCount++;
-      continue;
-    }
-
-    // #1757 — an id the gateway has no record of is terminal for this row, not
-    // a run failure: FAILED via the canonical handler (releases earnings, TDS).
-    if (lookup?.kind === "unknown_id") {
-      await retireUnknownGatewayPayout(
-        {
-          provider: payout.provider,
-          providerPayoutId: payout.providerPayoutId,
-        },
-        lookup.detail,
-      );
-      retiredCount++;
-      retired.push(payout.id);
-      continue;
-    }
-
-    if (!lookup || lookup.kind === "gateway_error") {
-      console.log(`   Could not get status from gateway - skipping`);
-      const detailSuffix = lookup ? ` (${lookup.detail})` : "";
-      errors.push(
-        `Payout ${payout.id}: Could not query gateway status${detailSuffix}`,
-      );
-      skippedCount++;
-      continue;
-    }
-
-    const gatewayStatus = lookup;
-
-    console.log(`   Gateway status: ${gatewayStatus.status}`);
-
-    // Map gateway status to our status
-    const mappedStatus = mapGatewayStatus(
-      payout.provider,
-      gatewayStatus.status,
-    );
-
-    if (!mappedStatus) {
-      console.log(`   Unknown gateway status - skipping`);
-      skippedCount++;
-      continue;
-    }
-
-    // Update if status changed
-    if (mappedStatus !== payout.status) {
-      const discrepancy = `Payout ${payout.id}: DB shows ${payout.status}, gateway shows ${gatewayStatus.status} (${mappedStatus})`;
-      discrepancies.push(discrepancy);
-      console.log(`   ⚠️ DISCREPANCY: ${discrepancy}`);
-
-      // #677 PM-15 — the old inline `status=COMPLETED` + `earnings PAID` flip
-      // bypassed the canonical webhook handler, so on this reconcile path TDS
-      // was never recorded, the payout ledger postings (revenue/payable
-      // counters) never ran, and the gateway UTR was dropped. Delegate the
-      // full money recording to handlePayoutWebhook, the same engine the live
-      // webhook uses. It claims `status notIn [COMPLETED, CANCELLED]`, so it is
-      // idempotent against a live webhook racing this reconcile — whichever
-      // fires first wins and the other no-ops.
-      const webhookStatus = WEBHOOK_STATUS_MAP[mappedStatus];
-      if (!webhookStatus) {
-        // mapGatewayStatus only yields COMPLETED/PROCESSING/FAILED/CANCELLED,
-        // so this is unreachable; keep it explicit rather than silently drop.
-        console.log(`   No webhook mapping for ${mappedStatus} - skipping`);
-        skippedCount++;
-        continue;
-      }
-
-      await handlePayoutWebhook(
-        payout.provider,
-        payout.providerPayoutId,
-        webhookStatus,
-        mappedStatus === PayoutStatus.FAILED
-          ? (gatewayStatus.status.toLowerCase() === "reversed"
-              ? "gateway reversed pre-completion (net-zero round trip): "
-              : "") +
-              (gatewayStatus.failureMessage ||
-                gatewayStatus.failureReason ||
-                gatewayStatus.status)
-          : undefined,
-        // UTR persists only on the COMPLETED branch inside the handler.
-        gatewayStatus.utr,
-      );
-
+  const staleStarted = await pollInRotation(
+    stalePayouts,
+    stampConsultantPayoutsReconciled,
+    pastDeadline,
+    async (payout) => {
+      console.log(`\nReconciling payout ${payout.id}`);
+      console.log(`   Provider: ${payout.provider}`);
+      console.log(`   Provider Payout ID: ${payout.providerPayoutId}`);
+      console.log(`   Current Status: ${payout.status}`);
       console.log(
-        `   Reconciled via webhook handler: ${payout.status} → ${mappedStatus}`,
+        `   Consultant: ${payout.consultantProfile.user.name || "Unknown"}`,
       );
-      reconciledCount++;
+      console.log(
+        `   Amount: ${payout.currency} ${(payout.amount / 100).toFixed(2)}`,
+      );
+      console.log(`   Last updated: ${payout.updatedAt.toISOString()}`);
 
-      if (mappedStatus === PayoutStatus.COMPLETED) {
-        completedCount++;
-      } else if (mappedStatus === PayoutStatus.FAILED) {
-        failedCount++;
-        console.log(`   ⚠️ Payout failed - consultant may need notification!`);
+      // Skip if no provider payout ID
+      if (!payout.providerPayoutId) {
+        console.log(`   Skipping - no provider payout ID`);
+        skippedCount++;
+        return;
       }
-    } else {
-      console.log(`   Status unchanged (${mappedStatus})`);
-    }
-  }
+
+      // Query gateway for actual status
+      let lookup: PayoutLookup | null = null;
+
+      if (payout.provider === PaymentGateway.RAZORPAY) {
+        if (!razorpayConfigured) {
+          console.log(`   Skipping - Razorpay credentials not configured`);
+          skippedCount++;
+          return;
+        }
+        lookup = await getRazorpayPayoutStatus(payout.providerPayoutId);
+      } else {
+        console.log(`   Skipping - unsupported gateway: ${payout.provider}`);
+        skippedCount++;
+        return;
+      }
+
+      // #1757 — an id the gateway has no record of is terminal for this row, not
+      // a run failure: FAILED via the canonical handler (releases earnings, TDS).
+      if (lookup?.kind === "unknown_id") {
+        await retireUnknownGatewayPayout(
+          {
+            provider: payout.provider,
+            providerPayoutId: payout.providerPayoutId,
+          },
+          lookup.detail,
+        );
+        retiredCount++;
+        retired.push(payout.id);
+        return;
+      }
+
+      if (!lookup || lookup.kind === "gateway_error") {
+        console.log(`   Could not get status from gateway - skipping`);
+        const detailSuffix = lookup ? ` (${lookup.detail})` : "";
+        errors.push(
+          `Payout ${payout.id}: Could not query gateway status${detailSuffix}`,
+        );
+        skippedCount++;
+        return;
+      }
+
+      const gatewayStatus = lookup;
+
+      console.log(`   Gateway status: ${gatewayStatus.status}`);
+
+      // Map gateway status to our status
+      const mappedStatus = mapGatewayStatus(
+        payout.provider,
+        gatewayStatus.status,
+      );
+
+      if (!mappedStatus) {
+        console.log(`   Unknown gateway status - skipping`);
+        skippedCount++;
+        return;
+      }
+
+      // Update if status changed
+      if (mappedStatus !== payout.status) {
+        const discrepancy = `Payout ${payout.id}: DB shows ${payout.status}, gateway shows ${gatewayStatus.status} (${mappedStatus})`;
+        discrepancies.push(discrepancy);
+        console.log(`   ⚠️ DISCREPANCY: ${discrepancy}`);
+
+        // #677 PM-15 — the old inline `status=COMPLETED` + `earnings PAID` flip
+        // bypassed the canonical webhook handler, so on this reconcile path TDS
+        // was never recorded, the payout ledger postings (revenue/payable
+        // counters) never ran, and the gateway UTR was dropped. Delegate the
+        // full money recording to handlePayoutWebhook, the same engine the live
+        // webhook uses. It claims `status notIn [COMPLETED, CANCELLED]`, so it is
+        // idempotent against a live webhook racing this reconcile — whichever
+        // fires first wins and the other no-ops.
+        const webhookStatus = WEBHOOK_STATUS_MAP[mappedStatus];
+        if (!webhookStatus) {
+          // mapGatewayStatus only yields COMPLETED/PROCESSING/FAILED/CANCELLED,
+          // so this is unreachable; keep it explicit rather than silently drop.
+          console.log(`   No webhook mapping for ${mappedStatus} - skipping`);
+          skippedCount++;
+          return;
+        }
+
+        await handlePayoutWebhook(
+          payout.provider,
+          payout.providerPayoutId,
+          webhookStatus,
+          mappedStatus === PayoutStatus.FAILED
+            ? (gatewayStatus.status.toLowerCase() === "reversed"
+                ? "gateway reversed pre-completion (net-zero round trip): "
+                : "") +
+                (gatewayStatus.failureMessage ||
+                  gatewayStatus.failureReason ||
+                  gatewayStatus.status)
+            : undefined,
+          // UTR persists only on the COMPLETED branch inside the handler.
+          gatewayStatus.utr,
+        );
+
+        console.log(
+          `   Reconciled via webhook handler: ${payout.status} → ${mappedStatus}`,
+        );
+        reconciledCount++;
+
+        if (mappedStatus === PayoutStatus.COMPLETED) {
+          completedCount++;
+        } else if (mappedStatus === PayoutStatus.FAILED) {
+          failedCount++;
+          console.log(
+            `   ⚠️ Payout failed - consultant may need notification!`,
+          );
+        }
+      } else {
+        console.log(`   Status unchanged (${mappedStatus})`);
+      }
+    },
+  );
 
   const completedReversalCutoff = new Date(
     Date.now() - 14 * 24 * 60 * 60 * 1000,
@@ -274,45 +287,47 @@ async function reconcilePayoutStatusUnlocked(
     orderBy: [LEAST_RECENTLY_RECONCILED, { processedAt: "desc" }],
     take: limit,
   });
-  await stampConsultantPayoutsReconciled(
-    recentCompletedPayouts.map((p) => p.id),
-  );
 
-  for (const completed of recentCompletedPayouts) {
-    if (
-      !completed.providerPayoutId ||
-      completed.provider !== PaymentGateway.RAZORPAY
-    ) {
-      continue;
-    }
-    try {
-      const gatewayStatus = await getRazorpayPayoutStatus(
-        completed.providerPayoutId,
-      );
+  await pollInRotation(
+    recentCompletedPayouts,
+    stampConsultantPayoutsReconciled,
+    pastDeadline,
+    async (completed) => {
       if (
-        gatewayStatus.kind === "status" &&
-        gatewayStatus.status.toLowerCase() === "reversed"
+        !completed.providerPayoutId ||
+        completed.provider !== PaymentGateway.RAZORPAY
       ) {
-        const rev = await markConsultantPayoutReversed(
-          completed.providerPayoutId,
-          gatewayStatus.failureReason ||
-            gatewayStatus.failureMessage ||
-            "Bank reversal detected during payout reconciliation",
-        );
-        if (!rev.wasNoOp) {
-          reconciledCount++;
-          failedCount++;
-          discrepancies.push(
-            `Completed payout ${completed.id} (${completed.providerPayoutId}) reversed at gateway`,
-          );
-        }
+        return;
       }
-    } catch (err) {
-      errors.push(
-        `Completed payout check failed for ${completed.id}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
+      try {
+        const gatewayStatus = await getRazorpayPayoutStatus(
+          completed.providerPayoutId,
+        );
+        if (
+          gatewayStatus.kind === "status" &&
+          gatewayStatus.status.toLowerCase() === "reversed"
+        ) {
+          const rev = await markConsultantPayoutReversed(
+            completed.providerPayoutId,
+            gatewayStatus.failureReason ||
+              gatewayStatus.failureMessage ||
+              "Bank reversal detected during payout reconciliation",
+          );
+          if (!rev.wasNoOp) {
+            reconciledCount++;
+            failedCount++;
+            discrepancies.push(
+              `Completed payout ${completed.id} (${completed.providerPayoutId}) reversed at gateway`,
+            );
+          }
+        }
+      } catch (err) {
+        errors.push(
+          `Completed payout check failed for ${completed.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+  );
 
   const recentCompletedOrgPayouts = await prisma.organizationPayout.findMany({
     where: {
@@ -328,42 +343,46 @@ async function reconcilePayoutStatusUnlocked(
     orderBy: [LEAST_RECENTLY_RECONCILED, { processedAt: "desc" }],
     take: limit,
   });
-  await stampOrgPayoutsReconciled(recentCompletedOrgPayouts.map((p) => p.id));
 
-  for (const orgCompleted of recentCompletedOrgPayouts) {
-    if (!orgCompleted.gatewayPayoutId) continue;
-    try {
-      const gatewayStatus = await getRazorpayPayoutStatus(
-        orgCompleted.gatewayPayoutId,
-      );
-      if (
-        gatewayStatus.kind === "status" &&
-        gatewayStatus.status.toLowerCase() === "reversed"
-      ) {
-        const rev = await markOrgPayoutReversed(
-          orgCompleted.id,
-          gatewayStatus.failureReason ||
-            gatewayStatus.failureMessage ||
-            "Bank reversal detected during payout reconciliation",
+  await pollInRotation(
+    recentCompletedOrgPayouts,
+    stampOrgPayoutsReconciled,
+    pastDeadline,
+    async (orgCompleted) => {
+      if (!orgCompleted.gatewayPayoutId) return;
+      try {
+        const gatewayStatus = await getRazorpayPayoutStatus(
+          orgCompleted.gatewayPayoutId,
         );
-        if (!rev.wasNoOp) {
-          reconciledCount++;
-          failedCount++;
-          discrepancies.push(
-            `Completed org payout ${orgCompleted.id} (${orgCompleted.gatewayPayoutId}) reversed at gateway`,
+        if (
+          gatewayStatus.kind === "status" &&
+          gatewayStatus.status.toLowerCase() === "reversed"
+        ) {
+          const rev = await markOrgPayoutReversed(
+            orgCompleted.id,
+            gatewayStatus.failureReason ||
+              gatewayStatus.failureMessage ||
+              "Bank reversal detected during payout reconciliation",
           );
+          if (!rev.wasNoOp) {
+            reconciledCount++;
+            failedCount++;
+            discrepancies.push(
+              `Completed org payout ${orgCompleted.id} (${orgCompleted.gatewayPayoutId}) reversed at gateway`,
+            );
+          }
         }
+      } catch (err) {
+        errors.push(
+          `Completed org payout check failed for ${orgCompleted.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
-    } catch (err) {
-      errors.push(
-        `Completed org payout check failed for ${orgCompleted.id}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
+    },
+  );
 
   // Summary
   console.log("\n📊 Payout Reconciliation Summary:");
-  console.log(`   Total processed: ${stalePayouts.length}`);
+  console.log(`   Total processed: ${staleStarted}`);
   console.log(`   Reconciled (status changed): ${reconciledCount}`);
   console.log(`   Completed payouts found: ${completedCount}`);
   console.log(`   Failed payouts found: ${failedCount}`);
@@ -393,7 +412,7 @@ async function reconcilePayoutStatusUnlocked(
 
   return {
     success: errors.length === 0,
-    totalProcessed: stalePayouts.length,
+    totalProcessed: staleStarted,
     reconciledCount,
     completedCount,
     failedCount,

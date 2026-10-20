@@ -80,7 +80,7 @@ function resolvePeriod(): { periodStart: Date; periodEnd: Date } {
 async function ensureConsumerInvoicesForPeriod(
   periodStart: Date,
   periodEnd: Date,
-  limit: number | undefined,
+  limit: number,
 ): Promise<{ minted: number; skipped: number }> {
   const candidates = await prisma.payment.findMany({
     where: {
@@ -313,9 +313,9 @@ export interface GstOutwardRegisterExportResult {
  *
  * @param opts.limit Payments the invoice healer may mint in this run.
  */
-export async function runGstOutwardRegisterExport(
-  opts: { limit?: number } = {},
-): Promise<GstOutwardRegisterExportResult> {
+export async function runGstOutwardRegisterExport(opts: {
+  limit: number;
+}): Promise<GstOutwardRegisterExportResult> {
   // Fail-CLOSED, unlike the read-only compliance drafts. The healer inside
   // allocates numbers from a gapless statutory series, and two concurrent
   // runs would both probe a payment as un-invoiced, both take a number, and

@@ -575,11 +575,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "handle-stuck-payouts": () =>
       cleanupRoute({
         job: "handle-stuck-payouts",
-        run: async (req) => {
+        run: async (req, { startedAt }) => {
           const { handleStuckPayouts } =
             await import("@/scripts/payouts/handle-stuck-payouts");
           return handleStuckPayouts({
             limit: parseLimitParamOrDefault(req, MAX_STUCK_PAYOUT_POLLS),
+            startedAt,
           });
         },
         summarize: (r) => ({
@@ -955,11 +956,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "reconcile-payout-status": () =>
       cleanupRoute({
         job: "reconcile-payout-status",
-        run: async (req) => {
+        run: async (req, { startedAt }) => {
           const { reconcilePayoutStatus } =
             await import("@/scripts/payouts/reconcile-payout-status");
           return reconcilePayoutStatus({
             limit: parseLimitParamOrDefault(req, MAX_PAYOUT_STATUS_POLLS),
+            startedAt,
           });
         },
         summarize: (r) => ({

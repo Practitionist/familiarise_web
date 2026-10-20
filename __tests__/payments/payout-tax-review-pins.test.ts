@@ -142,7 +142,7 @@ it("keeps commercial credit notes out of the GSTR-1 register", async () => {
   const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
   jest.spyOn(console, "log").mockImplementation(() => {});
 
-  await runGstOutwardRegisterExport();
+  await runGstOutwardRegisterExport({ limit: 25 });
 
   for (const findMany of [mockCreditNoteFindMany, mockConsumerNoteFindMany]) {
     expect(findMany.mock.calls[0][0].where).toMatchObject({
