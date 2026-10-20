@@ -14,6 +14,25 @@ jest.mock("@sentry/nextjs", () => ({
     error: jest.fn(),
   },
 }));
+
+type PinnedLookup = (
+  host: string,
+  opts: { all?: boolean },
+  cb: (err: Error | null, address: unknown, family?: number) => void,
+) => void;
+const undiciAgents: Array<{ connect: { lookup: PinnedLookup } }> = [];
+const undiciFetch = jest.fn();
+jest.mock("undici", () => ({
+  Agent: class {
+    constructor(opts: { connect: { lookup: PinnedLookup } }) {
+      undiciAgents.push(opts);
+    }
+    close() {
+      return Promise.resolve();
+    }
+  },
+  fetch: (...args: unknown[]) => undiciFetch(...args),
+}));
 import type { PrismaLike } from "@/lib/prisma";
 import {
   assertPublicUrl,
@@ -161,38 +180,42 @@ describe("SSRF guard IPv6 CIDR closures & resolvePublicUrl", () => {
 describe("Outbound webhook worker security, backoff, Sentry & OrgAuditLog", () => {
   it("pins production fetch via undici dispatcher, cancels response stream, and sends idempotency headers", async () => {
     const cancelMock = jest.fn().mockResolvedValue(undefined);
-    const originalFetch = globalThis.fetch;
     let capturedInit: RequestInit & { dispatcher?: unknown } = {};
+    undiciAgents.length = 0;
+    undiciFetch.mockImplementation(async (_input, init) => {
+      capturedInit = init;
+      return { status: 200, body: { cancel: cancelMock } };
+    });
 
-    globalThis.fetch = jest.fn(async (_input, init) => {
-      capturedInit = (init ?? {}) as RequestInit & { dispatcher?: unknown };
-      return {
-        status: 200,
-        body: { cancel: cancelMock },
-      } as unknown as Response;
-    }) as unknown as typeof fetch;
+    const row = makeDeliveryRow({
+      id: "del-pinned",
+      eventType: "contract.signed",
+    });
+    const stub = makeWorkerPrisma([row]);
 
-    try {
-      const row = makeDeliveryRow({
-        id: "del-pinned",
-        eventType: "contract.signed",
-      });
-      const stub = makeWorkerPrisma([row]);
+    const res = await runDispatchTick({
+      prisma: stub.prisma as unknown as PrismaLike,
+      now: () => FROZEN_NOW_MS,
+    });
 
-      const res = await runDispatchTick({
-        prisma: stub.prisma as unknown as PrismaLike,
-        now: () => FROZEN_NOW_MS,
-      });
+    expect(res.succeeded).toBe(1);
+    expect(capturedInit.dispatcher).toBeDefined();
+    expect(cancelMock).toHaveBeenCalledTimes(1);
+    const headers = capturedInit.headers as Record<string, string>;
+    expect(headers[DELIVERY_ID_HEADER]).toBe("del-pinned");
+    expect(headers[EVENT_HEADER]).toBe("contract.signed");
 
-      expect(res.succeeded).toBe(1);
-      expect(capturedInit.dispatcher).toBeDefined();
-      expect(cancelMock).toHaveBeenCalledTimes(1);
-      const headers = capturedInit.headers as Record<string, string>;
-      expect(headers[DELIVERY_ID_HEADER]).toBe("del-pinned");
-      expect(headers[EVENT_HEADER]).toBe("contract.signed");
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    // The agent dials only the validated address, in both lookup shapes.
+    expect(undiciAgents).toHaveLength(1);
+    const lookup = undiciAgents[0].connect.lookup;
+    const single = jest.fn();
+    lookup("evil.example", {}, single);
+    expect(single).toHaveBeenCalledWith(null, "93.184.216.34", 4);
+    const all = jest.fn();
+    lookup("evil.example", { all: true }, all);
+    expect(all).toHaveBeenCalledWith(null, [
+      { address: "93.184.216.34", family: 4 },
+    ]);
   });
 
   it("fences stale IN_FLIGHT claims with updatedAt < inFlightStaleBefore and bumps updatedAt on claim", async () => {
