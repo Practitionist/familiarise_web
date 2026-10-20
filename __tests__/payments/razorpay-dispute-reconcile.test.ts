@@ -136,15 +136,26 @@ beforeEach(() => {
   store.payments = [];
   store.earnings = [];
 
-  mockDisputeFindMany.mockImplementation(async () =>
-    store.disputes.filter((d) =>
-      [
-        "NEEDS_RESPONSE",
-        "WARNING_NEEDS_RESPONSE",
-        "UNDER_REVIEW",
-        "WARNING_UNDER_REVIEW",
-      ].includes(d.status),
-    ),
+  // The deadline-window query filters `dueBy.lte`; the stale query takes the rest.
+  mockDisputeFindMany.mockImplementation(
+    async (args: {
+      where: {
+        dueBy?: { lte: Date };
+        OR?: [unknown, { dueBy: { gt: Date } }];
+      };
+    }) =>
+      store.disputes.filter(
+        (d) =>
+          [
+            "NEEDS_RESPONSE",
+            "WARNING_NEEDS_RESPONSE",
+            "UNDER_REVIEW",
+            "WARNING_UNDER_REVIEW",
+          ].includes(d.status) &&
+          (args.where.dueBy
+            ? d.dueBy !== null && d.dueBy <= args.where.dueBy.lte
+            : d.dueBy === null || d.dueBy > args.where.OR![1].dueBy.gt),
+      ),
   );
   mockDisputeUpdateMany.mockImplementation(
     async (args: {

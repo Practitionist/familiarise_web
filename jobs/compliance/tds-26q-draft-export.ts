@@ -16,7 +16,6 @@
  * than the object.
  */
 
-import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
 import * as Sentry from "@sentry/nextjs";
 import {
@@ -31,7 +30,6 @@ import {
 import { decryptPAN } from "@/lib/payments/tax/pan-crypto";
 import { uploadPrivateFinanceObject } from "@/lib/storage/private-finance-object";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { abortIfMaintenance } from "@/lib/maintenance-cron";
 
 /** India has no DST, so the offset is a constant rather than a tz lookup. */
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
@@ -504,12 +502,8 @@ function decryptPansByDeducteeKey(
 }
 
 /**
- * The locked core both entry points share — the Actions run below and the
- * CRON_SECRET twin at `app/api/cleanup/tds-return-draft/route.ts`. The
- * maintenance guard stays OUT of it: `abortIfMaintenance` exits the process,
- * which inside the Next server would take the instance down, so each entry
- * point applies its own flavour (`abortIfMaintenance` here,
- * `assertNotInMaintenance` in `cleanupRoute`).
+ * The locked export, driven by the `/api/cleanup/tds-return-draft` twin;
+ * `cleanupRoute` applies the maintenance guard.
  */
 export async function runTdsReturnDraftExport(): Promise<{
   financialYear: string;
@@ -637,20 +631,4 @@ export async function runTdsReturnDraftExport(): Promise<{
       };
     },
   );
-}
-
-async function main() {
-  // runJob returns void by design (it manages its own lifecycle) — no await.
-  runJob("tds-26q-draft-export", async () => {
-    await abortIfMaintenance("tds-26q-draft-export");
-    await runTdsReturnDraftExport();
-  });
-}
-
-// Guarded: importing this module from the HTTP twin must not fire the export.
-if (require.main === module) {
-  main().catch((err) => {
-    console.error("[tds-return-draft] fatal:", err);
-    process.exit(1);
-  });
 }
