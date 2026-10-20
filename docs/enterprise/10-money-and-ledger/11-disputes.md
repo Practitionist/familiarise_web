@@ -123,7 +123,7 @@ sequenceDiagram
     RE->>L: OrganizationPayout.clawbackAmountPaise += reversalNow<br/>Dr ORG_RECEIVABLE / Cr ORG_PAYABLE
     H->>Org: org-funded? settle sponsor chargeback
     Org->>Org: net against SUCCEEDED refunds (avoid double-debit)
-    Org->>L: Dr WALLET (or ORG_RECEIVABLE) / Cr CASH<br/>idempotencyKey chargeback:<disputeId>
+    Org->>L: Dr WALLET (or ORG_RECEIVABLE) / Cr GATEWAY_CLEARING<br/>idempotencyKey chargeback:<disputeId>
 ```
 
 ### 5.1 `settleLostDispute` and `CONSULTANT_PAYOUT_CLAWBACK` (`CONSULTANT_CLAWBACK`)
@@ -143,7 +143,7 @@ sequenceDiagram
    - When the row was already `PAID` on a `COMPLETED` `OrganizationPayout`, `applyReversal` (`kind: "PAYOUT_CLAWBACK"`, via `reversePayoutClawback` / `postPayoutClawback`) claims idempotency key `clawback:dispute:<dispute.id>:payout:<orgPayoutId>`, posts `Dr ORG_RECEIVABLE / Cr ORG_PAYABLE`, and increments `OrganizationPayout.clawbackAmountPaise`.
 
 3. **Sponsoring-org chargeback (`applyOrgChargeback`) and credit notes:**
-   - `applyOrgChargeback` is idempotent on `chargeback:<disputeId>` and **nets the chargeback against any `SUCCEEDED` refund already booked on the same payment**, so the sponsoring org is debited at most once (`Dr WALLET` or `Dr ORG_RECEIVABLE` / `Cr CASH`).
+   - `applyOrgChargeback` is idempotent on `chargeback:<disputeId>` and **nets the chargeback against any `SUCCEEDED` refund already booked on the same payment**, so the sponsoring org is debited at most once (`Dr WALLET` or `Dr ORG_RECEIVABLE` / `Cr GATEWAY_CLEARING`).
    - When the disputed payment was billed on an issued `OrganizationInvoice`, the resulting `CreditNote` links to `disputeId` (`@unique`), one of the four mutually exclusive triggers enforced by `credit_note_trigger_xor` (`CHECK (num_nonnulls("refundId", "disputeId", "overageEventId", "voidedInvoiceId") = 1)`).
 
 ---

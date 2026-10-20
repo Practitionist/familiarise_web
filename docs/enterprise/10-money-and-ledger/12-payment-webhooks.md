@@ -33,7 +33,7 @@ sequenceDiagram
         Route-->>RZP: "400 + WEBHOOK WARN SystemEvent"
     end
     Route->>Log: "isDbHealthy() check -> 503 if DB unreachable"
-    Route->>Log: "Synthesize tamper-proof eventId = eventType:entityId:sha256(rawBody)[0..16]"
+    Route->>Log: "Synthesize tamper-proof eventId = eventType:entityId:razorpayEventId (x-razorpay-event-id header if valid, else sha256(rawBody)[0..16])"
     alt "Already Succeeded or Active In-Flight Claim"
         Log-->>Route: "isNew = false"
         Route-->>RZP: "200 { duplicate: true }"

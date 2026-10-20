@@ -70,12 +70,12 @@ flowchart TB
   subgraph AFTER["After #772 — reconcile = re-sum one journal"]
     direction LR
     a1["LedgerEntry rows"] -->|"GROUP BY direction"| a2["Σdebit vs Σcredit<br/>per LedgerTransaction"]
-    a2 --> aq["✅ balanced ⇒ books tie out<br/>(ledger_txn_balanced trigger)"]
+    a2 --> aq["✅ every transaction balances<br/>(ledger_txn_balanced trigger)"]
   end
   BEFORE ==>|"#772 cutover"| AFTER
 ```
 
-The "no structural guarantee" box is not rhetorical: three independently-signed logs can each be internally consistent and still disagree with each other, and nothing in the schema forced them to agree. The double-entry rewrite makes "the books are wrong" a _single per-transaction predicate_ that Postgres enforces at COMMIT (the `ledger_txn_balanced` trigger), so no nightly sweep has to re-prove it ([ledger integrity](13-ledger-integrity.md)).
+The "no structural guarantee" box is not rhetorical: three independently-signed logs can each be internally consistent and still disagree with each other, and nothing in the schema forced them to agree. The double-entry rewrite makes "is this posting balanced" a _single per-transaction predicate_ that Postgres enforces at COMMIT (the `ledger_txn_balanced` trigger), so no nightly sweep has to re-prove it. The trigger proves only that each transaction balances. It does not prove that every business event was posted, or that cached balances agree with the business records; the nightly auditor covers those cases ([ledger integrity](13-ledger-integrity.md)).
 
 ### 🛠️ What this design survived
 
