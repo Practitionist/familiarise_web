@@ -45,12 +45,12 @@ their old behaviour. The route enforces the allowed-action table below; read eac
 row as the set of actions permitted from a given starting status, and note that
 `DEACTIVATED` is terminal and admits none.
 
-| From                   | Allowed actions                   |
-|------------------------|-----------------------------------|
-| `PENDING_VERIFICATION` | `VERIFY`, `REJECT`, `DEACTIVATE`  |
-| `ACTIVE`               | `SUSPEND`, `DEACTIVATE`           |
-| `SUSPENDED`            | `REACTIVATE`, `DEACTIVATE`        |
-| `DEACTIVATED`          | none — terminal                   |
+| From                   | Allowed actions                  |
+| ---------------------- | -------------------------------- |
+| `PENDING_VERIFICATION` | `VERIFY`, `REJECT`, `DEACTIVATE` |
+| `ACTIVE`               | `SUSPEND`, `DEACTIVATE`          |
+| `SUSPENDED`            | `REACTIVATE`, `DEACTIVATE`       |
+| `DEACTIVATED`          | none — terminal                  |
 
 Every action through this route emits an `OrgAuditLog` row in the `SYSTEM`
 category. `VERIFY` emits `AUDIT_ACTIONS.SYSTEM.VERIFIED`, `SUSPEND` emits
@@ -450,8 +450,8 @@ The roll-vs-close decision, period math, and rollover chain are detailed in
 
 ## Design decisions & trade-offs
 
-Three choices in this doc share one principle — *don't mutate a row whose
-history something else depends on; mint a new row and chain.*
+Three choices in this doc share one principle — _don't mutate a row whose
+history something else depends on; mint a new row and chain._
 
 - **REJECT is a sub-state, not an `OrgStatus`.** Adding a `REJECTED` enum
   value would force every status `switch` to handle it and would lose the
@@ -475,10 +475,8 @@ history something else depends on; mint a new row and chain.*
   still-`ACTIVE` assignments → `CLOSED` **inside the one tx** (the cron also
   pins `periodEnd = now`). If the cascade were a follow-up job, a crash
   between steps would leave an assignment still drawing on a dead contract — a
-  *zombie assignment*, the exact bug the cycle engine + cascade work killed
-  (#779 §A/§B, `52a6d37f`; tracked `✅` in
-  [subsystem-checklist](../90-audits/02-subsystem-checklist.md) under
-  "contract-expiry/termination cascade"). Cost: a larger transaction holding
+  _zombie assignment_, the exact bug the cycle engine + cascade work killed
+  (#779 §A/§B, `52a6d37f`). Cost: a larger transaction holding
   more row locks — acceptable because termination is rare and operator-driven.
 
 ## Related docs

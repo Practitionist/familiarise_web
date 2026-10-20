@@ -34,7 +34,7 @@ graph TB
     end
 
     subgraph "Automation"
-        GH[GitHub Actions]
+        GH[Netlify ticker]
         S1[release-earnings]
         S2[create-payout-batch]
         S3[process-payouts]
@@ -111,14 +111,14 @@ graph LR
 
 **Key Functions:**
 
-| Function                    | Purpose                                                                                                                                                                                                                       | Trigger                              |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `createEarningsFromPayment` | Create earnings record(s) with hold period. For WEBINAR/CLASS with collaborators, creates multi-party earnings via `calculateRevenueSplit()`.                                                                                 | Webhook: payment.success             |
-| `releaseEarningsFromHold`   | PENDING → READY after hold period                                                                                                                                                                                             | Cron: hourly                         |
-| `getConsultantEarnings`     | Fetch earnings for dashboard                                                                                                                                                                                                  | API request                          |
-| `refundEarnings`            | Proportional or full reversal of earnings. Accepts `refundAmount`/`paymentAmount` for partial refunds. Tracks cumulative reversals via `refundedShareAmount`. Supports `forceRefund: true` for PAID earnings (lost disputes). | Webhook: refund, Cron: lost disputes |
+| Function                    | Purpose                                                                                                                                                                                                                       | Trigger                          |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| `createEarningsFromPayment` | Create earnings record(s) with hold period. For WEBINAR/CLASS with collaborators, creates multi-party earnings via `calculateRevenueSplit()`.                                                                                 | Webhook: payment.success         |
+| `releaseEarningsFromHold`   | PENDING → READY after hold period                                                                                                                                                                                             | Cron: hourly                     |
+| `getConsultantEarnings`     | Fetch earnings for dashboard                                                                                                                                                                                                  | API request                      |
+| `refundEarnings`            | Proportional or full reversal of earnings. Accepts `refundAmount`/`paymentAmount` for partial refunds. Tracks cumulative reversals via `refundedShareAmount`. Supports `forceRefund: true` for PAID earnings (lost disputes). | Webhook: refund, dispute verdict |
 
-`holdEarnings` and `releaseHeldEarnings` no longer exist as separate functions in `earnings-service.ts`. The `READY → HELD` and `HELD → READY` transitions are now inline CAS `updateMany` writes inside the dispute webhook handler in `app/api/webhooks/utils.ts`, made directly against `ConsultantEarnings` and `OrganizationEarnings` at dispute creation and resolution rather than through a named service function.
+Holds are written by `placeEarningsHolds()` and `releaseEarningsHolds()` in `lib/payments/payouts/earnings-holds.ts`, the only writer of the `HELD` status. A hold has a reason (`DISPUTE`, `MODERATION`, `OPERATOR` or `OVERAGE`), and releasing one reason never frees another. Dispute verdicts are settled by `settleDisputeVerdict()` in `app/api/webhooks/utils.ts`; see [earnings lifecycle](./02-earnings-lifecycle.md).
 
 ---
 
@@ -150,14 +150,14 @@ graph LR
 
 **Key Functions:**
 
-| Function                 | Purpose                                                                                                                       | Trigger        |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| `checkPayoutEligibility` | Validate consultant can receive payout                                                                                        | Batch creation |
-| `createPayoutBatch`      | Group READY earnings into payouts                                                                                             | Cron: weekly   |
-| `approvePayout`          | Admin approves pending payout                                                                                                 | Admin action   |
-| `rejectPayout`           | Admin rejects with reason                                                                                                     | Admin action   |
-| `processApprovedPayouts` | Send to payment provider                                                                                                      | Cron: weekly   |
-| `handlePayoutWebhook`    | Update status from provider. Uses atomic `updateMany` with `status: { notIn: [COMPLETED, CANCELLED] }` guard for idempotency. | Webhook event  |
+| Function                 | Purpose                                                                                                                       | Trigger               |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| `checkPayoutEligibility` | Validate consultant can receive payout                                                                                        | Batch creation        |
+| `createPayoutBatchSlice` | Group READY earnings into payouts, in bounded slices                                                                          | Ticker: Monday window |
+| `approvePayout`          | Admin approves pending payout                                                                                                 | Admin action          |
+| `rejectPayout`           | Admin rejects with reason                                                                                                     | Admin action          |
+| `processApprovedPayouts` | Send to payment provider                                                                                                      | Ticker: hourly        |
+| `handlePayoutWebhook`    | Update status from provider. Uses atomic `updateMany` with `status: { notIn: [COMPLETED, CANCELLED] }` guard for idempotency. | Webhook event         |
 
 ---
 
@@ -350,14 +350,14 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "Hourly"
-        H1[GitHub Actions Trigger]
+    subgraph "Every 15 minutes"
+        H1[Ticker trigger]
         H2[release-earnings.ts]
         H3[PENDING → READY]
     end
 
-    subgraph "Weekly Monday 1:30 AM IST"
-        W1[GitHub Actions Trigger]
+    subgraph "Monday window from 20:00 UTC, 3 hours of slices"
+        W1[Ticker trigger]
         W2[create-payout-batch.ts]
         W3[Group READY earnings]
         W4[Create Payout records]
@@ -366,8 +366,8 @@ graph TB
         W7[Pending approval]
     end
 
-    subgraph "Weekly Monday 2:30 AM IST"
-        P1[GitHub Actions Trigger]
+    subgraph "Hourly at minute 00"
+        P1[Ticker trigger]
         P2[process-payouts.ts]
         P3[Get APPROVED payouts]
         P4{Provider?}

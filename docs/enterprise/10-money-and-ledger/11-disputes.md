@@ -10,7 +10,7 @@ last-reviewed: 2026-06-05
 
 **What this covers:** the organization/B2B side of disputes (chargebacks) — how a lost dispute on an org-funded booking settles against the org, how disputed earnings are held, and the dispute state machine our code maintains. The consumer-marketplace (B2C) dispute UI and the gateway-generic flow stay documented in [`docs/payments/refunds-disputes/`](../../payments/refunds-disputes/README.md); this doc is the enterprise lens on the same handler.
 
-A dispute is the buyer's bank pulling money back without going through our refund engine, so its money-path mirror is a refund but the *trigger* is external. The handler lives in `app/api/webhooks/utils.ts` (`handleDisputeCreated`, `handleDisputeUpdated`, `applyOrgChargeback`), guarded by the state machine in `lib/payments/dispute-status.ts`.
+A dispute is the buyer's bank pulling money back without going through our refund engine, so its money-path mirror is a refund but the _trigger_ is external. The handler lives in `app/api/webhooks/utils.ts` (`handleDisputeCreated`, `handleDisputeUpdated`, `applyOrgChargeback`), guarded by the state machine in `lib/payments/dispute-status.ts`.
 
 ---
 
@@ -55,14 +55,14 @@ The **status** axis has five values: `open` (the dispute was raised), `under_rev
 
 The table below maps Razorpay's `status` to our `DisputeStatus`, with the webhook that delivers it and the code path that performs the mapping.
 
-| Razorpay `status` | Delivering webhook | Our enum (via `mapDisputeStatus`) | Correct? |
-| --- | --- | --- | --- |
-| `open` | `payment.dispute.created` | `NEEDS_RESPONSE` (default branch) | Works only by falling through to the default; no explicit `open` case. |
-| `under_review` | `payment.dispute.under_review` | `UNDER_REVIEW` | Correct — the event is dispatched alongside `action_required` (#789). |
-| `won` | `payment.dispute.won` | `WON` (dispatch forces `"won"`) | Correct. |
-| `lost` | `payment.dispute.lost` | `LOST` (dispatch forces `"lost"`) | Correct. |
-| `closed` | `payment.dispute.closed` | `CLOSED` (terminal) | Correct — proceedings ended without a verdict; still-`HELD` earnings release, refund-consumed ones are already `REFUNDED`. |
-| (entity status) | `payment.dispute.action_required` | `NEEDS_RESPONSE` | Correct in effect — the deadline-bearing signal lands back in the needs-response state and the hourly deadline alert cron picks up its `respond_by`. Razorpay allows roughly three business days to respond, so this event is the urgent one. |
+| Razorpay `status` | Delivering webhook                | Our enum (via `mapDisputeStatus`) | Correct?                                                                                                                                                                                                                                      |
+| ----------------- | --------------------------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `open`            | `payment.dispute.created`         | `NEEDS_RESPONSE` (default branch) | Works only by falling through to the default; no explicit `open` case.                                                                                                                                                                        |
+| `under_review`    | `payment.dispute.under_review`    | `UNDER_REVIEW`                    | Correct — the event is dispatched alongside `action_required` (#789).                                                                                                                                                                         |
+| `won`             | `payment.dispute.won`             | `WON` (dispatch forces `"won"`)   | Correct.                                                                                                                                                                                                                                      |
+| `lost`            | `payment.dispute.lost`            | `LOST` (dispatch forces `"lost"`) | Correct.                                                                                                                                                                                                                                      |
+| `closed`          | `payment.dispute.closed`          | `CLOSED` (terminal)               | Correct — proceedings ended without a verdict. `settleClosedDispute()` follows Razorpay's `amount_deducted`: a positive amount is settled as a loss for that amount, otherwise this dispute's hold is released.                               |
+| (entity status)   | `payment.dispute.action_required` | `NEEDS_RESPONSE`                  | Correct in effect — the deadline-bearing signal lands back in the needs-response state and the hourly deadline alert cron picks up its `respond_by`. Razorpay allows roughly three business days to respond, so this event is the urgent one. |
 
 The three `WARNING_*` enum values have no Razorpay source at all — Razorpay folds its early `fraud`/`retrieval` phases into `open`/`under_review`, never a `warning_*` status — so those states only ever populate from the Stripe path.
 
@@ -98,9 +98,9 @@ A related but lower-severity observation still stands: `open` is not explicitly 
 
 Three crons keep dispute state honest when webhooks are missed or deadlines approach, each a thin GitHub-Actions wrapper over a script in `scripts/disputes/`.
 
-The **reconcile-disputes** cron (`jobs/disputes/reconcile-disputes.ts`, every 6 hours) re-queries the gateway for disputes that are still `NEEDS_RESPONSE`/`UNDER_REVIEW` (or their warning variants) and either approaching their `dueBy` deadline or stale for 24 hours, then adopts any changed status. It reconciles **Stripe** disputes live and **Razorpay** disputes via `GET /v1/disputes/:id`; a Razorpay row the poll cannot adopt (unknown gateway id, unmapped status, unlinked payment) counts toward manual review instead. The **alert-dispute-deadlines** cron (hourly) finds `NEEDS_RESPONSE`/`WARNING_NEEDS_RESPONSE` disputes whose `dueBy` falls within 48 hours, escalating to critical within 12 hours, and flags any past-due disputes. There is no `handle-lost-disputes` cron: the backstop for a missed `payment.dispute.lost` webhook is the same reconcile run — a `LOST` outcome adopted by the poll settles through the shared `settleLostDispute(tx, dispute)` (`app/api/webhooks/utils.ts`), the exact same atomic money path used by `handleDisputeUpdated`.
+The **reconcile-disputes** cron (`jobs/disputes/reconcile-disputes.ts`, every 6 hours) re-queries the gateway for disputes that are still `NEEDS_RESPONSE`/`UNDER_REVIEW` (or their warning variants) and either approaching their `dueBy` deadline or stale for 24 hours, then adopts any changed status. It reconciles **Stripe** disputes live and **Razorpay** disputes via `GET /v1/disputes/:id`; a Razorpay row the poll cannot adopt (unknown gateway id, unmapped status, unlinked payment) counts toward manual review instead. The **alert-dispute-deadlines** cron (hourly) finds `NEEDS_RESPONSE`/`WARNING_NEEDS_RESPONSE` disputes whose `dueBy` falls within 48 hours, escalating to critical within 12 hours, and flags any past-due disputes. There is no `handle-lost-disputes` cron: the backstop for a missed `payment.dispute.lost` webhook is the same reconcile run — every verdict the poll adopts settles through the shared `settleDisputeVerdict(tx, dispute, verdict, amountDeducted)` (`app/api/webhooks/utils.ts`), the exact same money path `handleDisputeUpdated` uses. The poll adopts the status and settles in one Serializable transaction, so a failed settlement rolls the adoption back for the next run and a later webhook replay finds nothing left to do.
 
-When a dispute is lost, `settleLostDispute(tx, dispute)` executes inside the caller's Serializable transaction and fans the reversal out across consultant earnings, host-org earnings, completed payouts (via `lib/payments/operations/reversal-engine.ts`), and the sponsoring org (via `applyOrgChargeback`):
+When a dispute is lost, `settleLostDispute(tx, dispute, lostAmountPaise)` executes inside the caller's Serializable transaction and fans the reversal out across consultant earnings, host-org earnings, completed payouts (via `lib/payments/operations/reversal-engine.ts`), and the sponsoring org (via `applyOrgChargeback`):
 
 ```mermaid
 sequenceDiagram
@@ -114,7 +114,8 @@ sequenceDiagram
 
     GW->>H: status = lost
     H->>H: guard — legal transition? not already terminal?
-    H->>E: HELD / PAID earnings → REFUNDED (prorated, CAS on refundedShareAmount)
+    Note over H: then releases this dispute's EarningsHold
+    H->>E: HELD / PAID earnings reversed pro rata (CAS on refundedShareAmount), REFUNDED only when fully reversed
     H->>E: recordTdsReversal for PAID consultant earnings
     H->>RE: PAID B2C consultant payout COMPLETED → CONSULTANT_CLAWBACK (CONSULTANT_PAYOUT_CLAWBACK)
     RE->>L: ConsultantPayout.clawbackAmountPaise += netClawbackPaise<br/>Dr CONSULTANT_RECEIVABLE / Cr CONSULTANT_PAYABLE
@@ -127,33 +128,34 @@ sequenceDiagram
 
 ### 5.1 `settleLostDispute` and `CONSULTANT_PAYOUT_CLAWBACK` (`CONSULTANT_CLAWBACK`)
 
-`settleLostDispute` prorates every reversal by `prorationFactor = min(dispute.amountPaise / dispute.payment.amount, 1)` so partial disputes reverse only the disputed fraction of each party's share:
+`settleLostDispute` prorates every reversal by `prorationFactor = min(lostAmountPaise / dispute.payment.amount, 1)`, where `lostAmountPaise` is Razorpay's `amount_deducted` (the disputed amount when it is absent). A partial loss therefore reverses only the lost fraction of each party's share, and the remainder stays payable. For example, a ₹590 (59,000 paise) loss on Charlotte Brown's ₹1,180 (118,000 paise) payment gives a factor of 0.5, so Hannah Anderson's ₹800 share loses ₹400 and the other ₹400 returns to its prior status after the hold is released:
 
 1. **Consultant earnings (`HELD` and `PAID`):**
-   - Each matching `ConsultantEarnings` row is updated with a compare-and-set on `(id, status IN ['HELD', 'PAID'], refundedShareAmount: alreadyRefunded)` that flips `status` to `REFUNDED`, clears `preDisputeStatus`, and increments `refundedShareAmount` by `reversalNow = min(floor(consultantSharePaise * prorationFactor), remainingRefundable)`.
+   - Each matching `ConsultantEarnings` row is updated with a compare-and-set on `(id, status IN ['HELD', 'PAID'], refundedShareAmount: alreadyRefunded)` that increments `refundedShareAmount` by `reversalNow = min(floor(consultantSharePaise * prorationFactor), remainingRefundable)` and flips `status` to `REFUNDED` only once the whole share is reversed (`applyCappedEarningReversal`).
    - When the CAS succeeds and `earning.payoutId` is present, `recordTdsReversal` (`lib/payments/tax/tds-service.ts`) writes a negative `TDSRecord` (and `TdsAdjustment` if the original quarter was already filed) so withheld tax is reversed alongside the principal.
-   - When the earning was already `PAID` on a `COMPLETED` `ConsultantPayout` for a **B2C** payment (`!dispute.payment.organizationId`), the net-of-TDS cash recovery (`netClawbackPaise = floor(reversalNow * (1 - payoutTds / payoutGross))`) is accumulated per `consultantPayoutId` and passed to the unified reversal engine (`lib/payments/operations/reversal-engine.ts`):
+   - When the earning was already `PAID` on a `COMPLETED` `ConsultantPayout` for a payment that was **not** funded on an organisation rail (`!orgFunded`), the net-of-TDS cash recovery (`netClawbackPaise = floor(reversalNow * (1 - payoutTds / payoutGross))`) is accumulated per `consultantPayoutId` and passed to the unified reversal engine (`lib/payments/operations/reversal-engine.ts`):
      - `applyReversal(tx, { source: { kind: "CONSULTANT_CLAWBACK", consultantPayoutId, consultantProfileId }, amountPaise: claw.amountPaise, reason, refundId: "dispute:<dispute.id>" })` (dispatched to `reverseConsultantPayoutClawback` / `postConsultantPayoutClawback`, the `CONSULTANT_PAYOUT_CLAWBACK` branch).
      - `postConsultantPayoutClawback` claims idempotency key `clawback:dispute:<dispute.id>:consultant-payout:<consultantPayoutId>` via `postLedgerTxn` (`Dr CONSULTANT_RECEIVABLE / Cr CONSULTANT_PAYABLE`, net of TDS) and increments `ConsultantPayout.clawbackAmountPaise` + stamps `clawbackInitiatedAt` only when the journal is newly created (`res.created === true`), guaranteeing atomic dual-write parity.
-   - On an org-funded payment (`dispute.payment.organizationId` set), the sponsoring org bears the chargeback via `applyOrgChargeback`, so no `CONSULTANT_RECEIVABLE` is booked.
+   - `orgFunded` is true only when the payment has a `WALLET`, `INVOICE_ACCRUAL` or `LICENSE` leg (`ORG_RAIL_LEG_SOURCES`). Then the sponsoring org bears the chargeback via `applyOrgChargeback` and no `CONSULTANT_RECEIVABLE` is booked. A card payment that is merely tagged to an organisation follows the consumer path.
 
 2. **Host-org earnings (`HELD` and `PAID`):**
-   - Each matching `OrganizationEarnings` row is flipped to `REFUNDED` with a CAS on `(id, status IN ['HELD', 'PAID'], refundedAmountPaise: alreadyRefunded)`.
+   - Each matching `OrganizationEarnings` row is reversed by the same capped CAS on `(id, status IN ['HELD', 'PAID'], refundedAmountPaise: alreadyRefunded)` and flips to `REFUNDED` only when fully reversed.
    - When the row was already `PAID` on a `COMPLETED` `OrganizationPayout`, `applyReversal` (`kind: "PAYOUT_CLAWBACK"`, via `reversePayoutClawback` / `postPayoutClawback`) claims idempotency key `clawback:dispute:<dispute.id>:payout:<orgPayoutId>`, posts `Dr ORG_RECEIVABLE / Cr ORG_PAYABLE`, and increments `OrganizationPayout.clawbackAmountPaise`.
 
 3. **Sponsoring-org chargeback (`applyOrgChargeback`) and credit notes:**
    - `applyOrgChargeback` is idempotent on `chargeback:<disputeId>` and **nets the chargeback against any `SUCCEEDED` refund already booked on the same payment**, so the sponsoring org is debited at most once (`Dr WALLET` or `Dr ORG_RECEIVABLE` / `Cr CASH`).
-   - When the disputed payment was billed on an issued `OrganizationInvoice`, the resulting `CreditNote` links to `disputeId` (`@unique`), one of the three mutually exclusive statutory triggers enforced by `credit_note_trigger_xor` (`CHECK (num_nonnulls("refundId", "disputeId", "overageEventId") = 1)`).
+   - When the disputed payment was billed on an issued `OrganizationInvoice`, the resulting `CreditNote` links to `disputeId` (`@unique`), one of the four mutually exclusive triggers enforced by `credit_note_trigger_xor` (`CHECK (num_nonnulls("refundId", "disputeId", "overageEventId", "voidedInvoiceId") = 1)`).
 
 ---
 
 ## 6. Disputes and earnings holds
 
-A dispute is the reason the earnings `HELD` state exists. When `handleDisputeCreated` records a new dispute, it flips that payment's `ConsultantEarnings` and `OrganizationEarnings` from `PENDING`/`READY` to `HELD` (preserving `preDisputeStatus`), freezing the funds so a payout cannot leave while the chargeback is live. The resolution then unwinds the hold: a `WON`, `WARNING_CLOSED`, or `CLOSED` dispute releases `HELD` earnings back to their recorded `preDisputeStatus` (`READY` or `PENDING`), while a `LOST`/`CHARGE_REFUNDED` dispute runs `settleLostDispute` to mark `HELD` and `PAID` rows `REFUNDED`, increment their cumulative refunded columns, and book any completed-payout clawbacks. The full set of earning states and the payout gates they govern live in [earnings lifecycle](06-earnings-lifecycle.md).
+An earning is `HELD` while it carries at least one active `EarningsHold` (`lib/payments/payouts/earnings-holds.ts`, the only writer of `HELD`). When `handleDisputeCreated` records a new dispute, `placeDisputeHolds()` places a `DISPUTE` hold, whose source is the dispute row, on that payment's unpaid `ConsultantEarnings` and `OrganizationEarnings`. Before it does, it cancels any `PENDING` or `APPROVED` payout that had already batched one of them and returns that payout's other earnings to `READY`, so a payout cannot leave while the chargeback is live. The first hold stores the row's prior status in `preHoldStatus`. The verdict then unwinds the hold through `settleDisputeVerdict()`: a `WON` or `WARNING_CLOSED` dispute releases only its own hold, a `LOST` or `CHARGE_REFUNDED` dispute runs `settleLostDispute` to reverse the lost fraction of each share, book any completed-payout clawbacks and release the hold, and a `CLOSED` dispute does one or the other according to `amount_deducted`. A release restores the earning's prior status only when no other hold remains, so a ban (`MODERATION`), an operator hold or an unpaid overage still freezes money after a dispute is won. The full set of earning states and the payout gates they govern live in [earnings lifecycle](06-earnings-lifecycle.md).
 
 ---
 
 ### Related docs
+
 - [Refunds](10-refunds.md) — the money path a `CHARGE_REFUNDED`/accept outcome shares, plus the unified reversal engine and `CreditNote` triggers.
 - [Earnings lifecycle](06-earnings-lifecycle.md) — the `HELD` → `READY`/`REFUNDED` transitions a dispute drives.
 - [Payout pipeline](07-payout-pipeline.md) — why held earnings must not pay out and how `clawbackAmountPaise` is tracked.

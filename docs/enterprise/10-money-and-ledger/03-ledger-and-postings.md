@@ -101,9 +101,9 @@ flowchart TD
 | `TOPUP`             | `topup:<providerOrderId>`                                                                                                                 | `walletCredit()` — `lib/api/organizations/wallet.ts`                                                                                                                                                                             |
 | `BOOKING`           | `booking:<paymentId>`                                                                                                                     | `createEarningsFromPayment()` — `lib/payments/payouts/earnings-service.ts`                                                                                                                                                       |
 | `INVOICE_ISSUED`    | `invoice-issued:<invoiceId>`, `invoice-voided:<invoiceId>`, `overage-accrual:<childPaymentId>`, `overage-accrual-voided:<childPaymentId>` | invoice issue and void — `lib/payments/billing/org-invoice-journal.ts`; CHARGE_ORG child accrual — `lib/payments/billing/overage-settlement.ts`; its void on a reversed booking — `lib/payments/billing/overage-accrual-void.ts` |
-| `INVOICE_PAID`      | `invoicepaid:<invoiceId>`                                                                                                                 | invoice-paid webhook — `app/api/webhooks/utils.ts`                                                                                                                                                                               |
+| `INVOICE_PAID`      | `invoicepaid:<invoiceId>`, `invoicereceipt:<receiptId>`                                                                                   | gateway capture — `applyOrgInvoiceCapture()` in `lib/payments/billing/org-invoice-settlement.ts`; bank transfer — `recordBankTransferReceipt()` in the same file                                                                 |
 | `INVOICE_REFUND`    | `invoice-refund:<refundId>`                                                                                                               | invoice refund webhook — `app/api/webhooks/utils.ts`                                                                                                                                                                             |
-| `TOPUP_REFUND`      | `topup-refund:<providerPaymentId>`                                                                                                        | refund webhook — `app/api/webhooks/utils.ts`                                                                                                                                                                                     |
+| `TOPUP_REFUND`      | `topup-refund:<gatewayRefundId>`, `topup-refund-shortfall:<gatewayRefundId>`                                                              | refund webhook — `app/api/webhooks/utils.ts`                                                                                                                                                                                     |
 | `REFUND`            | `refund:<refundId>`                                                                                                                       | refund cascade — `lib/payments/operations/refund.ts`                                                                                                                                                                             |
 | `PAYOUT`            | `payout:<payoutId>`                                                                                                                       | consultant payout — `lib/payments/payouts/payout-service.ts`                                                                                                                                                                     |
 | `ORG_PAYOUT`        | `orgpayout:<payoutId>`                                                                                                                    | host-org payout — `lib/payments/payouts/org-payout-service.ts`                                                                                                                                                                   |
@@ -122,10 +122,10 @@ All amounts are paise; every block balances (`Σdebit == Σcredit`).
 
 ### 4.1 Top-up — `TOPUP` (`topup:<orderId>`)
 
-Org pays cash; we now owe it wallet spending power.
+Org pays by card or netbanking through Razorpay; we now owe it wallet spending power. Razorpay PG money posts to `GATEWAY_CLEARING` through `gatewayCashAccount()` (`lib/payments/ledger/gateway-account.ts`), never straight to `CASH`. The gateway fee is a separate `gatewayfee:<pay_id>` journal, and the daily `settlement:<setl_id>` journal moves the net from `GATEWAY_CLEARING` to `CASH`. RazorpayX payouts and bank-transfer invoice receipts stay on `CASH`.
 
 ```
-Dr CASH(platform)        amount
+Dr GATEWAY_CLEARING      amount
    Cr WALLET(org)        amount
 ```
 
@@ -134,7 +134,7 @@ Dr CASH(platform)        amount
 The funding legs of the checkout become debits; the fee/payable/tax split becomes credits. The debit side is assembled from the payment's `PaymentLeg` rows ([payment legs](09-payment-legs.md)):
 
 ```
-Dr CASH(platform)            sum of CARD legs
+Dr GATEWAY_CLEARING           sum of CARD legs
 Dr WALLET(org)               sum of WALLET legs
 Dr ORG_RECEIVABLE(org)       sum of INVOICE_ACCRUAL + OVERAGE_INVOICE_ACCRUAL legs
 Dr PLATFORM_PROMO            sum of REFERRAL_CREDIT legs
@@ -151,11 +151,11 @@ Dr DISCOUNT                  max(0, originalAmount + taxAmount − Σ(funding-le
 
 ### 4.3 Invoice paid — `INVOICE_PAID` (`invoicepaid:<invoiceId>`)
 
-The org settles its NET-NN invoice; the receivable accrued at booking clears.
+The org settles its NET-NN invoice; the receivable accrued at booking clears. A card payment through `/pay` posts to `GATEWAY_CLEARING` (`applyOrgInvoiceCapture()`), and an admin-recorded bank transfer posts to `CASH` under `invoicereceipt:<receiptId>`, once per receipt, so a part-payment posts only its own amount.
 
 ```
-Dr CASH(platform)            invoice total
-   Cr ORG_RECEIVABLE(org)    invoice total
+Dr GATEWAY_CLEARING (or CASH for a bank transfer)   amount received
+   Cr ORG_RECEIVABLE(org)                          amount received
 ```
 
 ### 4.3a Invoice issued, voided and refunded — `INVOICE_ISSUED` / `INVOICE_REFUND`
@@ -206,14 +206,16 @@ Dr ORG_PAYABLE(org)          netPayoutPaise   (pre-withholding org share)
 
 A payout already claimed against `ORG_PAYOUT` can still be clawed back after the fact — a dispute lost on one of its earnings, or a later refund cascade touching a booking it already paid out. `postPayoutClawback` (`lib/payments/operations/reversal-engine.ts`) posts `Dr CASH / Cr ORG_PAYABLE`, keyed `clawback:<refundId>:<payoutId>`, and every writer that can trigger a clawback — the dispute-lost path and both refund-cascade paths — calls the same function in the same transaction as the earnings counter it updates, so the reconciler's `LEDGER_DUAL_WRITE_GAP` finding, which compares the payout's stamped clawback total against the sum of the CASH debit legs actually posted, never sees a gap from a path that forgot to post (#1582 C-P1-02c).
 
-### 4.6 Top-up refund — `TOPUP_REFUND` (`topup-refund:<providerPaymentId>`)
+### 4.6 Top-up refund — `TOPUP_REFUND` (`topup-refund:<gatewayRefundId>`)
 
-A confirmed top-up is refunded; the IOU shrinks, cash returns to the gateway. Exact reverse of 4.1.
+A confirmed top-up that Razorpay refunds is booked when the refund webhook arrives; the IOU shrinks and cash returns to the gateway. The key names the gateway refund, so each partial refund posts once. No in-app door starts a top-up refund today; one is **planned** and not yet on `dev`.
 
 ```
 Dr WALLET(org)               refund amount (clamped to original top-up)
-   Cr CASH(platform)         refund amount
+   Cr GATEWAY_CLEARING       refund amount
 ```
+
+The wallet cache is reduced only by what it still holds (the `billing_account_wallet_nonnegative` CHECK would otherwise reject the write), and any part the org had already spent posts as a receivable under `topup-refund-shortfall:<gatewayRefundId>`: `Dr ORG_RECEIVABLE(org) / Cr WALLET(org)`.
 
 ### 4.7 Booking refund — `REFUND` (`refund:<refundId>`)
 
@@ -224,17 +226,17 @@ Dr PLATFORM_FEE              platform plug (funding − consultant − org − G
 Dr CONSULTANT_PAYABLE(owner) refunded consultant share
 Dr ORG_PAYABLE(org)          refunded org share
 Dr GST_PAYABLE               refunded GST share
-   Cr CASH / WALLET / ORG_RECEIVABLE / PLATFORM_PROMO   the original funding legs, prorated
+   Cr GATEWAY_CLEARING / WALLET / ORG_RECEIVABLE / PLATFORM_PROMO   the original funding legs, prorated
 ```
 
-Posted only when the debit side balances to the refunded funding total (a guard in `refund.ts`); a partial/edge case that wouldn't balance is skipped and logged rather than written half-formed. The whole reversal block is wrapped so a ledger imbalance can never block the customer refund (gateway money may already have moved) — the failure is logged + paged and the reconciler's `EARNINGS_LEDGER_DRIFT` / `LEDGER_TXN_IMBALANCE` catch any divergence.
+Posted only when the debit side balances to the refunded funding total (a guard in `refund.ts`); a partial/edge case that wouldn't balance is skipped and logged rather than written half-formed. The whole reversal block is wrapped so a ledger imbalance can never block the customer refund (gateway money may already have moved) — the failure is logged + paged and the reconciler's `EARNINGS_LEDGER_DRIFT` and `REVERSED_EARNING_WITHOUT_REFUND_TXN` checks catch any divergence.
 
 ### 4.8 Member overage — `OVERAGE_MEMBER` (`overage:<sideChargePaymentId>`)
 
 A `CHARGE_MEMBER` program booked past its cap creates a parent-linked side-`Payment` at checkout; when the member settles it via the resume-checkout surface, the gateway webhook posts the **org-relief** transaction (`lib/payments/webhooks/overage-handlers.ts`). The booking already charged the org the full price and paid the consultant once, so the member's marginal _relieves_ the org:
 
 ```
-Dr CASH(platform)        side-charge amount   (the member's card)
+Dr GATEWAY_CLEARING      side-charge amount   (the member's card)
    Cr ORG_PAYABLE(org)   base + surcharge     (a credit the org realises in settlement)
    Cr GST_PAYABLE        side-charge taxAmount (18% on the surcharge)
 ```
@@ -247,7 +249,7 @@ The side-`Payment` carries a single `CARD` leg (`sourceRef` = gateway order id),
 
 ## 5. Invariants
 
-1. **Balanced.** Enforced at write (`postLedgerTxn`) and re-proved nightly (`LEDGER_TXN_IMBALANCE`).
+1. **Balanced.** Enforced at write (`postLedgerTxn`) and by the deferred constraint trigger `ledger_txn_balanced` at COMMIT (`prisma/sql/ledger-triggers.sql`). No application sweep re-checks it.
 2. **Immutable.** `LedgerEntry.transactionId` is `onDelete: Restrict` — postings are never deleted or updated. A wrong posting is corrected by a **counter-transaction**, not an edit (that's what `REFUND`/`TOPUP_REFUND` are).
 3. **Positive amounts only.** Sign is `direction`, never a negative `amountPaise`.
 4. **One event, one key.** Every flow's `idempotencyKey` is derived from a stable upstream id, so at-least-once webhooks and cron retries collapse to one posting. See [concurrency & idempotency](../30-programs-and-lifecycle/01-concurrency-and-idempotency.md).
@@ -263,7 +265,7 @@ The side-`Payment` carries a single `CARD` leg (`sourceRef` = gateway order id),
 ## 5b. What this design survived
 
 - **The silently-dropped DISCOUNT plug on referral-funded bookings (`d335901e`, #776 / #785 review).** The booking `DISCOUNT` leg is the platform-absorbed gap between gross (`originalAmount + taxAmount`) and the funding actually applied. It was computed as `originalAmount + tax − Payment.amount` — but a `REFERRAL_CREDIT` leg funds the booking (debited as `PLATFORM_PROMO`) and is _already excluded_ from `Payment.amount` (which is the post-credit figure). So the credit was counted **twice** (once as `PLATFORM_PROMO`, once inside `DISCOUNT`), the posting failed `Σdebit == Σcredit`, and `postLedgerTxn` threw — which meant the _entire booking transaction was silently dropped_ for any referral-funded booking. The fix bases the plug on `Σ(funding-leg debits)` (`fundingDebitTotal`) instead of `Payment.amount`, so the credit is counted once. This is why §4.2 is emphatic that the `DISCOUNT` plug bases on the funding-leg sum.
-- **The refund reversal that must never block a customer refund (refund.ts, §4.7).** Gateway money may already have moved by the time the ledger reversal runs, so the whole reversal block is wrapped: a `LedgerImbalanceError` on an edge-case partial is logged + paged, the customer refund still completes, and the reconciler's `EARNINGS_LEDGER_DRIFT` / `LEDGER_TXN_IMBALANCE` catch any divergence. The design explicitly trades "perfectly-balanced books at this instant" for "never trap a customer's money behind a bookkeeping bug" — the reconciler is the backstop that makes that safe.
+- **The refund reversal that must never block a customer refund (refund.ts, §4.7).** Gateway money may already have moved by the time the ledger reversal runs, so the whole reversal block is wrapped: a `LedgerImbalanceError` on an edge-case partial is logged + paged, the customer refund still completes, and the reconciler's `EARNINGS_LEDGER_DRIFT` and `REVERSED_EARNING_WITHOUT_REFUND_TXN` checks catch any divergence. The design explicitly trades "perfectly-balanced books at this instant" for "never trap a customer's money behind a bookkeeping bug" — the reconciler is the backstop that makes that safe.
 
 ## 6. What NOT to do
 
@@ -286,7 +288,7 @@ Every financial state change in `familiarise_web` maps to one of the **20 canoni
 
 | Account                   | Direction | Amount (Paise) | Display Amount | Notes                            |
 | :------------------------ | :-------- | -------------: | -------------: | :------------------------------- |
-| `CASH`                    | `DEBIT`   |        118,000 |      ₹1,180.00 | Gateway gross card collection    |
+| `GATEWAY_CLEARING`        | `DEBIT`   |        118,000 |      ₹1,180.00 | Gateway gross card collection    |
 | `PLATFORM_FEE`            | `CREDIT`  |         20,000 |        ₹200.00 | 20% platform revenue cut         |
 | `CONSULTANT_PAYABLE(c_1)` | `CREDIT`  |         80,000 |        ₹800.00 | 80% consultant share             |
 | `GST_PAYABLE`             | `CREDIT`  |         18,000 |        ₹180.00 | 18% Output GST (Principal model) |
@@ -300,7 +302,7 @@ Every financial state change in `familiarise_web` maps to one of the **20 canoni
 
 | Account                   | Direction | Amount (Paise) | Display Amount | Notes                             |
 | :------------------------ | :-------- | -------------: | -------------: | :-------------------------------- |
-| `CASH`                    | `DEBIT`   |         68,000 |        ₹680.00 | Net cash charged to gateway       |
+| `GATEWAY_CLEARING`        | `DEBIT`   |         68,000 |        ₹680.00 | Net cash charged to gateway       |
 | `PLATFORM_PROMO`          | `DEBIT`   |         50,000 |        ₹500.00 | Platform-absorbed referral credit |
 | `PLATFORM_FEE`            | `CREDIT`  |         20,000 |        ₹200.00 | Commission on full nominal base   |
 | `CONSULTANT_PAYABLE(c_1)` | `CREDIT`  |         80,000 |        ₹800.00 | Consultant receives full earnings |
@@ -315,7 +317,7 @@ Every financial state change in `familiarise_web` maps to one of the **20 canoni
 
 | Account                   | Direction | Amount (Paise) | Display Amount | Notes                                  |
 | :------------------------ | :-------- | -------------: | -------------: | :------------------------------------- |
-| `CASH`                    | `DEBIT`   |         94,400 |        ₹944.00 | Discounted price + GST charged to card |
+| `GATEWAY_CLEARING`        | `DEBIT`   |         94,400 |        ₹944.00 | Discounted price + GST charged to card |
 | `DISCOUNT`                | `DEBIT`   |         20,000 |        ₹200.00 | Platform-absorbed discount plug        |
 | `PLATFORM_FEE`            | `CREDIT`  |         20,000 |        ₹200.00 | Platform commission base               |
 | `CONSULTANT_PAYABLE(c_1)` | `CREDIT`  |         80,000 |        ₹800.00 | Consultant share of nominal list       |
@@ -354,10 +356,10 @@ Every financial state change in `familiarise_web` maps to one of the **20 canoni
 - **Context**: Client org `org_wipro` tops up prepaid balance by ₹5,00,000.
 - **Idempotency Key**: `topup:order_topup_882`
 
-| Account             | Direction | Amount (Paise) | Display Amount | Notes                                  |
-| :------------------ | :-------- | -------------: | -------------: | :------------------------------------- |
-| `CASH`              | `DEBIT`   |     50,000,000 |   ₹5,00,000.00 | Bank deposit / payment gateway receipt |
-| `WALLET(org_wipro)` | `CREDIT`  |     50,000,000 |   ₹5,00,000.00 | Prepaid balance liability credited     |
+| Account             | Direction | Amount (Paise) | Display Amount | Notes                              |
+| :------------------ | :-------- | -------------: | -------------: | :--------------------------------- |
+| `GATEWAY_CLEARING`  | `DEBIT`   |     50,000,000 |   ₹5,00,000.00 | Payment gateway receipt            |
+| `WALLET(org_wipro)` | `CREDIT`  |     50,000,000 |   ₹5,00,000.00 | Prepaid balance liability credited |
 
 - **Balance Check**: `∑ Debit = 50,000,000 == ∑ Credit = 50,000,000 ✓`
 
@@ -477,7 +479,7 @@ Every financial state change in `familiarise_web` maps to one of the **20 canoni
 | `CONSULTANT_PAYABLE(c_1)` | `DEBIT`   |         80,000 |        ₹800.00 | Consultant earnings debited              |
 | `GST_PAYABLE`             | `DEBIT`   |         18,000 |        ₹180.00 | Reverses Output GST (Credit Note issued) |
 | `PLATFORM_FEE`            | `DEBIT`   |         20,000 |        ₹200.00 | Platform fee plug debited                |
-| `CASH`                    | `CREDIT`  |        118,000 |      ₹1,180.00 | Gateway refund returns cash to card      |
+| `GATEWAY_CLEARING`        | `CREDIT`  |        118,000 |      ₹1,180.00 | Gateway refund returns cash to card      |
 
 - **Balance Check**: `∑ Debit = 118,000 == ∑ Credit = 118,000 ✓`
 
@@ -491,7 +493,7 @@ Every financial state change in `familiarise_web` maps to one of the **20 canoni
 | `CONSULTANT_PAYABLE(c_1)` | `DEBIT`   |         40,000 |        ₹400.00 | 50% prorated consultant earnings clawback |
 | `GST_PAYABLE`             | `DEBIT`   |          9,000 |         ₹90.00 | 50% tax reversal via Credit Note          |
 | `PLATFORM_FEE`            | `DEBIT`   |         10,000 |        ₹100.00 | 50% platform fee reversed                 |
-| `CASH`                    | `CREDIT`  |         59,000 |        ₹590.00 | Gateway partial refund to buyer           |
+| `GATEWAY_CLEARING`        | `CREDIT`  |         59,000 |        ₹590.00 | Gateway partial refund to buyer           |
 
 - **Balance Check**: `∑ Debit = 59,000 == ∑ Credit = 59,000 ✓`
 
@@ -530,7 +532,7 @@ Every financial state change in `familiarise_web` maps to one of the **20 canoni
 
 | Account                  | Direction | Amount (Paise) | Display Amount | Notes                                  |
 | :----------------------- | :-------- | -------------: | -------------: | :------------------------------------- |
-| `CASH`                   | `DEBIT`   |        100,000 |      ₹1,000.00 | Collected from member's personal card  |
+| `GATEWAY_CLEARING`       | `DEBIT`   |        100,000 |      ₹1,000.00 | Collected from member's personal card  |
 | `ORG_PAYABLE(org_wipro)` | `CREDIT`  |        100,000 |      ₹1,000.00 | Relief credit realized by organization |
 
 - **Balance Check**: `∑ Debit = 100,000 == ∑ Credit = 100,000 ✓`
