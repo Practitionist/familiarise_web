@@ -1,69 +1,56 @@
-import { EvidenceInbox } from "@/components/support/EvidenceInbox";
-import { redirect } from "next/navigation";
-
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { Inbox } from "lucide-react";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
-import {
-  DashboardContent,
-  DashboardHeader,
-} from "@/components/dashboard/PageScaffold";
-import { UrlTabs } from "@/components/dashboard/UrlTabs";
-
-import { ReportHistory } from "@/components/dashboard/shared/ReportHistory";
-import { OrgSupportTriage } from "./OrgSupportTriage";
+import { PageHeader } from "@/components/dashboard/PageScaffold";
+import { EmptyState } from "@/components/dashboard/EmptyState";
+import { Button } from "@/components/ui/button";
+import { CreateTicketDialog } from "@/components/dashboard/shared/support/CreateTicketDialog";
 import { OrgSupportRequests } from "./OrgSupportRequests";
 
-/** Organization correspondence and session activity use separate server-side grants. */
-export default async function OrgSupportPage({
+export default async function OrganizationSupportPage({
   params,
-}: {
-  params: Promise<{ orgId: string }>;
-}) {
+}: Readonly<{ params: Promise<{ orgId: string }> }>) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, {
-    readOnly: true,
-    permission: "supportRequests.org",
-  });
-  if (access.error) redirect(`/dashboard/organization/${orgId}/home`);
-  const triage = hasOrgPermission(access.member.role, "operations.read");
-
+  const access = await requireOrgAccess(orgId, { readOnly: true });
+  if (access.error) notFound();
+  const canRead = hasOrgPermission(access.member.role, "supportRequests.org");
+  const ownershipScope = hasOrgPermission(
+    access.member.role,
+    "supportCases.operations.manage",
+  )
+    ? "ORG_OPERATIONS"
+    : "ORG_BILLING";
   return (
     <>
-      <DashboardHeader
-        title="Support"
-        description={
-          triage
-            ? "Session quality, member support activity, and your organization’s own requests."
-            : "Your organization’s operations and billing requests."
+      <PageHeader
+        title="Support requests"
+        description="Your organization’s operations and billing conversations with the Familiarise team."
+        actions={
+          canRead ? (
+            <CreateTicketDialog
+              defaults={{ organizationId: orgId, ownershipScope }}
+            />
+          ) : undefined
         }
       />
-      <DashboardContent>
-        <UrlTabs
-          tabs={[
-            {
-              value: "conversations",
-              label: "Session support activity",
-              content: <OrgSupportTriage orgId={orgId} />,
-              show: triage,
-            },
-            {
-              value: "evidence",
-              label: "Evidence requests",
-              content: <EvidenceInbox />,
-            },
-            {
-              value: "reports",
-              label: "Reports and decisions",
-              content: <ReportHistory />,
-            },
-            {
-              value: "requests",
-              label: "Organization requests",
-              content: <OrgSupportRequests orgId={orgId} />,
-            },
-          ]}
+      {canRead ? (
+        <OrgSupportRequests orgId={orgId} />
+      ) : (
+        <EmptyState
+          icon={Inbox}
+          title="Get help with an organization appointment"
+          description="Open an appointment to raise a personal concern. Organization-owned conversations are handled by authorized team members."
+          action={
+            <Button variant="outline" asChild>
+              <Link href={`/dashboard/organization/${orgId}/appointments`}>
+                View appointments
+              </Link>
+            </Button>
+          }
         />
-      </DashboardContent>
+      )}
     </>
   );
 }

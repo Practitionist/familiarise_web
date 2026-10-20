@@ -45,7 +45,7 @@ import {
 import { MemberRole } from "@prisma/client";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { canRaiseAboutOrg } from "@/lib/support/about-org";
-import { SupportPriority } from "@prisma/client";
+import { SupportPriority, type SupportCaseOwnership } from "@prisma/client";
 import {
   ISSUE_TYPE_LABELS,
   PLATFORM_ISSUE_TYPE_CATEGORIES,
@@ -57,6 +57,7 @@ export interface CreateTicketDefaults {
   description?: string;
   /** Preselects "About" (#1527), e.g. org Billing's invoice request. */
   organizationId?: string;
+  ownershipScope?: SupportCaseOwnership;
 }
 
 interface OrgMembership {
@@ -103,7 +104,7 @@ export function CreateTicketDialog({
   const [priority, setPriority] = useState<SupportPriority>("MEDIUM");
   const [ownershipScope, setOwnershipScope] = useState<
     "PERSONAL" | "ORG_OPERATIONS" | "ORG_BILLING"
-  >("PERSONAL");
+  >(defaults?.ownershipScope ?? "PERSONAL");
   const [about, setAbout] = useState(defaults?.organizationId ?? ABOUT_ME);
   const [callbackRequested, setCallbackRequested] = useState(false);
   const [callbackPhone, setCallbackPhone] = useState("");
@@ -163,7 +164,7 @@ export function CreateTicketDialog({
           : "Request created",
         description: describeWait(ticket.ackDueAt),
       });
-      void qc.invalidateQueries({ queryKey: ["user-support-tickets"] });
+      void qc.invalidateQueries({ queryKey: ["personal-support-requests"] });
       void qc.invalidateQueries({ queryKey: ["org-support-tickets"] });
       clientIntakeId.current = null;
       setOpen(false);
@@ -175,6 +176,7 @@ export function CreateTicketDialog({
       setCallbackPhone("");
       setPhoneError(null);
       setAbout(defaults?.organizationId ?? ABOUT_ME);
+      setOwnershipScope(defaults?.ownershipScope ?? "PERSONAL");
       if (requestHref) router.push(requestHref(ticket.id));
     },
     onError: (e: unknown) => {

@@ -45,7 +45,7 @@ import { cn } from "@/utils/tailwind";
 import { SessionConversation } from "./SessionConversation";
 
 export interface SupportRequestViewProps {
-  /** `t_<ticketId>` or `b_<appointmentId>` (lib/support/case-key.ts). */
+  /** `c_<caseId>` or `b_<appointmentId>` (lib/support/case-key.ts). */
   caseKey: string;
   /** The Support requests list, for the back link. */
   requestsHref: string;
@@ -189,6 +189,17 @@ function SessionRequest({
               status: t.thread?.status ?? null,
             })}
           />
+          {t.query.isError && !t.data ? (
+            <ErrorState
+              title="This conversation could not be loaded"
+              onRetry={() => void t.query.refetch()}
+            />
+          ) : (
+            <SessionConversation t={t} requestsHref={props.requestsHref} />
+          )}
+        </div>
+        <aside className="order-first space-y-4 lg:order-last">
+          <h2 className="text-sm font-semibold">Request context</h2>
           {booking && (
             <ContextCard
               icon={CalendarDays}
@@ -204,17 +215,14 @@ function SessionRequest({
               hrefLabel="Go to booking"
             />
           )}
-          {t.query.isError && !t.data ? (
-            <ErrorState
-              title="This conversation could not be loaded"
-              onRetry={() => void t.query.refetch()}
-            />
-          ) : (
-            <SessionConversation t={t} requestsHref={props.requestsHref} />
-          )}
-        </div>
-        <aside>
-          <Articles links={props.articles[topic] ?? []} />
+          <details className="rounded-lg border border-border p-4">
+            <summary className="cursor-pointer text-sm font-medium">
+              Helpful articles
+            </summary>
+            <div className="mt-3">
+              <Articles links={props.articles[topic] ?? []} />
+            </div>
+          </details>
         </aside>
       </div>
     </>
@@ -294,7 +302,7 @@ function TicketComposer({
   );
 }
 
-/** A platform request (`t_<ticketId>`); private notes never reach this read. */
+/** A platform request (`c_<caseId>`); private notes never reach this read. */
 function TicketRequest({
   ticketId,
   props,
@@ -349,7 +357,7 @@ function TicketRequest({
     onSuccess: (_result, message) => {
       setDraft((current) => (current.trim() === message ? "" : current));
       void qc.invalidateQueries({ queryKey });
-      void qc.invalidateQueries({ queryKey: ["user-support-tickets"] });
+      void qc.invalidateQueries({ queryKey: ["personal-support-requests"] });
     },
     onError: (e: unknown) =>
       toast({
@@ -407,24 +415,6 @@ function TicketRequest({
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div className="min-w-0 space-y-4">
           <StatusTimeline stage={requestStage({ status: data.status })} />
-          {data.payment && (
-            <ContextCard
-              icon={CreditCard}
-              title={formatCurrencyAmount(
-                data.payment.amount,
-                data.payment.currency,
-              )}
-              detail={day(data.payment.createdAt)}
-              badge={
-                <StatusBadge
-                  {...paymentStatusBadge(data.payment.status)}
-                  size="sm"
-                />
-              }
-              href={paymentHref}
-              hrefLabel="Go to payment"
-            />
-          )}
           {data.canReply && (
             <CaseResolutionPanel caseId={data.caseId} customer />
           )}
@@ -511,8 +501,46 @@ function TicketRequest({
             </div>
           </div>
         </div>
-        <aside>
-          <Articles links={props.articles[data.topic] ?? []} />
+        <aside className="order-first space-y-4 lg:order-last">
+          <h2 className="text-sm font-semibold">Request details</h2>
+          <div className="space-y-2 rounded-lg border border-border p-4 text-sm">
+            <p className="text-xs text-muted-foreground">{data.reference}</p>
+            <StatusBadge
+              label={humanizeEnum(data.status)}
+              tone="neutral"
+              size="sm"
+            />
+            <p className="text-muted-foreground">
+              {describeWait(data.ackDueAt)}
+            </p>
+            {data.organization && <p>{data.organization.name}</p>}
+          </div>
+          {data.payment && (
+            <ContextCard
+              icon={CreditCard}
+              title={formatCurrencyAmount(
+                data.payment.amount,
+                data.payment.currency,
+              )}
+              detail={day(data.payment.createdAt)}
+              badge={
+                <StatusBadge
+                  {...paymentStatusBadge(data.payment.status)}
+                  size="sm"
+                />
+              }
+              href={paymentHref}
+              hrefLabel="Go to payment"
+            />
+          )}
+          <details className="rounded-lg border border-border p-4">
+            <summary className="cursor-pointer text-sm font-medium">
+              Helpful articles
+            </summary>
+            <div className="mt-3">
+              <Articles links={props.articles[data.topic] ?? []} />
+            </div>
+          </details>
         </aside>
       </div>
     </>

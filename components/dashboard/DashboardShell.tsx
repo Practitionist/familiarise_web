@@ -40,10 +40,7 @@ import {
 } from "@/lib/dashboard/nav/find-index";
 
 export type DashboardShellKind =
-  | "personal"
-  | "organization"
-  | "workspace"
-  | "backoffice";
+  "personal" | "organization" | "workspace" | "backoffice";
 
 export interface DashboardShellProps {
   /** Keys the persisted sidebar-collapse state. */
@@ -194,7 +191,6 @@ export function DashboardShell({
           <MobileNav
             basePath={nav.basePath}
             groups={groups}
-            settings={nav.settings}
             orgSettings={account.orgSettings}
             onOpenFind={openFind}
             support={nav.support}

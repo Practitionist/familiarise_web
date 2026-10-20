@@ -568,7 +568,7 @@ export function PlatformSupportSheet({
           ticketReference: result.supportTicketReference,
           replyByAt: result.replyByAt ?? null,
         });
-        void qc.invalidateQueries({ queryKey: ["user-support-tickets"] });
+        void qc.invalidateQueries({ queryKey: ["personal-support-requests"] });
       } else if (result.resolved) {
         setDone({
           resolved: true,

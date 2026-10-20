@@ -9,6 +9,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { CaseAttachments } from "./CaseAttachments";
 import { useToast } from "@/hooks/use-toast";
 import { throwSupportError } from "@/lib/support/error-copy";
+import { FileCheck } from "lucide-react";
+import { useSession } from "@/lib/auth-client";
+import { PageHeader } from "@/components/dashboard/PageScaffold";
+import { EmptyState } from "@/components/dashboard/EmptyState";
+import { ErrorState } from "@/components/dashboard/ErrorState";
+import { FilterBar } from "@/components/dashboard/FilterBar";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { humanizeEnum } from "@/lib/ui/tone";
 
 const Evidence = z.object({
   id: z.string(),
@@ -16,13 +25,21 @@ const Evidence = z.object({
   dueAt: z.string(),
   respondedAt: z.string().nullable(),
   cancelledAt: z.string().nullable(),
+  caseClosed: z.boolean(),
 });
 const List = z.object({ data: z.array(Evidence) });
 const Detail = z.object({
   data: Evidence.extend({
     caseId: z.string(),
     responseBody: z.string().nullable(),
-    caseClosed: z.boolean(),
+    booking: z
+      .object({
+        title: z.string().nullable(),
+        startsAt: z.string().nullable(),
+        organizationName: z.string().nullable(),
+      })
+      .nullable()
+      .optional(),
     decisions: z.array(
       z.object({
         id: z.string(),
@@ -34,29 +51,73 @@ const Detail = z.object({
   }),
 });
 
-export function EvidenceInbox() {
+export function EvidenceInbox({
+  detailBase,
+  organizationId,
+}: Readonly<{ detailBase: string; organizationId?: string }>) {
+  const { data: session } = useSession();
+  const [status, setStatus] = useState("all");
   const query = useQuery({
-    queryKey: ["support-evidence"],
+    queryKey: ["support-evidence", session?.user.id, organizationId],
+    enabled: Boolean(session?.user.id),
     queryFn: async () => {
-      const response = await fetch("/api/support/evidence");
+      const response = await fetch(
+        organizationId
+          ? `/api/support/evidence?organizationId=${encodeURIComponent(organizationId)}`
+          : "/api/support/evidence",
+      );
       if (!response.ok)
         await throwSupportError(response, "evidence requests load");
       return List.parse(await response.json()).data;
     },
   });
-  if (!query.data?.length && !query.isError) return null;
+  if (query.isLoading) return <Skeleton className="h-32 w-full" />;
+  if (query.isError)
+    return (
+      <ErrorState
+        title="Couldn't load evidence requests"
+        onRetry={() => void query.refetch()}
+      />
+    );
+  const rows =
+    query.data?.filter(
+      (row) =>
+        status === "all" ||
+        (status === "pending"
+          ? !row.respondedAt && !row.cancelledAt && !row.caseClosed
+          : status === "submitted"
+            ? Boolean(row.respondedAt)
+            : Boolean(row.cancelledAt)),
+    ) ?? [];
   return (
-    <section className="space-y-3 rounded-xl border border-border p-4">
-      <h2 className="font-semibold">Evidence requests</h2>
-      {query.isError && (
-        <Button variant="outline" onClick={() => void query.refetch()}>
-          Retry loading requests
-        </Button>
+    <section className="space-y-4">
+      <FilterBar
+        selects={[
+          {
+            key: "status",
+            label: "Status",
+            value: status,
+            options: [
+              { value: "all", label: "All requests" },
+              { value: "pending", label: "Needs response" },
+              { value: "submitted", label: "Submitted" },
+              { value: "cancelled", label: "Cancelled" },
+            ],
+            onChange: setStatus,
+          },
+        ]}
+      />
+      {rows.length === 0 && (
+        <EmptyState
+          icon={FileCheck}
+          title="No evidence requests"
+          description="Requests addressed to you will appear here with their prompt and response deadline."
+        />
       )}
-      {query.data?.map((request) => (
+      {rows.map((request) => (
         <Link
           key={request.id}
-          href={`/dashboard/evidence/${request.id}`}
+          href={`${detailBase}/${request.id}`}
           className="block rounded-lg border border-border p-3 focus-visible:outline focus-visible:outline-2"
         >
           <p className="line-clamp-2">{request.prompt}</p>
@@ -65,7 +126,9 @@ export function EvidenceInbox() {
               ? "Cancelled"
               : request.respondedAt
                 ? "Response submitted"
-                : `Respond by ${new Date(request.dueAt).toLocaleString()}`}
+                : request.caseClosed
+                  ? "Investigation concluded"
+                  : `Respond by ${new Date(request.dueAt).toLocaleString()}`}
           </p>
         </Link>
       ))}
@@ -75,7 +138,9 @@ export function EvidenceInbox() {
 
 export function EvidenceRequest({
   requestId,
-}: Readonly<{ requestId: string }>) {
+  inboxHref,
+}: Readonly<{ requestId: string; inboxHref: string }>) {
+  const { data: session } = useSession();
   const [body, setBody] = useState("");
   const [pending, setPending] = useState(false);
   const [appealDecision, setAppealDecision] = useState<string | null>(null);
@@ -84,9 +149,10 @@ export function EvidenceRequest({
   const turnId = useRef<string | null>(null);
   const qc = useQueryClient();
   const { toast } = useToast();
-  const queryKey = ["support-evidence", requestId];
+  const queryKey = ["support-evidence", session?.user.id, requestId];
   const query = useQuery({
     queryKey,
+    enabled: Boolean(session?.user.id),
     queryFn: async () => {
       const response = await fetch(`/api/support/evidence/${requestId}`);
       if (!response.ok)
@@ -155,107 +221,159 @@ export function EvidenceRequest({
   if (query.isLoading) return <p role="status">Loading evidence request…</p>;
   if (!data)
     return (
-      <Button onClick={() => void query.refetch()}>
-        Retry loading request
-      </Button>
+      <ErrorState
+        title="Couldn't load this evidence request"
+        onRetry={() => void query.refetch()}
+      />
     );
   const open = !data.respondedAt && !data.cancelledAt && !data.caseClosed;
   return (
-    <section className="space-y-4 rounded-xl border border-border p-5">
-      <h1 className="text-xl font-semibold">Evidence request</h1>
-      <p className="whitespace-pre-wrap">{data.prompt}</p>
-      <p className="text-sm text-muted-foreground">
-        Respond by {new Date(data.dueAt).toLocaleString()}. Your response is
-        shared with the platform investigation team.
-      </p>
-      {data.cancelledAt && <p role="status">This request was cancelled.</p>}
-      {data.caseClosed && <p role="status">The investigation has concluded.</p>}
-      {data.decisions.map((decision) => (
-        <div
-          key={decision.id}
-          className="space-y-2 rounded-lg border border-border p-3"
-        >
-          <p>
-            Platform decision recorded on{" "}
-            {new Date(decision.createdAt).toLocaleDateString()}.
-          </p>
-          {new Date(decision.appealUntil) > new Date() && (
-            <Button
-              variant="outline"
-              onClick={() => {
-                setAppealDecision(decision.id);
-                setAppealReason("");
-                appealId.current = null;
+    <>
+      <PageHeader
+        title="Evidence request"
+        back={{ href: inboxHref, label: "Evidence requests" }}
+        meta={
+          <StatusBadge
+            label={
+              data.cancelledAt
+                ? "Cancelled"
+                : data.respondedAt
+                  ? "Response submitted"
+                  : data.caseClosed
+                    ? "Investigation concluded"
+                    : "Response needed"
+            }
+            tone={open ? "caution" : "neutral"}
+            size="sm"
+          />
+        }
+      />
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
+        <aside className="space-y-4 rounded-lg border border-border p-5 text-sm lg:col-start-2 lg:row-start-1">
+          <h2 className="font-semibold">Request details</h2>
+          {data.booking && (
+            <div>
+              <p className="text-xs text-muted-foreground">Appointment</p>
+              <p>{data.booking.title ?? "Session"}</p>
+              {data.booking.startsAt && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {new Date(data.booking.startsAt).toLocaleString()}
+                </p>
+              )}
+              {data.booking.organizationName && (
+                <p className="text-xs text-muted-foreground">
+                  {data.booking.organizationName}
+                </p>
+              )}
+            </div>
+          )}
+          <div>
+            <p className="text-xs text-muted-foreground">Respond by</p>
+            <p>{new Date(data.dueAt).toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Visibility</p>
+            <p>
+              Your response and attachments are shared with the platform
+              investigation team.
+            </p>
+          </div>
+        </aside>
+        <section className="min-w-0 space-y-4 rounded-xl border border-border p-5 lg:col-start-1 lg:row-start-1">
+          <h2 className="font-semibold">What we need from you</h2>
+          <p className="whitespace-pre-wrap">{data.prompt}</p>
+          {data.cancelledAt && <p role="status">This request was cancelled.</p>}
+          {data.caseClosed && (
+            <p role="status">The investigation has concluded.</p>
+          )}
+          {data.decisions.map((decision) => (
+            <div
+              key={decision.id}
+              className="space-y-2 rounded-lg border border-border p-3"
+            >
+              <p>
+                {humanizeEnum(decision.outcome)}. Recorded on{" "}
+                {new Date(decision.createdAt).toLocaleDateString()}.
+              </p>
+              {new Date(decision.appealUntil) > new Date() && (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setAppealDecision(decision.id);
+                    setAppealReason("");
+                    appealId.current = null;
+                  }}
+                >
+                  Appeal this decision
+                </Button>
+              )}
+            </div>
+          ))}
+          {appealDecision && (
+            <form
+              className="space-y-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void appeal();
               }}
             >
-              Appeal this decision
-            </Button>
+              <label htmlFor="evidence-appeal" className="text-sm font-medium">
+                Reason for appeal
+              </label>
+              <Textarea
+                id="evidence-appeal"
+                value={appealReason}
+                maxLength={10000}
+                onChange={(event) => {
+                  setAppealReason(event.target.value);
+                  appealId.current = null;
+                }}
+                required
+              />
+              <Button disabled={pending || !appealReason.trim()}>
+                Submit appeal
+              </Button>
+            </form>
           )}
-        </div>
-      ))}
-      {appealDecision && (
-        <form
-          className="space-y-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void appeal();
-          }}
-        >
-          <label htmlFor="evidence-appeal" className="text-sm font-medium">
-            Reason for appeal
-          </label>
-          <Textarea
-            id="evidence-appeal"
-            value={appealReason}
-            maxLength={10000}
-            onChange={(event) => {
-              setAppealReason(event.target.value);
-              appealId.current = null;
-            }}
-            required
+          {data.responseBody && (
+            <div className="whitespace-pre-wrap rounded-lg bg-muted p-4">
+              <p className="mb-2 font-medium">Your submitted response</p>
+              {data.responseBody}
+            </div>
+          )}
+          <CaseAttachments
+            caseId={data.caseId}
+            evidenceRequestId={data.id}
+            canUpload={open}
           />
-          <Button disabled={pending || !appealReason.trim()}>
-            Submit appeal
-          </Button>
-        </form>
-      )}
-      {data.responseBody && (
-        <div className="whitespace-pre-wrap rounded-lg bg-muted p-4">
-          <p className="mb-2 font-medium">Your submitted response</p>
-          {data.responseBody}
-        </div>
-      )}
-      <CaseAttachments
-        caseId={data.caseId}
-        evidenceRequestId={data.id}
-        canUpload={open}
-      />
-      {open && (
-        <>
-          <label
-            className="block text-sm font-medium"
-            htmlFor="evidence-response"
-          >
-            Your response
-          </label>
-          <Textarea
-            id="evidence-response"
-            value={body}
-            maxLength={10000}
-            onChange={(event) => {
-              setBody(event.target.value);
-              turnId.current = null;
-            }}
-            disabled={pending}
-          />
-          <Button
-            disabled={pending || !body.trim()}
-            onClick={() => void submit()}
-          >
-            {pending ? "Submitting…" : "Submit response"}
-          </Button>
-        </>
-      )}
-    </section>
+          {open && (
+            <>
+              <label
+                className="block text-sm font-medium"
+                htmlFor="evidence-response"
+              >
+                Your response
+              </label>
+              <Textarea
+                id="evidence-response"
+                value={body}
+                maxLength={10000}
+                onChange={(event) => {
+                  setBody(event.target.value);
+                  turnId.current = null;
+                }}
+                disabled={pending}
+              />
+              <Button
+                disabled={pending || !body.trim()}
+                onClick={() => void submit()}
+              >
+                {pending ? "Submitting…" : "Submit response"}
+              </Button>
+            </>
+          )}
+        </section>
+      </div>
+    </>
   );
 }

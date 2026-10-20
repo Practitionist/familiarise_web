@@ -220,7 +220,7 @@ export function CaseResolutionPanel({
         title: "Appeal submitted",
         description: "Your appeal will be reviewed independently.",
       });
-      void qc.invalidateQueries({ queryKey: ["user-support-tickets"] });
+      void qc.invalidateQueries({ queryKey: ["personal-support-requests"] });
     },
     onError: (error: unknown) =>
       toast({

@@ -1,29 +1,18 @@
 "use client";
-import { EvidenceInbox } from "@/components/support/EvidenceInbox";
 
 import type { ReactNode } from "react";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
-import { UrlTabs } from "@/components/dashboard/UrlTabs";
-import { FeedbackPanel } from "./FeedbackPanel";
-import { ReportHistory } from "@/components/dashboard/shared/ReportHistory";
 import { SupportHub } from "./SupportHub";
 
 export interface SupportRequestsPageProps {
-  /** The mounting dashboard's profile id (consultee or consultant). */
-  profileId: string;
   /** `/dashboard/<tree>/<id>` — the page lives at `<basePath>/support`. */
   basePath: string;
   /** Suggested Help Center articles, rendered on the server (SuggestedArticles). */
   suggested: ReactNode;
 }
 
-/**
- * Support requests: private conversations with the Familiarise team as URL tabs
- * — Requests (Sessions · Platform) and Feedback — alongside contextual links
- * to Help Center articles.
- */
+/** A single personal inbox; evidence, reporting and feedback have separate pages. */
 export function SupportRequestsPage({
-  profileId,
   basePath,
   suggested,
 }: Readonly<SupportRequestsPageProps>) {
@@ -33,39 +22,18 @@ export function SupportRequestsPage({
         title="Support requests"
         description="Your conversations with the Familiarise team — about a session or the platform."
       />
-      <UrlTabs
-        tabs={[
-          {
-            value: "requests",
-            label: "Requests",
-            content: (
-              <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
-                <SupportHub
-                  profileId={profileId}
-                  requestsBase={`${basePath}/support/requests`}
-                  feedbackHref={`${basePath}/support?tab=feedback`}
-                />
-                <aside>{suggested}</aside>
-              </div>
-            ),
-          },
-          {
-            value: "evidence",
-            label: "Evidence requests",
-            content: <EvidenceInbox />,
-          },
-          {
-            value: "reports",
-            label: "Reports and decisions",
-            content: <ReportHistory />,
-          },
-          {
-            value: "feedback",
-            label: "Feedback",
-            content: <FeedbackPanel profileId={profileId} />,
-          },
-        ]}
-      />
+      <div className="space-y-6">
+        <SupportHub
+          requestsBase={`${basePath}/support/requests`}
+          appointmentsHref={`${basePath}/appointments`}
+        />
+        <details className="rounded-lg border border-border p-4">
+          <summary className="cursor-pointer text-sm font-medium">
+            Helpful articles
+          </summary>
+          <div className="mt-4">{suggested}</div>
+        </details>
+      </div>
     </>
   );
 }

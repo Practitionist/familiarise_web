@@ -5,8 +5,14 @@ import { requireApiAuth } from "@/lib/auth-helpers";
 import { supportError } from "@/lib/api/support-http";
 import { visibleCaseWhere } from "@/lib/support/case-access";
 import { PLAN_TITLE_SELECT, planTitle } from "@/lib/support/case-read";
+import { SupportCaseStatus, type Prisma } from "@prisma/client";
 
-const Query = z.object({ scope: z.enum(["session", "platform"]).optional() });
+const Query = z.object({
+  scope: z.enum(["session", "platform"]).optional(),
+  ownership: z.literal("personal").optional(),
+  status: z.nativeEnum(SupportCaseStatus).optional(),
+  page: z.coerce.number().int().min(1).max(10000).default(1),
+});
 export async function GET(req: NextRequest) {
   const auth = await requireApiAuth();
   if (auth.error) return auth.error;
@@ -17,58 +23,69 @@ export async function GET(req: NextRequest) {
     userId: auth.session.user.id,
     role: "CONSULTEE",
   });
-  const cases = await prisma.supportCase.findMany({
-    where: {
-      AND: [
-        visible,
-        ...(query.data.scope === "session"
-          ? [{ appointmentId: { not: null } }]
-          : query.data.scope === "platform"
-            ? [{ appointmentId: null }]
-            : []),
-      ],
-    },
-    take: 100,
-    orderBy: [
-      { lastMessageAt: { sort: "desc", nulls: "last" } },
-      { createdAt: "desc" },
+  const where: Prisma.SupportCaseWhereInput = {
+    AND: [
+      visible,
+      ...(query.data.ownership
+        ? [{ ownershipScope: "PERSONAL" as const }]
+        : []),
+      ...(query.data.status ? [{ status: query.data.status }] : []),
+      ...(query.data.scope === "session"
+        ? [{ appointmentId: { not: null } }]
+        : query.data.scope === "platform"
+          ? [{ appointmentId: null }]
+          : []),
     ],
-    select: {
-      id: true,
-      title: true,
-      referenceNumber: true,
-      category: true,
-      status: true,
-      activeChannel: true,
-      appointmentId: true,
-      requesterUserId: true,
-      submitterUserId: true,
-      createdAt: true,
-      updatedAt: true,
-      lastMessageAt: true,
-      resolvedAt: true,
-      organization: { select: { id: true, name: true } },
-      appointment: {
-        select: {
-          ...PLAN_TITLE_SELECT,
-          organization: { select: { name: true } },
-          occurrences: {
-            orderBy: { startsAt: "asc" },
-            take: 1,
-            select: { startsAt: true },
+  };
+  const pageSize = 20;
+  const [cases, total] = await Promise.all([
+    prisma.supportCase.findMany({
+      where,
+      take: pageSize,
+      skip: (query.data.page - 1) * pageSize,
+      orderBy: [
+        { lastMessageAt: { sort: "desc", nulls: "last" } },
+        { createdAt: "desc" },
+      ],
+      select: {
+        id: true,
+        title: true,
+        referenceNumber: true,
+        category: true,
+        status: true,
+        activeChannel: true,
+        appointmentId: true,
+        requesterUserId: true,
+        submitterUserId: true,
+        createdAt: true,
+        updatedAt: true,
+        lastMessageAt: true,
+        resolvedAt: true,
+        organization: { select: { id: true, name: true } },
+        appointment: {
+          select: {
+            ...PLAN_TITLE_SELECT,
+            organization: { select: { name: true } },
+            occurrences: {
+              orderBy: { startsAt: "asc" },
+              take: 1,
+              select: { startsAt: true },
+            },
           },
         },
+        messages: {
+          where: { isInternal: false },
+          orderBy: { seq: "desc" },
+          take: 1,
+          select: { sender: true, body: true, createdAt: true },
+        },
       },
-      messages: {
-        where: { isInternal: false },
-        orderBy: { seq: "desc" },
-        take: 1,
-        select: { sender: true, body: true, createdAt: true },
-      },
-    },
-  });
+    }),
+    prisma.supportCase.count({ where }),
+  ]);
   return NextResponse.json(
     {
+      pagination: { page: query.data.page, pageSize, total },
       data: cases.map((c) => {
         const redacted =
           c.requesterUserId !== c.submitterUserId &&

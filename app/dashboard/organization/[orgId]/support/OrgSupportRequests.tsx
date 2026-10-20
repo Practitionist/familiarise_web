@@ -44,7 +44,6 @@ const STATUS_TONE: Record<string, Tone> = {
   OPEN: "caution",
   IN_PROGRESS: "info",
   ESCALATED: "info",
-  ON_HOLD: "caution",
   RESOLVED: "success",
   CLOSED: "neutral",
 };

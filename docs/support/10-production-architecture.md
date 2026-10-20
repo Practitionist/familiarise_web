@@ -52,6 +52,34 @@ The case links the service investigation to its payment and refund.
 - `/dashboard/support/c_<id>` resolves a notification to the viewer's authorized
   workspace. Case access is checked before choosing the destination.
 
+### Dashboard navigation
+
+Every active personal, workspace and organization dashboard exposes an Operations
+group with Help & support and the Settings destination permitted in that scope.
+Personal help uses separate routed pages for Support requests, Evidence requests,
+Reports & appeals, and Product feedback. A shared secondary menu navigates pages;
+context and status filters narrow the paginated personal case inbox. Product
+feedback is a separate form/history module, not a support conversation. Session
+ratings stay on appointments and experts' received public reviews stay in Business.
+
+Request and evidence details retain the dashboard shell. Their secondary menu is
+removed on detail routes to give the conversation or response form a full main
+column alongside its context panel. The panel stacks above the form on mobile.
+The profile-free evidence notification URL authorizes the recipient and redirects
+to their dashboard; it renders no standalone evidence page.
+
+Organization support lists only organization-owned conversations allowed by the
+current member's operations/billing grants. Its evidence inbox stays recipient-only
+and matches that organization's sponsored or hosted appointments. Personal reports
+and product feedback are explicitly linked into the viewer's personal workspace,
+never rendered as organization-owned records. Member support activity is a separate
+operations-only page. Settings remains available from the avatar as a shortcut;
+the mobile menu includes each Settings destination once.
+
+Recent-appointment pickers use booking title, date, time, kind and organization
+when available. No generated thread summary is used. Reports use the same shared
+segmented control as other dashboard views, with native keyboard behavior.
+
 ### Decisions, evidence and appeals
 
 `SupportCaseEvidenceRequest` gives one delivery participant or current host
@@ -149,3 +177,9 @@ features must attach directly to the canonical case. A universal pausing
 resolution deadline is superseded by category-specific absolute deadlines;
 internal wait accounting cannot extend them. Service complaints remain separate
 from issuing-bank chargebacks.
+
+The support page no longer nests Feedback, Evidence and Reports inside Requests,
+or adds Sessions/Platform subtabs beneath them. Those tasks have separate routed
+pages; the inbox uses context filters. The former evidence-only layout and
+avatar-only Settings placement are superseded by dashboard detail routes and
+Operations navigation. Support conversation summaries are not generated.

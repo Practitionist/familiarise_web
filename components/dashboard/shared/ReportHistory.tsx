@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { throwSupportError } from "@/lib/support/error-copy";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const historySchema = z.object({
   reports: z.array(
@@ -91,31 +91,18 @@ export function ReportHistory() {
   });
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Reports and moderation decisions</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant={scope === "submitted" ? "default" : "outline"}
-            onClick={() => {
-              setScope("submitted");
-              setPage(1);
-            }}
-          >
-            Your reports
-          </Button>
-          <Button
-            variant={scope === "decisions" ? "default" : "outline"}
-            onClick={() => {
-              setScope("decisions");
-              setPage(1);
-            }}
-          >
-            Decisions affecting you
-          </Button>
-        </div>
+    <Tabs
+      value={scope}
+      onValueChange={(value) => {
+        setScope(z.enum(["submitted", "decisions"]).parse(value));
+        setPage(1);
+      }}
+    >
+      <TabsList aria-label="Reports and decisions">
+        <TabsTrigger value="submitted">Your reports</TabsTrigger>
+        <TabsTrigger value="decisions">Decisions affecting you</TabsTrigger>
+      </TabsList>
+      <TabsContent value={scope} className="space-y-4">
         {query.isLoading ? (
           <p>Loading report history…</p>
         ) : query.isError ? (
@@ -212,7 +199,7 @@ export function ReportHistory() {
             </Button>
           </div>
         )}
-      </CardContent>
-    </Card>
+      </TabsContent>
+    </Tabs>
   );
 }

@@ -846,7 +846,7 @@ export default function HomeTab({
           body="Answers about bookings, payments, and sessions."
         />
         <HelpCard
-          href={`${basePath}/support?tab=requests`}
+          href={`${basePath}/support`}
           icon={MessageSquareText}
           title="Open a support request"
           body="Ask our team about a booking or a payment."

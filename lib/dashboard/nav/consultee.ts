@@ -4,6 +4,7 @@ import {
   FileText,
   Gift,
   Home,
+  LifeBuoy,
   MessageSquare,
   Search,
   Settings,
@@ -12,11 +13,7 @@ import {
 
 import { personalSupportLinks, type DashboardNav } from "./types";
 
-/**
- * Learner (consultee) IA from #1527 §7.1. Settings lives in the avatar menu
- * and Help in the header menu (Cloudflare shell); Feedback folds into Support
- * requests.
- */
+/** Learners find account operations alongside their work and billing. */
 export function buildConsulteeNav(consulteeId: string): DashboardNav {
   return {
     basePath: `/dashboard/consultee/${consulteeId}`,
@@ -43,12 +40,18 @@ export function buildConsulteeNav(consulteeId: string): DashboardNav {
       {
         label: "Money",
         items: [
-          { name: "Payments", icon: CreditCard, path: "payments" },
+          { name: "Billing", icon: CreditCard, path: "payments" },
           { name: "Invite & earn", icon: Gift, path: "referrals" },
         ],
       },
+      {
+        label: "Operations",
+        items: [
+          { name: "Help & support", icon: LifeBuoy, path: "support" },
+          { name: "Settings", icon: Settings, path: "settings" },
+        ],
+      },
     ],
-    settings: { name: "Settings", icon: Settings, path: "settings" },
     support: personalSupportLinks(
       `/dashboard/consultee/${consulteeId}/support`,
     ),
@@ -67,13 +70,15 @@ export const CONSULTEE_PAGE_LABELS: Record<string, string> = {
   appointments: "Appointments",
   resources: "Resources",
   messages: "Messages",
-  payments: "Payments",
+  payments: "Billing",
   referrals: "Invite & earn",
-  support: "Support requests",
+  support: "Help & support",
+  evidence: "Evidence requests",
+  reports: "Reports & appeals",
   settings: "Settings",
   documents: "Session documents",
   recordings: "Recordings",
-  feedback: "Feedback",
+  feedback: "Product feedback",
   help: "Help",
   reschedule: "Reschedule",
   account: "Account",

@@ -82,8 +82,5 @@ export function supportRequestsHref(user: AccountHrefUser): string | null {
 export function supportLinksFor(user: AccountHrefUser): SupportLinks | null {
   const requestsHref = supportRequestsHref(user);
   if (!requestsHref) return null;
-  // The workspace page has no Feedback tab.
-  return user.role === "ORG_WORKSPACE"
-    ? { requestsHref, feedbackHref: null }
-    : personalSupportLinks(requestsHref);
+  return personalSupportLinks(requestsHref);
 }

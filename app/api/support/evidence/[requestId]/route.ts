@@ -11,6 +11,7 @@ import {
 } from "@/lib/support/case-actions";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { sessionRole } from "@/lib/auth/session-role";
+import { PLAN_TITLE_SELECT, planTitle } from "@/lib/support/case-read";
 interface Context {
   params: Promise<{ requestId: string }>;
 }
@@ -60,6 +61,20 @@ export async function GET(_req: NextRequest, context: Context) {
     orderBy: { createdAt: "asc" },
     select: { id: true, outcome: true, appealUntil: true, createdAt: true },
   });
+  const booking = authorized.supportCase.appointmentId
+    ? await prisma.appointment.findUnique({
+        where: { id: authorized.supportCase.appointmentId },
+        select: {
+          ...PLAN_TITLE_SELECT,
+          organization: { select: { name: true } },
+          occurrences: {
+            orderBy: { startsAt: "asc" },
+            take: 1,
+            select: { startsAt: true },
+          },
+        },
+      })
+    : null;
   return NextResponse.json({
     data: {
       ...row,
@@ -67,6 +82,13 @@ export async function GET(_req: NextRequest, context: Context) {
         authorized.supportCase.resolvedAt || authorized.supportCase.closedAt,
       ),
       decisions,
+      booking: booking
+        ? {
+            title: planTitle(booking),
+            startsAt: booking.occurrences[0]?.startsAt ?? null,
+            organizationName: booking.organization?.name ?? null,
+          }
+        : null,
     },
   });
 }

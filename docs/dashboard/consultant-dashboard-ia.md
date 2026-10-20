@@ -8,16 +8,18 @@ This page records how the consultant (Expert) dashboard is organised after the 2
 
 The consultant dashboard now shares one `DashboardShell` with every other dashboard tree (personal, organization, workspace and back office), rather than carrying its own chrome. The shell's sidebar begins with the `ContextSwitcher`, which lets a signed-in person move between their Expert dashboard, their Learner dashboard (if they have also bought a session), every organization they belong to, and — for admins and staff — the back office. Below the switcher, the sidebar is a static, unfiltered list of groups, because every surface on a personal dashboard belongs to the one person who owns it. `buildConsultantNav()` in `lib/dashboard/nav/consultant.ts` builds it as:
 
-| Group    | Entries                                                             |
-| -------- | ------------------------------------------------------------------- |
-| Work     | Home, Requests (count badge), Appointments, Messages (unread badge) |
-| Business | **Offerings**, Availability, Earnings, **Reviews**                  |
-| Library  | Documents, Recordings                                               |
-| Grow     | Invite & earn                                                       |
+| Group      | Entries                                                                     |
+| ---------- | --------------------------------------------------------------------------- |
+| Work       | Home, Booking requests (count badge), Appointments, Messages (unread badge) |
+| Business   | Offerings, Availability, Reviews                                            |
+| Money      | Earnings & payouts                                                          |
+| Library    | Session documents, Recordings                                               |
+| Grow       | Invite & earn                                                               |
+| Operations | Help & support, Settings                                                    |
 
 "Offerings" is the renamed Event Planner; the old `planner` route now 308-redirects to `offerings`, and Collaborations moved from its own sidebar entry into an Offerings tab. Offering cards copy the expert's signed personal share link (`?via=<token>` / `?ref=<code>`, locking the 10% own-link platform fee), display subscription cadence and topic/module counts, and hydrate full plan metadata (`deliverables`, `prerequisite`, `material`, `sessionDurationInHours`) in the edit drawer alongside a net take-home preview. Earnings surfaces active `ConsultantFeeWaiver` banners, `Own link (10%)` and `Fee waived` badges on ledger rows, a Tax & TDS (`Form 16A`) quarterly summary with 1-click FY CSV export, and Own-Link vs Marketplace revenue split + repeat learner rate on the Analytics tab. Reviews is a dedicated destination where an expert filters by track (`1:1` vs `Group`) or star rating, replies to learners, reports abusive reviews, and shares sanitised review cards or session milestones to LinkedIn/X. Two rules shape this list: a sidebar entry must be a distinct destination, and a daily work surface is not a preference, which is why Availability stays in Business rather than moving into Settings.
 
-Settings is no longer a sidebar row. It is one entry in the header's avatar menu (name, email, role, Settings, Sign out) alongside a header **Help ▾** menu (Help Center · Support requests · Send feedback) — both are part of the shared `DashboardShell` header, not this tree's own nav. The pinned footer action is "View public page".
+Operations contains **Help & support** and **Settings** in the sidebar. Help & support has separate pages for Support requests, Evidence requests, Reports & appeals, and Product feedback. Request details retain the dashboard shell and a context panel; the shared secondary menu is hidden on detail routes. Product feedback is separate from support conversations, session ratings, and public Reviews. Settings also remains in the avatar menu as a shortcut. The header Help menu links to the same destinations and the public Help Center. The pinned header action is "View public page".
 
 The mobile tab strip carries four tabs plus **Menu**: Home, Requests, Appointments, Messages. Menu opens a sheet with the switcher, the full nav, Settings and Sign out — Availability, Earnings and everything else not in the four tabs is reached from there, replacing the old five-tab strip that left Messages, the planner and Availability unreachable on a phone.
 

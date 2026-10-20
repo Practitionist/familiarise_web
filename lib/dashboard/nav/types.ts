@@ -39,24 +39,18 @@ export interface PinnedCta {
  */
 export interface SupportLinks {
   requestsHref: string;
-  /** Its Feedback tab; null where the page has none (the workspace). */
+  /** The separate product feedback page, when available. */
   feedbackHref: string | null;
 }
 
-/** A personal tree's Support requests page and its Feedback tab. */
+/** Personal help destinations share an area, not a support conversation. */
 export function personalSupportLinks(requestsHref: string): SupportLinks {
-  return { requestsHref, feedbackHref: `${requestsHref}?tab=feedback` };
+  return { requestsHref, feedbackHref: `${requestsHref}/feedback` };
 }
 
 export interface DashboardNav {
   basePath: string;
   groups: NavGroup[];
-  /**
-   * Personal / back-office Settings (#1527): the avatar menu's "Settings" and
-   * a mobile Menu row, never a rail row. Omitted where Settings is an
-   * ordinary last nav item (organization, workspace).
-   */
-  settings?: NavItem;
   /** Help menu rows; null leaves only the Help Center (back office). */
   support: SupportLinks | null;
   /** Up to four item paths shown as mobile tabs; everything else is in Menu. */
@@ -65,10 +59,7 @@ export interface DashboardNav {
   pinnedCta?: PinnedCta;
 }
 
-/** Every item in a nav, groups first, then the account Settings if any. */
-export function flattenNav(
-  nav: Pick<DashboardNav, "groups" | "settings">,
-): NavItem[] {
-  const items = nav.groups.flatMap((g) => g.items);
-  return nav.settings ? [...items, nav.settings] : items;
+/** Every destination appears once in its sidebar group. */
+export function flattenNav(nav: Pick<DashboardNav, "groups">): NavItem[] {
+  return nav.groups.flatMap((g) => g.items);
 }

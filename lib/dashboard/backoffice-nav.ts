@@ -20,6 +20,7 @@ import {
   RefreshCw,
   RotateCcw,
   Scale,
+  Settings,
   ScrollText,
   Shield,
   Siren,
@@ -161,6 +162,12 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
     {
       label: "Operations",
       items: [
+        {
+          name: "Settings",
+          icon: Settings,
+          path: "settings",
+          surface: "users.read",
+        },
         {
           name: "Appointments",
           icon: CalendarCheck,

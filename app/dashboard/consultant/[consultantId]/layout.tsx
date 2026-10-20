@@ -82,7 +82,8 @@ function useConsultantExtras({
   // Gating policy: waiting states get a browsable dashboard + banner;
   // REJECTED gets the full-screen gate with the reviewer feedback threaded
   // in. Settings stays reachable in every state (it hosts the fix).
-  const isSettingsPage = pathname.includes("/settings");
+  const isSettingsPage =
+    pathname.includes("/settings") || pathname.includes("/support");
   const showRejectedGate =
     verificationStatus === "REJECTED" && !isSettingsPage && !!isOwnDashboard;
   const showVerificationBanner =
