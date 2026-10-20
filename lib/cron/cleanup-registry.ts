@@ -47,6 +47,12 @@ const MAX_ACCRUAL_ROLLUPS = 10;
 const MAX_ORG_LIFECYCLE_CLAIMS = 25;
 /** IRN submissions per run; each is a GSP round trip. */
 const MAX_IRP_UPLOADS = 10;
+/** Stuck payouts per model per run; each costs up to two RazorpayX calls. */
+const MAX_STUCK_PAYOUT_POLLS = 5;
+/** Payouts per reconcile cohort per run (three cohorts); one RazorpayX GET each. */
+const MAX_PAYOUT_STATUS_POLLS = 8;
+/** Consumer invoices the GST register healer may mint per run; one transaction each. */
+const MAX_GST_HEALER_MINTS = 25;
 
 /**
  * Registry of `/api/cleanup/[job]` HTTP twins.
@@ -531,13 +537,16 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "gst-outward-register-export": () =>
       cleanupRoute({
         job: "gst-outward-register-export",
-        run: async () => {
+        run: async (req) => {
           const { runGstOutwardRegisterExport } =
             await import("@/jobs/compliance/gst-outward-register-export");
-          return runGstOutwardRegisterExport({ writeCsv: false });
+          return runGstOutwardRegisterExport({
+            limit: parseLimitParamOrDefault(req, MAX_GST_HEALER_MINTS),
+          });
         },
         summarize: (r) => ({
           period: r.period,
+          storagePath: r.storagePath,
           mintedByHealer: r.mintedByHealer,
           documentCount: r.documentCount,
           warnings: r.warnings,
@@ -566,10 +575,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "handle-stuck-payouts": () =>
       cleanupRoute({
         job: "handle-stuck-payouts",
-        run: async () => {
+        run: async (req) => {
           const { handleStuckPayouts } =
             await import("@/scripts/payouts/handle-stuck-payouts");
-          return handleStuckPayouts();
+          return handleStuckPayouts({
+            limit: parseLimitParamOrDefault(req, MAX_STUCK_PAYOUT_POLLS),
+          });
         },
         summarize: (r) => ({
           totalProcessed: r.totalProcessed,
@@ -944,10 +955,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "reconcile-payout-status": () =>
       cleanupRoute({
         job: "reconcile-payout-status",
-        run: async () => {
+        run: async (req) => {
           const { reconcilePayoutStatus } =
             await import("@/scripts/payouts/reconcile-payout-status");
-          return reconcilePayoutStatus();
+          return reconcilePayoutStatus({
+            limit: parseLimitParamOrDefault(req, MAX_PAYOUT_STATUS_POLLS),
+          });
         },
         summarize: (r) => ({
           totalProcessed: r.totalProcessed,

@@ -47,6 +47,9 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
   mintConsumerInvoice: jest.fn(),
 }));
+jest.mock("../../lib/storage/private-finance-object", () => ({
+  uploadPrivateFinanceObject: jest.fn().mockResolvedValue(undefined),
+}));
 
 import { RefundStatus } from "@prisma/client";
 import { REFUND_GATED_PAYMENT_WHERE } from "@/lib/payments/payouts/shared-lifecycle";
@@ -139,7 +142,7 @@ it("keeps commercial credit notes out of the GSTR-1 register", async () => {
   const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
   jest.spyOn(console, "log").mockImplementation(() => {});
 
-  await runGstOutwardRegisterExport({ writeCsv: false });
+  await runGstOutwardRegisterExport();
 
   for (const findMany of [mockCreditNoteFindMany, mockConsumerNoteFindMany]) {
     expect(findMany.mock.calls[0][0].where).toMatchObject({

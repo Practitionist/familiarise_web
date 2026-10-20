@@ -9,12 +9,8 @@
  * - DB update failed after gateway processed payout
  * - Gateway status changed without webhook
  *
- * This module exports the core reconciliation function.
- * It is imported by:
- * - jobs/reconcile-payout-status.ts (GitHub Actions)
- * - app/api/cleanup/reconcile-payout-status/route.ts (API endpoint)
- *
- * Schedule: Every 6 hours
+ * Driven by the `/api/cleanup/reconcile-payout-status` twin with a per-cohort
+ * `limit`; every cohort rotates on `lastReconciledAt` (see reconcile-cursor.ts).
  */
 
 import prisma from "../../lib/prisma";
@@ -33,6 +29,11 @@ import {
   mapGatewayStatus,
   retireUnknownGatewayPayout,
 } from "@/lib/payments/payouts/payout-gateway-lookup";
+import {
+  LEAST_RECENTLY_RECONCILED,
+  stampConsultantPayoutsReconciled,
+  stampOrgPayoutsReconciled,
+} from "@/lib/payments/payouts/reconcile-cursor";
 import { reportSentryMessage } from "@/lib/observability/report";
 
 // Only reconcile payouts older than 48 hours (give webhooks time)
@@ -59,17 +60,20 @@ export interface PayoutReconciliationResult {
 /**
  * Reconcile stale PENDING/PROCESSING payouts with gateway status
  */
-// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
-// mutual exclusion; fail-closed: money state must not double-run unlocked.
-export async function reconcilePayoutStatus(): Promise<PayoutReconciliationResult> {
+// Fail-closed: money state must not double-run unlocked.
+export async function reconcilePayoutStatus(
+  opts: { limit?: number } = {},
+): Promise<PayoutReconciliationResult> {
   return withCronLock(
     "reconcile-payout-status",
     { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
-    () => reconcilePayoutStatusUnlocked(),
+    () => reconcilePayoutStatusUnlocked(opts.limit),
   );
 }
 
-async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResult> {
+async function reconcilePayoutStatusUnlocked(
+  limit: number | undefined,
+): Promise<PayoutReconciliationResult> {
   const errors: string[] = [];
   const discrepancies: string[] = [];
   let reconciledCount = 0;
@@ -100,8 +104,10 @@ async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResu
         },
       },
     },
-    orderBy: { updatedAt: "asc" },
+    orderBy: [LEAST_RECENTLY_RECONCILED, { updatedAt: "asc" }],
+    take: limit,
   });
+  await stampConsultantPayoutsReconciled(stalePayouts.map((p) => p.id));
 
   // #1407 — the pre-flight gate has to test the credentials the lookup will
   // actually send, or it reports "configured" and every lookup still 401s.
@@ -254,22 +260,23 @@ async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResu
   const completedReversalCutoff = new Date(
     Date.now() - 14 * 24 * 60 * 60 * 1000,
   );
-  const recentCompletedPayouts = prisma.consultantPayout?.findMany
-    ? await prisma.consultantPayout.findMany({
-        where: {
-          status: PayoutStatus.COMPLETED,
-          providerPayoutId: { not: null },
-          processedAt: { gte: completedReversalCutoff },
-        },
-        select: {
-          id: true,
-          providerPayoutId: true,
-          provider: true,
-        },
-        orderBy: { processedAt: "desc" },
-        take: 100,
-      })
-    : [];
+  const recentCompletedPayouts = await prisma.consultantPayout.findMany({
+    where: {
+      status: PayoutStatus.COMPLETED,
+      providerPayoutId: { not: null },
+      processedAt: { gte: completedReversalCutoff },
+    },
+    select: {
+      id: true,
+      providerPayoutId: true,
+      provider: true,
+    },
+    orderBy: [LEAST_RECENTLY_RECONCILED, { processedAt: "desc" }],
+    take: limit,
+  });
+  await stampConsultantPayoutsReconciled(
+    recentCompletedPayouts.map((p) => p.id),
+  );
 
   for (const completed of recentCompletedPayouts) {
     if (
@@ -307,22 +314,21 @@ async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResu
     }
   }
 
-  const recentCompletedOrgPayouts = prisma.organizationPayout?.findMany
-    ? await prisma.organizationPayout.findMany({
-        where: {
-          status: PayoutStatus.COMPLETED,
-          paymentGateway: PaymentGateway.RAZORPAY,
-          gatewayPayoutId: { not: null },
-          processedAt: { gte: completedReversalCutoff },
-        },
-        select: {
-          id: true,
-          gatewayPayoutId: true,
-        },
-        orderBy: { processedAt: "desc" },
-        take: 100,
-      })
-    : [];
+  const recentCompletedOrgPayouts = await prisma.organizationPayout.findMany({
+    where: {
+      status: PayoutStatus.COMPLETED,
+      paymentGateway: PaymentGateway.RAZORPAY,
+      gatewayPayoutId: { not: null },
+      processedAt: { gte: completedReversalCutoff },
+    },
+    select: {
+      id: true,
+      gatewayPayoutId: true,
+    },
+    orderBy: [LEAST_RECENTLY_RECONCILED, { processedAt: "desc" }],
+    take: limit,
+  });
+  await stampOrgPayoutsReconciled(recentCompletedOrgPayouts.map((p) => p.id));
 
   for (const orgCompleted of recentCompletedOrgPayouts) {
     if (!orgCompleted.gatewayPayoutId) continue;
@@ -398,11 +404,4 @@ async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResu
     errors,
     timestamp: new Date().toISOString(),
   };
-}
-
-/**
- * Disconnect from database - call this when done
- */
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
 }

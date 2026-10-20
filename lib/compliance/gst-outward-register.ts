@@ -72,6 +72,15 @@ function istDateLabel(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+/** The private-bucket path of a period's register CSV; fixed per period, so a re-run overwrites it. */
+export function gstOutwardRegisterCsvStoragePath(
+  periodStart: Date,
+  periodEnd: Date,
+): string {
+  const lastDay = new Date(periodEnd.getTime() - 24 * 60 * 60 * 1000);
+  return `compliance/gst/${istDateLabel(periodStart)}_${istDateLabel(lastDay)}.csv`;
+}
+
 /**
  * Aggregate the period's documents and flag everything a filer would have to
  * chase. The warnings are the point of the exercise: a register that silently

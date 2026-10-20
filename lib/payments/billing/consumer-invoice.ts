@@ -41,7 +41,11 @@ import {
 import { getPlatformSupplier } from "@/lib/pdf/supplier";
 import { generateConsumerInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { generateConsumerCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
-import type { PlaceOfSupplySource } from "@prisma/client";
+import type {
+  PaymentLegSource,
+  PlaceOfSupplySource,
+  Prisma,
+} from "@prisma/client";
 
 /** 18% expressed in basis points — recorded on the document, never used to
  *  re-derive the heads. */
@@ -218,12 +222,20 @@ export function supplierStateCode(): string {
 /** Funding sources that make a payment ORG-funded. Those supplies are invoiced
  *  to the organization on its own series and must never get a second document
  *  on the consumer series. */
-const ORG_FUNDED_LEG_SOURCES = new Set([
+const ORG_FUNDED_LEG_SOURCES: readonly PaymentLegSource[] = [
   "WALLET",
   "LICENSE",
   "INVOICE_ACCRUAL",
   "OVERAGE_INVOICE_ACCRUAL",
-]);
+];
+
+/** The static half of {@link mintConsumerInvoice}'s eligibility, so a bounded
+ *  healer never spends its bite on payments the consumer series always skips. */
+export const CONSUMER_INVOICEABLE_PAYMENT_WHERE = {
+  billableToOrgInvoiceId: null,
+  legs: { none: { source: { in: [...ORG_FUNDED_LEG_SOURCES] } } },
+  OR: [{ amount: { gt: 0 } }, { creditUsages: { some: {} } }],
+} satisfies Prisma.PaymentWhereInput;
 
 /**
  * Which record supplied the buyer's state. Recorded on the invoice because a
@@ -306,7 +318,7 @@ export async function mintConsumerInvoice(
   // Org-funded supplies are invoiced to the organization, on the org series.
   if (
     payment.billableToOrgInvoiceId !== null ||
-    payment.legs.some((leg) => ORG_FUNDED_LEG_SOURCES.has(leg.source))
+    payment.legs.some((leg) => ORG_FUNDED_LEG_SOURCES.includes(leg.source))
   ) {
     return { consumerInvoiceId: null };
   }

@@ -214,15 +214,20 @@ describe("cron-tick dueTargets cadence", () => {
     }
   });
 
-  it("never fires more than MAX_TARGETS_PER_TICK on any tick of a month, windows included", () => {
+  it("never fires more than MAX_TARGETS_PER_TICK on any tick of 400 days, windows included", () => {
     const { MAX_TARGETS_PER_TICK } = loadTicker();
     expect(MAX_TARGETS_PER_TICK).toBe(9);
+    // 400 days from 2026-11-01 cover every month start, every weekday and every quarter start.
     const start = Date.UTC(2026, 10, 1);
-    for (let m = 0; m < 30 * 24 * 60; m += 5) {
-      const due = dueTargets(new Date(start + m * 60_000));
-      expect(due.length).toBeGreaterThanOrEqual(5);
-      expect(due.length).toBeLessThanOrEqual(MAX_TARGETS_PER_TICK);
+    let min = Infinity;
+    let max = 0;
+    for (let m = 0; m < 400 * 24 * 60; m += 5) {
+      const n = dueTargets(new Date(start + m * 60_000)).length;
+      min = Math.min(min, n);
+      max = Math.max(max, n);
     }
+    expect(min).toBeGreaterThanOrEqual(5);
+    expect(max).toBeLessThanOrEqual(MAX_TARGETS_PER_TICK);
   });
 
   it("fires the orphaned-payments healer only at :10/:40", () => {
@@ -367,7 +372,7 @@ describe("cron-tick calendar windows", () => {
   });
 
   it("anchors a window that runs past midnight to the day it opened", () => {
-    expect(dueTargets(utc(3, 0, 40))).toContain("dunning");
+    expect(dueTargets(utc(3, 0, 10))).toContain("dunning");
     expect(windowStartFor("dunning", utc(3, 0, 40))?.toISOString()).toBe(
       "2026-11-02T23:30:00.000Z",
     );
@@ -386,6 +391,48 @@ describe("cron-tick calendar windows", () => {
     ).toBe(
       "https://site.test/api/cleanup/settle-invoice-accruals?limit=10&windowStart=2026-11-01T04:00:00.000Z",
     );
+  });
+
+  it("alternates the two payout reconcilers on :40, each every two hours", () => {
+    const fires = (name: Parameters<typeof windowStartFor>[0]) =>
+      Array.from({ length: 24 * 12 }, (_, i) => utc(4, 0, i * 5))
+        .filter((t) => dueTargets(t).includes(name))
+        .map((t) => t.toISOString().slice(11, 16));
+    const stuck = fires("handle-stuck-payouts");
+    const status = fires("reconcile-payout-status");
+    expect(stuck).toHaveLength(12);
+    expect(status).toHaveLength(12);
+    expect(stuck.slice(0, 2)).toEqual(["00:40", "02:40"]);
+    expect(status.slice(0, 2)).toEqual(["01:40", "03:40"]);
+    expect(targetRequest("https://site.test", "handle-stuck-payouts")).toEqual({
+      url: "https://site.test/api/cleanup/handle-stuck-payouts?limit=5",
+      timeoutMs: 24_000,
+    });
+    expect(
+      targetRequest("https://site.test", "reconcile-payout-status").url,
+    ).toBe("https://site.test/api/cleanup/reconcile-payout-status?limit=8");
+  });
+
+  it("runs the GST register hourly on the 2nd only, 04:45 to 22:45", () => {
+    const fires = (day: number) =>
+      Array.from({ length: 24 * 12 }, (_, i) => utc(day, 0, i * 5))
+        .filter((t) => dueTargets(t).includes("gst-outward-register-export"))
+        .map((t) => t.toISOString().slice(11, 16));
+    const second = fires(2);
+    expect(second).toHaveLength(19);
+    expect([second[0], second[18]]).toEqual(["04:45", "22:45"]);
+    expect(fires(1)).toEqual([]);
+    expect(fires(3)).toEqual([]);
+    expect(
+      targetRequest(
+        "https://site.test",
+        "gst-outward-register-export",
+        utc(2, 4, 45),
+      ),
+    ).toEqual({
+      url: "https://site.test/api/cleanup/gst-outward-register-export?limit=25&windowStart=2026-11-02T04:00:00.000Z",
+      timeoutMs: 24_000,
+    });
   });
 
   it("sends the MSME digest once a day and payouts every hour", () => {
@@ -459,6 +506,7 @@ describe("cron-tick drain targets and failure reporting", () => {
     expect(reportMinutes("sweep-stuck-webhook-events")).toEqual([0]);
     expect(reportMinutes("release-earnings")).toEqual([5]);
     expect(reportMinutes("retry-moderation-enforcement")).toEqual([25]);
+    expect(reportMinutes("reconcile-payout-status")).toEqual([40]);
     expect(reportMinutes("sentry-ingest-canary")).toEqual([0]);
   });
 });

@@ -70,6 +70,9 @@ const TARGETS = [
   // posts a real stored event, so cadence is a line item on the 5,000/month
   // allowance (6 h = 120/month). See TARGET_EVERY_MINUTES and 06-ingest-canary.md.
   "sentry-ingest-canary",
+  // Payout reconcilers: bounded, rotating on lastReconciledAt; alternate hours at :40.
+  "handle-stuck-payouts",
+  "reconcile-payout-status",
   // Drains OrgDataExportJob (DPDP data export); every 10 minutes.
   "process-data-exports",
   // Drains StreamRevocationRetry and the VendorErasureRetry outbox (DPDP erasure); every 30 minutes.
@@ -84,6 +87,7 @@ const TARGETS = [
   "create-payout-batch",
   "settle-invoice-accruals",
   "expire-referral-credits",
+  "gst-outward-register-export",
   "generate-subscription-invoices",
   "abandoned-org-top-ups",
   "advance-program-cycles",
@@ -158,9 +162,15 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "support-sla-sweep": 20,
   // Units per rail: a gateway call per disbursement, a transaction per minted payout.
   "process-payouts": 5,
+  // Per payout model: up to two RazorpayX calls each.
+  "handle-stuck-payouts": 5,
+  // Per cohort, three cohorts: one RazorpayX GET each.
+  "reconcile-payout-status": 8,
   "create-payout-batch": 10,
   "settle-invoice-accruals": 10,
   "expire-referral-credits": 50,
+  // Invoice-healer mints per slice; the register upload and stamp run every slice.
+  "gst-outward-register-export": 25,
   "generate-subscription-invoices": 10,
   "abandoned-org-top-ups": 200,
   "advance-program-cycles": 25,
@@ -222,9 +232,12 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "vest-referral-credits": 30,
   "support-sla-sweep": 30,
   "process-payouts": 60,
+  "handle-stuck-payouts": 120,
+  "reconcile-payout-status": 120,
   "create-payout-batch": 15,
   "settle-invoice-accruals": 60,
   "expire-referral-credits": 60,
+  "gst-outward-register-export": 60,
   "generate-subscription-invoices": 60,
   "abandoned-org-top-ups": 60,
   "advance-program-cycles": 60,
@@ -290,13 +303,18 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "irp-uploader": 25,
   "sweep-abandoned-overage-charges": 30,
   "expire-contracts": 35,
-  "msme-payment-alerts": 40,
+  "msme-payment-alerts": 45,
   // Monthly windows on the 1st, on minutes the daily window leaves free.
   "settle-invoice-accruals": 45,
   "expire-referral-credits": 50,
+  // Monthly window on the 2nd, after the 1st's rollups.
+  "gst-outward-register-export": 45,
+  // :40 is held by no window, so the two payout reconcilers alternate on it every hour.
+  "handle-stuck-payouts": 40,
+  "reconcile-payout-status": 100,
   // Daily 23:30 window.
   "timeout-member-overages": 35,
-  dunning: 40,
+  dunning: 10,
   "wallet-low-balance": 45,
   // Daily 06:30 window, on the one minute no other window uses.
   "reconcile-gateway-settlements": 55,
@@ -337,6 +355,12 @@ const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
     dayOfMonthUtc: 1,
     startMinuteUtc: 190,
     windowMinutes: 180,
+  },
+  // Nineteen hourly slices (04:45-22:45); each re-uploads the same period CSV, so a repeat is harmless.
+  "gst-outward-register-export": {
+    dayOfMonthUtc: 2,
+    startMinuteUtc: 240,
+    windowMinutes: 1140,
   },
   "generate-subscription-invoices": DAILY_0300,
   "abandoned-org-top-ups": DAILY_0300,
@@ -425,6 +449,9 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "process-data-exports": 20_000,
   "retry-moderation-enforcement": 20_000,
   "process-payouts": 24_000,
+  "handle-stuck-payouts": 24_000,
+  "reconcile-payout-status": 24_000,
+  "gst-outward-register-export": 24_000,
   "create-payout-batch": 20_000,
   "settle-invoice-accruals": 20_000,
   "expire-referral-credits": 20_000,
@@ -692,7 +719,7 @@ export function isFirstDueTickOfHour(name: string, now: Date): boolean {
   const first =
     every === undefined
       ? 0
-      : (((OFFSET_BY_NAME[name] ?? 0) % every) + every) % every;
+      : ((((OFFSET_BY_NAME[name] ?? 0) % every) + every) % every) % 60;
   const sinceFirst = now.getUTCMinutes() - first;
   return sinceFirst >= 0 && sinceFirst < 5;
 }

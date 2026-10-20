@@ -10,17 +10,17 @@
  * - Gateway processed but DB update failed
  * - Network timeout during payout processing
  *
- * This module exports the core handler function.
- * It is imported by:
- * - jobs/handle-stuck-payouts.ts (GitHub Actions)
- * - app/api/cleanup/handle-stuck-payouts/route.ts (API endpoint)
- *
- * Schedule: Every 4 hours
+ * Driven by the `/api/cleanup/handle-stuck-payouts` twin with a per-model
+ * `limit`; each cohort rotates on `lastReconciledAt` (see reconcile-cursor.ts).
  */
 
 import prisma from "../../lib/prisma";
 import { PayoutStatus, PaymentGateway, EarningStatus } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import {
+  recordSystemError,
+  recordSystemEvent,
+} from "@/lib/enterprise/system-events";
 import {
   applyOrgGatewayStatus,
   handlePayoutWebhook,
@@ -36,6 +36,11 @@ import {
   mapGatewayStatus,
   retireUnknownGatewayPayout,
 } from "@/lib/payments/payouts/payout-gateway-lookup";
+import {
+  LEAST_RECENTLY_RECONCILED,
+  stampConsultantPayoutsReconciled,
+  stampOrgPayoutsReconciled,
+} from "@/lib/payments/payouts/reconcile-cursor";
 import { reportSentryMessage } from "@/lib/observability/report";
 
 // Consider payouts stuck if in PROCESSING for more than 24 hours
@@ -61,17 +66,46 @@ export interface StuckPayoutsResult {
 /**
  * Find and handle stuck payouts
  */
-// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
-// mutual exclusion; fail-closed: money state must not double-run unlocked.
-export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
+// Fail-closed: money state must not double-run unlocked. A permanent failure or
+// a crash also lands in SystemEvent, because it means someone is not being paid.
+export async function handleStuckPayouts(
+  opts: { limit?: number } = {},
+): Promise<StuckPayoutsResult> {
   return withCronLock(
     "handle-stuck-payouts",
     { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
-    () => handleStuckPayoutsUnlocked(),
+    async () => {
+      try {
+        const result = await handleStuckPayoutsUnlocked(opts.limit);
+        if (result.failedCount > 0 || !result.success) {
+          await recordSystemEvent({
+            category: "PAYOUT",
+            severity: "ERROR",
+            message: `Stuck-payout handler: ${result.failedCount} permanently failed, success=${result.success}`,
+            context: {
+              totalProcessed: result.totalProcessed,
+              failedCount: result.failedCount,
+              retriedCount: result.retriedCount,
+              errors: result.errors,
+            },
+          });
+        }
+        return result;
+      } catch (error) {
+        await recordSystemError({
+          category: "PAYOUT",
+          summary: "Stuck-payout handler crashed",
+          err: error,
+        });
+        throw error;
+      }
+    },
   );
 }
 
-async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
+async function handleStuckPayoutsUnlocked(
+  limit: number | undefined,
+): Promise<StuckPayoutsResult> {
   const errors: string[] = [];
   let reconciledCount = 0;
   let retriedCount = 0;
@@ -97,7 +131,10 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
         },
       },
     },
+    orderBy: [LEAST_RECENTLY_RECONCILED, { updatedAt: "asc" }],
+    take: limit,
   });
+  await stampConsultantPayoutsReconciled(stuckPayouts.map((p) => p.id));
 
   // #1407 — the pre-flight gate has to test the credentials the lookup will
   // actually send, or it reports "configured" and every lookup still 401s.
@@ -354,7 +391,11 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
     }
   }
 
-  const org = await handleStuckOrgPayouts(stuckThreshold, razorpayConfigured);
+  const org = await handleStuckOrgPayouts(
+    stuckThreshold,
+    razorpayConfigured,
+    limit,
+  );
   reconciledCount += org.reconciled;
   retriedCount += org.retried;
   skippedCount += org.skipped;
@@ -418,6 +459,7 @@ interface StuckOrgPayoutsRun {
 async function handleStuckOrgPayouts(
   stuckThreshold: Date,
   razorpayConfigured: boolean,
+  limit: number | undefined,
 ): Promise<StuckOrgPayoutsRun> {
   const run: StuckOrgPayoutsRun = {
     processed: 0,
@@ -433,8 +475,10 @@ async function handleStuckOrgPayouts(
       updatedAt: { lt: stuckThreshold },
     },
     select: { id: true, gatewayPayoutId: true },
-    orderBy: { updatedAt: "asc" },
+    orderBy: [LEAST_RECENTLY_RECONCILED, { updatedAt: "asc" }],
+    take: limit,
   });
+  await stampOrgPayoutsReconciled(stuck.map((p) => p.id));
   run.processed = stuck.length;
   if (stuck.length > 0 && !razorpayConfigured) {
     run.skipped += stuck.length;
@@ -504,11 +548,4 @@ async function reconcileStuckOrgPayout(
     failureReason: lookup.failureMessage || lookup.failureReason,
   });
   if (moved) run.reconciled++;
-}
-
-/**
- * Disconnect from database - call this when done
- */
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
 }
