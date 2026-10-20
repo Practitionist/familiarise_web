@@ -8,7 +8,7 @@ last-reviewed: 2026-06-05
 
 # Chart of accounts
 
-**What this covers:** the twelve `LedgerAccountKind` buckets every posting touches, which side each is _normal_ on (so you can read a balance correctly), and how an account is scoped + addressed deterministically. This is the vocabulary the [postings doc](03-ledger-and-postings.md) speaks.
+**What this covers:** the sixteen `LedgerAccountKind` buckets every posting touches, which side each is _normal_ on (so you can read a balance correctly), and how an account is scoped + addressed deterministically. This is the vocabulary the [postings doc](03-ledger-and-postings.md) speaks.
 
 > **Reading a balance.** `ledgerBalancePaise()` returns the **signed** balance `Σ(DEBIT) − Σ(CREDIT)` in paise. For a **debit-normal** account that number is the balance as-is. For a **credit-normal** account (every liability and revenue), the meaningful figure — _the amount we owe / the revenue we booked_ — is the **negative** of it. That single sign flip is why callers must know an account's normal side.
 
@@ -40,7 +40,9 @@ classDiagram
   class ContraRevenue_DebitNormal {
     PLATFORM_PROMO  — platform-funded grants / comps / referral credits
     DISCOUNT  — discount given to the buyer
-    GATEWAY_FEE  — the gateway's fee net of its GST (an expense)
+  }
+  class Expense_DebitNormal {
+    GATEWAY_FEE  — the gateway's fee net of its GST
   }
 ```
 

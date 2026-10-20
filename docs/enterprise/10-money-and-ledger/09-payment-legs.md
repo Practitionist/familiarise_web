@@ -54,7 +54,7 @@ flowchart LR
     LIC["LICENSE (0)"]
   end
   subgraph Debits["BOOKING transaction — debit legs"]
-    CASH[(CASH)]
+    CASH[(GATEWAY_CLEARING)]
     WALLET[("WALLET(org)")]
     AR[("ORG_RECEIVABLE(org)")]
     PROMO[(PLATFORM_PROMO)]
@@ -70,7 +70,7 @@ flowchart LR
 
 | Source                             | Writer                      | Trigger                                                                                                              | Booking debit                        |
 | ---------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `CARD`                             | checkout handler            | learner paid via gateway; `amountPaise` = remainder after wallet + credits                                           | `CASH`                               |
+| `CARD`                             | checkout handler            | learner paid via gateway; `amountPaise` = remainder after wallet + credits                                           | `GATEWAY_CLEARING`                   |
 | `WALLET`                           | `walletDebit()`             | sponsor org `fundingSource = WALLET`; leg written in the same tx as the cache decrement                              | `WALLET(org)`                        |
 | `REFERRAL_CREDIT`                  | referral consumption helper | platform referral credits applied at checkout                                                                        | `PLATFORM_PROMO`                     |
 | `INVOICE_ACCRUAL`                  | checkout handler            | sponsor org `fundingSource = INVOICE`; no cash at booking, sum-per-cycle becomes the invoice                         | `ORG_RECEIVABLE(org)`                |

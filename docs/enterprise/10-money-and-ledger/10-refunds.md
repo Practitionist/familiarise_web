@@ -123,11 +123,12 @@ Authoritative: `docs/compliance/09`.
 
 When a refund lands on a payment that was funded by an **issued** organization invoice, or when an already-invoiced `OverageEvent` base is carved back (`lib/payments/billing/overage-base-carve.ts`), the platform mints a GST credit note (`model CreditNote` in `prisma/schema.prisma`) for the invoiced portion.
 
-Every `CreditNote` row carries an explicit trigger reference enforced by the database constraint `credit_note_trigger_xor` (`CHECK (num_nonnulls("refundId", "disputeId", "overageEventId") = 1)` in `prisma/sql/check-constraints.sql`):
+Every `CreditNote` row carries an explicit trigger reference enforced by the database constraint `credit_note_trigger_xor` (`CHECK (num_nonnulls("refundId", "disputeId", "overageEventId", "voidedInvoiceId") = 1)` in `prisma/sql/check-constraints.sql`):
 
 - `refundId` (`@unique`) — when the credit note arises from a `Refund` (`mintRefundCreditNote` for booking-centric `INVOICE_ACCRUAL` legs, or `mintInvoiceRefundCreditNote` when an `OrganizationInvoice` payment is refunded directly).
 - `disputeId` (`@unique`) — when the credit note arises from a lost chargeback (`Dispute`).
 - `overageEventId` (`@unique`) — when an already-invoiced `OverageEvent` base is carved and credited back (`mintInvoiceRefundCreditNote` with `{ overageEventId }`), so the statutory document names its real trigger rather than borrowing `refundId`.
+- `voidedInvoiceId` (`@unique`) — when the platform voids an unpaid invoice (`voidOrgInvoice()`), the credit note names the voided invoice.
 
 Because each trigger column is `@unique`, a webhook redelivery or cron retry never mints a duplicate or burns a gapless sequence number, and both minters refuse to mint against a `DRAFT` or un-issued invoice — minting a Section 34 credit note against an unissued document would be a filing defect.
 
@@ -154,7 +155,7 @@ When a consultant's earnings are reversed by a refund, any TDS that was withheld
 ### Related docs
 
 - [Money model overview](01-money-model-overview.md) — the refund-vs-reimbursement-vs-payout vocabulary and the `REFUND` journal `kind`.
-- [Ledger & postings](03-ledger-and-postings.md) — the `refund:<refundId>` and `topup-refund:<paymentId>` postings in detail.
+- [Ledger & postings](03-ledger-and-postings.md) — the `refund:<refundId>` and `topup-refund:<gatewayRefundId>` postings in detail.
 - [Wallet & top-ups](04-wallet-and-topups.md) — how a `WALLET`-leg refund credits the org balance back.
 - [Earnings lifecycle](06-earnings-lifecycle.md) — the `HELD`/`REFUNDED` earning states a refund drives.
 - [Invoicing](08-invoicing.md) — the credit-note section and the invoice the refund adjusts.

@@ -75,7 +75,7 @@ flowchart TB
   BEFORE ==>|"#772 cutover"| AFTER
 ```
 
-The "no structural guarantee" box is not rhetorical: three independently-signed logs can each be internally consistent and still disagree with each other, and nothing in the schema forced them to agree. The double-entry rewrite makes "the books are wrong" a _single per-transaction predicate_ the reconciler re-proves nightly ([ledger integrity](13-ledger-integrity.md) `LEDGER_TXN_IMBALANCE`).
+The "no structural guarantee" box is not rhetorical: three independently-signed logs can each be internally consistent and still disagree with each other, and nothing in the schema forced them to agree. The double-entry rewrite makes "the books are wrong" a _single per-transaction predicate_ that Postgres enforces at COMMIT (the `ledger_txn_balanced` trigger), so no nightly sweep has to re-prove it ([ledger integrity](13-ledger-integrity.md)).
 
 ### 🛠️ What this design survived
 

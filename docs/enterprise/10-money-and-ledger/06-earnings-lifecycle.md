@@ -46,6 +46,7 @@ stateDiagram-v2
   PENDING_TRUST --> PENDING: org ACTIVE or first invoice paid
   PENDING --> READY: holdUntil elapsed (release cron)
   PENDING --> HELD: first EarningsHold placed
+  PENDING_TRUST --> HELD: first EarningsHold placed
   READY --> HELD: first EarningsHold placed
   HELD --> READY: last hold released (was READY)
   HELD --> PENDING: last hold released (was PENDING)
