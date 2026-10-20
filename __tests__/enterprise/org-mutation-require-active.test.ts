@@ -95,6 +95,8 @@ describe("Enterprise org mutation routes requireActive enforcement & DPDP compli
     }
 
     expect(missingRequireActive).toEqual([
+      // An org awaiting verification must still pay what it accrued; the route refuses only suspended orgs.
+      "app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pay/route.ts#POST",
       "app/api/organizations/[orgId]/consent/route.ts#DELETE",
       "app/api/organizations/[orgId]/data-exports/route.ts#POST",
       "app/api/organizations/[orgId]/invitations/route.ts#POST",
