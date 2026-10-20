@@ -262,7 +262,7 @@ export class WalletAdjustmentKeyReusedError extends Error {
  * An operator's signed wallet correction: the balanced journal and the cache
  * move commit in the caller's transaction. A credit is Dr PLATFORM_PROMO / Cr
  * WALLET, a debit Dr WALLET / Cr PLATFORM_FEE; a debit never overdraws.
- * Idempotent on `walletadj:<idempotencyKey>`.
+ * Idempotent on `walletadj:<billingAccountId>:<idempotencyKey>`, so a key is scoped to one wallet.
  */
 export async function adjustWallet(
   tx: Tx,
@@ -286,7 +286,7 @@ export async function adjustWallet(
   const isCredit = amountPaise > 0;
   const magnitude = Math.abs(amountPaise);
   const wallet = { kind: "WALLET" as const, organizationId: ownerOrgId };
-  const idempotencyKey = `walletadj:${params.idempotencyKey}`;
+  const idempotencyKey = `walletadj:${billingAccountId}:${params.idempotencyKey}`;
   const posted = await postLedgerTxn(tx, {
     idempotencyKey,
     kind: "WALLET_ADJUSTMENT",
@@ -314,7 +314,7 @@ export async function adjustWallet(
     const prior = await tx.ledgerEntry.findFirst({
       where: {
         transactionId: posted.transactionId,
-        account: { kind: "WALLET" },
+        account: { kind: "WALLET", organizationId: ownerOrgId },
       },
       select: { direction: true, amountPaise: true },
     });

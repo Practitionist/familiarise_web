@@ -146,7 +146,7 @@ describe("org wallet journal atomicity", () => {
       }),
     ).rejects.toBeInstanceOf(WalletInsufficientFundsError);
     expect((postLedgerTxn as jest.Mock).mock.calls[0][1]).toMatchObject({
-      idempotencyKey: "walletadj:k1",
+      idempotencyKey: "walletadj:ba_1:k1",
       kind: "WALLET_ADJUSTMENT",
       postings: [
         {
