@@ -40,6 +40,40 @@ export async function postUnappliedReceipt(
   });
 }
 
+/**
+ * Dr GATEWAY_CLEARING / Cr UNAPPLIED_RECEIPTS for an org-invoice capture no
+ * invoice can claim, keyed by the gateway `pay_…` id. True only when newly parked.
+ */
+export async function postUnappliedInvoiceReceipt(
+  tx: Tx,
+  input: {
+    gatewayPaymentId: string;
+    invoiceId: string | null;
+    capturedPaise: number;
+  },
+): Promise<boolean> {
+  if (input.capturedPaise <= 0) return false;
+  const { created } = await postLedgerTxn(tx, {
+    idempotencyKey: unappliedReceiptKey(input.gatewayPaymentId),
+    kind: "UNAPPLIED_RECEIPT",
+    description: "Org-invoice capture settles no invoice; parked for ops",
+    invoiceId: input.invoiceId,
+    postings: [
+      {
+        account: gatewayCashAccount(),
+        direction: "DEBIT",
+        amountPaise: input.capturedPaise,
+      },
+      {
+        account: { kind: "UNAPPLIED_RECEIPTS" },
+        direction: "CREDIT",
+        amountPaise: input.capturedPaise,
+      },
+    ],
+  });
+  return created;
+}
+
 /** Whether the payment's cash is parked rather than booked (posted and not released). */
 export async function hasUnappliedReceipt(
   tx: Tx,

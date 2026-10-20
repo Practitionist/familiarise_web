@@ -1,22 +1,10 @@
 /**
  * POST /api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pay
  *
- * Mints a real Razorpay order for an issued invoice and returns the
- * order id + publishable key + amount so the dashboard can open
- * Razorpay's hosted checkout. The order's `notes.type =
- * "invoice_payment"` routes the webhook handler at
- * /api/webhooks/razorpay (see app/api/webhooks/utils.ts#handleOrgPaymentSuccess)
- * to transition the invoice ISSUED → PAID atomically.
- *
- * This endpoint never settles the invoice itself — doing so client-
- * side would leave a race where the client thinks it's paid before
- * Razorpay confirms. The webhook is the only path that mutates
- * invoice.status to PAID.
- *
- * If RAZORPAY_KEY_ID/SECRET are missing (preview / CI / dev), the
- * route returns 503 so the client surfaces a "payment gateway not
- * configured" error instead of opening a popup that can never
- * resolve.
+ * Mints (or reuses) a Razorpay order for what an issued invoice still owes and
+ * returns it for hosted checkout. Only the webhook settles the invoice; the
+ * order's `notes.type = "invoice_payment"` routes the capture there. An org
+ * awaiting verification may pay; a suspended one may not.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -24,7 +12,11 @@ import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { createRazorpayOrder } from "@/lib/payments/core/razorpay";
+import { invoiceOutstandingPaise } from "@/lib/payments/billing/org-invoice-settlement";
+import {
+  createRazorpayOrder,
+  fetchRazorpayOrder,
+} from "@/lib/payments/core/razorpay";
 import { PaymentError } from "@/lib/payments/core/types";
 import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
 
@@ -40,9 +32,17 @@ export async function POST(
   const access = await requireOrgAccess(orgId, {
     permission: "billing.manage",
     canSponsor: true,
-    requireActive: true,
   });
   if (access.error) return access.error;
+  if (access.org.status === "SUSPENDED") {
+    return NextResponse.json(
+      {
+        error: "ORG_SUSPENDED",
+        message: "This organisation is suspended; contact Familiarise support.",
+      },
+      { status: 409 },
+    );
+  }
 
   // #677/PM-36 — pay initiates a gateway order for a statutory document.
   // #1236-triage — per-ACTOR key (see pdf route note).
@@ -58,7 +58,6 @@ export async function POST(
       id: true,
       status: true,
       invoiceNumber: true,
-      totalPaise: true,
       displayCurrency: true,
       paidAt: true,
       providerPaymentOrderId: true,
@@ -83,20 +82,27 @@ export async function POST(
     );
   }
 
-  let razorpayOrderId: string;
-  // Idempotent Pay: if we already minted a Razorpay order for this
-  // invoice (persisted on OrganizationInvoice.providerPaymentOrderId),
-  // reuse it instead of creating another. Without this, every retry of
-  // the client popup leaks a fresh order into the gateway.
-  if (invoice.providerPaymentOrderId) {
-    razorpayOrderId = invoice.providerPaymentOrderId;
-    console.log(
-      `[invoice/pay] reusing existing Razorpay order ${razorpayOrderId} for invoice ${invoiceId}`,
+  const amountPaise = await invoiceOutstandingPaise(prisma, invoiceId);
+  if (amountPaise <= 0) {
+    return NextResponse.json(
+      {
+        error: "Nothing is outstanding on this invoice",
+        code: "NOTHING_OUTSTANDING",
+      },
+      { status: 409 },
     );
+  }
+
+  let razorpayOrderId: string;
+  const reusable = invoice.providerPaymentOrderId
+    ? await isReusableOrder(invoice.providerPaymentOrderId, amountPaise)
+    : false;
+  if (reusable && invoice.providerPaymentOrderId) {
+    razorpayOrderId = invoice.providerPaymentOrderId;
   } else {
     try {
       const order = await createRazorpayOrder({
-        amount: invoice.totalPaise,
+        amount: amountPaise,
         currency: invoice.displayCurrency,
         paymentGateway: "RAZORPAY",
         // PaymentIntentParams.metadata insists on appointmentId/Type for
@@ -154,7 +160,10 @@ export async function POST(
     try {
       await prisma.$transaction(async (tx) => {
         const claimed = await tx.organizationInvoice.updateMany({
-          where: { id: invoiceId, providerPaymentOrderId: null },
+          where: {
+            id: invoiceId,
+            providerPaymentOrderId: invoice.providerPaymentOrderId,
+          },
           data: { providerPaymentOrderId: razorpayOrderId },
         });
         if (claimed.count === 0) {
@@ -166,6 +175,11 @@ export async function POST(
             razorpayOrderId = current.providerPaymentOrderId;
             return;
           }
+          // A receipt or parked capture cleared the stale order meanwhile; claim the empty slot.
+          await tx.organizationInvoice.updateMany({
+            where: { id: invoiceId, providerPaymentOrderId: null },
+            data: { providerPaymentOrderId: razorpayOrderId },
+          });
         }
         await tx.orgAuditLog.create({
           data: {
@@ -177,7 +191,7 @@ export async function POST(
             details: {
               invoiceId,
               razorpayOrderId,
-              totalPaise: invoice.totalPaise,
+              amountPaise,
             },
           },
         });
@@ -206,7 +220,7 @@ export async function POST(
     // confirmation without the client forwarding anything itself.
     razorpayOrderId,
     keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
-    amountPaise: invoice.totalPaise,
+    amountPaise,
     currency: invoice.displayCurrency,
     invoice: {
       id: invoice.id,
@@ -214,4 +228,17 @@ export async function POST(
       status: invoice.status,
     },
   });
+}
+
+/** A cached order is reused only while it is unpaid and still for the outstanding amount. */
+async function isReusableOrder(
+  orderId: string,
+  amountPaise: number,
+): Promise<boolean> {
+  try {
+    const order = await fetchRazorpayOrder(orderId);
+    return order?.amount === amountPaise && order.status !== "paid";
+  } catch {
+    return false;
+  }
 }

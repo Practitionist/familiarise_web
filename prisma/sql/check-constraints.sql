@@ -428,11 +428,11 @@ ALTER TABLE "CreditNote" ADD CONSTRAINT "credit_note_amounts_nonnegative"
   );
 -- SPLIT
 -- #1582 C-P0-01 — exactly one trigger keys an org credit note: a Refund, a
--- Dispute, or an OverageEvent reversal.
+-- Dispute, an OverageEvent reversal, or the platform's void of its invoice.
 ALTER TABLE "CreditNote" DROP CONSTRAINT IF EXISTS "credit_note_trigger_xor";
 -- SPLIT
 ALTER TABLE "CreditNote" ADD CONSTRAINT "credit_note_trigger_xor"
-  CHECK (num_nonnulls("refundId", "disputeId", "overageEventId") = 1);
+  CHECK (num_nonnulls("refundId", "disputeId", "overageEventId", "voidedInvoiceId") = 1);
 -- SPLIT
 ALTER TABLE "WalletTopUp" DROP CONSTRAINT IF EXISTS "wallet_topup_amount_positive";
 -- SPLIT

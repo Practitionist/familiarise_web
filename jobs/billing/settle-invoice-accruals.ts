@@ -24,7 +24,10 @@
  */
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
-import { rollupOrgInvoiceAccruals } from "@/lib/payments/billing/invoice-rollup";
+import {
+  rollupOrgInvoiceAccruals,
+  type RollupResult,
+} from "@/lib/payments/billing/invoice-rollup";
 import {
   recordSystemError,
   recordSystemEvent,
@@ -37,6 +40,78 @@ export interface SettleInvoiceAccrualsResult {
   invoicesCreated: number;
   failed: number;
   remaining: number;
+}
+
+interface RollupGaps {
+  heldForPo: { organizationId: string; invoiceNumber: string }[];
+  noGstState: string[];
+}
+
+/** Records the expected gaps a rollup reported; true when it issued an invoice. */
+function noteRollupResult(
+  organizationId: string,
+  r: RollupResult,
+  gaps: RollupGaps,
+): boolean {
+  if (r.skippedNoGstState) gaps.noGstState.push(organizationId);
+  if (r.heldForPo && r.invoiceNumber) {
+    gaps.heldForPo.push({ organizationId, invoiceNumber: r.invoiceNumber });
+  }
+  if (!r.invoiceId) return false;
+  console.log(
+    `[settle-invoice-accruals] org ${organizationId}: invoice ${r.invoiceNumber} for ${r.billedPaymentCount} bookings (₹${(r.totalPaise / 100).toFixed(2)})`,
+  );
+  return true;
+}
+
+/**
+ * #1347 — a P2034 that survived the rollup's bounded retries leaves the org
+ * unbilled this cycle, so it is recorded; the next org still runs.
+ */
+async function reportRollupFailure(
+  organizationId: string,
+  err: unknown,
+): Promise<void> {
+  if (
+    err instanceof Prisma.PrismaClientKnownRequestError &&
+    err.code === "P2034"
+  ) {
+    await recordSystemError({
+      organizationId,
+      category: "INVOICE",
+      summary: `Consolidated invoice rollup exhausted its serialization retries for org ${organizationId} — its unbilled accruals were NOT invoiced this cycle and will be retried on the next run`,
+      err,
+      context: { organizationId, prismaCode: "P2034" },
+    });
+    return;
+  }
+  console.error(
+    `[settle-invoice-accruals] org ${organizationId} failed:`,
+    err instanceof Error ? err.message : err,
+  );
+  Sentry.captureException(err, {
+    tags: { subsystem: "jobs", job: "settle-invoice-accruals" },
+  });
+}
+
+/** One row per run for each expected gap; ops fixes the org, not the cron. */
+async function reportRollupGaps(gaps: RollupGaps): Promise<void> {
+  if (gaps.noGstState.length > 0) {
+    await recordSystemEvent({
+      category: "INVOICE",
+      severity: "WARN",
+      message: `ROLLUP_GST_STATE_MISSING: ${gaps.noGstState.length} domestic org(s) have no GST state or GSTIN, so their accruals were not invoiced this cycle`,
+      context: { organizationIds: gaps.noGstState.slice(0, 50) },
+    });
+  }
+  if (gaps.heldForPo.length > 0) {
+    await recordSystemEvent({
+      category: "INVOICE",
+      severity: "WARN",
+      message: `ROLLUP_PO_NOT_COVERED: ${gaps.heldForPo.length} invoice(s) held as DRAFT because no active purchase order covers them; issue each with a PO from the admin console`,
+      context: { invoices: gaps.heldForPo.slice(0, 50) },
+    });
+  }
 }
 
 /**
@@ -90,8 +165,7 @@ export async function settleInvoiceAccruals(
   let invoicesCreated = 0;
   let failed = 0;
   let visited = 0;
-  const unbackedPo: { organizationId: string; invoiceNumber: string }[] = [];
-  const noGstState: string[] = [];
+  const gaps: RollupGaps = { heldForPo: [], noGstState: [] };
   for (const row of rows) {
     if (opts.limit !== undefined && invoicesCreated + failed >= opts.limit) {
       break;
@@ -103,65 +177,13 @@ export async function settleInvoiceAccruals(
         organizationId: row.organizationId,
         issueImmediately: true,
       });
-      if (r.skippedNoGstState) noGstState.push(row.organizationId);
-      if (r.unbackedPo && r.invoiceNumber) {
-        unbackedPo.push({
-          organizationId: row.organizationId,
-          invoiceNumber: r.invoiceNumber,
-        });
-      }
-      if (r.invoiceId) {
-        invoicesCreated++;
-        console.log(
-          `[settle-invoice-accruals] org ${row.organizationId}: invoice ${r.invoiceNumber} for ${r.billedPaymentCount} bookings (₹${(r.totalPaise / 100).toFixed(2)})`,
-        );
-      }
+      if (noteRollupResult(row.organizationId, r, gaps)) invoicesCreated++;
     } catch (err) {
-      // #1347 — a P2034 that survived the rollup's bounded retries. Skip
-      // semantics are kept (the next org still runs) but the org is left
-      // unbilled for this cycle, so it is reported, not logged away.
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2034"
-      ) {
-        failed++;
-        await recordSystemError({
-          organizationId: row.organizationId,
-          category: "INVOICE",
-          summary: `Consolidated invoice rollup exhausted its serialization retries for org ${row.organizationId} — its unbilled accruals were NOT invoiced this cycle and will be retried on the next run`,
-          err,
-          context: { organizationId: row.organizationId, prismaCode: "P2034" },
-        });
-        continue;
-      }
       failed++;
-      console.error(
-        `[settle-invoice-accruals] org ${row.organizationId} failed:`,
-        err instanceof Error ? err.message : err,
-      );
-      Sentry.captureException(err, {
-        tags: { subsystem: "jobs", job: "settle-invoice-accruals" },
-      });
+      await reportRollupFailure(row.organizationId, err);
     }
   }
-
-  // One row per run for each expected gap; ops fixes the org, not the cron.
-  if (noGstState.length > 0) {
-    await recordSystemEvent({
-      category: "INVOICE",
-      severity: "WARN",
-      message: `ROLLUP_GST_STATE_MISSING: ${noGstState.length} domestic org(s) have no GST state or GSTIN, so their accruals were not invoiced this cycle`,
-      context: { organizationIds: noGstState.slice(0, 50) },
-    });
-  }
-  if (unbackedPo.length > 0) {
-    await recordSystemEvent({
-      category: "INVOICE",
-      severity: "WARN",
-      message: `ROLLUP_PO_NOT_COVERED: ${unbackedPo.length} invoice(s) issued without a covering purchase order on orgs that require one`,
-      context: { invoices: unbackedPo.slice(0, 50) },
-    });
-  }
+  await reportRollupGaps(gaps);
 
   return {
     orgsProcessed: visited,

@@ -26,6 +26,7 @@ jest.mock("../../lib/prisma", () => {
   const tx = {
     payment: {
       findUnique: jest.fn(),
+      update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     paymentLeg: { updateMany: jest.fn() },
@@ -56,6 +57,10 @@ jest.mock("../../lib/payments/billing/overage-base-carve", () => ({
   restoreOverageBaseCarve: jest.fn().mockResolvedValue("restored"),
   recarveOverageBase: jest.fn().mockResolvedValue("recarved"),
   releaseOverageHeldParentEarnings: jest.fn().mockResolvedValue(undefined),
+}));
+const mockRefund = jest.fn().mockResolvedValue({ status: "SUCCEEDED" });
+jest.mock("../../lib/payments/operations/booking-refund", () => ({
+  refundBookingPayment: (...a: unknown[]) => mockRefund(...a),
 }));
 jest.mock("../../lib/payments/operations/refund", () => ({
   mintInvoiceRefundCreditNote: jest.fn(),
@@ -392,19 +397,16 @@ describe("unchanged paths", () => {
     expect(mockSystemError).not.toHaveBeenCalled();
   });
 
-  it("capture racing a reversal (moved === 0): still no org credit, no reversal", async () => {
+  it("capture racing a reversal (moved === 0): no org credit, no reversal, cash parked and refunded", async () => {
     mockTransition.mockReset().mockResolvedValue(0);
 
     await handleOverageMemberSuccess("order_abc", MARGINAL);
 
-    expect(mockPost).not.toHaveBeenCalled();
+    const keys = mockPost.mock.calls.map((c) => c[1].idempotencyKey);
+    expect(keys).toEqual(["unapplied:side1"]);
     expect(mockMint).not.toHaveBeenCalled();
-    // The pre-existing escalation is left exactly as it was.
-    expect(mockSystemError).toHaveBeenCalledWith(
-      expect.objectContaining({
-        category: "OVERAGE",
-        context: expect.objectContaining({ sidePaymentId: "side1" }),
-      }),
+    expect(mockRefund).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "side1", amountPaise: MARGINAL }),
     );
   });
 });

@@ -1349,7 +1349,8 @@ model Organization {
   maintenanceWindows MaintenanceWindow[]
 
   // #778 §D — GST credit notes (Sec 34) issued against this org's invoices.
-  creditNotes CreditNote[]
+  creditNotes     CreditNote[]
+  invoiceReceipts OrganizationInvoiceReceipt[]
 
   // #appt-support — org-scoped read views over members' per-appointment support
   // threads + CSAT (denormalized org tag; org admins triage / see quality).
@@ -2478,6 +2479,7 @@ model OrganizationInvoice {
 
   // #778 §D — GST credit notes (Sec 34) adjusting this invoice.
   creditNotes CreditNote[]
+  receipts    OrganizationInvoiceReceipt[]
 
   /// #779 §A — DUNNING lifecycle. The dunning cron flips ISSUED→OVERDUE when
   /// dueDate passes (no new status value — OVERDUE exists), then escalates.
@@ -2507,6 +2509,31 @@ model OrganizationInvoice {
   @@index([billingAccountId])
   @@index([contractId])
   @@index([purchaseOrderId])
+}
+
+/// Money received against an org invoice; the invoice is PAID once these and its credit notes cover the total.
+model OrganizationInvoiceReceipt {
+  id             String               @id @default(cuid())
+  organizationId String
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  invoiceId      String
+  invoice        OrganizationInvoice  @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  amountPaise    BigInt
+  method         InvoiceReceiptMethod
+  /// The bank UTR, or the gateway `pay_…` id.
+  reference      String               @db.VarChar(64)
+  receivedOn     DateTime             @db.Date
+  /// The admin who recorded a bank transfer; null for a gateway capture.
+  recordedById   String?
+  createdAt      DateTime             @default(now()) @db.Timestamptz
+
+  @@unique([organizationId, reference])
+  @@index([invoiceId])
+}
+
+enum InvoiceReceiptMethod {
+  BANK_TRANSFER
+  GATEWAY
 }
 
 // Typed line items for OrganizationInvoice — replaces the `items` Json
@@ -6522,26 +6549,28 @@ model CreditNote {
   creditNoteNumber String
   fiscalYear       Int    @default(0)
 
-  organizationId String
-  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  organizationId  String
+  organization    Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   // Original invoice this CN adjusts (Sec 34 requires the linkage). Nullable for
   // B2C/unregistered cases where no GST invoice was issued.
-  invoiceId      String?
-  invoice        OrganizationInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  invoiceId       String?
+  invoice         OrganizationInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
   // Triggering refund, when the CN arises from one. @unique (#776) makes
   // refund-driven minting idempotent: one credit note per refund, so a webhook
   // redelivery / cron retry / app re-run can't mint a duplicate or burn a
   // gapless sequence number. Postgres allows many NULLs, so manual CNs are fine.
-  refundId       String?              @unique
+  refundId        String?              @unique
   // #738-B — triggering dispute (chargeback LOST), when the CN arises from one.
   // Same idempotency discipline as refundId: one credit note per dispute.
-  disputeId      String?              @unique
+  disputeId       String?              @unique
   // #1894 — non-refund trigger: an overage base already invoiced and credited
   // back. A statutory document must name its real trigger, not borrow refundId.
-  overageEventId String?              @unique
-  reason         String?
+  overageEventId  String?              @unique
+  /// Set when the platform voided the invoice this note cancels; one per invoice.
+  voidedInvoiceId String?              @unique
+  reason          String?
   /// Issued past the CGST s.34(2) cutoff: no tax reversed, so it stays out of GSTR-1.
-  isCommercial   Boolean              @default(false)
+  isCommercial    Boolean              @default(false)
 
   // #778 §D — IRP reports credit/debit notes as their own document types for
   // in-scope (AATO ≥ ₹5cr) taxpayers; ≥ ₹10cr adds a 30-day reporting window.

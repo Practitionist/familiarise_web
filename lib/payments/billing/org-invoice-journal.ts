@@ -14,6 +14,8 @@ import { sumPaise } from "@/lib/payments/utils/money";
 
 export const invoiceIssuedKey = (invoiceId: string) =>
   `invoice-issued:${invoiceId}`;
+export const invoiceVoidedKey = (invoiceId: string) =>
+  `invoice-voided:${invoiceId}`;
 
 export type IssueJournalOutcome =
   "POSTED" | "BILLS_BOOKINGS" | "NOTHING_TO_POST";
@@ -73,6 +75,61 @@ export async function postInvoiceIssuedJournal(
     postings,
   });
   return "POSTED";
+}
+
+/**
+ * A forgiven void: clears the receivable the invoice still carries, against the
+ * void credit note's GST and fee income for the rest. With no earlier credit and
+ * a tax-bearing note this is the exact mirror of the issue journal.
+ */
+export async function postInvoiceVoidedJournal(
+  tx: Tx,
+  params: {
+    invoiceId: string;
+    organizationId: string;
+    receivablePaise: number;
+    creditNoteId: string;
+  },
+): Promise<void> {
+  const note = await tx.creditNote.findUniqueOrThrow({
+    where: { id: params.creditNoteId },
+    select: { igstPaise: true, cgstPaise: true, sgstPaise: true },
+  });
+  const gstPaise = Math.min(
+    params.receivablePaise,
+    note.igstPaise + note.cgstPaise + note.sgstPaise,
+  );
+  const postings: Posting[] = [
+    {
+      account: {
+        kind: "ORG_RECEIVABLE",
+        organizationId: params.organizationId,
+      },
+      direction: "CREDIT",
+      amountPaise: params.receivablePaise,
+    },
+  ];
+  if (gstPaise > 0) {
+    postings.push({
+      account: { kind: "GST_PAYABLE" },
+      direction: "DEBIT",
+      amountPaise: gstPaise,
+    });
+  }
+  if (params.receivablePaise - gstPaise > 0) {
+    postings.push({
+      account: { kind: "PLATFORM_FEE" },
+      direction: "DEBIT",
+      amountPaise: params.receivablePaise - gstPaise,
+    });
+  }
+  await postLedgerTxn(tx, {
+    idempotencyKey: invoiceVoidedKey(params.invoiceId),
+    kind: "INVOICE_ISSUED",
+    invoiceId: params.invoiceId,
+    description: "Org invoice voided: receivable written off by credit note",
+    postings,
+  });
 }
 
 /** Post the exact mirror of the journal under `sourceKey`; false when none was posted. */
