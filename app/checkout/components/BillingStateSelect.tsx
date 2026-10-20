@@ -93,12 +93,8 @@ export function BillingStateSelect({
 }
 
 export interface UseBillingStateResult {
-  /** The 2-digit numeric code, or null when nothing has been chosen. */
-  value: string | null;
-  onChange: (stateCode: string | null) => void;
-  /** True when this checkout mints a consumer invoice and so needs a state. */
-  required: boolean;
-  error: string | null;
+  /** Spread straight onto `<BillingStateSelect />`. */
+  selectProps: BillingStateSelectProps;
   /** Shows the inline error and returns false when a required state is missing. */
   validate: () => boolean;
   /**
@@ -117,14 +113,13 @@ export interface UseBillingStateResult {
  * paint, so without one, a buyer who answers before it lands would have their
  * answer overwritten by the stored value a moment later.
  */
-export function useBillingState(params: {
-  /** The remembered state from the checkout context, if any. */
-  initial?: string | null;
-  isInternational: boolean;
+export function useBillingState(
+  /** The checkout context: the remembered state and whether the buyer is abroad. */
+  taxContext: { billingStateCode: string | null; isInternational: boolean },
   /** The org the buyer chose to bill, or null for a personal payment. */
-  organizationId: string | null;
-}): UseBillingStateResult {
-  const { initial, isInternational, organizationId } = params;
+  organizationId: string | null,
+): UseBillingStateResult {
+  const { billingStateCode: initial, isInternational } = taxContext;
   const [value, setValue] = useState<string | null>(null);
   const [answered, setAnswered] = useState(false);
   const [submitBlocked, setSubmitBlocked] = useState(false);
@@ -132,7 +127,7 @@ export function useBillingState(params: {
 
   useEffect(() => {
     if (answered) return;
-    setValue(initial ?? null);
+    setValue(initial);
   }, [initial, answered]);
 
   // Only WALLET/INVOICE/LICENSE bill the org; an org with no rail falls back to PERSONAL.
@@ -169,6 +164,10 @@ export function useBillingState(params: {
     submitBlocked && required && value === null
       ? BUYER_STATE_REQUIRED_MESSAGE
       : null;
+  const selectProps = useMemo(
+    () => ({ value, onChange, required, error }),
+    [value, onChange, required, error],
+  );
 
-  return { value, onChange, required, error, validate, bodyField };
+  return { selectProps, validate, bodyField };
 }

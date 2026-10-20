@@ -8,9 +8,11 @@ import "../../booking-algorithm/setup";
 import {
   buildCheckoutInput,
   buyerRow,
+  eventPlanLookup,
   mintOrder,
   mockCreatePaymentIntent as createPaymentIntent,
   silenceConsole,
+  webinar,
 } from "./checkout-harness/mocks/setup";
 import { Prisma } from "@prisma/client";
 
@@ -29,42 +31,6 @@ let payments: Row[] = [];
 const APPT = "appt-webinar";
 const BUYER = "buyer";
 const OLD_INTENT = "order_OLD";
-
-const webinar = {
-  id: "web-1",
-  status: "SCHEDULED",
-  webinarPlan: {
-    id: "wplan-1",
-    price: 100_000,
-    priceCurrency: "INR",
-    maxParticipants: 50,
-    refundWindowHours: 24,
-    archivedAt: null,
-    visibility: "PUBLIC",
-    status: "PUBLISHED",
-    organizationId: null,
-    consultantProfileId: "cons-profile",
-    consultantProfile: {
-      id: "cons-profile",
-      userId: "cons-user",
-      deletedAt: null,
-      verificationStatus: "VERIFIED",
-    },
-  },
-  appointment: {
-    id: APPT,
-    occurrences: [
-      {
-        id: "occ-1",
-        startsAt: new Date(Date.now() + 72 * 3600_000),
-        endsAt: new Date(Date.now() + 73 * 3600_000),
-        deletedAt: null,
-        completionStatus: "SCHEDULED",
-      },
-    ],
-    participants: [],
-  },
-};
 
 const p2002 = () =>
   new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
@@ -98,11 +64,7 @@ beforeEach(() => {
   resetDouble({
     "user.findUnique": () => buyerRow(BUYER),
     "webinar.findUnique": () => webinar,
-    "webinarPlan.findUnique": () => ({
-      consultantProfileId: "cons-profile",
-      organizationId: null,
-      collaborators: [],
-    }),
+    "webinarPlan.findUnique": eventPlanLookup,
     // Mirrors @@unique([userId, appointmentId]); NULL appointmentId never collides.
     "payment.create": (args) => {
       const data = (args as { data: Row }).data;

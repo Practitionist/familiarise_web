@@ -162,11 +162,10 @@ export default function ConsultationCheckoutPage({
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<
     string | null
   >(null);
-  const billingState = useBillingState({
-    initial: checkoutTaxContext.billingStateCode,
-    isInternational: checkoutTaxContext.isInternational,
-    organizationId: selectedOrganizationId,
-  });
+  const billingState = useBillingState(
+    checkoutTaxContext,
+    selectedOrganizationId,
+  );
   const { validate: validateBillingState } = billingState;
   const { data: session } = useSession();
   // #1863 — the refund rail, derived from the buyer's own funding choice so the
@@ -816,12 +815,7 @@ export default function ConsultationCheckoutPage({
           }}
         />
         <Separator className="bg-border" />
-        <BillingStateSelect
-          value={billingState.value}
-          onChange={billingState.onChange}
-          required={billingState.required}
-          error={billingState.error}
-        />
+        <BillingStateSelect {...billingState.selectProps} />
         <Separator className="bg-border" />
         <div className="grid gap-4">
           <div className="font-semibold">Discount Codes</div>

@@ -64,3 +64,85 @@ export function silenceConsole(): void {
   jest.spyOn(console, "error").mockImplementation(() => {});
   jest.spyOn(console, "warn").mockImplementation(() => {});
 }
+
+const WEBINAR_START = new Date(Date.now() + 72 * 3600_000);
+
+/** A published, buyer-paid webinar plan owned by `cons-profile`. */
+export const webinarPlan = {
+  id: "wplan-1",
+  price: 100_000,
+  priceCurrency: "INR",
+  maxParticipants: 50,
+  refundWindowHours: 24,
+  archivedAt: null,
+  visibility: "PUBLIC",
+  status: "PUBLISHED",
+  organizationId: null,
+  consultantProfileId: "cons-profile",
+  consultantProfile: {
+    id: "cons-profile",
+    userId: "cons-user",
+    deletedAt: null,
+    verificationStatus: "VERIFIED",
+  },
+};
+
+/** One scheduled `web-1` session three days out, on appointment `appt-webinar`. */
+export const webinar = {
+  id: "web-1",
+  status: "SCHEDULED",
+  webinarPlan,
+  appointment: {
+    id: "appt-webinar",
+    occurrences: [
+      {
+        id: "occ-1",
+        startsAt: WEBINAR_START,
+        endsAt: new Date(WEBINAR_START.getTime() + 3600_000),
+        deletedAt: null,
+        completionStatus: "SCHEDULED",
+      },
+    ],
+    participants: [],
+  },
+};
+
+/** The in-lock event-plan lookup: owned by `cons-profile`, no collaborators. */
+export function eventPlanLookup() {
+  return {
+    consultantProfileId: "cons-profile",
+    organizationId: null,
+    collaborators: [],
+  };
+}
+
+/** An active `org-1` member on the given rail with programme assignment `pa-1`. */
+export function orgMember(
+  fundingSource: "PERSONAL" | "WALLET" | "INVOICE" | "LICENSE" = "PERSONAL",
+  membershipStatus = "ACTIVE",
+) {
+  return {
+    "organization.findUnique": () => ({
+      id: "org-1",
+      status: "ACTIVE",
+      canSponsor: true,
+      billingAccount: {
+        id: "ba-1",
+        fundingSource,
+        creditLimit: null,
+        walletBalance: 0,
+      },
+    }),
+    "billingAccount.findFirst": () => ({
+      id: "ba-1",
+      fundingSource,
+      creditLimit: null,
+    }),
+    "membership.findUnique": () => ({
+      id: "m-1",
+      role: "MEMBER",
+      status: membershipStatus,
+    }),
+    "programAssignment.findFirst": () => ({ id: "pa-1", programId: "prog-1" }),
+  };
+}

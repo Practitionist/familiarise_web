@@ -138,11 +138,10 @@ export default function ClassCheckoutPage({
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<
     string | null
   >(null);
-  const billingState = useBillingState({
-    initial: checkoutTaxContext.billingStateCode,
-    isInternational: checkoutTaxContext.isInternational,
-    organizationId: selectedOrganizationId,
-  });
+  const billingState = useBillingState(
+    checkoutTaxContext,
+    selectedOrganizationId,
+  );
   const { validate: validateBillingState } = billingState;
 
   const { toast } = useToast();
@@ -719,12 +718,7 @@ export default function ClassCheckoutPage({
           }}
         />
         <Separator className="bg-border" />
-        <BillingStateSelect
-          value={billingState.value}
-          onChange={billingState.onChange}
-          required={billingState.required}
-          error={billingState.error}
-        />
+        <BillingStateSelect {...billingState.selectProps} />
         <Separator className="bg-border" />
         <div className="grid gap-4">
           <div className="font-semibold">Discount Codes</div>
