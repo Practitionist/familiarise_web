@@ -52,7 +52,7 @@ erDiagram
 - `LedgerTransaction` — one balanced cash event. `idempotencyKey @unique` is the dedupe anchor; `kind` is a **typed `LedgerTransactionKind` enum** (#778 §B made it an enum — a free-string typo like `"BOOKNG"` used to silently break reconcile's `groupBy`; now it's a compile error); `paymentId`/`invoiceId`/`payoutId` are optional indexed soft-links for tracing.
 - `LedgerEntry` — one leg. `amountPaise` is a **positive** `BigInt`; the sign lives in `direction`.
 
-Both tables are immutable at the database, not merely by application convention: `prisma/sql/ledger-triggers.sql` installs `ledger_entry_immutable` and `ledger_transaction_immutable`, `BEFORE UPDATE OR DELETE` triggers that raise on any attempt to touch a posted row (owner decision Q5). Nothing in the codebase updates or deletes a journal row — the balance fold upserts `LedgerAccountBalance` only — so the trigger pair closes off the one write path that was previously only a code-review convention.
+Both tables are immutable at the database, not merely by application convention: `prisma/sql/ledger-triggers.sql` installs `ledger_entry_immutable` and `ledger_transaction_immutable`, `BEFORE UPDATE OR DELETE` triggers that raise on any attempt to touch a posted row (owner decision Q5). Nothing in the codebase updates or deletes a journal row, and no balance is stored beside it, so the trigger pair closes off the one write path that was previously only a code-review convention.
 
 ---
 
@@ -573,8 +573,9 @@ journal is the only balance; there is no snapshot to drift.
   transaction, and the reconciler validated it as
   `LEDGER_BALANCE_SNAPSHOT_DRIFT`. Nothing on a request path read it, while the
   fold made `CASH`, `PLATFORM_FEE` and `GST_PAYABLE` hot rows that serialized
-  every confirmation. The fold and the finding are gone; the table is unwritten
-  and is dropped at the pre-launch reset.
+  every confirmation. The fold, the finding and the Prisma model are gone; the
+  live table is unread and unwritten until the owner drops it
+  (`DROP TABLE IF EXISTS "LedgerAccountBalance";`).
 
 ### Related docs
 

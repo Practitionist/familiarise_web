@@ -2,9 +2,10 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { callOpsDoor } from "@/components/dashboard/backoffice/money/ops-door";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import {
   DashboardContent,
@@ -13,6 +14,8 @@ import {
 import { KeyValueList, Section } from "@/components/dashboard/Section";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
@@ -73,6 +76,69 @@ async function postJson(url: string, body: Record<string, unknown>) {
   return json;
 }
 
+const PAN_STATE: Record<
+  NonNullable<User360["pan"]>["state"],
+  { label: string; tone: Tone }
+> = {
+  VERIFIED: { label: "Verified", tone: "success" },
+  PENDING: { label: "Pending verification", tone: "caution" },
+  NOT_PROVIDED: { label: "Not provided", tone: "neutral" },
+};
+
+/** Verify or reject the PAN on file; a name mismatch needs the override ticked. */
+function PanDoor({
+  userId,
+  decision,
+  pan,
+}: Readonly<{
+  userId: string;
+  decision: "VERIFY" | "REJECT";
+  pan: NonNullable<User360["pan"]>;
+}>) {
+  const router = useRouter();
+  const [override, setOverride] = useState(false);
+  const verify = decision === "VERIFY";
+  return (
+    <ConfirmDialog
+      trigger={
+        <Button size="sm" variant="outline">
+          {verify ? "Verify PAN" : "Reject PAN"}
+        </Button>
+      }
+      title={verify ? "Verify this PAN?" : "Reject this PAN?"}
+      description={
+        verify
+          ? "Payouts then withhold TDS at the with-PAN rate."
+          : "Payouts then withhold TDS at the no-PAN rate."
+      }
+      confirmLabel={verify ? "Verify PAN" : "Reject PAN"}
+      tone={verify ? "default" : "destructive"}
+      requireReason={{}}
+      onConfirm={async ({ reason }) => {
+        await callOpsDoor(`/api/admin/users/${userId}/tax-info/verify-pan`, {
+          decision,
+          reason,
+          ...(verify && override ? { overrideNameMismatch: true } : {}),
+        });
+        router.refresh();
+      }}
+    >
+      {verify && !pan.namesMatch && (
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id={`pan-override-${decision}`}
+            checked={override}
+            onCheckedChange={(c) => setOverride(c === true)}
+          />
+          <Label htmlFor={`pan-override-${decision}`}>
+            The names differ; verify anyway
+          </Label>
+        </div>
+      )}
+    </ConfirmDialog>
+  );
+}
+
 function Empty({ children }: Readonly<{ children: ReactNode }>) {
   return <p className="py-6 text-sm text-muted-foreground">{children}</p>;
 }
@@ -88,6 +154,7 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
   const queryClient = useQueryClient();
   const { profile } = data;
   const canModerate = can("users.moderate");
+  const canManagePayouts = can("payouts.manage");
 
   const viewDashboard = (facet: "consultant" | "consultee") => (
     <ConfirmDialog
@@ -461,6 +528,42 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
               rows={data.verifications}
               getRowId={(v) => v.id}
               empty={<Empty>No verification submitted.</Empty>}
+            />
+          </Section>
+        )}
+
+        {data.pan && (
+          <Section
+            title="PAN"
+            variant="card"
+            actions={
+              canManagePayouts && data.pan.state !== "NOT_PROVIDED" ? (
+                <PanDoor
+                  key={data.pan.state}
+                  userId={profile.id}
+                  decision={data.pan.state === "VERIFIED" ? "REJECT" : "VERIFY"}
+                  pan={data.pan}
+                />
+              ) : undefined
+            }
+          >
+            <KeyValueList
+              items={[
+                {
+                  label: "PAN",
+                  value: <StatusBadge {...PAN_STATE[data.pan.state]} />,
+                  hint: data.pan.panLast4
+                    ? `Ending ${data.pan.panLast4}`
+                    : undefined,
+                },
+                {
+                  label: "Payout account holder",
+                  value: data.pan.payoutHolderName ?? "No verified account",
+                  hint: data.pan.payoutHolderName
+                    ? `${data.pan.namesMatch ? "Matches" : "Does not match"} the account name`
+                    : undefined,
+                },
+              ]}
             />
           </Section>
         )}

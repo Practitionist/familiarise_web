@@ -2,6 +2,7 @@ import type { Tx } from "@/lib/prisma";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { reportSentryError } from "@/lib/observability/report";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
+import { prorate } from "@/lib/payments/utils/money";
 
 function consultantClawbackKey(
   refundId: string,
@@ -103,8 +104,10 @@ export function accumulatePaidConsultantClawback(
   const payoutTds = Number(earnings.payout.tdsDeducted ?? 0);
   const netClawbackPaise =
     payoutGross > 0
-      ? Math.floor(
-          (reversedPaise * Math.max(0, payoutGross - payoutTds)) / payoutGross,
+      ? prorate(
+          reversedPaise,
+          Math.max(0, payoutGross - payoutTds),
+          payoutGross,
         )
       : reversedPaise;
   if (netClawbackPaise <= 0) return;

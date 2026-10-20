@@ -142,20 +142,19 @@ export function tdsRateToBps(tdsRate: number): number {
 }
 
 /**
- * Computes statutory Section 194-O TDS for an Indian-resident payee using
- * encrypted-PAN-on-file presence (plaintext PAN decryption is deferred to
- * Form 26Q filing).
+ * Computes statutory Section 194-O TDS for an Indian-resident payee from whether
+ * a PAN is on file (plaintext PAN decryption is deferred to Form 26Q filing).
  */
 export function computeResidentPayoutTds(
   grossAmountPaise: number,
-  panEncrypted: Uint8Array | string | null | undefined,
+  panOnFile: boolean,
   resolvedRate?: Parameters<typeof computeTdsForPayout>[0]["resolvedRate"],
 ) {
   return computeTdsForPayout({
     grossAmountPaise,
     consultant: {
       panNumber: null,
-      panOnFile: !!panEncrypted,
+      panOnFile,
       residencyStatus: "RESIDENT",
       tdsSection: null,
       tdsRateBps: null,

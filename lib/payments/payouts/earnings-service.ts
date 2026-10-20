@@ -407,11 +407,11 @@ async function resolveOrgSplit(
   });
 
   // Integer paise × basis-point math, no float drift.
-  const platformFeePaise = Math.floor(
-    (grossAmount * resolved.platformBps) / 10_000,
-  );
-  const consultantSharePaise = Math.floor(
-    (grossAmount * resolved.consultantBps) / 10_000,
+  const platformFeePaise = prorate(grossAmount, resolved.platformBps, 10_000);
+  const consultantSharePaise = prorate(
+    grossAmount,
+    resolved.consultantBps,
+    10_000,
   );
   const orgShare = grossAmount - platformFeePaise - consultantSharePaise;
 
@@ -537,9 +537,7 @@ function buildFallbackOwnerlessOrgSplit(
   grossSlice: number,
   defaultPlatformBps: number,
 ): OrgEarningsSplit {
-  const platformFeePaise = Math.floor(
-    (grossSlice * defaultPlatformBps) / 10_000,
-  );
+  const platformFeePaise = prorate(grossSlice, defaultPlatformBps, 10_000);
   return {
     organizationId: orgId,
     rateCardIdApplied: null,
@@ -607,9 +605,7 @@ async function resolveOwnerlessOrgSplit(
     );
   }
 
-  const platformFeePaise = Math.floor(
-    (grossSlice * resolved.platformBps) / 10_000,
-  );
+  const platformFeePaise = prorate(grossSlice, resolved.platformBps, 10_000);
   const orgShare = grossSlice - platformFeePaise;
 
   return {

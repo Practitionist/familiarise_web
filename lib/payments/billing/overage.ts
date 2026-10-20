@@ -20,6 +20,7 @@
  */
 import type { OverageBehavior, ProgramType } from "@prisma/client";
 import { determineTax } from "@/lib/payments/tax/tax-engine";
+import { prorate } from "@/lib/payments/utils/money";
 
 /**
  * GST on the surcharge, by the payer's place of supply. The surcharge is the one
@@ -161,9 +162,9 @@ export function computeOverage(input: OverageInput): OverageResult {
     const engagements = Number.isFinite(input.engagementsConsumed)
       ? Math.max(1, Math.floor(input.engagementsConsumed))
       : 1;
-    const perCap = input.priceCapPerEngagementPaise;
+    const perCap = input.priceCapPerEngagementPaise ?? null;
     const maxCoveredByPool =
-      perCap != null ? Math.min(remaining, engagements * perCap) : remaining;
+      perCap !== null ? Math.min(remaining, engagements * perCap) : remaining;
     coveredPaise = Math.min(price, maxCoveredByPool);
     marginalPaise = price - coveredPaise;
   } else {
@@ -224,7 +225,7 @@ export function computeOverage(input: OverageInput): OverageResult {
   const basePaise = marginalPaise;
   const surchargeBps = input.overageSurchargeBps ?? 0;
   const surchargePaise =
-    surchargeBps > 0 ? Math.floor((basePaise * surchargeBps) / 10000) : 0;
+    surchargeBps > 0 ? prorate(basePaise, surchargeBps, 10_000) : 0;
   marginalPaise = basePaise + surchargePaise;
 
   // --- Step 2: per-cycle circuit breaker → hard BLOCK regardless of behavior

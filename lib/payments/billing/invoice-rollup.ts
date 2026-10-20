@@ -36,6 +36,7 @@ import { generateOrgInvoiceNumber } from "./invoice-numbering";
 import { supplierStateCode } from "./consumer-invoice";
 import { transitionOverage } from "./overage-transitions";
 import { drawCoveringPurchaseOrder } from "./purchase-order-draw";
+import { prorate } from "@/lib/payments/utils/money";
 
 export interface RollupResult {
   invoiceId: string | null;
@@ -70,7 +71,7 @@ function accruedTaxPaise(
   if (gross <= 0 || net <= 0) return 0;
   return net === gross
     ? taxAmountPaise
-    : Math.round((taxAmountPaise * net) / gross);
+    : prorate(taxAmountPaise, net, gross, "round");
 }
 
 /**

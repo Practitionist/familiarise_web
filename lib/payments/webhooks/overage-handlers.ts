@@ -47,6 +47,7 @@ import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import { postUnappliedReceipt } from "@/lib/payments/ledger/unapplied-receipts";
 import { autoRefundPendingDescription } from "@/lib/payments/webhooks/auto-refund-marker";
+import { prorate } from "@/lib/payments/utils/money";
 
 type OverageTxOutcome =
   | { kind: "settled"; sideId: string }
@@ -200,16 +201,35 @@ async function settleOverageSidePaymentInTx(
       parentPaymentId: true,
     },
   });
-  if (
-    !side ||
-    !side.parentPaymentId ||
-    side.paymentStatus === PaymentStatus.SUCCEEDED ||
-    capturedPaise === undefined
-  ) {
-    return null;
-  }
-
+  if (!side || capturedPaise === undefined) return null;
   const capturedGatewayId = gatewayPaymentId ? { gatewayPaymentId } : {};
+
+  // A parentless EXPIRED row is the tombstone of a replaced order: park the capture and auto-refund it.
+  if (!side.parentPaymentId) {
+    if (side.paymentStatus !== PaymentStatus.EXPIRED) return null;
+    const claimed = await tx.payment.updateMany({
+      where: { id: side.id, paymentStatus: PaymentStatus.EXPIRED },
+      data: {
+        paymentStatus: PaymentStatus.SUCCEEDED,
+        ...capturedGatewayId,
+        capturedAt: new Date(),
+        description: autoRefundPendingDescription(
+          `capture landed on replaced overage order ${paymentIntentId}`,
+        ),
+      },
+    });
+    if (claimed.count === 0) return null;
+    await postUnappliedReceipt(tx, { paymentId: side.id, capturedPaise });
+    return {
+      kind: "mismatch_refund",
+      sideId: side.id,
+      capturedPaise,
+      organizationId: side.organizationId,
+      reason:
+        "Capture on a replaced overage order; auto-refunding gateway truth",
+    };
+  }
+  if (side.paymentStatus === PaymentStatus.SUCCEEDED) return null;
   if (capturedPaise !== side.amount) {
     const stamped = await tx.payment.updateMany({
       where: {
@@ -461,7 +481,7 @@ async function neutraliseInvoicedOverageBase(
     : 0;
   const grossBasePaise =
     invoice && invoice.subtotalPaise > 0
-      ? basePaise + Math.round((basePaise * taxPaise) / invoice.subtotalPaise)
+      ? basePaise + prorate(basePaise, taxPaise, invoice.subtotalPaise, "round")
       : basePaise;
 
   const { creditNoteId, outcome } = await mintInvoiceRefundCreditNote(tx, {

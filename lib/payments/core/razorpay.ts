@@ -73,6 +73,24 @@ import {
       );
     }
   }
+  // A live RazorpayX key (resolved as in resolveRazorpayXCredentials) without the egress proxy is
+  // reported once per process at load; collections keep booting and each payout call refuses.
+  if (
+    process.env.NEXT_PHASE !== "phase-production-build" &&
+    (process.env.RAZORPAYX_KEY_ID || process.env.RAZORPAY_KEY_ID)?.startsWith(
+      "rzp_live_",
+    ) &&
+    !process.env.RAZORPAYX_EGRESS_PROXY_URL
+  ) {
+    reportSentryError(
+      new PaymentError(
+        "RazorpayX live key in use but RAZORPAYX_EGRESS_PROXY_URL is unset; payouts will refuse",
+        "RAZORPAYX_EGRESS_NOT_CONFIGURED",
+        "RAZORPAY",
+      ),
+      { subsystem: "payments", op: "razorpayx-egress-boot-check" },
+    );
+  }
 }
 
 // L2 FIX: Removed module-load console.warn — per-call errors are more actionable
