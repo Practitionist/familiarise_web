@@ -151,6 +151,7 @@ jest.mock("../../lib/prisma", () => {
     },
     notificationOutbox: {
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       findMany: jest.fn(),
     },
     membership: {
@@ -223,7 +224,11 @@ interface MockPrismaClient {
   supportResponse: { create: jest.Mock };
   appointmentSupportThread: { findUnique: jest.Mock; updateMany: jest.Mock };
   supportMessage: { create: jest.Mock };
-  notificationOutbox: { findUnique: jest.Mock; findMany: jest.Mock };
+  notificationOutbox: {
+    findUnique: jest.Mock;
+    findFirst: jest.Mock;
+    findMany: jest.Mock;
+  };
   membership: { findFirst: jest.Mock };
   appointment: { findUnique: jest.Mock };
   $transaction: jest.Mock;
@@ -269,8 +274,6 @@ import {
 } from "../../lib/support/case-service";
 import { readOwnTicket } from "../../lib/support/own-case-read";
 import { runSupportSlaSweep } from "../../lib/support/sla-sweep";
-import { deriveTransactionId } from "../../lib/novu/outbox";
-import { NOVU_WORKFLOWS } from "../../lib/novu/workflows";
 import {
   GET as getCases,
   POST as postCases,
@@ -307,6 +310,8 @@ describe("WS1/WS2/WS4/WS6/WS9 Support Backend & SLA Engine", () => {
     mockPrisma.appointmentSupportThread.updateMany.mockReset();
     mockPrisma.supportMessage.create.mockReset();
     mockPrisma.notificationOutbox.findUnique.mockReset();
+    mockPrisma.notificationOutbox.findFirst.mockReset();
+    mockPrisma.notificationOutbox.findFirst.mockResolvedValue(null);
     mockPrisma.notificationOutbox.findMany.mockReset();
     mockPrisma.notificationOutbox.findMany.mockResolvedValue([]);
     mockPrisma.membership.findFirst.mockReset();
@@ -994,33 +999,29 @@ describe("WS1/WS2/WS4/WS6/WS9 Support Backend & SLA Engine", () => {
       expect(stagedDisputeKeys()).toHaveLength(4);
     });
 
-    it("pairs already staged do not use up the batch", async () => {
+    it("pairs already staged do not use up the batch, whichever admins their bell reached", async () => {
       seedDisputes([
         dispute("sent-a", 5),
         dispute("sent-b", 6),
         dispute("new-c", 40),
       ]);
+      // Staged rows are found by entityRef; their transactionId depends on which admins the bell policy allowed.
       mockPrisma.notificationOutbox.findMany.mockImplementation(
-        async (args: { where: { transactionId?: { in: string[] } } }) =>
-          (args.where.transactionId?.in ?? [])
-            .filter((id) =>
-              ["sent-a", "sent-b"].some(
-                (d) =>
-                  id ===
-                  deriveTransactionId(
-                    NOVU_WORKFLOWS.DISPUTE_UPDATED,
-                    ["admin-1"],
-                    {},
-                    `dispute-due:${d}:24`,
-                  ),
-              ),
+        async (args: { where: { entityRef?: { in: string[] } } }) =>
+          (args.where.entityRef?.in ?? [])
+            .filter((ref) =>
+              ["dispute-due:sent-a:24", "dispute-due:sent-b:24"].includes(ref),
             )
-            .map((transactionId) => ({ transactionId })),
+            .map((entityRef) => ({ entityRef })),
       );
 
       await runSupportSlaSweep({ now, limit: 1 });
 
       expect(stagedDisputeKeys()).toEqual(["dispute-due:new-c:72"]);
+      expect(mockStageBell).toHaveBeenCalledWith(
+        mockTx,
+        expect.objectContaining({ entityRef: "dispute-due:new-c:72" }),
+      );
     });
 
     it("pages every critical dispute even when the send batch is smaller", async () => {

@@ -702,30 +702,27 @@ async function processDisputeDeadlineAlerts(
     const window: "24" | "72" =
       d.dueBy.getTime() - now.getTime() <= 24 * HOUR_MS ? "24" : "72";
     const dedupeKey = `dispute-due:${d.id}:${window}`;
-    // With a dedupeKey the payload does not enter the id, so this matches what stageBell writes.
-    const transactionId = deriveTransactionId(
-      NOVU_WORKFLOWS.DISPUTE_UPDATED,
-      recipients,
-      {},
-      dedupeKey,
-    );
-    return [{ d, dueBy: d.dueBy, window, dedupeKey, transactionId }];
+    return [{ d, dueBy: d.dueBy, window, dedupeKey }];
   });
+  // Matched on entityRef, not transactionId: stageBell derives the id from the policy-filtered admins.
   const alreadyStaged = new Set(
     (
       (await prisma.notificationOutbox.findMany({
-        where: { transactionId: { in: pairs.map((p) => p.transactionId) } },
-        select: { transactionId: true },
+        where: {
+          workflowId: NOVU_WORKFLOWS.DISPUTE_UPDATED,
+          entityRef: { in: pairs.map((p) => p.dedupeKey) },
+        },
+        select: { entityRef: true },
       })) ?? []
-    ).map((r) => r.transactionId),
+    ).map((r) => r.entityRef),
   );
   const unsent = pairs
-    .filter((p) => !alreadyStaged.has(p.transactionId))
+    .filter((p) => !alreadyStaged.has(p.dedupeKey))
     .slice(0, limit);
 
   const stagedFlags = await runSequential(
     unsent,
-    async ({ d, dueBy, window, dedupeKey, transactionId }) => {
+    async ({ d, dueBy, window, dedupeKey }) => {
       const dueByIso = dueBy.toISOString();
       const subject = `[Dispute Due T-${window}h] ${d.disputeId}`;
       const escapedDisputeId = escapeHtml(d.disputeId);
@@ -744,8 +741,11 @@ async function processDisputeDeadlineAlerts(
 
         const txResult = await prisma.$transaction(
           async (tx) => {
-            const existing = await tx.notificationOutbox.findUnique({
-              where: { transactionId },
+            const existing = await tx.notificationOutbox.findFirst({
+              where: {
+                workflowId: NOVU_WORKFLOWS.DISPUTE_UPDATED,
+                entityRef: dedupeKey,
+              },
               select: { id: true },
             });
             const rowOutbox = await stageBell(tx, {
@@ -753,6 +753,7 @@ async function processDisputeDeadlineAlerts(
               recipients,
               payload,
               dedupeKey,
+              entityRef: dedupeKey,
             });
             return { newlyStaged: !existing, rowOutbox };
           },
