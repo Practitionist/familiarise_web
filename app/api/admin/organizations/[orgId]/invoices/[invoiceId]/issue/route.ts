@@ -9,6 +9,7 @@
 import { z } from "zod";
 
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
+import { orgInvoiceTotalPaise } from "@/lib/backoffice/ops-proposal-amounts";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import {
   issueDraftOrgInvoice,
@@ -67,5 +68,16 @@ export const POST = withOpsAction(
       };
     },
   },
-  { stepUp: true },
+  {
+    stepUp: true,
+    secondApprover: {
+      route: "/api/admin/organizations/[orgId]/invoices/[invoiceId]/issue",
+      target: ({ params }) => ({
+        kind: "OrganizationInvoice",
+        id: params.invoiceId,
+      }),
+      amountPaise: (_body, { params }) =>
+        orgInvoiceTotalPaise(params.orgId, params.invoiceId),
+    },
+  },
 );

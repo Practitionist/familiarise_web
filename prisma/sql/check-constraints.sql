@@ -1300,3 +1300,8 @@ ALTER TABLE "ConsultantEarnings" ADD CONSTRAINT "consultant_earnings_currency_in
 ALTER TABLE "ConsultantPayout" DROP CONSTRAINT IF EXISTS "consultant_payout_currency_inr";
 -- SPLIT
 ALTER TABLE "ConsultantPayout" ADD CONSTRAINT "consultant_payout_currency_inr" CHECK ("currency" = 'INR');
+-- SPLIT
+-- One open second-approval proposal per (action, target); decided rows keep theirs.
+CREATE UNIQUE INDEX IF NOT EXISTS "ops_action_proposal_one_open_key"
+  ON "ops_action_proposals" ("action", "targetKind", "targetId")
+  WHERE "status" = 'PROPOSED';

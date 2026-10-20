@@ -9,17 +9,27 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { requireFreshSession } from "@/lib/auth/step-up";
-import type { BackofficeSurface } from "@/lib/auth/backoffice-permissions";
+import {
+  hasBackofficePermission,
+  type BackofficeSurface,
+} from "@/lib/auth/backoffice-permissions";
 import { reportSentryError } from "@/lib/observability/report";
 import { scheduleAfter } from "@/lib/api/after-safe";
-import { refusalCode, refusalResponse } from "./ops-refusal";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
+import { UserRoleEnum } from "@/schemas/user";
+import { OpsRefusal, refusalCode, refusalResponse } from "./ops-refusal";
+import {
+  markProposalExecuted,
+  openProposal,
+  requiresSecondApprover,
+} from "./ops-proposals";
 
 /** A reason an auditor can read later; five characters rules out "ok"/"fix". */
 export const opsReasonSchema = z
@@ -107,21 +117,157 @@ type GatewayDoor<B> = {
 // Promise<unknown> accepts every route's params, read below as strings.
 type RouteContext = { params: Promise<unknown> };
 
+type OpsRouteHandler = (
+  req: NextRequest,
+  route: RouteContext,
+) => Promise<NextResponse>;
+
+/** F10: a door whose amount can exceed the threshold names how to price and target it. */
+export interface SecondApprover<B> {
+  /** The door's route; the approve door dispatches a stored proposal on it. */
+  route: string;
+  target: (ctx: OpsDoorContext<B>) => { kind: string; id: string };
+  /** What the door would move, in paise; Infinity when unbounded. */
+  amountPaise: (
+    body: B & { reason: string },
+    ctx: OpsDoorContext<B>,
+  ) => number | Promise<number>;
+}
+
+interface OpsActionOptions<B> {
+  /** IAM and money doors also need a session re-authenticated within 15 minutes. */
+  stepUp?: boolean;
+  secondApprover?: SecondApprover<B>;
+}
+
+/** A proposal another ADMIN approved, replayed through its own door. */
+export interface ApprovedProposal {
+  id: string;
+  action: string;
+  requestBody: Prisma.JsonValue;
+  routeParams: Prisma.JsonValue;
+  proposedById: string | null;
+}
+
+export interface ProposableOpsDoor {
+  proposalRoute: string;
+  executeApproved: (input: {
+    proposal: ApprovedProposal;
+    actor: OpsActor;
+  }) => Promise<{ opsActionId: string; response: Record<string, unknown> }>;
+}
+
+type Body<S extends z.ZodRawShape> = z.infer<z.ZodObject<S>>;
+type Door<B> = TxDoor<B> | GatewayDoor<B>;
+
+const routeParamsSchema = z.record(z.string());
+
 /**
  * The route shell every console door shares: the surface gate, a Zod body
  * with a required `reason`, the handler, the audit row, and typed refusals.
+ * With `secondApprover`, an amount above the threshold is held for another ADMIN.
  */
 export function withOpsAction<S extends z.ZodRawShape>(
   surface: BackofficeSurface,
-  /** A fixed name, or one read off the body (approve vs reject). */
-  actionOf: string | ((body: z.infer<z.ZodObject<S>>) => string),
+  actionOf: string | ((body: Body<S>) => string),
   shape: S,
-  door: TxDoor<z.infer<z.ZodObject<S>>> | GatewayDoor<z.infer<z.ZodObject<S>>>,
-  /** `stepUp`: IAM and money doors also need a session re-authenticated within 15 minutes. */
-  options: { stepUp?: boolean } = {},
-) {
+  door: Door<Body<S>>,
+  options: OpsActionOptions<Body<S>> & {
+    secondApprover: SecondApprover<Body<S>>;
+  },
+): OpsRouteHandler & ProposableOpsDoor;
+export function withOpsAction<S extends z.ZodRawShape>(
+  surface: BackofficeSurface,
+  /** A fixed name, or one read off the body (approve vs reject). */
+  actionOf: string | ((body: Body<S>) => string),
+  shape: S,
+  door: Door<Body<S>>,
+  options?: OpsActionOptions<Body<S>>,
+): OpsRouteHandler;
+export function withOpsAction<S extends z.ZodRawShape>(
+  surface: BackofficeSurface,
+  actionOf: string | ((body: Body<S>) => string),
+  shape: S,
+  door: Door<Body<S>>,
+  options: OpsActionOptions<Body<S>> = {},
+): OpsRouteHandler | (OpsRouteHandler & ProposableOpsDoor) {
   const schema = z.object(shape).extend({ reason: opsReasonSchema });
-  return async (req: NextRequest, route: RouteContext) => {
+  type Ctx = OpsDoorContext<Body<S>>;
+  const actionFor = (body: Body<S>) =>
+    typeof actionOf === "string" ? actionOf : actionOf(body);
+
+  /** Runs the door and writes its audit row; a replayed proposal is linked and marked EXECUTED. */
+  const execute = async (
+    ctx: Ctx,
+    action: string,
+    proposal?: ApprovedProposal,
+  ): Promise<OpsDoorResult> => {
+    const link = proposal
+      ? { proposalId: proposal.id, proposedById: proposal.proposedById }
+      : null;
+    const row = (r: OpsDoorResult, after?: Prisma.InputJsonValue) => {
+      const base = after ?? r.after;
+      return {
+        id: ctx.opsActionId,
+        actorUserId: ctx.actor.userId,
+        actorRole: ctx.actor.role,
+        surface,
+        action,
+        targetKind: r.target.kind,
+        targetId: r.target.id,
+        reason: ctx.body.reason,
+        before: r.before,
+        after: link ? { ...(isJsonObject(base) ? base : {}), ...link } : base,
+        correlationId: r.correlationId,
+      };
+    };
+    let result: OpsDoorResult;
+    if (door.mode === "tx") {
+      result = await prisma.$transaction(async (tx) => {
+        const r = await door.run(tx, ctx);
+        await recordOpsAction(tx, row(r));
+        if (
+          proposal &&
+          (await markProposalExecuted(tx, proposal.id, ctx.opsActionId)) !== 1
+        ) {
+          throw new OpsRefusal(
+            "PROPOSAL_DECIDED",
+            "This proposal is no longer approved.",
+          );
+        }
+        return r;
+      });
+    } else {
+      result = await runGatewayDoor(door, ctx, row);
+      // The money already moved; a lost EXECUTED mark pages rather than failing the answer.
+      if (proposal) {
+        await markProposalExecuted(prisma, proposal.id, ctx.opsActionId).catch(
+          (err: unknown) =>
+            reportSentryError(err, { subsystem: "admin", op: "ops-proposal" }),
+        );
+      }
+    }
+    if (result.afterCommit) {
+      void scheduleAfter(result.afterCommit, `ops:${action}`);
+    }
+    return result;
+  };
+
+  const failed = (err: unknown, action: string, opsActionId: string) => {
+    const refused = refusalResponse(err);
+    if (refused) return refused;
+    reportSentryError(err, {
+      subsystem: "admin",
+      op: `ops:${action}`,
+      extra: { opsActionId },
+    });
+    return NextResponse.json(
+      { error: "Something went wrong — please try again.", code: "FAILED" },
+      { status: 500 },
+    );
+  };
+
+  const handler: OpsRouteHandler = async (req, route) => {
     const auth = await requireBackofficeSurface(surface, { expectUser: true });
     if (auth.error) return auth.error;
     if (options.stepUp) {
@@ -138,8 +284,8 @@ export function withOpsAction<S extends z.ZodRawShape>(
         { status: 400 },
       );
     }
-    const ctx: OpsDoorContext<z.infer<z.ZodObject<S>>> = {
-      body: parsed.data as z.infer<z.ZodObject<S>> & { reason: string },
+    const ctx: Ctx = {
+      body: parsed.data as Body<S> & { reason: string },
       actor: {
         userId: auth.session.user.id,
         role: String(auth.session.user.role ?? "UNKNOWN"),
@@ -148,49 +294,134 @@ export function withOpsAction<S extends z.ZodRawShape>(
         ((await route?.params) as Record<string, string> | undefined) ?? {},
       opsActionId: randomUUID(),
     };
-    const action = typeof actionOf === "string" ? actionOf : actionOf(ctx.body);
-    const row = (r: OpsDoorResult, after?: Prisma.InputJsonValue) => ({
-      id: ctx.opsActionId,
-      actorUserId: ctx.actor.userId,
-      actorRole: ctx.actor.role,
-      surface,
-      action,
-      targetKind: r.target.kind,
-      targetId: r.target.id,
-      reason: ctx.body.reason,
-      before: r.before,
-      after: after ?? r.after,
-      correlationId: r.correlationId,
-    });
+    const action = actionFor(ctx.body);
     try {
-      const result =
-        door.mode === "tx"
-          ? await prisma.$transaction(async (tx) => {
-              const r = await door.run(tx, ctx);
-              await recordOpsAction(tx, row(r));
-              return r;
-            })
-          : await runGatewayDoor(door, ctx, row);
-      if (result.afterCommit)
-        scheduleAfter(result.afterCommit, `ops:${action}`);
+      if (options.secondApprover) {
+        const proposed = await proposeIfRequired(
+          options.secondApprover,
+          surface,
+          action,
+          ctx,
+        );
+        if (proposed) {
+          return NextResponse.json(
+            {
+              proposalId: proposed.id,
+              status: "PROPOSED",
+              expiresAt: proposed.expiresAt.toISOString(),
+              opsActionId: ctx.opsActionId,
+            },
+            { status: 202 },
+          );
+        }
+      }
+      const result = await execute(ctx, action);
       return NextResponse.json(
         { ...result.response, opsActionId: ctx.opsActionId },
         { status: result.status ?? 200 },
       );
     } catch (err) {
-      const refused = refusalResponse(err);
-      if (refused) return refused;
-      reportSentryError(err, {
-        subsystem: "admin",
-        op: `ops:${action}`,
-        extra: { opsActionId: ctx.opsActionId },
-      });
-      return NextResponse.json(
-        { error: "Something went wrong — please try again.", code: "FAILED" },
-        { status: 500 },
-      );
+      return failed(err, action, ctx.opsActionId);
     }
   };
+
+  const secondApprover = options.secondApprover;
+  if (!secondApprover) return handler;
+  const executeApproved: ProposableOpsDoor["executeApproved"] = async ({
+    proposal,
+    actor,
+  }) => {
+    const role = UserRoleEnum.safeParse(actor.role);
+    if (!role.success || !hasBackofficePermission(role.data, surface)) {
+      throw new OpsRefusal(
+        "FORBIDDEN",
+        "You cannot run this action yourself, so you cannot approve it.",
+        403,
+      );
+    }
+    const body = schema.safeParse(proposal.requestBody);
+    const params = routeParamsSchema.safeParse(proposal.routeParams);
+    if (!body.success || !params.success) {
+      throw new OpsRefusal(
+        "PROPOSAL_INVALID",
+        "This proposal's stored request no longer validates; propose it again.",
+      );
+    }
+    const ctx: Ctx = {
+      body: body.data as Body<S> & { reason: string },
+      actor,
+      params: params.data,
+      opsActionId: randomUUID(),
+    };
+    const action = actionFor(ctx.body);
+    if (action !== proposal.action) {
+      throw new OpsRefusal(
+        "PROPOSAL_INVALID",
+        "This proposal's stored request names a different action.",
+      );
+    }
+    const result = await execute(ctx, action, proposal);
+    return { opsActionId: ctx.opsActionId, response: result.response };
+  };
+  return Object.assign(handler, {
+    proposalRoute: secondApprover.route,
+    executeApproved,
+  });
+}
+
+/** Holds the door as a PROPOSED row when F10 needs a second ADMIN; null runs it now. */
+async function proposeIfRequired<B>(
+  secondApprover: SecondApprover<B>,
+  surface: BackofficeSurface,
+  action: string,
+  ctx: OpsDoorContext<B>,
+): Promise<{ id: string; expiresAt: Date } | null> {
+  const amountPaise = await secondApprover.amountPaise(ctx.body, ctx);
+  if (!(await requiresSecondApprover(prisma, amountPaise))) return null;
+  const target = secondApprover.target(ctx);
+  // A JSON round-trip, not a clone: the row holds exactly what the replay re-parses.
+  const requestBody: Prisma.InputJsonValue = JSON.parse(
+    JSON.stringify(ctx.body),
+  );
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const proposal = await openProposal(tx, {
+        action,
+        route: secondApprover.route,
+        target,
+        amountPaise,
+        requestBody,
+        routeParams: ctx.params,
+        proposedById: ctx.actor.userId,
+        reason: ctx.body.reason,
+        now: new Date(),
+      });
+      await recordOpsAction(tx, {
+        id: ctx.opsActionId,
+        actorUserId: ctx.actor.userId,
+        actorRole: ctx.actor.role,
+        surface,
+        action: "ops-proposal.propose",
+        targetKind: target.kind,
+        targetId: target.id,
+        reason: ctx.body.reason,
+        after: {
+          proposalId: proposal.id,
+          action,
+          amountPaise: Number.isFinite(amountPaise) ? amountPaise : null,
+        },
+      });
+      return proposal;
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      throw new OpsRefusal(
+        "PROPOSAL_PENDING",
+        "This action is already waiting for a second admin's approval.",
+      );
+    }
+    throw err;
+  }
 }
 
 async function runGatewayDoor<B>(

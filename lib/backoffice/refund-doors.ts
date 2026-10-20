@@ -195,3 +195,34 @@ export async function assertSessionRefundable(args: {
     "This session was already refunded at a different amount. Issue any further refund without the session link.",
   );
 }
+
+/** What a full refund of this payment would return now; 0 when it is unknown. */
+export async function refundablePaymentPaise(
+  paymentId: string,
+): Promise<number> {
+  const payment = await prisma.payment.findUnique({
+    where: { id: paymentId, deletedAt: null },
+    select: { amount: true, ...REFUNDABLE_BALANCE_SELECT },
+  });
+  return payment ? refundableBalancePaise(Number(payment.amount), payment) : 0;
+}
+
+/** An upper bound on a whole-event refund: every SUCCEEDED seat's refundable balance. */
+export async function refundableEventPaise(
+  kind: "class" | "webinar",
+  eventId: string,
+): Promise<number> {
+  const payments = await prisma.payment.findMany({
+    where: {
+      appointment:
+        kind === "webinar" ? { webinarId: eventId } : { classId: eventId },
+      paymentStatus: "SUCCEEDED",
+      deletedAt: null,
+    },
+    select: { amount: true, ...REFUNDABLE_BALANCE_SELECT },
+  });
+  return payments.reduce(
+    (sum, p) => sum + refundableBalancePaise(Number(p.amount), p),
+    0,
+  );
+}

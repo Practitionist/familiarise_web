@@ -158,6 +158,8 @@ model User {
   // Disputes this admin owns (#269).
   disputesAssigned              Dispute[]                     @relation("DisputeAssignee")
   opsActions                    OpsActionLog[]
+  opsProposalsMade              OpsActionProposal[]           @relation("OpsProposalProposer")
+  opsProposalsDecided           OpsActionProposal[]           @relation("OpsProposalDecider")
   declaredIncidents             PlatformIncident[]
   incidentRemedies              IncidentRemedy[]
   // A8 — documents this consultant reviewed (back-relation for the FK-ified
@@ -3753,6 +3755,46 @@ model OpsActionLog {
   @@index([targetKind, targetId])
   @@index([actorUserId, createdAt])
   @@map("ops_action_logs")
+}
+
+/// A money door above the second-approval threshold, held until a different ADMIN
+/// approves it; one PROPOSED row per (action, target) via the prisma/sql sidecar.
+model OpsActionProposal {
+  id                     String                  @id @default(uuid())
+  /// The door's withOpsAction action slug.
+  action                 String
+  /// The door's route; the approve door dispatches on it.
+  surface                String
+  targetKind             String
+  targetId               String
+  /// Paise; null = unbounded (an unlimited credit limit).
+  amountPaise            BigInt?
+  /// The validated body the approver's run replays, and the route params it ran under.
+  requestBody            Json
+  routeParams            Json
+  proposedById           String?
+  proposedBy             User?                   @relation("OpsProposalProposer", fields: [proposedById], references: [id], onDelete: SetNull)
+  reason                 String                  @db.Text
+  status                 OpsActionProposalStatus @default(PROPOSED)
+  decidedById            String?
+  decidedBy              User?                   @relation("OpsProposalDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedAt              DateTime?               @db.Timestamptz
+  decisionReason         String?                 @db.Text
+  /// A PROPOSED row past this is expired; read-time, so no sweep runs.
+  expiresAt              DateTime                @db.Timestamptz
+  executedOpsActionLogId String?                 @unique
+  createdAt              DateTime                @default(now()) @db.Timestamptz
+
+  @@index([status, createdAt])
+  @@map("ops_action_proposals")
+}
+
+enum OpsActionProposalStatus {
+  PROPOSED
+  APPROVED
+  EXECUTED
+  REJECTED
+  EXPIRED
 }
 
 //////////////////////////////////////////////////// PROFESSIONAL BACKGROUND MODELS ////////////////////////////////////////////////////
