@@ -202,9 +202,9 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
     <div className="space-y-8">
       {/* Quality signal — aggregates only (ADR 20) */}
       <section>
-        <h2 className="mb-3 text-sm font-semibold text-foreground">
+        <h3 className="mb-3 text-sm font-semibold text-foreground">
           Session quality
-        </h2>
+        </h3>
         <div className="grid gap-3 sm:grid-cols-2">
           {summaryError ? (
             summaryError
@@ -295,9 +295,9 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
       {/* Members' support conversations — metadata triage */}
       <section>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+          <h3 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
             <MessageSquareText className="h-4 w-4" /> Member support activity
-          </h2>
+          </h3>
           <div className="flex gap-1">
             <Button
               size="sm"

@@ -11,6 +11,7 @@ export default async function EvidencePage({
   return (
     <>
       <PageHeader
+        headingLevel={2}
         title="Evidence requests"
         description="Requests addressed to you about sessions sponsored or hosted by this organization."
       />

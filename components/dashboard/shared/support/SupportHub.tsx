@@ -17,7 +17,6 @@ import { useSession } from "@/lib/auth-client";
 import { caseKeyOf } from "@/lib/support/case-key";
 import { throwSupportError } from "@/lib/support/error-copy";
 import { CreateTicketDialog } from "./CreateTicketDialog";
-import { PlatformSupportSheet } from "@/components/support/PlatformSupportSheet";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 
 const Cases = z.object({
@@ -228,12 +227,6 @@ export function SupportHub({
             `/dashboard/support/${caseKeyOf({ kind: "case", id })}`
           }
         />
-        <PlatformSupportSheet
-          requestHref={(id) =>
-            `/dashboard/support/${caseKeyOf({ kind: "case", id })}`
-          }
-          trigger={<Button variant="ghost">Guided help</Button>}
-        />
         {appointmentsHref && (
           <Button
             variant="outline"
@@ -251,7 +244,7 @@ export function SupportHub({
           id="support-appointment-picker"
           className="space-y-3 rounded-lg border border-border p-4"
         >
-          <h2 className="text-sm font-semibold">Choose an appointment</h2>
+          <h3 className="text-sm font-semibold">Choose an appointment</h3>
           {appointmentContent}
           <p className="text-sm text-muted-foreground">
             Looking for another booking?{" "}

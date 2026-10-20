@@ -29,6 +29,7 @@ export default async function OrganizationSupportPage({
   return (
     <>
       <PageHeader
+        headingLevel={2}
         title="Support requests"
         description="Your organization’s operations and billing conversations with the Familiarise team."
         actions={

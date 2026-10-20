@@ -112,7 +112,7 @@ export function ProductFeedbackPage() {
         {query.data?.map((feedback) => (
           <li className="space-y-2 py-4" key={feedback.id}>
             <div className="flex flex-wrap items-start justify-between gap-2">
-              <h2 className="text-sm font-medium">{feedback.title}</h2>
+              <h3 className="text-sm font-medium">{feedback.title}</h3>
               <StatusBadge
                 label={STATUS_LABELS[feedback.status]}
                 tone="neutral"
@@ -130,6 +130,7 @@ export function ProductFeedbackPage() {
   return (
     <>
       <PageHeader
+        headingLevel={2}
         title="Product feedback"
         description="Ideas and suggestions to improve Familiarise. For help with a booking or account, open Support requests."
         actions={
@@ -150,7 +151,7 @@ export function ProductFeedbackPage() {
               submit.mutate();
           }}
         >
-          <h2 className="text-base font-semibold">Suggest an improvement</h2>
+          <h3 className="text-base font-semibold">Suggest an improvement</h3>
           <div className="space-y-2">
             <Label htmlFor="product-feedback-title">Title</Label>
             <Input

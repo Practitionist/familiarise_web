@@ -3,6 +3,10 @@
 import type { ReactNode } from "react";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { SupportHub } from "./SupportHub";
+import { Button } from "@/components/ui/button";
+import { PlatformSupportSheet } from "@/components/support/PlatformSupportSheet";
+import { caseKeyOf } from "@/lib/support/case-key";
+import { supportRequestHref } from "@/lib/novu/resolve-href";
 
 export interface SupportRequestsPageProps {
   /** `/dashboard/<tree>/<id>` — the page lives at `<basePath>/support`. */
@@ -19,19 +23,33 @@ export function SupportRequestsPage({
   return (
     <>
       <PageHeader
-        title="Support requests"
-        description="Your conversations with the Familiarise team — about a session or the platform."
+        title="Your requests"
+        headingLevel={2}
+        description="Track conversations with the Familiarise team about an appointment or your account."
       />
       <div className="space-y-6">
         <SupportHub
           requestsBase={`${basePath}/support/requests`}
           appointmentsHref={`${basePath}/appointments`}
         />
-        <details className="rounded-lg border border-border p-4">
+        <details className="border-t border-border pt-5">
           <summary className="cursor-pointer text-sm font-medium">
-            Helpful articles
+            Find an answer
           </summary>
-          <div className="mt-4">{suggested}</div>
+          <div className="mt-4 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                Follow guided steps or browse answers to common questions.
+              </p>
+              <PlatformSupportSheet
+                requestHref={(id) =>
+                  supportRequestHref(caseKeyOf({ kind: "case", id }))
+                }
+                trigger={<Button variant="outline">Guided help</Button>}
+              />
+            </div>
+            {suggested}
+          </div>
         </details>
       </div>
     </>

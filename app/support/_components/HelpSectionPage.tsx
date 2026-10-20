@@ -13,6 +13,7 @@ export function HelpSectionPage({
     return (
       <>
         <PageHeader
+          headingLevel={2}
           title="Reports & appeals"
           description="Track your reports and review decisions affecting your content or account."
         />
@@ -23,6 +24,7 @@ export function HelpSectionPage({
     return (
       <>
         <PageHeader
+          headingLevel={2}
           title="Evidence requests"
           description="Information the platform investigation team has asked you to provide."
         />

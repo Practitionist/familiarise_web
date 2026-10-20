@@ -14,6 +14,7 @@ export default async function ActivityPage({
   return (
     <>
       <PageHeader
+        headingLevel={2}
         title="Member support activity"
         description="Session-quality aggregates and support statuses. Members’ private conversations remain with the platform team."
       />

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { goHref } from "@/lib/dashboard/go";
+import { PageHeader } from "@/components/dashboard/PageScaffold";
 
 /** Secondary page navigation stays out of request details so forms retain their full width. */
 export function HelpSupportLayout({
@@ -33,7 +34,7 @@ export function HelpSupportLayout({
   )
     return children;
   const items = [
-    { label: "Support requests", href: root, icon: MessagesSquare },
+    { label: "Requests", href: root, icon: MessagesSquare },
     { label: "Evidence requests", href: `${root}/evidence`, icon: FileCheck },
     ...(!organization
       ? [
@@ -61,19 +62,28 @@ export function HelpSupportLayout({
   ];
   return (
     <div className="min-w-0 space-y-6">
+      <PageHeader
+        title={organization ? "Organization help & support" : "Help & support"}
+        description={
+          organization
+            ? "Get help and follow support activity for this organization."
+            : "Get help, follow requests, and share product feedback."
+        }
+        className="mb-0"
+      />
       <nav aria-label="Help and support pages" className="min-w-0 space-y-3">
-        <div className="overflow-x-auto pb-1">
-          <ul className="inline-flex w-max items-center gap-1 rounded-lg bg-muted p-1">
+        <div className="-mx-1 overflow-x-auto px-1 py-1">
+          <ul className="flex min-w-max items-center gap-6 border-b border-border">
             {items.map(({ label, href, icon: Icon }) => (
               <li key={href} className="shrink-0">
                 <Link
                   href={href}
                   aria-current={pathname === href ? "page" : undefined}
                   className={cn(
-                    "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                    "-mb-px inline-flex items-center justify-center gap-2 whitespace-nowrap border-b-2 px-0.5 py-3 text-sm font-medium transition-colors focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                     pathname === href
-                      ? "bg-background text-foreground shadow"
-                      : "text-muted-foreground hover:text-foreground",
+                      ? "border-foreground text-foreground"
+                      : "border-transparent text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground",
                   )}
                 >
                   <Icon className="h-4 w-4 shrink-0" aria-hidden />
