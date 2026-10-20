@@ -7,10 +7,8 @@
  * - Webhooks were missed or delayed
  * - Dispute status changed but webhook wasn't received
  *
- * This module exports the core reconciliation function.
- * It is imported by:
- * - jobs/reconcile-disputes.ts (GitHub Actions)
- * - app/api/cleanup/reconcile-disputes/route.ts (API endpoint)
+ * This module exports the core reconciliation function, driven by the
+ * `/api/cleanup/reconcile-disputes` twin on the Netlify ticker.
  */
 
 import prisma from "../../lib/prisma";
@@ -137,15 +135,19 @@ async function flagDisputeForManualReview(
  */
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
-export async function reconcileDisputes(): Promise<DisputeReconciliationResult> {
+export async function reconcileDisputes(
+  opts: { limit?: number } = {},
+): Promise<DisputeReconciliationResult> {
   return withCronLock(
     "reconcile-disputes",
     { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
-    () => reconcileDisputesUnlocked(),
+    () => reconcileDisputesUnlocked(opts),
   );
 }
 
-async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult> {
+async function reconcileDisputesUnlocked(opts: {
+  limit?: number;
+}): Promise<DisputeReconciliationResult> {
   const approachingDeadline = new Date(Date.now() + APPROACHING_DEADLINE_MS);
   const staleThreshold = new Date(Date.now() - STALE_THRESHOLD_MS);
   const urgentThreshold = new Date(Date.now() + 48 * 60 * 60 * 1000);
@@ -174,9 +176,9 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
     include: {
       payment: true,
     },
-    orderBy: {
-      dueBy: "asc",
-    },
+    // Least recently touched first: every polled row has its updatedAt bumped, so a limited run rotates through the cohort.
+    orderBy: [{ updatedAt: "asc" }, { dueBy: "asc" }],
+    ...(opts.limit === undefined ? {} : { take: opts.limit }),
   });
 
   console.log(`Found ${disputesToReconcile.length} disputes to reconcile`);

@@ -57,7 +57,11 @@ function loadCronTicker(): {
     },
   });
   const mod = { exports: {} as ReturnType<typeof loadCronTicker> };
-  vm.runInNewContext(outputText, { module: mod, exports: mod.exports });
+  vm.runInNewContext(outputText, {
+    module: mod,
+    exports: mod.exports,
+    require,
+  });
   return mod.exports;
 }
 

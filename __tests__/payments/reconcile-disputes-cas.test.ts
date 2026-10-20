@@ -25,20 +25,21 @@ const updateMany = jest.fn(async ({ where }: { where: { status: string } }) =>
   where.status === "UNDER_REVIEW" ? { count: 0 } : { count: 1 },
 );
 const update = jest.fn();
+const findMany = jest.fn(async (_args: unknown) => [
+  {
+    disputeId: "dp_1",
+    status: "UNDER_REVIEW",
+    paymentGateway: "RAZORPAY",
+    dueBy: null,
+    evidence: null,
+    payment: { id: "p1", amount: 1000, gatewayPaymentId: "pay_1" },
+  },
+]);
 jest.mock("../../lib/prisma", () => {
   const db = {
     $transaction: (fn: (tx: unknown) => unknown) => fn(db),
     dispute: {
-      findMany: jest.fn(async () => [
-        {
-          disputeId: "dp_1",
-          status: "UNDER_REVIEW",
-          paymentGateway: "RAZORPAY",
-          dueBy: null,
-          evidence: null,
-          payment: { id: "p1", amount: 1000, gatewayPaymentId: "pay_1" },
-        },
-      ]),
+      findMany: (a: unknown) => findMany(a),
       updateMany: (...a: unknown[]) => updateMany(...(a as [never])),
       update: (...a: unknown[]) => update(...a),
     },
@@ -73,5 +74,32 @@ describe("dispute reconciliation is a CAS on the status it read", () => {
     // The miss is a skip, not a reconciliation and not an error.
     expect(result.reconciledCount).toBe(0);
     expect(result.errors).toEqual([]);
+  });
+});
+
+describe("dispute reconciliation honours the ticker's limit", () => {
+  it("takes at most `limit` rows, least recently touched first", async () => {
+    mockGetRazorpayDispute.mockResolvedValue({
+      paymentId: "pay_1",
+      status: "needs_response",
+      evidence: {},
+      isChargeRefundable: true,
+      dueBy: null,
+    });
+
+    await reconcileDisputes({ limit: 10 });
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        take: 10,
+        orderBy: [{ updatedAt: "asc" }, { dueBy: "asc" }],
+      }),
+    );
+  });
+
+  it("is unbounded without a limit", async () => {
+    await reconcileDisputes().catch(() => undefined);
+
+    expect(findMany.mock.calls[0][0]).not.toHaveProperty("take");
   });
 });

@@ -706,10 +706,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "reconcile-disputes": () =>
       cleanupRoute({
         job: "reconcile-disputes",
-        run: async () => {
+        run: async (req) => {
           const { reconcileDisputes } =
             await import("@/scripts/disputes/reconcile-disputes");
-          const result = await reconcileDisputes();
+          const result = await reconcileDisputes({
+            limit: parseLimitParam(req),
+          });
           if (result.urgentCount > 0) {
             console.warn(
               `ALERT: ${result.urgentCount} disputes require immediate attention!`,
@@ -797,6 +799,11 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
             scope: "full",
             triggeredById,
           });
+          if (!report.ok) {
+            const { respondToLedgerDrift } =
+              await import("@/scripts/reconcile/ledger-drift-response");
+            await respondToLedgerDrift(report);
+          }
           return {
             success: true,
             runId: report.id,
