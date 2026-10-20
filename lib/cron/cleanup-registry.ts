@@ -800,12 +800,17 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
             scope: "full",
             triggeredById,
           });
+          // Same freeze as the nightly job and the admin door.
+          const { freezeDriftedWallets } =
+            await import("@/lib/payments/wallet-freeze");
+          const frozenWallets = await freezeDriftedWallets(report);
           return {
             success: true,
             runId: report.id,
             scope: report.scope,
             status: "OK" as const,
             report,
+            frozenWallets,
           };
         },
         summarize: (r) => ({
@@ -813,6 +818,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           status: r.status,
           ok: r.report.ok,
           discrepanciesCount: r.report.summary?.discrepanciesCount ?? 0,
+          frozenWallets: r.frozenWallets.length,
         }),
         status: (r) => statusFor(r, !r.report.ok),
         failureMessage: "Failed to run ledger reconciliation",

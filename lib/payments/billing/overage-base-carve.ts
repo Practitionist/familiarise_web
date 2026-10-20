@@ -164,6 +164,57 @@ async function loadCarveContext(
 }
 
 /**
+ * The Dr WALLET line for a base restored onto a wallet-funded parent. The
+ * parent's booking journal funded the carved base from its DISCOUNT plug, so
+ * the restore moves it: Dr WALLET / Cr DISCOUNT, once per overage event. A
+ * parent whose booking journal has not posted yet tallies the restored leg itself.
+ */
+async function journalWalletBaseRestore(
+  tx: Tx,
+  args: {
+    parentPaymentId: string;
+    billingAccountId: string;
+    overageEventId: string;
+    basePaise: number;
+  },
+): Promise<void> {
+  const booking = await tx.ledgerTransaction.findUnique({
+    where: { idempotencyKey: `booking:${args.parentPaymentId}` },
+    select: { id: true },
+  });
+  if (!booking) return;
+  const { ownerOrgId } = await tx.billingAccount.findUniqueOrThrow({
+    where: { id: args.billingAccountId },
+    select: { ownerOrgId: true },
+  });
+  const { postLedgerTxn } = await import("@/lib/payments/ledger/post");
+  const posted = await postLedgerTxn(tx, {
+    idempotencyKey: `overage-restore:${args.overageEventId}`,
+    kind: "OVERAGE_MEMBER",
+    paymentId: args.parentPaymentId,
+    description: `Abandoned member overage ${args.overageEventId}: base restored onto the org wallet`,
+    postings: [
+      {
+        account: { kind: "WALLET", organizationId: ownerOrgId },
+        direction: "DEBIT",
+        amountPaise: args.basePaise,
+      },
+      {
+        account: { kind: "DISCOUNT" },
+        direction: "CREDIT",
+        amountPaise: args.basePaise,
+      },
+    ],
+  });
+  // The wallet was just debited again; without a fresh journal line that is drift.
+  if (!posted.created) {
+    throw new Error(
+      `restoreOverageBaseCarve: overage ${args.overageEventId} was already restored onto the wallet; refusing an unjournaled second debit`,
+    );
+  }
+}
+
+/**
  * FAILED edge: return the carved basePaise to the parent's INVOICE_ACCRUAL
  * or WALLET leg + amount and release any overage-held earnings on the parent
  * payment. For LICENSE parents (whose booking leg is ₹0 and cannot absorb the
@@ -218,6 +269,12 @@ export async function restoreOverageBaseCarve(
           amountPaise: ctx.event.basePaise,
           reason: "BOOKING",
           paymentId: ctx.parent.id,
+        });
+        await journalWalletBaseRestore(tx as unknown as Tx, {
+          parentPaymentId: ctx.parent.id,
+          billingAccountId: ctx.parent.billingAccountId,
+          overageEventId: ctx.event.id,
+          basePaise: ctx.event.basePaise,
         });
       }
       await tx.payment.updateMany({

@@ -652,9 +652,17 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
       },
       billingAccount: {
         updateMany: jest.fn(),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ ownerOrgId: "org_w" }),
+      },
+      ledgerTransaction: {
+        findUnique: jest.fn().mockResolvedValue({ id: "txn_booking" }),
       },
       ...holds.db,
     };
+    const { postLedgerTxn } = jest.requireMock(
+      "../../lib/payments/ledger/post",
+    );
+    postLedgerTxn.mockClear();
 
     const outcome = await restoreOverageBaseCarve(mockTx as never, {
       sidePaymentId: "side_wallet_1",
@@ -685,6 +693,31 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
       preHoldStatus: null,
     });
     expect(holds.activeReasons("ce_wallet_1")).toEqual([]);
+    // The re-debit carries its own balanced journal, moving the base off DISCOUNT.
+    expect(postLedgerTxn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        idempotencyKey: "overage-restore:oe_wallet_1",
+        postings: [
+          {
+            account: { kind: "WALLET", organizationId: "org_w" },
+            direction: "DEBIT",
+            amountPaise: 40_000,
+          },
+          {
+            account: { kind: "DISCOUNT" },
+            direction: "CREDIT",
+            amountPaise: 40_000,
+          },
+        ],
+      }),
+    );
+    postLedgerTxn.mockResolvedValueOnce({ created: false });
+    await expect(
+      restoreOverageBaseCarve(mockTx as never, {
+        sidePaymentId: "side_wallet_1",
+      }),
+    ).rejects.toThrow(/already restored/);
   });
 
   it("LICENSE parent: leaves ₹0 LICENSE leg untouched and keeps parent earnings HELD when member side-charge fails", async () => {
