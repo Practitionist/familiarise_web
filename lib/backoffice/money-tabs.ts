@@ -16,6 +16,7 @@ export type MoneyTabKey =
   | "refunds"
   | "disputes"
   | "payouts"
+  | "org-payouts"
   | "earnings"
   | "reconcile"
   | "incidents"
@@ -52,6 +53,14 @@ export const MONEY_TABS: readonly MoneyTab[] = [
     label: "Payouts",
     description: "Consultant payouts waiting, in flight and paid.",
     surface: "payouts.read",
+  },
+  {
+    key: "org-payouts",
+    label: "Org payouts",
+    description:
+      "Organisation payouts, with platform co-approval, hold and release.",
+    // The section is the approve/hold/release doors, so admin.
+    surface: "payouts.manage",
   },
   {
     key: "earnings",

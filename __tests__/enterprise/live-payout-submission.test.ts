@@ -439,9 +439,10 @@ describe("processOrgPayout — live submission gating", () => {
       mockedPrisma.organizationPayout.findMany.mock.calls[0][0].where,
     ).toEqual({
       status: payable,
+      platformHeldAt: null,
     });
     expect(mockedPrisma.organizationPayout.updateMany).toHaveBeenCalledWith({
-      where: { id: PAYOUT_ID, status: payable },
+      where: { id: PAYOUT_ID, status: payable, platformHeldAt: null },
       data: { status: "PROCESSING" },
     });
     expect(run.advanced).toBe(1);

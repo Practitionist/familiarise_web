@@ -15,14 +15,14 @@ import {
   recordSystemEventSafe,
 } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import prisma, { type Tx } from "@/lib/prisma";
+import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import type { PaymentGateway, PayoutStatus } from "@prisma/client";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import { assertPayoutBalance } from "./balance-preflight";
 import { PAYOUT_CONSTANTS } from "./constants";
 import {
-  PAYOUT_ACCOUNT_COOLING_OFF_MS,
+  payoutAccountChangedAt,
   payoutAccountHold,
 } from "./payout-requirements";
 import {
@@ -92,6 +92,17 @@ export class PayoutValidationError extends Error {
   ) {
     super(message);
     this.name = "PayoutValidationError";
+  }
+}
+
+/** Nothing was sent: the destination changed after mint, so the earnings need a fresh, re-approved payout. */
+export class OrgPayoutAccountChangedError extends PayoutValidationError {
+  constructor(payoutId: string) {
+    super(
+      `Payout ${payoutId}: the payout account changed after this payout was minted — refusing to submit`,
+      409,
+    );
+    this.name = "OrgPayoutAccountChangedError";
   }
 }
 
@@ -566,7 +577,7 @@ export async function createOrgPayoutBatch(
         };
       }
     }
-    reportSentryError(err, { subsystem: "payments" });
+    // Callers report: the route per request, the scheduled batch once per run.
     throw err;
   } finally {
     await releaseLock(lockKey, token);
@@ -574,15 +585,25 @@ export async function createOrgPayoutBatch(
 }
 
 /**
- * Approve a PENDING organization payout with maker-checker enforcement (#1898).
+ * A Familiarise admin's co-approval of a payout the org has already approved:
+ * PENDING with `platformApprovalRequiredAt` → APPROVED. The approver may be
+ * neither the payout's creator nor the org member who approved it.
  */
 export async function approveOrgPayout(
   payoutId: string,
-  adminUserId: string,
-): Promise<void> {
-  const existing = await prisma.organizationPayout.findUnique({
+  platformUserId: string,
+  db: PrismaLike = prisma,
+): Promise<{ organizationId: string; amountPaise: number }> {
+  const existing = await db.organizationPayout.findUnique({
     where: { id: payoutId },
-    select: { status: true, createdBy: true, organizationId: true },
+    select: {
+      status: true,
+      createdBy: true,
+      orgApprovedBy: true,
+      organizationId: true,
+      amountPaise: true,
+      platformApprovalRequiredAt: true,
+    },
   });
   if (!existing) {
     throw new PayoutValidationError(`Payout ${payoutId} not found`, 404);
@@ -593,64 +614,43 @@ export async function approveOrgPayout(
       409,
     );
   }
-
-  const makerCheckerRequired =
-    process.env.PAYOUT_MAKER_CHECKER_REQUIRED !== "false";
-  if (
-    makerCheckerRequired &&
-    existing.createdBy &&
-    existing.createdBy === adminUserId
-  ) {
-    const activeAdminCount =
-      typeof (prisma as unknown as { user?: { count?: unknown } }).user
-        ?.count === "function"
-        ? await prisma.user.count({
-            where: { role: "ADMIN" },
-          })
-        : 2;
-    if (activeAdminCount > 1) {
-      throw new PayoutMakerCheckerError(
-        "Maker-checker violation: the admin who created this org payout batch cannot also approve it.",
-      );
-    }
-    if (typeof recordSystemEventSafe === "function") {
-      await recordSystemEventSafe({
-        organizationId: existing.organizationId,
-        category: "PAYOUT",
-        severity: "WARN",
-        message: `Solo-admin bootstrap exception: admin ${adminUserId} self-approved org payout ${payoutId}`,
-        context: {
-          action: "ORG_PAYOUT_SOLO_ADMIN_SELF_APPROVAL",
-          actorUserId: adminUserId,
-          payoutId,
-          adminUserId,
-          activeAdminCount,
-        },
-      });
-    }
-  }
-
-  const approved = await prisma.organizationPayout.updateMany({
-    where: { id: payoutId, status: { in: PAYOUT_ALLOWED_FROM.APPROVED } },
-    data: {
-      status: "APPROVED",
-      approvedAt: new Date(),
-      approvedBy: adminUserId,
-    },
-  });
-  if (approved.count === 0) {
-    const current = await prisma.organizationPayout.findUnique({
-      where: { id: payoutId },
-      select: { status: true },
-    });
-    if (!current) {
-      throw new PayoutValidationError(`Payout ${payoutId} not found`, 404);
-    }
+  if (!existing.platformApprovalRequiredAt) {
     throw new PayoutValidationError(
-      `Payout cannot be approved from status: ${current.status}`,
+      "The organisation has not approved this payout yet, or it does not need a platform approval.",
       409,
     );
   }
+  if (
+    platformUserId === existing.createdBy ||
+    platformUserId === existing.orgApprovedBy
+  ) {
+    throw new PayoutMakerCheckerError(
+      "Maker-checker violation: whoever created or approved this payout for the organisation cannot also co-approve it.",
+    );
+  }
+
+  const approved = await db.organizationPayout.updateMany({
+    where: {
+      id: payoutId,
+      status: { in: PAYOUT_ALLOWED_FROM.APPROVED },
+      platformApprovalRequiredAt: { not: null },
+    },
+    data: {
+      status: "APPROVED",
+      approvedAt: new Date(),
+      approvedBy: platformUserId,
+    },
+  });
+  if (approved.count === 0) {
+    throw new PayoutValidationError(
+      "Another decision on this payout landed first — reload the list.",
+      409,
+    );
+  }
+  return {
+    organizationId: existing.organizationId,
+    amountPaise: existing.amountPaise,
+  };
 }
 
 async function readOrgPayoutCurrentStatus(
@@ -793,10 +793,12 @@ export async function processOrgPayout(payoutId: string): Promise<{
             };
           }
 
+          // A platform hold parks the payout; release lets the next pass claim it.
           const claim = await tx.organizationPayout.updateMany({
             where: {
               id: payoutId,
               status: { in: PAYOUT_ALLOWED_FROM.PROCESSING },
+              platformHeldAt: null,
             },
             data: { status: "PROCESSING" },
           });
@@ -876,6 +878,17 @@ export async function processOrgPayout(payoutId: string): Promise<{
         claimed: true,
       };
     } catch (err) {
+      if (err instanceof OrgPayoutAccountChangedError) {
+        await markOrgPayoutFailed(
+          payoutId,
+          "PAYOUT_ACCOUNT_CHANGED: the payout account changed after this payout was created; its earnings return to the next batch, which needs a fresh approval",
+        );
+        return {
+          status: "FAILED" as PayoutStatus,
+          submittedToGateway: false,
+          claimed: true,
+        };
+      }
       const cls = classifyGatewaySubmissionError(err);
       if (cls === "PERMANENT_4XX") {
         reportSentryError(err, { subsystem: "payments", expected: true });
@@ -958,15 +971,11 @@ async function submitOrgPayoutToGateway(payoutId: string): Promise<void> {
     );
   }
   // The org account row is edited in place, so a destination changed after mint is a different destination.
-  const changedAt =
-    payout.orgPayoutAccount && account.payoutsAllowedAfter
-      ? account.payoutsAllowedAfter.getTime() - PAYOUT_ACCOUNT_COOLING_OFF_MS
-      : null;
+  const changedAt = payout.orgPayoutAccount
+    ? payoutAccountChangedAt(account)
+    : null;
   if (changedAt !== null && changedAt > payout.createdAt.getTime()) {
-    throw new PayoutValidationError(
-      `Payout ${payoutId}: the payout account changed after this payout was minted — refusing to submit`,
-      409,
-    );
+    throw new OrgPayoutAccountChangedError(payoutId);
   }
 
   const { getRazorpayPayoutsService } = await import("./razorpay-payouts");
@@ -1055,7 +1064,10 @@ export async function processPendingOrgPayouts(
   const result: OrgProcessingResult = { scanned: 0, advanced: 0, errors: [] };
 
   const pending = await prisma.organizationPayout.findMany({
-    where: { status: { in: PAYOUT_ALLOWED_FROM.PROCESSING } },
+    where: {
+      status: { in: PAYOUT_ALLOWED_FROM.PROCESSING },
+      platformHeldAt: null,
+    },
     select: { id: true },
     orderBy: { createdAt: "asc" },
   });
@@ -1121,41 +1133,59 @@ async function redriveSingleOrgPayoutRow(
   }
 
   const remote = await sdk.fetchPayout(gatewayPayoutId);
+  const moved = await applyOrgGatewayStatus(p.id, {
+    status: remote.status,
+    utr: remote.utr,
+    failureReason:
+      remote.failure_reason ??
+      remote.status_details?.description ??
+      remote.status_details?.reason,
+  });
+  if (moved) result.advanced++;
+}
+
+export interface OrgGatewayStatus {
+  status: string;
+  utr?: string | null;
+  failureReason?: string | null;
+}
+
+/** Settles a PROCESSING org payout from the status RazorpayX reports; true when the row moved. */
+export async function applyOrgGatewayStatus(
+  payoutId: string,
+  remote: OrgGatewayStatus,
+): Promise<boolean> {
   switch (remote.status) {
     case "processed":
       if (remote.utr) {
         await prisma.organizationPayout.updateMany({
-          where: { id: p.id, gatewayUtr: null },
+          where: { id: payoutId, gatewayUtr: null },
           data: { gatewayUtr: remote.utr },
         });
       }
-      await markOrgPayoutCompleted(p.id);
-      result.advanced++;
-      break;
+      await markOrgPayoutCompleted(payoutId);
+      return true;
     case "failed":
       await markOrgPayoutFailed(
-        p.id,
-        remote.failure_reason ??
-          remote.status_details?.description ??
-          remote.status_details?.reason ??
-          "Gateway reports the payout failed",
+        payoutId,
+        remote.failureReason || "Gateway reports the payout failed",
       );
-      result.advanced++;
-      break;
+      return true;
     case "cancelled":
     case "rejected":
       await markOrgPayoutFailed(
-        p.id,
+        payoutId,
         `Gateway reports the payout ${remote.status}`,
       );
-      result.advanced++;
-      break;
+      return true;
     case "reversed":
-      await markOrgPayoutReversed(p.id, "Gateway reports the payout reversed");
-      result.advanced++;
-      break;
+      await markOrgPayoutReversed(
+        payoutId,
+        "Gateway reports the payout reversed",
+      );
+      return true;
     default:
-      break;
+      return false;
   }
 }
 
@@ -2154,10 +2184,11 @@ export async function createOrgPayoutBatches(opts?: {
   result.orgsScanned = eligible.length;
 
   let visited = 0;
+  const failures: Array<{ organizationId: string; error: string }> = [];
   for (const row of eligible) {
     if (
       opts?.limit !== undefined &&
-      result.payoutsCreated + result.failed >= opts.limit
+      result.payoutsCreated + failures.length >= opts.limit
     ) {
       break;
     }
@@ -2199,11 +2230,20 @@ export async function createOrgPayoutBatches(opts?: {
         continue;
       }
       const message = err instanceof Error ? err.message : String(err);
-      result.failed++;
+      failures.push({ organizationId: orgId, error: message.slice(0, 300) });
       result.errors.push(`${orgId}: ${message}`);
     }
   }
 
+  result.failed = failures.length;
+  if (failures.length > 0) {
+    reportSentryMessage("org-payout-batch-failures", {
+      subsystem: "payments",
+      level: "error",
+      extra: { periodEnd: periodEnd.toISOString(), failures },
+      fingerprint: ["org-payout-batch-failures"],
+    });
+  }
   result.remaining = eligible.length - visited;
   result.success = true;
   return result;
