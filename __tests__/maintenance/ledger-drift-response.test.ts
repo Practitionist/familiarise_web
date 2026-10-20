@@ -108,6 +108,24 @@ describe("freezeDriftingWallets", () => {
     expect(captureException.mock.calls.at(-1)?.[1]?.level).toBe("fatal");
   });
 
+  it("still freezes later wallets when one freeze throws, then rejects", async () => {
+    freezeWalletSpend.mockRejectedValueOnce(new Error("db down"));
+    const second = { ...walletDrift, billingAccountId: "ba_2" };
+
+    await expect(
+      freezeDriftingWallets("rep_1", [walletDrift, second]),
+    ).rejects.toBeInstanceOf(AggregateError);
+    expect(freezeWalletSpend).toHaveBeenCalledTimes(2);
+    expect(freezeWalletSpend.mock.calls[1]?.[0]).toMatchObject({
+      billingAccountId: "ba_2",
+    });
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(captureException.mock.calls[0]?.[1]?.contexts.wallet).toMatchObject({
+      driftingWallets: 2,
+      frozenWallets: 1,
+    });
+  });
+
   it("does not freeze or page for non-wallet drift", async () => {
     await freezeDriftingWallets("rep_1", [
       {

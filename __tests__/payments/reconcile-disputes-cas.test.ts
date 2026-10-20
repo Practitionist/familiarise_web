@@ -111,12 +111,27 @@ describe("dispute reconciliation honours the ticker's limit", () => {
     });
   });
 
-  it("skips the stale query when deadline-window rows fill the limit", async () => {
-    findMany.mockImplementationOnce(async () => [row("dp_a"), row("dp_b")]);
+  it("skips the stale query when deadline-window rows fill a limit of one", async () => {
+    findMany.mockImplementationOnce(async () => [row("dp_a")]);
 
-    await reconcileDisputes({ limit: 2 });
+    await reconcileDisputes({ limit: 1 });
 
     expect(findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("reserves room for a null-dueBy row when deadline-window rows exceed the limit", async () => {
+    findMany
+      .mockImplementationOnce(async (args: FindArgs) =>
+        Array.from({ length: args.take ?? 0 }, (_, i) => row(`dp_due${i}`)),
+      )
+      .mockImplementationOnce(async () => [row("dp_null")]);
+
+    await reconcileDisputes({ limit: 3 });
+
+    expect(findMany.mock.calls[1]?.[0]).toMatchObject({ take: 1 });
+    const polled = mockGetRazorpayDispute.mock.calls.map((c) => c[0]);
+    expect(polled).toHaveLength(3);
+    expect(polled).toContain("dp_null");
   });
 
   it("is unbounded without a limit", async () => {

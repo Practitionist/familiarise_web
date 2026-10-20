@@ -158,7 +158,7 @@ async function reconcileDisputesUnlocked(opts: {
   let razorpayManualReviewCount = 0;
 
   // Every pass writes the row (or another writer moved it), so ordering by
-  // updatedAt rotates a limited run; deadline-window rows go before the stale rest.
+  // updatedAt rotates a limited run.
   const base = {
     paymentGateway: PaymentGateway.RAZORPAY,
     status: {
@@ -174,13 +174,20 @@ async function reconcileDisputesUnlocked(opts: {
     include: { payment: true },
     orderBy: [{ updatedAt: "asc" }, { dueBy: "asc" }],
   } satisfies Omit<Prisma.DisputeFindManyArgs, "where">;
-  const nearDeadline = await prisma.dispute.findMany({
+  // A bounded run reserves a third for the stale cohort, since UNDER_REVIEW rows keep
+  // a past dueBy for weeks; whichever cohort is short hands its share to the other.
+  const limit = opts.limit;
+  const staleReserve =
+    limit !== undefined && limit >= 2 ? Math.ceil(limit / 3) : 0;
+  const deadlineRows = await prisma.dispute.findMany({
     ...query,
     where: { ...base, dueBy: { lte: approachingDeadline } },
-    ...(opts.limit === undefined ? {} : { take: opts.limit }),
+    ...(limit === undefined ? {} : { take: limit }),
   });
   const room =
-    opts.limit === undefined ? undefined : opts.limit - nearDeadline.length;
+    limit === undefined
+      ? undefined
+      : limit - Math.min(deadlineRows.length, limit - staleReserve);
   const stale =
     room === 0
       ? []
@@ -193,6 +200,10 @@ async function reconcileDisputesUnlocked(opts: {
           },
           ...(room === undefined ? {} : { take: room }),
         });
+  const nearDeadline =
+    limit === undefined
+      ? deadlineRows
+      : deadlineRows.slice(0, limit - stale.length);
   const disputesToReconcile = [...nearDeadline, ...stale];
 
   console.log(`Found ${disputesToReconcile.length} disputes to reconcile`);

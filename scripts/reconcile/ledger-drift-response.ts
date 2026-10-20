@@ -76,20 +76,34 @@ export async function freezeDriftingWallets(
     deltaPaise: number;
     newlyFrozen: boolean;
   }> = [];
+  const failures: unknown[] = [];
   try {
     for (const f of walletDrift) {
       if (!f.billingAccountId) continue;
-      const froze = await freezeWalletSpend({
-        billingAccountId: f.billingAccountId,
-        organizationId: f.organizationId ?? null,
-        reason: `ledger reconcile ${reportId}: wallet cache ${f.actualPaise}p ≠ journal ${f.expectedPaise}p (Δ${f.deltaPaise}p)`,
-      });
-      frozenWallets.push({
-        billingAccountId: f.billingAccountId,
-        organizationId: f.organizationId ?? null,
-        deltaPaise: Number(f.deltaPaise),
-        newlyFrozen: froze,
-      });
+      try {
+        const froze = await freezeWalletSpend({
+          billingAccountId: f.billingAccountId,
+          organizationId: f.organizationId ?? null,
+          reason: `ledger reconcile ${reportId}: wallet cache ${f.actualPaise}p ≠ journal ${f.expectedPaise}p (Δ${f.deltaPaise}p)`,
+        });
+        frozenWallets.push({
+          billingAccountId: f.billingAccountId,
+          organizationId: f.organizationId ?? null,
+          deltaPaise: Number(f.deltaPaise),
+          newlyFrozen: froze,
+        });
+      } catch (err) {
+        // One failed freeze must not leave the remaining drifting wallets spendable.
+        failures.push(err);
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        `Wallet freeze failed for ${failures.length} of ${walletDrift.length} drifting account(s): ${failures
+          .map((e) => (e instanceof Error ? e.message : String(e)))
+          .join("; ")}`,
+      );
     }
   } finally {
     // One fatal per run, keyed on detected drift so a freeze that throws still pages.
