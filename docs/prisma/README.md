@@ -16,8 +16,34 @@ completed Prisma 7 upgrade last because it is history rather than instruction.
 
 | Document                 | What it is                                                                                                                                                                                                       | Read it when                                                                                 |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `00-schema-map.md`       | Twenty-four domain diagrams of the Prisma schema, plus the enum reference table.                                                                                                                                 | Orienting in an unfamiliar part of the schema, or tracing how two models relate.             |
+| `00-schema-map.md`       | Thirty-one domain diagrams of the Prisma schema, the enforcer inventory from `prisma/sql/`, and the enum reference table.                                                                                        | Orienting in an unfamiliar part of the schema, or tracing how two models relate.             |
 | `01-migrations-guide.md` | The general-purpose reference for Prisma Migrate — every command, safe and dangerous operations, expand and contract, drift, rollback, troubleshooting. Written against a fictional schema so it stays portable. | You need to know what a Prisma command does, or how a class of change is handled in general. |
+
+## The schema map is generated, not hand-drawn
+
+`00-schema-map.md` used to be maintained by hand, and it drifted: the committed
+file described 120 models while the schema had grown past 160, ten of the model
+names in its diagrams no longer existed, and the enforcers in `prisma/sql/`
+appeared nowhere in it. Nothing caught that, because a documentation file cannot
+disagree with code in a way a compiler notices.
+
+It is now a function of the schema.
+
+| Command                         | What it does                                                                  |
+| ------------------------------- | ----------------------------------------------------------------------------- |
+| `npm run docs:schema-map`       | Re-parses `prisma/schema.prisma` and rewrites `docs/prisma/00-schema-map.md`. |
+| `npm run docs:schema-map:check` | Fails if the committed map has drifted from the schema. Run in CI.            |
+
+The domain grouping — which models belong to which diagram, and the prose around
+each one — lives in `scripts/prisma/schema-domains.ts`. The generator refuses to
+write a map in which any model is claimed twice or left unclaimed, so a new model
+cannot land in the schema without landing in a diagram. The enforcer inventory
+is derived from `scripts/db/sidecar-objects.ts`, the repo's own sidecar parser,
+so it is exactly the object list `scripts/ci/check-db-sidecars.ts` already
+asserts against the live database.
+
+**When you add a model, add it to `scripts/prisma/schema-domains.ts` and run
+`npm run docs:schema-map`.** The CI check will tell you if you forget.
 
 ## The one thing to know first
 

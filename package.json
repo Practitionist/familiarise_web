@@ -44,7 +44,9 @@
     "start": "next start",
     "start-watch": "WATCHPACK_POLLING=true next start",
     "test": "jest",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "docs:schema-map": "npx tsx scripts/prisma/build-schema-map.ts",
+    "docs:schema-map:check": "npx tsx scripts/ci/check-schema-map.ts"
   },
   "dependencies": {
     "@better-auth/core": "1.7.7",
