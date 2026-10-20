@@ -210,4 +210,5 @@ export const moneyResultExtensions = {
     basePaise: f("basePaise"),
     surchargePaise: f("surchargePaise"),
   },
+  opsActionProposal: { amountPaise: fn("amountPaise") },
 };

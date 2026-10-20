@@ -46,6 +46,8 @@ jest.mock("../../lib/backoffice/refund-doors", () => ({
   refundInFlightOr: async (err: unknown) => {
     throw err;
   },
+  refundablePaymentPaise: async () => 0,
+  refundableEventPaise: async () => 0,
 }));
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...args: unknown[]) => refundPayment(...args),

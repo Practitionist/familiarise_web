@@ -1275,3 +1275,8 @@ ALTER TABLE "OrganizationEarnings" DROP CONSTRAINT IF EXISTS "org_earnings_batch
 -- SPLIT
 ALTER TABLE "OrganizationEarnings" ADD CONSTRAINT "org_earnings_batched_has_payout"
   CHECK ("status" <> 'BATCHED' OR "orgPayoutId" IS NOT NULL);
+-- SPLIT
+-- One open second-approval proposal per (action, target); decided rows keep theirs.
+CREATE UNIQUE INDEX IF NOT EXISTS "ops_action_proposal_one_open_key"
+  ON "ops_action_proposals" ("action", "targetKind", "targetId")
+  WHERE "status" = 'PROPOSED';

@@ -185,6 +185,7 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/admin/payouts",
   "/api/consultant/payouts/instant",
   "/api/admin/refunds",
+  "/api/admin/ops-proposals",
   "/api/admin/tds",
   "/api/admin/billing-accounts",
   "/api/payments/*/recover",

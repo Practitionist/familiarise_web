@@ -35,6 +35,13 @@ export async function callOpsDoor(
   return json;
 }
 
+/** Above ₹25,000 with two admins, a money door answers 202 and waits for another admin. */
+export const PROPOSED_TOAST = "Sent to another admin for approval";
+
+export function isProposed(data: Record<string, unknown>): boolean {
+  return data.status === "PROPOSED";
+}
+
 /** A door as a mutation: toasts the outcome and refreshes the given reads. */
 export function useOpsDoor(opts: {
   success: string;
@@ -52,7 +59,7 @@ export function useOpsDoor(opts: {
       body: Record<string, unknown>;
     }) => callOpsDoor(url, body),
     onSuccess: (data) => {
-      toast({ title: opts.success });
+      toast({ title: isProposed(data) ? PROPOSED_TOAST : opts.success });
       for (const key of opts.invalidate)
         void queryClient.invalidateQueries({ queryKey: [...key] });
       opts.onDone?.(data);
