@@ -58,7 +58,7 @@ export const reviewSupportRefundDoor = withOpsAction(
         kind: "SupportFinancialRecommendation",
         id: body.recommendationId,
       }),
-      amountPaise: async (body, { actor, params }) => {
+      amountPaise: (body, { actor, params }) => {
         const { caseId } = Params.parse(params);
         return prisma
           .$transaction(async (tx) => {

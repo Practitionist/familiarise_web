@@ -51,6 +51,16 @@ const Detail = z.object({
   }),
 });
 
+function evidenceStatus(
+  request: z.infer<typeof Evidence>,
+  pendingLabel: string,
+) {
+  if (request.cancelledAt) return "Cancelled";
+  if (request.respondedAt) return "Response submitted";
+  if (request.caseClosed) return "Investigation concluded";
+  return pendingLabel;
+}
+
 export function EvidenceInbox({
   detailBase,
   organizationId,
@@ -81,15 +91,13 @@ export function EvidenceInbox({
       />
     );
   const rows =
-    query.data?.filter(
-      (row) =>
-        status === "all" ||
-        (status === "pending"
-          ? !row.respondedAt && !row.cancelledAt && !row.caseClosed
-          : status === "submitted"
-            ? Boolean(row.respondedAt)
-            : Boolean(row.cancelledAt)),
-    ) ?? [];
+    query.data?.filter((row) => {
+      if (status === "all") return true;
+      if (status === "pending")
+        return !row.respondedAt && !row.cancelledAt && !row.caseClosed;
+      if (status === "submitted") return Boolean(row.respondedAt);
+      return Boolean(row.cancelledAt);
+    }) ?? [];
   return (
     <section className="space-y-4">
       <FilterBar
@@ -123,13 +131,10 @@ export function EvidenceInbox({
         >
           <p className="line-clamp-2">{request.prompt}</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {request.cancelledAt
-              ? "Cancelled"
-              : request.respondedAt
-                ? "Response submitted"
-                : request.caseClosed
-                  ? "Investigation concluded"
-                  : `Respond by ${new Date(request.dueAt).toLocaleString()}`}
+            {evidenceStatus(
+              request,
+              `Respond by ${new Date(request.dueAt).toLocaleString()}`,
+            )}
           </p>
         </Link>
       ))}
@@ -219,7 +224,8 @@ export function EvidenceRequest({
     }
   };
   const data = query.data;
-  if (query.isLoading) return <p role="status">Loading evidence request…</p>;
+  if (query.isLoading)
+    return <output className="block">Loading evidence request…</output>;
   if (!data)
     return (
       <ErrorState
@@ -235,15 +241,7 @@ export function EvidenceRequest({
         back={{ href: inboxHref, label: "Evidence requests" }}
         meta={
           <StatusBadge
-            label={
-              data.cancelledAt
-                ? "Cancelled"
-                : data.respondedAt
-                  ? "Response submitted"
-                  : data.caseClosed
-                    ? "Investigation concluded"
-                    : "Response needed"
-            }
+            label={evidenceStatus(data, "Response needed")}
             tone={open ? "caution" : "neutral"}
             size="sm"
           />
@@ -283,9 +281,11 @@ export function EvidenceRequest({
         <section className="min-w-0 space-y-4 rounded-xl border border-border p-5 lg:col-start-1 lg:row-start-1">
           <h2 className="font-semibold">What we need from you</h2>
           <p className="whitespace-pre-wrap">{data.prompt}</p>
-          {data.cancelledAt && <p role="status">This request was cancelled.</p>}
+          {data.cancelledAt && (
+            <output className="block">This request was cancelled.</output>
+          )}
           {data.caseClosed && (
-            <p role="status">The investigation has concluded.</p>
+            <output className="block">The investigation has concluded.</output>
           )}
           {data.decisions.map((decision) => (
             <div

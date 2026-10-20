@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
+import { Prisma, type SupportCaseOwnership } from "@prisma/client";
 import { z } from "zod";
 import { addMonths } from "date-fns";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { canCorrespondOnCase } from "@/lib/support/case-access";
@@ -27,6 +27,102 @@ const Input = z
       1,
     "Choose one decision to appeal",
   );
+
+interface AppealScope {
+  organizationId: string | null;
+  ownershipScope: SupportCaseOwnership;
+  originalReviewer: string | null;
+}
+
+async function decisionAppealScope(
+  tx: Tx,
+  decisionId: string,
+  userId: string,
+  now: Date,
+): Promise<AppealScope> {
+  const decision = await tx.supportCaseDecision.findUnique({
+    where: { id: decisionId },
+    include: { supportCase: true },
+  });
+  if (!decision)
+    throw new CaseActionError("NOT_FOUND", "Decision not found.", 404);
+  const canCorrespond = await canCorrespondOnCase(
+    decision.supportCase,
+    { userId, role: "CONSULTEE" },
+    tx,
+  );
+  const evidenceParty = await tx.supportCaseEvidenceRequest.findFirst({
+    where: { caseId: decision.caseId, recipientUserId: userId },
+    select: { id: true },
+  });
+  if (!canCorrespond && !evidenceParty)
+    throw new CaseActionError("NOT_FOUND", "Decision not found.", 404);
+  if (
+    decision.supportCase.appealOfDecisionId ||
+    decision.supportCase.appealOfModerationActionId
+  )
+    throw new CaseActionError(
+      "FINAL_DECISION",
+      "This decision already follows an appeal.",
+    );
+  if (now > decision.appealUntil)
+    throw new CaseActionError(
+      "APPEAL_EXPIRED",
+      "The appeal window has ended.",
+      400,
+    );
+  return {
+    organizationId: canCorrespond ? decision.supportCase.organizationId : null,
+    ownershipScope: canCorrespond
+      ? decision.supportCase.ownershipScope
+      : "PERSONAL",
+    originalReviewer: decision.decidedById,
+  };
+}
+
+async function moderationAppealScope(
+  tx: Tx,
+  moderationActionId: string | undefined,
+  userId: string,
+  now: Date,
+): Promise<AppealScope> {
+  const action = await tx.moderationAction.findUnique({
+    where: { id: moderationActionId },
+    include: {
+      report: { select: { reportedById: true, targetUserId: true } },
+      review: {
+        select: {
+          consulteeProfile: { select: { userId: true } },
+          consultantProfile: {
+            select: { user: { select: { id: true } } },
+          },
+        },
+      },
+      feedback: { select: { userId: true } },
+    },
+  });
+  const eligible =
+    action &&
+    (action.report?.reportedById === userId ||
+      action.report?.targetUserId === userId ||
+      action.review?.consulteeProfile.userId === userId ||
+      action.review?.consultantProfile.user?.id === userId ||
+      action.feedback?.userId === userId);
+  if (!action || !eligible)
+    throw new CaseActionError("NOT_FOUND", "Decision not found.", 404);
+  if (now > addMonths(action.createdAt, 6))
+    throw new CaseActionError(
+      "APPEAL_EXPIRED",
+      "The appeal window has ended.",
+      400,
+    );
+  return {
+    organizationId: null,
+    ownershipScope: "PERSONAL",
+    originalReviewer: action.takenById,
+  };
+}
+
 export async function POST(req: NextRequest) {
   const auth = await requireApiAuth({ expectUser: true });
   if (auth.error) return auth.error;
@@ -58,93 +154,15 @@ export async function POST(req: NextRequest) {
           const prior = await tx.supportCase.findFirst({ where });
           if (prior) return prior;
           const now = new Date();
-          let organizationId: string | null = null;
-          let scope: "PERSONAL" | "ORG_OPERATIONS" | "ORG_BILLING" = "PERSONAL";
-          let originalReviewer: string | null = null;
-          if (input.decisionId) {
-            const decision = await tx.supportCaseDecision.findUnique({
-              where: { id: input.decisionId },
-              include: { supportCase: true },
-            });
-            if (!decision)
-              throw new CaseActionError(
-                "NOT_FOUND",
-                "Decision not found.",
-                404,
-              );
-            const canCorrespond = await canCorrespondOnCase(
-              decision.supportCase,
-              { userId, role: "CONSULTEE" },
-              tx,
-            );
-            const evidenceParty = await tx.supportCaseEvidenceRequest.findFirst(
-              {
-                where: { caseId: decision.caseId, recipientUserId: userId },
-                select: { id: true },
-              },
-            );
-            if (!canCorrespond && !evidenceParty)
-              throw new CaseActionError(
-                "NOT_FOUND",
-                "Decision not found.",
-                404,
-              );
-            if (
-              decision.supportCase.appealOfDecisionId ||
-              decision.supportCase.appealOfModerationActionId
-            )
-              throw new CaseActionError(
-                "FINAL_DECISION",
-                "This decision already follows an appeal.",
-              );
-            if (now > decision.appealUntil)
-              throw new CaseActionError(
-                "APPEAL_EXPIRED",
-                "The appeal window has ended.",
-                400,
-              );
-            originalReviewer = decision.decidedById;
-            if (canCorrespond) {
-              organizationId = decision.supportCase.organizationId;
-              scope = decision.supportCase.ownershipScope;
-            }
-          } else {
-            const action = await tx.moderationAction.findUnique({
-              where: { id: input.moderationActionId },
-              include: {
-                report: { select: { reportedById: true, targetUserId: true } },
-                review: {
-                  select: {
-                    consulteeProfile: { select: { userId: true } },
-                    consultantProfile: {
-                      select: { user: { select: { id: true } } },
-                    },
-                  },
-                },
-                feedback: { select: { userId: true } },
-              },
-            });
-            const eligible =
-              action &&
-              (action.report?.reportedById === userId ||
-                action.report?.targetUserId === userId ||
-                action.review?.consulteeProfile.userId === userId ||
-                action.review?.consultantProfile.user?.id === userId ||
-                action.feedback?.userId === userId);
-            if (!action || !eligible)
-              throw new CaseActionError(
-                "NOT_FOUND",
-                "Decision not found.",
-                404,
-              );
-            if (now > addMonths(action.createdAt, 6))
-              throw new CaseActionError(
-                "APPEAL_EXPIRED",
-                "The appeal window has ended.",
-                400,
-              );
-            originalReviewer = action.takenById;
-          }
+          const { organizationId, ownershipScope, originalReviewer } =
+            input.decisionId
+              ? await decisionAppealScope(tx, input.decisionId, userId, now)
+              : await moderationAppealScope(
+                  tx,
+                  input.moderationActionId,
+                  userId,
+                  now,
+                );
           const referenceNumber = await allocateTicketReference(tx, now);
           const supportCase = await tx.supportCase.create({
             data: {
@@ -158,7 +176,7 @@ export async function POST(req: NextRequest) {
               requesterUserId: userId,
               submitterUserId: userId,
               organizationId,
-              ownershipScope: scope,
+              ownershipScope,
               scopeKey: `${input.decisionId ? "CASE_DECISION" : "MODERATION_ACTION"}:${input.decisionId ?? input.moderationActionId}`,
               appealOfDecisionId: input.decisionId,
               appealOfModerationActionId: input.moderationActionId,

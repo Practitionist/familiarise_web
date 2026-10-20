@@ -50,6 +50,7 @@ export async function GET(req: NextRequest) {
     },
   });
   const allowedAppointments = new Set<string>();
+  // Bound eligibility reads to one transaction at a time on the serverless pool.
   for (const appointmentId of new Set(
     data.flatMap((row) =>
       row.supportCase.appointmentId ? [row.supportCase.appointmentId] : [],

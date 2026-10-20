@@ -573,6 +573,106 @@ async function pageCriticalDisputeDeadlines(
   }
 }
 
+type DisputeAlertPair = {
+  d: {
+    id: string;
+    disputeId: string;
+    amountPaise: number;
+    currency: string;
+    reason: string;
+  };
+  dueBy: Date;
+  window: "24" | "72";
+  dedupeKey: string;
+};
+
+async function stageDisputeDeadlineAlert(
+  { d, dueBy, window, dedupeKey }: DisputeAlertPair,
+  admins: OperatorRow[],
+  errors: string[],
+  stagedBells: StagedTrigger[],
+): Promise<number> {
+  const recipients = admins.map((admin) => admin.id);
+
+  const dueByIso = dueBy.toISOString();
+  const subject = `[Dispute Due T-${window}h] ${d.disputeId}`;
+  const escapedDisputeId = escapeHtml(d.disputeId);
+
+  try {
+    const payload = {
+      title: `Dispute ${d.disputeId} response due within ${window}h (by ${dueByIso})`,
+      disputeId: d.disputeId,
+      amount: d.amountPaise,
+      currency: d.currency,
+      reason: d.reason,
+      dueBy: dueByIso,
+      windowHours: Number(window),
+      dashboardUrl: `${getAppUrl()}/dashboard/admin/disputes/${d.id}`,
+    };
+
+    const txResult = await prisma.$transaction(
+      async (tx) => {
+        const existing = await tx.notificationOutbox.findFirst({
+          where: {
+            workflowId: NOVU_WORKFLOWS.DISPUTE_UPDATED,
+            entityRef: dedupeKey,
+          },
+          select: { id: true },
+        });
+        const rowOutbox = await stageBell(tx, {
+          workflowId: NOVU_WORKFLOWS.DISPUTE_UPDATED,
+          recipients,
+          payload,
+          dedupeKey,
+          entityRef: dedupeKey,
+        });
+        return { newlyStaged: !existing, rowOutbox };
+      },
+      {
+        maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+        timeout: ALLOCATION_TX_TIMEOUT_MS,
+      },
+    );
+
+    if (!txResult.newlyStaged) return 0;
+    if (txResult.rowOutbox) {
+      stagedBells.push(txResult.rowOutbox);
+    }
+
+    const settled = await Promise.allSettled(
+      admins
+        .filter((admin): admin is OperatorRow & { email: string } =>
+          Boolean(admin.email),
+        )
+        .map((admin) =>
+          deliver(
+            {
+              from: DEFAULT_FROM_ADDRESS,
+              to: admin.email,
+              subject,
+              html: `<p>Dispute <strong>${escapedDisputeId}</strong> requires a response before ${dueByIso} (${window}h threshold).</p>`,
+            },
+            "dispute-deadline-alert",
+            { entityRef: dedupeKey, budgetMs: EMAIL_BUDGET_MS.JOB },
+          ),
+        ),
+    );
+    for (const s of settled) {
+      if (s.status === "rejected") {
+        errors.push(
+          `dispute-due ${d.id} (${dedupeKey}): ${s.reason instanceof Error ? s.reason.message : String(s.reason)}`,
+        );
+      }
+    }
+    return 1;
+  } catch (err) {
+    errors.push(
+      `dispute-due ${d.id} (${dedupeKey}): ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return 0;
+  }
+}
+
 async function processDisputeDeadlineAlerts(
   now: Date,
   limit: number,
@@ -597,7 +697,6 @@ async function processDisputeDeadlineAlerts(
   await pageCriticalDisputeDeadlines(now, actionableDisputes, errors);
 
   if (admins.length === 0) return 0;
-  const recipients = admins.map((a) => a.id);
 
   const pairs = actionableDisputes.flatMap((d) => {
     if (!d.dueBy) return [];
@@ -622,87 +721,8 @@ async function processDisputeDeadlineAlerts(
     .filter((p) => !alreadyStaged.has(p.dedupeKey))
     .slice(0, limit);
 
-  const stagedFlags = await runSequential(
-    unsent,
-    async ({ d, dueBy, window, dedupeKey }) => {
-      const dueByIso = dueBy.toISOString();
-      const subject = `[Dispute Due T-${window}h] ${d.disputeId}`;
-      const escapedDisputeId = escapeHtml(d.disputeId);
-
-      try {
-        const payload = {
-          title: `Dispute ${d.disputeId} response due within ${window}h (by ${dueByIso})`,
-          disputeId: d.disputeId,
-          amount: d.amountPaise,
-          currency: d.currency,
-          reason: d.reason,
-          dueBy: dueByIso,
-          windowHours: Number(window),
-          dashboardUrl: `${getAppUrl()}/dashboard/admin/disputes/${d.id}`,
-        };
-
-        const txResult = await prisma.$transaction(
-          async (tx) => {
-            const existing = await tx.notificationOutbox.findFirst({
-              where: {
-                workflowId: NOVU_WORKFLOWS.DISPUTE_UPDATED,
-                entityRef: dedupeKey,
-              },
-              select: { id: true },
-            });
-            const rowOutbox = await stageBell(tx, {
-              workflowId: NOVU_WORKFLOWS.DISPUTE_UPDATED,
-              recipients,
-              payload,
-              dedupeKey,
-              entityRef: dedupeKey,
-            });
-            return { newlyStaged: !existing, rowOutbox };
-          },
-          {
-            maxWait: ALLOCATION_TX_MAX_WAIT_MS,
-            timeout: ALLOCATION_TX_TIMEOUT_MS,
-          },
-        );
-
-        if (!txResult.newlyStaged) return 0;
-        if (txResult.rowOutbox) {
-          stagedBells.push(txResult.rowOutbox);
-        }
-
-        const settled = await Promise.allSettled(
-          admins
-            .filter((admin): admin is OperatorRow & { email: string } =>
-              Boolean(admin.email),
-            )
-            .map((admin) =>
-              deliver(
-                {
-                  from: DEFAULT_FROM_ADDRESS,
-                  to: admin.email,
-                  subject,
-                  html: `<p>Dispute <strong>${escapedDisputeId}</strong> requires a response before ${dueByIso} (${window}h threshold).</p>`,
-                },
-                "dispute-deadline-alert",
-                { entityRef: dedupeKey, budgetMs: EMAIL_BUDGET_MS.JOB },
-              ),
-            ),
-        );
-        for (const s of settled) {
-          if (s.status === "rejected") {
-            errors.push(
-              `dispute-due ${d.id} (${dedupeKey}): ${s.reason instanceof Error ? s.reason.message : String(s.reason)}`,
-            );
-          }
-        }
-        return 1;
-      } catch (err) {
-        errors.push(
-          `dispute-due ${d.id} (${dedupeKey}): ${err instanceof Error ? err.message : String(err)}`,
-        );
-        return 0;
-      }
-    },
+  const stagedFlags = await runSequential(unsent, (pair) =>
+    stageDisputeDeadlineAlert(pair, admins, errors, stagedBells),
   );
 
   return stagedFlags.reduce((sum: number, n: number) => sum + n, 0);
@@ -825,6 +845,7 @@ export async function runSupportSlaSweep(opts?: {
       take: limit,
       select: { id: true, assignedToId: true, resolutionDueAt: true },
     });
+    // Bound database writes to one leased invocation; each notice commits before the next.
     for (const report of pendingReports) {
       const level =
         report.resolutionDueAt && report.resolutionDueAt <= now
@@ -882,6 +903,7 @@ export async function runSupportSlaSweep(opts?: {
       orderBy: { dueAt: "asc" },
       select: { id: true, requestedById: true, caseId: true },
     });
+    // Keep the single-connection transaction work sequential.
     for (const evidence of overdueEvidence) {
       try {
         await prisma.$transaction(async (tx) => {

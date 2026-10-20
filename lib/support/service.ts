@@ -10,6 +10,7 @@ import type {
   SupportThreadCategory,
   SupportCaseStatus,
   SupportCase,
+  SupportPriority,
 } from "@prisma/client";
 import { seatOrganizationId } from "@/lib/booking/participants";
 import { stripCallbackTags } from "@/lib/validation/phone";
@@ -537,24 +538,71 @@ async function persistHumanTurn(
   };
 }
 
+interface EscalationTurn {
+  messages: {
+    sender: string;
+    body: string;
+    metadata?: Record<string, unknown>;
+  }[];
+  nextNodeId: string | null;
+  actions: SupportAction[];
+  resolved: boolean;
+  escalate: boolean;
+  reason?: string;
+  chosenLabel?: string;
+  promises?: ReadonlyArray<{ id: string; text: string }>;
+}
+
+function escalationDescription(
+  priorTurns: ReadonlyArray<{ sender: string; body: string }>,
+  turn: EscalationTurn,
+  userMessage: string | undefined,
+  category: SupportThreadCategory,
+  reason: string,
+): string {
+  const priorUserSteps = priorTurns
+    .filter((message) => message.sender === "USER")
+    .map((message) => message.body);
+  const typed = userMessage?.trim();
+  return stripCallbackTags(
+    escalationBrief({
+      customerAsk:
+        typed && !isBareHumanRequest(typed)
+          ? typed
+          : (priorUserSteps.findLast((body) => !isBareHumanRequest(body)) ??
+            turn.chosenLabel ??
+            null),
+      path:
+        [
+          ...priorUserSteps,
+          ...(turn.chosenLabel ? [turn.chosenLabel] : []),
+        ].join(" → ") || null,
+      botSaid:
+        turn.messages.find((message) => message.sender === "BOT")?.body ??
+        priorTurns.findLast((message) => message.sender === "BOT")?.body ??
+        null,
+      reason,
+      topic: category,
+      promises: turn.promises,
+    }),
+  );
+}
+
+function handoffPriority(
+  prior: Pick<SupportCase, "activeChannel" | "priority">,
+  priority: SupportPriority,
+  urgent: boolean | undefined,
+): SupportPriority {
+  if (prior.activeChannel !== "HUMAN") return priority;
+  if (urgent && ["LOW", "MEDIUM"].includes(prior.priority)) return "HIGH";
+  return prior.priority;
+}
+
 async function escalate(
   ctx: SupportContext,
   threadId: string,
   category: SupportThreadCategory,
-  turn: {
-    messages: {
-      sender: string;
-      body: string;
-      metadata?: Record<string, unknown>;
-    }[];
-    nextNodeId: string | null;
-    actions: SupportAction[];
-    resolved: boolean;
-    escalate: boolean;
-    reason?: string;
-    chosenLabel?: string;
-    promises?: ReadonlyArray<{ id: string; text: string }>;
-  },
+  turn: EscalationTurn,
   userMessage: string | undefined,
   reason: string,
   urgent: boolean | undefined,
@@ -585,34 +633,12 @@ async function escalate(
           take: 6,
         })
       ).reverse();
-      const priorUserSteps = priorTurns
-        .filter((message) => message.sender === "USER")
-        .map((message) => message.body);
-      const typed = userMessage?.trim();
-      const description = stripCallbackTags(
-        escalationBrief({
-          customerAsk:
-            typed && !isBareHumanRequest(typed)
-              ? typed
-              : (priorUserSteps
-                  .filter((body) => !isBareHumanRequest(body))
-                  .at(-1) ??
-                turn.chosenLabel ??
-                null),
-          path:
-            [
-              ...priorUserSteps,
-              ...(turn.chosenLabel ? [turn.chosenLabel] : []),
-            ].join(" → ") || null,
-          botSaid:
-            turn.messages.find((message) => message.sender === "BOT")?.body ??
-            priorTurns.filter((message) => message.sender === "BOT").at(-1)
-              ?.body ??
-            null,
-          reason: effectiveReason,
-          topic: category,
-          promises: turn.promises,
-        }),
+      const description = escalationDescription(
+        priorTurns,
+        turn,
+        userMessage,
+        category,
+        effectiveReason,
       );
       const moved = await tx.supportCase.updateMany({
         where: {
@@ -629,12 +655,7 @@ async function escalate(
           title: `Support for ${ctx.planTitle ?? `${ctx.appointmentType.toLowerCase()} appointment`}`,
           description,
           issueType: issueTypeForReason(effectiveReason),
-          priority:
-            prior.activeChannel === "HUMAN"
-              ? urgent && ["LOW", "MEDIUM"].includes(prior.priority)
-                ? "HIGH"
-                : prior.priority
-              : priority,
+          priority: handoffPriority(prior, priority, urgent),
           ...(prior.activeChannel === "HUMAN"
             ? {}
             : {
@@ -664,6 +685,7 @@ async function escalate(
         })),
       ];
       let seq = await allocateMessageSeq(tx, threadId, outgoing.length);
+      // Sequential writes preserve allocated message order and the first turn's replay identity.
       for (const [index, message] of outgoing.entries()) {
         await tx.supportCaseMessage.create({
           data: {
@@ -673,6 +695,7 @@ async function escalate(
             sender: message.sender,
             body: message.body,
             authorUserId: message.sender === "USER" ? ctx.userId : null,
+            // JSON serialization omits undefined fields before Prisma persists metadata.
             metadata:
               message.sender === "BOT" || message.sender === "SYSTEM"
                 ? JSON.parse(

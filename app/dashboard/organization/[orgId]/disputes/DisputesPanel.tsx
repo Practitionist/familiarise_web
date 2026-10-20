@@ -84,6 +84,11 @@ const STATUS: Record<string, { label: string; tone: Tone }> = {
   LOST: { label: "Lost", tone: "critical" },
   CLOSED: { label: "Closed", tone: "neutral" },
 };
+const RELATIONSHIP_LABELS: Record<DisputeItem["relationship"], string> = {
+  BUYER_AND_HOST: "Buyer and host",
+  BUYER: "Buyer",
+  HOST: "Host",
+};
 
 const columns: ResponsiveColumn<DisputeItem>[] = [
   {
@@ -101,12 +106,7 @@ const columns: ResponsiveColumn<DisputeItem>[] = [
   {
     key: "relationship",
     header: "Organization role",
-    cell: (d) =>
-      d.relationship === "BUYER_AND_HOST"
-        ? "Buyer and host"
-        : d.relationship === "BUYER"
-          ? "Buyer"
-          : "Host",
+    cell: (d) => RELATIONSHIP_LABELS[d.relationship],
   },
   { key: "reason", header: "Reason", cell: (d) => d.reason ?? "—" },
   {

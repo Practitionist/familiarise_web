@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CalendarDays, Inbox } from "lucide-react";
 import { z } from "zod";
@@ -110,6 +110,116 @@ export function SupportHub({
   });
   const requestHref = (id: string) =>
     `${requestsBase}/${caseKeyOf({ kind: "case", id })}`;
+  let appointmentContent: ReactNode;
+  if (!pickAppointment) {
+    appointmentContent = null;
+  } else if (appointments.isLoading) {
+    appointmentContent = <Skeleton className="h-20 w-full" />;
+  } else if (appointments.isError) {
+    appointmentContent = (
+      <ErrorState
+        title="Couldn't load appointments"
+        onRetry={() => void appointments.refetch()}
+      />
+    );
+  } else {
+    appointmentContent = (
+      <ul className="divide-y divide-border">
+        {appointments.data?.map((a) => {
+          const title =
+            a.consultation?.consultationPlan?.title ??
+            a.subscription?.subscriptionPlan?.title ??
+            a.webinar?.webinarPlan?.title ??
+            a.class?.classPlan?.title ??
+            "Appointment";
+          const startsAt = a.occurrences?.[0]?.startsAt;
+          return (
+            <li
+              key={a.id}
+              className="flex flex-wrap items-center justify-between gap-3 py-3"
+            >
+              <div>
+                <p className="text-sm font-medium">{title}</p>
+                <p className="text-xs text-muted-foreground">
+                  {[
+                    startsAt
+                      ? DATE_TIME.format(new Date(startsAt))
+                      : "Time not set",
+                    a.appointmentType ? humanizeEnum(a.appointmentType) : null,
+                    a.organization?.name,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+              </div>
+              <Button size="sm" variant="outline" asChild>
+                <Link
+                  href={`${requestsBase}/${caseKeyOf({ kind: "booking", id: a.id })}`}
+                >
+                  Get help
+                </Link>
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
+    );
+  }
+  let requestList: ReactNode;
+  if (query.isLoading) {
+    requestList = <Skeleton className="h-40 w-full" />;
+  } else if (query.isError) {
+    requestList = (
+      <ErrorState
+        title="Couldn't load your support requests"
+        onRetry={() => void query.refetch()}
+      />
+    );
+  } else if (query.data?.data.length === 0) {
+    requestList = (
+      <EmptyState
+        icon={Inbox}
+        title={
+          context || status
+            ? "No requests match these filters"
+            : "No support requests yet"
+        }
+        description="Requests you raise personally appear here. Organization-owned requests stay in that organization’s Help & support area."
+      />
+    );
+  } else {
+    requestList = (
+      <ul className="divide-y divide-border rounded-lg border border-border">
+        {query.data?.data.map((row) => (
+          <li key={row.id}>
+            <Link
+              href={requestHref(row.id)}
+              className="flex flex-wrap items-start justify-between gap-3 px-4 py-4 transition-colors hover:bg-muted/50"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">{row.title}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {[
+                    row.referenceNumber,
+                    row.appointmentId ? "Appointment" : "Account & platform",
+                    row.organization?.name,
+                    `Updated ${DATE_TIME.format(new Date(row.lastMessageAt))}`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+              </div>
+              <StatusBadge
+                label={humanizeEnum(row.status)}
+                tone={STATUS_TONES[row.status] ?? "neutral"}
+                size="sm"
+              />
+            </Link>
+          </li>
+        ))}
+      </ul>
+    );
+  }
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-2">
@@ -142,56 +252,7 @@ export function SupportHub({
           className="space-y-3 rounded-lg border border-border p-4"
         >
           <h2 className="text-sm font-semibold">Choose an appointment</h2>
-          {appointments.isLoading ? (
-            <Skeleton className="h-20 w-full" />
-          ) : appointments.isError ? (
-            <ErrorState
-              title="Couldn't load appointments"
-              onRetry={() => void appointments.refetch()}
-            />
-          ) : (
-            <ul className="divide-y divide-border">
-              {appointments.data?.map((a) => {
-                const title =
-                  a.consultation?.consultationPlan?.title ??
-                  a.subscription?.subscriptionPlan?.title ??
-                  a.webinar?.webinarPlan?.title ??
-                  a.class?.classPlan?.title ??
-                  "Appointment";
-                const startsAt = a.occurrences?.[0]?.startsAt;
-                return (
-                  <li
-                    key={a.id}
-                    className="flex flex-wrap items-center justify-between gap-3 py-3"
-                  >
-                    <div>
-                      <p className="text-sm font-medium">{title}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {[
-                          startsAt
-                            ? DATE_TIME.format(new Date(startsAt))
-                            : "Time not set",
-                          a.appointmentType
-                            ? humanizeEnum(a.appointmentType)
-                            : null,
-                          a.organization?.name,
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </p>
-                    </div>
-                    <Button size="sm" variant="outline" asChild>
-                      <Link
-                        href={`${requestsBase}/${caseKeyOf({ kind: "booking", id: a.id })}`}
-                      >
-                        Get help
-                      </Link>
-                    </Button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+          {appointmentContent}
           <p className="text-sm text-muted-foreground">
             Looking for another booking?{" "}
             <Link
@@ -235,54 +296,7 @@ export function SupportHub({
         canClear={Boolean(context || status)}
         onClear={list.clear}
       />
-      {query.isLoading ? (
-        <Skeleton className="h-40 w-full" />
-      ) : query.isError ? (
-        <ErrorState
-          title="Couldn't load your support requests"
-          onRetry={() => void query.refetch()}
-        />
-      ) : query.data?.data.length === 0 ? (
-        <EmptyState
-          icon={Inbox}
-          title={
-            context || status
-              ? "No requests match these filters"
-              : "No support requests yet"
-          }
-          description="Requests you raise personally appear here. Organization-owned requests stay in that organization’s Help & support area."
-        />
-      ) : (
-        <ul className="divide-y divide-border rounded-lg border border-border">
-          {query.data?.data.map((row) => (
-            <li key={row.id}>
-              <Link
-                href={requestHref(row.id)}
-                className="flex flex-wrap items-start justify-between gap-3 px-4 py-4 transition-colors hover:bg-muted/50"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium">{row.title}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {[
-                      row.referenceNumber,
-                      row.appointmentId ? "Appointment" : "Account & platform",
-                      row.organization?.name,
-                      `Updated ${DATE_TIME.format(new Date(row.lastMessageAt))}`,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </p>
-                </div>
-                <StatusBadge
-                  label={humanizeEnum(row.status)}
-                  tone={STATUS_TONES[row.status] ?? "neutral"}
-                  size="sm"
-                />
-              </Link>
-            </li>
-          ))}
-        </ul>
-      )}
+      {requestList}
       {query.data &&
         query.data.pagination.total > query.data.pagination.pageSize && (
           <TablePagination

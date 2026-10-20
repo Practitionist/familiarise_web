@@ -276,22 +276,21 @@ export function CaseResolutionPanel({
         data.recommendations.some(
           (rec) => rec.id === refundProposal.recommendationId && !rec.decidedAt,
         ) && (
-          <div
-            role="status"
-            className="space-y-1 rounded border border-border p-3"
-          >
-            <p className="font-medium">Waiting for another admin’s approval</p>
-            <p className="text-xs text-muted-foreground">
+          <output className="block space-y-1 rounded border border-border p-3">
+            <span className="block font-medium">
+              Waiting for another admin’s approval
+            </span>
+            <span className="block text-xs text-muted-foreground">
               The refund has not been sent. This request expires{" "}
               {new Date(refundProposal.expiresAt).toLocaleString()}.
-            </p>
+            </span>
             <a
               className="text-xs underline"
               href="/dashboard/admin/money/approvals"
             >
               View money approvals
             </a>
-          </div>
+          </output>
         )}
       {customer && (
         <a
@@ -423,53 +422,54 @@ export function CaseResolutionPanel({
               <p className="text-xs text-muted-foreground">
                 Responses stay with the platform review team.
               </p>
-              {data.evidenceRequests.map((request) => (
-                <div
-                  key={request.id}
-                  className="space-y-1 rounded border border-border p-2 text-xs"
-                >
-                  <p>{request.prompt}</p>
-                  <p className="text-muted-foreground">
-                    Due {new Date(request.dueAt).toLocaleString()} ·{" "}
-                    {request.cancelledAt
-                      ? "Cancelled"
-                      : request.respondedAt
-                        ? "Responded"
-                        : "Awaiting response"}
-                  </p>
-                  {request.responseBody && (
-                    <p className="whitespace-pre-wrap">
-                      {request.responseBody}
+              {data.evidenceRequests.map((request) => {
+                let status = "Awaiting response";
+                if (request.cancelledAt) status = "Cancelled";
+                else if (request.respondedAt) status = "Responded";
+                return (
+                  <div
+                    key={request.id}
+                    className="space-y-1 rounded border border-border p-2 text-xs"
+                  >
+                    <p>{request.prompt}</p>
+                    <p className="text-muted-foreground">
+                      Due {new Date(request.dueAt).toLocaleString()} · {status}
                     </p>
-                  )}
-                  {request.respondedAt &&
-                    new Date(request.respondedAt) > new Date(request.dueAt) && (
-                      <p className="text-muted-foreground">
-                        Received after the requested deadline
+                    {request.responseBody && (
+                      <p className="whitespace-pre-wrap">
+                        {request.responseBody}
                       </p>
                     )}
-                  <CaseAttachments
-                    caseId={caseId}
-                    evidenceRequestId={request.id}
-                  />
-                  {!request.respondedAt && !request.cancelledAt && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={busy || !reason.trim()}
-                      onClick={() =>
-                        action.mutate({
-                          action: "CANCEL_EVIDENCE",
-                          requestId: request.id,
-                          reason: reason.trim(),
-                        })
-                      }
-                    >
-                      Cancel request
-                    </Button>
-                  )}
-                </div>
-              ))}
+                    {request.respondedAt &&
+                      new Date(request.respondedAt) >
+                        new Date(request.dueAt) && (
+                        <p className="text-muted-foreground">
+                          Received after the requested deadline
+                        </p>
+                      )}
+                    <CaseAttachments
+                      caseId={caseId}
+                      evidenceRequestId={request.id}
+                    />
+                    {!request.respondedAt && !request.cancelledAt && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy || !reason.trim()}
+                        onClick={() =>
+                          action.mutate({
+                            action: "CANCEL_EVIDENCE",
+                            requestId: request.id,
+                            reason: reason.trim(),
+                          })
+                        }
+                      >
+                        Cancel request
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
               <form
                 className="space-y-2"
                 onSubmit={(event) => {
@@ -516,58 +516,63 @@ export function CaseResolutionPanel({
               Financial review
             </summary>
             <div className="mt-2 space-y-3">
-              {data.recommendations.map((rec) => (
-                <div
-                  key={rec.id}
-                  className="space-y-1 rounded border border-border p-2 text-xs"
-                >
-                  <p>
-                    {formatCurrencyAmount(rec.amountPaise, "INR")} ·{" "}
-                    {rec.reason}
-                  </p>
-                  <p>
-                    {rec.decidedAt
-                      ? rec.approved
-                        ? `Approved${rec.refund ? ` · ${humanizeEnum(rec.refund.status)}` : ""}`
-                        : "Declined"
-                      : "Awaiting administrator review"}
-                  </p>
-                  {canMoney &&
-                    (!rec.decidedAt || (rec.approved && !rec.refund)) && (
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={
-                            busy || previewLoading || reason.trim().length < 5
-                          }
-                          onClick={() => void loadPreview(rec.id)}
-                        >
-                          {rec.approved
-                            ? "Retry approved refund"
-                            : "Review refund"}
-                        </Button>
-                        {!rec.decidedAt && (
+              {data.recommendations.map((rec) => {
+                let status = "Awaiting administrator review";
+                if (rec.decidedAt) {
+                  status = "Declined";
+                  if (rec.approved) {
+                    status = "Approved";
+                    if (rec.refund)
+                      status += ` · ${humanizeEnum(rec.refund.status)}`;
+                  }
+                }
+                return (
+                  <div
+                    key={rec.id}
+                    className="space-y-1 rounded border border-border p-2 text-xs"
+                  >
+                    <p>
+                      {formatCurrencyAmount(rec.amountPaise, "INR")} ·{" "}
+                      {rec.reason}
+                    </p>
+                    <p>{status}</p>
+                    {canMoney &&
+                      (!rec.decidedAt || (rec.approved && !rec.refund)) && (
+                        <div className="flex gap-2">
                           <Button
                             size="sm"
-                            variant="ghost"
-                            disabled={busy || reason.trim().length < 5}
-                            onClick={() =>
-                              action.mutate({
-                                action: "REVIEW_REFUND",
-                                recommendationId: rec.id,
-                                approve: false,
-                                reason: reason.trim(),
-                              })
+                            variant="outline"
+                            disabled={
+                              busy || previewLoading || reason.trim().length < 5
                             }
+                            onClick={() => void loadPreview(rec.id)}
                           >
-                            Decline
+                            {rec.approved
+                              ? "Retry approved refund"
+                              : "Review refund"}
                           </Button>
-                        )}
-                      </div>
-                    )}
-                </div>
-              ))}
+                          {!rec.decidedAt && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={busy || reason.trim().length < 5}
+                              onClick={() =>
+                                action.mutate({
+                                  action: "REVIEW_REFUND",
+                                  recommendationId: rec.id,
+                                  approve: false,
+                                  reason: reason.trim(),
+                                })
+                              }
+                            >
+                              Decline
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                  </div>
+                );
+              })}
               {paymentId && (
                 <form
                   className="space-y-2"

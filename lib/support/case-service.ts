@@ -545,6 +545,7 @@ export async function stageSupportCaseIntakeTx(
         where: { id: { in: correspondentIds } },
         select: { email: true },
       });
+      // Keep outbox writes sequential on the transaction’s single connection.
       for (const recipient of recipients) {
         const text = `Reference: ${created.referenceNumber}\n\n${created.ownershipScope === "PERSONAL" ? created.description : "An organization support request was received."}\n\n${getAppUrl()}${href}`;
         const html = text
@@ -802,6 +803,164 @@ async function applyTurnStateUpdate(
   return true;
 }
 
+async function caseTurnRecipientIdsTx(
+  tx: Tx,
+  existingCase: SupportCase,
+  sender: AppendSupportCaseTurnInput["sender"],
+): Promise<string[]> {
+  if (sender === "AGENT") return caseCorrespondentIds(existingCase, tx);
+  if (existingCase.assignedToId) return [existingCase.assignedToId];
+  const operators = await tx.user.findMany({
+    where: { role: { in: ["STAFF", "ADMIN"] }, banned: false },
+    select: { id: true },
+  });
+  return operators.map((operator) => operator.id);
+}
+
+async function stageCaseResponseEmailsTx(
+  tx: Tx,
+  existingCase: SupportCase,
+  body: string,
+  recipients: string[],
+  messageId: string,
+): Promise<void> {
+  const customers = await tx.user.findMany({
+    where: { id: { in: recipients } },
+    select: { email: true },
+  });
+  const href = `${getAppUrl()}${supportRequestHref(caseKeyOf({ kind: "case", id: existingCase.id }), existingCase.organizationId)}`;
+  const text = `Reference: ${existingCase.referenceNumber}\n\n${existingCase.ownershipScope === "PERSONAL" ? body : "A new response is available in your organization support workspace."}\n\n${href}`;
+  const html = text
+    .replace(
+      /[&<>"']/g,
+      (character) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[character] ?? character,
+    )
+    .replace(/\n/g, "<br>");
+  // Keep outbox writes sequential on the transaction’s single connection.
+  for (const customer of customers)
+    await stageEmail(
+      {
+        from: DEFAULT_FROM_ADDRESS,
+        to: customer.email,
+        subject: `Support response — ${existingCase.referenceNumber}`,
+        html,
+        text,
+      },
+      "SUPPORT_TICKET_RESPONSE",
+      { tx, entityRef: `case-message:${messageId}` },
+    );
+}
+
+async function stageCaseTurnNotificationsTx(
+  tx: Tx,
+  existingCase: SupportCase,
+  input: AppendSupportCaseTurnInput,
+  messageId: string,
+): Promise<void> {
+  if (input.isInternal || (input.sender !== "USER" && input.sender !== "AGENT"))
+    return;
+  if (input.sender === "AGENT" && existingCase.externalRequesterEmail) {
+    const html = input.body.replace(
+      /[&<>"']/g,
+      (character) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[character] ?? character,
+    );
+    await stageEmail(
+      {
+        from: DEFAULT_FROM_ADDRESS,
+        to: existingCase.externalRequesterEmail,
+        subject: `Support response — ${existingCase.referenceNumber}`,
+        text: input.body,
+        html: `<p>${html.replace(/\n/g, "<br>")}</p><p>Reference: ${existingCase.referenceNumber}</p>`,
+      },
+      "SUPPORT_TICKET_RESPONSE",
+      { tx, entityRef: `case-message:${messageId}` },
+    );
+    return;
+  }
+  const recipients = await caseTurnRecipientIdsTx(
+    tx,
+    existingCase,
+    input.sender,
+  );
+  await stageBell(tx, {
+    workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
+    recipients,
+    dedupeKey: `case-message:${messageId}`,
+    entityRef: `case-message:${messageId}`,
+    payload: {
+      ticketId: existingCase.id,
+      reference: existingCase.referenceNumber,
+      ticketTitle: existingCase.title,
+      status: "New response",
+      dashboardUrl: supportRequestHref(
+        caseKeyOf({ kind: "case", id: existingCase.id }),
+        existingCase.organizationId,
+      ),
+      ...notificationScope(existingCase.organizationId),
+    },
+  });
+  if (input.sender === "AGENT")
+    await stageCaseResponseEmailsTx(
+      tx,
+      existingCase,
+      input.body,
+      recipients,
+      messageId,
+    );
+}
+
+async function appendTurnConflictTx(
+  tx: Tx,
+  existingCase: Pick<SupportCase, "lastMessageAt">,
+  input: AppendSupportCaseTurnInput,
+) {
+  if (
+    input.sender === "AGENT" &&
+    !input.isInternal &&
+    input.expectedLastMessageAt
+  ) {
+    const expectedDate = new Date(input.expectedLastMessageAt);
+    const latestRow = await tx.supportCase.findUnique({
+      where: { id: input.caseId },
+      select: { lastMessageAt: true },
+    });
+    const latestLastMessageAt =
+      latestRow?.lastMessageAt ?? existingCase.lastMessageAt;
+    if (
+      latestLastMessageAt &&
+      latestLastMessageAt.getTime() > expectedDate.getTime()
+    ) {
+      return {
+        ok: false as const,
+        status: 409 as const,
+        code: "NEW_CUSTOMER_MESSAGE" as const,
+        error:
+          "Customer replied since you opened this case. Review their message before sending.",
+      };
+    }
+  }
+  return {
+    ok: false as const,
+    status: 409 as const,
+    code: "CONFLICT" as const,
+    error: "Support case was updated concurrently.",
+  };
+}
+
 async function executeAppendTurnTx(
   tx: Tx,
   input: AppendSupportCaseTurnInput,
@@ -832,39 +991,7 @@ async function executeAppendTurnTx(
   }
 
   const applied = await applyTurnStateUpdate(tx, existingCase, input, now);
-  if (!applied) {
-    if (
-      input.sender === "AGENT" &&
-      !input.isInternal &&
-      input.expectedLastMessageAt
-    ) {
-      const expectedDate = new Date(input.expectedLastMessageAt);
-      const latestRow = await tx.supportCase.findUnique({
-        where: { id: input.caseId },
-        select: { lastMessageAt: true },
-      });
-      const latestLastMessageAt =
-        latestRow?.lastMessageAt ?? existingCase.lastMessageAt;
-      if (
-        latestLastMessageAt &&
-        latestLastMessageAt.getTime() > expectedDate.getTime()
-      ) {
-        return {
-          ok: false as const,
-          status: 409 as const,
-          code: "NEW_CUSTOMER_MESSAGE" as const,
-          error:
-            "Customer replied since you opened this case. Review their message before sending.",
-        };
-      }
-    }
-    return {
-      ok: false as const,
-      status: 409 as const,
-      code: "CONFLICT" as const,
-      error: "Support case was updated concurrently.",
-    };
-  }
+  if (!applied) return appendTurnConflictTx(tx, existingCase, input);
 
   const seqHolder = await tx.supportCase.findUniqueOrThrow({
     where: { id: input.caseId },
@@ -884,97 +1011,7 @@ async function executeAppendTurnTx(
     },
   });
 
-  if (
-    !input.isInternal &&
-    (input.sender === "USER" || input.sender === "AGENT")
-  ) {
-    if (input.sender === "AGENT" && existingCase.externalRequesterEmail) {
-      const html = input.body.replace(
-        /[&<>"']/g,
-        (character) =>
-          ({
-            "&": "&amp;",
-            "<": "&lt;",
-            ">": "&gt;",
-            '"': "&quot;",
-            "'": "&#39;",
-          })[character] ?? character,
-      );
-      await stageEmail(
-        {
-          from: DEFAULT_FROM_ADDRESS,
-          to: existingCase.externalRequesterEmail,
-          subject: `Support response — ${existingCase.referenceNumber}`,
-          text: input.body,
-          html: `<p>${html.replace(/\n/g, "<br>")}</p><p>Reference: ${existingCase.referenceNumber}</p>`,
-        },
-        "SUPPORT_TICKET_RESPONSE",
-        { tx, entityRef: `case-message:${created.id}` },
-      );
-    } else {
-      const recipients =
-        input.sender === "AGENT"
-          ? await caseCorrespondentIds(existingCase, tx)
-          : existingCase.assignedToId
-            ? [existingCase.assignedToId]
-            : (
-                await tx.user.findMany({
-                  where: { role: { in: ["STAFF", "ADMIN"] }, banned: false },
-                  select: { id: true },
-                })
-              ).map((operator) => operator.id);
-      await stageBell(tx, {
-        workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
-        recipients,
-        dedupeKey: `case-message:${created.id}`,
-        entityRef: `case-message:${created.id}`,
-        payload: {
-          ticketId: existingCase.id,
-          reference: existingCase.referenceNumber,
-          ticketTitle: existingCase.title,
-          status: "New response",
-          dashboardUrl: supportRequestHref(
-            caseKeyOf({ kind: "case", id: existingCase.id }),
-            existingCase.organizationId,
-          ),
-          ...notificationScope(existingCase.organizationId),
-        },
-      });
-      if (input.sender === "AGENT") {
-        const customers = await tx.user.findMany({
-          where: { id: { in: recipients } },
-          select: { email: true },
-        });
-        const href = `${getAppUrl()}${supportRequestHref(caseKeyOf({ kind: "case", id: existingCase.id }), existingCase.organizationId)}`;
-        const text = `Reference: ${existingCase.referenceNumber}\n\n${existingCase.ownershipScope === "PERSONAL" ? input.body : "A new response is available in your organization support workspace."}\n\n${href}`;
-        const html = text
-          .replace(
-            /[&<>"']/g,
-            (character) =>
-              ({
-                "&": "&amp;",
-                "<": "&lt;",
-                ">": "&gt;",
-                '"': "&quot;",
-                "'": "&#39;",
-              })[character] ?? character,
-          )
-          .replace(/\n/g, "<br>");
-        for (const customer of customers)
-          await stageEmail(
-            {
-              from: DEFAULT_FROM_ADDRESS,
-              to: customer.email,
-              subject: `Support response — ${existingCase.referenceNumber}`,
-              html,
-              text,
-            },
-            "SUPPORT_TICKET_RESPONSE",
-            { tx, entityRef: `case-message:${created.id}` },
-          );
-      }
-    }
-  }
+  await stageCaseTurnNotificationsTx(tx, existingCase, input, created.id);
   return {
     ok: true as const,
     replayed: false,
@@ -1369,6 +1406,39 @@ async function validatePatchLifecyclePreconditionsTx(
   return null;
 }
 
+async function hasConflictingAppealReviewerTx(
+  tx: Tx,
+  existing: Pick<
+    SupportCase,
+    "appealOfDecisionId" | "appealOfModerationActionId"
+  >,
+  input: Pick<PatchSupportCaseInput, "actorId" | "assignedToId">,
+): Promise<boolean> {
+  if (!existing.appealOfDecisionId && !existing.appealOfModerationActionId)
+    return false;
+  const reviewerIds = new Set(
+    [input.actorId, input.assignedToId].filter((id): id is string =>
+      Boolean(id),
+    ),
+  );
+  const decision = existing.appealOfDecisionId
+    ? await tx.supportCaseDecision.findUnique({
+        where: { id: existing.appealOfDecisionId },
+        select: { decidedById: true },
+      })
+    : null;
+  const action = existing.appealOfModerationActionId
+    ? await tx.moderationAction.findUnique({
+        where: { id: existing.appealOfModerationActionId },
+        select: { takenById: true },
+      })
+    : null;
+  return Boolean(
+    (decision?.decidedById && reviewerIds.has(decision.decidedById)) ||
+    (action?.takenById && reviewerIds.has(action.takenById)),
+  );
+}
+
 export async function executePatchLifecycleTx(
   tx: Tx,
   input: PatchSupportCaseInput,
@@ -1386,35 +1456,13 @@ export async function executePatchLifecycleTx(
     };
   }
 
-  if (existing.appealOfDecisionId || existing.appealOfModerationActionId) {
-    const reviewerIds = new Set(
-      [input.actorId, input.assignedToId].filter((id): id is string =>
-        Boolean(id),
-      ),
-    );
-    const decision = existing.appealOfDecisionId
-      ? await tx.supportCaseDecision.findUnique({
-          where: { id: existing.appealOfDecisionId },
-          select: { decidedById: true },
-        })
-      : null;
-    const action = existing.appealOfModerationActionId
-      ? await tx.moderationAction.findUnique({
-          where: { id: existing.appealOfModerationActionId },
-          select: { takenById: true },
-        })
-      : null;
-    if (
-      (decision?.decidedById && reviewerIds.has(decision.decidedById)) ||
-      (action?.takenById && reviewerIds.has(action.takenById))
-    )
-      return {
-        ok: false as const,
-        status: 403 as const,
-        code: "INDEPENDENT_REVIEW_REQUIRED" as const,
-        error: "A different eligible reviewer must handle this appeal.",
-      };
-  }
+  if (await hasConflictingAppealReviewerTx(tx, existing, input))
+    return {
+      ok: false as const,
+      status: 403 as const,
+      code: "INDEPENDENT_REVIEW_REQUIRED" as const,
+      error: "A different eligible reviewer must handle this appeal.",
+    };
 
   const preconditionFailure = await validatePatchLifecyclePreconditionsTx(
     tx,

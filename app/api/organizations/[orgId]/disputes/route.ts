@@ -94,11 +94,13 @@ export async function GET(
       const host =
         payment.hostOrganizationId === orgId ||
         payment.organizationEarnings.length > 0;
+      let relationship = "HOST";
+      if (buyer) relationship = host ? "BUYER_AND_HOST" : "BUYER";
       return {
         ...dispute,
         reason: buyer ? reason : null,
         payment: buyer ? { id: payment.id } : null,
-        relationship: buyer ? (host ? "BUYER_AND_HOST" : "BUYER") : "HOST",
+        relationship,
       };
     }),
     pagination: {

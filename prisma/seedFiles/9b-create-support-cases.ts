@@ -23,6 +23,7 @@ export async function createSupportCases(
     "RESOLVED",
     "CLOSED",
   ];
+  // Allocate references sequentially without opening competing seed transactions.
   for (const [index, customer] of customers.entries()) {
     const status = statuses[index % statuses.length];
     const createdAt = new Date(Date.now() - 2 * 86_400_000);

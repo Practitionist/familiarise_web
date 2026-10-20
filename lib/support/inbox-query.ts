@@ -148,56 +148,77 @@ function range(f: InboxFilters) {
 export const SLA_ACK_AT_RISK_MS = 6 * 3_600_000;
 export const SLA_RESOLUTION_AT_RISK_MS = 12 * 3_600_000;
 
+function inboxViewWhere(
+  f: InboxFilters,
+  now: Date,
+): Prisma.SupportCaseWhereInput[] {
+  switch (f.view) {
+    case "needs-reply":
+      return [
+        CASE_OPEN_WHERE,
+        { activeChannel: "HUMAN", awaitingUserSince: null },
+      ];
+    case "evidence-overdue":
+      return [
+        CASE_OPEN_WHERE,
+        {
+          evidenceRequests: {
+            some: { dueAt: { lte: now }, respondedAt: null, cancelledAt: null },
+          },
+        },
+      ];
+    case "financial-pending":
+      return [{ recommendations: { some: { decidedAt: null } } }];
+    case "appeals":
+      return [
+        {
+          OR: [
+            { appealOfDecisionId: { not: null } },
+            { appealOfModerationActionId: { not: null } },
+          ],
+        },
+      ];
+    case "sla-at-risk":
+      return [
+        CASE_OPEN_WHERE,
+        {
+          OR: [
+            {
+              statutoryDueAt: {
+                lte: new Date(now.getTime() + SLA_RESOLUTION_AT_RISK_MS),
+              },
+            },
+            {
+              acknowledgedAt: null,
+              ackDueAt: { lte: new Date(now.getTime() + SLA_ACK_AT_RISK_MS) },
+            },
+            {
+              resolutionDueAt: {
+                lte: new Date(now.getTime() + SLA_RESOLUTION_AT_RISK_MS),
+              },
+            },
+          ],
+        },
+      ];
+    case "mine":
+      return [{ assignedToId: f.viewerId }];
+    case "unassigned":
+      return [{ assignedToId: null, activeChannel: "HUMAN" }];
+    case "self-serve":
+      return [{ activeChannel: "SELF_SERVE" }];
+    case "all":
+      return [];
+  }
+}
+
 export function inboxCaseWhere(
   f: InboxFilters,
   now: Date = new Date(),
 ): Prisma.SupportCaseWhereInput {
-  const and: Prisma.SupportCaseWhereInput[] = [{ deletedAt: null }];
-  if (f.view === "needs-reply") {
-    and.push(CASE_OPEN_WHERE, {
-      activeChannel: "HUMAN",
-      awaitingUserSince: null,
-    });
-  }
-  if (f.view === "evidence-overdue")
-    and.push(CASE_OPEN_WHERE, {
-      evidenceRequests: {
-        some: { dueAt: { lte: now }, respondedAt: null, cancelledAt: null },
-      },
-    });
-  if (f.view === "financial-pending")
-    and.push({ recommendations: { some: { decidedAt: null } } });
-  if (f.view === "appeals")
-    and.push({
-      OR: [
-        { appealOfDecisionId: { not: null } },
-        { appealOfModerationActionId: { not: null } },
-      ],
-    });
-  if (f.view === "sla-at-risk") {
-    and.push(CASE_OPEN_WHERE, {
-      OR: [
-        {
-          statutoryDueAt: {
-            lte: new Date(now.getTime() + SLA_RESOLUTION_AT_RISK_MS),
-          },
-        },
-        {
-          acknowledgedAt: null,
-          ackDueAt: { lte: new Date(now.getTime() + SLA_ACK_AT_RISK_MS) },
-        },
-        {
-          resolutionDueAt: {
-            lte: new Date(now.getTime() + SLA_RESOLUTION_AT_RISK_MS),
-          },
-        },
-      ],
-    });
-  }
-  if (f.view === "mine") and.push({ assignedToId: f.viewerId });
-  if (f.view === "unassigned")
-    and.push({ assignedToId: null, activeChannel: "HUMAN" });
-  if (f.view === "self-serve") and.push({ activeChannel: "SELF_SERVE" });
+  const and: Prisma.SupportCaseWhereInput[] = [
+    { deletedAt: null },
+    ...inboxViewWhere(f, now),
+  ];
   if (["mine", "unassigned", "self-serve"].includes(f.view) && !f.status)
     and.push(CASE_OPEN_WHERE);
   if (f.status) and.push({ status: f.status });

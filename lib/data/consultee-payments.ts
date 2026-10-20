@@ -52,7 +52,7 @@ export interface ConsulteePaymentRow {
   paymentGateway: string;
   appointmentType: string | null;
   appointmentId: string | null;
-  /** #1675 — the buyer already has a support thread on this booking. */
+  /** The buyer already has a support case on this booking. */
   hasSupportCase: boolean;
   planTitle: string;
   consultantName: string;
@@ -248,8 +248,7 @@ export function paymentRowSelect(userId: string) {
       select: {
         id: true,
         appointmentType: true,
-        // #1675 — the buyer's own support case on this booking, when one
-        // exists, is where a failed refund's "Contact support" goes.
+        // Failed-refund help reuses the buyer’s own active correspondence.
         supportCases: {
           where: { requesterUserId: userId, deletedAt: null },
           select: { id: true },

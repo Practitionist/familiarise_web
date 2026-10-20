@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSession } from "@/lib/auth-client";
 import { z } from "zod";
@@ -90,6 +90,56 @@ export function ReportHistory() {
     },
   });
 
+  let history: ReactNode;
+  if (query.isLoading) {
+    history = <p>Loading report history…</p>;
+  } else if (query.isError) {
+    history = (
+      <div role="alert">
+        Could not load report history.{" "}
+        <Button variant="link" onClick={() => void query.refetch()}>
+          Retry
+        </Button>
+      </div>
+    );
+  } else if (query.data?.reports.length === 0) {
+    history = (
+      <p className="text-sm text-muted-foreground">
+        {scope === "submitted"
+          ? "Reports you submit appear here with a personal reference and outcome."
+          : "No moderation decisions affecting your content or account."}
+      </p>
+    );
+  } else {
+    history = (
+      <ul className="divide-y">
+        {query.data?.reports.map((report) => (
+          <li
+            key={report.reportId}
+            className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm"
+          >
+            <span className="font-medium">{report.reference}</span>
+            <span>{new Date(report.createdAt).toLocaleDateString()}</span>
+            <span>{outcomeLabels[report.outcome]}</span>
+            {report.moderationActionId &&
+              report.appealUntil &&
+              new Date(report.appealUntil).getTime() >= Date.now() && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setAppealing(report.moderationActionId ?? null);
+                    appealId.current = null;
+                  }}
+                >
+                  Appeal decision
+                </Button>
+              )}
+          </li>
+        ))}
+      </ul>
+    );
+  }
   return (
     <Tabs
       value={scope}
@@ -103,49 +153,7 @@ export function ReportHistory() {
         <TabsTrigger value="decisions">Decisions affecting you</TabsTrigger>
       </TabsList>
       <TabsContent value={scope} className="space-y-4">
-        {query.isLoading ? (
-          <p>Loading report history…</p>
-        ) : query.isError ? (
-          <div role="alert">
-            Could not load report history.{" "}
-            <Button variant="link" onClick={() => void query.refetch()}>
-              Retry
-            </Button>
-          </div>
-        ) : query.data?.reports.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            {scope === "submitted"
-              ? "Reports you submit appear here with a personal reference and outcome."
-              : "No moderation decisions affecting your content or account."}
-          </p>
-        ) : (
-          <ul className="divide-y">
-            {query.data?.reports.map((report) => (
-              <li
-                key={report.reportId}
-                className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm"
-              >
-                <span className="font-medium">{report.reference}</span>
-                <span>{new Date(report.createdAt).toLocaleDateString()}</span>
-                <span>{outcomeLabels[report.outcome]}</span>
-                {report.moderationActionId &&
-                  report.appealUntil &&
-                  new Date(report.appealUntil).getTime() >= Date.now() && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        setAppealing(report.moderationActionId ?? null);
-                        appealId.current = null;
-                      }}
-                    >
-                      Appeal decision
-                    </Button>
-                  )}
-              </li>
-            ))}
-          </ul>
-        )}
+        {history}
         {appealing && (
           <div className="space-y-2">
             <label htmlFor="moderation-appeal-reason">

@@ -28,10 +28,8 @@ import type { UserRole } from "@prisma/client";
  *     turnover; irreversible actions concentrate on the account that answers
  *     for them.
  *
- * Deliberately NOT a maker-checker split: there is exactly one admin today,
- * so an approval queue would have a single clearer and would add latency
- * without adding separation of duties. Revisit when a second admin exists —
- * the surface keys below already name the mutations that would need it.
+ * High-value money actions require a different approver when multiple admins
+ * are active; the single-admin path retains fresh-session, budget and audit guards.
  */
 
 export type BackofficeSurface =

@@ -339,6 +339,90 @@ async function validateCaseScopeAccess(params: {
   return null;
 }
 
+async function validateCaseOwnershipAccess(
+  data: ParsedCaseCreationBody,
+  staff: boolean,
+  userId: string,
+): Promise<NextResponse | null> {
+  const targetOrgId = data.organizationId ?? null;
+  const ownershipPermission = caseOwnershipPermission(
+    data.ownershipScope ?? "PERSONAL",
+  );
+  if (ownershipPermission) {
+    const member = targetOrgId
+      ? await prisma.membership.findFirst({
+          where: {
+            organizationId: targetOrgId,
+            userId,
+            status: "ACTIVE",
+          },
+          select: { role: true },
+        })
+      : null;
+    if (
+      !staff &&
+      (!member || !hasOrgPermission(member.role, ownershipPermission))
+    )
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (!targetOrgId)
+      return NextResponse.json(
+        { error: "Organization is required" },
+        { status: 400 },
+      );
+  }
+
+  return null;
+}
+
+async function resolveCasePayment(
+  data: ParsedCaseCreationBody,
+  staff: boolean,
+  userId: string,
+  targetOrgId: string | null,
+) {
+  const payment = data.paymentId
+    ? await prisma.payment.findFirst({
+        where: { id: data.paymentId, deletedAt: null },
+        select: {
+          id: true,
+          userId: true,
+          appointmentId: true,
+          billingAccount: { select: { ownerOrgId: true } },
+        },
+      })
+    : null;
+  if (
+    data.paymentId &&
+    (!payment ||
+      (!staff &&
+        payment.userId !== userId &&
+        !(
+          data.ownershipScope === "ORG_BILLING" &&
+          payment.billingAccount?.ownerOrgId === targetOrgId
+        )))
+  )
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        { error: "Payment not found" },
+        { status: 404 },
+      ),
+    };
+  if (
+    payment &&
+    data.appointmentId &&
+    payment.appointmentId !== data.appointmentId
+  )
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        { error: "Payment does not belong to this booking" },
+        { status: 400 },
+      ),
+    };
+  return { ok: true as const, payment };
+}
+
 export async function POST(req: NextRequest) {
   try {
     const auth = await requireApiAuth();
@@ -358,31 +442,12 @@ export async function POST(req: NextRequest) {
     const requesterUserId = bodyRes.data.requesterUserId ?? user.id;
     const targetOrgId = bodyRes.data.organizationId ?? null;
 
-    const ownershipPermission = caseOwnershipPermission(
-      bodyRes.data.ownershipScope ?? "PERSONAL",
+    const ownershipError = await validateCaseOwnershipAccess(
+      bodyRes.data,
+      staff,
+      user.id,
     );
-    if (ownershipPermission) {
-      const member = targetOrgId
-        ? await prisma.membership.findFirst({
-            where: {
-              organizationId: targetOrgId,
-              userId: user.id,
-              status: "ACTIVE",
-            },
-            select: { role: true },
-          })
-        : null;
-      if (
-        !staff &&
-        (!member || !hasOrgPermission(member.role, ownershipPermission))
-      )
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-      if (!targetOrgId)
-        return NextResponse.json(
-          { error: "Organization is required" },
-          { status: 400 },
-        );
-    }
+    if (ownershipError) return ownershipError;
 
     const accessErr = await validateCaseScopeAccess({
       staff,
@@ -394,37 +459,14 @@ export async function POST(req: NextRequest) {
     });
     if (accessErr) return accessErr;
 
-    const payment = bodyRes.data.paymentId
-      ? await prisma.payment.findFirst({
-          where: { id: bodyRes.data.paymentId, deletedAt: null },
-          select: {
-            id: true,
-            userId: true,
-            appointmentId: true,
-            billingAccount: { select: { ownerOrgId: true } },
-          },
-        })
-      : null;
-    if (
-      bodyRes.data.paymentId &&
-      (!payment ||
-        (!staff &&
-          payment.userId !== user.id &&
-          !(
-            bodyRes.data.ownershipScope === "ORG_BILLING" &&
-            payment.billingAccount?.ownerOrgId === targetOrgId
-          )))
-    )
-      return NextResponse.json({ error: "Payment not found" }, { status: 404 });
-    if (
-      payment &&
-      bodyRes.data.appointmentId &&
-      payment.appointmentId !== bodyRes.data.appointmentId
-    )
-      return NextResponse.json(
-        { error: "Payment does not belong to this booking" },
-        { status: 400 },
-      );
+    const paymentResult = await resolveCasePayment(
+      bodyRes.data,
+      staff,
+      user.id,
+      targetOrgId,
+    );
+    if (!paymentResult.ok) return paymentResult.response;
+    const { payment } = paymentResult;
     const result = await createOrReuseSupportCase({
       ...bodyRes.data,
       subjects: payment

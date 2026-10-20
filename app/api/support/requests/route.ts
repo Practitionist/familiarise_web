@@ -23,6 +23,11 @@ export async function GET(req: NextRequest) {
     userId: auth.session.user.id,
     role: "CONSULTEE",
   });
+  const scopeFilters: Prisma.SupportCaseWhereInput[] = [];
+  if (query.data.scope === "session")
+    scopeFilters.push({ appointmentId: { not: null } });
+  if (query.data.scope === "platform")
+    scopeFilters.push({ appointmentId: null });
   const where: Prisma.SupportCaseWhereInput = {
     AND: [
       visible,
@@ -30,11 +35,7 @@ export async function GET(req: NextRequest) {
         ? [{ ownershipScope: "PERSONAL" as const }]
         : []),
       ...(query.data.status ? [{ status: query.data.status }] : []),
-      ...(query.data.scope === "session"
-        ? [{ appointmentId: { not: null } }]
-        : query.data.scope === "platform"
-          ? [{ appointmentId: null }]
-          : []),
+      ...scopeFilters,
     ],
   };
   const pageSize = 20;
@@ -90,6 +91,7 @@ export async function GET(req: NextRequest) {
         const redacted =
           c.requesterUserId !== c.submitterUserId &&
           c.requesterUserId === auth.session.user.id;
+        const lastMessage = redacted ? undefined : c.messages[0];
         return {
           id: c.id,
           title: redacted ? "Organization support request" : c.title,
@@ -110,11 +112,9 @@ export async function GET(req: NextRequest) {
                 createdAt: m.createdAt,
                 isInternal: false,
               })),
-          lastMessage: redacted
-            ? null
-            : c.messages[0]
-              ? { sender: c.messages[0].sender, body: c.messages[0].body }
-              : null,
+          lastMessage: lastMessage
+            ? { sender: lastMessage.sender, body: lastMessage.body }
+            : null,
           appointment: c.appointment
             ? {
                 appointmentType: c.appointment.appointmentType,

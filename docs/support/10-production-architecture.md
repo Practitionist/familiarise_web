@@ -33,6 +33,25 @@ A service complaint does not create a bank chargeback. Gateway `Dispute` rows
 retain the provider's references, lifecycle, evidence deadline, and money guards.
 The case links the service investigation to its payment and refund.
 
+Platform mediation is explicit: a participant selects Get help, staff request
+neutral evidence from the other relevant party, then record a decision. Ordinary
+chat remains participant messaging, with abuse reports routed to moderation.
+Staff do not automatically join private chats or monitor disagreements. Evidence
+recipients see the prompt, their response and the permitted decision outcome;
+they do not receive the complainant’s private correspondence or full explanation.
+
+| Term            | Meaning and owner                                                                                                 |
+| --------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Service dispute | A support case about the appointment or service; staff investigate and mediate.                                   |
+| Chargeback      | A bank/provider payment dispute; admin handles evidence and provider deadlines in the finance workflow.           |
+| Refund          | An approved return of a payment, reserved and executed through existing finance controls.                         |
+| Clawback        | Recovery of already-paid earnings through the existing ledger and future payout offsets; no automatic bank debit. |
+| Payment hold    | A separate admin block on eligible unpaid earnings during investigation; it cannot recall a completed payout.     |
+
+A complaint or low rating does not trigger a refund, hold or clawback. The
+provider’s chargeback process is separate from the platform’s service decision;
+see [Razorpay’s dispute documentation](https://razorpay.com/docs/payments/disputes/).
+
 ### Ownership and authorization
 
 - Staff investigate and communicate. Admin alone executes money operations,
@@ -134,8 +153,8 @@ transactions. Sidecar constraints enforce the new ownership, appeal and hold
 shapes; application code does not sweep database-enforced ledger invariants.
 
 Guided self-service starts no operator SLA clock. Formal intake or the first
-human handoff captures `receivedAt` and the category deadline, fixed at receipt and do not pause while waiting for a
-customer. Internal SLA targets may pause, bounded by the absolute deadline.
+human handoff captures `receivedAt` and the category deadline. That deadline is
+fixed at receipt and does not pause while waiting for a customer. Internal SLA targets may pause, bounded by the absolute deadline.
 The existing SLA sweep sends bounded support, evidence and moderation notices;
 there is no additional scheduler. The public policy and applicability of statutory
 categories remain accountable legal/business inputs, not an automatic compliance

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Lightbulb, Plus } from "lucide-react";
 import { z } from "zod";
@@ -88,6 +88,45 @@ export function ProductFeedbackPage() {
         variant: "destructive",
       }),
   });
+  let feedbackHistory: ReactNode;
+  if (query.isLoading) {
+    feedbackHistory = <Skeleton className="h-32 w-full" />;
+  } else if (query.isError) {
+    feedbackHistory = (
+      <ErrorState
+        title="Couldn't load your product feedback"
+        onRetry={() => void query.refetch()}
+      />
+    );
+  } else if (query.data?.length === 0) {
+    feedbackHistory = (
+      <EmptyState
+        icon={Lightbulb}
+        title="No product feedback yet"
+        description="Your suggestions and their review status will appear here."
+      />
+    );
+  } else {
+    feedbackHistory = (
+      <ul className="divide-y divide-border">
+        {query.data?.map((feedback) => (
+          <li className="space-y-2 py-4" key={feedback.id}>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <h2 className="text-sm font-medium">{feedback.title}</h2>
+              <StatusBadge
+                label={STATUS_LABELS[feedback.status]}
+                tone="neutral"
+                size="sm"
+              />
+            </div>
+            <p className="whitespace-pre-wrap text-sm text-muted-foreground">
+              {feedback.description}
+            </p>
+          </li>
+        ))}
+      </ul>
+    );
+  }
   return (
     <>
       <PageHeader
@@ -155,38 +194,7 @@ export function ProductFeedbackPage() {
           </div>
         </form>
       )}
-      {query.isLoading ? (
-        <Skeleton className="h-32 w-full" />
-      ) : query.isError ? (
-        <ErrorState
-          title="Couldn't load your product feedback"
-          onRetry={() => void query.refetch()}
-        />
-      ) : query.data?.length === 0 ? (
-        <EmptyState
-          icon={Lightbulb}
-          title="No product feedback yet"
-          description="Your suggestions and their review status will appear here."
-        />
-      ) : (
-        <ul className="divide-y divide-border">
-          {query.data?.map((feedback) => (
-            <li className="space-y-2 py-4" key={feedback.id}>
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <h2 className="text-sm font-medium">{feedback.title}</h2>
-                <StatusBadge
-                  label={STATUS_LABELS[feedback.status]}
-                  tone="neutral"
-                  size="sm"
-                />
-              </div>
-              <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-                {feedback.description}
-              </p>
-            </li>
-          ))}
-        </ul>
-      )}
+      {feedbackHistory}
     </>
   );
 }

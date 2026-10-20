@@ -30,14 +30,16 @@ export async function GET(
   if (!recommendation)
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   const payment = recommendation.payment;
-  const blockedReason =
-    payment.paymentStatus !== "SUCCEEDED"
-      ? "Payment is not captured"
-      : payment.disputes.some(
-            (dispute) => !DISPUTE_INACTIVE_FOR_GATING.includes(dispute.status),
-          )
-        ? "A gateway chargeback is active"
-        : null;
+  let blockedReason: string | null = null;
+  if (payment.paymentStatus !== "SUCCEEDED") {
+    blockedReason = "Payment is not captured";
+  } else if (
+    payment.disputes.some(
+      (dispute) => !DISPUTE_INACTIVE_FOR_GATING.includes(dispute.status),
+    )
+  ) {
+    blockedReason = "A gateway chargeback is active";
+  }
   return NextResponse.json({
     data: {
       refundablePaise: refundableBalancePaise(payment.amount, payment),
