@@ -16,7 +16,8 @@ completed Prisma 7 upgrade last because it is history rather than instruction.
 
 | Document                 | What it is                                                                                                                                                                                                       | Read it when                                                                                 |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `00-schema-map.md`       | Thirty-one domain diagrams of the Prisma schema, the enforcer inventory from `prisma/sql/`, and the enum reference table.                                                                                        | Orienting in an unfamiliar part of the schema, or tracing how two models relate.             |
+| `00-schema-map.md`       | The index: the master domain map, the enforcer inventory from `prisma/sql/`, and the enum reference table. The domain diagrams live in `domains/`.                                                               | Orienting in an unfamiliar part of the schema, or tracing how two models relate.             |
+| `domains/01-…` … `10-…`  | The thirty-one domain diagrams, one file per topic: identity, plans, bookings, lifecycle, payments, earnings, invoicing, enterprise, support, compliance.                                                        | Reading the ER diagram for one area of the system.                                           |
 | `01-migrations-guide.md` | The general-purpose reference for Prisma Migrate — every command, safe and dangerous operations, expand and contract, drift, rollback, troubleshooting. Written against a fictional schema so it stays portable. | You need to know what a Prisma command does, or how a class of change is handled in general. |
 
 ## The schema map is generated, not hand-drawn
@@ -29,10 +30,10 @@ disagree with code in a way a compiler notices.
 
 It is now a function of the schema.
 
-| Command                         | What it does                                                                  |
-| ------------------------------- | ----------------------------------------------------------------------------- |
-| `npm run docs:schema-map`       | Re-parses `prisma/schema.prisma` and rewrites `docs/prisma/00-schema-map.md`. |
-| `npm run docs:schema-map:check` | Fails if the committed map has drifted from the schema. Run in CI.            |
+| Command                         | What it does                                                                                   |
+| ------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `npm run docs:schema-map`       | Re-parses `prisma/schema.prisma` and rewrites the index and every file in `domains/`.          |
+| `npm run docs:schema-map:check` | Fails if the committed map has drifted from the schema, or a part file is orphaned. Run in CI. |
 
 The domain grouping — which models belong to which diagram, and the prose around
 each one — lives in `scripts/prisma/schema-domains.ts`. The generator refuses to
@@ -44,6 +45,19 @@ asserts against the live database.
 
 **When you add a model, add it to `scripts/prisma/schema-domains.ts` and run
 `npm run docs:schema-map`.** The CI check will tell you if you forget.
+
+### Why the map is split across files
+
+One file carrying every diagram renders to roughly 12 MB of inline SVG. That
+is past what GitHub's markdown renderer lays out on one page: past a certain
+point the diagrams stop rendering and the page reports `svg element not in
+render tree`. The map is therefore split by topic, and each file is kept small
+enough to render on its own.
+
+Two smaller rules follow from the same problem. An ER box carries at most
+eight columns — the key, the state, the money and the keys it points at — and a
+model that is only context (an anchor, or the target of a key from another
+domain) is drawn as its id alone rather than in full.
 
 ## The one thing to know first
 

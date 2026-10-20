@@ -1,5 +1,5 @@
 /**
- * Builds `docs/prisma/00-schema-map.md` from `prisma/schema.prisma`.
+ * Builds the schema map under `docs/prisma/` from `prisma/schema.prisma`.
  *
  * The map used to be hand-drawn and went stale: the committed file described
  * 120 models while the schema had grown past 160, and ten of the model names
@@ -7,8 +7,15 @@
  * function of the schema, so a schema change that forgets its diagram is
  * caught by `scripts/ci/check-schema-map.ts` instead of by a reader.
  *
- *   npm run docs:schema-map          rewrite the map
+ *   npm run docs:schema-map              rewrite the map
  *   npm run docs:schema-map -- --check   fail if the committed map is stale
+ *
+ * The map is SPLIT ACROSS FILES on purpose. A single file carrying every
+ * diagram renders to roughly 16 MB of inline SVG, which is past what GitHub's
+ * markdown renderer will lay out on one page: past a certain point the
+ * diagrams stop rendering and the page reports "svg element not in render
+ * tree". The index holds the master map, the enforcers and the enums; each
+ * part file under `docs/prisma/domains/` holds one topic group's diagrams.
  *
  * The domain grouping — which models belong to which diagram, and the prose
  * around each one — lives in `scripts/prisma/schema-domains.ts`. The enforcer
@@ -17,13 +24,16 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { format as prettierFormat } from "prettier";
 import { parseSidecarDirectory } from "../db/sidecar-objects";
 import { domains } from "./schema-domains";
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const SCHEMA_PATH = path.join(ROOT, "prisma", "schema.prisma");
 const SQL_DIR = path.join(ROOT, "prisma", "sql");
-const OUT_PATH = path.join(ROOT, "docs", "prisma", "00-schema-map.md");
+const OUT_DIR = path.join(ROOT, "docs", "prisma");
+const OUT_PATH = path.join(OUT_DIR, "00-schema-map.md");
+const DOMAINS_DIR = path.join(OUT_DIR, "domains");
 
 // ---------------------------------------------------------------- parsing
 
@@ -103,7 +113,7 @@ function parseBlocks(text: string): Block[] {
   return blocks;
 }
 
-/** Strips a balanced `name(...)` attribute list from a field's attribute tail. */
+/** Splits a field's attribute tail from its name and type. */
 function splitAttributes(rest: string): { attrs: string; rest: string } {
   let depth = 0;
   let inString = false;
@@ -243,20 +253,34 @@ function parseSchema(text: string): { models: Model[]; enums: Enum[] } {
 
 const MONEY =
   /(amount|paise|price|fee|tax|balance|share|total|subtotal|igst|cgst|sgst|gst|refundable|credit|limit|due|revenue)/i;
-const STATE =
-  /(status|state|kind|type|mode|role|source|channel|method|reason)/i;
 
-/** Mermaid's erDiagram has no optional marker, so nullability lives in prose. */
-function mermaidType(type: string): string {
-  return type === "BigInt" ? "bigint" : type.toLowerCase();
-}
+/**
+ * The columns worth drawing. An ER box with sixteen rows is unreadable on a
+ * phone and each one costs SVG payload, so the diagram keeps the columns that
+ * identify the row — its key, the state it is in, the money it carries and
+ * where it points — and leaves the rest to the schema.
+ */
+const STATE_COLUMNS = [
+  "status",
+  "type",
+  "kind",
+  "scope",
+  "channel",
+  "actionType",
+  "role",
+  "priority",
+  "verificationStatus",
+];
+
+const MAX_ATTRIBUTES = 8;
 
 function pickFields(model: Model, enumNames: Set<string>): string[] {
   const out: string[] = [];
   const fkNames = new Set(model.relations.flatMap((r) => r.fk));
+  const byName = new Map(model.scalars.map((s) => [s.name, s]));
 
   const add = (s: Scalar) => {
-    if (out.length >= 16) return;
+    if (out.length >= MAX_ATTRIBUTES) return;
     if (out.some((x) => x.split(" ")[0] === s.name)) return;
     const key = s.isId
       ? " PK"
@@ -268,16 +292,32 @@ function pickFields(model: Model, enumNames: Set<string>): string[] {
     out.push(`${s.name} ${mermaidType(s.type)}${key}`);
   };
 
+  // 1. the key
   for (const s of model.scalars) if (s.isId) add(s);
-  for (const s of model.scalars) if (fkNames.has(s.name)) add(s);
-  for (const s of model.scalars) if (enumNames.has(s.type)) add(s);
-  for (const s of model.scalars)
-    if (MONEY.test(s.name) && ["Int", "BigInt", "Float"].includes(s.type))
+  // 2. the state the row is in
+  for (const name of STATE_COLUMNS) {
+    const s = byName.get(name);
+    if (s && enumNames.has(s.type)) add(s);
+  }
+  // 3. the money it carries
+  for (const s of model.scalars) {
+    if (MONEY.test(s.name) && ["Int", "BigInt", "Float"].includes(s.type)) {
       add(s);
-  for (const s of model.scalars)
-    if (STATE.test(s.name) && enumNames.has(s.type)) add(s);
+      break;
+    }
+  }
+  // 4. where it points
+  for (const s of model.scalars) if (fkNames.has(s.name)) add(s);
+  // 5. when it was written
+  for (const s of model.scalars) if (s.name === "createdAt") add(s);
+  // 6. fill the remaining slots
   for (const s of model.scalars) add(s);
   return out;
+}
+
+/** Mermaid's erDiagram has no optional marker, so nullability lives in prose. */
+function mermaidType(type: string): string {
+  return type === "BigInt" ? "bigint" : type.toLowerCase();
 }
 
 /** Mermaid reserves `Class`; a model with that name is aliased in the diagram. */
@@ -288,6 +328,7 @@ function erDiagram(
   domainModels: string[],
   anchors: string[],
   models: Map<string, Model>,
+  enumNames: Set<string>,
 ): string {
   const focal = new Set<string>([...domainModels, ...anchors]);
   const entityNames = new Set<string>(focal);
@@ -305,12 +346,15 @@ function erDiagram(
   for (const n of entityNames) {
     const model = models.get(n);
     if (!model) continue;
-    const isStub = !focal.has(n);
+    // Only a domain's OWN models are drawn in full. An anchor and a
+    // cross-domain target are context: the reader needs to see that the key
+    // lands somewhere, not that model's whole column list.
+    const isStub = !domainModels.includes(n);
     const fields = isStub
       ? model.scalars
           .filter((s) => s.isId)
           .map((s) => `${s.name} ${mermaidType(s.type)} PK`)
-      : pickFields(model, ENUM_NAMES);
+      : pickFields(model, enumNames);
     lines.push(`    ${alias(n)} {`);
     for (const f of fields) lines.push(`        ${f}`);
     lines.push("    }");
@@ -339,14 +383,135 @@ function erDiagram(
   return lines.join("\n");
 }
 
+// ------------------------------------------------------------------ parts
+
+/**
+ * The parts the map is split into, in reading order. A part is a topic, not
+ * a size: the split exists so that no single page carries enough inline SVG
+ * to stop GitHub rendering it.
+ */
+interface Part {
+  file: string;
+  title: string;
+  summary: string;
+  domainIds: string[];
+}
+
+const PARTS: Part[] = [
+  {
+    file: "01-identity-and-profiles.md",
+    title: "Identity & Profiles",
+    summary:
+      "Who a person is, what role they hold, and the background they bring.",
+    domainIds: ["identity", "profiles", "background", "taxonomy"],
+  },
+  {
+    file: "02-plans-and-availability.md",
+    title: "Plans & Availability",
+    summary: "What is sold, who else sells it with you, and when you are open.",
+    domainIds: ["plans", "collaborators", "availability"],
+  },
+  {
+    file: "03-bookings-and-appointments.md",
+    title: "Bookings & Appointments",
+    summary:
+      "The request-to-payment chain, and the appointment every booking resolves to.",
+    domainIds: ["bookings-1to1", "bookings-group", "appointment"],
+  },
+  {
+    file: "04-lifecycle-and-sessions.md",
+    title: "Lifecycle & Sessions",
+    summary:
+      "Ending a booking early, moving it, and running the session it becomes.",
+    domainIds: ["cancellation", "session", "documents"],
+  },
+  {
+    file: "05-payments-and-pricing.md",
+    title: "Payments & Pricing",
+    summary: "Money in, money back, and the platform's own fee policy.",
+    domainIds: ["payments", "pricing"],
+  },
+  {
+    file: "06-earnings-and-tax.md",
+    title: "Earnings & Tax",
+    summary:
+      "From a captured payment to money in a bank account, and the tax withheld on the way.",
+    domainIds: ["earnings", "tax"],
+  },
+  {
+    file: "07-invoicing-and-referrals.md",
+    title: "Invoicing & Referrals",
+    summary:
+      "The tax documents a buyer receives, and the credits that bring them back.",
+    domainIds: ["consumer-billing", "referrals", "experts"],
+  },
+  {
+    file: "08-enterprise.md",
+    title: "Enterprise",
+    summary:
+      "The organisation, what it buys, what it is billed, and the ledger underneath.",
+    domainIds: [
+      "enterprise-core",
+      "enterprise-billing",
+      "enterprise-invoicing",
+      "ledger",
+    ],
+  },
+  {
+    file: "09-support-and-moderation.md",
+    title: "Support & Moderation",
+    summary:
+      "The case a support conversation becomes, the rating that follows, and the moderation over both.",
+    domainIds: ["support-legacy", "support-case", "feedback", "moderation"],
+  },
+  {
+    file: "10-compliance-and-system.md",
+    title: "Compliance & System",
+    summary:
+      "Consent, erasure and the operational substrate everything else runs on.",
+    domainIds: ["leads", "compliance", "system"],
+  },
+];
+
 // ------------------------------------------------------------------ build
 
-let ENUM_NAMES = new Set<string>();
+/** GitHub's heading-slug rules: lowercase, drop punctuation, spaces to hyphens. */
+function ghAnchor(heading: string): string {
+  return heading
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-");
+}
 
-function build(): string {
+interface BuiltFile {
+  /** Path relative to the repo root. */
+  path: string;
+  content: string;
+}
+
+/**
+ * Format a generated file exactly the way `prettier --write` would.
+ *
+ * The repo runs `prettier --check .` in CI, so a generator whose output is
+ * not already prettier-clean makes the two checks fight each other: prettier
+ * reformats the committed file, and the drift check then reports it as stale.
+ * Formatting here makes the committed bytes the generator's own output.
+ */
+async function formatFile(relPath: string, content: string): Promise<string> {
+  const parser = relPath.endsWith(".md")
+    ? "markdown"
+    : relPath.endsWith(".ts")
+      ? "typescript"
+      : undefined;
+  if (!parser) return content;
+  return prettierFormat(content, { parser });
+}
+
+async function build(): Promise<BuiltFile[]> {
   const schemaText = fs.readFileSync(SCHEMA_PATH, "utf8");
   const { models: modelList, enums } = parseSchema(schemaText);
-  ENUM_NAMES = new Set(enums.map((e) => e.name));
+  const enumNames = new Set(enums.map((e) => e.name));
   const models = new Map(modelList.map((m) => [m.name, m]));
 
   // Every model must be claimed by exactly one domain.
@@ -354,8 +519,9 @@ function build(): string {
   const problems: string[] = [];
   for (const d of domains) {
     for (const m of d.models) {
-      if (claimed.has(m))
+      if (claimed.has(m)) {
         problems.push(`${m} claimed by both ${claimed.get(m)} and ${d.id}`);
+      }
       claimed.set(m, d.id);
       if (!models.has(m))
         problems.push(`${m} is in domain ${d.id} but not in the schema`);
@@ -372,81 +538,89 @@ function build(): string {
     );
   }
 
-  const parts: string[] = [];
-  const N = domains.length;
-  const enforcers = enforcerRows();
+  // Every domain must be in exactly one part.
+  const partIds = PARTS.flatMap((p) => p.domainIds);
+  const missing = domains
+    .map((d) => d.id)
+    .filter((id) => !partIds.includes(id));
+  const extra = partIds.filter((id) => !domains.some((d) => d.id === id));
+  if (missing.length || extra.length) {
+    throw new Error(
+      `Part map does not cover the domains:\n  missing: ${missing.join(", ") || "none"}\n  unknown: ${extra.join(", ") || "none"}`,
+    );
+  }
 
-  parts.push(HEADER(modelList.length, enums.length));
+  const byId = new Map(domains.map((d) => [d.id, d]));
+  const files: BuiltFile[] = [];
 
-  parts.push(`## Contents
+  // ---- the part files
+  const partIndex: Array<{
+    part: Part;
+    entries: Array<{ title: string; anchor: string }>;
+  }> = [];
+  for (const part of PARTS) {
+    const entries: Array<{ title: string; anchor: string }> = [];
+    const body: string[] = [];
+    body.push(`---
+type: reference
+title: Familiarise — Schema map, ${part.title}
+---`);
+    body.push(`# Schema map — ${part.title}
 
-1. [Master domain map](#1-master-domain-map)
-${domains.map((d, i) => `${i + 2}. [${d.title}](#${ghAnchor(`${i + 2}. ${d.title}`)})`).join("\n")}
-${N + 2}. [Enforcers — the \`prisma/sql\` sidecars](#${ghAnchor(`${N + 2}. Enforcers — the \`prisma/sql\` sidecars`)})
-${N + 3}. [Enum reference](#${ghAnchor(`${N + 3}. Enum reference`)})
-${N + 4}. [Deprecated & superseded approaches](#${ghAnchor(`${N + 4}. Deprecated & superseded approaches`)})`);
+${part.summary}
 
-  parts.push(MASTER_MAP(N));
+Part ${PARTS.indexOf(part) + 1} of ${PARTS.length} of the domain map. The
+[map index](../00-schema-map.md) holds the master diagram, the enforcer
+inventory and the enum reference.`);
 
-  domains.forEach((d, i) => {
-    parts.push(`## ${i + 2}. ${d.title}
+    part.domainIds.forEach((id, i) => {
+      const d = byId.get(id)!;
+      const heading = `${i + 1}. ${d.title}`;
+      const anchor = ghAnchor(heading);
+      entries.push({ title: d.title, anchor });
+      body.push(`## ${heading}
 
 ${d.intro}
 
 \`\`\`mermaid
-${erDiagram(d.models, d.anchors ?? [], models)}
+${erDiagram(d.models, d.anchors ?? [], models, enumNames)}
 \`\`\`
 ${d.notes && d.notes.length ? "\n" + d.notes.map((x) => `- ${x}`).join("\n") : ""}`);
-  });
+    });
 
-  parts.push(ENFORCERS_SECTION(enforcers, N));
-  parts.push(ENUM_SECTION(enums, N));
-  parts.push(DEPRECATED_SECTION(N));
+    files.push({
+      path: path.join("docs", "prisma", "domains", part.file),
+      content: body.join("\n\n") + "\n",
+    });
+    partIndex.push({ part, entries });
+  }
 
-  return parts.join("\n\n---\n\n") + "\n";
-}
-
-/** GitHub's heading-slug rules: lowercase, drop punctuation, spaces to hyphens. */
-function ghAnchor(heading: string): string {
-  return heading
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "-");
-}
-
-function enforcerRows(): Array<{ kind: string; name: string; table: string }> {
-  const objects = parseSidecarDirectory(SQL_DIR);
-  const rows = objects.map((o) => ({
-    kind: o.kind,
-    name: o.name,
-    table: o.table ?? "—",
-  }));
-  rows.sort(
-    (a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name),
-  );
-  return rows;
-}
-
-function HEADER(modelCount: number, enumCount: number): string {
-  return `---
+  // ---- the index
+  const index: string[] = [];
+  index.push(`---
 type: reference
 title: Familiarise — Prisma schema map
----
-
-# Familiarise — Prisma Schema Map
+---`);
+  index.push(`# Familiarise — Prisma Schema Map
 
 Every model in the database, how they relate, which state machine each enum
 encodes, and which rule the database itself refuses to let you break.
 
-**Scale.** ${modelCount} models, ${enumCount} enums.
+**Scale.** ${modelList.length} models, ${enums.length} enums, across
+${domains.length} domains.
+
+**The map is split.** The domain diagrams live in
+[\`domains/\`](./domains/) — one file per topic — because a single file
+carrying every diagram renders to roughly 16 MB of inline SVG, which is past
+what GitHub's markdown renderer will lay out on one page. The index below
+holds the master diagram, the enforcer inventory and the enum reference.
 
 **The Prisma schema is not the whole truth.** The rules that matter most are
 often not expressible in Prisma and live in \`prisma/sql/*.sql\` as CHECK
 constraints, partial unique indexes, exclusion constraints and triggers.
-[Section ${domains.length + 2}](#${ghAnchor(`${domains.length + 2}. Enforcers — the \`prisma/sql\` sidecars`)})
-lists all of them by name and table. Where this document says "the database
-refuses it", that section names the object that does the refusing.
+[Section 2](#2-enforcers--the-prismasql-sidecars) lists all of them by name
+and table. Where this document says "the database refuses it", that section
+names the object that does the refusing.
 
 **Money.** Every monetary column is \`BigInt\` **paise** in Postgres, mapped to
 \`number\` at the Prisma client boundary in \`lib/prisma.ts\`. Settlement is INR
@@ -457,18 +631,70 @@ and new models are allowed; renames, drops of live columns and type changes are
 not, until launch cutover.
 
 **This file is generated.** \`npm run docs:schema-map\` re-parses
-\`prisma/schema.prisma\` and rewrites it; \`scripts/ci/check-schema-map.ts\`
-fails the build when the committed map has drifted from the schema. The domain
-grouping and the prose live in \`scripts/prisma/schema-domains.ts\`.`;
-}
+\`prisma/schema.prisma\` and rewrites it and its parts;
+\`scripts/ci/check-schema-map.ts\` fails the build when the committed map has
+drifted from the schema. The domain grouping and the prose live in
+\`scripts/prisma/schema-domains.ts\`.`);
 
-function MASTER_MAP(N: number): string {
-  return `## 1. Master domain map
+  // The contents table: every domain, in order, with its part file.
+  const contents: string[] = [];
+  let n = 0;
+  for (const { part, entries } of partIndex) {
+    n += 1;
+    contents.push(
+      `| ${String(n).padStart(2, " ")}. | [${part.title}](./domains/${part.file}) | ${part.summary} |`,
+    );
+    for (const e of entries) {
+      n += 1;
+      contents.push(
+        `| ${String(n).padStart(2, " ")}. | [${e.title}](./domains/${part.file}#${e.anchor}) | |`,
+      );
+    }
+  }
+  index.push(`## Contents
 
-The ${N} domains below, and how the identity and money layers cut across them.
+| # | Domain | |
+| --- | --- | --- |
+${contents.join("\n")}`);
+
+  index.push(`## 1. Master domain map
+
+The ${domains.length} domains below, and how the identity and money layers cut
+across them.
 
 \`\`\`mermaid
-flowchart TD
+${MASTER_MAP()}
+\`\`\`
+
+**The three rules that shape everything else.**
+
+1. **Identity is the only root.** Every row that belongs to a person resolves to
+   \`User.id\`. Money resolves to \`Payment\`; a booking resolves to
+   \`Appointment\`, never directly to a booking-type row.
+2. **Money has one writer per transition.** A status change on \`Payment\`,
+   \`Refund\`, \`Appointment\` or \`ConsultantPayout\` is a conditional update
+   that names the expected prior status in its \`WHERE\` clause. The ledger
+   behind it is append-only, and a reversal is a counter-transaction rather
+   than an edited row.
+3. **The database enforces the invariants, not the application.** The
+   application may check first, but the object that actually refuses the bad
+   write is named in the enforcers section.`);
+
+  index.push(ENFORCERS_SECTION(enforcerRows(), 2));
+  index.push(ENUM_SECTION(enums, 3));
+  index.push(DEPRECATED_SECTION(4));
+
+  files.unshift({
+    path: path.join("docs", "prisma", "00-schema-map.md"),
+    content: index.join("\n\n") + "\n",
+  });
+
+  for (const f of files) f.content = await formatFile(f.path, f.content);
+  return files;
+}
+
+function MASTER_MAP(): string {
+  return `flowchart TD
     subgraph ID["Identity & Auth"]
         User
         Account
@@ -581,27 +807,25 @@ flowchart TD
     ID --> MOD
     ID --> CMP
     ID --> OPS
-    LED --> OPS
-\`\`\`
+    LED --> OPS`;
+}
 
-**The three rules that shape everything else.**
-
-1. **Identity is the only root.** Every row that belongs to a person resolves to
-   \`User.id\`. Money resolves to \`Payment\`; a booking resolves to
-   \`Appointment\`, never directly to a booking-type row.
-2. **Money has one writer per transition.** A status change on \`Payment\`,
-   \`Refund\`, \`Appointment\` or \`ConsultantPayout\` is a conditional update
-   that names the expected prior status in its \`WHERE\` clause. The ledger
-   behind it is append-only, and a reversal is a counter-transaction rather
-   than an edited row.
-3. **The database enforces the invariants, not the application.** The
-   application may check first, but the object that actually refuses the bad
-   write is named in the enforcers section.`;
+function enforcerRows(): Array<{ kind: string; name: string; table: string }> {
+  const objects = parseSidecarDirectory(SQL_DIR);
+  const rows = objects.map((o) => ({
+    kind: o.kind,
+    name: o.name,
+    table: o.table ?? "—",
+  }));
+  rows.sort(
+    (a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name),
+  );
+  return rows;
 }
 
 function ENFORCERS_SECTION(
   rows: Array<{ kind: string; name: string; table: string }>,
-  N: number,
+  n: number,
 ): string {
   const table = rows
     .map(
@@ -610,7 +834,7 @@ function ENFORCERS_SECTION(
     )
     .join("\n");
 
-  return `## ${N + 2}. Enforcers — the \`prisma/sql\` sidecars
+  return `## ${n}. Enforcers — the \`prisma/sql\` sidecars
 
 The schema is managed with \`prisma db push\`, which cannot express a CHECK
 that spans columns, a partial unique index, a GiST exclusion constraint or a
@@ -657,17 +881,17 @@ ${table}
 | \`overage_marginal_is_base_plus_surcharge\` | An overage charge whose marginal amount is not base plus surcharge. |
 | \`rate_card_bps_sum_is_whole\` | A three-way fee split that is not exactly 10,000 basis points. |
 | \`onboarding_draft_payload_size\` | An onboarding draft blob above the byte cap. |
-| \`webhook_event_processed_error_exclusive\` | A gateway webhook claiming both processed and failed. |`;
+| \`webhook_event_processed_error_exclusive\` | A gateway webhook claiming both processed and failed.`;
 }
 
-function ENUM_SECTION(enums: Enum[], N: number): string {
+function ENUM_SECTION(enums: Enum[], n: number): string {
   const table = enums
     .map(
       (e) =>
         `| \`${e.name}\` | ${e.values.map((v) => `\`${v}\``).join(", ")} |`,
     )
     .join("\n");
-  return `## ${N + 3}. Enum reference
+  return `## ${n}. Enum reference
 
 Every enum in the schema, with its full value list. Enums are declared below the
 model that uses them, and a new value is normally a schema change rather than a
@@ -678,8 +902,8 @@ free-text string.
 ${table}`;
 }
 
-function DEPRECATED_SECTION(N: number): string {
-  return `## ${N + 4}. Deprecated & superseded approaches
+function DEPRECATED_SECTION(n: number): string {
+  return `## ${n}. Deprecated & superseded approaches
 
 Kept so that an engineer or agent reading the current schema recognises these
 names and deletes the leftovers rather than re-introducing them.
@@ -705,30 +929,70 @@ boundaries cannot be transactional.`;
 
 // ------------------------------------------------------------------- main
 
-export { build as buildSchemaMap, OUT_PATH };
+export { build as buildSchemaMap, DOMAINS_DIR, OUT_DIR };
 
 /** Run as a script rather than imported as a module. */
 if (require.main === module) {
-  const check = process.argv.includes("--check");
-  const generated = build();
-
-  if (check) {
-    const committed = fs.existsSync(OUT_PATH)
-      ? fs.readFileSync(OUT_PATH, "utf8")
-      : "";
-    if (committed === generated) {
-      console.log(
-        `schema map is up to date (${path.relative(ROOT, OUT_PATH)})`,
+  void (async () => {
+    const check = process.argv.includes("--check");
+    let files: BuiltFile[];
+    try {
+      files = await build();
+    } catch (error) {
+      console.error(
+        `ERROR: could not build the schema map: ${error instanceof Error ? error.message : String(error)}`,
       );
+      process.exit(1);
+    }
+
+    if (check) {
+      const stale: string[] = [];
+      for (const f of files) {
+        const abs = path.join(ROOT, f.path);
+        const committed = fs.existsSync(abs)
+          ? fs.readFileSync(abs, "utf8")
+          : "";
+        if (committed !== f.content) stale.push(f.path);
+      }
+      // A part file left behind by an earlier split would be a stale artefact.
+      const expected = new Set(files.map((f) => path.join(ROOT, f.path)));
+      const orphans: string[] = [];
+      if (fs.existsSync(DOMAINS_DIR)) {
+        for (const name of fs.readdirSync(DOMAINS_DIR)) {
+          const abs = path.join(DOMAINS_DIR, name);
+          if (!expected.has(abs)) orphans.push(path.relative(ROOT, abs));
+        }
+      }
+      if (stale.length || orphans.length) {
+        console.error(
+          `ERROR: the schema map has drifted from prisma/schema.prisma.\n` +
+            (stale.length ? `  stale: ${stale.join(", ")}\n` : "") +
+            (orphans.length
+              ? `  orphaned part files: ${orphans.join(", ")}\n`
+              : "") +
+            `  Run: npm run docs:schema-map`,
+        );
+        process.exit(1);
+      }
+      console.log(`schema map is up to date (${files.length} files)`);
       process.exit(0);
     }
-    console.error(
-      `ERROR: ${path.relative(ROOT, OUT_PATH)} has drifted from prisma/schema.prisma.\n` +
-        `       Run: npm run docs:schema-map`,
-    );
-    process.exit(1);
-  }
 
-  fs.writeFileSync(OUT_PATH, generated);
-  console.log(`wrote ${path.relative(ROOT, OUT_PATH)}`);
+    fs.mkdirSync(DOMAINS_DIR, { recursive: true });
+    // Remove a part file the split no longer produces.
+    const keep = new Set(files.map((f) => path.basename(f.path)));
+    if (fs.existsSync(DOMAINS_DIR)) {
+      for (const name of fs.readdirSync(DOMAINS_DIR)) {
+        if (!keep.has(name)) fs.rmSync(path.join(DOMAINS_DIR, name));
+      }
+    }
+    for (const f of files) {
+      const abs = path.join(ROOT, f.path);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, f.content);
+    }
+    console.log(
+      `wrote ${files.length} files: ${path.relative(ROOT, OUT_PATH)} and ${path.relative(ROOT, DOMAINS_DIR)}/`,
+    );
+  })();
 }
