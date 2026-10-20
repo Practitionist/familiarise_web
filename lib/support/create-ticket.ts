@@ -95,7 +95,7 @@ export async function findRecentOpenEscalation(
       submitterUserId: userId,
       issueType,
       organizationId,
-      status: { in: ["OPEN", "IN_PROGRESS", "ESCALATED", "ON_HOLD"] },
+      status: { in: ["OPEN", "IN_PROGRESS", "ESCALATED"] },
       deletedAt: null,
       createdAt: { gte: new Date(Date.now() - 30 * 60_000) },
     },

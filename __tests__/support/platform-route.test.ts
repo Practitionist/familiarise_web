@@ -49,7 +49,7 @@ jest.mock("../../lib/prisma", () => {
         referenceNumber: "FAM-2026-000001",
       })),
     },
-    supportTicketCounter: { upsert: jest.fn(async () => ({ nextSeq: 2 })) },
+    supportCaseCounter: { upsert: jest.fn(async () => ({ nextSeq: 2 })) },
     supportFlowOutcome: { create: jest.fn(async () => ({})) },
     user: { findMany: jest.fn(async () => []) },
     organization: { findUnique: jest.fn(async () => null) },

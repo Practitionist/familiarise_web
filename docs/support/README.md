@@ -1,35 +1,23 @@
 # Support and trust
 
-`SupportCase` is the active support record across personal, organization and
-operator dashboards. It owns a reference, ordered messages, assignment, lifecycle,
-absolute deadline and audit events. Legacy tickets/threads are migration sources;
-old links resolve through aliases and old mutation APIs return `410`.
+`SupportCase` owns each support request and its conversation. Appointment,
+payment, account and organization entry points reuse the same lifecycle within
+explicit privacy scopes. Staff investigate; admins execute financial remedies.
 
-Start with [production architecture and cutover](10-productionization-and-cutover.md)
-for ownership, evidence, decisions, refunds, payout holds, appeals, storage,
-concurrency and the deployment sequence. The [intent grid](02-the-grid.md) explains
-why learning questions, support, private ratings, public reviews, product feedback,
-moderation reports and gateway chargebacks remain distinct.
+Start with [production architecture](10-production-architecture.md). Domain details:
 
-Staff investigate and communicate; admin executes money and restricted sanctions.
-Organization operators collaborate within their finance/operations scope, while
-member-private correspondence remains private. Evidence recipients receive a
-neutral request rather than access to the customer's conversation. Notifications
-resolve through `/dashboard/support/<caseKey>` to the authorized workspace.
-
-Case actions reuse the existing financial reservation, ledger and payout services.
-Category deadlines never extend merely because the customer owes information.
-The existing SLA sweep and notification outbox provide recovery. PostgreSQL
-constraints and conditional updates arbitrate concurrent writes.
-
-The service entry points are `/api/support/cases`, `/api/support/requests`,
-`/api/support/evidence` and `/api/support/appeals`. Public grievances retain
-external contact identity and guarded email correspondence. Attachments use
-private storage with direct signed transfers and authorization on every read.
+1. [Architecture](01-architecture.md)
+2. [Ownership and scope](02-the-grid.md)
+3. [References and deadlines](03-ticket-references-and-sla.md)
+4. [Self-service and CSAT](04-deflection-and-support-csat.md)
+5. [Schema reference](05-schema-reference.md)
+6. [Invariants and CI verification](06-invariants-and-testing.md)
+7. [Lifecycle and concurrency](07-ticket-lifecycle-and-concurrency.md)
+8. [Intake, callbacks and evidence](08-intake-callbacks-attachments-and-limits.md)
+9. [SLA sweep](09-support-case-and-sla-sweep.md)
+10. [Production architecture](10-production-architecture.md)
 
 ## Deprecated & Superseded Approaches
 
-Separate live ticket and appointment-thread queues, drawer-only conversations,
-and a shared report identity for multiple reporters are superseded. Older domain
-references describe the former deployment; the cutover document is authoritative
-for the current application and its migration requirements.
+Historical ticket/thread persistence and import compatibility have been removed.
+The pre-MVP database contains disposable mock data; seed canonical cases directly.

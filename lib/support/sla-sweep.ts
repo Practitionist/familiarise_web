@@ -32,8 +32,7 @@ interface SlaSweepCandidate {
   id: string;
   referenceNumber: string;
   title: string;
-  status:
-    "OPEN" | "IN_PROGRESS" | "ESCALATED" | "ON_HOLD" | "RESOLVED" | "CLOSED";
+  status: "OPEN" | "IN_PROGRESS" | "ESCALATED" | "RESOLVED" | "CLOSED";
   assignedToId: string | null;
   ackDueAt: Date | null;
   acknowledgedAt: Date | null;
@@ -66,8 +65,7 @@ export interface SupportSlaSweepResult {
 
 function slaNoticeTransitions(
   row: {
-    status:
-      "OPEN" | "IN_PROGRESS" | "ESCALATED" | "ON_HOLD" | "RESOLVED" | "CLOSED";
+    status: "OPEN" | "IN_PROGRESS" | "ESCALATED" | "RESOLVED" | "CLOSED";
     ackDueAt: Date | null;
     acknowledgedAt: Date | null;
     resolutionDueAt: Date | null;

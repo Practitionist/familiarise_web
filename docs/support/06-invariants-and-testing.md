@@ -1,55 +1,35 @@
-# Invariants and Testing
+# Support invariants and CI verification
 
-The 24 runtime and database invariants below govern the unified support architecture (`SupportCase` family), legacy transition paths (`SupportTicket` / `AppointmentSupportThread`), operator authentication, and test isolation. Every rule is backed by atomic compare-and-set (`updateMany`) filters, PostgreSQL sidecar constraints, or automated unit and integration suites.
+The implementation is checked through focused regressions and disposable-Postgres
+CI races. Tests, typechecking, lint and builds run in CI/CD for this change.
 
----
+1. SupportCase is the only live correspondence record; booking/account help uses it.
+2. Intake deduplicates within ownership and subject scope, with a partial unique index.
+3. Every transaction helper queries its passed transaction client, never global Prisma.
+4. Message sequence and retry identity prevent reordered or duplicated turns.
+5. Metadata uses expectedUpdatedAt; stale writes return a conflict.
+6. Public staff replies reject unseen newer customer messages.
+7. Private notes never reach the customer or evidence recipient.
+8. Organization membership grants operations and billing separately.
+9. Evidence submission/cancellation races have one conditional winner.
+10. Submitted evidence is final; lateness is visible rather than silently discarded.
+11. Decisions are immutable and appeals exclude the original reviewer.
+12. Refund recommendations retain one stable reservation/refund identity across retries.
+13. Financial execution uses admin step-up, reason, budget, audit and conditional approval.
+14. Case holds participate in payout claims and disbursement eligibility.
+15. Absolute receipt deadlines cannot be extended by customer waiting.
+16. Notifications stage transactionally and dedupe through the durable outbox.
+17. Reporter receipts and appeal rights stay reporter-specific.
+18. Feedback/reviews do not automatically create cases or money movements.
 
-## Core Invariants (1–24)
-
-1. **Status mirrors are transactional and CAS-guarded on `CLOSED`.** Thread and ticket status changes (`staff/support-threads/[threadId]` `PATCH` and the ticket-route mirror) execute inside a single `prisma.$transaction`, unconditionally guarded with `status: { notIn: ["CLOSED"] }`. Conditional empty arrays (`notIn: []`) are never used because Prisma treats an empty `notIn` as a no-op filter that overwrites closed rows.
-2. **All three write doors CAS on `CLOSED`, and a refusal rolls back the entire transaction.** Self-serve turns, `persistHumanTurn`, and `escalate()` express their open-state check directly inside `WHERE` and throw `ThreadSettledError` on refusal rather than returning a boolean flag, because returning normally from a Prisma interactive callback commits earlier message inserts inside the same transaction.
-3. **`resolvedAt` lifecycle semantics.** Transitioning to `RESOLVED` sets `resolvedAt = now` and `closedAt = null`; returning to an active state (`OPEN` / `IN_PROGRESS`) clears both; transitioning to `CLOSED` preserves any existing `resolvedAt` (`existing.resolvedAt ?? now`).
-4. **`lastMessageAt` is the canonical activity clock.** Every visible customer, bot, or staff message write atomically updates `lastMessageAt` alongside `messageSeq` inside the same transaction so the backoffice queue and customer support lists sort by true conversation activity rather than row metadata edits (`updatedAt`).
-5. **The ticket spam budget is charged at escalation only.** Navigating self-serve prompts never charges `spamLimiter` (`tickets:<userId>`); only terminal escalation or explicit ticket creation spends rate-limit tokens.
-6. **The recording 48-hour window is server-verified.** `runSupportTurn` validates slot completion timestamps (`endsAt + 48h`) on the server and re-anchors expired "within 48h" claims onto the escalation path.
-7. **Session CSAT writes are participant-only and attributed.** `AppointmentFeedback.raterRole` records author provenance (`CONSULTEE` vs `PROVIDER`), staff read access grants zero rating write privilege, and organization aggregates filter explicitly on `raterRole = 'CONSULTEE'` (see [feedback architecture](../feedback/01-architecture.md)).
-8. **CSAT aggregates suppress small cohorts.** Summary endpoints return `null` averages and `null` counts whenever distinct raters fall below `ORG_QUALITY_MIN_RESPONDENTS`, enforcing secondary suppression across per-consultant breakdowns and complement windows (see [org quality signal](../feedback/02-org-quality-signal.md)).
-9. **Org triage is metadata-only by construction.** Organization operator views select strictly non-content metadata fields enforced by [`__tests__/security/org-scope-payload-allowlist.test.ts`](../../__tests__/security/org-scope-payload-allowlist.test.ts) (`THREAD_METADATA_SELECT`).
-10. **`SupportMessage` and `SupportCaseMessage` order strictly by `seq`, never by `createdAt` alone.** Because PostgreSQL `CURRENT_TIMESTAMP` evaluates once at transaction start, multi-row writes share identical timestamps; every query orders by `MESSAGE_ORDER` / `seq ASC` allocated atomically inside the write transaction.
-11. **Intent and status enums share a single schema source.** [`schemas/enums.ts`](../../schemas/enums.ts) defines `SupportThreadCategoryEnum`, `SupportThreadStatusEnum`, and `SupportIssueTypeEnum` so `GET` intent discovery and `POST` turn validation never drift apart.
-12. **A staff reply never reopens a settled case, whereas a customer reply does.** Public staff replies move `OPEN` -> `IN_PROGRESS` via CAS while leaving `RESOLVED` unchanged; customer turns on `RESOLVED` move the case to `IN_PROGRESS` (if assigned) or `OPEN` (if unassigned) and record a `REOPENED` audit event. `CLOSED` refuses all public replies.
-13. **Staff metadata edits require `expectedUpdatedAt` optimistic concurrency.** Lifecycle `PATCH` routes assert `updatedAt: new Date(expectedUpdatedAt)` in `WHERE`, returning `409 CONFLICT` on concurrent edits and rejecting `ON_HOLD` writes with `400 STATUS_NOT_SUPPORTED`.
-14. **Callback tags are server-authored only.** Every inbound customer string is sanitized through `stripCallbackTags` (`lib/validation/phone.ts`) before formatting structured callback windows (`09:00-12:00 IST` .. `18:00-21:00 IST`).
-15. **Attachments are private, served via 60-second signed redirects, and deleted synchronously first.** Storage deletion must succeed before removing the DB attachment row (`502` on upstream storage failure).
-16. **Self-serve exploration is zero-cost across both scopes.** Platform self-serve turns (`handleSelfServeTurn`) and booking bot turns charge zero ticket rate-limit quota.
-17. **Public staff replies enforce `expectedLastMessageAt` collision detection (`409 NEW_CUSTOMER_MESSAGE`).** Both unified case replies (`advanceAgentPublicTurnState` in [`lib/support/case-service.ts`](../../lib/support/case-service.ts)) and legacy ticket replies (`guardTicketPublicReplyTx` in [`app/api/staff/support-tickets/[ticketId]/responses/route.ts`](../../app/api/staff/support-tickets/%5BticketId%5D/responses/route.ts)) include `OR: [{ lastMessageAt: null }, { lastMessageAt: { lte: expectedDate } }]` in their CAS filter. If a customer sent a new message after the operator opened the view, the write aborts with `409 NEW_CUSTOMER_MESSAGE` so staff read the customer's turn before sending a stale reply.
-18. **Customer notifications and emails fire strictly on status transitions with deterministic `dedupeKey`.** Updating assignee, priority, or internal notes never pings or emails the customer. `notifySupportTicketUpdate` and `sendSupportTicketUpdateEmail` (routed through `deliver()`) run exclusively when `previousStatus !== updatedStatus`, keyed by deterministic `dedupeKey` values (`case-status:${id}:${status}:${updatedAtMs}` / `ticket-status:${id}:${status}:${nowMs}`).
-19. **Priority raises tighten SLA deadlines; priority lowers never extend them.** [`tightenDeadlinesForPriorityRaise`](../../lib/support/sla.ts) sets `ackDueAt = Math.min(existing, target)` (while unacknowledged) and `resolutionDueAt = Math.min(existing, target)` (while unresolved) whenever priority increases, and returns `{}` on same/lower priority.
-20. **ADR 20 cross-party transcript redaction when `requesterUserId !== submitterUserId`.** When an organization admin files a case on behalf of a member (`requesterUserId !== submitterUserId`), [`readSupportCaseForViewer`](../../lib/support/case-service.ts) returns `filedByOrganizationNotice: true` with safe metadata scalars only (`messages: []`, `events: []`, `subjects: []`, `description: ""`, `submitterUserId: null`) to non-staff subject viewers.
-21. **System-only `extractBotPromises` and newline sanitization (`oneLine`) in `escalationBrief`.** [`escalationBrief`](../../lib/support/escalation.ts) sanitizes every input through `oneLine` (`s.replace(/[\r\n]+/g, " ").trim()`) so embedded newlines in `customerAsk` can never spoof a `"Bot told the customer:"` promise banner; [`extractBotPromises`](../../lib/support/escalation.ts) parses only server-written terminal promises.
-22. **Mandatory operator 2FA (`requireApiAuth` `428`) and deterministic seed pre-enrollment.** [`requireApiAuth`](../../lib/auth-helpers.ts) enforces `twoFactorPrecondition` on every `STAFF` and `ADMIN` request, rejecting un-enrolled operators with `428 TWO_FACTOR_REQUIRED` (`X-Auth-Action: enroll-2fa`). Seeded `STAFF` and `ADMIN` accounts are deterministically pre-enrolled by [`prisma/seedFiles/seed-two-factor.ts`](../../prisma/seedFiles/seed-two-factor.ts) using HMAC-SHA256 (`deriveSeedOperatorTotpSecret`) under `BETTER_AUTH_SECRET` encrypted via `symmetricEncrypt`, with live TOTP codes generated by `computeSeedOperatorTotp(email)`.
-23. **Upstash Jest network isolation via `__mocks__/redis-edge.ts` using `sha256` script digests.** [`jest.config.ts`](../../jest.config.ts) maps `@/lib/redis-edge`, `lib/redis-edge`, and `./redis-edge` to [`__mocks__/redis-edge.ts`](../../__mocks__/redis-edge.ts), running rate-limiters and locks in-memory without outbound network calls and caching Lua scripts by `sha256` digest (`scriptLoad` / `evalsha`).
-24. **Prisma schema drift (`P2021`/`P2022`) `fatal` single-family Sentry fingerprinting.** [`sentry.shared.config.ts`](../../sentry.shared.config.ts) detects missing-table/missing-column errors (`SCHEMA_DRIFT_TEXT = /\bP202[12]\b|does not exist in the current database/`), setting `fingerprint = ["prisma-schema-drift"]` and `level = "fatal"` so affected routes merge into one fatal issue that bypasses the non-fatal hourly circuit breaker while remaining bounded per process by `INFRA_THROTTLE_MS` (1 hour).
-
----
-
-## Automated Test Suite Map
-
-- **Core support & unified case suites (`__tests__/support/`)**:
-  - [`case-service-and-sla-sweep.test.ts`](../../__tests__/support/case-service-and-sla-sweep.test.ts), [`case-workspace.test.ts`](../../__tests__/support/case-workspace.test.ts), and [`case-conversation-closed.test.tsx`](../../__tests__/support/case-conversation-closed.test.tsx) — unified case intake idempotency (`clientIntakeId` & `open_scope`), `expectedLastMessageAt` `409 NEW_CUSTOMER_MESSAGE` guard, status-transition notification gating, problem cascade resolution, ADR 20 redaction, 24h CSAT staging, and 28-day `submitSupportCaseCsat` CAS.
-  - [`deflection.test.ts`](../../__tests__/support/deflection.test.ts) — direct `outcomeId` return from `recordFlowOutcome`, `rateFlowOutcome` CAS, paired `recontactRate7d`, and `ackWithin24hRate` overdue denominator inclusion.
-  - [`sla-and-reference.test.ts`](../../__tests__/support/sla-and-reference.test.ts), [`staff-ticket-patch-cas.test.ts`](../../__tests__/support/staff-ticket-patch-cas.test.ts), [`support-feedback-review-megafix.test.ts`](../../__tests__/support/support-feedback-review-megafix.test.ts), and [`support-journey-followups.test.ts`](../../__tests__/support/support-journey-followups.test.ts) — statutory SLA caps, `tightenDeadlinesForPriorityRaise`, `oneLine` brief sanitization, operator 2FA (`computeSeedOperatorTotp`), and end-to-end journey regressions.
-  - [`flow-walk.test.ts`](../../__tests__/support/flow-walk.test.ts), [`platform-flows.test.ts`](../../__tests__/support/platform-flows.test.ts), [`service.test.ts`](../../__tests__/support/service.test.ts), [`intent-offer-accept-parity.test.ts`](../../__tests__/support/intent-offer-accept-parity.test.ts), [`appointment-support-route.test.ts`](../../__tests__/support/appointment-support-route.test.ts), and [`platform-route.test.ts`](../../__tests__/support/platform-route.test.ts) — deterministic graph transitions, `DOCUMENTS` parity, and slug-id route handling.
-
-### End-to-End QA Campaign Suite (`prompts/support-feedback-review-tests/`)
-
-The 6-lane, 149-case verification suite in [`prompts/support-feedback-review-tests/00-orchestrator.md`](../../prompts/support-feedback-review-tests/00-orchestrator.md) runs sequentially against a preview URL or local server (`preflight -> customer journey -> staff ops -> reviews/feedback -> moderation -> platform feedback/disputes -> tag sweep & Sentry audit`). **Seeded `STAFF` and `ADMIN` operator accounts are pre-enrolled in two-factor authentication out of the box by [`prisma/seedFiles/seed-two-factor.ts`](../../prisma/seedFiles/seed-two-factor.ts) (`computeSeedOperatorTotp(email)`)**, so automated QA lanes authenticate privileged operators directly without manual TOTP enrollment steps.
-
----
+`__tests__/support` covers case services, authorization, evidence, financial review,
+case addressing, SLA sweeps and request presentation. The support-concurrency CI
+script verifies actual database uniqueness and race behavior. Existing payment
+and payout regressions cover the money boundaries. A rendered preview is visual
+and API evidence, not proof that gateway refunds or external filings completed.
 
 ## Deprecated & Superseded Approaches
 
-- **Manual operator 2FA enrollment precondition for QA runs**: Earlier test documentation required manual UI TOTP enrollment before executing staff/admin QA lanes. Seeded `STAFF`/`ADMIN` accounts are now deterministically pre-enrolled at seed time via `buildSeedOperatorTwoFactorRow` and `computeSeedOperatorTotp(email)`.
-- **Unconditional customer notifications on every `PATCH` and unguarded public agent replies**: Sending customer emails on every `PATCH` spammed users during internal priority/assignee triage, and omitting `expectedLastMessageAt` allowed staff replies to cross unseen customer messages silently. Both are superseded by strict status-transition gating (`previousStatus !== updatedStatus`) and `409 NEW_CUSTOMER_MESSAGE` CAS enforcement.
-- **Unthrottled per-route Prisma `P2021`/`P2022` schema-drift alerts and live Upstash calls in Jest**: Letting schema drift split across every route exhausted monthly Sentry quota, and unmocked edge Redis imports leaked live HTTP calls during unit tests. Superseded by single-family `"prisma-schema-drift"` fatal fingerprinting in `sentry.shared.config.ts` and `moduleNameMapper` isolation in `__mocks__/redis-edge.ts`.
-- **Ad-hoc per-PR manual test scripts**: Replaced permanently by the 6-lane prompt suite in `prompts/support-feedback-review-tests/` and deterministic Jest regression suites under `__tests__/support/`.
+Tests for migration imports, aliases and retired 410 route stubs were deleted with
+their implementation. Avoid restoring them as compatibility requirements for a
+pre-MVP database whose former rows were disposable.

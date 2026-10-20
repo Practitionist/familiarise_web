@@ -132,7 +132,7 @@ export async function GET(
               appointmentId,
               requesterUserId: auth.userId,
               deletedAt: null,
-              status: { in: ["OPEN", "IN_PROGRESS", "ON_HOLD", "ESCALATED"] },
+              status: { in: ["OPEN", "IN_PROGRESS", "ESCALATED"] },
             },
             select: { id: true },
           }),

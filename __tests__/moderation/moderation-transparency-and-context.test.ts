@@ -35,7 +35,7 @@ const mockAppointmentFeedback = {
   findUnique: jest.fn(),
   updateMany: jest.fn(),
 };
-const mockAppointmentSupportThread = {
+const mockSupportCase = {
   findFirst: jest.fn(),
   findMany: jest.fn(),
   count: jest.fn(),
@@ -97,8 +97,8 @@ jest.mock("../../lib/prisma", () => ({
     get appointmentFeedback() {
       return mockAppointmentFeedback;
     },
-    get appointmentSupportThread() {
-      return mockAppointmentSupportThread;
+    get supportCase() {
+      return mockSupportCase;
     },
     get refund() {
       return mockRefund;
@@ -328,9 +328,7 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
       mockRefund.findMany.mockResolvedValue([
         { payment: { appointmentId: "apt-1" } },
       ]);
-      mockAppointmentSupportThread.findMany.mockResolvedValue([
-        { appointmentId: "apt-2" },
-      ]);
+      mockSupportCase.findMany.mockResolvedValue([{ appointmentId: "apt-2" }]);
       mockDispute.findMany.mockResolvedValue([]);
 
       const signals = await readReviewReportSignals(["apt-1", "apt-2"]);
@@ -349,7 +347,7 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
         id: "apt-1",
         occurrences: [{ completionStatus: "COMPLETED" }],
         consultantReviews: [{ createdAt: new Date("2026-10-07T10:00:00Z") }],
-        supportThreads: [{ id: "thread-open-1" }],
+        supportCases: [{ id: "case-open-1" }],
         payment: [
           {
             refunds: [
@@ -559,7 +557,7 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
   });
 
   describe("GET /api/appointments/[appointmentId]/feedback supportOpen signal", () => {
-    it("returns supportOpen=true when an unresolved AppointmentSupportThread exists", async () => {
+    it("returns supportOpen=true when an unresolved SupportCase exists", async () => {
       mockAuthorizeAppointment.mockResolvedValue({
         userId: "consultee-1",
         detail: {
@@ -569,9 +567,9 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
       mockAppointmentOccurrence.findMany.mockResolvedValue([]);
       mockAppointmentFeedback.findMany.mockResolvedValue([]);
       // Only consultee-1's own thread is open; another attendee's is not visible.
-      mockAppointmentSupportThread.findFirst.mockImplementation(
-        async ({ where }: { where: { userId: string } }) =>
-          where.userId === "consultee-1" ? { id: "thread-1" } : null,
+      mockSupportCase.findFirst.mockImplementation(
+        async ({ where }: { where: { requesterUserId: string } }) =>
+          where.requesterUserId === "consultee-1" ? { id: "thread-1" } : null,
       );
 
       const req = new NextRequest(

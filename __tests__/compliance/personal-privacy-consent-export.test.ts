@@ -48,7 +48,7 @@ jest.mock("../../lib/prisma", () => ({
     payment: {
       findMany: jest.fn(),
     },
-    supportTicket: {
+    supportCase: {
       findMany: jest.fn(),
     },
     dpdpGrievance: {
@@ -86,7 +86,7 @@ const mockPrisma = prisma as unknown as {
   };
   user: { findUnique: jest.Mock };
   payment: { findMany: jest.Mock };
-  supportTicket: { findMany: jest.Mock };
+  supportCase: { findMany: jest.Mock };
   dpdpGrievance: { findMany: jest.Mock };
   consumerInvoice: { findMany: jest.Mock };
   appointmentParticipant: { findMany: jest.Mock };
@@ -104,8 +104,8 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
     };
     mockGetSession.mockResolvedValue(session);
     mockRequireApiAuth.mockResolvedValue({ session, error: null });
-    mockPrisma.$transaction.mockImplementation(
-      (fn: (tx: unknown) => unknown) => fn(mockPrisma),
+    mockPrisma.$transaction.mockImplementation((fn: (tx: unknown) => unknown) =>
+      fn(mockPrisma),
     );
   });
 
@@ -280,7 +280,7 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
           issuedAt: now,
         },
       ]);
-      mockPrisma.supportTicket.findMany.mockResolvedValueOnce([]);
+      mockPrisma.supportCase.findMany.mockResolvedValueOnce([]);
       mockPrisma.appointmentParticipant.findMany.mockResolvedValueOnce([]);
 
       const res = await getExport();

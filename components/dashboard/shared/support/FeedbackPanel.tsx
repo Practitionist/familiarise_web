@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 
-import { PlatformFeedbackStatus, SupportTicketStatus } from "@prisma/client";
+import { PlatformFeedbackStatus } from "@prisma/client";
 import { useFeedbackSupport } from "./useFeedbackSupport";
 import {
   MessageSquare,
@@ -41,12 +41,9 @@ export function FeedbackPanel({ profileId }: FeedbackPanelProps) {
 
   // Semantic status colors kept (amber=in progress, green=resolved); the
   // off-brand blue OPEN/PENDING accent collapses to neutral monochrome.
-  const getStatusColor = (
-    status: PlatformFeedbackStatus | SupportTicketStatus,
-  ) => {
+  const getStatusColor = (status: PlatformFeedbackStatus) => {
     switch (status) {
       case "PENDING":
-      case "OPEN":
         return "bg-muted text-foreground border-border";
       case "ACKNOWLEDGED":
         return "bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-900/30 dark:text-sky-300 dark:border-sky-800";
@@ -61,12 +58,9 @@ export function FeedbackPanel({ profileId }: FeedbackPanelProps) {
     }
   };
 
-  const getStatusIcon = (
-    status: PlatformFeedbackStatus | SupportTicketStatus,
-  ) => {
+  const getStatusIcon = (status: PlatformFeedbackStatus) => {
     switch (status) {
       case "PENDING":
-      case "OPEN":
         return <AlertCircle className="h-3.5 w-3.5" />;
       case "ACKNOWLEDGED":
         return <CheckCircle2 className="h-3.5 w-3.5" />;

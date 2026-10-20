@@ -211,13 +211,7 @@ export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
                   {c.subject}
                 </Link>
                 <p className="text-xs text-muted-foreground">
-                  {
-                    caseStatus(
-                      c.key.startsWith("t_") ? "ticket" : "thread",
-                      c.status,
-                    ).label
-                  }{" "}
-                  · {day(c.at)}
+                  {caseStatus(c.status).label} · {day(c.at)}
                 </p>
               </li>
             ))}

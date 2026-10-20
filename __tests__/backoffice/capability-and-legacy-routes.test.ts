@@ -92,17 +92,6 @@ describe("legacyBackofficeHref", () => {
       "/dashboard/admin/compliance?tab=breaches&id=b1",
     ],
     ["admin", [], {}, "/dashboard/admin/home"],
-    // #1527 — Tickets + Conversations → the Support inbox, items as cases.
-    [
-      "staff",
-      ["tickets"],
-      { view: "mine" },
-      "/dashboard/staff/support?view=mine",
-    ],
-    ["admin", ["tickets", "t1"], {}, "/dashboard/admin/support/t_t1"],
-    ["admin", ["tickets"], { id: "t1" }, "/dashboard/admin/support/t_t1"],
-    ["staff", ["threads", "s1"], {}, "/dashboard/staff/support/s_s1"],
-    ["staff", ["threads"], {}, "/dashboard/staff/support"],
   ] as const)("%s %j %j → %s", (tree, segments, query, expected) => {
     expect(legacyBackofficeHref(tree, segments, query)).toBe(expected);
   });

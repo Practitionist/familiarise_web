@@ -40,7 +40,6 @@ export default async function OrgSupportRequestPage({
     <SupportRequestCasePage
       caseKey={caseKey}
       supportHref={supportHref}
-      requestsBase={`${base}/support/requests`}
       appointmentsBase={`${base}/appointments`}
       intent={intent}
     />

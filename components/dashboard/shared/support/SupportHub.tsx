@@ -80,7 +80,6 @@ const STATUS_LABELS: Record<string, string> = {
   OPEN: "Open",
   IN_PROGRESS: "In progress",
   ESCALATED: "With our team",
-  ON_HOLD: "With our team",
   RESOLVED: "Resolved",
   CLOSED: "Closed",
 };
@@ -90,13 +89,13 @@ function statusVariant(
 ): "default" | "secondary" | "outline" | "destructive" {
   if (status === "RESOLVED") return "secondary";
   if (status === "CLOSED") return "outline";
-  if (status === "ESCALATED" || status === "ON_HOLD") return "destructive";
+  if (status === "ESCALATED") return "destructive";
   return "default";
 }
 
 /** Bucket key for the three user-facing groups. */
 function bucketOf(status: string): "open" | "team" | "resolved" {
-  if (status === "ESCALATED" || status === "ON_HOLD") return "team";
+  if (status === "ESCALATED") return "team";
   if (status === "RESOLVED" || status === "CLOSED") return "resolved";
   return "open";
 }

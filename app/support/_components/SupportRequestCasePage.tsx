@@ -1,10 +1,9 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 
 import { SupportRequestView } from "@/components/dashboard/shared/support/SupportRequestView";
 import { requireOnboarded } from "@/lib/auth-guard";
 import { parseCaseKey } from "@/lib/support/case-key";
 import { readOwnSupportCase } from "@/lib/support/own-case-read";
-import { resolveSupportCaseId } from "@/lib/support/case-workspace";
 import { articleLinksByTopic } from "../_data/support-content";
 
 /**
@@ -16,7 +15,6 @@ import { articleLinksByTopic } from "../_data/support-content";
 export async function SupportRequestCasePage({
   caseKey,
   supportHref,
-  requestsBase = `${supportHref}/requests`,
   appointmentsBase,
   paymentsBase,
   intent,
@@ -24,8 +22,6 @@ export async function SupportRequestCasePage({
   caseKey: string;
   /** The dashboard's Support requests page. */
   supportHref: string;
-  /** Where request pages live; defaults to `<supportHref>/requests`. */
-  requestsBase?: string;
   appointmentsBase?: string;
   paymentsBase?: string;
   intent?: string | string[];
@@ -34,12 +30,9 @@ export async function SupportRequestCasePage({
   if (!ref) notFound();
   if (ref.kind !== "booking") {
     const { user } = await requireOnboarded();
-    const id = await resolveSupportCaseId(ref);
+    const id = ref.id;
     const own = id ? await readOwnSupportCase(id, user.id) : null;
     if (!own) notFound();
-    if (ref.kind !== "case") {
-      redirect(`${requestsBase}/${own.key}`);
-    }
   }
   return (
     <SupportRequestView

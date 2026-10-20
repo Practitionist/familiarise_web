@@ -186,9 +186,7 @@ function SessionRequest({
         <div className="min-w-0 space-y-4">
           <StatusTimeline
             stage={requestStage({
-              kind: "thread",
               status: t.thread?.status ?? null,
-              channel: t.thread?.activeChannel ?? null,
             })}
           />
           {booking && (
@@ -408,9 +406,7 @@ function TicketRequest({
       />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div className="min-w-0 space-y-4">
-          <StatusTimeline
-            stage={requestStage({ kind: "ticket", status: data.status })}
-          />
+          <StatusTimeline stage={requestStage({ status: data.status })} />
           {data.payment && (
             <ContextCard
               icon={CreditCard}
@@ -536,7 +532,7 @@ export function SupportRequestView(props: Readonly<SupportRequestViewProps>) {
       {ref?.kind === "booking" && (
         <SessionRequest key={ref.id} appointmentId={ref.id} props={props} />
       )}
-      {(ref?.kind === "ticket" || ref?.kind === "case") && (
+      {ref?.kind === "case" && (
         <TicketRequest key={ref.id} ticketId={ref.id} props={props} />
       )}
     </DashboardErrorBoundary>

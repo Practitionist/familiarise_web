@@ -1,4 +1,4 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 
 import { CaseWorkspace } from "@/components/dashboard/backoffice/support/CaseWorkspace";
 import {
@@ -6,37 +6,19 @@ import {
   helpCenterArticleLinks,
 } from "@/app/support/_data/support-content";
 import { requireBackofficePage } from "@/lib/auth-guard";
-import { caseKeyOf, parseCaseKey } from "@/lib/support/case-key";
-import { resolveSupportCaseId } from "@/lib/support/case-workspace";
+import { parseCaseKey } from "@/lib/support/case-key";
 
-/**
- * #1527 — one support case (`t_<ticketId>` or `s_<threadId>`), beside the
- * inbox list at lg+. Its own URL, so deep links, refresh and Back work.
- */
+/** A canonical case workspace with its own refreshable URL. */
 export default async function SupportCasePage({
   params,
-  searchParams,
 }: Readonly<{
   params: Promise<{ tree: string; caseKey: string }>;
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }>) {
   const { tree, caseKey } = await params;
   // Page-level back-office gate (C5): sidebar hiding is not access control.
-  const { cap } = await requireBackofficePage("tickets.manage", tree);
+  await requireBackofficePage("tickets.manage", tree);
   const ref = parseCaseKey(caseKey);
   if (!ref || ref.kind === "booking") notFound();
-  if (ref.kind !== "case") {
-    const caseId = await resolveSupportCaseId(ref);
-    if (!caseId) notFound();
-    const query = new URLSearchParams();
-    for (const [key, value] of Object.entries(await searchParams)) {
-      if (typeof value === "string") query.set(key, value);
-    }
-    const qs = query.toString();
-    redirect(
-      `${cap.basePath}/support/${caseKeyOf({ kind: "case", id: caseId })}${qs ? `?${qs}` : ""}`,
-    );
-  }
   // Help Center data stays on the server; the client gets title + href.
   return (
     <CaseWorkspace

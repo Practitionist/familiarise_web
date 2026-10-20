@@ -7,7 +7,7 @@
  * server validates every transition against the platform registry and never
  * trusts client state beyond "which node are you on". A terminal either
  * self-serves (nothing persisted) or escalates — the only write, a
- * SupportTicket via the shared factory with the walked path summarized in.
+ * SupportCase via the shared factory with the walked path summarized in.
  *
  * GET  → the intent catalog for this caller (chips for the intake sheet).
  * POST → advance one turn: {flowId, nodeId?, chosenOptionId?/userMessage, orgId?}.

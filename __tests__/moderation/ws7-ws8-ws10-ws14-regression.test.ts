@@ -33,7 +33,7 @@ const mockDispute = {
 const mockAppointment = {
   findMany: jest.fn(),
 };
-const mockSupportTicket = {
+const mockSupportCase = {
   create: jest.fn(),
 };
 const mockTransaction = jest.fn();
@@ -67,8 +67,8 @@ jest.mock("../../lib/prisma", () => ({
     get appointment() {
       return mockAppointment;
     },
-    get supportTicket() {
-      return mockSupportTicket;
+    get supportCase() {
+      return mockSupportCase;
     },
     $transaction: (...args: unknown[]) => mockTransaction(...args),
   },
@@ -149,7 +149,7 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
           moderationAction: { create: jest.fn() },
           consultantProfile: { update: jest.fn() },
           user: mockUser,
-          supportTicket: mockSupportTicket,
+          supportCase: mockSupportCase,
         }),
     );
   });
@@ -502,11 +502,11 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     ).not.toContain("familiarisenow.com");
   });
 
-  test("POST /api/contact creates SupportTicket in the same transaction as allocateTicketReference for public grievances and skips allocation when zero operators exist", async () => {
+  test("POST /api/contact creates SupportCase in the same transaction as allocateTicketReference for public grievances and skips allocation when zero operators exist", async () => {
     mockGetSession.mockResolvedValue(null);
     mockUser.findFirst.mockResolvedValueOnce({ id: "operator-admin-1" });
     mockAllocateTicketReference.mockResolvedValueOnce("FAM-2026-000042");
-    mockSupportTicket.create.mockResolvedValueOnce({
+    mockSupportCase.create.mockResolvedValueOnce({
       id: "ticket-42",
       referenceNumber: "FAM-2026-000042",
     });
@@ -538,8 +538,8 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     });
     expect(mockTransaction).toHaveBeenCalledTimes(1);
     expect(mockAllocateTicketReference).toHaveBeenCalledTimes(1);
-    expect(mockSupportTicket.create).toHaveBeenCalledTimes(1);
-    expect(mockSupportTicket.create).toHaveBeenCalledWith(
+    expect(mockSupportCase.create).toHaveBeenCalledTimes(1);
+    expect(mockSupportCase.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           referenceNumber: "FAM-2026-000042",
@@ -547,13 +547,15 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
           category: "GRIEVANCE",
           status: "OPEN",
           priority: "HIGH",
-          userId: "operator-admin-1",
+          requesterUserId: "operator-admin-1",
+          submitterUserId: "operator-admin-1",
+          externalRequesterEmail: "asha@example.com",
         }),
       }),
     );
 
     mockAllocateTicketReference.mockClear();
-    mockSupportTicket.create.mockClear();
+    mockSupportCase.create.mockClear();
     mockUser.findFirst.mockResolvedValueOnce(null);
 
     const noOperatorReq = new NextRequest("http://localhost/api/contact", {
@@ -580,7 +582,7 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
         "Grievance received — our Grievance Officer will open a case and email your tracking reference within 24 hours.",
     });
     expect(mockAllocateTicketReference).not.toHaveBeenCalled();
-    expect(mockSupportTicket.create).not.toHaveBeenCalled();
+    expect(mockSupportCase.create).not.toHaveBeenCalled();
   });
 
   test("POST /api/report preserves newest reporter statement when aggregated description exceeds 4000 chars", async () => {

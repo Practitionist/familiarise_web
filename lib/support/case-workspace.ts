@@ -153,25 +153,12 @@ export interface WorkspaceGrants {
   showPayment: boolean;
 }
 
-/** Old links resolve through the import alias, never through a legacy table. */
-export async function resolveSupportCaseId(
-  ref: CaseRef,
-): Promise<string | null> {
-  if (ref.kind === "case") return ref.id;
-  if (ref.kind === "booking") return null;
-  const alias = await prisma.supportCaseLegacyAlias.findUnique({
-    where: { legacyKind_legacyId: { legacyKind: ref.kind, legacyId: ref.id } },
-    select: { caseId: true },
-  });
-  return alias?.caseId ?? null;
-}
-
 export async function readCaseWorkspace(
   ref: CaseRef,
   grants: WorkspaceGrants,
 ): Promise<CaseWorkspace | null> {
-  const caseId = await resolveSupportCaseId(ref);
-  if (!caseId) return null;
+  if (ref.kind !== "case") return null;
+  const caseId = ref.id;
   const c = await prisma.supportCase.findFirst({
     where: { id: caseId, deletedAt: null },
     include: {
