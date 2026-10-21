@@ -1,7 +1,7 @@
-// #705 schema freeze (2026-07-17) — enterprise schema is launch-frozen.
-// Additive-only until launch: new nullable columns / new models are allowed;
-// renames, drops of live columns, and type changes are not. Money columns are
-// BigInt paise; enums are declared below the model(s) that use them.
+// Enterprise and money models are additive-only until launch: new nullable
+// columns and new models are allowed; renames, drops and type changes are not.
+// Support models hold disposable pre-MVP data and may still change shape.
+// Money columns are BigInt paise; enums are declared below the models using them.
 
 generator client {
   provider        = "prisma-client-js"

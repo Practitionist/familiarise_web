@@ -46,6 +46,7 @@ jest.mock("../../lib/prisma", () => {
     ALLOCATION_TX_TIMEOUT_MS: 1000,
   };
 });
+import { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import {
   appendSupportCaseTurn,
@@ -119,6 +120,37 @@ it("replays an intake only within its submitting party", async () => {
         submitterUserId: "customer",
         clientIntakeId: "same-browser-retry",
       },
+    }),
+  );
+  expect(cases.create).not.toHaveBeenCalled();
+});
+it("returns the winning case when a concurrent intake with the same retry key commits first", async () => {
+  const duplicate = new Prisma.PrismaClientKnownRequestError(
+    "Unique constraint failed",
+    { code: "P2002", clientVersion: "test" },
+  );
+  (prisma.$transaction as jest.Mock).mockRejectedValueOnce(duplicate);
+  const winner = record({ id: "winner" });
+  (cases.findFirst as jest.Mock).mockResolvedValueOnce(winner);
+  const result = await createOrReuseSupportCase(
+    {
+      title: "Help",
+      description: "Complaint",
+      category: "GENERAL",
+      requesterUserId: "customer",
+      submitterUserId: "customer",
+      clientIntakeId: "double-click",
+    },
+    now,
+  );
+  expect(result).toMatchObject({
+    reused: true,
+    dedupeReason: "client_intake_id",
+    supportCase: { id: "winner" },
+  });
+  expect(cases.findFirst).toHaveBeenCalledWith(
+    expect.objectContaining({
+      where: { clientIntakeId: "double-click", submitterUserId: "customer" },
     }),
   );
   expect(cases.create).not.toHaveBeenCalled();

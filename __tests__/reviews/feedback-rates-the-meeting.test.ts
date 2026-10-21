@@ -198,7 +198,7 @@ describe("#1540 — one read for the whole booking", () => {
         appointmentId: APPT,
         requesterUserId: "u1",
         deletedAt: null,
-        status: { in: ["OPEN", "IN_PROGRESS", "ON_HOLD", "ESCALATED"] },
+        status: { in: ["OPEN", "IN_PROGRESS", "ESCALATED"] },
       },
       select: { id: true },
     });

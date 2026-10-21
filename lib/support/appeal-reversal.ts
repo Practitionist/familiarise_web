@@ -8,6 +8,10 @@ import type { Tx } from "@/lib/prisma";
 import { recomputeConsultantRating } from "@/lib/reviews";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 
+/** A restored review names its consultant so the caller can purge public review caches. */
+type ReversalResult =
+  { ok: false; error: string } | { ok: true; consultantProfileId?: string };
+
 function reviewRestoration(actionType: ModerationActionType): {
   where: Prisma.ConsultantReviewWhereInput;
   data: Prisma.ConsultantReviewUpdateManyMutationInput;
@@ -38,7 +42,7 @@ async function restoreReview(
   reviewId: string,
   actorId: string,
   rationale: string,
-) {
+): Promise<ReversalResult> {
   const review = await tx.consultantReview.findUniqueOrThrow({
     where: { id: reviewId },
   });
@@ -103,7 +107,7 @@ async function restoreRating(
   feedbackId: string,
   actorId: string,
   rationale: string,
-) {
+): Promise<ReversalResult> {
   const latest = await tx.moderationAction.findFirst({
     where: {
       feedbackId,
@@ -151,7 +155,7 @@ export async function reverseAppealedModeration(
   actionId: string,
   actor: { userId: string; role: UserRole | null },
   rationale: string,
-) {
+): Promise<ReversalResult> {
   if (!hasBackofficePermission(actor.role, "users.moderate"))
     return {
       ok: false as const,

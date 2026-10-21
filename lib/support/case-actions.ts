@@ -455,8 +455,7 @@ async function recordCaseDecisionTx(
     );
     if (!reversal.ok)
       throw new CaseActionError("COMPENSATING_ACTION_REQUIRED", reversal.error);
-    if ("consultantProfileId" in reversal)
-      restoredConsultantProfileId = reversal.consultantProfileId;
+    restoredConsultantProfileId = reversal.consultantProfileId;
   }
   const moved = await executePatchLifecycleTx(
     tx,
@@ -810,7 +809,8 @@ export async function performCaseAction(
   );
   if (input.action === "DECIDE" && input.outcome === "OVERTURNED")
     purgeReviewSurfaces(
-      "restoredConsultantProfileId" in result
+      "restoredConsultantProfileId" in result &&
+        typeof result.restoredConsultantProfileId === "string"
         ? result.restoredConsultantProfileId
         : undefined,
     );
