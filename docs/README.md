@@ -336,7 +336,8 @@ Mobile API integration documentation.
 Prisma operations and migration documentation.
 
 - [prisma/README.md](./prisma/README.md) - **Full index**, and which document applies to the current posture
-- [00-schema-map.md](./prisma/00-schema-map.md) - Domain diagrams of the Prisma schema
+- [00-schema-map.md](./prisma/00-schema-map.md) - Schema map index: master diagram, enforcers, enum reference
+- [prisma/domains/](./prisma/domains/) - The thirty-three domain ER diagrams, one file per topic
 - [01-migrations-guide.md](./prisma/01-migrations-guide.md) - General-purpose Prisma Migrate reference
 - [02-pre-mvp-reset-runbook.md](./prisma/02-pre-mvp-reset-runbook.md) - The one-time reset that finalises the launch schema
 - [03-cutover-to-migrations.md](./prisma/03-cutover-to-migrations.md) - Launch-day runbook: `db push` to versioned migrations

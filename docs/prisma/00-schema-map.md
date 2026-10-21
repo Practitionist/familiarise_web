@@ -1,1949 +1,585 @@
-# Familiarise — Prisma Schema Visualisation
-
-**The schema currently holds 146 models and 123 enums across 7,015 lines** (counted 2026-09-07). The 24 diagrams below were drawn from the 2026-06-05 snapshot of 120 models and 97 enums, so the structures they show are accurate but the newest models are not yet drawn; regenerate a diagram from `prisma/schema.prisma` before relying on it for a recently added domain.
-
-Each diagram covers one domain. Use the table of contents to jump to any section.
-
 ---
+type: reference
+title: Familiarise — Prisma schema map
+---
+
+# Familiarise — Prisma Schema Map
+
+Every model in the database, how they relate, which state machine each enum
+encodes, and which rule the database itself refuses to let you break.
+
+**Scale.** 165 models, 151 enums, across
+33 domains.
+
+**The map is split.** The domain diagrams live in
+[`domains/`](./domains/) — one file per topic — because a single file
+carrying every diagram renders to roughly 16 MB of inline SVG, which is past
+what GitHub's markdown renderer will lay out on one page. The index below
+holds the master diagram, the enforcer inventory and the enum reference.
+
+**The Prisma schema is not the whole truth.** The rules that matter most are
+often not expressible in Prisma and live in `prisma/sql/*.sql` as CHECK
+constraints, partial unique indexes, exclusion constraints and triggers.
+[Section 2](#2-enforcers--the-prismasql-sidecars) lists all of them by name
+and table. Where this document says "the database refuses it", that section
+names the object that does the refusing.
+
+**Money.** Every monetary column is `BigInt` **paise** in Postgres, mapped to
+`number` at the Prisma client boundary in `lib/prisma.ts`. Settlement is INR
+only, and the database enforces that.
+
+**The schema is additive-only** under the launch freeze: new nullable columns
+and new models are allowed; renames, drops of live columns and type changes are
+not, until launch cutover.
+
+**This file is generated.** `npm run docs:schema-map` re-parses
+`prisma/schema.prisma` and rewrites it and its parts;
+`scripts/ci/check-schema-map.ts` fails the build when the committed map has
+drifted from the schema. The domain grouping and the prose live in
+`scripts/prisma/schema-domains.ts`.
 
 ## Contents
 
-1. [Master Domain Map](#1-master-domain-map)
-2. [User Identity & Auth](#2-user-identity--auth)
-3. [User Role Profiles](#3-user-role-profiles)
-4. [Consultant Domain Taxonomy](#4-consultant-domain-taxonomy)
-5. [Professional Background](#5-professional-background)
-6. [Service Plans](#6-service-plans)
-7. [Plan Curriculum Content](#7-plan-curriculum-content)
-8. [Availability & Slots](#8-availability--slots)
-9. [Bookings — Consultation & Subscription](#9-bookings--consultation--subscription)
-10. [Bookings — Webinar & Class](#10-bookings--webinar--class)
-11. [Appointment — The Pivot Model](#11-appointment--the-pivot-model)
-12. [Session Infrastructure](#12-session-infrastructure)
-13. [Documents & Consultant Verification](#13-documents--consultant-verification)
-14. [Collaboration System](#14-collaboration-system)
-15. [Payment System](#15-payment-system)
-16. [Referral System](#16-referral-system)
-17. [Consultant Payouts & Tax](#17-consultant-payouts--tax)
-18. [Enterprise Core — Org & Membership](#18-enterprise-core--org--membership)
-19. [Enterprise Billing & Programs](#19-enterprise-billing--programs)
-20. [Enterprise Invoicing & Org Payouts](#20-enterprise-invoicing--org-payouts)
-21. [Three-Ledger Accounting](#21-three-ledger-accounting)
-22. [Support & Feedback](#22-support--feedback)
-23. [Moderation](#23-moderation)
-24. [Compliance, HRIS & System](#24-compliance-hris--system)
-25. [Enum Reference Table](#25-enum-reference-table)
+| #   | Domain                                                                                                                                    |                                                                                                 |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| 1.  | [Identity & Profiles](./domains/01-identity-and-profiles.md)                                                                              | Who a person is, what role they hold, and the background they bring.                            |
+| 2.  | [Identity & Authentication](./domains/01-identity-and-profiles.md#1-identity--authentication)                                             |                                                                                                 |
+| 3.  | [Role Profiles](./domains/01-identity-and-profiles.md#2-role-profiles)                                                                    |                                                                                                 |
+| 4.  | [Professional Background & Verification](./domains/01-identity-and-profiles.md#3-professional-background--verification)                   |                                                                                                 |
+| 5.  | [Consultant Taxonomy](./domains/01-identity-and-profiles.md#4-consultant-taxonomy)                                                        |                                                                                                 |
+| 6.  | [Plans & Availability](./domains/02-plans-and-availability.md)                                                                            | What is sold, who else sells it with you, and when you are open.                                |
+| 7.  | [Service Plans & Curriculum](./domains/02-plans-and-availability.md#1-service-plans--curriculum)                                          |                                                                                                 |
+| 8.  | [Collaborators & Revenue Splits](./domains/02-plans-and-availability.md#2-collaborators--revenue-splits)                                  |                                                                                                 |
+| 9.  | [Availability, Waitlist & Backup Windows](./domains/02-plans-and-availability.md#3-availability-waitlist--backup-windows)                 |                                                                                                 |
+| 10. | [Bookings & Appointments](./domains/03-bookings-and-appointments.md)                                                                      | The request-to-payment chain, and the appointment every booking resolves to.                    |
+| 11. | [One-to-One Bookings](./domains/03-bookings-and-appointments.md#1-one-to-one-bookings)                                                    |                                                                                                 |
+| 12. | [Group Bookings — Webinar & Class](./domains/03-bookings-and-appointments.md#2-group-bookings--webinar--class)                            |                                                                                                 |
+| 13. | [Appointment — The Pivot Model](./domains/03-bookings-and-appointments.md#3-appointment--the-pivot-model)                                 |                                                                                                 |
+| 14. | [Lifecycle & Sessions](./domains/04-lifecycle-and-sessions.md)                                                                            | Ending a booking early, moving it, and running the session it becomes.                          |
+| 15. | [Cancellation Policy & Reschedule](./domains/04-lifecycle-and-sessions.md#1-cancellation-policy--reschedule)                              |                                                                                                 |
+| 16. | [Session Infrastructure, Attendance & Recordings](./domains/04-lifecycle-and-sessions.md#2-session-infrastructure-attendance--recordings) |                                                                                                 |
+| 17. | [Session Documents](./domains/04-lifecycle-and-sessions.md#3-session-documents)                                                           |                                                                                                 |
+| 18. | [Payments & Pricing](./domains/05-payments-and-pricing.md)                                                                                | Money in, money back, and the platform's own fee policy.                                        |
+| 19. | [Payments, Refunds & Disputes](./domains/05-payments-and-pricing.md#1-payments-refunds--disputes)                                         |                                                                                                 |
+| 20. | [Platform Pricing & Fee Policy](./domains/05-payments-and-pricing.md#2-platform-pricing--fee-policy)                                      |                                                                                                 |
+| 21. | [Earnings & Tax](./domains/06-earnings-and-tax.md)                                                                                        | From a captured payment to money in a bank account, and the tax withheld on the way.            |
+| 22. | [Consultant Earnings & Payouts](./domains/06-earnings-and-tax.md#1-consultant-earnings--payouts)                                          |                                                                                                 |
+| 23. | [Tax — TDS, GST & Adjustments](./domains/06-earnings-and-tax.md#2-tax--tds-gst--adjustments)                                              |                                                                                                 |
+| 24. | [Invoicing & Referrals](./domains/07-invoicing-and-referrals.md)                                                                          | The tax documents a buyer receives, and the credits that bring them back.                       |
+| 25. | [Consumer Invoicing & Credit Notes](./domains/07-invoicing-and-referrals.md#1-consumer-invoicing--credit-notes)                           |                                                                                                 |
+| 26. | [Referrals & Credit Pools](./domains/07-invoicing-and-referrals.md#2-referrals--credit-pools)                                             |                                                                                                 |
+| 27. | [Expert–Customer Relationships](./domains/07-invoicing-and-referrals.md#3-expertcustomer-relationships)                                   |                                                                                                 |
+| 28. | [Enterprise](./domains/08-enterprise.md)                                                                                                  | The organisation, what it buys, what it is billed, and the ledger underneath.                   |
+| 29. | [Enterprise Core — Organisation & Membership](./domains/08-enterprise.md#1-enterprise-core--organisation--membership)                     |                                                                                                 |
+| 30. | [Enterprise Commercial Spine](./domains/08-enterprise.md#2-enterprise-commercial-spine)                                                   |                                                                                                 |
+| 31. | [Enterprise Programs & Usage](./domains/08-enterprise.md#3-enterprise-programs--usage)                                                    |                                                                                                 |
+| 32. | [Enterprise Invoicing, Receipts & Organisation Payouts](./domains/08-enterprise.md#4-enterprise-invoicing-receipts--organisation-payouts) |                                                                                                 |
+| 33. | [Double-Entry Ledger & Gateway Settlement](./domains/08-enterprise.md#5-double-entry-ledger--gateway-settlement)                          |                                                                                                 |
+| 34. | [Support & Moderation](./domains/09-support-and-moderation.md)                                                                            | The case a support conversation becomes, the rating that follows, and the moderation over both. |
+| 35. | [Support — Legacy Queues & Self-Serve Threads](./domains/09-support-and-moderation.md#1-support--legacy-queues--self-serve-threads)       |                                                                                                 |
+| 36. | [Support — The Canonical Case](./domains/09-support-and-moderation.md#2-support--the-canonical-case)                                      |                                                                                                 |
+| 37. | [Feedback & Ratings](./domains/09-support-and-moderation.md#3-feedback--ratings)                                                          |                                                                                                 |
+| 38. | [Moderation, Trust & Incidents](./domains/09-support-and-moderation.md#4-moderation-trust--incidents)                                     |                                                                                                 |
+| 39. | [Compliance & System](./domains/10-compliance-and-system.md)                                                                              | Consent, erasure and the operational substrate everything else runs on.                         |
+| 40. | [Leads](./domains/10-compliance-and-system.md#1-leads)                                                                                    |                                                                                                 |
+| 41. | [Compliance — DPDP Consent, Erasure & Data Rights](./domains/10-compliance-and-system.md#2-compliance--dpdp-consent-erasure--data-rights) |                                                                                                 |
+| 42. | [System & Operations Record](./domains/10-compliance-and-system.md#3-system--operations-record)                                           |                                                                                                 |
+| 43. | [Notification Delivery](./domains/10-compliance-and-system.md#4-notification-delivery)                                                    |                                                                                                 |
 
----
+## 1. Master domain map
 
-## 1. Master Domain Map
-
-How all 24 domain groups connect to each other.
+The 33 domains below, and how the identity and money layers cut
+across them.
 
 ```mermaid
 flowchart TD
-    subgraph Identity["Identity & Auth"]
+    subgraph ID["Identity & Auth"]
         User
         Account
         Session
     end
-    subgraph Profiles["Role Profiles"]
+    subgraph PROF["Role Profiles"]
         ConsultantProfile
         ConsulteeProfile
         OrgWorkspaceProfile
     end
-    subgraph Taxonomy["Domain Taxonomy"]
+    subgraph TAX["Taxonomy"]
         Domain
         SubDomain
         Tag
         Topic
     end
-    subgraph Background["Professional Background"]
-        WorkExperience
-        Certification
-        Education
-        Achievement
-    end
-    subgraph Plans["Service Plans"]
+    subgraph PLAN["Service Plans"]
         ConsultationPlan
         SubscriptionPlan
         WebinarPlan
         ClassPlan
     end
-    subgraph Bookings["Bookings"]
+    subgraph AVAIL["Availability"]
+        AvailabilityWindowWeekly
+        AvailabilityWindowCustom
+        Waitlist
+    end
+    subgraph BOOK["Bookings"]
         Consultation
         Subscription
+        Trial
         Webinar
         Class
-        Trial
     end
-    subgraph Core["Appointment Core"]
+    subgraph CORE["Appointment Core"]
         Appointment
         AppointmentOccurrence
+        AppointmentParticipant
+    end
+    subgraph SESS["Session Infra"]
         Meeting
         Recording
     end
-    subgraph Docs["Documents"]
-        AppointmentDocument
-        PlanMaterial
-        ConsultantProfileVerification
-    end
-    subgraph Collab["Collaboration"]
-        WebinarCollaborator
-        ClassCollaborator
-    end
-    subgraph Pay["Payments"]
+    subgraph PAY["Payments"]
         Payment
         PaymentLeg
         Refund
         Dispute
-        Invoice
     end
-    subgraph Earn["Payouts & Earnings"]
+    subgraph LED["Double-Entry Ledger"]
+        LedgerAccount
+        LedgerTransaction
+        LedgerEntry
+    end
+    subgraph EARN["Earnings & Payouts"]
         ConsultantEarnings
-        Payout
-        TDSRecord
+        ConsultantPayout
+        PayoutAccount
     end
-    subgraph Ref["Referral"]
-        ReferralCode
-        ReferralCredit
-    end
-    subgraph Ent["Enterprise"]
+    subgraph ENT["Enterprise"]
         Organization
         Membership
         BillingAccount
         Contract
         Program
     end
-    subgraph Ledgers["Accounting Ledgers"]
-        UsageLedgerEntry
-        LedgerAccount
-        LedgerEntry
+    subgraph EINVO["Enterprise Invoicing"]
+        OrganizationInvoice
+        OrganizationEarnings
+        OrganizationPayout
     end
-    subgraph Support["Support & Moderation"]
+    subgraph SUP["Support"]
+        SupportCase
+        SupportCaseMessage
         SupportTicket
+        AppointmentSupportThread
+    end
+    subgraph MOD["Moderation & Trust"]
         ModerationReport
+        ModerationAction
     end
-    subgraph Compliance["Compliance & System"]
+    subgraph CMP["Compliance"]
         ConsentArtifact
-        HrisConfig
-        ActivityLog
+        ErasureRequest
+        DpdpGrievance
+    end
+    subgraph OPS["System & Ops"]
+        OpsActionLog
+        OpsActionProposal
+        NotificationOutbox
+        SystemJobExecution
     end
 
-    Identity --> Profiles
-    Profiles --> Plans
-    Profiles --> Background
-    Profiles --> Taxonomy
-    Plans --> Bookings
-    Bookings --> Core
-    Core --> Docs
-    Plans --> Collab
-    Core --> Pay
-    Pay --> Earn
-    Pay --> Ledgers
-    Ent --> Pay
-    Ent --> Ledgers
-    Identity --> Ref
-    Identity --> Support
-    Identity --> Compliance
-    Ent --> Compliance
+    ID --> PROF
+    PROF --> PLAN
+    PROF --> TAX
+    PLAN --> AVAIL
+    PLAN --> BOOK
+    AVAIL --> BOOK
+    BOOK --> CORE
+    CORE --> SESS
+    BOOK --> PAY
+    PAY --> LED
+    PAY --> EARN
+    ENT --> PAY
+    ENT --> LED
+    ENT --> EINVO
+    PAY --> SUP
+    CORE --> SUP
+    ID --> MOD
+    ID --> CMP
+    ID --> OPS
+    LED --> OPS
 ```
 
----
-
-## 2. User Identity & Auth
-
-The central `User` model and BetterAuth supporting tables.
-
-```mermaid
-erDiagram
-    User {
-        string id
-        string email
-        string name
-        string phone
-        UserRole role
-        boolean emailVerified
-        boolean onboardingCompleted
-        string timezone
-        string consultantProfileId
-        string consulteeProfileId
-        string orgWorkspaceProfileId
-    }
-    Account {
-        string id
-        string userId
-        string providerId
-        string accountId
-        string accessToken
-        string refreshToken
-    }
-    Session {
-        string id
-        string token
-        string userId
-        datetime expiresAt
-        string ipAddress
-    }
-    Verification {
-        string id
-        string identifier
-        string value
-        datetime expiresAt
-    }
-    SsoProvider {
-        string id
-        string issuer
-        string providerId
-        string organizationId
-        string domain
-        string userId
-        string oidcConfig
-        boolean domainVerified
-    }
-    TwoFactor {
-        string id
-        string userId
-        boolean verified
-        int failedVerificationCount
-        datetime lockedUntil
-    }
-    CookiePreference {
-        string id
-        string userId
-        boolean essential
-        boolean analytics
-        boolean marketing
-        boolean functional
-    }
-    NotificationPreference {
-        string id
-        string userId
-        boolean allNotifications
-        boolean emailEnabled
-        boolean inAppEnabled
-        boolean appointmentReminders
-        boolean quietHoursEnabled
-    }
-
-    User ||--o{ Account : "has"
-    User ||--o{ Session : "has"
-    User ||--o| TwoFactor : "has"
-    User ||--o| CookiePreference : "has"
-    User ||--o| NotificationPreference : "has"
-    User ||--o{ SsoProvider : "has"
-```
-
----
-
-## 3. User Role Profiles
-
-One `User` can hold multiple profile types. `ConsultantProfile` and `ConsulteeProfile` can co-exist on the same account.
-
-```mermaid
-erDiagram
-    User {
-        string id
-        UserRole role
-        string consultantProfileId
-        string consulteeProfileId
-        string staffProfileId
-        string adminProfileId
-        string orgWorkspaceProfileId
-    }
-    ConsultantProfile {
-        string id
-        string userId
-        string domainId
-        ScheduleType scheduleType
-        ConsultantVerificationStatus verificationStatus
-        boolean isVerified
-        float rating
-        int totalRevenue
-        int pendingRevenue
-        boolean isIndependent
-    }
-    ConsulteeProfile {
-        string id
-        string userId
-        CareerStage careerStage
-        BudgetPreference budgetPreference
-        boolean isIndependent
-    }
-    StaffProfile {
-        string id
-        string userId
-        string department
-        string position
-    }
-    AdminProfile {
-        string id
-        string userId
-    }
-    OrgWorkspaceProfile {
-        string id
-        string userId
-    }
-
-    User ||--o| ConsultantProfile : "is consultant"
-    User ||--o| ConsulteeProfile : "is consultee"
-    User ||--o| StaffProfile : "is staff"
-    User ||--o| AdminProfile : "is admin"
-    User ||--o| OrgWorkspaceProfile : "is org operator"
-```
-
----
-
-## 4. Consultant Domain Taxonomy
-
-How consultants categorise their expertise and how plans are tagged.
-
-```mermaid
-erDiagram
-    ConsultantProfile {
-        string id
-        string domainId
-    }
-    Domain {
-        string id
-        string name
-    }
-    SubDomain {
-        string id
-        string name
-        string domainId
-    }
-    Tag {
-        string id
-        string name
-        string domainId
-    }
-    Topic {
-        string id
-        string name
-    }
-    ConsultantReview {
-        string id
-        string consultantProfileId
-        string consulteeProfileId
-        int rating
-    }
-
-    Domain ||--|{ SubDomain : "has"
-    Domain ||--|{ Tag : "has"
-    ConsultantProfile }o--|| Domain : "primary domain"
-    ConsultantProfile }o--o{ SubDomain : "tagged"
-    ConsultantProfile }o--o{ Tag : "tagged"
-    ConsultantProfile ||--o{ ConsultantReview : "receives"
-    Topic }o--o{ ConsultationPlan : "on plan"
-    Topic }o--o{ SubscriptionPlan : "on plan"
-    Topic }o--o{ WebinarPlan : "on plan"
-    Topic }o--o{ ClassPlan : "on plan"
-```
-
-`ConsultantReview` is the public reputation rail and #1300 gave it companions that the diagram above omits for space: `ConsultantReviewRevision` (one append-only row per superseded version of a review's text) and the enums `ReviewTrack` (`ONE_TO_ONE` or `GROUP`), `RatingCause` (what a rater says drove a low score, shared with `AppointmentFeedback`) and `ReviewActor` (`AUTHOR` or `MODERATION`, who removed a review or its reply). Every staff act on a review or a private rating is a `ModerationAction` row, which since #1562 no longer needs a report behind it. The `ScoringSnapshot` model that #1542 added was dropped by #1566. The reference for all of them is [`docs/reviews/`](../reviews/README.md), and the column-by-column list is [`docs/reviews/06-schema-reference.md`](../reviews/06-schema-reference.md).
-
----
-
-## 5. Professional Background
-
-All consolidated at `User` level (not profile level) for DRY principle. `Achievement` is consultant-only.
-
-```mermaid
-erDiagram
-    User {
-        string id
-    }
-    WorkExperience {
-        string id
-        string userId
-        string company
-        string companyDomain
-        string title
-        datetime startDate
-        datetime endDate
-        boolean isCurrent
-    }
-    Certification {
-        string id
-        string userId
-        string name
-        string issuingOrganization
-        datetime issueDate
-        datetime expiryDate
-        string credentialUrl
-    }
-    Education {
-        string id
-        string userId
-        string institution
-        string degree
-        string fieldOfStudy
-        int startYear
-        int endYear
-    }
-    Achievement {
-        string id
-        string consultantProfileId
-        AchievementType achievementType
-        string title
-        string url
-    }
-    ConsultantProfile {
-        string id
-        string userId
-    }
-
-    User ||--o{ WorkExperience : "career history"
-    User ||--o{ Certification : "certifications"
-    User ||--o{ Education : "education"
-    ConsultantProfile ||--o{ Achievement : "portfolio"
-    User ||--o| ConsultantProfile : "is consultant"
-```
-
----
-
-## 6. Service Plans
-
-Four plan types. All owned by `ConsultantProfile`, optionally also by `Organization`. Visibility controls marketplace exposure, and `archivedAt` withdraws a plan from sale without deleting the terms past bookings still resolve against.
-
-All four carry the same buyer-facing content shape — `subtitle`, `targetAudience`, `whatsIncluded`, `imageUrl`, `slug`, a `PlanLevel` `level`, and a polymorphic `PlanFaq` child list. See [ADR 24](../enterprise/70-design-decisions/24-offering-content-model.md).
-
-```mermaid
-erDiagram
-    ConsultantProfile {
-        string id
-    }
-    Organization {
-        string id
-    }
-    ConsultationPlan {
-        string id
-        string consultantProfileId
-        string organizationId
-        string title
-        string subtitle
-        string[] targetAudience
-        string[] whatsIncluded
-        int price
-        float durationInHours
-        PlanLevel level
-        OrgPlanVisibility visibility
-        datetime archivedAt
-    }
-    SubscriptionPlan {
-        string id
-        string consultantProfileId
-        string organizationId
-        string title
-        string subtitle
-        string[] targetAudience
-        string[] whatsIncluded
-        int price
-        int sessionsPerWeek
-        int durationInMonths
-        int totalSessions
-        boolean trialEnabled
-        int trialDurationMinutes
-        int trialPriceInPaise
-        PlanLevel level
-        OrgPlanVisibility visibility
-        datetime archivedAt
-    }
-    WebinarPlan {
-        string id
-        string consultantProfileId
-        string organizationId
-        string title
-        string subtitle
-        string[] targetAudience
-        string[] whatsIncluded
-        int price
-        int maxParticipants
-        float durationInHours
-        boolean certificateProvided
-        PlanLevel level
-        OrgPlanVisibility visibility
-        datetime archivedAt
-    }
-    ClassPlan {
-        string id
-        string consultantProfileId
-        string organizationId
-        string title
-        string subtitle
-        string[] targetAudience
-        string[] whatsIncluded
-        int price
-        int sessionsPerWeek
-        int durationInMonths
-        int totalSessions
-        int maxParticipants
-        boolean certificateProvided
-        PlanLevel level
-        OrgPlanVisibility visibility
-        datetime archivedAt
-    }
-    PlanMaterial {
-        string id
-        string consultationPlanId
-        string subscriptionPlanId
-        string webinarPlanId
-        string classPlanId
-        string fileName
-        string fileUrl
-        int order
-    }
-    PlanFaq {
-        string id
-        string consultationPlanId
-        string subscriptionPlanId
-        string webinarPlanId
-        string classPlanId
-        string question
-        string answer
-        int order
-    }
-
-    ConsultantProfile ||--o{ ConsultationPlan : "offers"
-    ConsultantProfile ||--o{ SubscriptionPlan : "offers"
-    ConsultantProfile ||--o{ WebinarPlan : "offers"
-    ConsultantProfile ||--o{ ClassPlan : "offers"
-    Organization ||--o{ ConsultationPlan : "owns (optional)"
-    Organization ||--o{ SubscriptionPlan : "owns (optional)"
-    Organization ||--o{ WebinarPlan : "owns (optional)"
-    Organization ||--o{ ClassPlan : "owns (optional)"
-    ConsultationPlan ||--o{ PlanMaterial : "materials"
-    SubscriptionPlan ||--o{ PlanMaterial : "materials"
-    WebinarPlan ||--o{ PlanMaterial : "materials"
-    ClassPlan ||--o{ PlanMaterial : "materials"
-    ConsultationPlan ||--o{ PlanFaq : "faqs"
-    SubscriptionPlan ||--o{ PlanFaq : "faqs"
-    WebinarPlan ||--o{ PlanFaq : "faqs"
-    ClassPlan ||--o{ PlanFaq : "faqs"
-```
-
----
-
-## 7. Plan Curriculum Content
-
-Session-by-session curriculum outline for Subscription and Class plans.
-
-The two tables are deliberately kept separate rather than collapsed into one polymorphic model: a class module is a unit of syllabus delivered to a cohort while a subscription session is one appointment in a 1:1 engagement, and the two are free to diverge as the products do. Both carry the same shape today, including `sectionLabel` — the free-text "Week 1" / "Sprint 2" heading that groups adjacent items under one label while `order` still drives sequence. See [ADR 24](../enterprise/70-design-decisions/24-offering-content-model.md).
-
-```mermaid
-erDiagram
-    SubscriptionPlan {
-        string id
-        string title
-        int sessionsPerWeek
-        int durationInMonths
-        int totalSessions
-    }
-    SubscriptionContent {
-        string id
-        string subscriptionPlanId
-        string title
-        string sectionLabel
-        string[] outcomes
-        string contentType
-        string contentUrl
-        int order
-        float hoursAllotted
-    }
-    ClassPlan {
-        string id
-        string title
-        int sessionsPerWeek
-        int durationInMonths
-        int totalSessions
-    }
-    ClassContent {
-        string id
-        string classPlanId
-        string title
-        string sectionLabel
-        string[] outcomes
-        string contentType
-        string contentUrl
-        int order
-        float hoursAllotted
-    }
-
-    SubscriptionPlan ||--o{ SubscriptionContent : "session outline"
-    ClassPlan ||--o{ ClassContent : "session outline"
-```
-
----
-
-## 8. Availability & Slots
-
-How consultant availability windows become booked appointment slots.
-
-```mermaid
-erDiagram
-    ConsultantProfile {
-        string id
-    }
-    AvailabilityWindowWeekly {
-        string id
-        string consultantProfileId
-        DayOfWeek startDay
-        int startTimeUtc
-        DayOfWeek endDay
-        int endTimeUtc
-        int utcOffsetMinutes
-    }
-    AvailabilityWindowCustom {
-        string id
-        string consultantProfileId
-        datetime startsAt
-        datetime endsAt
-    }
-    AppointmentOccurrence {
-        string id
-        string appointmentId
-        datetime startsAt
-        datetime endsAt
-        boolean isTentative
-        OccurrenceCompletionStatus completionStatus
-        datetime completedAt
-    }
-    Meeting {
-        string id
-        string slotOfAppointmentId
-        string streamCallId
-        Platform platform
-        boolean isRecording
-        datetime endedAt
-        string endedReason
-    }
-    Recording {
-        string id
-        string meetingId
-        RecordingStorageType storageType
-        RecordingStatus status
-        string streamRecordingId
-        string supabasePath
-        datetime streamUrlExpiresAt
-        datetime transferredAt
-    }
-
-    ConsultantProfile ||--o{ AvailabilityWindowWeekly : "weekly windows"
-    ConsultantProfile ||--o{ AvailabilityWindowCustom : "custom windows"
-    AppointmentOccurrence ||--o| Meeting : "live session"
-    Meeting ||--o{ Recording : "recordings"
-```
-
-> **Key invariant**: `startTimeUtc` and `endTimeUtc` are stored as **integer minutes since midnight UTC** (0–1439). The 30-minute atomic slot is the fundamental booking unit.
-
----
-
-## 9. Bookings — Consultation & Subscription
-
-The request-to-approval-to-payment state machine for 1-on-1 services.
-
-```mermaid
-erDiagram
-    ConsulteeProfile {
-        string id
-    }
-    ConsultationPlan {
-        string id
-        string consultantProfileId
-        int price
-    }
-    Consultation {
-        string id
-        string consultationPlanId
-        string requestedById
-        AppointmentStatus status
-        BookingSource bookingSource
-        string pendingPaymentUrl
-        CancellationReason cancellationReason
-        datetime cancelledAt
-    }
-    SubscriptionPlan {
-        string id
-        string consultantProfileId
-        int price
-        boolean trialEnabled
-        int trialPriceInPaise
-        int sessionsPerWeek
-        int durationInMonths
-    }
-    Subscription {
-        string id
-        string subscriptionPlanId
-        string requestedById
-        AppointmentStatus status
-        BookingSource bookingSource
-        string pendingPaymentUrl
-        datetime schedulingPeriodStartsAt
-        datetime schedulingPeriodEndsAt
-    }
-    Trial {
-        string id
-        string consulteeProfileId
-        string consultantProfileId
-        string subscriptionPlanId
-        string appointmentId
-        string convertedToSubscriptionId
-        string organizationId
-        string pendingPaymentUrl
-        string paymentId
-        TrialStatus status
-    }
-    PlatformPricingConfig {
-        string id
-        int minTrialPriceInPaise
-    }
-
-    ConsulteeProfile ||--o{ Consultation : "requests"
-    ConsultationPlan ||--o{ Consultation : "booked under"
-    ConsulteeProfile ||--o{ Subscription : "requests"
-    SubscriptionPlan ||--o{ Subscription : "booked under"
-    ConsulteeProfile ||--o{ Trial : "trial"
-    SubscriptionPlan ||--o{ Trial : "trialled"
-    Trial ||--o| Subscription : "converts to"
-```
-
----
-
-## 10. Bookings — Webinar & Class
-
-Group sessions. Many consultees share one Appointment row (many-to-one booking).
-
-```mermaid
-erDiagram
-    WebinarPlan {
-        string id
-        string consultantProfileId
-        int price
-        int maxParticipants
-        boolean certificateProvided
-    }
-    Webinar {
-        string id
-        string webinarPlanId
-        WebinarStatus status
-        string feedbackSummary
-    }
-    ClassPlan {
-        string id
-        string consultantProfileId
-        int price
-        int maxParticipants
-        int totalSessions
-        boolean certificateProvided
-    }
-    Class {
-        string id
-        string classPlanId
-        ClassStatus status
-        datetime schedulingPeriodStartsAt
-        datetime schedulingPeriodEndsAt
-    }
-    WebinarPlan ||--o{ Webinar : "schedules instances"
-    ClassPlan ||--o{ Class : "runs cohorts"
-```
-
-`Webinar.maxParticipants` and `Class.maxParticipants` are nullable per-instance
-capacity overrides; null inherits the plan's value. See
-[the capacity section of the booking docs](../booking/02-event-types-and-validation.md).
-
----
-
-## 11. Appointment — The Pivot Model
-
-`Appointment` links every booking type to its slots and payments. Group events (webinar/class) share one Appointment row across all registrants.
-
-```mermaid
-erDiagram
-    Appointment {
-        string id
-        AppointmentsType appointmentType
-        string consultationId
-        string subscriptionId
-        string webinarId
-        string classId
-        string organizationId
-    }
-    Consultation {
-        string id
-        AppointmentStatus status
-    }
-    Subscription {
-        string id
-        AppointmentStatus status
-    }
-    Webinar {
-        string id
-        WebinarStatus status
-    }
-    Class {
-        string id
-        ClassStatus status
-    }
-    Trial {
-        string id
-        TrialStatus status
-        string appointmentId
-    }
-    AppointmentOccurrence {
-        string id
-        string appointmentId
-        datetime startsAt
-        datetime endsAt
-        boolean isTentative
-        OccurrenceCompletionStatus completionStatus
-    }
-    Payment {
-        string id
-        string appointmentId
-        string userId
-        PaymentStatus paymentStatus
-        int amount
-    }
-    AppointmentDocument {
-        string id
-        string appointmentId
-        DocumentReviewStatus reviewStatus
-        DocumentUploadRole uploadedByRole
-    }
-
-    Consultation ||--o| Appointment : "1-to-1"
-    Subscription ||--o{ Appointment : "1-to-many sessions"
-    Webinar ||--o| Appointment : "shared by all registrants"
-    Class ||--o{ Appointment : "one per session"
-    Trial ||--o| Appointment : "free session"
-    Appointment ||--|{ AppointmentOccurrence : "1+ time slots"
-    Appointment ||--o{ Payment : "paid via"
-    Appointment ||--o{ AppointmentDocument : "docs"
-```
-
----
-
-## 12. Session Infrastructure
-
-The Stream.io video layer and dual-storage recording system.
-
-```mermaid
-erDiagram
-    AppointmentOccurrence {
-        string id
-        OccurrenceCompletionStatus completionStatus
-    }
-    Meeting {
-        string id
-        string slotOfAppointmentId
-        string streamCallId
-        Platform platform
-        boolean isRecording
-        string recordingStartedBy
-        datetime recordingStartedAt
-        datetime endedAt
-        string endedReason
-    }
-    Recording {
-        string id
-        string meetingId
-        string organizationId
-        string title
-        RecordingStorageType storageType
-        RecordingStatus status
-        int durationInMinutes
-        string streamRecordingId
-        string streamCallId
-        string supabaseUrl
-        string supabasePath
-        string thumbnailUrl
-        datetime streamUrlExpiresAt
-        datetime transferredAt
-    }
-
-    AppointmentOccurrence ||--o| Meeting : "one session"
-    Meeting ||--o{ Recording : "recordings"
-```
-
-> **Dual storage**: `STREAM_S3` = temporary 2-week storage (free tier). `SUPABASE` = permanent (premium). `RecordingStatus` lifecycle: RECORDING → PROCESSING → READY → TRANSFERRING → AVAILABLE.
-
----
-
-## 13. Documents & Consultant Verification
-
-```mermaid
-erDiagram
-    Appointment {
-        string id
-    }
-    AppointmentDocument {
-        string id
-        string appointmentId
-        string rootDocumentId
-        string responseToDocumentId
-        int versionNo
-        string fileName
-        string storagePath
-        string fileUrl
-        boolean isStorageMissing
-        DocumentReviewStatus reviewStatus
-        DocumentUploadRole uploadedByRole
-        string reviewedById
-        datetime reviewedAt
-        datetime deletedAt
-    }
-    ConsultantProfile {
-        string id
-        ConsultantVerificationStatus verificationStatus
-    }
-    ConsultantProfileVerification {
-        string id
-        string consultantProfileId
-        ProfileVerificationStatus status
-        datetime submittedAt
-        datetime reviewedAt
-        string reviewedById
-        string rejectionReason
-        string feedbackDetails
-    }
-    ProfileVerificationDocument {
-        string id
-        string verificationId
-        string fileName
-        string fileUrl
-        boolean isValid
-        string staffFeedback
-        string description
-    }
-
-    Appointment ||--o{ AppointmentDocument : "session docs"
-    AppointmentDocument ||--o{ AppointmentDocument : "threadVersions / responseToDocument"
-    ConsultantProfile ||--o{ ConsultantProfileVerification : "verification submissions"
-    ConsultantProfileVerification ||--o{ ProfileVerificationDocument : "supporting docs"
-```
-
----
-
-## 14. Collaboration System
-
-Co-hosts, TAs, and guest speakers with revenue-share splits on Webinar and Class plans.
-
-```mermaid
-erDiagram
-    ConsultantProfile {
-        string id
-    }
-    WebinarPlan {
-        string id
-        string consultantProfileId
-    }
-    WebinarCollaborator {
-        string id
-        string consultantProfileId
-        string webinarPlanId
-        string invitedById
-        WebinarCollaboratorRole role
-        float revenueSharePercentage
-        CollaboratorStatus status
-        datetime respondedAt
-    }
-    ClassPlan {
-        string id
-        string consultantProfileId
-    }
-    ClassCollaborator {
-        string id
-        string consultantProfileId
-        string classPlanId
-        string invitedById
-        ClassCollaboratorRole role
-        float revenueSharePercentage
-        CollaboratorStatus status
-        datetime respondedAt
-    }
-
-    WebinarPlan ||--o{ WebinarCollaborator : "has collaborators"
-    ConsultantProfile ||--o{ WebinarCollaborator : "collaborates on"
-    ClassPlan ||--o{ ClassCollaborator : "has collaborators"
-    ConsultantProfile ||--o{ ClassCollaborator : "collaborates on"
-```
-
----
-
-## 15. Payment System
-
-Two-phase commit: tentative slot created pre-payment, confirmed on webhook. Multi-leg funding for stacked payment sources.
-
-```mermaid
-erDiagram
-    Payment {
-        string id
-        string userId
-        string appointmentId
-        string organizationId
-        string billingAccountId
-        string billableToOrgInvoiceId
-        string discountCodeId
-        PaymentGateway paymentGateway
-        PaymentStatus paymentStatus
-        int amount
-        int originalAmount
-        int taxAmount
-        boolean isInternational
-        string buyerCountry
-        string displayCurrencyAtCheckout
-        float exchangeRateAtCheckout
-    }
-    PaymentLeg {
-        string id
-        string paymentId
-        PaymentLegSource source
-        int amountPaise
-        string sourceRef
-    }
-    Refund {
-        string id
-        string paymentId
-        RefundStatus status
-        int amount
-        PaymentGateway paymentGateway
-        string refundId
-        float exchangeRateAtRefund
-    }
-    Dispute {
-        string id
-        string paymentId
-        DisputeStatus status
-        int amount
-        datetime dueBy
-        string disputeId
-    }
-    Invoice {
-        string id
-        string paymentId
-        string invoiceNumber
-        PaymentStatus status
-        int amount
-        int taxAmount
-        string hsnCode
-    }
-    WebhookEvent {
-        string id
-        string provider
-        string eventId
-        string eventType
-        boolean processed
-        datetime receivedAt
-    }
-    DiscountCode {
-        string id
-        string code
-        DiscountType discountType
-        int discountValue
-        boolean isActive
-        int currentUses
-        int maxUses
-        datetime expiresAt
-    }
-
-    Payment ||--o{ PaymentLeg : "funding legs"
-    Payment ||--o{ Refund : "refunds"
-    Payment ||--o{ Dispute : "disputes"
-    Payment ||--o| Invoice : "invoice"
-    Payment }o--o| DiscountCode : "discount applied"
-```
-
----
-
-## 16. Referral System
-
-User acquisition via referral codes, with credit pools applied as payment legs.
-
-```mermaid
-erDiagram
-    User {
-        string id
-    }
-    ReferralCode {
-        string id
-        string userId
-        string code
-        string customCode
-        int referrerReward
-        int refereeReward
-        int totalReferrals
-        int successfulReferrals
-        boolean isActive
-    }
-    Referral {
-        string id
-        string referralCodeId
-        string referredUserId
-        ReferralStatus status
-        datetime qualifiedAt
-        int referrerRewardAmount
-        int refereeRewardAmount
-    }
-    ReferralCredit {
-        string id
-        string userId
-        CreditSource source
-        int amount
-        int usedAmount
-        int remainingAmount
-        datetime expiresAt
-    }
-    ReferralCreditUsage {
-        string id
-        string creditId
-        string paymentId
-        int amount
-        int originalAmount
-        int restoredAmount
-    }
-
-    User ||--o| ReferralCode : "owns code"
-    ReferralCode ||--o{ Referral : "tracks"
-    User ||--o| Referral : "was referred"
-    User ||--o{ ReferralCredit : "earns credits"
-    ReferralCredit ||--o{ ReferralCreditUsage : "applied to"
-    ReferralCreditUsage }o--|| Payment : "used on payment"
-```
-
----
-
-## 17. Consultant Payouts & Tax
-
-Earnings lifecycle from payment → hold → payout → TDS deduction → bank transfer.
-
-```mermaid
-erDiagram
-    ConsultantProfile {
-        string id
-        ResidencyStatus residencyStatus
-        float tdsRate
-        MsmeStatus msmeStatus
-        PayoutArrangement payoutArrangement
-    }
-    ConsultantEarnings {
-        string id
-        string consultantProfileId
-        string paymentId
-        string payoutId
-        int grossAmount
-        int platformFee
-        int consultantShare
-        int refundedShareAmount
-        EarningRole role
-        float sharePercentage
-        EarningStatus status
-        datetime holdUntil
-        datetime paidAt
-    }
-    Payout {
-        string id
-        string consultantProfileId
-        PayoutStatus status
-        PayoutMethod method
-        int amount
-        int tdsDeducted
-        int netAmount
-        float tdsRateApplied
-        string tdsFinancialYear
-        string batchId
-        datetime processedAt
-    }
-    PayoutAccount {
-        string id
-        string consultantProfileId
-        PayoutAccountType accountType
-        boolean isVerified
-        boolean isDefault
-        string razorpayContactId
-        string razorpayFundAccId
-    }
-    ConsultantTaxInfo {
-        string id
-        string consultantProfileId
-        boolean panVerified
-        string gstin
-        boolean gstinVerified
-        boolean isIndianResident
-        string lutNumber
-        datetime lutValidUntil
-    }
-    TDSRecord {
-        string id
-        string consultantProfileId
-        string payoutId
-        string financialYear
-        int quarter
-        int tdsDeducted
-        float tdsRate
-        boolean reportedInForm26Q
-        datetime form26QFilingDate
-    }
-    TdsAdjustment {
-        string id
-        string consultantProfileId
-        string tdsRecordId
-        string payoutId
-        string refundId
-        string financialYear
-        int quarter
-        int amountPaise
-        boolean reportedInForm26Q
-    }
-
-    ConsultantProfile ||--o{ ConsultantEarnings : "earns"
-    ConsultantProfile ||--o{ Payout : "batch payouts"
-    ConsultantProfile ||--o{ PayoutAccount : "bank accounts"
-    ConsultantProfile ||--o| ConsultantTaxInfo : "tax info"
-    ConsultantProfile ||--o{ TDSRecord : "TDS records"
-    ConsultantProfile ||--o{ TdsAdjustment : "TDS reversals (refund)"
-    Payout ||--o{ ConsultantEarnings : "batches"
-    Payout ||--o{ TDSRecord : "triggers TDS"
-```
-
-> **#778 §D refund-tax reversals.** `TdsAdjustment` posts a negative line in the
-> revised 26Q/27Q when previously-withheld TDS is reversed on refund.
-> `CreditNote` (Sec 34 / CGST Rule 53) is the org-side
-> refund document — see section 20 (Enterprise Invoicing).
-
----
-
-## 18. Enterprise Core — Org & Membership
-
-An Organization can sponsor employees (`canSponsor`) and/or host consultants (`canHost`). `Membership` is the only membership table.
-
-```mermaid
-erDiagram
-    Organization {
-        string id
-        string name
-        string slug
-        OrgStatus status
-        boolean canSponsor
-        boolean canHost
-        boolean isPublic
-        string billingAccountId
-        string gstin
-        GstRegStatus gstRegStatus
-        DataRegion dataResidencyRegion
-        Currency contractCurrency
-        boolean requiresPO
-        int paymentTermsDays
-        string parentId
-    }
-    Membership {
-        string id
-        string userId
-        string organizationId
-        string consulteeProfileId
-        string consultantProfileId
-        MemberRole role
-        MemberStatus status
-        PayoutRecipient payoutRecipient
-        string rateCardOverrideId
-        boolean exclusiveEngagement
-        string departmentLabel
-    }
-    Invitation {
-        string id
-        string organizationId
-        string inviterId
-        string userId
-        string email
-        string status
-        datetime expiresAt
-    }
-    OrganizationSSOSettings {
-        string id
-        string organizationId
-        boolean enforceSSO
-        MemberRole defaultRoleForAutoJoin
-        int version
-    }
-    OrgDomainClaim {
-        string id
-        string organizationId
-        string domain
-        string verificationToken
-        datetime verifiedAt
-    }
-    OrgAuditLog {
-        string id
-        string organizationId
-        OrgAuditCategory category
-        string action
-        string actorMembershipId
-    }
-
-    Organization ||--o{ Membership : "typed members"
-    Organization ||--o{ Invitation : "pending invites"
-    Organization ||--o| OrganizationSSOSettings : "SSO"
-    Organization ||--o{ OrgDomainClaim : "domain claims"
-    Organization ||--o{ OrgAuditLog : "audit trail"
-    Organization ||--o{ OrgInvoiceCounter : "fiscal-year seq"
-    User ||--o{ Membership : "member of orgs"
-```
-
-### 18.1 New 2026-05-15 fields on `Organization`
-
-Added by the Round-3 close-out PR to close enterprise procurement +
-India-statutory gaps:
-
-| Field                        | Type                        | Purpose                                                                                                                           |
-| ---------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `billingContactName`         | `String?`                   | Named human at the org for invoice/PO correspondence.                                                                             |
-| `billingContactEmail`        | `String? @db.VarChar(255)`  | Used by Novu `ORG_INVOICE_*` workflows when present; falls back to OWNER membership email.                                        |
-| `billingContactPhone`        | `String? @db.VarChar(32)`   | Optional.                                                                                                                         |
-| `supportContactName`         | `String?`                   | Surfaced on order-confirmation emails for the org's members.                                                                      |
-| `supportContactEmail`        | `String? @db.VarChar(255)`  | Routed via Novu when set.                                                                                                         |
-| `escalationContactEmail`     | `String? @db.VarChar(255)`  | Used by SLA-breach alerts only.                                                                                                   |
-| `invoiceNumberPrefix`        | `String?`                   | Per-org override for the human-readable invoice prefix. Null → slug-derived. Used by `lib/payments/billing/invoice-numbering.ts`. |
-| `msmeStatus`                 | `MsmeStatus @default(NONE)` | Mirrors `ConsultantProfile.msmeStatus`. Drives the 15/45-day deadline at org-payout creation.                                     |
-| `msmeWrittenAgreementOnFile` | `Boolean @default(false)`   | Mirrors `ConsultantProfile.writtenAgreementWithFamiliarise`.                                                                      |
-
----
-
-## 19. Enterprise Billing & Programs
-
-Commercial structure: `BillingAccount` → `Contract` → `Program` → `ProgramAssignment` → `BookingUtilization`. Each link adds a layer of budget control.
-
-> **v2 (#777/#779) additions shown above:** `Contract` self-supersession chain
-> (`supersededByContractId` @unique + `supersessionReason`) for amend/renew/
-> terminate-replace; `Contract.autoRenew` + `autoRenewedAt` (renewal cron claim
-> gate); `Program.configLockedAt` (money-config lock, stamped at first
-> assignment) + `archivedAt` (soft-delete); `ProgramAssignment.status`
-> (`AssignmentStatus`) + `consumedPaise` (CREDIT*POOL money-meter) +
-> `rolledToAssignmentId` @unique self-relation (cycle-engine rollover);
-> `LicensedSeatConfig`/`CreditPoolConfig.{overageSurchargeBps,
-maxOveragePerCyclePaise}` (surcharge + circuit-breaker); `OverageEvent`
-> (append-only over-cap charge ledger, `basePaise`+`surchargePaise`=`marginalPaise`);
-> and `BillingAccount.{minBalancePaise, autoTopUpLastFiredAt}` (notify-only
-> wallet floor + its alert cooldown). Top-up lifecycle is
-> `WalletTopUp` (PENDING→CONFIRMED/FAILED) — the wallet \_balance* itself is a
-> credit-normal liability in the double-entry ledger, not a standalone table.
-
-```mermaid
-erDiagram
-    BillingAccount {
-        string id
-        string ownerOrgId
-        FundingSource fundingSource
-        int walletBalance
-        int creditLimit
-        int minBalancePaise
-        datetime autoTopUpLastFiredAt
-        string billingEmail
-        Currency currency
-    }
-    WalletTopUp {
-        string id
-        string billingAccountId
-        string providerOrderId
-        string providerPaymentId
-        int amountPaise
-        WalletTopUpStatus status
-        datetime confirmedAt
-        datetime capturedAt
-    }
-    Contract {
-        string id
-        string organizationId
-        string billingAccountId
-        string purchaseOrderId
-        ContractStatus status
-        int paymentTermsDays
-        boolean autoRenew
-        datetime autoRenewedAt
-        string supersededByContractId
-        ContractSupersessionReason supersessionReason
-        datetime supersededAt
-        datetime effectiveFrom
-        datetime effectiveTo
-    }
-    BillingSubscription {
-        string id
-        string contractId
-        SubscriptionModel model
-        BillingCycle cycle
-        int activeSeatCount
-        datetime currentCycleStart
-        datetime currentCycleEnd
-        datetime nextInvoiceDate
-    }
-    RateCard {
-        string id
-        string ownerOrgId
-        string ownerContractId
-        int platformBps
-        int orgBps
-        int consultantBps
-        datetime effectiveFrom
-        datetime effectiveTo
-    }
-    Program {
-        string id
-        string contractId
-        ProgramType type
-        ProgramStatus status
-        string name
-        datetime configLockedAt
-        datetime archivedAt
-    }
-    ProgramConsultantAllowlist {
-        string id
-        string programId
-        string consultantProfileId
-    }
-    LicensedSeatConfig {
-        string programId
-        int ratePerSeatPaise
-        BillingCycle cycle
-        int coveredEngagementsPerCycle
-        OverageBehavior overageBehavior
-        int overageSurchargeBps
-        int maxOveragePerCyclePaise
-        int priceCapPerEngagementPaise
-        int activeSeatCount
-    }
-    CreditPoolConfig {
-        string programId
-        BillingCycle cycle
-        int creditsPerCycle
-        int minimumCreditsPerPeriod
-        OverageBehavior overageBehavior
-        int overageSurchargeBps
-        int maxOveragePerCyclePaise
-    }
-    ProgramAssignment {
-        string id
-        string programId
-        string membershipId
-        AssignmentStatus status
-        datetime periodStart
-        datetime periodEnd
-        int engagementsUsed
-        int consumedPaise
-        int overageCount
-        string rolledToAssignmentId
-        datetime rolledAt
-    }
-    OverageEvent {
-        string id
-        string programAssignmentId
-        string bookingUtilizationId
-        string batchKey
-        OverageBehavior overageBehavior
-        int basePaise
-        int surchargePaise
-        int marginalPaise
-        OverageChargeStatus chargeStatus
-        string paymentId
-        string invoiceLineItemId
-        datetime chargeTimedOutAt
-    }
-    BookingUtilization {
-        string id
-        string programAssignmentId
-        string paymentId
-        int engagementsConsumed
-        int priceAtBookingPaise
-        boolean wasOverage
-        datetime reversedAt
-    }
-
-    BillingAccount ||--o{ WalletTopUp : "top-up lifecycle"
-    BillingAccount ||--o{ Contract : "governs"
-    BillingAccount ||--o| BillingSubscription : "billing cycle"
-    Contract ||--o| Contract : "superseded by (amend/renew)"
-    Contract ||--o{ Program : "contains"
-    Contract ||--o{ RateCard : "rate cards"
-    Contract ||--o| BillingSubscription : "subscription"
-    Program ||--o| LicensedSeatConfig : "seat config"
-    Program ||--o| CreditPoolConfig : "pool config"
-    Program ||--o{ ProgramAssignment : "member assignments"
-    ProgramAssignment ||--o| ProgramAssignment : "rolls to (cycle rollover)"
-    ProgramAssignment ||--o{ BookingUtilization : "usage tracking"
-    ProgramAssignment ||--o{ OverageEvent : "over-cap charges"
-    BookingUtilization ||--o{ OverageEvent : "one per over-cap batch"
-    OverageEvent ||--o| InvoiceLineItem : "CHARGE_ORG line"
-    OverageEvent ||--o| Payment : "CHARGE_MEMBER side-payment"
-    Membership ||--o{ ProgramAssignment : "assigned to program"
-```
-
----
-
-## 20. Enterprise Invoicing & Org Payouts
-
-Month-end invoice generation, GST/e-invoice (IRN), PO matching, and host-org revenue payouts.
-
-> **Invoice numbering (CGST Rule 46).** `OrganizationInvoice.invoiceNumber`
-> is per-org-scoped (`@@unique([organizationId, invoiceNumber])`) with
-> the format `<PREFIX>-<FY>-<SEQ>` (e.g. `ACME-2026-0042`). `PREFIX` is
-> `Organization.invoiceNumberPrefix` when set, else `slug.toUpperCase()`.
-> `FY` is the Indian fiscal year (April–March). `SEQ` is a 4-digit
-> zero-padded monotonic integer allocated atomically from the
-> `OrgInvoiceCounter` table via `INSERT … ON CONFLICT … RETURNING`.
-> Helper: `lib/payments/billing/invoice-numbering.ts:generateInvoiceNumber`.
->
-> **OrgInvoiceCounter** (`org_invoice_counters` table) — primary key
-> `(organizationId, fiscalYear)`, single column `nextSeq Int @default(1)`.
-> The transactional UPSERT guarantees unbroken sequence per (org, FY)
-> even under concurrent invoice creation.
->
-> **`OrganizationInvoice.fiscalYear Int`** — set at issue time; never
-> updated. Indexed via `@@index([organizationId, fiscalYear, issuedAt])`.
-
-```mermaid
-erDiagram
-    Organization {
-        string id
-        string gstin
-        boolean requiresPO
-        int paymentTermsDays
-    }
-    PurchaseOrder {
-        string id
-        string organizationId
-        string poNumber
-        int totalAmountPaise
-        int remainingAmountPaise
-        PoStatus status
-        datetime validUntil
-    }
-    OrganizationInvoice {
-        string id
-        string billingAccountId
-        string organizationId
-        string contractId
-        string purchaseOrderId
-        string invoiceNumber
-        OrgInvoiceStatus status
-        int subtotalPaise
-        int igstPaise
-        int cgstPaise
-        int sgstPaise
-        int totalPaise
-        string irn
-        IrpStatus irpStatus
-        datetime dueDate
-        datetime paidAt
-        boolean autoGenerated
-    }
-    OrganizationEarnings {
-        string id
-        string organizationId
-        string paymentId
-        string orgPayoutId
-        int orgSharePaise
-        int platformFeePaise
-        int consultantSharePaise
-        EarningStatus status
-    }
-    OrganizationPayout {
-        string id
-        string organizationId
-        PayoutStatus status
-        int amountPaise
-        int tdsAmountPaise
-        int netPayoutPaise
-        datetime periodStart
-        datetime periodEnd
-        string gatewayPayoutId
-    }
-    OrganizationPayoutAccount {
-        string id
-        string organizationId
-        string bankName
-        string ifscCode
-        OrgPayoutAccountStatus status
-        string razorpayContactId
-    }
-    CreditNote {
-        string id
-        string creditNoteNumber
-        int fiscalYear
-        string organizationId
-        string invoiceId
-        string refundId
-        int subtotalPaise
-        int igstPaise
-        int cgstPaise
-        int sgstPaise
-        int totalPaise
-        CreditNoteStatus status
-    }
-
-    Organization ||--o{ PurchaseOrder : "raises POs"
-    Organization ||--o{ OrganizationInvoice : "receives invoices"
-    Organization ||--o{ CreditNote : "credit notes (Sec 34)"
-    PurchaseOrder ||--o{ OrganizationInvoice : "covers invoice"
-    OrganizationInvoice ||--o{ CreditNote : "adjusted by"
-    Organization ||--o{ OrganizationEarnings : "earns (canHost)"
-    Organization ||--o{ OrganizationPayout : "batch payouts"
-    Organization ||--o| OrganizationPayoutAccount : "bank account"
-    OrganizationPayout ||--o{ OrganizationEarnings : "batches"
-```
-
----
-
-## 21. Double-Entry Cash Ledger
-
-> **Updated (#771 D1/D5).** The old "three single-entry logs"
-> (`WalletEntry` + `FundingLedgerEntry` + `SettlementLedgerEntry`) collapsed
-> into ONE balanced double-entry journal: every cash event is a
-> `LedgerTransaction` whose `LedgerEntry` rows satisfy Σ(DEBIT) == Σ(CREDIT),
-> and balances are DERIVED (sum of entries on a `LedgerAccount`). The append-only
-> `LedgerEntry` journal is the source of truth; account balances are
-> aggregated from it, never stored.
-> `UsageLedgerEntry` (non-cash engagement counts) stays separate.
-> `BillingAccount.walletBalance` is retained only as a denormalized cache for the
-> atomic-debit guard, asserted equal to the WALLET account balance nightly.
-
-```mermaid
-erDiagram
-    UsageLedgerEntry {
-        string id
-        string programAssignmentId
-        string membershipId
-        string paymentId
-        int engagementsConsumed
-        int minutesConsumed
-        int priceAtBookingPaise
-        boolean wasOverage
-    }
-    LedgerAccount {
-        string id
-        string organizationId
-        string consultantProfileId
-        LedgerAccountKind kind
-        Currency currency
-    }
-    LedgerTransaction {
-        string id
-        string idempotencyKey
-        LedgerTransactionKind kind
-        string paymentId
-        string invoiceId
-        string payoutId
-        datetime postedAt
-    }
-    LedgerEntry {
-        string id
-        string transactionId
-        string accountId
-        LedgerDirection direction
-        bigint amountPaise
-    }
-    LedgerReconciliationReport {
-        string id
-        string scope
-        json summary
-        json findings
-        boolean ok
-        int durationMs
-        datetime runAt
-    }
-
-    LedgerAccount ||--o{ LedgerEntry : "postings"
-    LedgerTransaction ||--o{ LedgerEntry : "balanced legs (ΣDr==ΣCr)"
-```
-
-| Table                        | Audience  | Purpose                                                                                                                          |
-| ---------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `UsageLedgerEntry`           | Finance   | Engagements consumed per program assignment (non-cash)                                                                           |
-| `LedgerAccount`              | Finance   | One account per (owner, `LedgerAccountKind`, currency) — CASH, WALLET, PLATFORM_FEE, ORG_PAYABLE, TDS_PAYABLE, GST_PAYABLE, etc. |
-| `LedgerTransaction`          | Finance   | One balanced cash event; `idempotencyKey` @unique makes posting retry-safe                                                       |
-| `LedgerEntry`                | Finance   | Immutable DEBIT/CREDIT legs (reversals are counter-transactions, never row edits)                                                |
-| `LedgerReconciliationReport` | Admin/Ops | Nightly audit output — READ ONLY, never mutates the ledger                                                                       |
-
----
-
-## 22. Support & Feedback
-
-```mermaid
-erDiagram
-    User {
-        string id
-    }
-    SupportTicket {
-        string id
-        string userId
-        string assignedToId
-        SupportTicketStatus status
-        SupportPriority priority
-        SupportIssueType issueType
-        string consultationId
-        string subscriptionId
-        string paymentId
-        string refundId
-    }
-    SupportResponse {
-        string id
-        string supportTicketId
-        string userId
-        boolean isInternal
-    }
-    SupportTicketAttachment {
-        string id
-        string ticketId
-        string fileName
-        string fileUrl
-        string mimeType
-    }
-    Feedback {
-        string id
-        string userId
-        FeedbackStatus status
-        int rating
-        string category
-        string title
-    }
-
-    User ||--o{ SupportTicket : "raises"
-    SupportTicket ||--o{ SupportResponse : "replies"
-    SupportTicket ||--o{ SupportTicketAttachment : "attachments"
-    User ||--o{ SupportResponse : "responds"
-    User ||--o{ Feedback : "submits"
-```
-
-The diagram above is the original ticket model. The `#support-hub` work added `AppointmentSupportThread`, `SupportMessage`, `SupportTicketCounter` and `SupportFlowOutcome`, and the private per-call rating `AppointmentFeedback` sits beside them. The support tables are documented in [`docs/support/05-schema-reference.md`](../support/05-schema-reference.md) and the rating table in [`docs/feedback/03-schema-reference.md`](../feedback/03-schema-reference.md).
-
----
-
-## 23. Moderation
-
-Staff-operated content moderation with aggregated report counts and typed enforcement actions.
-
-A report points at the content it is about, and which pointer is set depends on the report type. A `REVIEW` report carries `reviewId`, and a `MESSAGE` report carries `streamMessageId` together with the `streamChannelCid` of the conversation it came from (#1270). Those two columns are what `CONTENT_REMOVED` deletes on Stream, and they are also the key that `POST /api/report` aggregates duplicate reports on, so two complaints about two different messages from the same author no longer collapse into one row. Both are nullable, because a report about a profile or a document has neither.
-
-`ModerationAction.sideEffects` holds the post-hoc record of what each enforcement step actually did — sessions revoked, appointments cancelled, refunds issued, and the per-step outcome of the Stream write. It is read by the moderation queue, so a ban whose Stream revocation failed is visible as such, and by the retry sweep, which treats `stream: "failed"` as its work queue and stamps `stream: "gave_up"` once a row is past its retry budget.
-
-```mermaid
-erDiagram
-    User {
-        string id
-    }
-    ModerationReport {
-        string id
-        string reportedById
-        string targetUserId
-        string assignedToId
-        ModerationReportType type
-        ModerationReportStatus status
-        int reportCount
-        string contentText
-        string reviewId
-        string streamMessageId
-        string streamChannelCid
-        datetime resolvedAt
-    }
-    ModerationAction {
-        string id
-        string reportId
-        string takenById
-        ModerationActionType actionType
-        string notes
-    }
-
-    User ||--o{ ModerationReport : "submits (reporter)"
-    User ||--o{ ModerationReport : "receives (target)"
-    ModerationReport ||--o{ ModerationAction : "enforcement actions"
-    User ||--o{ ModerationAction : "staff takes action"
-```
-
----
-
-## 24. Compliance, HRIS & System
-
-DPDP Act consent, data breach tracking, HRIS employee sync (CSV/API), and platform admin models.
-
-```mermaid
-erDiagram
-    User {
-        string id
-    }
-    ConsentArtifact {
-        string id
-        string userId
-        string dataFiduciary
-        datetime grantedAt
-        datetime withdrawnAt
-        string hash
-        datetime auditRetainedUntil
-    }
-    DataBreach {
-        string id
-        datetime detectedAt
-        datetime reportedAt
-        string dpbReference
-    }
-    Organization {
-        string id
-    }
-    HrisConfig {
-        string id
-        string organizationId
-        HrisProvider provider
-        boolean active
-        datetime lastSyncedAt
-    }
-    HrisSyncJob {
-        string id
-        string hrisConfigId
-        HrisSyncStatus status
-        int recordsProcessed
-        datetime startedAt
-        datetime completedAt
-    }
-    HrisEmployeeMap {
-        string id
-        string hrisConfigId
-        string organizationId
-        string membershipId
-        string externalEmployeeId
-        string externalEmail
-        datetime syncedAt
-    }
-    ActivityLog {
-        string id
-        string consultantProfileId
-        ActivityType activityType
-        string actorId
-        string actorName
-        string consultationId
-        string subscriptionId
-        string webinarId
-        string classId
-    }
-    SystemJobExecution {
-        string id
-        string jobId
-        string jobName
-        SystemJobStatus status
-        datetime startedAt
-        datetime endedAt
-        int itemsProcessed
-        int durationMs
-    }
-    Announcement {
-        string id
-        string title
-        boolean isActive
-        datetime startDate
-        datetime endDate
-    }
-    MaintenanceWindow {
-        string id
-        MaintenancePhase phase
-        datetime scheduledAt
-        datetime startedAt
-        datetime endedAt
-    }
-
-    User ||--o{ ConsentArtifact : "consent records (7yr retention)"
-    Organization ||--o| HrisConfig : "HRIS integration"
-    HrisConfig ||--o{ HrisSyncJob : "sync jobs"
-    HrisConfig ||--o{ HrisEmployeeMap : "employee map"
-    ConsultantProfile ||--o{ ActivityLog : "dashboard activity"
-```
-
----
-
-## 25. Enum Reference Table
-
-Every enum in the schema and its values.
-
-| Enum                           | Values                                                                                                                                                                                                                                                                                 |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `UserRole`                     | CONSULTANT, CONSULTEE, ADMIN, STAFF, ORG_WORKSPACE                                                                                                                                                                                                                                     |
-| `MemberRole`                   | OWNER, MAINTAINER, MANAGER, EXPERT, LEARNER, SUPPORT                                                                                                                                                                                                                                   |
-| `MemberStatus`                 | PENDING, ACTIVE, SUSPENDED, REMOVED                                                                                                                                                                                                                                                    |
-| `OrgStatus`                    | PENDING_VERIFICATION, ACTIVE, SUSPENDED, DEACTIVATED                                                                                                                                                                                                                                   |
-| `OrgSizeBucket`                | SMALL_1_50, MEDIUM_51_200, LARGE_201_1000, ENTERPRISE_1000_PLUS                                                                                                                                                                                                                        |
-| `OrgAuditCategory`             | MEMBER, CONTRACT, PROGRAM, WALLET, INVOICE, PAYOUT, SETTINGS, CONSENT, CATALOG, SYSTEM                                                                                                                                                                                                 |
-| `DataRegion`                   | IN, US, EU                                                                                                                                                                                                                                                                             |
-| `Currency`                     | INR, USD, EUR, GBP                                                                                                                                                                                                                                                                     |
-| `GstRegStatus`                 | REGULAR, COMPOSITION, UNREGISTERED                                                                                                                                                                                                                                                     |
-| `FundingSource`                | PERSONAL, LICENSE, WALLET, INVOICE                                                                                                                                                                                                                                                     |
-| `WalletReason`                 | TOPUP, BOOKING, REFUND, ADJUSTMENT                                                                                                                                                                                                                                                     |
-| `WalletTopUpStatus`            | PENDING, CONFIRMED, FAILED                                                                                                                                                                                                                                                             |
-| `LedgerAccountKind`            | CASH, WALLET, PLATFORM_FEE, PLATFORM_PROMO, DISCOUNT, CONSULTANT_PAYABLE, ORG_PAYABLE, ORG_RECEIVABLE, CONSULTANT_RECEIVABLE, TDS_PAYABLE, GST_PAYABLE, UNAPPLIED_RECEIPTS                                                                                                             |
-| `LedgerDirection`              | DEBIT, CREDIT                                                                                                                                                                                                                                                                          |
-| `LedgerTransactionKind`        | BOOKING, TOPUP, TOPUP_REFUND, INVOICE_ISSUED, INVOICE_PAID, PAYOUT, ORG_PAYOUT, REFUND, OVERAGE_MEMBER, GRANT, UNAPPLIED_RECEIPT                                                                                                                                                       |
-| `ContractStatus`               | DRAFT, ACTIVE, EXPIRED, TERMINATED                                                                                                                                                                                                                                                     |
-| `ContractSupersessionReason`   | AMENDMENT, RENEWAL, TERMINATION_REPLACEMENT                                                                                                                                                                                                                                            |
-| `BillingCycle`                 | MONTHLY, QUARTERLY, ANNUAL                                                                                                                                                                                                                                                             |
-| `SubscriptionModel`            | PER_SEAT, FLAT_FEE                                                                                                                                                                                                                                                                     |
-| `ProgramType`                  | LICENSED_SEAT, CREDIT_POOL                                                                                                                                                                                                                                                             |
-| `ProgramStatus`                | ACTIVE, PAUSED, EXPIRED, CANCELLED                                                                                                                                                                                                                                                     |
-| `AssignmentStatus`             | ACTIVE, ROLLED, PAUSED, CLOSED, CANCELLED                                                                                                                                                                                                                                              |
-| `OverageBehavior`              | BLOCK, CHARGE_MEMBER, CHARGE_ORG                                                                                                                                                                                                                                                       |
-| `OverageChargeStatus`          | PENDING, ACCRUED, CHARGED, BLOCKED, REVERSED, FAILED                                                                                                                                                                                                                                   |
-| `OrgPlanVisibility`            | PUBLIC, ORG_ONLY, ORG_AND_PUBLIC                                                                                                                                                                                                                                                       |
-| `CoveredPlanType`              | CONSULTATION, CLASS, WEBINAR, SUBSCRIPTION                                                                                                                                                                                                                                             |
-| `OrgInvoiceStatus`             | DRAFT, ISSUED, PAID, OVERDUE, VOID, CANCELLED, REFUNDED                                                                                                                                                                                                                                |
-| `IrpStatus`                    | PENDING, GENERATED, CANCELLED, FAILED                                                                                                                                                                                                                                                  |
-| `PoStatus`                     | ACTIVE, CLOSED, CANCELLED                                                                                                                                                                                                                                                              |
-| `CreditNoteStatus`             | DRAFT, ISSUED, CANCELLED                                                                                                                                                                                                                                                               |
-| `OrgDataExportStatus`          | PENDING, PROCESSING, READY, FAILED, EXPIRED                                                                                                                                                                                                                                            |
-| `PayoutRecipient`              | SELF, ORGANIZATION                                                                                                                                                                                                                                                                     |
-| `ResidencyStatus`              | RESIDENT, NON_RESIDENT                                                                                                                                                                                                                                                                 |
-| `MsmeStatus`                   | NONE, MICRO, SMALL, MEDIUM                                                                                                                                                                                                                                                             |
-| `PayoutArrangement`            | DIRECT, AOR, EOR                                                                                                                                                                                                                                                                       |
-| `AppointmentStatus`            | PENDING, APPROVED, APPROVED_PENDING_PAYMENT, SCHEDULED, COMPLETED, REJECTED, CANCELLED, EXPIRED                                                                                                                                                                                        |
-| `AppointmentsType`             | CONSULTATION, SUBSCRIPTION, WEBINAR, CLASS, TRIAL                                                                                                                                                                                                                                      |
-| `OccurrenceCompletionStatus`   | SCHEDULED, COMPLETED, UNVERIFIED, CANCELLED, RESCHEDULED, VOIDED                                                                                                                                                                                                                       |
-| `RescheduleRequestStatus`      | PENDING_REVIEW, ACCEPTED, AUTO_ACCEPTED, DECLINED, WITHDRAWN, EXPIRED                                                                                                                                                                                                                  |
-| `BookingSource`                | DIRECT_CHECKOUT, REQUEST_SUBMITTED                                                                                                                                                                                                                                                     |
-| `TrialStatus`                  | PENDING, AWAITING_PAYMENT, SCHEDULED, COMPLETED, CONVERTED, CANCELLED, REJECTED                                                                                                                                                                                                        |
-| `WaitlistStatus`               | PENDING, SUBSCRIBED, UNSUBSCRIBED, BOUNCED (newsletter list)                                                                                                                                                                                                                           |
-| `WaitlistSource`               | LANDING_PAGE, FOOTER, BLOG, USE_CASE_PAGE, EVENT_SOLD_OUT, IMPORT                                                                                                                                                                                                                      |
-| `WebinarStatus`                | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED                                                                                                                                                                                                                                           |
-| `ClassStatus`                  | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED                                                                                                                                                                                                                                           |
-| `DayOfWeek`                    | MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY                                                                                                                                                                                                                         |
-| `ScheduleType`                 | WEEKLY, CUSTOM                                                                                                                                                                                                                                                                         |
-| `Platform`                     | ZOOM, GOOGLE_MEET, MICROSOFT_TEAMS, STREAM, CUSTOM                                                                                                                                                                                                                                     |
-| `RecordingStorageType`         | STREAM_S3, PLATFORM                                                                                                                                                                                                                                                                    |
-| `RecordingStatus`              | RECORDING, PROCESSING, READY, TRANSFERRING, AVAILABLE, FAILED, EXPIRED                                                                                                                                                                                                                 |
-| `PaymentGateway`               | STRIPE, RAZORPAY, DODO_PAYMENTS, CARD                                                                                                                                                                                                                                                  |
-| `PaymentStatus`                | PENDING, SUCCEEDED, FAILED, EXPIRED                                                                                                                                                                                                                                                    |
-| `PaymentLegSource`             | CARD, WALLET, REFERRAL_CREDIT, INVOICE_ACCRUAL, OVERAGE_INVOICE_ACCRUAL, LICENSE                                                                                                                                                                                                       |
-| `RefundStatus`                 | PENDING, SUCCEEDED, FAILED, CANCELLED                                                                                                                                                                                                                                                  |
-| `DisputeStatus`                | WARNING_NEEDS_RESPONSE, WARNING_UNDER_REVIEW, WARNING_CLOSED, NEEDS_RESPONSE, UNDER_REVIEW, CHARGE_REFUNDED, WON, LOST                                                                                                                                                                 |
-| `EarningStatus`                | PENDING, HELD, READY, PAID, REFUNDED, PENDING_TRUST                                                                                                                                                                                                                                    |
-| `EarningRole`                  | OWNER, COLLABORATOR                                                                                                                                                                                                                                                                    |
-| `PayoutStatus`                 | PENDING, APPROVED, PROCESSING, COMPLETED, FAILED, CANCELLED                                                                                                                                                                                                                            |
-| `PayoutMethod`                 | BANK_TRANSFER, UPI, STRIPE_TRANSFER                                                                                                                                                                                                                                                    |
-| `PayoutAccountType`            | BANK_ACCOUNT, UPI, STRIPE_CONNECT                                                                                                                                                                                                                                                      |
-| `CollaboratorStatus`           | PENDING, ACCEPTED, DECLINED, REMOVED                                                                                                                                                                                                                                                   |
-| `WebinarCollaboratorRole`      | CO_HOST, MODERATOR, GUEST_SPEAKER, TECHNICAL_SUPPORT                                                                                                                                                                                                                                   |
-| `ClassCollaboratorRole`        | CO_INSTRUCTOR, TEACHING_ASSISTANT, GUEST_LECTURER, CONTENT_CREATOR                                                                                                                                                                                                                     |
-| `ConsultantVerificationStatus` | PENDING_VERIFICATION, UNDER_REVIEW, VERIFIED, REJECTED                                                                                                                                                                                                                                 |
-| `ProfileVerificationStatus`    | PENDING, APPROVED, REJECTED, NEEDS_INFO, SUPERSEDED                                                                                                                                                                                                                                    |
-| `DocumentReviewStatus`         | PENDING, IN_REVIEW, APPROVED, REJECTED, NEEDS_REVISION                                                                                                                                                                                                                                 |
-| `DocumentUploadRole`           | CONSULTEE, CONSULTANT                                                                                                                                                                                                                                                                  |
-| `ReferralStatus`               | SIGNED_UP, QUALIFIED, REWARDED, EXPIRED, FRAUDULENT                                                                                                                                                                                                                                    |
-| `CreditSource`                 | REFERRAL_BONUS, REFEREE_BONUS, PROMOTION, COMPENSATION, MANUAL                                                                                                                                                                                                                         |
-| `DiscountType`                 | PERCENTAGE, FIXED_AMOUNT                                                                                                                                                                                                                                                               |
-| `AchievementType`              | AWARD, PUBLICATION, PROJECT, TALK, OPEN_SOURCE, OTHER                                                                                                                                                                                                                                  |
-| `CareerStage`                  | SCHOOL_STUDENT, STUDENT, EARLY_CAREER, MID_CAREER, SENIOR, EXECUTIVE                                                                                                                                                                                                                   |
-| `BudgetPreference`             | BUDGET, MODERATE, PREMIUM, FLEXIBLE                                                                                                                                                                                                                                                    |
-| `OfferingFormat`               | ONE_ON_ONE, GROUP, ASYNC_REVIEW                                                                                                                                                                                                                                                        |
-| `ActivityType`                 | CONSULTATION_BOOKED, CONSULTATION_COMPLETED, CONSULTATION_CANCELLED, SUBSCRIPTION_REQUESTED, SUBSCRIPTION_APPROVED, SUBSCRIPTION_CANCELLED, WEBINAR_REGISTERED, CLASS_ENROLLED, TRIAL_REQUESTED, TRIAL_SCHEDULED, TRIAL_COMPLETED, TRIAL_CONVERTED, REVIEW_SUBMITTED, MESSAGE_RECEIVED |
-| `FeedbackStatus`               | PENDING, ACKNOWLEDGED, IN_PROGRESS, RESOLVED, CLOSED                                                                                                                                                                                                                                   |
-| `SupportTicketStatus`          | OPEN, IN_PROGRESS, ON_HOLD, RESOLVED, CLOSED                                                                                                                                                                                                                                           |
-| `SupportPriority`              | LOW, MEDIUM, HIGH, URGENT                                                                                                                                                                                                                                                              |
-| `ModerationReportType`         | REVIEW, PROFILE, MESSAGE, DOCUMENT, OTHER                                                                                                                                                                                                                                              |
-| `ModerationReportStatus`       | PENDING, UNDER_REVIEW, DISMISSED, ACTION_TAKEN, ESCALATED                                                                                                                                                                                                                              |
-| `ModerationActionType`         | WARNING_ISSUED, CONTENT_REMOVED, USER_SUSPENDED, USER_BANNED, PROFILE_UNVERIFIED, NO_ACTION, USER_REINSTATED                                                                                                                                                                           |
-| `HrisProvider`                 | WORKDAY, BAMBOOHR, SAP, ORACLE, CERIDIAN, DARWINBOX, CSV                                                                                                                                                                                                                               |
-| `HrisSyncStatus`               | PENDING, RUNNING, COMPLETED, FAILED                                                                                                                                                                                                                                                    |
-| `SystemJobStatus`              | RUNNING, COMPLETED, FAILED, CANCELLED                                                                                                                                                                                                                                                  |
-| `MaintenancePhase`             | OFF, DEGRADED, OFFLINE                                                                                                                                                                                                                                                                 |
-| `OrgPayoutAccountStatus`       | PENDING_VERIFICATION, VERIFIED, FAILED_VERIFICATION, SUSPENDED                                                                                                                                                                                                                         |
-| `ParentEntityType`             | LISTED_US, PRIVATE_US, EU, OTHER                                                                                                                                                                                                                                                       |
+**The three rules that shape everything else.**
+
+1. **Identity is the only root.** Every row that belongs to a person resolves to
+   `User.id`. Money resolves to `Payment`; a booking resolves to
+   `Appointment`, never directly to a booking-type row.
+2. **Money has one writer per transition.** A status change on `Payment`,
+   `Refund`, `Appointment` or `ConsultantPayout` is a conditional update
+   that names the expected prior status in its `WHERE` clause. The ledger
+   behind it is append-only, and a reversal is a counter-transaction rather
+   than an edited row.
+3. **The database enforces the invariants, not the application.** The
+   application may check first, but the object that actually refuses the bad
+   write is named in the enforcers section.
+
+## 2. Enforcers — the `prisma/sql` sidecars
+
+The schema is managed with `prisma db push`, which cannot express a CHECK
+that spans columns, a partial unique index, a GiST exclusion constraint or a
+constraint trigger. Those live in three sidecar files and are applied and
+asserted separately:
+
+| File                                   | What it holds                                                                                         |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `prisma/sql/check-constraints.sql`     | CHECK constraints, partial unique indexes, GiST exclusion constraints, and the immutability triggers. |
+| `prisma/sql/ledger-triggers.sql`       | The double-entry ledger's immutability and balance triggers.                                          |
+| `prisma/sql/payment-legs-triggers.sql` | The payment-leg sum identity, the header-versus-legs identity, and the refund ceiling.                |
+
+`scripts/db/sidecar-objects.ts` is the one parser that derives the expected
+object list from those files, and `scripts/ci/check-db-sidecars.ts` asserts
+that the live database actually has every one of them. The inventory below is
+generated from that same parser, so it is exactly the list CI asserts.
+
+| Object                                             | Kind       | Table                   |
+| -------------------------------------------------- | ---------- | ----------------------- |
+| `appointment_parent_matches_type`                  | constraint | `Appointment`           |
+| `AppointmentDocument_fileSize_positive_check`      | constraint | `AppointmentDocument`   |
+| `billing_account_wallet_nonnegative`               | constraint | `BillingAccount`        |
+| `class_max_participants_min`                       | constraint | `Class`                 |
+| `class_plan_max_participants_min`                  | constraint | `ClassPlan`             |
+| `class_plan_price_nonnegative`                     | constraint | `ClassPlan`             |
+| `class_plan_total_sessions_min`                    | constraint | `ClassPlan`             |
+| `collaborator_plan_xor`                            | constraint | `Collaborator`          |
+| `collaborator_role_matches_plan_type`              | constraint | `Collaborator`          |
+| `collaborator_share_bps_in_range`                  | constraint | `Collaborator`          |
+| `collaborator_tier_matches_role`                   | constraint | `Collaborator`          |
+| `consultant_earnings_amounts_nonnegative`          | constraint | `ConsultantEarnings`    |
+| `consultant_earnings_batched_has_payout`           | constraint | `ConsultantEarnings`    |
+| `consultant_earnings_currency_inr`                 | constraint | `ConsultantEarnings`    |
+| `consultant_earnings_share_bps_range`              | constraint | `ConsultantEarnings`    |
+| `consultant_fee_waiver_sessions_nonnegative`       | constraint | `ConsultantFeeWaiver`   |
+| `consultant_payout_amounts_nonnegative`            | constraint | `ConsultantPayout`      |
+| `consultant_payout_currency_inr`                   | constraint | `ConsultantPayout`      |
+| `consultant_payout_tds_fy_format`                  | constraint | `ConsultantPayout`      |
+| `consultant_payout_tds_threshold_sane`             | constraint | `ConsultantPayout`      |
+| `consultant_review_group_has_event`                | constraint | `ConsultantReview`      |
+| `consultant_review_removed_pair`                   | constraint | `ConsultantReview`      |
+| `consultant_review_reply_removed_pair`             | constraint | `ConsultantReview`      |
+| `consultation_plan_price_nonnegative`              | constraint | `ConsultationPlan`      |
+| `consumer_credit_note_amounts_nonnegative`         | constraint | `ConsumerCreditNote`    |
+| `consumer_credit_note_tax_head_xor`                | constraint | `ConsumerCreditNote`    |
+| `consumer_invoice_amounts_nonnegative`             | constraint | `ConsumerInvoice`       |
+| `consumer_invoice_tax_head_xor`                    | constraint | `ConsumerInvoice`       |
+| `contract_payment_terms_nonnegative`               | constraint | `Contract`              |
+| `credit_note_amounts_nonnegative`                  | constraint | `CreditNote`            |
+| `credit_note_trigger_xor`                          | constraint | `CreditNote`            |
+| `credit_pool_config_pricing_sane`                  | constraint | `CreditPoolConfig`      |
+| `discount_code_uses_within_cap`                    | constraint | `DiscountCode`          |
+| `dispute_amount_nonnegative`                       | constraint | `Dispute`               |
+| `dispute_currency_inr`                             | constraint | `Dispute`               |
+| `earnings_hold_one_earning`                        | constraint | `EarningsHold`          |
+| `invoice_line_item_amounts_nonnegative`            | constraint | `InvoiceLineItem`       |
+| `ledger_account_currency_inr`                      | constraint | `LedgerAccount`         |
+| `ledger_entry_amount_positive`                     | constraint | `LedgerEntry`           |
+| `licensed_seat_config_pricing_sane`                | constraint | `LicensedSeatConfig`    |
+| `moderation_action_has_target`                     | constraint | `ModerationAction`      |
+| `moderation_action_target_matches_type`            | constraint | `ModerationAction`      |
+| `moderation_report_review_has_review`              | constraint | `ModerationReport`      |
+| `occurrence_no_confirmed_overlap`                  | constraint | `AppointmentOccurrence` |
+| `occurrence_time_order`                            | constraint | `AppointmentOccurrence` |
+| `onboarding_draft_payload_size`                    | constraint | `onboarding_drafts`     |
+| `org_earnings_amounts_nonnegative`                 | constraint | `OrganizationEarnings`  |
+| `org_earnings_batched_has_payout`                  | constraint | `OrganizationEarnings`  |
+| `org_earnings_split_within_gross`                  | constraint | `OrganizationEarnings`  |
+| `org_invoice_amounts_nonnegative`                  | constraint | `OrganizationInvoice`   |
+| `org_payout_amounts_nonnegative`                   | constraint | `OrganizationPayout`    |
+| `org_payout_tds_fy_format`                         | constraint | `OrganizationPayout`    |
+| `org_stream_recording_retention_days_range`        | constraint | `organizations`         |
+| `overage_marginal_is_base_plus_surcharge`          | constraint | `OverageEvent`          |
+| `payment_amounts_nonnegative`                      | constraint | `Payment`               |
+| `payment_currency_inr`                             | constraint | `Payment`               |
+| `payment_leg_nonreversal_nonnegative`              | constraint | `PaymentLeg`            |
+| `payment_platform_fee_bps_range`                   | constraint | `Payment`               |
+| `payment_refund_owed_paise_positive`               | constraint | `Payment`               |
+| `payment_welcome_discount_positive`                | constraint | `Payment`               |
+| `PlanMaterial_single_plan_fk_check`                | constraint | `PlanMaterial`          |
+| `platform_fee_schedule_valid`                      | constraint | `PlatformFeeSchedule`   |
+| `platform_incident_time_order`                     | constraint | `PlatformIncident`      |
+| `program_assignment_no_active_overlap`             | constraint | `ProgramAssignment`     |
+| `purchase_order_amounts_coherent`                  | constraint | `PurchaseOrder`         |
+| `rate_card_bps_sum_is_whole`                       | constraint | `RateCard`              |
+| `Recording_storage_and_publish_check`              | constraint | `Recording`             |
+| `referral_credit_balance_consistent`               | constraint | `ReferralCredit`        |
+| `referral_credit_usage_nonnegative`                | constraint | `ReferralCreditUsage`   |
+| `referral_program_config_ranges`                   | constraint | `ReferralProgramConfig` |
+| `refund_amount_nonnegative`                        | constraint | `Refund`                |
+| `refund_currency_inr`                              | constraint | `Refund`                |
+| `sso_provider_id_not_reserved`                     | constraint | `ssoProvider`           |
+| `subscription_plan_price_nonnegative`              | constraint | `SubscriptionPlan`      |
+| `subscription_plan_total_sessions_min`             | constraint | `SubscriptionPlan`      |
+| `subscription_sessions_returned_range`             | constraint | `Subscription`          |
+| `support_case_event_target_xor`                    | constraint | `SupportCaseEvent`      |
+| `support_case_scope_and_shape_chk`                 | constraint | `SupportCase`           |
+| `tds_adjustment_deductee_xor`                      | constraint | `TdsAdjustment`         |
+| `tds_rate_bps_and_window_sane`                     | constraint | `TdsRate`               |
+| `tds_rate_bps_bounds`                              | constraint | `TdsRate`               |
+| `tds_record_deductee_xor`                          | constraint | `TDSRecord`             |
+| `tds_record_financial_year_format`                 | constraint | `TDSRecord`             |
+| `tds_record_payout_rail_matches`                   | constraint | `TDSRecord`             |
+| `wallet_topup_amount_positive`                     | constraint | `WalletTopUp`           |
+| `webhook_event_processed_error_exclusive`          | constraint | `WebhookEvent`          |
+| `webhook_event_processed_timestamp_consistent`     | constraint | `WebhookEvent`          |
+| `webinar_max_participants_min`                     | constraint | `Webinar`               |
+| `webinar_plan_max_participants_min`                | constraint | `WebinarPlan`           |
+| `webinar_plan_price_nonnegative`                   | constraint | `WebinarPlan`           |
+| `appointment_doc_thread_version_unique`            | index      | —                       |
+| `appointment_feedback_level_key`                   | index      | —                       |
+| `appointment_occurrence_live_ordinal_key`          | index      | —                       |
+| `AppointmentDocument_active_storagePath_key`       | index      | —                       |
+| `cancellation_policy_one_active_per_scope`         | index      | —                       |
+| `cancellation_policy_scope_version`                | index      | —                       |
+| `collaborator_one_presenter_class`                 | index      | —                       |
+| `collaborator_one_presenter_webinar`               | index      | —                       |
+| `consultant_earnings_occurrence_key`               | index      | —                       |
+| `consultant_payout_one_tds_catch_up_per_fy`        | index      | —                       |
+| `consultant_review_pair_track_event_key`           | index      | —                       |
+| `contract_one_active_per_billing_account_idx`      | index      | —                       |
+| `earnings_hold_active_consultant_key`              | index      | —                       |
+| `earnings_hold_active_org_key`                     | index      | —                       |
+| `erasure_request_active_user_key`                  | index      | —                       |
+| `FailedEmail_active_outbox_idx`                    | index      | —                       |
+| `FailedEmail_sent_unscrubbed_updatedAt_idx`        | index      | —                       |
+| `FailedEmailBatch_active_outbox_idx`               | index      | —                       |
+| `invitations_org_email_pending_key`                | index      | —                       |
+| `NotificationOutbox_active_outbox_idx`             | index      | —                       |
+| `ops_action_proposal_one_open_key`                 | index      | —                       |
+| `org_domain_claims_verified_domain_key`            | index      | —                       |
+| `organization_earnings_split_key`                  | index      | —                       |
+| `OverageEvent_bookingUtilizationId_batchKey_key`   | index      | —                       |
+| `Payment_live_welcome_discount_user_key`           | index      | —                       |
+| `rate_card_one_open_window`                        | index      | —                       |
+| `Recording_streamRecordingId_unique_idx`           | index      | —                       |
+| `support_case_event_legacy_csat_key`               | index      | —                       |
+| `support_case_open_scope_key`                      | index      | —                       |
+| `support_case_subject_primary_key`                 | index      | —                       |
+| `SystemJobExecution_running_jobName_key`           | index      | —                       |
+| `WebhookEvent_unprocessed_provider_receivedAt_idx` | index      | —                       |
+| `booking_status_history_immutable`                 | trigger    | —                       |
+| `ledger_entry_immutable`                           | trigger    | —                       |
+| `ledger_transaction_immutable`                     | trigger    | —                       |
+| `ledger_txn_balanced`                              | trigger    | —                       |
+| `payment_amount_vs_legs`                           | trigger    | —                       |
+| `payment_legs_sum_to_amount`                       | trigger    | —                       |
+| `payment_refunds_within_amount`                    | trigger    | —                       |
+| `review_revision_immutable`                        | trigger    | —                       |
+| `usage_ledger_entry_immutable`                     | trigger    | —                       |
+
+### The ones worth knowing by heart
+
+| Object                                    | What it refuses                                                                                                                                                                     |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `occurrence_no_confirmed_overlap`         | Two confirmed sessions for one consultant at the same time. A GiST exclusion constraint, so it is race-proof at commit. It deliberately ignores tentative holds and cancelled rows. |
+| `payment_legs_sum_to_amount`              | A payment whose funding legs do not add up to its amount.                                                                                                                           |
+| `payment_amount_vs_legs`                  | A payment whose header amount disagrees with its legs.                                                                                                                              |
+| `payment_refunds_within_amount`           | Refunds totalling more than the captured amount.                                                                                                                                    |
+| `ledger_txn_balanced`                     | A ledger transaction whose debits do not equal its credits.                                                                                                                         |
+| `ledger_entry_immutable`                  | An update or delete of a ledger posting.                                                                                                                                            |
+| `ledger_transaction_immutable`            | An update or delete of a ledger transaction.                                                                                                                                        |
+| `usage_ledger_entry_immutable`            | An update or delete of a usage counter.                                                                                                                                             |
+| `booking_status_history_immutable`        | An update or delete of a booking status transition.                                                                                                                                 |
+| `review_revision_immutable`               | An update or delete of a review revision.                                                                                                                                           |
+| `support_case_open_scope_key`             | Two open support cases in the same ownership scope.                                                                                                                                 |
+| `support_case_scope_and_shape_chk`        | A case whose scope and its columns disagree.                                                                                                                                        |
+| `support_case_event_target_xor`           | A case event that points at two targets or none.                                                                                                                                    |
+| `consultant_earnings_occurrence_key`      | The same occurrence being paid out twice.                                                                                                                                           |
+| `organization_earnings_split_key`         | The same organisation split being recorded twice.                                                                                                                                   |
+| `appointment_feedback_level_key`          | Two ratings by the same person for the same call, with nulls treated as distinct.                                                                                                   |
+| `program_assignment_no_active_overlap`    | Two active program assignments for one member.                                                                                                                                      |
+| `org_earnings_split_within_gross`         | An organisation split whose parts exceed the gross.                                                                                                                                 |
+| `overage_marginal_is_base_plus_surcharge` | An overage charge whose marginal amount is not base plus surcharge.                                                                                                                 |
+| `rate_card_bps_sum_is_whole`              | A three-way fee split that is not exactly 10,000 basis points.                                                                                                                      |
+| `onboarding_draft_payload_size`           | An onboarding draft blob above the byte cap.                                                                                                                                        |
+| `webhook_event_processed_error_exclusive` | A gateway webhook claiming both processed and failed.                                                                                                                               |
+
+## 3. Enum reference
+
+Every enum in the schema, with its full value list. Enums are declared below the
+model that uses them, and a new value is normally a schema change rather than a
+free-text string.
+
+| Enum                           | Values                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SupportFlowOutcomeKind`       | `RESOLVED`, `ESCALATED`                                                                                                                                                                                                                                                                                                                                                                          |
+| `SupportCaseStatus`            | `OPEN`, `IN_PROGRESS`, `ESCALATED`, `ON_HOLD`, `RESOLVED`, `CLOSED`                                                                                                                                                                                                                                                                                                                              |
+| `SupportCaseKind`              | `INCIDENT`, `PROBLEM`                                                                                                                                                                                                                                                                                                                                                                            |
+| `SupportSubjectType`           | `APPOINTMENT`, `OCCURRENCE`, `PAYMENT`, `REFUND`, `INVOICE`, `ORGANIZATION`, `ACCOUNT`                                                                                                                                                                                                                                                                                                           |
+| `SupportCaseEventKind`         | `CREATED`, `STATUS_CHANGED`, `PRIORITY_CHANGED`, `ASSIGNED`, `UNASSIGNED`, `VISIBILITY_CHANGED`, `LINKED_PROBLEM`, `DUPLICATE_CLOSED`, `REOPENED`, `AUTO_CLOSED`, `CSAT_RATED`                                                                                                                                                                                                                   |
+| `AppointmentFeedbackRole`      | `CONSULTEE`, `PROVIDER`                                                                                                                                                                                                                                                                                                                                                                          |
+| `RatingCause`                  | `CONSULTANT`, `PLATFORM_TECHNICAL`, `PAYMENT`, `SCHEDULING`, `CONTENT`, `OTHER`                                                                                                                                                                                                                                                                                                                  |
+| `SupportThreadStatus`          | `OPEN`, `IN_PROGRESS`, `ESCALATED`, `RESOLVED`, `CLOSED`                                                                                                                                                                                                                                                                                                                                         |
+| `SupportChannel`               | `SELF_SERVE`, `AI`, `HUMAN`                                                                                                                                                                                                                                                                                                                                                                      |
+| `SupportMessageSender`         | `USER`, `BOT`, `AGENT`, `SYSTEM`                                                                                                                                                                                                                                                                                                                                                                 |
+| `SupportThreadCategory`        | `CANCEL_REFUND`, `RESCHEDULE`, `NO_SHOW`, `TECHNICAL`, `DOCUMENTS`, `PAYMENT_STATUS`, `RECORDING_ACCESS`, `QUALITY_COMPLAINT`, `SPONSORSHIP_BILLING`, `ORG_ADMIN_DISPUTE`, `OTHER`                                                                                                                                                                                                               |
+| `PlatformFeedbackStatus`       | `PENDING`, `ACKNOWLEDGED`, `IN_PROGRESS`, `RESOLVED`, `CLOSED`                                                                                                                                                                                                                                                                                                                                   |
+| `SupportTicketStatus`          | `OPEN`, `IN_PROGRESS`, `ON_HOLD`, `RESOLVED`, `CLOSED`                                                                                                                                                                                                                                                                                                                                           |
+| `SupportPriority`              | `LOW`, `MEDIUM`, `HIGH`, `URGENT`                                                                                                                                                                                                                                                                                                                                                                |
+| `CancellationReason`           | `SCHEDULE_CONFLICT`, `FOUND_ALTERNATIVE`, `FINANCIAL_REASONS`, `PERSONAL_EMERGENCY`, `NO_LONGER_NEEDED`, `CONSULTANT_UNAVAILABLE`, `CONSULTANT_EMERGENCY`, `PAYMENT_FAILED`, `EXPIRED`, `CONSULTANT_ISSUE`, `TECHNICAL_ISSUE`, `MODERATION`, `OTHER`                                                                                                                                             |
+| `SupportIssueType`             | `CONSULTANT_NO_SHOW`, `CONSULTANT_LATE`, `SESSION_ENDED_EARLY`, `SESSION_QUALITY_POOR`, `COMMUNICATION_ISSUE`, `TECHNICAL_ISSUES`, `WRONG_CONSULTANT`, `ACCESS_ISSUE`, `TIMEZONE_CONFUSION`, `RESCHEDULING_HELP`, `PAYMENT_FAILED`, `CHARGED_TWICE`, `REFUND_REQUEST`, `BILLING_QUESTION`, `DOCUMENT_ISSUE`, `WANT_TO_CANCEL`, `CANCELLATION_ISSUE`, `ACCOUNT_ISSUE`, `GENERAL_INQUIRY`, `OTHER` |
+| `InvitationStatus`             | `PENDING`, `ACCEPTED`, `CANCELED`, `EXPIRED`                                                                                                                                                                                                                                                                                                                                                     |
+| `MemberRole`                   | `OWNER`, `MAINTAINER`, `BILLING_ADMIN`, `MANAGER`, `EXPERT`, `LEARNER`, `SUPPORT`                                                                                                                                                                                                                                                                                                                |
+| `MemberStatus`                 | `PENDING`, `ACTIVE`, `SUSPENDED`, `REMOVED`, `ERASED`                                                                                                                                                                                                                                                                                                                                            |
+| `OrgStatus`                    | `PENDING_VERIFICATION`, `ACTIVE`, `SUSPENDED`, `DEACTIVATED`                                                                                                                                                                                                                                                                                                                                     |
+| `OrgKind`                      | `AGENCY`, `ENTERPRISE`, `SOLO_PRACTICE`                                                                                                                                                                                                                                                                                                                                                          |
+| `OrgSizeBucket`                | `SMALL_1_50`, `MEDIUM_51_200`, `LARGE_201_1000`, `ENTERPRISE_1000_PLUS`                                                                                                                                                                                                                                                                                                                          |
+| `DataRegion`                   | `IN`, `US`, `EU`                                                                                                                                                                                                                                                                                                                                                                                 |
+| `Currency`                     | `INR`, `USD`, `EUR`, `GBP`                                                                                                                                                                                                                                                                                                                                                                       |
+| `ParentEntityType`             | `LISTED_US`, `PRIVATE_US`, `EU`, `OTHER`                                                                                                                                                                                                                                                                                                                                                         |
+| `GstRegStatus`                 | `REGULAR`, `COMPOSITION`, `UNREGISTERED`                                                                                                                                                                                                                                                                                                                                                         |
+| `PayoutRecipient`              | `SELF`, `ORGANIZATION`                                                                                                                                                                                                                                                                                                                                                                           |
+| `FundingSource`                | `PERSONAL`, `LICENSE`, `WALLET`, `INVOICE`                                                                                                                                                                                                                                                                                                                                                       |
+| `ContractStatus`               | `DRAFT`, `ACTIVE`, `EXPIRED`, `TERMINATED`                                                                                                                                                                                                                                                                                                                                                       |
+| `ContractSupersessionReason`   | `AMENDMENT`, `RENEWAL`, `TERMINATION_REPLACEMENT`                                                                                                                                                                                                                                                                                                                                                |
+| `SubscriptionModel`            | `PER_SEAT`, `FLAT_FEE`                                                                                                                                                                                                                                                                                                                                                                           |
+| `BillingCycle`                 | `MONTHLY`, `QUARTERLY`, `ANNUAL`                                                                                                                                                                                                                                                                                                                                                                 |
+| `WalletReason`                 | `TOPUP`, `BOOKING`, `REFUND`, `ADJUSTMENT`                                                                                                                                                                                                                                                                                                                                                       |
+| `WalletTopUpStatus`            | `PENDING`, `CONFIRMED`, `FAILED`                                                                                                                                                                                                                                                                                                                                                                 |
+| `ProgramType`                  | `LICENSED_SEAT`, `CREDIT_POOL`                                                                                                                                                                                                                                                                                                                                                                   |
+| `ProgramStatus`                | `ACTIVE`, `PAUSED`, `EXPIRED`, `CANCELLED`                                                                                                                                                                                                                                                                                                                                                       |
+| `AssignmentStatus`             | `ACTIVE`, `ROLLED`, `PAUSED`, `CLOSED`, `CANCELLED`                                                                                                                                                                                                                                                                                                                                              |
+| `OverageBehavior`              | `BLOCK`, `CHARGE_MEMBER`, `CHARGE_ORG`                                                                                                                                                                                                                                                                                                                                                           |
+| `OverageChargeStatus`          | `PENDING`, `ACCRUED`, `CHARGED`, `BLOCKED`, `REVERSED`, `FAILED`                                                                                                                                                                                                                                                                                                                                 |
+| `OrgPlanVisibility`            | `PUBLIC`, `ORG_ONLY`, `ORG_AND_PUBLIC`                                                                                                                                                                                                                                                                                                                                                           |
+| `CoveredPlanType`              | `CONSULTATION`, `CLASS`, `WEBINAR`, `SUBSCRIPTION`                                                                                                                                                                                                                                                                                                                                               |
+| `OrgPayoutAccountStatus`       | `PENDING_VERIFICATION`, `VERIFIED`, `FAILED_VERIFICATION`, `SUSPENDED`                                                                                                                                                                                                                                                                                                                           |
+| `PayoutRailProvider`           | `RAZORPAYX`, `CASHFREE_PAYOUTS`                                                                                                                                                                                                                                                                                                                                                                  |
+| `ResidencyStatus`              | `RESIDENT`, `NON_RESIDENT`                                                                                                                                                                                                                                                                                                                                                                       |
+| `MsmeStatus`                   | `NONE`, `MICRO`, `SMALL`, `MEDIUM`                                                                                                                                                                                                                                                                                                                                                               |
+| `InvoiceReceiptMethod`         | `BANK_TRANSFER`, `GATEWAY`                                                                                                                                                                                                                                                                                                                                                                       |
+| `PlaceOfSupplySource`          | `DECLARED_AT_CHECKOUT`, `PROFILE_ON_RECORD`, `SUPPLIER_DEFAULT_12_2_B`                                                                                                                                                                                                                                                                                                                           |
+| `OrgInvoiceStatus`             | `DRAFT`, `ISSUED`, `PAID`, `OVERDUE`, `VOID`, `CANCELLED`, `REFUNDED`                                                                                                                                                                                                                                                                                                                            |
+| `IrpStatus`                    | `PENDING`, `GENERATED`, `CANCELLED`, `FAILED`                                                                                                                                                                                                                                                                                                                                                    |
+| `PoStatus`                     | `ACTIVE`, `CLOSED`, `CANCELLED`                                                                                                                                                                                                                                                                                                                                                                  |
+| `OrgAuditCategory`             | `MEMBER`, `CONTRACT`, `PROGRAM`, `WALLET`, `INVOICE`, `PAYOUT`, `SETTINGS`, `CONSENT`, `CATALOG`, `SYSTEM`, `WEBHOOK`                                                                                                                                                                                                                                                                            |
+| `LedgerAccountKind`            | `CASH`, `WALLET`, `PLATFORM_FEE`, `PLATFORM_PROMO`, `REFERRAL_CREDIT_LIABILITY`, `DISCOUNT`, `CONSULTANT_PAYABLE`, `ORG_PAYABLE`, `ORG_RECEIVABLE`, `CONSULTANT_RECEIVABLE`, `TDS_PAYABLE`, `GST_PAYABLE`, `UNAPPLIED_RECEIPTS`, `GATEWAY_CLEARING`, `GATEWAY_FEE`, `GST_INPUT_CREDIT`                                                                                                           |
+| `LedgerDirection`              | `DEBIT`, `CREDIT`                                                                                                                                                                                                                                                                                                                                                                                |
+| `LedgerTransactionKind`        | `BOOKING`, `TOPUP`, `TOPUP_REFUND`, `INVOICE_ISSUED`, `INVOICE_PAID`, `INVOICE_REFUND`, `PAYOUT`, `ORG_PAYOUT`, `REFUND`, `OVERAGE_MEMBER`, `GRANT`, `REFERRAL_CREDIT`, `UNAPPLIED_RECEIPT`, `GATEWAY_FEE`, `GATEWAY_SETTLEMENT`, `WALLET_ADJUSTMENT`                                                                                                                                            |
+| `GatewaySettlementMatchKind`   | `PAYMENT`, `REFUND`, `DISPUTE`, `TOPUP`, `INVOICE`, `NONE`                                                                                                                                                                                                                                                                                                                                       |
+| `GatewaySettlementLineStatus`  | `MATCHED`, `AMOUNT_MISMATCH`, `FEE_MISMATCH`, `UNMATCHED`                                                                                                                                                                                                                                                                                                                                        |
+| `GrievanceStatus`              | `OPEN`, `RESOLVED`                                                                                                                                                                                                                                                                                                                                                                               |
+| `BookingMode`                  | `INSTANT`, `REQUEST`                                                                                                                                                                                                                                                                                                                                                                             |
+| `ReviewTrack`                  | `ONE_TO_ONE`, `GROUP`                                                                                                                                                                                                                                                                                                                                                                            |
+| `ReviewActor`                  | `AUTHOR`, `MODERATION`                                                                                                                                                                                                                                                                                                                                                                           |
+| `NotificationRoutingMode`      | `BELL_AND_EMAIL`, `BELL_ONLY`, `EMAIL_ONLY`, `NEITHER`                                                                                                                                                                                                                                                                                                                                           |
+| `SystemEventSeverity`          | `INFO`, `WARN`, `ERROR`                                                                                                                                                                                                                                                                                                                                                                          |
+| `OpsActionProposalStatus`      | `PROPOSED`, `APPROVED`, `EXECUTED`, `REJECTED`, `EXPIRED`                                                                                                                                                                                                                                                                                                                                        |
+| `AchievementType`              | `AWARD`, `PUBLICATION`, `PROJECT`, `TALK`, `OPEN_SOURCE`, `OTHER`                                                                                                                                                                                                                                                                                                                                |
+| `OfferingPlanStatus`           | `DRAFT`, `PUBLISHED`                                                                                                                                                                                                                                                                                                                                                                             |
+| `AppointmentStatus`            | `PENDING`, `APPROVED`, `APPROVED_PENDING_PAYMENT`, `SCHEDULED`, `COMPLETED`, `REJECTED`, `CANCELLED`, `EXPIRED`                                                                                                                                                                                                                                                                                  |
+| `TrialStatus`                  | `PENDING`, `AWAITING_PAYMENT`, `SCHEDULED`, `COMPLETED`, `CONVERTED`, `CANCELLED`, `REJECTED`                                                                                                                                                                                                                                                                                                    |
+| `ActivityType`                 | `CONSULTATION_BOOKED`, `APPOINTMENT_RESCHEDULED`, `CONSULTATION_COMPLETED`, `CONSULTATION_CANCELLED`, `SUBSCRIPTION_REQUESTED`, `SUBSCRIPTION_APPROVED`, `SUBSCRIPTION_CANCELLED`, `WEBINAR_REGISTERED`, `CLASS_ENROLLED`, `TRIAL_REQUESTED`, `TRIAL_SCHEDULED`, `TRIAL_COMPLETED`, `TRIAL_CONVERTED`, `REVIEW_SUBMITTED`, `MESSAGE_RECEIVED`                                                    |
+| `BookingSource`                | `DIRECT_CHECKOUT`, `REQUEST_SUBMITTED`                                                                                                                                                                                                                                                                                                                                                           |
+| `WebinarStatus`                | `DRAFT`, `SCHEDULED`, `IN_PROGRESS`, `COMPLETED`, `CANCELLED`                                                                                                                                                                                                                                                                                                                                    |
+| `ClassStatus`                  | `DRAFT`, `SCHEDULED`, `IN_PROGRESS`, `COMPLETED`, `CANCELLED`                                                                                                                                                                                                                                                                                                                                    |
+| `WaitlistStatus`               | `PENDING`, `SUBSCRIBED`, `UNSUBSCRIBED`, `BOUNCED`                                                                                                                                                                                                                                                                                                                                               |
+| `WaitlistSource`               | `LANDING_PAGE`, `FOOTER`, `BLOG`, `USE_CASE_PAGE`, `EVENT_SOLD_OUT`, `IMPORT`                                                                                                                                                                                                                                                                                                                    |
+| `BackupInterestStatus`         | `WAITING`, `NOTIFIED`, `BOOKED`, `EXPIRED`                                                                                                                                                                                                                                                                                                                                                       |
+| `ParticipantRole`              | `CONSULTANT`, `CONSULTEE`, `COLLABORATOR`                                                                                                                                                                                                                                                                                                                                                        |
+| `ParticipantStatus`            | `HELD`, `CONFIRMED`, `CANCELLED`, `REFUNDED`, `ATTENDED`                                                                                                                                                                                                                                                                                                                                         |
+| `BookingHistoryEntity`         | `CONSULTATION`, `SUBSCRIPTION`, `WEBINAR`, `CLASS`, `TRIAL`, `RESCHEDULE_REQUEST`, `OCCURRENCE`                                                                                                                                                                                                                                                                                                  |
+| `AppointmentsType`             | `CONSULTATION`, `SUBSCRIPTION`, `WEBINAR`, `CLASS`, `TRIAL`                                                                                                                                                                                                                                                                                                                                      |
+| `CancellationPolicyStatus`     | `ACTIVE`, `ARCHIVED`                                                                                                                                                                                                                                                                                                                                                                             |
+| `RescheduleInitiatorRole`      | `CONSULTEE`, `CONSULTANT`                                                                                                                                                                                                                                                                                                                                                                        |
+| `ReschedulePreferredTimeOfDay` | `MORNING`, `AFTERNOON`, `EVENING`                                                                                                                                                                                                                                                                                                                                                                |
+| `ReschedulePreferredDays`      | `WEEKDAYS`, `WEEKENDS`                                                                                                                                                                                                                                                                                                                                                                           |
+| `RescheduleRequestStatus`      | `AUTO_ACCEPTED`, `PENDING_REVIEW`, `ACCEPTED`, `DECLINED`, `WITHDRAWN`, `EXPIRED`                                                                                                                                                                                                                                                                                                                |
+| `DocumentReviewStatus`         | `PENDING`, `IN_REVIEW`, `APPROVED`, `REJECTED`, `NEEDS_REVISION`                                                                                                                                                                                                                                                                                                                                 |
+| `DocumentUploadRole`           | `CONSULTEE`, `CONSULTANT`                                                                                                                                                                                                                                                                                                                                                                        |
+| `DocumentRemovalReason`        | `USER_REQUEST`, `RETENTION_EXPIRY`, `SUPPORT_ACTION`, `ACCOUNT_ERASURE`                                                                                                                                                                                                                                                                                                                          |
+| `OccurrenceCompletionStatus`   | `SCHEDULED`, `COMPLETED`, `UNVERIFIED`, `CANCELLED`, `RESCHEDULED`, `VOIDED`                                                                                                                                                                                                                                                                                                                     |
+| `OccurrenceOutcome`            | `HELD`, `CUT_SHORT`, `PLATFORM_OUTAGE`, `HOST_ABSENT`, `LEARNER_ABSENT`, `NOBODY_JOINED`, `INCONCLUSIVE`, `OFFLINE`                                                                                                                                                                                                                                                                              |
+| `RecordingConsentDecision`     | `GRANTED`, `DECLINED`                                                                                                                                                                                                                                                                                                                                                                            |
+| `RecordingStorageType`         | `STREAM_S3`, `PLATFORM`                                                                                                                                                                                                                                                                                                                                                                          |
+| `RecordingStatus`              | `RECORDING`, `PROCESSING`, `READY`, `TRANSFERRING`, `AVAILABLE`, `FAILED`, `EXPIRED`                                                                                                                                                                                                                                                                                                             |
+| `RecordingListingStatus`       | `DRAFT`, `PUBLISHED`, `UNPUBLISHED`                                                                                                                                                                                                                                                                                                                                                              |
+| `RecordingPurchaseStatus`      | `PENDING`, `SUCCEEDED`, `FAILED`, `REFUNDED`                                                                                                                                                                                                                                                                                                                                                     |
+| `RecordingRemovalReason`       | `EXPERT_DELETED`, `RETENTION`, `DECLINED`, `COPY_LAPSED`, `SUPPORT_ACTION`, `ORG_ACTION`                                                                                                                                                                                                                                                                                                         |
+| `Platform`                     | `ZOOM`, `GOOGLE_MEET`, `MICROSOFT_TEAMS`, `STREAM`, `CUSTOM`                                                                                                                                                                                                                                                                                                                                     |
+| `PaymentAttributionSource`     | `MARKETPLACE`, `OWN_LINK`, `CONSUMER_REFERRAL`                                                                                                                                                                                                                                                                                                                                                   |
+| `PaymentLegSource`             | `CARD`, `WALLET`, `REFERRAL_CREDIT`, `INVOICE_ACCRUAL`, `OVERAGE_INVOICE_ACCRUAL`, `LICENSE`, `INVOICE_ACCRUAL_REVERSAL`, `OVERAGE_INVOICE_ACCRUAL_REVERSAL`                                                                                                                                                                                                                                     |
+| `PaymentGateway`               | `STRIPE`, `RAZORPAY`, `DODO_PAYMENTS`, `CARD`                                                                                                                                                                                                                                                                                                                                                    |
+| `PaymentStatus`                | `PENDING`, `SUCCEEDED`, `FAILED`, `EXPIRED`                                                                                                                                                                                                                                                                                                                                                      |
+| `RefundStatus`                 | `PENDING`, `SUCCEEDED`, `FAILED`, `CANCELLED`                                                                                                                                                                                                                                                                                                                                                    |
+| `DisputeStatus`                | `WARNING_NEEDS_RESPONSE`, `WARNING_UNDER_REVIEW`, `WARNING_CLOSED`, `NEEDS_RESPONSE`, `UNDER_REVIEW`, `CHARGE_REFUNDED`, `WON`, `LOST`, `CLOSED`                                                                                                                                                                                                                                                 |
+| `EarningStatus`                | `PENDING`, `HELD`, `READY`, `BATCHED`, `PAID`, `REFUNDED`, `PENDING_TRUST`                                                                                                                                                                                                                                                                                                                       |
+| `PayoutStatus`                 | `PENDING`, `APPROVED`, `PROCESSING`, `COMPLETED`, `FAILED`, `CANCELLED`, `REVERSED`                                                                                                                                                                                                                                                                                                              |
+| `PayoutMethod`                 | `BANK_TRANSFER`, `UPI`, `STRIPE_TRANSFER`                                                                                                                                                                                                                                                                                                                                                        |
+| `PayoutAccountType`            | `BANK_ACCOUNT`, `UPI`, `STRIPE_CONNECT`                                                                                                                                                                                                                                                                                                                                                          |
+| `EarningsHoldReason`           | `DISPUTE`, `MODERATION`, `OPERATOR`, `OVERAGE`                                                                                                                                                                                                                                                                                                                                                   |
+| `TdsLawCode`                   | `IT1961`, `IT2025`                                                                                                                                                                                                                                                                                                                                                                               |
+| `TaxEntityType`                | `INDIVIDUAL`, `HUF`, `PARTNERSHIP`, `LLP`, `COMPANY`                                                                                                                                                                                                                                                                                                                                             |
+| `CreditNoteStatus`             | `DRAFT`, `ISSUED`, `CANCELLED`                                                                                                                                                                                                                                                                                                                                                                   |
+| `CreditNoteDocType`            | `CRN`, `DBN`                                                                                                                                                                                                                                                                                                                                                                                     |
+| `DiscountType`                 | `PERCENTAGE`, `FIXED_AMOUNT`                                                                                                                                                                                                                                                                                                                                                                     |
+| `ReferralCreditState`          | `PENDING`, `VESTED`, `EXPIRED`, `VOID`                                                                                                                                                                                                                                                                                                                                                           |
+| `ConsultantFeeWaiverReason`    | `REFERRED_EXPERT`, `REFERRING_EXPERT`                                                                                                                                                                                                                                                                                                                                                            |
+| `ReferralStatus`               | `SIGNED_UP`, `QUALIFIED`, `REWARDED`, `EXPIRED`, `FRAUDULENT`, `QUALIFYING`, `VESTED`, `VOID`                                                                                                                                                                                                                                                                                                    |
+| `CreditSource`                 | `REFERRAL_BONUS`, `REFEREE_BONUS`, `PROMOTION`, `COMPENSATION`, `MANUAL`                                                                                                                                                                                                                                                                                                                         |
+| `CollaboratorTier`             | `PRESENTER`, `CREW`                                                                                                                                                                                                                                                                                                                                                                              |
+| `CollaboratorType`             | `WEBINAR`, `CLASS`                                                                                                                                                                                                                                                                                                                                                                               |
+| `CollaboratorStatus`           | `PENDING`, `ACCEPTED`, `DECLINED`, `REMOVED`, `WITHDRAWN`                                                                                                                                                                                                                                                                                                                                        |
+| `CollaboratorRole`             | `CO_HOST`, `MODERATOR`, `GUEST_SPEAKER`, `TECHNICAL_SUPPORT`, `CO_INSTRUCTOR`, `TEACHING_ASSISTANT`, `GUEST_LECTURER`, `CONTENT_CREATOR`                                                                                                                                                                                                                                                         |
+| `EarningRole`                  | `OWNER`, `COLLABORATOR`                                                                                                                                                                                                                                                                                                                                                                          |
+| `PlanLevel`                    | `BEGINNER`, `INTERMEDIATE`, `ADVANCED`, `ALL_LEVELS`                                                                                                                                                                                                                                                                                                                                             |
+| `PlanEmailSupport`             | `GENERAL`, `PRIORITY`, `DEDICATED`                                                                                                                                                                                                                                                                                                                                                               |
+| `UserRole`                     | `CONSULTANT`, `CONSULTEE`, `ADMIN`, `STAFF`, `ORG_WORKSPACE`                                                                                                                                                                                                                                                                                                                                     |
+| `DayOfWeek`                    | `MONDAY`, `TUESDAY`, `WEDNESDAY`, `THURSDAY`, `FRIDAY`, `SATURDAY`, `SUNDAY`                                                                                                                                                                                                                                                                                                                     |
+| `ScheduleType`                 | `WEEKLY`, `CUSTOM`                                                                                                                                                                                                                                                                                                                                                                               |
+| `Gender`                       | `MALE`, `FEMALE`, `NON_BINARY`, `PREFER_NOT_TO_SAY`                                                                                                                                                                                                                                                                                                                                              |
+| `CareerStage`                  | `SCHOOL_STUDENT`, `STUDENT`, `EARLY_CAREER`, `MID_CAREER`, `SENIOR`, `EXECUTIVE`                                                                                                                                                                                                                                                                                                                 |
+| `BudgetPreference`             | `BUDGET`, `MODERATE`, `PREMIUM`, `FLEXIBLE`                                                                                                                                                                                                                                                                                                                                                      |
+| `OfferingFormat`               | `ONE_ON_ONE`, `GROUP`, `ASYNC_REVIEW`                                                                                                                                                                                                                                                                                                                                                            |
+| `ModerationReportType`         | `REVIEW`, `PROFILE`, `MESSAGE`, `DOCUMENT`, `OTHER`                                                                                                                                                                                                                                                                                                                                              |
+| `ModerationReportStatus`       | `PENDING`, `UNDER_REVIEW`, `DISMISSED`, `ACTION_TAKEN`, `ESCALATED`                                                                                                                                                                                                                                                                                                                              |
+| `ModerationActionType`         | `WARNING_ISSUED`, `CONTENT_REMOVED`, `USER_SUSPENDED`, `USER_BANNED`, `PROFILE_UNVERIFIED`, `NO_ACTION`, `USER_REINSTATED`, `REVIEW_REMOVED`, `REVIEW_REPLY_REMOVED`, `REVIEW_EXCLUDED_FROM_AGGREGATE`, `FEEDBACK_EXCLUDED_FROM_AGGREGATE`                                                                                                                                                       |
+| `ProfileVerificationStatus`    | `PENDING`, `APPROVED`, `REJECTED`, `NEEDS_INFO`, `SUPERSEDED`                                                                                                                                                                                                                                                                                                                                    |
+| `SystemJobStatus`              | `RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED`                                                                                                                                                                                                                                                                                                                                                    |
+| `VerificationDocumentIssue`    | `UNCLEAR_SCAN`, `EXPIRED`, `NAME_MISMATCH`, `MISSING_PAGE`, `WRONG_TYPE`, `OTHER`                                                                                                                                                                                                                                                                                                                |
+| `ConsultantVerificationStatus` | `PENDING_VERIFICATION`, `UNDER_REVIEW`, `VERIFIED`, `REJECTED`                                                                                                                                                                                                                                                                                                                                   |
+| `MaintenancePhase`             | `OFF`, `DEGRADED`, `OFFLINE`                                                                                                                                                                                                                                                                                                                                                                     |
+| `IncidentRemedyKind`           | `REFUND_AT_DUE`, `REFUND_NOW`, `TRIAL_REOFFER`, `SUBSCRIPTION_EXTEND`, `CLASS_EXISTING`                                                                                                                                                                                                                                                                                                          |
+| `WebhookEndpointStatus`        | `ACTIVE`, `PAUSED`, `DISABLED`                                                                                                                                                                                                                                                                                                                                                                   |
+| `DeliveryStatus`               | `PENDING`, `IN_FLIGHT`, `SUCCESS`, `RETRY`, `FAILED`, `DEAD_LETTER`                                                                                                                                                                                                                                                                                                                              |
+| `NotificationOutboxKind`       | `SINGLE`, `MULTI`, `BROADCAST`                                                                                                                                                                                                                                                                                                                                                                   |
+| `EmailDeliveryStatus`          | `PENDING`, `RETRY`, `SENT`, `DEAD_LETTER`                                                                                                                                                                                                                                                                                                                                                        |
+| `EmailSuppressionReason`       | `HARD_BOUNCE`, `COMPLAINT`, `MANUAL`                                                                                                                                                                                                                                                                                                                                                             |
+| `ErasureVendor`                | `STREAM`, `NOVU`, `RAZORPAY`                                                                                                                                                                                                                                                                                                                                                                     |
+| `RetryStatus`                  | `PENDING`, `SUCCEEDED`, `FAILED`                                                                                                                                                                                                                                                                                                                                                                 |
+| `ErasureStatus`                | `PENDING`, `IN_PROGRESS`, `COMPLETED`, `REJECTED`                                                                                                                                                                                                                                                                                                                                                |
+| `OrgDataExportStatus`          | `PENDING`, `PROCESSING`, `READY`, `FAILED`, `EXPIRED`                                                                                                                                                                                                                                                                                                                                            |
+| `OrgDataExportKind`            | `FULL`, `PEOPLE`, `FINANCE`                                                                                                                                                                                                                                                                                                                                                                      |
+| `OrgDirectoryType`             | `EXPERT_NETWORK`, `CONSULTING_AGENCY`, `LEARNING_INSTITUTION`, `CORPORATE_ACADEMY`, `OTHER`                                                                                                                                                                                                                                                                                                      |
+| `TaxJurisdiction`              | `IN`, `US`, `JP`, `GB`, `EU`                                                                                                                                                                                                                                                                                                                                                                     |
+| `LeadStatus`                   | `NEW`, `CONTACTED`, `QUALIFIED`, `CLOSED_WON`, `CLOSED_LOST`                                                                                                                                                                                                                                                                                                                                     |
+
+## 4. Deprecated & superseded approaches
+
+Kept so that an engineer or agent reading the current schema recognises these
+names and deletes the leftovers rather than re-introducing them.
+
+| Superseded name                                              | What replaced it                                                                  | Why                                                                                                                                                   |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Feedback`                                                   | `PlatformFeedback` (platform-level) and `AppointmentFeedback` (per-call rating)   | One table was doing two unrelated jobs. Feedback about the platform is not a rating of a call.                                                        |
+| `Invoice`                                                    | `ConsumerInvoice` (B2C), `OrganizationInvoice` (B2B) and `PlatformInvoiceCounter` | The three audiences have different numbering rules and different tax heads.                                                                           |
+| `Payout`                                                     | `ConsultantPayout` and `OrganizationPayout`                                       | A consultant payout and a host-organisation payout have different approval rails and different TDS treatment.                                         |
+| `WalletEntry`, `FundingLedgerEntry`, `SettlementLedgerEntry` | `LedgerTransaction` + `LedgerEntry`                                               | Three single-entry logs could not be reconciled against a gateway. They collapsed into one balanced double-entry journal.                             |
+| `LedgerAccountBalance`                                       | _(removed)_ — the balance is derived from the journal                             | A stored balance is a cache that can disagree with the postings. The reconcile job computes it.                                                       |
+| `WebinarCollaborator`, `ClassCollaborator`                   | `Collaborator`                                                                    | One polymorphic table with database-enforced plan XOR, role and tier matching.                                                                        |
+| `HrisConfig`, `ScoringSnapshot`                              | _(removed)_                                                                       | Neither survived the design that replaced them.                                                                                                       |
+| `SupportTicket` as the case of record                        | `SupportCase`                                                                     | The ticket queue could not hold evidence, decisions, appeals or a statutory deadline. The legacy rows stay readable through `SupportCaseLegacyAlias`. |
+
+**The one rule that outranks all of these.** `AGENTS.md` §1.3 — do not write
+an application-level reconciler for an invariant the database already enforces
+at `COMMIT`. Only reconcile across external vendor boundaries (Razorpay,
+Stream, Supabase Storage, email). `GatewaySettlementLine` and the two
+vendor-retry tables in the compliance section exist precisely because those
+boundaries cannot be transactional.

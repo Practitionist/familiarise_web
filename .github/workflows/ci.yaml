@@ -206,6 +206,12 @@ jobs:
         continue-on-error: true
         run: node_modules/.bin/tsx scripts/ci/check-docs-drift.ts
 
+      - name: Schema map guard
+        # docs/prisma/00-schema-map.md is generated from prisma/schema.prisma.
+        # A schema change that forgot its diagram fails here instead of in a
+        # reader's head. Static only: no network, no database.
+        run: npx --yes tsx@4.23.1 scripts/ci/check-schema-map.ts
+
   # Pull requests into non-release branches: only tests related to the diff.
   unit-tests-changed:
     name: Unit tests (changed files)
