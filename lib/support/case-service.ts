@@ -27,6 +27,7 @@ import {
 import { supportDeadline } from "./deadline-policy";
 import { stageExternalRequesterEmail } from "./external-requester";
 import { allocateTicketReference } from "./reference";
+import { releaseAllCaseHolds } from "./case-holds";
 import {
   openWaitSeconds,
   slaDeadlinesFor,
@@ -1225,6 +1226,11 @@ async function resolveSingleLinkedIncident(
       createdAt: now,
     },
   });
+  await releaseAllCaseHolds(tx, {
+    caseId: inc.id,
+    actorId,
+    note: "Released when the case was resolved",
+  });
 
   return {
     id: inc.id,
@@ -1505,6 +1511,15 @@ export async function executePatchLifecycleTx(
   }
 
   await recordLifecycleAuditEvents(tx, input, existing, noteTrimmed, now);
+  if (
+    (input.status === "RESOLVED" || input.status === "CLOSED") &&
+    input.status !== existing.status
+  )
+    await releaseAllCaseHolds(tx, {
+      caseId: input.caseId,
+      actorId: input.actorId,
+      note: `Released when the case was ${input.status.toLowerCase()}`,
+    });
 
   const cascadedIncidents =
     existing.caseKind === "PROBLEM" && input.status === "RESOLVED"

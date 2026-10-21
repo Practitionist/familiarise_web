@@ -18,6 +18,7 @@ import { useListParams } from "@/hooks/useListParams";
 import { caseKeyOf } from "@/lib/support/case-key";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 import { ISSUE_TYPE_LABELS } from "@/utils/supportTicketUrl";
+import { supportKeys } from "@/lib/support/support-keys";
 
 const PAGE_SIZE = 20;
 
@@ -130,7 +131,7 @@ export function OrgSupportRequests({ orgId }: Readonly<{ orgId: string }>) {
   const { page, setPage } = useListParams();
   const columns = useMemo(() => buildColumns(orgId), [orgId]);
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["org-support-tickets", orgId, page],
+    queryKey: supportKeys.orgRequests(orgId, page),
     queryFn: async (): Promise<OrgTicketsPage> => {
       const res = await fetch(
         `/api/organizations/${orgId}/support-tickets?page=${page}&pageSize=${PAGE_SIZE}`,

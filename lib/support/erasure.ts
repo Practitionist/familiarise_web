@@ -6,8 +6,8 @@ export const ERASED_SUPPORT_TEXT = "[erased]";
 
 /**
  * Support rows that a hard delete cannot remove: decisions, evidence,
- * recommendations, holds and attachments restrict their case and author. An
- * account with any of these takes the scrub path instead.
+ * recommendations and attachments restrict their case and author. An account
+ * with any of these takes the scrub path instead.
  */
 export async function supportRetainedHistoryCount(
   db: Pick<
@@ -17,11 +17,10 @@ export async function supportRetainedHistoryCount(
     | "supportCaseAttachment"
     | "supportCaseDecision"
     | "supportFinancialRecommendation"
-    | "supportPaymentHold"
   >,
   userId: string,
 ): Promise<number> {
-  const [cases, evidence, attachments, decisions, recommendations, holds] =
+  const [cases, evidence, attachments, decisions, recommendations] =
     await Promise.all([
       db.supportCase.count({
         where: {
@@ -32,7 +31,6 @@ export async function supportRetainedHistoryCount(
               { evidenceRequests: { some: {} } },
               { attachments: { some: {} } },
               { recommendations: { some: {} } },
-              { paymentHolds: { some: {} } },
             ],
           },
         },
@@ -47,11 +45,8 @@ export async function supportRetainedHistoryCount(
       db.supportFinancialRecommendation.count({
         where: { OR: [{ proposedById: userId }, { decidedById: userId }] },
       }),
-      db.supportPaymentHold.count({
-        where: { OR: [{ appliedById: userId }, { releasedById: userId }] },
-      }),
     ]);
-  return cases + evidence + attachments + decisions + recommendations + holds;
+  return cases + evidence + attachments + decisions + recommendations;
 }
 
 /**

@@ -24,7 +24,6 @@ describe("support history routes an erasure to the scrub path", () => {
       supportCaseAttachment: count(0),
       supportCaseDecision: count(0),
       supportFinancialRecommendation: count(0),
-      supportPaymentHold: count(0),
     };
     await expect(supportRetainedHistoryCount(db as never, "u1")).resolves.toBe(
       3,
@@ -50,7 +49,6 @@ describe("support history routes an erasure to the scrub path", () => {
       supportCaseAttachment: count(0),
       supportCaseDecision: count(0),
       supportFinancialRecommendation: count(0),
-      supportPaymentHold: count(0),
     };
     await expect(supportRetainedHistoryCount(db as never, "u1")).resolves.toBe(
       0,

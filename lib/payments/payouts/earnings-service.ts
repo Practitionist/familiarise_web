@@ -181,6 +181,7 @@ export {
 } from "./earning-status";
 import { allocateCycleClawback } from "./earnings-reversal";
 import { prorate, sumPaise } from "@/lib/payments/utils/money";
+import { applyCaseHoldsToNewEarnings } from "@/lib/support/case-holds";
 import {
   sessionsTotalOf,
   subscriptionTranches,
@@ -2063,7 +2064,7 @@ async function executeEarningsCreationInTx(
   }
 
   if (splits.length === 0 && consultantProfileId) {
-    return settleSingleOwnerEarningsInTx(tx, {
+    const ownerEarningsId = await settleSingleOwnerEarningsInTx(tx, {
       consultantProfileId,
       payment,
       appointmentType,
@@ -2074,6 +2075,8 @@ async function executeEarningsCreationInTx(
       holdUntil,
       preplanned,
     });
+    await applyCaseHoldsToNewEarnings(tx, payment);
+    return ownerEarningsId;
   }
 
   let partySettlements: PartySettlement[] = [];
@@ -2126,6 +2129,7 @@ async function executeEarningsCreationInTx(
     partySettlements,
     preplanned,
   });
+  await applyCaseHoldsToNewEarnings(tx, payment);
 
   return ownerId;
 }

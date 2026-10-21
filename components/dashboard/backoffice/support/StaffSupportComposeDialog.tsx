@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { throwSupportError } from "@/lib/support/error-copy";
+import { supportKeys } from "@/lib/support/support-keys";
 import { Loader2, Send } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { UserSearchCombobox, type FoundUser } from "./UserSearchCombobox";
 
 const OUTBOUND_ISSUE_TYPES = [
   { value: "GENERAL_INQUIRY", label: "General Inquiry" },
@@ -41,17 +43,20 @@ type SupportPriority = "LOW" | "MEDIUM" | "HIGH" | "URGENT";
 export function StaffSupportComposeDialog({
   open,
   onOpenChange,
-  defaultTargetUserId = "",
   onCreated,
 }: Readonly<{
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  defaultTargetUserId?: string;
   onCreated?: (ticketId: string) => void;
 }>) {
   const intakeId = useRef<string | null>(null);
   const queryClient = useQueryClient();
-  const [targetUserId, setTargetUserId] = useState(defaultTargetUserId);
+  const [target, setTargetState] = useState<FoundUser | null>(null);
+  // A retry may reuse the intake key only for the same customer.
+  const setTarget = (user: FoundUser | null) => {
+    if (user?.id !== target?.id) intakeId.current = null;
+    setTargetState(user);
+  };
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [issueType, setIssueType] =
@@ -60,7 +65,7 @@ export function StaffSupportComposeDialog({
   const [error, setError] = useState<string | null>(null);
 
   const reset = () => {
-    setTargetUserId(defaultTargetUserId);
+    setTarget(null);
     setTitle("");
     setDescription("");
     setIssueType("GENERAL_INQUIRY");
@@ -97,8 +102,7 @@ export function StaffSupportComposeDialog({
         .parse(await res.json()).data;
     },
     onSuccess: (created) => {
-      queryClient.invalidateQueries({ queryKey: ["support-inbox"] });
-      queryClient.invalidateQueries({ queryKey: ["support-inbox-stats"] });
+      void queryClient.invalidateQueries({ queryKey: supportKeys.inbox() });
       intakeId.current = null;
       reset();
       onOpenChange(false);
@@ -109,9 +113,8 @@ export function StaffSupportComposeDialog({
 
   const handleSubmit = () => {
     setError(null);
-    const trimmedTarget = targetUserId.trim();
-    if (!trimmedTarget) {
-      setError("Target user ID is required.");
+    if (!target) {
+      setError("Choose who this request is for.");
       return;
     }
     const trimmedTitle = title.trim();
@@ -126,7 +129,7 @@ export function StaffSupportComposeDialog({
     }
 
     createMutation.mutate({
-      targetUserId: trimmedTarget,
+      targetUserId: target.id,
       title: trimmedTitle,
       description: trimmedDesc,
       issueType,
@@ -145,18 +148,17 @@ export function StaffSupportComposeDialog({
       <ResponsiveModalContent className="sm:max-w-lg">
         <ResponsiveModalHeader>
           <ResponsiveModalTitle>
-            New Outbound Support Ticket
+            New outbound support request
           </ResponsiveModalTitle>
         </ResponsiveModalHeader>
 
         <div className="space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor="outbound-target-user">Target user ID *</Label>
-            <Input
+            <Label htmlFor="outbound-target-user">Customer *</Label>
+            <UserSearchCombobox
               id="outbound-target-user"
-              value={targetUserId}
-              onChange={(e) => setTargetUserId(e.target.value)}
-              placeholder="User ID"
+              value={target}
+              onChange={setTarget}
             />
           </div>
 
@@ -252,7 +254,7 @@ export function StaffSupportComposeDialog({
               </>
             ) : (
               <>
-                <Send className="mr-1 h-4 w-4" /> Create Ticket
+                <Send className="mr-1 h-4 w-4" /> Create request
               </>
             )}
           </Button>

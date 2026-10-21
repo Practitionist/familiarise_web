@@ -198,6 +198,7 @@ function createEarningsTestHarness(options: EarningsHarnessOptions = {}) {
         },
       ),
     },
+    supportCase: { findMany: jest.fn(async () => []) },
     organizationEarnings: {
       findFirst: jest.fn(async () => null),
       create: jest.fn(

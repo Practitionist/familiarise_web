@@ -97,7 +97,6 @@ import {
   DISPUTE_GATED_PAYMENT_WHERE,
   PayoutMakerCheckerError,
   REFUND_GATED_PAYMENT_WHERE,
-  SUPPORT_HOLD_GATED_PAYMENT_WHERE,
   resolveCompletionTdsWindow,
   resolvePayoutMsmeDeadline,
 } from "./shared-lifecycle";
@@ -204,7 +203,6 @@ export async function checkPayoutEligibility(
       consultantProfileId,
       status: EarningStatus.READY,
       payoutId: null,
-      payment: { NOT: SUPPORT_HOLD_GATED_PAYMENT_WHERE },
     },
     _sum: { consultantSharePaise: true, refundedShareAmount: true },
   });
@@ -320,7 +318,6 @@ async function runPayoutBatch(
       where: {
         status: EarningStatus.READY,
         payoutId: null,
-        payment: { NOT: SUPPORT_HOLD_GATED_PAYMENT_WHERE },
         ...(consultantProfileIds?.length
           ? { consultantProfileId: { in: consultantProfileIds } }
           : {}),
@@ -504,7 +501,6 @@ async function mintConsultantPayout(
             consultantProfileId,
             status: EarningStatus.READY,
             payoutId: null,
-            payment: { NOT: SUPPORT_HOLD_GATED_PAYMENT_WHERE },
           },
           select: {
             id: true,
@@ -565,7 +561,6 @@ async function mintConsultantPayout(
             id: { in: readyEarnings.map((e) => e.id) },
             status: EarningStatus.READY,
             payoutId: null,
-            payment: { NOT: SUPPORT_HOLD_GATED_PAYMENT_WHERE },
           },
           data: {
             payoutId: payout.id,
@@ -1257,7 +1252,6 @@ export async function previewInstantPayout(
               consultantProfileId,
               status: EarningStatus.READY,
               payoutId: null,
-              payment: { NOT: SUPPORT_HOLD_GATED_PAYMENT_WHERE },
             },
             readyPaise,
           ),
@@ -1323,7 +1317,6 @@ async function isMakerCheckerDisbursementBlocked(
 }
 
 type ClaimGateOutcome =
-  | { kind: "support_hold_blocked" }
   | { kind: "dispute_blocked" }
   | { kind: "refund_blocked" }
   | { kind: "shortfall"; owedPaise: number; shortfallReason: string }
@@ -1335,12 +1328,6 @@ async function runConsultantPayoutClaimGate(
   payoutId: string,
   amount: number,
 ): Promise<ClaimGateOutcome> {
-  const supportHeldEarning = await db.consultantEarnings.findFirst({
-    where: { payoutId, payment: SUPPORT_HOLD_GATED_PAYMENT_WHERE },
-    select: { id: true },
-  });
-  if (supportHeldEarning) return { kind: "support_hold_blocked" };
-
   const disputedEarning = await db.consultantEarnings.findFirst({
     where: {
       payoutId,
@@ -1426,14 +1413,6 @@ async function claimConsultantPayoutForDisbursement(
         )
       : await runConsultantPayoutClaimGate(prisma, payoutId, amount);
 
-  if (claimOutcome.kind === "support_hold_blocked") {
-    return {
-      payoutId,
-      success: false,
-      skipped: true,
-      error: "Payment held for support review",
-    };
-  }
   if (claimOutcome.kind === "dispute_blocked") {
     console.warn(
       `[Payouts] Payout ${payoutId} blocked — an earning's payment has a live dispute`,

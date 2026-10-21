@@ -1,57 +1,59 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
-import {
-  REFUNDABLE_BALANCE_SELECT,
-  refundableBalancePaise,
-} from "@/lib/payments/refundable-balance";
-import { fundingRailForIntent } from "@/lib/payments/funding-rail";
-import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
-import { parseRouteParams } from "@/lib/api/support-http";
-import { CaseRecommendationParams } from "@/schemas/support";
+import { sessionRole } from "@/lib/auth/session-role";
+import { canCorrespondOnCase } from "@/lib/support/case-access";
+import { CaseActionError, quoteCaseRefund } from "@/lib/support/case-actions";
+
+const Params = z.object({
+  caseId: z.string().min(1).max(64),
+  recommendationId: z.string().min(1).max(128),
+});
+
+/** The side-effect-free quote a reviewer confirms; approval re-checks the same figures. */
 export async function GET(
   _req: NextRequest,
   context: { params: Promise<{ caseId: string; recommendationId: string }> },
 ) {
-  const ids = await parseRouteParams(CaseRecommendationParams, context.params, {
-    route: "support.case.recommendation.preview",
-  });
-  if (!ids.ok) return ids.response;
-  const auth = await requireBackofficeSurface("refunds.manage");
+  const auth = await requireBackofficeSurface("supportRefunds.executeBounded");
   if (auth.error) return auth.error;
-  const { caseId, recommendationId } = ids.data;
-  const recommendation = await prisma.supportFinancialRecommendation.findFirst({
-    where: { id: recommendationId, caseId },
-    include: {
-      payment: {
-        select: {
-          amount: true,
-          paymentIntent: true,
-          paymentStatus: true,
-          ...REFUNDABLE_BALANCE_SELECT,
-        },
-      },
-    },
-  });
-  if (!recommendation)
+  const params = Params.safeParse(await context.params);
+  if (!params.success)
     return NextResponse.json({ error: "Not found" }, { status: 404 });
-  const payment = recommendation.payment;
-  let blockedReason: string | null = null;
-  if (payment.paymentStatus !== "SUCCEEDED") {
-    blockedReason = "Payment is not captured";
-  } else if (
-    payment.disputes.some(
-      (dispute) => !DISPUTE_INACTIVE_FOR_GATING.includes(dispute.status),
-    )
-  ) {
-    blockedReason = "A gateway chargeback is active";
-  }
+  const { caseId, recommendationId } = params.data;
+  const viewer = {
+    userId: auth.session.user.id,
+    role: sessionRole(auth.session.user.role),
+  };
+  const quote = await prisma
+    .$transaction(async (tx) => {
+      const supportCase = await tx.supportCase.findFirst({
+        where: { id: caseId, deletedAt: null },
+      });
+      if (!supportCase || !(await canCorrespondOnCase(supportCase, viewer, tx)))
+        return null;
+      const recommendation = await tx.supportFinancialRecommendation.findFirst({
+        where: { id: recommendationId, caseId },
+      });
+      if (!recommendation) return null;
+      return {
+        amountPaise: Number(recommendation.amountPaise),
+        ...(await quoteCaseRefund(tx, caseId, recommendation)),
+      };
+    })
+    .catch((error: unknown) => {
+      if (error instanceof CaseActionError) return null;
+      throw error;
+    });
+  if (!quote) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json({
     data: {
-      refundablePaise: refundableBalancePaise(payment.amount, payment),
-      amountPaise: recommendation.amountPaise,
-      rail: fundingRailForIntent(payment.paymentIntent),
-      blockedReason,
+      refundablePaise: quote.refundablePaise,
+      amountPaise: quote.amountPaise,
+      rail: quote.rail,
+      blockedReason: quote.blocked?.reason ?? null,
+      committedPaise: quote.committedPaise,
     },
   });
 }

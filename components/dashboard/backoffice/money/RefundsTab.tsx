@@ -1,7 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { useParams, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -13,10 +14,11 @@ interface NeedsHuman {
   message: string;
   createdAt: string;
   paymentId: string | null;
-  /** #1834 — a credit seat gets the credit door; a held paid seat the refund door. */
-  kind?: "credit" | "held-paid-seat";
+  /** A credit seat gets the credit door, a held paid seat the refund door, a support remedy its case. */
+  kind?: "credit" | "held-paid-seat" | "support-recommendation";
   occurrenceId?: string | null;
   unitPaise?: number | null;
+  caseId?: string | null;
 }
 
 async function fetchNeeds(): Promise<{ items: NeedsHuman[] }> {
@@ -48,6 +50,7 @@ function doorFor(item: NeedsHuman) {
  */
 export function RefundDoorsPanel() {
   const params = useSearchParams();
+  const tree = useParams<{ tree?: string }>()?.tree ?? "admin";
   const linkedPayment = params.get("paymentId");
   // A booking's Ops actions link here with `?door=issue&paymentId=…`.
   const [open, setOpen] = useState<{
@@ -92,7 +95,7 @@ export function RefundDoorsPanel() {
         </div>
         {items.length > 0 && (
           <div className="space-y-2">
-            <p className="text-sm font-medium">Seats waiting for a human</p>
+            <p className="text-sm font-medium">Refunds waiting for a human</p>
             <ul className="divide-y divide-border rounded-md border">
               {items.map((item) => (
                 <li
@@ -100,7 +103,16 @@ export function RefundDoorsPanel() {
                   className="flex flex-wrap items-center justify-between gap-2 p-3 text-sm"
                 >
                   <span className="min-w-0 flex-1">{item.message}</span>
-                  {item.paymentId && (
+                  {item.kind === "support-recommendation" && item.caseId && (
+                    <Button size="sm" variant="outline" asChild>
+                      <Link
+                        href={`/dashboard/${tree}/support/c_${item.caseId}`}
+                      >
+                        Open case
+                      </Link>
+                    </Button>
+                  )}
+                  {item.kind !== "support-recommendation" && item.paymentId && (
                     <Button
                       size="sm"
                       variant="outline"

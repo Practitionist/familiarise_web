@@ -18,10 +18,10 @@ flowchart TD
   Evidence --> Staff
   Staff --> Decision[Immutable decision and appeal window]
   Staff --> Recommendation[Financial recommendation]
-  Recommendation --> Admin[Admin preview and approval]
-  Admin --> Refund[Existing refund reservation and gateway operation]
+  Recommendation --> Review["Bounded staff or admin preview and approval"]
+  Review --> Refund[Existing refund reservation and gateway operation]
   Refund --> Ledger[Ledger reversal and tax credit note]
-  Admin --> Hold[Payment-scoped payout hold]
+  Staff --> Hold["Support-case EarningsHold on unpaid earnings"]
   Decision --> Appeal[Independent review case]
   Case --> Outbox[Durable notifications and existing SLA sweep]
   Chargeback[Gateway chargeback] --> Money[Existing financial guards]
@@ -58,7 +58,7 @@ feedback and public reviews do not act as appeal conversations.
 | Chargeback      | A bank/provider payment dispute; admin handles evidence and provider deadlines in the finance workflow.           |
 | Refund          | An approved return of a payment, reserved and executed through existing finance controls.                         |
 | Clawback        | Recovery of already-paid earnings through the existing ledger and future payout offsets; no automatic bank debit. |
-| Payment hold    | A separate admin block on eligible unpaid earnings during investigation; it cannot recall a completed payout.     |
+| Payment hold    | A `SUPPORT_CASE` earnings hold on unpaid earnings during investigation; it cannot recall a completed payout.      |
 
 A complaint or low rating does not trigger a refund, hold or clawback. The
 provider’s chargeback process is separate from the platform’s service decision;
@@ -66,8 +66,16 @@ see [Razorpay’s dispute documentation](https://razorpay.com/docs/payments/disp
 
 ### Ownership and authorization
 
-- Staff investigate and communicate. Admin alone executes money operations,
-  service holds, and restricted enforcement reversals.
+- Staff investigate, communicate, apply and release support payout holds, and
+  execute bounded case refunds: ₹5,000 per payment across its support remedies
+  and ₹50,000 per staff member over a rolling 24 hours, summed from their
+  `OpsActionLog` rows (`lib/support/money-policy.ts`). Admin executes above
+  those limits, voids failed approvals, and owns payouts, settlements,
+  clawbacks, chargeback responses and restricted enforcement reversals.
+- A platform operator who is not a party to a booking cancels it only through
+  `POST /api/staff/appointments/[appointmentId]/cancel`, an audited door that
+  prices the refunds it will send under the same limits; the participant cancel
+  route refuses them.
 - `PERSONAL` cases belong to their submitter. A member who is the subject of a
   case an operator filed for them receives a summary, never its correspondence;
   such cases are organization-owned so access follows current membership.
@@ -75,9 +83,9 @@ see [Razorpay’s dispute documentation](https://razorpay.com/docs/payments/disp
   MANAGER and SUPPORT members. `ORG_BILLING` correspondence is available to
   OWNER, MAINTAINER and BILLING_ADMIN. Organization tagging alone grants no
   correspondence access.
-- Organization handovers preserve authorship and record an event. Notifications
-  target current eligible members; organization emails link to the authorized
-  workspace without copying its transcript. Access rechecks current membership.
+- Notifications target current eligible members; organization emails link to
+  the authorized workspace without copying its transcript. Access rechecks
+  current membership.
 - A signed-in public grievance belongs to the account and appears in its
   dashboard and privacy export. An anonymous grievance stores explicit external
   contact fields on a case held by the non-staff `system-public-grievance-intake`
@@ -140,31 +148,53 @@ appeal deadline. Case decisions permit seven-day appeals; review moderation uses
 six calendar months. Appeals are cases linked to the original decision/action,
 unique per appellant. Assignment and adjudication reject the original operator.
 A missing independent reviewer leaves the appeal pending. Financial appeals
-still use admin-executed recommendations. Reversible review moderation uses
+still use bounded recommendations. Reversible review moderation uses
 explicit compensating actions; existing account reinstatement retains its
 external enforcement recovery.
 
-`SupportFinancialRecommendation` stores paise, payment, author and reason.
-Admin approval requires a fresh refundable-balance preview. The existing refund
-front door reserves and links the refund using the recommendation as its stable
-operation identity. A retry resumes that operation. Gateway acceptance and bank
-receipt are distinct states in the UI.
+`SupportFinancialRecommendation` stores paise, payment, author, reason and
+`releaseSeat`. A payment has at most one undecided recommendation (sidecar
+partial unique). Approval requires a fresh refundable-balance preview, a
+captured payment and no live chargeback; the refundable balance excludes other
+approved remedies on the payment that have no live refund yet. With two or more
+active admins the author cannot approve their own recommendation. The existing
+refund front door reserves and links the refund using the recommendation as its
+stable operation identity, sends the gateway and credit note a fixed
+`Support remedy <reference>` reason, and keeps the buyer's seat unless
+`releaseSeat` is set. A retry of a failed refund resumes that operation; an admin
+may instead void an approval whose refund failed or never started. Approvals
+without a live refund are listed in the Refunds needs-human queue. Gateway
+acceptance and bank receipt are distinct states in the UI. A `REFUND_APPROVED`
+decision needs an approved recommendation with a pending or sent refund, and
+`REFUND_DECLINED` needs none approved.
 
-Refund review uses the shared admin money door: a fresh session, a reason of at
-least five characters, the per-admin money-action budget and an `OpsActionLog`
-row. A refund above ₹25,000 waits in Money → Approvals when at least two admins
-are active; a different admin approves the stored request before execution. A
-single active admin can execute it directly. The recommendation remains
-undecided while approval is pending. Execution retains the case access,
-independent appeal review, case version and previewed refundable-balance checks.
-Declining a recommendation or retrieving its existing keyed refund moves no new money and
-requires no second approval. The case panel labels a pending approval separately
-from a sent refund.
+Refund review uses the shared money door (`supportRefunds.executeBounded`): a
+fresh session, a reason of at least five characters, the per-operator money-action
+budget, the in-door maintenance check (refused in DEGRADED or OFFLINE, and when
+the phase cannot be read) and an `OpsActionLog` row whose `after` names the
+payment, amount, refund, rail and refund status. When this remedy plus the
+remedies already approved on its payment exceed ₹25,000 and at least two admins
+are active, it waits in Money → Approvals; a different admin approves the stored
+request before execution. A single active admin can execute it directly. The
+recommendation remains undecided while approval is pending. Execution retains the
+case access, independent appeal review and the recommendation's own
+`decidedAt` and previewed refundable-balance checks; it does not check the case
+version, so case messages during the approval window do not invalidate it.
+Declining a recommendation or retrieving its existing keyed refund moves no new
+money and requires no second approval. The case panel labels a pending approval
+separately from a sent refund.
 
-`SupportPaymentHold` independently blocks linked unpaid earnings during batching
-and disbursement. Releasing a service hold does not release a chargeback or refund
-reservation. An in-flight payout requires investigation; completed payouts cannot
-be recalled by creating a hold.
+A support payout hold is an `EarningsHold` with reason `SUPPORT_CASE` and the
+case id as its source, placed and released through `placeEarningsHolds` and
+`releaseEarningsHolds` on the payment's unpaid consultant and organisation
+earnings (`lib/support/case-holds.ts`). Applying it cancels payouts not yet sent
+that batched those earnings, as a dispute hold does, and refuses while a payout
+is being sent. The case timeline's `HOLD_APPLIED` / `HOLD_RELEASED` events carry
+the intent, so earnings created later for the payment start held. Apply and
+release run through audited `withOpsAction` doors (`supportHolds.manage`), and
+every hold of a case is released when the case is resolved or closed. Releasing a
+service hold does not release a chargeback, operator or overage hold. Completed
+payouts cannot be recalled by creating a hold.
 
 ### Storage, concurrency and deadlines
 
@@ -177,8 +207,8 @@ with the case; pending uploads can be withdrawn.
 Case metadata uses optimistic concurrency. Messages have ordered sequences and
 client retry identities. Financial operations retain existing Serializable
 reservations, conditional claims and immutable balanced ledger postings. External
-calls occur outside database transactions. Holds participate in payout claim
-transactions. Sidecar constraints enforce the new ownership, appeal and hold
+calls occur outside database transactions. Held earnings never reach a payout
+claim. Sidecar constraints enforce the new ownership, appeal and recommendation
 shapes; application code does not sweep database-enforced ledger invariants.
 
 Guided self-service starts no operator SLA clock. Formal intake or the first

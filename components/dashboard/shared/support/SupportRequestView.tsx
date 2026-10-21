@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarDays, CreditCard, Send } from "lucide-react";
+import { z } from "zod";
 
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { ErrorState } from "@/components/dashboard/ErrorState";
@@ -12,14 +13,17 @@ import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-overrid
 import { Section } from "@/components/dashboard/Section";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { CaseCsat } from "@/components/support/CaseCsat";
-import { CaseResolutionPanel } from "@/components/support/CaseResolutionPanel";
 import { CaseAttachments } from "@/components/support/CaseAttachments";
+import { OwnTicketCaseSchema } from "@/components/support/own-case-schema";
+import { CustomerCaseResolution } from "@/components/support/resolution/CustomerCaseResolution";
 import { useCaseTimeline } from "@/components/support/useCaseTimeline";
 import { SupportBubble } from "@/components/support/SupportBubble";
 import {
   describeWait,
+  fetchSupportThread,
   useSupportThread,
 } from "@/components/support/useSupportThread";
+import { useThreadScroll } from "@/components/support/useThreadScroll";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
@@ -37,8 +41,10 @@ import {
   requestStage,
   type RequestStage,
 } from "@/lib/support/request-stage";
+import { invalidateSupportCase, supportKeys } from "@/lib/support/support-keys";
+import { formatDateLabel } from "@/lib/time/display";
 import { humanizeEnum } from "@/lib/ui/tone";
-import type { ArticleLink, OwnTicketCase } from "@/types/support-case";
+import type { ArticleLink } from "@/types/support-case";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
 
@@ -59,13 +65,7 @@ export interface SupportRequestViewProps {
 }
 
 const day = (iso: string | null | undefined) =>
-  iso
-    ? new Date(iso).toLocaleDateString(undefined, {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-      })
-    : null;
+  iso ? formatDateLabel(new Date(iso)) : null;
 
 function StatusTimeline({ stage }: Readonly<{ stage: RequestStage }>) {
   const steps = [...REQUEST_STEPS.slice(0, 2), stage.settledLabel];
@@ -187,6 +187,7 @@ function SessionRequest({
           <StatusTimeline
             stage={requestStage({
               status: t.thread?.status ?? null,
+              selfServe: !t.isHuman,
             })}
           />
           {t.query.isError && !t.data ? (
@@ -252,6 +253,7 @@ function TicketComposer({
   onDraftChange: (value: string) => void;
   onSubmit: (message: string) => void;
 }>) {
+  const field = useRef<HTMLTextAreaElement>(null);
   if (closed) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -273,6 +275,7 @@ function TicketComposer({
         e.preventDefault();
         const msg = draft.trim();
         if (msg && !sending) onSubmit(msg);
+        field.current?.focus();
       }}
     >
       {resolved && (
@@ -281,6 +284,7 @@ function TicketComposer({
         </p>
       )}
       <Textarea
+        ref={field}
         aria-label="Reply"
         aria-describedby={resolved ? "support-reply-reopens" : undefined}
         rows={3}
@@ -312,7 +316,6 @@ function TicketRequest({
   const [draft, setDraft] = useState("");
   const [offline, setOffline] = useState(false);
   const pendingTurns = useRef(new Map<string, string>());
-  const queryKey = ["user-support-case", ticketId];
 
   useEffect(() => {
     setDraft("");
@@ -331,11 +334,12 @@ function TicketRequest({
   }, []);
 
   const query = useQuery({
-    queryKey,
-    queryFn: async (): Promise<OwnTicketCase> => {
+    queryKey: supportKeys.ownCase(ticketId),
+    queryFn: async () => {
       const res = await fetch(`/api/support/requests/c_${ticketId}`);
       if (!res.ok) await throwSupportError(res, "request load");
-      return ((await res.json()) as { data: OwnTicketCase }).data;
+      return z.object({ data: OwnTicketCaseSchema }).parse(await res.json())
+        .data;
     },
     refetchIntervalInBackground: false,
     refetchInterval: (q) =>
@@ -356,8 +360,7 @@ function TicketRequest({
     },
     onSuccess: (_result, message) => {
       setDraft((current) => (current.trim() === message ? "" : current));
-      void qc.invalidateQueries({ queryKey });
-      void qc.invalidateQueries({ queryKey: ["personal-support-requests"] });
+      void invalidateSupportCase(qc, ticketId);
     },
     onError: (e: unknown) =>
       toast({
@@ -374,6 +377,17 @@ function TicketRequest({
     data?.nextBeforeSeq,
     data?.hasMore,
   );
+  const scroll = useThreadScroll<HTMLDivElement>(
+    ticketId,
+    history.timeline.length,
+  );
+  const appointmentId = data?.appointmentId ?? null;
+  const booking = useQuery({
+    queryKey: supportKeys.thread(appointmentId ?? ""),
+    queryFn: () => fetchSupportThread(appointmentId ?? ""),
+    enabled: appointmentId !== null && data?.canReply === true,
+    select: (thread) => thread.booking,
+  });
   useSetBreadcrumbLabel(data?.subject);
   if (query.isError && !data) {
     return (
@@ -415,17 +429,21 @@ function TicketRequest({
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div className="min-w-0 space-y-4">
           <StatusTimeline stage={requestStage({ status: data.status })} />
-          {data.canReply && (
-            <CaseResolutionPanel caseId={data.caseId} customer />
-          )}
+          {data.canReply && <CustomerCaseResolution caseId={data.caseId} />}
           <div className="flex flex-col rounded-lg border border-border bg-card">
-            <div className="max-h-[60vh] min-h-[16rem] space-y-3 overflow-y-auto p-4">
+            <div
+              ref={scroll.container}
+              onScroll={scroll.onScroll}
+              className="max-h-[60vh] min-h-[16rem] space-y-3 overflow-y-auto p-4"
+            >
               {history.hasMore && (
                 <Button
                   size="sm"
                   variant="outline"
                   disabled={history.loading}
-                  onClick={() => void history.loadOlder()}
+                  onClick={() =>
+                    void scroll.loadOlderAnchored(history.loadOlder)
+                  }
                 >
                   Load older messages
                 </Button>
@@ -436,16 +454,18 @@ function TicketRequest({
                   managed by its authorized team.
                 </p>
               )}
-              {history.timeline.map((m) => (
-                <SupportBubble
-                  key={m.id}
-                  perspective="user"
-                  author={m.author}
-                  authorName={m.author === "USER" ? null : m.authorName}
-                  body={m.body}
-                  at={m.at}
-                />
-              ))}
+              <div role="log" aria-label="Conversation" className="space-y-3">
+                {history.timeline.map((m) => (
+                  <SupportBubble
+                    key={m.id}
+                    perspective="user"
+                    author={m.author}
+                    authorName={m.author === "USER" ? null : m.authorName}
+                    body={m.body}
+                    at={m.at}
+                  />
+                ))}
+              </div>
               {!closed && !resolved && (
                 <p className="text-center text-[11px] text-muted-foreground">
                   {describeWait(data.ackDueAt)}
@@ -515,6 +535,28 @@ function TicketRequest({
             </p>
             {data.organization && <p>{data.organization.name}</p>}
           </div>
+          {appointmentId && (
+            <ContextCard
+              icon={CalendarDays}
+              title={booking.data?.title ?? "Appointment"}
+              detail={
+                booking.data
+                  ? [
+                      humanizeEnum(booking.data.kind),
+                      day(booking.data.startsAt),
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")
+                  : null
+              }
+              href={
+                props.appointmentsBase
+                  ? `${props.appointmentsBase}/${appointmentId}`
+                  : undefined
+              }
+              hrefLabel="Go to booking"
+            />
+          )}
           {data.payment && (
             <ContextCard
               icon={CreditCard}
@@ -548,10 +590,8 @@ function TicketRequest({
 }
 
 /**
- * #1527 — one support request as a full page (no drawers): a header with the
- * status timeline, the booking or payment it is about, the conversation and a
- * composer, and three Help Center answers. Shared by every dashboard that
- * mounts Support requests.
+ * One support request as a full page: status timeline, the booking or payment
+ * it is about, the conversation and composer, and Help Center answers.
  */
 export function SupportRequestView(props: Readonly<SupportRequestViewProps>) {
   const ref = parseCaseKey(props.caseKey);

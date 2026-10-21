@@ -89,7 +89,7 @@ export function ProductFeedbackPage() {
       }),
   });
   let feedbackHistory: ReactNode;
-  if (query.isLoading) {
+  if (query.isPending) {
     feedbackHistory = <Skeleton className="h-32 w-full" />;
   } else if (query.isError) {
     feedbackHistory = (

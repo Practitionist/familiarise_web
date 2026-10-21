@@ -32,6 +32,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { isBareHumanRequest } from "@/lib/support/escalation";
 import { throwSupportError } from "@/lib/support/error-copy";
+import { supportKeys } from "@/lib/support/support-keys";
 import { describeWait } from "./useSupportThread";
 
 type Sender = "USER" | "BOT" | "AGENT" | "SYSTEM";
@@ -568,7 +569,7 @@ export function PlatformSupportSheet({
           ticketReference: result.supportTicketReference,
           replyByAt: result.replyByAt ?? null,
         });
-        void qc.invalidateQueries({ queryKey: ["personal-support-requests"] });
+        void qc.invalidateQueries({ queryKey: supportKeys.requests() });
       } else if (result.resolved) {
         setDone({
           resolved: true,

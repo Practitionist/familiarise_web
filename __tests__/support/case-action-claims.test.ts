@@ -94,16 +94,15 @@ beforeEach(() => {
 });
 
 it("refuses a refund review that loses the claim race to another administrator", async () => {
-  db.supportFinancialRecommendation.findFirst
-    .mockResolvedValueOnce(null)
-    .mockResolvedValueOnce({
-      id: "rec-1",
-      caseId: "case-1",
-      paymentId: "pay-1",
-      amountPaise: BigInt(100_000),
-      decidedAt: null,
-      approved: null,
-    } as never);
+  db.supportFinancialRecommendation.findFirst.mockResolvedValueOnce({
+    id: "rec-1",
+    caseId: "case-1",
+    paymentId: "pay-1",
+    amountPaise: BigInt(100_000),
+    decidedAt: null,
+    approved: null,
+    refund: null,
+  } as never);
   db.supportFinancialRecommendation.updateMany.mockResolvedValue({ count: 0 });
 
   const outcome = performCaseAction("case-1", admin, review(false));
@@ -148,12 +147,18 @@ it("refuses an appeal action by the operator who made the original decision", as
   expect(db.supportCase.updateMany).not.toHaveBeenCalled();
 });
 
-it("refuses money actions for staff without refund execution rights", async () => {
+it("refuses staff an admin-only money action", async () => {
   await expect(
     performCaseAction(
       "case-1",
       { userId: "staff-1", role: "STAFF" },
-      review(true),
+      {
+        action: "VOID_RECOMMENDATION",
+        clientActionId: "void-1",
+        expectedUpdatedAt: updatedAt.toISOString(),
+        recommendationId: "rec-1",
+        reason: "Gateway refused the refund",
+      },
     ),
   ).rejects.toMatchObject({ code: "FORBIDDEN", status: 403 });
   expect(db.$transaction).not.toHaveBeenCalled();

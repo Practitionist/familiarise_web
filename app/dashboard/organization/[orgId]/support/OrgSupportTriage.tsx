@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useRequireOrgAccess } from "../useOrgRole";
 import { caseKeyOf } from "@/lib/support/case-key";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
+import { supportKeys } from "@/lib/support/support-keys";
 
 interface TriageRow {
   id: string;
@@ -146,7 +147,7 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
   });
 
   const threads = useQuery({
-    queryKey: ["org-support-threads", orgId, status],
+    queryKey: supportKeys.orgThreads(orgId, status),
     enabled: allowed,
     queryFn: async (): Promise<TriageRow[]> => {
       const params = new URLSearchParams({ pageSize: "30" });

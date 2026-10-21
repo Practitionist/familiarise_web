@@ -161,7 +161,6 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/appointments/*/reschedule",
   "/api/appointments/*/documents",
   "/api/appointments/*/feedback",
-  "/api/appointments/*/support",
   "/api/bookings/consultations",
   "/api/bookings/subscriptions",
   "/api/bookings/webinars",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import { throwSupportError } from "@/lib/support/error-copy";
@@ -32,14 +32,18 @@ export function useCaseTimeline(
   const [cursor, setCursor] = useState<number | null | undefined>(undefined);
   const [hasOlder, setHasOlder] = useState<boolean | undefined>(undefined);
   const [loading, setLoading] = useState(false);
+  const currentCase = useRef(caseId);
   useEffect(() => {
+    currentCase.current = caseId;
     setOlder([]);
     setCursor(undefined);
     setHasOlder(undefined);
   }, [caseId]);
-  const loadOlder = async () => {
+  /** Resolves true when a page of older messages was added. */
+  const loadOlder = async (): Promise<boolean> => {
     const next = cursor === undefined ? before : cursor;
-    if (loading || next === null || next === undefined) return;
+    if (loading || next === null || next === undefined) return false;
+    const requestedFor = caseId;
     setLoading(true);
     try {
       const res = await fetch(
@@ -47,6 +51,7 @@ export function useCaseTimeline(
       );
       if (!res.ok) await throwSupportError(res, "older messages");
       const page = PageSchema.parse(await res.json());
+      if (currentCase.current !== requestedFor) return false;
       setOlder((rows) => [
         ...page.data.map((m) => ({
           id: m.id,
@@ -61,12 +66,14 @@ export function useCaseTimeline(
       ]);
       setCursor(page.nextBeforeSeq);
       setHasOlder(page.hasMore);
+      return page.data.length > 0;
     } catch (error) {
       toast({
         title: "Older messages could not be loaded",
         description: error instanceof Error ? error.message : undefined,
         variant: "destructive",
       });
+      return false;
     } finally {
       setLoading(false);
     }

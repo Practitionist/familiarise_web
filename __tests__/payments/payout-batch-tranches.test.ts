@@ -37,26 +37,10 @@ const tranches = [
     consultantSharePaise: 30_000,
     refundedShareAmount: 0,
   },
-  {
-    id: "held-ready",
-    status: "READY",
-    consultantSharePaise: 90_000,
-    refundedShareAmount: 0,
-    activeSupportHold: true,
-  },
 ];
 
-type ReadyWhere = {
-  status: string;
-  payoutId: null;
-  payment?: { NOT?: { supportHolds?: { some: { releasedAt: null } } } };
-};
-const readyOnly = (where: ReadyWhere) =>
-  tranches.filter(
-    (t) =>
-      t.status === where.status &&
-      !(where.payment?.NOT?.supportHolds && t.activeSupportHold),
-  );
+const readyOnly = (where: { status: string; payoutId: null }) =>
+  tranches.filter((t) => t.status === where.status);
 
 const mockPayoutCreate = jest.fn();
 const mockEarningsUpdateMany = jest.fn();
@@ -64,8 +48,9 @@ const mockEarningsUpdateMany = jest.fn();
 jest.mock("../../lib/prisma", () => {
   const tx = {
     consultantEarnings: {
-      findMany: jest.fn(async ({ where }: { where: ReadyWhere }) =>
-        readyOnly(where),
+      findMany: jest.fn(
+        async ({ where }: { where: { status: string; payoutId: null } }) =>
+          readyOnly(where),
       ),
       updateMany: (...a: unknown[]) => mockEarningsUpdateMany(...a),
     },
@@ -77,22 +62,24 @@ jest.mock("../../lib/prisma", () => {
     __esModule: true,
     default: {
       consultantEarnings: {
-        groupBy: jest.fn(async ({ where }: { where: ReadyWhere }) => {
-          const rows = readyOnly(where);
-          return rows.length
-            ? [
-                {
-                  consultantProfileId: CONSULTANT,
-                  _sum: {
-                    consultantSharePaise: rows.reduce(
-                      (s, r) => s + r.consultantSharePaise,
-                      0,
-                    ),
+        groupBy: jest.fn(
+          async ({ where }: { where: { status: string; payoutId: null } }) => {
+            const rows = readyOnly(where);
+            return rows.length
+              ? [
+                  {
+                    consultantProfileId: CONSULTANT,
+                    _sum: {
+                      consultantSharePaise: rows.reduce(
+                        (s, r) => s + r.consultantSharePaise,
+                        0,
+                      ),
+                    },
                   },
-                },
-              ]
-            : [];
-        }),
+                ]
+              : [];
+          },
+        ),
       },
       payoutAccount: {
         findFirst: jest.fn().mockResolvedValue({

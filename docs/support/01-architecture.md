@@ -32,9 +32,11 @@ customer messages. Evidence recipients receive a prompt and their own evidence
 view without the customer transcript.
 
 Case decisions, financial recommendations, payment holds and moderation appeals
-are linked records with separate authority checks. Staff can recommend a refund;
-admin executes it through the shared money door, with conditional second approval.
-Payment holds block eligible unpaid earnings; complaints alone do not freeze them.
+are linked records with separate authority checks. Staff can recommend a refund
+and execute it within the bounded staff limits; admin executes above them, all
+through the shared money door with conditional second approval. Payment holds are
+`SUPPORT_CASE` earnings holds on eligible unpaid earnings; complaints alone do not
+freeze them.
 Notifications use the durable outbox and the existing leased SLA sweep.
 
 See [production architecture](10-production-architecture.md) for complete policy.
