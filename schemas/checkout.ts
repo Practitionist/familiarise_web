@@ -21,7 +21,7 @@ const GST_STATE_CODES: ReadonlySet<string> = new Set(
 export const BUYER_STATE_REQUIRED_MESSAGE =
   "Select your billing state. It is needed for your GST invoice.";
 
-const consumerStateCodeSchema = z
+export const consumerStateCodeSchema = z
   .string({ required_error: BUYER_STATE_REQUIRED_MESSAGE })
   .length(2)
   .refine((code) => GST_STATE_CODES.has(code), {

@@ -92,6 +92,8 @@ export default async function PayExistingOrderPage({
                 }}
                 doneHref={state.doneHref}
                 description={state.summary.description ?? "Booking payment"}
+                needsBuyerState={state.needsBuyerState}
+                taxContext={state.taxContext}
               />
               {state.summary.expiresAt && (
                 <p className="text-center text-xs text-muted-foreground">

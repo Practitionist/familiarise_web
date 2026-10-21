@@ -24,6 +24,7 @@ import {
 } from "@/lib/payments/pre-mint-intent";
 import { remintTrialPayLink } from "@/lib/trials/pay-link";
 import { goHref } from "@/lib/dashboard/go";
+import { consumerStateCodeSchema } from "@/schemas/checkout";
 
 export interface PayPageOrder {
   orderId: string;
@@ -52,6 +53,9 @@ export type PayPageState =
       order: PayPageOrder;
       summary: PayPageSummary;
       doneHref: string;
+      needsBuyerState: boolean;
+      /** Pre-fills the state picker; mirrors the checkout tax context. */
+      taxContext: { billingStateCode: string | null; isInternational: boolean };
     }
   | { kind: "unpayable"; doneHref: string };
 
@@ -68,8 +72,14 @@ const PAY_PAGE_SELECT = {
   currency: true,
   description: true,
   expiresAt: true,
+  buyerCountry: true,
+  consumerStateCode: true,
   appointmentId: true,
-  user: { select: { consulteeProfile: { select: { id: true } } } },
+  user: {
+    select: {
+      consulteeProfile: { select: { id: true, billingStateCode: true } },
+    },
+  },
   appointment: {
     select: {
       consultation: {
@@ -103,6 +113,19 @@ const PAY_PAGE_SELECT = {
     },
   },
 } as const;
+
+/** A domestic open order with no buyer state must collect one before it is paid (CGST Rule 46(f)). */
+export function payNeedsBuyerState(row: {
+  paymentStatus: PaymentStatus;
+  buyerCountry: string | null;
+  consumerStateCode: string | null;
+}): boolean {
+  return (
+    row.paymentStatus === PaymentStatus.PENDING &&
+    (row.buyerCountry ?? "IN") === "IN" &&
+    row.consumerStateCode === null
+  );
+}
 
 type PayPageRow = NonNullable<Awaited<ReturnType<typeof readPayPageRow>>>;
 
@@ -200,6 +223,9 @@ async function findLiveOrder(row: PayPageRow, now: Date) {
 }
 
 function openState(row: PayPageRow): PayPageState {
+  const savedState = consumerStateCodeSchema.safeParse(
+    row.user.consulteeProfile?.billingStateCode,
+  );
   return {
     kind: "open",
     order: {
@@ -218,6 +244,11 @@ function openState(row: PayPageRow): PayPageState {
       expiresAt: row.expiresAt,
     },
     doneHref: detailHref(row),
+    needsBuyerState: payNeedsBuyerState(row),
+    taxContext: {
+      billingStateCode: savedState.success ? savedState.data : null,
+      isInternational: (row.buyerCountry ?? "IN") !== "IN",
+    },
   };
 }
 
