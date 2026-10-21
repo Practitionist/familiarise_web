@@ -11,7 +11,8 @@ jest.mock("../../lib/auth/reauth-client", () => ({
   fetchWithReauth: (...args: unknown[]) => mockPost(...args),
 }));
 
-import { CaseResolutionPanel } from "../../components/support/CaseResolutionPanel";
+import { StaffCaseResolution } from "../../components/support/resolution/StaffCaseResolution";
+import { supportKeys } from "../../lib/support/support-keys";
 
 const resolution = {
   decisions: [],
@@ -83,22 +84,24 @@ it("shows a 202 refund as awaiting another admin, with a link to approvals", asy
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
-  client.setQueryData(["support-case-resolution", "case_1"], resolution);
+  client.setQueryData(supportKeys.resolution("case_1"), resolution);
+  client.setQueryData(supportKeys.workspace("case_1"), {
+    updatedAt: resolution.updatedAt,
+  });
   const { unmount } = render(
     <QueryClientProvider client={client}>
-      <CaseResolutionPanel caseId="case_1" />
+      <StaffCaseResolution caseId="case_1" basePath="/dashboard/admin" />
     </QueryClientProvider>,
   );
   fireEvent.click(screen.getByText("Financial review"));
-  expect(screen.getByRole("button", { name: "Review refund" })).toBeDisabled();
-  fireEvent.change(screen.getByLabelText("Action reason"), {
-    target: { value: "Session not delivered" },
-  });
   fireEvent.click(screen.getByRole("button", { name: "Review refund" }));
   await screen.findByRole("alertdialog", { name: "Review refund" });
-  fireEvent.click(
-    screen.getByRole("button", { name: "Confirm refund review" }),
-  );
+  const confirm = screen.getByRole("button", { name: "Confirm refund review" });
+  expect(confirm).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Refund review reason"), {
+    target: { value: "Session not delivered" },
+  });
+  fireEvent.click(confirm);
 
   const pending = await screen.findByRole("status");
   expect(pending).toHaveTextContent("Waiting for another admin’s approval");
@@ -112,5 +115,39 @@ it("shows a 202 refund as awaiting another admin, with a link to approvals", asy
   expect(mockToast).not.toHaveBeenCalledWith({ title: "Case updated" });
   expect(mockPost).toHaveBeenCalledTimes(1);
   unmount();
+  client.clear();
+});
+
+it("keeps a hold reason out of the refund recommendation", async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  });
+  client.setQueryData(supportKeys.resolution("case_1"), resolution);
+  render(
+    <QueryClientProvider client={client}>
+      <StaffCaseResolution
+        caseId="case_1"
+        paymentId="pay_1"
+        basePath="/dashboard/admin"
+      />
+    </QueryClientProvider>,
+  );
+  fireEvent.click(screen.getByText("Financial review"));
+  fireEvent.click(screen.getByRole("button", { name: "Hold payment" }));
+  fireEvent.change(screen.getByLabelText("Reason: Hold payment"), {
+    target: { value: "Chargeback opened" },
+  });
+  expect(
+    screen.getByLabelText("Reason for the refund recommendation"),
+  ).toHaveValue("");
+  fireEvent.change(
+    screen.getByLabelText("Reason for the refund recommendation"),
+    {
+      target: { value: "Partial delivery" },
+    },
+  );
+  expect(
+    screen.getByRole("button", { name: "Recommend refund" }),
+  ).toBeDisabled();
   client.clear();
 });

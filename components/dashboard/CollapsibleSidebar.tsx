@@ -332,8 +332,7 @@ export function CollapsibleSidebar({
 
         <nav
           aria-label="Dashboard"
-          tabIndex={0}
-          className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 py-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 py-4"
         >
           <SidebarNavGroups
             groups={groups}

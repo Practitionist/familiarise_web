@@ -6,13 +6,19 @@ export interface RequestStage {
 }
 export function requestStage({
   status,
+  selfServe = false,
 }: {
   status: string | null;
+  /** Still in the guided flow: no person is involved yet, whatever the status. */
+  selfServe?: boolean;
 }): RequestStage {
   if (status === "CLOSED") return { step: 2, settledLabel: "Closed" };
   if (status === "RESOLVED") return { step: 2, settledLabel: "Resolved" };
   return {
-    step: status === "IN_PROGRESS" || status === "ESCALATED" ? 1 : 0,
+    step:
+      !selfServe && (status === "IN_PROGRESS" || status === "ESCALATED")
+        ? 1
+        : 0,
     settledLabel: "Resolved",
   };
 }

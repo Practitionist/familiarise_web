@@ -1,12 +1,8 @@
 "use client";
 
 /**
- * #support-hub — the direct "New request" dialog for PLATFORM tickets. The
- * flowchart intake stays the front door (it resolves most issues without a
- * queue); this is the explicit path for users who already know what they need.
- * Issue types are restricted to the platform taxonomy — session-specific
- * problems belong on the appointment's Get help thread (the server 422s them
- * here anyway, so the UI and API enforce the same line).
+ * The direct "New request" dialog for platform issues. Issue types are limited
+ * to the platform taxonomy; session problems belong on the appointment's Get help.
  */
 
 import { useRef, useState } from "react";
@@ -42,6 +38,7 @@ import {
   SupportRequestError,
   throwSupportError,
 } from "@/lib/support/error-copy";
+import { supportKeys } from "@/lib/support/support-keys";
 import { MemberRole } from "@prisma/client";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { canRaiseAboutOrg } from "@/lib/support/about-org";
@@ -55,17 +52,21 @@ export interface CreateTicketDefaults {
   issueType?: string;
   title?: string;
   description?: string;
-  /** Preselects "About" (#1527), e.g. org Billing's invoice request. */
+  /** Preselects "About", e.g. org Billing's invoice request. */
   organizationId?: string;
   ownershipScope?: SupportCaseOwnership;
 }
 
-interface OrgMembership {
-  organizationId: string;
-  orgName: string;
-  role: string;
-  status: string;
-}
+const Memberships = z.object({
+  data: z.array(
+    z.object({
+      organizationId: z.string(),
+      orgName: z.string(),
+      role: z.string(),
+      status: z.string(),
+    }),
+  ),
+});
 
 /** "About" value for a personal request. */
 const ABOUT_ME = "me";
@@ -114,11 +115,10 @@ export function CreateTicketDialog({
 
   const memberships = useQuery({
     queryKey: ["user-org-memberships"],
-    queryFn: async (): Promise<OrgMembership[]> => {
+    queryFn: async () => {
       const res = await fetch("/api/user/org-memberships");
-      if (!res.ok) return [];
-      const { data } = await res.json();
-      return data;
+      if (!res.ok) await throwSupportError(res, "organization memberships");
+      return Memberships.parse(await res.json()).data;
     },
     enabled: open,
     staleTime: 60_000,
@@ -164,8 +164,8 @@ export function CreateTicketDialog({
           : "Request created",
         description: describeWait(ticket.ackDueAt),
       });
-      void qc.invalidateQueries({ queryKey: ["personal-support-requests"] });
-      void qc.invalidateQueries({ queryKey: ["org-support-tickets"] });
+      void qc.invalidateQueries({ queryKey: supportKeys.requests() });
+      void qc.invalidateQueries({ queryKey: supportKeys.org() });
       clientIntakeId.current = null;
       setOpen(false);
       setIssueType(defaults?.issueType ?? "");
@@ -341,13 +341,9 @@ export function CreateTicketDialog({
             <Label htmlFor="new-ticket-priority">Priority</Label>
             <Select
               value={priority}
-              onValueChange={(v) => {
-                const nextPriority = PRIORITY_BY_VALUE[v] ?? "MEDIUM";
-                setPriority(nextPriority);
-                setCallbackRequested(
-                  nextPriority === "HIGH" || nextPriority === "URGENT",
-                );
-              }}
+              onValueChange={(v) =>
+                setPriority(PRIORITY_BY_VALUE[v] ?? "MEDIUM")
+              }
             >
               <SelectTrigger id="new-ticket-priority">
                 <SelectValue />
@@ -368,7 +364,7 @@ export function CreateTicketDialog({
                 checked={callbackRequested}
                 onChange={(e) => setCallbackRequested(e.target.checked)}
               />
-              <span>Request urgent phone callback</span>
+              <span>Request a phone callback</span>
             </label>
             {callbackRequested && (
               <>

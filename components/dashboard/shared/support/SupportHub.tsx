@@ -16,6 +16,7 @@ import { useListParams } from "@/hooks/useListParams";
 import { useSession } from "@/lib/auth-client";
 import { caseKeyOf } from "@/lib/support/case-key";
 import { throwSupportError } from "@/lib/support/error-copy";
+import { supportKeys } from "@/lib/support/support-keys";
 import { CreateTicketDialog } from "./CreateTicketDialog";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 
@@ -64,6 +65,36 @@ const DATE_TIME = new Intl.DateTimeFormat("en-IN", {
   timeStyle: "short",
 });
 
+type PickerAppointment = z.infer<typeof Appointments>["items"][number];
+
+/** Upcoming occurrences soonest first, then past ones most recent first. */
+export function byRelevantOccurrence(
+  items: PickerAppointment[],
+  now: number,
+): { appointment: PickerAppointment; startsAt: string | undefined }[] {
+  const ranked = items.map((appointment) => {
+    const times = (appointment.occurrences ?? [])
+      .map((o) => new Date(o.startsAt).getTime())
+      .filter((t) => Number.isFinite(t));
+    const upcoming = times.filter((t) => t >= now);
+    const at = upcoming.length > 0 ? Math.min(...upcoming) : Math.max(...times);
+    return {
+      appointment,
+      at: Number.isFinite(at) ? at : null,
+      upcoming: upcoming.length > 0,
+    };
+  });
+  ranked.sort((a, b) => {
+    if (a.at === null || b.at === null) return a.at === null ? 1 : -1;
+    if (a.upcoming !== b.upcoming) return a.upcoming ? -1 : 1;
+    return a.upcoming ? a.at - b.at : b.at - a.at;
+  });
+  return ranked.map(({ appointment, at }) => ({
+    appointment,
+    startsAt: at === null ? undefined : new Date(at).toISOString(),
+  }));
+}
+
 /** One personal inbox; appointment descriptions use booking facts rather than generated summaries. */
 export function SupportHub({
   requestsBase,
@@ -77,13 +108,11 @@ export function SupportHub({
   const context = list.filters.context;
   const status = list.filters.status;
   const query = useQuery({
-    queryKey: [
-      "personal-support-requests",
-      session?.user.id,
-      list.page,
+    queryKey: supportKeys.requestList(session?.user.id, {
+      page: list.page,
       context,
       status,
-    ],
+    }),
     enabled: Boolean(session?.user.id),
     refetchOnMount: "always",
     queryFn: async () => {
@@ -99,12 +128,15 @@ export function SupportHub({
     },
   });
   const appointments = useQuery({
-    queryKey: ["support-appointment-picker", session?.user.id],
+    queryKey: supportKeys.appointmentPicker(session?.user.id),
     enabled: pickAppointment && Boolean(session?.user.id),
     queryFn: async () => {
-      const response = await fetch("/api/appointments?pageSize=8");
+      const response = await fetch("/api/appointments?pageSize=20");
       if (!response.ok) await throwSupportError(response, "appointments load");
-      return Appointments.parse(await response.json()).items;
+      return byRelevantOccurrence(
+        Appointments.parse(await response.json()).items,
+        Date.now(),
+      ).slice(0, 8);
     },
   });
   const requestHref = (id: string) =>
@@ -112,7 +144,7 @@ export function SupportHub({
   let appointmentContent: ReactNode;
   if (!pickAppointment) {
     appointmentContent = null;
-  } else if (appointments.isLoading) {
+  } else if (appointments.isPending) {
     appointmentContent = <Skeleton className="h-20 w-full" />;
   } else if (appointments.isError) {
     appointmentContent = (
@@ -121,17 +153,20 @@ export function SupportHub({
         onRetry={() => void appointments.refetch()}
       />
     );
+  } else if (appointments.data.length === 0) {
+    appointmentContent = (
+      <p className="text-sm text-muted-foreground">No appointments yet.</p>
+    );
   } else {
     appointmentContent = (
       <ul className="divide-y divide-border">
-        {appointments.data?.map((a) => {
+        {appointments.data.map(({ appointment: a, startsAt }) => {
           const title =
             a.consultation?.consultationPlan?.title ??
             a.subscription?.subscriptionPlan?.title ??
             a.webinar?.webinarPlan?.title ??
             a.class?.classPlan?.title ??
             "Appointment";
-          const startsAt = a.occurrences?.[0]?.startsAt;
           return (
             <li
               key={a.id}
@@ -165,7 +200,7 @@ export function SupportHub({
     );
   }
   let requestList: ReactNode;
-  if (query.isLoading) {
+  if (query.isPending) {
     requestList = <Skeleton className="h-40 w-full" />;
   } else if (query.isError) {
     requestList = (
@@ -174,7 +209,7 @@ export function SupportHub({
         onRetry={() => void query.refetch()}
       />
     );
-  } else if (query.data?.data.length === 0) {
+  } else if (query.data.data.length === 0) {
     requestList = (
       <EmptyState
         icon={Inbox}
@@ -189,7 +224,7 @@ export function SupportHub({
   } else {
     requestList = (
       <ul className="divide-y divide-border rounded-lg border border-border">
-        {query.data?.data.map((row) => (
+        {query.data.data.map((row) => (
           <li key={row.id}>
             <Link
               href={requestHref(row.id)}

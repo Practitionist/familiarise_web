@@ -9,14 +9,11 @@ import {
   SupportRequestError,
   throwSupportError,
 } from "@/lib/support/error-copy";
+import { supportKeys } from "@/lib/support/support-keys";
 
 /**
- * #appt-support / #1527 — the per-appointment support conversation: the
- * guided flow's prompts as options, free text, and the hand-off to a person.
- * Moved out of the retired "Get help" drawer so the request PAGE drives the
- * same API with the same behaviour. It only DISPLAYS the actions a resolver
- * requests (e.g. an eligible refund %); execution is a separate
- * server-validated surface, never fired from here.
+ * The per-appointment support conversation: flow options, free text and the
+ * hand-off to a person. Resolver actions are only displayed, never executed here.
  */
 
 export type Sender = "USER" | "BOT" | "AGENT" | "SYSTEM";
@@ -108,9 +105,6 @@ export interface TurnVars {
 let localSeq = 0;
 const nextLocalId = () => `local-${++localSeq}`;
 
-export const supportThreadKey = (appointmentId: string) =>
-  ["support-thread", appointmentId] as const;
-
 /** The one fetcher for this cache entry, so every reader gets one shape. */
 export async function fetchSupportThread(
   appointmentId: string,
@@ -188,7 +182,7 @@ export function describeAction(a: SupportAction): string | null {
       : "Cancelling now is outside the refund window — no refund would apply.";
   }
   if (a.kind === "SHOW_INVOICES") {
-    return "Invoices and GST receipts live on your Payments page.";
+    return "Invoices and GST receipts live on your Billing page.";
   }
   return null;
 }
@@ -217,7 +211,7 @@ export function useSupportThread(
   >({});
   const { toast } = useToast();
   const qc = useQueryClient();
-  const queryKey = supportThreadKey(appointmentId);
+  const queryKey = supportKeys.thread(appointmentId);
 
   // Undo the optimistic bubble. A turn sent before the first GET resolves has
   // NO snapshot to restore, so the pending bubble is filtered out instead.
@@ -473,9 +467,7 @@ export function useSupportThread(
     if (!seedCategory || seeded.current || !data) return;
     const t = data.thread;
     const intent = data.intents.find((i) => i.category === seedCategory);
-    // #1527 — CodeRabbit delta: seed only into a fresh or resolved thread;
-    // an open BOT-only thread was falling through and got re-seeded on
-    // every remount, duplicating the intent turn.
+    // Seed only a fresh or resolved thread, so a remount never repeats the intent turn.
     if ((t && t.status !== "RESOLVED") || !intent) {
       seeded.current = true;
       return;

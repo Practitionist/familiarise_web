@@ -1,14 +1,13 @@
 "use client";
 
-import { useRef, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "@/lib/auth-client";
 import { z } from "zod";
-import { Textarea } from "@/components/ui/textarea";
-import { useToast } from "@/hooks/use-toast";
-import { throwSupportError } from "@/lib/support/error-copy";
+import { AppealAction } from "@/components/support/resolution/AppealAction";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { formatDateLabel } from "@/lib/time/display";
 
 const historySchema = z.object({
   reports: z.array(
@@ -42,44 +41,12 @@ const outcomeLabels = {
 /** Personal reporting receipts and enforcement decisions, without other users' evidence. */
 export function ReportHistory() {
   const { data: session } = useSession();
+  const qc = useQueryClient();
   const [scope, setScope] = useState<"submitted" | "decisions">("submitted");
   const [page, setPage] = useState(1);
-  const [appealing, setAppealing] = useState<string | null>(null);
-  const [appealReason, setAppealReason] = useState("");
-  const [sending, setSending] = useState(false);
-  const appealId = useRef<string | null>(null);
-  const { toast } = useToast();
-  const sendAppeal = async () => {
-    if (!appealing || !appealReason.trim() || sending) return;
-    setSending(true);
-    appealId.current ??= crypto.randomUUID();
-    try {
-      const response = await fetch("/api/support/appeals", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          moderationActionId: appealing,
-          reason: appealReason.trim(),
-          clientIntakeId: appealId.current,
-        }),
-      });
-      if (!response.ok) await throwSupportError(response, "appeal submission");
-      setAppealing(null);
-      setAppealReason("");
-      appealId.current = null;
-      toast({ title: "Appeal submitted for independent review" });
-    } catch (error) {
-      toast({
-        title: "Appeal was not submitted",
-        description: error instanceof Error ? error.message : undefined,
-        variant: "destructive",
-      });
-    } finally {
-      setSending(false);
-    }
-  };
+  const queryKey = ["personal-report-history", session?.user.id, scope, page];
   const query = useQuery({
-    queryKey: ["personal-report-history", session?.user.id, scope, page],
+    queryKey,
     enabled: Boolean(session?.user.id),
     queryFn: async () => {
       const response = await fetch(
@@ -91,7 +58,7 @@ export function ReportHistory() {
   });
 
   let history: ReactNode;
-  if (query.isLoading) {
+  if (query.isPending) {
     history = <p>Loading report history…</p>;
   } else if (query.isError) {
     history = (
@@ -102,7 +69,7 @@ export function ReportHistory() {
         </Button>
       </div>
     );
-  } else if (query.data?.reports.length === 0) {
+  } else if (query.data.reports.length === 0) {
     history = (
       <p className="text-sm text-muted-foreground">
         {scope === "submitted"
@@ -113,33 +80,52 @@ export function ReportHistory() {
   } else {
     history = (
       <ul className="divide-y">
-        {query.data?.reports.map((report) => (
-          <li
-            key={report.reportId}
-            className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm"
-          >
-            <span className="font-medium">{report.reference}</span>
-            <span>{new Date(report.createdAt).toLocaleDateString()}</span>
-            <span>{outcomeLabels[report.outcome]}</span>
+        {query.data.reports.map((report) => (
+          <li key={report.reportId} className="space-y-2 py-3 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-medium">{report.reference}</span>
+              <span>{formatDateLabel(new Date(report.createdAt))}</span>
+              <span>{outcomeLabels[report.outcome]}</span>
+            </div>
             {report.moderationActionId &&
               report.appealUntil &&
               new Date(report.appealUntil).getTime() >= Date.now() && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setAppealing(report.moderationActionId ?? null);
-                    appealId.current = null;
-                  }}
-                >
-                  Appeal decision
-                </Button>
+                <AppealAction
+                  target={{ moderationActionId: report.moderationActionId }}
+                  onSubmitted={() => void qc.invalidateQueries({ queryKey })}
+                />
               )}
           </li>
         ))}
       </ul>
     );
   }
+  const panel = (
+    <>
+      {history}
+      {query.data && query.data.pagination.totalPages > 1 && (
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            disabled={page === 1}
+            onClick={() => setPage(page - 1)}
+          >
+            Previous
+          </Button>
+          <span className="text-sm">
+            Page {page} of {query.data.pagination.totalPages}
+          </span>
+          <Button
+            variant="outline"
+            disabled={page >= query.data.pagination.totalPages}
+            onClick={() => setPage(page + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      )}
+    </>
+  );
   return (
     <Tabs
       value={scope}
@@ -152,61 +138,11 @@ export function ReportHistory() {
         <TabsTrigger value="submitted">Your reports</TabsTrigger>
         <TabsTrigger value="decisions">Decisions affecting you</TabsTrigger>
       </TabsList>
-      <TabsContent value={scope} className="space-y-4">
-        {history}
-        {appealing && (
-          <div className="space-y-2">
-            <label htmlFor="moderation-appeal-reason">
-              Why should this decision be reviewed?
-            </label>
-            <Textarea
-              id="moderation-appeal-reason"
-              maxLength={10000}
-              value={appealReason}
-              onChange={(event) => {
-                setAppealReason(event.target.value);
-                appealId.current = null;
-              }}
-              disabled={sending}
-            />
-            <div className="flex gap-2">
-              <Button
-                disabled={sending || !appealReason.trim()}
-                onClick={() => void sendAppeal()}
-              >
-                {sending ? "Submitting…" : "Submit appeal"}
-              </Button>
-              <Button
-                variant="ghost"
-                disabled={sending}
-                onClick={() => setAppealing(null)}
-              >
-                Cancel
-              </Button>
-            </div>
-          </div>
-        )}
-        {query.data && query.data.pagination.totalPages > 1 && (
-          <div className="flex items-center gap-3">
-            <Button
-              variant="outline"
-              disabled={page === 1}
-              onClick={() => setPage(page - 1)}
-            >
-              Previous
-            </Button>
-            <span className="text-sm">
-              Page {page} of {query.data.pagination.totalPages}
-            </span>
-            <Button
-              variant="outline"
-              disabled={page >= query.data.pagination.totalPages}
-              onClick={() => setPage(page + 1)}
-            >
-              Next
-            </Button>
-          </div>
-        )}
+      <TabsContent value="submitted" className="space-y-4">
+        {scope === "submitted" && panel}
+      </TabsContent>
+      <TabsContent value="decisions" className="space-y-4">
+        {scope === "decisions" && panel}
       </TabsContent>
     </Tabs>
   );

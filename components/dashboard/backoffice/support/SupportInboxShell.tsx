@@ -29,6 +29,7 @@ import { cn } from "@/utils/tailwind";
 
 import { CaseList } from "./CaseList";
 import { StaffSupportComposeDialog } from "./StaffSupportComposeDialog";
+import { supportKeys } from "@/lib/support/support-keys";
 
 const ANY = "any";
 const withAny = (
@@ -47,7 +48,7 @@ function StatsLine({
   className,
 }: Readonly<{ basePath: string; className?: string }>) {
   const stats = useQuery({
-    queryKey: ["support-inbox-stats"],
+    queryKey: supportKeys.inboxStats(),
     queryFn: async (): Promise<InboxStats> => {
       const res = await fetch("/api/staff/support-inbox/stats");
       if (!res.ok) throw new Error("Couldn't load the team stats");
@@ -121,7 +122,7 @@ export function SupportInboxShell({
               variant="outline"
               onClick={() => setComposeOpen(true)}
             >
-              <Plus className="mr-1 h-4 w-4" /> New Outbound Ticket
+              <Plus className="mr-1 h-4 w-4" /> New outbound request
             </Button>
           </div>
         }
