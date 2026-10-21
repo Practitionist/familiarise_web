@@ -10,6 +10,7 @@ import { passkey } from "@better-auth/passkey";
 import bcrypt from "bcrypt";
 import prisma from "@/lib/prisma";
 import { scheduleAfter } from "@/lib/api/after-safe";
+import { trustedClientIpHeaders } from "@/lib/request-ip";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { assertSsoSessionAllowed } from "@/lib/sso/enforce-session";
 import {
@@ -350,16 +351,10 @@ export const auth = betterAuth({
       httpOnly: true,
     },
     ipAddress: {
-      // The rate-limit key and the session's recorded IP. Most-trusted
-      // first: `x-nf-client-connection-ip` is set by Netlify and cannot be
-      // forged by a client. The fallbacks only matter off Netlify, and
-      // BetterAuth ignores a multi-hop `x-forwarded-for` (no trustedProxies),
-      // so a client cannot pick its own key by prepending addresses.
-      ipAddressHeaders: [
-        "x-nf-client-connection-ip",
-        "x-vercel-forwarded-for",
-        "x-forwarded-for",
-      ],
+      // The rate-limit key and the session's recorded IP, read only from the
+      // header this runtime's edge sets. BetterAuth ignores a multi-hop
+      // `x-forwarded-for` (no trustedProxies), so a client cannot pick its key.
+      ipAddressHeaders: trustedClientIpHeaders(),
       // Key IPv6 on the /64. One host usually owns a whole /64, so per-address
       // keys would let it rotate through 2^64 buckets.
       ipv6Subnet: 64,

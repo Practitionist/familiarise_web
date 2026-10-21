@@ -20,6 +20,7 @@ import { SupportThreadCategoryEnum } from "@/schemas/enums";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import { assertBodySize } from "@/lib/validation/limits";
 import { stripCallbackTags } from "@/lib/validation/phone";
+import { applyRateLimit, supportTurnLimiter } from "@/lib/rate-limit";
 import {
   authorizeAppointment,
   appointmentAuthzError,
@@ -70,11 +71,34 @@ export async function GET(
         deletedAt: null,
       },
       orderBy: { createdAt: "desc" },
-      include: {
+      select: {
+        id: true,
+        referenceNumber: true,
+        status: true,
+        activeChannel: true,
+        category: true,
+        flowKey: true,
+        currentNodeId: true,
+        requesterUserId: true,
+        ackDueAt: true,
+        resolvedAt: true,
+        csatRating: true,
+        csatAt: true,
+        lastMessageAt: true,
+        createdAt: true,
+        updatedAt: true,
         messages: {
           where: { isInternal: false },
           orderBy: { seq: "asc" },
           take: -201,
+          select: {
+            id: true,
+            seq: true,
+            sender: true,
+            body: true,
+            metadata: true,
+            createdAt: true,
+          },
         },
       },
     });
@@ -169,6 +193,12 @@ export async function POST(
         route: SUPPORT_ROUTE,
         appointmentId,
       });
+
+    const limited = await applyRateLimit(
+      supportTurnLimiter,
+      `appt-turn:${auth.userId}`,
+    );
+    if (limited) return limited;
 
     const tooLarge = assertBodySize(req);
     if (tooLarge) return tooLarge;
