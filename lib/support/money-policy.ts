@@ -113,7 +113,7 @@ export async function assertBoundedRefund(
 export async function lockStaffRefunds(
   actor: MoneyActor,
 ): Promise<() => Promise<void>> {
-  if (actor.role !== "STAFF") return async () => undefined;
+  if (actor.role !== "STAFF") return () => Promise.resolve();
   const key = `staff-refund:${actor.userId}`;
   const token = await acquireLock(key, STAFF_REFUND_LOCK_TTL_MS);
   if (!token)

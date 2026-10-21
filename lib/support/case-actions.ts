@@ -594,7 +594,7 @@ type ActionInput<Action extends CaseAction["action"]> = Extract<
   { action: Action }
 >;
 
-async function replayCaseActionTx(tx: Tx, caseId: string, input: CaseAction) {
+function replayCaseActionTx(tx: Tx, caseId: string, input: CaseAction) {
   const where = {
     caseId_clientActionId: { caseId, clientActionId: input.clientActionId },
   };
@@ -929,13 +929,7 @@ async function reviewRefundTx(
         "This recommendation already has a decision.",
       );
     if (input.approve && !isLiveRefund(recommendation.refund))
-      await assertRefundExecutable(
-        tx,
-        caseId,
-        actor,
-        recommendation,
-        input.expectedRefundablePaise,
-      );
+      await claimRefundRetry(tx, caseId, actor, recommendation, input);
     return recommendation;
   }
   if (input.approve)
@@ -978,6 +972,51 @@ async function reviewRefundTx(
   };
 }
 
+/**
+ * A retry of an approval whose refund failed or never started. It locks the
+ * row against a concurrent void and leaves a RETRIED event the void honours
+ * for the send grace, since the refund itself is sent after this commits.
+ */
+async function claimRefundRetry(
+  tx: Tx,
+  caseId: string,
+  actor: CaseActor,
+  recommendation: {
+    id: string;
+    paymentId: string;
+    amountPaise: number | bigint;
+    proposedById: string;
+  },
+  input: ActionInput<"REVIEW_REFUND">,
+) {
+  await assertRefundExecutable(
+    tx,
+    caseId,
+    actor,
+    recommendation,
+    input.expectedRefundablePaise,
+  );
+  const claimed = await tx.supportFinancialRecommendation.updateMany({
+    where: { id: recommendation.id, approved: true, voidedAt: null },
+    data: { decisionReason: input.reason },
+  });
+  if (!claimed.count)
+    throw new CaseActionError(
+      "ALREADY_DECIDED",
+      "This recommendation was voided; it cannot be retried.",
+    );
+  await caseEvent(
+    tx,
+    caseId,
+    actor.userId,
+    "RECOMMENDATION_DECIDED",
+    recommendation.id,
+    RETRIED,
+  );
+}
+
+const RETRIED = "RETRIED";
+
 /** Withdraws an approval whose refund never went live, so the case can move on. */
 async function voidRecommendationTx(
   tx: Tx,
@@ -986,20 +1025,11 @@ async function voidRecommendationTx(
   input: ActionInput<"VOID_RECOMMENDATION">,
 ) {
   const voidedAt = new Date();
-  // An unlinked approval may still be sending its refund; its keyed reservation
-  // or the send grace window says so.
-  const sending = await tx.refund.findFirst({
-    where: {
-      dedupeKey: `case-recommendation:${input.recommendationId}`,
-      status: { in: ["PENDING", "SUCCEEDED"] },
-    },
-    select: { id: true },
-  });
-  if (sending)
-    throw new CaseActionError(
-      "NOT_VOIDABLE",
-      "A refund for this recommendation is pending or sent; it cannot be voided.",
-    );
+  const graceStart = new Date(
+    voidedAt.getTime() - SUPPORT_REFUND_SEND_GRACE_MS,
+  );
+  // The CAS takes the row lock first, so a concurrent retry either commits
+  // before the checks below read it or finds the row voided.
   const voided = await tx.supportFinancialRecommendation.updateMany({
     where: {
       id: input.recommendationId,
@@ -1007,17 +1037,36 @@ async function voidRecommendationTx(
       approved: true,
       voidedAt: null,
       OR: [
-        {
-          refundId: null,
-          decidedAt: {
-            lte: new Date(voidedAt.getTime() - SUPPORT_REFUND_SEND_GRACE_MS),
-          },
-        },
+        { refundId: null, decidedAt: { lte: graceStart } },
         { refund: { status: { in: ["FAILED", "CANCELLED"] } } },
       ],
     },
     data: { approved: false, voidedAt, voidedById: actor.userId },
   });
+  if (voided.count) {
+    const sending = await tx.refund.findFirst({
+      where: {
+        dedupeKey: `case-recommendation:${input.recommendationId}`,
+        status: { in: ["PENDING", "SUCCEEDED"] },
+      },
+      select: { id: true },
+    });
+    const retried = await tx.supportCaseEvent.findFirst({
+      where: {
+        caseId,
+        kind: "RECOMMENDATION_DECIDED",
+        toValue: input.recommendationId,
+        note: RETRIED,
+        createdAt: { gte: graceStart },
+      },
+      select: { id: true },
+    });
+    if (sending || retried)
+      throw new CaseActionError(
+        "NOT_VOIDABLE",
+        "A refund for this recommendation is pending, sent or being retried; it cannot be voided.",
+      );
+  }
   const recommendation = await tx.supportFinancialRecommendation.findFirst({
     where: { id: input.recommendationId, caseId },
   });

@@ -70,6 +70,12 @@ jest.mock("../../lib/prisma", () => {
     supportCaseDecision: { findUnique: jest.fn() },
     moderationAction: { findUnique: jest.fn() },
     supportCaseEvent: {
+      findFirst: jest.fn(
+        async ({ where }: { where: Where }) =>
+          mockStore.events.find((e) =>
+            mockMatches(e, { ...where, createdAt: undefined }),
+          ) ?? null,
+      ),
       create: jest.fn(async ({ data }: { data: Row }) => {
         mockStore.events.push(data);
         return { id: `evt-${mockStore.events.length}`, ...data };
@@ -377,7 +383,18 @@ describe("refund execution correctness", () => {
     ];
     const retried = await performCaseAction("case-1", admin, review(true));
     expect(retried).toMatchObject({ movedPaise: 300_000 });
-    expect(db.supportFinancialRecommendation.updateMany).not.toHaveBeenCalled();
+    expect(db.supportFinancialRecommendation.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "rec-1", approved: true, voidedAt: null },
+      }),
+    );
+    expect(mockStore.events).toContainEqual(
+      expect.objectContaining({
+        kind: "RECOMMENDATION_DECIDED",
+        toValue: "rec-1",
+        note: "RETRIED",
+      }),
+    );
     expect(
       await priceCaseRefundReview(db as never, "case-1", admin, {
         recommendationId: "rec-1",
@@ -464,7 +481,12 @@ describe("refund execution correctness", () => {
       performCaseAction("case-1", admin, voidAction),
     ).rejects.toMatchObject({ code: "NOT_VOIDABLE" });
 
-    mockStore.recommendations[0].decidedAt = new Date(Date.now() - 3_600_000);
+    const stale = () =>
+      recommendation({
+        decidedAt: new Date(Date.now() - 3_600_000),
+        approved: true,
+      });
+    mockStore.recommendations = [stale()];
     mockStore.keyedRefund = { id: "refund-reserved" };
     await expect(
       performCaseAction("case-1", admin, voidAction),
@@ -477,9 +499,44 @@ describe("refund execution correctness", () => {
       }),
     );
 
+    mockStore.recommendations = [stale()];
     mockStore.keyedRefund = null;
     await performCaseAction("case-1", admin, voidAction);
     expect(mockStore.recommendations[0]).toMatchObject({ approved: false });
+  });
+
+  it("keeps a void and a retry of the same failed refund mutually exclusive", async () => {
+    const failed = () =>
+      recommendation({
+        decidedAt: new Date(Date.now() - 3_600_000),
+        approved: true,
+        refundId: "refund-0",
+        refund: { id: "refund-0", status: "FAILED" },
+      });
+    mockStore.recommendations = [failed()];
+    await performCaseAction("case-1", admin, review(true));
+    expect(refundBookingPayment).toHaveBeenCalledTimes(1);
+
+    mockStore.recommendations = [failed()];
+    await expect(
+      performCaseAction("case-1", admin, {
+        action: "VOID_RECOMMENDATION",
+        clientActionId: "void-1",
+        expectedUpdatedAt: caseUpdatedAt.toISOString(),
+        recommendationId: "rec-1",
+        reason: "Refunding by bank transfer instead",
+      }),
+    ).rejects.toMatchObject({ code: "NOT_VOIDABLE" });
+
+    mockStore.events = [];
+    mockStore.recommendations = [failed()];
+    db.supportFinancialRecommendation.updateMany.mockResolvedValueOnce({
+      count: 0,
+    });
+    await expect(
+      performCaseAction("case-1", admin, review(true)),
+    ).rejects.toMatchObject({ code: "ALREADY_DECIDED" });
+    expect(refundBookingPayment).toHaveBeenCalledTimes(1);
   });
 
   it("allows one open recommendation per payment and keeps the seat by default", async () => {

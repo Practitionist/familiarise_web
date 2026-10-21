@@ -68,7 +68,7 @@ export const reviewSupportRefundDoor = withOpsAction(
       };
       const release = body.approve
         ? await lockStaffRefunds(reviewer)
-        : async () => undefined;
+        : () => Promise.resolve();
       const data = await performCaseAction(caseId, reviewer, body).catch(
         async (error: unknown) => {
           await release();

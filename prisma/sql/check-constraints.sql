@@ -1315,7 +1315,7 @@ ALTER TABLE "SupportFinancialRecommendation" ADD CONSTRAINT "support_recommendat
   CHECK ("amountPaise" >= 0 AND (("decidedAt" IS NULL AND "approved" IS NULL AND "decidedById" IS NULL)
     OR ("decidedAt" IS NOT NULL AND "approved" IS NOT NULL AND "decidedById" IS NOT NULL))
     AND (("voidedAt" IS NULL AND "voidedById" IS NULL)
-      OR ("voidedAt" IS NOT NULL AND "voidedById" IS NOT NULL AND "decidedAt" IS NOT NULL AND "approved" = false)));
+      OR ("voidedAt" IS NOT NULL AND "voidedById" IS NOT NULL AND "decidedAt" IS NOT NULL AND NOT "approved")));
 
 -- SPLIT
 -- One undecided support refund recommendation per payment.

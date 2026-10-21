@@ -1,4 +1,3 @@
-import type { UserRole } from "@prisma/client";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 
@@ -14,6 +13,7 @@ import {
 import {
   assertBoundedRefund,
   lockStaffRefunds,
+  type RefundCharge,
 } from "@/lib/support/money-policy";
 import { CancellationReasonEnum } from "@/schemas/enums";
 import { UserRoleEnum } from "@/schemas/user";
@@ -54,35 +54,39 @@ export const POST = withOpsAction(
         role: UserRoleEnum.parse(actor.role),
       };
       const release = await lockStaffRefunds(operator);
-      try {
-        return await cancelUnderGrant(
-          operator,
-          appointmentId,
-          body,
-          opsActionId,
-          release,
-        );
-      } catch (error) {
-        await release();
-        throw error;
-      }
+      const charges = await platformCancelCharges(
+        appointmentId,
+        body.expectedRefundPaise,
+      )
+        .then(async (priced) => {
+          await assertBoundedRefund(prisma, operator, priced);
+          return priced;
+        })
+        .catch(async (error: unknown) => {
+          await release();
+          throw error;
+        });
+      // Once the cancel route ran, money may have moved: an unknown outcome
+      // keeps the lock to its TTL rather than let another refund pass uncounted.
+      return cancelUnderGrant(
+        appointmentId,
+        body,
+        charges,
+        opsActionId,
+        release,
+      );
     },
   },
   { stepUp: true },
 );
 
 async function cancelUnderGrant(
-  operator: { userId: string; role: UserRole },
   appointmentId: string,
   body: z.infer<typeof Body>,
+  charges: RefundCharge[],
   opsActionId: string,
   release: () => Promise<void>,
 ) {
-  const charges = await platformCancelCharges(
-    appointmentId,
-    body.expectedRefundPaise,
-  );
-  await assertBoundedRefund(prisma, operator, charges);
   const request = new NextRequest(
     `https://internal.invalid/api/appointments/${appointmentId}/cancel`,
     {
@@ -102,6 +106,8 @@ async function cancelUnderGrant(
   });
   const payload: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
+    // A 4xx refusal is decided before the cancel commits; a 5xx outcome is unknown.
+    if (response.status < 500) await release();
     const refusal = CancelRefusal.safeParse(payload);
     throw new OpsRefusal(
       (refusal.success && refusal.data.code) || "CANCEL_REFUSED",

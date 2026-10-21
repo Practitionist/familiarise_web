@@ -349,6 +349,16 @@ describe("platform cancel door", () => {
     const response = await cancel(100_000);
     expect(response.status).toBe(409);
     expect((await response.json()).code).toBe("REFUND_QUOTE_CHANGED");
+    expect(mockLocks.size).toBe(0);
+  });
+
+  it("keeps the staff lock to its TTL when the cancel outcome is unknown", async () => {
+    mockCancel.mockResolvedValueOnce(
+      NextResponse.json({ error: "boom" }, { status: 500 }),
+    );
+    expect((await cancel(100_000)).status).toBe(500);
+    expect(mockLocks.has("staff-refund:staff-1")).toBe(true);
+    expect(mockReleases).not.toHaveBeenCalled();
   });
 
   it("serializes one staff member's refunds so parallel requests cannot each pass the rolling limit", async () => {

@@ -289,3 +289,45 @@ it("releases every case hold, restoring status but never another owner's hold", 
     }),
   ).toBe(0);
 });
+
+it("refuses when an earning stays batched in a payout it could not cancel", async () => {
+  const { store, tx, payout } = world();
+  store.consultant.push({
+    id: "ce-1",
+    paymentId: "pay-1",
+    status: "BATCHED",
+    payoutId: "po-1",
+    payout: payout("po-1", "COMPLETED"),
+  });
+  await expect(
+    holdPaymentForCase(tx, { caseId: "case-1", paymentId: "pay-1", note: "x" }),
+  ).rejects.toMatchObject({ code: "PAYOUT_IN_FLIGHT" });
+  expect(store.holds).toHaveLength(0);
+});
+
+it("maps an earning that keeps moving under the hold to EARNING_CHANGED", async () => {
+  const { store, tx, raw } = world();
+  store.consultant.push({ id: "ce-1", paymentId: "pay-1", status: "READY" });
+  raw.consultantEarnings.updateMany.mockImplementation(async () => ({
+    count: 0,
+  }));
+  await expect(
+    holdPaymentForCase(tx, { caseId: "case-1", paymentId: "pay-1", note: "x" }),
+  ).rejects.toMatchObject({ code: "EARNING_CHANGED" });
+  expect(store.holds).toHaveLength(0);
+});
+
+it("places each earning's case hold once when the hold is applied again", async () => {
+  const { store, tx } = world();
+  store.consultant.push({ id: "ce-1", paymentId: "pay-1", status: "READY" });
+  store.org.push({ id: "oe-1", paymentId: "pay-1", status: "PENDING" });
+  const input = { caseId: "case-1", paymentId: "pay-1", note: "x" };
+  await holdPaymentForCase(tx, input);
+  await holdPaymentForCase(tx, input);
+  expect(store.holds).toHaveLength(2);
+  expect(store.activeReasons("ce-1")).toEqual(["SUPPORT_CASE"]);
+  expect(store.consultant[0]).toMatchObject({
+    status: "HELD",
+    preHoldStatus: "READY",
+  });
+});
