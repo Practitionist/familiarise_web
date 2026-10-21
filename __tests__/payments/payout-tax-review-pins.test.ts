@@ -16,6 +16,16 @@ jest.mock("../../lib/payments/ledger/post", () => ({
 
 const mockCreditNoteFindMany = jest.fn();
 const mockConsumerNoteFindMany = jest.fn();
+// The register refuses to write without the platform's own supplier identity;
+// here it is configured, so the run proceeds.
+jest.mock("../../lib/pdf/supplier", () => ({
+  getPlatformSupplier: () => ({
+    name: "Familiarise Technologies Private Limited",
+    gstin: "29AAFCF1234Q1ZN",
+    address: "Koramangala 1st Block, Bangalore, Karnataka 560034, India",
+    email: "billing@familiarise.test",
+  }),
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -46,6 +56,9 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
   mintConsumerInvoice: jest.fn(),
+}));
+jest.mock("../../lib/storage/private-finance-object", () => ({
+  uploadPrivateFinanceObject: jest.fn().mockResolvedValue(undefined),
 }));
 
 import { RefundStatus } from "@prisma/client";
@@ -139,7 +152,7 @@ it("keeps commercial credit notes out of the GSTR-1 register", async () => {
   const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
   jest.spyOn(console, "log").mockImplementation(() => {});
 
-  await runGstOutwardRegisterExport({ writeCsv: false });
+  await runGstOutwardRegisterExport({ limit: 25 });
 
   for (const findMany of [mockCreditNoteFindMany, mockConsumerNoteFindMany]) {
     expect(findMany.mock.calls[0][0].where).toMatchObject({

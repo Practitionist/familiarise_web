@@ -16,7 +16,7 @@ When a learner pays for a session, the platform keeps its share and records the 
 
 An expert who does not want to wait for Monday can use **Get paid now** on the Earnings page. It pays out the expert's READY earnings at once, free of charge, at most once a day. An instant payout of up to ₹25,000 is approved and sent immediately, and a larger one joins the admin approval queue (`INSTANT_PAYOUT_AUTO_APPROVE_PAISE`).
 
-Sometimes the bank's answer never arrives, for example because the request to RazorpayX timed out. Since #1853, such a payout is never marked FAILED on a guess, because the money might already have left and a second payout would pay the expert twice. The payout stays PROCESSING, and every four hours the `handle-stuck-payouts` job asks RazorpayX about it using our own payout id as the reference. If RazorpayX has the payout, the job records the outcome; if RazorpayX has no record of it, the job retries it safely under the same idempotency key; and if the answer is unclear, an operator is alerted.
+Sometimes the bank's answer never arrives, for example because the request to RazorpayX timed out. Since #1853, such a payout is never marked FAILED on a guess, because the money might already have left and a second payout would pay the expert twice. The payout stays PROCESSING, and every two hours the `handle-stuck-payouts` job asks RazorpayX about it using our own payout id as the reference. If RazorpayX has the payout, the job records the outcome; if RazorpayX has no record of it, the job retries it safely under the same idempotency key; and if the answer is unclear, an operator is alerted.
 
 ## Organisation payouts
 

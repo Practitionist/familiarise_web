@@ -278,7 +278,7 @@ between "rots in a table" and "wakes someone".
 
 ```mermaid
 flowchart TD
-  CS["emitter callsites:<br/>scripts/reconcile/ledger-drift-response.ts<br/>jobs/payouts/handle-stuck-payouts.ts<br/>jobs/cleanup/dispatch-outbound-webhooks.ts<br/>app/api/webhooks/razorpay/route.ts<br/>+ refund / reversal / earnings services"]
+  CS["emitter callsites:<br/>scripts/reconcile/ledger-drift-response.ts<br/>scripts/payouts/handle-stuck-payouts.ts<br/>jobs/cleanup/dispatch-outbound-webhooks.ts<br/>app/api/webhooks/razorpay/route.ts<br/>+ refund / reversal / earnings services"]
   CS --> REC["recordSystemEvent /<br/>recordSystemError<br/>(lib/enterprise/system-events.ts)"]
   REC --> DB[("SystemEvent row<br/>(source of truth,<br/>always written)")]
   REC --> GATE{ENABLE_BETTERSTACK_<br/>TELEMETRY === true<br/>+ token & URL set?}
@@ -307,7 +307,7 @@ ingest outage never blocks the caller.
 
 Wired page-worthy callsites: failed/crashed ledger reconcile
 (`scripts/reconcile/ledger-drift-response.ts`, called by the `reconcile-ledgers` twin), permanently-failed payouts
-(`jobs/payouts/handle-stuck-payouts.ts`), outbound webhook queue backlog
+(`scripts/payouts/handle-stuck-payouts.ts`), outbound webhook queue backlog
 (`jobs/cleanup/dispatch-outbound-webhooks.ts`), and inbound HMAC verification
 failures (`app/api/webhooks/razorpay/route.ts`). This is distinct from
 `lib/betterstack.ts`, which drives the Uptime/Incident-Management API for

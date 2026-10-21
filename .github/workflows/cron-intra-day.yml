@@ -9,9 +9,7 @@ on:
     - cron: "25,55 * * * *"
     # Hourly: DPDP breach deadline alerts, occurrence availability
     - cron: "17 * * * *"
-    # Every 4 hours: stuck payout recovery
-    - cron: "52 */4 * * *"
-    # Every 6 hours: payout status sync, recording copy to R2
+    # Every 6 hours: recording copy to R2
     - cron: "33 */6 * * *"
   workflow_dispatch:
     inputs:
@@ -83,7 +81,7 @@ jobs:
           INPUT_JOB: ${{ inputs.job }}
         run: |
           case "${INPUT_JOB}" in
-            ""|all|reconcile-orphaned-sessions|databreach-deadline-alerts|reconcile-occurrence-availability|handle-stuck-payouts|reconcile-payout-status|transfer-recordings)
+            ""|all|reconcile-orphaned-sessions|databreach-deadline-alerts|reconcile-occurrence-availability|transfer-recordings)
               ;;
             *)
               echo "::error::Unknown intra-day job slug '${INPUT_JOB}'"
@@ -118,24 +116,6 @@ jobs:
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/appointments/reconcile-occurrence-availability.ts
 
-      - name: Handle stuck payouts
-        id: handle-stuck-payouts
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '52 */4 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'handle-stuck-payouts'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/payouts/handle-stuck-payouts.ts
-
-      - name: Reconcile payout status
-        id: reconcile-payout-status
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '33 */6 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'reconcile-payout-status'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/payouts/reconcile-payout-status.ts
-
       - name: Transfer recordings
         id: transfer-recordings
         if: >-
@@ -158,8 +138,6 @@ jobs:
             "reconcile-orphaned-sessions:${{ steps.reconcile-orphaned-sessions.outcome }}" \
             "databreach-deadline-alerts:${{ steps.databreach-deadline-alerts.outcome }}" \
             "reconcile-occurrence-availability:${{ steps.reconcile-occurrence-availability.outcome }}" \
-            "handle-stuck-payouts:${{ steps.handle-stuck-payouts.outcome }}" \
-            "reconcile-payout-status:${{ steps.reconcile-payout-status.outcome }}" \
             "transfer-recordings:${{ steps.transfer-recordings.outcome }}"
           do
             job_name="${entry%%:*}"

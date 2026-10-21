@@ -154,6 +154,7 @@ const db = {
     async (fn: (tx: unknown) => unknown): Promise<unknown> => fn(db),
   ),
   $disconnect: jest.fn(),
+  $executeRaw: jest.fn(async () => 0),
 };
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,

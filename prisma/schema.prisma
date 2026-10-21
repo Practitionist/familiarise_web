@@ -2353,6 +2353,9 @@ model OrganizationPayout {
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
+  /// Last gateway poll by a payout reconciler; written by raw SQL so `updatedAt` aging is untouched.
+  lastReconciledAt DateTime? @db.Timestamptz
+
   @@index([organizationId, status])
   @@index([periodStart, periodEnd])
   // CR #1240 — keyset pagination for the payouts CSV export walks
@@ -6366,6 +6369,9 @@ model ConsultantPayout {
   // A6/A7/PM-16 — Timestamptz on the money models (#676).
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
+
+  /// Last gateway poll by a payout reconciler; written by raw SQL so `updatedAt` aging is untouched.
+  lastReconciledAt DateTime? @db.Timestamptz
 
   /// The destination snapshotted at mint; processing sends to exactly this account.
   payoutAccountId String?

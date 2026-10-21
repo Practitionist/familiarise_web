@@ -116,7 +116,8 @@ npx tsx jobs/cleanup/reconcile-document-storage.ts
 
 ```bash
 # Only run if maintenance overlapped with payout processing (Monday 8-10 PM UTC)
-npx tsx jobs/payouts/reconcile-payout-status.ts
+curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
+  "$APP_URL/api/cleanup/reconcile-payout-status"
 ```
 
 - [ ] Verify output: all payout statuses match gateway state
