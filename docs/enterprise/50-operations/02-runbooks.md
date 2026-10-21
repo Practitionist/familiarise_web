@@ -307,6 +307,28 @@ longer matches its journal postings.
    endpoint with `{ organizationId }` scoped to the affected org and
    confirm `ok=true`.
 
+**Known findings are baselined, not hidden.** The auditor splits its
+findings against the checked-in baseline
+(`scripts/reconcile/ledger-findings-baseline.ts`), so a report can be
+`ok=false` while carrying findings that were already known. Read
+`summary` before reading `findings`:
+
+- `summary.unbaselinedCount` — the findings that are **not** covered by
+  the baseline. These are the ones to triage.
+- `summary.baselinedCount` — findings the baseline excuses. They are
+  still in `findings` and still in `summary.discrepanciesCount`; a
+  baselined finding never hides evidence.
+- `summary.baselineProblems` — the baseline file is malformed (a missing
+  owner, reason or expiry, an unparseable date, or a finding kind the
+  auditor cannot raise). The baseline excuses nothing in that state and
+  the run fails anyway, so fix the file in
+  `scripts/reconcile/ledger-findings-baseline.ts` rather than the money.
+
+A baseline entry only excuses the exact finding it pins (kind, delta and
+every entity id it names) and stops excusing it after its `expires` date.
+A finding that reappears with a different amount, on a different row, or
+after the entry expired is unbaselined and fails the run again.
+
 **Correcting drift:** the journal is append-only. Never edit or delete a
 `LedgerTransaction`/`LedgerEntry` row to "fix" a finding — post a
 balanced **counter-transaction** (Σ DEBIT == Σ CREDIT) that reverses the

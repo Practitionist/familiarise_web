@@ -24,6 +24,10 @@ import {
   orgInvoiceGstFindings,
   staleClawbackFindings,
 } from "./tax-and-clawback-steps";
+import {
+  evaluateLedgerBaseline,
+  LEDGER_FINDINGS_BASELINE,
+} from "./ledger-findings-baseline";
 
 export type ReconcileScope = {
   /** Human-readable scope tag, e.g. "full" or "org:<orgId>". */
@@ -36,34 +40,44 @@ export type ReconcileScope = {
   onWalletDrift?: (reportId: string, findings: Finding[]) => Promise<void>;
 };
 
+/**
+ * Every kind of finding the auditor can raise. The list is the single source
+ * of truth: `Finding["kind"]` is derived from it, and the checked-in baseline
+ * is validated against it, so a retired kind can never sit in the baseline.
+ */
+export const RECONCILE_FINDING_KINDS = [
+  "WALLET_BALANCE_DRIFT",
+  "EARNINGS_LEDGER_DRIFT",
+  "PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT",
+  "ACTIVE_SEAT_COUNT_DRIFT",
+  "ORG_PAYOUT_TOTAL_MISMATCH",
+  "CREDIT_POOL_CONSUMED_DRIFT",
+  "OVERAGE_COUNT_DRIFT",
+  "OVERAGE_CHARGESTATUS_INTEGRITY",
+  "REFUND_BOOKING_COHERENCE",
+  "REVERSED_EARNING_WITHOUT_REFUND_TXN",
+  "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN",
+  "LEDGER_DUAL_WRITE_GAP",
+  "EARNINGS_WITHOUT_BOOKING_TXN",
+  "SPLIT_SUM_MISMATCH",
+  "OVERAGE_SETTLEMENT_MISMATCH",
+  // An anti-invoice-fraud park older than 24h. Detect-only: age never
+  // releases a park.
+  "PENDING_TRUST_PARK_STALE",
+  // The referral-credit liability disagrees with the vested, unredeemed credit balance.
+  "REFERRAL_CREDIT_LIABILITY_DRIFT",
+  // A settled refund of a parked capture left UNAPPLIED_RECEIPTS non-zero.
+  "UNAPPLIED_RECEIPTS_RESIDUE",
+  // An org invoice's output tax differs from the GST_PAYABLE its bookings posted.
+  "ORG_INVOICE_GST_MISMATCH",
+  // One per run: clawbacks still unrecovered after the 90-day window.
+  "CLAWBACK_RECEIVABLE_STALE",
+] as const;
+
+export type ReconcileFindingKind = (typeof RECONCILE_FINDING_KINDS)[number];
+
 export type Finding = {
-  kind:
-    | "WALLET_BALANCE_DRIFT"
-    | "EARNINGS_LEDGER_DRIFT"
-    | "PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT"
-    | "ACTIVE_SEAT_COUNT_DRIFT"
-    | "ORG_PAYOUT_TOTAL_MISMATCH"
-    | "CREDIT_POOL_CONSUMED_DRIFT"
-    | "OVERAGE_COUNT_DRIFT"
-    | "OVERAGE_CHARGESTATUS_INTEGRITY"
-    | "REFUND_BOOKING_COHERENCE"
-    | "REVERSED_EARNING_WITHOUT_REFUND_TXN"
-    | "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN"
-    | "LEDGER_DUAL_WRITE_GAP"
-    | "EARNINGS_WITHOUT_BOOKING_TXN"
-    | "SPLIT_SUM_MISMATCH"
-    | "OVERAGE_SETTLEMENT_MISMATCH"
-    // An anti-invoice-fraud park older than 24h. Detect-only: age never
-    // releases a park.
-    | "PENDING_TRUST_PARK_STALE"
-    // The referral-credit liability disagrees with the vested, unredeemed credit balance.
-    | "REFERRAL_CREDIT_LIABILITY_DRIFT"
-    // A settled refund of a parked capture left UNAPPLIED_RECEIPTS non-zero.
-    | "UNAPPLIED_RECEIPTS_RESIDUE"
-    // An org invoice's output tax differs from the GST_PAYABLE its bookings posted.
-    | "ORG_INVOICE_GST_MISMATCH"
-    // One per run: clawbacks still unrecovered after the 90-day window.
-    | "CLAWBACK_RECEIVABLE_STALE";
+  kind: ReconcileFindingKind;
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -96,7 +110,16 @@ export type ReconcileReport = {
   ok: boolean;
   durationMs: number;
   summary: ReconcileCounts & {
+    /** Every finding the run raised, baselined or not. */
     discrepanciesCount: number;
+    /** How many findings the checked-in baseline excuses. */
+    baselinedCount: number;
+    /** How many findings the baseline does not excuse — each one fails the run. */
+    unbaselinedCount: number;
+    /** Baseline entries whose expiry has passed. They excuse nothing. */
+    baselineExpiredCount: number;
+    /** Why the baseline was rejected. A non-empty list fails the run. */
+    baselineProblems: string[];
     status?: ReconcileRunStatus;
     calls?: number;
   };
@@ -1588,10 +1611,22 @@ async function runReconcileLedgersUnlocked(
     select: { id: true },
   });
   const { ctx, durationMs } = await executeSteps(opts, row.id);
-  const ok = ctx.findings.length === 0;
+  // The findings are raw evidence and are all persisted. The checked-in
+  // baseline only decides which of them fail the run.
+  const baseline = evaluateLedgerBaseline({
+    findings: ctx.findings,
+    entries: LEDGER_FINDINGS_BASELINE,
+    knownKinds: RECONCILE_FINDING_KINDS,
+    now: ctx.now,
+  });
+  const ok = baseline.ok;
   const summary = {
     ...ctx.counts,
     discrepanciesCount: ctx.findings.length,
+    baselinedCount: baseline.baselinedCount,
+    unbaselinedCount: baseline.unbaselinedCount,
+    baselineExpiredCount: baseline.expiredEntryCount,
+    baselineProblems: baseline.problems,
     status: "COMPLETED" as const,
     calls: 1,
   };
