@@ -24,6 +24,11 @@
 
 name: CI
 
+# The default token can read the repository; nothing here needs to write to it.
+# A job that needs more must say so in its own `permissions:` block.
+permissions:
+  contents: read
+
 # A newer dev tip contains the older one, so superseded runs on PRs and on dev are
 # cancelled; staging/prod pushes deploy and always finish. A label other than
 # `db-reset` gets its own group and skips every job, so it never cancels a run in flight.
@@ -135,7 +140,11 @@ jobs:
 
   typecheck:
     name: TypeScript & guards
-    if: github.actor != 'dependabot[bot]' && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      ((github.event.action != 'labeled' &&
+      github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -159,6 +168,11 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
 
       - name: Load environment
+        # The production environment is materialised here, so only a branch
+        # inside this repository may run this job: a pull request from a fork
+        # would otherwise run untrusted test code with the production
+        # credentials in its environment. The job conditions carry the same
+        # same-repo guard.
         run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
 
       - name: Generate Prisma Client
@@ -209,7 +223,13 @@ jobs:
   # Pull requests into non-release branches: only tests related to the diff.
   unit-tests-changed:
     name: Unit tests (changed files)
-    if: github.actor != 'dependabot[bot]' && github.event_name == 'pull_request' && github.base_ref != 'prod' && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      github.event_name == 'pull_request' &&
+      github.base_ref != 'prod' &&
+      ((github.event.action != 'labeled' &&
+      github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -227,6 +247,11 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Load environment
+        # The production environment is materialised here, so only a branch
+        # inside this repository may run this job: a pull request from a fork
+        # would otherwise run untrusted test code with the production
+        # credentials in its environment. The job conditions carry the same
+        # same-repo guard.
         run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
 
       - name: Generate Prisma Client
@@ -246,7 +271,12 @@ jobs:
   # Pushes and pull requests into prod: the full suite, sharded.
   unit-tests:
     name: Unit tests (${{ matrix.shard }})
-    if: github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.base_ref == 'prod') && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'pull_request' || github.base_ref == 'prod') &&
+      ((github.event.action != 'labeled' &&
+      github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -272,6 +302,11 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Load environment
+        # The production environment is materialised here, so only a branch
+        # inside this repository may run this job: a pull request from a fork
+        # would otherwise run untrusted test code with the production
+        # credentials in its environment. The job conditions carry the same
+        # same-repo guard.
         run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
 
       - name: Generate Prisma Client
@@ -283,7 +318,14 @@ jobs:
   build:
     name: Build
     # PRs are built by the Netlify deploy preview (the build gate); CI builds pushes and release PRs.
-    if: github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.base_ref == 'prod') && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset') && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'pull_request' || github.base_ref == 'prod') &&
+      ((github.event.action != 'labeled' &&
+      github.event.action != 'unlabeled') || github.event.label.name == 'db-reset') &&
+      ((github.event.action != 'labeled' &&
+      github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
     runs-on: ubuntu-latest
     timeout-minutes: 25
     # No redis service — see the note on unit-tests.
@@ -302,6 +344,11 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Load environment
+        # The production environment is materialised here, so only a branch
+        # inside this repository may run this job: a pull request from a fork
+        # would otherwise run untrusted test code with the production
+        # credentials in its environment. The job conditions carry the same
+        # same-repo guard.
         run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
 
       - name: Runner resources
