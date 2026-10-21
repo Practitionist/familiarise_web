@@ -66,7 +66,12 @@ export function useThreadScroll<T extends HTMLElement>(
   const loadOlderAnchored = useCallback(
     async (loadOlder: () => Promise<boolean>) => {
       beforePrepend();
-      if (!(await loadOlder())) cancelPrepend();
+      let added = false;
+      try {
+        added = await loadOlder();
+      } finally {
+        if (!added) cancelPrepend();
+      }
     },
     [beforePrepend, cancelPrepend],
   );

@@ -646,7 +646,9 @@ export function StaffCaseResolution({
   const run: Run = (payload, onDone) =>
     action.mutate(payload, {
       onSuccess: (result) => {
-        setProposal(result);
+        // Only a refund review changes the pending proposal; other actions leave it shown.
+        if (result) setProposal(result);
+        else if (payload.action === "REVIEW_REFUND") setProposal(null);
         onDone?.();
       },
     });

@@ -48,7 +48,7 @@ function Thread({
       },
     });
   };
-  onReady(api);
+  React.useEffect(() => onReady(api));
   return (
     <div
       ref={setRef}
@@ -89,6 +89,24 @@ describe("useThreadScroll", () => {
     fireEvent.scroll(el);
     rerender(<Thread count={17} onReady={ready} />);
     expect(el.scrollTop).toBe(200);
+  });
+
+  it("drops the prepend anchor when loading older messages fails", async () => {
+    const { getByTestId, rerender } = render(
+      <Thread count={10} onReady={ready} />,
+    );
+    const el = getByTestId("thread");
+    el.scrollTop = 0;
+    fireEvent.scroll(el);
+    await act(async () => {
+      await api
+        .loadOlderAnchored(async () => {
+          throw new Error("offline");
+        })
+        .catch(() => undefined);
+    });
+    rerender(<Thread count={11} onReady={ready} />);
+    expect(el.scrollTop).toBe(0);
   });
 
   it("follows new messages when the reader is at the bottom", () => {

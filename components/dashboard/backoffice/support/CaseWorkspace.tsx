@@ -292,18 +292,14 @@ export function CaseWorkspace({
       insert(macro.body);
       return;
     }
-    let replySent = false;
     try {
       await reply.mutateAsync({ message: macro.body, note: false });
-      replySent = true;
-      const fresh = await query.refetch();
-      if (fresh.isError) throw fresh.error;
-      setStatus.mutate("RESOLVED");
     } catch {
-      if (!replySent) {
-        insert(macro.body);
-      }
+      insert(macro.body);
+      return;
     }
+    // The status write refetches the invalidated case first and toasts its own failure.
+    setStatus.mutate("RESOLVED");
   };
   const markDuplicate = async (reference: string) => {
     try {
@@ -311,12 +307,11 @@ export function CaseWorkspace({
         message: duplicateMessage(reference),
         note: false,
       });
-      const fresh = await query.refetch();
-      if (fresh.isError) throw fresh.error;
-      setStatus.mutate("CLOSED");
     } catch {
-      // Mutation hook surfaces any error toast.
+      return;
     }
+    // A failed close toasts from the mutation, so staff can retry it.
+    setStatus.mutate("CLOSED");
   };
   const busy = setStatus.isPending || update.isPending;
   const assignee = data.assignee?.id ?? UNASSIGNED;

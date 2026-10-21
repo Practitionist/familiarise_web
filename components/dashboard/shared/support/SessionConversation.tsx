@@ -374,7 +374,7 @@ function SessionComposer({
         <Button
           type="submit"
           size="icon"
-          disabled={!text.trim()}
+          disabled={!text.trim() || t.turnPending}
           aria-label="Send"
         >
           <Send className="h-4 w-4" />

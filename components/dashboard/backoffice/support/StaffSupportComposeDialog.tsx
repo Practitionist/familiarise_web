@@ -51,7 +51,12 @@ export function StaffSupportComposeDialog({
 }>) {
   const intakeId = useRef<string | null>(null);
   const queryClient = useQueryClient();
-  const [target, setTarget] = useState<FoundUser | null>(null);
+  const [target, setTargetState] = useState<FoundUser | null>(null);
+  // A retry may reuse the intake key only for the same customer.
+  const setTarget = (user: FoundUser | null) => {
+    if (user?.id !== target?.id) intakeId.current = null;
+    setTargetState(user);
+  };
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [issueType, setIssueType] =
