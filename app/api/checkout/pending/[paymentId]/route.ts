@@ -1,10 +1,13 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
+import { PaymentStatus, Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
+import prisma from "@/lib/prisma";
 import { applyRateLimit, cancelPendingLimiter } from "@/lib/rate-limit";
 import { cancelPendingCheckout } from "@/lib/payments/operations/cancel-pending";
+import { payNeedsBuyerState } from "@/lib/payments/pay-page";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { consumerBuyerStateSchema } from "@/schemas/checkout";
 
 // Serializable write-conflict shapes — P2034 plus the Prisma 7 client-engine
 // message variants. Surfaces when withSerializableRetry exhausts its retries
@@ -106,4 +109,80 @@ export async function DELETE(
       { status: 500 },
     );
   }
+}
+
+/**
+ * Records the buyer's GST state on their open pay-link order before it is
+ * paid. Asked only while the order is PENDING, domestic and has no state.
+ */
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ paymentId: string }> },
+) {
+  const session = await getSession();
+  if (!session?.user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const rl = await applyRateLimit(cancelPendingLimiter, session.user.id);
+  if (rl) return rl;
+
+  const { paymentId } = await params;
+  const userId = session.user.id;
+
+  const payment = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    select: {
+      userId: true,
+      deletedAt: true,
+      paymentStatus: true,
+      buyerCountry: true,
+      consumerStateCode: true,
+      user: {
+        select: { consulteeProfile: { select: { billingStateCode: true } } },
+      },
+    },
+  });
+  if (!payment || payment.deletedAt || payment.userId !== userId) {
+    return NextResponse.json({ error: "Payment not found" }, { status: 404 });
+  }
+  if (!payNeedsBuyerState(payment)) {
+    return NextResponse.json({ success: true });
+  }
+
+  const body: unknown = await req.json().catch(() => ({}));
+  const parsed = consumerBuyerStateSchema.safeParse(body ?? {});
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return NextResponse.json(
+      {
+        error: issue?.message ?? "Invalid request",
+        ...(issue?.path.length ? { field: issue.path.join(".") } : {}),
+      },
+      { status: 400 },
+    );
+  }
+  const { consumerStateCode } = parsed.data;
+
+  await prisma.$transaction(async (tx) => {
+    const written = await tx.payment.updateMany({
+      where: {
+        id: paymentId,
+        paymentStatus: PaymentStatus.PENDING,
+        consumerStateCode: null,
+      },
+      data: { consumerStateCode },
+    });
+    if (
+      written.count === 1 &&
+      consumerStateCode !== payment.user.consulteeProfile?.billingStateCode
+    ) {
+      await tx.consulteeProfile.updateMany({
+        where: { userId },
+        data: { billingStateCode: consumerStateCode },
+      });
+    }
+  });
+
+  return NextResponse.json({ success: true });
 }

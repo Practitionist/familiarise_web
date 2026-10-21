@@ -26,6 +26,7 @@ import {
   isPreMintIntent,
 } from "@/lib/payments/pre-mint-intent";
 import { sumPaise } from "@/lib/payments/utils/money";
+import { consumerStateCodeSchema } from "@/schemas/checkout";
 import {
   AppointmentStatus,
   Currency,
@@ -219,6 +220,12 @@ export async function createApprovalPaymentIntent(
     // #1583 C-P0-01 — the same taxed figure checkout derives, computed before
     // the reuse decision below so a live row is compared against it.
     const buyerCountry = detectBuyerCountry({ userCountry: user.country });
+    // A domestic buyer's saved state is the invoice's place of supply; an invalid one counts as missing.
+    const savedState = consumerStateCodeSchema.safeParse(
+      user.consulteeProfile.billingStateCode,
+    );
+    const consumerStateCode =
+      buyerCountry === "IN" && savedState.success ? savedState.data : null;
     const {
       amount,
       originalAmount,
@@ -314,6 +321,7 @@ export async function createApprovalPaymentIntent(
             preMintIntent,
             holdExpiresAt,
             description,
+            consumerStateCode,
             paymentGateway: params.paymentGateway,
             appointmentType: params.appointmentType,
           })
@@ -322,6 +330,7 @@ export async function createApprovalPaymentIntent(
             preMintIntent,
             holdExpiresAt,
             description,
+            consumerStateCode,
           });
     if ("settled" in claim) return claim.settled;
     const paymentId = claim.paymentId;
@@ -433,6 +442,8 @@ interface PreMintFields {
   preMintIntent: string;
   holdExpiresAt: Date;
   description: string;
+  /** The buyer's GST state from their profile; null when abroad or none is saved. */
+  consumerStateCode: string | null;
 }
 
 /** Either the row the order will be written onto, or an answer that needs no new order. */
@@ -452,6 +463,7 @@ async function createPreMintRow(
         taxAmount: fields.taxAmount,
         buyerCountry: fields.buyerCountry,
         isInternational: fields.isInternational,
+        consumerStateCode: fields.consumerStateCode,
         currency: fields.currency,
         description: fields.description,
         paymentMethod: "card",
@@ -525,6 +537,17 @@ async function claimRowForRemint(
       },
     });
     if (cas.count !== 1) return false;
+    if (fields.consumerStateCode) {
+      // A state already on the row was declared by the buyer and is never overwritten.
+      await tx.payment.updateMany({
+        where: {
+          id: existing.id,
+          paymentIntent: fields.preMintIntent,
+          consumerStateCode: null,
+        },
+        data: { consumerStateCode: fields.consumerStateCode },
+      });
+    }
     if (isPreMintIntent(existing.paymentIntent)) {
       // A pre-mint row never reached the gateway, so there is no order to keep.
       await tx.paymentLeg.deleteMany({ where: { paymentId: existing.id } });
