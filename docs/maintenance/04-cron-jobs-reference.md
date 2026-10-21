@@ -198,6 +198,8 @@ These jobs exist because a statute or a regulator says they must, and their dead
 | **DPDP data-breach deadline alerts**<br>`databreach-deadline-alerts`              | `17 * * * *`                                        | `jobs/compliance/databreach-deadline-alerts.ts`  | open   | no        | Reads only; emails the DPDP officer inbox                                                                                                                      | Skips: OFFLINE           |
 | **Consent retention sweeper**<br>`consent-retention-sweeper`                      | `25 0 * * 0`                                        | `jobs/compliance/consent-retention-sweeper.ts`   | open   | no        | Counts expired `ConsentArtifact` rows, deleting only when `DPDP_SWEEPER_DELETE=true`                                                                           | Skips: OFFLINE           |
 
+The GST register needs the platform's own supplier identity. `PLATFORM_GSTIN` (with `SUPPLIER_STATE_CODE` agreeing with it) must be set in the host environment: without it the export refuses to write, because the healer cannot mint a consumer invoice and a register written in that state would read as a month with no B2C supplies rather than as a failure. The same missing variable makes the organisation invoice and credit-note PDF routes answer 503.
+
 ## Stream and recordings
 
 Chat channels, video sessions and the recordings they produce all live in Stream's systems as well as ours, so these jobs reconcile two sources of truth and move recording files into our own storage before Stream expires them.

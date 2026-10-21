@@ -16,6 +16,16 @@ jest.mock("../../lib/storage/private-finance-object", () => ({
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_name: string, _opts: unknown, fn: () => unknown) => fn(),
 }));
+// The export refuses to write without the platform's own supplier identity;
+// here it is configured, so the run proceeds.
+jest.mock("../../lib/pdf/supplier", () => ({
+  getPlatformSupplier: () => ({
+    name: "Familiarise Technologies Private Limited",
+    gstin: "29AAFCF1234Q1ZN",
+    address: "Koramangala 1st Block, Bangalore, Karnataka 560034, India",
+    email: "billing@familiarise.test",
+  }),
+}));
 const mockMint = jest.fn(async () => ({ consumerInvoiceId: "ci" }));
 jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
   CONSUMER_INVOICEABLE_PAYMENT_WHERE: { billableToOrgInvoiceId: null },

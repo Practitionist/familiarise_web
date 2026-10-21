@@ -35,6 +35,7 @@ import {
   mintConsumerInvoice,
 } from "@/lib/payments/billing/consumer-invoice";
 import { uploadPrivateFinanceObject } from "@/lib/storage/private-finance-object";
+import { getPlatformSupplier } from "@/lib/pdf/supplier";
 import {
   previousIstCalendarMonthStart,
   nextMonthStart,
@@ -316,6 +317,15 @@ export interface GstOutwardRegisterExportResult {
 export async function runGstOutwardRegisterExport(opts: {
   limit: number;
 }): Promise<GstOutwardRegisterExportResult> {
+  // A register needs the platform's own supplier identity. Without it the
+  // healer below no-ops (no consumer invoice can be minted) and the file
+  // would read as a month with no B2C supplies — a silent understatement
+  // rather than a visible failure.
+  if (!getPlatformSupplier()) {
+    throw new Error(
+      "PLATFORM_GSTIN is not configured; the platform cannot issue statutory documents.",
+    );
+  }
   // Fail-CLOSED, unlike the read-only compliance drafts. The healer inside
   // allocates numbers from a gapless statutory series, and two concurrent
   // runs would both probe a payment as un-invoiced, both take a number, and
