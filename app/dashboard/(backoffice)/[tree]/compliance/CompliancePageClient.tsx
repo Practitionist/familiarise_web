@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/responsive-table";
 import { BREACH_REPORTING_DEADLINE_HOURS } from "@/lib/backoffice/queue-predicates";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
+import { GstRegisterDownload } from "./GstRegisterDownload";
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -392,7 +393,7 @@ export function CompliancePageClient() {
     <div className="space-y-6">
       <PageHeader
         title="Compliance"
-        description="Erasure requests, data breaches and emails that never arrived."
+        description="Erasure requests, data breaches, emails that never arrived, and the monthly GST outward-supplies register."
       />
       <UrlTabs
         tabs={[
@@ -410,6 +411,11 @@ export function CompliancePageClient() {
             value: "emails",
             label: "Failed emails",
             content: <FailedEmailsTab />,
+          },
+          {
+            value: "gst-register",
+            label: "GST register",
+            content: <GstRegisterDownload />,
           },
         ]}
       />
