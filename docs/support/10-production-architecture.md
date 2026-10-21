@@ -40,6 +40,18 @@ Staff do not automatically join private chats or monitor disagreements. Evidence
 recipients see the prompt, their response and the permitted decision outcome;
 they do not receive the complainant’s private correspondence or full explanation.
 
+Booking context cards in Messages provide a Get help shortcut to the existing
+appointment support flow in the current dashboard. The server still checks
+appointment access; following the link neither submits a complaint nor shares the
+chat transcript. Pair conversations may cover several bookings, so the shortcut
+belongs to the specific booking card rather than guessing an appointment from
+the channel. Direct negotiation is optional, including for safety complaints.
+
+Follow-ups continue in the case; challenges to a recorded decision use its one
+independent appeal per eligible person within the stored deadline. A new report
+does not undo that decision or create another refund entitlement. Product
+feedback and public reviews do not act as appeal conversations.
+
 | Term            | Meaning and owner                                                                                                 |
 | --------------- | ----------------------------------------------------------------------------------------------------------------- |
 | Service dispute | A support case about the appointment or service; staff investigate and mediate.                                   |
