@@ -34,6 +34,13 @@ export const PURPOSE_CODES = {
 
 export type PurposeCode = (typeof PURPOSE_CODES)[keyof typeof PURPOSE_CODES];
 
+/** How chat is reviewed; shown wherever the video & chat purpose is consented to. */
+export const MESSAGE_REVIEW_NOTICE =
+  "Chat is checked automatically for fraud, off-platform payment requests, contact sharing and safety. Our support team may read a booking's chat when it is reported or has a support case, and may join it visibly as \u201cFamiliarise Support\u201d.";
+
+export const MESSAGE_REVIEW_ARTICLE_HREF =
+  "/support/help/how-we-review-messages";
+
 /** Terms and privacy-notice version written to every `ConsentArtifact.version`. */
 export const TERMS_VERSION = 2;
 
@@ -72,8 +79,7 @@ export const PURPOSE_CODE_META: Record<
   },
   [PURPOSE_CODES.STREAM_DATA_PROCESSING]: {
     label: "Video & chat (Stream.io)",
-    description:
-      "Share the data needed for live video and chat with our messaging processor (Stream.io). Required for video/chat to work. Chat is checked automatically for fraud, off-platform payment requests, contact sharing and safety, and our support team may read a booking's chat when it is reported or has a support case.",
+    description: `Share the data needed for live video and chat with our messaging processor (Stream.io). Required for video/chat to work. ${MESSAGE_REVIEW_NOTICE}`,
   },
   [PURPOSE_CODES.MARKETING_COMMS]: {
     label: "Marketing communications",

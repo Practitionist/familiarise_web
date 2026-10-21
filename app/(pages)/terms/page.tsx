@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { FileText } from "lucide-react";
+import { MESSAGE_REVIEW_ARTICLE_HREF } from "@/lib/compliance/purpose-codes";
 import {
   COMPANY_INFO,
   PAGE_META,
@@ -522,7 +523,7 @@ export default function TermsPage() {
                 </a>{" "}
                 (section 3.6) and in{" "}
                 <Link
-                  href="/support/help/how-we-review-messages"
+                  href={MESSAGE_REVIEW_ARTICLE_HREF}
                   className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
                 >
                   How and why we review messages

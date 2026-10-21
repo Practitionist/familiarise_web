@@ -1,6 +1,7 @@
 import React from "react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { MessageReviewNotice } from "./MessageReviewNotice";
 
 interface AgreementProps {
   id: string;
@@ -79,21 +80,7 @@ const TermsAndPrivacyAgreement: React.FC<TermsAndPrivacyAgreementProps> = ({
           pseudonymous token (<code>ust_&lt;hash&gt;</code>) with no raw PII
           sent to Sentry.
         </p>
-        <p>
-          Chat is checked automatically for fraud, off-platform payment
-          requests, contact sharing and safety. Our support team may read a
-          booking&rsquo;s chat when it is reported or has a support case, and
-          may join it visibly as &ldquo;Familiarise Support&rdquo;. See{" "}
-          <a
-            href="/support/help/how-we-review-messages"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-primary hover:underline"
-          >
-            How and why we review messages
-          </a>
-          .
-        </p>
+        <MessageReviewNotice />
         <p>
           You can <strong>download your data &amp; processor summary</strong>,{" "}
           <strong>withdraw optional consents</strong> in 1 click,{" "}
