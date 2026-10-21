@@ -186,6 +186,7 @@ jest.mock("../../lib/activity/log-activity", () => ({
 
 import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/cancel/route";
 import { RefundGatewayError } from "@/lib/payments/operations/refund";
+import { grantPlatformCancel } from "@/lib/booking/platform-cancel";
 
 const HOUR = 3_600_000;
 const APPT = "appt-1";
@@ -490,12 +491,25 @@ describe("a platform cancellation is not the buyer's choice", () => {
       bookingRows({ liveSlotHours: [1] }),
     );
 
-    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+    const request = makeRequest();
+    grantPlatformCancel(request, "ops-1");
+    const res = await cancelHandler(request, makeParams(APPT));
     const body = await res.json();
 
     expect(body.refund.refundPct).toBe(100);
     expect(body.refund.amountRefundedPaise).toBe(GROSS);
     expect(txStub.systemEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses an operator who is not a party unless the audited platform door sent the request", async () => {
+    mockGetSession.mockResolvedValue(sessionAs("admin"));
+    mockAppointmentFindUnique.mockResolvedValue(consultationAppointment());
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("PLATFORM_CANCEL_DOOR_REQUIRED");
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
   });
 });
 

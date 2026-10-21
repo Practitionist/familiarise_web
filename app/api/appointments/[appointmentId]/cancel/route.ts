@@ -33,6 +33,7 @@ import {
 } from "@/lib/activity/log-activity";
 
 import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
+import { platformCancelGrant } from "@/lib/booking/platform-cancel";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import {
   driveRefundOwed,
@@ -682,6 +683,19 @@ export async function POST(
     }
 
     const isPrivilegedUser = isPrivileged(session.user.role);
+
+    // A platform operator who is not a party cancels only through the audited,
+    // money-bounded door, which grants this request.
+    if (isPrivilegedUser && !isParticipant && !platformCancelGrant(request)) {
+      return NextResponse.json(
+        {
+          error:
+            "Cancel this booking from the back office so the refund is audited.",
+          code: "PLATFORM_CANCEL_DOOR_REQUIRED",
+        },
+        { status: 403 },
+      );
+    }
 
     const orgActor =
       !isParticipant && !isPrivilegedUser
