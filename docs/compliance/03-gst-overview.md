@@ -54,6 +54,9 @@ Plus the orthogonal obligations:
 | `lib/compliance/gst.ts:68–128`                                           | `deriveGstBreakdown` — zero-rated export, intra-state CGST 9%+SGST 9%, inter-state IGST 18%, HSN defaulting                     | ✅ live                             |
 | `lib/compliance/irp.ts`                                                  | `generateIrn` — env-gated ClearTax connector                                                                                    | ✅ live                             |
 | `jobs/compliance/irp-uploader.ts`                                        | Daily cron — eligible invoices → `generateIrn` → persist IRN                                                                    | ✅ wired (Round 2, daily 02:30 UTC) |
+| `lib/compliance/gst-outward-register.ts`                                 | `buildOutwardRegister` / `buildOutwardRegisterCsv` — the monthly GSTR-1 working file for both rails                             | ✅ live                             |
+| `jobs/compliance/gst-outward-register-export.ts`                         | Monthly cron — heals missing consumer invoices, uploads the period CSV, stamps `gstr1ExportedAt`                                | ✅ live                             |
+| `app/api/admin/compliance/gst-register/route.ts`                         | ADMIN-only download of one month's outward-supplies register                                                                    | ✅ live                             |
 | `lib/pdf/invoice-renderer.tsx`                                           | `ConsumerInvoiceDocument` + `OrganizationInvoiceDocument` PDF                                                                   | ✅ live                             |
 | `OrganizationInvoice` (schema)                                           | igstPaise / cgstPaise / sgstPaise / placeOfSupply / lutNumber / irn / ackNumber / signedQrPayload / irpStatus / retry telemetry | ✅ schema-final                     |
 | `Invoice` (schema, B2C)                                                  | Has HSN / GST split fields                                                                                                      | ✅ schema-final                     |
@@ -65,6 +68,12 @@ Plus the orthogonal obligations:
 | LUT enforcement                                                          | Schema field exists; no enforcement                                                                                             | 🔴                                  |
 | Credit note on refund                                                    | **Missing** entirely                                                                                                            | 🔴                                  |
 | HSN selection per appointment type                                       | Static default (999293 catch-all) in PDF — should be 998311 consulting / 999293 training                                        | 🟡                                  |
+
+## The outward-supplies register
+
+The platform's own outward-supply return is one CSV per month: every tax invoice and every credit note issued on both rails, with the tax heads, the place of supply and the document references already resolved, so the chartered accountant files GSTR-1 from one file instead of reconciling four tables by hand. The builder is `lib/compliance/gst-outward-register.ts`, and `jobs/compliance/gst-outward-register-export.ts` runs it for the previous IST calendar month and uploads the result to the private `org-invoices` bucket at `compliance/gst/<first day>_<last day>.csv`.
+
+An operator fetches the file through `GET /api/admin/compliance/gst-register?period=2026-10`, where `period` is the IST calendar month the supplies belong to. The route is ADMIN-only, resolves that month to the same IST window the job used, and answers a short-lived signed URL for the file; a month the job has not produced yet is a 404, which means the register for it simply does not exist yet. The Compliance page in the back office carries the same link. The file's columns and the download route are described in [the B2C tax-invoice doc](../payments/06-b2c-tax-invoice.md#the-outward-supplies-register).
 
 ## Gap
 

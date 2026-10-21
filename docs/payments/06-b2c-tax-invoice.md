@@ -108,12 +108,18 @@ It does four things in order. First it heals: up to `limit` (25 from the ticker)
 The CSV header is fixed, because the CA's import template depends on it:
 
 ```
-doc_type,doc_number,doc_date,buyer_type,buyer_gstin,place_of_supply,taxable_paise,cgst_paise,sgst_paise,igst_paise,total_paise,sac_code,original_invoice_number,payment_id
+doc_type,doc_number,doc_date,buyer_type,buyer_gstin,place_of_supply,taxable_paise,cgst_paise,sgst_paise,igst_paise,total_paise,sac_code,original_invoice_number,payment_id,supply_date
 ```
 
 The builder raises a warning for any document with no place of supply, any document whose tax heads do not reconcile to the total minus the taxable value, and any B2C document of ₹50,000 or more that lacks the recipient's address and state.
 
 The job is fail-closed on its cron lock and is on the financial job list, unlike the read-only compliance drafts beside it. Its healer allocates numbers from a gapless statutory series, and two concurrent runs would both see a payment as un-invoiced, both take a number, and one would lose the unique constraint, leaving a gap that cannot be filled. Not producing the register is recoverable; a gap in the series is not.
+
+### Getting the register
+
+The file is private-bucket storage, so an operator fetches it through `GET /api/admin/compliance/gst-register?period=2026-10`, where `period` is the IST calendar month the supplies belong to. The route is ADMIN-only, resolves that month to the same IST window the job used — the helpers in `lib/compliance/ist-period.ts` — and rebuilds the identical storage path through `gstOutwardRegisterCsvStoragePath()` in `lib/compliance/gst-outward-register.ts`. It answers 404 for a month the job has not produced yet, and otherwise redirects to a signed URL that expires after ten minutes, so a URL left in a browser history or a chat message is dead long before anyone else finds it. The Compliance page in the back office carries the same link, so no operator needs the Supabase dashboard.
+
+A period exported through the job's manual window override (`GST_REGISTER_PERIOD_START` and `GST_REGISTER_PERIOD_END`) is not a calendar month, so no `period` names it and this route cannot fetch it; that file is reachable only from the bucket itself.
 
 ## The ₹50,000 flag
 
