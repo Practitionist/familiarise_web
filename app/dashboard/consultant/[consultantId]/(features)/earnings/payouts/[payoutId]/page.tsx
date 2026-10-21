@@ -63,7 +63,7 @@ export default async function PayoutDetailPage({
       <PageHeader
         back={{
           href: `/dashboard/consultant/${consultantId}/earnings`,
-          label: "Earnings",
+          label: "Earnings & payouts",
         }}
         title={`Payout of ${money(payout.netPaise)}`}
         description={presentation.line}

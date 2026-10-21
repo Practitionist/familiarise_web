@@ -321,71 +321,6 @@ export type PlanType = "consultation" | "subscription" | "webinar" | "class";
 const deletePlanMaterial = (storagePath: string): Promise<boolean> =>
   deleteAsset("documents", storagePath);
 
-// Support ticket attachment types
-interface SupportAttachmentUploadOptions {
-  ticketId: string;
-  file: File;
-}
-
-const SUPPORT_ATTACHMENTS_BUCKET = "support-attachments";
-// Signed URLs cannot be revoked early, so keep them just long enough for a click-through.
-const SUPPORT_ATTACHMENT_URL_TTL_SECONDS = 60;
-
-/**
- * Upload a support ticket attachment to the private bucket; no URL is minted
- * here because readers sign one per request.
- */
-const uploadSupportTicketAttachment = (
-  options: SupportAttachmentUploadOptions,
-): Promise<DocumentUploadResult> => {
-  const { ticketId, file } = options;
-  return uploadAsset({
-    bucket: SUPPORT_ATTACHMENTS_BUCKET,
-    folder: `support-tickets/${ticketId}`,
-    file,
-    maxBytes: 10 * 1024 * 1024,
-    allowedMime: [
-      "application/pdf",
-      "application/msword",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "image/jpeg",
-      "image/png",
-      "image/gif",
-      "image/webp",
-      "text/plain",
-    ],
-    access: "private",
-    ensureBucket: { public: false },
-    errors: {
-      bucketNotReady:
-        "Support attachments storage bucket not found. Please create a private 'support-attachments' bucket in your Supabase dashboard.",
-    },
-  });
-};
-
-/** Short-lived signed URL for a support attachment, or null when signing fails. */
-const signSupportTicketAttachment = async (
-  storagePath: string,
-): Promise<string | null> => {
-  try {
-    const { data, error } = await getSignedAssetUrl(
-      SUPPORT_ATTACHMENTS_BUCKET,
-      storagePath,
-      SUPPORT_ATTACHMENT_URL_TTL_SECONDS,
-    );
-    if (error || !data?.signedUrl) return null;
-    return data.signedUrl;
-  } catch {
-    return null;
-  }
-};
-
-/**
- * Delete support ticket attachment from Supabase storage
- */
-const deleteSupportTicketAttachment = (storagePath: string): Promise<boolean> =>
-  deleteAsset(SUPPORT_ATTACHMENTS_BUCKET, storagePath);
-
 /**
  * Get manual bucket creation instructions
  */
@@ -820,9 +755,6 @@ export {
   // Plan materials
   deletePlanMaterial,
   // Support ticket attachments
-  uploadSupportTicketAttachment,
-  signSupportTicketAttachment,
-  deleteSupportTicketAttachment,
   // Plan images
   uploadPlanImage,
   deletePlanImage,

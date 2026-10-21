@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { Prisma, SupportCaseStatus } from "@prisma/client";
+import {
+  Prisma,
+  SupportCaseStatus,
+  type UserRole,
+  type SupportCase,
+} from "@prisma/client";
 import { SupportIssueTypeEnum } from "@/schemas/enums";
 import { callbackPhoneSchema } from "@/lib/validation/phone";
 import { stageBell } from "@/lib/novu/stage-bell";
@@ -11,6 +16,11 @@ import prisma, {
   type Tx,
 } from "@/lib/prisma";
 import { caseKeyOf } from "./case-key";
+import { stage as stageEmail } from "@/lib/email/deliver";
+import { getAppUrl } from "@/lib/url";
+import { DEFAULT_FROM_ADDRESS } from "@/lib/email/config";
+import { canCorrespondOnCase, caseCorrespondentIds } from "./case-access";
+import { supportDeadline } from "./deadline-policy";
 import { allocateTicketReference } from "./reference";
 import {
   openWaitSeconds,
@@ -22,7 +32,6 @@ import {
 const IST_OFFSET_MS = 330 * 60_000;
 const TWENTY_EIGHT_DAYS_MS = 28 * 24 * 3_600_000;
 const TWENTY_FOUR_HOURS_MS = 24 * 3_600_000;
-const FIFTEEN_DAYS_MS = 15 * 24 * 3_600_000;
 
 export const CALLBACK_WINDOWS = [
   "09:00-12:00 IST",
@@ -45,7 +54,7 @@ export class SupportCaseValidationError extends Error {
 
 const CASE_RELATIONS_INCLUDE = {
   subjects: true,
-  messages: { orderBy: { seq: "asc" } },
+  messages: { orderBy: { seq: "asc" }, take: -200 },
   events: { orderBy: { createdAt: "asc" } },
 } as const;
 
@@ -53,7 +62,6 @@ export const SupportCaseStatusSchema = z.enum([
   "OPEN",
   "IN_PROGRESS",
   "ESCALATED",
-  "ON_HOLD",
   "RESOLVED",
   "CLOSED",
 ]);
@@ -121,6 +129,8 @@ export function refineCreateSupportCaseInput<
 }
 
 export const CreateSupportCaseObjectSchema = z.object({
+  initialSender: z.enum(["USER", "AGENT", "SYSTEM"]).optional(),
+  initialAuthorUserId: z.string().min(1).max(64).optional(),
   title: z.string().trim().min(1).max(300),
   description: z.string().trim().min(1).max(10_000),
   category: z.string().trim().max(64).nullable().optional(),
@@ -134,6 +144,9 @@ export const CreateSupportCaseObjectSchema = z.object({
   requesterUserId: z.string().min(1).max(64),
   submitterUserId: z.string().min(1).max(64),
   organizationId: z.string().min(1).max(64).nullable().optional(),
+  ownershipScope: z
+    .enum(["PERSONAL", "ORG_OPERATIONS", "ORG_BILLING"])
+    .optional(),
   appointmentId: z.string().min(1).max(64).nullable().optional(),
   appointmentOccurrenceId: z.string().min(1).max(64).nullable().optional(),
   callbackPhone: callbackPhoneSchema.nullish(),
@@ -199,10 +212,18 @@ function resolveReopenedUserTurnStatus(
   currentStatus: z.infer<typeof SupportCaseStatusSchema>,
   assignedToId: string | null,
 ): z.infer<typeof SupportCaseStatusSchema> {
-  if (currentStatus === "RESOLVED" || currentStatus === "ON_HOLD") {
+  if (currentStatus === "RESOLVED") {
     return assignedToId ? "IN_PROGRESS" : "OPEN";
   }
   return currentStatus;
+}
+
+function caseScopeKey(input: CreateSupportCaseInput): string {
+  if (input.appointmentOccurrenceId)
+    return `OCCURRENCE:${input.appointmentOccurrenceId}`;
+  if (input.appointmentId) return `APPOINTMENT:${input.appointmentId}`;
+  const primary = input.subjects?.find((subject) => subject.isPrimary);
+  return primary ? `${primary.subjectType}:${primary.subjectId}` : "ACCOUNT";
 }
 
 function buildInitialCaseSubjects(input: CreateSupportCaseInput) {
@@ -246,101 +267,56 @@ function buildInitialCaseSubjects(input: CreateSupportCaseInput) {
 
 async function appendOpenScopeTurn(
   tx: Tx,
-  existingOpen: NonNullable<
-    Awaited<ReturnType<typeof prisma.supportCase.findFirst>>
-  > & {
-    subjects: Array<unknown>;
-    messages: Array<unknown>;
-    events: Array<unknown>;
-  },
+  existingOpen: { id: string },
   input: CreateSupportCaseInput,
   now: Date,
 ) {
-  const nextStatus = resolveReopenedUserTurnStatus(
-    existingOpen.status,
-    existingOpen.assignedToId,
-  );
-  const pausePatch = userRepliedPatch(
+  const result = await executeAppendTurnTx(
+    tx,
     {
-      awaitingUserSince: existingOpen.awaitingUserSince ?? null,
-      pausedSeconds: existingOpen.pausedSeconds ?? 0,
+      caseId: existingOpen.id,
+      authorUserId: input.initialAuthorUserId ?? input.submitterUserId,
+      sender: input.initialSender ?? "USER",
+      body: input.description,
+      isInternal: false,
+      clientTurnId: input.clientIntakeId,
     },
     now,
   );
-  const nextSeq = (existingOpen.messageSeq ?? 0) + 1;
-
-  const moved = await tx.supportCase.updateMany({
-    where: {
-      id: existingOpen.id,
-      status: existingOpen.status,
-      awaitingUserSince: existingOpen.awaitingUserSince ?? null,
-      pausedSeconds: existingOpen.pausedSeconds ?? 0,
-    },
-    data: {
-      messageSeq: { increment: 1 },
-      lastMessageAt: now,
-      status: nextStatus,
-      resolvedAt: null,
-      closedAt: null,
-      ...pausePatch,
-    },
-  });
-  if (moved.count === 0) {
-    throw new Error("Support case was updated concurrently; retry intake.");
-  }
-
-  const afterIncrement = await tx.supportCase.findUnique({
-    where: { id: existingOpen.id },
-    select: { messageSeq: true },
-  });
-  const allocatedSeq = afterIncrement?.messageSeq ?? nextSeq;
-
-  const createdTurn = await tx.supportCaseMessage.create({
-    data: {
-      caseId: existingOpen.id,
-      seq: allocatedSeq,
-      sender: "USER",
-      body: input.description,
-      isInternal: false,
-      clientTurnId: input.clientIntakeId ?? null,
-      authorUserId: input.submitterUserId,
-      createdAt: now,
-    },
-  });
-
-  if (existingOpen.status === "RESOLVED" || existingOpen.status === "ON_HOLD") {
-    await tx.supportCaseEvent.create({
-      data: {
-        caseId: existingOpen.id,
-        actorId: input.submitterUserId,
-        kind: "REOPENED",
-        fromValue: existingOpen.status,
-        toValue: nextStatus,
-        createdAt: now,
-      },
-    });
-  }
-
-  const refreshed = await tx.supportCase.findUnique({
+  if (!result.ok) throw new SupportCaseValidationError(result.error);
+  let refreshed = await tx.supportCase.findUniqueOrThrow({
     where: { id: existingOpen.id },
     include: CASE_RELATIONS_INCLUDE,
   });
-
-  return (
-    refreshed ?? {
-      ...existingOpen,
-      status: nextStatus,
-      messageSeq: nextSeq,
-      lastMessageAt: now,
-      resolvedAt: null,
-      closedAt: null,
-      ...pausePatch,
-      messages: [
-        ...(Array.isArray(existingOpen.messages) ? existingOpen.messages : []),
-        createdTurn,
-      ],
-    }
-  );
+  if (input.activeChannel === "HUMAN" && refreshed.activeChannel !== "HUMAN") {
+    const priority = input.priority ?? refreshed.priority;
+    const handoff = await tx.supportCase.updateMany({
+      where: {
+        id: refreshed.id,
+        updatedAt: refreshed.updatedAt,
+        activeChannel: refreshed.activeChannel,
+        closedAt: null,
+      },
+      data: {
+        activeChannel: "HUMAN",
+        status: refreshed.assignedToId ? "IN_PROGRESS" : "OPEN",
+        priority,
+        receivedAt: now,
+        ...slaDeadlinesFor(priority, now),
+        ...supportDeadline(input.category, now),
+      },
+    });
+    if (!handoff.count)
+      throw new SupportCaseValidationError(
+        "The case changed during handoff. Refresh and retry.",
+      );
+    refreshed = await tx.supportCase.findUniqueOrThrow({
+      where: { id: existingOpen.id },
+      include: CASE_RELATIONS_INCLUDE,
+    });
+    await stageSupportCaseIntakeTx(tx, refreshed, input.initialSender);
+  }
+  return refreshed;
 }
 
 async function validateProblemCaseTargetTx(
@@ -400,6 +376,9 @@ async function executeCreateOrReuseCaseTx(
       appointmentId: input.appointmentId ?? null,
       appointmentOccurrenceId: input.appointmentOccurrenceId ?? null,
       category: input.category ?? null,
+      organizationId: input.organizationId ?? null,
+      ownershipScope: input.ownershipScope ?? "PERSONAL",
+      scopeKey: caseScopeKey(input),
       closedAt: null,
       deletedAt: null,
     },
@@ -416,7 +395,10 @@ async function executeCreateOrReuseCaseTx(
 
   const priority = input.priority ?? "MEDIUM";
   const referenceNumber = await allocateTicketReference(tx, now);
-  const { ackDueAt, resolutionDueAt } = slaDeadlinesFor(priority, now);
+  const { ackDueAt, resolutionDueAt } =
+    input.activeChannel === "HUMAN"
+      ? slaDeadlinesFor(priority, now)
+      : { ackDueAt: null, resolutionDueAt: null };
   const caseKind = input.caseKind ?? "INCIDENT";
   const problemCaseId =
     caseKind === "PROBLEM" ? null : (input.problemCaseId ?? null);
@@ -425,6 +407,11 @@ async function executeCreateOrReuseCaseTx(
     data: {
       referenceNumber,
       clientIntakeId: input.clientIntakeId ?? null,
+      ownershipScope: input.ownershipScope ?? "PERSONAL",
+      scopeKey: caseScopeKey(input),
+      ...(input.activeChannel === "HUMAN"
+        ? { ...supportDeadline(input.category, now), receivedAt: now }
+        : {}),
       title: input.title,
       description: input.description,
       category: input.category ?? null,
@@ -433,7 +420,15 @@ async function executeCreateOrReuseCaseTx(
       activeChannel: input.activeChannel ?? "SELF_SERVE",
       issueType: input.issueType ?? null,
       priority,
-      status: "OPEN",
+      status: input.initialSender === "AGENT" ? "IN_PROGRESS" : "OPEN",
+      ...(input.initialSender === "AGENT"
+        ? {
+            assignedToId: input.initialAuthorUserId,
+            acknowledgedAt: now,
+            firstAgentReplyAt: now,
+            awaitingUserSince: now,
+          }
+        : {}),
       caseKind,
       problemCaseId,
       requesterUserId: input.requesterUserId,
@@ -454,11 +449,14 @@ async function executeCreateOrReuseCaseTx(
         create: [
           {
             seq: 1,
-            sender: "USER",
+            sender: input.initialSender ?? "USER",
             body: input.description,
             isInternal: false,
             clientTurnId: input.clientIntakeId ?? null,
-            authorUserId: input.submitterUserId,
+            authorUserId:
+              input.initialSender === "SYSTEM"
+                ? null
+                : (input.initialAuthorUserId ?? input.submitterUserId),
             createdAt: now,
           },
         ],
@@ -477,11 +475,106 @@ async function executeCreateOrReuseCaseTx(
     include: CASE_RELATIONS_INCLUDE,
   });
 
+  await stageSupportCaseIntakeTx(tx, created, input.initialSender);
   return {
     supportCase: created,
     reused: false,
     dedupeReason: null,
   };
+}
+
+/** Stage formal intake notifications in the same transaction as its first human handoff. */
+export async function stageSupportCaseIntakeTx(
+  tx: Tx,
+  created: Pick<
+    SupportCase,
+    | "id"
+    | "referenceNumber"
+    | "title"
+    | "description"
+    | "activeChannel"
+    | "submitterUserId"
+    | "organizationId"
+    | "ownershipScope"
+    | "externalRequesterEmail"
+  >,
+  initialSender?: "USER" | "AGENT" | "SYSTEM",
+) {
+  if (created.activeChannel === "HUMAN") {
+    const operators = await tx.user.findMany({
+      where: { role: { in: ["STAFF", "ADMIN"] }, banned: false },
+      select: { id: true },
+    });
+    const href = supportRequestHref(
+      caseKeyOf({ kind: "case", id: created.id }),
+      created.organizationId,
+    );
+    await stageBell(tx, {
+      workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_CREATED,
+      recipients: operators.map((operator) => operator.id),
+      dedupeKey: `case-created:${created.id}:staff`,
+      entityRef: `case-created:${created.id}`,
+      payload: {
+        ticketId: created.id,
+        reference: created.referenceNumber,
+        ticketTitle: created.title,
+        dashboardUrl: href,
+        ...notificationScope(created.organizationId),
+      },
+    });
+    if (initialSender !== "SYSTEM") {
+      const correspondentIds = await caseCorrespondentIds(created, tx);
+      await stageBell(tx, {
+        workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
+        recipients: correspondentIds,
+        dedupeKey: `case-created:${created.id}:customer`,
+        entityRef: `case-created:${created.id}`,
+        payload: {
+          ticketId: created.id,
+          reference: created.referenceNumber,
+          ticketTitle: created.title,
+          status:
+            initialSender === "AGENT"
+              ? "New support message"
+              : "Request received",
+          dashboardUrl: href,
+          ...notificationScope(created.organizationId),
+        },
+      });
+      const recipients = await tx.user.findMany({
+        where: { id: { in: correspondentIds } },
+        select: { email: true },
+      });
+      // Keep outbox writes sequential on the transaction’s single connection.
+      for (const recipient of recipients) {
+        const text = `Reference: ${created.referenceNumber}\n\n${created.ownershipScope === "PERSONAL" ? created.description : "An organization support request was received."}\n\n${getAppUrl()}${href}`;
+        const html = text
+          .replace(
+            /[&<>"']/g,
+            (character) =>
+              ({
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#39;",
+              })[character] ?? character,
+          )
+          .replace(/\n/g, "<br>");
+        await stageEmail(
+          {
+            from: DEFAULT_FROM_ADDRESS,
+            to: recipient.email,
+            subject: `Support request — ${created.referenceNumber}`,
+            html,
+            text,
+          },
+          "SUPPORT_TICKET_RECEIVED",
+          { tx, entityRef: `case-created:${created.id}` },
+        );
+      }
+    }
+  }
 }
 
 async function recoverFromCaseUniqueConflict(input: CreateSupportCaseInput) {
@@ -509,6 +602,9 @@ async function recoverFromCaseUniqueConflict(input: CreateSupportCaseInput) {
       appointmentId: input.appointmentId ?? null,
       appointmentOccurrenceId: input.appointmentOccurrenceId ?? null,
       category: input.category ?? null,
+      organizationId: input.organizationId ?? null,
+      ownershipScope: input.ownershipScope ?? "PERSONAL",
+      scopeKey: caseScopeKey(input),
       closedAt: null,
       deletedAt: null,
     },
@@ -546,6 +642,12 @@ export async function createOrReuseSupportCase(
       err.code === "P2002"
     ) {
       const recovered = await recoverFromCaseUniqueConflict(input);
+      if (recovered?.dedupeReason === "open_scope") {
+        const supportCase = await prisma.$transaction((tx) =>
+          appendOpenScopeTurn(tx, { id: recovered.supportCase.id }, input, now),
+        );
+        return { ...recovered, supportCase };
+      }
       if (recovered) return recovered;
     }
     throw err;
@@ -575,6 +677,7 @@ async function replayClientTurnIfExists(
       ...(input.sender !== "AGENT" ? { isInternal: false } : {}),
     },
     orderBy: { seq: "asc" },
+    take: 200,
   });
   return {
     ok: true as const,
@@ -613,7 +716,7 @@ async function advanceUserTurnState(
   });
   if ((moved?.count ?? 0) === 0) return false;
 
-  if (existingCase.status === "RESOLVED" || existingCase.status === "ON_HOLD") {
+  if (existingCase.status === "RESOLVED") {
     await tx.supportCaseEvent.create({
       data: {
         caseId: input.caseId,
@@ -651,7 +754,8 @@ async function advanceAgentPublicTurnState(
   const moved = await tx.supportCase.updateMany({
     where: {
       id: input.caseId,
-      status: { not: "CLOSED" },
+      status: existingCase.status,
+      updatedAt: existingCase.updatedAt,
       awaitingUserSince: existingCase.awaitingUserSince,
       ...(expectedDate
         ? {
@@ -699,6 +803,164 @@ async function applyTurnStateUpdate(
   return true;
 }
 
+async function caseTurnRecipientIdsTx(
+  tx: Tx,
+  existingCase: SupportCase,
+  sender: AppendSupportCaseTurnInput["sender"],
+): Promise<string[]> {
+  if (sender === "AGENT") return caseCorrespondentIds(existingCase, tx);
+  if (existingCase.assignedToId) return [existingCase.assignedToId];
+  const operators = await tx.user.findMany({
+    where: { role: { in: ["STAFF", "ADMIN"] }, banned: false },
+    select: { id: true },
+  });
+  return operators.map((operator) => operator.id);
+}
+
+async function stageCaseResponseEmailsTx(
+  tx: Tx,
+  existingCase: SupportCase,
+  body: string,
+  recipients: string[],
+  messageId: string,
+): Promise<void> {
+  const customers = await tx.user.findMany({
+    where: { id: { in: recipients } },
+    select: { email: true },
+  });
+  const href = `${getAppUrl()}${supportRequestHref(caseKeyOf({ kind: "case", id: existingCase.id }), existingCase.organizationId)}`;
+  const text = `Reference: ${existingCase.referenceNumber}\n\n${existingCase.ownershipScope === "PERSONAL" ? body : "A new response is available in your organization support workspace."}\n\n${href}`;
+  const html = text
+    .replace(
+      /[&<>"']/g,
+      (character) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[character] ?? character,
+    )
+    .replace(/\n/g, "<br>");
+  // Keep outbox writes sequential on the transaction’s single connection.
+  for (const customer of customers)
+    await stageEmail(
+      {
+        from: DEFAULT_FROM_ADDRESS,
+        to: customer.email,
+        subject: `Support response — ${existingCase.referenceNumber}`,
+        html,
+        text,
+      },
+      "SUPPORT_TICKET_RESPONSE",
+      { tx, entityRef: `case-message:${messageId}` },
+    );
+}
+
+async function stageCaseTurnNotificationsTx(
+  tx: Tx,
+  existingCase: SupportCase,
+  input: AppendSupportCaseTurnInput,
+  messageId: string,
+): Promise<void> {
+  if (input.isInternal || (input.sender !== "USER" && input.sender !== "AGENT"))
+    return;
+  if (input.sender === "AGENT" && existingCase.externalRequesterEmail) {
+    const html = input.body.replace(
+      /[&<>"']/g,
+      (character) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[character] ?? character,
+    );
+    await stageEmail(
+      {
+        from: DEFAULT_FROM_ADDRESS,
+        to: existingCase.externalRequesterEmail,
+        subject: `Support response — ${existingCase.referenceNumber}`,
+        text: input.body,
+        html: `<p>${html.replace(/\n/g, "<br>")}</p><p>Reference: ${existingCase.referenceNumber}</p>`,
+      },
+      "SUPPORT_TICKET_RESPONSE",
+      { tx, entityRef: `case-message:${messageId}` },
+    );
+    return;
+  }
+  const recipients = await caseTurnRecipientIdsTx(
+    tx,
+    existingCase,
+    input.sender,
+  );
+  await stageBell(tx, {
+    workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
+    recipients,
+    dedupeKey: `case-message:${messageId}`,
+    entityRef: `case-message:${messageId}`,
+    payload: {
+      ticketId: existingCase.id,
+      reference: existingCase.referenceNumber,
+      ticketTitle: existingCase.title,
+      status: "New response",
+      dashboardUrl: supportRequestHref(
+        caseKeyOf({ kind: "case", id: existingCase.id }),
+        existingCase.organizationId,
+      ),
+      ...notificationScope(existingCase.organizationId),
+    },
+  });
+  if (input.sender === "AGENT")
+    await stageCaseResponseEmailsTx(
+      tx,
+      existingCase,
+      input.body,
+      recipients,
+      messageId,
+    );
+}
+
+async function appendTurnConflictTx(
+  tx: Tx,
+  existingCase: Pick<SupportCase, "lastMessageAt">,
+  input: AppendSupportCaseTurnInput,
+) {
+  if (
+    input.sender === "AGENT" &&
+    !input.isInternal &&
+    input.expectedLastMessageAt
+  ) {
+    const expectedDate = new Date(input.expectedLastMessageAt);
+    const latestRow = await tx.supportCase.findUnique({
+      where: { id: input.caseId },
+      select: { lastMessageAt: true },
+    });
+    const latestLastMessageAt =
+      latestRow?.lastMessageAt ?? existingCase.lastMessageAt;
+    if (
+      latestLastMessageAt &&
+      latestLastMessageAt.getTime() > expectedDate.getTime()
+    ) {
+      return {
+        ok: false as const,
+        status: 409 as const,
+        code: "NEW_CUSTOMER_MESSAGE" as const,
+        error:
+          "Customer replied since you opened this case. Review their message before sending.",
+      };
+    }
+  }
+  return {
+    ok: false as const,
+    status: 409 as const,
+    code: "CONFLICT" as const,
+    error: "Support case was updated concurrently.",
+  };
+}
+
 async function executeAppendTurnTx(
   tx: Tx,
   input: AppendSupportCaseTurnInput,
@@ -729,39 +991,7 @@ async function executeAppendTurnTx(
   }
 
   const applied = await applyTurnStateUpdate(tx, existingCase, input, now);
-  if (!applied) {
-    if (
-      input.sender === "AGENT" &&
-      !input.isInternal &&
-      input.expectedLastMessageAt
-    ) {
-      const expectedDate = new Date(input.expectedLastMessageAt);
-      const latestRow = await tx.supportCase.findUnique({
-        where: { id: input.caseId },
-        select: { lastMessageAt: true },
-      });
-      const latestLastMessageAt =
-        latestRow?.lastMessageAt ?? existingCase.lastMessageAt;
-      if (
-        latestLastMessageAt &&
-        latestLastMessageAt.getTime() > expectedDate.getTime()
-      ) {
-        return {
-          ok: false as const,
-          status: 409 as const,
-          code: "NEW_CUSTOMER_MESSAGE" as const,
-          error:
-            "Customer replied since you opened this case. Review their message before sending.",
-        };
-      }
-    }
-    return {
-      ok: false as const,
-      status: 409 as const,
-      code: "CONFLICT" as const,
-      error: "Support case was updated concurrently.",
-    };
-  }
+  if (!applied) return appendTurnConflictTx(tx, existingCase, input);
 
   const seqHolder = await tx.supportCase.findUniqueOrThrow({
     where: { id: input.caseId },
@@ -781,6 +1011,7 @@ async function executeAppendTurnTx(
     },
   });
 
+  await stageCaseTurnNotificationsTx(tx, existingCase, input, created.id);
   return {
     ok: true as const,
     replayed: false,
@@ -789,16 +1020,33 @@ async function executeAppendTurnTx(
 }
 
 /** Append a message turn idempotently via clientTurnId and advance SLA/status via CAS. */
-export function appendSupportCaseTurn(
+export async function appendSupportCaseTurn(
   rawInput: AppendSupportCaseTurnInput,
   now: Date = new Date(),
 ) {
   const input = AppendSupportCaseTurnSchema.parse(rawInput);
 
-  return prisma.$transaction((tx) => executeAppendTurnTx(tx, input, now), {
-    maxWait: ALLOCATION_TX_MAX_WAIT_MS,
-    timeout: ALLOCATION_TX_TIMEOUT_MS,
-  });
+  try {
+    return await prisma.$transaction(
+      (tx) => executeAppendTurnTx(tx, input, now),
+      {
+        maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+        timeout: ALLOCATION_TX_TIMEOUT_MS,
+      },
+    );
+  } catch (error) {
+    if (
+      input.clientTurnId &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      const replay = await prisma.$transaction((tx) =>
+        replayClientTurnIfExists(tx, input),
+      );
+      if (replay) return replay;
+    }
+    throw error;
+  }
 }
 
 function buildStatusDatesPatch(
@@ -1058,17 +1306,19 @@ async function stageCaseResolutionCsatPromptTx(
     title?: string;
     submitterUserId?: string;
     requesterUserId?: string;
+    externalRequesterEmail?: string | null;
     organizationId?: string | null;
   },
-  fallbackActorId: string,
   resolvedAt: Date,
 ): Promise<void> {
-  const recipientId =
-    target.submitterUserId ?? target.requesterUserId ?? fallbackActorId;
+  if (target.externalRequesterEmail) return;
+  const current = await tx.supportCase.findUnique({ where: { id: target.id } });
+  if (!current) return;
+  const recipients = await caseCorrespondentIds(current, tx);
   const dedupeKey = `csat:${target.id}:${resolvedAt.toISOString()}`;
   const bellArgs = {
     workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
-    recipients: [recipientId],
+    recipients,
     payload: {
       ticketId: target.id,
       reference: target.referenceNumber,
@@ -1156,7 +1406,40 @@ async function validatePatchLifecyclePreconditionsTx(
   return null;
 }
 
-async function executePatchLifecycleTx(
+async function hasConflictingAppealReviewerTx(
+  tx: Tx,
+  existing: Pick<
+    SupportCase,
+    "appealOfDecisionId" | "appealOfModerationActionId"
+  >,
+  input: Pick<PatchSupportCaseInput, "actorId" | "assignedToId">,
+): Promise<boolean> {
+  if (!existing.appealOfDecisionId && !existing.appealOfModerationActionId)
+    return false;
+  const reviewerIds = new Set(
+    [input.actorId, input.assignedToId].filter((id): id is string =>
+      Boolean(id),
+    ),
+  );
+  const decision = existing.appealOfDecisionId
+    ? await tx.supportCaseDecision.findUnique({
+        where: { id: existing.appealOfDecisionId },
+        select: { decidedById: true },
+      })
+    : null;
+  const action = existing.appealOfModerationActionId
+    ? await tx.moderationAction.findUnique({
+        where: { id: existing.appealOfModerationActionId },
+        select: { takenById: true },
+      })
+    : null;
+  return Boolean(
+    (decision?.decidedById && reviewerIds.has(decision.decidedById)) ||
+    (action?.takenById && reviewerIds.has(action.takenById)),
+  );
+}
+
+export async function executePatchLifecycleTx(
   tx: Tx,
   input: PatchSupportCaseInput,
   now: Date,
@@ -1172,6 +1455,14 @@ async function executePatchLifecycleTx(
       error: "Support case not found.",
     };
   }
+
+  if (await hasConflictingAppealReviewerTx(tx, existing, input))
+    return {
+      ok: false as const,
+      status: 403 as const,
+      code: "INDEPENDENT_REVIEW_REQUIRED" as const,
+      error: "A different eligible reviewer must handle this appeal.",
+    };
 
   const preconditionFailure = await validatePatchLifecyclePreconditionsTx(
     tx,
@@ -1233,9 +1524,9 @@ async function executePatchLifecycleTx(
 
   if (input.status === "RESOLVED" && existing.status !== "RESOLVED") {
     await Promise.all([
-      stageCaseResolutionCsatPromptTx(tx, existing, input.actorId, now),
+      stageCaseResolutionCsatPromptTx(tx, existing, now),
       ...cascadedIncidents.map((inc) =>
-        stageCaseResolutionCsatPromptTx(tx, inc, input.actorId, now),
+        stageCaseResolutionCsatPromptTx(tx, inc, now),
       ),
     ]);
   }
@@ -1260,16 +1551,6 @@ export function patchSupportCaseLifecycle(
 ) {
   const input = PatchSupportCaseSchema.parse(rawInput);
 
-  if (input.status === "ON_HOLD") {
-    return Promise.resolve({
-      ok: false as const,
-      status: 400 as const,
-      code: "STATUS_NOT_SUPPORTED" as const,
-      error:
-        "On hold is not supported; use Waiting on customer or leave an internal note.",
-    });
-  }
-
   return prisma.$transaction((tx) => executePatchLifecycleTx(tx, input, now), {
     maxWait: ALLOCATION_TX_MAX_WAIT_MS,
     timeout: ALLOCATION_TX_TIMEOUT_MS,
@@ -1282,7 +1563,13 @@ export function patchSupportCaseLifecycle(
  */
 export async function readSupportCaseForViewer(
   caseId: string,
-  viewer: { userId: string; isStaff: boolean },
+  viewer: {
+    userId: string;
+    isStaff: boolean;
+    role?: UserRole | null;
+    canReadPayments?: boolean;
+    canReadContact?: boolean;
+  },
 ) {
   const supportCase = await prisma.supportCase.findUnique({
     where: { id: caseId },
@@ -1292,14 +1579,19 @@ export async function readSupportCaseForViewer(
     return null;
   }
 
-  const isSubmitter = viewer.userId === supportCase.submitterUserId;
+  if (supportCase.externalRequesterEmail && !viewer.isStaff) return null;
   const isRequester = viewer.userId === supportCase.requesterUserId;
-  if (!viewer.isStaff && !isSubmitter && !isRequester) {
-    return null;
-  }
+  const canCorrespond =
+    viewer.isStaff ||
+    (await canCorrespondOnCase(supportCase, {
+      userId: viewer.userId,
+      role: viewer.role ?? "CONSULTEE",
+    }));
+  if (!canCorrespond && !isRequester) return null;
+  if (supportCase.ownershipScope !== "PERSONAL" && !canCorrespond) return null;
 
   if (
-    !viewer.isStaff &&
+    !canCorrespond &&
     viewer.userId === supportCase.requesterUserId &&
     supportCase.requesterUserId !== supportCase.submitterUserId
   ) {
@@ -1324,6 +1616,12 @@ export async function readSupportCaseForViewer(
   if (viewer.isStaff) {
     return {
       ...supportCase,
+      callbackPhone: viewer.canReadContact ? supportCase.callbackPhone : null,
+      subjects: supportCase.subjects.filter(
+        (subject) =>
+          viewer.canReadPayments ||
+          !["PAYMENT", "REFUND", "INVOICE"].includes(subject.subjectType),
+      ),
       filedByOrganizationNotice: false as const,
     };
   }
@@ -1331,86 +1629,15 @@ export async function readSupportCaseForViewer(
   return {
     ...supportCase,
     messages: (supportCase.messages ?? []).filter((m) => !m.isInternal),
-    events: (supportCase.events ?? []).filter(
-      (e) => e.kind !== "VISIBILITY_CHANGED",
-    ),
+    assignedToId: null,
+    events: (supportCase.events ?? [])
+      .filter((e) =>
+        ["CREATED", "STATUS_CHANGED", "REOPENED", "AUTO_CLOSED"].includes(
+          e.kind,
+        ),
+      )
+      .map((event) => ({ ...event, actorId: null, note: null })),
     filedByOrganizationNotice: false as const,
-  };
-}
-
-async function submitLegacyTicketCsatTx(
-  tx: Tx,
-  input: SubmitSupportCaseCsatInput,
-  now: Date,
-) {
-  const legacyTicket = await tx.supportTicket.findUnique({
-    where: { id: input.caseId },
-  });
-  if (!legacyTicket || legacyTicket.userId !== input.userId) {
-    return {
-      ok: false as const,
-      status: 404 as const,
-      error: "Support case not found.",
-    };
-  }
-  if (legacyTicket.status !== "RESOLVED" && legacyTicket.status !== "CLOSED") {
-    return {
-      ok: false as const,
-      status: 400 as const,
-      error: "Only resolved or closed cases can be rated.",
-    };
-  }
-  if (
-    !legacyTicket.resolvedAt ||
-    now.getTime() - legacyTicket.resolvedAt.getTime() > TWENTY_EIGHT_DAYS_MS
-  ) {
-    return {
-      ok: false as const,
-      status: 400 as const,
-      error: "The 28-day survey window for this case has expired.",
-    };
-  }
-  const existingEvent = await tx.supportCaseEvent.findFirst({
-    where: {
-      legacyTicketId: input.caseId,
-      kind: "CSAT_RATED",
-    },
-    select: { id: true },
-  });
-  if (existingEvent) {
-    return {
-      ok: false as const,
-      status: 409 as const,
-      error: "This case has already been rated.",
-    };
-  }
-  try {
-    await tx.supportCaseEvent.create({
-      data: {
-        legacyTicketId: input.caseId,
-        actorId: input.userId,
-        kind: "CSAT_RATED",
-        toValue: String(input.rating),
-        createdAt: now,
-      },
-    });
-  } catch (err) {
-    if (
-      err instanceof Prisma.PrismaClientKnownRequestError &&
-      err.code === "P2002"
-    ) {
-      return {
-        ok: false as const,
-        status: 409 as const,
-        error: "This case has already been rated.",
-      };
-    }
-    throw err;
-  }
-  return {
-    ok: true as const,
-    csatRating: input.rating,
-    csatAt: now,
   };
 }
 
@@ -1423,10 +1650,20 @@ async function executeSubmitCsatTx(
     where: { id: input.caseId },
   });
   if (!existing) {
-    return submitLegacyTicketCsatTx(tx, input, now);
+    return {
+      ok: false as const,
+      status: 404 as const,
+      error: "Support case not found.",
+    };
   }
 
-  if (existing.submitterUserId !== input.userId) {
+  if (
+    !(await canCorrespondOnCase(
+      existing,
+      { userId: input.userId, role: "CONSULTEE" },
+      tx,
+    ))
+  ) {
     return {
       ok: false as const,
       status: 404 as const,
@@ -1520,113 +1757,72 @@ export async function submitSupportCaseCsat(
   }
 }
 
-const MODERATION_APPEAL_RE = /\bRPT-/;
-
-/** Statutory monthly compliance report across unified SupportCase and legacy SupportTicket for an IST month. */
+/** Category deadlines are absolute; monthly reporting never subtracts customer waiting time. */
 export async function supportMonthlyComplianceReport(
   year: number,
   month: number,
 ) {
-  const startUtc = new Date(
-    Date.UTC(year, month - 1, 1, 0, 0, 0, 0) - IST_OFFSET_MS,
-  );
-  const endUtc = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0) - IST_OFFSET_MS);
-
-  const [supportCases, legacyTickets] = await Promise.all([
-    prisma.supportCase.findMany({
-      where: {
-        createdAt: { gte: startUtc, lt: endUtc },
-        deletedAt: null,
-      },
-      orderBy: { createdAt: "asc" },
-      select: {
-        id: true,
-        referenceNumber: true,
-        title: true,
-        description: true,
-        category: true,
-        status: true,
-        createdAt: true,
-        acknowledgedAt: true,
-        resolvedAt: true,
-        pausedSeconds: true,
-      },
-    }),
-    prisma.supportTicket.findMany({
-      where: {
-        createdAt: { gte: startUtc, lt: endUtc },
-      },
-      orderBy: { createdAt: "asc" },
-      select: {
-        id: true,
-        referenceNumber: true,
-        title: true,
-        description: true,
-        category: true,
-        status: true,
-        createdAt: true,
-        acknowledgedAt: true,
-        resolvedAt: true,
-        pausedSeconds: true,
-      },
-    }),
-  ]);
-
-  const rows = [
-    ...supportCases.map((c) => ({ ...c, source: "case" as const })),
-    ...legacyTickets.map((t) => ({ ...t, source: "ticket" as const })),
-  ].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-
-  let acknowledgedWithin24h = 0;
-  let disposedWithin15d = 0;
-  let grievances = 0;
-  let appealed = 0;
-
-  const cases = rows.map((r) => {
-    const ackOk =
-      r.acknowledgedAt !== null &&
-      r.acknowledgedAt.getTime() - r.createdAt.getTime() <=
-        TWENTY_FOUR_HOURS_MS;
-    const dispOk =
-      r.resolvedAt !== null &&
-      r.resolvedAt.getTime() - r.createdAt.getTime() - r.pausedSeconds * 1000 <=
-        FIFTEEN_DAYS_MS;
-    const isGrievance = r.category === "GRIEVANCE";
-    const isAppealed =
-      r.category === "MODERATION_APPEAL" ||
-      MODERATION_APPEAL_RE.test(r.title ?? "") ||
-      MODERATION_APPEAL_RE.test(r.description ?? "");
-
-    if (ackOk) acknowledgedWithin24h++;
-    if (dispOk) disposedWithin15d++;
-    if (isGrievance) grievances++;
-    if (isAppealed) appealed++;
-
+  const startUtc = new Date(Date.UTC(year, month - 1, 1) - IST_OFFSET_MS);
+  const endUtc = new Date(Date.UTC(year, month, 1) - IST_OFFSET_MS);
+  const rows = await prisma.supportCase.findMany({
+    where: {
+      receivedAt: { gte: startUtc, lt: endUtc },
+      activeChannel: "HUMAN",
+      deletedAt: null,
+    },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      referenceNumber: true,
+      category: true,
+      status: true,
+      createdAt: true,
+      receivedAt: true,
+      acknowledgedAt: true,
+      resolvedAt: true,
+      statutoryDueAt: true,
+      appealOfDecisionId: true,
+      appealOfModerationActionId: true,
+    },
+  });
+  const cases = rows.map((row) => {
+    const due =
+      row.statutoryDueAt ??
+      supportDeadline(row.category, row.receivedAt ?? row.createdAt)
+        .statutoryDueAt;
     return {
-      id: r.id,
-      source: r.source,
-      referenceNumber: r.referenceNumber,
-      category: r.category,
-      status: r.status,
-      createdAt: r.createdAt,
-      acknowledgedAt: r.acknowledgedAt,
-      resolvedAt: r.resolvedAt,
-      pausedSeconds: r.pausedSeconds,
-      acknowledgedWithin24h: ackOk,
-      disposedWithin15d: dispOk,
-      grievance: isGrievance,
-      appealed: isAppealed,
+      id: row.id,
+      source: "case" as const,
+      referenceNumber: row.referenceNumber,
+      category: row.category,
+      status: row.status,
+      createdAt: row.receivedAt ?? row.createdAt,
+      acknowledgedAt: row.acknowledgedAt,
+      resolvedAt: row.resolvedAt,
+      statutoryDueAt: due,
+      acknowledgedWithin24h: Boolean(
+        row.acknowledgedAt &&
+        row.acknowledgedAt.getTime() -
+          (row.receivedAt ?? row.createdAt).getTime() <=
+          TWENTY_FOUR_HOURS_MS,
+      ),
+      resolvedWithinDeadline: Boolean(row.resolvedAt && row.resolvedAt <= due),
+      grievance: row.category === "GRIEVANCE",
+      appealed: Boolean(
+        row.appealOfDecisionId || row.appealOfModerationActionId,
+      ),
     };
   });
-
   return {
     year,
     month,
-    received: rows.length,
-    acknowledgedWithin24h,
-    disposedWithin15d,
-    grievances,
-    appealed,
+    received: cases.length,
+    acknowledgedWithin24h: cases.filter((row) => row.acknowledgedWithin24h)
+      .length,
+    resolvedWithinDeadline: cases.filter((row) => row.resolvedWithinDeadline)
+      .length,
+    grievances: cases.filter((row) => row.grievance).length,
+    appealed: cases.filter((row) => row.appealed).length,
     cases,
   };
 }

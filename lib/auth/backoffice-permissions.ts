@@ -28,10 +28,8 @@ import type { UserRole } from "@prisma/client";
  *     turnover; irreversible actions concentrate on the account that answers
  *     for them.
  *
- * Deliberately NOT a maker-checker split: there is exactly one admin today,
- * so an approval queue would have a single clearer and would add latency
- * without adding separation of duties. Revisit when a second admin exists —
- * the surface keys below already name the mutations that would need it.
+ * High-value money actions require a different approver when multiple admins
+ * are active; the single-admin path retains fresh-session, budget and audit guards.
  */
 
 export type BackofficeSurface =
@@ -178,9 +176,16 @@ export const BACKOFFICE_PERMISSIONS: Record<
   "newsletter.send": ADMIN_ONLY,
 };
 
+/**
+ * Whether a role holds a backoffice surface.
+ *
+ * The role is nullable because the session carries it as a string that may
+ * name a role the schema does not define; such a role holds no surface, so it
+ * is refused rather than forced into a valid enum member.
+ */
 export function hasBackofficePermission(
-  role: UserRole,
+  role: UserRole | null,
   surface: BackofficeSurface,
 ): boolean {
-  return BACKOFFICE_PERMISSIONS[surface].has(role);
+  return role !== null && BACKOFFICE_PERMISSIONS[surface].has(role);
 }

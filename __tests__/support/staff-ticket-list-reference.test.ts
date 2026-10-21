@@ -13,8 +13,7 @@
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    supportTicket: { findMany: jest.fn(), count: jest.fn() },
-    appointmentSupportThread: { findMany: jest.fn(), count: jest.fn() },
+    supportCase: { findMany: jest.fn(), count: jest.fn() },
   },
 }));
 
@@ -38,16 +37,17 @@ const TICKET_ROW = {
   resolvedAt: null,
   awaitingUserSince: null,
   pausedSeconds: 0,
-  user: { id: "u1", name: "U", email: "u@x.test" },
+  requester: { id: "u1", name: "U", email: "u@x.test" },
   assignedTo: null,
-  appointmentSupportThread: null,
+  appointmentId: null,
+  activeChannel: "HUMAN",
+  statutoryDueAt: null,
+  externalRequesterName: null,
 };
 
 beforeEach(() => {
-  (prisma.supportTicket.findMany as jest.Mock).mockResolvedValue([TICKET_ROW]);
-  (prisma.supportTicket.count as jest.Mock).mockResolvedValue(1);
-  (prisma.appointmentSupportThread.findMany as jest.Mock).mockResolvedValue([]);
-  (prisma.appointmentSupportThread.count as jest.Mock).mockResolvedValue(0);
+  (prisma.supportCase.findMany as jest.Mock).mockResolvedValue([TICKET_ROW]);
+  (prisma.supportCase.count as jest.Mock).mockResolvedValue(1);
 });
 
 describe("Support inbox list (E2E F-4)", () => {
@@ -59,7 +59,7 @@ describe("Support inbox list (E2E F-4)", () => {
     const page = await readInboxPage(filters, 1);
     expect(page.total).toBe(1);
     expect(page.rows[0]).toMatchObject({
-      key: `t_${TICKET_ROW.id}`,
+      key: `c_${TICKET_ROW.id}`,
       reference: "FAM-2026-000006",
       topic: "payments",
       scope: "platform",

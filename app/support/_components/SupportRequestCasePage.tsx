@@ -1,9 +1,9 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 
 import { SupportRequestView } from "@/components/dashboard/shared/support/SupportRequestView";
 import { requireOnboarded } from "@/lib/auth-guard";
-import { caseKeyOf, parseCaseKey } from "@/lib/support/case-key";
-import { readOwnTicket } from "@/lib/support/own-case-read";
+import { parseCaseKey } from "@/lib/support/case-key";
+import { readOwnSupportCase } from "@/lib/support/own-case-read";
 import { articleLinksByTopic } from "../_data/support-content";
 
 /**
@@ -15,7 +15,6 @@ import { articleLinksByTopic } from "../_data/support-content";
 export async function SupportRequestCasePage({
   caseKey,
   supportHref,
-  requestsBase = `${supportHref}/requests`,
   appointmentsBase,
   paymentsBase,
   intent,
@@ -23,23 +22,17 @@ export async function SupportRequestCasePage({
   caseKey: string;
   /** The dashboard's Support requests page. */
   supportHref: string;
-  /** Where request pages live; defaults to `<supportHref>/requests`. */
-  requestsBase?: string;
   appointmentsBase?: string;
   paymentsBase?: string;
   intent?: string | string[];
 }>) {
   const ref = parseCaseKey(caseKey);
-  if (!ref || ref.kind === "thread") notFound();
-  if (ref.kind === "ticket" || ref.kind === "case") {
+  if (!ref) notFound();
+  if (ref.kind !== "booking") {
     const { user } = await requireOnboarded();
-    const own = await readOwnTicket(ref.id, user.id);
+    const id = ref.id;
+    const own = id ? await readOwnSupportCase(id, user.id) : null;
     if (!own) notFound();
-    if (own.appointmentId) {
-      redirect(
-        `${requestsBase}/${caseKeyOf({ kind: "booking", id: own.appointmentId })}`,
-      );
-    }
   }
   return (
     <SupportRequestView

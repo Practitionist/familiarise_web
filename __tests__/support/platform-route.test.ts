@@ -38,7 +38,7 @@ jest.mock("../../lib/prisma", () => {
     membership: { findMany: jest.fn(async () => []) },
     // Escalation writes a ticket; the counter behind its reference and the
     // staff fan-out both live on the same client.
-    supportTicket: {
+    supportCase: {
       findFirst: jest.fn(async () => null),
       findUnique: jest.fn(async () => null),
       updateMany: jest.fn(async () => ({ count: 1 })),
@@ -49,7 +49,7 @@ jest.mock("../../lib/prisma", () => {
         referenceNumber: "FAM-2026-000001",
       })),
     },
-    supportTicketCounter: { upsert: jest.fn(async () => ({ nextSeq: 2 })) },
+    supportCaseCounter: { upsert: jest.fn(async () => ({ nextSeq: 2 })) },
     supportFlowOutcome: { create: jest.fn(async () => ({})) },
     user: { findMany: jest.fn(async () => []) },
     organization: { findUnique: jest.fn(async () => null) },
@@ -74,6 +74,20 @@ jest.mock("../../lib/novu", () => ({
   notifySupportTicketActivity: jest.fn(async () => []),
 }));
 
+jest.mock("../../lib/support/case-service", () => ({
+  appendSupportCaseTurn: jest.fn(async () => ({ ok: true })),
+  createOrReuseSupportCase: jest.fn(async () => ({
+    supportCase: {
+      id: "case-1",
+      title: "Help",
+      organizationId: null,
+      referenceNumber: "FAM-2026-000001",
+      ackDueAt: null,
+    },
+    reused: false,
+  })),
+}));
+import { createOrReuseSupportCase } from "../../lib/support/case-service";
 import { NextRequest } from "next/server";
 import { getSession } from "../../lib/auth-server";
 import prisma from "../../lib/prisma";
@@ -84,8 +98,8 @@ const mockedGetSession = getSession as jest.Mock;
 
 beforeEach(() => {
   (applyRateLimit as jest.Mock).mockClear();
-  (prisma.supportTicket.create as jest.Mock).mockClear();
-  (prisma.supportTicket.updateMany as jest.Mock).mockClear();
+  jest.mocked(createOrReuseSupportCase).mockClear();
+  (prisma.supportCase.updateMany as jest.Mock).mockClear();
 });
 
 function postReq(body: unknown): NextRequest {
@@ -179,9 +193,9 @@ describe("asking for a person, in the scope that had no way to", () => {
         urgent: true,
       }),
     );
-    expect(prisma.supportTicket.create).toHaveBeenCalledWith(
+    expect(createOrReuseSupportCase).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ priority: "HIGH" }),
+        priority: "HIGH",
       }),
     );
   });
@@ -198,19 +212,17 @@ describe("asking for a person, in the scope that had no way to", () => {
     );
     const json = await res.json();
     expect(json.data.escalated).toBe(true);
-    expect(prisma.supportTicket.create).toHaveBeenCalledWith(
+    expect(createOrReuseSupportCase).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
-          priority: "HIGH",
-          issueType: "GENERAL_INQUIRY",
-        }),
+        priority: "HIGH",
+        issueType: "GENERAL_INQUIRY",
       }),
     );
   });
 
   it("raises a reused open ticket to HIGH when the replayed hand-off is urgent", async () => {
     mockedGetSession.mockResolvedValue({ user: { id: "u1", name: "U" } });
-    (prisma.supportTicket.findFirst as jest.Mock).mockResolvedValueOnce({
+    (prisma.supportCase.findFirst as jest.Mock).mockResolvedValueOnce({
       id: "t-recent",
       referenceNumber: "FAM-2026-000009",
     });
@@ -224,11 +236,12 @@ describe("asking for a person, in the scope that had no way to", () => {
     );
     const json = await res.json();
     expect(json.data.deduped).toBe(true);
-    expect(prisma.supportTicket.create).not.toHaveBeenCalled();
-    expect(prisma.supportTicket.updateMany).toHaveBeenCalledWith({
+    expect(createOrReuseSupportCase).not.toHaveBeenCalled();
+    expect(prisma.supportCase.updateMany).toHaveBeenCalledWith({
       where: {
         id: "t-recent",
-        status: { not: "CLOSED" },
+        closedAt: null,
+        deletedAt: null,
         priority: { in: ["LOW", "MEDIUM"] },
       },
       data: { priority: "HIGH" },
@@ -237,7 +250,7 @@ describe("asking for a person, in the scope that had no way to", () => {
 
   it("leaves a reused ticket's priority alone when the replay is not urgent", async () => {
     mockedGetSession.mockResolvedValue({ user: { id: "u1", name: "U" } });
-    (prisma.supportTicket.findFirst as jest.Mock).mockResolvedValueOnce({
+    (prisma.supportCase.findFirst as jest.Mock).mockResolvedValueOnce({
       id: "t-recent",
       referenceNumber: "FAM-2026-000009",
     });
@@ -248,7 +261,7 @@ describe("asking for a person, in the scope that had no way to", () => {
         userMessage: "just get me an agent please",
       }),
     );
-    expect(prisma.supportTicket.updateMany).not.toHaveBeenCalled();
+    expect(prisma.supportCase.updateMany).not.toHaveBeenCalled();
   });
 
   it("leaves an ordinary message to the flow", async () => {

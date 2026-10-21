@@ -179,6 +179,7 @@ export async function refundBookingPayment(input: {
   initiatedByUserId?: string | null;
   /** #1780 — one refund per key on every rail; a repeat returns the first. */
   dedupeKey?: string;
+  supportRecommendationId?: string;
   /**
    * #1780 row 4 — a per-session refund (a missed class session) leaves the
    * seat live; every other refund marks the funded seat REFUNDED.
@@ -278,6 +279,7 @@ async function refundFreeCreditPayment(input: {
   reason: string;
   initiatedByUserId?: string | null;
   dedupeKey?: string;
+  supportRecommendationId?: string;
 }): Promise<BookingRefundResult> {
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId, deletedAt: null },
@@ -331,6 +333,13 @@ async function refundFreeCreditPayment(input: {
             status: RefundStatus.SUCCEEDED,
             refundId: `credits_${globalThis.crypto.randomUUID()}`,
             dedupeKey: input.dedupeKey ?? null,
+            ...(input.supportRecommendationId
+              ? {
+                  supportRecommendation: {
+                    connect: { id: input.supportRecommendationId },
+                  },
+                }
+              : {}),
             paymentGateway: payment.paymentGateway,
             metadata: {
               initiatedByUserId: input.initiatedByUserId ?? null,
@@ -1010,6 +1019,7 @@ async function refundInternalFundedPayment(input: {
   reason: string;
   initiatedByUserId?: string | null;
   dedupeKey?: string;
+  supportRecommendationId?: string;
   keepSeat?: boolean;
 }): Promise<BookingRefundResult> {
   const payment = await prisma.payment.findUnique({
@@ -1088,6 +1098,13 @@ async function refundInternalFundedPayment(input: {
             // No gateway ever mints an id for these, so the row owns its own.
             refundId: `internal_${globalThis.crypto.randomUUID()}`,
             dedupeKey: input.dedupeKey ?? null,
+            ...(input.supportRecommendationId
+              ? {
+                  supportRecommendation: {
+                    connect: { id: input.supportRecommendationId },
+                  },
+                }
+              : {}),
             paymentGateway: payment.paymentGateway,
             exchangeRateAtRefund: payment.exchangeRateAtCheckout,
             displayCurrency: payment.displayCurrencyAtCheckout,

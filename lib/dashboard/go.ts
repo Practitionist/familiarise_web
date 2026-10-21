@@ -11,6 +11,7 @@ export interface GoViewer {
   role: string | null | undefined;
   consultantProfileId?: string | null;
   consulteeProfileId?: string | null;
+  orgWorkspaceProfileId?: string | null;
   /** ACTIVE memberships (session). */
   organizationIds?: readonly string[];
 }
@@ -81,6 +82,16 @@ const CLIENT_ONLY = new Set(["payments", "resources"]);
 
 /** The role's own side first, then whichever personal tree exists. */
 function roleFirst(viewer: GoViewer, path: readonly string[]): string | null {
+  if (
+    viewer.role === "ORG_WORKSPACE" &&
+    viewer.orgWorkspaceProfileId &&
+    (!path[0] ||
+      ["home", "support", "settings", "activity", "billing"].includes(path[0]))
+  )
+    return join(
+      `/dashboard/org-workspace/${viewer.orgWorkspaceProfileId}`,
+      path,
+    );
   if (EXPERT_ONLY.has(path[0] ?? "")) return expertHref(viewer, path);
   if (CLIENT_ONLY.has(path[0] ?? "")) return clientHref(viewer, path);
   if (viewer.role === "CONSULTEE") {

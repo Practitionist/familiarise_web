@@ -1,4 +1,4 @@
-import { Activity, CreditCard, Home } from "lucide-react";
+import { Activity, CreditCard, Home, LifeBuoy, Settings } from "lucide-react";
 
 import type { DashboardNav } from "./types";
 
@@ -65,11 +65,18 @@ export function buildWorkspaceNav(
             : []),
         ],
       },
+      {
+        label: "Operations",
+        items: [
+          { name: "Help & support", icon: LifeBuoy, path: "support" },
+          { name: "Workspace settings", icon: Settings, path: "settings" },
+        ],
+      },
     ],
-    // The operator's Support requests page (#1527). It has no Feedback tab,
-    // so the Help menu shows no Send feedback row.
-    support: { requestsHref: `${basePath}/support`, feedbackHref: null },
-    // #1527 — Workspace settings opens from the avatar menu.
+    support: {
+      requestsHref: `${basePath}/support`,
+      feedbackHref: `${basePath}/support/feedback`,
+    },
     mobileTabs: portfolio ? ["home", "activity", "billing"] : ["home"],
   };
 }
@@ -82,6 +89,9 @@ export const WORKSPACE_PAGE_LABELS: Record<string, string> = {
   landing: "Default landing organization",
   notifications: "Notification routing",
   account: "Account",
-  support: "Support requests",
+  support: "Help & support",
+  evidence: "Evidence requests",
+  reports: "Reports & appeals",
+  feedback: "Product feedback",
   create: "New organization",
 };

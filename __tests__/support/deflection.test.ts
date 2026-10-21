@@ -24,7 +24,6 @@ jest.mock("../../lib/prisma", () => ({
       updateMany: jest.fn(),
     },
     supportCase: { findMany: jest.fn() },
-    supportTicket: { findMany: jest.fn() },
   },
 }));
 
@@ -39,7 +38,6 @@ const mockPrisma = prisma as unknown as {
     updateMany: jest.Mock;
   };
   supportCase: { findMany: jest.Mock };
-  supportTicket: { findMany: jest.Mock };
 };
 
 beforeEach(() => {
@@ -47,7 +45,6 @@ beforeEach(() => {
   mockPrisma.supportFlowOutcome.create.mockResolvedValue({ id: "out-1" });
   mockPrisma.supportFlowOutcome.findMany.mockResolvedValue([]);
   mockPrisma.supportCase.findMany.mockResolvedValue([]);
-  mockPrisma.supportTicket.findMany.mockResolvedValue([]);
 });
 
 describe("recording an outcome", () => {

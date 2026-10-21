@@ -4,11 +4,7 @@ import type { UserSentryIssues } from "@/lib/observability/sentry-issues-types";
 import type { CaseTopic } from "@/lib/support/case-topic";
 import type { SlaState } from "@/lib/support/sla";
 
-/**
- * #1527 — the Support inbox payloads, shaped on the server
- * (lib/support/case-read.ts) and rendered by the back-office inbox and the
- * user's request page. Dates are ISO strings.
- */
+/** Dashboard support payloads use canonical case IDs and ISO timestamps. */
 
 export type CaseAuthor = "USER" | "BOT" | "AGENT" | "SYSTEM";
 
@@ -20,7 +16,7 @@ export interface ArticleLink {
 
 export interface InboxRow {
   key: string;
-  kind: "ticket" | "thread";
+  kind: "case";
   scope: "session" | "platform";
   /** Name only: contact fields are on the case detail, never the list. */
   requester: {
@@ -57,6 +53,7 @@ export interface InboxStats {
 
 export interface TimelineItem {
   id: string;
+  seq?: number;
   author: CaseAuthor;
   authorName: string | null;
   body: string;
@@ -104,9 +101,8 @@ export interface CaseHistoryEvent {
 
 export interface CaseWorkspace {
   key: string;
-  kind: "ticket" | "thread";
-  ticketId: string | null;
-  threadId: string | null;
+  kind: "case";
+  caseId: string;
   subject: string;
   reference: string | null;
   topic: CaseTopic;
@@ -139,13 +135,18 @@ export interface CaseWorkspace {
   pastCases: { key: string; subject: string; status: string; at: string }[];
   sentryIssues?: UserSentryIssues;
   timeline: TimelineItem[];
+  hasMore?: boolean;
+  nextBeforeSeq?: number | null;
   attachments: { id: string; name: string; url: string; size: number }[];
 }
 
-/** The requester's own view of a platform ticket: no private notes, ever. */
+/** Customer case view: private notes are excluded before serialization. */
 export interface OwnTicketCase {
   key: string;
-  ticketId: string;
+  caseId: string;
+  appointmentId?: string | null;
+  filedByOrganizationNotice?: boolean;
+  canReply?: boolean;
   subject: string;
   reference: string | null;
   topic: CaseTopic;
@@ -158,4 +159,6 @@ export interface OwnTicketCase {
   payment: CasePayment | null;
   organization: { id: string; name: string } | null;
   timeline: TimelineItem[];
+  hasMore?: boolean;
+  nextBeforeSeq?: number | null;
 }

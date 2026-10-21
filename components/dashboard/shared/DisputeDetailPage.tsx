@@ -4,6 +4,7 @@ import { useBackofficeCapability } from "@/components/dashboard/backoffice/Backo
 import { useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
+import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -124,15 +125,19 @@ export function DisputeDetailPage({
   queryKeyPrefix = "dispute",
 }: DisputeDetailPageProps) {
   // #1527 — links stay in the viewer's tree; evidence is `disputes.manage`.
-  const { basePath, can } = useBackofficeCapability();
+  const { basePath, can, viewerId } = useBackofficeCapability();
   const allowEvidenceSubmission = can("disputes.manage");
 
   const [showEvidenceForm, setShowEvidenceForm] = useState(false);
+  const [assignmentReason, setAssignmentReason] = useState("");
+  const [assignmentError, setAssignmentError] = useState<string | null>(null);
+  const [assigning, setAssigning] = useState(false);
 
   const {
     data: dispute,
     isLoading,
     error,
+    refetch,
   } = useQuery({
     queryKey: [queryKeyPrefix, disputeId],
     queryFn: () => fetchDisputeDetails(apiEndpoint, disputeId),
@@ -178,8 +183,89 @@ export function DisputeDetailPage({
     dispute.paymentGateway === "RAZORPAY" &&
     dispute.status === "NEEDS_RESPONSE";
 
+  async function assign(assignedToUserId: string | null) {
+    if (!dispute) return;
+    setAssigning(true);
+    setAssignmentError(null);
+    try {
+      const response = await fetch(`${apiEndpoint}/${disputeId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          assignedToUserId,
+          expectedUpdatedAt: dispute.updatedAt,
+          reason: assignmentReason,
+        }),
+      });
+      if (!response.ok)
+        throw new Error(
+          response.status === 409
+            ? "This dispute changed. Refresh it before assigning an owner."
+            : "Could not update the chargeback owner. Refresh and try again.",
+        );
+      setAssignmentReason("");
+      await refetch();
+    } catch (error) {
+      setAssignmentError(
+        error instanceof Error ? error.message : "Could not update owner",
+      );
+    } finally {
+      setAssigning(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Chargeback owner</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm">
+            {dispute.assignedTo?.name ?? "Unassigned"}. This owner coordinates
+            the gateway response and evidence.
+          </p>
+          {allowEvidenceSubmission && (
+            <>
+              <Textarea
+                aria-label="Assignment reason"
+                placeholder="Reason for changing the owner (at least 5 characters)"
+                value={assignmentReason}
+                onChange={(event) => setAssignmentReason(event.target.value)}
+                maxLength={1000}
+              />
+              <div className="flex gap-2">
+                <Button
+                  disabled={
+                    assigning ||
+                    assignmentReason.trim().length < 5 ||
+                    dispute.assignedToUserId === viewerId
+                  }
+                  onClick={() => void assign(viewerId)}
+                >
+                  Assign to me
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={
+                    assigning ||
+                    assignmentReason.trim().length < 5 ||
+                    !dispute.assignedToUserId
+                  }
+                  onClick={() => void assign(null)}
+                >
+                  Unassign
+                </Button>
+              </div>
+              {assignmentError && (
+                <p role="alert" className="text-sm text-red-600">
+                  {assignmentError}
+                </p>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">

@@ -1,3 +1,4 @@
+import { visibleCaseWhere } from "@/lib/support/case-access";
 /**
  * GET /api/user/privacy/export
  *
@@ -37,6 +38,10 @@ export async function GET() {
   const userId = session.user.id;
 
   try {
+    const ownCaseVisibility = await visibleCaseWhere({
+      userId,
+      role: "CONSULTEE",
+    });
     const [
       user,
       consents,
@@ -215,13 +220,24 @@ export async function GET() {
           issuedAt: true,
         },
       }),
-      prisma.supportTicket.findMany({
-        where: { userId },
+      prisma.supportCase.findMany({
+        where: {
+          AND: [
+            ownCaseVisibility,
+            {
+              externalRequesterEmail: null,
+              OR: [{ requesterUserId: userId }, { submitterUserId: userId }],
+            },
+          ],
+        },
         orderBy: { createdAt: "desc" },
         take: 100,
         select: {
           id: true,
           title: true,
+          ownershipScope: true,
+          requesterUserId: true,
+          submitterUserId: true,
           category: true,
           priority: true,
           status: true,
@@ -371,7 +387,17 @@ export async function GET() {
           appointmentParticipations: participations,
           payments,
           consumerInvoices,
-          supportTickets,
+          supportTickets: supportTickets.map(
+            ({ ownershipScope, requesterUserId, submitterUserId, ...row }) => ({
+              ...row,
+              title:
+                ownershipScope === "PERSONAL" &&
+                requesterUserId !== submitterUserId &&
+                userId !== submitterUserId
+                  ? "Organization support request"
+                  : row.title,
+            }),
+          ),
           dpdpGrievances: grievances,
         },
       },

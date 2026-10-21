@@ -309,19 +309,22 @@ export function CollapsibleSidebar({
     <SidebarCollapsedContext.Provider value={collapsed}>
       <aside
         className={cn(
-          "flex h-full flex-col border-r border-border bg-card transition-all duration-300",
+          "flex h-full min-h-0 flex-col overflow-hidden border-r border-border bg-card transition-all duration-300",
           collapsed ? "w-16" : "w-64",
           className,
         )}
       >
         {/* h-14 pixel-matches the DashboardContextBar so the borders meet. */}
-        <div className="flex h-14 items-center border-b border-border px-2">
+        <div className="flex h-14 shrink-0 items-center border-b border-border px-2">
           <div className="w-full min-w-0">{header}</div>
         </div>
 
         {find && (
           <div
-            className={cn("pt-3", collapsed ? "flex justify-center" : "px-3")}
+            className={cn(
+              "shrink-0 pt-3",
+              collapsed ? "flex justify-center" : "px-3",
+            )}
           >
             {find}
           </div>
@@ -329,7 +332,8 @@ export function CollapsibleSidebar({
 
         <nav
           aria-label="Dashboard"
-          className="flex-1 overflow-y-auto px-3 py-4"
+          tabIndex={0}
+          className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 py-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         >
           <SidebarNavGroups
             groups={groups}

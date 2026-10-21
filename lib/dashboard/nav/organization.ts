@@ -14,6 +14,7 @@ import {
   LifeBuoy,
   MessageSquare,
   ShieldCheck,
+  Settings,
   UserCog,
   Users,
   Video,
@@ -129,7 +130,7 @@ export function buildOrganizationNav(
     {
       // The profile is the real predicate: an OWNER who delivers gets it too.
       // Same test as the page, which redirects without a profile (#1527 P1-10).
-      name: "Requests",
+      name: "Booking requests",
       icon: ClipboardCheck,
       path: "requests",
       show: input.consultantProfileId !== null && canHost,
@@ -197,10 +198,15 @@ export function buildOrganizationNav(
     {
       // Metadata-only triage (ADR 20) and org-tagged requests (#1527);
       // each tab carries its own gate.
-      name: "Support",
+      name: "Help & support",
       icon: LifeBuoy,
       path: "support",
-      show: can("supportRequests.org"),
+    },
+    {
+      name: "Organization settings",
+      icon: Settings,
+      path: "settings",
+      show: canOpenOrgSettings(role),
     },
   ];
 
@@ -236,7 +242,6 @@ export function buildOrganizationNav(
     { label: "Operations", items: keep(operations) },
     { label: "Insights", items: keep(insights) },
   ].filter((g) => g.items.length > 0);
-  // #1527 — org Settings opens from the avatar menu, not the rail.
   return {
     basePath: `/dashboard/organization/${orgId}`,
     groups,
@@ -283,7 +288,7 @@ export const ORGANIZATION_PAGE_LABELS: Record<string, string> = {
   collaborations: "Plan collaborators",
   appointments: "Appointments",
   messages: "Messages",
-  requests: "Requests",
+  requests: "Booking requests",
   members: "Members",
   catalog: "Catalog",
   materials: "Materials",
@@ -291,7 +296,9 @@ export const ORGANIZATION_PAGE_LABELS: Record<string, string> = {
   contracts: "Contracts",
   documents: "Session documents",
   recordings: "Recordings",
-  support: "Support",
+  support: "Help & support",
+  evidence: "Evidence requests",
+  activity: "Member support activity",
   billing: "Billing",
   payouts: "Payouts",
   analytics: "Analytics",

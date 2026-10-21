@@ -1,5 +1,6 @@
 "use client";
 
+import { CaseResolutionPanel } from "@/components/support/CaseResolutionPanel";
 import Link from "next/link";
 import { ExternalLink, FileText, Phone } from "lucide-react";
 import type { ReactNode } from "react";
@@ -143,6 +144,7 @@ export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
 
   return (
     <div className="space-y-5">
+      <CaseResolutionPanel caseId={data.caseId} paymentId={data.payment?.id} />
       <Section title="Person">
         <Facts items={personItems} />
       </Section>
@@ -209,13 +211,7 @@ export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
                   {c.subject}
                 </Link>
                 <p className="text-xs text-muted-foreground">
-                  {
-                    caseStatus(
-                      c.key.startsWith("t_") ? "ticket" : "thread",
-                      c.status,
-                    ).label
-                  }{" "}
-                  · {day(c.at)}
+                  {caseStatus(c.status).label} · {day(c.at)}
                 </p>
               </li>
             ))}

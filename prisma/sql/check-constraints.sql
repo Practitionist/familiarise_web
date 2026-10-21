@@ -1090,12 +1090,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS "Recording_streamRecordingId_unique_idx"
   WHERE "streamRecordingId" IS NOT NULL;
 
 -- SPLIT
--- At most one open non-deleted SupportCase per (appointmentId, appointmentOccurrenceId, requesterUserId, submitterUserId, category)
--- using NULLS NOT DISTINCT so booking-wide (appointmentOccurrenceId IS NULL) and platform-wide cases collide cleanly without merging cross-submitter threads.
+-- Open cases deduplicate within their ownership, organization, subject and submitting party.
 DROP INDEX IF EXISTS "support_case_open_scope_key";
 -- SPLIT
 CREATE UNIQUE INDEX IF NOT EXISTS "support_case_open_scope_key"
-  ON "SupportCase" ("appointmentId", "appointmentOccurrenceId", "requesterUserId", "submitterUserId", "category")
+  ON "SupportCase" ("ownershipScope", "organizationId", "scopeKey", "requesterUserId", "submitterUserId", "category")
   NULLS NOT DISTINCT
   WHERE "closedAt" IS NULL AND "deletedAt" IS NULL;
 
@@ -1119,21 +1118,6 @@ ALTER TABLE "SupportCase" ADD CONSTRAINT "support_case_scope_and_shape_chk"
     AND ("problemCaseId" IS NULL OR "caseKind" = 'INCIDENT')
     AND ("csatRating" IS NULL OR ("csatRating" BETWEEN 1 AND 5))
   );
-
--- SPLIT
--- Each SupportCaseEvent belongs to either a unified SupportCase or a pre-cutover SupportTicket.
-ALTER TABLE "SupportCaseEvent" DROP CONSTRAINT IF EXISTS "support_case_event_target_xor";
--- SPLIT
-ALTER TABLE "SupportCaseEvent" ADD CONSTRAINT "support_case_event_target_xor"
-  CHECK (("caseId" IS NULL) <> ("legacyTicketId" IS NULL));
-
--- SPLIT
--- At most one CSAT rating event per pre-cutover SupportTicket.
-DROP INDEX IF EXISTS "support_case_event_legacy_csat_key";
--- SPLIT
-CREATE UNIQUE INDEX IF NOT EXISTS "support_case_event_legacy_csat_key"
-  ON "SupportCaseEvent" ("legacyTicketId")
-  WHERE "kind" = 'CSAT_RATED';
 
 -- SPLIT
 CREATE UNIQUE INDEX IF NOT EXISTS "AppointmentDocument_active_storagePath_key"
@@ -1305,3 +1289,52 @@ ALTER TABLE "ConsultantPayout" ADD CONSTRAINT "consultant_payout_currency_inr" C
 CREATE UNIQUE INDEX IF NOT EXISTS "ops_action_proposal_one_open_key"
   ON "ops_action_proposals" ("action", "targetKind", "targetId")
   WHERE "status" = 'PROPOSED';
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "moderation_report_reporter_open_content_key"
+  ON "ModerationReport" ("reportedById", "targetUserId", "type", "reviewId", "streamMessageId")
+  NULLS NOT DISTINCT
+  WHERE "status" IN ('PENDING', 'UNDER_REVIEW', 'ESCALATED');
+
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "support_payment_hold_active_key"
+  ON "SupportPaymentHold" ("caseId", "paymentId") WHERE "releasedAt" IS NULL;
+
+-- SPLIT
+ALTER TABLE "SupportCase" DROP CONSTRAINT IF EXISTS "support_case_ownership_and_appeal_shape";
+-- SPLIT
+ALTER TABLE "SupportCase" ADD CONSTRAINT "support_case_ownership_and_appeal_shape"
+  CHECK (("ownershipScope" = 'PERSONAL' OR "organizationId" IS NOT NULL)
+    AND num_nonnulls("appealOfDecisionId", "appealOfModerationActionId") <= 1);
+
+-- SPLIT
+ALTER TABLE "SupportCaseAttachment" DROP CONSTRAINT IF EXISTS "support_case_attachment_shape";
+-- SPLIT
+ALTER TABLE "SupportCaseAttachment" ADD CONSTRAINT "support_case_attachment_shape"
+  CHECK (num_nonnulls("messageId", "evidenceRequestId") <= 1 AND "fileSize" >= 0);
+
+-- SPLIT
+ALTER TABLE "SupportFinancialRecommendation" DROP CONSTRAINT IF EXISTS "support_recommendation_shape";
+-- SPLIT
+ALTER TABLE "SupportFinancialRecommendation" ADD CONSTRAINT "support_recommendation_shape"
+  CHECK ("amountPaise" >= 0 AND (("decidedAt" IS NULL AND "approved" IS NULL AND "decidedById" IS NULL)
+    OR ("decidedAt" IS NOT NULL AND "approved" IS NOT NULL AND "decidedById" IS NOT NULL)));
+
+-- SPLIT
+ALTER TABLE "SupportPaymentHold" DROP CONSTRAINT IF EXISTS "support_payment_hold_release_shape";
+-- SPLIT
+ALTER TABLE "SupportPaymentHold" ADD CONSTRAINT "support_payment_hold_release_shape"
+  CHECK (("releasedAt" IS NULL AND "releasedById" IS NULL AND "releaseReason" IS NULL)
+    OR ("releasedAt" IS NOT NULL AND "releasedById" IS NOT NULL AND "releaseReason" IS NOT NULL));
+
+-- SPLIT
+CREATE OR REPLACE FUNCTION assert_support_decision_immutable() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'Case decisions are immutable; append a new decision instead';
+END;
+$$ LANGUAGE plpgsql;
+-- SPLIT
+DROP TRIGGER IF EXISTS support_case_decision_immutable ON "SupportCaseDecision";
+-- SPLIT
+CREATE TRIGGER support_case_decision_immutable
+  BEFORE UPDATE OR DELETE ON "SupportCaseDecision"
+  FOR EACH ROW EXECUTE FUNCTION assert_support_decision_immutable();

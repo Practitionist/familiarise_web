@@ -1,7 +1,7 @@
-// #705 schema freeze (2026-07-17) — enterprise schema is launch-frozen.
-// Additive-only until launch: new nullable columns / new models are allowed;
-// renames, drops of live columns, and type changes are not. Money columns are
-// BigInt paise; enums are declared below the model(s) that use them.
+// Enterprise and money models are additive-only until launch: new nullable
+// columns and new models are allowed; renames, drops and type changes are not.
+// Support models hold disposable pre-MVP data and may still change shape.
+// Money columns are BigInt paise; enums are declared below the models using them.
 
 generator client {
   provider        = "prisma-client-js"
@@ -79,27 +79,22 @@ model User {
   waitlistSubscriptions Waitlist[]
 
   // Platform feedback and support
-  platformFeedback          PlatformFeedback[]
-  supportTickets            SupportTicket[]
+  platformFeedback    PlatformFeedback[]
   // #appt-support — per-appointment support conversations + private CSAT.
-  appointmentSupportThreads AppointmentSupportThread[]
-  appointmentFeedback       AppointmentFeedback[]
-  supportResponses          SupportResponse[]
-  supportTicketsAssigned    SupportTicket[]            @relation("SupportTicketAssignee")
-  supportMessagesAuthored   SupportMessage[]           @relation("SupportMessageAuthor")
-  supportFlowOutcomes       SupportFlowOutcome[]
-  accounts                  Account[] // BetterAuth Accounts
-  sessions                  Session[] // BetterAuth Sessions
-  memberships               Membership[] // Typed enterprise memberships (Arch 4-Modified)
-  invitationsSent           Invitation[]               @relation("InvitationsSent")
+  appointmentFeedback AppointmentFeedback[]
+  supportFlowOutcomes SupportFlowOutcome[]
+  accounts            Account[] // BetterAuth Accounts
+  sessions            Session[] // BetterAuth Sessions
+  memberships         Membership[] // Typed enterprise memberships (Arch 4-Modified)
+  invitationsSent     Invitation[]          @relation("InvitationsSent")
   // #1927 — the platform-side operator door (STAFF/ADMIN), DISTINCT from the
   // org `Invitation` above: no organizationId, and the recipient is bound by
   // the emailed address rather than by a Membership. Two relations because
   // both sides are real — who minted the invite, and which User the accepted
   // token produced. SetNull rather than Cascade: deleting a User must not
   // delete the audit record that they were ever onboarded here.
-  consentArtifacts          ConsentArtifact[]
-  dpdpGrievances            DpdpGrievance[]
+  consentArtifacts    ConsentArtifact[]
+  dpdpGrievances      DpdpGrievance[]
 
   // Staff Dashboard Relations
   reportsSubmitted  ModerationReport[] @relation("ReportsSubmitted")
@@ -145,43 +140,51 @@ model User {
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
-  invitations                   Invitation[]
-  twoFactor                     TwoFactor?
-  passkeys                      Passkey[]
-  ssoproviders                  SsoProvider[]
-  erasureRequests               ErasureRequest[]
+  invitations                    Invitation[]
+  twoFactor                      TwoFactor?
+  passkeys                       Passkey[]
+  ssoproviders                   SsoProvider[]
+  erasureRequests                ErasureRequest[]
   /// Erasure requests this user processed as an admin. Named relation
   /// distinguishes it from `erasureRequests` above (requests filed
   /// against this user) — Prisma requires the disambiguation since
   /// both edges target ErasureRequest.
-  erasureRequestsProcessed      ErasureRequest[]              @relation("ErasureRequestProcessor")
+  erasureRequestsProcessed       ErasureRequest[]                 @relation("ErasureRequestProcessor")
   // Disputes this admin owns (#269).
-  disputesAssigned              Dispute[]                     @relation("DisputeAssignee")
-  opsActions                    OpsActionLog[]
-  opsProposalsMade              OpsActionProposal[]           @relation("OpsProposalProposer")
-  opsProposalsDecided           OpsActionProposal[]           @relation("OpsProposalDecider")
-  declaredIncidents             PlatformIncident[]
-  incidentRemedies              IncidentRemedy[]
+  disputesAssigned               Dispute[]                        @relation("DisputeAssignee")
+  opsActions                     OpsActionLog[]
+  opsProposalsMade               OpsActionProposal[]              @relation("OpsProposalProposer")
+  opsProposalsDecided            OpsActionProposal[]              @relation("OpsProposalDecider")
+  declaredIncidents              PlatformIncident[]
+  incidentRemedies               IncidentRemedy[]
   // A8 — documents this consultant reviewed (back-relation for the FK-ified
   // AppointmentDocument.reviewedById; named to avoid the implicit-relation guess).
-  documentsReviewed             AppointmentDocument[]         @relation("DocumentReviewer")
+  documentsReviewed              AppointmentDocument[]            @relation("DocumentReviewer")
   // Soft-delete audit — who tombstoned an appointment document.
-  documentsDeleted              AppointmentDocument[]         @relation("DocumentDeleter")
+  documentsDeleted               AppointmentDocument[]            @relation("DocumentDeleter")
   // #366 — publish-time redistribution-consent attestations made by consultants.
-  recordingsConsentAttested     Recording[]                   @relation("RecordingConsentAttestor")
+  recordingsConsentAttested      Recording[]                      @relation("RecordingConsentAttestor")
   // #366 — replay purchases this user made.
-  recordingPurchases            RecordingPurchase[]           @relation("RecordingPurchaseBuyer")
+  recordingPurchases             RecordingPurchase[]              @relation("RecordingPurchaseBuyer")
   // #1499 — cancellation-policy versions this OWNER published, for the audit trail.
-  publishedCancellationPolicies CancellationPolicy[]          @relation("CancellationPolicyPublisher")
+  publishedCancellationPolicies  CancellationPolicy[]             @relation("CancellationPolicyPublisher")
   // Verification documents this user uploaded (owner column, #1224).
-  verificationDocumentsUploaded ProfileVerificationDocument[] @relation("VerificationDocumentUploader")
+  verificationDocumentsUploaded  ProfileVerificationDocument[]    @relation("VerificationDocumentUploader")
   // #1778 — the held windows this user asked to hear about when they free.
-  windowBackupInterests         WindowBackupInterest[]
-  supportCasesRequested         SupportCase[]                 @relation("SupportCaseRequester")
-  supportCasesSubmitted         SupportCase[]                 @relation("SupportCaseSubmitter")
-  supportCasesAssigned          SupportCase[]                 @relation("SupportCaseAssignee")
-  supportCaseMessagesAuthored   SupportCaseMessage[]          @relation("SupportCaseMessageAuthor")
-  supportCaseEventsActed        SupportCaseEvent[]            @relation("SupportCaseEventActor")
+  windowBackupInterests          WindowBackupInterest[]
+  supportCasesRequested          SupportCase[]                    @relation("SupportCaseRequester")
+  supportCasesSubmitted          SupportCase[]                    @relation("SupportCaseSubmitter")
+  supportCasesAssigned           SupportCase[]                    @relation("SupportCaseAssignee")
+  supportCaseMessagesAuthored    SupportCaseMessage[]             @relation("SupportCaseMessageAuthor")
+  supportCaseEventsActed         SupportCaseEvent[]               @relation("SupportCaseEventActor")
+  supportEvidenceReceived        SupportCaseEvidenceRequest[]     @relation("SupportEvidenceRecipient")
+  supportEvidenceRequested       SupportCaseEvidenceRequest[]     @relation("SupportEvidenceRequester")
+  supportDecisions               SupportCaseDecision[]
+  supportRecommendations         SupportFinancialRecommendation[] @relation("SupportRecommendationAuthor")
+  supportRecommendationDecisions SupportFinancialRecommendation[] @relation("SupportRecommendationDecider")
+  supportHoldsApplied            SupportPaymentHold[]             @relation("SupportHoldApplier")
+  supportHoldsReleased           SupportPaymentHold[]             @relation("SupportHoldReleaser")
+  supportAttachments             SupportCaseAttachment[]
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -291,245 +294,13 @@ model PlatformFeedback {
   @@index([userId])
 }
 
-// FROZEN: Unified into SupportCase at pre-MVP cutover; kept read/write compatible until legacy row drain completes.
-model SupportTicket {
-  id             String              @id @default(uuid())
-  title          String
-  description    String              @db.Text
-  priority       SupportPriority     @default(MEDIUM)
-  status         SupportTicketStatus @default(OPEN)
-  category       String?
-  // #1021 — org context so enterprise tickets can be routed, SLA-tracked,
-  // and counted per organisation instead of disappearing into the B2C queue.
-  organizationId String?
-  organization   Organization?       @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-  issueType      SupportIssueType?
-
-  // #705 — a speakable handle for email subjects and phone support. A uuid
-  // cannot be read back over a phone line, so the two staff surfaces had each
-  // invented their own truncation (one took the first 8 chars, the other the
-  // last) and users were given nothing at all. Year-scoped so the series leaks
-  // this year's volume rather than the all-time count. Nullable because it is
-  // minted forward-only: a unique index permits unlimited NULLs, so tickets
-  // that predate it keep their uuid and no backfill is owed.
-  referenceNumber String? @unique @db.VarChar(20)
-
-  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  userId String
-
-  responses                SupportResponse[]
-  attachments              SupportTicketAttachment[]
-  events                   SupportCaseEvent[]        @relation("LegacySupportTicketEvents")
-  // #appt-support — set when a per-appointment thread escalates to a human, so
-  // ops works it in this existing queue rather than a parallel system.
-  appointmentSupportThread AppointmentSupportThread?
-
-  // #support-hub — denormalized last-activity clock, bumped transactionally on
-  // every visible message write. `updatedAt` only moves when THIS row changes,
-  // so replies would leave it stale; the hub and the ops inbox sort by this.
-  lastMessageAt DateTime?
-
-  // Entity links for Swiggy-style context (link ticket to booking/payment)
-  consultationId String?
-  subscriptionId String?
-  paymentId      String?
-  refundId       String? // If refund was initiated from this ticket
-
-  // Staff assignment. #705 — was a bare String, so it could name a user who no
-  // longer exists and the ops queue could not render a name without a second
-  // query. SetNull, never Cascade: a staff departure must not delete tickets.
-  assignedTo   User?   @relation("SupportTicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
-  assignedToId String?
-
-  // #705 — SLA deadlines, STORED at intake rather than derived at read time so
-  // a later policy change never retroactively re-dates an open ticket's breach
-  // (same rationale as Appointment.cancellationPolicySnapshot). Sized to the
-  // IT Rules 2021 numbers — acknowledge <= 24h, dispose <= 15 days — because
-  // they are tighter than the Consumer Protection (E-Commerce) Rules 2020, so
-  // meeting them satisfies both. No `slaState` column: every state is derivable
-  // from these stamps plus now(), and a stored one would go stale between cron
-  // runs. NULL on tickets that predate this; lib/support/sla.ts falls back to
-  // createdAt + the statutory window, which is why no backfill is owed.
-  ackDueAt          DateTime? @db.Timestamptz
-  acknowledgedAt    DateTime? @db.Timestamptz
-  resolutionDueAt   DateTime? @db.Timestamptz
-  resolvedAt        DateTime? @db.Timestamptz
-  closedAt          DateTime? @db.Timestamptz
-  // First reply from a person. Distinct from acknowledgedAt, which an automated
-  // acknowledgement satisfies; this is the number that actually predicts CSAT.
-  firstAgentReplyAt DateTime? @db.Timestamptz
-  // The resolution clock stops while the ball is in the user's court, or every
-  // slow-replying customer reads as a team breach. Staff's reply sets
-  // `awaitingUserSince`; the user's reply folds the elapsed wait into
-  // `pausedSeconds` and clears it. Effective deadline =
-  // resolutionDueAt + pausedSeconds.
-  //
-  // SECONDS, not milliseconds: an Int of ms overflows at 24.8 days, which a
-  // ticket that sits on the user for a couple of months would reach. Seconds
-  // buy 68 years, and sub-second precision is meaningless against a deadline
-  // measured in days.
-  awaitingUserSince DateTime? @db.Timestamptz
-  pausedSeconds     Int       @default(0)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([userId])
-  @@index([status])
-  @@index([assignedToId])
-  @@index([consultationId])
-  @@index([paymentId])
-  @@index([createdAt])
-  @@index([assignedToId, status])
-  // #support-hub — org-filtered ops queue views. This also serves the
-  // organizationId-only lookups #1245 r2 added a single-column index for:
-  // Postgres reads a composite's leftmost prefix, so that index was pure
-  // write cost. Removed here rather than left shadowing this one.
-  @@index([organizationId, status])
-  // #705 — breach sweeps: "unacknowledged and past due", "unresolved and past
-  // due". Without these, finding a breach means scanning the whole queue.
-  @@index([acknowledgedAt, ackDueAt])
-  @@index([resolvedAt, resolutionDueAt])
-}
-
-// #705 — per-year counter behind SupportTicket.referenceNumber. Allocation is
-// an INSERT…ON CONFLICT DO UPDATE…RETURNING, so concurrent ticket creation
-// queues on this single row and each caller gets a distinct number instead of
-// two tickets reading the same "next" value. Same shape as OrgInvoiceCounter,
-// but unlike a GST series gaps are fine here: a rolled-back ticket burning a
-// number costs nothing, whereas CGST Rule 46 would not allow it.
-model SupportTicketCounter {
+// Year-scoped references are allocated atomically inside the case transaction.
+model SupportCaseCounter {
   year      Int      @id
   nextSeq   Int      @default(1)
   updatedAt DateTime @updatedAt
 
-  @@map("support_ticket_counters")
-}
-
-// FROZEN: Unified into SupportCaseMessage at pre-MVP cutover.
-model SupportResponse {
-  id         String  @id @default(uuid())
-  message    String  @db.Text
-  isInternal Boolean @default(false) // Internal notes not visible to user
-
-  supportTicket   SupportTicket @relation(fields: [supportTicketId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  supportTicketId String
-
-  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  userId String
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([supportTicketId])
-  @@index([userId])
-}
-
-model SupportTicketAttachment {
-  id           String @id @default(uuid())
-  fileName     String
-  originalName String
-  fileSize     Int
-  mimeType     String
-  fileUrl      String
-  storagePath  String
-
-  ticket   SupportTicket @relation(fields: [ticketId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  ticketId String
-
-  uploadedAt DateTime @default(now())
-
-  @@index([ticketId])
-}
-
-// FROZEN: Unified into SupportCase at pre-MVP cutover.
-// #appt-support — per-appointment support conversation (Swiggy/Zomato-style).
-// One thread per (appointment, user). Channel-agnostic: messages are produced
-// by a swappable resolver — a deterministic flowchart now, an AI agent later,
-// a human on escalation — without changing this shape. organizationId is
-// denormalized from the appointment so org admins can triage without a join.
-model AppointmentSupportThread {
-  id             String        @id @default(uuid())
-  appointmentId  String
-  appointment    Appointment   @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
-  userId         String
-  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  // Null for pure B2C appointments; set for org-sponsored/hosted ones.
-  organizationId String?
-  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-
-  category      SupportThreadCategory @default(OTHER)
-  status        SupportThreadStatus   @default(OPEN)
-  // Which resolver is currently driving the thread. SELF_SERVE = flowchart.
-  activeChannel SupportChannel        @default(SELF_SERVE)
-  // Current flowchart node id (null once AI/HUMAN takes over or it resolves).
-  currentNodeId String?
-
-  // A HUMAN handoff creates/links a general SupportTicket so ops works it in the
-  // existing queue — no parallel ops system (one-to-one).
-  supportTicketId String?        @unique
-  supportTicket   SupportTicket? @relation(fields: [supportTicketId], references: [id], onDelete: SetNull)
-
-  messages   SupportMessage[]
-  createdAt  DateTime         @default(now())
-  updatedAt  DateTime         @updatedAt
-  resolvedAt DateTime?
-
-  // #support-hub — denormalized last-activity clock, bumped transactionally on
-  // every message write (same rationale as SupportTicket.lastMessageAt).
-  lastMessageAt DateTime?
-
-  // #705 — allocator for SupportMessage.seq. Incremented inside the same
-  // transaction that writes the messages, so the row lock it takes IS the
-  // serialization point between a user typing on their phone and an agent
-  // replying on desktop. Free: every message write already updates this row.
-  messageSeq Int @default(0)
-
-  // One support conversation per (appointment, user) — reused across intents,
-  // like a per-order support chat. Also the concurrency guard for find-or-create.
-  @@unique([appointmentId, userId])
-  @@index([userId, status])
-  @@index([organizationId, status])
-  @@index([status, createdAt])
-  // #support-hub — the ops inbox sorts by last activity, usually status-
-  // filtered; without this every page sorts the whole filtered set.
-  @@index([status, lastMessageAt])
-}
-
-// FROZEN: Unified into SupportCaseMessage at pre-MVP cutover.
-model SupportMessage {
-  id       String                   @id @default(uuid())
-  threadId String
-  thread   AppointmentSupportThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
-  sender   SupportMessageSender
-  body     String                   @db.Text
-  // Resolver metadata — flow node id, AI model, action refs. Free-form.
-  metadata Json?
-
-  // #705 — createdAt alone cannot order this table. The user's turn and the
-  // bot's reply are written in ONE transaction, and Postgres CURRENT_TIMESTAMP
-  // is transaction START time, so they can carry a byte-identical timestamp;
-  // the sort then falls to the planner and the answer renders above the
-  // question. Ordering by [createdAt, id] only makes that deterministic, not
-  // correct — id is a random uuid, so it would put the reply first about half
-  // the time. `seq` is a strict per-thread total order from
-  // AppointmentSupportThread.messageSeq. Rows written before this column keep
-  // 0 and sort first, which is chronologically right: they all predate it.
-  seq Int @default(0)
-
-  // Which staff member wrote an AGENT message. NULL for USER/BOT/SYSTEM (the
-  // thread's own userId identifies the user side) and for AGENT rows written
-  // before this column, which honestly record "no longer known". SetNull, never
-  // Cascade: a staff departure must not delete a customer's support history.
-  authorUser   User?   @relation("SupportMessageAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
-  authorUserId String?
-
-  createdAt DateTime @default(now())
-
-  @@index([threadId, seq])
-  @@index([threadId, createdAt])
-  // Postgres does not index a foreign key for you; the SetNull scans by this.
-  @@index([authorUserId])
+  @@map("support_case_counters")
 }
 
 // #705 — one row per TERMINAL support turn, in both scopes.
@@ -594,12 +365,12 @@ enum SupportFlowOutcomeKind {
 
 /// Unified support case owning the transcript, SLA clocks, FAM reference, flow cursor,
 /// callback schedule, and resolution CSAT. Never declare an @@index or @@unique on the
-/// exact 5-tuple [appointmentId, appointmentOccurrenceId, requesterUserId, submitterUserId, category]
+/// ownership/scope tuple [ownershipScope, organizationId, scopeKey, requesterUserId, submitterUserId, category]
 /// so prisma db push leaves sidecar partial unique index "support_case_open_scope_key" intact.
 model SupportCase {
   id              String            @id @default(uuid())
   referenceNumber String            @unique @db.VarChar(20)
-  clientIntakeId  String?           @unique @db.VarChar(128)
+  clientIntakeId  String?           @db.VarChar(128)
   title           String
   description     String            @db.Text
   category        String?           @db.VarChar(64)
@@ -650,6 +421,23 @@ model SupportCase {
   csatRating Int?      @db.SmallInt
   csatAt     DateTime? @db.Timestamptz
 
+  externalRequesterEmail     String?                          @db.VarChar(320)
+  externalRequesterName      String?                          @db.VarChar(200)
+  ownershipScope             SupportCaseOwnership             @default(PERSONAL)
+  scopeKey                   String                           @default("ACCOUNT") @db.VarChar(200)
+  receivedAt                 DateTime?                        @db.Timestamptz
+  statutoryDueAt             DateTime?                        @db.Timestamptz
+  deadlinePolicy             String?                          @db.VarChar(64)
+  appealOfDecisionId         String?
+  appealOfDecision           SupportCaseDecision?             @relation("CaseDecisionAppeals", fields: [appealOfDecisionId], references: [id], onDelete: Restrict)
+  appealOfModerationActionId String?
+  appealOfModerationAction   ModerationAction?                @relation(fields: [appealOfModerationActionId], references: [id], onDelete: Restrict)
+  evidenceRequests           SupportCaseEvidenceRequest[]
+  decisions                  SupportCaseDecision[]            @relation("CaseDecisions")
+  recommendations            SupportFinancialRecommendation[]
+  paymentHolds               SupportPaymentHold[]
+  attachments                SupportCaseAttachment[]
+
   subjects SupportCaseSubject[]
   messages SupportCaseMessage[]
   events   SupportCaseEvent[]
@@ -657,6 +445,9 @@ model SupportCase {
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
+  @@unique([submitterUserId, clientIntakeId])
+  @@unique([appealOfDecisionId, submitterUserId])
+  @@unique([appealOfModerationActionId, submitterUserId])
   @@index([requesterUserId, status])
   @@index([submitterUserId])
   @@index([appointmentId, requesterUserId])
@@ -665,6 +456,8 @@ model SupportCase {
   @@index([status, lastMessageAt])
   @@index([acknowledgedAt, ackDueAt])
   @@index([resolvedAt, resolutionDueAt])
+  @@index([resolvedAt, statutoryDueAt])
+  @@index([receivedAt])
   @@index([problemCaseId])
 }
 
@@ -695,35 +488,153 @@ model SupportCaseMessage {
   authorUser   User?                @relation("SupportCaseMessageAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
   createdAt    DateTime             @default(now()) @db.Timestamptz
 
+  attachments SupportCaseAttachment[]
+
   @@unique([caseId, clientTurnId])
-  @@index([caseId, seq])
+  @@unique([caseId, seq])
   @@index([authorUserId])
 }
 
 model SupportCaseEvent {
-  id             String               @id @default(uuid())
-  caseId         String?
-  supportCase    SupportCase?         @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  legacyTicketId String?
-  legacyTicket   SupportTicket?       @relation("LegacySupportTicketEvents", fields: [legacyTicketId], references: [id], onDelete: Cascade)
-  actorId        String?
-  actor          User?                @relation("SupportCaseEventActor", fields: [actorId], references: [id], onDelete: SetNull)
-  kind           SupportCaseEventKind
-  fromValue      String?
-  toValue        String?
-  note           String?              @db.Text
-  createdAt      DateTime             @default(now()) @db.Timestamptz
+  id          String               @id @default(uuid())
+  caseId      String
+  supportCase SupportCase          @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  actorId     String?
+  actor       User?                @relation("SupportCaseEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+  kind        SupportCaseEventKind
+  fromValue   String?
+  toValue     String?
+  note        String?              @db.Text
+  createdAt   DateTime             @default(now()) @db.Timestamptz
 
   @@index([caseId, createdAt])
-  @@index([legacyTicketId, createdAt])
   @@index([actorId])
+}
+
+enum SupportCaseOwnership {
+  PERSONAL
+  ORG_OPERATIONS
+  ORG_BILLING
+}
+
+model SupportCaseEvidenceRequest {
+  id               String                  @id @default(uuid())
+  caseId           String
+  supportCase      SupportCase             @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  recipientUserId  String
+  recipient        User                    @relation("SupportEvidenceRecipient", fields: [recipientUserId], references: [id], onDelete: Restrict)
+  requestedById    String
+  requestedBy      User                    @relation("SupportEvidenceRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  clientActionId   String                  @db.VarChar(128)
+  prompt           String                  @db.Text
+  dueAt            DateTime                @db.Timestamptz
+  responseBody     String?                 @db.Text
+  responseClientId String?                 @db.VarChar(128)
+  respondedAt      DateTime?               @db.Timestamptz
+  cancelledAt      DateTime?               @db.Timestamptz
+  createdAt        DateTime                @default(now()) @db.Timestamptz
+  attachments      SupportCaseAttachment[]
+
+  @@unique([caseId, clientActionId])
+  @@index([recipientUserId, respondedAt])
+  @@index([dueAt, respondedAt, cancelledAt])
+}
+
+model SupportCaseDecision {
+  id               String        @id @default(uuid())
+  caseId           String
+  supportCase      SupportCase   @relation("CaseDecisions", fields: [caseId], references: [id], onDelete: Restrict)
+  decidedById      String
+  decidedBy        User          @relation(fields: [decidedById], references: [id], onDelete: Restrict)
+  clientActionId   String        @db.VarChar(128)
+  outcome          String        @db.VarChar(32)
+  explanation      String        @db.Text
+  privateRationale String?       @db.Text
+  appealUntil      DateTime      @db.Timestamptz
+  createdAt        DateTime      @default(now()) @db.Timestamptz
+  appeals          SupportCase[] @relation("CaseDecisionAppeals")
+
+  @@unique([caseId, clientActionId])
+  @@index([caseId, createdAt])
+  @@index([decidedById])
+}
+
+model SupportFinancialRecommendation {
+  id             String      @id @default(uuid())
+  caseId         String
+  supportCase    SupportCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  paymentId      String
+  payment        Payment     @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  proposedById   String
+  proposedBy     User        @relation("SupportRecommendationAuthor", fields: [proposedById], references: [id], onDelete: Restrict)
+  clientActionId String      @db.VarChar(128)
+  amountPaise    BigInt
+  reason         String      @db.Text
+  decidedAt      DateTime?   @db.Timestamptz
+  decidedById    String?
+  decidedBy      User?       @relation("SupportRecommendationDecider", fields: [decidedById], references: [id], onDelete: Restrict)
+  decisionReason String?     @db.Text
+  approved       Boolean?
+  refundId       String?     @unique
+  refund         Refund?     @relation(fields: [refundId], references: [id], onDelete: Restrict)
+  createdAt      DateTime    @default(now()) @db.Timestamptz
+
+  @@unique([caseId, clientActionId])
+  @@index([caseId, decidedAt])
+  @@index([paymentId])
+  @@index([proposedById])
+  @@index([decidedById])
+}
+
+model SupportPaymentHold {
+  id            String      @id @default(uuid())
+  caseId        String
+  supportCase   SupportCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  paymentId     String
+  payment       Payment     @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  appliedById   String
+  appliedBy     User        @relation("SupportHoldApplier", fields: [appliedById], references: [id], onDelete: Restrict)
+  reason        String      @db.Text
+  createdAt     DateTime    @default(now()) @db.Timestamptz
+  releasedAt    DateTime?   @db.Timestamptz
+  releasedById  String?
+  releasedBy    User?       @relation("SupportHoldReleaser", fields: [releasedById], references: [id], onDelete: Restrict)
+  releaseReason String?     @db.Text
+
+  @@index([paymentId, releasedAt])
+  @@index([caseId])
+  @@index([appliedById])
+  @@index([releasedById])
+}
+
+model SupportCaseAttachment {
+  id                String                      @id @default(uuid())
+  caseId            String
+  supportCase       SupportCase                 @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  messageId         String?
+  message           SupportCaseMessage?         @relation(fields: [messageId], references: [id], onDelete: Restrict)
+  evidenceRequestId String?
+  evidenceRequest   SupportCaseEvidenceRequest? @relation(fields: [evidenceRequestId], references: [id], onDelete: Restrict)
+  uploadedById      String
+  uploadedBy        User                        @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+  originalName      String
+  mimeType          String
+  fileSize          Int
+  storagePath       String                      @unique
+  completedAt       DateTime?                   @db.Timestamptz
+  deletedAt         DateTime?                   @db.Timestamptz
+  createdAt         DateTime                    @default(now()) @db.Timestamptz
+
+  @@index([caseId])
+  @@index([messageId])
+  @@index([evidenceRequestId])
+  @@index([uploadedById])
 }
 
 enum SupportCaseStatus {
   OPEN
   IN_PROGRESS
   ESCALATED
-  ON_HOLD
   RESOLVED
   CLOSED
 }
@@ -761,7 +672,8 @@ enum SupportCaseEventKind {
 // ConsultantReview. Gives webinar/class a feedback path they lack today and
 // feeds the org-level quality signal. One per (appointment, user).
 model AppointmentFeedback {
-  id String @id @default(uuid())
+  id        String    @id @default(uuid())
+  deletedAt DateTime? @db.Timestamptz
 
   // #1554 — the held call being rated; NULL means the rating is about the
   // whole appointment (a subscription or class as a purchase).
@@ -843,14 +755,6 @@ enum RatingCause {
   OTHER
 }
 
-enum SupportThreadStatus {
-  OPEN
-  IN_PROGRESS
-  ESCALATED
-  RESOLVED
-  CLOSED
-}
-
 // Which resolver drives the thread. The interface is identical across all three
 // so a thread can move SELF_SERVE → AI → HUMAN without a data change.
 enum SupportChannel {
@@ -889,14 +793,6 @@ enum PlatformFeedbackStatus {
   PENDING
   ACKNOWLEDGED
   IN_PROGRESS
-  RESOLVED
-  CLOSED
-}
-
-enum SupportTicketStatus {
-  OPEN
-  IN_PROGRESS
-  ON_HOLD
   RESOLVED
   CLOSED
 }
@@ -1356,12 +1252,10 @@ model Organization {
 
   // #appt-support — org-scoped read views over members' per-appointment support
   // threads + CSAT (denormalized org tag; org admins triage / see quality).
-  appointmentSupportThreads AppointmentSupportThread[]
-  appointmentFeedback       AppointmentFeedback[]
+  appointmentFeedback AppointmentFeedback[]
   // #support-hub — tickets attributed to this org (operator intake + escalated
   // org-appointment threads). Powers the org-filtered ops queue.
-  supportTickets            SupportTicket[]
-  moderationReports         ModerationReport[]
+  moderationReports   ModerationReport[]
 
   // #778 §D — annual aggregate turnover ≥ ₹5cr makes IRN/e-invoice mandatory
   // (CGST e-invoicing threshold). Drives whether OrganizationInvoice must upload
@@ -4800,7 +4694,6 @@ model Appointment {
   payment           Payment[]
   documents         AppointmentDocument[]
   // #appt-support — per-appointment support conversations + private CSAT.
-  supportThreads    AppointmentSupportThread[]
   supportFeedback   AppointmentFeedback[]
   // #705 — the public reviews this session earned. Distinct from
   // supportFeedback: that is private CSAT, this is a consumer review.
@@ -5897,6 +5790,9 @@ model Payment {
   refunds  Refund[] // Refunds associated with this payment
   disputes Dispute[] // Disputes associated with this payment
 
+  supportHolds           SupportPaymentHold[]
+  supportRecommendations SupportFinancialRecommendation[]
+
   incidentRemedies IncidentRemedy[]
 
   // #1365 — the statutory B2C tax invoice for this payment, at most one.
@@ -6081,6 +5977,8 @@ model Refund {
 
   payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   paymentId String
+
+  supportRecommendation SupportFinancialRecommendation?
 
   // Idempotency stamp for applyRefundCascade, claimed once by whichever path runs it.
   // reconcile-pending-refunds re-drives SUCCEEDED rows still null after 10 minutes.
@@ -7232,6 +7130,9 @@ enum ModerationActionType {
   REVIEW_REPLY_REMOVED
   REVIEW_EXCLUDED_FROM_AGGREGATE
   FEEDBACK_EXCLUDED_FROM_AGGREGATE
+  REVIEW_RESTORED
+  REVIEW_REPLY_RESTORED
+  RATING_REINSTATED
 }
 
 enum ProfileVerificationStatus {
@@ -7296,6 +7197,10 @@ model ModerationReport {
   resolvedAt DateTime?
   resolvedBy String? // Staff user ID
 
+  acknowledgementDueAt DateTime? @db.Timestamptz
+  resolutionDueAt      DateTime? @db.Timestamptz
+  deadlinePolicy       String?   @db.VarChar(64)
+
   actions ModerationAction[]
 
   createdAt DateTime @default(now())
@@ -7337,6 +7242,8 @@ model ModerationAction {
   // revoked, appointments cancelled, refund totals, per-step failures) —
   // best-effort steps can partially fail, and staff needs to see what stuck.
   sideEffects Json?
+
+  supportAppeals SupportCase[]
 
   createdAt DateTime @default(now())
 

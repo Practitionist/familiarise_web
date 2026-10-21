@@ -13,9 +13,7 @@ import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/utils/tailwind";
 
-// The inline field-error pattern (#1527 §14): `invalidProps` puts
-// `aria-invalid` + `aria-describedby` on the input, `FieldError` renders the
-// message under it with the matching id.
+// Field errors link inputs to their validation message with aria-describedby.
 export { FieldError, invalidProps } from "@/components/ui/field-error";
 
 export interface SettingsNavSection {
@@ -40,8 +38,6 @@ export interface SettingsLayoutProps {
   groups: SettingsNavGroup[];
   /** The hub root; with no section open it shows the section list. */
   basePath: string;
-  /** Where the mobile "Settings" back link goes; defaults to `basePath`. */
-  listHref?: string;
   children: ReactNode;
 }
 
@@ -49,7 +45,7 @@ function isActive(section: SettingsNavSection, pathname: string) {
   return pathname === section.href || pathname.startsWith(`${section.href}/`);
 }
 
-/** The mobile hub list: every section as a row, grouped (list → detail). */
+/** Settings sections stay in a grouped hub; individual forms use back navigation. */
 function SectionList({ groups }: Readonly<{ groups: SettingsNavGroup[] }>) {
   return (
     <div className="space-y-6">
@@ -98,18 +94,12 @@ function SectionList({ groups }: Readonly<{ groups: SettingsNavGroup[] }>) {
   );
 }
 
-/**
- * The one Settings layout for every tree (#1527 §14): a grouped left nav from
- * `md` up; below it the hub root is a list of sections and each section page
- * carries a "Settings" back link (list → detail). Every section is its own
- * URL, so back/forward and deep links work.
- */
+/** One URL per settings form, with a grouped hub and a full-width detail page. */
 export function SettingsLayout({
   title,
   description,
   groups,
   basePath,
-  listHref,
   children,
 }: Readonly<SettingsLayoutProps>) {
   const pathname = usePathname();
@@ -136,65 +126,20 @@ export function SettingsLayout({
   }
 
   return (
-    <>
+    <div className="max-w-3xl">
       <Link
-        href={listHref ?? basePath}
-        className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground md:hidden"
+        href={basePath}
+        className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
         <ChevronLeft className="h-4 w-4" aria-hidden />
         {title}
       </Link>
-      {/* One h1: the section name on mobile (detail view), the hub name at md+. */}
       <PageHeader
-        title={
-          <>
-            <span className="md:hidden">{active.label}</span>
-            <span className="hidden md:inline">{title}</span>
-          </>
-        }
+        title={active.label}
         description={active.description ?? description}
       />
-      <div className="flex gap-8">
-        <nav
-          aria-label={`${title} sections`}
-          className="hidden w-52 shrink-0 space-y-5 md:block"
-        >
-          {visible.map((group) => (
-            <div key={group.title}>
-              <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                {group.title}
-              </p>
-              <ul className="space-y-0.5">
-                {group.sections.map((section) => {
-                  const current = section.key === active.key;
-                  const Icon = section.icon;
-                  return (
-                    <li key={section.key}>
-                      <Link
-                        href={section.href}
-                        aria-current={current ? "page" : undefined}
-                        className={cn(
-                          "flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors",
-                          current
-                            ? "bg-muted font-medium text-foreground"
-                            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-                        )}
-                      >
-                        {Icon && (
-                          <Icon className="h-4 w-4 shrink-0" aria-hidden />
-                        )}
-                        {section.label}
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          ))}
-        </nav>
-        <div className="min-w-0 max-w-3xl flex-1">{children}</div>
-      </div>
-    </>
+      {children}
+    </div>
   );
 }
 

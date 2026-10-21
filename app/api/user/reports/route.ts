@@ -11,10 +11,12 @@ import type {
 } from "@prisma/client";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { getSession } from "@/lib/auth-server";
+import { requireApiAuth } from "@/lib/auth-helpers";
+import { addMonths } from "date-fns";
 import { formatReportReference } from "@/lib/moderation/report-reference";
 
 const userReportsQuerySchema = z.object({
+  scope: z.enum(["submitted", "decisions"]).default("submitted"),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce
     .number()
@@ -62,13 +64,13 @@ function derivePublicReportOutcome(
 
 export async function GET(req: NextRequest) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const auth = await requireApiAuth();
+    if (auth.error) return auth.error;
+    const session = auth.session;
 
     const { searchParams } = new URL(req.url);
     const parsedQuery = userReportsQuerySchema.safeParse({
+      scope: searchParams.get("scope") ?? undefined,
       page: searchParams.get("page") ?? undefined,
       limit: searchParams.get("limit") ?? undefined,
     });
@@ -82,10 +84,61 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const { page, limit } = parsedQuery.data;
+    const { page, limit, scope } = parsedQuery.data;
     const offset = (page - 1) * limit;
-    const where = { reportedById: session.user.id };
+    const where =
+      scope === "submitted"
+        ? { reportedById: session.user.id }
+        : { targetUserId: session.user.id, status: "ACTION_TAKEN" as const };
 
+    if (scope === "decisions") {
+      const actorWhere = {
+        OR: [
+          { report: { targetUserId: session.user.id } },
+          { review: { consulteeProfile: { userId: session.user.id } } },
+          {
+            review: { consultantProfile: { userId: session.user.id } },
+            actionType: "REVIEW_REPLY_REMOVED" as const,
+          },
+          { feedback: { userId: session.user.id } },
+        ],
+      };
+      const [actions, count] = await Promise.all([
+        prisma.moderationAction.findMany({
+          where: actorWhere,
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          skip: offset,
+          take: limit,
+          select: {
+            id: true,
+            reportId: true,
+            actionType: true,
+            createdAt: true,
+          },
+        }),
+        prisma.moderationAction.count({ where: actorWhere }),
+      ]);
+      return NextResponse.json({
+        reports: actions.map((action) => ({
+          reportId: action.reportId ?? action.id,
+          reference: formatReportReference(action.reportId ?? action.id),
+          type: "MODERATION_DECISION",
+          status: "ACTION_TAKEN",
+          createdAt: action.createdAt,
+          resolvedAt: action.createdAt,
+          moderationActionId: action.id,
+          appealUntil: addMonths(action.createdAt, 6),
+          outcome: derivePublicReportOutcome("ACTION_TAKEN", action.actionType),
+        })),
+        pagination: {
+          total: count,
+          page,
+          limit,
+          totalPages: Math.ceil(count / limit),
+          hasMore: offset + limit < count,
+        },
+      });
+    }
     const [rows, total] = await Promise.all([
       prisma.moderationReport.findMany({
         where,
@@ -101,7 +154,7 @@ export async function GET(req: NextRequest) {
           actions: {
             orderBy: { createdAt: "desc" },
             take: 1,
-            select: { actionType: true },
+            select: { id: true, createdAt: true, actionType: true },
           },
         },
       }),
@@ -115,6 +168,10 @@ export async function GET(req: NextRequest) {
       status: row.status,
       createdAt: row.createdAt,
       resolvedAt: row.resolvedAt,
+      moderationActionId: row.actions[0]?.id ?? null,
+      appealUntil: row.actions[0]
+        ? addMonths(row.actions[0].createdAt, 6)
+        : null,
       outcome: derivePublicReportOutcome(
         row.status,
         row.actions[0]?.actionType ?? null,

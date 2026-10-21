@@ -67,7 +67,7 @@ jest.mock("../../lib/prisma", () => ({
     },
     planMaterial: { findMany: jest.fn() },
     profileVerificationDocument: { findMany: jest.fn() },
-    supportTicketAttachment: { findMany: jest.fn(async () => []) },
+    supportCaseAttachment: { findMany: jest.fn(async () => []) },
   },
 }));
 

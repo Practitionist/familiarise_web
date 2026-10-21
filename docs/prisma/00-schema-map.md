@@ -121,7 +121,7 @@ flowchart TD
         LedgerEntry
     end
     subgraph Support["Support & Moderation"]
-        SupportTicket
+        SupportCase
         ModerationReport
     end
     subgraph Compliance["Compliance & System"]
@@ -1670,48 +1670,28 @@ erDiagram
     User {
         string id
     }
-    SupportTicket {
-        string id
-        string userId
-        string assignedToId
-        SupportTicketStatus status
-        SupportPriority priority
-        SupportIssueType issueType
-        string consultationId
-        string subscriptionId
-        string paymentId
-        string refundId
+    SupportCase {
+        String id PK
+        String referenceNumber UK
+        SupportCaseOwnership ownershipScope
+        SupportCaseStatus status
     }
-    SupportResponse {
-        string id
-        string supportTicketId
-        string userId
-        boolean isInternal
+    SupportCaseMessage {
+        String id PK
+        String caseId FK
+        Int seq
     }
-    SupportTicketAttachment {
-        string id
-        string ticketId
-        string fileName
-        string fileUrl
-        string mimeType
+    SupportCaseEvent {
+        String id PK
+        String caseId FK
     }
-    Feedback {
-        string id
-        string userId
-        FeedbackStatus status
-        int rating
-        string category
-        string title
-    }
+    User ||--o{ SupportCase : "requests"
+    SupportCase ||--o{ SupportCaseMessage : "conversation"
+    SupportCase ||--o{ SupportCaseEvent : "audit"
 
-    User ||--o{ SupportTicket : "raises"
-    SupportTicket ||--o{ SupportResponse : "replies"
-    SupportTicket ||--o{ SupportTicketAttachment : "attachments"
-    User ||--o{ SupportResponse : "responds"
-    User ||--o{ Feedback : "submits"
 ```
 
-The diagram above is the original ticket model. The `#support-hub` work added `AppointmentSupportThread`, `SupportMessage`, `SupportTicketCounter` and `SupportFlowOutcome`, and the private per-call rating `AppointmentFeedback` sits beside them. The support tables are documented in [`docs/support/05-schema-reference.md`](../support/05-schema-reference.md) and the rating table in [`docs/feedback/03-schema-reference.md`](../feedback/03-schema-reference.md).
+Canonical case evidence, decisions, recommendations, holds, private attachments and the reference counter are documented in [the support schema](../support/05-schema-reference.md). Private session ratings are documented in [feedback](../feedback/03-schema-reference.md).
 
 ---
 
@@ -1936,7 +1916,7 @@ Every enum in the schema and its values.
 | `OfferingFormat`               | ONE_ON_ONE, GROUP, ASYNC_REVIEW                                                                                                                                                                                                                                                        |
 | `ActivityType`                 | CONSULTATION_BOOKED, CONSULTATION_COMPLETED, CONSULTATION_CANCELLED, SUBSCRIPTION_REQUESTED, SUBSCRIPTION_APPROVED, SUBSCRIPTION_CANCELLED, WEBINAR_REGISTERED, CLASS_ENROLLED, TRIAL_REQUESTED, TRIAL_SCHEDULED, TRIAL_COMPLETED, TRIAL_CONVERTED, REVIEW_SUBMITTED, MESSAGE_RECEIVED |
 | `FeedbackStatus`               | PENDING, ACKNOWLEDGED, IN_PROGRESS, RESOLVED, CLOSED                                                                                                                                                                                                                                   |
-| `SupportTicketStatus`          | OPEN, IN_PROGRESS, ON_HOLD, RESOLVED, CLOSED                                                                                                                                                                                                                                           |
+| `SupportCaseStatus`            | OPEN, IN_PROGRESS, ESCALATED, RESOLVED, CLOSED                                                                                                                                                                                                                                         |
 | `SupportPriority`              | LOW, MEDIUM, HIGH, URGENT                                                                                                                                                                                                                                                              |
 | `ModerationReportType`         | REVIEW, PROFILE, MESSAGE, DOCUMENT, OTHER                                                                                                                                                                                                                                              |
 | `ModerationReportStatus`       | PENDING, UNDER_REVIEW, DISMISSED, ACTION_TAKEN, ESCALATED                                                                                                                                                                                                                              |

@@ -478,14 +478,30 @@ describe("the refund timeline (#1780)", () => {
       { now: NOW },
     ).timeline.filter((e) => e.kind);
 
+  it("dates processing completion from the refund update rather than its request or bank receipt", () => {
+    const r = { ...refund("SUCCEEDED", 708_000, "rfnd_5"), updatedAt: IN_4D };
+    const [step] = refundStep(r);
+    expect(step.at).toEqual(IN_4D);
+    expect(step.label).toContain("bank arrival not confirmed");
+  });
+
   it.each([
     [refund("PENDING", 708_000, "pending_1"), "refund-requested", /requested/],
     [
       refund("PENDING", 708_000, "rfnd_1"),
       "refund-processing",
-      /5–7 working days, UPI 1–3/,
+      /bank arrival varies; receipt is not yet confirmed/,
     ],
-    [refund("SUCCEEDED", 200_000, "rfnd_2"), "refund-completed", /\(partial\)/],
+    [
+      refund("SUCCEEDED", 200_000, "rfnd_2"),
+      "refund-completed",
+      /Partial refund processed.*bank arrival not confirmed/,
+    ],
+    [
+      refund("SUCCEEDED", 708_000, "rfnd_4"),
+      "refund-completed",
+      /Refund processed.*bank arrival not confirmed/,
+    ],
     [refund("FAILED", 708_000, "rfnd_3"), "refund-failed", /failed/],
   ])("%# emits one %s step", (r, kind, label) => {
     const [step] = refundStep(r);

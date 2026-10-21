@@ -54,7 +54,7 @@ export function buildFindIndex({
   settings = [],
   account = [],
 }: {
-  nav: Pick<DashboardNav, "basePath" | "groups" | "settings">;
+  nav: Pick<DashboardNav, "basePath" | "groups">;
   settings?: FindSettingsGroup[];
   /** The avatar menu's settings links (personal, org, workspace). */
   account?: { label: string; href: string }[];
@@ -76,9 +76,6 @@ export function buildFindIndex({
     for (const item of group.items) {
       add(item.name, `${nav.basePath}/${item.path}`, group.label ?? "Pages");
     }
-  }
-  if (nav.settings) {
-    add(nav.settings.name, `${nav.basePath}/${nav.settings.path}`, "Account");
   }
   for (const link of account) add(link.label, link.href, "Account");
   for (const group of settings) {

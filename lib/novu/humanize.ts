@@ -14,7 +14,7 @@
  * for any consumer that has to compute or branch on it.
  */
 
-import type { CancellationReason, SupportTicketStatus } from "@prisma/client";
+import type { CancellationReason, SupportCaseStatus } from "@prisma/client";
 import prisma, { type Db } from "@/lib/prisma";
 import { ZONE_ABBREVIATION } from "@/lib/time/viewer-zone";
 import {
@@ -417,21 +417,21 @@ export function collaboratorRoleLabel(role: string | null | undefined): string {
  * the inbox as "in progress". Exhaustive over the enum so a new status fails
  * the build rather than shouting its identifier at a customer.
  */
-const SUPPORT_TICKET_STATUS_LABEL: Record<SupportTicketStatus, string> = {
+const SUPPORT_TICKET_STATUS_LABEL: Record<SupportCaseStatus, string> = {
   OPEN: "open",
   IN_PROGRESS: "in progress",
-  ON_HOLD: "on hold",
+  ESCALATED: "escalated",
   RESOLVED: "resolved",
   CLOSED: "closed",
 };
 
 export function supportTicketStatusLabel(
-  status: SupportTicketStatus | string,
+  status: SupportCaseStatus | string,
 ): string {
   // Own-key: a hostile status like "toString" would otherwise resolve the
   // inherited function instead of falling through to the spaced fallback.
   return Object.hasOwn(SUPPORT_TICKET_STATUS_LABEL, status)
-    ? SUPPORT_TICKET_STATUS_LABEL[status as SupportTicketStatus]
+    ? SUPPORT_TICKET_STATUS_LABEL[status as SupportCaseStatus]
     : status.toLowerCase().replace(/_/g, " ");
 }
 

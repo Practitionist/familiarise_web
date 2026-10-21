@@ -49,6 +49,7 @@ export default async function GoPage({
       role: user.role,
       consultantProfileId: user.consultantProfileId,
       consulteeProfileId: user.consulteeProfileId,
+      orgWorkspaceProfileId: user.orgWorkspaceProfileId,
       organizationIds: (user.organizationMemberships ?? []).map(
         (m) => m.organizationId,
       ),

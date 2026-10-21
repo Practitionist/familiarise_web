@@ -7,6 +7,7 @@ import {
   Gift,
   Home,
   Inbox,
+  LifeBuoy,
   MessageSquare,
   Settings,
   Star,
@@ -31,7 +32,7 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
         items: [
           { name: "Home", icon: Home, path: "home" },
           {
-            name: "Requests",
+            name: "Booking requests",
             icon: Inbox,
             path: "requests",
             badgeKey: "requests",
@@ -51,9 +52,12 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
           { name: "Offerings", icon: CalendarRange, path: "offerings" },
           // #1785 — a daily work surface, not a preference.
           { name: "Availability", icon: CalendarClock, path: "availability" },
-          { name: "Earnings", icon: Wallet, path: "earnings" },
           { name: "Reviews", icon: Star, path: "reviews" },
         ],
+      },
+      {
+        label: "Money",
+        items: [{ name: "Earnings & payouts", icon: Wallet, path: "earnings" }],
       },
       {
         label: "Library",
@@ -66,8 +70,14 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
         label: "Grow",
         items: [{ name: "Invite & earn", icon: Gift, path: "referrals" }],
       },
+      {
+        label: "Operations",
+        items: [
+          { name: "Help & support", icon: LifeBuoy, path: "support" },
+          { name: "Settings", icon: Settings, path: "settings" },
+        ],
+      },
     ],
-    settings: { name: "Settings", icon: Settings, path: "settings" },
     support: personalSupportLinks(`${basePath}/support`),
     mobileTabs: ["home", "requests", "appointments", "messages"],
     pinnedCta: {
@@ -95,7 +105,7 @@ export const CONSULTANT_PAGE_LABELS: Record<string, string> = {
   webinar: "Webinar",
   offerings: "Offerings",
   availability: "Availability",
-  requests: "Requests",
+  requests: "Booking requests",
   timings: "Timings",
   allocate: "Allocate",
   reschedule: "Reschedule",
@@ -103,7 +113,7 @@ export const CONSULTANT_PAGE_LABELS: Record<string, string> = {
   reviews: "Reviews",
   recordings: "Recordings",
   documents: "Session documents",
-  earnings: "Earnings",
+  earnings: "Earnings & payouts",
   referrals: "Invite & earn",
   settings: "Settings",
   // Settings hub sections (#1785): one URL each, so one crumb each.
@@ -115,8 +125,10 @@ export const CONSULTANT_PAGE_LABELS: Record<string, string> = {
   payouts: "Get paid",
   notifications: "Notifications",
   security: "Security",
-  support: "Support requests",
-  feedback: "Feedback",
+  support: "Help & support",
+  evidence: "Evidence requests",
+  reports: "Reports & appeals",
+  feedback: "Product feedback",
   help: "Help",
   edit: "Edit",
   new: "New",

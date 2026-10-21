@@ -185,7 +185,17 @@ async function documentsBucketPaths(): Promise<Set<string>> {
 }
 
 async function supportAttachmentPaths(): Promise<Set<string>> {
-  const rows = await prisma.supportTicketAttachment.findMany({
+  const rows = await prisma.supportCaseAttachment.findMany({
+    where: {
+      OR: [
+        { completedAt: { not: null } },
+        {
+          completedAt: null,
+          deletedAt: null,
+          createdAt: { gte: new Date(Date.now() - 86_400_000) },
+        },
+      ],
+    },
     select: { storagePath: true },
   });
   return new Set(rows.map((row) => row.storagePath));

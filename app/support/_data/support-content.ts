@@ -1421,7 +1421,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "References, SLAs, and status",
         paragraphs: [
-          "Tickets carry a speakable reference number and target acknowledgement within 24 hours with resolution within 15 days; complex cases pause the clock while we await your reply. During incidents a banner describes the degradation; a full maintenance page auto-refreshes every 30 seconds — check it before filing a duplicate ticket.",
+          "Cases carry a reference number and target acknowledgement within 24 hours. Resolution follows the applicable category deadline; urgent content complaints have shorter deadlines. Waiting for a reply does not extend a statutory deadline. During incidents a banner describes the degradation; a full maintenance page auto-refreshes every 30 seconds — check it before filing a duplicate ticket.",
         ],
         list: [
           "Include your ticket reference in every follow-up.",

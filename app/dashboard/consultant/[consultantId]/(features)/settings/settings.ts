@@ -380,12 +380,6 @@ export function settingsSectionHref(
 }
 
 /**
- * `settings?view=sections` renders the hub's section list (the mobile list
- * view, #1527) instead of redirecting to the first section.
- */
-export const SETTINGS_LIST_VIEW = "sections";
-
-/**
  * Where a legacy `settings?tab=<key>` deep link lands now that the tabs are
  * gone (#1785). Availability left Settings for the sidebar; every other key
  * is a hub section. Unknown keys and no key land on the first section.

@@ -113,6 +113,8 @@ export type OrgSurface =
   | "operations.read"
   // Platform requests a member tagged "About: <org>" (#1527).
   | "supportRequests.org"
+  | "supportCases.operations.manage"
+  | "supportCases.billing.manage"
   | "quality.read"
   // Acting for the org on an org-funded booking (#1527 decision 8). Cancel is
   // narrower: it refunds.
@@ -245,6 +247,8 @@ export const ORG_PERMISSIONS: Record<OrgSurface, ReadonlySet<MemberRole>> = {
   // #1527 — operations.read OR billing.read: an ops lead or the finance team
   // raises requests about the org and reads the ones raised.
   "supportRequests.org": new Set([...OPERATIONS_READERS, ...FINANCE_READERS]),
+  "supportCases.operations.manage": OPERATIONS_READERS,
+  "supportCases.billing.manage": roles("OWNER", "MAINTAINER", "BILLING_ADMIN"),
 
   // #1300 — the quality signal over the organisation's own sessions. Its own key
   // rather than riding `operations.read`, which is the grant that opens the

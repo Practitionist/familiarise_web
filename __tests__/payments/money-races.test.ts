@@ -249,6 +249,11 @@ describe("a dispute opening against a payout batching the same earning", () => {
         id: { in: ["ce-1"] },
         status: "READY",
         payoutId: null,
+        // A support hold blocks the claim as well as the read, so a hold
+        // applied between the two cannot slip an earning into a batch.
+        payment: {
+          NOT: { supportHolds: { some: { releasedAt: null } } },
+        },
       },
       data: { payoutId: "po-1", status: "BATCHED" },
     });

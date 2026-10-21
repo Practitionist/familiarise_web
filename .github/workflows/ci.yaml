@@ -464,3 +464,6 @@ jobs:
 
       - name: Database sidecar guard
         run: node_modules/.bin/tsx scripts/ci/check-db-sidecars.ts
+
+      - name: Support transaction races on disposable Postgres
+        run: node_modules/.bin/tsx scripts/ci/check-support-concurrency.ts

@@ -5,7 +5,7 @@
  * stateless flowchart: the client holds the cursor for the length of one
  * sitting and replays it to the server each turn; the server validates every
  * transition (the client is never trusted) and either answers self-serve or
- * escalates — the only write, a SupportTicket via the shared factory.
+ * escalates — the only write, a SupportCase via the shared factory.
  *
  * Deliberately NOT Stream, NOT persisted: platform flows are short (1–3
  * steps); the escalated outcome lives in the ops queue, and "My requests"
@@ -507,6 +507,7 @@ export function PlatformSupportSheet({
       ...body
     }: {
       flowId: string;
+      clientTurnId: string;
       nodeId?: string | null;
       chosenOptionId?: string;
       userMessage?: string;
@@ -567,7 +568,7 @@ export function PlatformSupportSheet({
           ticketReference: result.supportTicketReference,
           replyByAt: result.replyByAt ?? null,
         });
-        void qc.invalidateQueries({ queryKey: ["user-support-tickets"] });
+        void qc.invalidateQueries({ queryKey: ["personal-support-requests"] });
       } else if (result.resolved) {
         setDone({
           resolved: true,
@@ -623,6 +624,7 @@ export function PlatformSupportSheet({
     setBareHumanUrgent(false);
     turn.mutate({
       flowId: flow.id,
+      clientTurnId: crypto.randomUUID(),
       chosenLabel: flow.title,
       epoch: sittingRef.current,
       visitedNodeIdsOverride: [],
@@ -823,7 +825,11 @@ export function PlatformSupportSheet({
               onBareHumanDetailsChange={setBareHumanDetails}
               onBareHumanUrgentChange={setBareHumanUrgent}
               onSubmitTurn={(payload) =>
-                turn.mutate({ ...payload, epoch: sittingRef.current })
+                turn.mutate({
+                  ...payload,
+                  clientTurnId: crypto.randomUUID(),
+                  epoch: sittingRef.current,
+                })
               }
             />
           </div>

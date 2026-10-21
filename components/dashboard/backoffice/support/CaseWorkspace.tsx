@@ -164,7 +164,7 @@ export function CaseWorkspace({
   });
   const data = query.data;
   const { reply, setStatus, update } = useCaseMutations(data);
-  const operators = useOperators(!!data?.ticketId);
+  const operators = useOperators(!!data?.caseId);
   useSetBreadcrumbLabel(data?.subject);
 
   const [mode, setMode] = useState<ComposerMode>("reply");
@@ -196,7 +196,7 @@ export function CaseWorkspace({
     );
   }
 
-  const isTicket = !!data.ticketId;
+  const isTicket = !!data.caseId;
   const sla = slaHint(data.sla);
   const settled = SETTLED.has(data.status);
   const insert = (text: string) => {
@@ -405,7 +405,7 @@ export function CaseWorkspace({
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <StatusBadge {...caseStatus(data.kind, data.status)} />
+          <StatusBadge {...caseStatus(data.status)} />
           {!isTicket && data.channel !== "HUMAN" && (
             <StatusBadge
               label="With the assistant"
@@ -511,7 +511,7 @@ export function CaseWorkspace({
                 <span key={d.id}>
                   {i > 0 && ", "}
                   <Link
-                    href={`${basePath}/support/t_${d.id}`}
+                    href={`${basePath}/support/c_${d.id}`}
                     className="font-medium underline underline-offset-4"
                   >
                     {d.reference}

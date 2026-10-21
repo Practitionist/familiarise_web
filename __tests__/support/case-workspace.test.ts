@@ -12,8 +12,7 @@ import { savedRepliesFor } from "@/lib/support/saved-replies";
 
 describe("case keys", () => {
   it.each([
-    ["ticket", "0f8fad5b-6bd8-4e9d-9c9f-aa1166a3cb17"],
-    ["thread", "demo0813-apt-ba"],
+    ["case", "0f8fad5b-6bd8-4e9d-9c9f-aa1166a3cb17"],
     ["booking", "abc123"],
   ] as const)("%s %s round-trips", (kind, id) => {
     expect(parseCaseKey(caseKeyOf({ kind, id }))).toEqual({ kind, id });
@@ -23,10 +22,12 @@ describe("case keys", () => {
     for (const key of [
       "",
       "x_1",
-      "t_",
-      "t_a/b",
+      "t_old-ticket",
+      "s_old-thread",
+      "c_",
+      "c_a/b",
       "tickets",
-      `t_${"a".repeat(65)}`,
+      `c_${"a".repeat(65)}`,
     ]) {
       expect(parseCaseKey(key)).toBeNull();
     }
