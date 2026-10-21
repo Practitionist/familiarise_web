@@ -56,7 +56,16 @@ jest.mock("../../lib/prisma", () => ({
 }));
 jest.mock("../../lib/redis", () => ({
   __esModule: true,
-  default: { set: jest.fn(async () => "OK") },
+  default: {
+    // The sweep's dedupe is the database. A Redis command in this path is a
+    // regression: the claim that used to sit here swallowed its own failure
+    // and skipped every reminder in the window while the run still reported
+    // success, so the mock throws rather than returning a key.
+    set: jest.fn(async () => {
+      throw new Error("the reminder sweep must not depend on Redis");
+    }),
+    del: jest.fn(async () => undefined),
+  },
 }));
 jest.mock("../../lib/novu/service", () => ({
   notifyAppointmentReminder: jest.fn(async () => undefined),
@@ -64,10 +73,9 @@ jest.mock("../../lib/novu/service", () => ({
 /**
  * The email twin has its own suite; leaving it real would drag the Resend
  * sender and the React templates into a test whose subject is the bell's
- * recipient list. The two constants carry their REAL values, because the sweep
- * uses them to build the `entityRef` it dedupes against — a stubbed ref format
- * here would stop matching the rows the twin stages and make the second case
- * below pass for the wrong reason.
+ * recipient list. The email type carries its real value; the ref builder is
+ * stubbed in the legacy `appointment:<id>:<window>` shape, and the staged rows
+ * below use that same shape, so the sweep's dedupe still matches them.
  */
 jest.mock("../../lib/email", () => ({
   APPOINTMENT_REMINDER_EMAIL_TYPE: "APPOINTMENT_REMINDER",
@@ -87,10 +95,13 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 
 import prisma from "../../lib/prisma";
+import redis from "../../lib/redis";
 import { notifyAppointmentReminder } from "@/lib/novu/service";
 import { sendAppointmentReminders } from "@/scripts/appointments/send-appointment-reminders";
 
 const bell = notifyAppointmentReminder as jest.Mock;
+const redisSet = (redis as unknown as { set: jest.Mock }).set;
+const redisDel = (redis as unknown as { del: jest.Mock }).del;
 const stagedEmails = (
   prisma as unknown as { failedEmail: { findMany: jest.Mock } }
 ).failedEmail;
@@ -110,6 +121,23 @@ it("reminds the attendee, the host and the accepted collaborator of a webinar", 
     expect.arrayContaining(["u-attendee", "u-host", "u-cohost"]),
   );
   expect(recipients).toHaveLength(3);
+});
+
+it("sends the reminder without depending on Redis", async () => {
+  // The claim the sweep used to take swallowed its own failure: one Redis
+  // error skipped every reminder in the window, and the run still reported
+  // success. The dedupe is the database, so the sweep must not call Redis.
+  const result = await sendAppointmentReminders();
+
+  expect(redisSet).not.toHaveBeenCalled();
+  expect(redisDel).not.toHaveBeenCalled();
+  // The mocked cohort returns the slot for both windows, so the sweep rings
+  // once per window. What matters is that it rang at all, and that the run
+  // counted the send instead of dropping it.
+  expect(bell).toHaveBeenCalledTimes(2);
+  expect(result.reminders1h).toBe(1);
+  expect(result.reminders24h).toBe(1);
+  expect(result.success).toBe(true);
 });
 
 it("skips the window whose email is already staged and still sends the other", async () => {

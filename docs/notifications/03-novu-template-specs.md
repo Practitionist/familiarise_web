@@ -319,7 +319,7 @@ Appointment Cancelled — {{payload.planTitle}}
 **Trigger function**: `notifyAppointmentReminder(userIds[], payload)`
 **Recipient**: Both consultant and consultee
 **Preference category**: `appointments`
-**Email twin**: `APPOINTMENT_REMINDER` (`emails/booking/AppointmentReminderEmail.tsx`), sent by `sendAppointmentReminderEmail()` inside the same Redis guard as this bell (#1653).
+**Email twin**: `APPOINTMENT_REMINDER` (`emails/booking/AppointmentReminderEmail.tsx`), sent by `sendAppointmentReminderEmail()` from the same sweep as this bell, deduped by the staged `FailedEmail` row it reads back.
 
 **Payload variables** (`AppointmentPayload`):
 
