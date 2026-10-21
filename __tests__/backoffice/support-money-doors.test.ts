@@ -6,12 +6,27 @@ jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
 }));
-jest.mock("../../lib/api/after-safe", () => ({ scheduleAfter: jest.fn() }));
+jest.mock("../../lib/api/after-safe", () => ({
+  scheduleAfter: (fn: () => unknown) => fn(),
+}));
 jest.mock("../../lib/auth/step-up", () => ({
   requireFreshSession: () => null,
 }));
 jest.mock("../../lib/backoffice/money-limit", () => ({
   assertMoneyOpsBudget: jest.fn(),
+}));
+const mockLocks = new Set<string>();
+const mockReleases = jest.fn();
+jest.mock("../../lib/redis", () => ({
+  acquireLock: async (key: string) => {
+    if (mockLocks.has(key)) return null;
+    mockLocks.add(key);
+    return "token";
+  },
+  releaseLock: async (key: string) => {
+    mockReleases(key);
+    mockLocks.delete(key);
+  },
 }));
 
 const mockViewer = { id: "staff-1", role: "STAFF" as "STAFF" | "ADMIN" };
@@ -167,6 +182,7 @@ beforeEach(() => {
   mockMaintenance.unreadable = false;
   mockAuditRows.length = 0;
   mockOpsRows.length = 0;
+  mockLocks.clear();
   mockPerformCaseAction.mockResolvedValue({
     paymentId: "pay-1",
     amountPaise: 100_000,
@@ -333,6 +349,21 @@ describe("platform cancel door", () => {
     const response = await cancel(100_000);
     expect(response.status).toBe(409);
     expect((await response.json()).code).toBe("REFUND_QUOTE_CHANGED");
+  });
+
+  it("serializes one staff member's refunds so parallel requests cannot each pass the rolling limit", async () => {
+    mockLocks.add("staff-refund:staff-1");
+    const busy = await cancel(100_000);
+    expect(busy.status).toBe(409);
+    expect((await busy.json()).code).toBe("STAFF_REFUND_IN_PROGRESS");
+    expect(mockCancel).not.toHaveBeenCalled();
+
+    mockLocks.clear();
+    expect((await cancel(100_000)).status).toBe(200);
+    expect(mockReleases).toHaveBeenCalledWith("staff-refund:staff-1");
+    expect(mockLocks.size).toBe(0);
+    expect((await cancel(600_000)).status).toBe(403);
+    expect(mockLocks.size).toBe(0);
   });
 
   it("refuses during maintenance", async () => {

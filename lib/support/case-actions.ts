@@ -40,6 +40,7 @@ import {
   assertBoundedRefund,
   assertNotOwnRemedy,
   STAFF_REFUND_PER_PAYMENT_PAISE,
+  SUPPORT_REFUND_SEND_GRACE_MS,
 } from "./money-policy";
 import {
   activeHolds,
@@ -985,6 +986,20 @@ async function voidRecommendationTx(
   input: ActionInput<"VOID_RECOMMENDATION">,
 ) {
   const voidedAt = new Date();
+  // An unlinked approval may still be sending its refund; its keyed reservation
+  // or the send grace window says so.
+  const sending = await tx.refund.findFirst({
+    where: {
+      dedupeKey: `case-recommendation:${input.recommendationId}`,
+      status: { in: ["PENDING", "SUCCEEDED"] },
+    },
+    select: { id: true },
+  });
+  if (sending)
+    throw new CaseActionError(
+      "NOT_VOIDABLE",
+      "A refund for this recommendation is pending or sent; it cannot be voided.",
+    );
   const voided = await tx.supportFinancialRecommendation.updateMany({
     where: {
       id: input.recommendationId,
@@ -992,7 +1007,12 @@ async function voidRecommendationTx(
       approved: true,
       voidedAt: null,
       OR: [
-        { refundId: null },
+        {
+          refundId: null,
+          decidedAt: {
+            lte: new Date(voidedAt.getTime() - SUPPORT_REFUND_SEND_GRACE_MS),
+          },
+        },
         { refund: { status: { in: ["FAILED", "CANCELLED"] } } },
       ],
     },
@@ -1007,7 +1027,7 @@ async function voidRecommendationTx(
     if (recommendation.voidedAt) return recommendation;
     throw new CaseActionError(
       "NOT_VOIDABLE",
-      "Only an approved recommendation whose refund failed or never started can be voided.",
+      "Only an approved recommendation whose refund failed, or never started within 15 minutes, can be voided.",
     );
   }
   await caseEvent(

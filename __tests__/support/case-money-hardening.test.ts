@@ -55,6 +55,7 @@ const mockStore = {
   opsRows: [] as Row[],
   admins: 1,
   payment: {} as Row,
+  keyedRefund: null as Row | null,
 };
 
 jest.mock("../../lib/prisma", () => {
@@ -102,6 +103,7 @@ jest.mock("../../lib/prisma", () => {
       }),
     },
     payment: { findFirst: jest.fn(async () => mockStore.payment) },
+    refund: { findFirst: jest.fn(async () => mockStore.keyedRefund) },
     opsActionLog: { findMany: jest.fn(async () => mockStore.opsRows) },
     user: { count: jest.fn(async () => mockStore.admins) },
     $transaction: jest.fn(),
@@ -180,6 +182,7 @@ beforeEach(() => {
   mockStore.events = [];
   mockStore.opsRows = [];
   mockStore.admins = 1;
+  mockStore.keyedRefund = null;
   mockStore.payment = {
     id: "pay-1",
     amount: 1_000_000,
@@ -444,6 +447,39 @@ describe("refund execution correctness", () => {
         reason: "Changed my mind",
       }),
     ).rejects.toMatchObject({ code: "NOT_VOIDABLE" });
+  });
+
+  it("refuses to void an unlinked approval that may still be sending its refund", async () => {
+    const voidAction = {
+      action: "VOID_RECOMMENDATION" as const,
+      clientActionId: "void-1",
+      expectedUpdatedAt: caseUpdatedAt.toISOString(),
+      recommendationId: "rec-1",
+      reason: "Refund never arrived",
+    };
+    mockStore.recommendations = [
+      recommendation({ decidedAt: new Date(), approved: true }),
+    ];
+    await expect(
+      performCaseAction("case-1", admin, voidAction),
+    ).rejects.toMatchObject({ code: "NOT_VOIDABLE" });
+
+    mockStore.recommendations[0].decidedAt = new Date(Date.now() - 3_600_000);
+    mockStore.keyedRefund = { id: "refund-reserved" };
+    await expect(
+      performCaseAction("case-1", admin, voidAction),
+    ).rejects.toMatchObject({ code: "NOT_VOIDABLE" });
+    expect(db.refund.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          dedupeKey: "case-recommendation:rec-1",
+        }),
+      }),
+    );
+
+    mockStore.keyedRefund = null;
+    await performCaseAction("case-1", admin, voidAction);
+    expect(mockStore.recommendations[0]).toMatchObject({ approved: false });
   });
 
   it("allows one open recommendation per payment and keeps the seat by default", async () => {

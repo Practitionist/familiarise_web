@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { occurrenceRefundKey } from "@/lib/booking/class-sessions";
+import { SUPPORT_REFUND_SEND_GRACE_MS } from "@/lib/support/money-policy";
 
 /** #1834 — the settle sweep's key for a paid seat still HELD at settle time. */
 export const HELD_PAID_SEAT_PREFIX = "held-paid-seat:";
@@ -109,9 +110,6 @@ function toItem(e: EventRow, kind: "credit" | "held-paid-seat") {
   };
 }
 
-/** An approval this recent may still be sending its refund. */
-const SUPPORT_APPROVAL_GRACE_MS = 15 * 60 * 1000;
-
 /**
  * Support remedies approved without a live refund: the refund was refused,
  * failed at the gateway, or never ran. Each needs a retry or a void on its case.
@@ -120,7 +118,9 @@ export async function readUnsentSupportRefunds(now = new Date()) {
   const rows = await prisma.supportFinancialRecommendation.findMany({
     where: {
       approved: true,
-      decidedAt: { lte: new Date(now.getTime() - SUPPORT_APPROVAL_GRACE_MS) },
+      decidedAt: {
+        lte: new Date(now.getTime() - SUPPORT_REFUND_SEND_GRACE_MS),
+      },
       OR: [
         { refundId: null },
         { refund: { status: { in: ["FAILED", "CANCELLED"] } } },

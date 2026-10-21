@@ -12,6 +12,7 @@ import {
   REFUNDABLE_PREVIEW_REQUIRED,
 } from "@/schemas/support-refund-review";
 import { canCorrespondOnCase } from "./case-access";
+import { lockStaffRefunds } from "./money-policy";
 import {
   assertIndependentReviewer,
   CaseActionError,
@@ -61,11 +62,19 @@ export const reviewSupportRefundDoor = withOpsAction(
       await assertMoneyOpsBudget(actor.userId);
       if (body.approve) await assertMoneyDoorsOpen();
       const { caseId } = Params.parse(params);
-      const data = await performCaseAction(
-        caseId,
-        { userId: actor.userId, role: UserRoleEnum.parse(actor.role) },
-        body,
-      ).catch(rethrowCaseRefusal);
+      const reviewer = {
+        userId: actor.userId,
+        role: UserRoleEnum.parse(actor.role),
+      };
+      const release = body.approve
+        ? await lockStaffRefunds(reviewer)
+        : async () => undefined;
+      const data = await performCaseAction(caseId, reviewer, body).catch(
+        async (error: unknown) => {
+          await release();
+          return rethrowCaseRefusal(error);
+        },
+      );
       // The money already moved; an unexpected shape thins the audit row, never fails it.
       const parsed = ReviewOutcome.safeParse(data);
       const outcome = parsed.success ? parsed.data : null;
@@ -85,6 +94,7 @@ export const reviewSupportRefundDoor = withOpsAction(
           refundStatus: outcome?.refund?.status ?? null,
         },
         response: { data },
+        afterCommit: release,
       };
     },
   },
