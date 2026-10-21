@@ -46,8 +46,10 @@ import {
   principalStreamPlanId,
   scrubUser,
 } from "@/lib/compliance/erasure/scrub-user";
+import { supportScrubModels } from "../fixtures/support-erasure-models";
 
 const tx = {
+  ...supportScrubModels(),
   user: {
     update: jest.fn(async () => ({})),
     findUnique: jest.fn(async () => ({ consultantProfileId: null })),
@@ -74,6 +76,7 @@ const db = {
       razorpayCustomerId: null,
     })),
   },
+  ...supportScrubModels(),
   membership: { findMany: jest.fn(async () => []) },
   payoutAccount: { findMany: jest.fn(async () => []) },
   streamRevocationRetry: { update: jest.fn(async () => ({})) },

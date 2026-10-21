@@ -46,6 +46,7 @@ import {
 } from "@/lib/enterprise/outbound-webhooks/worker";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { scrubUser } from "@/lib/compliance/erasure/scrub-user";
+import { supportScrubModels } from "../../fixtures/support-erasure-models";
 
 const FROZEN_NOW_MS = new Date("2026-06-01T12:00:00Z").getTime();
 
@@ -358,6 +359,7 @@ describe("Outbound webhook worker security, backoff, Sentry & OrgAuditLog", () =
     const emptyFind = () => ({ findMany: jest.fn().mockResolvedValue([]) });
 
     const txStub = {
+      ...supportScrubModels(),
       user: {
         findUnique: jest.fn().mockResolvedValue({ consultantProfileId: null }),
         update: jest.fn().mockResolvedValue({}),

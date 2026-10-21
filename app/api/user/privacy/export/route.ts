@@ -1,4 +1,3 @@
-import { visibleCaseWhere } from "@/lib/support/case-access";
 /**
  * GET /api/user/privacy/export
  *
@@ -29,6 +28,7 @@ import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { resolveSentryUserId } from "@/lib/observability/identity";
 import { PURPOSE_CODE_META } from "@/lib/compliance/purpose-codes";
+import { readSupportExport } from "@/lib/support/privacy-export";
 
 export async function GET() {
   const session = await getSession();
@@ -38,17 +38,13 @@ export async function GET() {
   const userId = session.user.id;
 
   try {
-    const ownCaseVisibility = await visibleCaseWhere({
-      userId,
-      role: "CONSULTEE",
-    });
     const [
       user,
       consents,
       grievances,
       payments,
       rawConsumerInvoices,
-      supportTickets,
+      support,
       participations,
     ] = await Promise.all([
       prisma.user.findUnique({
@@ -220,30 +216,7 @@ export async function GET() {
           issuedAt: true,
         },
       }),
-      prisma.supportCase.findMany({
-        where: {
-          AND: [
-            ownCaseVisibility,
-            {
-              externalRequesterEmail: null,
-              OR: [{ requesterUserId: userId }, { submitterUserId: userId }],
-            },
-          ],
-        },
-        orderBy: { createdAt: "desc" },
-        take: 100,
-        select: {
-          id: true,
-          title: true,
-          ownershipScope: true,
-          requesterUserId: true,
-          submitterUserId: true,
-          category: true,
-          priority: true,
-          status: true,
-          createdAt: true,
-        },
-      }),
+      readSupportExport(userId),
       prisma.appointmentParticipant.findMany({
         where: { userId },
         orderBy: { createdAt: "desc" },
@@ -387,17 +360,7 @@ export async function GET() {
           appointmentParticipations: participations,
           payments,
           consumerInvoices,
-          supportTickets: supportTickets.map(
-            ({ ownershipScope, requesterUserId, submitterUserId, ...row }) => ({
-              ...row,
-              title:
-                ownershipScope === "PERSONAL" &&
-                requesterUserId !== submitterUserId &&
-                userId !== submitterUserId
-                  ? "Organization support request"
-                  : row.title,
-            }),
-          ),
+          ...support,
           dpdpGrievances: grievances,
         },
       },

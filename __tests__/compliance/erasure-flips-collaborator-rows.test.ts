@@ -31,8 +31,10 @@ jest.mock("../../lib/stream-client", () => ({
 
 import { revokeCollaboratorAccess } from "@/lib/collaborators/service";
 import { scrubUser } from "@/lib/compliance/erasure/scrub-user";
+import { supportScrubModels } from "../fixtures/support-erasure-models";
 
 const tx = {
+  ...supportScrubModels(),
   user: {
     update: jest.fn(async () => ({})),
     findUnique: jest.fn(async () => ({ consultantProfileId: "cp-1" })),
