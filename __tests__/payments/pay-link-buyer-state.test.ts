@@ -26,13 +26,14 @@ jest.mock("../../lib/trials/pay-link", () => ({
 
 const paymentUpdateMany = jest.fn(async () => ({ count: 1 }));
 const profileUpdateMany = jest.fn(async () => ({ count: 1 }));
+const txFindPayment = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     payment: { findUnique: jest.fn() },
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
       fn({
-        payment: { updateMany: paymentUpdateMany },
+        payment: { updateMany: paymentUpdateMany, findUnique: txFindPayment },
         consulteeProfile: { updateMany: profileUpdateMany },
       }),
     ),
@@ -98,6 +99,40 @@ describe("PATCH /api/checkout/pending/[paymentId] (buyer state)", () => {
       where: { userId: "user-1" },
       data: { billingStateCode: "29" },
     });
+  });
+
+  it.each([
+    ["was cancelled", { paymentStatus: "CANCELLED", consumerStateCode: null }],
+    [
+      "was paid with no state",
+      { paymentStatus: "SUCCEEDED", consumerStateCode: null },
+    ],
+  ])(
+    "refuses with 409 when the CAS loses because the order %s",
+    async (_label, now) => {
+      findPayment.mockResolvedValueOnce(pendingOrder());
+      paymentUpdateMany.mockResolvedValueOnce({ count: 0 });
+      txFindPayment.mockResolvedValueOnce(now);
+
+      const res = await patch({ consumerStateCode: "29" });
+
+      expect(res.status).toBe(409);
+      expect(profileUpdateMany).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts a lost CAS when a concurrent call already recorded a state on the open order", async () => {
+    findPayment.mockResolvedValueOnce(pendingOrder());
+    paymentUpdateMany.mockResolvedValueOnce({ count: 0 });
+    txFindPayment.mockResolvedValueOnce({
+      paymentStatus: "PENDING",
+      consumerStateCode: "29",
+    });
+
+    const res = await patch({ consumerStateCode: "29" });
+
+    expect(res.status).toBe(200);
+    expect(profileUpdateMany).not.toHaveBeenCalled();
   });
 
   it.each([

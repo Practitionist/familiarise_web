@@ -164,7 +164,7 @@ export async function PATCH(
   }
   const { consumerStateCode } = parsed.data;
 
-  await prisma.$transaction(async (tx) => {
+  const saved = await prisma.$transaction(async (tx) => {
     const written = await tx.payment.updateMany({
       where: {
         id: paymentId,
@@ -182,7 +182,23 @@ export async function PATCH(
         data: { billingStateCode: consumerStateCode },
       });
     }
+    if (written.count === 1) return true;
+    // A lost CAS is fine only when a concurrent call recorded a state on the still-open order.
+    const now = await tx.payment.findUnique({
+      where: { id: paymentId },
+      select: { paymentStatus: true, consumerStateCode: true },
+    });
+    return (
+      now?.paymentStatus === PaymentStatus.PENDING &&
+      now.consumerStateCode !== null
+    );
   });
+  if (!saved) {
+    return NextResponse.json(
+      { error: "This order changed. Refresh the page and try again." },
+      { status: 409 },
+    );
+  }
 
   return NextResponse.json({ success: true });
 }

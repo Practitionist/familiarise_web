@@ -529,6 +529,8 @@ async function claimRowForRemint(
         taxAmount: fields.taxAmount,
         buyerCountry: fields.buyerCountry,
         isInternational: fields.isInternational,
+        // A buyer now abroad has no Indian place of supply, so a state from an earlier mint is dropped.
+        ...(fields.buyerCountry === "IN" ? {} : { consumerStateCode: null }),
         currency: fields.currency,
         description: fields.description,
         paymentGateway: fields.paymentGateway,

@@ -887,6 +887,20 @@ describe("the approval mint snapshots the buyer's saved GST state", () => {
       data: { consumerStateCode: "29" },
     });
   });
+
+  it("a re-mint for a buyer now abroad drops the state from the earlier mint", async () => {
+    state.user = buyer("GB", "29");
+    state.appointmentPayments = [
+      taxedRow({ id: "pay-dead", paymentStatus: PaymentStatus.EXPIRED }),
+    ];
+
+    await createApprovalPaymentIntent(mintParams());
+
+    expect(mockedPaymentUpdate.mock.calls[0][0].data).toMatchObject({
+      buyerCountry: "GB",
+      consumerStateCode: null,
+    });
+  });
 });
 
 describe("approval routes thread the appointment (source contract)", () => {
