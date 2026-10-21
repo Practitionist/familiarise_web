@@ -1,6 +1,7 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { ArrowRight } from "lucide-react";
+import Link from "next/link";
 
 import {
   Accordion,
@@ -8,61 +9,53 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { Badge } from "@/components/ui/badge";
 import { FAQ_ITEMS } from "./data";
+import { Em, Eyebrow, Reveal, Section } from "./primitives";
 
 export function FAQSection() {
   return (
-    <section className="py-20 md:py-32 bg-background relative">
-      <div className="container mx-auto px-4 md:px-6">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          viewport={{ once: true }}
-          className="text-center mb-12"
-        >
-          <Badge
-            variant="secondary"
-            className="mb-4 bg-secondary text-secondary-foreground hover:bg-secondary border-0"
-          >
-            FAQ
-          </Badge>
-          <h2 className="text-fluid-4xl font-bold text-foreground mb-4 tracking-tight">
-            Common <span className="text-muted-foreground">questions</span>
+    <Section id="faq">
+      <div className="grid gap-12 lg:grid-cols-[1fr_1.6fr] lg:gap-20">
+        <Reveal className="lg:sticky lg:top-[calc(var(--header-height)+2rem)] lg:self-start">
+          <Eyebrow>FAQ</Eyebrow>
+          <h2 className="font-serif text-4xl leading-[1.05] tracking-tight text-white md:text-5xl">
+            Common <Em>questions</Em>
           </h2>
-          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Everything you need to know about getting started
+          <p className="mt-5 leading-relaxed text-zinc-400">
+            Everything you need to know about getting started.
           </p>
-        </motion.div>
+          <Link
+            href="/contactus"
+            className="group mt-8 inline-flex items-center gap-1.5 text-sm text-zinc-300 transition-colors hover:text-white"
+          >
+            Still curious? Contact us
+            <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+          </Link>
+        </Reveal>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.1 }}
-          viewport={{ once: true }}
-          className="max-w-3xl mx-auto"
-        >
-          <Accordion type="single" collapsible className="space-y-4">
+        <Reveal delay={0.08}>
+          <Accordion
+            type="single"
+            collapsible
+            className="border-t border-white/[0.08]"
+          >
             {FAQ_ITEMS.map((item, index) => (
               <AccordionItem
-                key={index}
+                key={item.question}
                 value={`item-${index}`}
-                className="border border-border rounded-xl px-6 bg-card shadow-elevation-1 hover:shadow-elevation-2 transition-shadow"
+                className="border-b border-white/[0.08]"
               >
-                <AccordionTrigger className="text-left hover:no-underline py-5">
-                  <span className="font-medium text-foreground">
-                    {item.question}
-                  </span>
+                <AccordionTrigger className="py-6 text-left text-base font-medium text-white hover:no-underline [&>svg]:text-zinc-500">
+                  {item.question}
                 </AccordionTrigger>
-                <AccordionContent className="text-muted-foreground pb-5 leading-relaxed">
+                <AccordionContent className="pb-6 pr-8 text-[15px] leading-relaxed text-zinc-400">
                   {item.answer}
                 </AccordionContent>
               </AccordionItem>
             ))}
           </Accordion>
-        </motion.div>
+        </Reveal>
       </div>
-    </section>
+    </Section>
   );
 }

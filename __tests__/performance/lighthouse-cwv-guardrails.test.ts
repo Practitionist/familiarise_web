@@ -19,10 +19,11 @@ describe("Lighthouse CWV & Anti-Runaway Billing Guardrails", () => {
     expect(src).not.toContain("animate-blob");
   });
 
-  it("uses renderLazyImage instead of renderLCPImage in below-the-fold BenefitsSection", () => {
-    const src = readRepoFile("components/home/BenefitsSection.tsx");
-    expect(src).toContain("renderLazyImage(");
-    expect(src).not.toContain("renderLCPImage(");
+  it("does not use renderLCPImage in below-the-fold OfferingsSection or home page", () => {
+    const offerings = readRepoFile("components/home/OfferingsSection.tsx");
+    const page = readRepoFile("app/page.tsx");
+    expect(offerings).not.toContain("renderLCPImage(");
+    expect(page).not.toContain("renderLCPImage(");
   });
 
   it("renders native lazy <img> in AvatarImage without Radix eager new Image() preloading", () => {
@@ -76,9 +77,9 @@ describe("Lighthouse CWV & Anti-Runaway Billing Guardrails", () => {
     expect(readRepoFile("lib/explore/programs.ts")).not.toContain("picsum");
   });
 
-  it("caps TestimonialsSection marquee duplication to 2x per row instead of 9x", () => {
+  it("caps TestimonialsSection wall without marquee duplication", () => {
     const src = readRepoFile("components/home/TestimonialsSection.tsx");
-    expect(src).toContain("[...reviews, ...reviews]");
+    expect(src).toContain("MAX_WALL = 6");
     expect(src).not.toContain(
       "[...displayReviews, ...displayReviews, ...displayReviews]",
     );

@@ -2,30 +2,18 @@ import { Suspense } from "react";
 
 import { HeroSection } from "@/components/home/HeroSection";
 import { TrustedBySection } from "@/components/home/TrustedBySection";
-import { FeaturesSection } from "@/components/home/FeaturesSection";
+import { OfferingsSection } from "@/components/home/OfferingsSection";
 import { CategoriesSection } from "@/components/home/CategoriesSection";
-import { BenefitsSection } from "@/components/home/BenefitsSection";
-import { SuccessStoriesSection } from "@/components/home/SuccessStoriesSection";
 import { FeaturedExpertsSection } from "@/components/home/FeaturedExpertsSection";
-import { PlatformFeaturesSection } from "@/components/home/PlatformFeaturesSection";
-import { TestimonialsSection } from "@/components/home/TestimonialsSection";
-import { UpcomingEventsSection } from "@/components/home/UpcomingEventsSection";
-import { TrustBadgesSection } from "@/components/home/TrustBadgesSection";
 import { HowItWorksSection } from "@/components/home/HowItWorksSection";
-import { BecomeExpertSection } from "@/components/home/BecomeExpertSection";
-import { EnterpriseSection } from "@/components/home/EnterpriseSection";
+import { TestimonialsSection } from "@/components/home/TestimonialsSection";
+import { AudiencePathsSection } from "@/components/home/AudiencePathsSection";
 import { FAQSection } from "@/components/home/FAQSection";
-import { SatisfiedTestimonial } from "@/app/explore/experts/components/SatisfiedTestimonial";
-import {
-  getHomeExperts,
-  getHomeReviews,
-  getHomeImages,
-  getHomeStats,
-} from "@/lib/data/home";
+import { LandingMotion } from "@/components/home/LandingMotion";
+import { getHomeExperts, getHomeReviews, getHomeStats } from "@/lib/data/home";
 import { buildExpertHeroStats } from "@/lib/data/public-stats";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
 import {
-  BenefitsSkeleton,
   FeaturedExpertsSkeleton,
   TestimonialsSkeleton,
 } from "@/components/home/HomeSectionSkeletons";
@@ -65,29 +53,19 @@ export const revalidate = 3600;
 // revalidation keeps serving it. The exposed window is a regeneration with no
 // cached copy — i.e. straight after a revalidatePath purge from a write site.
 // (FAMILIARISE_WEB-A)
-async function BenefitsLoader() {
-  const images = await withBuildTimeRetry(getHomeImages);
-  return <BenefitsSection images={images} />;
-}
-
 async function FeaturedExpertsLoader() {
   const experts = await withBuildTimeRetry(getHomeExperts);
-  // Hide the section rather than render an empty marquee under its headers when
+  // Hide the section rather than render an empty grid under its headers when
   // there's nothing to show — whether a transient timeout degraded it or the
   // platform genuinely has no featured experts yet. (#934 review.)
   if (experts.length === 0) return null;
-  return <FeaturedExpertsSection experts={experts} isLoading={false} />;
+  return <FeaturedExpertsSection experts={experts} />;
 }
 
 async function ReviewsLoader() {
   const reviews = await withBuildTimeRetry(getHomeReviews);
   if (reviews.length === 0) return null;
-  return (
-    <>
-      <TestimonialsSection reviews={reviews} isLoading={false} />
-      <UpcomingEventsSection reviews={reviews} />
-    </>
-  );
+  return <TestimonialsSection reviews={reviews} />;
 }
 
 // #1490 — the hero and the category cards render real figures now, so the page
@@ -100,85 +78,37 @@ async function ReviewsLoader() {
 export default async function Home() {
   const stats = await withBuildTimeRetry(getHomeStats);
 
+  // One continuous dark surface; sections are divided by hairlines rather
+  // than alternating backgrounds (see components/home/primitives.tsx). The
+  // Footer below is also bg-black, so the page ends without a seam.
   return (
-    <main className="flex-1 w-full overflow-hidden">
-      {/* Hero - Black with animated orbs */}
-      <HeroSection stats={buildExpertHeroStats(stats)} />
+    <LandingMotion>
+      <main className="flex-1 w-full overflow-x-clip bg-black text-white antialiased">
+        <HeroSection stats={buildExpertHeroStats(stats)} />
 
-      {/* Trusted By / Logo Cloud - Dark */}
-      <TrustedBySection />
+        <TrustedBySection />
 
-      {/* Our Offerings - Dark charcoal with dot pattern */}
-      <div className="cv-auto">
-        <FeaturesSection />
-      </div>
+        {/* What you can buy + what every format includes */}
+        <OfferingsSection />
 
-      {/* Browse by Category - Light gradient */}
-      <div className="cv-auto">
         <CategoriesSection consultantsByDomain={stats.consultantsByDomain} />
-      </div>
 
-      {/* Why Familiarise / Benefits - Light silver gradient */}
-      <div className="cv-auto">
-        <Suspense fallback={<BenefitsSkeleton />}>
-          <BenefitsLoader />
-        </Suspense>
-      </div>
-
-      {/* Success Stories - Dark gradient */}
-      <div className="cv-auto">
-        <SuccessStoriesSection />
-      </div>
-
-      {/* Featured Experts Marquee - White with dot pattern */}
-      <div className="cv-auto">
         <Suspense fallback={<FeaturedExpertsSkeleton />}>
           <FeaturedExpertsLoader />
         </Suspense>
-      </div>
 
-      {/* Platform Features - Light with diagonal stripes */}
-      <div className="cv-auto">
-        <PlatformFeaturesSection />
-      </div>
+        <HowItWorksSection />
 
-      {/* Testimonials Marquee + Upcoming Events - Dark */}
-      <div className="cv-auto">
         <Suspense fallback={<TestimonialsSkeleton />}>
           <ReviewsLoader />
         </Suspense>
-      </div>
 
-      {/* Trust & Security Badges - Dark strip */}
-      <div className="cv-auto">
-        <TrustBadgesSection />
-      </div>
+        {/* Organisations and experts — the two "which side are you on?"
+            paths, adjacent at the page's end. */}
+        <AudiencePathsSection />
 
-      {/* How It Works - Light with circles */}
-      <div className="cv-auto">
-        <HowItWorksSection />
-      </div>
-
-      {/* For teams & organisations - Dark. Sits next to the expert CTA so the
-          two "which side are you on?" paths are adjacent at the page's end. */}
-      <div className="cv-auto">
-        <EnterpriseSection />
-      </div>
-
-      {/* Become an Expert CTA - Light mesh gradient */}
-      <div className="cv-auto">
-        <BecomeExpertSection />
-      </div>
-
-      {/* Explore Testimonials - Dark */}
-      <div className="cv-auto">
-        <SatisfiedTestimonial />
-      </div>
-
-      {/* FAQ - Clean white */}
-      <div className="cv-auto">
         <FAQSection />
-      </div>
-    </main>
+      </main>
+    </LandingMotion>
   );
 }
