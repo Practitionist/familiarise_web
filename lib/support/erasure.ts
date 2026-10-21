@@ -94,9 +94,17 @@ export async function scrubSupportPiiTx(
     where: { uploadedById: userId },
     select: { storagePath: true },
   });
+  await tx.supportCaseEvidenceRequest.updateMany({
+    where: { requestedById: userId },
+    data: { prompt: ERASED_SUPPORT_TEXT },
+  });
+  await tx.supportCaseAttachment.updateMany({
+    where: { uploadedById: userId },
+    data: { originalName: ERASED_SUPPORT_TEXT },
+  });
   await tx.supportCaseAttachment.updateMany({
     where: { uploadedById: userId, deletedAt: null },
-    data: { deletedAt: now, originalName: ERASED_SUPPORT_TEXT },
+    data: { deletedAt: now },
   });
   return attachments.map((a) => a.storagePath);
 }

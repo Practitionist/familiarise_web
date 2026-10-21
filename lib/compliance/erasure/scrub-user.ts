@@ -529,7 +529,14 @@ async function retryErasedUserVendorCleanup(
   const documentFailures = await eraseUserSessionDocuments(prisma, userId, now);
   const supportFailures = await removeSupportAttachmentObjects(
     await supportAttachmentPaths(prisma, userId),
-  );
+  ).catch((error_: unknown) => {
+    reportSentryError(error_, {
+      subsystem: "compliance",
+      op: "scrubUser.removeSupportAttachmentObjects",
+      extra: { userId },
+    });
+    return ["support-attachments: storage cleanup failed; re-run erasure"];
+  });
   vendorFailures.push(
     ...recordingFailures,
     ...documentFailures,

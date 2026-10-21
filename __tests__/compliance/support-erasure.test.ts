@@ -97,9 +97,17 @@ describe("scrubSupportPiiTx", () => {
       where: { recipientUserId: "u1", responseBody: { not: null } },
       data: { responseBody: ERASED_SUPPORT_TEXT },
     });
+    expect(tx.supportCaseEvidenceRequest.updateMany).toHaveBeenCalledWith({
+      where: { requestedById: "u1" },
+      data: { prompt: ERASED_SUPPORT_TEXT },
+    });
+    expect(tx.supportCaseAttachment.updateMany).toHaveBeenCalledWith({
+      where: { uploadedById: "u1" },
+      data: { originalName: ERASED_SUPPORT_TEXT },
+    });
     expect(tx.supportCaseAttachment.updateMany).toHaveBeenCalledWith({
       where: { uploadedById: "u1", deletedAt: null },
-      data: { deletedAt: now, originalName: ERASED_SUPPORT_TEXT },
+      data: { deletedAt: now },
     });
     expect(paths).toEqual(["support-cases/c1/f1", "support-cases/c1/f2"]);
     expect(removeObjects).not.toHaveBeenCalled();

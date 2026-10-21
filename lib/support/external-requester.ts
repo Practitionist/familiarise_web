@@ -14,6 +14,9 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
  * Anonymous public grievances are held by this non-staff system account, so no
  * real operator's deletion cascades into them. Created on first use.
  */
+
+/** Newest withheld replies (and decisions) mailed once the address is confirmed. */
+const WITHHELD_DIGEST_LIMIT = 50;
 export const PUBLIC_INTAKE_USER_ID = "system-public-grievance-intake";
 export const PUBLIC_INTAKE_USER_EMAIL =
   "public-grievance-intake@system.familiarise.invalid";
@@ -250,14 +253,18 @@ export function confirmExternalRequesterEmail(input: {
         const replies = await tx.supportCaseMessage.findMany({
           where: { caseId: supportCase.id, sender: "AGENT", isInternal: false },
           orderBy: { seq: "asc" },
-          take: 50,
+          take: -WITHHELD_DIGEST_LIMIT,
           select: { body: true, createdAt: true },
         });
         const decisions = await tx.supportCaseDecision.findMany({
           where: { caseId: supportCase.id },
           orderBy: { createdAt: "asc" },
+          take: -WITHHELD_DIGEST_LIMIT,
           select: { explanation: true, createdAt: true },
         });
+        const truncated =
+          replies.length === WITHHELD_DIGEST_LIMIT ||
+          decisions.length === WITHHELD_DIGEST_LIMIT;
         const updates = [
           ...replies.map((r) => ({ at: r.createdAt, text: r.body })),
           ...decisions.map((d) => ({
@@ -272,6 +279,11 @@ export function confirmExternalRequesterEmail(input: {
               `Support response — ${supportCase.referenceNumber}`,
               [
                 `Reference: ${supportCase.referenceNumber}`,
+                ...(truncated
+                  ? [
+                      "Only the most recent updates are shown. Reply to this email if you need the full history.",
+                    ]
+                  : []),
                 ...updates.map(
                   (u) => `${u.at.toISOString().slice(0, 10)}\n${u.text}`,
                 ),
