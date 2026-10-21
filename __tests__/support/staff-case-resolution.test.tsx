@@ -12,6 +12,7 @@ jest.mock("../../lib/auth/reauth-client", () => ({
 }));
 
 import { StaffCaseResolution } from "../../components/support/resolution/StaffCaseResolution";
+import { rupeesToPaise } from "../../components/support/resolution/resolution-data";
 import {
   invalidateSupportCase,
   supportKeys,
@@ -182,5 +183,16 @@ describe("StaffCaseResolution", () => {
       expectedUpdatedAt: FRESH,
     });
     qc.clear();
+  });
+});
+
+describe("rupeesToPaise", () => {
+  it("converts exactly and refuses what it would have to round", () => {
+    expect(rupeesToPaise("100.5")).toBe(10050);
+    expect(rupeesToPaise(" 0 ")).toBe(0);
+    expect(rupeesToPaise("100.005")).toBeNull();
+    expect(rupeesToPaise("1e3")).toBeNull();
+    expect(rupeesToPaise("")).toBeNull();
+    expect(rupeesToPaise("-5")).toBeNull();
   });
 });

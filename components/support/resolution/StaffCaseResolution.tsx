@@ -25,6 +25,7 @@ import {
   DECISION_APPEAL_DAYS,
   Outcome,
   OUTCOME_LABEL,
+  rupeesToPaise,
   useCaseAction,
   useCaseResolution,
   type CaseActionPayload,
@@ -373,11 +374,8 @@ function FinancialPanel({
   const [reviewReason, setReviewReason] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
   const canMoney = data.canExecuteMoney;
-  const amountPaise = Math.round(Number(amount) * 100);
-  const amountValid =
-    amount.trim() !== "" &&
-    Number.isSafeInteger(amountPaise) &&
-    amountPaise >= 0;
+  const amountPaise = rupeesToPaise(amount);
+  const amountValid = amountPaise !== null;
   const loadPreview = async (recommendationId: string) => {
     setPreviewLoading(true);
     try {
@@ -476,7 +474,7 @@ function FinancialPanel({
             className="space-y-2"
             onSubmit={(event) => {
               event.preventDefault();
-              if (!amountValid) return;
+              if (amountPaise === null) return;
               run(
                 {
                   action: "RECOMMEND_REFUND",

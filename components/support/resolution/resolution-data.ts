@@ -36,6 +36,15 @@ export const OUTCOME_LABEL: Record<DecisionOutcome, string> = {
   OVERTURNED: "Original decision overturned",
 };
 
+/** Exact rupees-to-paise for a typed amount: plain digits, at most two decimals, no rounding. */
+export function rupeesToPaise(text: string): number | null {
+  const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(text.trim());
+  if (!match) return null;
+  const paise =
+    Number(match[1]) * 100 + Number((match[2] ?? "").padEnd(2, "0"));
+  return Number.isSafeInteger(paise) ? paise : null;
+}
+
 const Resolution = z.object({
   data: z.object({
     decisions: z.array(
