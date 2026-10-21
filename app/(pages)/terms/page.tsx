@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { FileText } from "lucide-react";
@@ -503,14 +504,158 @@ export default function TermsPage() {
               <Separator className="my-6" />
 
               <h2 className="text-2xl font-semibold mt-6 mb-4">
-                12. Dispute Resolution
+                12. Messaging, Reporting and How We Resolve Problems
               </h2>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
-                12.1 Informal Resolution
+                12.1 Review of In-App Messages
+              </h3>
+              {/* counsel: a ToS acceptance should not carry data-processing consent; confirm making this review a condition of using messaging is valid under DPDP s.6. */}
+              <p>
+                In-app messaging is part of the service. As a condition of using
+                it, you agree that we may review messages as described in our{" "}
+                <a
+                  href="/privacy"
+                  className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
+                >
+                  Privacy Policy
+                </a>{" "}
+                (section 3.6) and in{" "}
+                <Link
+                  href="/support/help/how-we-review-messages"
+                  className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
+                >
+                  How and why we review messages
+                </Link>
+                . In short:
+              </p>
+              <ul>
+                <li>
+                  Our systems may scan chat automatically for fraud, scams,
+                  off-platform payment requests, contact sharing and safety
+                  risks. A person checks before we take any action against an
+                  account.
+                </li>
+                <li>
+                  Familiarise support staff may read a booking&rsquo;s chat when
+                  that booking is reported or has a support case. Each access is
+                  linked to the case and logged.
+                </li>
+                <li>
+                  When evidence is overdue, or after a safety, fraud or scam
+                  report, a staff member may join the booking chat as
+                  &ldquo;Familiarise Support&rdquo;, with a banner and a system
+                  message, until the case is resolved.
+                </li>
+              </ul>
+
+              <h3 className="text-xl font-semibold mt-4 mb-2">
+                12.2 Keep Payments and Contact on Familiarise
+              </h3>
+              <p>You must not:</p>
+              <ul>
+                <li>
+                  Ask for, offer or accept payment outside Familiarise for a
+                  session or service found or booked on Familiarise
+                </li>
+                <li>
+                  Share or ask for phone numbers, email addresses, social media
+                  handles, UPI IDs or payment links before a booking is
+                  confirmed
+                </li>
+              </ul>
+              {/* counsel: confirm the enforcement ladder and the statement that off-platform payments are unprotected. */}
+              <p>
+                We may warn you, limit messaging, or suspend or close your
+                account if you do. Payments made outside Familiarise are not
+                covered by our refund policy, and we cannot recover them for
+                you.
+              </p>
+
+              <h3 className="text-xl font-semibold mt-4 mb-2">
+                12.3 Reporting a Problem and How We Decide
               </h3>
               <p>
-                In the event of any dispute, you agree to first contact us at{" "}
+                If something goes wrong with a booking, use{" "}
+                <strong>Get help</strong> on the booking to report a problem. We
+                call this a service complaint. It works like this:
+              </p>
+              <ol>
+                <li>You report the problem and tell us what happened.</li>
+                <li>
+                  We may ask you, the other party or both for evidence. Each
+                  request has a deadline.
+                </li>
+                <li>
+                  We review the booking records, the evidence and, where needed,
+                  the booking chat, and then record a decision with reasons.
+                </li>
+                <li>
+                  Either party may appeal the decision once, within 7 days.
+                </li>
+              </ol>
+              <p>
+                If a party does not respond by a deadline, we decide on the
+                evidence we have. Joining a mediation conversation is optional,
+                but the decision will not wait for it.
+              </p>
+              {/* counsel: confirm "final on the platform" wording preserves statutory remedies (CPA 2019, IT Rules GAC appeal). */}
+              <p>
+                The decision after an appeal is final on Familiarise. This does
+                not affect your right to contact our{" "}
+                <a
+                  href="/grievance"
+                  className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
+                >
+                  Grievance Officer
+                </a>
+                , a consumer commission or a court.
+              </p>
+
+              <h3 className="text-xl font-semibold mt-4 mb-2">
+                12.4 Refunds and Other Remedies
+              </h3>
+              {/* counsel: confirm consultants' agreement to holds and adjustments of earnings tied to a case. */}
+              <p>
+                We decide refunds and other remedies under our{" "}
+                <a
+                  href="/refund"
+                  className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
+                >
+                  Cancellation &amp; Refund Policy
+                </a>{" "}
+                and these Terms, and we carry them out through Familiarise.
+                Remedies can include a full or partial refund to the original
+                payment method, credit, or a make-up session. Consultants agree
+                that earnings for a booking with an open case may be held until
+                it is decided, and adjusted to match the decision.
+              </p>
+
+              <h3 className="text-xl font-semibold mt-4 mb-2">
+                12.5 Service Complaints vs Payment Disputes
+              </h3>
+              <p>
+                A <strong>service complaint</strong> is a problem with a booking
+                or session that you report to us. A{" "}
+                <strong>payment dispute</strong> (also called a chargeback) is a
+                request to your bank or card issuer to reverse a payment. Please
+                report a problem to us first: it is usually faster, and a
+                chargeback freezes the amount and pauses actions on the booking
+                while the bank decides.
+              </p>
+
+              <Separator className="my-6" />
+
+              <h2 className="text-2xl font-semibold mt-6 mb-4">
+                13. Dispute Resolution
+              </h2>
+
+              <h3 className="text-xl font-semibold mt-4 mb-2">
+                13.1 Informal Resolution
+              </h3>
+              <p>
+                In the event of any dispute, you agree to first report a problem
+                through Familiarise or contact us at{" "}
                 <a
                   href={getMailtoLink()}
                   className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
@@ -522,7 +667,7 @@ export default function TermsPage() {
               </p>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
-                12.2 Mediation
+                13.2 Mediation
               </h3>
               <p>
                 If informal resolution fails, disputes may be referred to
@@ -530,7 +675,7 @@ export default function TermsPage() {
               </p>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
-                12.3 Governing Law
+                13.3 Governing Law
               </h3>
               <p>
                 These Terms shall be governed by and construed in accordance
@@ -539,7 +684,7 @@ export default function TermsPage() {
               </p>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
-                12.4 Jurisdiction
+                13.4 Jurisdiction
               </h3>
               <p>
                 You agree to submit to the exclusive jurisdiction of the courts
@@ -550,7 +695,7 @@ export default function TermsPage() {
               <Separator className="my-6" />
 
               <h2 className="text-2xl font-semibold mt-6 mb-4">
-                13. Privacy and Data Protection
+                14. Privacy and Data Protection
               </h2>
               <p>
                 Your use of our services is also governed by our{" "}
@@ -568,7 +713,7 @@ export default function TermsPage() {
               <Separator className="my-6" />
 
               <h2 className="text-2xl font-semibold mt-6 mb-4">
-                14. Changes to Terms
+                15. Changes to Terms
               </h2>
               <p>
                 We reserve the right to modify these Terms at any time. We will
@@ -589,7 +734,7 @@ export default function TermsPage() {
               <Separator className="my-6" />
 
               <h2 className="text-2xl font-semibold mt-6 mb-4">
-                15. Severability
+                16. Severability
               </h2>
               <p>
                 If any provision of these Terms is found to be invalid or
@@ -600,7 +745,7 @@ export default function TermsPage() {
               <Separator className="my-6" />
 
               <h2 className="text-2xl font-semibold mt-6 mb-4">
-                16. Entire Agreement
+                17. Entire Agreement
               </h2>
               <p>
                 These Terms, together with our Privacy Policy and Cancellation &
@@ -612,7 +757,7 @@ export default function TermsPage() {
               <Separator className="my-6" />
 
               <h2 className="text-2xl font-semibold mt-6 mb-4">
-                17. Contact Information
+                18. Contact Information
               </h2>
               <p>
                 If you have any questions about these Terms & Conditions, please

@@ -125,7 +125,7 @@ export const supportCategories: SupportCategory[] = [
     slug: "payments",
     title: "Payments, refunds, credits & invoices",
     description:
-      "Checkout failures, payment links, refunds, referral credits, GST invoices, and disputes.",
+      "Checkout failures, payment links, refunds, referral credits, GST invoices, and chargebacks.",
     icon: "payments",
     subcategories: [
       {
@@ -641,7 +641,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Earning and using credits",
         paragraphs: [
-          "A friend who joins through your link gets 20% off their first booking, up to ₹300, taken off the price before tax. You get ₹300 of credit after your friend's first paid session has taken place and its refund window has passed; if that booking is refunded or disputed, the credit is cancelled.",
+          "A friend who joins through your link gets 20% off their first booking, up to ₹300, taken off the price before tax. You get ₹300 of credit after your friend's first paid session has taken place and its refund window has passed; if that booking is refunded or charged back, the credit is cancelled.",
           "Credit applies automatically at checkout on orders of ₹500 or more, oldest-expiring first, and can cover up to 20% of a booking (less on an expert's own-link bookings). Credit expires 90 days after it becomes spendable, is INR-only and cannot be withdrawn or transferred.",
           "Your referral link is on the Invite & earn page of your dashboard. A referral counts when the person you invited makes their first paid booking within 30 days of signing up; a sign-up alone earns nothing.",
         ],
@@ -660,7 +660,7 @@ export const supportArticles: SupportArticle[] = [
     title: "Where is my GST invoice? What about chargebacks?",
     excerpt:
       "Downloading invoices and credit notes, billing state, and why chargebacks risk suspension.",
-    updated: "September 2026",
+    updated: "October 2026",
     contactCategory: "billing",
     related: [
       "payments/refunds-explained",
@@ -676,7 +676,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Do not charge back first",
         paragraphs: [
-          "Always contact us before asking your bank to reverse a charge. A chargeback freezes the disputed amount on both sides, blocks further booking actions on the appointment while the dispute is live, and may lead to account suspension. Support resolves most billing disputes faster than banks do.",
+          "Report a problem before asking your bank to reverse a charge. A chargeback (payment dispute) freezes the amount on both sides, blocks further booking actions on the appointment while the chargeback is open, and may lead to account suspension. We usually fix billing problems faster than banks do.",
         ],
       },
     ],
@@ -1278,8 +1278,8 @@ export const supportArticles: SupportArticle[] = [
     category: "organizations",
     title: "Org support queues, activity, and data retention",
     excerpt:
-      "Sponsorship billing disputes, admin visibility, recording and chat retention.",
-    updated: "September 2026",
+      "Sponsorship billing questions, admin visibility, recording and chat retention.",
+    updated: "October 2026",
     contactCategory: "enterprise",
     related: [
       "organizations/wallet-invoice-billing",
@@ -1289,7 +1289,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Support and visibility",
         paragraphs: [
-          "Booking issues tied to sponsored members route through dedicated queues (sponsorship billing, admin disputes) so your admins and our team see the same thread. Admins can track program activity, assignments, and member bookings from the organisation workspace.",
+          "Booking issues tied to sponsored members route through dedicated queues (sponsorship billing, session concerns raised by admins) so your admins and our team see the same request. Admins can track program activity, assignments, and member bookings from the organisation workspace. Admins never see members' chat messages, even when our team reviews a sponsored session.",
         ],
       },
       {
@@ -1381,10 +1381,11 @@ export const supportArticles: SupportArticle[] = [
     title: "How is my data used? How do I report someone?",
     excerpt:
       "Data sharing basics, reporting users or content, and ban appeals.",
-    updated: "September 2026",
+    updated: "October 2026",
     contactCategory: "general",
     related: [
       "getting-started/age-consent-delete-data",
+      "help/how-we-review-messages",
       "help/tickets-and-contact",
     ],
     sections: [
@@ -1392,12 +1393,146 @@ export const supportArticles: SupportArticle[] = [
         heading: "Data use",
         paragraphs: [
           "We process your data to run the marketplace — accounts, bookings, payments (via Razorpay), and video (via Stream) — as described in the Privacy Policy. Payment and video providers receive only what they need to complete their function.",
+          'Chat is checked automatically for fraud and safety, and our support team may read a booking\'s chat when it is reported or has a support case. "How and why we review messages" explains when and how.',
         ],
       },
       {
         heading: "Reporting and appeals",
         paragraphs: [
-          "Report abusive users, inappropriate content, or poor session conduct from the relevant page or by contacting support with links and timestamps. Banned or suspended accounts receive the reason by email; reply with counter-evidence to appeal. Do not open a duplicate account to evade a ban — it harms your appeal.",
+          "Report abusive users, inappropriate content, or poor session conduct from the relevant page, use Report Message in chat, or contact support with links and timestamps. Banned or suspended accounts receive the reason by email; reply with counter-evidence to appeal. Do not open a duplicate account to evade a ban — it harms your appeal.",
+        ],
+      },
+    ],
+  },
+  {
+    slug: "how-we-review-messages",
+    category: "help",
+    title: "How and why we review messages",
+    excerpt:
+      "What we check automatically, when a person reads your messages, who can see what, and how to appeal.",
+    updated: "October 2026",
+    contactCategory: "general",
+    related: ["help/report-a-problem", "help/privacy-cookies-safety"],
+    sections: [
+      {
+        heading: "Why we review messages",
+        paragraphs: [
+          "In-app chat helps learners and experts plan and run sessions. We review messages only for a few named reasons: to stop fraud and scams, to keep payments on Familiarise, to keep people safe, to resolve problems that are reported to us, and when the law requires it. The Privacy Policy (section 3.6) and Terms (section 12) set this out formally.",
+        ],
+      },
+      {
+        heading: "What we check automatically",
+        // counsel: automated scanning is described as "may" until it is switched on; confirm the wording once it ships.
+        paragraphs: [
+          'Our systems may scan chat for signs of trouble. If a message matches, you may see a reminder in the chat, such as "Pay only on Familiarise; you are protected only here." Before a booking is confirmed, we may block a message that shares contact details.',
+          "An automated match never leads to a penalty by itself. A person on our team checks it first.",
+        ],
+        list: [
+          "Signs of fraud or a scam, such as fake payment links.",
+          "Requests to pay outside Familiarise (for example by UPI, bank transfer or another app).",
+          "Phone numbers, email addresses, social media handles, UPI IDs or payment links shared before a booking.",
+          "Safety risks such as threats or harassment.",
+        ],
+      },
+      {
+        heading: "When a person reads your messages",
+        paragraphs: [
+          "A member of the Familiarise support team reads a booking's chat only when someone reports a message or the booking, or when the booking has an open support case. They see that booking's chat only, and only for that case. In a group session, they see only the messages of the people involved in the report. Every access is linked to the case and logged.",
+          "We may also disclose messages when Indian law requires it, for example under a valid court or government order.",
+        ],
+      },
+      {
+        heading: "Who can see what",
+        paragraphs: [
+          "Here is who can see your messages and recordings, and when.",
+        ],
+        list: [
+          "People in the booking: they see the chat as usual.",
+          "Familiarise support staff: only as described above, linked to a case and logged.",
+          "Organisation admins (sponsored sessions): never your messages. They may see a record that our team reviewed a sponsored session.",
+          "Recordings: support staff can see details such as date and length. Only a Familiarise administrator can play a recording, for a specific case or report, and every playback is logged.",
+        ],
+      },
+      {
+        heading: "When Familiarise Support joins a chat",
+        paragraphs: [
+          'If evidence in a case is overdue, or after a report of a safety risk, fraud or a scam, a staff member may join the booking chat as "Familiarise Support". Everyone in the chat sees a banner and a message when this happens. We never join silently. Support leaves automatically when the case is resolved.',
+          "You don't have to reply in the chat. If we ask you for evidence and you don't respond by the deadline, we decide on the evidence we have.",
+        ],
+      },
+      {
+        heading: "How you're told",
+        // counsel: confirm the scope of the safety/legal exception to post-decision notice.
+        paragraphs: [
+          "After a decision, we tell the people in the case that our team reviewed messages related to it. We may delay or skip this notice when telling you would put someone at risk, help a fraud continue, or break the law.",
+        ],
+      },
+      {
+        heading: "If you disagree",
+        paragraphs: [
+          'You can appeal a decision once, within 7 days, from your request page. You can also contact our Grievance Officer through the Grievance Redressal page (/grievance). "Report a problem and how decisions work" explains the full process.',
+        ],
+      },
+    ],
+  },
+  {
+    slug: "report-a-problem",
+    category: "help",
+    title: "Report a problem and how decisions work",
+    excerpt:
+      "Continue an existing request, reopen one that didn't work, answer evidence requests, and appeal a decision.",
+    updated: "October 2026",
+    contactCategory: "general",
+    related: ["help/how-we-review-messages", "help/tickets-and-contact"],
+    sections: [
+      {
+        heading: "Report a problem",
+        paragraphs: [
+          "Open the booking and choose Get help. Pick what went wrong and follow the steps. If we can't fix it straight away, this creates a request with a reference number, which you can follow on your request page. For problems not tied to a booking, use the support page in your dashboard.",
+        ],
+      },
+      {
+        heading: "Already have a request? Continue it",
+        // counsel: "This didn't fix it" and the Continue prompt describe the request lifecycle shipping before launch; keep in sync with the product.
+        paragraphs: [
+          "Use New request only for a different, unrelated problem. Duplicate requests slow things down.",
+        ],
+        list: [
+          "Continue: if you already have an open request about the same booking, add to it.",
+          "This didn't fix it: within 14 days of a request being resolved, reopen the same request.",
+          "Appeal: after a decision, appeal it once. A new request does not undo a decision.",
+          "New request: only for a different problem.",
+        ],
+      },
+      {
+        heading: "Evidence requests",
+        paragraphs: [
+          "We may ask you, the other party or both for evidence, such as screenshots, documents or an explanation. Each request shows a deadline on your request page, usually 48 hours. If a party doesn't respond by the deadline, we decide on the evidence we have.",
+        ],
+        list: [
+          "File types: PDF, JPEG, PNG, WebP, TXT and DOCX.",
+          "Up to 20 MB per file.",
+          "Up to 20 files per person per case.",
+          "Never send OTPs, UPI PINs, card numbers or passwords.",
+        ],
+      },
+      {
+        heading: "How decisions work",
+        paragraphs: [
+          'A member of our support team reviews your request, the booking\'s records (such as join and leave times and payments) and any evidence. Where needed, they may read the booking chat, as explained in "How and why we review messages". We then record a decision and explain it to both sides.',
+          "If the decision includes a refund, credit or make-up session, we carry it out through Familiarise under the Cancellation & Refund Policy. You don't need to arrange anything with the other party.",
+        ],
+      },
+      {
+        heading: "Appeals",
+        paragraphs: [
+          "You can appeal once, within 7 days of the decision, from your request page. Tell us what you think we got wrong and add anything new. If you're still unhappy after the appeal, you can contact our Grievance Officer through the Grievance Redressal page (/grievance). This doesn't affect your other legal rights.",
+        ],
+      },
+      {
+        heading: "Service complaints vs chargebacks",
+        paragraphs: [
+          "Reporting a problem with a booking is a service complaint. A payment dispute (chargeback) is when you ask your bank to reverse a charge. Report a problem first: it's usually faster, and a chargeback freezes the amount and pauses actions on the booking.",
         ],
       },
     ],
@@ -1405,28 +1540,28 @@ export const supportArticles: SupportArticle[] = [
   {
     slug: "tickets-and-contact",
     category: "help",
-    title: "How do I contact support and track my ticket?",
+    title: "How do I contact support and track my request?",
     excerpt:
-      "Per-booking help vs tickets, reference numbers, SLAs, and platform status.",
-    updated: "September 2026",
+      "Per-booking help vs general requests, reference numbers, response times, and platform status.",
+    updated: "October 2026",
     contactCategory: "general",
-    related: ["help/privacy-cookies-safety", "booking/cancel-and-no-show"],
+    related: ["help/report-a-problem", "help/privacy-cookies-safety"],
     sections: [
       {
         heading: "Pick the right channel",
         paragraphs: [
-          "For a specific booking, use the help option on that appointment — it opens a thread with full booking context attached. For everything else, use Contact us (general, technical, billing, booking, expert, enterprise, feedback) or the in-dashboard support page. Enterprise and team-training inquiries route to the sales pipeline instead of the support queue.",
+          "For a specific booking, use Get help on that appointment to report a problem — it opens a request with full booking context attached. For everything else, use Contact us (general, technical, billing, booking, expert, enterprise, feedback) or the in-dashboard support page. Enterprise and team-training inquiries route to the sales pipeline instead of the support queue.",
         ],
       },
       {
-        heading: "References, SLAs, and status",
+        heading: "References, response times, and status",
         paragraphs: [
-          "Cases carry a reference number and target acknowledgement within 24 hours. Resolution follows the applicable category deadline; urgent content complaints have shorter deadlines. Waiting for a reply does not extend a statutory deadline. During incidents a banner describes the degradation; a full maintenance page auto-refreshes every 30 seconds — check it before filing a duplicate ticket.",
+          "Requests carry a reference number and target acknowledgement within 24 hours. Resolution follows the applicable category deadline; urgent content complaints have shorter deadlines. Waiting for a reply does not extend a statutory deadline. During incidents a banner describes the degradation; a full maintenance page auto-refreshes every 30 seconds — check it before opening a duplicate request.",
         ],
         list: [
-          "Include your ticket reference in every follow-up.",
+          "Continue your open request instead of opening a new one.",
           "Attach screenshots, payment IDs, and timestamps up front.",
-          "One issue per ticket resolves faster than bundled complaints.",
+          "One problem per request resolves faster than bundled complaints.",
         ],
       },
     ],
@@ -1511,18 +1646,18 @@ const SYNONYMS: Record<string, string[]> = {
   timezone: ["time zone", "time", "ist"],
   reschedule: ["postpone", "move", "change time"],
   notification: ["email", "alert", "remind", "push"],
-  ticket: ["support", "help", "complaint", "contact"],
+  ticket: ["support", "help", "complaint", "contact", "request"],
+  dispute: ["report a problem", "complaint", "chargeback"],
+  complaint: ["report a problem", "request"],
+  chat: ["message"],
+  message: ["chat"],
   expert: ["consultant", "mentor", "coach"],
   organisation: ["organization", "org", "company", "enterprise", "team"],
   organization: ["organisation", "org", "company", "enterprise", "team"],
 };
 
-/**
- * Machine-readable date for the v1 corpus. Every article currently carries the
- * same display month, so one constant feeds JSON-LD `dateModified`; per-article
- * ISO dates replace it once content starts changing on different dates.
- */
-export const CONTENT_ISO_DATE = "2026-09-01";
+/** Latest change anywhere in the corpus; feeds every article's JSON-LD `dateModified`. */
+export const CONTENT_ISO_DATE = "2026-10-21";
 
 function normalize(text: string): string {
   return text
@@ -1755,9 +1890,9 @@ const TOPIC_ARTICLES: Record<CaseTopic, readonly string[]> = {
     "organizations/members-roles",
   ],
   other: [
+    "help/report-a-problem",
     "help/tickets-and-contact",
-    "help/notification-preferences",
-    "help/privacy-cookies-safety",
+    "help/how-we-review-messages",
   ],
 };
 

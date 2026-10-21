@@ -1,6 +1,6 @@
 const HOUR = 3_600_000;
 
-const DEADLINE_HOURS = {
+export const DEADLINE_HOURS = {
   GENERAL: 7 * 24,
   GRIEVANCE: 7 * 24,
   CONTENT_REMOVAL: 36,

@@ -1,10 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Shield } from "lucide-react";
 import {
   COMPANY_INFO,
+  GRIEVANCE_OFFICER,
   PAGE_META,
   POLICY_DATES,
   getMailtoLink,
@@ -108,10 +110,15 @@ export default function PrivacyPolicyPage() {
               <ul>
                 <li>Chat messages and communications between users</li>
                 <li>
-                  Video conference metadata (session duration, participants)
+                  Video conference metadata (session duration, participants,
+                  join and leave times)
                 </li>
                 <li>Course materials and content uploads</li>
                 <li>Ratings and reviews</li>
+                <li>
+                  Reports you make, support requests, the messages and files you
+                  send us in them, and our decisions
+                </li>
               </ul>
 
               <Separator className="my-6" />
@@ -305,9 +312,102 @@ export default function PrivacyPolicyPage() {
                         toggle in Settings &rarr; Account.
                       </td>
                     </tr>
+                    <tr>
+                      <td className="p-2 align-top">
+                        <strong>Support Cases &amp; Evidence</strong> (your
+                        request, messages with support, uploaded files, the
+                        booking chat messages reviewed for the case, decisions,
+                        and a log of every staff access)
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Support, Safety &amp; Fraud Prevention</strong>{" "}
+                        — Resolve problems you or another party report, keep
+                        people safe, and stop fraud and off-platform payment
+                        (see section 3.6).
+                      </td>
+                      <td className="p-2 align-top">
+                        {/* counsel: confirm 180 days after closure is adequate for limitation periods and consumer-forum claims. */}
+                        <strong>Case-linked</strong> — Deleted 180 days after
+                        the case closes, unless we must keep it for a legal
+                        claim or a legal hold. Staff access logs follow the
+                        security-log period above.
+                      </td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
+
+              <h3 className="text-xl font-semibold mt-6 mb-2">
+                3.6 Messages, Calls and Support Cases
+              </h3>
+              {/* counsel: confirm these purposes are covered by consent at sign-up (STREAM_DATA_PROCESSING notice) or by DPDP s.7 legitimate use, without relying on "legitimate interest". */}
+              <p>
+                In-app chat and video help you plan and attend sessions. We also
+                process your messages and call data for the specific purposes
+                below, and for no others. We explain this in plain terms in our
+                help article{" "}
+                <Link
+                  href="/support/help/how-we-review-messages"
+                  className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
+                >
+                  How and why we review messages
+                </Link>
+                .
+              </p>
+              <ul>
+                <li>
+                  <strong>Automated checks for fraud and safety:</strong> our
+                  systems may scan in-app chat for signs of fraud or scams,
+                  requests to pay outside Familiarise, sharing of phone numbers,
+                  email addresses, UPI IDs or payment links before a booking,
+                  and safety risks. A match may show you a reminder in the chat.
+                  Before a booking is confirmed, we may block a message that
+                  shares contact details. An automated match never leads to a
+                  penalty by itself: a person checks it first.
+                </li>
+                <li>
+                  <strong>Human review when a booking is reported:</strong> a
+                  member of the Familiarise support team may read a
+                  booking&rsquo;s chat when a message or the booking is
+                  reported, or when the booking has an open support case. Access
+                  is linked to that case, limited to that booking&rsquo;s chat,
+                  and logged. In a group session, it is limited to the messages
+                  of the people involved in the report.
+                </li>
+                <li>
+                  <strong>Visible staff intervention:</strong> when evidence in
+                  a case is overdue, or after a report of a safety risk, fraud
+                  or a scam, a staff member may join the booking chat as
+                  &ldquo;Familiarise Support&rdquo;. Everyone in the chat sees a
+                  banner and a system message. We never join silently. Support
+                  is removed when the case is resolved.
+                </li>
+                <li>
+                  <strong>Recordings:</strong> support staff can see recording
+                  details such as date, length and status. Only a Familiarise
+                  administrator can play a recording, for a specific case or
+                  report, and every playback is logged.
+                </li>
+                <li>
+                  <strong>Organisation admins:</strong> if an organisation
+                  sponsors your session, its admins never see your chat
+                  messages. They may see a record that our team reviewed a
+                  sponsored session.
+                </li>
+                <li>
+                  <strong>Telling you afterwards:</strong> after a decision, we
+                  tell the people in the case that our team reviewed messages
+                  related to it.{" "}
+                  {/* counsel: confirm the scope of the safety/legal exception to post-decision notice. */}
+                  We may delay or skip this notice where it would put someone at
+                  risk, help a fraud continue, or break the law.
+                </li>
+                <li>
+                  <strong>Legal requests:</strong> we may disclose messages when
+                  Indian law requires it, for example under a valid order from a
+                  court or a government agency.
+                </li>
+              </ul>
 
               <Separator className="my-6" />
 
@@ -572,10 +672,11 @@ export default function PrivacyPolicyPage() {
                   selecting{" "}
                   <strong>Withdraw core consent &amp; delete account</strong> in{" "}
                   <strong>Settings &rarr; Account</strong>. If you have active
-                  upcoming sessions or unsettled payouts/disputes, we will guide
-                  you to complete or cancel them first; upon erasure, your
-                  personal identifiers are permanently scrubbed while statutory
-                  tax and financial records are retained under Indian tax law.
+                  upcoming sessions, unsettled payouts or open chargebacks, we
+                  will guide you to complete or cancel them first; upon erasure,
+                  your personal identifiers are permanently scrubbed while
+                  statutory tax and financial records are retained under Indian
+                  tax law.
                 </li>
                 <li>
                   <strong>Grievance Officer &amp; Statutory SLA:</strong> You
@@ -594,8 +695,9 @@ export default function PrivacyPolicyPage() {
                   >
                     {COMPANY_INFO.email}
                   </a>
-                  {". "}Grievances receive an immediate ticket reference, are
-                  acknowledged within 24 hours, and are resolved within 15 days.
+                  {". "}Grievances receive an immediate reference number, are
+                  acknowledged {GRIEVANCE_OFFICER.ackPromise}, and are resolved{" "}
+                  {GRIEVANCE_OFFICER.resolutionPromise}.
                 </li>
                 <li>
                   <strong>Right to Approach the Data Protection Board:</strong>{" "}
@@ -604,6 +706,35 @@ export default function PrivacyPolicyPage() {
                   right under Section 13(3) and Section 27 of the DPDP Act, 2023
                   to make a complaint to the{" "}
                   <strong>Data Protection Board of India (DPBI)</strong>.
+                </li>
+              </ul>
+
+              <h3 className="text-xl font-semibold mt-4 mb-2">
+                7.6 Your Rights in a Support Case
+              </h3>
+              <ul>
+                <li>
+                  <strong>Access:</strong> you can see your request, your
+                  messages with support, the files you uploaded and our decision
+                  on your request page. You can ask for a copy through a
+                  grievance.
+                </li>
+                <li>
+                  <strong>Correction:</strong> you can add information or
+                  correct what you told us while the case is open, and in an
+                  appeal.
+                </li>
+                {/* counsel: confirm early erasure on request may be refused while a case is open, given the other party's interest in the same evidence. */}
+                <li>
+                  <strong>Erasure:</strong> case evidence is deleted 180 days
+                  after the case closes. If you ask us to erase it sooner, we
+                  will, unless we need it for an open case, a legal claim or a
+                  legal hold.
+                </li>
+                <li>
+                  <strong>Appeal and grievance:</strong> you can appeal a
+                  support decision once, within 7 days. You can also contact our
+                  Grievance Officer as described in section 7.5.
                 </li>
               </ul>
 
@@ -657,6 +788,11 @@ export default function PrivacyPolicyPage() {
                   Maintain business records for tax and accounting purposes
                 </li>
               </ul>
+              <p>
+                Support case evidence, including booking chat messages reviewed
+                for a case, is deleted 180 days after the case closes, unless a
+                legal claim or legal hold requires us to keep it longer.
+              </p>
               <p>
                 When you delete your account, we will delete or anonymize your
                 personal information within a reasonable timeframe, except where
