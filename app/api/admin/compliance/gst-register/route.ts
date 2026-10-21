@@ -16,7 +16,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdminAuth } from "@/lib/auth-helpers";
-import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
+import { applyRateLimit, gstRegisterDownloadLimiter } from "@/lib/rate-limit";
 import { gstOutwardRegisterCsvStoragePath } from "@/lib/compliance/gst-outward-register";
 import {
   nextMonthStart,
@@ -84,7 +84,10 @@ export async function GET(req: NextRequest) {
     const auth = await requireAdminAuth();
     if (auth.error) return auth.error;
 
-    const limited = await applyRateLimit(moneyOpsLimiter, auth.session.user.id);
+    const limited = await applyRateLimit(
+      gstRegisterDownloadLimiter,
+      auth.session.user.id,
+    );
     if (limited) return limited;
 
     const { searchParams } = new URL(req.url);

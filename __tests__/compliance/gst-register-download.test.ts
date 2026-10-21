@@ -27,6 +27,7 @@ jest.mock("../../lib/rate-limit", () => ({
   __esModule: true,
   applyRateLimit: jest.fn(async () => null),
   moneyOpsLimiter: {},
+  gstRegisterDownloadLimiter: {},
 }));
 
 jest.mock("../../lib/prisma", () => ({
@@ -43,7 +44,10 @@ jest.mock("../../lib/storage/private-finance-object", () => ({
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest } from "next/server";
-import { applyRateLimit, moneyOpsLimiter } from "../../lib/rate-limit";
+import {
+  applyRateLimit,
+  gstRegisterDownloadLimiter,
+} from "../../lib/rate-limit";
 import { GET } from "../../app/api/admin/compliance/gst-register/route";
 
 /** An operator session the ADMIN gate admits: role plus the 2FA precondition. */
@@ -101,7 +105,10 @@ describe("GET /api/admin/compliance/gst-register", () => {
       "compliance/gst/2026-10-01_2026-10-31.csv",
       600,
     );
-    expect(applyRateLimit).toHaveBeenCalledWith(moneyOpsLimiter, "admin_1");
+    expect(applyRateLimit).toHaveBeenCalledWith(
+      gstRegisterDownloadLimiter,
+      "admin_1",
+    );
   });
 
   it("maps a month whose length differs to the days that month has", async () => {

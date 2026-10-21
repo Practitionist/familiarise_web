@@ -62,7 +62,7 @@ export function GstRegisterDownload() {
         </div>
         {href ? (
           <Button asChild size="sm">
-            <a href={href}>
+            <a href={href} target="_blank" rel="noopener noreferrer">
               <Download className="mr-1.5 h-4 w-4" /> Download register
             </a>
           </Button>
