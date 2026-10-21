@@ -58,6 +58,10 @@ const report = (findings: ReconcileReport["findings"]): ReconcileReport => ({
     payoutsChecked: 0,
     earningsPaymentsWithoutBookingTxn: 0,
     discrepanciesCount: findings.length,
+    baselinedCount: 0,
+    unbaselinedCount: findings.length,
+    baselineExpiredCount: 0,
+    baselineProblems: [],
   },
   findings,
 });

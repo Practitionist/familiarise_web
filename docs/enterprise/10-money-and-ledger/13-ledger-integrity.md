@@ -8,7 +8,7 @@ last-reviewed: 2026-10-20
 
 # Ledger integrity & reconciliation
 
-**What this covers:** the auditor that proves the money model holds — the invariants it checks, the one informational coverage metric, how it runs (nightly job plus an on-demand admin door), what a finding means, and the single protective action a wallet-cache drift triggers. The auditor is read-only: it reports drift and never repairs it. This is the safety net that lets us trust derived balances and reconciled caches.
+**What this covers:** the auditor that proves the money model holds — the invariants it checks, the one informational coverage metric, the checked-in baseline that separates known findings from new drift, how it runs (nightly job plus an on-demand admin door), what a finding means, and the single protective action a wallet-cache drift triggers. The auditor is read-only: it reports drift and never repairs it. This is the safety net that lets us trust derived balances and reconciled caches.
 
 > **Why this exists.** The journal is the source of truth, but a few numbers are **cached** for the hot path (`walletBalance`) or **denormalized** for query speed (`engagementsUsed`, `activeSeatCount`, the `Earnings` amount columns). A cache is only safe if something independently re-derives it and screams on drift. That something is `scripts/reconcile/reconcile-ledgers.ts` — it never hand-patches an audited table, writing only `LedgerReconciliationReport`. Its one protective side effect is that every door that runs a reconcile (the nightly job, the `CRON_SECRET` twin and the admin door) **freezes the spend of each wallet with a `WALLET_BALANCE_DRIFT` finding** through `freezeDriftedWallets()`, and the nightly job also pages P0 (see the design notes below); it still never SQL-patches the drifted cache itself.
 
@@ -32,10 +32,11 @@ flowchart TD
   R --> T["tax and standing:<br/>ORG_INVOICE_GST_MISMATCH<br/>PENDING_TRUST_PARK_STALE<br/>CLAWBACK_RECEIVABLE_STALE"]
   R --> X["full-scope only:<br/>REFUND_BOOKING_COHERENCE<br/>REFERRAL_CREDIT_LIABILITY_DRIFT<br/>UNAPPLIED_RECEIPTS_RESIDUE"]
   A & E2 & E & CP & OC & OI & F & G & J & T & X --> Z["findings[]"]
-  Z --> RP["LedgerReconciliationReport<br/>{ ok, summary, findings }"]
-  RP --> OK{"findings.length == 0?"}
-  OK -- yes --> EX0["ok:true · exit 0"]
-  OK -- no --> EX2["ok:false · exit 2 (page ops)"]
+  Z --> BL["baseline split<br/>(scripts/reconcile/ledger-findings-baseline.ts)"]
+  BL --> RP["LedgerReconciliationReport<br/>{ ok, summary, findings }"]
+  BL --> OK{"any unbaselined finding?<br/>baseline sound?"}
+  OK -- no --> EX0["ok:true · 200 (clean)"]
+  OK -- yes --> EX2["ok:false · 207 (page ops)"]
 ```
 
 | Finding `kind`                         | Scope                                                                           | Asserts                                                                                                                                                                                                                         | Drift means                                                                                                                                                                                                 |
@@ -100,9 +101,10 @@ flowchart TD
     CRS["CLAWBACK_RECEIVABLE_STALE"]
   end
   G1 & G2 & G3 & G4 --> RPT["LedgerReconciliationReport<br/>{ ok, summary, findings[] }"]
-  RPT --> OK{"findings.length<br/>== 0?"}
-  OK -- yes --> CLEAN["exit 0 · ok:true"]
-  OK -- no --> PAGE["exit 2 · ok:false"]
+  RPT --> BL["split against the checked-in baseline"]
+  BL --> OK{"any unbaselined finding?<br/>baseline malformed?"}
+  OK -- no --> CLEAN["200 · ok:true"]
+  OK -- yes --> PAGE["207 · ok:false"]
   PAGE --> MON["monitoring alert<br/>(50-operations/03-monitoring.md)"]
   MON --> ONCALL["on-call → runbook<br/>(50-operations/02-runbooks.md):<br/>inspect the upstream writer,<br/>post a counter-txn — never SQL-patch"]
   CLEAN --> AUDIT["history row = integrity proof over time"]
@@ -122,25 +124,50 @@ A related but stricter check, the `EARNINGS_WITHOUT_BOOKING_TXN` finding, does f
 
 ---
 
-## 3. How it runs
+## 3. The known-findings baseline
 
-- **Library:** `runReconcileLedgers({ scope, organizationId?, triggeredById? })` → `ReconcileReport`. Scope is `"full"` or `"org:<id>"`; passing `organizationId` limits every per-row check to one org and **skips the four full-scope-only checks** listed in §1.
-- **Nightly run:** the Netlify five-minute ticker (`netlify/functions/cron-tick.mts`) calls the `reconcile-ledgers` twin once a day at 03:55 UTC (inside its 03:00 to 04:00 UTC window; one slot, because every run writes a report row). The twin calls `runReconcileLedgers({ scope: "full", onWalletDrift })`, which persists a `LedgerReconciliationReport`. `freezeDriftingWallets()` (`scripts/reconcile/ledger-drift-response.ts`) freezes the spend of every wallet with `WALLET_BALANCE_DRIFT` from the audit's wallet step, so a run cut off later has already frozen. `respondToLedgerDrift()` then records a `SystemEvent` and reports the findings to Sentry once per standing set. The route answers `200` (clean), `207` (discrepancies, page ops) or `500` (the audit or a freeze failed); there is no process exit code. The auditor in `scripts/reconcile/reconcile-ledgers.ts` itself only reads and reports.
-- **On-demand door and HTTP twin:** `POST /api/admin/reconcile-ledgers` is an admin money door (ADMIN, step-up, reason, one `OpsActionLog` row; `startLedgerReconciliation()` in `lib/backoffice/ledger-run.ts` is the one helper behind it and the console's reconcile job), and `POST /api/cleanup/reconcile-ledgers` (with `Authorization: Bearer $CRON_SECRET`) is the twin the ticker calls and the way to run it by hand. Both run `runReconcileLedgers` synchronously in-process under the `reconcile-ledgers` cron lock, and a full-scope run that is already `RUNNING` answers 409. Both then freeze every drifted wallet through the same `freezeDriftedWallets()` (`lib/payments/wallet-freeze.ts`) that the nightly run uses, and report the count as `frozenWallets`. A full-scope run completes in a few seconds without chunking or background workers.
-- **Report storage:** every run writes a `LedgerReconciliationReport { scope, ok, durationMs, summary, findings, triggeredById }`. The history is the audit trail of integrity over time.
+A finding that is already known must not keep the nightly run red forever: an auditor that is permanently red is an auditor nobody reads. The auditor therefore splits its findings against a checked-in baseline — `scripts/reconcile/ledger-findings-baseline.ts` — and only the findings the baseline does not excuse fail the run.
+
+**The baseline never hides evidence.** Every finding still lands in the persisted `LedgerReconciliationReport.findings` array and still counts in `summary.discrepanciesCount`. The baseline decides which findings fail the run; it never mutes, repairs or deletes one.
+
+**An entry pins one finding by fingerprint.** An entry names the finding `kind`, the `deltaPaise`, the entity ids the finding carries (`organizationId`, `billingAccountId`, `paymentId`, `payoutId`, `invoiceId`, `programAssignmentId`, `billingSubscriptionId`) and, for a finding that identifies itself only through its `details` (for example `details.bookingUtilizationId`), that one detail key with its value. A finding is excused only when the kind, the delta and **every** identifier agree, so a new row, a changed amount, or a finding that grew an identifier the entry never pinned is never excused. `occurrences` says how many findings of one fingerprint the entry excuses; a fingerprint that occurs more often than that leaves the surplus failing the run.
+
+**Every entry carries an owner, a reason and an expiry.** `owner` says who carries the cleanup, `reason` says in one line why the finding is knowingly carried, and `expires` is the ISO date after which the entry excuses nothing. An expired entry excuses nothing, so its finding fails the run again and an allowlist can never become permanent. The auditor counts expired entries in `summary.baselineExpiredCount`.
+
+**A malformed baseline fails the run.** An entry that is missing its owner, reason or expiry, that carries an unparseable date, or that names a finding kind the auditor cannot raise is ignored as a baseline entry **and** fails the run: the problem is recorded in `summary.baselineProblems` and the report is not ok. A broken baseline can never silently green a run.
+
+| Report field                   | Meaning                                                        |
+| ------------------------------ | -------------------------------------------------------------- |
+| `summary.discrepanciesCount`   | Every finding the run raised, baselined or not.                |
+| `summary.baselinedCount`       | How many of them the baseline excuses.                         |
+| `summary.unbaselinedCount`     | How many it does not — each one fails the run.                 |
+| `summary.baselineExpiredCount` | Baseline entries whose expiry has passed.                      |
+| `summary.baselineProblems`     | Why the baseline was rejected. A non-empty list fails the run. |
+
+The gate in one line: the report is ok when `unbaselinedCount` is zero **and** `baselineProblems` is empty.
 
 ---
 
-## 4. When a finding fires
+## 4. How it runs
+
+- **Library:** `runReconcileLedgers({ scope, organizationId?, triggeredById? })` → `ReconcileReport`. Scope is `"full"` or `"org:<id>"`; passing `organizationId` limits every per-row check to one org and **skips the four full-scope-only checks** listed in §1.
+- **Nightly run:** the Netlify five-minute ticker (`netlify/functions/cron-tick.mts`) calls the `reconcile-ledgers` twin once a day at 03:55 UTC (inside its 03:00 to 04:00 UTC window; one slot, because every run writes a report row). The twin calls `runReconcileLedgers({ scope: "full", onWalletDrift })`, which persists a `LedgerReconciliationReport`. `freezeDriftingWallets()` (`scripts/reconcile/ledger-drift-response.ts`) freezes the spend of every wallet with `WALLET_BALANCE_DRIFT` from the audit's wallet step, so a run cut off later has already frozen. `respondToLedgerDrift()` then records a `SystemEvent` and reports the findings to Sentry once per standing set; it runs only when the report is not ok, so a night whose findings are all baselined pages nobody. The route answers `200` (clean), `207` (discrepancies, page ops) or `500` (the audit or a freeze failed); there is no process exit code. The auditor in `scripts/reconcile/reconcile-ledgers.ts` itself only reads and reports.
+- **On-demand door and HTTP twin:** `POST /api/admin/reconcile-ledgers` is an admin money door (ADMIN, step-up, reason, one `OpsActionLog` row; `startLedgerReconciliation()` in `lib/backoffice/ledger-run.ts` is the one helper behind it and the console's reconcile job), and `POST /api/cleanup/reconcile-ledgers` (with `Authorization: Bearer $CRON_SECRET`) is the twin the ticker calls and the way to run it by hand. Both run `runReconcileLedgers` synchronously in-process under the `reconcile-ledgers` cron lock, and a full-scope run that is already `RUNNING` answers 409. Both then freeze every drifted wallet through the same `freezeDriftedWallets()` (`lib/payments/wallet-freeze.ts`) that the nightly run uses, and report the count as `frozenWallets`. A full-scope run completes in a few seconds without chunking or background workers.
+- **Report storage:** every run writes a `LedgerReconciliationReport { scope, ok, durationMs, summary, findings, triggeredById }`. The history is the audit trail of integrity over time; the `summary` carries the count of findings, how many the baseline excused and why the baseline was rejected (§3).
+
+---
+
+## 5. When a finding fires
 
 A finding is an **incident signal, never a thing to hand-patch.** The drift is a symptom; the fix is upstream (the writer that diverged), and the correction — if money is involved — is a **counter-transaction**, not a SQL `UPDATE` on a balance. See [runbooks](../50-operations/02-runbooks.md) for the per-finding triage procedure (which writer to inspect, how to post a correcting entry, when to page).
 
 ---
 
-## 5. Design decisions & trade-offs
+## 6. Design decisions & trade-offs
 
 - **Never hand-patches a cache — but fails closed on wallet drift.** The auditor writes _only_ `LedgerReconciliationReport` and never touches an audited table. When any reconcile door (the nightly job, `POST /api/cleanup/reconcile-ledgers` or `POST /api/admin/reconcile-ledgers`) sees a `WALLET_BALANCE_DRIFT` finding, which means a wallet's cached balance no longer matches its journal, `freezeDriftedWallets()` freezes spend for that `BillingAccount`; the nightly job also pages P0. The freeze rides the append-only `SystemEvent` log (a `WALLET_FREEZE` / `WALLET_UNFREEZE` pair keyed on `correlationId`), fails closed so an unreadable log blocks the spend rather than leaking it, and gates only discretionary checkout spend — never a top-up credit. An admin lifts it with `POST /api/admin/billing-accounts/[billingAccountId]/unfreeze` once the drift is reconciled. The door re-reads that one wallet's drift first and refuses with 409 `WALLET_STILL_DRIFTED` while the cache and the journal still disagree.
 - **Counts and events reuse the `*Paise` fields.** Rather than a separate schema per check kind, count-based findings (`…ENGAGEMENTS_DRIFT`, `…SEAT_COUNT_DRIFT`, `OVERAGE_COUNT_DRIFT`) and link/state findings stuff counts into `expectedPaise`/`actualPaise`/`deltaPaise` and record the real unit in `details.unit`.
+- **A checked-in baseline of known findings (`scripts/reconcile/ledger-findings-baseline.ts`).** The nightly signal has to mean "new drift", not "the same seeded row again", or ops learns to ignore a red reconciler. The baseline records what is already known without hiding it: every finding still reaches the report, and only the findings the baseline does not excuse fail the run. Its three rules — fingerprint, expiry, fail-closed on a malformed entry — are in §3.
 
 ### Related docs
 
@@ -149,7 +176,7 @@ A finding is an **incident signal, never a thing to hand-patch.** The drift is a
 - [Payment legs](09-payment-legs.md) — the leg-sum invariant, enforced by the `payment_legs_sum_to_amount` trigger.
 - [Runbooks](../50-operations/02-runbooks.md) — per-finding incident response.
 - [Monitoring](../50-operations/03-monitoring.md) — alerting on report `ok:false`.
-- Ground truth: `scripts/reconcile/reconcile-ledgers.ts`, `LedgerReconciliationReport` in `prisma/schema.prisma`.
+- Ground truth: `scripts/reconcile/reconcile-ledgers.ts`, `scripts/reconcile/ledger-findings-baseline.ts`, `LedgerReconciliationReport` in `prisma/schema.prisma`.
 
 ---
 
@@ -160,5 +187,5 @@ A finding is an **incident signal, never a thing to hand-patch.** The drift is a
 
 1. **Chunked Cursor State Machine (`advanceReconcileRun` / `ReconcileCursorState`)**: Previously, `reconcile-ledgers.ts` walked 5 tables row-by-row in TypeScript (139 serialised DB round trips taking 22–27 seconds), persisting a keyset cursor (`summary.progress`) on `LedgerReconciliationReport` with a 12-second soft chunk deadline (`RECONCILE_CHUNK_BUDGET_MS`). Rewriting those checks as set-based SQL `GROUP BY` / `HAVING` queries reduced full-scope execution to ~1–2 seconds in a single pass, making the multi-step cursor engine obsolete.
 2. **Netlify Background Function Driver (`netlify/functions/reconcile-ledgers-background`)**: Previously, `POST /api/admin/reconcile-ledgers` kicked a Netlify Background Function that looped `POST /api/cleanup/reconcile-ledgers?runId=...` up to 400 times. Because full-scope runs now finish well within a standard HTTP request budget, `POST /api/admin/reconcile-ledgers` runs `runReconcileLedgers` synchronously in-process and the background function was removed.
-3. **A reconcile baseline that mutes known drift** was deleted. Every finding now counts, and a standing set is reported to Sentry once per window instead (`reportStandingFinding()`).
+3. **A baseline keyed to one entity id** (the old `LEDGER_BASELINE` list): it excused a finding by `kind` plus a single entity id, so the same row with a changed amount stayed hidden, and a broken entry silently excused nothing. The current baseline (`scripts/reconcile/ledger-findings-baseline.ts`) pins the kind, the delta and every identifier the finding carries, expires, and fails the run when it is malformed.
 4. **Re-verifying invariants Postgres enforces** (`LEDGER_TXN_IMBALANCE`, `PAYMENT_LEG_SUM_MISMATCH`, `INVOICE_TOTAL_MISMATCH`, `LEDGER_ACCOUNT_NON_INR`) was removed from the auditor. The deferred triggers and CHECK constraints in `prisma/sql/*.sql` are the enforcers, and a JS sweep over them only adds a second, weaker copy.

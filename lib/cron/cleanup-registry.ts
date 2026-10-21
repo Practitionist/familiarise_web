@@ -845,7 +845,11 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           runId: r.runId,
           status: r.status,
           ok: r.report.ok,
+          // Every finding the run raised, and the ones the checked-in baseline
+          // does not excuse. A green night has a non-zero total and a zero
+          // unbaselined count.
           discrepanciesCount: r.report.summary?.discrepanciesCount ?? 0,
+          unbaselinedCount: r.report.summary?.unbaselinedCount ?? 0,
           frozenWallets: r.frozenWallets.length,
         }),
         status: (r) => statusFor(r, !r.report.ok),
