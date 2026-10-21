@@ -1,9 +1,5 @@
 import prisma from "@/lib/prisma";
-import {
-  canCorrespondOnVisibleCase,
-  projectCaseForViewer,
-  visibleCaseWhere,
-} from "./case-access";
+import { projectCaseForViewer, visibleCaseAccess } from "./case-access";
 
 const EXPORT_BATCH = 500;
 /** A safety bound per collection; reaching it is reported, never silent. */
@@ -36,12 +32,12 @@ const order = [{ createdAt: "asc" as const }, { id: "asc" as const }];
  * files they uploaded, and their ratings. Internal staff notes are excluded.
  */
 export async function readSupportExport(userId: string) {
-  const visible = await visibleCaseWhere({ userId, role: "CONSULTEE" });
+  const access = await visibleCaseAccess({ userId, role: "CONSULTEE" });
   const cases = await readAllPages((cursor) =>
     prisma.supportCase.findMany({
       where: {
         AND: [
-          visible,
+          access.where,
           { OR: [{ requesterUserId: userId }, { submitterUserId: userId }] },
         ],
       },
@@ -124,11 +120,7 @@ export async function readSupportExport(userId: string) {
   );
 
   const caseRows = cases.rows.map((row) => {
-    const view = projectCaseForViewer(
-      row,
-      userId,
-      canCorrespondOnVisibleCase(row, userId),
-    );
+    const view = projectCaseForViewer(row, userId, access.canCorrespond(row));
     if (view.summaryOnly)
       return {
         id: row.id,

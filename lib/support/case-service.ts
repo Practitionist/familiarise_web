@@ -1583,8 +1583,9 @@ export async function readSupportCaseForViewer(
       role: viewer.role ?? "CONSULTEE",
     }));
   if (!canCorrespond && !isRequester) return null;
-  if (supportCase.ownershipScope !== "PERSONAL" && !canCorrespond) return null;
 
+  // The member a case was filed about gets the summary whatever its scope;
+  // only then does an org-owned case refuse everyone without the grant.
   const view = projectCaseForViewer(supportCase, viewer.userId, canCorrespond);
   if (view.summaryOnly)
     return {
@@ -1594,6 +1595,7 @@ export async function readSupportCaseForViewer(
       events: [],
       subjects: [],
     };
+  if (supportCase.ownershipScope !== "PERSONAL" && !canCorrespond) return null;
 
   if (viewer.isStaff) {
     return {

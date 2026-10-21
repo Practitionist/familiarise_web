@@ -68,8 +68,9 @@ see [Razorpay’s dispute documentation](https://razorpay.com/docs/payments/disp
 
 - Staff investigate and communicate. Admin alone executes money operations,
   service holds, and restricted enforcement reversals.
-- `PERSONAL` cases belong to their submitter. A member who is the subject of an
-  organization-filed personal case receives a summary, never its correspondence.
+- `PERSONAL` cases belong to their submitter. A member who is the subject of a
+  case an operator filed for them receives a summary, never its correspondence;
+  such cases are organization-owned so access follows current membership.
 - `ORG_OPERATIONS` correspondence is available to active OWNER, MAINTAINER,
   MANAGER and SUPPORT members. `ORG_BILLING` correspondence is available to
   OWNER, MAINTAINER and BILLING_ADMIN. Organization tagging alone grants no

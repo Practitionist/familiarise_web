@@ -225,10 +225,11 @@ export async function evidenceRecipientsByAppointment(
   const result = new Map<string, { id: string; name: string }[]>();
   if (appointmentIds.length === 0) return result;
   const plan = { consultantProfileId: true } as const;
+  // Only delivering collaborators answer for a session; crew seats never do.
   const groupPlan = {
     ...plan,
     collaborators: {
-      where: { status: "ACCEPTED" as const },
+      where: { status: "ACCEPTED" as const, tier: "PRESENTER" as const },
       select: { consultantProfileId: true },
     },
   };
@@ -238,7 +239,7 @@ export async function evidenceRecipientsByAppointment(
       id: true,
       participants: {
         where: {
-          role: { in: ["CONSULTANT", "COLLABORATOR"] },
+          role: "CONSULTANT",
           status: { in: ["CONFIRMED", "ATTENDED"] },
         },
         select: { userId: true },

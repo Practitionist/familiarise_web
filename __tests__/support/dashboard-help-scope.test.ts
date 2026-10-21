@@ -15,9 +15,9 @@ jest.mock("../../lib/support/case-actions", () => ({
 }));
 jest.mock("../../lib/support/case-access", () => ({
   ...jest.requireActual("../../lib/support/case-access"),
-  visibleCaseWhere: jest.fn(async () => ({
-    deletedAt: null,
-    submitterUserId: "viewer",
+  visibleCaseAccess: jest.fn(async () => ({
+    where: { deletedAt: null, submitterUserId: "viewer" },
+    canCorrespond: () => true,
   })),
 }));
 jest.mock("../../lib/support/case-read", () => ({
@@ -114,7 +114,7 @@ it("hides an evidence request when the recipient no longer delivers the session"
   expect(await response.json()).toEqual({ data: [] });
 });
 
-it("paginates the personal inbox without including organization-owned cases", async () => {
+it("paginates the personal inbox: personal cases plus org cases filed about the viewer", async () => {
   const response = await requestList(
     new NextRequest(
       "https://example.test/api/support/requests?ownership=personal&scope=session&status=OPEN&page=2",
@@ -124,7 +124,12 @@ it("paginates the personal inbox without including organization-owned cases", as
   const where = {
     AND: [
       { deletedAt: null, submitterUserId: "viewer" },
-      { ownershipScope: "PERSONAL" },
+      {
+        OR: [
+          { ownershipScope: "PERSONAL" },
+          { requesterUserId: "viewer", NOT: { submitterUserId: "viewer" } },
+        ],
+      },
       { status: "OPEN" },
       { appointmentId: { not: null } },
     ],

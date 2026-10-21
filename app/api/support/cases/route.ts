@@ -1,7 +1,6 @@
 import {
-  visibleCaseWhere,
+  visibleCaseAccess,
   caseOwnershipPermission,
-  canCorrespondOnVisibleCase,
   projectCaseForViewer,
 } from "@/lib/support/case-access";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
@@ -96,13 +95,11 @@ export async function GET(req: NextRequest) {
       });
     const { status, limit: take } = query.data;
 
-    const where = {
-      ...(await visibleCaseWhere({
-        userId: user.id,
-        role: sessionRole(user.role),
-      })),
-      ...(status ? { status } : {}),
-    };
+    const access = await visibleCaseAccess({
+      userId: user.id,
+      role: sessionRole(user.role),
+    });
+    const where = { ...access.where, ...(status ? { status } : {}) };
 
     const cases = await prisma.supportCase.findMany({
       where,
@@ -140,7 +137,7 @@ export async function GET(req: NextRequest) {
           const view = projectCaseForViewer(
             row,
             user.id,
-            canCorrespondOnVisibleCase(row, user.id),
+            access.canCorrespond(row),
           );
           if (view.summaryOnly) return view.summary;
           return {

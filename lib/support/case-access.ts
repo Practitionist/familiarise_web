@@ -82,64 +82,86 @@ export async function caseCorrespondentIds(
     .map((member) => member.userId);
 }
 
-export async function visibleCaseWhere(viewer: {
+/**
+ * The cases a viewer may list, and whether they may correspond on each row.
+ * The subject of a case someone else filed sees it (as a summary) in any scope.
+ */
+export async function visibleCaseAccess(viewer: {
   userId: string;
   role: UserRole | null;
 }) {
   if (hasBackofficePermission(viewer.role, "tickets.manage"))
-    return { deletedAt: null };
+    return {
+      where: { deletedAt: null },
+      canCorrespond: (_row: CorrespondenceRow) => true,
+    };
   const memberships = await prisma.membership.findMany({
     where: { userId: viewer.userId, status: "ACTIVE" },
     select: { organizationId: true, role: true },
   });
+  const holds = (surface: OrgSurface, organizationId: string | null) =>
+    organizationId !== null &&
+    memberships.some(
+      (m) =>
+        m.organizationId === organizationId &&
+        hasOrgPermission(m.role, surface),
+    );
   return {
-    deletedAt: null,
-    externalRequesterEmail: null,
-    OR: [
-      {
-        ownershipScope: "PERSONAL" as const,
-        OR: [
-          { submitterUserId: viewer.userId },
-          { requesterUserId: viewer.userId },
-        ],
-      },
-      ...memberships.flatMap((m) => [
-        ...(hasOrgPermission(m.role, "supportCases.operations.manage")
-          ? [
-              {
-                ownershipScope: "ORG_OPERATIONS" as const,
-                organizationId: m.organizationId,
-              },
-            ]
-          : []),
-        ...(hasOrgPermission(m.role, "supportCases.billing.manage")
-          ? [
-              {
-                ownershipScope: "ORG_BILLING" as const,
-                organizationId: m.organizationId,
-              },
-            ]
-          : []),
-      ]),
-    ],
+    where: {
+      deletedAt: null,
+      externalRequesterEmail: null,
+      OR: [
+        {
+          ownershipScope: "PERSONAL" as const,
+          OR: [
+            { submitterUserId: viewer.userId },
+            { requesterUserId: viewer.userId },
+          ],
+        },
+        {
+          requesterUserId: viewer.userId,
+          NOT: { submitterUserId: viewer.userId },
+        },
+        ...memberships.flatMap((m) => [
+          ...(hasOrgPermission(m.role, "supportCases.operations.manage")
+            ? [
+                {
+                  ownershipScope: "ORG_OPERATIONS" as const,
+                  organizationId: m.organizationId,
+                },
+              ]
+            : []),
+          ...(hasOrgPermission(m.role, "supportCases.billing.manage")
+            ? [
+                {
+                  ownershipScope: "ORG_BILLING" as const,
+                  organizationId: m.organizationId,
+                },
+              ]
+            : []),
+        ]),
+      ],
+    },
+    canCorrespond: (row: CorrespondenceRow) => {
+      const permission = caseOwnershipPermission(row.ownershipScope);
+      return permission
+        ? holds(permission, row.organizationId)
+        : row.submitterUserId === viewer.userId;
+    },
   };
 }
 
-/**
- * For a row already filtered by `visibleCaseWhere`: org-scope rows passed the
- * membership grant there, so only personal rows need the submitter check.
- */
-export function canCorrespondOnVisibleCase(
-  supportCase: {
-    ownershipScope: SupportCaseOwnership;
-    submitterUserId: string;
-  },
-  viewerUserId: string,
-): boolean {
-  return (
-    supportCase.ownershipScope !== "PERSONAL" ||
-    supportCase.submitterUserId === viewerUserId
-  );
+interface CorrespondenceRow {
+  ownershipScope: SupportCaseOwnership;
+  organizationId: string | null;
+  submitterUserId: string;
+}
+
+export async function visibleCaseWhere(viewer: {
+  userId: string;
+  role: UserRole | null;
+}) {
+  return (await visibleCaseAccess(viewer)).where;
 }
 
 export const ORG_FILED_CASE_TITLE = "Organization support request";

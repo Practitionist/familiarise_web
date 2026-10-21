@@ -5,9 +5,8 @@ import { requireApiAuth } from "@/lib/auth-helpers";
 import { supportError } from "@/lib/api/support-http";
 import {
   ORG_FILED_CASE_TITLE,
-  canCorrespondOnVisibleCase,
   projectCaseForViewer,
-  visibleCaseWhere,
+  visibleCaseAccess,
 } from "@/lib/support/case-access";
 import { PLAN_TITLE_SELECT, planTitle } from "@/lib/support/case-read";
 import { SupportCaseStatus, type Prisma } from "@prisma/client";
@@ -24,10 +23,11 @@ export async function GET(req: NextRequest) {
   const query = Query.safeParse(Object.fromEntries(req.nextUrl.searchParams));
   if (!query.success)
     return supportError({ status: 400, code: "VALIDATION_FAILED" });
-  const visible = await visibleCaseWhere({
+  const access = await visibleCaseAccess({
     userId: auth.session.user.id,
     role: "CONSULTEE",
   });
+  const visible = access.where;
   const scopeFilters: Prisma.SupportCaseWhereInput[] = [];
   if (query.data.scope === "session")
     scopeFilters.push({ appointmentId: { not: null } });
@@ -37,7 +37,17 @@ export async function GET(req: NextRequest) {
     AND: [
       visible,
       ...(query.data.ownership
-        ? [{ ownershipScope: "PERSONAL" as const }]
+        ? [
+            {
+              OR: [
+                { ownershipScope: "PERSONAL" as const },
+                {
+                  requesterUserId: auth.session.user.id,
+                  NOT: { submitterUserId: auth.session.user.id },
+                },
+              ],
+            },
+          ]
         : []),
       ...(query.data.status ? [{ status: query.data.status }] : []),
       ...scopeFilters,
@@ -98,7 +108,7 @@ export async function GET(req: NextRequest) {
         const redacted = projectCaseForViewer(
           c,
           auth.session.user.id,
-          canCorrespondOnVisibleCase(c, auth.session.user.id),
+          access.canCorrespond(c),
         ).summaryOnly;
         const lastMessage = redacted ? undefined : c.messages[0];
         return {

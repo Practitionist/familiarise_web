@@ -24,8 +24,8 @@ signed URLs. Large binaries go directly to Supabase Storage rather than through
 the application server. Submitted evidence is retained; pending uploads can be
 withdrawn according to the case rules.
 
-Staff send neutral evidence prompts to eligible delivery participants or current
-host representatives. Recipients see the prompt, due time and their own submission,
+Staff send neutral evidence prompts to the delivering consultant, presenter-tier
+collaborators or current host representatives; crew collaborators are never asked. Recipients see the prompt, due time and their own submission,
 not customer correspondence or private operator notes. The request remains linked
 to the parent case for staff investigation and decision tracking.
 
