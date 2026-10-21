@@ -4,19 +4,38 @@ import { requireApiAuth } from "@/lib/auth-helpers";
 import { requireFreshSession } from "@/lib/auth/step-up";
 import {
   CaseActionError,
-  CaseActionSchema,
+  CaseActionRequestSchema,
   performCaseAction,
   readCaseResolution,
+  type CaseAction,
 } from "@/lib/support/case-actions";
 import { assertBodySize } from "@/lib/validation/limits";
 import { supportError } from "@/lib/api/support-http";
 import { reviewSupportRefundDoor } from "@/lib/support/refund-door";
+import {
+  applySupportHoldDoor,
+  releaseSupportHoldDoor,
+  voidSupportRecommendationDoor,
+} from "@/lib/support/case-doors";
 import { sessionRole } from "@/lib/auth/session-role";
 
 const Params = z.object({ caseId: z.string().min(1).max(64) });
 interface Context {
   params: Promise<{ caseId: string }>;
 }
+
+/** Money and payout-hold actions run through their audited ops doors. */
+const OPS_DOORS: Partial<
+  Record<
+    CaseAction["action"],
+    (req: NextRequest, context: Context) => Promise<NextResponse>
+  >
+> = {
+  REVIEW_REFUND: reviewSupportRefundDoor,
+  VOID_RECOMMENDATION: voidSupportRecommendationDoor,
+  APPLY_HOLD: applySupportHoldDoor,
+  RELEASE_HOLD: releaseSupportHoldDoor,
+};
 
 export async function GET(_req: NextRequest, context: Context) {
   const auth = await requireApiAuth();
@@ -39,11 +58,22 @@ export async function POST(req: NextRequest, context: Context) {
   const tooLarge = assertBodySize(req);
   if (tooLarge) return tooLarge;
   const params = Params.safeParse(await context.params);
-  const parsed = CaseActionSchema.safeParse(await req.json().catch(() => null));
+  const parsed = CaseActionRequestSchema.safeParse(
+    await req.json().catch(() => null),
+  );
   if (!parsed.success || !params.success)
-    return NextResponse.json({ error: "Invalid action" }, { status: 400 });
-  if (parsed.data.action === "REVIEW_REFUND")
-    return reviewSupportRefundDoor(
+    return NextResponse.json(
+      {
+        error:
+          parsed.error?.issues.find((issue) => issue.code === "custom")
+            ?.message ?? "Invalid action",
+        code: "INVALID_ACTION",
+      },
+      { status: 400 },
+    );
+  const door = OPS_DOORS[parsed.data.action];
+  if (door)
+    return door(
       new NextRequest(req.url, {
         method: "POST",
         headers: req.headers,
@@ -51,10 +81,7 @@ export async function POST(req: NextRequest, context: Context) {
       }),
       context,
     );
-  if (
-    ["APPLY_HOLD", "RELEASE_HOLD"].includes(parsed.data.action) ||
-    (parsed.data.action === "DECIDE" && parsed.data.outcome === "OVERTURNED")
-  ) {
+  if (parsed.data.action === "DECIDE" && parsed.data.outcome === "OVERTURNED") {
     const stale = requireFreshSession(auth.session);
     if (stale) return stale;
   }

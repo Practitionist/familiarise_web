@@ -70,6 +70,7 @@ jest.mock("../../lib/prisma", () => {
       findFirst: jest.fn().mockResolvedValue(null),
       upsert: jest.fn().mockResolvedValue({ id: "ledger-1" }),
     },
+    supportCase: { findMany: jest.fn(async () => []) },
     ledgerTransaction: { findUnique: jest.fn().mockResolvedValue(null) },
     paymentLeg: { findMany: jest.fn().mockResolvedValue([]) },
     consultantEarnings: {

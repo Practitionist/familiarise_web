@@ -182,8 +182,6 @@ model User {
   supportDecisions               SupportCaseDecision[]
   supportRecommendations         SupportFinancialRecommendation[] @relation("SupportRecommendationAuthor")
   supportRecommendationDecisions SupportFinancialRecommendation[] @relation("SupportRecommendationDecider")
-  supportHoldsApplied            SupportPaymentHold[]             @relation("SupportHoldApplier")
-  supportHoldsReleased           SupportPaymentHold[]             @relation("SupportHoldReleaser")
   supportAttachments             SupportCaseAttachment[]
 
   @@index([consultantProfileId])
@@ -435,7 +433,6 @@ model SupportCase {
   evidenceRequests           SupportCaseEvidenceRequest[]
   decisions                  SupportCaseDecision[]            @relation("CaseDecisions")
   recommendations            SupportFinancialRecommendation[]
-  paymentHolds               SupportPaymentHold[]
   attachments                SupportCaseAttachment[]
 
   subjects SupportCaseSubject[]
@@ -575,6 +572,11 @@ model SupportFinancialRecommendation {
   decidedBy      User?       @relation("SupportRecommendationDecider", fields: [decidedById], references: [id], onDelete: Restrict)
   decisionReason String?     @db.Text
   approved       Boolean?
+  /// Cancels the remaining service on execution; false keeps the buyer's seat.
+  releaseSeat    Boolean     @default(false)
+  /// An approval withdrawn because its refund never went live (null or FAILED).
+  voidedAt       DateTime?   @db.Timestamptz
+  voidedById     String?
   refundId       String?     @unique
   refund         Refund?     @relation(fields: [refundId], references: [id], onDelete: Restrict)
   createdAt      DateTime    @default(now()) @db.Timestamptz
@@ -584,27 +586,6 @@ model SupportFinancialRecommendation {
   @@index([paymentId])
   @@index([proposedById])
   @@index([decidedById])
-}
-
-model SupportPaymentHold {
-  id            String      @id @default(uuid())
-  caseId        String
-  supportCase   SupportCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
-  paymentId     String
-  payment       Payment     @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-  appliedById   String
-  appliedBy     User        @relation("SupportHoldApplier", fields: [appliedById], references: [id], onDelete: Restrict)
-  reason        String      @db.Text
-  createdAt     DateTime    @default(now()) @db.Timestamptz
-  releasedAt    DateTime?   @db.Timestamptz
-  releasedById  String?
-  releasedBy    User?       @relation("SupportHoldReleaser", fields: [releasedById], references: [id], onDelete: Restrict)
-  releaseReason String?     @db.Text
-
-  @@index([paymentId, releasedAt])
-  @@index([caseId])
-  @@index([appliedById])
-  @@index([releasedById])
 }
 
 model SupportCaseAttachment {
@@ -666,6 +647,14 @@ enum SupportCaseEventKind {
   REOPENED
   AUTO_CLOSED
   CSAT_RATED
+  EVIDENCE_REQUESTED
+  EVIDENCE_CANCELLED
+  DECISION_RECORDED
+  RECOMMENDATION_PROPOSED
+  RECOMMENDATION_DECIDED
+  RECOMMENDATION_VOIDED
+  HOLD_APPLIED
+  HOLD_RELEASED
 }
 
 // #appt-support — per-appointment private CSAT (1-5), distinct from the public
@@ -5790,7 +5779,6 @@ model Payment {
   refunds  Refund[] // Refunds associated with this payment
   disputes Dispute[] // Disputes associated with this payment
 
-  supportHolds           SupportPaymentHold[]
   supportRecommendations SupportFinancialRecommendation[]
 
   incidentRemedies IncidentRemedy[]
@@ -6184,7 +6172,7 @@ model EarningsHold {
   organizationEarningsId String?
   organizationEarnings   OrganizationEarnings? @relation(fields: [organizationEarningsId], references: [id], onDelete: Restrict)
   reason                 EarningsHoldReason
-  /// Dispute row id, banned user id, OpsActionLog id, or the overage parent payment id.
+  /// Dispute row id, banned user id, OpsActionLog id, the overage parent payment id, or the support case id.
   sourceRef              String
   placedAt               DateTime              @default(now()) @db.Timestamptz
   releasedAt             DateTime?             @db.Timestamptz
@@ -6201,6 +6189,7 @@ enum EarningsHoldReason {
   MODERATION
   OPERATOR
   OVERAGE // a CHARGE_MEMBER side charge on the parent payment is still unpaid
+  SUPPORT_CASE // a support case froze the payment's unpaid earnings
 }
 
 /// Payouts to individual consultants (1099-style). The parallel

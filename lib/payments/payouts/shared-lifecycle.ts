@@ -40,11 +40,6 @@ export const REFUND_GATED_PAYMENT_WHERE = {
   },
 } satisfies Prisma.PaymentWhereInput;
 
-/** Support holds are independent of gateway disputes and refund reservations. */
-export const SUPPORT_HOLD_GATED_PAYMENT_WHERE = {
-  supportHolds: { some: { releasedAt: null } },
-} satisfies Prisma.PaymentWhereInput;
-
 export type PayableLedgerAccount =
   | { kind: "CONSULTANT_PAYABLE"; consultantProfileId: string }
   | { kind: "ORG_PAYABLE"; organizationId: string };

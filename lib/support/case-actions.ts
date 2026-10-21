@@ -2,6 +2,7 @@ import {
   Prisma,
   type SupportCase,
   type SupportCaseDecision,
+  type SupportCaseEventKind,
   type UserRole,
 } from "@prisma/client";
 import { stage as stageEmail } from "@/lib/email/deliver";
@@ -9,7 +10,10 @@ import { DEFAULT_FROM_ADDRESS } from "@/lib/email/config";
 import { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
+import {
+  hasBackofficePermission,
+  type BackofficeSurface,
+} from "@/lib/auth/backoffice-permissions";
 import { canCorrespondOnCase, caseCorrespondentIds } from "./case-access";
 import { reverseAppealedModeration } from "./appeal-reversal";
 import { purgeReviewSurfaces } from "@/lib/data/public-cache";
@@ -20,17 +24,50 @@ import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { caseKeyOf } from "./case-key";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { refundInFlightOr } from "@/lib/backoffice/refund-doors";
-import { CaseRefundReviewSchema } from "@/schemas/support-refund-review";
+import {
+  CaseRefundReviewSchema,
+  hasRefundablePreview,
+  REFUNDABLE_PREVIEW_REQUIRED,
+} from "@/schemas/support-refund-review";
 import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
+import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
+import { fundingRailForIntent } from "@/lib/payments/funding-rail";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
+import {
+  assertBoundedRefund,
+  assertNotOwnRemedy,
+  STAFF_REFUND_PER_PAYMENT_PAISE,
+} from "./money-policy";
+import {
+  activeHolds,
+  caseHoldEvents,
+  holdPaymentForCase,
+  releaseCaseHoldRows,
+} from "./case-holds";
 
 const id = z.string().min(1).max(128);
 const reason = z.string().trim().min(1).max(10_000);
 const base = z.object({
   clientActionId: id,
   expectedUpdatedAt: z.string().datetime(),
+});
+export const ApplyHoldSchema = base.extend({
+  action: z.literal("APPLY_HOLD"),
+  paymentId: id,
+  reason,
+});
+export const ReleaseHoldSchema = base.extend({
+  action: z.literal("RELEASE_HOLD"),
+  holdId: id,
+  reason,
+});
+export const VoidRecommendationSchema = base.extend({
+  action: z.literal("VOID_RECOMMENDATION"),
+  recommendationId: id,
+  reason,
 });
 export const CaseActionSchema = z.discriminatedUnion("action", [
   base.extend({
@@ -58,12 +95,25 @@ export const CaseActionSchema = z.discriminatedUnion("action", [
     paymentId: id,
     amountPaise: z.number().int().nonnegative().safe(),
     reason,
+    /** Cancels the remaining service when executed; by default the seat stays. */
+    releaseSeat: z.boolean().default(false),
   }),
   CaseRefundReviewSchema,
-  base.extend({ action: z.literal("APPLY_HOLD"), paymentId: id, reason }),
-  base.extend({ action: z.literal("RELEASE_HOLD"), holdId: id, reason }),
-  base.extend({ action: z.literal("HANDOVER"), reason }),
+  VoidRecommendationSchema,
+  ApplyHoldSchema,
+  ReleaseHoldSchema,
 ]);
+/** The route's parse: an approval must carry the refundable balance it previewed. */
+export const CaseActionRequestSchema = CaseActionSchema.superRefine(
+  (body, ctx) => {
+    if (body.action === "REVIEW_REFUND" && !hasRefundablePreview(body))
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["expectedRefundablePaise"],
+        message: REFUNDABLE_PREVIEW_REQUIRED,
+      });
+  },
+);
 export type CaseAction = z.infer<typeof CaseActionSchema>;
 export type CaseActor = { userId: string; role: UserRole | null };
 
@@ -110,14 +160,17 @@ export async function assertIndependentReviewer(
   }
 }
 
-async function privateEvent(
+/** A typed audit row on the case timeline; `toValue` names the row it acted on. */
+async function caseEvent(
   tx: Tx,
   caseId: string,
   actorId: string,
-  note: string,
+  kind: SupportCaseEventKind,
+  toValue: string,
+  note?: string,
 ) {
   await tx.supportCaseEvent.create({
-    data: { caseId, actorId, kind: "VISIBILITY_CHANGED", note },
+    data: { caseId, actorId, kind, toValue, note, createdAt: new Date() },
   });
 }
 
@@ -198,6 +251,7 @@ async function linkedPayment(tx: Tx, caseId: string, paymentId: string) {
       id: true,
       amount: true,
       paymentIntent: true,
+      paymentStatus: true,
       ...REFUNDABLE_BALANCE_SELECT,
     },
   });
@@ -278,6 +332,65 @@ export async function evidenceRecipients(tx: Tx, appointmentId: string | null) {
   });
 }
 
+const LIVE_REFUND_STATUSES = new Set(["PENDING", "SUCCEEDED"]);
+
+/** A refund that moved money or is about to; FAILED and CANCELLED moved none. */
+function isLiveRefund(refund: { status: string } | null): boolean {
+  return refund !== null && LIVE_REFUND_STATUSES.has(refund.status);
+}
+
+type HoldSummary = {
+  id: string;
+  paymentId: string;
+  reason: string;
+  createdAt: Date;
+  releasedAt: Date | null;
+  /** Unpaid earnings this hold freezes now; 0 once released or when none were unpaid. */
+  earningsHeld: number;
+};
+
+async function readCaseHolds(tx: Tx, caseId: string): Promise<HoldSummary[]> {
+  const events = await caseHoldEvents(tx, [caseId]);
+  const rows = await tx.earningsHold.findMany({
+    where: { reason: "SUPPORT_CASE", sourceRef: caseId, releasedAt: null },
+    select: {
+      consultantEarnings: { select: { paymentId: true } },
+      organizationEarnings: { select: { paymentId: true } },
+    },
+  });
+  const heldByPayment = new Map<string, number>();
+  for (const row of rows) {
+    const paymentId =
+      row.consultantEarnings?.paymentId ?? row.organizationEarnings?.paymentId;
+    if (paymentId)
+      heldByPayment.set(paymentId, (heldByPayment.get(paymentId) ?? 0) + 1);
+  }
+  const open = new Map<string, HoldSummary>();
+  const holds: HoldSummary[] = [];
+  for (const event of [...events].reverse()) {
+    if (!event.toValue) continue;
+    if (event.kind === "HOLD_APPLIED") {
+      const hold: HoldSummary = {
+        id: event.id,
+        paymentId: event.toValue,
+        reason: event.note ?? "",
+        createdAt: event.createdAt,
+        releasedAt: null,
+        earningsHeld: 0,
+      };
+      open.set(event.toValue, hold);
+      holds.push(hold);
+    } else {
+      const hold = open.get(event.toValue);
+      if (hold) hold.releasedAt = event.createdAt;
+      open.delete(event.toValue);
+    }
+  }
+  for (const hold of open.values())
+    hold.earningsHeld = heldByPayment.get(hold.paymentId) ?? 0;
+  return holds.reverse();
+}
+
 export async function readCaseResolution(caseId: string, actor: CaseActor) {
   const supportCase = await prisma.supportCase.findFirst({
     where: { id: caseId, deletedAt: null },
@@ -312,12 +425,7 @@ export async function readCaseResolution(caseId: string, actor: CaseActor) {
               orderBy: { createdAt: "desc" },
             })
           : [],
-        moneyRead
-          ? tx.supportPaymentHold.findMany({
-              where: { caseId },
-              orderBy: { createdAt: "desc" },
-            })
-          : [],
+        moneyRead ? readCaseHolds(tx, caseId) : [],
         staff
           ? tx.supportCaseEvidenceRequest.findMany({
               where: { caseId },
@@ -334,10 +442,150 @@ export async function readCaseResolution(caseId: string, actor: CaseActor) {
     evidenceRequests: requests,
     recipients,
     canManage: staff,
-    canExecuteMoney: hasBackofficePermission(actor.role, "refunds.manage"),
+    canExecuteMoney: hasBackofficePermission(
+      actor.role,
+      "supportRefunds.executeBounded",
+    ),
+    canManageHolds: hasBackofficePermission(actor.role, "supportHolds.manage"),
+    canVoidRecommendations: hasBackofficePermission(
+      actor.role,
+      "refunds.manage",
+    ),
+    /** Per-payment cumulative refund ceiling for this operator; null is unbounded. */
+    refundLimitPaise:
+      actor.role === "ADMIN" ? null : STAFF_REFUND_PER_PAYMENT_PAISE,
     ownershipScope: supportCase.ownershipScope,
     updatedAt: supportCase.updatedAt,
   };
+}
+
+/**
+ * What a recommendation may still refund: the payment's refundable balance
+ * less other approved support remedies on it that have no live refund yet,
+ * plus the remedies already committed on the payment and any blocker.
+ */
+export async function quoteCaseRefund(
+  tx: Tx,
+  caseId: string,
+  recommendation: { id: string; paymentId: string },
+) {
+  const payment = await linkedPayment(tx, caseId, recommendation.paymentId);
+  const others = await tx.supportFinancialRecommendation.findMany({
+    where: {
+      paymentId: recommendation.paymentId,
+      approved: true,
+      id: { not: recommendation.id },
+    },
+    select: { amountPaise: true, refund: { select: { status: true } } },
+  });
+  const committedPaise = others.reduce(
+    (sum, other) => sum + Number(other.amountPaise),
+    0,
+  );
+  const unrefundedPaise = others
+    .filter((other) => !isLiveRefund(other.refund))
+    .reduce((sum, other) => sum + Number(other.amountPaise), 0);
+  let blocked: { code: string; reason: string } | null = null;
+  if (payment.paymentStatus !== "SUCCEEDED")
+    blocked = {
+      code: "PAYMENT_NOT_SUCCEEDED",
+      reason: "Payment is not captured",
+    };
+  else if (
+    payment.disputes.some(
+      (dispute) => !DISPUTE_INACTIVE_FOR_GATING.includes(dispute.status),
+    )
+  )
+    blocked = {
+      code: "REFUND_BLOCKED_BY_DISPUTE",
+      reason: "A gateway chargeback is active",
+    };
+  return {
+    refundablePaise: Math.max(
+      0,
+      refundableBalancePaise(Number(payment.amount), payment) - unrefundedPaise,
+    ),
+    committedPaise,
+    rail: fundingRailForIntent(payment.paymentIntent),
+    blocked,
+  };
+}
+
+/** The checks an approval or a retry must pass before any money moves. */
+async function assertRefundExecutable(
+  tx: Tx,
+  caseId: string,
+  actor: CaseActor,
+  recommendation: {
+    id: string;
+    paymentId: string;
+    amountPaise: number | bigint;
+    proposedById: string;
+  },
+  expectedRefundablePaise: number | undefined,
+) {
+  const quote = await quoteCaseRefund(tx, caseId, recommendation);
+  if (quote.blocked)
+    throw new CaseActionError(quote.blocked.code, `${quote.blocked.reason}.`);
+  if (expectedRefundablePaise !== quote.refundablePaise)
+    throw new CaseActionError(
+      "PREVIEW_CHANGED",
+      "Refresh the refund preview before approving.",
+    );
+  const amountPaise = Number(recommendation.amountPaise);
+  if (amountPaise > quote.refundablePaise)
+    throw new CaseActionError(
+      "AMOUNT_EXCEEDS_REFUNDABLE",
+      "The recommendation exceeds the refundable balance.",
+    );
+  await assertNotOwnRemedy(tx, recommendation.proposedById, actor.userId);
+  await assertBoundedRefund(tx, actor, [
+    {
+      paymentId: recommendation.paymentId,
+      newPaise: amountPaise,
+      priorPaise: quote.committedPaise,
+    },
+  ]);
+}
+
+/**
+ * The amount the second-admin rule prices for a review: this remedy plus the
+ * remedies already committed on its payment, or 0 when no new money moves.
+ * Staff limits and blockers refuse here, before any proposal is opened.
+ */
+export async function priceCaseRefundReview(
+  tx: Tx,
+  caseId: string,
+  actor: CaseActor,
+  input: { recommendationId: string; approve: boolean },
+): Promise<number> {
+  const recommendation = await tx.supportFinancialRecommendation.findFirst({
+    where: { id: input.recommendationId, caseId },
+    include: { refund: { select: { status: true } } },
+  });
+  if (!recommendation)
+    throw new CaseActionError("NOT_FOUND", "Recommendation not found.", 404);
+  if (
+    recommendation.decidedAt &&
+    (recommendation.approved !== input.approve || recommendation.voidedAt)
+  )
+    throw new CaseActionError(
+      "ALREADY_DECIDED",
+      "This recommendation already has a decision.",
+    );
+  if (!input.approve || isLiveRefund(recommendation.refund)) return 0;
+  const quote = await quoteCaseRefund(tx, caseId, recommendation);
+  if (quote.blocked)
+    throw new CaseActionError(quote.blocked.code, `${quote.blocked.reason}.`);
+  const amountPaise = Number(recommendation.amountPaise);
+  await assertBoundedRefund(tx, actor, [
+    {
+      paymentId: recommendation.paymentId,
+      newPaise: amountPaise,
+      priorPaise: quote.committedPaise,
+    },
+  ]);
+  return amountPaise + quote.committedPaise;
 }
 
 type ActionInput<Action extends CaseAction["action"]> = Extract<
@@ -356,17 +604,6 @@ async function replayCaseActionTx(tx: Tx, caseId: string, input: CaseAction) {
       return tx.supportFinancialRecommendation.findUnique({ where });
     case "DECIDE":
       return tx.supportCaseDecision.findUnique({ where });
-    case "REVIEW_REFUND": {
-      const prior = await tx.supportFinancialRecommendation.findFirst({
-        where: { id: input.recommendationId, caseId, decidedAt: { not: null } },
-      });
-      if (prior && prior.approved !== input.approve)
-        throw new CaseActionError(
-          "ALREADY_DECIDED",
-          "This recommendation already has a decision.",
-        );
-      return prior;
-    }
     default:
       return null;
   }
@@ -435,6 +672,40 @@ async function stageDecisionNotificationsTx(
   }
 }
 
+/** A refund outcome must match the money: approved needs a live refund, declined none approved. */
+async function assertDecisionMatchesMoney(
+  tx: Tx,
+  caseId: string,
+  outcome: ActionInput<"DECIDE">["outcome"],
+) {
+  if (outcome === "REFUND_APPROVED") {
+    const live = await tx.supportFinancialRecommendation.findFirst({
+      where: {
+        caseId,
+        approved: true,
+        refund: { status: { in: ["PENDING", "SUCCEEDED"] } },
+      },
+      select: { id: true },
+    });
+    if (!live)
+      throw new CaseActionError(
+        "REFUND_NOT_LIVE",
+        "Record a refund approval once an approved refund is pending or sent.",
+      );
+  }
+  if (outcome === "REFUND_DECLINED") {
+    const approved = await tx.supportFinancialRecommendation.findFirst({
+      where: { caseId, approved: true },
+      select: { id: true },
+    });
+    if (approved)
+      throw new CaseActionError(
+        "REFUND_APPROVED_EXISTS",
+        "This case has an approved refund. Void it before recording a decline.",
+      );
+  }
+}
+
 async function recordCaseDecisionTx(
   tx: Tx,
   supportCase: SupportCase,
@@ -442,6 +713,7 @@ async function recordCaseDecisionTx(
   input: ActionInput<"DECIDE">,
 ) {
   const caseId = supportCase.id;
+  await assertDecisionMatchesMoney(tx, caseId, input.outcome);
   let restoredConsultantProfileId: string | undefined;
   if (
     input.outcome === "OVERTURNED" &&
@@ -481,6 +753,14 @@ async function recordCaseDecisionTx(
       appealUntil: new Date(Date.now() + 7 * 86_400_000),
     },
   });
+  await caseEvent(
+    tx,
+    caseId,
+    actor.userId,
+    "DECISION_RECORDED",
+    decision.id,
+    input.outcome,
+  );
   await stageDecisionNotificationsTx(tx, supportCase, decision);
   return { ...decision, restoredConsultantProfileId };
 }
@@ -522,12 +802,7 @@ async function requestEvidenceTx(
       dueAt,
     },
   });
-  await privateEvent(
-    tx,
-    caseId,
-    actor.userId,
-    `Evidence requested: ${request.id}`,
-  );
+  await caseEvent(tx, caseId, actor.userId, "EVIDENCE_REQUESTED", request.id);
   await stageBell(tx, {
     workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
     recipients: [input.recipientUserId],
@@ -547,6 +822,7 @@ async function requestEvidenceTx(
 async function cancelEvidenceTx(
   tx: Tx,
   caseId: string,
+  actor: CaseActor,
   input: ActionInput<"CANCEL_EVIDENCE">,
 ) {
   const cancelled = await tx.supportCaseEvidenceRequest.updateMany({
@@ -563,6 +839,15 @@ async function cancelEvidenceTx(
       "CONFLICT",
       "Evidence was already submitted or cancelled.",
     );
+  await caseEvent(
+    tx,
+    caseId,
+    actor.userId,
+    "EVIDENCE_CANCELLED",
+    input.requestId,
+    input.reason,
+  );
+  return { ok: true };
 }
 
 async function recommendRefundTx(
@@ -584,6 +869,11 @@ async function recommendRefundTx(
         : "Enter a positive refund amount.",
       400,
     );
+  const open = await tx.supportFinancialRecommendation.findFirst({
+    where: { paymentId: input.paymentId, decidedAt: null },
+    select: { id: true },
+  });
+  if (open) throw openRecommendationError();
   const recommendation = await tx.supportFinancialRecommendation.create({
     data: {
       caseId,
@@ -592,17 +882,33 @@ async function recommendRefundTx(
       clientActionId: input.clientActionId,
       amountPaise: input.amountPaise,
       reason: input.reason,
+      releaseSeat: input.releaseSeat,
     },
   });
-  await privateEvent(
+  await caseEvent(
     tx,
     caseId,
     actor.userId,
-    `Financial recommendation: ${recommendation.id}`,
+    "RECOMMENDATION_PROPOSED",
+    recommendation.id,
   );
   return recommendation;
 }
 
+function openRecommendationError() {
+  return new CaseActionError(
+    "RECOMMENDATION_OPEN",
+    "This payment already has a refund recommendation awaiting review.",
+  );
+}
+
+/**
+ * Claims the decision on a recommendation. It is guarded by the
+ * recommendation's own `decidedAt` CAS and the previewed refundable balance,
+ * not by the case version, so a second-admin replay survives case activity.
+ * An approved recommendation whose refund failed or never started may be
+ * retried through the same checks.
+ */
 async function reviewRefundTx(
   tx: Tx,
   caseId: string,
@@ -611,33 +917,39 @@ async function reviewRefundTx(
 ) {
   const recommendation = await tx.supportFinancialRecommendation.findFirst({
     where: { id: input.recommendationId, caseId },
+    include: { refund: { select: { id: true, status: true } } },
   });
   if (!recommendation)
     throw new CaseActionError("NOT_FOUND", "Recommendation not found.", 404);
   if (recommendation.decidedAt) {
-    if (recommendation.approved !== input.approve)
+    if (recommendation.approved !== input.approve || recommendation.voidedAt)
       throw new CaseActionError(
         "ALREADY_DECIDED",
         "This recommendation already has a decision.",
       );
+    if (input.approve && !isLiveRefund(recommendation.refund))
+      await assertRefundExecutable(
+        tx,
+        caseId,
+        actor,
+        recommendation,
+        input.expectedRefundablePaise,
+      );
     return recommendation;
   }
-  const payment = await linkedPayment(tx, caseId, recommendation.paymentId);
-  const refundable = refundableBalancePaise(Number(payment.amount), payment);
-  if (input.approve && input.expectedRefundablePaise !== refundable)
-    throw new CaseActionError(
-      "PREVIEW_CHANGED",
-      "Refresh the refund preview before approving.",
+  if (input.approve)
+    await assertRefundExecutable(
+      tx,
+      caseId,
+      actor,
+      recommendation,
+      input.expectedRefundablePaise,
     );
-  if (input.approve && Number(recommendation.amountPaise) > refundable)
-    throw new CaseActionError(
-      "AMOUNT_EXCEEDS_REFUNDABLE",
-      "The recommendation exceeds the refundable balance.",
-    );
+  const decidedAt = new Date();
   const claimed = await tx.supportFinancialRecommendation.updateMany({
     where: { id: recommendation.id, decidedAt: null },
     data: {
-      decidedAt: new Date(),
+      decidedAt,
       decidedById: actor.userId,
       approved: input.approve,
       decisionReason: input.reason,
@@ -648,99 +960,70 @@ async function reviewRefundTx(
       "CONFLICT",
       "Another administrator reviewed this recommendation.",
     );
-  await privateEvent(
+  await caseEvent(
     tx,
     caseId,
     actor.userId,
-    `${input.approve ? "Approved" : "Declined"} financial recommendation: ${recommendation.id}`,
+    "RECOMMENDATION_DECIDED",
+    recommendation.id,
+    input.approve ? "APPROVED" : "DECLINED",
   );
-  return { ...recommendation, approved: input.approve };
+  return {
+    ...recommendation,
+    decidedAt,
+    decidedById: actor.userId,
+    approved: input.approve,
+    decisionReason: input.reason,
+  };
 }
 
-async function applyPaymentHoldTx(
+/** Withdraws an approval whose refund never went live, so the case can move on. */
+async function voidRecommendationTx(
   tx: Tx,
   caseId: string,
   actor: CaseActor,
-  input: ActionInput<"APPLY_HOLD">,
+  input: ActionInput<"VOID_RECOMMENDATION">,
 ) {
-  await linkedPayment(tx, caseId, input.paymentId);
-  const inFlight = await tx.consultantEarnings.findFirst({
+  const voidedAt = new Date();
+  const voided = await tx.supportFinancialRecommendation.updateMany({
     where: {
-      paymentId: input.paymentId,
-      payout: { status: "PROCESSING" },
-    },
-    select: { id: true },
-  });
-  const orgInFlight = await tx.organizationEarnings.findFirst({
-    where: {
-      paymentId: input.paymentId,
-      orgPayout: { status: "PROCESSING" },
-    },
-    select: { id: true },
-  });
-  if (inFlight || orgInFlight)
-    throw new CaseActionError(
-      "PAYOUT_IN_FLIGHT",
-      "A linked payout is already being sent. Review it before applying this hold.",
-    );
-  const existing = await tx.supportPaymentHold.findFirst({
-    where: { caseId, paymentId: input.paymentId, releasedAt: null },
-  });
-  if (existing) return existing;
-  const hold = await tx.supportPaymentHold.create({
-    data: {
+      id: input.recommendationId,
       caseId,
-      paymentId: input.paymentId,
-      appliedById: actor.userId,
-      reason: input.reason,
+      approved: true,
+      voidedAt: null,
+      OR: [
+        { refundId: null },
+        { refund: { status: { in: ["FAILED", "CANCELLED"] } } },
+      ],
     },
+    data: { approved: false, voidedAt, voidedById: actor.userId },
   });
-  await privateEvent(
+  const recommendation = await tx.supportFinancialRecommendation.findFirst({
+    where: { id: input.recommendationId, caseId },
+  });
+  if (!recommendation)
+    throw new CaseActionError("NOT_FOUND", "Recommendation not found.", 404);
+  if (!voided.count) {
+    if (recommendation.voidedAt) return recommendation;
+    throw new CaseActionError(
+      "NOT_VOIDABLE",
+      "Only an approved recommendation whose refund failed or never started can be voided.",
+    );
+  }
+  await caseEvent(
     tx,
     caseId,
     actor.userId,
-    `Payment hold applied: ${hold.id}`,
+    "RECOMMENDATION_VOIDED",
+    recommendation.id,
+    input.reason,
   );
-  return hold;
+  return recommendation;
 }
 
-async function releasePaymentHoldTx(
-  tx: Tx,
-  caseId: string,
-  actor: CaseActor,
-  input: ActionInput<"RELEASE_HOLD">,
-) {
-  const released = await tx.supportPaymentHold.updateMany({
-    where: { id: input.holdId, caseId, releasedAt: null },
-    data: {
-      releasedAt: new Date(),
-      releasedById: actor.userId,
-      releaseReason: input.reason,
-    },
-  });
-  if (!released.count)
-    throw new CaseActionError("CONFLICT", "This hold was already released.");
-}
-
-async function performCaseActionTx(
-  tx: Tx,
-  caseId: string,
-  actor: CaseActor,
-  input: CaseAction,
-) {
-  const supportCase = await tx.supportCase.findFirst({
-    where: { id: caseId, deletedAt: null },
-  });
-  if (!supportCase || !(await canCorrespondOnCase(supportCase, actor, tx)))
-    throw new CaseActionError("NOT_FOUND", "Support case not found.", 404);
-  if (supportCase.appealOfDecisionId || supportCase.appealOfModerationActionId)
-    await assertIndependentReviewer(tx, supportCase, actor.userId);
-  const replay = await replayCaseActionTx(tx, caseId, input);
-  if (replay) return replay;
-  if (input.action === "DECIDE")
-    return recordCaseDecisionTx(tx, supportCase, actor, input);
+async function touchCase(tx: Tx, caseId: string, expectedUpdatedAt: string) {
   const touched = await tx.supportCase.updateMany({
-    where: { id: caseId, updatedAt: new Date(input.expectedUpdatedAt) },
+    where: { id: caseId, updatedAt: new Date(expectedUpdatedAt) },
     data: { updatedAt: new Date() },
   });
   if (touched.count !== 1)
@@ -748,37 +1031,156 @@ async function performCaseActionTx(
       "CONFLICT",
       "This case changed. Refresh before continuing.",
     );
+}
+
+async function applyHoldTx(
+  tx: Tx,
+  caseId: string,
+  actor: CaseActor,
+  input: ActionInput<"APPLY_HOLD">,
+) {
+  await linkedPayment(tx, caseId, input.paymentId);
+  const [active] = activeHolds(
+    await caseHoldEvents(tx, [caseId], input.paymentId),
+  );
+  if (active)
+    return {
+      holdId: active.id,
+      paymentId: input.paymentId,
+      replayed: true,
+      consultantEarningIds: [],
+      orgEarningIds: [],
+      cancelledPayoutIds: [],
+    };
+  await touchCase(tx, caseId, input.expectedUpdatedAt);
+  const held = await holdPaymentForCase(tx, {
+    caseId,
+    paymentId: input.paymentId,
+    note: input.reason,
+  });
+  const event = await tx.supportCaseEvent.create({
+    data: {
+      caseId,
+      actorId: actor.userId,
+      kind: "HOLD_APPLIED",
+      toValue: input.paymentId,
+      note: input.reason,
+      createdAt: new Date(),
+    },
+  });
+  return {
+    holdId: event.id,
+    paymentId: input.paymentId,
+    replayed: false,
+    ...held,
+  };
+}
+
+async function releaseHoldTx(
+  tx: Tx,
+  caseId: string,
+  actor: CaseActor,
+  input: ActionInput<"RELEASE_HOLD">,
+) {
+  const applied = await tx.supportCaseEvent.findFirst({
+    where: { id: input.holdId, caseId, kind: "HOLD_APPLIED" },
+    select: { id: true, toValue: true },
+  });
+  if (!applied?.toValue)
+    throw new CaseActionError("NOT_FOUND", "Hold not found.", 404);
+  const paymentId = applied.toValue;
+  const [active] = activeHolds(await caseHoldEvents(tx, [caseId], paymentId));
+  if (active?.id !== applied.id)
+    return {
+      holdId: applied.id,
+      paymentId,
+      replayed: true,
+      consultantEarningIds: [],
+      orgEarningIds: [],
+    };
+  await touchCase(tx, caseId, input.expectedUpdatedAt);
+  const released = await releaseCaseHoldRows(tx, {
+    caseId,
+    paymentId,
+    releasedById: actor.userId,
+  });
+  await tx.supportCaseEvent.create({
+    data: {
+      caseId,
+      actorId: actor.userId,
+      kind: "HOLD_RELEASED",
+      fromValue: applied.id,
+      toValue: paymentId,
+      note: input.reason,
+      createdAt: new Date(),
+    },
+  });
+  return { holdId: applied.id, paymentId, replayed: false, ...released };
+}
+
+/** Loads the live case and refuses an operator who cannot act on it. */
+async function actionableCase(tx: Tx, caseId: string, actor: CaseActor) {
+  const supportCase = await tx.supportCase.findFirst({
+    where: { id: caseId, deletedAt: null },
+  });
+  if (!supportCase || !(await canCorrespondOnCase(supportCase, actor, tx)))
+    throw new CaseActionError("NOT_FOUND", "Support case not found.", 404);
+  if (supportCase.appealOfDecisionId || supportCase.appealOfModerationActionId)
+    await assertIndependentReviewer(tx, supportCase, actor.userId);
+  return supportCase;
+}
+
+/** Runs one case action on the caller's transaction; the door or wrapper owns the role check. */
+export async function performCaseActionTx(
+  tx: Tx,
+  caseId: string,
+  actor: CaseActor,
+  input: CaseAction,
+) {
+  const supportCase = await actionableCase(tx, caseId, actor);
+  const replay = await replayCaseActionTx(tx, caseId, input);
+  if (replay) return replay;
   switch (input.action) {
-    case "REQUEST_EVIDENCE":
-      return requestEvidenceTx(tx, supportCase, actor, input);
-    case "RECOMMEND_REFUND":
-      return recommendRefundTx(tx, caseId, actor, input);
+    case "DECIDE":
+      return recordCaseDecisionTx(tx, supportCase, actor, input);
     case "REVIEW_REFUND":
       return reviewRefundTx(tx, caseId, actor, input);
+    case "VOID_RECOMMENDATION":
+      return voidRecommendationTx(tx, caseId, actor, input);
     case "APPLY_HOLD":
-      return applyPaymentHoldTx(tx, caseId, actor, input);
-    case "CANCEL_EVIDENCE":
-      await cancelEvidenceTx(tx, caseId, input);
-      break;
+      return applyHoldTx(tx, caseId, actor, input);
     case "RELEASE_HOLD":
-      await releasePaymentHoldTx(tx, caseId, actor, input);
-      break;
-    case "HANDOVER":
-      if (supportCase.ownershipScope === "PERSONAL")
-        throw new CaseActionError(
-          "PERSONAL_CASE",
-          "Personal correspondence cannot be handed over to an organization.",
-          403,
-        );
-      break;
+      return releaseHoldTx(tx, caseId, actor, input);
+    case "REQUEST_EVIDENCE":
+      await touchCase(tx, caseId, input.expectedUpdatedAt);
+      return requestEvidenceTx(tx, supportCase, actor, input);
+    case "RECOMMEND_REFUND":
+      await touchCase(tx, caseId, input.expectedUpdatedAt);
+      return recommendRefundTx(tx, caseId, actor, input);
+    case "CANCEL_EVIDENCE":
+      await touchCase(tx, caseId, input.expectedUpdatedAt);
+      return cancelEvidenceTx(tx, caseId, actor, input);
   }
-  await privateEvent(
-    tx,
-    caseId,
-    actor.userId,
-    `${input.action}: ${input.reason}`,
-  );
-  return { ok: true };
+}
+
+/** The back-office surface each action needs; the doors enforce money limits on top. */
+export function caseActionSurface(input: CaseAction): BackofficeSurface {
+  switch (input.action) {
+    case "REVIEW_REFUND":
+      return "supportRefunds.executeBounded";
+    case "VOID_RECOMMENDATION":
+      return "refunds.manage";
+    case "APPLY_HOLD":
+    case "RELEASE_HOLD":
+      return "supportHolds.manage";
+    case "DECIDE":
+      return input.outcome === "REFUND_APPROVED" ||
+        input.outcome === "REFUND_DECLINED"
+        ? "supportRefunds.executeBounded"
+        : "tickets.manage";
+    default:
+      return "tickets.manage";
+  }
 }
 
 export async function performCaseAction(
@@ -786,17 +1188,7 @@ export async function performCaseAction(
   actor: CaseActor,
   input: CaseAction,
 ) {
-  const financial =
-    ["REVIEW_REFUND", "APPLY_HOLD", "RELEASE_HOLD"].includes(input.action) ||
-    (input.action === "DECIDE" &&
-      ["REFUND_APPROVED", "REFUND_DECLINED"].includes(input.outcome));
-  if (
-    !hasBackofficePermission(
-      actor.role,
-      financial ? "refunds.manage" : "tickets.manage",
-    ) &&
-    input.action !== "HANDOVER"
-  )
+  if (!hasBackofficePermission(actor.role, caseActionSurface(input)))
     throw new CaseActionError(
       "FORBIDDEN",
       "This action is not available to your role.",
@@ -806,7 +1198,11 @@ export async function performCaseAction(
     prisma.$transaction((tx) => performCaseActionTx(tx, caseId, actor, input), {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     }),
-  );
+  ).catch((error: unknown) => {
+    if (input.action === "RECOMMEND_REFUND" && isUniqueViolation(error))
+      throw openRecommendationError();
+    throw error;
+  });
   if (input.action === "DECIDE" && input.outcome === "OVERTURNED")
     purgeReviewSurfaces(
       "restoredConsultantProfileId" in result &&
@@ -814,27 +1210,48 @@ export async function performCaseAction(
         ? result.restoredConsultantProfileId
         : undefined,
     );
-  if (input.action === "REVIEW_REFUND" && input.approve) {
-    const recommendation =
-      await prisma.supportFinancialRecommendation.findFirstOrThrow({
-        where: { id: input.recommendationId, caseId, approved: true },
-      });
-    const dedupeKey = `case-recommendation:${recommendation.id}`;
-    const payment = await prisma.payment.findUniqueOrThrow({
-      where: { id: recommendation.paymentId },
-      select: { paymentIntent: true },
-    });
-    const refund = await refundBookingPayment({
-      paymentId: recommendation.paymentId,
-      ...(payment.paymentIntent.startsWith("free_")
-        ? {}
-        : { amountPaise: Number(recommendation.amountPaise) }),
-      reason: recommendation.reason,
-      initiatedByUserId: actor.userId,
-      dedupeKey,
-      supportRecommendationId: recommendation.id,
-    }).catch((error: unknown) => refundInFlightOr(error, dedupeKey));
-    return { ...result, refund };
-  }
+  if (input.action === "REVIEW_REFUND" && input.approve)
+    return {
+      ...result,
+      ...(await executeApprovedRefund(caseId, actor, input)),
+    };
   return result;
+}
+
+/**
+ * Sends the approved remedy after the decision committed, keyed on the
+ * recommendation so a retry resumes the same refund. `movedPaise` is the new
+ * money this call sent, which the staff rolling limit sums.
+ */
+async function executeApprovedRefund(
+  caseId: string,
+  actor: CaseActor,
+  input: ActionInput<"REVIEW_REFUND">,
+) {
+  const recommendation =
+    await prisma.supportFinancialRecommendation.findFirstOrThrow({
+      where: { id: input.recommendationId, caseId, approved: true },
+      include: {
+        refund: { select: { status: true } },
+        payment: { select: { paymentIntent: true } },
+        supportCase: { select: { referenceNumber: true } },
+      },
+    });
+  const wasLive = isLiveRefund(recommendation.refund);
+  const dedupeKey = `case-recommendation:${recommendation.id}`;
+  const refund = await refundBookingPayment({
+    paymentId: recommendation.paymentId,
+    ...(recommendation.payment.paymentIntent.startsWith("free_")
+      ? {}
+      : { amountPaise: Number(recommendation.amountPaise) }),
+    reason: `Support remedy ${recommendation.supportCase.referenceNumber}`,
+    initiatedByUserId: actor.userId,
+    dedupeKey,
+    supportRecommendationId: recommendation.id,
+    keepSeat: !recommendation.releaseSeat,
+  }).catch((error: unknown) => refundInFlightOr(error, dedupeKey));
+  return {
+    refund,
+    movedPaise: wasLive ? 0 : Number(recommendation.amountPaise),
+  };
 }

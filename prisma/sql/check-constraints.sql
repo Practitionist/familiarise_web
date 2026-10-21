@@ -1296,10 +1296,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS "moderation_report_reporter_open_content_key"
   WHERE "status" IN ('PENDING', 'UNDER_REVIEW', 'ESCALATED');
 
 -- SPLIT
-CREATE UNIQUE INDEX IF NOT EXISTS "support_payment_hold_active_key"
-  ON "SupportPaymentHold" ("caseId", "paymentId") WHERE "releasedAt" IS NULL;
-
--- SPLIT
 ALTER TABLE "SupportCase" DROP CONSTRAINT IF EXISTS "support_case_ownership_and_appeal_shape";
 -- SPLIT
 ALTER TABLE "SupportCase" ADD CONSTRAINT "support_case_ownership_and_appeal_shape"
@@ -1317,14 +1313,14 @@ ALTER TABLE "SupportFinancialRecommendation" DROP CONSTRAINT IF EXISTS "support_
 -- SPLIT
 ALTER TABLE "SupportFinancialRecommendation" ADD CONSTRAINT "support_recommendation_shape"
   CHECK ("amountPaise" >= 0 AND (("decidedAt" IS NULL AND "approved" IS NULL AND "decidedById" IS NULL)
-    OR ("decidedAt" IS NOT NULL AND "approved" IS NOT NULL AND "decidedById" IS NOT NULL)));
+    OR ("decidedAt" IS NOT NULL AND "approved" IS NOT NULL AND "decidedById" IS NOT NULL))
+    AND (("voidedAt" IS NULL AND "voidedById" IS NULL)
+      OR ("voidedAt" IS NOT NULL AND "voidedById" IS NOT NULL AND "decidedAt" IS NOT NULL AND "approved" = false)));
 
 -- SPLIT
-ALTER TABLE "SupportPaymentHold" DROP CONSTRAINT IF EXISTS "support_payment_hold_release_shape";
--- SPLIT
-ALTER TABLE "SupportPaymentHold" ADD CONSTRAINT "support_payment_hold_release_shape"
-  CHECK (("releasedAt" IS NULL AND "releasedById" IS NULL AND "releaseReason" IS NULL)
-    OR ("releasedAt" IS NOT NULL AND "releasedById" IS NOT NULL AND "releaseReason" IS NOT NULL));
+-- One undecided support refund recommendation per payment.
+CREATE UNIQUE INDEX IF NOT EXISTS "support_recommendation_one_open_per_payment"
+  ON "SupportFinancialRecommendation" ("paymentId") WHERE "decidedAt" IS NULL;
 
 -- SPLIT
 CREATE OR REPLACE FUNCTION assert_support_decision_immutable() RETURNS trigger AS $$
