@@ -6,6 +6,7 @@ import {
   ConsulteePreferences,
   PersonalInfoAndRole,
 } from "@/schemas/user";
+import { MessageReviewNotice } from "./MessageReviewNotice";
 
 type ConsulteeFormData = Partial<PersonalInfoAndRole> &
   Partial<ConsulteeProfile> &
@@ -84,6 +85,7 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
           pseudonymous token (<code>ust_&lt;hash&gt;</code>) with no raw PII
           sent to Sentry.
         </p>
+        <MessageReviewNotice />
         <p>
           You can <strong>download your data &amp; processor summary</strong>,{" "}
           <strong>withdraw optional consents</strong> in 1 click,{" "}

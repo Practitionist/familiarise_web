@@ -45,6 +45,11 @@ describe("searchSupport", () => {
     expect(slugs("consecutive slots")).toContain("booking/picking-slots");
   });
 
+  it("routes dispute and message-review language to the new articles", () => {
+    expect(slugs("dispute")).toContain("help/report-a-problem");
+    expect(slugs("who reads my chat")).toContain("help/how-we-review-messages");
+  });
+
   it("returns nothing for gibberish", () => {
     expect(searchSupport("xqzt kpwmn zzz")).toEqual([]);
   });

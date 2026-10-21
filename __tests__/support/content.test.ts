@@ -7,6 +7,7 @@
  */
 import { INQUIRY_CATEGORIES } from "@/app/(pages)/constants";
 import {
+  articleLinksByTopic,
   articleUrl,
   articlesForCategory,
   getArticle,
@@ -83,6 +84,37 @@ describe("support content model", () => {
     for (const article of supportArticles) {
       expect(valid.has(article.contactCategory)).toBe(true);
     }
+  });
+
+  it("registers the message-review and report-a-problem articles for both audiences", () => {
+    for (const slug of ["how-we-review-messages", "report-a-problem"]) {
+      const article = getArticle("help", slug);
+      expect(article).toBeDefined();
+      expect(articleUrl(article!)).toBe(`/support/help/${slug}`);
+      for (const audience of ["learner", "expert"] as const) {
+        const pool = helpCenterFor(audience).flatMap((c) => c.articles);
+        expect(pool).toContain(article);
+      }
+    }
+    expect(articleLinksByTopic().other.map((l) => l.href)).toContain(
+      "/support/help/report-a-problem",
+    );
+  });
+
+  it('uses "dispute" only for bank chargebacks', () => {
+    const texts = supportArticles.flatMap((article) => [
+      article.title,
+      article.excerpt,
+      ...article.sections.flatMap((s) => [
+        s.heading,
+        ...s.paragraphs,
+        ...(s.list ?? []),
+      ]),
+    ]);
+    const serviceDisputes = texts.filter(
+      (text) => /disput/i.test(text) && !/chargeback/i.test(text),
+    );
+    expect(serviceDisputes).toEqual([]);
   });
 
   it("gives learners and experts their own help-centre topics (#1527)", () => {
