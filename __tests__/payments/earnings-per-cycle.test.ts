@@ -58,6 +58,7 @@ jest.mock("../../lib/prisma", () => {
     membership: { findFirst: jest.fn().mockResolvedValue(null) },
     paymentLeg: { findMany: jest.fn().mockResolvedValue([]) },
     overageEvent: { findMany: jest.fn().mockResolvedValue([]) },
+    supportCase: { findMany: jest.fn(async () => []) },
     ledgerTransaction: {
       findUnique: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue({ id: "ltxn-1" }),
@@ -158,4 +159,36 @@ it("a non-subscription payment keeps its single row with a stamped hold and no o
   expect(created).toHaveLength(1);
   expect(created[0].cycleOrdinal).toBeUndefined();
   expect(created[0].holdUntil).toBeInstanceOf(Date);
+});
+
+it("new earnings look for an open support case still holding their payment", async () => {
+  const db = jest.requireMock<{
+    default: {
+      $transaction: (fn: (t: unknown) => unknown) => Promise<unknown>;
+    };
+  }>("../../lib/prisma").default;
+  const tx = (await db.$transaction(async (t) => t)) as {
+    supportCase: { findMany: jest.Mock };
+  };
+  tx.supportCase.findMany.mockClear();
+
+  await createEarningsFromPayment({
+    payment: payment(50_000),
+    appointmentType: "CONSULTATION",
+  });
+
+  expect(tx.supportCase.findMany).toHaveBeenCalledWith(
+    expect.objectContaining({
+      where: expect.objectContaining({
+        OR: [
+          { appointmentId: APPOINTMENT_ID },
+          {
+            subjects: {
+              some: { subjectType: "PAYMENT", subjectId: PAYMENT_ID },
+            },
+          },
+        ],
+      }),
+    }),
+  );
 });

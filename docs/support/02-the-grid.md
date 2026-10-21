@@ -7,8 +7,8 @@
 | Organization billing case    | The organization's billing correspondence               | Active OWNER, MAINTAINER, BILLING_ADMIN and platform operators                   |
 | Evidence request             | A prompt, deadline and response within an investigation | Requested delivery participant or authorized host representative; staff track it |
 | Case decision                | Immutable explanation and outcome                       | Eligible platform operator; independent reviewer for an appeal                   |
-| Financial recommendation     | A proposed refund linked to the case and payment        | Staff recommend; admin reviews and executes                                      |
-| Payment hold                 | Prevent payout of eligible unpaid earnings              | Admin                                                                            |
+| Financial recommendation     | A proposed refund linked to the case and payment        | Staff recommend and execute within the staff limits; admin above them            |
+| Payment hold                 | Prevent payout of eligible unpaid earnings              | Staff and admin                                                                  |
 | Gateway `Dispute`            | Bank/provider chargeback                                | Admin finance workflow                                                           |
 | `PlatformFeedback`           | Product suggestion or opinion                           | Author and feedback operators                                                    |
 | `AppointmentFeedback`        | Private session quality rating                          | Participant and platform; organization receives eligible aggregates              |

@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { occurrenceRefundKey } from "@/lib/booking/class-sessions";
+import { SUPPORT_REFUND_SEND_GRACE_MS } from "@/lib/support/money-policy";
 
 /** #1834 — the settle sweep's key for a paid seat still HELD at settle time. */
 export const HELD_PAID_SEAT_PREFIX = "held-paid-seat:";
@@ -105,13 +106,56 @@ function toItem(e: EventRow, kind: "credit" | "held-paid-seat") {
     occurrenceId: contextString(e.context, "occurrenceId"),
     unitPaise: typeof unit === "number" ? unit : null,
     kind,
+    caseId: null as string | null,
   };
 }
 
 /**
+ * Support remedies approved without a live refund: the refund was refused,
+ * failed at the gateway, or never ran. Each needs a retry or a void on its case.
+ */
+export async function readUnsentSupportRefunds(now = new Date()) {
+  const rows = await prisma.supportFinancialRecommendation.findMany({
+    where: {
+      approved: true,
+      decidedAt: {
+        lte: new Date(now.getTime() - SUPPORT_REFUND_SEND_GRACE_MS),
+      },
+      OR: [
+        { refundId: null },
+        { refund: { status: { in: ["FAILED", "CANCELLED"] } } },
+      ],
+    },
+    orderBy: { decidedAt: "desc" },
+    take: 100,
+    select: {
+      id: true,
+      caseId: true,
+      paymentId: true,
+      amountPaise: true,
+      decidedAt: true,
+      createdAt: true,
+      refund: { select: { status: true } },
+      supportCase: { select: { referenceNumber: true } },
+    },
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    message: `Support case ${row.supportCase.referenceNumber}: an approved refund of ₹${(Number(row.amountPaise) / 100).toFixed(2)} ${row.refund ? "failed" : "was never sent"}. Retry or void it on the case.`,
+    createdAt: row.decidedAt ?? row.createdAt,
+    paymentId: row.paymentId,
+    occurrenceId: null,
+    unitPaise: null,
+    kind: "support-recommendation" as const,
+    caseId: row.caseId,
+  }));
+}
+
+/**
  * #1771 K-5 — credit seats the automatic paths could not settle, plus (#1834)
- * paid seats still HELD at settle. The Refunds tab lists these; #1527 — the
- * Refunds nav badge counts the same list, so it is the one reader.
+ * paid seats still HELD at settle, plus approved support remedies with no live
+ * refund. The Refunds tab lists these; #1527 — the Refunds nav badge counts the
+ * same list, so it is the one reader.
  */
 export async function readRefundNeedsHuman() {
   // Sequential reads: one pooled connection (PG_POOL_MAX=1) serialises them anyway.
@@ -140,7 +184,8 @@ export async function readRefundNeedsHuman() {
   const held = await dropAnsweredHeldSeats(
     heldEvents.map((e) => toItem(e, "held-paid-seat")),
   );
-  const items = [...credit, ...held].sort(
+  const unsent = await readUnsentSupportRefunds();
+  const items = [...credit, ...held, ...unsent].sort(
     (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
   );
   return items;

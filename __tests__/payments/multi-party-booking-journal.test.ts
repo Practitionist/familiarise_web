@@ -77,6 +77,7 @@ let capturedOrgEarnings: CapturedOrgEarningsCreate[] = [];
 
 jest.mock("../../lib/prisma", () => {
   const mockTx = {
+    supportCase: { findMany: jest.fn(async () => []) },
     ledgerTransaction: {
       findUnique: jest.fn().mockResolvedValue(null),
       create: jest

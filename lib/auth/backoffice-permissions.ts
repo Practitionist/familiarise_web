@@ -17,12 +17,15 @@ import type { UserRole } from "@prisma/client";
  *   - STAFF own support end-to-end: tickets, feedback, moderation,
  *     appointments, and user verification. This is the job.
  *   - STAFF READ every money surface, because a support agent who can't see
- *     a payment can't resolve a billing ticket. They mutate none of it.
+ *     a payment can't resolve a billing ticket. Their only money writes are
+ *     bounded: a support-case refund or platform cancel refund within
+ *     `lib/support/money-policy.ts`'s limits, and a support-case payout hold.
  *   - STAFF READ recording metadata and ADMIN alone can play a recording
  *     (#1270). The asymmetry is deliberate: the session content is the
  *     customer's, not the operator's, and nothing a support agent does with a
  *     replay ticket requires watching the session.
- *   - ADMIN alone executes money (refunds, payouts, subscription changes),
+ *   - ADMIN alone executes money above the staff limits (refunds, payouts,
+ *     settlements, clawbacks, chargeback responses, subscription changes),
  *     owns org lifecycle and platform config, and takes the destructive user
  *     actions (ban, role change). Staff are interns and employees with
  *     turnover; irreversible actions concentrate on the account that answers
@@ -57,6 +60,10 @@ export type BackofficeSurface =
   | "payments.manage"
   | "refunds.read"
   | "refunds.manage"
+  // Bounded money: staff within lib/support/money-policy.ts, admin above it.
+  | "supportRefunds.executeBounded"
+  | "supportHolds.manage"
+  | "appointments.cancelForPlatform"
   | "disputes.read"
   | "disputes.manage"
   | "invoices.read"
@@ -141,6 +148,10 @@ export const BACKOFFICE_PERMISSIONS: Record<
   "payments.manage": ADMIN_ONLY,
   "refunds.read": OPERATORS,
   "refunds.manage": ADMIN_ONLY,
+  // The door applies the staff limits; holding the surface is not the limit.
+  "supportRefunds.executeBounded": OPERATORS,
+  "supportHolds.manage": OPERATORS,
+  "appointments.cancelForPlatform": OPERATORS,
   "disputes.read": OPERATORS,
   "disputes.manage": ADMIN_ONLY,
   "invoices.read": OPERATORS,

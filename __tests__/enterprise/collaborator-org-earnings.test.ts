@@ -100,6 +100,7 @@ jest.mock("../../lib/prisma", () => {
       findUnique: jest.fn().mockResolvedValue(null),
     },
     payment: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    supportCase: { findMany: jest.fn(async () => []) },
     ledgerTransaction: {
       findUnique: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue({ id: "ltxn-1" }),
