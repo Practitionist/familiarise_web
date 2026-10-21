@@ -1,6 +1,6 @@
 /**
- * TDS quarterly return draft (#1230) — Form 26Q today, Form 140 from
- * FY 2026-27. Aggregates TDSRecord rows for the requested FY+quarter into a
+ * TDS quarterly return draft (#1230) — Form 140 for FY 2026-27 onward, Form
+ * 26Q for earlier years. Aggregates TDSRecord rows for the requested FY+quarter into a
  * deductee-wise draft, prints the MASKED draft for the filing workflow, and
  * writes the full-PAN CSV the chartered accountant imports into the private
  * Supabase bucket. Portal serialization (FVU) and the reportedInForm26Q stamp

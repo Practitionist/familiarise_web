@@ -850,6 +850,59 @@ describe("approval pay-links charge the same tax as checkout (#1583 C-P0-01)", (
   });
 });
 
+describe("the approval mint snapshots the buyer's saved GST state", () => {
+  const buyer = (country: string, billingStateCode: string | null) => ({
+    id: CUID,
+    country,
+    consulteeProfile: { id: "consultee-1", billingStateCode },
+  });
+
+  it.each([
+    ["IN", "29", "29"],
+    ["IN", "99", null],
+    ["IN", null, null],
+    ["GB", "29", null],
+  ])(
+    "a %s buyer with saved state %s mints with consumerStateCode %s",
+    async (country, saved, expected) => {
+      state.user = buyer(country, saved);
+      await createApprovalPaymentIntent(mintParams());
+      expect(mockedPaymentCreate.mock.calls[0][0].data.consumerStateCode).toBe(
+        expected,
+      );
+    },
+  );
+
+  it("a re-mint writes the saved state only where the row has none", async () => {
+    state.user = buyer("IN", "29");
+    state.appointmentPayments = [
+      taxedRow({ id: "pay-dead", paymentStatus: PaymentStatus.EXPIRED }),
+    ];
+
+    await createApprovalPaymentIntent(mintParams());
+
+    const marker = mockedPaymentUpdate.mock.calls[0][0].data.paymentIntent;
+    expect(mockedPaymentUpdate).toHaveBeenCalledWith({
+      where: { id: "pay-dead", paymentIntent: marker, consumerStateCode: null },
+      data: { consumerStateCode: "29" },
+    });
+  });
+
+  it("a re-mint for a buyer now abroad drops the state from the earlier mint", async () => {
+    state.user = buyer("GB", "29");
+    state.appointmentPayments = [
+      taxedRow({ id: "pay-dead", paymentStatus: PaymentStatus.EXPIRED }),
+    ];
+
+    await createApprovalPaymentIntent(mintParams());
+
+    expect(mockedPaymentUpdate.mock.calls[0][0].data).toMatchObject({
+      buyerCountry: "GB",
+      consumerStateCode: null,
+    });
+  });
+});
+
 describe("approval routes thread the appointment (source contract)", () => {
   const read = (rel: string) =>
     fs.readFileSync(path.join(process.cwd(), rel), "utf8");

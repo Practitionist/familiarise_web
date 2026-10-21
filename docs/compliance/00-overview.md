@@ -22,23 +22,27 @@ A previous `india/` subfolder under this directory has been merged into this top
 
 ## How this series is organised
 
-| #   | Doc                                                                                                      | Scope                                                             | Severity    |
-| --- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ----------- |
-| 00  | this file                                                                                                | Overview + index                                                  | —           |
-| 01  | [TDS — sections, rates, thresholds](./02-tds-overview.md)                                                | B2B (194J / 194C) + B2C (194O) + non-resident (195)               | 🔴 Critical |
-| 02  | [GST — TCS Sec 52, invoicing, place of supply, HSN, IRN, LUT](./03-gst-overview.md)                      | B2B + B2C invoicing, B2C TCS collection, e-invoicing              | 🔴 Critical |
-| 03  | [MSME Section 43B(h)](./04-msme-43b-h.md)                                                                | B2B-only — payment to MSME-registered consultants in 15 / 45 days | 🟠 High     |
-| 04  | [Form 26Q / 27Q / 16A — quarterly TDS returns](./05-tds-quarterly-filings.md)                            | Both rails                                                        | 🟠 High     |
-| 05  | [Refund & chargeback tax adjustments](./06-refund-and-chargeback-tax-adjustments.md)                     | Both rails — TDS reversal + TCS adjustment + GST credit notes     | 🔴 Critical |
-| 06  | [Multi-attendee billing](./07-multi-attendee-billing.md)                                                 | B2C (and B2B webinar/class) per-attendee fan-out                  | 🟠 High     |
-| 07  | [Cross-border flows](./08-cross-border-flows.md)                                                         | Non-resident consumers + non-resident consultants, both rails     | 🟠 High     |
-| 08  | [DPDP — Act 2023 + Rules 2025](./09-dpdp-and-privacy.md)                                                 | Both rails — consent, DSAR, erasure, retention, breach 72h        | 🔴 Critical |
-| 09  | [Consumer Protection / E-Commerce Rules 2020](./10-consumer-protection-and-grievance.md)                 | B2C-primary; B2B inherits Grievance Officer + ODR                 | 🟠 High     |
-| 10  | [RBI Payment Aggregator Directions 2025 + payment architecture](./11-rbi-pa-and-payment-architecture.md) | Both rails — Razorpay PG + RazorpayX + Stripe Connect             | 🟡 Medium   |
-| 11  | [Removed / deprecated levies](./13-removed-and-deprecated-levies.md)                                     | EL / 206AB / 206C(1H) — cleanup hygiene                           | 🟢 Low      |
-| 12  | [India compliance calendar](./14-india-compliance-calendar.md)                                           | Filing deadlines for both rails                                   | —           |
-| 13  | [Implementation roadmap](./15-implementation-roadmap.md)                                                 | Consolidated B2B + B2C plan                                       | —           |
-| 14  | [References](./16-references.md)                                                                         | Authoritative source URLs (CBDT, CBIC, RBI, MeitY, PIB)           | —           |
+| #   | Doc                                                                                                      | Scope                                                                    | Severity    |
+| --- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----------- |
+| 00  | this file                                                                                                | Overview + index                                                         | —           |
+| 01  | [India-first compliance posture](./01-india-first-posture.md)                                            | Posture, scope and open questions for the series                         | —           |
+| 02  | [TDS — sections, rates, thresholds](./02-tds-overview.md)                                                | B2B (194J / 194C) + B2C (194O) + non-resident (195)                      | 🔴 Critical |
+| 03  | [GST — TCS Sec 52, invoicing, place of supply, HSN, IRN, LUT](./03-gst-overview.md)                      | B2B + B2C invoicing, TCS (not collected; CA-gated), e-invoicing          | 🔴 Critical |
+| 04  | [MSME Section 43B(h)](./04-msme-43b-h.md)                                                                | B2B-only — payment to MSME-registered consultants in 15 / 45 days        | 🟠 High     |
+| 05  | [Form 140 / 144 / 131 (was 26Q / 27Q / 16A) — TDS returns](./05-tds-quarterly-filings.md)                | Both rails                                                               | 🟠 High     |
+| 06  | [Refund & chargeback tax adjustments](./06-refund-and-chargeback-tax-adjustments.md)                     | Both rails — TDS reversal + TCS adjustment + GST credit notes            | 🔴 Critical |
+| 07  | [Multi-attendee billing](./07-multi-attendee-billing.md)                                                 | B2C (and B2B webinar/class) per-attendee fan-out                         | 🟠 High     |
+| 08  | [Cross-border flows](./08-cross-border-flows.md)                                                         | Non-resident consumers + non-resident consultants, both rails            | 🟠 High     |
+| 09  | [DPDP — Act 2023 + Rules 2025](./09-dpdp-and-privacy.md)                                                 | Both rails — consent, DSAR, erasure, retention, breach 72h               | 🔴 Critical |
+| 10  | [Consumer Protection / E-Commerce Rules 2020](./10-consumer-protection-and-grievance.md)                 | B2C-primary; B2B inherits Grievance Officer + ODR                        | 🟠 High     |
+| 11  | [RBI Payment Aggregator Directions 2025 + payment architecture](./11-rbi-pa-and-payment-architecture.md) | Both rails — Razorpay PG + RazorpayX + Stripe Connect                    | 🟡 Medium   |
+| 12  | [RLS design memo](./12-rls-design-memo.md)                                                               | Deferred database row-level-security proposal                            | —           |
+| 13  | [Removed / deprecated levies](./13-removed-and-deprecated-levies.md)                                     | EL / 206AB / 206C(1H) — cleanup hygiene                                  | 🟢 Low      |
+| 14  | [India compliance calendar](./14-india-compliance-calendar.md)                                           | Filing deadlines for both rails                                          | —           |
+| 15  | [Implementation roadmap](./15-implementation-roadmap.md)                                                 | Consolidated B2B + B2C plan                                              | —           |
+| 16  | [References](./16-references.md)                                                                         | Authoritative source URLs (CBDT, CBIC, RBI, MeitY, PIB)                  | —           |
+| 17  | [India compliance shipping checklist](./17-india-compliance-shipping-checklist.md)                       | P0/P1 shipping checklist across the series                               | —           |
+| 18  | [Tax research memo, Oct 2026](./18-tax-research-memo-oct-2026.md)                                        | Income-tax Act 2025 + GST research for the CA, with code status (Q1–Q14) | —           |
 
 ## Doc shape
 
@@ -64,27 +68,27 @@ The same regulation can apply differently to the two rails. This table is the qu
 
 | Regulation                                                     | B2B (org-sponsored)                                                                    | B2C (consumer marketplace)                                                |
 | -------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| **TDS Sec 194O** (ECO TDS @ 0.10%)                             | N/A — org pays via invoice/wallet/license; no ECO event for the org's own consultants. | **Applies** at every consultant payout. Doc 01.                           |
+| **TDS Sec 194O** (ECO TDS @ 0.10%)                             | N/A — org pays via invoice/wallet/license; no ECO event for the org's own consultants. | **Applies** at every consultant payout. Doc 02.                           |
 | **TDS Sec 194J** (professional fees @ 10%)                     | Applies for org → external contractor invoices (admin/legal/CA).                       | N/A — wrong section for consultant payouts (current code uses this; bug). |
 | **TDS Sec 194C** (contract works @ 1% / 2%)                    | Edge case — for vendor contracts (e.g. white-label).                                   | N/A.                                                                      |
 | **TDS Sec 195** (non-resident payments)                        | Applies if org has non-resident consultants.                                           | Applies for non-resident consultants on B2C side.                         |
-| **GST TCS Sec 52** (1% by ECO)                                 | N/A — no ECO event in B2B.                                                             | **Applies** when consultant is GST-registered. Doc 02.                    |
-| **GST tax invoice** (Rule 46)                                  | Applies — `OrganizationInvoice` is real.                                               | Applies — `Invoice` is real. Doc 02.                                      |
-| **Place of supply** (Sec 12 IGST)                              | Applies — uses org's GST state.                                                        | Applies — needs consumer state at checkout. Doc 02.                       |
-| **GST e-invoice / IRN** (Notif 10/2023)                        | Applies if AATO ≥ ₹5 cr — connector live, cron wired.                                  | B2C voluntary pilot only (Sep 2024). Doc 02.                              |
-| **MSME Sec 43B(h)** (15/45-day payment)                        | **Applies** — org must pay MSME-registered consultants on time.                        | N/A — consumer pays platform, not consultant directly. Doc 03.            |
-| **Form 26Q quarterly TDS return**                              | Applies for org's resident consultants.                                                | Applies for B2C residents. Doc 04.                                        |
-| **Form 27Q quarterly TDS return**                              | Applies for org's non-resident consultants.                                            | Applies for B2C non-residents. Doc 04.                                    |
-| **Form 16A consultant TDS certificate**                        | Applies.                                                                               | Applies. Doc 04.                                                          |
-| **GST credit notes** (CGST Sec 34)                             | Applies on org refunds / cancellations.                                                | Applies on consumer refunds. Doc 05.                                      |
-| **Refund tax adjustments**                                     | Required — TDS / TCS / GST output reversals.                                           | Required. Doc 05.                                                         |
-| **DPDP consent + DSAR**                                        | Applies for org operators.                                                             | Applies for consumers. Doc 08.                                            |
-| **DPDP breach reporting (72h)**                                | Applies.                                                                               | Applies. Doc 08.                                                          |
-| **Consumer Protection / Grievance Officer**                    | Inherits — same officer covers both rails.                                             | **Applies** — primary obligation. Doc 09.                                 |
-| **RBI PA Directions 2025** (RBI/DPSS/2025-26/141, 15 Sep 2025) | Org payouts via RazorpayX → arch memo only.                                            | Consumer payments via Razorpay PG → arch memo only. Doc 10.               |
-| **FEMA / PA-CB / Form 15CA-CB**                                | Applies for org's non-resident consultants + cross-border invoices.                    | Applies for B2C non-resident flows. Doc 07.                               |
-| **Equalisation Levy** (abolished 2024)                         | Cleanup.                                                                               | Cleanup. Doc 11.                                                          |
-| **Sec 206AB / 206C(1H)** (omitted 2025)                        | Cleanup.                                                                               | Cleanup. Doc 11.                                                          |
+| **GST TCS Sec 52** (0.5% by ECO)                               | N/A — no ECO event in B2B.                                                             | Not collected: principal-supplier model (ADR 26). CA-gated. Doc 03, 18.   |
+| **GST tax invoice** (Rule 46)                                  | Applies — `OrganizationInvoice` is real.                                               | Applies — `Invoice` is real. Doc 03.                                      |
+| **Place of supply** (Sec 12 IGST)                              | Applies — uses org's GST state.                                                        | Applies — needs consumer state at checkout. Doc 03.                       |
+| **GST e-invoice / IRN** (Notif 10/2023)                        | Applies if AATO ≥ ₹5 cr — connector live, cron wired.                                  | B2C voluntary pilot only (Sep 2024). Doc 03.                              |
+| **MSME Sec 43B(h)** (15/45-day payment)                        | **Applies** — org must pay MSME-registered consultants on time.                        | N/A — consumer pays platform, not consultant directly. Doc 04.            |
+| **Form 140 (was 26Q) quarterly TDS return**                    | Applies for org's resident consultants.                                                | Applies for B2C residents. Doc 05.                                        |
+| **Form 144 (was 27Q) quarterly TDS return**                    | Applies for org's non-resident consultants.                                            | Applies for B2C non-residents. Doc 05.                                    |
+| **Form 131 (was 16A) consultant TDS certificate**              | Applies.                                                                               | Applies. Doc 05.                                                          |
+| **GST credit notes** (CGST Sec 34)                             | Applies on org refunds / cancellations.                                                | Applies on consumer refunds. Doc 06.                                      |
+| **Refund tax adjustments**                                     | Required — TDS / TCS / GST output reversals.                                           | Required. Doc 06.                                                         |
+| **DPDP consent + DSAR**                                        | Applies for org operators.                                                             | Applies for consumers. Doc 09.                                            |
+| **DPDP breach reporting (72h)**                                | Applies.                                                                               | Applies. Doc 09.                                                          |
+| **Consumer Protection / Grievance Officer**                    | Inherits — same officer covers both rails.                                             | **Applies** — primary obligation. Doc 10.                                 |
+| **RBI PA Directions 2025** (RBI/DPSS/2025-26/141, 15 Sep 2025) | Org payouts via RazorpayX → arch memo only.                                            | Consumer payments via Razorpay PG → arch memo only. Doc 11.               |
+| **FEMA / PA-CB / Form 15CA-CB**                                | Applies for org's non-resident consultants + cross-border invoices.                    | Applies for B2C non-resident flows. Doc 08.                               |
+| **Equalisation Levy** (abolished 2024)                         | Cleanup.                                                                               | Cleanup. Doc 13.                                                          |
+| **Sec 206AB / 206C(1H)** (omitted 2025)                        | Cleanup.                                                                               | Cleanup. Doc 13.                                                          |
 
 ## Current state at a glance
 
@@ -98,11 +102,12 @@ The same regulation can apply differently to the two rails. This table is the qu
 
 ## How to use this series
 
-- **Building a new payment / payout / refund feature?** Read 00 + 01 + 02 + 05 first.
-- **Adding a new role or onboarding flow?** Read 08 (DPDP) + 09 (Consumer Protection).
-- **Doing tax filings ops?** Read 04 + 12.
-- **Adding cross-border?** Read 07 + 10 in full before any code.
-- **Reviewing the master plan?** 13.
+- **Building a new payment / payout / refund feature?** Read 00 + 02 + 03 + 06 first.
+- **Adding a new role or onboarding flow?** Read 09 (DPDP) + 10 (Consumer Protection).
+- **Doing tax filings ops?** Read 05 + 14.
+- **Adding cross-border?** Read 08 + 11 in full before any code.
+- **Reviewing the master plan?** 15.
+- **Preparing questions for the chartered accountant?** Read 18.
 
 ## What this series is NOT
 

@@ -177,7 +177,7 @@ export async function POST(req: NextRequest) {
       const replay = await replayByIdempotencyKey(replayUserId, replayKey);
       if (replay) return replay;
     }
-    // ZodError from checkoutSchema.parse() — extract first human-readable message
+    // ZodError from the request schemas — the first issue's message and field
     if (error instanceof ZodError) {
       const firstIssue = error.issues[0];
       const firstMessage = firstIssue?.message ?? "Invalid request";
@@ -199,6 +199,9 @@ export async function POST(req: NextRequest) {
           error: firstMessage,
           errorType: isAvailability ? "AVAILABILITY_ERROR" : "UNKNOWN_ERROR",
           ...(typedCode ? { code: typedCode } : {}),
+          ...(firstIssue?.path.length
+            ? { field: firstIssue.path.join(".") }
+            : {}),
           timestamp: new Date().toISOString(),
         },
         { status: 400 },

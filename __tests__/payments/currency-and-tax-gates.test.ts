@@ -254,10 +254,11 @@ describe("B2C place of supply (s.12(2)(b))", () => {
     expect(tax.cgstPaise).toBe(0);
     expect(tax.sgstPaise).toBe(0);
     expect(tax.placeOfSupply).toBe("27");
+    expect(tax.placeOfSupplySource).toBe("DECLARED_AT_CHECKOUT");
     expect(tax.taxableValuePaise + tax.igstPaise).toBe(tax.totalPaise);
   });
 
-  it("falls back to the supplier's own state when no address is on record", () => {
+  it("falls back to the supplier's own state for an older payment with no buyer state", () => {
     const tax = deriveConsumerInvoiceTax({
       ...CHARGED,
       buyerStateCode: null,
@@ -385,6 +386,59 @@ describe("the supplier's own state", () => {
     } finally {
       process.env.SUPPLIER_STATE_CODE = previousEnv;
     }
+  });
+});
+
+describe("a payment with no declared state", () => {
+  it("is invoiced on the buyer's profile state, recorded as PROFILE_ON_RECORD", async () => {
+    (getPlatformSupplier as jest.Mock).mockReturnValue({
+      name: "Familiarise",
+      gstin: "29AABCU9603R1ZM",
+      address: "Bengaluru, Karnataka",
+    });
+    const create = jest.fn(async () => ({ id: "inv_1" }));
+    const tx = {
+      consumerInvoice: { findUnique: jest.fn(async () => null), create },
+      platformInvoiceCounter: { upsert: jest.fn(async () => ({ nextSeq: 2 })) },
+      payment: {
+        findUnique: jest.fn(async () => ({
+          id: "pay_profile",
+          amount: 118_000,
+          taxAmount: 18_000,
+          currency: "INR",
+          paymentStatus: "SUCCEEDED",
+          deletedAt: null,
+          buyerCountry: "IN",
+          consumerStateCode: null,
+          billableToOrgInvoiceId: null,
+          createdAt: new Date("2026-08-10T06:00:00Z"),
+          userId: "usr_1",
+          legs: [{ source: "CARD" }],
+          creditUsages: [],
+          user: {
+            id: "usr_1",
+            name: "A Buyer",
+            email: "buyer@example.com",
+            address: null,
+            city: null,
+            consulteeProfile: { billingStateCode: "27" },
+          },
+        })),
+      },
+    } as unknown as Parameters<typeof mintConsumerInvoice>[0];
+
+    await mintConsumerInvoice(tx, { paymentId: "pay_profile" });
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          placeOfSupplySource: "PROFILE_ON_RECORD",
+          buyerStateCode: "27",
+          placeOfSupply: "27",
+          igstPaise: 18_000,
+        }),
+      }),
+    );
   });
 });
 
