@@ -5,8 +5,7 @@ import { requireApiAuth, requireBackofficeSurface } from "@/lib/auth-helpers";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import prisma from "@/lib/prisma";
 import { caseCorrespondentIds } from "@/lib/support/case-access";
-import { stage as stageEmail } from "@/lib/email/deliver";
-import { DEFAULT_FROM_ADDRESS } from "@/lib/email/config";
+import { stageExternalRequesterEmail } from "@/lib/support/external-requester";
 import { notifySupportTicketUpdate } from "@/lib/novu";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { notificationScope } from "@/lib/novu/workflows";
@@ -152,20 +151,16 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
           if (!current) return [];
           const statusLabel = supportTicketStatusLabel(t.status);
           if (current.externalRequesterEmail) {
-            const text = `Reference: ${t.referenceNumber}. Status: ${statusLabel}.`;
-            const message = {
-              from: DEFAULT_FROM_ADDRESS,
+            const email = await stageExternalRequesterEmail({
+              caseId: t.id,
+              reference: t.referenceNumber,
               to: current.externalRequesterEmail,
               subject: `Support update — ${t.referenceNumber}`,
-              text,
-              html: `<p>${text}</p>`,
-            };
-            const email = await stageEmail(message, "SUPPORT_TICKET_UPDATE", {
+              text: `Reference: ${t.referenceNumber}. Status: ${statusLabel}.`,
+              emailType: "SUPPORT_TICKET_UPDATE",
               entityRef: `case-status:${t.id}:${t.status}:${t.updatedAtMs}`,
             });
-            return [
-              { stagedBell: null, emailRows: [{ staged: email, message }] },
-            ];
+            return [{ stagedBell: null, emailRows: [email] }];
           }
           const recipients = await caseCorrespondentIds(current);
           const dashboardUrl = supportRequestHref(

@@ -41,3 +41,21 @@ export const AppointmentIdParams = z.object({
 export const OrgIdParams = z.object({
   orgId: z.string().min(1).max(64),
 });
+
+const OpaqueId = z.string().min(1).max(64);
+
+export const CaseIdParams = z.object({ caseId: OpaqueId });
+
+export const AttachmentIdParams = z.object({ attachmentId: OpaqueId });
+
+export const EvidenceRequestIdParams = z.object({ requestId: OpaqueId });
+
+export const CaseRecommendationParams = z.object({
+  caseId: OpaqueId,
+  recommendationId: OpaqueId,
+});
+
+/** Optional evidence-request scope on a case attachment list. */
+export const CaseAttachmentQuery = z.object({
+  evidenceRequestId: OpaqueId.optional(),
+});

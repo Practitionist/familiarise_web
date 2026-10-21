@@ -3,13 +3,19 @@ import { requireApiAuth } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
 import { canCorrespondOnCase } from "@/lib/support/case-access";
 import { sessionRole } from "@/lib/auth/session-role";
+import { parseRouteParams } from "@/lib/api/support-http";
+import { CaseIdParams } from "@/schemas/support";
 export async function GET(
   _req: NextRequest,
   context: { params: Promise<{ caseId: string }> },
 ) {
+  const id = await parseRouteParams(CaseIdParams, context.params, {
+    route: "support.case.receipt",
+  });
+  if (!id.ok) return id.response;
   const auth = await requireApiAuth();
   if (auth.error) return auth.error;
-  const { caseId } = await context.params;
+  const { caseId } = id.data;
   const row = await prisma.supportCase.findFirst({
     where: { id: caseId, deletedAt: null },
     select: {

@@ -7,6 +7,7 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 jest.mock("../../lib/support/case-access", () => ({
+  ...jest.requireActual("../../lib/support/case-access"),
   visibleCaseWhere: jest.fn(async () => ({ deletedAt: null })),
   canCorrespondOnCase: jest.fn(async () => true),
 }));

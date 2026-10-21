@@ -35,7 +35,7 @@ export async function GET(
   try {
     const role = auth.session.user.role as UserRole;
     const data = await readCaseWorkspace(ref, {
-      showEmail: hasBackofficePermission(role, "users.read"),
+      showContact: hasBackofficePermission(role, "users.read"),
       showPayment: hasBackofficePermission(role, "payments.read"),
     });
     if (!data) {

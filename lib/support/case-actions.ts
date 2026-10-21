@@ -4,8 +4,6 @@ import {
   type SupportCaseDecision,
   type UserRole,
 } from "@prisma/client";
-import { stage as stageEmail } from "@/lib/email/deliver";
-import { DEFAULT_FROM_ADDRESS } from "@/lib/email/config";
 import { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -18,6 +16,7 @@ import { stageBell } from "@/lib/novu/stage-bell";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { caseKeyOf } from "./case-key";
+import { stageExternalRequesterEmail } from "./external-requester";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { refundInFlightOr } from "@/lib/backoffice/refund-doors";
 import { CaseRefundReviewSchema } from "@/schemas/support-refund-review";
@@ -210,8 +209,21 @@ async function linkedPayment(tx: Tx, caseId: string, paymentId: string) {
   return payment;
 }
 
-export async function evidenceRecipients(tx: Tx, appointmentId: string | null) {
-  if (!appointmentId) return [];
+type EvidenceRecipientDb = Pick<
+  Tx,
+  "appointment" | "consultantProfile" | "membership" | "user"
+>;
+
+/**
+ * Current evidence parties per appointment, read in four queries for the whole
+ * batch. Pure reads: pass `prisma` outside a transaction, `tx` inside one.
+ */
+export async function evidenceRecipientsByAppointment(
+  db: EvidenceRecipientDb,
+  appointmentIds: readonly string[],
+): Promise<Map<string, { id: string; name: string }[]>> {
+  const result = new Map<string, { id: string; name: string }[]>();
+  if (appointmentIds.length === 0) return result;
   const plan = { consultantProfileId: true } as const;
   const groupPlan = {
     ...plan,
@@ -220,9 +232,10 @@ export async function evidenceRecipients(tx: Tx, appointmentId: string | null) {
       select: { consultantProfileId: true },
     },
   };
-  const booking = await tx.appointment.findUnique({
-    where: { id: appointmentId },
+  const bookings = await db.appointment.findMany({
+    where: { id: { in: [...new Set(appointmentIds)] } },
     select: {
+      id: true,
       participants: {
         where: {
           role: { in: ["CONSULTANT", "COLLABORATOR"] },
@@ -237,45 +250,83 @@ export async function evidenceRecipients(tx: Tx, appointmentId: string | null) {
       payment: { select: { hostOrganizationId: true } },
     },
   });
-  if (!booking) return [];
-  const people = new Set(booking.participants.map((p) => p.userId));
-  const profileIds = [
-    booking.consultation?.consultationPlan.consultantProfileId,
-    booking.subscription?.subscriptionPlan.consultantProfileId,
-    booking.webinar?.webinarPlan.consultantProfileId,
-    booking.class?.classPlan.consultantProfileId,
-    ...(booking.webinar?.webinarPlan.collaborators ?? []).map(
-      (c) => c.consultantProfileId,
-    ),
-    ...(booking.class?.classPlan.collaborators ?? []).map(
-      (c) => c.consultantProfileId,
-    ),
-  ].filter((profileId): profileId is string => Boolean(profileId));
-  const profiles = await tx.consultantProfile.findMany({
-    where: { id: { in: profileIds }, deletedAt: null },
-    select: { user: { select: { id: true } } },
-  });
-  profiles.forEach((profile) => {
-    if (profile.user) people.add(profile.user.id);
-  });
-  const hostIds = booking.payment.flatMap((p) =>
-    p.hostOrganizationId ? [p.hostOrganizationId] : [],
+  const profileIdsOf = (booking: (typeof bookings)[number]) =>
+    [
+      booking.consultation?.consultationPlan.consultantProfileId,
+      booking.subscription?.subscriptionPlan.consultantProfileId,
+      booking.webinar?.webinarPlan.consultantProfileId,
+      booking.class?.classPlan.consultantProfileId,
+      ...(booking.webinar?.webinarPlan.collaborators ?? []).map(
+        (c) => c.consultantProfileId,
+      ),
+      ...(booking.class?.classPlan.collaborators ?? []).map(
+        (c) => c.consultantProfileId,
+      ),
+    ].filter((profileId): profileId is string => Boolean(profileId));
+  const hostIdsOf = (booking: (typeof bookings)[number]) =>
+    booking.payment.flatMap((p) =>
+      p.hostOrganizationId ? [p.hostOrganizationId] : [],
+    );
+  const allProfileIds = [...new Set(bookings.flatMap(profileIdsOf))];
+  const allHostIds = [...new Set(bookings.flatMap(hostIdsOf))];
+  const profiles = allProfileIds.length
+    ? await db.consultantProfile.findMany({
+        where: { id: { in: allProfileIds }, deletedAt: null },
+        select: { id: true, user: { select: { id: true } } },
+      })
+    : [];
+  const profileUser = new Map(
+    profiles.flatMap((p) => (p.user ? [[p.id, p.user.id] as const] : [])),
   );
-  if (hostIds.length) {
-    const operators = await tx.membership.findMany({
-      where: {
-        organizationId: { in: hostIds },
-        status: "ACTIVE",
-        role: { in: ["OWNER", "MAINTAINER", "MANAGER", "SUPPORT"] },
-      },
-      select: { userId: true },
-    });
-    operators.forEach((m) => people.add(m.userId));
-  }
-  return tx.user.findMany({
-    where: { id: { in: [...people] }, banned: { not: true } },
-    select: { id: true, name: true },
-  });
+  const operators = allHostIds.length
+    ? await db.membership.findMany({
+        where: {
+          organizationId: { in: allHostIds },
+          status: "ACTIVE",
+          role: { in: ["OWNER", "MAINTAINER", "MANAGER", "SUPPORT"] },
+        },
+        select: { organizationId: true, userId: true },
+      })
+    : [];
+  const peopleByBooking = new Map(
+    bookings.map((booking) => {
+      const people = new Set(booking.participants.map((p) => p.userId));
+      for (const profileId of profileIdsOf(booking)) {
+        const userId = profileUser.get(profileId);
+        if (userId) people.add(userId);
+      }
+      const hosts = new Set(hostIdsOf(booking));
+      for (const m of operators)
+        if (hosts.has(m.organizationId)) people.add(m.userId);
+      return [booking.id, people] as const;
+    }),
+  );
+  const everyone = [
+    ...new Set([...peopleByBooking.values()].flatMap((p) => [...p])),
+  ];
+  const users = everyone.length
+    ? await db.user.findMany({
+        where: { id: { in: everyone }, banned: { not: true } },
+        select: { id: true, name: true },
+      })
+    : [];
+  for (const [bookingId, people] of peopleByBooking)
+    result.set(
+      bookingId,
+      users.filter((user) => people.has(user.id)),
+    );
+  return result;
+}
+
+export async function evidenceRecipients(
+  db: EvidenceRecipientDb,
+  appointmentId: string | null,
+) {
+  if (!appointmentId) return [];
+  const byAppointment = await evidenceRecipientsByAppointment(db, [
+    appointmentId,
+  ]);
+  return byAppointment.get(appointmentId) ?? [];
 }
 
 export async function readCaseResolution(caseId: string, actor: CaseActor) {
@@ -379,30 +430,17 @@ async function stageDecisionNotificationsTx(
 ) {
   const caseId = supportCase.id;
   if (supportCase.externalRequesterEmail) {
-    const text = `Reference: ${supportCase.referenceNumber}\n\n${decision.explanation}`;
-    const html = text
-      .replace(
-        /[&<>"']/g,
-        (character) =>
-          ({
-            "&": "&amp;",
-            "<": "&lt;",
-            ">": "&gt;",
-            '"': "&quot;",
-            "'": "&#39;",
-          })[character] ?? character,
-      )
-      .replace(/\n/g, "<br>");
-    await stageEmail(
+    await stageExternalRequesterEmail(
       {
-        from: DEFAULT_FROM_ADDRESS,
+        caseId,
+        reference: supportCase.referenceNumber,
         to: supportCase.externalRequesterEmail,
         subject: `Support decision — ${supportCase.referenceNumber}`,
-        html,
-        text,
+        text: `Reference: ${supportCase.referenceNumber}\n\n${decision.explanation}`,
+        emailType: "SUPPORT_TICKET_UPDATE",
+        entityRef: `decision:${decision.id}`,
       },
-      "SUPPORT_TICKET_UPDATE",
-      { tx, entityRef: `decision:${decision.id}` },
+      tx,
     );
   } else
     await stageCaseNotice(

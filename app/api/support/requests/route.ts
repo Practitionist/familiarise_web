@@ -3,7 +3,12 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { supportError } from "@/lib/api/support-http";
-import { visibleCaseWhere } from "@/lib/support/case-access";
+import {
+  ORG_FILED_CASE_TITLE,
+  canCorrespondOnVisibleCase,
+  projectCaseForViewer,
+  visibleCaseWhere,
+} from "@/lib/support/case-access";
 import { PLAN_TITLE_SELECT, planTitle } from "@/lib/support/case-read";
 import { SupportCaseStatus, type Prisma } from "@prisma/client";
 
@@ -56,6 +61,8 @@ export async function GET(req: NextRequest) {
         status: true,
         activeChannel: true,
         appointmentId: true,
+        ownershipScope: true,
+        organizationId: true,
         requesterUserId: true,
         submitterUserId: true,
         createdAt: true,
@@ -88,13 +95,15 @@ export async function GET(req: NextRequest) {
     {
       pagination: { page: query.data.page, pageSize, total },
       data: cases.map((c) => {
-        const redacted =
-          c.requesterUserId !== c.submitterUserId &&
-          c.requesterUserId === auth.session.user.id;
+        const redacted = projectCaseForViewer(
+          c,
+          auth.session.user.id,
+          canCorrespondOnVisibleCase(c, auth.session.user.id),
+        ).summaryOnly;
         const lastMessage = redacted ? undefined : c.messages[0];
         return {
           id: c.id,
-          title: redacted ? "Organization support request" : c.title,
+          title: redacted ? ORG_FILED_CASE_TITLE : c.title,
           referenceNumber: c.referenceNumber,
           category: c.category,
           status: c.status,

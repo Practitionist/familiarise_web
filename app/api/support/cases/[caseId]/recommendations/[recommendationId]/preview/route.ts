@@ -7,13 +7,19 @@ import {
 } from "@/lib/payments/refundable-balance";
 import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
+import { parseRouteParams } from "@/lib/api/support-http";
+import { CaseRecommendationParams } from "@/schemas/support";
 export async function GET(
   _req: NextRequest,
   context: { params: Promise<{ caseId: string; recommendationId: string }> },
 ) {
+  const ids = await parseRouteParams(CaseRecommendationParams, context.params, {
+    route: "support.case.recommendation.preview",
+  });
+  if (!ids.ok) return ids.response;
   const auth = await requireBackofficeSurface("refunds.manage");
   if (auth.error) return auth.error;
-  const { caseId, recommendationId } = await context.params;
+  const { caseId, recommendationId } = ids.data;
   const recommendation = await prisma.supportFinancialRecommendation.findFirst({
     where: { id: recommendationId, caseId },
     include: {

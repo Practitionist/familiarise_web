@@ -12,6 +12,9 @@
  * __tests__/security/org-scope-payload-allowlist.test.ts. The transcript
  * belongs to the participant and (once escalated) the platform's support team.
  *
+ * A member's PERSONAL complaint about the organization or its delivery is
+ * counted in `withheld`, never listed, so admins cannot tell who raised it.
+ *
  * Query params: `status`, `category`, `page`, `pageSize`.
  */
 
@@ -25,9 +28,25 @@ import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { SupportThreadCategoryEnum } from "@/schemas/enums";
-import { caseOwnershipPermission } from "@/lib/support/case-access";
+import {
+  ORG_SENSITIVE_PERSONAL_CATEGORIES,
+  caseOwnershipPermission,
+} from "@/lib/support/case-access";
 
 const ORG_THREADS_ROUTE = "organizations.support-threads";
+
+const SENSITIVE_PERSONAL: Prisma.SupportCaseWhereInput = {
+  ownershipScope: "PERSONAL",
+  category: { in: [...ORG_SENSITIVE_PERSONAL_CATEGORIES] },
+};
+// Spelled positively: a NULL category must stay listed, which NOT(...) drops.
+const NOT_SENSITIVE_PERSONAL: Prisma.SupportCaseWhereInput = {
+  OR: [
+    { ownershipScope: { not: "PERSONAL" } },
+    { category: null },
+    { category: { notIn: [...ORG_SENSITIVE_PERSONAL_CATEGORIES] } },
+  ],
+};
 
 const QuerySchema = z.object({
   status: z
@@ -100,15 +119,18 @@ export async function GET(
     }
     const pagination = parsePagination(url);
 
-    const where: Prisma.SupportCaseWhereInput = {
+    const base: Prisma.SupportCaseWhereInput = {
       organizationId: orgId,
       deletedAt: null,
       appointmentId: { not: null },
       ...(filters.data.status ? { status: filters.data.status } : {}),
       ...(filters.data.category ? { category: filters.data.category } : {}),
     };
+    const where: Prisma.SupportCaseWhereInput = {
+      AND: [base, NOT_SENSITIVE_PERSONAL],
+    };
 
-    const [threads, total] = await Promise.all([
+    const [threads, total, withheld] = await Promise.all([
       prisma.supportCase.findMany({
         where,
         orderBy: [
@@ -120,6 +142,7 @@ export async function GET(
         select: THREAD_METADATA_SELECT,
       }),
       prisma.supportCase.count({ where }),
+      prisma.supportCase.count({ where: { AND: [base, SENSITIVE_PERSONAL] } }),
     ]);
 
     return NextResponse.json({
@@ -153,6 +176,7 @@ export async function GET(
           // content is not.
         };
       }),
+      withheld: { sensitivePersonal: withheld },
       pagination: {
         page: pagination.page,
         perPage: pagination.pageSize,

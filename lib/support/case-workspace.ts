@@ -149,7 +149,7 @@ export async function readPayment(
 }
 
 export interface WorkspaceGrants {
-  showEmail: boolean;
+  showContact: boolean;
   showPayment: boolean;
 }
 
@@ -290,12 +290,13 @@ export async function readCaseWorkspace(
       id: c.requester.id,
       name: c.externalRequesterName ?? c.requester.name,
       role: c.requester.role,
-      email: grants.showEmail
+      email: grants.showContact
         ? (c.externalRequesterEmail ?? c.requester.email)
         : null,
-      phone:
-        c.callbackPhone ??
-        (c.externalRequesterEmail ? null : c.requester.phone),
+      phone: grants.showContact
+        ? (c.callbackPhone ??
+          (c.externalRequesterEmail ? null : c.requester.phone))
+        : null,
       callbackRequested: Boolean(c.callbackPhone),
       joinedAt: c.requester.createdAt.toISOString(),
     },

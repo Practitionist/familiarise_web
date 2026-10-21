@@ -1,4 +1,9 @@
-import { visibleCaseWhere, canCorrespondOnCase } from "./case-access";
+import {
+  ORG_FILED_CASE_TITLE,
+  canCorrespondOnCase,
+  projectCaseForViewer,
+  visibleCaseWhere,
+} from "./case-access";
 import prisma from "@/lib/prisma";
 import type { OwnTicketCase } from "@/types/support-case";
 import { caseKeyOf } from "./case-key";
@@ -19,10 +24,7 @@ export async function readOwnSupportCase(
   });
   if (!c) return null;
   const canReply = await canCorrespondOnCase(c, { userId, role: "CONSULTEE" });
-  const redact =
-    !canReply &&
-    c.requesterUserId !== c.submitterUserId &&
-    userId !== c.submitterUserId;
+  const redact = projectCaseForViewer(c, userId, canReply).summaryOnly;
   const [payment, rows] = await Promise.all([
     redact
       ? null
@@ -44,7 +46,7 @@ export async function readOwnSupportCase(
     key: caseKeyOf({ kind: "case", id: c.id }),
     caseId: c.id,
     appointmentId: c.appointmentId,
-    subject: redact ? "Organization support request" : c.title,
+    subject: redact ? ORG_FILED_CASE_TITLE : c.title,
     reference: c.referenceNumber,
     topic: ticketTopic(c),
     status: c.status,

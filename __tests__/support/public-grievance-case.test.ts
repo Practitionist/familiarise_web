@@ -12,19 +12,30 @@ jest.mock("../../lib/rate-limit", () => ({
   spamLimiter: {},
   applyRateLimit: jest.fn(async () => null),
 }));
-jest.mock("../../lib/novu/stage-bell", () => ({
-  stageBell: jest.fn(async () => null),
-}));
 jest.mock("../../lib/support/reference", () => ({
   allocateTicketReference: jest.fn(async () => "SUP-000001"),
+}));
+jest.mock("../../lib/support/case-service", () => ({
+  stageSupportCaseIntakeTx: jest.fn(async () => undefined),
+}));
+jest.mock("../../lib/support/external-requester", () => ({
+  resolvePublicIntakeUserId: jest.fn(
+    async () => "system-public-grievance-intake",
+  ),
+  stageExternalIntakeReceiptTx: jest.fn(async () => null),
 }));
 jest.mock("../../lib/prisma", () => {
   const db = {
     user: {
-      findMany: jest.fn(async () => [{ id: "queue-custodian" }]),
-      findFirst: jest.fn(async () => ({ id: "queue-custodian" })),
+      findUnique: jest.fn(async () => ({
+        id: "member-1",
+        email: "member@account.example",
+        name: "Account Holder",
+      })),
     },
-    supportCase: { create: jest.fn(async () => ({ id: "case" })) },
+    supportCase: {
+      create: jest.fn(async ({ data }) => ({ ...data, id: "case" })),
+    },
   };
   return {
     __esModule: true,
@@ -34,24 +45,32 @@ jest.mock("../../lib/prisma", () => {
 
 import { NextRequest } from "next/server";
 import prisma from "../../lib/prisma";
+import { getSession } from "../../lib/auth-server";
 import { sendContactInquiryEmail } from "../../lib/email";
+import { stageSupportCaseIntakeTx } from "../../lib/support/case-service";
+import { stageExternalIntakeReceiptTx } from "../../lib/support/external-requester";
 import { POST } from "../../app/api/contact/route";
 
-it("records an external complainant explicitly and preserves the public receipt without fabricating a customer author", async () => {
-  const response = await POST(
+const file = (email = "outside@example.com") =>
+  POST(
     new NextRequest("https://test/api/contact", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         firstName: "Outside",
         lastName: "Customer",
-        email: "outside@example.com",
+        email,
         subject: "Complaint",
         message: "Please investigate",
         category: "grievance",
       }),
     }),
   );
+
+beforeEach(() => jest.clearAllMocks());
+
+it("holds an anonymous grievance on the system intake account and sends only a confirmation receipt", async () => {
+  const response = await file();
   expect(response.status).toBe(202);
   expect(await response.json()).toMatchObject({
     referenceNumber: "SUP-000001",
@@ -60,8 +79,9 @@ it("records an external complainant explicitly and preserves the public receipt 
     data: expect.objectContaining({
       externalRequesterEmail: "outside@example.com",
       externalRequesterName: "Outside Customer",
-      requesterUserId: "queue-custodian",
-      submitterUserId: "queue-custodian",
+      requesterUserId: "system-public-grievance-intake",
+      submitterUserId: "system-public-grievance-intake",
+      scopeKey: expect.stringMatching(/^GRIEVANCE:[0-9a-f-]{36}$/),
       messages: {
         create: expect.objectContaining({
           authorUserId: null,
@@ -71,10 +91,40 @@ it("records an external complainant explicitly and preserves the public receipt 
       },
     }),
   });
+  expect(stageExternalIntakeReceiptTx).toHaveBeenCalledWith(expect.anything(), {
+    caseId: "case",
+    reference: "SUP-000001",
+    to: "outside@example.com",
+  });
   expect(sendContactInquiryEmail).toHaveBeenCalledWith(
     expect.objectContaining({
       email: "outside@example.com",
       referenceNumber: "SUP-000001",
     }),
   );
+});
+
+it("files a signed-in grievance on the account, ignoring the typed address", async () => {
+  (getSession as jest.Mock).mockResolvedValueOnce({
+    user: { id: "member-1" },
+  });
+
+  const response = await file("typo@stranger.example");
+
+  expect(response.status).toBe(202);
+  const { data } = (prisma.supportCase.create as jest.Mock).mock.calls[0][0];
+  expect(data).toMatchObject({
+    externalRequesterEmail: null,
+    externalRequesterName: null,
+    requesterUserId: "member-1",
+    submitterUserId: "member-1",
+  });
+  expect(data.description).not.toContain("typo@stranger.example");
+  expect(data.messages.create.authorUserId).toBe("member-1");
+  expect(stageSupportCaseIntakeTx).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({ id: "case", externalRequesterEmail: null }),
+    "USER",
+  );
+  expect(stageExternalIntakeReceiptTx).not.toHaveBeenCalled();
 });
