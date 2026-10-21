@@ -30,6 +30,11 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { IndiaOnlyPayoutNotice } from "@/components/payouts/IndiaOnlyPayoutNotice";
 import { cn } from "@/utils/tailwind";
+import {
+  AWAITING_ORG_HINT,
+  AWAITING_ORG_LABEL,
+  newExpertHoldCopy,
+} from "@/lib/dashboard/hold-copy";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import {
   BUCKET_LABEL,
@@ -38,6 +43,7 @@ import {
   SEGMENT_LABEL,
   deriveEarningPresentation,
   derivePayoutPresentation,
+  nextClearDate,
   nextPayoutCopy,
   payoutNet,
   presentationBadge,
@@ -288,17 +294,6 @@ export function EarningsSkeleton() {
   );
 }
 
-/** The soonest hold that clears, among Pending rows (#1827: "with the date"). */
-function nextClearDate(rows: EarningRow[], now: Date): Date | null {
-  let soonest: Date | null = null;
-  for (const row of rows) {
-    if (!row.holdUntil) continue;
-    const at = new Date(row.holdUntil);
-    if (at > now && (!soonest || at < soonest)) soonest = at;
-  }
-  return soonest;
-}
-
 /**
  * #1527 §7.2 / #1827 — the Summary tab: four tiles (Available · Pending ·
  * Paid out · Lifetime), when the next payout runs, what each offering earned
@@ -411,6 +406,20 @@ export function EarningsSummary({
           hint="Everything you've earned, before TDS"
         />
       </StatRow>
+
+      {sums.awaitingOrg > 0 && (
+        <StatRow columns={2}>
+          <Stat
+            label={AWAITING_ORG_LABEL}
+            value={inr(sums.awaitingOrg)}
+            hint={AWAITING_ORG_HINT}
+          />
+        </StatRow>
+      )}
+
+      {sums.pending > 0 && (
+        <p className="text-xs text-muted-foreground">{newExpertHoldCopy()}</p>
+      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <p className="text-sm text-foreground">

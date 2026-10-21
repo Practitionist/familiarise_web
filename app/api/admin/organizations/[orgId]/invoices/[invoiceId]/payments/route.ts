@@ -66,5 +66,15 @@ export const POST = withOpsAction(
       };
     },
   },
-  { stepUp: true },
+  {
+    stepUp: true,
+    secondApprover: {
+      route: "/api/admin/organizations/[orgId]/invoices/[invoiceId]/payments",
+      target: ({ params }) => ({
+        kind: "OrganizationInvoice",
+        id: params.invoiceId,
+      }),
+      amountPaise: (body) => body.amountPaise,
+    },
+  },
 );

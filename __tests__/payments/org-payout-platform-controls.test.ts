@@ -148,10 +148,13 @@ const db = {
   opsActionLog: {
     create: jest.fn(async (_a: { data: Row }) => ({ id: "ops" })),
   },
+  // The second-approval count: one active admin, so the door runs directly.
+  user: { count: jest.fn(async () => 1) },
   $transaction: jest.fn(
     async (fn: (tx: unknown) => unknown): Promise<unknown> => fn(db),
   ),
   $disconnect: jest.fn(),
+  $executeRaw: jest.fn(async () => 0),
 };
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,

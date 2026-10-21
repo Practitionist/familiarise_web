@@ -9,7 +9,9 @@ import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { SettingsSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
+import { NO_PAN_BPS_194O } from "@/lib/compliance/tds";
 import { toneBadge, type Tone } from "@/lib/dashboard/money-state";
+import { newExpertHoldCopy } from "@/lib/dashboard/hold-copy";
 import type {
   PayoutEligibilityReason,
   Requirement,
@@ -309,6 +311,11 @@ function TaxCard({
               Change
             </Button>
           </div>
+          {!taxInfo.panVerified && (
+            <p className="text-sm text-muted-foreground">
+              {`PAN pending verification: TDS is withheld at ${NO_PAN_BPS_194O / 100}% until Familiarise verifies your PAN.`}
+            </p>
+          )}
           <p id="gstin" className="scroll-mt-24 text-xs text-muted-foreground">
             {taxInfo.gstin
               ? "Your GSTIN is on file."
@@ -361,6 +368,9 @@ export function GetPaidView({
           currentlyDue={requirements.currentlyDue}
           eventuallyDue={requirements.eventuallyDue}
         />
+        <p className="mt-3 text-xs text-muted-foreground">
+          {newExpertHoldCopy()}
+        </p>
       </section>
       <AccountCard consultantId={consultantId} setup={setup} />
       <TaxCard consultantId={consultantId} setup={setup} />

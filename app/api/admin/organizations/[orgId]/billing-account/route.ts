@@ -11,6 +11,7 @@
 import { z } from "zod";
 
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
+import { creditLimitRaisePaise } from "@/lib/backoffice/ops-proposal-amounts";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { recordBillingAccountUpdate } from "@/lib/enterprise/billing-account-audit";
 import { assertVerifiedDomainOrThrow } from "@/lib/enterprise/governance";
@@ -101,5 +102,13 @@ export const PATCH = withOpsAction(
       };
     },
   },
-  { stepUp: true },
+  {
+    stepUp: true,
+    secondApprover: {
+      route: "/api/admin/organizations/[orgId]/billing-account",
+      target: ({ params }) => ({ kind: "Organization", id: params.orgId }),
+      amountPaise: (body, { params }) =>
+        creditLimitRaisePaise(params.orgId, body),
+    },
+  },
 );

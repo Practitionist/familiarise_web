@@ -7,32 +7,12 @@ on:
   schedule:
     # Weekly Sunday 00:25 UTC: webhook event archival, DPDP consent retention sweeper, onboarding draft expiry
     - cron: "25 0 * * 0"
-    # Monthly 3rd 01:40 UTC: GST outward-supplies register export
-    - cron: "40 1 3 * *"
-    # Quarterly 5th of Jan/Apr/Jul/Oct 01:20 UTC: TDS Form 26Q return draft export
-    - cron: "20 1 5 1,4,7,10 *"
   workflow_dispatch:
     inputs:
       job:
         description: "Job slug to run (or 'all' to run every weekly/statutory job)"
         required: false
         default: "all"
-        type: string
-      period_start:
-        description: "GST register period start (YYYY-MM-DD, inclusive)"
-        required: false
-        type: string
-      period_end:
-        description: "GST register period end (YYYY-MM-DD, exclusive)"
-        required: false
-        type: string
-      financialYear:
-        description: "TDS return financial year, e.g. '2026-27'"
-        required: false
-        type: string
-      quarter:
-        description: "TDS return fiscal quarter 1-4"
-        required: false
         type: string
 
 concurrency:
@@ -66,7 +46,6 @@ jobs:
       PLATFORM_GSTIN: ${{ secrets.PLATFORM_GSTIN }}
       SUPPLIER_STATE_CODE: ${{ secrets.SUPPLIER_STATE_CODE }}
       PLATFORM_INVOICE_PREFIX: ${{ secrets.PLATFORM_INVOICE_PREFIX }}
-      GST_REGISTER_CSV_OUT: gst-outward-register.csv
       PAN_ENCRYPTION_KEY: ${{ secrets.PAN_ENCRYPTION_KEY }}
 
     steps:
@@ -93,7 +72,7 @@ jobs:
           INPUT_JOB: ${{ inputs.job }}
         run: |
           case "${INPUT_JOB}" in
-            ""|all|archive-webhook-events|consent-retention-sweeper|expire-onboarding-drafts|gst-outward-register-export|tds-26q-draft-export|tds-return-draft)
+            ""|all|archive-webhook-events|consent-retention-sweeper|expire-onboarding-drafts)
               ;;
             *)
               echo "::error::Unknown weekly/statutory job slug '${INPUT_JOB}'"
@@ -140,39 +119,6 @@ jobs:
             -X POST -H "Authorization: Bearer ${CRON_SECRET}" \
             "${APP_URL}/api/cleanup/expire-onboarding-drafts"
 
-      - name: Export GST outward-supplies register
-        id: gst-outward-register-export
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '40 1 3 * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'gst-outward-register-export'))
-        timeout-minutes: 10
-        continue-on-error: true
-        env:
-          GST_REGISTER_PERIOD_START: ${{ inputs.period_start }}
-          GST_REGISTER_PERIOD_END: ${{ inputs.period_end }}
-        run: node_modules/.bin/tsx jobs/compliance/gst-outward-register-export.ts
-
-      - name: Upload GST outward-supplies register CSV
-        if: always() && steps.gst-outward-register-export.outcome != 'skipped'
-        uses: actions/upload-artifact@v7
-        with:
-          name: gst-outward-register
-          path: gst-outward-register.csv
-          retention-days: 90
-          if-no-files-found: warn
-
-      - name: Export TDS Form 26Q return draft
-        id: tds-26q-draft-export
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '20 1 5 1,4,7,10 *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'tds-26q-draft-export' || inputs.job == 'tds-return-draft'))
-        timeout-minutes: 10
-        continue-on-error: true
-        env:
-          TDS_RETURN_FY: ${{ inputs.financialYear }}
-          TDS_RETURN_QUARTER: ${{ inputs.quarter }}
-        run: node_modules/.bin/tsx jobs/compliance/tds-26q-draft-export.ts
-
       - name: Check job outcomes and notify on failure
         if: always()
         env:
@@ -185,9 +131,7 @@ jobs:
           for entry in \
             "archive-webhook-events:${{ steps.archive-webhook-events.outcome }}" \
             "consent-retention-sweeper:${{ steps.consent-retention-sweeper.outcome }}" \
-            "expire-onboarding-drafts:${{ steps.expire-onboarding-drafts.outcome }}" \
-            "gst-outward-register-export:${{ steps.gst-outward-register-export.outcome }}" \
-            "tds-26q-draft-export:${{ steps.tds-26q-draft-export.outcome }}"
+            "expire-onboarding-drafts:${{ steps.expire-onboarding-drafts.outcome }}"
           do
             job_name="${entry%%:*}"
             outcome="${entry#*:}"

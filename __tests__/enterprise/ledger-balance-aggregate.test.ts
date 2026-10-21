@@ -31,7 +31,6 @@ function journalDb() {
       ),
     },
     ledgerAccount: { upsert: jest.fn().mockResolvedValue({}) },
-    ledgerAccountBalance: { upsert: jest.fn(), findUnique: jest.fn() },
     ledgerEntry: {
       groupBy: jest.fn(async ({ where }: { where: { accountId: string } }) =>
         ["DEBIT", "CREDIT"].map((direction) => ({
@@ -92,8 +91,6 @@ describe("ledger balances — aggregated, never stored", () => {
       postings: refund,
     });
 
-    expect(db.ledgerAccountBalance.upsert).not.toHaveBeenCalled();
-
     for (const kind of ["CASH", "GST_PAYABLE", "PLATFORM_FEE"] as const) {
       const fromPostings = [...booking, ...refund]
         .filter((p) => ledgerAccountId(p.account) === ledgerAccountId({ kind }))
@@ -106,6 +103,5 @@ describe("ledger balances — aggregated, never stored", () => {
         fromPostings,
       );
     }
-    expect(db.ledgerAccountBalance.findUnique).not.toHaveBeenCalled();
   });
 });

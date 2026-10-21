@@ -7,6 +7,7 @@ import {
   statusFor,
 } from "@/lib/cron/cleanup-route";
 import { reportSentryError } from "@/lib/observability/report";
+import type { FrozenWallet } from "@/lib/payments/wallet-freeze";
 
 export type CleanupRouteHandlers = {
   GET: (req: NextRequest) => Promise<NextResponse>;
@@ -47,6 +48,12 @@ const MAX_ACCRUAL_ROLLUPS = 10;
 const MAX_ORG_LIFECYCLE_CLAIMS = 25;
 /** IRN submissions per run; each is a GSP round trip. */
 const MAX_IRP_UPLOADS = 10;
+/** Stuck payouts per model per run; each costs up to two RazorpayX calls. */
+const MAX_STUCK_PAYOUT_POLLS = 5;
+/** Payouts per reconcile cohort per run (three cohorts); one RazorpayX GET each. */
+const MAX_PAYOUT_STATUS_POLLS = 8;
+/** Consumer invoices the GST register healer may mint per run; one transaction each. */
+const MAX_GST_HEALER_MINTS = 25;
 
 /**
  * Registry of `/api/cleanup/[job]` HTTP twins.
@@ -66,10 +73,16 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         run: async (req) => {
           const { cleanupAbandonedOrgTopUps } =
             await import("@/scripts/cleanup/cleanup-abandoned-org-top-ups");
-          return cleanupAbandonedOrgTopUps({ limit: parseLimitParam(req) });
+          // One gateway read per row, so an unparameterised call stays bounded too.
+          return cleanupAbandonedOrgTopUps({
+            limit: parseLimitParamOrDefault(req, MAX_ORG_LIFECYCLE_CLAIMS),
+          });
         },
         summarize: (r) => ({
           reaped: r.reaped,
+          confirmed: r.confirmed,
+          kept: r.kept,
+          errors: r.errors.length,
           graceHours: r.graceHours,
           success: r.success,
         }),
@@ -531,13 +544,16 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "gst-outward-register-export": () =>
       cleanupRoute({
         job: "gst-outward-register-export",
-        run: async () => {
+        run: async (req) => {
           const { runGstOutwardRegisterExport } =
             await import("@/jobs/compliance/gst-outward-register-export");
-          return runGstOutwardRegisterExport({ writeCsv: false });
+          return runGstOutwardRegisterExport({
+            limit: parseLimitParamOrDefault(req, MAX_GST_HEALER_MINTS),
+          });
         },
         summarize: (r) => ({
           period: r.period,
+          storagePath: r.storagePath,
           mintedByHealer: r.mintedByHealer,
           documentCount: r.documentCount,
           warnings: r.warnings,
@@ -566,10 +582,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "handle-stuck-payouts": () =>
       cleanupRoute({
         job: "handle-stuck-payouts",
-        run: async () => {
+        run: async (req, { startedAt }) => {
           const { handleStuckPayouts } =
             await import("@/scripts/payouts/handle-stuck-payouts");
-          return handleStuckPayouts();
+          return handleStuckPayouts({
+            limit: parseLimitParamOrDefault(req, MAX_STUCK_PAYOUT_POLLS),
+            startedAt,
+          });
         },
         summarize: (r) => ({
           totalProcessed: r.totalProcessed,
@@ -706,10 +725,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "reconcile-disputes": () =>
       cleanupRoute({
         job: "reconcile-disputes",
-        run: async () => {
+        run: async (req) => {
           const { reconcileDisputes } =
             await import("@/scripts/disputes/reconcile-disputes");
-          const result = await reconcileDisputes();
+          const result = await reconcileDisputes({
+            limit: parseLimitParam(req),
+          });
           if (result.urgentCount > 0) {
             console.warn(
               `ALERT: ${result.urgentCount} disputes require immediate attention!`,
@@ -793,23 +814,43 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
             await import("@/scripts/reconcile/reconcile-ledgers");
           const triggeredById =
             req.nextUrl.searchParams.get("triggeredById") ?? undefined;
+          const { respondToLedgerDrift, freezeDriftingWallets } =
+            await import("@/scripts/reconcile/ledger-drift-response");
+          // Freeze from the wallet step so a run cut off later has already frozen; a freeze failure fails the route once the audit completes.
+          let freezeError: unknown = null;
+          let frozenWallets: FrozenWallet[] = [];
           const report = await runReconcileLedgers({
             scope: "full",
             triggeredById,
+            onWalletDrift: async (reportId, findings) => {
+              try {
+                frozenWallets = await freezeDriftingWallets(reportId, findings);
+              } catch (err) {
+                freezeError = err;
+              }
+            },
           });
+          if (!report.ok) await respondToLedgerDrift(report);
+          if (freezeError) throw freezeError;
           return {
             success: true,
             runId: report.id,
             scope: report.scope,
             status: "OK" as const,
             report,
+            frozenWallets,
           };
         },
         summarize: (r) => ({
           runId: r.runId,
           status: r.status,
           ok: r.report.ok,
+          // Every finding the run raised, and the ones the checked-in baseline
+          // does not excuse. A green night has a non-zero total and a zero
+          // unbaselined count.
           discrepanciesCount: r.report.summary?.discrepanciesCount ?? 0,
+          unbaselinedCount: r.report.summary?.unbaselinedCount ?? 0,
+          frozenWallets: r.frozenWallets.length,
         }),
         status: (r) => statusFor(r, !r.report.ok),
         failureMessage: "Failed to run ledger reconciliation",
@@ -944,10 +985,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "reconcile-payout-status": () =>
       cleanupRoute({
         job: "reconcile-payout-status",
-        run: async () => {
+        run: async (req, { startedAt }) => {
           const { reconcilePayoutStatus } =
             await import("@/scripts/payouts/reconcile-payout-status");
-          return reconcilePayoutStatus();
+          return reconcilePayoutStatus({
+            limit: parseLimitParamOrDefault(req, MAX_PAYOUT_STATUS_POLLS),
+            startedAt,
+          });
         },
         summarize: (r) => ({
           totalProcessed: r.totalProcessed,

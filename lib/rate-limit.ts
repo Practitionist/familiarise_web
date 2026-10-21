@@ -35,7 +35,7 @@ export const checkoutContextLimiter = makeLimiter(
   "1 m",
   "rl:checkout-context",
 );
-/** 10 per minute — DELETE /api/checkout/pending/[paymentId] */
+/** 10 per minute — DELETE and PATCH /api/checkout/pending/[paymentId] */
 export const cancelPendingLimiter = makeLimiter(10, "1 m", "rl:cancel-pending");
 /** 10 per minute — POST /api/payments/discounts/validate */
 export const discountLimiter = makeLimiter(10, "1 m", "rl:discount");

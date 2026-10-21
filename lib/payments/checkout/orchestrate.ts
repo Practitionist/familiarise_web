@@ -5,7 +5,10 @@ import { scheduleAfter } from "@/lib/api/after-safe";
 import { reportSentryError } from "@/lib/observability/report";
 import { PaymentError } from "@/lib/payments/core/types";
 import prisma from "@/lib/prisma";
-import type { CheckoutInput } from "@/schemas/checkout";
+import {
+  consumerBuyerStateSchema,
+  type CheckoutInput,
+} from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
 import {
   CHECKOUT_WAIT_RETRY_CONFIG,
@@ -130,6 +133,15 @@ export async function handleCheckout(
     referralCreditsDropped,
   } = orgFunding;
   let { billingAccountId, fundingSource, creditEffectiveLimit } = orgFunding;
+
+  // A buyer-paid domestic supply gets a consumer tax invoice, which must carry
+  // the buyer's state; org rails bill on the org series and exports have none.
+  if (
+    buyerCountry === "IN" &&
+    (!fundingSource || fundingSource === "PERSONAL")
+  ) {
+    consumerBuyerStateSchema.parse(validatedData);
+  }
 
   try {
     // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)

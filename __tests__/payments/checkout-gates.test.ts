@@ -8,8 +8,10 @@ import "../booking-algorithm/setup";
 import {
   buildCheckoutInput,
   buyerRow,
+  eventPlanLookup,
   mintOrder,
   mockCreatePaymentIntent as createPaymentIntent,
+  orgMember,
   silenceConsole,
 } from "../booking/repro/checkout-harness/mocks/setup";
 
@@ -98,38 +100,6 @@ const classInstance = {
     participants: [],
   },
 };
-
-/** A PERSONAL-rail org member whose programme assignment meters the booking. */
-const orgMember = (membershipStatus = "ACTIVE") => ({
-  "organization.findUnique": () => ({
-    id: "org-1",
-    status: "ACTIVE",
-    canSponsor: true,
-    billingAccount: {
-      id: "ba-1",
-      fundingSource: "PERSONAL",
-      creditLimit: null,
-      walletBalance: 0,
-    },
-  }),
-  "billingAccount.findFirst": () => ({
-    id: "ba-1",
-    fundingSource: "PERSONAL",
-    creditLimit: null,
-  }),
-  "membership.findUnique": () => ({
-    id: "m-1",
-    role: "MEMBER",
-    status: membershipStatus,
-  }),
-  "programAssignment.findFirst": () => ({ id: "pa-1", programId: "prog-1" }),
-});
-
-const eventPlanLookup = () => ({
-  consultantProfileId: "cons-profile",
-  organizationId: null,
-  collaborators: [],
-});
 
 beforeEach(() => {
   mintOrder("order_1");
@@ -265,7 +235,7 @@ it("org-funded checkout refuses a non-ACTIVE membership with a typed 403", async
   resetDouble({
     "user.findUnique": () => buyerRow(),
     "webinar.findUnique": () => webinar,
-    ...orgMember("SUSPENDED"),
+    ...orgMember("PERSONAL", "SUSPENDED"),
   });
   const error = await refusal(
     buildCheckoutInput({

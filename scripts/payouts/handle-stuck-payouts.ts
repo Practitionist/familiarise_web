@@ -10,17 +10,18 @@
  * - Gateway processed but DB update failed
  * - Network timeout during payout processing
  *
- * This module exports the core handler function.
- * It is imported by:
- * - jobs/handle-stuck-payouts.ts (GitHub Actions)
- * - app/api/cleanup/handle-stuck-payouts/route.ts (API endpoint)
- *
- * Schedule: Every 4 hours
+ * Driven by the `/api/cleanup/handle-stuck-payouts` twin with a per-model
+ * `limit` and the request's `startedAt`; each cohort rotates on
+ * `lastReconciledAt` (see reconcile-cursor.ts).
  */
 
 import prisma from "../../lib/prisma";
 import { PayoutStatus, PaymentGateway, EarningStatus } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import {
+  recordSystemError,
+  recordSystemEvent,
+} from "@/lib/enterprise/system-events";
 import {
   applyOrgGatewayStatus,
   handlePayoutWebhook,
@@ -36,6 +37,14 @@ import {
   mapGatewayStatus,
   retireUnknownGatewayPayout,
 } from "@/lib/payments/payouts/payout-gateway-lookup";
+import {
+  DEFAULT_RECONCILE_LIMIT,
+  LEAST_RECENTLY_RECONCILED,
+  pollInRotation,
+  stampConsultantPayoutsReconciled,
+  stampOrgPayoutsReconciled,
+} from "@/lib/payments/payouts/reconcile-cursor";
+import { startDeadline } from "@/lib/cron/run-deadline";
 import { reportSentryMessage } from "@/lib/observability/report";
 
 // Consider payouts stuck if in PROCESSING for more than 24 hours
@@ -61,17 +70,49 @@ export interface StuckPayoutsResult {
 /**
  * Find and handle stuck payouts
  */
-// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
-// mutual exclusion; fail-closed: money state must not double-run unlocked.
-export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
+// Fail-closed: money state must not double-run unlocked. A permanent failure or
+// a crash also lands in SystemEvent, because it means someone is not being paid.
+export async function handleStuckPayouts(
+  opts: { limit?: number; startedAt?: number } = {},
+): Promise<StuckPayoutsResult> {
+  const limit = opts.limit ?? DEFAULT_RECONCILE_LIMIT;
+  const pastDeadline = startDeadline(opts.startedAt);
   return withCronLock(
     "handle-stuck-payouts",
     { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
-    () => handleStuckPayoutsUnlocked(),
+    async () => {
+      try {
+        const result = await handleStuckPayoutsUnlocked(limit, pastDeadline);
+        if (result.failedCount > 0 || !result.success) {
+          await recordSystemEvent({
+            category: "PAYOUT",
+            severity: "ERROR",
+            message: `Stuck-payout handler: ${result.failedCount} permanently failed, success=${result.success}`,
+            context: {
+              totalProcessed: result.totalProcessed,
+              failedCount: result.failedCount,
+              retriedCount: result.retriedCount,
+              errors: result.errors,
+            },
+          });
+        }
+        return result;
+      } catch (error) {
+        await recordSystemError({
+          category: "PAYOUT",
+          summary: "Stuck-payout handler crashed",
+          err: error,
+        });
+        throw error;
+      }
+    },
   );
 }
 
-async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
+async function handleStuckPayoutsUnlocked(
+  limit: number,
+  pastDeadline: () => boolean,
+): Promise<StuckPayoutsResult> {
   const errors: string[] = [];
   let reconciledCount = 0;
   let retriedCount = 0;
@@ -97,6 +138,8 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
         },
       },
     },
+    orderBy: [LEAST_RECENTLY_RECONCILED, { updatedAt: "asc" }],
+    take: limit,
   });
 
   // #1407 — the pre-flight gate has to test the credentials the lookup will
@@ -115,253 +158,269 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
     `Found ${stuckPayouts.length} payouts stuck in PROCESSING for >${STUCK_THRESHOLD_HOURS}h`,
   );
 
-  for (const payout of stuckPayouts) {
-    console.log(
-      `\nProcessing stuck payout ${payout.id} for ${payout.consultantProfile.user.name || "Unknown"}`,
-    );
-    console.log(
-      `   Amount: ${payout.currency} ${(payout.amount / 100).toFixed(2)}`,
-    );
-    console.log(`   Provider: ${payout.provider}`);
-    console.log(`   Provider Payout ID: ${payout.providerPayoutId || "none"}`);
-    console.log(`   Last updated: ${payout.updatedAt.toISOString()}`);
-    console.log(`   Retry count: ${payout.retryCount}`);
+  const consultantStarted = await pollInRotation(
+    stuckPayouts,
+    stampConsultantPayoutsReconciled,
+    pastDeadline,
+    (payout, err) =>
+      errors.push(
+        `Payout ${payout.id}: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+    async (payout) => {
+      console.log(
+        `\nProcessing stuck payout ${payout.id} for ${payout.consultantProfile.user.name || "Unknown"}`,
+      );
+      console.log(
+        `   Amount: ${payout.currency} ${(payout.amount / 100).toFixed(2)}`,
+      );
+      console.log(`   Provider: ${payout.provider}`);
+      console.log(
+        `   Provider Payout ID: ${payout.providerPayoutId || "none"}`,
+      );
+      console.log(`   Last updated: ${payout.updatedAt.toISOString()}`);
+      console.log(`   Retry count: ${payout.retryCount}`);
 
-    let providerPayoutId = payout.providerPayoutId;
-    if (!providerPayoutId) {
-      // #1846 N1 — no provider id does NOT mean "never sent": a submit whose
-      // reply timed out leaves exactly this row, and the transfer may exist.
-      // Ask the gateway by reference id (our row id) before resubmitting or
-      // failing. Only "none" makes either safe; a found payout is stamped and
-      // settled below like any other.
-      if (payout.provider !== PaymentGateway.RAZORPAY) {
-        // Only RazorpayX has a reference lookup; resubmitting any other
-        // provider's payout could pay twice, so an operator settles these.
-        skippedCount++;
-        errors.push(
-          `Payout ${payout.id}: ${payout.provider} payout with no provider id needs manual review`,
-        );
-        continue;
-      }
-      if (!razorpayConfigured) {
-        console.log(`   Skipping - Razorpay credentials not configured`);
-        skippedCount++;
-        continue;
-      }
-      const ref = await findRazorpayPayoutByReference(payout.id);
-      if (ref.kind === "gateway_error" || ref.kind === "ambiguous") {
-        errors.push(
-          `Payout ${payout.id}: reference lookup ${ref.kind} (${ref.detail})`,
-        );
-        if (ref.kind === "ambiguous") {
-          reportSentryMessage(
-            "handle-stuck-payouts: several gateway payouts share one reference",
-            {
-              subsystem: "payments",
-              op: "handle-stuck-payouts",
-              level: "error",
-              extra: { payoutId: payout.id, detail: ref.detail },
-            },
-          );
-        }
-        continue;
-      }
-      if (ref.kind === "found") {
-        await prisma.consultantPayout.updateMany({
-          where: { id: payout.id, providerPayoutId: null },
-          data: { providerPayoutId: ref.providerPayoutId },
-        });
-        console.log(
-          `   Gateway holds ${ref.providerPayoutId} for this reference - settling it`,
-        );
-        providerPayoutId = ref.providerPayoutId;
-      }
-    }
-
-    if (!providerPayoutId) {
-      console.log(`   Gateway holds no payout for this reference`);
-
-      if (payout.retryCount >= MAX_RETRIES) {
-        // #1205-triage — CAS the terminal flip inside the same tx as the
-        // earnings release: without the PROCESSING guard, a concurrently
-        // completing gateway webhook could be overwritten by this FAILED.
-        const cas = await prisma.$transaction(async (tx) => {
-          const claimed = await tx.consultantPayout.updateMany({
-            where: { id: payout.id, status: PayoutStatus.PROCESSING },
-            data: {
-              status: PayoutStatus.FAILED,
-              failureReason:
-                "Payout never sent to gateway after multiple attempts",
-              // The TDS outcome is staged before submission (#1846 N1); a
-              // payout that never left withheld nothing.
-              tdsDeducted: 0,
-              netAmount: null,
-              tdsRateAppliedBps: null,
-              tdsFinancialYear: null,
-              tdsCatchUpFy: null,
-              tdsCarryPaise: 0,
-              tdsCreditPaise: 0,
-            },
-          });
-          if (claimed.count === 0) return { released: 0, claimed: false };
-          const released = await tx.consultantEarnings.updateMany({
-            where: { payoutId: payout.id, status: EarningStatus.BATCHED },
-            data: {
-              payoutId: null,
-              status: EarningStatus.READY,
-              releasedFromPayoutId: payout.id,
-            },
-          });
-          await releaseClawbackRecovery(tx, payout.id);
-          return { released: released.count, claimed: true };
-        });
-        failedCount++;
-        if (!cas.claimed) {
-          console.log(
-            `   Skipped — payout left PROCESSING concurrently (webhook won)`,
-          );
-        } else {
-          console.log(
-            `   Marked as permanently FAILED (max retries reached); released ${cas.released} earning(s)`,
-          );
-        }
-      } else {
-        // #1407 — CAS the retry reset, like every sibling write in this loop.
-        // The interleaving: the cohort is read once, then each payout costs a
-        // gateway HTTP round-trip; while this job is out on an earlier
-        // element, a concurrent process-payouts run or a payout webhook can
-        // move a LATER one. The bare `update` carried no guard, so it stamped
-        // that row back to APPROVED from whatever it had become and the next
-        // batch paid it twice.
-        const reset = await prisma.consultantPayout.updateMany({
-          where: {
-            id: payout.id,
-            status: PayoutStatus.PROCESSING,
-            providerPayoutId: null,
-          },
-          data: {
-            status: PayoutStatus.APPROVED,
-            retryCount: { increment: 1 },
-          },
-        });
-        if (reset.count === 0) {
-          // Whoever moved it owns the row now — never re-arm it from here.
+      let providerPayoutId = payout.providerPayoutId;
+      if (!providerPayoutId) {
+        // #1846 N1 — no provider id does NOT mean "never sent": a submit whose
+        // reply timed out leaves exactly this row, and the transfer may exist.
+        // Ask the gateway by reference id (our row id) before resubmitting or
+        // failing. Only "none" makes either safe; a found payout is stamped and
+        // settled below like any other.
+        if (payout.provider !== PaymentGateway.RAZORPAY) {
+          // Only RazorpayX has a reference lookup; resubmitting any other
+          // provider's payout could pay twice, so an operator settles these.
           skippedCount++;
-          console.log(
-            `   Skipped — raced: a concurrent process-payouts run or payout webhook moved it`,
+          errors.push(
+            `Payout ${payout.id}: ${payout.provider} payout with no provider id needs manual review`,
           );
-        } else {
-          retriedCount++;
-          console.log(
-            `   Reset to APPROVED for retry (attempt ${payout.retryCount + 1})`,
+          return;
+        }
+        if (!razorpayConfigured) {
+          console.log(`   Skipping - Razorpay credentials not configured`);
+          skippedCount++;
+          return;
+        }
+        const ref = await findRazorpayPayoutByReference(payout.id);
+        if (ref.kind === "gateway_error" || ref.kind === "ambiguous") {
+          errors.push(
+            `Payout ${payout.id}: reference lookup ${ref.kind} (${ref.detail})`,
           );
+          if (ref.kind === "ambiguous") {
+            reportSentryMessage(
+              "handle-stuck-payouts: several gateway payouts share one reference",
+              {
+                subsystem: "payments",
+                op: "handle-stuck-payouts",
+                level: "error",
+                extra: { payoutId: payout.id, detail: ref.detail },
+              },
+            );
+          }
+          return;
+        }
+        if (ref.kind === "found") {
+          await prisma.consultantPayout.updateMany({
+            where: { id: payout.id, providerPayoutId: null },
+            data: { providerPayoutId: ref.providerPayoutId },
+          });
+          console.log(
+            `   Gateway holds ${ref.providerPayoutId} for this reference - settling it`,
+          );
+          providerPayoutId = ref.providerPayoutId;
         }
       }
-      continue;
-    }
 
-    // Query gateway for actual status
-    let lookup: PayoutLookup | null = null;
+      if (!providerPayoutId) {
+        console.log(`   Gateway holds no payout for this reference`);
 
-    if (payout.provider === PaymentGateway.RAZORPAY) {
-      if (!razorpayConfigured) {
-        console.log(`   Skipping - Razorpay credentials not configured`);
-        skippedCount++;
-        continue;
+        if (payout.retryCount >= MAX_RETRIES) {
+          // #1205-triage — CAS the terminal flip inside the same tx as the
+          // earnings release: without the PROCESSING guard, a concurrently
+          // completing gateway webhook could be overwritten by this FAILED.
+          const cas = await prisma.$transaction(async (tx) => {
+            const claimed = await tx.consultantPayout.updateMany({
+              where: { id: payout.id, status: PayoutStatus.PROCESSING },
+              data: {
+                status: PayoutStatus.FAILED,
+                failureReason:
+                  "Payout never sent to gateway after multiple attempts",
+                // The TDS outcome is staged before submission (#1846 N1); a
+                // payout that never left withheld nothing.
+                tdsDeducted: 0,
+                netAmount: null,
+                tdsRateAppliedBps: null,
+                tdsFinancialYear: null,
+                tdsCatchUpFy: null,
+                tdsCarryPaise: 0,
+                tdsCreditPaise: 0,
+              },
+            });
+            if (claimed.count === 0) return { released: 0, claimed: false };
+            const released = await tx.consultantEarnings.updateMany({
+              where: { payoutId: payout.id, status: EarningStatus.BATCHED },
+              data: {
+                payoutId: null,
+                status: EarningStatus.READY,
+                releasedFromPayoutId: payout.id,
+              },
+            });
+            await releaseClawbackRecovery(tx, payout.id);
+            return { released: released.count, claimed: true };
+          });
+          failedCount++;
+          if (!cas.claimed) {
+            console.log(
+              `   Skipped — payout left PROCESSING concurrently (webhook won)`,
+            );
+          } else {
+            console.log(
+              `   Marked as permanently FAILED (max retries reached); released ${cas.released} earning(s)`,
+            );
+          }
+        } else {
+          // #1407 — CAS the retry reset, like every sibling write in this loop.
+          // The interleaving: the cohort is read once, then each payout costs a
+          // gateway HTTP round-trip; while this job is out on an earlier
+          // element, a concurrent process-payouts run or a payout webhook can
+          // move a LATER one. The bare `update` carried no guard, so it stamped
+          // that row back to APPROVED from whatever it had become and the next
+          // batch paid it twice.
+          const reset = await prisma.consultantPayout.updateMany({
+            where: {
+              id: payout.id,
+              status: PayoutStatus.PROCESSING,
+              providerPayoutId: null,
+            },
+            data: {
+              status: PayoutStatus.APPROVED,
+              retryCount: { increment: 1 },
+            },
+          });
+          if (reset.count === 0) {
+            // Whoever moved it owns the row now — never re-arm it from here.
+            skippedCount++;
+            console.log(
+              `   Skipped — raced: a concurrent process-payouts run or payout webhook moved it`,
+            );
+          } else {
+            retriedCount++;
+            console.log(
+              `   Reset to APPROVED for retry (attempt ${payout.retryCount + 1})`,
+            );
+          }
+        }
+        return;
       }
-      lookup = await getRazorpayPayoutStatus(providerPayoutId);
-    }
 
-    // #1757 — an id the gateway has no record of is terminal for this row, not
-    // a run failure: FAILED via the canonical handler (releases earnings, TDS).
-    if (lookup?.kind === "unknown_id") {
-      await retireUnknownGatewayPayout(
-        {
-          provider: payout.provider,
-          providerPayoutId,
-        },
-        lookup.detail,
-      );
-      retiredCount++;
-      retired.push(payout.id);
-      continue;
-    }
+      // Query gateway for actual status
+      let lookup: PayoutLookup | null = null;
 
-    if (!lookup || lookup.kind === "gateway_error") {
-      console.log(`   Could not get status from gateway - skipping`);
-      const detailSuffix = lookup ? ` (${lookup.detail})` : "";
-      errors.push(
-        `Payout ${payout.id}: Could not query gateway status${detailSuffix}`,
-      );
-      continue;
-    }
-
-    const gatewayStatus = lookup;
-
-    console.log(`   Gateway status: ${gatewayStatus.status}`);
-
-    // Map gateway status to our status
-    const mappedStatus = mapGatewayStatus(
-      payout.provider,
-      gatewayStatus.status,
-    );
-
-    if (!mappedStatus) {
-      console.log(
-        `   Unknown gateway status: ${gatewayStatus.status} - skipping`,
-      );
-      errors.push(
-        `Payout ${payout.id}: Unknown gateway status ${gatewayStatus.status}`,
-      );
-      continue;
-    }
-
-    // Update if status changed
-    if (mappedStatus !== payout.status) {
-      // PM-15 — the old inline `status=COMPLETED` + `earnings PAID` flip
-      // bypassed the canonical webhook handler, so on this reconcile path TDS
-      // was never recorded, the payout ledger postings (the revenue/payable
-      // counters) never ran, and the gateway UTR was dropped. Delegate the
-      // full money recording to handlePayoutWebhook, the same engine the live
-      // webhook uses. It claims `status notIn [COMPLETED, CANCELLED]`, so it is
-      // idempotent against a live webhook racing this reconcile — whichever
-      // fires first wins and the other no-ops. The UTR persists only on the
-      // COMPLETED branch inside the handler.
-      const webhookStatus = WEBHOOK_STATUS_MAP[mappedStatus];
-      if (!webhookStatus) {
-        // mapGatewayStatus only yields COMPLETED/PROCESSING/FAILED/CANCELLED,
-        // so this is unreachable; keep it explicit rather than silently drop.
-        console.log(`   No webhook mapping for ${mappedStatus} - skipping`);
-        continue;
+      if (payout.provider === PaymentGateway.RAZORPAY) {
+        if (!razorpayConfigured) {
+          console.log(`   Skipping - Razorpay credentials not configured`);
+          skippedCount++;
+          return;
+        }
+        lookup = await getRazorpayPayoutStatus(providerPayoutId);
       }
 
-      await handlePayoutWebhook(
+      // #1757 — an id the gateway has no record of is terminal for this row, not
+      // a run failure: FAILED via the canonical handler (releases earnings, TDS).
+      if (lookup?.kind === "unknown_id") {
+        await retireUnknownGatewayPayout(
+          {
+            provider: payout.provider,
+            providerPayoutId,
+          },
+          lookup.detail,
+        );
+        retiredCount++;
+        retired.push(payout.id);
+        return;
+      }
+
+      if (!lookup || lookup.kind === "gateway_error") {
+        console.log(`   Could not get status from gateway - skipping`);
+        const detailSuffix = lookup ? ` (${lookup.detail})` : "";
+        errors.push(
+          `Payout ${payout.id}: Could not query gateway status${detailSuffix}`,
+        );
+        return;
+      }
+
+      const gatewayStatus = lookup;
+
+      console.log(`   Gateway status: ${gatewayStatus.status}`);
+
+      // Map gateway status to our status
+      const mappedStatus = mapGatewayStatus(
         payout.provider,
-        providerPayoutId,
-        webhookStatus,
-        mappedStatus === PayoutStatus.FAILED
-          ? gatewayStatus.failureMessage || gatewayStatus.failureReason
-          : undefined,
-        gatewayStatus.utr,
+        gatewayStatus.status,
       );
 
-      console.log(
-        `   Reconciled via webhook handler: ${payout.status} → ${mappedStatus}`,
-      );
-      reconciledCount++;
-    } else {
-      console.log(`   Status unchanged (${mappedStatus})`);
-    }
-  }
+      if (!mappedStatus) {
+        console.log(
+          `   Unknown gateway status: ${gatewayStatus.status} - skipping`,
+        );
+        errors.push(
+          `Payout ${payout.id}: Unknown gateway status ${gatewayStatus.status}`,
+        );
+        return;
+      }
 
-  const org = await handleStuckOrgPayouts(stuckThreshold, razorpayConfigured);
+      // Update if status changed
+      if (mappedStatus !== payout.status) {
+        // PM-15 — the old inline `status=COMPLETED` + `earnings PAID` flip
+        // bypassed the canonical webhook handler, so on this reconcile path TDS
+        // was never recorded, the payout ledger postings (the revenue/payable
+        // counters) never ran, and the gateway UTR was dropped. Delegate the
+        // full money recording to handlePayoutWebhook, the same engine the live
+        // webhook uses. It claims `status notIn [COMPLETED, CANCELLED]`, so it is
+        // idempotent against a live webhook racing this reconcile — whichever
+        // fires first wins and the other no-ops. The UTR persists only on the
+        // COMPLETED branch inside the handler.
+        const webhookStatus = WEBHOOK_STATUS_MAP[mappedStatus];
+        if (!webhookStatus) {
+          // mapGatewayStatus only yields COMPLETED/PROCESSING/FAILED/CANCELLED,
+          // so this is unreachable; keep it explicit rather than silently drop.
+          console.log(`   No webhook mapping for ${mappedStatus} - skipping`);
+          return;
+        }
+
+        await handlePayoutWebhook(
+          payout.provider,
+          providerPayoutId,
+          webhookStatus,
+          mappedStatus === PayoutStatus.FAILED
+            ? gatewayStatus.failureMessage || gatewayStatus.failureReason
+            : undefined,
+          gatewayStatus.utr,
+        );
+
+        console.log(
+          `   Reconciled via webhook handler: ${payout.status} → ${mappedStatus}`,
+        );
+        reconciledCount++;
+      } else {
+        console.log(`   Status unchanged (${mappedStatus})`);
+      }
+    },
+  );
+
+  const org = await handleStuckOrgPayouts(
+    stuckThreshold,
+    razorpayConfigured,
+    limit,
+    pastDeadline,
+  );
   reconciledCount += org.reconciled;
   retriedCount += org.retried;
   skippedCount += org.skipped;
   retiredCount += org.retired.length;
   retired.push(...org.retired);
   errors.push(...org.errors);
-  const totalProcessed = stuckPayouts.length + org.processed;
+  const totalProcessed = consultantStarted + org.processed;
 
   // Summary
   console.log("\n📊 Stuck Payouts Summary:");
@@ -418,6 +477,8 @@ interface StuckOrgPayoutsRun {
 async function handleStuckOrgPayouts(
   stuckThreshold: Date,
   razorpayConfigured: boolean,
+  limit: number,
+  pastDeadline: () => boolean,
 ): Promise<StuckOrgPayoutsRun> {
   const run: StuckOrgPayoutsRun = {
     processed: 0,
@@ -433,23 +494,33 @@ async function handleStuckOrgPayouts(
       updatedAt: { lt: stuckThreshold },
     },
     select: { id: true, gatewayPayoutId: true },
-    orderBy: { updatedAt: "asc" },
+    orderBy: [LEAST_RECENTLY_RECONCILED, { updatedAt: "asc" }],
+    take: limit,
   });
-  run.processed = stuck.length;
   if (stuck.length > 0 && !razorpayConfigured) {
+    run.processed = stuck.length;
     run.skipped += stuck.length;
     return run;
   }
 
   // One row's failure is recorded and never blocks the rows behind it.
-  for (const payout of stuck) {
-    try {
-      await reconcileStuckOrgPayout(payout, run);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      run.errors.push(`OrgPayout ${payout.id}: ${message}`);
-    }
-  }
+  run.processed = await pollInRotation(
+    stuck,
+    stampOrgPayoutsReconciled,
+    pastDeadline,
+    (payout, err) =>
+      run.errors.push(
+        `OrgPayout ${payout.id}: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+    async (payout) => {
+      try {
+        await reconcileStuckOrgPayout(payout, run);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        run.errors.push(`OrgPayout ${payout.id}: ${message}`);
+      }
+    },
+  );
   return run;
 }
 
@@ -504,11 +575,4 @@ async function reconcileStuckOrgPayout(
     failureReason: lookup.failureMessage || lookup.failureReason,
   });
   if (moved) run.reconciled++;
-}
-
-/**
- * Disconnect from database - call this when done
- */
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
 }

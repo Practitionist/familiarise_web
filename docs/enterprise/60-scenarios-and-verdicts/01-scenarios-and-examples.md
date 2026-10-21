@@ -471,4 +471,4 @@ Sign in as the non-operator seed users (`SEED_PASSWORD`, default: the seed defau
 - [contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md) · [cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md) — the lifecycle state machines behind §5.11/§5.15/§5.16.
 - [ledger-integrity](../10-money-and-ledger/13-ledger-integrity.md) — the reconcile checks that prove each scenario ties out.
 - [harness-verdict](02-harness-verdict.md) — the scenario-by-scenario verdict table.
-- [verification-guide](../90-audits/03-verification-guide.md) — the seeded logins + click-through flows that walk these scenarios live.
+- [mock-credentials](../../team/mock-credentials.md) — the seeded logins for walking these scenarios live.

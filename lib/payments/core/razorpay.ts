@@ -73,6 +73,24 @@ import {
       );
     }
   }
+  // A live RazorpayX key (resolved as in resolveRazorpayXCredentials) without the egress proxy is
+  // reported once per process at load; collections keep booting and each payout call refuses.
+  if (
+    process.env.NEXT_PHASE !== "phase-production-build" &&
+    (process.env.RAZORPAYX_KEY_ID || process.env.RAZORPAY_KEY_ID)?.startsWith(
+      "rzp_live_",
+    ) &&
+    !process.env.RAZORPAYX_EGRESS_PROXY_URL
+  ) {
+    reportSentryError(
+      new PaymentError(
+        "RazorpayX live key in use but RAZORPAYX_EGRESS_PROXY_URL is unset; payouts will refuse",
+        "RAZORPAYX_EGRESS_NOT_CONFIGURED",
+        "RAZORPAY",
+      ),
+      { subsystem: "payments", op: "razorpayx-egress-boot-check" },
+    );
+  }
 }
 
 // L2 FIX: Removed module-load console.warn — per-call errors are more actionable
@@ -615,6 +633,46 @@ export async function cancelRazorpayOrder(
     });
     return "unknown";
   }
+}
+
+/** What an order holds at the gateway: its captured payment, an uncaptured live one, or nothing. */
+export type RazorpayOrderHolding =
+  | { kind: "captured"; paymentId: string; amountPaise: number }
+  | { kind: "live" }
+  | { kind: "empty" };
+
+/**
+ * Reads the order's payments; an order Razorpay does not know holds nothing.
+ * Throws without a client or when the gateway cannot answer, so a caller never
+ * mistakes "unproven" for "empty".
+ */
+export async function readRazorpayOrderHolding(
+  orderId: string,
+): Promise<RazorpayOrderHolding> {
+  const razorpayClient = getRazorpayClient();
+  if (!razorpayClient) throw new Error("RAZORPAY_NOT_INITIALIZED");
+  let payments;
+  try {
+    payments = await withRazorpaySdkTimeout("orders.fetchPayments", () =>
+      razorpayClient.orders.fetchPayments(orderId),
+    );
+  } catch (error) {
+    if (isUnknownOrderId(error)) return { kind: "empty" };
+    throw error;
+  }
+  const captured = payments.items.find((p) => p.status === "captured");
+  if (captured) {
+    const amountPaise = Number(captured.amount);
+    if (!Number.isSafeInteger(amountPaise) || captured.currency !== "INR") {
+      throw new Error(
+        `Order ${orderId} captured ${String(captured.amount)} ${captured.currency}, not whole INR paise`,
+      );
+    }
+    return { kind: "captured", paymentId: captured.id, amountPaise };
+  }
+  return payments.items.some((p) => LIVE_ORDER_PAYMENT_STATUSES.has(p.status))
+    ? { kind: "live" }
+    : { kind: "empty" };
 }
 
 /** The gateway's own order record; null without a client, throws when Razorpay cannot answer. */

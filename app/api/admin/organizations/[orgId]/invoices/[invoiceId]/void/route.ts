@@ -10,6 +10,7 @@
 import { z } from "zod";
 
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
+import { orgInvoiceTotalPaise } from "@/lib/backoffice/ops-proposal-amounts";
 import { voidOrgInvoice } from "@/lib/payments/billing/org-invoice-void";
 
 export const POST = withOpsAction(
@@ -41,5 +42,16 @@ export const POST = withOpsAction(
       };
     },
   },
-  { stepUp: true },
+  {
+    stepUp: true,
+    secondApprover: {
+      route: "/api/admin/organizations/[orgId]/invoices/[invoiceId]/void",
+      target: ({ params }) => ({
+        kind: "OrganizationInvoice",
+        id: params.invoiceId,
+      }),
+      amountPaise: (_body, { params }) =>
+        orgInvoiceTotalPaise(params.orgId, params.invoiceId),
+    },
+  },
 );

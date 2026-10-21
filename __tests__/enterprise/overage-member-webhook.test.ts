@@ -195,6 +195,32 @@ describe("handleOverageMemberSuccess", () => {
     expect(mockPost).toHaveBeenCalledTimes(1);
   });
 
+  it("capture on a tombstoned replaced order: parked and auto-refunded", async () => {
+    tx.payment.findUnique.mockResolvedValue({
+      ...side,
+      id: "tomb1",
+      paymentStatus: "EXPIRED",
+      parentPaymentId: null,
+    });
+
+    await handleOverageMemberSuccess("order_old", 129_500, "pay_1");
+
+    expect(tx.payment.updateMany).toHaveBeenCalledWith({
+      where: { id: "tomb1", paymentStatus: "EXPIRED" },
+      data: expect.objectContaining({
+        paymentStatus: "SUCCEEDED",
+        gatewayPaymentId: "pay_1",
+      }),
+    });
+    expect(mockPost.mock.calls.map((c) => c[1].idempotencyKey)).toEqual([
+      "unapplied:tomb1",
+    ]);
+    expect(mockTransition).not.toHaveBeenCalled();
+    expect(mockRefund).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "tomb1", amountPaise: 129_500 }),
+    );
+  });
+
   it("non-overage payment (no parentPaymentId) is ignored", async () => {
     tx.payment.findUnique.mockResolvedValue({ ...side, parentPaymentId: null });
 

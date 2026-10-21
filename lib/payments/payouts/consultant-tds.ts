@@ -11,7 +11,7 @@ import {
   getFYDateRange,
   TDS_THRESHOLD_PAISE,
 } from "@/lib/payments/tax/tds-service";
-import { sumPaise } from "@/lib/payments/utils/money";
+import { prorate, sumPaise } from "@/lib/payments/utils/money";
 import { computeResidentPayoutTds } from "./shared-lifecycle";
 
 /** Payouts whose staged TDS counts toward the expert's history. */
@@ -31,6 +31,7 @@ export type ConsultantTdsInput = {
   taxInfo: {
     taxEntityType?: string | null;
     panEncrypted?: Uint8Array | string | null;
+    panVerified: boolean;
   } | null;
   resolvedRate: ResolvedTdsRate;
   /** False after losing the one-catch-up-per-FY race; the payout then pays on its own gross. */
@@ -80,12 +81,20 @@ function subtractProportionalGrossRefund(
     return Math.max(0, grossPaise);
   }
   if (sharePaise > 0) {
-    const proportionalGrossRefund = Math.round(
-      (grossPaise * refundedSharePaise) / sharePaise,
+    const proportionalGrossRefund = prorate(
+      grossPaise,
+      refundedSharePaise,
+      sharePaise,
+      "round",
     );
     return Math.max(0, grossPaise - proportionalGrossRefund);
   }
   return Math.max(0, grossPaise - refundedSharePaise);
+}
+
+// A PAN counts as on file for 194-O only once it is verified; an unverified PAN takes the no-PAN rate.
+function consultantPanOnFile(taxInfo: ConsultantTdsInput["taxInfo"]): boolean {
+  return !!taxInfo?.panEncrypted && taxInfo.panVerified === true;
 }
 
 /**
@@ -96,7 +105,7 @@ export async function planConsultantPayoutTds(
   db: PrismaLike,
   input: ConsultantTdsInput,
 ): Promise<ConsultantTdsPlan> {
-  const pan = input.taxInfo?.panEncrypted;
+  const pan = consultantPanOnFile(input.taxInfo);
   const tdsOn = (paise: number) =>
     computeResidentPayoutTds(paise, pan, input.resolvedRate).tdsAmountPaise;
   const own = computeResidentPayoutTds(
@@ -155,7 +164,7 @@ async function resolveDueTds(
     grossBeforePaise: await priorFyGrossPaise(db, input),
     grossThisPayoutPaise: input.grossThisPayoutPaise,
     entityType: input.taxInfo?.taxEntityType ?? null,
-    panOnFile: !!input.taxInfo?.panEncrypted,
+    panOnFile: consultantPanOnFile(input.taxInfo),
   });
 
   if (!ENABLE_TDS_194O_GROSS || process.env.ENABLE_TDS_194O_GROSS === "false") {

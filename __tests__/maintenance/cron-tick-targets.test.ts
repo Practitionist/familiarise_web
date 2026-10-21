@@ -3,13 +3,10 @@
  */
 
 /**
- * #1633 — the ticker's per-target request shape. `reconcile-ledgers` must be
- * asked to resume (never to open a run), carry no `limit` so the route's own
- * soft deadline bounds the chunk, and get its own 20 s timeout, while the
- * money sweeps keep the six-second default and their `limit`. Jest has no
- * transform for `.mts`, so the function file is transpiled here and its
- * exported `targetRequest` called directly, rather than pinned by grepping
- * source text.
+ * The ticker's per-target request shape, cadence, calendar windows and fleet
+ * gate. Jest has no transform for `.mts`, so the function file is transpiled
+ * here and its exports called directly, rather than pinned by grepping source
+ * text.
  */
 
 import fs from "node:fs";
@@ -32,6 +29,7 @@ type Ticker = Pick<
   | "bucketFor"
   | "buildFailedTargetEvent"
   | "windowStartFor"
+  | "otherActivePlatform"
   | "MAX_TARGETS_PER_TICK"
 >;
 type Target = ReturnType<Ticker["dueTargets"]>[number];
@@ -52,7 +50,15 @@ function loadTicker(): Ticker {
     },
   });
   const mod = { exports: {} as Ticker };
-  vm.runInNewContext(outputText, { module: mod, exports: mod.exports });
+  vm.runInNewContext(outputText, {
+    module: mod,
+    exports: mod.exports,
+    require,
+    process,
+    setTimeout,
+    clearTimeout,
+    AbortController,
+  });
   return mod.exports;
 }
 
@@ -144,6 +150,21 @@ describe("cron-tick targetRequest", () => {
     });
   });
 
+  it("bounds the dispute poll at ten and sends no limit to the ledger audit or the TDS draft", () => {
+    expect(targetRequest(base, "reconcile-disputes")).toEqual({
+      url: "https://site.test/api/cleanup/reconcile-disputes?limit=10",
+      timeoutMs: 20_000,
+    });
+    expect(targetRequest(base, "reconcile-ledgers")).toEqual({
+      url: "https://site.test/api/cleanup/reconcile-ledgers",
+      timeoutMs: 20_000,
+    });
+    expect(targetRequest(base, "tds-return-draft")).toEqual({
+      url: "https://site.test/api/cleanup/tds-return-draft",
+      timeoutMs: 20_000,
+    });
+  });
+
   it("gives the orphaned-payments healer a bite of ten and 20 s", () => {
     expect(targetRequest(base, "reconcile-orphaned-payments")).toEqual({
       url: "https://site.test/api/cleanup/reconcile-orphaned-payments?limit=10",
@@ -214,15 +235,20 @@ describe("cron-tick dueTargets cadence", () => {
     }
   });
 
-  it("never fires more than MAX_TARGETS_PER_TICK on any tick of a month, windows included", () => {
+  it("never fires more than MAX_TARGETS_PER_TICK on any tick of 400 days, windows included", () => {
     const { MAX_TARGETS_PER_TICK } = loadTicker();
     expect(MAX_TARGETS_PER_TICK).toBe(9);
+    // 400 days from 2026-11-01 cover every month start, every weekday and every quarter start.
     const start = Date.UTC(2026, 10, 1);
-    for (let m = 0; m < 30 * 24 * 60; m += 5) {
-      const due = dueTargets(new Date(start + m * 60_000));
-      expect(due.length).toBeGreaterThanOrEqual(5);
-      expect(due.length).toBeLessThanOrEqual(MAX_TARGETS_PER_TICK);
+    let min = Infinity;
+    let max = 0;
+    for (let m = 0; m < 400 * 24 * 60; m += 5) {
+      const n = dueTargets(new Date(start + m * 60_000)).length;
+      min = Math.min(min, n);
+      max = Math.max(max, n);
     }
+    expect(min).toBeGreaterThanOrEqual(5);
+    expect(max).toBeLessThanOrEqual(MAX_TARGETS_PER_TICK);
   });
 
   it("fires the orphaned-payments healer only at :10/:40", () => {
@@ -257,7 +283,7 @@ describe("cron-tick dueTargets cadence", () => {
     expect(firing("detect-consultant-no-shows")).toEqual([20, 50]);
   });
 
-  it("fires the Sentry ingest canary every 6 hours, not every tick", () => {
+  it("fires the Sentry ingest canary every 6 hours at :50, not every tick", () => {
     const name = "sentry-ingest-canary";
     const ticks = Array.from({ length: 24 * 12 }, (_, i) => i * 5).filter(
       (minuteOfDay) =>
@@ -274,7 +300,7 @@ describe("cron-tick dueTargets cadence", () => {
         ).includes(name),
     );
 
-    expect(ticks).toEqual([0, 360, 720, 1080]);
+    expect(ticks).toEqual([50, 410, 770, 1130]);
   });
   it("never reports the Sentry ingest canary's failure TO Sentry", () => {
     /**
@@ -344,6 +370,9 @@ describe("cron-tick bucketFor", () => {
     expect(bucketFor(200)).toBe("ok");
     expect(bucketFor(207, false, "process-payouts")).toBe("failed");
     expect(bucketFor(207, false, "dunning")).toBe("failed");
+    expect(bucketFor(207, false, "sweep-orphaned-topup-captures")).toBe(
+      "failed",
+    );
     expect(bucketFor(207, false, "reconcile-payment-status")).toBe("ok");
     expect(bucketFor(500)).toBe("failed");
     expect(bucketFor(0)).toBe("failed");
@@ -367,7 +396,7 @@ describe("cron-tick calendar windows", () => {
   });
 
   it("anchors a window that runs past midnight to the day it opened", () => {
-    expect(dueTargets(utc(3, 0, 40))).toContain("dunning");
+    expect(dueTargets(utc(3, 0, 10))).toContain("dunning");
     expect(windowStartFor("dunning", utc(3, 0, 40))?.toISOString()).toBe(
       "2026-11-02T23:30:00.000Z",
     );
@@ -386,6 +415,76 @@ describe("cron-tick calendar windows", () => {
     ).toBe(
       "https://site.test/api/cleanup/settle-invoice-accruals?limit=10&windowStart=2026-11-01T04:00:00.000Z",
     );
+  });
+
+  it("alternates the two payout reconcilers on :40, each every two hours", () => {
+    const fires = (name: Parameters<typeof windowStartFor>[0]) =>
+      Array.from({ length: 24 * 12 }, (_, i) => utc(4, 0, i * 5))
+        .filter((t) => dueTargets(t).includes(name))
+        .map((t) => t.toISOString().slice(11, 16));
+    const stuck = fires("handle-stuck-payouts");
+    const status = fires("reconcile-payout-status");
+    expect(stuck).toHaveLength(12);
+    expect(status).toHaveLength(12);
+    expect(stuck.slice(0, 2)).toEqual(["00:40", "02:40"]);
+    expect(status.slice(0, 2)).toEqual(["01:40", "03:40"]);
+    expect(targetRequest("https://site.test", "handle-stuck-payouts")).toEqual({
+      url: "https://site.test/api/cleanup/handle-stuck-payouts?limit=5",
+      timeoutMs: 24_000,
+    });
+    expect(
+      targetRequest("https://site.test", "reconcile-payout-status").url,
+    ).toBe("https://site.test/api/cleanup/reconcile-payout-status?limit=8");
+  });
+
+  it("runs the GST register hourly on the 2nd only, 04:45 to 22:45", () => {
+    const fires = (day: number) =>
+      Array.from({ length: 24 * 12 }, (_, i) => utc(day, 0, i * 5))
+        .filter((t) => dueTargets(t).includes("gst-outward-register-export"))
+        .map((t) => t.toISOString().slice(11, 16));
+    const second = fires(2);
+    expect(second).toHaveLength(19);
+    expect([second[0], second[18]]).toEqual(["04:45", "22:45"]);
+    expect(fires(1)).toEqual([]);
+    expect(fires(3)).toEqual([]);
+    expect(
+      targetRequest(
+        "https://site.test",
+        "gst-outward-register-export",
+        utc(2, 4, 45),
+      ),
+    ).toEqual({
+      url: "https://site.test/api/cleanup/gst-outward-register-export?limit=25&windowStart=2026-11-02T04:00:00.000Z",
+      timeoutMs: 24_000,
+    });
+  });
+
+  it("runs the dispute poll every hour at :00 and the ledger audit once a day at 03:55", () => {
+    const fires = (name: Parameters<typeof windowStartFor>[0]) =>
+      Array.from({ length: 24 * 12 }, (_, i) => utc(4, 0, i * 5)).filter((t) =>
+        dueTargets(t).includes(name),
+      );
+    const disputes = fires("reconcile-disputes");
+    expect(disputes).toHaveLength(24);
+    expect(disputes.every((t) => t.getUTCMinutes() === 0)).toBe(true);
+    expect(fires("reconcile-ledgers").map((t) => t.toISOString())).toEqual([
+      "2026-11-04T03:55:00.000Z",
+    ]);
+  });
+
+  it("runs the TDS draft only on the 5th of January, April, July and October", () => {
+    const fires = (month: number, day: number) =>
+      Array.from(
+        { length: 24 * 12 },
+        (_, i) => new Date(Date.UTC(2027, month, day, 0, i * 5)),
+      ).filter((t) => dueTargets(t).includes("tds-return-draft"));
+    expect(fires(0, 5).map((t) => t.toISOString())).toEqual([
+      "2027-01-05T01:55:00.000Z",
+      "2027-01-05T02:55:00.000Z",
+    ]);
+    expect(fires(3, 5)).toHaveLength(2);
+    expect(fires(1, 5)).toHaveLength(0);
+    expect(fires(0, 6)).toHaveLength(0);
   });
 
   it("sends the MSME digest once a day and payouts every hour", () => {
@@ -459,6 +558,57 @@ describe("cron-tick drain targets and failure reporting", () => {
     expect(reportMinutes("sweep-stuck-webhook-events")).toEqual([0]);
     expect(reportMinutes("release-earnings")).toEqual([5]);
     expect(reportMinutes("retry-moderation-enforcement")).toEqual([25]);
-    expect(reportMinutes("sentry-ingest-canary")).toEqual([0]);
+    expect(reportMinutes("reconcile-payout-status")).toEqual([40]);
+    expect(reportMinutes("sentry-ingest-canary")).toEqual([50]);
+  });
+});
+
+describe("cron-tick fleet gate (ops:active_cron_platform)", () => {
+  const { otherActivePlatform } = loadTicker();
+  const env = {
+    UPSTASH_REDIS_REST_URL: "https://redis.test/",
+    UPSTASH_REDIS_REST_TOKEN: "tok",
+  };
+  const replying = (body: unknown, status = 200) =>
+    jest.fn(
+      async (_url: string | URL | Request, _init?: RequestInit) =>
+        new Response(JSON.stringify(body), { status }),
+    );
+
+  it("runs when the key is absent", async () => {
+    const fetchImpl = replying({ result: null });
+    await expect(otherActivePlatform(env, fetchImpl)).resolves.toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      "https://redis.test/get/ops%3Aactive_cron_platform",
+    );
+  });
+
+  it("runs when the key says netlify", async () => {
+    await expect(
+      otherActivePlatform(env, replying({ result: "netlify" })),
+    ).resolves.toBeNull();
+  });
+
+  it("skips and names the platform when the key says another host", async () => {
+    await expect(
+      otherActivePlatform(env, replying({ result: "vercel" })),
+    ).resolves.toBe("vercel");
+  });
+
+  it("fails open on a fetch error, an error status, a malformed reply and missing credentials", async () => {
+    const rejecting = jest.fn(async () => {
+      throw new Error("network down");
+    });
+    await expect(otherActivePlatform(env, rejecting)).resolves.toBeNull();
+    await expect(
+      otherActivePlatform(env, replying({ error: "ERR" }, 500)),
+    ).resolves.toBeNull();
+    await expect(
+      otherActivePlatform(env, replying({ result: 7 })),
+    ).resolves.toBeNull();
+    const unused = replying({ result: "vercel" });
+    await expect(otherActivePlatform({}, unused)).resolves.toBeNull();
+    expect(unused).not.toHaveBeenCalled();
   });
 });

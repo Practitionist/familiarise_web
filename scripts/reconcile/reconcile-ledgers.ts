@@ -24,6 +24,10 @@ import {
   orgInvoiceGstFindings,
   staleClawbackFindings,
 } from "./tax-and-clawback-steps";
+import {
+  evaluateLedgerBaseline,
+  LEDGER_FINDINGS_BASELINE,
+} from "./ledger-findings-baseline";
 
 export type ReconcileScope = {
   /** Human-readable scope tag, e.g. "full" or "org:<orgId>". */
@@ -32,36 +36,48 @@ export type ReconcileScope = {
   organizationId?: string;
   /** Membership id that initiated this run (null for scheduled cron). */
   triggeredById?: string;
+  /** Awaited as soon as the wallet step finds drift, so a run cut off later in the audit has already acted on it. */
+  onWalletDrift?: (reportId: string, findings: Finding[]) => Promise<void>;
 };
 
+/**
+ * Every kind of finding the auditor can raise. The list is the single source
+ * of truth: `Finding["kind"]` is derived from it, and the checked-in baseline
+ * is validated against it, so a retired kind can never sit in the baseline.
+ */
+export const RECONCILE_FINDING_KINDS = [
+  "WALLET_BALANCE_DRIFT",
+  "EARNINGS_LEDGER_DRIFT",
+  "PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT",
+  "ACTIVE_SEAT_COUNT_DRIFT",
+  "ORG_PAYOUT_TOTAL_MISMATCH",
+  "CREDIT_POOL_CONSUMED_DRIFT",
+  "OVERAGE_COUNT_DRIFT",
+  "OVERAGE_CHARGESTATUS_INTEGRITY",
+  "REFUND_BOOKING_COHERENCE",
+  "REVERSED_EARNING_WITHOUT_REFUND_TXN",
+  "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN",
+  "LEDGER_DUAL_WRITE_GAP",
+  "EARNINGS_WITHOUT_BOOKING_TXN",
+  "SPLIT_SUM_MISMATCH",
+  "OVERAGE_SETTLEMENT_MISMATCH",
+  // An anti-invoice-fraud park older than 24h. Detect-only: age never
+  // releases a park.
+  "PENDING_TRUST_PARK_STALE",
+  // The referral-credit liability disagrees with the vested, unredeemed credit balance.
+  "REFERRAL_CREDIT_LIABILITY_DRIFT",
+  // A settled refund of a parked capture left UNAPPLIED_RECEIPTS non-zero.
+  "UNAPPLIED_RECEIPTS_RESIDUE",
+  // An org invoice's output tax differs from the GST_PAYABLE its bookings posted.
+  "ORG_INVOICE_GST_MISMATCH",
+  // One per run: clawbacks still unrecovered after the 90-day window.
+  "CLAWBACK_RECEIVABLE_STALE",
+] as const;
+
+export type ReconcileFindingKind = (typeof RECONCILE_FINDING_KINDS)[number];
+
 export type Finding = {
-  kind:
-    | "WALLET_BALANCE_DRIFT"
-    | "EARNINGS_LEDGER_DRIFT"
-    | "PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT"
-    | "ACTIVE_SEAT_COUNT_DRIFT"
-    | "ORG_PAYOUT_TOTAL_MISMATCH"
-    | "CREDIT_POOL_CONSUMED_DRIFT"
-    | "OVERAGE_COUNT_DRIFT"
-    | "OVERAGE_CHARGESTATUS_INTEGRITY"
-    | "REFUND_BOOKING_COHERENCE"
-    | "REVERSED_EARNING_WITHOUT_REFUND_TXN"
-    | "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN"
-    | "LEDGER_DUAL_WRITE_GAP"
-    | "EARNINGS_WITHOUT_BOOKING_TXN"
-    | "SPLIT_SUM_MISMATCH"
-    | "OVERAGE_SETTLEMENT_MISMATCH"
-    // An anti-invoice-fraud park older than 24h. Detect-only: age never
-    // releases a park.
-    | "PENDING_TRUST_PARK_STALE"
-    // The referral-credit liability disagrees with the vested, unredeemed credit balance.
-    | "REFERRAL_CREDIT_LIABILITY_DRIFT"
-    // A settled refund of a parked capture left UNAPPLIED_RECEIPTS non-zero.
-    | "UNAPPLIED_RECEIPTS_RESIDUE"
-    // An org invoice's output tax differs from the GST_PAYABLE its bookings posted.
-    | "ORG_INVOICE_GST_MISMATCH"
-    // One per run: clawbacks still unrecovered after the 90-day window.
-    | "CLAWBACK_RECEIVABLE_STALE";
+  kind: ReconcileFindingKind;
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -94,7 +110,16 @@ export type ReconcileReport = {
   ok: boolean;
   durationMs: number;
   summary: ReconcileCounts & {
+    /** Every finding the run raised, baselined or not. */
     discrepanciesCount: number;
+    /** How many findings the checked-in baseline excuses. */
+    baselinedCount: number;
+    /** How many findings the baseline does not excuse — each one fails the run. */
+    unbaselinedCount: number;
+    /** Baseline entries whose expiry has passed. They excuse nothing. */
+    baselineExpiredCount: number;
+    /** Why the baseline was rejected. A non-empty list fails the run. */
+    baselineProblems: string[];
     status?: ReconcileRunStatus;
     calls?: number;
   };
@@ -155,78 +180,110 @@ type StepCtx = {
 };
 
 // --- (A): per BillingAccount wallet balance vs derived WALLET account (set-based) ---
-async function stepWalletBalance(ctx: StepCtx): Promise<void> {
-  const accounts = await prisma.billingAccount.findMany({
-    where: ctx.opts.organizationId
-      ? { ownerOrgId: ctx.opts.organizationId }
-      : {},
-    select: {
-      id: true,
-      walletBalance: true,
-      ownerOrgId: true,
-      currency: true,
-    },
-  });
-  ctx.counts.accountsChecked = accounts.length;
-  if (accounts.length === 0) return;
+/** A full-scope snapshot reads every WALLET entry; the 5 s interactive default is too short. */
+const WALLET_SNAPSHOT_TIMEOUT_MS = 120_000;
 
-  const walletLedgerAccounts = await prisma.ledgerAccount.findMany({
+type SnapshotTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+/** Each org's journal-owed WALLET total, keyed `<orgId>:<currency>`; read on the snapshot's `tx`. */
+async function walletTotalsByOrgCurrency(
+  tx: SnapshotTx,
+  orgFilter: string | undefined,
+): Promise<Map<string, number>> {
+  const walletLedgerAccounts = await tx.ledgerAccount.findMany({
     where: {
       kind: "WALLET",
-      ...(ctx.opts.organizationId
-        ? { organizationId: ctx.opts.organizationId }
-        : {}),
+      ...(orgFilter ? { organizationId: orgFilter } : {}),
     },
     select: { id: true, organizationId: true, currency: true },
   });
-
   const walletAccountIds = walletLedgerAccounts.map((a) => a.id);
   const netByAccountId = new Map<string, number>();
+  // Sequential on purpose: an interactive transaction runs one statement at a time.
   for (let i = 0; i < walletAccountIds.length; i += CHUNK) {
-    const sums = await prisma.ledgerEntry.groupBy({
+    const sums = await tx.ledgerEntry.groupBy({
       by: ["accountId", "direction"],
       where: { accountId: { in: walletAccountIds.slice(i, i + CHUNK) } },
       _sum: { amountPaise: true },
     });
     for (const row of sums) {
       const amt = sumPaise(row._sum.amountPaise);
-      const cur = netByAccountId.get(row.accountId) ?? 0;
       // WALLET is a credit-normal liability: amount owed = Σ CREDIT − Σ DEBIT
+      const signed = row.direction === "CREDIT" ? amt : -amt;
       netByAccountId.set(
         row.accountId,
-        row.direction === "CREDIT" ? cur + amt : cur - amt,
+        (netByAccountId.get(row.accountId) ?? 0) + signed,
       );
     }
   }
-
-  const walletTotalByOrgCurrency = new Map<string, number>();
+  const totals = new Map<string, number>();
   for (const wa of walletLedgerAccounts) {
     if (!wa.organizationId) continue;
     const key = `${wa.organizationId}:${wa.currency}`;
-    walletTotalByOrgCurrency.set(
-      key,
-      (walletTotalByOrgCurrency.get(key) ?? 0) +
-        (netByAccountId.get(wa.id) ?? 0),
-    );
+    totals.set(key, (totals.get(key) ?? 0) + (netByAccountId.get(wa.id) ?? 0));
   }
+  return totals;
+}
 
-  for (const acct of accounts) {
-    const walletTotal = acct.ownerOrgId
-      ? (walletTotalByOrgCurrency.get(`${acct.ownerOrgId}:${acct.currency}`) ??
-        0)
-      : 0;
-    const bal = acct.walletBalance ?? 0;
-    if (walletTotal !== bal) {
-      ctx.findings.push({
-        kind: "WALLET_BALANCE_DRIFT",
-        billingAccountId: acct.id,
-        organizationId: acct.ownerOrgId ?? undefined,
-        expectedPaise: walletTotal,
-        actualPaise: bal,
-        deltaPaise: bal - walletTotal,
+/**
+ * Cached wallet balances against their WALLET journal sums, read in ONE
+ * read-only REPEATABLE READ snapshot so a booking committing mid-read is not
+ * drift. Scoped to an org, to one billing account, or to every account.
+ */
+export function walletDriftFindings(scope: {
+  organizationId?: string;
+  billingAccountId?: string;
+}): Promise<{ findings: Finding[]; accountsChecked: number }> {
+  return prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+      const accounts = await tx.billingAccount.findMany({
+        where: {
+          ...(scope.organizationId ? { ownerOrgId: scope.organizationId } : {}),
+          ...(scope.billingAccountId ? { id: scope.billingAccountId } : {}),
+        },
+        select: {
+          id: true,
+          walletBalance: true,
+          ownerOrgId: true,
+          currency: true,
+        },
       });
-    }
-  }
+      if (accounts.length === 0) return { findings: [], accountsChecked: 0 };
+
+      const totals = await walletTotalsByOrgCurrency(
+        tx,
+        scope.organizationId ??
+          (scope.billingAccountId ? accounts[0].ownerOrgId : undefined),
+      );
+      const findings: Finding[] = [];
+      for (const acct of accounts) {
+        const walletTotal =
+          totals.get(`${acct.ownerOrgId}:${acct.currency}`) ?? 0;
+        const bal = acct.walletBalance ?? 0;
+        if (walletTotal !== bal) {
+          findings.push({
+            kind: "WALLET_BALANCE_DRIFT",
+            billingAccountId: acct.id,
+            organizationId: acct.ownerOrgId,
+            expectedPaise: walletTotal,
+            actualPaise: bal,
+            deltaPaise: bal - walletTotal,
+          });
+        }
+      }
+      return { findings, accountsChecked: accounts.length };
+    },
+    { isolationLevel: "RepeatableRead", timeout: WALLET_SNAPSHOT_TIMEOUT_MS },
+  );
+}
+
+async function stepWalletBalance(ctx: StepCtx): Promise<void> {
+  const { findings, accountsChecked } = await walletDriftFindings({
+    organizationId: ctx.opts.organizationId,
+  });
+  ctx.counts.accountsChecked = accountsChecked;
+  ctx.findings.push(...findings);
 }
 
 // --- (E): per ProgramAssignment engagement / credit-pool / overage meters (set-based) ---
@@ -1484,7 +1541,10 @@ async function stepReferralCreditLiability(ctx: StepCtx): Promise<void> {
   }
 }
 
-async function executeSteps(opts: ReconcileScope): Promise<{
+async function executeSteps(
+  opts: ReconcileScope,
+  reportId: string,
+): Promise<{
   ctx: StepCtx;
   durationMs: number;
 }> {
@@ -1497,6 +1557,12 @@ async function executeSteps(opts: ReconcileScope): Promise<{
   };
 
   await stepWalletBalance(ctx);
+  const walletDrift = ctx.findings.filter(
+    (f) => f.kind === "WALLET_BALANCE_DRIFT",
+  );
+  if (opts.onWalletDrift && walletDrift.length > 0) {
+    await opts.onWalletDrift(reportId, walletDrift);
+  }
   await stepAssignmentMeters(ctx);
   await stepOverageIntegrity(ctx);
   await stepPayoutTotals(ctx);
@@ -1544,11 +1610,23 @@ async function runReconcileLedgersUnlocked(
     },
     select: { id: true },
   });
-  const { ctx, durationMs } = await executeSteps(opts);
-  const ok = ctx.findings.length === 0;
+  const { ctx, durationMs } = await executeSteps(opts, row.id);
+  // The findings are raw evidence and are all persisted. The checked-in
+  // baseline only decides which of them fail the run.
+  const baseline = evaluateLedgerBaseline({
+    findings: ctx.findings,
+    entries: LEDGER_FINDINGS_BASELINE,
+    knownKinds: RECONCILE_FINDING_KINDS,
+    now: ctx.now,
+  });
+  const ok = baseline.ok;
   const summary = {
     ...ctx.counts,
     discrepanciesCount: ctx.findings.length,
+    baselinedCount: baseline.baselinedCount,
+    unbaselinedCount: baseline.unbaselinedCount,
+    baselineExpiredCount: baseline.expiredEntryCount,
+    baselineProblems: baseline.problems,
     status: "COMPLETED" as const,
     calls: 1,
   };

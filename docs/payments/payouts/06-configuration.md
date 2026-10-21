@@ -18,6 +18,9 @@ DATABASE_URL="postgresql://user:password@host:5432/database"
 RAZORPAY_KEY_ID="rzp_live_xxxxx"
 RAZORPAY_KEY_SECRET="xxxxx"
 RAZORPAYX_ACCOUNT_NUMBER="2323230012345678"
+# Static-egress proxy; live RazorpayX answers only allowlisted IPs and Netlify has none.
+# A live key without it is refused (RAZORPAYX_EGRESS_NOT_CONFIGURED).
+RAZORPAYX_EGRESS_PROXY_URL="http://user:password@static-ip-proxy:3128"
 
 # Stripe (International Payouts)
 STRIPE_SECRET_KEY="sk_live_xxxxx"
@@ -116,49 +119,21 @@ export const PAYOUT_MODES = {
 
 ---
 
-## GitHub Actions Configuration
+## Scheduling
 
-### Workflow Secrets
+The payout jobs run on the five-minute Netlify scheduled ticker (`netlify/functions/cron-tick.mts`), which calls each job's `CRON_SECRET`-gated twin under `/api/cleanup/[job]`. They do not run in GitHub Actions. The registry is `lib/cron/cleanup-registry.ts`, and each job runs under `withCronLock`.
 
-Set these in GitHub repository settings:
+| Job                   | Window and cadence (UTC)                                           | Per-run bite                     |
+| --------------------- | ------------------------------------------------------------------ | -------------------------------- |
+| `release-earnings`    | Every 15 minutes, at minute :05                                    | Default limit of 50              |
+| `create-payout-batch` | Mondays from 20:00 for three hours, every 15 minutes at minute :05 | 10 consultant and 10 org payouts |
+| `process-payouts`     | Every hour at minute :00                                           | 5 payouts per rail               |
 
-```
-Settings → Secrets and Variables → Actions → New repository secret
-```
+IST is UTC+5:30, so the Monday 20:00 UTC window opens at 01:30 IST on Tuesday. A windowed job receives its window start as `?windowStart=` so that every slice of one window works on the same cohort. `reconcile-payout-status` and `handle-stuck-payouts` stay in `.github/workflows/cron-intra-day.yml`. Disbursement is additionally gated on `ENABLE_LIVE_PAYOUTS`.
 
-| Secret                     | Description                           |
-| -------------------------- | ------------------------------------- |
-| `DATABASE_URL`             | Production database connection string |
-| `RAZORPAY_KEY_ID`          | RazorpayX API key ID                  |
-| `RAZORPAY_KEY_SECRET`      | RazorpayX API secret                  |
-| `RAZORPAYX_ACCOUNT_NUMBER` | RazorpayX account number              |
-| `STRIPE_SECRET_KEY`        | Stripe secret key                     |
-| `PAYOUT_CRON_SECRET`       | Secret for cron job auth              |
+### Changing a schedule
 
-### Workflow Schedules
-
-Located in `.github/workflows/`:
-
-| Workflow         | File                      | Schedule (UTC)       | Schedule (IST)        |
-| ---------------- | ------------------------- | -------------------- | --------------------- |
-| Release Earnings | `release-earnings.yml`    | `0 * * * *` (hourly) | Every hour            |
-| Create Batch     | `create-payout-batch.yml` | `0 20 * * 1`         | Tuesday 1:30 AM (IST) |
-| Process Payouts  | `process-payouts.yml`     | `0 21 * * 1`         | Tuesday 2:30 AM (IST) |
-
-> IST is UTC+5:30. Monday 8 PM / 9 PM UTC = Tuesday 1:30 AM / 2:30 AM IST. Both jobs belong to the Monday payout cycle (the GH workflow is named after the cycle, not the calendar day it fires in IST).
-
-### Modifying Schedules
-
-Edit the cron expression in workflow files:
-
-```yaml
-on:
-  schedule:
-    - cron: "0 20 * * 1" # Monday 8PM UTC = Tuesday 1:30 AM IST
-  workflow_dispatch: # Allow manual trigger
-```
-
-**Cron Format:** `minute hour day month weekday`
+Edit `TARGET_EVERY_MINUTES`, `TARGET_OFFSET_MINUTES` and `TARGET_WINDOWS` in `netlify/functions/cron-tick.mts`. A tick may fire at most `MAX_TARGETS_PER_TICK` targets, and the cadence test pins that.
 
 ---
 
@@ -237,9 +212,7 @@ Added to `package.json`:
 ```json
 {
   "scripts": {
-    "scripts:release-earnings": "npx tsx scripts/release-earnings.ts",
-    "scripts:create-payout-batch": "npx tsx scripts/create-payout-batch.ts",
-    "scripts:process-payouts": "npx tsx jobs/payouts/process-payouts.ts"
+    "scripts:release-earnings": "npx tsx scripts/earnings/release-earnings.ts"
   }
 }
 ```
@@ -249,14 +222,9 @@ Added to `package.json`:
 ```bash
 # Release earnings from hold
 npm run scripts:release-earnings
-
-# Create weekly batch
-npm run scripts:create-payout-batch
-
-# Process approved payouts (drives lib/payments/payouts — the
-# standalone scripts/payouts copy was deleted in #850)
-npm run scripts:process-payouts
 ```
+
+To run the batch or the disbursement on demand, use System Jobs "Run now" in the back office, or `POST /api/admin/payouts` (batch) and `POST /api/admin/payouts/process`. Each is an admin money door (ADMIN, step-up, reason).
 
 ---
 
@@ -344,16 +312,16 @@ Configure in workflow files:
 
 ### Common Issues
 
-| Issue                  | Cause              | Solution                     |
-| ---------------------- | ------------------ | ---------------------------- |
-| Payouts not processing | Missing API keys   | Check environment variables  |
-| Webhook not received   | Wrong endpoint URL | Verify webhook configuration |
-| Earnings not releasing | Cron not running   | Check GitHub Actions status  |
-| Bank transfer failed   | Invalid IFSC       | Verify account details       |
+| Issue                  | Cause              | Solution                                       |
+| ---------------------- | ------------------ | ---------------------------------------------- |
+| Payouts not processing | Missing API keys   | Check environment variables                    |
+| Webhook not received   | Wrong endpoint URL | Verify webhook configuration                   |
+| Earnings not releasing | Ticker not running | Check the Netlify function log for `cron-tick` |
+| Bank transfer failed   | Invalid IFSC       | Verify account details                         |
 
 ### Debug Steps
 
-1. **Check cron jobs**: Go to GitHub Actions → Scheduled runs
+1. **Check cron jobs**: open the `cron-tick` function log on Netlify, or System Jobs in the back office
 2. **Verify webhooks**: Check Stripe/Razorpay webhook logs
 3. **Database state**: Query earnings/payouts tables
 4. **API logs**: Check Vercel/server logs

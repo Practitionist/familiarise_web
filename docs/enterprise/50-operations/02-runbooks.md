@@ -164,7 +164,7 @@ These cron jobs keep the outbound webhook queue drained, heal stuck inbound even
 | `cleanup-abandoned-org-top-ups` | `jobs/cleanup/cleanup-abandoned-org-top-ups.ts` | `0 2 * * *`                        | Reaps never-completed org wallet top-up intents past the grace window.                                                                                                                                                                                                                                                                                                                                                |
 | `cascade-refund-earnings`       | `jobs/refunds/cascade-refund-earnings.ts`       | `*/15 * * * *`                     | Idempotent refund→earnings cascade (`mintRefundCreditNote`; `Refund.cascadedAt` gate).                                                                                                                                                                                                                                                                                                                                |
 | `reconcile-pending-refunds`     | `jobs/refunds/reconcile-pending-refunds.ts`     | `*/15 * * * *`                     | Reconciles PENDING refunds against the gateway; notifies on failed refunds (no more silent stuck money).                                                                                                                                                                                                                                                                                                              |
-| `reconcile-ledgers`             | `jobs/reconcile/reconcile-ledgers.ts`           | `45 3 * * *`                       | Nightly money-integrity audit. Exit 2 + `RECONCILE`/ERROR `SystemEvent` on discrepancies, exit 1 + `recordSystemError` on crash. See _🚨 Ledger reconciler flagged discrepancies_.                                                                                                                                                                                                                                    |
+| `reconcile-ledgers`             | `scripts/reconcile/reconcile-ledgers.ts`        | Ticker, `03:55` daily              | Nightly money-integrity audit, run by the Netlify ticker through `/api/cleanup/reconcile-ledgers`. Answers `207` + `RECONCILE`/ERROR `SystemEvent` on discrepancies and `500` on failure. See _🚨 Ledger reconciler flagged discrepancies_.                                                                                                                                                                           |
 | `reconcile-document-storage`    | `jobs/cleanup/reconcile-document-storage.ts`    | `0 2 * * *`                        | Reconciles `OrganizationDocument` rows against object storage (orphaned + missing files).                                                                                                                                                                                                                                                                                                                             |
 
 ### Payouts & earnings
@@ -175,8 +175,8 @@ These jobs assemble and submit the weekly payout batch, reconcile in-flight tran
 | -------------------------------- | ------------------------------------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `create-payout-batch`            | `jobs/payouts/create-payout-batch.ts`            | `0 20 * * 1` (Mon)    | Assembles the weekly payout batch.                                                                                                                                       |
 | `process-payouts`                | `jobs/payouts/process-payouts.ts`                | `0 21 * * 1` (Mon)    | Submits batch to gateway — **gated by `ENABLE_LIVE_PAYOUTS`** (off ⇒ rows freeze at PROCESSING). See [`live-payout-go-live-runbook`](05-live-payout-go-live-runbook.md). |
-| `handle-stuck-payouts`           | `jobs/payouts/handle-stuck-payouts.ts`           | `0 */4 * * *`         | Reconciles/retries/fails PROCESSING payouts with no terminal webhook. Emits `PAYOUT` `SystemEvent` (+ `recordSystemError` on permanent failure → Better Stack).          |
-| `reconcile-payout-status`        | `jobs/payouts/reconcile-payout-status.ts`        | `0 */6 * * *`         | Pulls gateway truth for in-flight payouts.                                                                                                                               |
+| `handle-stuck-payouts`           | `scripts/payouts/handle-stuck-payouts.ts`        | ticker, even `:40`    | Reconciles/retries/fails PROCESSING payouts with no terminal webhook. Emits `PAYOUT` `SystemEvent` (+ `recordSystemError` on permanent failure → Better Stack).          |
+| `reconcile-payout-status`        | `scripts/payouts/reconcile-payout-status.ts`     | ticker, odd `:40`     | Pulls gateway truth for in-flight payouts.                                                                                                                               |
 | `release-earnings`               | `jobs/earnings/release-earnings.ts`              | `0 * * * *` (hourly)  | PENDING → READY when `holdUntil` lapses.                                                                                                                                 |
 | `release-pending-trust-earnings` | `jobs/cleanup/release-pending-trust-earnings.ts` | `30 * * * *` (hourly) | Invoice-fraud trust gate: PENDING_TRUST → PENDING once the org is ACTIVE or has paid an invoice (#687). Disjoint rows from `release-earnings`.                           |
 | `sync-payment-earnings`          | `jobs/earnings/sync-payment-earnings.ts`         | `0 * * * *` (hourly)  | Backfills earnings rows from succeeded payments.                                                                                                                         |
@@ -196,7 +196,7 @@ Regulatory jobs in this group handle e-invoice IRN generation, DPDP breach-deadl
 
 ### Non-enterprise crons (for completeness)
 
-Disputes (`alert-dispute-deadlines` hourly, `reconcile-disputes` every 6h), appointments, waitlist, Stream recording
+Disputes (`reconcile-disputes` hourly on the Netlify ticker; deadline alerts inside `support-sla-sweep` every 30 minutes, which bells and emails admins at T-72h/T-24h and pages once for disputes due within 12 h or past due), appointments, waitlist, Stream recording
 retention (`expire-recordings`, `transfer-recordings`), discount expiry, and the auth-token /
 empty-folder / tentative-slot cleanups all live under the same
 `.github/workflows` + `jobs/**` convention but are outside the
@@ -264,13 +264,14 @@ Subscriptions keep billing but the local `BillingSubscription` state lags.
 
 ## 🚨 Ledger reconciler flagged discrepancies
 
-**Symptoms:** Nightly `reconcile-ledgers` cron (see
-`.github/workflows/reconcile-ledgers.yml`) exits with code `2`, or the
+**Symptoms:** The nightly `reconcile-ledgers` run (the Netlify ticker's
+03:55 UTC call to `/api/cleanup/reconcile-ledgers`) answers `207`, a
+`RECONCILE` `SystemEvent` or Sentry page appears, or the
 admin dashboard shows a `LedgerReconciliationReport` with `ok=false`.
 
 **Impact:** A money-journal or usage-ledger invariant (see
-`ledger-and-postings`) is not holding. A `LedgerTransaction` may be
-unbalanced, the `BillingAccount.walletBalance` cache may have drifted from
+`ledger-and-postings`) is not holding. A `LedgerTransaction` is never
+unbalanced (Postgres rejects it at COMMIT), but the `BillingAccount.walletBalance` cache may have drifted from
 the WALLET account, or an aggregate (earnings / seats / org-payout) no
 longer matches its journal postings.
 
@@ -282,28 +283,21 @@ longer matches its journal postings.
      -H "Authorization: Bearer $PRIVILEGED_TOKEN" | jq .
    ```
 2. Each `finding.kind` maps to a known invariant (codes defined in
-   `scripts/reconcile/reconcile-ledgers.ts`; same set in the
-   `jobs/reconcile/reconcile-ledgers.ts` cron entry point):
+   `scripts/reconcile/reconcile-ledgers.ts`):
    - `WALLET_BALANCE_DRIFT` — `BillingAccount.walletBalance` cache
      disagrees with the signed balance of the org's WALLET
-     `LedgerAccount` (`ledgerBalancePaise`). The nightly cron fails
+     `LedgerAccount` (`ledgerBalancePaise`). The nightly run fails
      closed on this finding (#837): it freezes that `BillingAccount`'s
      discretionary wallet spend (a `WALLET_FREEZE` `SystemEvent`) and
      pages P0, so no further checkout debits draw down an untrusted
      balance until an operator reconciles the drift and clears the
      freeze with a `WALLET_UNFREEZE`. Top-up credits are not gated.
-   - `LEDGER_TXN_IMBALANCE` — a `LedgerTransaction` has
-     `Σ DEBIT ≠ Σ CREDIT` across its `LedgerEntry` rows. Should be
-     impossible (`postLedgerTxn` rejects unbalanced postings) — a hit
-     means a row was hand-edited or partially written.
    - `EARNINGS_LEDGER_DRIFT` — `OrganizationEarnings` aggregates
      disagree with the `CONSULTANT_PAYABLE`/`ORG_PAYABLE` journal legs.
    - `PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT` — `ProgramAssignment`
      engagement counters disagree with the `UsageLedgerEntry` rows.
    - `ACTIVE_SEAT_COUNT_DRIFT` — cached active-seat count disagrees
      with live `ProgramAssignment` membership.
-   - `PAYMENT_LEG_SUM_MISMATCH` — a `Payment`'s amount disagrees with
-     the sum of its attributed journal legs.
    - `ORG_PAYOUT_TOTAL_MISMATCH` — an `OrganizationPayout` total
      disagrees with its `ORG_PAYABLE`/`PAYOUT` postings.
 3. For each finding, identify the root cause — nearly always a
@@ -312,6 +306,33 @@ longer matches its journal postings.
 4. Once reconciled, trigger a fresh audit via `POST` to the admin
    endpoint with `{ organizationId }` scoped to the affected org and
    confirm `ok=true`.
+
+**Known findings are baselined, not hidden.** The auditor splits its
+findings against the checked-in baseline
+(`scripts/reconcile/ledger-findings-baseline.ts`), so a report can be
+`ok=false` while carrying findings that were already known. Read
+`summary` before reading `findings`:
+
+- `summary.unbaselinedCount` — the findings that are **not** covered by
+  the baseline. These are the ones to triage.
+- `summary.baselinedCount` — findings the baseline excuses. They are
+  still in `findings` and still in `summary.discrepanciesCount`; a
+  baselined finding never hides evidence.
+- `summary.baselineProblems` — the baseline file is malformed (a missing
+  owner, reason or expiry, an unparseable date, or a finding kind the
+  auditor cannot raise). A malformed entry excuses nothing for itself, the
+  valid entries beside it are still evaluated, and any problem fails the run
+  anyway — so fix the file in
+  `scripts/reconcile/ledger-findings-baseline.ts` rather than the money.
+
+A baseline entry only excuses the exact finding it pins: the kind, the
+delta, the complete set of entity ids the finding carries — the entry must
+name the same ids, and a finding that carries an id the entry does not pin
+is not excused — and, where the entry names one, the `details` key and
+value. The entry stops excusing that finding after its `expires` date. A
+finding that reappears with a different amount, on a different row, with an
+extra identifier, or after the entry expired is unbaselined and fails the
+run again.
 
 **Correcting drift:** the journal is append-only. Never edit or delete a
 `LedgerTransaction`/`LedgerEntry` row to "fix" a finding — post a

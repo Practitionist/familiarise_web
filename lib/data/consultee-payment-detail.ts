@@ -9,7 +9,7 @@
  * page binds the profile to the session first (requirePersonalProfileAccess).
  */
 
-import type { Prisma } from "@prisma/client";
+import type { PaymentLegSource, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import {
   deriveBookingPresentation,
@@ -65,7 +65,7 @@ export interface ConsulteePaymentDetail {
   invoicePdfHref: string | null;
   creditNotes: { id: string; number: string; issuedAt: Date; href: string }[];
   /** What each funding rail carried, in the payer's words. */
-  legs: { source: string; amountPaise: number }[];
+  legs: { source: PaymentLegSource; amountPaise: number }[];
   coPays: { id: string; amountPaise: number; currency: string }[];
 }
 

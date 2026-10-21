@@ -16,8 +16,9 @@
  *
  * Bucket: `org-invoices` (private, and self-provisioning — see
  * `ensurePrivateFinanceBucket`). It holds the org invoice PDFs under
- * `<orgId>/<invoiceId>.pdf` and the quarterly TDS return CSVs under
- * `compliance/tds/`.
+ * `<orgId>/<invoiceId>.pdf`, the quarterly TDS return CSVs under
+ * `compliance/tds/` and the monthly GST outward register CSVs under
+ * `compliance/gst/`.
  */
 
 import { supabaseAdmin } from "@/lib/supabase-storage-core";

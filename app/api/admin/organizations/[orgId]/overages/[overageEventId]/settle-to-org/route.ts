@@ -8,6 +8,7 @@
  */
 
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
+import { overageSettlementPaise } from "@/lib/backoffice/ops-proposal-amounts";
 import { settleFailedMemberOverageAsOrg } from "@/lib/payments/billing/overage-settlement";
 
 export const POST = withOpsAction(
@@ -33,5 +34,17 @@ export const POST = withOpsAction(
       };
     },
   },
-  { stepUp: true },
+  {
+    stepUp: true,
+    secondApprover: {
+      route:
+        "/api/admin/organizations/[orgId]/overages/[overageEventId]/settle-to-org",
+      target: ({ params }) => ({
+        kind: "OverageEvent",
+        id: params.overageEventId,
+      }),
+      amountPaise: (_body, { params }) =>
+        overageSettlementPaise(params.orgId, params.overageEventId),
+    },
+  },
 );

@@ -4,15 +4,18 @@
  * Every five minutes this POSTs the `/api/cleanup/*` routes listed in
  * {@link TARGETS}: the money sweeps, the Novu and email outbox relays, the
  * booking sweeps, the session-outcome jobs, the drains, hourly payout
- * processing, and the money batch jobs inside their calendar windows
- * ({@link TARGET_WINDOWS}). GitHub Actions runs only the ledger reconcile, the
- * statutory exports and non-money batch jobs, and is NOT a backstop for a
- * ticker target: a target missing here runs nowhere unless a workflow names it.
+ * processing, the dispute and payout reconcilers, and the money batch jobs,
+ * the daily ledger reconcile, the GST register and the quarterly TDS draft
+ * inside their calendar windows ({@link TARGET_WINDOWS}). GitHub Actions runs
+ * only non-money batch jobs and is NOT a backstop for a ticker target: a
+ * target missing here runs nowhere unless a workflow names it.
+ * A tick first reads the fleet switch `ops:active_cron_platform` and skips every
+ * target unless this host is the active one ({@link otherActivePlatform}).
  * It never writes money state itself: every target is `CRON_SECRET`-gated and
  * wraps its core in `withCronLock`, so overlapping runs answer 409 from the
  * loser — expected, not an error.
  *
- * Deliberately dependency-free: no `@netlify/functions` import, only
+ * Deliberately light: no `@netlify/functions` import, only `zod`,
  * `process.env` and the global `fetch`/`AbortController` the Netlify
  * Functions runtime already provides. `@sentry/node` and the shared error
  * budget are imported lazily, only for the missing-secret fatal and for
@@ -20,6 +23,8 @@
  *
  * The tick always answers 200; see {@link statusFor} for why.
  */
+
+import { z } from "zod";
 
 export const config = { schedule: "*/5 * * * *" };
 
@@ -70,6 +75,9 @@ const TARGETS = [
   // posts a real stored event, so cadence is a line item on the 5,000/month
   // allowance (6 h = 120/month). See TARGET_EVERY_MINUTES and 06-ingest-canary.md.
   "sentry-ingest-canary",
+  // Payout reconcilers: bounded, rotating on lastReconciledAt; alternate hours at :40.
+  "handle-stuck-payouts",
+  "reconcile-payout-status",
   // Drains OrgDataExportJob (DPDP data export); every 10 minutes.
   "process-data-exports",
   // Drains StreamRevocationRetry and the VendorErasureRetry outbox (DPDP erasure); every 30 minutes.
@@ -80,10 +88,13 @@ const TARGETS = [
   "support-sla-sweep",
   // Disburses APPROVED consultant and org payouts hourly; still gated on ENABLE_LIVE_PAYOUTS.
   "process-payouts",
+  // Polls Razorpay for open disputes whose webhook was missed; hourly at :00.
+  "reconcile-disputes",
   // Money batch jobs: each fires only inside its TARGET_WINDOWS entry.
   "create-payout-batch",
   "settle-invoice-accruals",
   "expire-referral-credits",
+  "gst-outward-register-export",
   "generate-subscription-invoices",
   "abandoned-org-top-ups",
   "advance-program-cycles",
@@ -96,6 +107,8 @@ const TARGETS = [
   "dunning",
   "wallet-low-balance",
   "reconcile-gateway-settlements",
+  "reconcile-ledgers",
+  "tds-return-draft",
 ] as const;
 
 type Target = (typeof TARGETS)[number];
@@ -158,9 +171,15 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "support-sla-sweep": 20,
   // Units per rail: a gateway call per disbursement, a transaction per minted payout.
   "process-payouts": 5,
+  // Per payout model: up to two RazorpayX calls each.
+  "handle-stuck-payouts": 5,
+  // Per cohort, three cohorts: one RazorpayX GET each.
+  "reconcile-payout-status": 8,
   "create-payout-batch": 10,
   "settle-invoice-accruals": 10,
   "expire-referral-credits": 50,
+  // Invoice-healer mints per slice; the register upload and stamp run every slice.
+  "gst-outward-register-export": 25,
   "generate-subscription-invoices": 10,
   "abandoned-org-top-ups": 200,
   "advance-program-cycles": 25,
@@ -175,6 +194,12 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "wallet-low-balance": 25,
   // One recon page per slice; the route takes no limit.
   "reconcile-gateway-settlements": null,
+  // One to two gateway round trips per dispute; ten fit the 20 s budget.
+  "reconcile-disputes": 10,
+  // Set-based SQL audit of the whole ledger; the route takes no limit.
+  "reconcile-ledgers": null,
+  // One read of the closed quarter and one upload; the route takes no limit.
+  "tds-return-draft": null,
 };
 
 /**
@@ -222,9 +247,12 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "vest-referral-credits": 30,
   "support-sla-sweep": 30,
   "process-payouts": 60,
+  "handle-stuck-payouts": 120,
+  "reconcile-payout-status": 120,
   "create-payout-batch": 15,
   "settle-invoice-accruals": 60,
   "expire-referral-credits": 60,
+  "gst-outward-register-export": 60,
   "generate-subscription-invoices": 60,
   "abandoned-org-top-ups": 60,
   "advance-program-cycles": 60,
@@ -237,25 +265,28 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   dunning: 60,
   "wallet-low-balance": 60,
   "reconcile-gateway-settlements": 60,
+  "reconcile-disputes": 60,
+  "reconcile-ledgers": 60,
+  "tds-return-draft": 60,
 };
 
 /**
  * Deterministic phase offsets (in minutes, modulo each target's interval).
- * Interval targets fill 95 of the 96 slots an hour under 8 per tick; the one
- * free slot (:00) takes process-payouts, and windowed targets sit on non-:00
- * minutes with at most one per tick, so no tick fires more than
- * {@link MAX_TARGETS_PER_TICK}.
+ * Interval targets already fill every tick to 8 or 9, so each addition is
+ * placed on a minute whose worst-case tick (month start, Monday, quarter start)
+ * still has room; the cadence test pins {@link MAX_TARGETS_PER_TICK}.
  */
 export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
-  // Phase 0 (:00, :15, :30, :45) — 6 targets + sentry-ingest-canary (00:00, 06:00, 12:00, 18:00 UTC)
+  // Phase 0 (:00, :15, :30, :45) — 6 targets; process-payouts and reconcile-disputes also fire at :00 every hour
   "sweep-stuck-webhook-events": 0,
   "sweep-orphaned-topup-captures": 0,
   "dispatch-outbound-webhooks": 0,
   "retry-failed-emails": 0,
   "sync-payment-earnings": 0,
-  "sentry-ingest-canary": 0,
   // #1859 M-P0-14 — read-only orphan scan rides phase 0 so no tick exceeds 8.
   "alert-orphaned-payments": 0,
+  // The canary sits at :50 (00:50, 06:50, 12:50, 18:50 UTC) so :00 stays free for the hourly dispute poll.
+  "sentry-ingest-canary": 50,
   // Phase 5 (:05, :20, :35, :50) — 6 targets + drain-notification-outbox (:05, :15, :25, :35, :45, :55)
   "release-earnings": 5,
   "reconcile-refunds": 5,
@@ -281,6 +312,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "vest-referral-credits": 5,
   "support-sla-sweep": 10,
   "process-payouts": 0,
+  "reconcile-disputes": 0,
   "create-payout-batch": 5,
   // Daily 03:00 window, in the order the Actions fleet ran them.
   "generate-subscription-invoices": 5,
@@ -290,16 +322,24 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "irp-uploader": 25,
   "sweep-abandoned-overage-charges": 30,
   "expire-contracts": 35,
-  "msme-payment-alerts": 40,
+  "msme-payment-alerts": 45,
   // Monthly windows on the 1st, on minutes the daily window leaves free.
   "settle-invoice-accruals": 45,
   "expire-referral-credits": 50,
+  // Monthly window on the 2nd, after the 1st's rollups.
+  "gst-outward-register-export": 45,
+  // :40 is held by no window, so the two payout reconcilers alternate on it every hour.
+  "handle-stuck-payouts": 40,
+  "reconcile-payout-status": 100,
   // Daily 23:30 window.
   "timeout-member-overages": 35,
-  dunning: 40,
+  dunning: 10,
   "wallet-low-balance": 45,
   // Daily 06:30 window, on the one minute no other window uses.
   "reconcile-gateway-settlements": 55,
+  // :55 is free of every window except the 06:30 settlement window; these two windows are disjoint from it.
+  "reconcile-ledgers": 55,
+  "tds-return-draft": 55,
 };
 
 /** The most targets one tick may fire; pinned by the cadence test. */
@@ -307,14 +347,16 @@ export const MAX_TARGETS_PER_TICK = 9;
 
 /**
  * A UTC calendar window. Inside it the target fires on its every/offset slots;
- * outside it never. `weekdayUtc` (0 = Sunday) or `dayOfMonthUtc` is checked
- * against the window's start, so a window may run past midnight.
+ * outside it never. `weekdayUtc` (0 = Sunday), `dayOfMonthUtc` and `monthsUtc`
+ * (1 = January) are checked against the window's start, so a window may run
+ * past midnight.
  */
 interface CalendarWindow {
   startMinuteUtc: number;
   windowMinutes: number;
   weekdayUtc?: number;
   dayOfMonthUtc?: number;
+  monthsUtc?: readonly number[];
 }
 
 // Runs to 20:00 so seventeen hourly slices drain the day's cohort before the Monday payout window opens.
@@ -338,6 +380,12 @@ const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
     startMinuteUtc: 190,
     windowMinutes: 180,
   },
+  // Nineteen hourly slices (04:45-22:45); each re-uploads the same period CSV, so a repeat is harmless.
+  "gst-outward-register-export": {
+    dayOfMonthUtc: 2,
+    startMinuteUtc: 240,
+    windowMinutes: 1140,
+  },
   "generate-subscription-invoices": DAILY_0300,
   "abandoned-org-top-ups": DAILY_0300,
   "advance-program-cycles": DAILY_0300,
@@ -352,6 +400,15 @@ const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
   "wallet-low-balance": DAILY_2330,
   // After Razorpay's T+1/T+2 settlements land; six hourly slices of one recon page each.
   "reconcile-gateway-settlements": { startMinuteUtc: 390, windowMinutes: 360 },
+  // One slot (03:55): the audit writes a report row per run, so it must not repeat.
+  "reconcile-ledgers": { startMinuteUtc: 180, windowMinutes: 60 },
+  // The 5th of Jan/Apr/Jul/Oct, two slots (01:55, 02:55); the export overwrites one private CSV, so a repeat is harmless.
+  "tds-return-draft": {
+    dayOfMonthUtc: 5,
+    monthsUtc: [1, 4, 7, 10],
+    startMinuteUtc: 60,
+    windowMinutes: 120,
+  },
 };
 
 /**
@@ -377,6 +434,9 @@ export function windowStartFor(name: Target, now: Date): Date | null {
     return null;
   }
   if (w.dayOfMonthUtc !== undefined && start.getUTCDate() !== w.dayOfMonthUtc) {
+    return null;
+  }
+  if (w.monthsUtc && !w.monthsUtc.includes(start.getUTCMonth() + 1)) {
     return null;
   }
   return start;
@@ -425,6 +485,9 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "process-data-exports": 20_000,
   "retry-moderation-enforcement": 20_000,
   "process-payouts": 24_000,
+  "handle-stuck-payouts": 24_000,
+  "reconcile-payout-status": 24_000,
+  "gst-outward-register-export": 24_000,
   "create-payout-batch": 20_000,
   "settle-invoice-accruals": 20_000,
   "expire-referral-credits": 20_000,
@@ -439,6 +502,9 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   dunning: 20_000,
   "wallet-low-balance": 20_000,
   "reconcile-gateway-settlements": 20_000,
+  "reconcile-disputes": 20_000,
+  "reconcile-ledgers": 20_000,
+  "tds-return-draft": 20_000,
 };
 
 /**
@@ -590,6 +656,8 @@ async function hitTarget(
 /** Targets whose 207 means some rows failed; every other target's 207 is a successful run that flagged rows. */
 const PARTIAL_FAILURE_TARGETS: ReadonlySet<string> = new Set([
   "process-payouts",
+  // A 207 here is a captured top-up still not credited to its wallet.
+  "sweep-orphaned-topup-captures",
   ...Object.keys(TARGET_WINDOWS),
 ]);
 
@@ -692,7 +760,7 @@ export function isFirstDueTickOfHour(name: string, now: Date): boolean {
   const first =
     every === undefined
       ? 0
-      : (((OFFSET_BY_NAME[name] ?? 0) % every) + every) % every;
+      : ((((OFFSET_BY_NAME[name] ?? 0) % every) + every) % every) % 60;
   const sinceFirst = now.getUTCMinutes() - first;
   return sinceFirst >= 0 && sinceFirst < 5;
 }
@@ -820,7 +888,59 @@ async function sendCheckIn(
   }
 }
 
+const ACTIVE_PLATFORM_KEY = "ops:active_cron_platform";
+const THIS_PLATFORM = "netlify";
+const ACTIVE_PLATFORM_TIMEOUT_MS = 1_000;
+const activePlatformReply = z.object({ result: z.string().nullable() });
+
+/**
+ * The platform that owns the fleet when it is not this one, else null. One
+ * Upstash REST GET per tick; an absent key, missing credentials, a timeout, an
+ * error or an unreadable reply all mean "run", because Netlify is the active
+ * host unless the key says otherwise.
+ */
+export async function otherActivePlatform(
+  env: Record<string, string | undefined> = process.env,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string | null> {
+  const token = env.UPSTASH_REDIS_REST_TOKEN;
+  let base = env.UPSTASH_REDIS_REST_URL ?? "";
+  while (base.endsWith("/")) base = base.slice(0, -1);
+  if (!base || !token) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(),
+    ACTIVE_PLATFORM_TIMEOUT_MS,
+  );
+  try {
+    const res = await fetchImpl(
+      `${base}/get/${encodeURIComponent(ACTIVE_PLATFORM_KEY)}`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      },
+    );
+    if (!res.ok) return null;
+    const parsed = activePlatformReply.safeParse(await res.json());
+    if (!parsed.success) return null;
+    const platform = parsed.data.result;
+    return platform === null || platform === THIS_PLATFORM ? null : platform;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export default async function cronTick(_req: Request): Promise<Response> {
+  const otherPlatform = await otherActivePlatform();
+  if (otherPlatform !== null) {
+    console.log(
+      JSON.stringify({ event: "cron-tick", skipped: true, otherPlatform }),
+    );
+    return jsonResponse({ skipped: true, otherPlatform }, 200);
+  }
+
   const secret = process.env.CRON_SECRET;
   if (!secret) {
     const error =

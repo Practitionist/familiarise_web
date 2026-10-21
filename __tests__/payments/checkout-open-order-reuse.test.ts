@@ -336,6 +336,7 @@ function checkoutInput(overrides: Record<string, unknown> = {}) {
     eventId: "evt-1",
     paymentGateway: "RAZORPAY",
     clientIdempotencyKey: "remount-tab-key-0002",
+    consumerStateCode: "29",
     ...overrides,
   } as unknown as Parameters<typeof handleCheckout>[0];
 }
@@ -387,7 +388,7 @@ beforeEach(() => {
 function userRow() {
   return {
     id: "user-1",
-    consulteeProfile: { id: "cprof-1" },
+    consulteeProfile: { id: "cprof-1", billingStateCode: "29" },
     consultantProfile: null,
   };
 }
@@ -533,6 +534,36 @@ describe("readInvoiceExposurePaise nets accrual reversals", () => {
 
     // Only the un-reversed overage accrual and the unpaid invoice remain.
     expect(exposure).toBe(35_000);
+  });
+
+  it("a partial reversal leaves the rest of the accrual counting", async () => {
+    const legs = [
+      { source: "INVOICE_ACCRUAL", amountPaise: 100_000 },
+      { source: "INVOICE_ACCRUAL_REVERSAL", amountPaise: -30_000 },
+    ];
+    const db = {
+      paymentLeg: {
+        aggregate: jest.fn(
+          async ({ where }: { where: { source: { in: string[] } } }) => ({
+            _sum: {
+              amountPaise: legs
+                .filter((l) => where.source.in.includes(l.source))
+                .reduce((s, l) => s + l.amountPaise, 0),
+            },
+          }),
+        ),
+      },
+      organizationInvoice: {
+        aggregate: jest.fn(async () => ({ _sum: { totalPaise: 0 } })),
+      },
+    };
+
+    const exposure = await readInvoiceExposurePaise(
+      db as unknown as Parameters<typeof readInvoiceExposurePaise>[0],
+      "org-1",
+    );
+
+    expect(exposure).toBe(70_000);
   });
 
   // #1744 row 4 — the booking itself counts, and the copy is in rupees.

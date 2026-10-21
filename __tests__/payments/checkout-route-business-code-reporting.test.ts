@@ -73,6 +73,7 @@ jest.mock("../../lib/prisma", () => ({
 
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
+import { ZodError } from "zod";
 
 import { POST } from "../../app/api/checkout/route";
 import { getErrorToast } from "../../lib/errors/mapping/payment-error-toast-map";
@@ -324,5 +325,25 @@ describe("a same-key P2002 out of handleCheckout replays the winner", () => {
     for (const call of (replayByIdempotencyKey as jest.Mock).mock.calls) {
       expect(call).toEqual(["user_1", KEY]);
     }
+  });
+});
+
+it("a schema refusal out of handleCheckout answers 400 naming the field", async () => {
+  handleCheckout.mockRejectedValue(
+    new ZodError([
+      {
+        code: "invalid_type",
+        expected: "string",
+        received: "undefined",
+        path: ["consumerStateCode"],
+        message: "Select your billing state.",
+      },
+    ]),
+  );
+  const res = await POST(checkoutRequest());
+  expect(res.status).toBe(400);
+  expect(await res.json()).toMatchObject({
+    error: "Select your billing state.",
+    field: "consumerStateCode",
   });
 });

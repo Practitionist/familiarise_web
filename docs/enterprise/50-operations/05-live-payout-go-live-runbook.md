@@ -66,13 +66,15 @@ is real money on the first run — so the prerequisites below are hard gates.
       and the same page takes the PAN and entity type that Section 194-O
       withholding reads. Neither validation runs in RazorpayX test mode, so a
       consultant verified on a preview is a consultant verified by hand.
+- [ ] Every payable consultant has a verified PAN (admin Verify PAN door);
+      unverified PANs withhold at the no-PAN rate.
 - [ ] **TDS + MSME fields populated** on the payouts (`tdsAmountPaise`,
       `mustPayByDate` — both payout paths stamp these as of #776).
 - [ ] **Idempotency keys present** (`payout_<profile>_<batch>`, NOT NULL) so a
       retry can never double-pay.
 - [ ] **Sandbox proof done** (next section) — green.
-- [ ] **Reconcile clean**: `reconcile-ledgers` reports `ok:true`, 0 findings
-      (incl. `ORG_PAYOUT_TOTAL_MISMATCH`).
+- [ ] **Reconcile clean**: `reconcile-ledgers` reports `ok:true` with no
+      unbaselined findings (incl. `ORG_PAYOUT_TOTAL_MISMATCH`).
 - [ ] **Monitoring live**: `ENABLE_BETTERSTACK_TELEMETRY=true` so a stuck/failed
       payout pages someone (#776 §K — `handle-stuck-payouts` emits to the sink).
 - [ ] **Rollback understood** (final section).
@@ -160,7 +162,7 @@ step for the ones that need real sandbox creds):
    nobody has approved stays out of the run on its own). Watch it go
    `PROCESSING → COMPLETED` and confirm the `payout.processed` webhook +
    `notifyOrgPayoutCompleted`.
-5. Reconcile (`reconcile-ledgers`) — expect 0 findings.
+5. Reconcile (`reconcile-ledgers`) — expect no unbaselined findings.
 6. Release the held payouts.
 
 ## Rollback
@@ -169,7 +171,7 @@ step for the ones that need real sandbox creds):
   in `PROCESSING` that were already submitted continue to settle via webhook
   (you can't un-send a transfer — that's a clawback, see §C reversal engine).
 - A stuck `PROCESSING` row (submitted, no terminal webhook) is handled by
-  `jobs/payouts/handle-stuck-payouts` (reconcile against the gateway, retry, or
+  `handle-stuck-payouts` (reconcile against the gateway, retry, or
   fail). It now emits to the telemetry sink on permanent failure.
 - A wrong disbursement is recovered via the reversal engine's `PAYOUT_CLAWBACK`
   source (`lib/payments/operations/reversal-engine.ts`) — ledger clawback is

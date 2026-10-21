@@ -135,11 +135,9 @@ export async function GET(
       prisma.organizationPayout.count({ where }),
       prisma.organizationPayout.aggregate({
         where: { organizationId: orgId, status: "COMPLETED" },
-        // #1132 follow-up — stats quote the DISBURSED figure (amountPaise =
-        // net after TDS), not netPayoutPaise (pre-TDS org share). Legacy
-        // pre-TDS rows carried amountPaise == netPayoutPaise, so history
-        // doesn't shift.
-        _sum: { amountPaise: true },
+        // Paid out is the DISBURSED figure (amountPaise, after TDS), not
+        // netPayoutPaise (pre-TDS org share); the TDS withheld rides alongside.
+        _sum: { amountPaise: true, tdsAmountPaise: true },
       }),
       prisma.organizationPayout.aggregate({
         where: { organizationId: orgId, status: { in: IN_FLIGHT_STATUSES } },
@@ -176,6 +174,7 @@ export async function GET(
     },
     stats: {
       totalPaidPaise: sumPaise(paidAgg._sum.amountPaise),
+      totalTdsPaise: sumPaise(paidAgg._sum.tdsAmountPaise),
       pendingPaise: sumPaise(pendingAgg._sum.amountPaise),
       counts: { ...counts, total: totalCount },
     },

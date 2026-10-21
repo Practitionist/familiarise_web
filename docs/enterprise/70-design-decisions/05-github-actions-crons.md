@@ -32,14 +32,11 @@ file under `.github/workflows/` with a `schedule:` cron trigger
 fired manually from the Actions tab. A workflow checks out the repo, sets
 up Node, runs `npm ci` and `npx prisma generate`, and then executes the
 job's TypeScript entry point directly with `npx tsx jobs/<area>/<job>.ts`
-— for example `reconcile-ledgers.yml` runs `npx tsx
-jobs/reconcile/reconcile-ledgers.ts`, and `process-payouts.yml` runs `npx
-tsx jobs/payouts/process-payouts.ts`. Database and gateway credentials are
+— for example `cron-daily.yml` runs `tsx
+jobs/cleanup/prune-audit-logs.ts`. Database and gateway credentials are
 injected from repository secrets into the job `env`, and a `Notify on
 failure` step fires on `if: failure()`. Schedules are deliberately
-staggered across the hour (the `reconcile-ledgers` workflow runs at 03:45
-UTC specifically to sit clear of the 03:00 jobs and ahead of the 04:00
-invoice rollup) to keep the Supabase connection pooler from spiking.
+staggered across the hour (the daily workflows are spaced apart for the same reason) to keep the Supabase connection pooler from spiking.
 
 In parallel, the same job logic is exposed as a set of `CRON_SECRET`-gated
 HTTP routes under `app/api/cleanup/**` (and a few siblings). For example
@@ -49,7 +46,7 @@ HTTP routes under `app/api/cleanup/**` (and a few siblings). For example
 These routes exist for manual triggering and for "an alternative cron
 system" (their own docblocks say so); they are the gated HTTP entry point,
 while the GitHub Actions workflows are the production scheduler and invoke
-the job scripts *directly* rather than calling these endpoints over HTTP.
+the job scripts _directly_ rather than calling these endpoints over HTTP.
 Both paths converge on the same underlying functions in `scripts/` and
 `lib/`, so behaviour is identical regardless of entry point.
 
@@ -95,7 +92,7 @@ pager cannot see is a run that never STARTS, which is what
 made a dead-man's switch necessary.
 
 A second consequence is the maintenance of two parallel entry points.
-Because the workflows run `jobs/*.ts` directly and do *not* call the
+Because the workflows run `jobs/*.ts` directly and do _not_ call the
 `CRON_SECRET` HTTP routes, the two surfaces can drift if a fix lands in
 one path's wrapper and not the other; the mitigation is that both delegate
 to the same shared function, so the divergence is confined to the thin
@@ -111,3 +108,10 @@ granularity and cold-start cost become the bottleneck), or if the host
 platform ships a queue/worker tier worth migrating to. The
 schedule-collision pile-ups at `:00` and `:15` are already tracked under a
 follow-up cron-schedule-audit issue.
+
+## Deprecated & Superseded Approaches
+
+This ADR records the original decision. The money jobs no longer follow it. The Netlify five-minute ticker (`netlify/functions/cron-tick.mts`) now runs the money reconcilers and batch jobs through the `CRON_SECRET`-gated twins in `lib/cron/cleanup-registry.ts`, as described in [ADR 27](27-state-as-outbox-and-scheduled-ticker.md). In particular:
+
+- `reconcile-ledgers` runs daily at 03:55 UTC, `reconcile-disputes` hourly at `:00` and `tds-return-draft` on the 5th of January, April, July and October. Their `jobs/**` entry points and workflow steps are deleted; do not re-create them. To run one by hand, `POST /api/cleanup/<job>` with `Authorization: Bearer $CRON_SECRET`, or use the admin system-jobs console.
+- A twin answers `200` when clean, `207` when it found something that needs attention, and `500` on failure. The exit-code convention of a GitHub Actions job process (`0`, `1`, `2`) no longer applies to these jobs.

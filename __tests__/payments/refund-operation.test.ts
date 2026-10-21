@@ -86,9 +86,6 @@ function txStub() {
     ledgerAccount: {
       upsert: jest.fn(async ({ where }: any) => ({ id: where.id })),
     },
-    ledgerAccountBalance: {
-      upsert: jest.fn(async () => ({})),
-    },
     systemEvent: { create: jest.fn(async () => ({})) },
     // Referral-credit restoration now runs inside Phase 3b (it closes the #B20
     // gap where app-initiated refunds restored nothing). None of the fixtures

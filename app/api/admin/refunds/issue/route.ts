@@ -6,6 +6,7 @@ import { assertMoneyOpsBudget } from "@/lib/backoffice/money-limit";
 import {
   assertSessionRefundable,
   ladderOverrideAmount,
+  refundablePaymentPaise,
   refundInFlightOr,
 } from "@/lib/backoffice/refund-doors";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
@@ -97,5 +98,21 @@ export const POST = withOpsAction(
       };
     },
   },
-  { stepUp: true },
+  {
+    stepUp: true,
+    secondApprover: {
+      route: "/api/admin/refunds/issue",
+      target: ({ body }) => ({ kind: "Payment", id: body.paymentId }),
+      // A body naming both runs straight into the door's own refusal.
+      amountPaise: async (body) => {
+        if (body.tierOverridePct === undefined) {
+          return body.amountPaise ?? refundablePaymentPaise(body.paymentId);
+        }
+        if (body.amountPaise !== undefined) return 0;
+        return (
+          await ladderOverrideAmount(body.paymentId, body.tierOverridePct)
+        ).amountPaise;
+      },
+    },
+  },
 );
