@@ -4,10 +4,20 @@ import Link from "next/link";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { MoreHorizontal, PanelRight } from "lucide-react";
+import { z } from "zod";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { ErrorState } from "@/components/dashboard/ErrorState";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -26,10 +36,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 import { caseStatus, ticketPriority } from "@/lib/labels/backoffice-labels";
 import { paymentStatusBadge } from "@/lib/labels/session-labels";
+import { parseCaseKey } from "@/lib/support/case-key";
 import { CASE_TOPIC_LABEL, type CaseTopic } from "@/lib/support/case-topic";
 import { throwSupportError } from "@/lib/support/error-copy";
 import { savedRepliesFor } from "@/lib/support/saved-replies";
 import { slaHint } from "@/lib/support/sla-hint";
+import { supportKeys } from "@/lib/support/support-keys";
+import { formatDateTimeLabel } from "@/lib/time/display";
 import type {
   ArticleLink,
   CaseWorkspace as CaseData,
@@ -44,7 +57,7 @@ const UNASSIGNED = "unassigned";
 const SETTLED = new Set(["RESOLVED", "CLOSED"]);
 const DETAILS_ID = "support-case-details";
 
-// #1527 — Details open/closed is one preference across cases (localStorage).
+// Details open/closed is one preference across cases (localStorage).
 const DETAILS_KEY = "support-details-open";
 const DETAILS_EVENT = "support-details-change";
 
@@ -80,27 +93,26 @@ function useDetailsOpen() {
 }
 
 // Pushes the conversation narrower at >=1440px; below, it overlays the right
-// edge without a backdrop so the conversation stays usable (#1527).
+// edge without a backdrop so the conversation stays usable.
 const DETAILS_PANEL =
   "absolute inset-y-0 right-0 z-20 w-80 max-w-[calc(100%-1rem)] overflow-y-auto rounded-lg border border-border bg-card p-4 shadow-xl " +
   "[@media(min-width:1440px)]:static [@media(min-width:1440px)]:w-72 [@media(min-width:1440px)]:max-w-none [@media(min-width:1440px)]:shrink-0 [@media(min-width:1440px)]:self-start [@media(min-width:1440px)]:shadow-none";
 
-interface Operator {
-  id: string;
-  name: string | null;
-}
+const Operators = z.object({
+  users: z.array(z.object({ id: z.string(), name: z.string().nullable() })),
+});
 
 /** Staff and admins, for the assignee picker (the PATCH re-validates). */
 function useOperators(enabled: boolean) {
   return useQuery({
-    queryKey: ["support-operators"],
+    queryKey: supportKeys.operators(),
     enabled,
     staleTime: 5 * 60_000,
-    queryFn: async (): Promise<Operator[]> => {
+    queryFn: async () => {
       const read = async (role: string) => {
         const res = await fetch(`/api/admin/users?role=${role}`);
         if (!res.ok) return [];
-        return ((await res.json()) as { users: Operator[] }).users;
+        return Operators.parse(await res.json()).users;
       };
       const [staff, admins] = await Promise.all([read("STAFF"), read("ADMIN")]);
       return [...staff, ...admins];
@@ -109,20 +121,85 @@ function useOperators(enabled: boolean) {
 }
 
 const when = (iso: string | null) =>
-  iso
-    ? new Date(iso).toLocaleString(undefined, {
-        day: "numeric",
-        month: "short",
-        hour: "numeric",
-        minute: "2-digit",
-      })
-    : null;
+  iso ? formatDateTimeLabel(new Date(iso)) : null;
+
+/** Nothing is merged server-side, so the customer is only told where the conversation continues. */
+export const duplicateMessage = (reference: string) =>
+  `We'll continue in your other support request ${reference}, so everything stays in one place. This request is now closed.`;
+
+export function DuplicateDialog({
+  duplicates,
+  target,
+  onTargetChange,
+  busy,
+  onConfirm,
+}: Readonly<{
+  duplicates: { id: string; reference: string; title: string }[];
+  target: string | null;
+  onTargetChange: (id: string | null) => void;
+  busy: boolean;
+  onConfirm: (reference: string) => void;
+}>) {
+  const chosen = duplicates.find((d) => d.id === target);
+  return (
+    <AlertDialog
+      open={target !== null}
+      onOpenChange={(open) => {
+        if (!open) onTargetChange(null);
+      }}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Mark as a duplicate?</AlertDialogTitle>
+          <AlertDialogDescription>
+            The customer gets the message below and this case closes. The other
+            request keeps its own history.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <fieldset className="space-y-2 text-sm">
+          <legend className="mb-1 text-xs text-muted-foreground">
+            Continue in
+          </legend>
+          {duplicates.map((d) => (
+            <label key={d.id} className="flex items-start gap-2">
+              <input
+                type="radio"
+                name="duplicate-target"
+                value={d.id}
+                checked={d.id === target}
+                onChange={() => onTargetChange(d.id)}
+                className="mt-1"
+              />
+              <span>
+                <span className="font-medium">{d.reference}</span> · {d.title}
+              </span>
+            </label>
+          ))}
+        </fieldset>
+        {chosen && (
+          <p className="rounded border border-border p-2 text-sm">
+            {duplicateMessage(chosen.reference)}
+          </p>
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <Button
+            disabled={busy || !chosen}
+            onClick={() => {
+              if (chosen) onConfirm(chosen.reference);
+            }}
+          >
+            Send and close
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
 
 /**
- * #1527 — one case: a two-row header, the conversation, and Details on
- * demand (not a modal: no backdrop, no focus trap). Every action goes through
- * the existing ticket and thread routes (useCaseMutations); the header's links
- * only deep-link existing guarded flows, and nothing here moves money.
+ * One case: a two-row header, the conversation, and Details on demand (not a
+ * modal: no backdrop, no focus trap). Header links only deep-link guarded flows.
  */
 export function CaseWorkspace({
   caseKey,
@@ -150,8 +227,9 @@ export function CaseWorkspace({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [detailsOpen, setDetailsOpen]);
+  const caseId = parseCaseKey(caseKey)?.id ?? caseKey;
   const query = useQuery({
-    queryKey: ["support-case", caseKey],
+    queryKey: supportKeys.workspace(caseId),
     queryFn: async (): Promise<CaseData> => {
       const res = await fetch(`/api/staff/support-inbox/${caseKey}`);
       if (!res.ok) await throwSupportError(res, "support case load");
@@ -170,10 +248,14 @@ export function CaseWorkspace({
   const [mode, setMode] = useState<ComposerMode>("reply");
   const [replyDraft, setReplyDraft] = useState("");
   const [reassignNote, setReassignNote] = useState("");
+  const [confirmClose, setConfirmClose] = useState(false);
+  const [duplicateTarget, setDuplicateTarget] = useState<string | null>(null);
   useEffect(() => {
     setMode("reply");
     setReplyDraft("");
     setReassignNote("");
+    setConfirmClose(false);
+    setDuplicateTarget(null);
   }, [caseKey]);
 
   if (query.isError && !data) {
@@ -196,7 +278,6 @@ export function CaseWorkspace({
     );
   }
 
-  const isTicket = !!data.caseId;
   const sla = slaHint(data.sla);
   const settled = SETTLED.has(data.status);
   const insert = (text: string) => {
@@ -227,7 +308,7 @@ export function CaseWorkspace({
   const markDuplicate = async (reference: string) => {
     try {
       await reply.mutateAsync({
-        message: `We've merged this into your active support request ${reference} so everything stays in one thread.`,
+        message: duplicateMessage(reference),
         note: false,
       });
       const fresh = await query.refetch();
@@ -338,7 +419,7 @@ export function CaseWorkspace({
                 variant="outline"
                 className="h-8"
                 disabled={busy}
-                onClick={() => setStatus.mutate("CLOSED")}
+                onClick={() => setConfirmClose(true)}
               >
                 Close
               </Button>
@@ -406,13 +487,6 @@ export function CaseWorkspace({
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <StatusBadge {...caseStatus(data.status)} />
-          {!isTicket && data.channel !== "HUMAN" && (
-            <StatusBadge
-              label="With the assistant"
-              tone="neutral"
-              variant="dot"
-            />
-          )}
           {sla && <StatusBadge {...sla} variant="dot" />}
           {data.person.callbackRequested && (
             <StatusBadge label="Callback" tone="critical" />
@@ -429,78 +503,74 @@ export function CaseWorkspace({
               Resolve by {when(data.resolutionDueAt)}
             </span>
           )}
-          {isTicket && (
-            <>
-              <Select
-                value={data.priority ?? "MEDIUM"}
-                disabled={busy}
-                onValueChange={(priority) => update.mutate({ priority })}
-              >
-                <SelectTrigger
-                  className="h-8 w-auto min-w-[8rem] text-xs"
-                  aria-label="Priority"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {["URGENT", "HIGH", "MEDIUM", "LOW"].map((p) => (
-                    <SelectItem key={p} value={p}>
-                      {ticketPriority(p).label} priority
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={assignee}
-                disabled={busy}
-                onValueChange={(id) => {
-                  const note = reassignNote.trim() || undefined;
-                  update.mutate({
-                    assignedToId: id === UNASSIGNED ? null : id,
-                    note,
-                  });
-                  setReassignNote("");
-                }}
-              >
-                <SelectTrigger
-                  className="h-8 w-auto min-w-[10rem] text-xs"
-                  aria-label="Assignee"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={UNASSIGNED}>Unassigned</SelectItem>
-                  {pickable.map((o) => (
-                    <SelectItem key={o.id} value={o.id}>
-                      {o.id === viewerId ? "You" : (o.name ?? "Operator")}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <input
-                type="text"
-                value={reassignNote}
-                onChange={(e) => setReassignNote(e.target.value)}
-                placeholder="Reassignment note (optional)"
-                aria-label="Reassignment note"
-                className="h-8 w-44 rounded-md border border-border bg-background px-2 text-xs text-foreground placeholder:text-muted-foreground"
-              />
-              {data.assignee?.id !== viewerId && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-8"
-                  disabled={busy}
-                  onClick={() => {
-                    const note = reassignNote.trim() || undefined;
-                    update.mutate({ assignedToId: viewerId, note });
-                    setReassignNote("");
-                  }}
-                >
-                  Assign to me
-                </Button>
-              )}
-            </>
+          <Select
+            value={data.priority ?? "MEDIUM"}
+            disabled={busy}
+            onValueChange={(priority) => update.mutate({ priority })}
+          >
+            <SelectTrigger
+              className="h-8 w-auto min-w-[8rem] text-xs"
+              aria-label="Priority"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {["URGENT", "HIGH", "MEDIUM", "LOW"].map((p) => (
+                <SelectItem key={p} value={p}>
+                  {ticketPriority(p).label} priority
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={assignee}
+            disabled={busy}
+            onValueChange={(id) => {
+              const note = reassignNote.trim() || undefined;
+              update.mutate({
+                assignedToId: id === UNASSIGNED ? null : id,
+                note,
+              });
+              setReassignNote("");
+            }}
+          >
+            <SelectTrigger
+              className="h-8 w-auto min-w-[10rem] text-xs"
+              aria-label="Assignee"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={UNASSIGNED}>Unassigned</SelectItem>
+              {pickable.map((o) => (
+                <SelectItem key={o.id} value={o.id}>
+                  {o.id === viewerId ? "You" : (o.name ?? "Operator")}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <input
+            type="text"
+            value={reassignNote}
+            onChange={(e) => setReassignNote(e.target.value)}
+            placeholder="Reassignment note (optional)"
+            aria-label="Reassignment note"
+            className="h-8 w-44 rounded-md border border-border bg-background px-2 text-xs text-foreground placeholder:text-muted-foreground"
+          />
+          {data.assignee?.id !== viewerId && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-8"
+              disabled={busy}
+              onClick={() => {
+                const note = reassignNote.trim() || undefined;
+                update.mutate({ assignedToId: viewerId, note });
+                setReassignNote("");
+              }}
+            >
+              Assign to me
+            </Button>
           )}
         </div>
         {duplicates.length > 0 && (
@@ -525,7 +595,7 @@ export function CaseWorkspace({
                 variant="outline"
                 className="h-6 px-2 text-xs"
                 disabled={busy || reply.isPending}
-                onClick={() => void markDuplicate(duplicates[0].reference)}
+                onClick={() => setDuplicateTarget(duplicates[0].id)}
               >
                 Mark duplicate
               </Button>
@@ -533,6 +603,39 @@ export function CaseWorkspace({
           </div>
         )}
       </header>
+      <AlertDialog open={confirmClose} onOpenChange={setConfirmClose}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Close this case?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The customer won&apos;t be able to reply on a closed case, and you
+              can only add private notes until it is reopened.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep open</AlertDialogCancel>
+            <Button
+              disabled={busy}
+              onClick={() => {
+                setConfirmClose(false);
+                setStatus.mutate("CLOSED");
+              }}
+            >
+              Close case
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <DuplicateDialog
+        duplicates={duplicates}
+        target={duplicateTarget}
+        onTargetChange={setDuplicateTarget}
+        busy={busy || reply.isPending}
+        onConfirm={(reference) => {
+          setDuplicateTarget(null);
+          void markDuplicate(reference);
+        }}
+      />
 
       <div className="relative flex items-start gap-4">
         <div className="min-w-0 flex-1">

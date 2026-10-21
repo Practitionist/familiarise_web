@@ -21,7 +21,10 @@ type ThreadState = Parameters<typeof SessionConversation>[0]["t"];
 function render(t: ThreadState): string {
   return renderToStaticMarkup(
     <QueryClientProvider client={new QueryClient()}>
-      <SessionConversation t={t} />
+      <SessionConversation
+        t={t}
+        requestsHref="/dashboard/consultee/p1/support"
+      />
     </QueryClientProvider>,
   );
 }

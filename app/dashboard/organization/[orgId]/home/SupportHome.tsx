@@ -6,6 +6,7 @@ import { useQueries } from "@tanstack/react-query";
 import { Stat, StatRow, StatSkeleton } from "@/components/dashboard/Stat";
 import { ErrorState } from "@/components/dashboard/ErrorState";
 import { Button } from "@/components/ui/button";
+import { supportKeys } from "@/lib/support/support-keys";
 
 const QUEUE = [
   { status: "OPEN", label: "Open", tone: "caution" as const },
@@ -36,7 +37,7 @@ export function SupportHome({ orgId }: Readonly<{ orgId: string }>) {
   const base = `/dashboard/organization/${orgId}`;
   const counts = useQueries({
     queries: QUEUE.map((q) => ({
-      queryKey: ["org-support-threads-count", orgId, q.status],
+      queryKey: supportKeys.orgThreadCount(orgId, q.status),
       queryFn: () => countThreads(orgId, q.status),
     })),
   });

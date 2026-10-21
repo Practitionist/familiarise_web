@@ -20,6 +20,7 @@ import { INBOX_FILTER_KEYS, INBOX_PAGE_SIZE } from "@/lib/support/inbox-query";
 import { slaHint, slaStatusBadge } from "@/lib/support/sla-hint";
 import type { InboxListResponse, InboxRow } from "@/types/support-case";
 import { cn } from "@/utils/tailwind";
+import { supportKeys } from "@/lib/support/support-keys";
 
 function CaseRow({
   row,
@@ -90,7 +91,7 @@ export function CaseList({
   const qs = query.toString();
 
   const cases = useQuery({
-    queryKey: ["support-inbox", qs],
+    queryKey: supportKeys.inboxList(qs),
     queryFn: async (): Promise<InboxListResponse> => {
       const res = await fetch(`/api/staff/support-inbox?${qs}`);
       if (!res.ok) await throwSupportError(res, "support inbox load");

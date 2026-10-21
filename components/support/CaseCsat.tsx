@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { throwSupportError } from "@/lib/support/error-copy";
+import { invalidateSupportCase } from "@/lib/support/support-keys";
 
 export function CaseCsat({
   caseId,
@@ -33,8 +34,7 @@ export function CaseCsat({
     },
     onSuccess: (score) => {
       setChoice(score);
-      void qc.invalidateQueries({ queryKey: ["user-support-case"] });
-      void qc.invalidateQueries({ queryKey: ["support-thread"] });
+      void invalidateSupportCase(qc, caseId);
     },
     onError: (error: unknown) => {
       toast({
@@ -42,8 +42,7 @@ export function CaseCsat({
         description: error instanceof Error ? error.message : undefined,
         variant: "destructive",
       });
-      void qc.invalidateQueries({ queryKey: ["user-support-case"] });
-      void qc.invalidateQueries({ queryKey: ["support-thread"] });
+      void invalidateSupportCase(qc, caseId);
     },
   });
   const elapsed = resolvedAt

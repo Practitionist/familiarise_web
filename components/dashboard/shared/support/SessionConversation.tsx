@@ -5,9 +5,10 @@ import Link from "next/link";
 import { Send } from "lucide-react";
 
 import { CaseCsat } from "@/components/support/CaseCsat";
-import { CaseResolutionPanel } from "@/components/support/CaseResolutionPanel";
 import { CaseAttachments } from "@/components/support/CaseAttachments";
+import { CustomerCaseResolution } from "@/components/support/resolution/CustomerCaseResolution";
 import { SupportBubble } from "@/components/support/SupportBubble";
+import { useThreadScroll } from "@/components/support/useThreadScroll";
 import {
   describeAction,
   type useSupportThread,
@@ -90,7 +91,7 @@ function EscalateStep({
       className="space-y-2"
       onSubmit={(e) => {
         e.preventDefault();
-        if (!short) onSend(text.trim(), urgent);
+        if (!short && !disabled) onSend(text.trim(), urgent);
       }}
     >
       <p className="text-sm">
@@ -107,7 +108,6 @@ function EscalateStep({
         maxLength={2000}
         rows={4}
         required
-        disabled={disabled}
         placeholder="What went wrong, and what would you like us to do?"
       />
       <p className="text-[11px] text-muted-foreground">
@@ -119,7 +119,6 @@ function EscalateStep({
           type="checkbox"
           checked={urgent}
           onChange={(e) => setUrgent(e.target.checked)}
-          disabled={disabled}
         />
         <span>This is urgent</span>
       </label>
@@ -327,6 +326,7 @@ function SessionComposer({
   onTextChange: (value: string) => void;
   onPickBareHuman: (label: string) => void;
 }>) {
+  const input = useRef<HTMLInputElement>(null);
   if (t.isClosed) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -359,20 +359,22 @@ function SessionComposer({
             onPickBareHuman(msg);
             return;
           }
+          // submitTurn's in-flight guard refuses a second send; the input stays enabled so focus stays put.
           if (t.submitTurn({ userMessage: msg })) onTextChange("");
+          input.current?.focus();
         }}
       >
         <Input
+          ref={input}
           aria-label="Message"
           value={text}
           onChange={(e) => onTextChange(e.target.value)}
           placeholder={t.isHuman ? "Message our team…" : "Type a message…"}
-          disabled={t.turnPending}
         />
         <Button
           type="submit"
           size="icon"
-          disabled={t.turnPending || !text.trim()}
+          disabled={!text.trim()}
           aria-label="Send"
         >
           <Send className="h-4 w-4" />
@@ -384,8 +386,8 @@ function SessionComposer({
 
 export function SessionConversation({
   t,
-  requestsHref = "/dashboard/support",
-}: Readonly<{ t: ThreadState; requestsHref?: string }>) {
+  requestsHref,
+}: Readonly<{ t: ThreadState; requestsHref: string }>) {
   const [text, setText] = useState("");
   const [picked, setPicked] = useState<Option | null>(null);
   const [offline, setOffline] = useState(false);
@@ -430,10 +432,11 @@ export function SessionConversation({
     picked && (picked.isCategory || t.options.some((o) => o.id === picked.id))
       ? picked
       : null;
-  const endRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-  }, [t.messages.length, t.turnPending]);
+  const failedCount = Object.keys(t.failedTurns).length;
+  const scroll = useThreadScroll<HTMLDivElement>(
+    t.thread?.id ?? "unstarted",
+    `${t.messages.length}:${failedCount}:${t.turnPending}`,
+  );
 
   const intro = t.isHuman
     ? "You're connected with our support team. They'll reply here and by email."
@@ -446,57 +449,63 @@ export function SessionConversation({
 
   return (
     <div className="flex flex-col rounded-lg border border-border bg-card">
-      <div className="max-h-[60vh] min-h-[16rem] space-y-3 overflow-y-auto p-4">
+      <div
+        ref={scroll.container}
+        onScroll={scroll.onScroll}
+        className="max-h-[60vh] min-h-[16rem] space-y-3 overflow-y-auto p-4"
+      >
         {t.history.hasMore && (
           <Button
             size="sm"
             variant="outline"
             disabled={t.history.loading}
-            onClick={() => void t.history.loadOlder()}
+            onClick={() => void scroll.loadOlderAnchored(t.history.loadOlder)}
           >
             Load older messages
           </Button>
         )}
         <p className="text-sm text-muted-foreground">{intro}</p>
-        {t.messages.map((m, i) => (
-          <div key={m.id} className="space-y-3">
-            {i === t.handoffIndex && <Handoff />}
+        <div role="log" aria-label="Conversation" className="space-y-3">
+          {t.messages.map((m, i) => (
+            <div key={m.id} className="space-y-3">
+              {i === t.handoffIndex && <Handoff />}
+              <SupportBubble
+                perspective="user"
+                author={m.sender}
+                body={m.body}
+                at={m.pending ? undefined : m.createdAt}
+                pending={m.pending}
+              />
+            </div>
+          ))}
+          {t.isHuman && !t.isResolved && !t.isClosed && (
+            <p className="text-center text-[11px] text-muted-foreground">
+              {t.waitingLine}
+            </p>
+          )}
+          {Object.entries(t.failedTurns).map(([id, f]) => (
             <SupportBubble
+              key={id}
               perspective="user"
-              author={m.sender}
-              body={m.body}
-              at={m.pending ? undefined : m.createdAt}
-              pending={m.pending}
+              author="USER"
+              body={f.body}
+              pending
+              footer={
+                <p className="flex items-center justify-end gap-2 text-[11px] text-destructive">
+                  <span>Not sent</span>
+                  <button
+                    type="button"
+                    className="underline underline-offset-2"
+                    onClick={() => t.retryTurn(id)}
+                  >
+                    Retry
+                  </button>
+                </p>
+              }
             />
-          </div>
-        ))}
-        {t.isHuman && !t.isResolved && !t.isClosed && (
-          <p className="text-center text-[11px] text-muted-foreground">
-            {t.waitingLine}
-          </p>
-        )}
-        {Object.entries(t.failedTurns).map(([id, f]) => (
-          <SupportBubble
-            key={id}
-            perspective="user"
-            author="USER"
-            body={f.body}
-            pending
-            footer={
-              <p className="flex items-center justify-end gap-2 text-[11px] text-destructive">
-                <span>Not sent</span>
-                <button
-                  type="button"
-                  className="underline underline-offset-2"
-                  onClick={() => t.retryTurn(id)}
-                >
-                  Retry
-                </button>
-              </p>
-            }
-          />
-        ))}
-        {t.handoffIndex === t.messages.length && <Handoff />}
+          ))}
+          {t.handoffIndex === t.messages.length && <Handoff />}
+        </div>
         {t.turnPending && !t.isHuman && (
           <output
             className="flex w-fit items-center gap-1 rounded-2xl bg-muted px-3 py-2.5"
@@ -557,13 +566,12 @@ export function SessionConversation({
             .
           </div>
         )}
-        <div ref={endRef} />
       </div>
 
       {t.thread?.id && t.thread.id !== "local" && (
         <>
           <CaseAttachments caseId={t.thread.id} canUpload={!t.isClosed} />
-          {t.isHuman && <CaseResolutionPanel caseId={t.thread.id} customer />}
+          {t.isHuman && <CustomerCaseResolution caseId={t.thread.id} />}
         </>
       )}
       <div className="space-y-3 border-t border-border p-4">
