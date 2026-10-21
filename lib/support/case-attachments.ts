@@ -32,6 +32,8 @@ export function ensureSupportEvidenceBucket(): Promise<boolean> {
   );
 }
 
+const HEAD_READ_TIMEOUT_MS = 5_000;
+
 /** The first bytes of an uploaded object, or null when it cannot be read. */
 export async function readAttachmentHead(
   storagePath: string,
@@ -40,21 +42,27 @@ export async function readAttachmentHead(
     .from(SUPPORT_EVIDENCE_BUCKET)
     .createSignedUrl(storagePath, 60);
   if (error || !data) return null;
-  const response = await fetch(data.signedUrl, {
-    headers: { Range: `bytes=0-${SUPPORT_ATTACHMENT_SNIFF_BYTES - 1}` },
-    cache: "no-store",
-  });
-  if (!response.ok || !response.body) return null;
-  const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let length = 0;
-  while (length < SUPPORT_ATTACHMENT_SNIFF_BYTES) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    length += value.length;
+  try {
+    const response = await fetch(data.signedUrl, {
+      headers: { Range: `bytes=0-${SUPPORT_ATTACHMENT_SNIFF_BYTES - 1}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(HEAD_READ_TIMEOUT_MS),
+    });
+    if (!response.ok || !response.body) return null;
+    const reader = response.body.getReader();
+    while (length < SUPPORT_ATTACHMENT_SNIFF_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      length += value.length;
+    }
+    await reader.cancel().catch(() => undefined);
+  } catch {
+    // A network failure or timeout is unverified, not a mismatch: the caller retries.
+    return null;
   }
-  await reader.cancel().catch(() => undefined);
   const head = new Uint8Array(length);
   let offset = 0;
   for (const chunk of chunks) {

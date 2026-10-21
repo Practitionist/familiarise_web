@@ -190,6 +190,19 @@ describe("PUT completes an upload only when its bytes match", () => {
     expect(removeObjects).toHaveBeenCalled();
   });
 
+  it("keeps the upload for a retry when storage cannot be reached", async () => {
+    global.fetch = jest.fn(async () => {
+      throw new TypeError("fetch failed");
+    }) as typeof fetch;
+
+    const response = await PUT(request(), {
+      params: Promise.resolve({ caseId: "case-1" }),
+    });
+
+    expect(response.status).toBe(503);
+    expect(removeObjects).not.toHaveBeenCalled();
+  });
+
   it("keeps the upload for a retry when the head cannot be read", async () => {
     global.fetch = jest.fn(
       async () => new Response("", { status: 503 }),
