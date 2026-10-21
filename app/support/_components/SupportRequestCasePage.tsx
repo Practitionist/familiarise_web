@@ -1,16 +1,20 @@
 import { notFound } from "next/navigation";
+import {
+  HydrationBoundary,
+  QueryClient,
+  dehydrate,
+} from "@tanstack/react-query";
 
 import { SupportRequestView } from "@/components/dashboard/shared/support/SupportRequestView";
 import { requireOnboarded } from "@/lib/auth-guard";
 import { parseCaseKey } from "@/lib/support/case-key";
 import { readOwnSupportCase } from "@/lib/support/own-case-read";
+import { supportKeys } from "@/lib/support/support-keys";
 import { articleLinksByTopic } from "../_data/support-content";
 
 /**
- * #1527 — one support request's page, shared by every dashboard that mounts
- * Support requests. Lives in app/ because the suggested articles read Help
- * Center data. A ticket must be the viewer's own; an escalated session
- * request opens on its conversation's page, which is where the user talks.
+ * One support request's page, shared by every dashboard. A case must be the
+ * viewer's own; its read is hydrated so the first paint has the conversation.
  */
 export async function SupportRequestCasePage({
   caseKey,
@@ -28,13 +32,7 @@ export async function SupportRequestCasePage({
 }>) {
   const ref = parseCaseKey(caseKey);
   if (!ref) notFound();
-  if (ref.kind !== "booking") {
-    const { user } = await requireOnboarded();
-    const id = ref.id;
-    const own = id ? await readOwnSupportCase(id, user.id) : null;
-    if (!own) notFound();
-  }
-  return (
+  const view = (
     <SupportRequestView
       caseKey={caseKey}
       requestsHref={supportHref}
@@ -43,6 +41,16 @@ export async function SupportRequestCasePage({
       intent={typeof intent === "string" ? intent : undefined}
       articles={articleLinksByTopic()}
     />
+  );
+  if (ref.kind === "booking") return view;
+  const { user } = await requireOnboarded();
+  const own = await readOwnSupportCase(ref.id, user.id);
+  if (!own) notFound();
+  // Same key and shape as GET /api/support/requests/c_<id>.
+  const queryClient = new QueryClient();
+  queryClient.setQueryData(supportKeys.ownCase(ref.id), own);
+  return (
+    <HydrationBoundary state={dehydrate(queryClient)}>{view}</HydrationBoundary>
   );
 }
 

@@ -124,7 +124,7 @@ const paymentsBillingFlow: PlatformFlowDefinition = {
     tracking: {
       id: "tracking",
       kind: "TERMINAL",
-      body: "Gateway refunds typically land in 5–7 working days depending on your bank. You can watch its status on your Payments page.",
+      body: "Gateway refunds typically land in 5–7 working days depending on your bank. You can watch its status on your Billing page.",
       action: { kind: "SHOW_REFUND_STATUS" },
       resolved: true,
       promises: [
@@ -150,7 +150,7 @@ const paymentsBillingFlow: PlatformFlowDefinition = {
     invoice: {
       id: "invoice",
       kind: "TERMINAL",
-      body: "Invoices and GST receipts live on your Payments page — download any of them anytime.",
+      body: "Invoices and GST receipts live on your Billing page — download any of them anytime.",
       action: { kind: "SHOW_INVOICES" },
       resolved: true,
     },

@@ -207,7 +207,7 @@ const paymentStatusFlow: FlowDefinition = {
     refund: {
       id: "refund",
       kind: "PROMPT",
-      body: "Do you see the refund initiated anywhere (bank statement / Payments page)?",
+      body: "Do you see the refund initiated anywhere (bank statement / Billing page)?",
       options: [
         { id: "initiated", label: "Yes, it's initiated", next: "tracking" },
         { id: "nothing", label: "No refund at all", next: "missing" },
@@ -242,7 +242,7 @@ const paymentStatusFlow: FlowDefinition = {
     invoice: {
       id: "invoice",
       kind: "TERMINAL",
-      body: "You can download invoices and GST receipts from your Payments page.",
+      body: "You can download invoices and GST receipts from your Billing page.",
       action: { kind: "SHOW_INVOICES" },
       resolved: true,
     },

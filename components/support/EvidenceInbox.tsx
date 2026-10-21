@@ -6,7 +6,17 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { CaseAttachments } from "./CaseAttachments";
+import { AppealAction } from "./resolution/AppealAction";
 import { useToast } from "@/hooks/use-toast";
 import { throwSupportError } from "@/lib/support/error-copy";
 import { FileCheck } from "lucide-react";
@@ -18,6 +28,10 @@ import { FilterBar } from "@/components/dashboard/FilterBar";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { humanizeEnum } from "@/lib/ui/tone";
+import { invalidateSupportCase, supportKeys } from "@/lib/support/support-keys";
+import { formatDateLabel, formatDateTimeLabel } from "@/lib/time/display";
+
+const when = (iso: string) => formatDateTimeLabel(new Date(iso));
 
 const Evidence = z.object({
   id: z.string(),
@@ -68,7 +82,7 @@ export function EvidenceInbox({
   const { data: session } = useSession();
   const [status, setStatus] = useState("all");
   const query = useQuery({
-    queryKey: ["support-evidence", session?.user.id, organizationId],
+    queryKey: supportKeys.evidenceList(session?.user.id, organizationId),
     refetchOnMount: "always",
     enabled: Boolean(session?.user.id),
     queryFn: async () => {
@@ -82,7 +96,7 @@ export function EvidenceInbox({
       return List.parse(await response.json()).data;
     },
   });
-  if (query.isLoading) return <Skeleton className="h-32 w-full" />;
+  if (query.isPending) return <Skeleton className="h-32 w-full" />;
   if (query.isError)
     return (
       <ErrorState
@@ -131,10 +145,7 @@ export function EvidenceInbox({
         >
           <p className="line-clamp-2">{request.prompt}</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {evidenceStatus(
-              request,
-              `Respond by ${new Date(request.dueAt).toLocaleString()}`,
-            )}
+            {evidenceStatus(request, `Respond by ${when(request.dueAt)}`)}
           </p>
         </Link>
       ))}
@@ -149,15 +160,12 @@ export function EvidenceRequest({
   const { data: session } = useSession();
   const [body, setBody] = useState("");
   const [pending, setPending] = useState(false);
-  const [appealDecision, setAppealDecision] = useState<string | null>(null);
-  const [appealReason, setAppealReason] = useState("");
-  const appealId = useRef<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const turnId = useRef<string | null>(null);
   const qc = useQueryClient();
   const { toast } = useToast();
-  const queryKey = ["support-evidence", session?.user.id, requestId];
   const query = useQuery({
-    queryKey,
+    queryKey: supportKeys.evidenceRequest(session?.user.id, requestId),
     enabled: Boolean(session?.user.id),
     queryFn: async () => {
       const response = await fetch(`/api/support/evidence/${requestId}`);
@@ -168,6 +176,7 @@ export function EvidenceRequest({
   });
   const submit = async () => {
     if (pending || !body.trim()) return;
+    setConfirming(false);
     setPending(true);
     turnId.current ??= crypto.randomUUID();
     try {
@@ -182,7 +191,9 @@ export function EvidenceRequest({
       if (!response.ok) await throwSupportError(response, "evidence response");
       turnId.current = null;
       setBody("");
-      await qc.invalidateQueries({ queryKey: ["support-evidence"] });
+      await (query.data
+        ? invalidateSupportCase(qc, query.data.caseId)
+        : qc.invalidateQueries({ queryKey: supportKeys.evidence() }));
       toast({ title: "Evidence response submitted" });
     } catch (error) {
       toast({
@@ -194,37 +205,8 @@ export function EvidenceRequest({
       setPending(false);
     }
   };
-  const appeal = async () => {
-    if (!appealDecision || !appealReason.trim() || pending) return;
-    setPending(true);
-    appealId.current ??= crypto.randomUUID();
-    try {
-      const response = await fetch("/api/support/appeals", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          decisionId: appealDecision,
-          reason: appealReason.trim(),
-          clientIntakeId: appealId.current,
-        }),
-      });
-      if (!response.ok) await throwSupportError(response, "appeal submission");
-      setAppealDecision(null);
-      setAppealReason("");
-      appealId.current = null;
-      toast({ title: "Appeal submitted for independent review" });
-    } catch (error) {
-      toast({
-        title: "Appeal was not submitted",
-        description: error instanceof Error ? error.message : undefined,
-        variant: "destructive",
-      });
-    } finally {
-      setPending(false);
-    }
-  };
   const data = query.data;
-  if (query.isLoading)
+  if (query.isPending)
     return <output className="block">Loading evidence request…</output>;
   if (!data)
     return (
@@ -256,7 +238,7 @@ export function EvidenceRequest({
               <p>{data.booking.title ?? "Session"}</p>
               {data.booking.startsAt && (
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {new Date(data.booking.startsAt).toLocaleString()}
+                  {when(data.booking.startsAt)}
                 </p>
               )}
               {data.booking.organizationName && (
@@ -268,7 +250,7 @@ export function EvidenceRequest({
           )}
           <div>
             <p className="text-xs text-muted-foreground">Respond by</p>
-            <p>{new Date(data.dueAt).toLocaleString()}</p>
+            <p>{when(data.dueAt)}</p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Visibility</p>
@@ -294,53 +276,30 @@ export function EvidenceRequest({
             >
               <p>
                 {humanizeEnum(decision.outcome)}. Recorded on{" "}
-                {new Date(decision.createdAt).toLocaleDateString()}.
+                {formatDateLabel(new Date(decision.createdAt))}.
               </p>
               {new Date(decision.appealUntil) > new Date() && (
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setAppealDecision(decision.id);
-                    setAppealReason("");
-                    appealId.current = null;
-                  }}
-                >
-                  Appeal this decision
-                </Button>
+                <AppealAction
+                  target={{ decisionId: decision.id }}
+                  prompt="Reason for appeal"
+                />
               )}
             </div>
           ))}
-          {appealDecision && (
-            <form
-              className="space-y-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void appeal();
-              }}
-            >
-              <label htmlFor="evidence-appeal" className="text-sm font-medium">
-                Reason for appeal
-              </label>
-              <Textarea
-                id="evidence-appeal"
-                value={appealReason}
-                maxLength={10000}
-                onChange={(event) => {
-                  setAppealReason(event.target.value);
-                  appealId.current = null;
-                }}
-                required
-              />
-              <Button disabled={pending || !appealReason.trim()}>
-                Submit appeal
-              </Button>
-            </form>
-          )}
           {data.responseBody && (
             <div className="whitespace-pre-wrap rounded-lg bg-muted p-4">
               <p className="mb-2 font-medium">Your submitted response</p>
               {data.responseBody}
             </div>
+          )}
+          {open && (
+            <p
+              id="evidence-final-note"
+              className="rounded-md border border-dashed border-border p-3 text-sm"
+            >
+              Attach files before submitting; responses are final. Once you
+              submit, you can&apos;t edit your response or add files.
+            </p>
           )}
           <CaseAttachments
             caseId={data.caseId}
@@ -357,20 +316,40 @@ export function EvidenceRequest({
               </label>
               <Textarea
                 id="evidence-response"
+                aria-describedby="evidence-final-note"
                 value={body}
                 maxLength={10000}
                 onChange={(event) => {
                   setBody(event.target.value);
                   turnId.current = null;
                 }}
-                disabled={pending}
               />
               <Button
                 disabled={pending || !body.trim()}
-                onClick={() => void submit()}
+                onClick={() => setConfirming(true)}
               >
                 {pending ? "Submitting…" : "Submit response"}
               </Button>
+              <AlertDialog open={confirming} onOpenChange={setConfirming}>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      Submit your final response?
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      You won&apos;t be able to edit it or attach more files
+                      afterwards. Check that every file you want to share is
+                      listed under Attachments.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Keep editing</AlertDialogCancel>
+                    <Button disabled={pending} onClick={() => void submit()}>
+                      Submit response
+                    </Button>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </>
           )}
         </section>
