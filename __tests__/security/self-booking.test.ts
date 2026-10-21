@@ -28,7 +28,9 @@ import {
   buyerRow,
   mintOrder,
   mockCreatePaymentIntent as createPaymentIntent,
+  orgMember,
   silenceConsole,
+  webinar,
 } from "../booking/repro/checkout-harness/mocks/setup";
 
 jest.mock("../../lib/api/organizations/program-helpers", () => ({
@@ -54,45 +56,6 @@ import { handleCheckout } from "../../lib/payments/checkout";
 import { calls, resetDouble } from "../booking/repro/checkout-harness/setup";
 import type { Overrides } from "../booking/repro/checkout-harness/setup";
 
-const HOUR = 3600_000;
-const START = new Date(Date.now() + 72 * HOUR);
-const plan = {
-  id: "wplan-1",
-  price: 100_000,
-  priceCurrency: "INR",
-  maxParticipants: 50,
-  refundWindowHours: 24,
-  archivedAt: null,
-  visibility: "PUBLIC",
-  status: "PUBLISHED",
-  organizationId: null,
-  consultantProfileId: "cons-profile",
-  consultantProfile: {
-    id: "cons-profile",
-    userId: "cons-user",
-    deletedAt: null,
-    verificationStatus: "VERIFIED",
-  },
-};
-const webinar = {
-  id: "web-1",
-  status: "SCHEDULED",
-  webinarPlan: plan,
-  appointment: {
-    id: "appt-webinar",
-    occurrences: [
-      {
-        id: "occ-1",
-        startsAt: START,
-        endsAt: new Date(START.getTime() + HOUR),
-        deletedAt: null,
-        completionStatus: "SCHEDULED",
-      },
-    ],
-    participants: [],
-  },
-};
-
 /** The buyer, who may also hold a consultant profile of their own. */
 const buyer = (consultantProfileId: string | null) => ({
   ...buyerRow(),
@@ -106,32 +69,6 @@ const lookup = (owner: string | null, collaborators: string[] = []) => ({
     consultantProfileId,
   })),
 });
-/** A PERSONAL-rail org member whose programme carries a curated panel check. */
-const orgMember: Overrides = {
-  "organization.findUnique": () => ({
-    id: "org-1",
-    status: "ACTIVE",
-    canSponsor: true,
-    billingAccount: {
-      id: "ba-1",
-      fundingSource: "PERSONAL",
-      creditLimit: null,
-      walletBalance: 0,
-    },
-  }),
-  "billingAccount.findFirst": () => ({
-    id: "ba-1",
-    fundingSource: "PERSONAL",
-    creditLimit: null,
-  }),
-  "membership.findUnique": () => ({
-    id: "m-1",
-    role: "MEMBER",
-    status: "ACTIVE",
-  }),
-  "programAssignment.findFirst": () => ({ id: "pa-1", programId: "prog-1" }),
-};
-
 function setup(
   buyerProfile: string | null,
   planLookup: ReturnType<typeof lookup>,
@@ -198,14 +135,14 @@ describe("a user cannot book their own plan", () => {
   });
 
   it("runs before the ADR-18 panel and exclusivity checks, on every paid path", async () => {
-    setup("cons-profile", lookup("cons-profile"), orgMember);
+    setup("cons-profile", lookup("cons-profile"), orgMember());
     expect(await checkout("org-1")).toMatchObject({ code: "SELF_BOOKING" });
     expect(called("programConsultantAllowlist.findMany")).toBe(false);
     expect(called("membership.findFirst")).toBe(false);
   });
 
   it("still allows a plan owned by someone else, through the panel check", async () => {
-    setup("other-cp", lookup("cons-profile"), orgMember);
+    setup("other-cp", lookup("cons-profile"), orgMember());
     expect(await checkout("org-1")).toBeNull();
     expect(called("programConsultantAllowlist.findMany")).toBe(true);
     expect(createPaymentIntent).toHaveBeenCalledTimes(1);

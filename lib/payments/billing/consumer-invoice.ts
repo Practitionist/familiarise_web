@@ -132,7 +132,8 @@ export function deriveConsumerInvoiceTax(params: {
   }
 
   // s.12(2)(b): no address of the recipient on record ⇒ the supply is placed
-  // at the supplier's location, which makes it intra-state.
+  // at the supplier's location, which makes it intra-state. New domestic B2C
+  // checkouts always carry the buyer's state; this serves older payments.
   const placeOfSupply = buyerState ?? supplierState;
   const intraState = !buyerState || buyerState === supplierState;
 

@@ -1,13 +1,13 @@
 # 02 — GST overview (TCS Sec 52, invoicing, place of supply, HSN, IRN, LUT)
 
-> **Status:** core derivation real (`deriveGstBreakdown` does CGST/SGST/IGST split + zero-rated export); TCS Sec 52 + GSTR-8 not collected or built (principal-supplier model); buyer state is optional at checkout and falls back to the supplier state (see [memo G1](./18-tax-research-memo-oct-2026.md)); e-invoicing / IRN connector live (env-gated) + cron wired (Round 2, 2026-05-02). 🟡 **NEW (2026-06-05): GST TCS rate corrected 1% → 0.5% (halved by Notif 15/2024-CT w.e.f. 10-Jul-2024) throughout this doc.**
+> **Status:** core derivation real (`deriveGstBreakdown` does CGST/SGST/IGST split + zero-rated export); TCS Sec 52 + GSTR-8 not collected or built (principal-supplier model); buyer state is required at checkout; older payments with none fall back to the supplier state (see [memo G1](./18-tax-research-memo-oct-2026.md)); e-invoicing / IRN connector live (env-gated) + cron wired (Round 2, 2026-05-02). 🟡 **NEW (2026-06-05): GST TCS rate corrected 1% → 0.5% (halved by Notif 15/2024-CT w.e.f. 10-Jul-2024) throughout this doc.**
 > **Audience:** payments + invoice + finance code.
-> **Last reviewed:** 2026-06-05 (regulatory facts web-verified as of 2026-06-05; prior review 2026-05-02)
+> **Last reviewed:** 2026-10-21 for the code model (buyer state, TCS removal); regulatory facts web-verified as of 2026-06-05.
 > **Linked issues:** [#737 §2,§5,§11](https://github.com/Practitionist/familiarise_web/issues/737), [#738 §A,§F](https://github.com/Practitionist/familiarise_web/issues/738).
 
 ## Model decision (2026-09-03)
 
-The platform bills as **Principal supplier for GST**, decided in [ADR 26](../enterprise/70-design-decisions/26-gst-principal-model.md) and superseding the facilitator framing this document was originally written around. GST stays at 18% on the full discounted price exactly as today, and the platform will issue its own numbered **B2C tax invoice** for every consumer supply (`ConsumerInvoice`) rather than relying on a consultant-issued invoice; this is the design intent recorded in ADR 26, not yet shipped — the model lands with PR-E (`feat/finance-b2c-tax-invoice`, in flight). For a consumer, CGST Rule 46(f) and CBIC Circular 242/36/2024-GST require the buyer's state to be collected before an online supply and used as the place of supply. Today the state is optional at checkout and, when absent, the invoice falls back to the **supplier's home state** (intra-state CGST + SGST, `SUPPLIER_DEFAULT_12_2_B`): this is a compliance gap ([memo G1](./18-tax-research-memo-oct-2026.md)), not a valid alternative. The B2B derivation's IGST fallback stays as an audit signal for org invoices only. **GST-TCS under Section 52 does not apply under this model and is not collected**; the dormant TCS schema (`Payment.gstTcsCollectedPaise`, `GstTcsBatch`) and the GSTR-8 draft builder were deleted on 2026-10-04, and TCS would be rebuilt from scratch if a chartered accountant overturns this decision. See ADR 26 for the full CA question list, including whether a platform-funded referral credit should reduce the taxable value under Section 15(3)(a).
+The platform bills as **Principal supplier for GST**, decided in [ADR 26](../enterprise/70-design-decisions/26-gst-principal-model.md) and superseding the facilitator framing this document was originally written around. GST stays at 18% on the full discounted price exactly as today, and the platform will issue its own numbered **B2C tax invoice** for every consumer supply (`ConsumerInvoice`) rather than relying on a consultant-issued invoice; this is the design intent recorded in ADR 26, not yet shipped — the model lands with PR-E (`feat/finance-b2c-tax-invoice`, in flight). For a consumer, CGST Rule 46(f) and CBIC Circular 242/36/2024-GST require the buyer's state to be collected before an online supply and used as the place of supply. Checkout now requires it: `handleCheckout` refuses a domestic buyer-paid checkout without one (400 on `consumerStateCode`, via `consumerBuyerStateSchema`), which closes the [memo G1](./18-tax-research-memo-oct-2026.md) gap for checkout. Org-funded checkouts bill on the org series and export checkouts have no Indian state, so neither needs one. Older payments with no state on record, and the approval, trial pay-link and recording purchases that do not pass through checkout, still fall back to the **supplier's home state** (intra-state CGST + SGST, `SUPPLIER_DEFAULT_12_2_B`) when the buyer's profile has no state either. The B2B derivation's IGST fallback stays as an audit signal for org invoices only. **GST-TCS under Section 52 does not apply under this model and is not collected**; the dormant TCS schema (`Payment.gstTcsCollectedPaise`, `GstTcsBatch`) and the GSTR-8 draft builder were deleted on 2026-10-04, and TCS would be rebuilt from scratch if a chartered accountant overturns this decision. See ADR 26 for the full CA question list, including whether a platform-funded referral credit should reduce the taxable value under Section 15(3)(a).
 
 ## What it is
 
@@ -40,8 +40,8 @@ Plus the orthogonal obligations:
 ### B2C (consumer marketplace)
 
 - Consumer tax invoice → applies. `Invoice` model is real; `ConsumerInvoiceDocument` PDF template exists at `lib/pdf/invoice-renderer.tsx`.
-- TCS Sec 52 → **applies** when the consultant is GST-registered. **Does not apply** to unregistered consultants (their supply isn't taxable) but the platform still has Sec 24(x) registration obligations.
-- Place of supply uses **consumer's state** (need to capture; see Gap below).
+- TCS Sec 52 → not collected under the principal-supplier model (ADR 26). Only if a CA overturns it would TCS **apply** when the consultant is GST-registered. **Does not apply** to unregistered consultants (their supply isn't taxable) but the platform still has Sec 24(x) registration obligations.
+- Place of supply uses the **consumer's declared state**, required at checkout for a domestic buyer-paid booking.
 - E-invoicing IRN for B2C → currently a **voluntary pilot** (54th GST Council, Sep 2024). Don't enable on B2C until mandated.
 - LUT → applies for non-resident consumer payments (zero-rated export under IGST Sec 16).
 - Credit note on consumer refund → applies; currently missing.
@@ -56,9 +56,9 @@ Plus the orthogonal obligations:
 | `lib/pdf/invoice-renderer.tsx`                                           | `ConsumerInvoiceDocument` + `OrganizationInvoiceDocument` PDF                                                                   | ✅ live                             |
 | `OrganizationInvoice` (schema)                                           | igstPaise / cgstPaise / sgstPaise / placeOfSupply / lutNumber / irn / ackNumber / signedQrPayload / irpStatus / retry telemetry | ✅ schema-final                     |
 | `Invoice` (schema, B2C)                                                  | Has HSN / GST split fields                                                                                                      | ✅ schema-final                     |
-| `Payment.consumerStateCode`                                              | **Missing**                                                                                                                     | 🔴                                  |
+| `Payment.consumerStateCode`                                              | Required at checkout (`consumerBuyerStateSchema`)                                                                               | 🟢                                  |
 | `Payment.gstTcsCollectedPaise` + `ConsultantEarnings.gstTcsAccruedPaise` | **Missing**                                                                                                                     | 🔴                                  |
-| GSTR-8 monthly export                                                    | **Missing**                                                                                                                     | 🔴                                  |
+| GSTR-8 monthly export                                                    | Not built (ADR 26; CA-gated)                                                                                                    | —                                   |
 | GSTIN registry verification (live API)                                   | Format-only (`isValidGstin`)                                                                                                    | 🔴                                  |
 | Reverse charge routing                                                   | Schema field exists; no routing                                                                                                 | 🔴                                  |
 | LUT enforcement                                                          | Schema field exists; no enforcement                                                                                             | 🔴                                  |
@@ -67,8 +67,8 @@ Plus the orthogonal obligations:
 
 ## Gap
 
-1. **TCS Sec 52 entirely missing** — see `02-gst-tcs-section-52` walkthrough below.
-2. **Place-of-supply state capture missing on B2C checkout** (CBIC Notification 02/2023-IT mandates it).
+1. **TCS Sec 52 not built** — not a current obligation under ADR 26; the walkthrough below applies only if a CA overturns it.
+2. **Place of supply outside checkout** — checkout requires the buyer's state (`handleCheckout`), but approval and trial pay links and recording purchases still fall back to the profile state, then the supplier state.
 3. **GST credit notes on refunds missing** (handled in [doc 05](./06-refund-and-chargeback-tax-adjustments.md)).
 4. **GSTIN live registry verification missing** — only format check today.
 5. **HSN selection static** — should pick **998311** (management consulting, group 9983) for CONSULTATION; **999293** (commercial training & coaching, group 9992) for WEBINAR / CLASS / SUBSCRIPTION on educational content. _(See header SAC correction — 999293 is training, NOT consulting; both 18%, so this is a classification/ITC-trail fix, not a rate fix.)_
@@ -76,6 +76,8 @@ Plus the orthogonal obligations:
 7. **RCM routing** — schema field present; no logic.
 
 ## TCS Section 52 walkthrough
+
+> Applies only if a chartered accountant overturns the principal-supplier model (ADR 26). None of it is built, and the TCS schema and GSTR-8 builder named below were deleted on 2026-10-04.
 
 This is the largest discrete gap. What it requires:
 

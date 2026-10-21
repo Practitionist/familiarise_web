@@ -254,10 +254,11 @@ describe("B2C place of supply (s.12(2)(b))", () => {
     expect(tax.cgstPaise).toBe(0);
     expect(tax.sgstPaise).toBe(0);
     expect(tax.placeOfSupply).toBe("27");
+    expect(tax.placeOfSupplySource).toBe("DECLARED_AT_CHECKOUT");
     expect(tax.taxableValuePaise + tax.igstPaise).toBe(tax.totalPaise);
   });
 
-  it("falls back to the supplier's own state when no address is on record", () => {
+  it("falls back to the supplier's own state for an older payment with no buyer state", () => {
     const tax = deriveConsumerInvoiceTax({
       ...CHARGED,
       buyerStateCode: null,

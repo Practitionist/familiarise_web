@@ -16,7 +16,7 @@ export interface CheckoutTaxContext {
   /**
    * #1365 — the buyer's remembered GST billing state (2-digit numeric), so the
    * checkout page can pre-fill the picker and a repeat buyer is never asked
-   * twice. Null is the statutory default, not a missing answer.
+   * twice. Null means none on record yet.
    */
   billingStateCode: string | null;
 }
