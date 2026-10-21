@@ -241,6 +241,9 @@ export async function readCaseWorkspace(
         : [],
     ]);
   const messages = c.messages.slice(-TIMELINE_LIMIT);
+  // An anonymous complainant's case is held by a system user with no phone.
+  const accountPhone = c.externalRequesterEmail ? null : c.requester.phone;
+  const requesterPhone = c.callbackPhone ?? accountPhone;
   return {
     key: caseKeyOf({ kind: "case", id: c.id }),
     kind: "case",
@@ -293,10 +296,7 @@ export async function readCaseWorkspace(
       email: grants.showContact
         ? (c.externalRequesterEmail ?? c.requester.email)
         : null,
-      phone: grants.showContact
-        ? (c.callbackPhone ??
-          (c.externalRequesterEmail ? null : c.requester.phone))
-        : null,
+      phone: grants.showContact ? requesterPhone : null,
       callbackRequested: Boolean(c.callbackPhone),
       joinedAt: c.requester.createdAt.toISOString(),
     },

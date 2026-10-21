@@ -10,7 +10,7 @@ import {
   AttachmentUploadSchema,
   attachmentCaseAccess,
   discardPendingAttachment,
-  ensureSupportEvidenceBucket,
+  issueSignedUpload,
   readAttachmentHead,
 } from "@/lib/support/case-attachments";
 import {
@@ -176,13 +176,8 @@ export async function POST(req: NextRequest, context: Context) {
         { error: "Maximum 20 evidence files per person per case" },
         { status: 400 },
       );
-    const bucketReady = await ensureSupportEvidenceBucket();
-    const { data, error } = bucketReady
-      ? await adminStorage()
-          .from(SUPPORT_EVIDENCE_BUCKET)
-          .createSignedUploadUrl(attachment.storagePath, { upsert: false })
-      : { data: null, error: new Error("Evidence bucket unavailable") };
-    if (error || !data) {
+    const data = await issueSignedUpload(attachment.storagePath);
+    if (!data) {
       await prisma.supportCaseAttachment.updateMany({
         where: { id: attachment.id, completedAt: null },
         data: { deletedAt: new Date() },

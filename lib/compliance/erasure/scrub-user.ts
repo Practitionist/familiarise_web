@@ -526,14 +526,14 @@ async function retryErasedUserVendorCleanup(
     userId,
     now,
   );
-  vendorFailures.push(...recordingFailures);
-  vendorFailures.push(
-    ...(await eraseUserSessionDocuments(prisma, userId, now)),
+  const documentFailures = await eraseUserSessionDocuments(prisma, userId, now);
+  const supportFailures = await removeSupportAttachmentObjects(
+    await supportAttachmentPaths(prisma, userId),
   );
   vendorFailures.push(
-    ...(await removeSupportAttachmentObjects(
-      await supportAttachmentPaths(prisma, userId),
-    )),
+    ...recordingFailures,
+    ...documentFailures,
+    ...supportFailures,
   );
   return vendorFailures;
 }

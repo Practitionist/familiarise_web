@@ -17,7 +17,7 @@ const LinkSchema = z.object({
 });
 
 function escapeAttribute(value: string): string {
-  return value.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+  return value.replace(/[&<>"']/g, (ch) => `&#${ch.codePointAt(0)};`);
 }
 
 function page(title: string, body: string, status: number): Response {
@@ -64,7 +64,7 @@ const invalidLink = () =>
     400,
   );
 
-export async function GET(request: NextRequest): Promise<Response> {
+export function GET(request: NextRequest): Response {
   const link = LinkSchema.safeParse(
     Object.fromEntries(request.nextUrl.searchParams),
   );

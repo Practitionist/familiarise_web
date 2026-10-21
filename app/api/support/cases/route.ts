@@ -15,6 +15,7 @@ import { assertBodySize } from "@/lib/validation/limits";
 import { supportError } from "@/lib/api/support-http";
 import {
   CreateSupportCaseObjectSchema,
+  type CreateSupportCaseInput,
   SupportCaseStatusSchema,
   SupportCaseValidationError,
   createOrReuseSupportCase,
@@ -436,6 +437,51 @@ async function resolveCasePayment(
   return { ok: true as const, payment };
 }
 
+/**
+ * A case a member files for another member belongs to the organization, so
+ * access follows current membership rather than the filing operator.
+ */
+function withOnBehalfOwnership(
+  data: ParsedCaseCreationBody,
+  staff: boolean,
+  userId: string,
+): ParsedCaseCreationBody {
+  const onBehalf = !staff && (data.requesterUserId ?? userId) !== userId;
+  return onBehalf && (data.ownershipScope ?? "PERSONAL") === "PERSONAL"
+    ? { ...data, ownershipScope: "ORG_OPERATIONS" }
+    : data;
+}
+
+/** Staff file personal cases as the customer; everyone else files as themselves. */
+function caseCreateInput(
+  data: ParsedCaseCreationBody,
+  ctx: {
+    paymentId: string | null;
+    staff: boolean;
+    userId: string;
+    requesterUserId: string;
+  },
+): CreateSupportCaseInput {
+  const personal = (data.ownershipScope ?? "PERSONAL") === "PERSONAL";
+  return {
+    ...data,
+    subjects: ctx.paymentId
+      ? [
+          {
+            subjectType: "PAYMENT",
+            subjectId: ctx.paymentId,
+            isPrimary: !data.appointmentId,
+          },
+        ]
+      : data.subjects,
+    requesterUserId: ctx.requesterUserId,
+    submitterUserId: ctx.staff && personal ? ctx.requesterUserId : ctx.userId,
+    activeChannel: data.activeChannel ?? "HUMAN",
+    initialSender: ctx.staff ? "AGENT" : "USER",
+    initialAuthorUserId: ctx.userId,
+  };
+}
+
 export async function POST(req: NextRequest) {
   try {
     const auth = await requireApiAuth();
@@ -446,24 +492,18 @@ export async function POST(req: NextRequest) {
       "tickets.manage",
     );
 
-    if (!staff) {
-      const rl = await applyRateLimit(spamLimiter, `support-cases:${user.id}`);
-      if (rl) return rl;
-    }
+    // Operators who manage tickets file on customers' behalf all day.
+    const rl = staff
+      ? null
+      : await applyRateLimit(spamLimiter, `support-cases:${user.id}`);
+    if (rl) return rl;
 
     const bodyRes = await resolveCaseCreationBody(req, staff);
     if (!bodyRes.ok) return bodyRes.response;
 
     const requesterUserId = bodyRes.data.requesterUserId ?? user.id;
     const targetOrgId = bodyRes.data.organizationId ?? null;
-    // A case filed for another member belongs to the organization, so access
-    // follows current membership rather than the filing operator.
-    const data: ParsedCaseCreationBody =
-      !staff &&
-      requesterUserId !== user.id &&
-      (bodyRes.data.ownershipScope ?? "PERSONAL") === "PERSONAL"
-        ? { ...bodyRes.data, ownershipScope: "ORG_OPERATIONS" }
-        : bodyRes.data;
+    const data = withOnBehalfOwnership(bodyRes.data, staff, user.id);
 
     const ownershipError = await validateCaseOwnershipAccess(
       data,
@@ -490,26 +530,14 @@ export async function POST(req: NextRequest) {
     );
     if (!paymentResult.ok) return paymentResult.response;
     const { payment } = paymentResult;
-    const result = await createOrReuseSupportCase({
-      ...data,
-      subjects: payment
-        ? [
-            {
-              subjectType: "PAYMENT",
-              subjectId: payment.id,
-              isPrimary: !data.appointmentId,
-            },
-          ]
-        : data.subjects,
-      requesterUserId,
-      submitterUserId:
-        staff && (data.ownershipScope ?? "PERSONAL") === "PERSONAL"
-          ? requesterUserId
-          : user.id,
-      activeChannel: data.activeChannel ?? "HUMAN",
-      initialSender: staff ? "AGENT" : "USER",
-      initialAuthorUserId: user.id,
-    });
+    const result = await createOrReuseSupportCase(
+      caseCreateInput(data, {
+        paymentId: payment?.id ?? null,
+        staff,
+        userId: user.id,
+        requesterUserId,
+      }),
+    );
 
     const viewerCase = await readSupportCaseForViewer(result.supportCase.id, {
       userId: user.id,

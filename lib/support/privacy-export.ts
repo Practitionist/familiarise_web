@@ -20,7 +20,7 @@ async function readAllPages<T extends { id: string }>(
     rows.push(...batch);
     if (batch.length < EXPORT_BATCH) return { rows, complete: true };
     if (rows.length >= EXPORT_MAX_ROWS) return { rows, complete: false };
-    after = batch[batch.length - 1].id;
+    after = batch.at(-1)?.id;
   }
 }
 

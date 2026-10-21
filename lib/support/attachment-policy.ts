@@ -34,7 +34,7 @@ const startsWith = (head: Uint8Array, signature: readonly number[], at = 0) =>
   head.length >= at + signature.length &&
   signature.every((byte, index) => head[at + index] === byte);
 
-const ascii = (text: string) => [...text].map((ch) => ch.charCodeAt(0));
+const ascii = (text: string) => [...text].map((ch) => ch.codePointAt(0) ?? 0);
 
 /** Plain text carries no NUL or non-whitespace C0 control bytes. */
 function looksLikeText(head: Uint8Array): boolean {

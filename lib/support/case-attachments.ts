@@ -34,6 +34,17 @@ export function ensureSupportEvidenceBucket(): Promise<boolean> {
 
 const HEAD_READ_TIMEOUT_MS = 5_000;
 
+/** A direct signed upload into the policy-configured bucket, or null when storage is unavailable. */
+export async function issueSignedUpload(
+  storagePath: string,
+): Promise<{ signedUrl: string; token: string; path: string } | null> {
+  if (!(await ensureSupportEvidenceBucket())) return null;
+  const { data, error } = await adminStorage()
+    .from(SUPPORT_EVIDENCE_BUCKET)
+    .createSignedUploadUrl(storagePath, { upsert: false });
+  return error || !data ? null : data;
+}
+
 /** The first bytes of an uploaded object, or null when it cannot be read. */
 export async function readAttachmentHead(
   storagePath: string,
