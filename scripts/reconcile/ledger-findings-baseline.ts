@@ -38,10 +38,18 @@ const LEDGER_BASELINE_ID_FIELDS = [
 const isoDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "must be an ISO date (YYYY-MM-DD)")
-  .refine(
-    (value) => !Number.isNaN(Date.parse(`${value}T00:00:00.000Z`)),
-    "must be a real calendar date",
-  );
+  .refine((value) => {
+    const parsed = new Date(`${value}T00:00:00.000Z`);
+    if (Number.isNaN(parsed.getTime())) return false;
+    // Date.parse normalises an impossible date instead of rejecting it, so
+    // 2026-02-30 would become 2 March and quietly extend the entry's life.
+    // The parsed components must read back as the ones that were written.
+    return (
+      parsed.getUTCFullYear() === Number(value.slice(0, 4)) &&
+      parsed.getUTCMonth() + 1 === Number(value.slice(5, 7)) &&
+      parsed.getUTCDate() === Number(value.slice(8, 10))
+    );
+  }, "must be a real calendar date");
 
 /**
  * One known finding. `kind` is checked against the kinds the auditor can

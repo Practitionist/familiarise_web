@@ -320,14 +320,19 @@ findings against the checked-in baseline
   baselined finding never hides evidence.
 - `summary.baselineProblems` — the baseline file is malformed (a missing
   owner, reason or expiry, an unparseable date, or a finding kind the
-  auditor cannot raise). The baseline excuses nothing in that state and
-  the run fails anyway, so fix the file in
+  auditor cannot raise). A malformed entry excuses nothing for itself, the
+  valid entries beside it are still evaluated, and any problem fails the run
+  anyway — so fix the file in
   `scripts/reconcile/ledger-findings-baseline.ts` rather than the money.
 
-A baseline entry only excuses the exact finding it pins (kind, delta and
-every entity id it names) and stops excusing it after its `expires` date.
-A finding that reappears with a different amount, on a different row, or
-after the entry expired is unbaselined and fails the run again.
+A baseline entry only excuses the exact finding it pins: the kind, the
+delta, the complete set of entity ids the finding carries — the entry must
+name the same ids, and a finding that carries an id the entry does not pin
+is not excused — and, where the entry names one, the `details` key and
+value. The entry stops excusing that finding after its `expires` date. A
+finding that reappears with a different amount, on a different row, with an
+extra identifier, or after the entry expired is unbaselined and fails the
+run again.
 
 **Correcting drift:** the journal is append-only. Never edit or delete a
 `LedgerTransaction`/`LedgerEntry` row to "fix" a finding — post a

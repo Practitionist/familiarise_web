@@ -195,6 +195,32 @@ describe("evaluateLedgerBaseline", () => {
     expect(badDate.ok).toBe(false);
   });
 
+  it("rejects an expiry date the calendar does not have", () => {
+    // 30 February parses as 2 March, so a date-only check would accept it and
+    // quietly extend the entry's life by a day.
+    const impossibleDate = evaluateLedgerBaseline({
+      findings: [],
+      entries: [entry({ expires: "2026-02-30" })],
+      knownKinds: RECONCILE_FINDING_KINDS,
+      now: NOW,
+    });
+
+    expect(impossibleDate.problems).toHaveLength(1);
+    expect(impossibleDate.problems[0]).toContain("expires");
+    expect(impossibleDate.ok).toBe(false);
+  });
+
+  it("accepts the last day of a leap February", () => {
+    const leapDay = evaluateLedgerBaseline({
+      findings: [],
+      entries: [entry({ expires: "2028-02-29" })],
+      knownKinds: RECONCILE_FINDING_KINDS,
+      now: NOW,
+    });
+
+    expect(leapDay.problems).toEqual([]);
+  });
+
   it("fails the run and reports an unknown finding kind", () => {
     const unknownKind = evaluateLedgerBaseline({
       findings: [],
