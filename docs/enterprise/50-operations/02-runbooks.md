@@ -196,7 +196,7 @@ Regulatory jobs in this group handle e-invoice IRN generation, DPDP breach-deadl
 
 ### Non-enterprise crons (for completeness)
 
-Disputes (`alert-dispute-deadlines` hourly; `reconcile-disputes` hourly on the Netlify ticker), appointments, waitlist, Stream recording
+Disputes (`reconcile-disputes` hourly on the Netlify ticker; deadline alerts inside `support-sla-sweep` every 30 minutes, which bells and emails admins at T-72h/T-24h and pages once for disputes due within 12 h or past due), appointments, waitlist, Stream recording
 retention (`expire-recordings`, `transfer-recordings`), discount expiry, and the auth-token /
 empty-folder / tentative-slot cleanups all live under the same
 `.github/workflows` + `jobs/**` convention but are outside the

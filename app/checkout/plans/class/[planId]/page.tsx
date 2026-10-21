@@ -135,12 +135,14 @@ export default function ClassCheckoutPage({
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [useReferralCredits, setUseReferralCredits] = useState(false);
-  // #1365 — GST place of supply. Blank is the statutory s.12(2)(b) default, so
-  // this never blocks checkout.
-  const billingState = useBillingState(checkoutTaxContext.billingStateCode);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<
     string | null
   >(null);
+  const billingState = useBillingState(
+    checkoutTaxContext,
+    selectedOrganizationId,
+  );
+  const { validate: validateBillingState } = billingState;
 
   const { toast } = useToast();
   const {
@@ -324,6 +326,8 @@ export default function ClassCheckoutPage({
         return;
       }
 
+      if (!validateBillingState()) return;
+
       if (isProcessingRef.current || isCheckoutProcessing) {
         return;
       }
@@ -419,6 +423,7 @@ export default function ClassCheckoutPage({
       useReferralCredits,
       selectedOrganizationId,
       billingState.bodyField,
+      validateBillingState,
       validatedSearchParams,
       currency,
       availableClassId,
@@ -713,10 +718,7 @@ export default function ClassCheckoutPage({
           }}
         />
         <Separator className="bg-border" />
-        <BillingStateSelect
-          value={billingState.value}
-          onChange={billingState.onChange}
-        />
+        <BillingStateSelect {...billingState.selectProps} />
         <Separator className="bg-border" />
         <div className="grid gap-4">
           <div className="font-semibold">Discount Codes</div>
@@ -942,6 +944,7 @@ export default function ClassCheckoutPage({
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
+                          onBeforeCheckout={async () => validateBillingState()}
                           disabled={isMaintenanceBlocked}
                         />
                       ) : null}
