@@ -70,6 +70,11 @@ import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { liveParticipant } from "@/lib/booking/participants";
 import { eraseUserSessionDocuments } from "@/lib/documents/document-erasure";
+import {
+  removeSupportAttachmentObjects,
+  scrubSupportPiiTx,
+  supportAttachmentPaths,
+} from "@/lib/support/erasure";
 
 export interface ScrubResult {
   /// True iff this call performed the scrub. False means the user was
@@ -521,9 +526,21 @@ async function retryErasedUserVendorCleanup(
     userId,
     now,
   );
-  vendorFailures.push(...recordingFailures);
+  const documentFailures = await eraseUserSessionDocuments(prisma, userId, now);
+  const supportFailures = await removeSupportAttachmentObjects(
+    await supportAttachmentPaths(prisma, userId),
+  ).catch((error_: unknown) => {
+    reportSentryError(error_, {
+      subsystem: "compliance",
+      op: "scrubUser.removeSupportAttachmentObjects",
+      extra: { userId },
+    });
+    return ["support-attachments: storage cleanup failed; re-run erasure"];
+  });
   vendorFailures.push(
-    ...(await eraseUserSessionDocuments(prisma, userId, now)),
+    ...recordingFailures,
+    ...documentFailures,
+    ...supportFailures,
   );
   return vendorFailures;
 }
@@ -734,6 +751,7 @@ export async function scrubUser(
     );
 
   let collaborationsRemoved: CollaborationRef[] = [];
+  let supportAttachmentPathsToRemove: string[] = [];
   let erasureRequestId: string | null = null;
   let principalOutboxQueued = false;
   await prisma.$transaction(async (tx) => {
@@ -824,6 +842,7 @@ export async function scrubUser(
       where: { requestedBy: { userId } },
       data: { requestNotes: null },
     });
+    supportAttachmentPathsToRemove = await scrubSupportPiiTx(tx, userId, now);
 
     // #1580 — an erased consultant otherwise stays an ACCEPTED collaborator in
     // every split and roster; the same flip the moderation ban runs.
@@ -1060,12 +1079,16 @@ export async function scrubUser(
   }
 
   const documentFailures = await eraseUserSessionDocuments(prisma, userId, now);
+  const supportFailures = await removeSupportAttachmentObjects(
+    supportAttachmentPathsToRemove,
+  );
 
   const vendorFailures = [
     ...paymentFailures,
     ...principalFailures,
     ...recordingFailures,
     ...documentFailures,
+    ...supportFailures,
   ];
 
   const notificationFailures = await offboardNotificationVendor(userId);

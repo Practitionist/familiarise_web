@@ -252,6 +252,12 @@ export async function POST(req: NextRequest) {
             caseKey: `c_${prior.id}`,
           },
         });
+      return supportError({
+        status: 409,
+        code: "CONFLICT",
+        message: "This request was already used. Refresh and try again.",
+        context: { route: "support.appeals" },
+      });
     }
     return supportError({
       status: 500,

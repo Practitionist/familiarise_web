@@ -1,6 +1,7 @@
 import {
-  visibleCaseWhere,
+  visibleCaseAccess,
   caseOwnershipPermission,
+  projectCaseForViewer,
 } from "@/lib/support/case-access";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { NextRequest, NextResponse } from "next/server";
@@ -14,6 +15,7 @@ import { assertBodySize } from "@/lib/validation/limits";
 import { supportError } from "@/lib/api/support-http";
 import {
   CreateSupportCaseObjectSchema,
+  type CreateSupportCaseInput,
   SupportCaseStatusSchema,
   SupportCaseValidationError,
   createOrReuseSupportCase,
@@ -21,6 +23,10 @@ import {
   refineCreateSupportCaseInput,
 } from "@/lib/support/case-service";
 import { sessionRole } from "@/lib/auth/session-role";
+import {
+  SupportIssueTypeEnum,
+  SupportThreadCategoryEnum,
+} from "@/schemas/enums";
 
 const ALLOWED_ORG_SUBMITTER_ROLES: ReadonlySet<MemberRole> = new Set([
   "OWNER",
@@ -51,10 +57,19 @@ const ClientCreateCaseBodySchema = CreateSupportCaseObjectSchema.omit({
   flowKey: true,
 })
   .extend({
+    category: z
+      .union([SupportIssueTypeEnum, SupportThreadCategoryEnum])
+      .nullable()
+      .optional(),
     requesterUserId: z.string().min(1).max(64).optional(),
     paymentId: z.string().min(1).max(64).optional(),
   })
   .superRefine(refineCreateSupportCaseInput);
+
+const ListQuerySchema = z.object({
+  status: SupportCaseStatusSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
 
 type ParsedCaseCreationBody = z.infer<typeof StaffCreateCaseBodySchema>;
 
@@ -68,21 +83,24 @@ export async function GET(req: NextRequest) {
       "tickets.manage",
     );
 
-    const parsedStatus = SupportCaseStatusSchema.safeParse(
-      req.nextUrl.searchParams.get("status"),
-    );
-    const limitParam = Number(req.nextUrl.searchParams.get("limit") ?? "50");
-    const take = Number.isFinite(limitParam)
-      ? Math.min(Math.max(1, limitParam), 100)
-      : 50;
+    const query = ListQuerySchema.safeParse({
+      status: req.nextUrl.searchParams.get("status") ?? undefined,
+      limit: req.nextUrl.searchParams.get("limit") ?? undefined,
+    });
+    if (!query.success)
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        detail: query.error.flatten(),
+        context: { route: "support.cases", action: "list" },
+      });
+    const { status, limit: take } = query.data;
 
-    const where = {
-      ...(await visibleCaseWhere({
-        userId: user.id,
-        role: sessionRole(user.role),
-      })),
-      ...(parsedStatus.success ? { status: parsedStatus.data } : {}),
-    };
+    const access = await visibleCaseAccess({
+      userId: user.id,
+      role: sessionRole(user.role),
+    });
+    const where = { ...access.where, ...(status ? { status } : {}) };
 
     const cases = await prisma.supportCase.findMany({
       where,
@@ -96,6 +114,7 @@ export async function GET(req: NextRequest) {
         priority: true,
         status: true,
         caseKind: true,
+        ownershipScope: true,
         requesterUserId: true,
         submitterUserId: true,
         organizationId: true,
@@ -116,30 +135,17 @@ export async function GET(req: NextRequest) {
     const data = staff
       ? cases
       : cases.map((row) => {
-          if (
-            row.requesterUserId !== row.submitterUserId &&
-            user.id !== row.submitterUserId
-          ) {
-            return {
-              id: row.id,
-              referenceNumber: row.referenceNumber,
-              status: row.status,
-              category: row.category,
-              createdAt: row.createdAt,
-              organizationId: row.organizationId,
-              requesterUserId: row.requesterUserId,
-              submitterUserId: null,
-              title: "Organization support request",
-              description: "",
-              messages: [],
-              events: [],
-              subjects: [],
-              callbackPhone: null,
-              callbackWindow: null,
-              filedByOrganizationNotice: true as const,
-            };
-          }
-          return row;
+          const view = projectCaseForViewer(
+            row,
+            user.id,
+            access.canCorrespond(row),
+          );
+          if (view.summaryOnly) return view.summary;
+          return {
+            ...row,
+            callbackPhone:
+              row.submitterUserId === user.id ? row.callbackPhone : null,
+          };
         });
 
     return NextResponse.json({ data });
@@ -188,7 +194,7 @@ async function resolveOrgMembershipAccess(
   requesterUserId: string,
   targetOrgId: string | null,
 ): Promise<
-  | { ok: true; callerIsOrgOperator: boolean }
+  | { ok: true; callerIsOrgOperator: boolean; onBehalf: boolean }
   | { ok: false; response: NextResponse }
 > {
   if (requesterUserId !== userId) {
@@ -234,7 +240,7 @@ async function resolveOrgMembershipAccess(
         }),
       };
     }
-    return { ok: true, callerIsOrgOperator: true };
+    return { ok: true, callerIsOrgOperator: true, onBehalf: true };
   }
 
   if (targetOrgId) {
@@ -261,10 +267,11 @@ async function resolveOrgMembershipAccess(
       callerIsOrgOperator: ALLOWED_ORG_SUBMITTER_ROLES.has(
         submitterMembership.role,
       ),
+      onBehalf: false,
     };
   }
 
-  return { ok: true, callerIsOrgOperator: false };
+  return { ok: true, callerIsOrgOperator: false, onBehalf: false };
 }
 
 async function validateCaseScopeAccess(params: {
@@ -276,6 +283,7 @@ async function validateCaseScopeAccess(params: {
   appointmentOccurrenceId?: string | null;
 }): Promise<NextResponse | null> {
   let callerIsOrgOperator = false;
+  let onBehalf = false;
   if (!params.staff) {
     const orgCheck = await resolveOrgMembershipAccess(
       params.userId,
@@ -284,6 +292,7 @@ async function validateCaseScopeAccess(params: {
     );
     if (!orgCheck.ok) return orgCheck.response;
     callerIsOrgOperator = orgCheck.callerIsOrgOperator;
+    onBehalf = orgCheck.onBehalf;
   }
 
   if (!params.appointmentId) return null;
@@ -318,7 +327,12 @@ async function validateCaseScopeAccess(params: {
       (appt.organizationId === params.targetOrgId ||
         appt.participants.some((p) => p.organizationId === params.targetOrgId));
 
-    if (!requesterOnAppointment && !orgMatchesAppointment) {
+    // Filing for another member reaches only the organization's own bookings.
+    if (
+      onBehalf
+        ? !orgMatchesAppointment
+        : !requesterOnAppointment && !orgMatchesAppointment
+    ) {
       return supportError({
         status: 403,
         code: "FORBIDDEN",
@@ -423,6 +437,51 @@ async function resolveCasePayment(
   return { ok: true as const, payment };
 }
 
+/**
+ * A case a member files for another member belongs to the organization, so
+ * access follows current membership rather than the filing operator.
+ */
+function withOnBehalfOwnership(
+  data: ParsedCaseCreationBody,
+  staff: boolean,
+  userId: string,
+): ParsedCaseCreationBody {
+  const onBehalf = !staff && (data.requesterUserId ?? userId) !== userId;
+  return onBehalf && (data.ownershipScope ?? "PERSONAL") === "PERSONAL"
+    ? { ...data, ownershipScope: "ORG_OPERATIONS" }
+    : data;
+}
+
+/** Staff file personal cases as the customer; everyone else files as themselves. */
+function caseCreateInput(
+  data: ParsedCaseCreationBody,
+  ctx: {
+    paymentId: string | null;
+    staff: boolean;
+    userId: string;
+    requesterUserId: string;
+  },
+): CreateSupportCaseInput {
+  const personal = (data.ownershipScope ?? "PERSONAL") === "PERSONAL";
+  return {
+    ...data,
+    subjects: ctx.paymentId
+      ? [
+          {
+            subjectType: "PAYMENT",
+            subjectId: ctx.paymentId,
+            isPrimary: !data.appointmentId,
+          },
+        ]
+      : data.subjects,
+    requesterUserId: ctx.requesterUserId,
+    submitterUserId: ctx.staff && personal ? ctx.requesterUserId : ctx.userId,
+    activeChannel: data.activeChannel ?? "HUMAN",
+    initialSender: ctx.staff ? "AGENT" : "USER",
+    initialAuthorUserId: ctx.userId,
+  };
+}
+
 export async function POST(req: NextRequest) {
   try {
     const auth = await requireApiAuth();
@@ -433,7 +492,10 @@ export async function POST(req: NextRequest) {
       "tickets.manage",
     );
 
-    const rl = await applyRateLimit(spamLimiter, `support-cases:${user.id}`);
+    // Operators who manage tickets file on customers' behalf all day.
+    const rl = staff
+      ? null
+      : await applyRateLimit(spamLimiter, `support-cases:${user.id}`);
     if (rl) return rl;
 
     const bodyRes = await resolveCaseCreationBody(req, staff);
@@ -441,9 +503,10 @@ export async function POST(req: NextRequest) {
 
     const requesterUserId = bodyRes.data.requesterUserId ?? user.id;
     const targetOrgId = bodyRes.data.organizationId ?? null;
+    const data = withOnBehalfOwnership(bodyRes.data, staff, user.id);
 
     const ownershipError = await validateCaseOwnershipAccess(
-      bodyRes.data,
+      data,
       staff,
       user.id,
     );
@@ -454,39 +517,27 @@ export async function POST(req: NextRequest) {
       userId: user.id,
       requesterUserId,
       targetOrgId,
-      appointmentId: bodyRes.data.appointmentId,
-      appointmentOccurrenceId: bodyRes.data.appointmentOccurrenceId,
+      appointmentId: data.appointmentId,
+      appointmentOccurrenceId: data.appointmentOccurrenceId,
     });
     if (accessErr) return accessErr;
 
     const paymentResult = await resolveCasePayment(
-      bodyRes.data,
+      data,
       staff,
       user.id,
       targetOrgId,
     );
     if (!paymentResult.ok) return paymentResult.response;
     const { payment } = paymentResult;
-    const result = await createOrReuseSupportCase({
-      ...bodyRes.data,
-      subjects: payment
-        ? [
-            {
-              subjectType: "PAYMENT",
-              subjectId: payment.id,
-              isPrimary: !bodyRes.data.appointmentId,
-            },
-          ]
-        : bodyRes.data.subjects,
-      requesterUserId,
-      submitterUserId:
-        staff && (bodyRes.data.ownershipScope ?? "PERSONAL") === "PERSONAL"
-          ? requesterUserId
-          : user.id,
-      activeChannel: bodyRes.data.activeChannel ?? "HUMAN",
-      initialSender: staff ? "AGENT" : "USER",
-      initialAuthorUserId: user.id,
-    });
+    const result = await createOrReuseSupportCase(
+      caseCreateInput(data, {
+        paymentId: payment?.id ?? null,
+        staff,
+        userId: user.id,
+        requesterUserId,
+      }),
+    );
 
     const viewerCase = await readSupportCaseForViewer(result.supportCase.id, {
       userId: user.id,

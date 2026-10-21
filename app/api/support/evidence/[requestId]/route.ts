@@ -12,6 +12,11 @@ import {
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { sessionRole } from "@/lib/auth/session-role";
 import { PLAN_TITLE_SELECT, planTitle } from "@/lib/support/case-read";
+import { parseRouteParams } from "@/lib/api/support-http";
+import { EvidenceRequestIdParams } from "@/schemas/support";
+
+const ROUTE = "support.evidence.detail";
+
 interface Context {
   params: Promise<{ requestId: string }>;
 }
@@ -20,9 +25,13 @@ const ResponseSchema = z.object({
   clientTurnId: z.string().min(1).max(128),
 });
 export async function GET(_req: NextRequest, context: Context) {
+  const id = await parseRouteParams(EvidenceRequestIdParams, context.params, {
+    route: ROUTE,
+  });
+  if (!id.ok) return id.response;
   const auth = await requireApiAuth();
   if (auth.error) return auth.error;
-  const { requestId } = await context.params;
+  const { requestId } = id.data;
   const row = await prisma.supportCaseEvidenceRequest.findFirst({
     where: {
       id: requestId,
@@ -93,6 +102,10 @@ export async function GET(_req: NextRequest, context: Context) {
   });
 }
 export async function POST(req: NextRequest, context: Context) {
+  const id = await parseRouteParams(EvidenceRequestIdParams, context.params, {
+    route: ROUTE,
+  });
+  if (!id.ok) return id.response;
   const auth = await requireApiAuth({ expectUser: true });
   if (auth.error) return auth.error;
   const limited = await applyRateLimit(
@@ -105,7 +118,7 @@ export async function POST(req: NextRequest, context: Context) {
   const input = ResponseSchema.safeParse(await req.json().catch(() => null));
   if (!input.success)
     return NextResponse.json({ error: "Write a response" }, { status: 400 });
-  const { requestId } = await context.params;
+  const { requestId } = id.data;
   const outcome = await prisma.$transaction(async (tx) => {
     const row = await tx.supportCaseEvidenceRequest.findFirst({
       where: { id: requestId, recipientUserId: auth.session.user.id },

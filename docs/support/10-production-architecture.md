@@ -76,8 +76,9 @@ see [Razorpay’s dispute documentation](https://razorpay.com/docs/payments/disp
   `POST /api/staff/appointments/[appointmentId]/cancel`, an audited door that
   prices the refunds it will send under the same limits; the participant cancel
   route refuses them.
-- `PERSONAL` cases belong to their submitter. A member who is the subject of an
-  organization-filed personal case receives a summary, never its correspondence.
+- `PERSONAL` cases belong to their submitter. A member who is the subject of a
+  case an operator filed for them receives a summary, never its correspondence;
+  such cases are organization-owned so access follows current membership.
 - `ORG_OPERATIONS` correspondence is available to active OWNER, MAINTAINER,
   MANAGER and SUPPORT members. `ORG_BILLING` correspondence is available to
   OWNER, MAINTAINER and BILLING_ADMIN. Organization tagging alone grants no
@@ -85,9 +86,12 @@ see [Razorpay’s dispute documentation](https://razorpay.com/docs/payments/disp
 - Notifications target current eligible members; organization emails link to
   the authorized workspace without copying its transcript. Access rechecks
   current membership.
-- Anonymous public grievances store explicit external contact fields. Operator
-  foreign keys identify queue custody, not the complainant. Those cases are
-  staff-only; external replies use the guarded email outbox.
+- A signed-in public grievance belongs to the account and appears in its
+  dashboard and privacy export. An anonymous grievance stores explicit external
+  contact fields on a case held by the non-staff `system-public-grievance-intake`
+  user, so no operator's deletion cascades into it. Those cases are staff-only.
+  Until the complainant confirms their address through a signed seven-day link,
+  replies, status changes and decisions are emailed as the reference only.
 - `/dashboard/support/c_<id>` resolves a notification to the viewer's authorized
   workspace. Case access is checked before choosing the destination.
 
@@ -109,7 +113,8 @@ The profile-free evidence notification URL authorizes the recipient and redirect
 to their dashboard; it renders no standalone evidence page.
 
 Organization support lists only organization-owned conversations allowed by the
-current member's operations/billing grants. Its evidence inbox stays recipient-only
+current member's operations/billing grants. The operations triage counts, but
+never lists, a member's personal complaint about the organization or its people. Its evidence inbox stays recipient-only
 and matches that organization's sponsored or hosted appointments. Personal reports
 and product feedback are explicitly linked into the viewer's personal workspace,
 never rendered as organization-owned records. Member support activity is a separate
@@ -193,8 +198,9 @@ payouts cannot be recalled by creating a hold.
 
 ### Storage, concurrency and deadlines
 
-Evidence uses private `support-attachments` storage, direct signed uploads, and
-server verification of the stored type and size before completion. Downloads
+Evidence uses private `support-attachments` storage with bucket limits set in
+code, direct signed uploads, and server verification of the stored type, size and
+leading bytes before completion; a mismatched object is removed. Downloads
 recheck access and issue short-lived signed URLs. Submitted evidence is retained
 with the case; pending uploads can be withdrawn.
 

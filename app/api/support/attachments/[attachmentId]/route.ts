@@ -6,13 +6,22 @@ import {
   attachmentCaseAccess,
 } from "@/lib/support/case-attachments";
 import { sessionRole } from "@/lib/auth/session-role";
+import { parseRouteParams } from "@/lib/api/support-http";
+import { AttachmentIdParams } from "@/schemas/support";
+
+const ROUTE = "support.attachments";
+
 interface Context {
   params: Promise<{ attachmentId: string }>;
 }
 export async function GET(_req: NextRequest, context: Context) {
+  const id = await parseRouteParams(AttachmentIdParams, context.params, {
+    route: ROUTE,
+  });
+  if (!id.ok) return id.response;
   const auth = await requireApiAuth();
   if (auth.error) return auth.error;
-  const { attachmentId } = await context.params;
+  const { attachmentId } = id.data;
   const href = await attachmentDownload(attachmentId, {
     userId: auth.session.user.id,
     role: sessionRole(auth.session.user.role),
@@ -24,9 +33,13 @@ export async function GET(_req: NextRequest, context: Context) {
     : NextResponse.json({ error: "Not found" }, { status: 404 });
 }
 export async function DELETE(_req: NextRequest, context: Context) {
+  const id = await parseRouteParams(AttachmentIdParams, context.params, {
+    route: ROUTE,
+  });
+  if (!id.ok) return id.response;
   const auth = await requireApiAuth({ expectUser: true });
   if (auth.error) return auth.error;
-  const { attachmentId } = await context.params;
+  const { attachmentId } = id.data;
   const row = await prisma.supportCaseAttachment.findFirst({
     where: {
       id: attachmentId,

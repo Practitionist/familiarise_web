@@ -8,12 +8,16 @@ jest.mock("../../lib/auth-helpers", () => ({
   })),
 }));
 jest.mock("../../lib/support/case-actions", () => ({
-  evidenceRecipients: jest.fn(async () => [{ id: "viewer", name: "Expert" }]),
+  evidenceRecipientsByAppointment: jest.fn(
+    async (_db: unknown, ids: string[]) =>
+      new Map(ids.map((id) => [id, [{ id: "viewer", name: "Expert" }]])),
+  ),
 }));
 jest.mock("../../lib/support/case-access", () => ({
-  visibleCaseWhere: jest.fn(async () => ({
-    deletedAt: null,
-    submitterUserId: "viewer",
+  ...jest.requireActual("../../lib/support/case-access"),
+  visibleCaseAccess: jest.fn(async () => ({
+    where: { deletedAt: null, submitterUserId: "viewer" },
+    canCorrespond: () => true,
   })),
 }));
 jest.mock("../../lib/support/case-read", () => ({
@@ -52,7 +56,7 @@ jest.mock("../../lib/prisma", () => ({
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { evidenceRecipients } from "@/lib/support/case-actions";
+import { evidenceRecipientsByAppointment } from "@/lib/support/case-actions";
 import { GET as evidenceList } from "@/app/api/support/evidence/route";
 import { GET as requestList } from "@/app/api/support/requests/route";
 
@@ -101,14 +105,16 @@ it("refuses organization evidence before reading requests when membership access
 });
 
 it("hides an evidence request when the recipient no longer delivers the session", async () => {
-  jest.mocked(evidenceRecipients).mockResolvedValueOnce([]);
+  jest
+    .mocked(evidenceRecipientsByAppointment)
+    .mockResolvedValueOnce(new Map([["appointment-1", []]]));
   const response = await evidenceList(
     new NextRequest("https://example.test/api/support/evidence"),
   );
   expect(await response.json()).toEqual({ data: [] });
 });
 
-it("paginates the personal inbox without including organization-owned cases", async () => {
+it("paginates the personal inbox: personal cases plus org cases filed about the viewer", async () => {
   const response = await requestList(
     new NextRequest(
       "https://example.test/api/support/requests?ownership=personal&scope=session&status=OPEN&page=2",
@@ -118,7 +124,12 @@ it("paginates the personal inbox without including organization-owned cases", as
   const where = {
     AND: [
       { deletedAt: null, submitterUserId: "viewer" },
-      { ownershipScope: "PERSONAL" },
+      {
+        OR: [
+          { ownershipScope: "PERSONAL" },
+          { requesterUserId: "viewer", NOT: { submitterUserId: "viewer" } },
+        ],
+      },
       { status: "OPEN" },
       { appointmentId: { not: null } },
     ],

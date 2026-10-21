@@ -9,20 +9,45 @@ import { documentUploadLimiter, applyRateLimit } from "@/lib/rate-limit";
 import {
   AttachmentUploadSchema,
   attachmentCaseAccess,
-  SUPPORT_EVIDENCE_BUCKET,
+  discardPendingAttachment,
+  issueSignedUpload,
+  readAttachmentHead,
 } from "@/lib/support/case-attachments";
-import { supportError } from "@/lib/api/support-http";
+import {
+  headMatchesMimeType,
+  SUPPORT_ATTACHMENT_MIME_TYPES,
+  SUPPORT_EVIDENCE_BUCKET,
+} from "@/lib/support/attachment-policy";
+import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import { sessionRole } from "@/lib/auth/session-role";
+import { CaseAttachmentQuery, CaseIdParams } from "@/schemas/support";
+
+const ROUTE = "support.case.attachments";
+
 interface Context {
   params: Promise<{ caseId: string }>;
 }
 
 export async function GET(req: NextRequest, context: Context) {
+  const id = await parseRouteParams(CaseIdParams, context.params, {
+    route: ROUTE,
+  });
+  if (!id.ok) return id.response;
   const auth = await requireApiAuth();
   if (auth.error) return auth.error;
-  const { caseId } = await context.params;
-  const evidenceRequestId =
-    req.nextUrl.searchParams.get("evidenceRequestId") ?? undefined;
+  const { caseId } = id.data;
+  const query = CaseAttachmentQuery.safeParse({
+    evidenceRequestId:
+      req.nextUrl.searchParams.get("evidenceRequestId") ?? undefined,
+  });
+  if (!query.success)
+    return supportError({
+      status: 400,
+      code: "VALIDATION_FAILED",
+      detail: query.error.flatten(),
+      context: { route: ROUTE, action: "list" },
+    });
+  const { evidenceRequestId } = query.data;
   const access = await attachmentCaseAccess(
     caseId,
     { userId: auth.session.user.id, role: sessionRole(auth.session.user.role) },
@@ -54,6 +79,10 @@ export async function GET(req: NextRequest, context: Context) {
 }
 
 export async function POST(req: NextRequest, context: Context) {
+  const id = await parseRouteParams(CaseIdParams, context.params, {
+    route: ROUTE,
+  });
+  if (!id.ok) return id.response;
   const auth = await requireApiAuth({ expectUser: true });
   if (auth.error) return auth.error;
   const limited = await applyRateLimit(
@@ -74,7 +103,7 @@ export async function POST(req: NextRequest, context: Context) {
       },
       { status: 400 },
     );
-  const { caseId } = await context.params;
+  const { caseId } = id.data;
   const input = parsed.data;
   const actor = {
     userId: auth.session.user.id,
@@ -147,10 +176,8 @@ export async function POST(req: NextRequest, context: Context) {
         { error: "Maximum 20 evidence files per person per case" },
         { status: 400 },
       );
-    const { data, error } = await adminStorage()
-      .from(SUPPORT_EVIDENCE_BUCKET)
-      .createSignedUploadUrl(attachment.storagePath, { upsert: false });
-    if (error || !data) {
+    const data = await issueSignedUpload(attachment.storagePath);
+    if (!data) {
       await prisma.supportCaseAttachment.updateMany({
         where: { id: attachment.id, completedAt: null },
         data: { deletedAt: new Date() },
@@ -176,12 +203,16 @@ export async function POST(req: NextRequest, context: Context) {
       status: 500,
       code: "INTERNAL",
       cause,
-      context: { route: "support.case.attachments" },
+      context: { route: ROUTE },
     });
   }
 }
 
 export async function PUT(req: NextRequest, context: Context) {
+  const id = await parseRouteParams(CaseIdParams, context.params, {
+    route: ROUTE,
+  });
+  if (!id.ok) return id.response;
   const auth = await requireApiAuth({ expectUser: true });
   if (auth.error) return auth.error;
   const parsed = z
@@ -189,7 +220,7 @@ export async function PUT(req: NextRequest, context: Context) {
     .safeParse(await req.json().catch(() => null));
   if (!parsed.success)
     return NextResponse.json({ error: "Invalid evidence" }, { status: 400 });
-  const { caseId } = await context.params;
+  const { caseId } = id.data;
   const attachment = await prisma.supportCaseAttachment.findFirst({
     where: {
       id: parsed.data.attachmentId,
@@ -231,14 +262,28 @@ export async function PUT(req: NextRequest, context: Context) {
       { error: "Finish uploading the file before confirming it" },
       { status: 409 },
     );
-  if (
-    info.data.size !== attachment.fileSize ||
-    info.data.contentType !== attachment.mimeType
-  )
+  const declared = z
+    .enum(SUPPORT_ATTACHMENT_MIME_TYPES)
+    .safeParse(attachment.mimeType);
+  const metadataMatches =
+    declared.success &&
+    info.data.size === attachment.fileSize &&
+    info.data.contentType === attachment.mimeType;
+  const head = metadataMatches
+    ? await readAttachmentHead(attachment.storagePath)
+    : null;
+  if (metadataMatches && !head)
+    return NextResponse.json(
+      { error: "The file could not be checked yet. Confirm it again shortly." },
+      { status: 503 },
+    );
+  if (!declared.success || !head || !headMatchesMimeType(head, declared.data)) {
+    await discardPendingAttachment(attachment);
     return NextResponse.json(
       { error: "The uploaded file does not match its declared type and size" },
       { status: 400 },
     );
+  }
   const completed = await prisma.$transaction(async (tx) => {
     const supportCase = await tx.supportCase.findUnique({
       where: { id: caseId },

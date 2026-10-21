@@ -11,7 +11,7 @@
  * through to the FailedEmail retry worker rather than being swallowed.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
@@ -21,9 +21,12 @@ import { sendContactInquiryEmail } from "@/lib/email";
 import { applyRateLimit, getClientIp, spamLimiter } from "@/lib/rate-limit";
 import { allocateTicketReference } from "@/lib/support/reference";
 import { supportDeadline } from "@/lib/support/deadline-policy";
-import { stageBell } from "@/lib/novu/stage-bell";
-import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { slaDeadlinesFor } from "@/lib/support/sla";
+import { stageSupportCaseIntakeTx } from "@/lib/support/case-service";
+import {
+  resolvePublicIntakeUserId,
+  stageExternalIntakeReceiptTx,
+} from "@/lib/support/external-requester";
 import { INQUIRY_CATEGORIES } from "@/app/(pages)/constants";
 
 const CATEGORY_SET = new Set<string>(INQUIRY_CATEGORIES.map((c) => c.value));
@@ -91,74 +94,81 @@ async function recordContactLeadIfApplicable(
   }
 }
 
+/**
+ * A signed-in filer's grievance belongs to their account and is answered in
+ * the dashboard; an anonymous one is held by the public-intake system user and
+ * receives staff content only once its email address is confirmed.
+ */
 async function recordPublicGrievanceTicket(
   data: z.infer<typeof ContactBodySchema>,
 ): Promise<string | null> {
   if (data.category !== "grievance") return null;
   const session = await getSession().catch(() => null);
-  const sessionUserId = session?.user?.id ?? null;
+  const sessionUser = session?.user?.id
+    ? await prisma.user.findUnique({
+        where: { id: session.user.id },
+        select: { id: true, email: true, name: true },
+      })
+    : null;
+  const ownerId = sessionUser?.id ?? (await resolvePublicIntakeUserId());
+  const name = sessionUser?.name ?? `${data.firstName} ${data.lastName}`.trim();
+  const email = sessionUser?.email ?? data.email;
 
   return prisma.$transaction(async (tx) => {
-    const fallbackOwner = sessionUserId
-      ? null
-      : await tx.user.findFirst({
-          where: { role: { in: ["ADMIN", "STAFF"] } },
-          select: { id: true },
-          orderBy: { createdAt: "asc" },
-        });
-    const userId = sessionUserId ?? fallbackOwner?.id ?? null;
-    if (!userId) return null;
-
     const now = new Date();
     const ref = await allocateTicketReference(tx, now);
-    const name = `${data.firstName} ${data.lastName}`.trim();
+    const caseId = randomUUID();
     const supportCase = await tx.supportCase.create({
       data: {
+        id: caseId,
+        // Each grievance is its own scope: one holder carries every anonymous
+        // filing, so the open-case dedupe key must never merge them.
+        scopeKey: `GRIEVANCE:${caseId}`,
         referenceNumber: ref,
         title: `[Grievance] ${data.subject || "Public Grievance"}`,
-        description: `Submitted via public form by ${name} <${data.email}>\n\n${data.message}`,
+        description: sessionUser
+          ? data.message
+          : `Submitted via public form by ${name} <${email}>\n\n${data.message}`,
         category: "GRIEVANCE",
         status: "OPEN",
         priority: "HIGH",
-        requesterUserId: userId,
-        submitterUserId: userId,
+        requesterUserId: ownerId,
+        submitterUserId: ownerId,
         activeChannel: "HUMAN",
-        externalRequesterEmail: data.email,
-        externalRequesterName: name,
+        externalRequesterEmail: sessionUser ? null : email,
+        externalRequesterName: sessionUser ? null : name,
         messageSeq: 1,
         messages: {
           create: {
             seq: 1,
             sender: "USER",
-            authorUserId: null,
+            authorUserId: sessionUser?.id ?? null,
             body: data.message,
-            metadata: { origin: "public-grievance", email: data.email, name },
+            metadata: sessionUser
+              ? { origin: "public-grievance" }
+              : { origin: "public-grievance", email, name },
           },
         },
-        events: { create: { kind: "CREATED", toValue: "OPEN" } },
+        events: {
+          create: {
+            kind: "CREATED",
+            toValue: "OPEN",
+            actorId: sessionUser?.id ?? null,
+          },
+        },
         lastMessageAt: now,
         ...slaDeadlinesFor("HIGH", now),
         ...supportDeadline("GRIEVANCE", now),
         receivedAt: now,
       },
     });
-    const operators = await tx.user.findMany({
-      where: { role: { in: ["STAFF", "ADMIN"] }, banned: false },
-      select: { id: true },
-    });
-    await stageBell(tx, {
-      workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_CREATED,
-      recipients: operators.map((operator) => operator.id),
-      dedupeKey: `public-grievance:${supportCase.id}`,
-      entityRef: `case-created:${supportCase.id}`,
-      payload: {
-        ticketId: supportCase.id,
+    await stageSupportCaseIntakeTx(tx, supportCase, "USER");
+    if (!sessionUser)
+      await stageExternalIntakeReceiptTx(tx, {
+        caseId: supportCase.id,
         reference: ref,
-        ticketTitle: supportCase.title,
-        dashboardUrl: `/dashboard/support/c_${supportCase.id}`,
-        ...notificationScope(null),
-      },
-    });
+        to: email,
+      });
     return ref;
   });
 }

@@ -21,8 +21,9 @@ flowchart TD
 `lib/support/service.ts` runs appointment self-service against live booking
 context. Platform flows persist a case on formal handoff. Both use
 `createOrReuseSupportCase` and the same reference, receipt and deadline rules.
-Guided self-service starts no operator SLA clock. Public grievances store explicit
-external contact fields and use the guarded email outbox for replies.
+Guided self-service starts no operator SLA clock. A signed-in public grievance is
+an ordinary account case. An anonymous one stores explicit external contact
+fields and receives staff content by email only after its address is confirmed.
 
 Personal cases stay private to the customer and platform. Organization-owned
 operations/billing cases are accessible only through the corresponding current

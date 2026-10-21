@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { evidenceRecipients } from "@/lib/support/case-actions";
+import { evidenceRecipientsByAppointment } from "@/lib/support/case-actions";
 import { requireApiAuth, requireOrgAccess } from "@/lib/auth-helpers";
 import { evidenceAppointmentScope } from "@/lib/support/evidence-scope";
 const Query = z.object({
@@ -49,19 +49,19 @@ export async function GET(req: NextRequest) {
       },
     },
   });
-  const allowedAppointments = new Set<string>();
-  // Bound eligibility reads to one transaction at a time on the serverless pool.
-  for (const appointmentId of new Set(
+  const recipientsByAppointment = await evidenceRecipientsByAppointment(
+    prisma,
     data.flatMap((row) =>
       row.supportCase.appointmentId ? [row.supportCase.appointmentId] : [],
     ),
-  )) {
-    const recipients = await prisma.$transaction((tx) =>
-      evidenceRecipients(tx, appointmentId),
-    );
-    if (recipients.some((recipient) => recipient.id === auth.session.user.id))
-      allowedAppointments.add(appointmentId);
-  }
+  );
+  const allowedAppointments = new Set(
+    [...recipientsByAppointment]
+      .filter(([, recipients]) =>
+        recipients.some((recipient) => recipient.id === auth.session.user.id),
+      )
+      .map(([appointmentId]) => appointmentId),
+  );
   return NextResponse.json({
     data: data
       .filter(

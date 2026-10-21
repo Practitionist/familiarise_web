@@ -19,8 +19,13 @@ import { caseKeyOf } from "./case-key";
 import { stage as stageEmail } from "@/lib/email/deliver";
 import { getAppUrl } from "@/lib/url";
 import { DEFAULT_FROM_ADDRESS } from "@/lib/email/config";
-import { canCorrespondOnCase, caseCorrespondentIds } from "./case-access";
+import {
+  canCorrespondOnCase,
+  caseCorrespondentIds,
+  projectCaseForViewer,
+} from "./case-access";
 import { supportDeadline } from "./deadline-policy";
+import { stageExternalRequesterEmail } from "./external-requester";
 import { allocateTicketReference } from "./reference";
 import { releaseAllCaseHolds } from "./case-holds";
 import {
@@ -868,27 +873,17 @@ async function stageCaseTurnNotificationsTx(
   if (input.isInternal || (input.sender !== "USER" && input.sender !== "AGENT"))
     return;
   if (input.sender === "AGENT" && existingCase.externalRequesterEmail) {
-    const html = input.body.replace(
-      /[&<>"']/g,
-      (character) =>
-        ({
-          "&": "&amp;",
-          "<": "&lt;",
-          ">": "&gt;",
-          '"': "&quot;",
-          "'": "&#39;",
-        })[character] ?? character,
-    );
-    await stageEmail(
+    await stageExternalRequesterEmail(
       {
-        from: DEFAULT_FROM_ADDRESS,
+        caseId: existingCase.id,
+        reference: existingCase.referenceNumber,
         to: existingCase.externalRequesterEmail,
         subject: `Support response — ${existingCase.referenceNumber}`,
-        text: input.body,
-        html: `<p>${html.replace(/\n/g, "<br>")}</p><p>Reference: ${existingCase.referenceNumber}</p>`,
+        text: `${input.body}\n\nReference: ${existingCase.referenceNumber}`,
+        emailType: "SUPPORT_TICKET_RESPONSE",
+        entityRef: `case-message:${messageId}`,
       },
-      "SUPPORT_TICKET_RESPONSE",
-      { tx, entityRef: `case-message:${messageId}` },
+      tx,
     );
     return;
   }
@@ -1603,30 +1598,19 @@ export async function readSupportCaseForViewer(
       role: viewer.role ?? "CONSULTEE",
     }));
   if (!canCorrespond && !isRequester) return null;
-  if (supportCase.ownershipScope !== "PERSONAL" && !canCorrespond) return null;
 
-  if (
-    !canCorrespond &&
-    viewer.userId === supportCase.requesterUserId &&
-    supportCase.requesterUserId !== supportCase.submitterUserId
-  ) {
+  // The member a case was filed about gets the summary whatever its scope;
+  // only then does an org-owned case refuse everyone without the grant.
+  const view = projectCaseForViewer(supportCase, viewer.userId, canCorrespond);
+  if (view.summaryOnly)
     return {
-      id: supportCase.id,
-      referenceNumber: supportCase.referenceNumber,
-      status: supportCase.status,
-      category: supportCase.category,
-      createdAt: supportCase.createdAt,
-      organizationId: supportCase.organizationId,
-      requesterUserId: supportCase.requesterUserId,
-      submitterUserId: null,
-      title: "Organization support request",
+      ...view.summary,
       description: "",
       messages: [],
       events: [],
       subjects: [],
-      filedByOrganizationNotice: true as const,
     };
-  }
+  if (supportCase.ownershipScope !== "PERSONAL" && !canCorrespond) return null;
 
   if (viewer.isStaff) {
     return {
@@ -1642,16 +1626,73 @@ export async function readSupportCaseForViewer(
   }
 
   return {
-    ...supportCase,
-    messages: (supportCase.messages ?? []).filter((m) => !m.isInternal),
+    id: supportCase.id,
+    referenceNumber: supportCase.referenceNumber,
+    title: supportCase.title,
+    description: supportCase.description,
+    category: supportCase.category,
+    activeChannel: supportCase.activeChannel,
+    issueType: supportCase.issueType,
+    priority: supportCase.priority,
+    status: supportCase.status,
+    caseKind: supportCase.caseKind,
+    ownershipScope: supportCase.ownershipScope,
+    requesterUserId: supportCase.requesterUserId,
+    submitterUserId: supportCase.submitterUserId,
+    organizationId: supportCase.organizationId,
+    appointmentId: supportCase.appointmentId,
+    appointmentOccurrenceId: supportCase.appointmentOccurrenceId,
     assignedToId: null,
-    events: (supportCase.events ?? [])
+    // The callback number belongs to whoever filed; co-operators never see it.
+    callbackPhone:
+      viewer.userId === supportCase.submitterUserId
+        ? supportCase.callbackPhone
+        : null,
+    callbackWindow: supportCase.callbackWindow,
+    ackDueAt: supportCase.ackDueAt,
+    acknowledgedAt: supportCase.acknowledgedAt,
+    resolutionDueAt: supportCase.resolutionDueAt,
+    resolvedAt: supportCase.resolvedAt,
+    closedAt: supportCase.closedAt,
+    firstAgentReplyAt: supportCase.firstAgentReplyAt,
+    lastMessageAt: supportCase.lastMessageAt,
+    csatRating: supportCase.csatRating,
+    csatAt: supportCase.csatAt,
+    receivedAt: supportCase.receivedAt,
+    createdAt: supportCase.createdAt,
+    updatedAt: supportCase.updatedAt,
+    subjects: supportCase.subjects.map((subject) => ({
+      id: subject.id,
+      subjectType: subject.subjectType,
+      subjectId: subject.subjectId,
+      isPrimary: subject.isPrimary,
+    })),
+    messages: supportCase.messages
+      .filter((m) => !m.isInternal)
+      .map((m) => ({
+        id: m.id,
+        seq: m.seq,
+        sender: m.sender,
+        body: m.body,
+        isInternal: false as const,
+        clientTurnId: m.clientTurnId,
+        createdAt: m.createdAt,
+      })),
+    events: supportCase.events
       .filter((e) =>
         ["CREATED", "STATUS_CHANGED", "REOPENED", "AUTO_CLOSED"].includes(
           e.kind,
         ),
       )
-      .map((event) => ({ ...event, actorId: null, note: null })),
+      .map((event) => ({
+        id: event.id,
+        kind: event.kind,
+        fromValue: event.fromValue,
+        toValue: event.toValue,
+        createdAt: event.createdAt,
+        actorId: null,
+        note: null,
+      })),
     filedByOrganizationNotice: false as const,
   };
 }

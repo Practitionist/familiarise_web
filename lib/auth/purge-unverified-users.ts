@@ -37,6 +37,7 @@ export function unverifiedUserPurgeWhere(now: Date): Prisma.UserWhereInput {
     erasureRequests: { none: {} },
     dpdpGrievances: { none: {} },
     supportCasesSubmitted: { none: {} },
+    supportCasesRequested: { none: {} },
     recordingPurchases: { none: {} },
   };
 }

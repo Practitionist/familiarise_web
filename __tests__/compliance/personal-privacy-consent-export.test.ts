@@ -51,6 +51,9 @@ jest.mock("../../lib/prisma", () => ({
     supportCase: {
       findMany: jest.fn(),
     },
+    supportCaseMessage: { findMany: jest.fn(async () => []) },
+    supportCaseEvidenceRequest: { findMany: jest.fn(async () => []) },
+    supportCaseAttachment: { findMany: jest.fn(async () => []) },
     membership: {
       findMany: jest.fn(),
     },
@@ -316,6 +319,15 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
       expect(
         payload.statutoryRetentionAndRightsInfo.grievanceAndBoardAppeal,
       ).toContain("90 days");
+      expect(payload.personalDataSummary.activitySummary).toMatchObject({
+        supportTickets: [],
+        supportGrievances: [],
+        supportMessages: [],
+        supportEvidenceRequests: [],
+        supportAttachments: [],
+        supportRatings: [],
+        supportExportComplete: true,
+      });
     });
   });
 });

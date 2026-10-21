@@ -51,6 +51,7 @@ jest.mock("../../lib/novu/client", () => ({
 }));
 
 import { scrubUser } from "@/lib/compliance/erasure/scrub-user";
+import { supportScrubModels } from "../fixtures/support-erasure-models";
 
 function models(overrides: Record<string, unknown>) {
   return new Proxy(overrides, {
@@ -61,12 +62,14 @@ function models(overrides: Record<string, unknown>) {
 }
 
 const tx = models({
+  ...supportScrubModels(),
   collaborator: { updateManyAndReturn: jest.fn(async () => []) },
   erasureRequest: { findFirst: jest.fn(async () => null) },
 });
 
 function makeDb(erased = false) {
   return models({
+    ...supportScrubModels(),
     user: {
       findUnique: jest.fn(async () => ({
         id: "u1",

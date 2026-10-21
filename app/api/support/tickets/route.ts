@@ -22,7 +22,9 @@ export async function POST(req: NextRequest) {
     .clone()
     .json()
     .catch(() => null);
-  const target = z.object({ targetUserId: z.unknown() }).safeParse(peek);
+  const target = z
+    .object({ targetUserId: z.string().trim().min(1) })
+    .safeParse(peek);
   if (!target.success)
     return supportError({
       status: 400,
