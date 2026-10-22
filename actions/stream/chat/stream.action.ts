@@ -8,7 +8,6 @@ import {
 } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { getSession } from "@/lib/auth-server";
-import { isPrivileged } from "@/lib/auth-helpers";
 import { checkConsent } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import {
@@ -28,17 +27,16 @@ const STREAM_CONSENT_REFUSAL =
   "Chat and video are unavailable because data-processing consent for real-time communication has not been granted.";
 
 /**
- * Tokens may only be minted for the caller's own userId (staff/admin may mint
- * for anyone), and never for a banned or erased user — Stream's server-side API
+ * Tokens may only be minted for the caller's own userId (no role is exempt),
+ * and never for a banned or erased user — Stream's server-side API
  * skips all permission checks, so this session bind is the only gate against
  * identity spoofing and re-minting a revoked/suspended/erased identity.
  */
 async function assertCanMintToken(
   forUserId: string,
 ): Promise<Refusal | undefined> {
-  // Bypass the cookie-session cache so a just-demoted staff/admin (or a
-  // just-banned user) can't keep minting cross-user tokens until the cache
-  // expires (#899).
+  // Bypass the cookie-session cache so a just-banned user can't keep minting
+  // until the cache expires.
   const session = await getSession();
   if (!session?.user?.id) {
     // A tab whose cookie expired while it sat open: an answer the caller
@@ -57,7 +55,7 @@ async function assertCanMintToken(
   if ((session.user as { erasedAt?: Date | string | null }).erasedAt) {
     throw new Error("Forbidden: account erased");
   }
-  if (session.user.id !== forUserId && !isPrivileged(session.user.role)) {
+  if (session.user.id !== forUserId) {
     throw new Error("Forbidden: cannot mint a token for another user");
   }
   const targetUser = await prisma.user?.findUnique?.({

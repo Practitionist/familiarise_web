@@ -46,8 +46,6 @@ import { getChannelDisplayInfo, viewerOwnsChannel } from "./utils/channelUtils";
 import { AddMembersDialog } from "./AddMembersDialog";
 import { isEventChannel } from "@/lib/stream-channel-ids";
 import { addMemberToChannel } from "@/actions/stream/chat/member.action";
-import { useSession } from "@/lib/auth-client";
-import { useServerSessionFacts } from "@/components/dashboard/ServerUserId";
 
 interface ChannelMember {
   id: string;
@@ -91,12 +89,6 @@ export const ChannelInfoAndManageDialog = ({
       };
 
   const displayName = displayInfo.displayName;
-
-  // The APP role, never `client.user.role` — same source and same reason as
-  // ChatSidebar, which carries the warning comment about this trap.
-  const { data: session } = useSession();
-  const serverFacts = useServerSessionFacts();
-  const appRole = session?.user?.role ?? serverFacts.role;
 
   // Check if current user is the event owner consultant.
   //
@@ -296,31 +288,9 @@ export const ChannelInfoAndManageDialog = ({
   const canTruncateChannel = (() => {
     // In 1-on-1 DMs, both users can clear their view
     if (isDirectMessage && !displayInfo.isGroupDM) return true;
-    // In group DMs and channels, only the creator or a platform operator.
-    //
-    // #1280 — the SECOND instance of the dead-role bug in this file, missed
-    // when `isEventOwner` was fixed a few lines above. `client.user.role` is the
-    // STREAM role, and `mapRoleToStream` (lib/user.ts:82) collapses every
-    // non-staff account to `"user"`, so `userRole === "CONSULTANT"` was false by
-    // construction and `isPrivileged` was permanently false. #1144 asked for a
-    // grep of this pattern; this is what it found.
-    //
-    // CONSULTANT is deliberately NOT in the privileged set, and that is the
-    // correction to the first pass at this fix. `handleClearChat` calls
-    // `channel.truncate()` from the CLIENT, so Stream's permission system
-    // decides, not ours:
-    //
-    //   ADMIN / STAFF   → mapRoleToStream gives them Stream `admin`   → allowed
-    //   creator         → channel-scoped `channel_moderator` at create → allowed
-    //   other consultant→ plain Stream `user`, no moderator grant      → REFUSED
-    //
-    // Granting the app role alone would have shown the button to every
-    // consultant and handed the non-owners a Stream authorization failure —
-    // trading a dead button for one that visibly errors, which is worse. A
-    // consultant qualifies here only by owning the channel.
-    const isCreator = viewerOwnsChannel(creatorId, client?.userID);
-    const isOperator = appRole === "ADMIN" || appRole === "STAFF";
-    return isCreator || isOperator;
+    // Elsewhere only the creator: truncate runs client-side, and only the creator's
+    // channel-scoped `channel_moderator` passes Stream (operators are plain `user`s).
+    return viewerOwnsChannel(creatorId, client?.userID);
   })();
 
   // Report the other user in a 1-on-1 DM (flags in Stream + persists to DB)

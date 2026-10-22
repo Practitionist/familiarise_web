@@ -98,15 +98,7 @@ export const createMockUserCache = () => ({
 
 // Role mapper mock
 export const createMockRoleMapper = () => ({
-  mapRoleToStream: jest.fn().mockImplementation((role: string) => {
-    const mapping: Record<string, string> = {
-      ADMIN: "admin",
-      CONSULTANT: "user",
-      CONSULTEE: "user",
-      STAFF: "admin",
-    };
-    return mapping[role] || "user";
-  }),
+  mapRoleToStream: jest.fn().mockReturnValue("user"),
 });
 
 // Stream Video Call mock with real Stream enum contract validation (#1999)
@@ -115,7 +107,8 @@ export const createMockVideoCall = () => {
     assertValidGetOrCreateCall,
     assertValidUpdateCallMembers,
     assertValidUpdateUserPermissions,
-  } = require("../../lib/stream/video-contracts") as typeof import("../../lib/stream/video-contracts");
+  } =
+    require("../../lib/stream/video-contracts") as typeof import("../../lib/stream/video-contracts");
 
   return {
     getOrCreate: jest.fn().mockImplementation(async (payload: unknown) => {
@@ -139,4 +132,3 @@ export const createMockVideoCall = () => {
     end: jest.fn().mockResolvedValue({}),
   };
 };
-

@@ -177,7 +177,6 @@ function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
           consultantId,
         ) as Promise<ConsultantDetails | null>
       }
-      profileStreamUserId={(profile) => profile?.user?.id}
       profileDisplayName={(profile) => profile?.user?.name}
       profileOwnerName={(profile) => profile?.user?.name}
       profileDisplayImage={(profile) => profile?.user?.image}
