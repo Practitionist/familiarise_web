@@ -273,14 +273,15 @@ sequenceDiagram
 
 ## Holds and Dispute Handling
 
-An earning is `HELD` while it carries at least one active `EarningsHold`. A hold names a reason (`DISPUTE`, `MODERATION`, `OPERATOR` or `OVERAGE`) and a source reference, and each owner places and releases only its own hold. `lib/payments/payouts/earnings-holds.ts` (`placeEarningsHolds()` and `releaseEarningsHolds()`) is the only writer of the `HELD` status. The first hold stores the earning's prior status in `preHoldStatus`, and the last release restores it, so a PENDING earning that is held and released goes back to PENDING and a READY one back to READY.
+An earning is `HELD` while it carries at least one active `EarningsHold`. A hold names a reason (`DISPUTE`, `MODERATION`, `OPERATOR`, `OVERAGE` or `SUPPORT_CASE`) and a source reference, and each owner places and releases only its own hold. `lib/payments/payouts/earnings-holds.ts` (`placeEarningsHolds()` and `releaseEarningsHolds()`) is the only writer of the `HELD` status. The first hold stores the earning's prior status in `preHoldStatus`, and the last release restores it, so a PENDING earning that is held and released goes back to PENDING and a READY one back to READY.
 
-| Reason       | Placed when                               | Released when                                       |
-| ------------ | ----------------------------------------- | --------------------------------------------------- |
-| `DISPUTE`    | A dispute opens on the payment            | That dispute settles, whatever the verdict          |
-| `MODERATION` | The consultant is banned                  | An admin releases it                                |
-| `OPERATOR`   | An admin holds the earning                | An admin releases it                                |
-| `OVERAGE`    | A member overage on the payment is unpaid | The overage is paid, reversed or settled to the org |
+| Reason         | Placed when                                                               | Released when                                               |
+| -------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `DISPUTE`      | A dispute opens on the payment                                            | That dispute settles, whatever the verdict                  |
+| `MODERATION`   | The consultant is banned                                                  | An admin releases it                                        |
+| `OPERATOR`     | An admin holds the earning                                                | An admin releases it                                        |
+| `OVERAGE`      | A member overage on the payment is unpaid                                 | The overage is paid, reversed or settled to the org         |
+| `SUPPORT_CASE` | Staff or an admin holds a service complaint (`lib/support/case-holds.ts`) | They release it, or the case is decided, resolved or closed |
 
 ```mermaid
 flowchart TD

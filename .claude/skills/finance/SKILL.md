@@ -23,8 +23,16 @@ This is the index for the finance domain: how money truth is written and proven 
 - Let the deferred payment-leg trigger enforce the funding sum; exclude `REFERRAL_CREDIT`, which is already netted out of `Payment.amount`.
 - Treat the immutable double-entry journal as authoritative. Wallet balances are reconciled caches; account balances are journal aggregates.
 - Advance scheduled ledger audits through persisted full-scope checkpoints under the same fail-closed lease as the full API. Each comparison uses one read-only Repeatable Read snapshot. Partial reports remain RUNNING; missing BOOKING findings and baselines pin paymentId. Freeze each wallet page immediately and deduplicate alerts by logical report. See `docs/enterprise/10-money-and-ledger/13-ledger-integrity.md` for operation and resumption.
-- Reserve refunds before any gateway call and enter through the two refund front doors.
+- Reserve refunds before any gateway call. Booking refunds use `refundBookingPayment`, `refundWholeEventPayments` or `refundRemovedAttendeeSeat`; wallet top-up refunds use `refundRemainingWalletBalance` or `bookTopUpRefund`. Support and incident paths enter through the booking refund door.
 - Bill GST as principal supplier: 18% on the full price, platform invoices and credit notes, no Section 52 TCS. Book each supply's GST once; invoice journals cover only supplies without booking journals, and overages tax only their surcharge.
 - Pass the transaction client through every helper inside `$transaction`; global-client reads can deadlock at `PG_POOL_MAX=1`.
 
 Detailed invariants and regime facts live in `references/doctrine.md`; verification procedures live in `references/verification.md`.
+
+## Settlement, wallet and operator surfaces
+
+- **Settlement recon.** Razorpay card money sits in the `GATEWAY_CLEARING` ledger account until it settles to `CASH`. `reconcile-gateway-settlements` (`jobs/reconcile/reconcile-gateway-settlements.ts`) matches Razorpay's settlement report into `GatewaySettlementLine` rows and books `GATEWAY_SETTLEMENT` (`GATEWAY_CLEARING` to `CASH`); the per-capture fee is booked by `lib/payments/ledger/gateway-fee.ts`. `reconcile-ledgers` does not check the clearing residual; read that job for it.
+- **Wallet corrections.** `adjustWallet` (`lib/api/organizations/wallet.ts`, kind `WALLET_ADJUSTMENT`) moves cache and journal by the same amount, so it cannot repair a cache-vs-journal drift. Repair drift with a balanced correcting `LedgerTransaction`, then unfreeze.
+- **Wallet freeze.** `WALLET_BALANCE_DRIFT` freezes discretionary spend via `lib/payments/wallet-freeze.ts` (`isWalletFrozen`, `freezeDriftedWallets`), even when the finding is baselined. A wallet debit also needs its `Dr WALLET` line (`assertWalletDebitJournaled`).
+- **Support holds and remedies.** `EarningsHoldReason.SUPPORT_CASE` holds are placed by `lib/support/case-holds.ts`. A service complaint (`SupportCase`) refund is proposed as a `SupportFinancialRecommendation`, decided by a second operator, and only then executed through `refundBookingPayment` (`lib/support/case-actions.ts`); a recommendation moves no money. The staff caps in `lib/support/money-policy.ts` (`assertBoundedRefund`) are checked on that approve-and-execute path. A dispute is the gateway chargeback (`Dispute`), a different thing.
+- **Ops proposals.** Back-office money doors above ₹25,000 answer `202` and wait for a second admin (`lib/backoffice/ops-proposals.ts`, `withOpsAction` in `lib/backoffice/ops-action-log.ts`).
