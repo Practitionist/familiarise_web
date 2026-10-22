@@ -203,8 +203,9 @@ within 15 minutes (`REAUTH_REQUIRED`), open money doors (the same maintenance
 check) and no undecided recommendation on the case (`RECOMMENDATION_OPEN`); it
 writes one `support.case.release-holds` `OpsActionLog` row naming the holds
 released. The cascade leaves a refused incident open and counts it as
-`incidentsHeldOpen` in the sweep summary. A customer resolving their own guided
-case releases nothing; its holds stay listed on the case until staff release them.
+`incidentsHeldOpen` in the sweep summary; each run scans up to twice its cap of
+ten incidents so held-open incidents do not block the ones that can resolve. A
+customer resolving their own guided case releases nothing; its holds stay listed on the case until staff release them.
 Releasing a service hold does not release a chargeback, operator or overage hold.
 Completed payouts cannot be recalled by creating a hold.
 

@@ -104,7 +104,7 @@ beforeEach(() => {
   });
 });
 
-it("queries only open incidents of a RESOLVED problem, oldest first, bounded by limit", async () => {
+it("queries only open incidents of a RESOLVED problem, oldest first, scanning twice the limit", async () => {
   db.supportCase.findMany.mockResolvedValue([]);
   await cascadeResolvedProblems({ limit: 7, now, errors: [] });
   expect(db.supportCase.findMany).toHaveBeenCalledWith(
@@ -116,7 +116,7 @@ it("queries only open incidents of a RESOLVED problem, oldest first, bounded by 
         problemCase: { status: "RESOLVED", deletedAt: null },
       },
       orderBy: { updatedAt: "asc" },
-      take: 7,
+      take: 14,
     }),
   );
 });
@@ -209,6 +209,22 @@ it("leaves open and reports an incident whose holds sit under an open recommenda
   });
   expect(db.tx.supportCase.updateMany).toHaveBeenCalledTimes(1);
   expect(errors).toEqual([]);
+});
+
+it("scans past held-open incidents but cascades no more than the limit", async () => {
+  db.supportCase.findMany.mockResolvedValue([
+    incident("a"),
+    incident("b"),
+    incident("c"),
+  ]);
+  mockHoldEvents.mockResolvedValueOnce([{ id: "hold-1", caseId: "a" }]);
+  mockOpenRecommendation.mockResolvedValueOnce({ id: "rec-1" } as never);
+  const result = await cascadeResolvedProblems({ limit: 1, now, errors: [] });
+  expect(result).toMatchObject({
+    cascaded: 1,
+    heldOpen: [{ caseId: "a", code: "RECOMMENDATION_OPEN" }],
+  });
+  expect(db.$transaction).toHaveBeenCalledTimes(2);
 });
 
 it("writes no closing message when the problem's RESOLVED event has no note", async () => {

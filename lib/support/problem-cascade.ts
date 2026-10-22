@@ -60,6 +60,9 @@ interface ProblemCascadeResult extends StagedNotices {
 /** The money doors' gate, read at most once per run and only when an incident has holds. */
 type DoorsGate = () => Promise<string | null>;
 
+/** Scan past `limit` so incidents held open do not starve the ones that can resolve. */
+const HELD_OPEN_SCAN_FACTOR = 2;
+
 const RESOLVED_LABEL = supportTicketStatusLabel("RESOLVED");
 
 /** Stages the customer's RESOLVED status bell and email on the incident's own transaction. */
@@ -263,7 +266,7 @@ export async function cascadeResolvedProblems({
         problemCase: { status: "RESOLVED", deletedAt: null },
       },
       orderBy: { updatedAt: "asc" },
-      take: limit,
+      take: limit * HELD_OPEN_SCAN_FACTOR,
       select: {
         id: true,
         referenceNumber: true,
@@ -294,6 +297,7 @@ export async function cascadeResolvedProblems({
     (gate ??= moneyDoorsRefusal().then((refusal) => refusal?.code ?? null));
   // Sequential: each incident commits on its own before the next starts.
   for (const inc of incidents) {
+    if (result.cascaded >= limit) break;
     const staged: StagedNotices = { bells: [], emails: [] };
     try {
       const resolved = await prisma.$transaction(
