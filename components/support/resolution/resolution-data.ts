@@ -55,6 +55,8 @@ const Resolution = z.object({
         privateRationale: z.string().nullish(),
         createdAt: z.string(),
         appealUntil: z.string().nullable(),
+        /** Set on an admin correction; the decision it names is no longer in force. */
+        supersedesDecisionId: z.string().nullable(),
       }),
     ),
     recommendations: z.array(
@@ -106,9 +108,35 @@ const Resolution = z.object({
     refundLimitPaise: z.number().nullable(),
     ownershipScope: z.enum(["PERSONAL", "ORG_OPERATIONS", "ORG_BILLING"]),
     updatedAt: z.string(),
+    caseKind: z.enum(["INCIDENT", "PROBLEM"]),
+    isAppeal: z.boolean(),
+    legalHoldAt: z.string().nullable(),
+    isAdmin: z.boolean(),
   }),
 });
 export type CaseResolution = z.infer<typeof Resolution>["data"];
+type Decision = CaseResolution["decisions"][number];
+
+/** The decision in force: the one no later decision supersedes. */
+export function decisionInForce(decisions: readonly Decision[]) {
+  const superseded = new Set(decisions.map((d) => d.supersedesDecisionId));
+  return decisions.findLast((d) => !superseded.has(d.id)) ?? null;
+}
+
+const APPEAL_OUTCOMES: ReadonlySet<DecisionOutcome> = new Set([
+  "UPHELD",
+  "OVERTURNED",
+]);
+
+/** Appeals are upheld or overturned; every other case gets a remedy outcome. */
+export function outcomesFor(data: CaseResolution): DecisionOutcome[] {
+  return Outcome.options.filter(
+    (value) =>
+      data.isAppeal === APPEAL_OUTCOMES.has(value) &&
+      (data.canExecuteMoney ||
+        (value !== "REFUND_APPROVED" && value !== "REFUND_DECLINED")),
+  );
+}
 
 export const ProposedRefund = z.object({
   status: z.literal("PROPOSED"),
@@ -146,6 +174,7 @@ export type CaseActionPayload =
       outcome: DecisionOutcome;
       explanation: string;
       privateRationale?: string;
+      supersedesDecisionId?: string;
     }
   | { action: "REQUEST_EVIDENCE"; recipientUserId: string; prompt: string }
   | { action: "CANCEL_EVIDENCE"; requestId: string; reason: string }
@@ -171,6 +200,34 @@ export type RunCaseAction = (
   payload: CaseActionPayload,
   onDone?: () => void,
 ) => void;
+
+/** Admin-only: places or lifts the legal hold that blocks the post-closure evidence purge. */
+export function useLegalHold(caseId: string) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (legalHold: boolean) => {
+      const expectedUpdatedAt = await freshCaseUpdatedAt(qc, caseId);
+      if (!expectedUpdatedAt)
+        throw new Error("Refresh the case before continuing.");
+      const response = await fetchWithReauth(`/api/support/cases/${caseId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ legalHold, expectedUpdatedAt }),
+      });
+      if (!response.ok) await throwSupportError(response, "legal hold");
+    },
+    onSuccess: (_result, legalHold) =>
+      toast({ title: legalHold ? "Legal hold placed" : "Legal hold lifted" }),
+    onError: (error: unknown) =>
+      toast({
+        title: "The legal hold was not changed",
+        description: error instanceof Error ? error.message : undefined,
+        variant: "destructive",
+      }),
+    onSettled: () => invalidateSupportCase(qc, caseId),
+  });
+}
 
 /** One staff case-action mutation; every success or failure refreshes the case subtree. */
 export function useCaseAction(caseId: string) {

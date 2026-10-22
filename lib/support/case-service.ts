@@ -24,10 +24,15 @@ import {
   caseCorrespondentIds,
   projectCaseForViewer,
 } from "./case-access";
-import { supportDeadline } from "./deadline-policy";
+import { REOPEN_WINDOW_MS, supportDeadline } from "./deadline-policy";
 import { stageExternalRequesterEmail } from "./external-requester";
 import { allocateTicketReference } from "./reference";
 import { releaseAllCaseHolds } from "./case-holds";
+import {
+  assertCaseTransition,
+  caseTransitionRefusal,
+} from "./case-transitions";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
 import {
   openWaitSeconds,
   slaDeadlinesFor,
@@ -184,6 +189,8 @@ export const AppendSupportCaseTurnSchema = z.object({
   isInternal: z.boolean().default(false),
   clientTurnId: z.string().trim().min(1).max(128).nullable().optional(),
   expectedLastMessageAt: z.string().datetime().optional(),
+  /** "This didn't fix it": reopens an undecided, recently resolved case. */
+  reopen: z.boolean().optional(),
 });
 
 export type AppendSupportCaseTurnInput = z.infer<
@@ -200,6 +207,8 @@ export const PatchSupportCaseSchema = z.object({
   problemCaseId: z.string().min(1).max(64).nullable().optional(),
   note: z.string().trim().max(10_000).optional(),
   closingMessage: z.string().trim().max(10_000).optional(),
+  /** Admin-only at the route; blocks the post-closure evidence purge. */
+  legalHold: z.boolean().optional(),
 });
 
 export type PatchSupportCaseInput = z.infer<typeof PatchSupportCaseSchema>;
@@ -214,14 +223,67 @@ export type SubmitSupportCaseCsatInput = z.infer<
   typeof SubmitSupportCaseCsatSchema
 >;
 
-function resolveReopenedUserTurnStatus(
-  currentStatus: z.infer<typeof SupportCaseStatusSchema>,
-  assignedToId: string | null,
-): z.infer<typeof SupportCaseStatusSchema> {
-  if (currentStatus === "RESOLVED") {
-    return assignedToId ? "IN_PROGRESS" : "OPEN";
-  }
-  return currentStatus;
+/** The decision now in force on a case: the one no later decision supersedes. */
+export function latestCaseDecisionTx(tx: Tx, caseId: string) {
+  return tx.supportCaseDecision.findFirst({
+    where: { caseId, supersededBy: { is: null } },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+/** The 409 body for a write refused because the case has a decision. */
+export function caseDecidedDetail(decision: { id: string; appealUntil: Date }) {
+  return {
+    appealUntil: decision.appealUntil.toISOString(),
+    decisionId: decision.id,
+  };
+}
+
+type OpenScopeTuple = Pick<
+  SupportCase,
+  | "ownershipScope"
+  | "organizationId"
+  | "scopeKey"
+  | "requesterUserId"
+  | "submitterUserId"
+  | "category"
+>;
+
+/**
+ * After a unique violation, the other open case holding this open-scope slot
+ * as a 409 body, or null when the violation was something else. Reads outside
+ * the failed transaction.
+ */
+export async function openCaseConflict(
+  tuple: OpenScopeTuple,
+  excludeCaseId: string,
+) {
+  const existing = await prisma.supportCase.findFirst({
+    where: {
+      ownershipScope: tuple.ownershipScope,
+      organizationId: tuple.organizationId,
+      scopeKey: tuple.scopeKey,
+      requesterUserId: tuple.requesterUserId,
+      submitterUserId: tuple.submitterUserId,
+      category: tuple.category,
+      closedAt: null,
+      deletedAt: null,
+      id: { not: excludeCaseId },
+    },
+    select: { id: true, referenceNumber: true },
+  });
+  if (!existing) return null;
+  return {
+    status: 409 as const,
+    code: "OPEN_CASE_EXISTS" as const,
+    error:
+      "There's already an open request about this. Continue in that request instead.",
+    existingCase: {
+      id: existing.id,
+      referenceNumber: existing.referenceNumber,
+      caseKey: caseKeyOf({ kind: "case", id: existing.id }),
+    },
+  };
 }
 
 function caseScopeKey(input: CreateSupportCaseInput): string {
@@ -294,35 +356,79 @@ async function appendOpenScopeTurn(
     where: { id: existingOpen.id },
     include: CASE_RELATIONS_INCLUDE,
   });
-  if (input.activeChannel === "HUMAN" && refreshed.activeChannel !== "HUMAN") {
+  // A decided case only takes follow-ups; an undecided guided answer may still go to a person.
+  const handoff =
+    input.activeChannel === "HUMAN" &&
+    refreshed.activeChannel !== "HUMAN" &&
+    !(
+      refreshed.status === "RESOLVED" &&
+      (await latestCaseDecisionTx(tx, refreshed.id))
+    );
+  if (handoff) {
     const priority = input.priority ?? refreshed.priority;
-    const handoff = await tx.supportCase.updateMany({
+    const status = refreshed.assignedToId ? "IN_PROGRESS" : "OPEN";
+    assertCaseTransition(refreshed.status, status, {
+      decided: false,
+      actor: "CUSTOMER",
+    });
+    const moved = await tx.supportCase.updateMany({
       where: {
         id: refreshed.id,
         updatedAt: refreshed.updatedAt,
+        status: refreshed.status,
         activeChannel: refreshed.activeChannel,
         closedAt: null,
       },
       data: {
         activeChannel: "HUMAN",
-        status: refreshed.assignedToId ? "IN_PROGRESS" : "OPEN",
+        status,
+        resolvedAt: null,
         priority,
         receivedAt: now,
         ...slaDeadlinesFor(priority, now),
         ...supportDeadline(input.category, now),
       },
     });
-    if (!handoff.count)
+    if (!moved.count)
       throw new SupportCaseValidationError(
         "The case changed during handoff. Refresh and retry.",
       );
+    const actorId = input.initialAuthorUserId ?? input.submitterUserId;
+    if (refreshed.status !== status)
+      await tx.supportCaseEvent.create({
+        data: {
+          caseId: refreshed.id,
+          actorId,
+          kind: "STATUS_CHANGED",
+          fromValue: refreshed.status,
+          toValue: status,
+          createdAt: now,
+        },
+      });
+    await tx.supportCaseEvent.create({
+      data: {
+        caseId: refreshed.id,
+        actorId,
+        kind: "CHANNEL_CHANGED",
+        fromValue: refreshed.activeChannel,
+        toValue: "HUMAN",
+        createdAt: now,
+      },
+    });
     refreshed = await tx.supportCase.findUniqueOrThrow({
       where: { id: existingOpen.id },
       include: CASE_RELATIONS_INCLUDE,
     });
     await stageSupportCaseIntakeTx(tx, refreshed, input.initialSender);
   }
-  return refreshed;
+  return {
+    supportCase: refreshed,
+    reused: true,
+    dedupeReason:
+      refreshed.status === "RESOLVED"
+        ? ("resolved_case" as const)
+        : ("open_scope" as const),
+  };
 }
 
 async function validateProblemCaseTargetTx(
@@ -332,11 +438,14 @@ async function validateProblemCaseTargetTx(
 ): Promise<boolean> {
   const target = await tx.supportCase.findUnique({
     where: { id: problemCaseId },
-    select: { id: true, caseKind: true, deletedAt: true },
+    select: { id: true, caseKind: true, deletedAt: true, status: true },
   });
+  // A settled problem no longer resolves anything, so a late link would hang.
   return (
     target?.deletedAt === null &&
     target.caseKind === "PROBLEM" &&
+    target.status !== "RESOLVED" &&
+    target.status !== "CLOSED" &&
     target.id !== currentCaseId
   );
 }
@@ -390,14 +499,7 @@ async function executeCreateOrReuseCaseTx(
     },
     include: CASE_RELATIONS_INCLUDE,
   });
-  if (existingOpen) {
-    const updatedOpen = await appendOpenScopeTurn(tx, existingOpen, input, now);
-    return {
-      supportCase: updatedOpen,
-      reused: true,
-      dedupeReason: "open_scope" as const,
-    };
-  }
+  if (existingOpen) return appendOpenScopeTurn(tx, existingOpen, input, now);
 
   const priority = input.priority ?? "MEDIUM";
   const referenceNumber = await allocateTicketReference(tx, now);
@@ -648,12 +750,10 @@ export async function createOrReuseSupportCase(
       err.code === "P2002"
     ) {
       const recovered = await recoverFromCaseUniqueConflict(input);
-      if (recovered?.dedupeReason === "open_scope") {
-        const supportCase = await prisma.$transaction((tx) =>
+      if (recovered?.dedupeReason === "open_scope")
+        return prisma.$transaction((tx) =>
           appendOpenScopeTurn(tx, { id: recovered.supportCase.id }, input, now),
         );
-        return { ...recovered, supportCase };
-      }
       if (recovered) return recovered;
     }
     throw err;
@@ -698,31 +798,29 @@ async function advanceUserTurnState(
     Awaited<ReturnType<typeof prisma.supportCase.findUnique>>
   >,
   input: AppendSupportCaseTurnInput,
+  reopening: boolean,
   now: Date,
 ): Promise<boolean> {
-  const nextStatus = resolveReopenedUserTurnStatus(
-    existingCase.status,
-    existingCase.assignedToId,
-  );
+  // A reply is a follow-up; only an explicit reopen moves a resolved case.
+  const nextStatus = existingCase.assignedToId ? "IN_PROGRESS" : "OPEN";
   const moved = await tx.supportCase.updateMany({
     where: {
       id: input.caseId,
       status: existingCase.status,
       awaitingUserSince: existingCase.awaitingUserSince,
       pausedSeconds: existingCase.pausedSeconds,
+      ...(reopening ? { resolvedAt: existingCase.resolvedAt } : {}),
     },
     data: {
       messageSeq: { increment: 1 },
       lastMessageAt: now,
-      status: nextStatus,
-      resolvedAt: null,
-      closedAt: null,
+      ...(reopening ? { status: nextStatus, resolvedAt: null } : {}),
       ...userRepliedPatch(existingCase, now),
     },
   });
   if ((moved?.count ?? 0) === 0) return false;
 
-  if (existingCase.status === "RESOLVED") {
+  if (reopening) {
     await tx.supportCaseEvent.create({
       data: {
         caseId: input.caseId,
@@ -791,10 +889,11 @@ async function applyTurnStateUpdate(
     Awaited<ReturnType<Tx["supportCase"]["findUnique"]>>
   >,
   input: AppendSupportCaseTurnInput,
+  reopening: boolean,
   now: Date,
 ): Promise<boolean> {
   if (input.sender === "USER") {
-    return advanceUserTurnState(tx, existingCase, input, now);
+    return advanceUserTurnState(tx, existingCase, input, reopening, now);
   }
   if (input.sender === "AGENT" && !input.isInternal) {
     return advanceAgentPublicTurnState(tx, existingCase, input, now);
@@ -957,6 +1056,49 @@ async function appendTurnConflictTx(
   };
 }
 
+/** Why "This didn't fix it" cannot reopen this resolved case, or null when it may. */
+async function reopenRefusalTx(
+  tx: Tx,
+  existingCase: SupportCase,
+  input: AppendSupportCaseTurnInput,
+  now: Date,
+) {
+  if (
+    input.authorUserId !== existingCase.requesterUserId &&
+    input.authorUserId !== existingCase.submitterUserId
+  )
+    return {
+      ok: false as const,
+      status: 403 as const,
+      code: "REOPEN_NOT_ALLOWED" as const,
+      error: "Only the person who raised this request can reopen it.",
+    };
+  const decision = await latestCaseDecisionTx(tx, existingCase.id);
+  const nextStatus = existingCase.assignedToId ? "IN_PROGRESS" : "OPEN";
+  const refusal = caseTransitionRefusal("RESOLVED", nextStatus, {
+    decided: decision !== null,
+    actor: "CUSTOMER",
+  });
+  if (refusal)
+    return {
+      ok: false as const,
+      ...refusal,
+      ...(decision ? caseDecidedDetail(decision) : {}),
+    };
+  if (
+    !existingCase.resolvedAt ||
+    now.getTime() - existingCase.resolvedAt.getTime() > REOPEN_WINDOW_MS
+  )
+    return {
+      ok: false as const,
+      status: 409 as const,
+      code: "REOPEN_WINDOW_EXPIRED" as const,
+      error:
+        "This request was resolved more than 14 days ago. Start a new request if you still need help.",
+    };
+  return null;
+}
+
 async function executeAppendTurnTx(
   tx: Tx,
   input: AppendSupportCaseTurnInput,
@@ -986,7 +1128,22 @@ async function executeAppendTurnTx(
     };
   }
 
-  const applied = await applyTurnStateUpdate(tx, existingCase, input, now);
+  const reopening =
+    input.sender === "USER" &&
+    input.reopen === true &&
+    existingCase.status === "RESOLVED";
+  if (reopening) {
+    const refused = await reopenRefusalTx(tx, existingCase, input, now);
+    if (refused) return refused;
+  }
+
+  const applied = await applyTurnStateUpdate(
+    tx,
+    existingCase,
+    input,
+    reopening,
+    now,
+  );
   if (!applied) return appendTurnConflictTx(tx, existingCase, input);
 
   const seqHolder = await tx.supportCase.findUniqueOrThrow({
@@ -1075,38 +1232,67 @@ function buildStatusDatesPatch(
   return { resolvedAt: null, closedAt: null, ...bankedPause };
 }
 
-async function recordLifecycleAuditEvents(
-  tx: Tx,
+type LifecycleAuditBefore = {
+  status: z.infer<typeof SupportCaseStatusSchema>;
+  priority: z.infer<typeof SupportPrioritySchema>;
+  assignedToId: string | null;
+  caseKind: z.infer<typeof SupportCaseKindSchema>;
+  problemCaseId: string | null;
+  legalHoldAt: Date | null;
+};
+type AuditRow = Prisma.SupportCaseEventCreateManyInput;
+
+function statusAuditRow(
   input: PatchSupportCaseInput,
-  existing: {
-    status: z.infer<typeof SupportCaseStatusSchema>;
-    priority: z.infer<typeof SupportPrioritySchema>;
-    assignedToId: string | null;
-    caseKind: z.infer<typeof SupportCaseKindSchema>;
-    problemCaseId: string | null;
-  },
+  existing: LifecycleAuditBefore,
+  now: Date,
+): AuditRow | null {
+  if (!input.status || input.status === existing.status) return null;
+  const wasSettled =
+    existing.status === "RESOLVED" || existing.status === "CLOSED";
+  const isActiveTarget =
+    input.status === "OPEN" || input.status === "IN_PROGRESS";
+  return {
+    caseId: input.caseId,
+    actorId: input.actorId,
+    kind: wasSettled && isActiveTarget ? "REOPENED" : "STATUS_CHANGED",
+    fromValue: existing.status,
+    toValue: input.status,
+    // The problem-resolution job reads this note as the linked incidents' closing message.
+    note:
+      input.status === "RESOLVED" ? input.closingMessage?.trim() || null : null,
+    createdAt: now,
+  };
+}
+
+function legalHoldAuditRow(
+  input: PatchSupportCaseInput,
+  existing: LifecycleAuditBefore,
   noteTrimmed: string | null,
   now: Date,
-): Promise<void> {
-  const auditRows: Prisma.SupportCaseEventCreateManyInput[] = [];
+): AuditRow | null {
+  if (!legalHoldChanges(input, existing)) return null;
+  return {
+    caseId: input.caseId,
+    actorId: input.actorId,
+    kind: "LEGAL_HOLD_CHANGED",
+    fromValue: existing.legalHoldAt ? "ON" : "OFF",
+    toValue: input.legalHold ? "ON" : "OFF",
+    note: noteTrimmed,
+    createdAt: now,
+  };
+}
 
-  if (input.status && input.status !== existing.status) {
-    const wasSettled =
-      existing.status === "RESOLVED" || existing.status === "CLOSED";
-    const isActiveTarget =
-      input.status === "OPEN" || input.status === "IN_PROGRESS";
-    auditRows.push({
-      caseId: input.caseId,
-      actorId: input.actorId,
-      kind: wasSettled && isActiveTarget ? "REOPENED" : "STATUS_CHANGED",
-      fromValue: existing.status,
-      toValue: input.status,
-      createdAt: now,
-    });
-  }
-
-  if (input.priority && input.priority !== existing.priority) {
-    auditRows.push({
+/** Priority, assignee and problem-link rows, in that order. */
+function routingAuditRows(
+  input: PatchSupportCaseInput,
+  existing: LifecycleAuditBefore,
+  noteTrimmed: string | null,
+  now: Date,
+): AuditRow[] {
+  const rows: AuditRow[] = [];
+  if (input.priority && input.priority !== existing.priority)
+    rows.push({
       caseId: input.caseId,
       actorId: input.actorId,
       kind: "PRIORITY_CHANGED",
@@ -1114,13 +1300,11 @@ async function recordLifecycleAuditEvents(
       toValue: input.priority,
       createdAt: now,
     });
-  }
-
   if (
     input.assignedToId !== undefined &&
     input.assignedToId !== existing.assignedToId
-  ) {
-    auditRows.push({
+  )
+    rows.push({
       caseId: input.caseId,
       actorId: input.actorId,
       kind: input.assignedToId ? "ASSIGNED" : "UNASSIGNED",
@@ -1129,14 +1313,12 @@ async function recordLifecycleAuditEvents(
       note: noteTrimmed,
       createdAt: now,
     });
-  }
-
   if (
     input.problemCaseId !== undefined &&
     existing.caseKind === "INCIDENT" &&
     input.problemCaseId !== existing.problemCaseId
-  ) {
-    auditRows.push({
+  )
+    rows.push({
       caseId: input.caseId,
       actorId: input.actorId,
       kind: "LINKED_PROBLEM",
@@ -1144,7 +1326,21 @@ async function recordLifecycleAuditEvents(
       toValue: input.problemCaseId,
       createdAt: now,
     });
-  }
+  return rows;
+}
+
+async function recordLifecycleAuditEvents(
+  tx: Tx,
+  input: PatchSupportCaseInput,
+  existing: LifecycleAuditBefore,
+  noteTrimmed: string | null,
+  now: Date,
+): Promise<void> {
+  const auditRows = [
+    statusAuditRow(input, existing, now),
+    legalHoldAuditRow(input, existing, noteTrimmed, now),
+    ...routingAuditRows(input, existing, noteTrimmed, now),
+  ].filter((row): row is AuditRow => row !== null);
 
   async function stepAudit(index: number): Promise<void> {
     if (index >= auditRows.length) return;
@@ -1154,137 +1350,14 @@ async function recordLifecycleAuditEvents(
   await stepAudit(0);
 }
 
-export interface CascadedIncidentNotice {
-  id: string;
-  referenceNumber: string;
-  title: string;
-  submitterUserId: string;
-  organizationId: string | null;
-}
-
-async function resolveSingleLinkedIncident(
-  tx: Tx,
-  inc: {
-    id: string;
-    referenceNumber: string;
-    title: string;
-    submitterUserId: string;
-    organizationId: string | null;
-    status: z.infer<typeof SupportCaseStatusSchema>;
-    messageSeq: number;
-    awaitingUserSince: Date | null;
-    pausedSeconds: number;
-  },
-  problemRef: string,
-  actorId: string,
-  closingMsg: string | null,
-  now: Date,
-): Promise<CascadedIncidentNotice | null> {
-  const bankedPause =
-    inc.awaitingUserSince !== null ? userRepliedPatch(inc, now) : {};
-  const movedInc = await tx.supportCase.updateMany({
-    where: {
-      id: inc.id,
-      status: inc.status,
-      messageSeq: inc.messageSeq,
-      awaitingUserSince: inc.awaitingUserSince,
-      pausedSeconds: inc.pausedSeconds,
-    },
-    data: {
-      status: "RESOLVED",
-      resolvedAt: now,
-      closedAt: null,
-      ...bankedPause,
-      ...(closingMsg
-        ? { messageSeq: { increment: 1 }, lastMessageAt: now }
-        : {}),
-    },
-  });
-  if ((movedInc?.count ?? 0) === 0) return null;
-
-  if (closingMsg) {
-    await tx.supportCaseMessage.create({
-      data: {
-        caseId: inc.id,
-        seq: inc.messageSeq + 1,
-        sender: "AGENT",
-        body: closingMsg,
-        isInternal: false,
-        authorUserId: actorId,
-        createdAt: now,
-      },
-    });
-  }
-  await tx.supportCaseEvent.create({
-    data: {
-      caseId: inc.id,
-      actorId,
-      kind: "STATUS_CHANGED",
-      fromValue: inc.status,
-      toValue: "RESOLVED",
-      note: `Resolved via problem ${problemRef}`,
-      createdAt: now,
-    },
-  });
-  await releaseAllCaseHolds(tx, {
-    caseId: inc.id,
-    actorId,
-    note: "Released when the case was resolved",
-  });
-
-  return {
-    id: inc.id,
-    referenceNumber: inc.referenceNumber,
-    title: inc.title,
-    submitterUserId: inc.submitterUserId,
-    organizationId: inc.organizationId,
-  };
-}
-
-async function cascadeProblemResolution(
-  tx: Tx,
-  problemCase: { id: string; referenceNumber: string },
-  actorId: string,
-  closingMsg: string | null,
-  now: Date,
-): Promise<CascadedIncidentNotice[]> {
-  const openIncidents = await tx.supportCase.findMany({
-    where: {
-      problemCaseId: problemCase.id,
-      caseKind: "INCIDENT",
-      status: { notIn: ["RESOLVED", "CLOSED"] },
-      deletedAt: null,
-    },
-    select: {
-      id: true,
-      referenceNumber: true,
-      title: true,
-      submitterUserId: true,
-      organizationId: true,
-      status: true,
-      messageSeq: true,
-      awaitingUserSince: true,
-      pausedSeconds: true,
-    },
-  });
-
-  async function step(
-    index: number,
-    acc: CascadedIncidentNotice[],
-  ): Promise<CascadedIncidentNotice[]> {
-    if (index >= openIncidents.length) return acc;
-    const notice = await resolveSingleLinkedIncident(
-      tx,
-      openIncidents[index],
-      problemCase.referenceNumber,
-      actorId,
-      closingMsg,
-      now,
-    );
-    if (notice) acc.push(notice);
-    return step(index + 1, acc);
-  }
-  return step(0, []);
+function legalHoldChanges(
+  input: Pick<PatchSupportCaseInput, "legalHold">,
+  existing: { legalHoldAt: Date | null },
+): boolean {
+  return (
+    input.legalHold !== undefined &&
+    input.legalHold !== Boolean(existing.legalHoldAt)
+  );
 }
 
 async function validateOperatorAssigneeTx(
@@ -1299,7 +1372,7 @@ async function validateOperatorAssigneeTx(
   return Boolean(user && (user.role === "STAFF" || user.role === "ADMIN"));
 }
 
-async function stageCaseResolutionCsatPromptTx(
+export async function stageCaseResolutionCsatPromptTx(
   tx: Tx,
   target: {
     id: string;
@@ -1360,8 +1433,22 @@ function buildLifecycleUpdateData(
     ...(input.problemCaseId !== undefined && existing.caseKind === "INCIDENT"
       ? { problemCaseId: input.problemCaseId }
       : {}),
+    ...(legalHoldChanges(input, existing)
+      ? { legalHoldAt: input.legalHold ? now : null }
+      : {}),
     ...(noteTrimmed ? { messageSeq: { increment: 1 } } : {}),
   };
+}
+
+/** A legal hold, with an optional reason, is the only change a closed case takes without reopening. */
+function isLegalHoldOnlyPatch(input: PatchSupportCaseInput): boolean {
+  return (
+    input.legalHold !== undefined &&
+    !input.status &&
+    input.priority === undefined &&
+    input.assignedToId === undefined &&
+    input.problemCaseId === undefined
+  );
 }
 
 async function validatePatchLifecyclePreconditionsTx(
@@ -1369,7 +1456,11 @@ async function validatePatchLifecyclePreconditionsTx(
   input: PatchSupportCaseInput,
   existing: { id: string; status: SupportCaseStatus },
 ) {
-  if (existing.status === "CLOSED" && !input.status) {
+  if (
+    existing.status === "CLOSED" &&
+    !input.status &&
+    !isLegalHoldOnlyPatch(input)
+  ) {
     return {
       ok: false as const,
       status: 400 as const,
@@ -1390,7 +1481,8 @@ async function validatePatchLifecyclePreconditionsTx(
         ok: false as const,
         status: 400 as const,
         code: "VALIDATION_FAILED" as const,
-        error: "problemCaseId must reference another active PROBLEM case.",
+        error:
+          "problemCaseId must reference another PROBLEM case that is not yet resolved.",
       };
     }
   }
@@ -1471,6 +1563,8 @@ export async function executePatchLifecycleTx(
     existing,
   );
   if (preconditionFailure) return preconditionFailure;
+  const transitionFailure = await patchTransitionRefusalTx(tx, input, existing);
+  if (transitionFailure) return transitionFailure;
 
   const noteTrimmed = input.note?.trim() || null;
 
@@ -1478,7 +1572,9 @@ export async function executePatchLifecycleTx(
     where: {
       id: input.caseId,
       updatedAt: new Date(input.expectedUpdatedAt),
-      ...(input.status ? {} : { status: { not: "CLOSED" } }),
+      ...(input.status || isLegalHoldOnlyPatch(input)
+        ? {}
+        : { status: { not: "CLOSED" } }),
     },
     data: buildLifecycleUpdateData(existing, input, noteTrimmed, now),
   });
@@ -1521,25 +1617,8 @@ export async function executePatchLifecycleTx(
       note: `Released when the case was ${input.status.toLowerCase()}`,
     });
 
-  const cascadedIncidents =
-    existing.caseKind === "PROBLEM" && input.status === "RESOLVED"
-      ? await cascadeProblemResolution(
-          tx,
-          existing,
-          input.actorId,
-          input.closingMessage?.trim() || null,
-          now,
-        )
-      : [];
-
-  if (input.status === "RESOLVED" && existing.status !== "RESOLVED") {
-    await Promise.all([
-      stageCaseResolutionCsatPromptTx(tx, existing, now),
-      ...cascadedIncidents.map((inc) =>
-        stageCaseResolutionCsatPromptTx(tx, inc, now),
-      ),
-    ]);
-  }
+  if (input.status === "RESOLVED" && existing.status !== "RESOLVED")
+    await stageCaseResolutionCsatPromptTx(tx, existing, now);
 
   const refreshed = await tx.supportCase.findUniqueOrThrow({
     where: { id: input.caseId },
@@ -1550,21 +1629,54 @@ export async function executePatchLifecycleTx(
     ok: true as const,
     previousStatus: existing.status,
     supportCase: refreshed,
-    cascadedIncidents,
   };
 }
 
-/** Update case status, priority, assignee, problem link, internal reassignment note, and audit log atomically. */
-export function patchSupportCaseLifecycle(
+/** A staff status move the transition table refuses, with the decision in force when that is why. */
+async function patchTransitionRefusalTx(
+  tx: Tx,
+  input: PatchSupportCaseInput,
+  existing: { id: string; status: SupportCaseStatus },
+) {
+  if (!input.status || input.status === existing.status) return null;
+  const decision =
+    existing.status === "RESOLVED" || existing.status === "CLOSED"
+      ? await latestCaseDecisionTx(tx, existing.id)
+      : null;
+  const refusal = caseTransitionRefusal(existing.status, input.status, {
+    decided: decision !== null,
+    actor: "STAFF",
+  });
+  if (!refusal) return null;
+  return {
+    ok: false as const,
+    ...refusal,
+    ...(decision ? caseDecidedDetail(decision) : {}),
+  };
+}
+
+/** Update case status, priority, assignee, problem link, legal hold, internal note, and audit log atomically. */
+export async function patchSupportCaseLifecycle(
   rawInput: PatchSupportCaseInput,
   now: Date = new Date(),
 ) {
   const input = PatchSupportCaseSchema.parse(rawInput);
 
-  return prisma.$transaction((tx) => executePatchLifecycleTx(tx, input, now), {
-    maxWait: ALLOCATION_TX_MAX_WAIT_MS,
-    timeout: ALLOCATION_TX_TIMEOUT_MS,
-  });
+  try {
+    return await prisma.$transaction(
+      (tx) => executePatchLifecycleTx(tx, input, now),
+      { maxWait: ALLOCATION_TX_MAX_WAIT_MS, timeout: ALLOCATION_TX_TIMEOUT_MS },
+    );
+  } catch (error) {
+    // Reopening a closed case can collide with a newer open case on the same scope.
+    if (!isUniqueViolation(error)) throw error;
+    const current = await prisma.supportCase.findUnique({
+      where: { id: input.caseId },
+    });
+    const conflict = current && (await openCaseConflict(current, current.id));
+    if (conflict) return { ok: false as const, ...conflict };
+    throw error;
+  }
 }
 
 /**

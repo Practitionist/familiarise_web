@@ -13,12 +13,14 @@ import { z } from "zod";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { runSupportTurn, ORG_PARTY_CATEGORIES } from "@/lib/support/service";
+import { CaseConflictError } from "@/lib/support/case-transitions";
 import { buildSupportContext } from "@/lib/support/context";
 import { flowsForContext } from "@/lib/support/flows";
 import { AppointmentIdParams } from "@/schemas/support";
 import { SupportThreadCategoryEnum } from "@/schemas/enums";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import { assertBodySize } from "@/lib/validation/limits";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { stripCallbackTags } from "@/lib/validation/phone";
 import { applyRateLimit, supportTurnLimiter } from "@/lib/rate-limit";
 import {
@@ -41,9 +43,15 @@ const turnSchema = z
       .pipe(z.string().max(2000))
       .optional(),
     urgent: z.boolean().optional(),
+    /** "This didn't fix it" on a resolved human conversation; carries a message. */
+    reopen: z.boolean().optional(),
   })
   .refine((v) => v.category || v.chosenOptionId || v.userMessage, {
     message: "A turn needs a category, a chosen option, or a message",
+  })
+  .refine((v) => !v.reopen || v.userMessage, {
+    message: "Tell us what still isn't fixed",
+    path: ["userMessage"],
   });
 
 export async function GET(
@@ -56,6 +64,9 @@ export async function GET(
   if (!id.ok) return id.response;
   const { appointmentId } = id.data;
   try {
+    // Operators without a second factor get the 2FA 428 like every other support route.
+    const session = await requireApiAuth();
+    if (session.error) return session.error;
     const auth = await authorizeAppointment(appointmentId, true);
     if ("code" in auth)
       return appointmentAuthzError(auth, {
@@ -187,6 +198,9 @@ export async function POST(
   if (!id.ok) return id.response;
   const { appointmentId } = id.data;
   try {
+    // Operators without a second factor get the 2FA 428 like every other support route.
+    const session = await requireApiAuth();
+    if (session.error) return session.error;
     const auth = await authorizeAppointment(appointmentId, true);
     if ("code" in auth)
       return appointmentAuthzError(auth, {
@@ -270,6 +284,8 @@ export async function POST(
       },
     });
   } catch (cause) {
+    if (cause instanceof CaseConflictError)
+      return NextResponse.json(cause.body, { status: cause.status });
     return supportError({
       status: 500,
       code: "INTERNAL",

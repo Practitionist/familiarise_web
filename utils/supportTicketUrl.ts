@@ -35,6 +35,11 @@ export const PLATFORM_ISSUE_TYPE_CATEGORIES = {
     SupportIssueType.REFUND_REQUEST,
     SupportIssueType.BILLING_QUESTION,
   ],
+  Tax: [
+    SupportIssueType.TAX_GST,
+    SupportIssueType.TDS_CERTIFICATE,
+    SupportIssueType.PAN_CARD_MISMATCH,
+  ],
   "Account & Access": [
     SupportIssueType.ACCOUNT_ISSUE,
     SupportIssueType.TECHNICAL_ISSUES,
@@ -70,6 +75,11 @@ export const ISSUE_TYPE_LABELS: Record<SupportIssueType, string> = {
   [SupportIssueType.CHARGED_TWICE]: "Charged twice",
   [SupportIssueType.REFUND_REQUEST]: "Refund request",
   [SupportIssueType.BILLING_QUESTION]: "Invoice or receipt inquiry",
+
+  // Tax
+  [SupportIssueType.TAX_GST]: "GST invoice correction",
+  [SupportIssueType.TDS_CERTIFICATE]: "TDS certificate (Form 16A)",
+  [SupportIssueType.PAN_CARD_MISMATCH]: "PAN mismatch",
 
   // Documents
   [SupportIssueType.DOCUMENT_ISSUE]: "Materials not received or incorrect",

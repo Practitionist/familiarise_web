@@ -241,10 +241,30 @@ const paymentStatusFlow: FlowDefinition = {
     },
     invoice: {
       id: "invoice",
+      kind: "PROMPT",
+      body: "Do you need a copy of your invoice, or is something on it wrong?",
+      options: [
+        { id: "download", label: "I need to download it", next: "download" },
+        {
+          id: "gstwrong",
+          label: "My GST invoice is wrong (GSTIN, state or amount)",
+          next: "gstwrong",
+        },
+      ],
+    },
+    download: {
+      id: "download",
       kind: "TERMINAL",
       body: "You can download invoices and GST receipts from your Billing page.",
       action: { kind: "SHOW_INVOICES" },
       resolved: true,
+    },
+    gstwrong: {
+      id: "gstwrong",
+      kind: "TERMINAL",
+      body: "Thanks — tell us what's wrong on the invoice (GSTIN, state or amount) and our billing team will review it and reply here.",
+      escalate: true,
+      reason: "gst_invoice_wrong",
     },
   },
 };
@@ -522,9 +542,10 @@ const orgAdminDisputeFlow: FlowDefinition = {
     billing: {
       id: "billing",
       kind: "TERMINAL",
-      body: "Charge and invoice disputes are handled on your organization's Disputes page (Billing → Disputes), where the finance team can act on the specific invoice.",
-      resolved: true,
-      reason: "routed_org_disputes",
+      // The thread lands in ORG_BILLING or ORG_OPERATIONS by the filer's grants; both list under org support requests.
+      body: "Our billing team will review the charge or invoice and reply here and in your organization's support requests. Tell us which charge or invoice it is and what looks wrong.",
+      escalate: true,
+      reason: "org_billing_dispute",
     },
     conduct: {
       id: "conduct",

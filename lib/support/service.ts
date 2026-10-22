@@ -4,14 +4,18 @@ import { createHash } from "node:crypto";
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
+  type Tx,
 } from "@/lib/prisma";
 import type {
   SupportChannel,
   SupportThreadCategory,
+  SupportCaseOwnership,
   SupportCaseStatus,
   SupportCase,
   SupportPriority,
 } from "@prisma/client";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { seatOrganizationId } from "@/lib/booking/participants";
 import { stripCallbackTags } from "@/lib/validation/phone";
 import { buildSupportContext } from "./context";
@@ -28,10 +32,11 @@ import { escalationPriority, issueTypeForReason } from "./priority";
 import {
   appendSupportCaseTurn,
   createOrReuseSupportCase,
+  latestCaseDecisionTx,
+  openCaseConflict,
   stageSupportCaseIntakeTx,
 } from "./case-service";
-import { stageBell } from "@/lib/novu/stage-bell";
-import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
+import { assertCaseTransition, CaseConflictError } from "./case-transitions";
 import { SupportThreadCategoryEnum } from "@/schemas/enums";
 import { z } from "zod";
 import { recordFlowOutcome } from "./deflection";
@@ -48,6 +53,8 @@ export interface RunTurnInput {
   userMessage?: string;
   /** The customer flagged this hand-off as urgent. */
   urgent?: boolean;
+  /** "This didn't fix it" on a resolved human conversation. */
+  reopen?: boolean;
   /**
    * Caller reached this appointment only via the org-operator party branch.
    * Restricted to org-party categories while permitting human escalation inside them.
@@ -149,9 +156,20 @@ export async function runSupportTurn(
       closedAt: null,
       deletedAt: null,
     },
+    orderBy: { createdAt: "desc" },
   });
+  // A new intent on a resolved human conversation starts its own request.
+  const reusable =
+    previous &&
+    !(
+      input.category &&
+      previous.activeChannel === "HUMAN" &&
+      previous.status === "RESOLVED"
+    )
+      ? previous
+      : null;
   const thread =
-    previous ??
+    reusable ??
     (
       await createOrReuseSupportCase({
         clientIntakeId: intakeId,
@@ -205,11 +223,13 @@ export async function runSupportTurn(
     currentNodeId = null;
   }
 
-  if (
-    thread.activeChannel === "HUMAN" &&
-    !(thread.status === "RESOLVED" && input.category)
-  ) {
-    return persistHumanTurn(thread, input.userMessage, input.clientTurnId);
+  if (thread.activeChannel === "HUMAN") {
+    return persistHumanTurn(
+      thread,
+      input.userMessage,
+      input.clientTurnId,
+      input.reopen,
+    );
   }
 
   const flow = flowForCategory(ctx, category);
@@ -377,8 +397,13 @@ export async function runSupportTurn(
   const status = turn.resolved ? "RESOLVED" : "IN_PROGRESS";
   const wroteMessages = !!input.userMessage || turn.messages.length > 0;
   let refusedStatus: SupportCaseStatus | null = null;
-  const accepted = await prisma.$transaction(
+  const acceptance = prisma.$transaction(
     async (tx) => {
+      assertCaseTransition(thread.status, status, {
+        decided: await isResolvedAndDecidedTx(tx, thread),
+        actor: "CUSTOMER",
+      });
+      // A guided turn never changes the channel, so a human case never drops back to self-serve.
       const moved = await tx.supportCase.updateMany({
         where: {
           id: thread.id,
@@ -390,7 +415,6 @@ export async function runSupportTurn(
           category,
           currentNodeId: turn.nextNodeId,
           status,
-          activeChannel: "SELF_SERVE",
           resolvedAt: turn.resolved ? new Date() : null,
           ...(wroteMessages ? { lastMessageAt: new Date() } : {}),
         },
@@ -429,6 +453,9 @@ export async function runSupportTurn(
     },
     { maxWait: ALLOCATION_TX_MAX_WAIT_MS, timeout: ALLOCATION_TX_TIMEOUT_MS },
   );
+  const accepted = await acceptance.catch(async (error: unknown) => {
+    throw await openScopeConflictOr(error, { ...thread, category }, thread.id);
+  });
 
   if (!accepted) {
     const current = await prisma.supportCase.findUniqueOrThrow({
@@ -466,17 +493,41 @@ export async function runSupportTurn(
   return {
     threadId: thread.id,
     status: refusedStatus ?? status,
-    activeChannel: "SELF_SERVE",
+    activeChannel: thread.activeChannel,
     currentNodeId: accepted ? turn.nextNodeId : thread.currentNodeId,
     messages: accepted ? turn.messages : [],
     actions: accepted ? turn.actions : [],
     escalated: false,
     resolved: accepted && turn.resolved,
     accepted,
-    supportTicketId: thread.activeChannel === "HUMAN" ? thread.id : null,
+    supportTicketId: null,
     reason: turn.reason,
     outcomeId: recorded,
   };
+}
+
+/** Only a resolved case can carry a decision; open statuses skip the read. */
+async function isResolvedAndDecidedTx(
+  tx: Tx,
+  supportCase: Pick<SupportCase, "id" | "status">,
+): Promise<boolean> {
+  return (
+    supportCase.status === "RESOLVED" &&
+    (await latestCaseDecisionTx(tx, supportCase.id)) !== null
+  );
+}
+
+/** A unique violation on a category or ownership write, as the 409 naming the open case in that slot. */
+async function openScopeConflictOr(
+  error: unknown,
+  attempted: Parameters<typeof openCaseConflict>[0],
+  caseId: string,
+): Promise<unknown> {
+  if (!isUniqueViolation(error)) return error;
+  const conflict = await openCaseConflict(attempted, caseId);
+  if (!conflict) return error;
+  const { status, ...body } = conflict;
+  return new CaseConflictError(body, status);
 }
 
 async function allocateMessageSeq(
@@ -508,10 +559,17 @@ function replayedTurn(thread: SupportCase): RunTurnResult {
   };
 }
 
+const REOPEN_REFUSALS: ReadonlySet<string> = new Set([
+  "CASE_DECIDED",
+  "REOPEN_WINDOW_EXPIRED",
+  "REOPEN_NOT_ALLOWED",
+]);
+
 async function persistHumanTurn(
   thread: SupportCase,
   userMessage: string | undefined,
   clientTurnId?: string,
+  reopen?: boolean,
 ): Promise<RunTurnResult> {
   const result = userMessage
     ? await appendSupportCaseTurn({
@@ -521,11 +579,23 @@ async function persistHumanTurn(
         body: userMessage,
         isInternal: false,
         clientTurnId,
+        reopen,
       })
     : null;
+  if (result && !result.ok && REOPEN_REFUSALS.has(result.code)) {
+    const { ok: _ok, status, ...body } = result;
+    throw new CaseConflictError(body, status);
+  }
+  const reopened =
+    reopen === true &&
+    result?.ok === true &&
+    !result.replayed &&
+    thread.status === "RESOLVED";
+  let status: SupportCaseStatus = thread.status;
+  if (reopened) status = thread.assignedToId ? "IN_PROGRESS" : "OPEN";
   return {
     threadId: thread.id,
-    status: thread.status,
+    status,
     activeChannel: "HUMAN",
     currentNodeId: null,
     messages: [],
@@ -598,6 +668,31 @@ function handoffPriority(
   return prior.priority;
 }
 
+/**
+ * An org billing dispute moves to the billing team's queue when the filer may
+ * read that queue; otherwise it stays with operations so the filer keeps sight of it.
+ */
+async function escalationOwnershipTx(
+  tx: Tx,
+  prior: Pick<SupportCase, "ownershipScope" | "organizationId">,
+  userId: string,
+  reason: string,
+): Promise<SupportCaseOwnership> {
+  if (
+    reason !== "org_billing_dispute" ||
+    prior.ownershipScope !== "ORG_OPERATIONS" ||
+    !prior.organizationId
+  )
+    return prior.ownershipScope;
+  const member = await tx.membership.findFirst({
+    where: { userId, organizationId: prior.organizationId, status: "ACTIVE" },
+    select: { role: true },
+  });
+  return member && hasOrgPermission(member.role, "supportCases.billing.manage")
+    ? "ORG_BILLING"
+    : prior.ownershipScope;
+}
+
 async function escalate(
   ctx: SupportContext,
   threadId: string,
@@ -612,7 +707,8 @@ async function escalate(
   const effectiveReason = turn.reason ?? reason;
   const priority = escalationPriority(effectiveReason, urgent);
   const now = new Date();
-  const result = await prisma.$transaction(
+  let attempted: Parameters<typeof openCaseConflict>[0] | null = null;
+  const handoff = prisma.$transaction(
     async (tx) => {
       const prior = await tx.supportCase.findUniqueOrThrow({
         where: { id: threadId },
@@ -626,6 +722,17 @@ async function escalate(
       )
         return { supportCase: prior, firstHandoff: false, replayed: true };
       if (prior.closedAt || prior.deletedAt) return null;
+      assertCaseTransition(prior.status, "ESCALATED", {
+        decided: await isResolvedAndDecidedTx(tx, prior),
+        actor: "CUSTOMER",
+      });
+      const ownershipScope = await escalationOwnershipTx(
+        tx,
+        prior,
+        ctx.userId,
+        effectiveReason,
+      );
+      attempted = { ...prior, category, ownershipScope };
       const priorTurns = (
         await tx.supportCaseMessage.findMany({
           where: { caseId: threadId, isInternal: false },
@@ -649,6 +756,7 @@ async function escalate(
         },
         data: {
           category,
+          ownershipScope,
           status: "ESCALATED",
           activeChannel: "HUMAN",
           currentNodeId: null,
@@ -718,31 +826,21 @@ async function escalate(
           toValue: "ESCALATED",
         },
       });
+      if (prior.activeChannel !== "HUMAN")
+        await tx.supportCaseEvent.create({
+          data: {
+            caseId: threadId,
+            actorId: ctx.userId,
+            kind: "CHANNEL_CHANGED",
+            fromValue: prior.activeChannel,
+            toValue: "HUMAN",
+          },
+        });
       const supportCase = await tx.supportCase.findUniqueOrThrow({
         where: { id: threadId },
       });
       if (prior.activeChannel !== "HUMAN")
         await stageSupportCaseIntakeTx(tx, supportCase, "USER");
-      else {
-        const operators = await tx.user.findMany({
-          where: { role: { in: ["STAFF", "ADMIN"] }, banned: false },
-          select: { id: true },
-        });
-        await stageBell(tx, {
-          workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_ACTIVITY,
-          recipients: operators.map((operator) => operator.id),
-          dedupeKey: `case-reopened:${threadId}:${supportCase.messageSeq}`,
-          entityRef: `case-reopened:${threadId}`,
-          payload: {
-            ticketId: threadId,
-            reference: supportCase.referenceNumber,
-            ticketTitle: supportCase.title,
-            activity: "reopened",
-            dashboardUrl: `/dashboard/support/c_${threadId}`,
-            ...notificationScope(supportCase.organizationId),
-          },
-        });
-      }
       return {
         supportCase,
         firstHandoff: prior.activeChannel !== "HUMAN",
@@ -751,6 +849,11 @@ async function escalate(
     },
     { maxWait: ALLOCATION_TX_MAX_WAIT_MS, timeout: ALLOCATION_TX_TIMEOUT_MS },
   );
+  const result = await handoff.catch(async (error: unknown) => {
+    throw attempted
+      ? await openScopeConflictOr(error, attempted, threadId)
+      : error;
+  });
   if (!result) {
     return {
       threadId,

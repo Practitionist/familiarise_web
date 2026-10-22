@@ -36,6 +36,7 @@ jest.mock("../../lib/validation/limits", () => ({
 jest.mock("../../lib/prisma", () => {
   const db = {
     membership: { findMany: jest.fn(async () => []) },
+    consultantProfile: { findFirst: jest.fn(async () => null) },
     // Escalation writes a ticket; the counter behind its reference and the
     // staff fan-out both live on the same client.
     supportCase: {
@@ -111,12 +112,10 @@ function postReq(body: unknown): NextRequest {
 }
 
 describe("POST /api/support/platform", () => {
-  it("401 UNAUTHORIZED envelope without a session", async () => {
+  it("401 without a session", async () => {
     mockedGetSession.mockResolvedValue(null);
     const res = await POST(postReq({ flowId: "anything" }));
     expect(res.status).toBe(401);
-    const json = await res.json();
-    expect(json.code).toBe("UNAUTHORIZED");
   });
 
   it("404 envelope with refresh guidance for an unknown flow (stale catalog)", async () => {
@@ -280,11 +279,115 @@ describe("asking for a person, in the scope that had no way to", () => {
 });
 
 describe("GET /api/support/platform", () => {
-  it("401 UNAUTHORIZED envelope without a session", async () => {
+  it("401 without a session", async () => {
     mockedGetSession.mockResolvedValue(null);
     const res = await GET();
     expect(res.status).toBe(401);
-    const json = await res.json();
-    expect(json.code).toBe("UNAUTHORIZED");
+  });
+
+  it("offers the expert tax flow only to a caller with a live consultant profile", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "u1" } });
+    const ids = async () =>
+      ((await (await GET()).json()).data.flows as { id: string }[]).map(
+        (f) => f.id,
+      );
+    expect(await ids()).not.toContain("EXPERT_TAX");
+
+    (prisma.consultantProfile.findFirst as jest.Mock).mockResolvedValueOnce({
+      id: "cp1",
+    });
+    expect(await ids()).toContain("EXPERT_TAX");
+    expect(prisma.consultantProfile.findFirst).toHaveBeenLastCalledWith({
+      where: { userId: "u1", deletedAt: null },
+      select: { id: true },
+    });
+  });
+});
+
+describe("operator billing ownership", () => {
+  const dispute = () =>
+    POST(
+      postReq({
+        flowId: "ORG_OPERATOR_BILLING",
+        nodeId: "invoice",
+        chosenOptionId: "dispute",
+        orgId: "org-a",
+      }),
+    );
+
+  it("files into the org billing queue when the filer holds supportCases.billing.manage", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "u1" } });
+    (prisma.membership.findMany as jest.Mock).mockResolvedValueOnce([
+      { organizationId: "org-a", role: "OWNER" },
+    ]);
+    const json = await (await dispute()).json();
+    expect(json.data.escalated).toBe(true);
+    expect(createOrReuseSupportCase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: "org-a",
+        ownershipScope: "ORG_BILLING",
+        issueType: "BILLING_QUESTION",
+      }),
+    );
+  });
+
+  it("lets a BILLING_ADMIN reach the flow and file into the org billing queue", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "u1" } });
+    (prisma.membership.findMany as jest.Mock).mockResolvedValueOnce([
+      { organizationId: "org-a", role: "BILLING_ADMIN" },
+    ]);
+    const json = await (await dispute()).json();
+    expect(json.data.escalated).toBe(true);
+    expect(createOrReuseSupportCase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: "org-a",
+        ownershipScope: "ORG_BILLING",
+      }),
+    );
+  });
+
+  it("keeps the flow from a member with neither operations nor billing access", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "u1" } });
+    (prisma.membership.findMany as jest.Mock).mockResolvedValueOnce([
+      { organizationId: "org-a", role: "LEARNER" },
+    ]);
+    const res = await dispute();
+    expect(res.status).toBe(404);
+    expect(createOrReuseSupportCase).not.toHaveBeenCalled();
+  });
+
+  it("keeps a MANAGER's escalation personal so they can still see it", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "u1" } });
+    (prisma.membership.findMany as jest.Mock).mockResolvedValueOnce([
+      { organizationId: "org-a", role: "MANAGER" },
+    ]);
+    await dispute();
+    expect(createOrReuseSupportCase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: "org-a",
+        ownershipScope: "PERSONAL",
+      }),
+    );
+  });
+
+  it("types a wrong org GST invoice as TAX_GST", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "u1" } });
+    (prisma.membership.findMany as jest.Mock).mockResolvedValueOnce([
+      { organizationId: "org-a", role: "OWNER" },
+    ]);
+    await POST(
+      postReq({
+        flowId: "ORG_OPERATOR_BILLING",
+        nodeId: "invoice",
+        chosenOptionId: "gstwrong",
+      }),
+    );
+    expect(createOrReuseSupportCase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: "org-a",
+        ownershipScope: "ORG_BILLING",
+        issueType: "TAX_GST",
+      }),
+    );
   });
 });

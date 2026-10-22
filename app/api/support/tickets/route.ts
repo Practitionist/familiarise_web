@@ -15,6 +15,10 @@ const OutboundSupportTicketSchema = CreateSupportTicketSchema.extend({
 });
 
 export async function POST(req: NextRequest) {
+  const auth = await requireBackofficeSurface("tickets.manage");
+  if (auth.error) return auth.error;
+  const { session } = auth;
+
   const tooLarge = assertBodySize(req);
   if (tooLarge) return tooLarge;
 
@@ -33,10 +37,6 @@ export async function POST(req: NextRequest) {
     });
 
   try {
-    const auth = await requireBackofficeSurface("tickets.manage");
-    if (auth.error) return auth.error;
-    const { session } = auth;
-
     const result = OutboundSupportTicketSchema.safeParse(peek);
     if (!result.success) {
       return supportError({

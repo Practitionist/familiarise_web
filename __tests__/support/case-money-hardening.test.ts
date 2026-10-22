@@ -21,6 +21,8 @@ jest.mock("../../lib/support/case-access", () => ({
 }));
 jest.mock("../../lib/support/case-service", () => ({
   executePatchLifecycleTx: jest.fn(),
+  latestCaseDecisionTx: jest.fn(async () => null),
+  caseDecidedDetail: jest.fn(() => ({})),
 }));
 
 type Row = Record<string, unknown>;
@@ -68,6 +70,7 @@ jest.mock("../../lib/prisma", () => {
     },
     supportCaseSubject: { findFirst: jest.fn(async () => null) },
     supportCaseDecision: { findUnique: jest.fn() },
+    supportCaseEvidenceRequest: { findUnique: jest.fn(async () => null) },
     moderationAction: { findUnique: jest.fn() },
     supportCaseEvent: {
       findFirst: jest.fn(
@@ -341,6 +344,23 @@ describe("refund execution correctness", () => {
     );
   });
 
+  it("leaves a failed refund's retry to the administrator who approved it", async () => {
+    mockStore.recommendations = [
+      recommendation({
+        decidedAt: new Date(),
+        decidedById: "admin-1",
+        approved: true,
+        refundId: "refund-0",
+        refund: { id: "refund-0", status: "FAILED" },
+      }),
+    ];
+    await expect(
+      performCaseAction("case-1", admin, review(true)),
+    ).rejects.toMatchObject({ code: "CONFLICT", status: 409 });
+    expect(refundBookingPayment).not.toHaveBeenCalled();
+    expect(db.supportFinancialRecommendation.updateMany).not.toHaveBeenCalled();
+  });
+
   it("replays a second-admin approval after a case message moved the case version", async () => {
     await expect(
       performCaseAction(
@@ -376,6 +396,7 @@ describe("refund execution correctness", () => {
     mockStore.recommendations = [
       recommendation({
         decidedAt: new Date(),
+        decidedById: admin.userId,
         approved: true,
         refundId: "refund-0",
         refund: { id: "refund-0", status: "FAILED" },
@@ -509,6 +530,7 @@ describe("refund execution correctness", () => {
     const failed = () =>
       recommendation({
         decidedAt: new Date(Date.now() - 3_600_000),
+        decidedById: admin.userId,
         approved: true,
         refundId: "refund-0",
         refund: { id: "refund-0", status: "FAILED" },

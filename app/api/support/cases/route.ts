@@ -23,6 +23,7 @@ import {
   refineCreateSupportCaseInput,
 } from "@/lib/support/case-service";
 import { sessionRole } from "@/lib/auth/session-role";
+import { CaseConflictError } from "@/lib/support/case-transitions";
 import {
   SupportIssueTypeEnum,
   SupportThreadCategoryEnum,
@@ -569,6 +570,8 @@ export async function POST(req: NextRequest) {
       { status: result.reused ? 200 : 201 },
     );
   } catch (cause) {
+    if (cause instanceof CaseConflictError)
+      return NextResponse.json(cause.body, { status: cause.status });
     if (cause instanceof SupportCaseValidationError) {
       return supportError({
         status: 400,

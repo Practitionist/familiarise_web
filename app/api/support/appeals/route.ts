@@ -10,6 +10,7 @@ import { allocateTicketReference } from "@/lib/support/reference";
 import { supportDeadline } from "@/lib/support/deadline-policy";
 import { slaDeadlinesFor } from "@/lib/support/sla";
 import { stageCaseNotice, CaseActionError } from "@/lib/support/case-actions";
+import { latestCaseDecisionTx } from "@/lib/support/case-service";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { assertBodySize } from "@/lib/validation/limits";
 import { supportError } from "@/lib/api/support-http";
@@ -42,7 +43,7 @@ async function decisionAppealScope(
 ): Promise<AppealScope> {
   const decision = await tx.supportCaseDecision.findUnique({
     where: { id: decisionId },
-    include: { supportCase: true },
+    include: { supportCase: true, supersededBy: { select: { id: true } } },
   });
   if (!decision)
     throw new CaseActionError("NOT_FOUND", "Decision not found.", 404);
@@ -65,6 +66,15 @@ async function decisionAppealScope(
       "FINAL_DECISION",
       "This decision already follows an appeal.",
     );
+  if (decision.supersededBy) {
+    const latest = await latestCaseDecisionTx(tx, decision.caseId);
+    throw new CaseActionError(
+      "DECISION_SUPERSEDED",
+      "This decision was replaced by a newer one. Appeal the latest decision instead.",
+      409,
+      { latestDecisionId: latest?.id ?? decision.supersededBy.id },
+    );
+  }
   if (now > decision.appealUntil)
     throw new CaseActionError(
       "APPEAL_EXPIRED",
@@ -235,7 +245,7 @@ export async function POST(req: NextRequest) {
   } catch (cause) {
     if (cause instanceof CaseActionError)
       return NextResponse.json(
-        { error: cause.message, code: cause.code },
+        { error: cause.message, code: cause.code, ...cause.detail },
         { status: cause.status },
       );
     if (

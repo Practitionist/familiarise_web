@@ -117,6 +117,37 @@ it("refuses a refund review that loses the claim race to another administrator",
   expect(refundBookingPayment).not.toHaveBeenCalled();
 });
 
+it("refuses the claim race loser whose serializable retry finds the approval already taken", async () => {
+  // Under SERIALIZABLE the loser's CAS aborts with 40001; the retry then reads
+  // the winner's approval, which must not route the loser into the refund retry.
+  db.supportFinancialRecommendation.findFirst.mockResolvedValueOnce({
+    id: "rec-1",
+    caseId: "case-1",
+    paymentId: "pay-1",
+    amountPaise: BigInt(100_000),
+    proposedById: "staff-1",
+    decidedAt: updatedAt,
+    decidedById: "admin-1",
+    approved: true,
+    voidedAt: null,
+    refund: null,
+  } as never);
+
+  const outcome = performCaseAction("case-1", admin, {
+    ...review(true),
+    expectedRefundablePaise: 500_000,
+  });
+
+  await expect(outcome).rejects.toMatchObject({
+    code: "CONFLICT",
+    status: 409,
+    message: "Another administrator reviewed this recommendation.",
+  });
+  expect(db.supportFinancialRecommendation.updateMany).not.toHaveBeenCalled();
+  expect(db.supportCaseEvent.create).not.toHaveBeenCalled();
+  expect(refundBookingPayment).not.toHaveBeenCalled();
+});
+
 it("refuses an opposite decision on an already decided recommendation", async () => {
   db.supportFinancialRecommendation.findFirst.mockResolvedValueOnce({
     id: "rec-1",

@@ -31,6 +31,19 @@ jest.mock("../../lib/observability/standing-finding", () => ({
   reportStandingFinding: (args: unknown, report: () => void) =>
     mockReportStandingFinding(args, report),
 }));
+jest.mock("../../lib/support/problem-cascade", () => ({
+  cascadeResolvedProblems: jest.fn(async () => ({
+    cascaded: 0,
+    bells: [],
+    emails: [],
+  })),
+}));
+jest.mock("../../lib/support/evidence-retention", () => ({
+  purgeExpiredSupportEvidence: jest.fn(async () => ({
+    casesPurged: 0,
+    filesDeleted: 0,
+  })),
+}));
 jest.mock("../../lib/prisma", () => {
   const db = {
     supportCase: { findMany: jest.fn(async () => []) },

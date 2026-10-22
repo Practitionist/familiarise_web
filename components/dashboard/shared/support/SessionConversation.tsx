@@ -19,6 +19,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
+import {
+  CASE_RESOLUTION_ANCHOR,
+  REOPEN_MESSAGE,
+  ResolvedFollowUp,
+} from "./ResolvedFollowUp";
+
 type ThreadState = ReturnType<typeof useSupportThread>;
 type Option = {
   id: string;
@@ -343,10 +349,19 @@ function SessionComposer({
   }
   return (
     <>
-      {t.isHuman && t.isResolved && (
-        <p className="text-xs text-muted-foreground">
-          This request is marked resolved. Replying reopens it.
-        </p>
+      {t.isHuman && t.isResolved && t.thread && t.thread.id !== "local" && (
+        <ResolvedFollowUp
+          caseId={t.thread.id}
+          resolvedAt={t.thread.resolvedAt}
+          disabled={t.turnPending}
+          onReopen={() => {
+            const sent = t.submitTurn({
+              userMessage: text.trim() || REOPEN_MESSAGE,
+              reopen: true,
+            });
+            if (sent) onTextChange("");
+          }}
+        />
       )}
       <form
         className="flex items-center gap-2"
@@ -571,7 +586,11 @@ export function SessionConversation({
       {t.thread?.id && t.thread.id !== "local" && (
         <>
           <CaseAttachments caseId={t.thread.id} canUpload={!t.isClosed} />
-          {t.isHuman && <CustomerCaseResolution caseId={t.thread.id} />}
+          {t.isHuman && (
+            <div id={CASE_RESOLUTION_ANCHOR}>
+              <CustomerCaseResolution caseId={t.thread.id} />
+            </div>
+          )}
         </>
       )}
       <div className="space-y-3 border-t border-border p-4">

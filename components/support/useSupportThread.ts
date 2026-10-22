@@ -97,6 +97,8 @@ export interface TurnVars {
   userMessage?: string;
   /** The customer flagged the escalation as urgent. */
   urgent?: boolean;
+  /** "This didn't fix it": reopens an undecided, recently resolved request. */
+  reopen?: boolean;
   /** Client-only echo of what was pressed. Never sent. */
   chosenLabel?: string;
 }
@@ -258,11 +260,16 @@ export function useSupportThread(
           body: JSON.stringify({
             body: body.userMessage,
             clientTurnId: body.clientTurnId,
+            ...(body.reopen ? { reopen: true } : {}),
           }),
         });
         if (!res.ok) await throwSupportError(res, "support reply");
+        // A plain reply is a follow-up; only "This didn't fix it" reopens.
         return {
-          status: current.status === "RESOLVED" ? "OPEN" : current.status,
+          status:
+            body.reopen && current.status === "RESOLVED"
+              ? "OPEN"
+              : current.status,
           activeChannel: "HUMAN",
           currentNodeId: current.currentNodeId,
           messages: [],

@@ -1334,3 +1334,13 @@ DROP TRIGGER IF EXISTS support_case_decision_immutable ON "SupportCaseDecision";
 CREATE TRIGGER support_case_decision_immutable
   BEFORE UPDATE OR DELETE ON "SupportCaseDecision"
   FOR EACH ROW EXECUTE FUNCTION assert_support_decision_immutable();
+
+-- SPLIT
+-- One original decision per case; every later decision supersedes exactly one other.
+CREATE UNIQUE INDEX IF NOT EXISTS "support_decision_one_original_per_case"
+  ON "SupportCaseDecision" ("caseId") WHERE "supersedesDecisionId" IS NULL;
+
+-- SPLIT
+-- Keeps the post-closure evidence purge scan cheap as closed cases accumulate.
+CREATE INDEX IF NOT EXISTS "support_case_closed_at_idx"
+  ON "SupportCase" ("closedAt") WHERE "closedAt" IS NOT NULL;

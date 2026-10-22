@@ -20,7 +20,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { getSession } from "@/lib/auth-server";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { supportError } from "@/lib/api/support-http";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { assertBodySize } from "@/lib/validation/limits";
@@ -31,6 +31,7 @@ import {
   platformFlowsForContext,
   platformFlowForId,
   issueTypeForFlow,
+  platformOwnershipScope,
   resolveOrgAttribution,
   type PlatformSupportContext,
 } from "@/lib/support/platform-flows";
@@ -156,16 +157,29 @@ function extractTerminalNodeId(
 async function buildPlatformContext(
   userId: string,
 ): Promise<PlatformSupportContext> {
-  const memberships = await prisma.membership.findMany({
-    where: { userId, status: "ACTIVE" },
-    select: { organizationId: true, role: true },
-  });
+  const [memberships, consultantProfile] = await Promise.all([
+    prisma.membership.findMany({
+      where: { userId, status: "ACTIVE" },
+      select: { organizationId: true, role: true },
+    }),
+    prisma.consultantProfile.findFirst({
+      where: { userId, deletedAt: null },
+      select: { id: true },
+    }),
+  ]);
   return {
     userId,
     isOperator: memberships.some((m) =>
       hasOrgPermission(m.role, "operations.read"),
     ),
+    isBillingReader: memberships.some((m) =>
+      hasOrgPermission(m.role, "billing.read"),
+    ),
+    isExpert: consultantProfile !== null,
     organizationIds: memberships.map((m) => m.organizationId),
+    billingOrgIds: memberships
+      .filter((m) => hasOrgPermission(m.role, "supportCases.billing.manage"))
+      .map((m) => m.organizationId),
   };
 }
 
@@ -204,9 +218,10 @@ async function handleEscalatedTurn(
   flow: PlatformFlow,
   turn: WalkResult,
   input: TurnInput,
-  userId: string,
+  ctx: PlatformSupportContext,
   organizationId: string | null,
 ): Promise<NextResponse> {
+  const userId = ctx.userId;
   const rl = await applyRateLimit(spamLimiter, `tickets:${userId}`);
   if (rl) return rl;
 
@@ -290,6 +305,11 @@ async function handleEscalatedTurn(
     priority,
     issueType,
     organizationId,
+    ownershipScope: platformOwnershipScope({
+      flowId: flow.id,
+      organizationId,
+      billingOrgIds: ctx.billingOrgIds,
+    }),
     filedBy: "requester",
   });
 
@@ -320,10 +340,9 @@ async function handleEscalatedTurn(
 
 export async function GET() {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return supportError({ status: 401, code: "UNAUTHORIZED" });
-    }
+    const auth = await requireApiAuth();
+    if (auth.error) return auth.error;
+    const { session } = auth;
     const ctx = await buildPlatformContext(session.user.id);
     const flows = platformFlowsForContext(ctx).map((f) => ({
       id: f.id,
@@ -345,10 +364,9 @@ export async function POST(req: NextRequest) {
   let userId: string | null = null;
   let flowId: string | null = null;
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return supportError({ status: 401, code: "UNAUTHORIZED" });
-    }
+    const auth = await requireApiAuth();
+    if (auth.error) return auth.error;
+    const { session } = auth;
     userId = session.user.id;
 
     const tooLarge = assertBodySize(req);
@@ -426,7 +444,7 @@ export async function POST(req: NextRequest) {
       flow,
       turn,
       input,
-      session.user.id,
+      ctx,
       attribution.organizationId,
     );
   } catch (cause) {

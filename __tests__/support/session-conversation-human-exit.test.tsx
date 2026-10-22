@@ -4,7 +4,7 @@
 
 /**
  * The human exit is visible inside a bot flow, not only on the first menu, and
- * a resolved hand-off tells the customer that replying reopens it.
+ * a resolved hand-off tells the customer that a reply will not reopen it.
  */
 
 jest.mock("../../hooks/use-toast", () => ({
@@ -66,11 +66,24 @@ describe("SessionConversation", () => {
     expect(html).toContain("Talk to a person");
   });
 
-  it("hides the exit once a person has the case, and says a reply reopens a resolved one", () => {
+  it("hides the exit once a person has the case, and says a reply won't reopen a resolved one", () => {
     const html = render(
-      thread({ isHuman: true, isResolved: true, options: [] }),
+      thread({
+        isHuman: true,
+        isResolved: true,
+        options: [],
+        thread: {
+          id: "case-1",
+          status: "RESOLVED",
+          activeChannel: "HUMAN",
+          currentNodeId: null,
+          resolvedAt: new Date().toISOString(),
+          messages: [],
+        },
+      }),
     );
     expect(html).not.toContain("Talk to a person");
-    expect(html).toContain("Replying reopens it");
+    expect(html).toContain("Your reply won&#x27;t reopen it");
+    expect(html).not.toContain("Replying reopens it");
   });
 });

@@ -28,6 +28,7 @@ jest.mock("../../lib/auth-server", () => ({
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
   isPrivileged: jest.fn(),
+  requireApiAuth: jest.fn(async () => ({ session: { user: { id: "u1" } } })),
 }));
 jest.mock("../../lib/auth/org-permissions", () => ({
   __esModule: true,

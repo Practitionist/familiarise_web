@@ -15,7 +15,11 @@ import {
 import { canCorrespondOnCase, caseCorrespondentIds } from "./case-access";
 import { reverseAppealedModeration } from "./appeal-reversal";
 import { purgeReviewSurfaces } from "@/lib/data/public-cache";
-import { executePatchLifecycleTx } from "./case-service";
+import {
+  caseDecidedDetail,
+  executePatchLifecycleTx,
+  latestCaseDecisionTx,
+} from "./case-service";
 import { stageBell } from "@/lib/novu/stage-bell";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { supportRequestHref } from "@/lib/novu/resolve-href";
@@ -90,6 +94,8 @@ export const CaseActionSchema = z.discriminatedUnion("action", [
     ]),
     explanation: reason,
     privateRationale: reason.optional(),
+    /** An admin correction names the decision in force; omitted for the first decision. */
+    supersedesDecisionId: id.optional(),
   }),
   base.extend({
     action: z.literal("RECOMMEND_REFUND"),
@@ -123,6 +129,8 @@ export class CaseActionError extends Error {
     readonly code: string,
     message: string,
     readonly status = 409,
+    /** Extra fields for the response body, such as the decision in force. */
+    readonly detail: Record<string, unknown> = {},
   ) {
     super(message);
     this.name = "CaseActionError";
@@ -465,6 +473,7 @@ export async function readCaseResolution(caseId: string, actor: CaseActor) {
             explanation: true,
             createdAt: true,
             appealUntil: true,
+            supersedesDecisionId: true,
             ...(staff ? { privateRationale: true, decidedById: true } : {}),
           },
         }),
@@ -527,6 +536,13 @@ export async function readCaseResolution(caseId: string, actor: CaseActor) {
       actor.role === "ADMIN" ? null : STAFF_REFUND_PER_PAYMENT_PAISE,
     ownershipScope: supportCase.ownershipScope,
     updatedAt: supportCase.updatedAt,
+    caseKind: supportCase.caseKind,
+    isAppeal: Boolean(
+      supportCase.appealOfDecisionId || supportCase.appealOfModerationActionId,
+    ),
+    legalHoldAt: staff ? supportCase.legalHoldAt : null,
+    /** Supersede and legal hold are admin-only. */
+    isAdmin: actor.role === "ADMIN",
   };
 }
 
@@ -664,20 +680,67 @@ type ActionInput<Action extends CaseAction["action"]> = Extract<
   { action: Action }
 >;
 
-function replayCaseActionTx(tx: Tx, caseId: string, input: CaseAction) {
+function idempotencyKeyReused() {
+  return new CaseActionError(
+    "IDEMPOTENCY_KEY_REUSED",
+    "This action was already submitted with different details.",
+  );
+}
+
+/**
+ * The stored row for a retried action. The same `clientActionId` with other
+ * details, another actor or another action kind is refused, never replayed.
+ */
+async function replayCaseActionTx(
+  tx: Tx,
+  caseId: string,
+  actor: CaseActor,
+  input: CaseAction,
+) {
+  if (
+    input.action !== "REQUEST_EVIDENCE" &&
+    input.action !== "RECOMMEND_REFUND" &&
+    input.action !== "DECIDE"
+  )
+    return null;
   const where = {
     caseId_clientActionId: { caseId, clientActionId: input.clientActionId },
   };
-  switch (input.action) {
-    case "REQUEST_EVIDENCE":
-      return tx.supportCaseEvidenceRequest.findUnique({ where });
-    case "RECOMMEND_REFUND":
-      return tx.supportFinancialRecommendation.findUnique({ where });
-    case "DECIDE":
-      return tx.supportCaseDecision.findUnique({ where });
-    default:
-      return null;
+  const evidence = await tx.supportCaseEvidenceRequest.findUnique({ where });
+  const recommendation = await tx.supportFinancialRecommendation.findUnique({
+    where,
+  });
+  const decision = await tx.supportCaseDecision.findUnique({ where });
+  if (!evidence && !recommendation && !decision) return null;
+  if (input.action === "REQUEST_EVIDENCE") {
+    if (
+      evidence?.recipientUserId !== input.recipientUserId ||
+      evidence.prompt !== input.prompt ||
+      evidence.requestedById !== actor.userId
+    )
+      throw idempotencyKeyReused();
+    return evidence;
   }
+  if (input.action === "RECOMMEND_REFUND") {
+    if (
+      recommendation?.paymentId !== input.paymentId ||
+      Number(recommendation.amountPaise) !== input.amountPaise ||
+      recommendation.reason !== input.reason ||
+      recommendation.releaseSeat !== input.releaseSeat ||
+      recommendation.proposedById !== actor.userId
+    )
+      throw idempotencyKeyReused();
+    return recommendation;
+  }
+  if (
+    decision?.outcome !== input.outcome ||
+    decision.explanation !== input.explanation ||
+    decision.privateRationale !== (input.privateRationale ?? null) ||
+    decision.supersedesDecisionId !== (input.supersedesDecisionId ?? null) ||
+    decision.decidedById !== actor.userId
+  )
+    throw idempotencyKeyReused();
+  return decision;
 }
 
 async function stageDecisionNotificationsTx(
@@ -764,6 +827,56 @@ async function assertDecisionMatchesMoney(
   }
 }
 
+const APPEAL_OUTCOMES: ReadonlySet<string> = new Set(["UPHELD", "OVERTURNED"]);
+
+/** Problems are resolved, not decided; appeals are upheld or overturned; incidents get a remedy outcome. */
+function assertDecisionFitsCase(
+  supportCase: SupportCase,
+  outcome: ActionInput<"DECIDE">["outcome"],
+) {
+  if (supportCase.caseKind === "PROBLEM")
+    throw new CaseActionError(
+      "DECISION_NOT_ALLOWED",
+      "A problem record is resolved, not decided. Record decisions on its linked incidents.",
+      400,
+    );
+  if (supportCase.status === "CLOSED")
+    throw new CaseActionError(
+      "CASE_CLOSED",
+      "This case is closed, so a decision can no longer be recorded.",
+    );
+  const appeal = Boolean(
+    supportCase.appealOfDecisionId || supportCase.appealOfModerationActionId,
+  );
+  if (appeal !== APPEAL_OUTCOMES.has(outcome))
+    throw new CaseActionError(
+      "OUTCOME_NOT_ALLOWED",
+      appeal
+        ? "An appeal is decided as upheld or overturned."
+        : "Upheld and overturned apply only to appeals.",
+      400,
+    );
+}
+
+async function reverseModerationIfOverturned(
+  tx: Tx,
+  supportCase: SupportCase,
+  actor: CaseActor,
+  input: ActionInput<"DECIDE">,
+): Promise<string | undefined> {
+  if (input.outcome !== "OVERTURNED" || !supportCase.appealOfModerationActionId)
+    return undefined;
+  const reversal = await reverseAppealedModeration(
+    tx,
+    supportCase.appealOfModerationActionId,
+    actor,
+    input.explanation,
+  );
+  if (!reversal.ok)
+    throw new CaseActionError("COMPENSATING_ACTION_REQUIRED", reversal.error);
+  return reversal.consultantProfileId;
+}
+
 async function recordCaseDecisionTx(
   tx: Tx,
   supportCase: SupportCase,
@@ -771,22 +884,24 @@ async function recordCaseDecisionTx(
   input: ActionInput<"DECIDE">,
 ) {
   const caseId = supportCase.id;
-  await assertDecisionMatchesMoney(tx, caseId, input.outcome);
-  let restoredConsultantProfileId: string | undefined;
-  if (
-    input.outcome === "OVERTURNED" &&
-    supportCase.appealOfModerationActionId
-  ) {
-    const reversal = await reverseAppealedModeration(
-      tx,
-      supportCase.appealOfModerationActionId,
-      actor,
-      input.explanation,
+  assertDecisionFitsCase(supportCase, input.outcome);
+  const latest = await latestCaseDecisionTx(tx, caseId);
+  if (input.supersedesDecisionId)
+    return supersedeDecisionTx(tx, supportCase, actor, input, latest);
+  if (latest)
+    throw new CaseActionError(
+      "CASE_ALREADY_DECIDED",
+      "This case already has a decision. An admin can supersede it while its appeal window is open.",
+      409,
+      caseDecidedDetail(latest),
     );
-    if (!reversal.ok)
-      throw new CaseActionError("COMPENSATING_ACTION_REQUIRED", reversal.error);
-    restoredConsultantProfileId = reversal.consultantProfileId;
-  }
+  await assertDecisionMatchesMoney(tx, caseId, input.outcome);
+  const restoredConsultantProfileId = await reverseModerationIfOverturned(
+    tx,
+    supportCase,
+    actor,
+    input,
+  );
   const moved = await executePatchLifecycleTx(
     tx,
     {
@@ -794,7 +909,6 @@ async function recordCaseDecisionTx(
       actorId: actor.userId,
       expectedUpdatedAt: input.expectedUpdatedAt,
       status: "RESOLVED",
-      closingMessage: input.explanation,
     },
     new Date(),
   );
@@ -819,6 +933,114 @@ async function recordCaseDecisionTx(
     decision.id,
     input.outcome,
   );
+  await stageDecisionNotificationsTx(tx, supportCase, decision);
+  return { ...decision, restoredConsultantProfileId };
+}
+
+/** A correction may not orphan what the decision in force already did: a reversed moderation action or a live refund. */
+async function assertSupersedeKeepsEffects(
+  tx: Tx,
+  supportCase: SupportCase,
+  latest: SupportCaseDecision,
+  outcome: ActionInput<"DECIDE">["outcome"],
+) {
+  // Reinstating a reversed moderation action is not automated.
+  if (
+    latest.outcome === "OVERTURNED" &&
+    outcome !== "OVERTURNED" &&
+    supportCase.appealOfModerationActionId
+  )
+    throw new CaseActionError(
+      "COMPENSATING_ACTION_REQUIRED",
+      "The moderation action was already reversed. Reinstate it from moderation first.",
+    );
+  if (latest.outcome !== "REFUND_APPROVED" || outcome === "REFUND_APPROVED")
+    return;
+  const live = await tx.supportFinancialRecommendation.findFirst({
+    where: {
+      caseId: supportCase.id,
+      approved: true,
+      refund: { status: { in: ["PENDING", "SUCCEEDED"] } },
+    },
+    select: { id: true },
+  });
+  if (live)
+    throw new CaseActionError(
+      "REFUND_APPROVED_EXISTS",
+      "A refund under this decision is pending or sent. Void or reconcile it before superseding.",
+    );
+}
+
+/**
+ * An admin correction of the decision in force, while its appeal window is
+ * open and before anyone appeals. It keeps the original appeal deadline and
+ * leaves the resolution time, and so the auto-close and CSAT prompt, alone.
+ */
+async function supersedeDecisionTx(
+  tx: Tx,
+  supportCase: SupportCase,
+  actor: CaseActor,
+  input: ActionInput<"DECIDE">,
+  latest: SupportCaseDecision | null,
+) {
+  const caseId = supportCase.id;
+  if (actor.role !== "ADMIN")
+    throw new CaseActionError(
+      "FORBIDDEN",
+      "Only an admin can supersede a decision.",
+      403,
+    );
+  if (!latest || latest.id !== input.supersedesDecisionId)
+    throw new CaseActionError(
+      "DECISION_SUPERSEDED",
+      "That is not the decision in force on this case. Refresh and try again.",
+      409,
+      latest ? caseDecidedDetail(latest) : {},
+    );
+  if (Date.now() > latest.appealUntil.getTime())
+    throw new CaseActionError(
+      "SUPERSEDE_WINDOW_CLOSED",
+      "The appeal window for this decision has ended, so it can no longer be superseded.",
+    );
+  const appealed = await tx.supportCaseDecision.findFirst({
+    where: { caseId, appeals: { some: {} } },
+    select: { id: true },
+  });
+  if (appealed)
+    throw new CaseActionError(
+      "DECISION_APPEALED",
+      "This decision has been appealed. Record the outcome on the appeal instead.",
+    );
+  await assertSupersedeKeepsEffects(tx, supportCase, latest, input.outcome);
+  await assertDecisionMatchesMoney(tx, caseId, input.outcome);
+  const restoredConsultantProfileId =
+    latest.outcome === "OVERTURNED"
+      ? undefined
+      : await reverseModerationIfOverturned(tx, supportCase, actor, input);
+  await touchCase(tx, caseId, input.expectedUpdatedAt);
+  const decision = await tx.supportCaseDecision.create({
+    data: {
+      caseId,
+      decidedById: actor.userId,
+      clientActionId: input.clientActionId,
+      outcome: input.outcome,
+      explanation: input.explanation,
+      privateRationale: input.privateRationale,
+      appealUntil: latest.appealUntil,
+      supersedesDecisionId: latest.id,
+    },
+  });
+  await tx.supportCaseEvent.create({
+    data: {
+      caseId,
+      actorId: actor.userId,
+      kind: "DECISION_RECORDED",
+      fromValue: latest.id,
+      toValue: decision.id,
+      note: input.outcome,
+      createdAt: new Date(),
+    },
+  });
   await stageDecisionNotificationsTx(tx, supportCase, decision);
   return { ...decision, restoredConsultantProfileId };
 }
@@ -984,6 +1206,12 @@ async function reviewRefundTx(
       throw new CaseActionError(
         "ALREADY_DECIDED",
         "This recommendation already has a decision.",
+      );
+    // A serializable retry of a lost claim lands here; only the decider may retry the refund.
+    if (recommendation.decidedById !== actor.userId)
+      throw new CaseActionError(
+        "CONFLICT",
+        "Another administrator reviewed this recommendation.",
       );
     if (input.approve && !isLiveRefund(recommendation.refund))
       await claimRefundRetry(tx, caseId, actor, recommendation, input);
@@ -1264,7 +1492,7 @@ export async function performCaseActionTx(
   input: CaseAction,
 ) {
   const supportCase = await actionableCase(tx, caseId, actor);
-  const replay = await replayCaseActionTx(tx, caseId, input);
+  const replay = await replayCaseActionTx(tx, caseId, actor, input);
   if (replay) return replay;
   switch (input.action) {
     case "DECIDE":
@@ -1324,9 +1552,19 @@ export async function performCaseAction(
     prisma.$transaction((tx) => performCaseActionTx(tx, caseId, actor, input), {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     }),
-  ).catch((error: unknown) => {
-    if (input.action === "RECOMMEND_REFUND" && isUniqueViolation(error))
-      throw openRecommendationError();
+  ).catch(async (error: unknown) => {
+    if (!isUniqueViolation(error)) throw error;
+    // A double submit lost the race on its own clientActionId: answer with the winner.
+    const replay = await prisma.$transaction((tx) =>
+      replayCaseActionTx(tx, caseId, actor, input),
+    );
+    if (replay) return replay;
+    if (input.action === "RECOMMEND_REFUND") throw openRecommendationError();
+    if (input.action === "DECIDE")
+      throw new CaseActionError(
+        "CASE_ALREADY_DECIDED",
+        "Another decision was recorded on this case at the same time. Refresh to see it.",
+      );
     throw error;
   });
   if (input.action === "DECIDE" && input.outcome === "OVERTURNED")

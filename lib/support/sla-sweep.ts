@@ -15,6 +15,8 @@ import {
 } from "@/lib/observability/report";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { slaStateOf } from "./sla";
+import { cascadeResolvedProblems } from "./problem-cascade";
+import { purgeExpiredSupportEvidence } from "./evidence-retention";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -27,6 +29,10 @@ const DISPUTE_CRITICAL_MS = 12 * HOUR_MS;
 const DISPUTE_LOOKBACK_MS = DAY_MS;
 // Open disputes due within the four-day window; far above any real backlog, it only bounds the read.
 const DISPUTE_WINDOW_CAP = 500;
+// Each cascaded incident stages its notices in its own transaction; keeps the arm inside the tick.
+const PROBLEM_CASCADE_CAP = 10;
+// Each purged case is a storage round trip plus a transaction.
+const EVIDENCE_PURGE_CAP = 5;
 
 type SlaNoticeKind = "ack" | "res";
 type SlaNoticeLevel = "warn" | "breach";
@@ -69,6 +75,9 @@ export interface SupportSlaSweepResult {
   slaNoticesStaged: number;
   orgEscalationEmailsSent: number;
   autoClosedCount: number;
+  incidentsCascaded: number;
+  evidenceCasesPurged: number;
+  evidenceFilesDeleted: number;
   disputeNoticesStaged: number;
   errors: string[];
 }
@@ -751,6 +760,7 @@ function moderationDeadlineIds(
 
 /**
  * Single background sweep for support SLA warnings/breaches, 28-day RESOLVED auto-close,
+ * resolved-problem incident cascade, 180-day evidence purge,
  * T-72h / T-24h dispute deadlines and one page for disputes due within 12 h or past due.
  * Collects row errors and reports to Sentry at most once.
  */
@@ -817,6 +827,17 @@ export async function runSupportSlaSweep(opts?: {
     );
 
     const autoClosedCount = await autoCloseResolvedRows(now, limit, errors);
+    const cascade = await cascadeResolvedProblems({
+      limit: Math.min(limit, PROBLEM_CASCADE_CAP),
+      now,
+      errors,
+    });
+    stagedBells.push(...cascade.bells);
+    const evidencePurge = await purgeExpiredSupportEvidence({
+      limit: Math.min(limit, EVIDENCE_PURGE_CAP),
+      now,
+      errors,
+    });
     const admins = operators.filter((o) => o.role === "ADMIN");
     const disputeNoticesStaged = await processDisputeDeadlineAlerts(
       now,
@@ -935,7 +956,13 @@ export async function runSupportSlaSweep(opts?: {
         );
       }
     }
-    await flushNotificationsAfter({ bells: stagedBells }, "support.sla-sweep");
+    await flushNotificationsAfter(
+      {
+        bells: stagedBells,
+        emails: [{ rows: cascade.emails, emailType: "SUPPORT_TICKET_UPDATE" }],
+      },
+      "support.sla-sweep",
+    );
 
     if (errors.length > 0) {
       reportSentryError(
@@ -959,6 +986,9 @@ export async function runSupportSlaSweep(opts?: {
       slaNoticesStaged,
       orgEscalationEmailsSent,
       autoClosedCount,
+      incidentsCascaded: cascade.cascaded,
+      evidenceCasesPurged: evidencePurge.casesPurged,
+      evidenceFilesDeleted: evidencePurge.filesDeleted,
       disputeNoticesStaged,
       errors,
     };

@@ -98,7 +98,7 @@ export async function POST(req: NextRequest, context: Context) {
   } catch (error) {
     if (error instanceof CaseActionError)
       return NextResponse.json(
-        { error: error.message, code: error.code },
+        { error: error.message, code: error.code, ...error.detail },
         { status: error.status },
       );
     return supportError({
