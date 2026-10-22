@@ -4,11 +4,11 @@
  * gone unrecovered for longer than the recovery window.
  */
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { surchargeTaxPaise } from "@/lib/payments/billing/overage";
 import { orgBuyerCountry } from "@/lib/compliance/gst";
-import type { LedgerDirection } from "@prisma/client";
+import type { LedgerDirection, Prisma } from "@prisma/client";
 import {
   CLAWBACK_RECOVERY_KEY_PREFIX,
   CLAWBACK_RECOVERY_RELEASE_KEY_PREFIX,
@@ -37,18 +37,20 @@ export const CLAWBACK_RECOVERY_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
  */
 export async function orgInvoiceGstFindings(
   organizationId?: string,
+  db: Tx = prisma,
+  page?: { afterId?: string; size: number; onPage: (ids: string[]) => void },
 ): Promise<Finding[]> {
   const findings: Finding[] = [];
-  let cursor: string | undefined;
+  let cursor = page?.afterId;
   for (;;) {
-    const slice = await prisma.organizationInvoice.findMany({
+    const slice = await db.organizationInvoice.findMany({
       where: {
         status: { in: ["ISSUED", "PAID", "OVERDUE"] },
+        ...(cursor ? { id: { gt: cursor } } : {}),
         ...(organizationId ? { organizationId } : {}),
       },
       orderBy: { id: "asc" },
-      take: CHUNK,
-      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      take: page?.size ?? CHUNK,
       select: {
         id: true,
         organizationId: true,
@@ -62,6 +64,7 @@ export async function orgInvoiceGstFindings(
         },
       },
     });
+    page?.onPage(slice.map((invoice) => invoice.id));
     if (slice.length === 0) break;
     cursor = slice[slice.length - 1].id;
 
@@ -78,7 +81,7 @@ export async function orgInvoiceGstFindings(
       }
     }
 
-    const entries = await prisma.ledgerEntry.findMany({
+    const entries = await db.ledgerEntry.findMany({
       where: {
         account: { kind: "GST_PAYABLE" },
         transaction: {
@@ -148,24 +151,54 @@ export async function orgInvoiceGstFindings(
             },
       });
     }
-    if (slice.length < CHUNK) break;
+    if (page || slice.length < CHUNK) break;
   }
 
-  if (typeof prisma.overageEvent?.findMany === "function") {
-    const walletOverages = await prisma.overageEvent.findMany({
+  if (!page)
+    findings.push(...(await walletOverageGstFindings(organizationId, db)));
+  return findings;
+}
+
+/** Wallet surcharge tax coverage, independently paged from issued invoices. */
+export async function walletOverageGstFindings(
+  organizationId?: string,
+  db: Tx = prisma,
+  page?: { afterId?: string; size: number; onPage: (ids: string[]) => void },
+): Promise<Finding[]> {
+  const findings: Finding[] = [];
+  {
+    const where: Prisma.OverageEventWhereInput = {
+      overageBehavior: "CHARGE_ORG",
+      chargeStatus: "CHARGED",
+      surchargePaise: { gt: 0 },
+      invoiceLineItemId: null,
+      paymentId: { not: null },
+      ...(organizationId
+        ? { programAssignment: { program: { contract: { organizationId } } } }
+        : {}),
+    };
+    const paymentPage = page
+      ? await db.overageEvent.groupBy({
+          by: ["paymentId"],
+          where: {
+            ...where,
+            paymentId: {
+              not: null,
+              ...(page.afterId ? { gt: page.afterId } : {}),
+            },
+          },
+          orderBy: { paymentId: "asc" },
+          take: page.size,
+        })
+      : null;
+    const paymentIds = paymentPage
+      ?.map((row) => row.paymentId)
+      .filter((id): id is string => id !== null);
+    if (paymentIds) page?.onPage(paymentIds);
+    const walletOverages = await db.overageEvent.findMany({
       where: {
-        overageBehavior: "CHARGE_ORG",
-        chargeStatus: "CHARGED",
-        surchargePaise: { gt: 0 },
-        invoiceLineItemId: null,
-        paymentId: { not: null },
-        ...(organizationId
-          ? {
-              programAssignment: {
-                program: { contract: { organizationId } },
-              },
-            }
-          : {}),
+        ...where,
+        ...(paymentIds ? { paymentId: { in: paymentIds } } : {}),
       },
       select: {
         id: true,
@@ -211,7 +244,7 @@ export async function orgInvoiceGstFindings(
       const paymentIds = [...expectedByPayment.keys()];
       if (paymentIds.length > 0) {
         const [gstEntries, payments] = await Promise.all([
-          prisma.ledgerEntry.findMany({
+          db.ledgerEntry.findMany({
             where: {
               account: { kind: "GST_PAYABLE" },
               transaction: { paymentId: { in: paymentIds } },
@@ -222,12 +255,10 @@ export async function orgInvoiceGstFindings(
               transaction: { select: { paymentId: true } },
             },
           }),
-          typeof prisma.payment?.findMany === "function"
-            ? prisma.payment.findMany({
-                where: { id: { in: paymentIds } },
-                select: { id: true, taxAmount: true },
-              })
-            : Promise.resolve([]),
+          db.payment.findMany({
+            where: { id: { in: paymentIds } },
+            select: { id: true, taxAmount: true },
+          }),
         ]);
         const gstByPayment = new Map<string, number>();
         for (const e of gstEntries) {
@@ -306,6 +337,7 @@ export function oldestUnrecoveredAt(events: ReceivableEvent[]): Date | null {
 async function dropLapsedRecoveries(
   events: ReceivableEvent[],
   rail: ClawbackPayee["rail"],
+  db: Tx,
 ): Promise<ReceivableEvent[]> {
   const released = new Set(
     events.filter((e) => e.kind === "RELEASED").map((e) => e.payoutId),
@@ -325,8 +357,8 @@ async function dropLapsedRecoveries(
   };
   const lapsed =
     rail === "CONSULTANT"
-      ? await prisma.consultantPayout.findMany({ where, select: { id: true } })
-      : await prisma.organizationPayout.findMany({
+      ? await db.consultantPayout.findMany({ where, select: { id: true } })
+      : await db.organizationPayout.findMany({
           where,
           select: { id: true },
         });
@@ -352,11 +384,14 @@ function classify(
 async function staleForRail(
   rail: ClawbackPayee["rail"],
   now: Date,
-  organizationId?: string,
+  organizationId: string | undefined,
+  db: Tx,
+  accountIds?: string[],
 ): Promise<{ payeeId: string; outstandingPaise: number; since: Date }[]> {
-  const entries = await prisma.ledgerEntry.findMany({
-    where:
-      rail === "CONSULTANT"
+  const entries = await db.ledgerEntry.findMany({
+    where: {
+      ...(accountIds ? { accountId: { in: accountIds } } : {}),
+      ...(rail === "CONSULTANT"
         ? { account: { kind: "CONSULTANT_RECEIVABLE" } }
         : {
             account: {
@@ -364,7 +399,8 @@ async function staleForRail(
               ...(organizationId ? { organizationId } : {}),
             },
             transaction: ORG_CLAWBACK_KEY_FILTER,
-          },
+          }),
+    },
     select: {
       direction: true,
       amountPaise: true,
@@ -393,7 +429,7 @@ async function staleForRail(
   const stale: { payeeId: string; outstandingPaise: number; since: Date }[] =
     [];
   for (const [payeeId, raw] of byPayee) {
-    const events = await dropLapsedRecoveries(raw, rail);
+    const events = await dropLapsedRecoveries(raw, rail, db);
     const since = oldestUnrecoveredAt(events);
     if (
       !since ||
@@ -415,11 +451,13 @@ async function staleForRail(
 export async function staleClawbackFindings(
   now: Date,
   organizationId?: string,
+  db: Tx = prisma,
+  accountIds?: string[],
 ): Promise<Finding[]> {
   const consultants = organizationId
     ? []
-    : await staleForRail("CONSULTANT", now);
-  const orgs = await staleForRail("ORG", now, organizationId);
+    : await staleForRail("CONSULTANT", now, undefined, db, accountIds);
+  const orgs = await staleForRail("ORG", now, organizationId, db, accountIds);
   const all = [
     ...consultants.map((s) => ({ ...s, rail: "CONSULTANT" as const })),
     ...orgs.map((s) => ({ ...s, rail: "ORG" as const })),

@@ -17,8 +17,24 @@ const programAssignmentFindMany = jest.fn(async (_a: unknown) => {
 });
 const db = {
   ledgerReconciliationReport: {
-    create: async () => ({ id: "rep_1" }),
-    update: jest.fn(async (_a: unknown) => ({})),
+    findFirst: async () => null,
+    create: async ({
+      data,
+    }: {
+      data: { scope: string; summary: unknown; findings: unknown };
+    }) => ({
+      ...data,
+      id: "rep_1",
+      runAt: new Date(),
+      durationMs: 0,
+      ok: false,
+    }),
+    update: jest.fn(async (_a: unknown) => ({
+      id: "rep_1",
+      runAt: new Date(),
+      durationMs: 0,
+      ok: false,
+    })),
   },
   billingAccount: {
     findMany: async () => [

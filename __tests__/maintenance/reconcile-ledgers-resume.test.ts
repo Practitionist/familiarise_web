@@ -3,9 +3,8 @@
  */
 
 /**
- * #1943 — `POST /api/cleanup/reconcile-ledgers` runs a full-scope ledger
- * reconciliation directly via `runReconcileLedgers({ scope: "full" })` under
- * its cron lock and freezes the wallets it finds drifted.
+ * Scheduled slices retain full-scope coverage and freeze wallet pages before
+ * later comparisons, with one fatal alert per invocation.
  */
 
 jest.mock("@sentry/nextjs", () => ({
@@ -30,15 +29,20 @@ const runReconcileLedgers = jest.fn(async (args: Args) => ({
   id: "rep_full",
   scope: args.scope,
   ok: true,
-  summary: { discrepanciesCount: 0 },
+  summary: { discrepanciesCount: 0, status: "COMPLETED" },
   findings: [] as unknown[],
 }));
-const freezeDriftingWallets = jest.fn(
-  async (..._a: unknown[]): Promise<unknown[]> => [],
+const freezeDriftedWallets = jest.fn(
+  async (_report: unknown, frozen: unknown[]): Promise<unknown[]> => frozen,
 );
+const reportWalletDriftFreeze = jest.fn();
+jest.mock("../../lib/payments/wallet-freeze", () => ({
+  freezeDriftedWallets: (...args: [unknown, unknown[]]) =>
+    freezeDriftedWallets(...args),
+}));
 const respondToLedgerDrift = jest.fn(async (..._a: unknown[]) => undefined);
 jest.mock("../../scripts/reconcile/ledger-drift-response", () => ({
-  freezeDriftingWallets: (...a: unknown[]) => freezeDriftingWallets(...a),
+  reportWalletDriftFreeze: (...a: unknown[]) => reportWalletDriftFreeze(...a),
   respondToLedgerDrift: (...a: unknown[]) => respondToLedgerDrift(...a),
 }));
 jest.mock("../../scripts/reconcile/reconcile-ledgers", () => {
@@ -47,7 +51,7 @@ jest.mock("../../scripts/reconcile/reconcile-ledgers", () => {
   >("../../scripts/reconcile/reconcile-ledgers");
   return {
     ...actual,
-    runReconcileLedgers: (...args: [Args]) => runReconcileLedgers(...args),
+    runReconcileLedgersSlice: (...args: [Args]) => runReconcileLedgers(...args),
   };
 });
 
@@ -71,14 +75,17 @@ beforeEach(() => {
 describe("POST /api/cleanup/reconcile-ledgers", () => {
   it("runs a full-scope audit, freezes from its wallet step and reports the frozen wallets", async () => {
     const drift = { kind: "WALLET_BALANCE_DRIFT", billingAccountId: "ba_1" };
-    freezeDriftingWallets.mockResolvedValueOnce([{ billingAccountId: "ba_1" }]);
+    freezeDriftedWallets.mockImplementationOnce(async (_report, frozen) => {
+      frozen.push({ billingAccountId: "ba_1" });
+      return frozen;
+    });
     runReconcileLedgers.mockImplementationOnce(async (args: Args) => {
       await args.onWalletDrift?.("rep_full", [drift]);
       return {
         id: "rep_full",
         scope: args.scope,
         ok: false,
-        summary: { discrepanciesCount: 1 },
+        summary: { discrepanciesCount: 1, status: "COMPLETED" },
         findings: [drift],
       };
     });
@@ -90,7 +97,11 @@ describe("POST /api/cleanup/reconcile-ledgers", () => {
     expect(runReconcileLedgers).toHaveBeenCalledWith(
       expect.objectContaining({ scope: "full" }),
     );
-    expect(freezeDriftingWallets).toHaveBeenCalledWith("rep_full", [drift]);
+    expect(freezeDriftedWallets).toHaveBeenCalledWith(
+      { id: "rep_full", findings: [drift] },
+      expect.any(Array),
+    );
+    expect(reportWalletDriftFreeze).toHaveBeenCalledTimes(1);
     expect(respondToLedgerDrift).toHaveBeenCalledTimes(1);
     expect(await res.json()).toMatchObject({
       status: "OK",
@@ -101,14 +112,14 @@ describe("POST /api/cleanup/reconcile-ledgers", () => {
 
   it("freezes from the audit's wallet step and fails the route after a freeze error", async () => {
     const drift = { kind: "WALLET_BALANCE_DRIFT", billingAccountId: "ba_1" };
-    freezeDriftingWallets.mockRejectedValueOnce(new Error("db down"));
+    freezeDriftedWallets.mockRejectedValueOnce(new Error("db down"));
     runReconcileLedgers.mockImplementationOnce(async (args: Args) => {
       await args.onWalletDrift?.("rep_full", [drift]);
       return {
         id: "rep_full",
         scope: args.scope,
         ok: false,
-        summary: { discrepanciesCount: 1 },
+        summary: { discrepanciesCount: 1, status: "COMPLETED" },
         findings: [drift],
       };
     });
@@ -117,8 +128,54 @@ describe("POST /api/cleanup/reconcile-ledgers", () => {
       params: Promise.resolve({ job: "reconcile-ledgers" }),
     });
 
-    expect(freezeDriftingWallets).toHaveBeenCalledWith("rep_full", [drift]);
-    expect(respondToLedgerDrift).toHaveBeenCalledTimes(1);
+    expect(freezeDriftedWallets).toHaveBeenCalledWith(
+      { id: "rep_full", findings: [drift] },
+      expect.any(Array),
+    );
+    expect(reportWalletDriftFreeze).toHaveBeenCalledWith(
+      "rep_full",
+      [drift],
+      [],
+    );
+    expect(respondToLedgerDrift).not.toHaveBeenCalled();
     expect(res.status).toBe(500);
+  });
+
+  it("accumulates every wallet page and alerts once while an audit remains RUNNING", async () => {
+    const first = { kind: "WALLET_BALANCE_DRIFT", billingAccountId: "ba_1" };
+    const second = { kind: "WALLET_BALANCE_DRIFT", billingAccountId: "ba_2" };
+    freezeDriftedWallets.mockImplementation(async (_report, frozen) => {
+      frozen.push({ billingAccountId: `ba_${frozen.length + 1}` });
+      return frozen;
+    });
+    runReconcileLedgers.mockImplementationOnce(async (args: Args) => {
+      await args.onWalletDrift?.("rep_full", [first]);
+      await args.onWalletDrift?.("rep_full", [second]);
+      return {
+        id: "rep_full",
+        scope: args.scope,
+        ok: false,
+        summary: { discrepanciesCount: 2, status: "RUNNING" },
+        findings: [first, second],
+      };
+    });
+    const res = await POST(invokeReconcile(), {
+      params: Promise.resolve({ job: "reconcile-ledgers" }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      status: "RUNNING",
+      frozenWallets: [
+        { billingAccountId: "ba_1" },
+        { billingAccountId: "ba_2" },
+      ],
+    });
+    expect(reportWalletDriftFreeze).toHaveBeenCalledTimes(1);
+    expect(reportWalletDriftFreeze).toHaveBeenCalledWith(
+      "rep_full",
+      [first, second],
+      expect.any(Array),
+    );
+    expect(respondToLedgerDrift).not.toHaveBeenCalled();
   });
 });

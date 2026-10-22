@@ -3,10 +3,8 @@
  */
 
 /**
- * #1943 — a full-scope or org-scoped POST /api/admin/reconcile-ledgers runs
- * `runReconcileLedgers` directly in-process under its cron lock, avoiding the
- * removed `/.netlify/functions/reconcile-ledgers-background` HTTP hop that
- * caused a 502 error.
+ * Full and organization audits share the scheduled slice's lease and can
+ * resume an idle checkpoint without a separate report-age gate.
  */
 
 jest.mock("@sentry/nextjs", () => ({
@@ -34,21 +32,35 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-const runReconcileLedgers = jest.fn(async (..._args: unknown[]) => ({
-  id: "rep_1",
-  ok: true,
-  findings: [],
+type RunArgs = {
+  scope: string;
+  triggeredById?: string;
+  onWalletDrift?: (id: string, findings: Finding[]) => Promise<void>;
+};
+const runReconcileLedgers = jest.fn(
+  async (
+    _args: RunArgs,
+  ): Promise<{ id: string; ok: boolean; findings: Finding[] }> => ({
+    id: "rep_1",
+    ok: true,
+    findings: [],
+  }),
+);
+const freezeDriftedWallets = jest.fn(
+  async (_report: unknown, frozen: unknown[]) => frozen,
+);
+jest.mock("../../lib/payments/wallet-freeze", () => ({
+  freezeDriftedWallets: (...args: [unknown, unknown[]]) =>
+    freezeDriftedWallets(...args),
 }));
 jest.mock("../../scripts/reconcile/reconcile-ledgers", () => ({
-  runReconcileLedgers: (...args: unknown[]) => runReconcileLedgers(...args),
-  isReconcileRunInProgress: (row: { summary: { status?: string } }) =>
-    row.summary?.status === "RUNNING",
-  RECONCILE_RUN_STALE_MS: 45 * 60 * 1000,
+  runReconcileLedgers: (args: RunArgs) => runReconcileLedgers(args),
 }));
 
 import { NextRequest } from "next/server";
 import { POST } from "../../app/api/admin/reconcile-ledgers/route";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import type { Finding } from "../../scripts/reconcile/reconcile-ledgers";
 
 const fetchMock = jest.fn(async () => new Response(null, { status: 202 }));
 
@@ -83,22 +95,19 @@ describe("POST /api/admin/reconcile-ledgers", () => {
     expect(runReconcileLedgers).toHaveBeenCalledWith({
       scope: "full",
       triggeredById: "admin_1",
+      onWalletDrift: expect.any(Function),
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("answers 409 when a full-scope run is already in progress", async () => {
-    findMany.mockResolvedValueOnce([
-      { id: "run_active", runAt: new Date(), summary: { status: "RUNNING" } },
-    ]);
-
+  it("resumes idle checkpoints through the audit instead of refusing a RUNNING report", async () => {
     const res = await POST(post({}), ROUTE);
     const body = await res.json();
 
-    expect(res.status).toBe(409);
-    expect(body.code).toBe("RUN_IN_PROGRESS");
-    expect(body.error).toContain("run_active");
-    expect(runReconcileLedgers).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(body.data.id).toBe("rep_1");
+    expect(findMany).not.toHaveBeenCalled();
+    expect(runReconcileLedgers).toHaveBeenCalled();
   });
 
   it("answers 409 when the reconcile-ledgers cron lock is held", async () => {
@@ -108,6 +117,26 @@ describe("POST /api/admin/reconcile-ledgers", () => {
 
     const res = await POST(post({}), ROUTE);
     expect(res.status).toBe(409);
+  });
+
+  it("freezes the wallet page even when a later comparison fails", async () => {
+    const drift: Finding = {
+      kind: "WALLET_BALANCE_DRIFT",
+      billingAccountId: "account-1",
+      expectedPaise: 100,
+      actualPaise: 0,
+      deltaPaise: -100,
+    };
+    runReconcileLedgers.mockImplementationOnce(async (args) => {
+      await args.onWalletDrift?.("rep_1", [drift]);
+      throw new Error("later comparison failed");
+    });
+    const res = await POST(post({}), ROUTE);
+    expect(res.status).toBe(500);
+    expect(freezeDriftedWallets).toHaveBeenCalledWith(
+      { id: "rep_1", findings: [drift] },
+      [],
+    );
   });
 
   it("refuses a run without a reason", async () => {
@@ -130,6 +159,7 @@ describe("POST /api/admin/reconcile-ledgers", () => {
       scope: "org:org_1",
       organizationId: "org_1",
       triggeredById: "admin_1",
+      onWalletDrift: expect.any(Function),
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });

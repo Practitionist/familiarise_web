@@ -7,9 +7,8 @@
  *  - `POST` with `{ organizationId, reason }` runs an org-scoped reconciliation
  *    synchronously and returns the resulting report.
  *  - `POST` with only `{ reason }` runs the full-scope reconciliation directly
- *    in-process under the `reconcile-ledgers` cron lock (#1943). A full-scope
- *    run already RUNNING and younger than the stale window, or holding the
- *    cron lock, answers 409.
+ *    in-process under the shared `reconcile-ledgers` lease. Idle reports resume;
+ *    an active caller holding the lease answers 409.
  *  - `GET` lists the most recent reports (paginated), or one by `?id=`.
  *
  * Access: platform admins only via `requireBackofficeSurface("payouts.manage")`

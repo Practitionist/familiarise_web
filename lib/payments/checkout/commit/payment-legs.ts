@@ -1,9 +1,7 @@
-// The card leg, the discount use, the referral-credit re-read and the
-// legs-sum-to-amount check, inside the checkout tx.
+// The card leg, discount use and referral-credit re-read inside the checkout tx.
 
 import type { Tx } from "@/lib/prisma";
 import { applyCreditsToPayment, getUserCredits } from "@/lib/referrals/service";
-import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
 import { DiscountExhaustedError } from "@/lib/payments/pricing/discount-exhausted-error";
 import type { CheckoutCommitInput } from "@/lib/payments/checkout/commit/types";
 
@@ -14,13 +12,7 @@ export async function settleCheckoutLegs(
     payment: { id: string; amount: number; expiresAt: Date | null };
   },
 ) {
-  const {
-    validatedData,
-    userId,
-    isMockPayment,
-    mintedOrder,
-    isOrgSponsoredPayment,
-  } = input;
+  const { userId, mintedOrder, isOrgSponsoredPayment } = input;
   const { amount, discountCodeId, creditsApplied } = input.priced;
   const { payment } = carried;
 
@@ -119,44 +111,5 @@ export async function settleCheckoutLegs(
     creditsRemainingAfter = (await getUserCredits(userId, tx)).totalAvailable;
   }
 
-  // Invariant sweep: every Payment should have legs that sum to
-  // `Payment.amount`, excluding REFERRAL_CREDIT, which is already
-  // netted out of it (#1347) —
-  // `docs/enterprise/10-money-and-ledger/09-payment-legs.md`. We
-  // log-only here rather than throw because the hot checkout
-  // path is the worst place to discover a leg-accounting drift
-  // — a surprise 500 blocks real bookings. A mismatch signals
-  // either (a) an org branch above wrote the wrong amount, or
-  // (b) a future PaymentLegSource was added without updating
-  // its write site. Reconciliation jobs + tests call the
-  // hard-throwing `assertPaymentLegsSumToAmount` instead.
-  if (!isMockPayment) {
-    const writtenLegs = await tx.paymentLeg.findMany({
-      where: { paymentId: payment.id },
-      select: { source: true, amountPaise: true },
-    });
-    const currentPayment =
-      typeof tx.payment?.findUnique === "function"
-        ? await tx.payment.findUnique({
-            where: { id: payment.id },
-            select: { amount: true },
-          })
-        : null;
-    const legMismatch = checkPaymentLegsSumToAmount({
-      paymentAmountPaise: currentPayment?.amount ?? payment.amount,
-      legs: writtenLegs,
-    });
-    if (legMismatch) {
-      console.warn(
-        JSON.stringify({
-          event: "payment_leg_sum_mismatch",
-          paymentId: payment.id,
-          organizationId: validatedData.organizationId ?? null,
-          appointmentType: validatedData.appointmentType,
-          ...legMismatch,
-        }),
-      );
-    }
-  }
   return { actualCreditsApplied, creditsRemainingAfter };
 }
