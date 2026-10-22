@@ -22,6 +22,8 @@ jest.mock("../../lib/support/case-access", () => ({
 }));
 
 import type { Tx } from "../../lib/prisma";
+import { assertMoneyDoorsOpen } from "../../lib/backoffice/maintenance-gate";
+import { OpsRefusal } from "../../lib/backoffice/ops-refusal-error";
 import { recordOpsAction } from "../../lib/backoffice/ops-action-log";
 import { releaseAllCaseHolds } from "../../lib/support/case-holds";
 import { executePatchLifecycleTx } from "../../lib/support/case-service";
@@ -100,7 +102,14 @@ it.each(["RESOLVED", "CLOSED"] as const)(
 );
 
 it.each([
-  ["a stale session", null, undefined, 403, "REAUTH_REQUIRED"],
+  ["no step-up grant", null, undefined, 403, "REAUTH_REQUIRED"],
+  [
+    "a stale session",
+    null,
+    { actorRole: "STAFF", freshSession: false },
+    403,
+    "REAUTH_REQUIRED",
+  ],
   [
     "an open recommendation",
     { id: "rec-1" },
@@ -108,9 +117,15 @@ it.each([
     409,
     "RECOMMENDATION_OPEN",
   ],
+  ["maintenance on", null, fresh, 503, "MAINTENANCE"],
+  ["maintenance unreadable", null, fresh, 503, "MAINTENANCE_UNKNOWN"],
 ] as const)(
   "refuses to release active holds with %s",
   async (_label, recommendation, grant, status, code) => {
+    if (code.startsWith("MAINTENANCE"))
+      jest
+        .mocked(assertMoneyDoorsOpen)
+        .mockRejectedValueOnce(new OpsRefusal(code, "paused", 503));
     const tx = fakeTx(recommendation);
     const moved = await executePatchLifecycleTx(
       tx,
