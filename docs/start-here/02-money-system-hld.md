@@ -330,7 +330,7 @@ Application sweeps reconcile only across vendor boundaries; invariants that Post
 | Razorpay payments                   | `reconcile-payment-status`, `reconcile-orphaned-payments`, `reconcile-orphaned-confirmations`, `sweep-orphaned-topup-captures` | Ticker, 15 to 30 minutes                  |
 | Razorpay refunds                    | `reconcile-refunds`, `retry-auto-refunds`                                                                                      | Ticker, 15 minutes                        |
 | Razorpay disputes                   | `reconcile-disputes`                                                                                                           | Ticker, hourly at `:00`                   |
-| Razorpay payouts                    | `reconcile-payout-status`, `handle-stuck-payouts`                                                                              | `cron-intra-day.yml`                      |
+| Razorpay payouts                    | `reconcile-payout-status`, `handle-stuck-payouts`                                                                              | Ticker, alternating `:40` hours           |
 | Razorpay settlements                | `reconcile-gateway-settlements` (`jobs/reconcile/reconcile-gateway-settlements.ts`)                                            | Ticker, 06:30–12:30 UTC                   |
 | Cached balances against the journal | `reconcile-ledgers` (`scripts/reconcile/reconcile-ledgers.ts`)                                                                 | Hourly `:55` slices when capacity permits |
 

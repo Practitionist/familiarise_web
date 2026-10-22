@@ -67,13 +67,7 @@ formerly-broken invoice paths are wired.
 
 ## 🗓️ Scheduled-task catalogue (cron → script)
 
-**Scheduling is GitHub Actions, not Netlify.** Every recurring task is a
-workflow under [`.github/workflows/*.yml`](../../../.github/workflows) with a
-`schedule.cron` block that invokes one standalone script under
-[`jobs/**`](../../../jobs) via `npx tsx`. There is **no** `netlify.toml`
-cron, no `app/api/cron` route, and no external scheduler. To find what
-runs a job, open its workflow; to run it by hand, see _🔬 Running cron
-jobs locally_ below, or trigger the workflow with `workflow_dispatch`.
+**Scheduling is split by the executable ticker inventory.** The Netlify five-minute ticker owns latency-sensitive recovery and money jobs through `CRON_SECRET` cleanup routes. `reconcile-ledgers` advances its persisted daily audit in hourly `:55` slices when dispatch capacity permits. Remaining non-money batch jobs use GitHub Actions; those schedules are currently budget-blocked. Find the active entry in `netlify/functions/cron-tick.mts` and `lib/cron/cleanup-registry.ts`, or the remaining workflow under [`.github/workflows`](../../../.github/workflows). Repeat the ledger cleanup route until its report is COMPLETED; the authenticated admin route resumes the same audit and continues to completion.
 
 > ⚠️ **GitHub-Actions cron caveats** (verified against GitHub docs
 > 2026-06-05). Scheduled workflows (a) enforce a **5-minute minimum**
@@ -94,9 +88,9 @@ they differ.
 
 ### Anatomy of a cron run
 
-Every enterprise cron has the same skeleton, which is why a delayed,
-doubled, or dropped GitHub-Actions run is always safe. The **claim gate**
-is the load-bearing step: a conditional `updateMany` (or an idempotency
+Business-row jobs use a **claim gate** to keep concurrent workers from
+applying the same mutation. A lease alone does not deduplicate sequential
+external effects. The row claim is a conditional `updateMany` (or an idempotency
 stamp) that lets exactly one runner own a row. If `count === 0`, someone
 else already claimed it — skip, don't retry-into-a-double. Knowing this
 shape tells you, for any "the cron isn't working" page, _where_ to look:

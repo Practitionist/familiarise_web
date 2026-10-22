@@ -245,7 +245,13 @@ On a real over-cap checkout, `recordOverageAtCheckout` (`lib/payments/billing/ov
 
 The `chargeStatus` state machine itself is a single guarded transition (`transitionOverage`, `overage-transitions.ts`); the overage-event lifecycle table of states (`PENDING/ACCRUED/CHARGED/BLOCKED/REVERSED/FAILED`) is in [funding & programs](../00-foundations/03-funding-and-programs.md) / [programs](../30-programs-and-lifecycle/02-programs.md).
 
-An overage always keeps the `BOOKING` journal balanced: `surchargePaise` is credited to `PLATFORM_FEE` (an over-cap surcharge is a platform markup for exceeding the program cap, while the consultant is paid out of `originalAmount`), and the 18% GST on `surchargePaise` is credited to `GST_PAYABLE`, matching `OrganizationInvoice.taxAmount` and the scheduled ledger reconciler.
+Overage journals depend on the payer and collection path; GST applies only to the surcharge, not to the previously taxed base. Domestic surcharge GST is 18%; the existing buyer-country rules determine the applicable amount.
+
+- **`CHARGE_MEMBER`:** capture of the side-payment posts `overage:<sidePaymentId>` with kind `OVERAGE_MEMBER`: debit gateway clearing, credit `ORG_PAYABLE` for the collected base plus surcharge, and credit `GST_PAYABLE` for its tax. It does not add a platform-fee credit to the parent's `BOOKING` journal.
+- **`CHARGE_ORG` on an uninvoiced parent:** invoice-funded surcharge and GST ride the parent's funding legs and tax amount into its booking journal. Wallet-funded surcharge does the same when recorded before the booking journal; a later wallet overage posts the separate `overage-accrual:<overageEventId>` transaction of kind `BOOKING`, debiting WALLET and crediting PLATFORM_FEE and GST_PAYABLE.
+- **`CHARGE_ORG` child accrual:** a licence, lazy allocation, personal-card parent or already invoiced parent can require a separate child payment. Its `overageAccrualKey(child.id)` journal has kind `INVOICE_ISSUED`, debits ORG_RECEIVABLE and credits PLATFORM_FEE and GST_PAYABLE; later invoice rollup must not book that tax again.
+
+See `postOverageMemberLedgerEntries`, `recordWalletCollectedOrgOverage` and `mintChildOverageAccrualPayment` for those postings, and the scheduled ledger auditor for projection checks.
 
 The refusals checkout can raise from inside its transaction all carry a machine-readable code, and the catch around that transaction rethrows any error whose code is registered in `BUSINESS_ERROR_CODES` instead of rewriting it. `PROGRAM_CAP_EXHAUSTED` therefore reaches the buyer as the HTTP 402 it was thrown as, with a toast that names the admin action, rather than as the 500 "Something Went Wrong" it used to collapse into.
 
