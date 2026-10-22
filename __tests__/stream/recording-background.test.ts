@@ -26,6 +26,10 @@ jest.mock("@sentry/nextjs", () => ({
 
 import { transferRecordings } from "../../lib/stream/recording-transfer-service";
 import { assertNotInMaintenance } from "../../lib/maintenance-cron";
+import {
+  initJobSentry,
+  flushJobSentry,
+} from "../../lib/observability/job-sentry";
 
 function loadWorker() {
   const file = path.join(
@@ -92,6 +96,8 @@ it("uses the shared authenticated cleanup boundary and existing implementation",
   await worker.run(request());
   expect(guard).toHaveBeenCalledWith("transfer-recordings");
   expect(runTransfer).toHaveBeenCalledTimes(1);
+  expect(initJobSentry).toHaveBeenCalledTimes(1);
+  expect(flushJobSentry).toHaveBeenCalledTimes(1);
 });
 
 it("never starts work for an invalid bearer or a non-POST invocation", async () => {
@@ -112,6 +118,7 @@ it("surfaces failed execution to Netlify instead of treating admission as comple
     errors: ["copy failed"],
   });
   await expect(worker.run(request())).rejects.toThrow("HTTP 500");
+  expect(flushJobSentry).toHaveBeenCalledTimes(1);
 });
 
 it("does not run the copy when the maintenance guard rejects admission", async () => {

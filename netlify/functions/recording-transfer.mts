@@ -17,10 +17,15 @@ const handlers = cleanupRoute({
 /** Netlify's 202 acknowledges invocation; execution history records the eventual result. */
 export default async function recordingTransfer(req: Request): Promise<void> {
   if (req.method !== "POST") return;
-  const response = await handlers.POST(new NextRequest(req));
-  if (response.status >= 500) {
-    throw new Error(
-      `Recording transfer worker returned HTTP ${response.status}`,
-    );
+  initJobSentry();
+  try {
+    const response = await handlers.POST(new NextRequest(req));
+    if (response.status >= 500) {
+      throw new Error(
+        `Recording transfer worker returned HTTP ${response.status}`,
+      );
+    }
+  } finally {
+    await flushJobSentry();
   }
 }

@@ -449,6 +449,10 @@ export async function streamMultipartToR2(opts: {
   const partSize = opts.partSize ?? R2_MULTIPART_PART_SIZE;
   const { signal } = opts;
   const reader = opts.stream.getReader();
+  const cancelReader = () => {
+    void reader.cancel(signal?.reason).catch(() => undefined);
+  };
+  signal?.addEventListener("abort", cancelReader, { once: true });
 
   let chunks: Buffer[] = [];
   let bufferedBytes = 0;
@@ -472,6 +476,7 @@ export async function streamMultipartToR2(opts: {
 
   const flushFullParts = async () => {
     while (hasFullPart()) {
+      signal?.throwIfAborted();
       uploadId ??= await initiateMultipartUpload({
         key: opts.key,
         contentType: opts.contentType,
@@ -490,8 +495,10 @@ export async function streamMultipartToR2(opts: {
   };
 
   try {
+    signal?.throwIfAborted();
     while (true) {
       const { done, value } = await reader.read();
+      signal?.throwIfAborted();
       if (done) break;
       if (!value || value.byteLength === 0) continue;
 
@@ -509,6 +516,7 @@ export async function streamMultipartToR2(opts: {
       await flushFullParts();
     }
 
+    signal?.throwIfAborted();
     if (!uploadId) {
       await putR2Object({
         key: opts.key,
@@ -533,6 +541,7 @@ export async function streamMultipartToR2(opts: {
       completedParts.push({ partNumber, etag });
     }
 
+    signal?.throwIfAborted();
     await completeMultipartUpload({
       key: opts.key,
       uploadId,
@@ -542,11 +551,14 @@ export async function streamMultipartToR2(opts: {
 
     return { key: opts.key, size: totalBytes, parts: completedParts.length };
   } catch (error) {
-    await reader.cancel().catch(() => undefined);
+    cancelReader();
     if (uploadId) {
       await abortMultipartUpload({ key: opts.key, uploadId });
     }
     throw error;
+  } finally {
+    signal?.removeEventListener("abort", cancelReader);
+    reader.releaseLock();
   }
 }
 
