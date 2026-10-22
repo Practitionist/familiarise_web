@@ -76,6 +76,7 @@ const db = prisma as unknown as {
   };
 };
 const now = new Date("2026-10-22T00:00:00Z");
+const problemResolvedAt = new Date("2026-10-21T00:00:00Z");
 const incident = (id: string, overrides: Record<string, unknown> = {}) => ({
   id,
   referenceNumber: `FAM-${id}`,
@@ -101,6 +102,7 @@ beforeEach(() => {
   db.tx.supportCaseEvent.findFirst.mockResolvedValue({
     actorId: "staff",
     note: "We fixed the video outage.",
+    createdAt: problemResolvedAt,
   });
 });
 
@@ -209,6 +211,24 @@ it("leaves open and reports an incident whose holds sit under an open recommenda
   });
   expect(db.tx.supportCase.updateMany).toHaveBeenCalledTimes(1);
   expect(errors).toEqual([]);
+});
+
+it("leaves open an incident whose hold was placed after the problem resolved, releasing only earlier holds", async () => {
+  db.supportCase.findMany.mockResolvedValue([incident("a"), incident("b")]);
+  const at = (ms: number) => new Date(problemResolvedAt.getTime() + ms);
+  mockHoldEvents
+    .mockResolvedValueOnce([{ id: "late", caseId: "a", createdAt: at(1) }])
+    .mockResolvedValueOnce([{ id: "early", caseId: "b", createdAt: at(-1) }]);
+  const result = await cascadeResolvedProblems({ limit: 10, now, errors: [] });
+  expect(result).toMatchObject({
+    cascaded: 1,
+    heldOpen: [{ caseId: "a", code: "HOLD_AFTER_PROBLEM_RESOLVED" }],
+  });
+  expect(mockReleaseHolds).toHaveBeenCalledTimes(1);
+  expect(mockReleaseHolds).toHaveBeenCalledWith(
+    db.tx,
+    expect.objectContaining({ caseId: "b" }),
+  );
 });
 
 it("scans past held-open incidents but cascades no more than the limit", async () => {

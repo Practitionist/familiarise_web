@@ -202,7 +202,9 @@ change, a decision or the problem cascade. A move that would release active hold
 within 15 minutes (`REAUTH_REQUIRED`), open money doors (the same maintenance
 check) and no undecided recommendation on the case (`RECOMMENDATION_OPEN`); it
 writes one `support.case.release-holds` `OpsActionLog` row naming the holds
-released. The cascade leaves a refused incident open and counts it as
+released. The cascade never releases a hold placed after the problem's latest
+RESOLVED event (`HOLD_AFTER_PROBLEM_RESOLVED`); staff release it through the
+step-up hold door. The cascade leaves a refused incident open and counts it as
 `incidentsHeldOpen` in the sweep summary; each run scans up to twice its cap of
 ten incidents so held-open incidents do not block the ones that can resolve. A
 customer resolving their own guided case releases nothing; its holds stay listed on the case until staff release them.

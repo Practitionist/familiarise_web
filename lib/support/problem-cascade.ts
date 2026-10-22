@@ -132,8 +132,9 @@ async function stageResolvedNoticeTx(
 
 /**
  * Resolves one incident; the CAS re-checks the problem is still RESOLVED and that
- * no hold or recommendation landed since the scan. An incident whose holds sit
- * under an open recommendation, or meet closed money doors, stays open under that code.
+ * no hold or recommendation landed since the scan. An incident with a hold placed
+ * after the problem resolved, holds under an open recommendation, or closed money
+ * doors stays open under that code.
  */
 async function resolveIncidentTx(
   tx: Tx,
@@ -143,12 +144,6 @@ async function resolveIncidentTx(
   doors: DoorsGate,
 ): Promise<boolean | string> {
   if (!inc.problemCaseId) return false;
-  const held = activeHolds(await caseHoldEvents(tx, [inc.id]));
-  if (held.length > 0) {
-    if (await openRecommendationTx(tx, inc.id)) return "RECOMMENDATION_OPEN";
-    const refused = await doors();
-    if (refused) return refused;
-  }
   const resolution = await tx.supportCaseEvent.findFirst({
     where: {
       caseId: inc.problemCaseId,
@@ -156,8 +151,18 @@ async function resolveIncidentTx(
       toValue: "RESOLVED",
     },
     orderBy: { createdAt: "desc" },
-    select: { actorId: true, note: true },
+    select: { actorId: true, note: true, createdAt: true },
   });
+  const held = activeHolds(await caseHoldEvents(tx, [inc.id]));
+  if (held.length > 0) {
+    // The problem's resolver never saw a later hold; staff release it through the step-up door.
+    if (!resolution || held.some((h) => h.createdAt > resolution.createdAt)) {
+      return "HOLD_AFTER_PROBLEM_RESOLVED";
+    }
+    if (await openRecommendationTx(tx, inc.id)) return "RECOMMENDATION_OPEN";
+    const refused = await doors();
+    if (refused) return refused;
+  }
   const actorId = resolution?.actorId ?? null;
   const closingMsg = resolution?.note?.trim() || null;
   const bankedPause =
