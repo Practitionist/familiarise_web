@@ -26,6 +26,9 @@ const resolution = {
   recipients: [],
   canManage: false,
   canExecuteMoney: false,
+  canManageHolds: false,
+  canVoidRecommendations: false,
+  refundLimitPaise: null,
   ownershipScope: "ORG_OPERATIONS",
   updatedAt: "2026-10-20T12:00:00.000Z",
 };

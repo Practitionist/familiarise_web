@@ -65,15 +65,23 @@ const Resolution = z.object({
         reason: z.string(),
         approved: z.boolean().nullable(),
         decidedAt: z.string().nullable(),
+        releaseSeat: z.boolean(),
+        voidedAt: z.string().nullable(),
+        voidedById: z.string().nullable(),
         refund: z.object({ id: z.string(), status: z.string() }).nullable(),
+        /** Set while a second-admin approval proposal is open. */
+        pendingApprovalExpiresAt: z.string().nullable(),
       }),
     ),
     holds: z.array(
       z.object({
+        /** The HOLD_APPLIED event id; RELEASE_HOLD takes it as holdId. */
         id: z.string(),
         paymentId: z.string(),
         reason: z.string(),
+        createdAt: z.string(),
         releasedAt: z.string().nullable(),
+        earningsHeld: z.number(),
       }),
     ),
     evidenceRequests: z.array(
@@ -92,6 +100,10 @@ const Resolution = z.object({
     ),
     canManage: z.boolean(),
     canExecuteMoney: z.boolean(),
+    canManageHolds: z.boolean(),
+    canVoidRecommendations: z.boolean(),
+    /** Per-payment cumulative ceiling across live support refunds; null is unbounded. */
+    refundLimitPaise: z.number().nullable(),
     ownershipScope: z.enum(["PERSONAL", "ORG_OPERATIONS", "ORG_BILLING"]),
     updatedAt: z.string(),
   }),
@@ -142,6 +154,7 @@ export type CaseActionPayload =
       paymentId: string;
       amountPaise: number;
       reason: string;
+      releaseSeat: boolean;
     }
   | {
       action: "REVIEW_REFUND";
@@ -152,7 +165,12 @@ export type CaseActionPayload =
     }
   | { action: "APPLY_HOLD"; paymentId: string; reason: string }
   | { action: "RELEASE_HOLD"; holdId: string; reason: string }
-  | { action: "HANDOVER"; reason: string };
+  | { action: "VOID_RECOMMENDATION"; recommendationId: string; reason: string };
+
+export type RunCaseAction = (
+  payload: CaseActionPayload,
+  onDone?: () => void,
+) => void;
 
 /** One staff case-action mutation; every success or failure refreshes the case subtree. */
 export function useCaseAction(caseId: string) {

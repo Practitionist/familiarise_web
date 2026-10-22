@@ -26,6 +26,7 @@ import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { caseKeyOf } from "./case-key";
 import { stageExternalRequesterEmail } from "./external-requester";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { proposalStatusWhere } from "@/lib/backoffice/ops-proposals";
 import { refundInFlightOr } from "@/lib/backoffice/refund-doors";
 import {
   CaseRefundReviewSchema,
@@ -497,9 +498,26 @@ export async function readCaseResolution(caseId: string, actor: CaseActor) {
         staff ? evidenceRecipients(tx, supportCase.appointmentId) : [],
       ]),
     );
+  const pendingApprovals = recommendations.length
+    ? await prisma.opsActionProposal.findMany({
+        where: {
+          ...proposalStatusWhere("PROPOSED", new Date()),
+          targetKind: "SupportFinancialRecommendation",
+          targetId: { in: recommendations.map((rec) => rec.id) },
+        },
+        select: { targetId: true, expiresAt: true },
+      })
+    : [];
+  const approvalExpiry = new Map(
+    pendingApprovals.map((p) => [p.targetId, p.expiresAt]),
+  );
   return {
     decisions,
-    recommendations,
+    /** `pendingApprovalExpiresAt` is set while a second-admin proposal is open. */
+    recommendations: recommendations.map((rec) => ({
+      ...rec,
+      pendingApprovalExpiresAt: approvalExpiry.get(rec.id) ?? null,
+    })),
     holds,
     evidenceRequests: requests,
     recipients,

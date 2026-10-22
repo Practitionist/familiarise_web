@@ -6,6 +6,12 @@ import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { throwSupportError } from "@/lib/support/error-copy";
+import {
+  SUPPORT_ATTACHMENT_ACCEPT,
+  SUPPORT_ATTACHMENT_MAX_BYTES,
+  SUPPORT_ATTACHMENT_MIME_TYPES,
+  type SupportAttachmentMimeType,
+} from "@/lib/support/attachment-policy";
 import { supportKeys } from "@/lib/support/support-keys";
 
 const AttachmentList = z.object({
@@ -22,29 +28,17 @@ const Upload = z.object({
   data: z.object({ id: z.string(), uploadUrl: z.string() }),
 });
 
-/** Mirrors the upload route's allowlist so a wrong file fails before any round trip. */
-export const ATTACHMENT_MIME_TYPES = [
-  "application/pdf",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "text/plain",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-] as const;
-export const ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
-const ACCEPT = [
-  ...ATTACHMENT_MIME_TYPES,
-  ".pdf,.jpg,.jpeg,.png,.webp,.txt,.docx",
-].join(",");
+const ALLOWED_TYPES = new Set<string>(SUPPORT_ATTACHMENT_MIME_TYPES);
 
-const EXTENSION_TYPES: Record<string, string> = {
+/** The upload route's allowlist, checked here so a wrong file fails before any round trip. */
+const EXTENSION_TYPES: Record<string, SupportAttachmentMimeType> = {
   pdf: "application/pdf",
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
   png: "image/png",
   webp: "image/webp",
   txt: "text/plain",
-  docx: ATTACHMENT_MIME_TYPES[5],
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 };
 
 /** Some browsers leave `type` empty (often for .docx); fall back to the extension. */
@@ -59,9 +53,10 @@ export function attachmentProblem(file: {
   size: number;
 }): string | null {
   const type = attachmentType(file);
-  if (!ATTACHMENT_MIME_TYPES.some((allowed) => allowed === type))
+  if (!ALLOWED_TYPES.has(type))
     return "Choose a PDF, JPEG, PNG, WebP, text or Word (.docx) file.";
-  if (file.size > ATTACHMENT_MAX_BYTES) return "Files can be up to 20 MB.";
+  if (file.size > SUPPORT_ATTACHMENT_MAX_BYTES)
+    return "Files can be up to 20 MB.";
   if (file.size === 0) return "This file is empty.";
   return null;
 }
@@ -188,7 +183,7 @@ export function CaseAttachments({
             ref={input}
             className="sr-only"
             type="file"
-            accept={ACCEPT}
+            accept={SUPPORT_ATTACHMENT_ACCEPT}
             aria-label="Upload attachment"
             disabled={uploading}
             onChange={(event) => {

@@ -8,6 +8,7 @@ import {
   attachmentProblem,
   formatFileSize,
 } from "../../components/support/CaseAttachments";
+import { SUPPORT_ATTACHMENT_ACCEPT } from "../../lib/support/attachment-policy";
 
 describe("prependedScrollTop", () => {
   it("keeps the same rows in view when older rows are added above", () => {
@@ -140,5 +141,16 @@ describe("attachment checks", () => {
       attachmentProblem({ name: "letter.docx", type: "", size: 2048 }),
     ).toBeNull();
     expect(formatFileSize(1536)).toBe("2 KB");
+  });
+
+  it("accepts every extension the file picker offers, even with no browser type", () => {
+    const extensions = SUPPORT_ATTACHMENT_ACCEPT.split(",").filter((entry) =>
+      entry.startsWith("."),
+    );
+    expect(extensions.length).toBeGreaterThan(0);
+    for (const extension of extensions)
+      expect(
+        attachmentProblem({ name: `file${extension}`, type: "", size: 10 }),
+      ).toBeNull();
   });
 });
