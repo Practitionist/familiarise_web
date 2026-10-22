@@ -31,6 +31,7 @@ import {
   platformFlowsForContext,
   platformFlowForId,
   issueTypeForFlow,
+  platformOwnershipScope,
   resolveOrgAttribution,
   type PlatformSupportContext,
 } from "@/lib/support/platform-flows";
@@ -156,16 +157,26 @@ function extractTerminalNodeId(
 async function buildPlatformContext(
   userId: string,
 ): Promise<PlatformSupportContext> {
-  const memberships = await prisma.membership.findMany({
-    where: { userId, status: "ACTIVE" },
-    select: { organizationId: true, role: true },
-  });
+  const [memberships, consultantProfile] = await Promise.all([
+    prisma.membership.findMany({
+      where: { userId, status: "ACTIVE" },
+      select: { organizationId: true, role: true },
+    }),
+    prisma.consultantProfile.findFirst({
+      where: { userId, deletedAt: null },
+      select: { id: true },
+    }),
+  ]);
   return {
     userId,
     isOperator: memberships.some((m) =>
       hasOrgPermission(m.role, "operations.read"),
     ),
+    isExpert: consultantProfile !== null,
     organizationIds: memberships.map((m) => m.organizationId),
+    billingOrgIds: memberships
+      .filter((m) => hasOrgPermission(m.role, "supportCases.billing.manage"))
+      .map((m) => m.organizationId),
   };
 }
 
@@ -204,9 +215,10 @@ async function handleEscalatedTurn(
   flow: PlatformFlow,
   turn: WalkResult,
   input: TurnInput,
-  userId: string,
+  ctx: PlatformSupportContext,
   organizationId: string | null,
 ): Promise<NextResponse> {
+  const userId = ctx.userId;
   const rl = await applyRateLimit(spamLimiter, `tickets:${userId}`);
   if (rl) return rl;
 
@@ -290,6 +302,11 @@ async function handleEscalatedTurn(
     priority,
     issueType,
     organizationId,
+    ownershipScope: platformOwnershipScope({
+      flowId: flow.id,
+      organizationId,
+      billingOrgIds: ctx.billingOrgIds,
+    }),
     filedBy: "requester",
   });
 
@@ -426,7 +443,7 @@ export async function POST(req: NextRequest) {
       flow,
       turn,
       input,
-      session.user.id,
+      ctx,
       attribution.organizationId,
     );
   } catch (cause) {

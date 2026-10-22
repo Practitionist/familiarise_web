@@ -7,7 +7,13 @@ import { savedRepliesFor } from "@/lib/support/saved-replies";
 import { isOrgOperatorThread } from "@/app/dashboard/organization/[orgId]/support/OrgSupportTriage";
 describe("flow commitments, handoff choices and organization triage", () => {
   const paymentsFlow = platformFlowForId(
-    { userId: "user1", isOperator: false, organizationIds: [] },
+    {
+      userId: "user1",
+      isOperator: false,
+      isExpert: false,
+      organizationIds: [],
+      billingOrgIds: [],
+    },
     "PAYMENTS_BILLING",
   )!;
   test("escalationBrief + extractBotPromises preserves structured commitments without splitting on semicolons", () => {

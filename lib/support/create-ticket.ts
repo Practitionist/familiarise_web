@@ -2,6 +2,7 @@
 
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import type {
+  SupportCaseOwnership,
   SupportIssueType,
   SupportPriority,
   SupportCase,
@@ -45,6 +46,8 @@ export interface CreateSupportTicketInput {
   clientIntakeId?: string;
   /** Org attribution (operator intake / escalated org threads). Null = B2C. */
   organizationId?: string | null;
+  /** Callers verify the filer holds the scope's grant on `organizationId`; default PERSONAL. */
+  ownershipScope?: SupportCaseOwnership;
   /** Only a ticket the requester filed themselves earns them a "request received" receipt. */
   filedBy: "requester" | "system";
 }
@@ -68,6 +71,7 @@ export async function createSupportTicket(
     category: input.category ?? input.issueType ?? "GENERAL_INQUIRY",
     issueType: input.issueType,
     organizationId: input.organizationId,
+    ownershipScope: input.ownershipScope,
     appointmentId: input.appointmentId,
     activeChannel: "HUMAN",
     subjects: input.paymentId
