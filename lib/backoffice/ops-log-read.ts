@@ -1,7 +1,8 @@
 import type { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
-import type { OpsLogFilters, OpsLogPage } from "./ops-log-types";
+import type { OpsLogFilters } from "@/schemas/ops-log";
+import type { OpsLogPage } from "./ops-log-types";
 
 export const OPS_LOG_PAGE_SIZE = 50;
 
@@ -22,6 +23,8 @@ export async function readOpsLog(args: {
     ...(f.surface ? { surface: f.surface } : {}),
     ...(f.targetKind ? { targetKind: f.targetKind } : {}),
     ...(f.targetId ? { targetId: f.targetId } : {}),
+    ...(f.action ? { action: f.action } : {}),
+    ...(f.since ? { createdAt: { gte: new Date(f.since) } } : {}),
   };
   const page = Math.max(1, Math.floor(args.page) || 1);
   const [rows, total] = await Promise.all([

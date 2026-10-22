@@ -11,11 +11,8 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import type {
-  OpsLogFilters,
-  OpsLogPage,
-  OpsLogRow,
-} from "@/lib/backoffice/ops-log-types";
+import type { OpsLogPage, OpsLogRow } from "@/lib/backoffice/ops-log-types";
+import type { OpsLogFilters } from "@/schemas/ops-log";
 import { enumLabel } from "@/lib/labels/money-labels";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 
@@ -28,7 +25,13 @@ const FILTERS: {
   { key: "surface", label: "Surface" },
   { key: "targetKind", label: "Target kind" },
   { key: "targetId", label: "Target id" },
+  { key: "action", label: "Action" },
+  { key: "since", label: "Since (YYYY-MM-DD or ISO time)" },
 ];
+
+const sameFilters = (a: OpsLogFilters, b: OpsLogFilters) =>
+  JSON.stringify(Object.entries(a).sort()) ===
+  JSON.stringify(Object.entries(b).sort());
 
 async function fetchPage(
   filters: OpsLogFilters,
@@ -65,19 +68,23 @@ const columns: ResponsiveColumn<OpsLogRow>[] = [
 
 /**
  * #1771 K-9 — the console's audit log, newest first, seeded by the server
- * render. Staff see their own rows only; the API enforces it too.
+ * render. Staff see their own rows only; the API enforces it too. The URL's
+ * filters seed the inputs, so other tabs can link to a filtered view.
  */
-export function AuditTab({ initial }: Readonly<{ initial: OpsLogPage }>) {
+export function AuditTab({
+  initial,
+  initialFilters = {},
+}: Readonly<{ initial: OpsLogPage; initialFilters?: OpsLogFilters }>) {
   // The read scopes by the viewer's ROLE, not the tree (ops-log-read.ts):
   // an admin in the staff tree still reads every row.
   const viewerIsAdmin = useBackofficeCapability().role === "ADMIN";
-  const [filters, setFilters] = useState<OpsLogFilters>({});
+  const [filters, setFilters] = useState<OpsLogFilters>(initialFilters);
   const [page, setPage] = useState(1);
   // Blank filters leave the key, so a cleared filter is the seeded key again.
   const active = Object.fromEntries(
     Object.entries(filters).filter(([, v]) => v?.trim()),
   ) as OpsLogFilters;
-  const pristine = page === 1 && Object.keys(active).length === 0;
+  const pristine = page === 1 && sameFilters(active, initialFilters);
   const { data } = useQuery({
     queryKey: ["money-audit", active, page],
     queryFn: () => fetchPage(active, page),
@@ -104,7 +111,7 @@ export function AuditTab({ initial }: Readonly<{ initial: OpsLogPage }>) {
       />
       <Card>
         <CardContent className="pt-6 space-y-4">
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {FILTERS.filter((f) => viewerIsAdmin || !f.adminOnly).map((f) => (
               <Input
                 key={f.key}

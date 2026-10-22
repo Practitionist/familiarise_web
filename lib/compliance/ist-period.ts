@@ -1,5 +1,6 @@
 /**
- * IST reporting-period arithmetic, shared by the monthly compliance exports.
+ * IST reporting-period arithmetic, shared by the monthly compliance exports
+ * and the back office's "today" figures.
  *
  * Every statutory period this codebase reports on is a calendar month reckoned
  * in IST, not UTC. A job that computed its window from UTC components would
@@ -24,6 +25,15 @@ export function previousIstCalendarMonthStart(now: Date = new Date()): Date {
   // midnight back into the instant a UTC-stored timestamp compares against.
   return new Date(
     Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth() - 1, 1) - IST_OFFSET_MS,
+  );
+}
+
+/** The instant that begins the IST calendar day containing `now`. */
+export function istDayStart(now: Date = new Date()): Date {
+  const ist = new Date(now.getTime() + IST_OFFSET_MS);
+  return new Date(
+    Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate()) -
+      IST_OFFSET_MS,
   );
 }
 

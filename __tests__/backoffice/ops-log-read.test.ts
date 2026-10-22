@@ -49,3 +49,15 @@ it("lets an admin filter by any actor, or read every row", async () => {
   });
   expect(whereOf()).toEqual({});
 });
+
+it("filters by action and by a since instant", async () => {
+  await readOpsLog({
+    viewer: { userId: "admin_1", role: "ADMIN" },
+    filters: { action: "support.refund.review", since: "2026-10-01" },
+    page: 1,
+  });
+  expect(whereOf()).toEqual({
+    action: "support.refund.review",
+    createdAt: { gte: new Date("2026-10-01T00:00:00.000Z") },
+  });
+});

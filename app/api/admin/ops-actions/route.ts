@@ -3,14 +3,10 @@ import { z } from "zod";
 
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { readOpsLog } from "@/lib/backoffice/ops-log-read";
+import { OpsLogFiltersSchema } from "@/schemas/ops-log";
 
-const filter = z.string().trim().max(200).optional();
-const QuerySchema = z.object({
+const QuerySchema = OpsLogFiltersSchema.extend({
   page: z.coerce.number().int().min(1).max(10_000).default(1),
-  actorUserId: filter,
-  surface: filter,
-  targetKind: filter,
-  targetId: filter,
 });
 
 /** #1771 K-9 — the Audit tab's API twin: one page of OpsActionLog. */
@@ -32,12 +28,7 @@ export async function GET(req: NextRequest) {
       userId: auth.session.user.id,
       role: String(auth.session.user.role ?? ""),
     },
-    filters: {
-      actorUserId: filters.actorUserId || undefined,
-      surface: filters.surface || undefined,
-      targetKind: filters.targetKind || undefined,
-      targetId: filters.targetId || undefined,
-    },
+    filters,
     page,
   });
   return NextResponse.json(result, {
