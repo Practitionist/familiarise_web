@@ -25,6 +25,7 @@ const mockRecordSystemError = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    $executeRaw: jest.fn().mockResolvedValue(1),
     $transaction: (...a: unknown[]) => mockTransaction(...a),
     organization: { findUnique: (...a: unknown[]) => mockOrgFindUnique(...a) },
     payment: { findMany: (...a: unknown[]) => mockPaymentFindMany(...a) },
@@ -69,6 +70,7 @@ jest.mock("../../lib/novu", () => ({
 jest.mock("../../lib/url", () => ({ getAppUrl: () => "https://app.test" }));
 
 import { Prisma } from "@prisma/client";
+import prisma from "../../lib/prisma";
 import { rollupOrgInvoiceAccruals } from "@/lib/payments/billing/invoice-rollup";
 import { settleInvoiceAccruals } from "@/jobs/billing/settle-invoice-accruals";
 
@@ -404,4 +406,52 @@ describe("rollupOrgInvoiceAccruals — PO coverage", () => {
     expect(mockNotifyIssued).not.toHaveBeenCalled();
     expect(mockDispatchWebhook).not.toHaveBeenCalled();
   });
+});
+
+test("bounded invoice rollup counts skipped organizations against the examination limit", async () => {
+  mockPaymentFindMany.mockResolvedValue([
+    { organizationId: "org_1" },
+    { organizationId: "org_2" },
+    { organizationId: "org_3" },
+  ]);
+  mockTransaction.mockResolvedValue({
+    result: { billedPaymentCount: 0, totalPaise: 0 },
+    notifyStaged: [],
+  });
+  const result = await settleInvoiceAccruals({ limit: 2 });
+  expect(result).toMatchObject({
+    orgsProcessed: 2,
+    invoicesCreated: 0,
+    remaining: 1,
+  });
+  expect(mockTransaction).toHaveBeenCalledTimes(2);
+});
+
+test("skipped invoice cohorts rotate so later organizations are examined", async () => {
+  const orgs = Array.from({ length: 25 }, (_, i) => ({
+    organizationId: `org_${String(i).padStart(2, "0")}`,
+    lastAccrualRollupAt: null as Date | null,
+  }));
+  mockPaymentFindMany.mockImplementation(async () =>
+    [...orgs].sort(
+      (a, b) =>
+        (a.lastAccrualRollupAt?.getTime() ?? 0) -
+          (b.lastAccrualRollupAt?.getTime() ?? 0) ||
+        a.organizationId.localeCompare(b.organizationId),
+    ),
+  );
+  const stamp = prisma.$executeRaw as jest.Mock;
+  stamp.mockImplementation(async (_sql: TemplateStringsArray, id: string) => {
+    const org = orgs.find((o) => o.organizationId === id);
+    if (org) org.lastAccrualRollupAt = new Date();
+    return 1;
+  });
+  mockTransaction.mockResolvedValue({
+    result: { billedPaymentCount: 0, totalPaise: 0 },
+    notifyStaged: [],
+  });
+  for (let i = 0; i < 3; i++) await settleInvoiceAccruals({ limit: 10 });
+  expect(new Set(stamp.mock.calls.map(([, id]) => id)).size).toBe(25);
+  expect(stamp).toHaveBeenCalledTimes(30);
+  stamp.mockResolvedValue(1);
 });

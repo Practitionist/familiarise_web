@@ -138,32 +138,38 @@ export interface RefundFailedEmailArgs {
   currency: string;
 }
 
+function refundFailedSpec(args: RefundFailedEmailArgs): RecipientEmailSpec {
+  const amountText = money(args.amountPaise, args.currency);
+  const support = supportEmail();
+  return {
+    emailType: MONEY_EMAIL_TYPES.REFUND_FAILED,
+    category: "payments",
+    from: SENDERS.payments,
+    entityRef: `payment:${args.paymentId}`,
+    subject: () => "We couldn't complete your refund",
+    render: (r) =>
+      RefundFailedEmail({
+        recipientName: greet(r),
+        amountText,
+        supportEmail: support,
+        unsubscribeUrl: r.unsubscribeUrl,
+      }),
+  };
+}
+
 export const sendRefundFailedEmail =
   defineFixedBudgetEmailSender<RefundFailedEmailArgs>(
     EMAIL_BUDGET_MS.JOB,
-    (args) => {
-      const amountText = money(args.amountPaise, args.currency);
-      const support = supportEmail();
-      return {
-        userIds: [args.userId],
-        spec: {
-          emailType: MONEY_EMAIL_TYPES.REFUND_FAILED,
-          category: "payments",
-          from: SENDERS.payments,
-          entityRef: `payment:${args.paymentId}`,
-          subject: () => "We couldn't complete your refund",
-          render: (r) =>
-            RefundFailedEmail({
-              recipientName: greet(r),
-              amountText,
-              supportEmail: support,
-              unsubscribeUrl: r.unsubscribeUrl,
-            }),
-        },
-      };
-    },
+    (args) => ({ userIds: [args.userId], spec: refundFailedSpec(args) }),
     NOTHING_SENT,
   );
+
+export async function stageRefundFailedEmail(
+  tx: StagingTx,
+  args: RefundFailedEmailArgs,
+): Promise<StagedRecipientEmail[]> {
+  return stageSpecGuarded(refundFailedSpec(args), [args.userId], tx);
+}
 
 // ── Org payout failed or reversed ───────────────────────────────────────────
 

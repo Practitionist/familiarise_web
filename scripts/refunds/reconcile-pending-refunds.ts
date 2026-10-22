@@ -11,6 +11,8 @@
  * - app/api/cleanup/reconcile-refunds/route.ts (API endpoint)
  */
 
+import { startDeadline } from "@/lib/cron/run-deadline";
+import { LEAST_RECENTLY_RECONCILED } from "@/lib/payments/payouts/reconcile-cursor";
 import prisma from "../../lib/prisma";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import { PaymentGateway, Prisma, RefundStatus } from "@prisma/client";
@@ -30,7 +32,7 @@ import { attemptTrigger, type StagedTrigger } from "../../lib/novu/outbox";
 import {
   EMAIL_BUDGET_MS,
   MONEY_EMAIL_TYPES,
-  sendRefundFailedEmail,
+  stageRefundFailedEmail,
   stageRefundProcessedEmail,
 } from "@/lib/email";
 import {
@@ -79,14 +81,9 @@ export interface RefundReconciliationResult {
 }
 
 export interface ReconcilePendingRefundsOptions {
-  /**
-   * #1356 — applied to EACH pass below in full, not split or subtracted
-   * between them: it bounds each pass's own query so a single pass fits the
-   * ticker's 26s function ceiling, and the unbounded GitHub Actions run is
-   * the backstop that drains whatever a bounded tick leaves behind (ADR 27).
-   * Undefined keeps today's unbounded scan.
-   */
+  /** Maximum pending refunds examined per run, across both gateway cohorts. */
   limit?: number;
+  startedAt?: number;
 }
 
 /**
@@ -125,6 +122,11 @@ export async function reconcilePendingRefunds(
 async function reconcilePendingRefundsUnlocked(
   opts: ReconcilePendingRefundsOptions = {},
 ): Promise<RefundReconciliationResult> {
+  const startedAt = opts.startedAt ?? Date.now();
+  const pastDeadline = startDeadline(startedAt);
+  // Reserve time for settled-cascade recovery and durable failure notices.
+  const pendingDeadline = () => Date.now() >= startedAt + 8_000;
+  const limit = opts.limit ?? 10;
   const thresholdDate = new Date(Date.now() - RECONCILIATION_THRESHOLD_MS);
   const errors: string[] = [];
   let reconciledCount = 0;
@@ -172,7 +174,7 @@ async function reconcilePendingRefundsUnlocked(
   // ------------------------------------------------------------------
   // Pass 1 — placeholders
   // ------------------------------------------------------------------
-  const stalePlaceholders = await prisma.refund.findMany({
+  const placeholders = await prisma.refund.findMany({
     where: {
       status: RefundStatus.PENDING,
       refundId: { startsWith: "pending_" },
@@ -181,22 +183,45 @@ async function reconcilePendingRefundsUnlocked(
     include: {
       payment: true,
     },
-    // Least-recently-touched first, id tie-break. Neither branch below that
-    // leaves a row PENDING (ambiguous / still within grace) writes back to
-    // it, so under a bounded run the same cohort can recur every tick; a
-    // persisted retry timestamp was deliberately NOT added here (pre-MVP,
-    // no-backfill posture) and starvation is capped by the unbounded GitHub
-    // Actions run, which always drains the full backlog.
-    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
-    take: opts.limit,
+    orderBy: [LEAST_RECENTLY_RECONCILED, { id: "asc" }],
+    take: limit,
   });
+
+  const SYNTHETIC_PREFIXES = ["pending_", "internal_", "credits_"];
+  const realIds = await prisma.refund.findMany({
+    where: {
+      status: RefundStatus.PENDING,
+      AND: SYNTHETIC_PREFIXES.map((prefix) => ({
+        refundId: { not: { startsWith: prefix } },
+      })),
+      createdAt: { lt: thresholdDate },
+    },
+    include: { payment: true },
+    orderBy: [LEAST_RECENTLY_RECONCILED, { id: "asc" }],
+    take: limit,
+  });
+  // Select across both rails before processing either, so a slow rail cannot starve the other.
+  const pending = [...placeholders, ...realIds]
+    .sort(
+      (a, b) =>
+        (a.lastReconciledAt?.getTime() ?? 0) -
+          (b.lastReconciledAt?.getTime() ?? 0) || a.id.localeCompare(b.id),
+    )
+    .slice(0, limit);
+  const stalePlaceholders = pending.filter((r) =>
+    r.refundId.startsWith("pending_"),
+  );
+  const pendingRealId = pending.filter(
+    (r) => !r.refundId.startsWith("pending_"),
+  );
 
   console.log(
     `Found ${stalePlaceholders.length} stale PENDING refund placeholders to reconcile`,
   );
-  totalProcessed += stalePlaceholders.length;
 
   for (const refund of stalePlaceholders) {
+    if (pendingDeadline()) break;
+    totalProcessed++;
     try {
       // Skip if payment gateway is not supported
       if (refund.payment.paymentGateway !== PaymentGateway.RAZORPAY) {
@@ -348,45 +373,22 @@ async function reconcilePendingRefundsUnlocked(
         error instanceof Error ? error.message : String(error);
       errors.push(`Refund ${refund.id}: ${errorMessage}`);
       console.error(`Error reconciling refund ${refund.id}:`, errorMessage);
+    } finally {
+      try {
+        await prisma.$executeRaw`UPDATE "Refund" SET "lastReconciledAt" = now() WHERE id = ${refund.id}`;
+      } catch (error) {
+        errors.push(
+          `Polling cursor Refund ${refund.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
   }
 
-  // ------------------------------------------------------------------
-  // Pass 2 — real-id PENDING rows (gateway accepted, confirmation lost)
-  // ------------------------------------------------------------------
-  const SYNTHETIC_PREFIXES = ["pending_", "internal_", "credits_"];
-  const pendingRealId = await prisma.refund.findMany({
-    where: {
-      status: RefundStatus.PENDING,
-      // booking-refund.ts mints internal_<uuid>/credits_<uuid> synthetic ids
-      // alongside the pending_ placeholders — none exist at any gateway.
-      AND: SYNTHETIC_PREFIXES.map((prefix) => ({
-        refundId: { not: { startsWith: prefix } },
-      })),
-      createdAt: { lt: thresholdDate },
-    },
-    include: {
-      payment: {
-        select: {
-          id: true,
-          amount: true,
-          paymentGateway: true,
-          userId: true,
-          organizationId: true,
-        },
-      },
-    },
-    // Same starvation reasoning as the placeholder pass above: "still
-    // settling" leaves the row untouched, so order least-recently-touched
-    // first rather than by creation.
-    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
-    take: opts.limit,
-  });
-
   console.log(`Found ${pendingRealId.length} real-id PENDING refunds to poll`);
-  totalProcessed += pendingRealId.length;
 
   for (const refund of pendingRealId) {
+    if (pendingDeadline()) break;
+    totalProcessed++;
     try {
       if (refund.payment.paymentGateway !== PaymentGateway.RAZORPAY) {
         if (await retireIfNoLiveClient(refund)) continue;
@@ -513,11 +515,24 @@ async function reconcilePendingRefundsUnlocked(
         error instanceof Error ? error.message : String(error);
       errors.push(`Refund ${refund.id}: ${errorMessage}`);
       console.error(`Error polling refund ${refund.id}:`, errorMessage);
+    } finally {
+      try {
+        await prisma.$executeRaw`UPDATE "Refund" SET "lastReconciledAt" = now() WHERE id = ${refund.id}`;
+      } catch (error) {
+        errors.push(
+          `Polling cursor Refund ${refund.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
   }
 
   // A poison row is a per-row failure in the summary, never a failed run.
-  const backstop = await redriveStrandedRefunds(opts.limit);
+  const backstop = pastDeadline()
+    ? { scanned: 0, redriven: 0, failed: 0, deadLettered: [] }
+    : await redriveStrandedRefunds(
+        limit,
+        () => Date.now() >= startedAt + 12_000,
+      );
   totalProcessed += backstop.scanned;
 
   // One expected warning per run listing the ids, never one per row per tick.
@@ -579,7 +594,7 @@ async function reconcilePendingRefundsUnlocked(
     );
   }
 
-  await notifyFailedRefundsUnlocked();
+  await notifyFailedRefundsUnlocked(limit, pastDeadline);
 
   return {
     success: errors.length === 0,
@@ -759,6 +774,7 @@ type StrandedPass = {
  */
 async function redriveStrandedRefunds(
   limit: number | undefined,
+  pastDeadline: () => boolean,
 ): Promise<StrandedPass> {
   const startedAt = Date.now();
   // Raw because a missing JSON key must count as zero attempts; credit
@@ -798,7 +814,7 @@ async function redriveStrandedRefunds(
   });
 
   for (const refund of stranded) {
-    if (Date.now() - startedAt > STRANDED_BUDGET_MS) break;
+    if (pastDeadline() || Date.now() - startedAt > STRANDED_BUDGET_MS) break;
     pass.scanned++;
     try {
       await withSerializableRetry(() =>
@@ -923,7 +939,10 @@ export async function notifyFailedRefunds(): Promise<FailedRefundNotifyResult> {
   );
 }
 
-async function notifyFailedRefundsUnlocked(): Promise<FailedRefundNotifyResult> {
+async function notifyFailedRefundsUnlocked(
+  limit = 10,
+  pastDeadline = startDeadline(),
+): Promise<FailedRefundNotifyResult> {
   const now = new Date();
   const failed =
     (await prisma.refund.findMany({
@@ -941,64 +960,98 @@ async function notifyFailedRefundsUnlocked(): Promise<FailedRefundNotifyResult> 
           },
         },
       },
-      orderBy: { createdAt: "asc" },
+      orderBy: [LEAST_RECENTLY_RECONCILED, { id: "asc" }],
+      take: limit,
     })) ?? [];
 
   let notified = 0;
+  const failures: string[] = [];
   for (const refund of failed) {
-    // An attempt of the refund the payment still owes is retried by the owed
-    // sweep, so it is claimed silently; a spent marker pages ops instead.
-    const owedAt = refund.payment.refundOwedAt;
-    if (refund.payment.refundOwedKey && owedAt && refund.createdAt >= owedAt) {
-      await prisma.refund.updateMany({
-        where: { id: refund.id, failedNotifiedAt: null },
-        data: { failedNotifiedAt: now, failedAt: refund.failedAt ?? now },
+    if (pastDeadline()) break;
+    try {
+      // An attempt of the refund the payment still owes is retried by the owed
+      // sweep, so it is claimed silently; a spent marker pages ops instead.
+      const owedAt = refund.payment.refundOwedAt;
+      if (
+        refund.payment.refundOwedKey &&
+        owedAt &&
+        refund.createdAt >= owedAt
+      ) {
+        await prisma.refund.updateMany({
+          where: { id: refund.id, failedNotifiedAt: null },
+          data: { failedNotifiedAt: now, failedAt: refund.failedAt ?? now },
+        });
+        continue;
+      }
+      // Prefer a gateway-supplied reason carried in metadata; fall back to the
+      // existing operator `reason` only as failure context, else default copy.
+      const meta = (refund.metadata ?? {}) as Record<string, unknown>;
+      const gatewayReason =
+        typeof meta.failure_reason === "string"
+          ? meta.failure_reason
+          : typeof meta.error_description === "string"
+            ? meta.error_description
+            : null;
+      const failureReason =
+        refund.failureReason ?? gatewayReason ?? REFUND_FAILED_DEFAULT_REASON;
+
+      const staged = await prisma.$transaction(async (tx) => {
+        const claim = await tx.refund.updateMany({
+          where: {
+            id: refund.id,
+            status: RefundStatus.FAILED,
+            failedNotifiedAt: null,
+          },
+          data: {
+            failedNotifiedAt: now,
+            failureReason: refund.failureReason ?? failureReason,
+            failedAt: refund.failedAt ?? now,
+          },
+        });
+        if (claim.count === 0) return null;
+        const notice = await notifyRefundFailed(
+          refund.payment.userId,
+          {
+            ...notificationScope(refund.payment.organizationId),
+            amount: refund.amountPaise,
+            currency: refund.currency,
+            reason: failureReason,
+            dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+          },
+          { tx, entityRef: `refund:${refund.id}` },
+        );
+        const emails = await stageRefundFailedEmail(tx, {
+          userId: refund.payment.userId,
+          paymentId: refund.paymentId,
+          amountPaise: refund.amountPaise,
+          currency: refund.currency,
+        });
+        return { bell: notice?.staged ?? null, emails };
       });
-      continue;
+      if (!staged) continue;
+      notified++;
+      if (staged.bell) await attemptTrigger(staged.bell);
+      await attemptStagedEmails(
+        staged.emails,
+        MONEY_EMAIL_TYPES.REFUND_FAILED,
+        EMAIL_BUDGET_MS.JOB,
+      );
+    } catch (error) {
+      failures.push(
+        `${refund.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      try {
+        await prisma.$executeRaw`UPDATE "Refund" SET "lastReconciledAt" = now() WHERE id = ${refund.id}`;
+      } catch (stampError) {
+        failures.push(
+          `${refund.id} cursor: ${stampError instanceof Error ? stampError.message : String(stampError)}`,
+        );
+      }
     }
-    // Prefer a gateway-supplied reason carried in metadata; fall back to the
-    // existing operator `reason` only as failure context, else default copy.
-    const meta = (refund.metadata ?? {}) as Record<string, unknown>;
-    const gatewayReason =
-      typeof meta.failure_reason === "string"
-        ? meta.failure_reason
-        : typeof meta.error_description === "string"
-          ? meta.error_description
-          : null;
-    const failureReason =
-      refund.failureReason ?? gatewayReason ?? REFUND_FAILED_DEFAULT_REASON;
-
-    // Claim the row: stamp failedNotifiedAt only if still null so a re-run or
-    // a second replica can't double-notify. Backfill failureReason / failedAt
-    // in the same gate when they're empty.
-    const claim = await prisma.refund.updateMany({
-      where: { id: refund.id, failedNotifiedAt: null },
-      data: {
-        failedNotifiedAt: now,
-        failureReason: refund.failureReason ?? failureReason,
-        failedAt: refund.failedAt ?? now,
-      },
-    });
-    if (claim.count === 0) continue;
-    notified++;
-
-    // Fire-and-forget — committed state, no DB writes in the notify path.
-    await notifyRefundFailed(refund.payment.userId, {
-      ...notificationScope(refund.payment.organizationId),
-      amount: refund.amountPaise,
-      currency: refund.currency,
-      reason: failureReason,
-      dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
-    });
-    // #1653 — the email twin; the sender never throws.
-    await sendRefundFailedEmail({
-      userId: refund.payment.userId,
-      paymentId: refund.paymentId,
-      amountPaise: refund.amountPaise,
-      currency: refund.currency,
-    });
   }
 
+  if (failures.length > 0)
+    throw new Error(`Failed refund notices: ${failures.join("; ")}`);
   return { scanned: failed.length, notified };
 }
 

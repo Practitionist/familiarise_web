@@ -27,6 +27,7 @@ jest.mock("@sentry/nextjs", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    $executeRaw: jest.fn().mockResolvedValue(1),
     payment: {
       findMany: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -77,6 +78,7 @@ jest.mock("../../lib/enterprise/system-events", () => {
   };
 });
 
+import { reconcilePaymentStatus } from "../../scripts/payments/reconcile-payment-status";
 import type { NextRequest } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "../../lib/prisma";
@@ -522,5 +524,63 @@ describe("reconcile-payment-status — permanent rows and pre-mint rows", () => 
     }
     expect(findMany).toHaveBeenCalledTimes(2);
     expect(updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("payment polling progress after interrupted runs", () => {
+  it("rotates unchanged pending records so all 25 are polled in three bounded runs", async () => {
+    setRazorpayEnv();
+    const rows = Array.from({ length: 25 }, (_, i) => ({
+      ...pendingRow,
+      id: `p_${String(i).padStart(2, "0")}`,
+      paymentIntent: `order_${i}`,
+      lastReconciledAt: null as Date | null,
+    }));
+    const findMany = prisma.payment.findMany as jest.Mock;
+    findMany
+      .mockReset()
+      .mockImplementation(
+        async (q: { where: { paymentGateway?: string }; take: number }) =>
+          q.where.paymentGateway
+            ? [...rows]
+                .sort(
+                  (a, b) =>
+                    (a.lastReconciledAt?.getTime() ?? 0) -
+                      (b.lastReconciledAt?.getTime() ?? 0) ||
+                    a.id.localeCompare(b.id),
+                )
+                .slice(0, q.take)
+            : [],
+      );
+    const stamp = prisma.$executeRaw as jest.Mock;
+    stamp
+      .mockClear()
+      .mockImplementation(async (_sql: TemplateStringsArray, id: string) => {
+        const row = rows.find((r) => r.id === id);
+        if (row) row.lastReconciledAt = new Date();
+        return 1;
+      });
+    mockFetch
+      .mockReset()
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: "created" }),
+      });
+    for (let i = 0; i < 3; i++) await reconcilePaymentStatus({ limit: 10 });
+    expect(new Set(mockFetch.mock.calls.map(([url]) => url)).size).toBe(25);
+    expect(stamp).toHaveBeenCalledTimes(30);
+    stamp.mockResolvedValue(1);
+  });
+
+  it("does not poll or rotate candidates when the execution budget was already exhausted", async () => {
+    (prisma.payment.findMany as jest.Mock)
+      .mockReset()
+      .mockResolvedValueOnce([pendingRow])
+      .mockResolvedValueOnce([]);
+    mockFetch.mockClear();
+    (prisma.$executeRaw as jest.Mock).mockClear();
+    await reconcilePaymentStatus({ startedAt: Date.now() - 20_000 });
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
   });
 });

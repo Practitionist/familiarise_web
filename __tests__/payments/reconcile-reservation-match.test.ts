@@ -32,7 +32,7 @@ jest.mock("../../lib/prisma", () => {
     __esModule: true,
     default: {
       refund,
-      // The stranded-refund backstop selects its cohort ids with raw SQL.
+      $executeRaw: jest.fn().mockResolvedValue(1), // The stranded-refund backstop selects its cohort ids with raw SQL.
       $queryRaw: jest.fn(),
       // #1589 N-P0-01 — the SUCCEEDED mark now runs in its own tx with the
       // payer's notice; the tx sees the same refund table.
@@ -48,8 +48,11 @@ jest.mock("../../lib/novu/outbox", () => ({
 }));
 jest.mock("../../lib/email", () => ({
   EMAIL_BUDGET_MS: { JOB: 1 },
-  MONEY_EMAIL_TYPES: { REFUND_PROCESSED: "REFUND_PROCESSED" },
-  sendRefundFailedEmail: jest.fn(),
+  MONEY_EMAIL_TYPES: {
+    REFUND_PROCESSED: "REFUND_PROCESSED",
+    REFUND_FAILED: "REFUND_FAILED",
+  },
+  stageRefundFailedEmail: jest.fn().mockResolvedValue([]),
   stageRefundProcessedEmail: jest.fn().mockResolvedValue([]),
 }));
 jest.mock("../../lib/email/send-to-recipients", () => ({
@@ -94,7 +97,11 @@ import { RefundError } from "../../lib/payments/core/types";
 import { reportSentryMessage } from "../../lib/observability/report";
 import { notifyRefundFailed } from "../../lib/novu/service";
 import { reverseCreditsForPayment } from "../../lib/referrals/service";
-import { reconcilePendingRefunds } from "../../scripts/refunds/reconcile-pending-refunds";
+import { stageRefundFailedEmail } from "../../lib/email";
+import {
+  reconcilePendingRefunds,
+  notifyFailedRefunds,
+} from "../../scripts/refunds/reconcile-pending-refunds";
 
 /** The Prisma refund surface the reconcile core touches. */
 interface ReconcileRefundMock {
@@ -300,7 +307,7 @@ describe("reconcilePendingRefunds — placeholder whose order the gateway does n
   test("within 24h → left PENDING and skipped; any other list error stays an error", async () => {
     refundTable.findMany
       .mockResolvedValueOnce([
-        placeholderRow({ id: "res_young", ageHours: 2 }),
+        placeholderRow({ id: "res_a_young", ageHours: 2 }),
         placeholderRow({ id: "res_flaky", ageHours: 30 }),
       ])
       .mockResolvedValueOnce([]);
@@ -592,12 +599,16 @@ describe("reconcilePendingRefunds — failed-refund notice", () => {
     });
     expect(refundTable.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "row_failed", failedNotifiedAt: null },
+        where: { id: "row_failed", status: "FAILED", failedNotifiedAt: null },
       }),
     );
     expect(mockNotifyFailed).toHaveBeenCalledWith(
       "user_1",
       expect.objectContaining({ amount: 10_000 }),
+      expect.objectContaining({
+        tx: expect.anything(),
+        entityRef: "refund:row_failed",
+      }),
     );
   });
 });
@@ -660,5 +671,120 @@ describe("reconcilePendingRefunds — stranded-refund backstop", () => {
       redriveDeadLettered: 1,
       success: true,
     });
+  });
+});
+
+describe("bounded refund polling and durable failure notices", () => {
+  test("rotates 25 still-pending refunds through three batches without changing business timestamps", async () => {
+    const rows = Array.from({ length: 25 }, (_, i) => ({
+      ...placeholderRow({ id: `row_${String(i).padStart(2, "0")}` }),
+      refundId: `rfnd_${i}`,
+      lastReconciledAt: null as Date | null,
+    }));
+    refundTable.findMany.mockImplementation(
+      async (query: {
+        where: { status: string; refundId?: unknown };
+        take?: number;
+      }) => {
+        if (query.where.status !== "PENDING" || query.where.refundId) return [];
+        return [...rows]
+          .sort(
+            (a, b) =>
+              (a.lastReconciledAt?.getTime() ?? 0) -
+                (b.lastReconciledAt?.getTime() ?? 0) ||
+              a.id.localeCompare(b.id),
+          )
+          .slice(0, query.take);
+      },
+    );
+    const stamp = prisma.$executeRaw as jest.Mock;
+    stamp.mockImplementation(async (_sql: TemplateStringsArray, id: string) => {
+      const row = rows.find((r) => r.id === id);
+      if (row) row.lastReconciledAt = new Date();
+      return 1;
+    });
+    mockGet.mockResolvedValue({ status: "PENDING" });
+    for (let i = 0; i < 3; i++) await reconcilePendingRefunds({ limit: 10 });
+    expect(new Set(mockGet.mock.calls.map(([id]) => id)).size).toBe(25);
+    expect(refundTable.updateMany).not.toHaveBeenCalled();
+    expect(stamp).toHaveBeenCalledTimes(30);
+    stamp.mockResolvedValue(1);
+  });
+
+  test("a timed-out run leaves unstarted rows available to the next run", async () => {
+    refundTable.findMany
+      .mockResolvedValueOnce([placeholderRow()])
+      .mockResolvedValueOnce([]);
+    await reconcilePendingRefunds({ startedAt: Date.now() - 20_000 });
+    expect(mockList).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  test("overlapping full and notification runs stage one failure notice even without a job lease", async () => {
+    const row = {
+      id: "failed_overlap",
+      paymentId: "pay_1",
+      amountPaise: 1000,
+      currency: "INR",
+      metadata: {},
+      failureReason: null,
+      failedAt: null,
+      payment: { userId: "user_1", organizationId: null },
+    };
+    refundTable.findMany.mockImplementation(
+      async (q: { where: { status: string } }) =>
+        q.where.status === "FAILED" ? [row] : [],
+    );
+    let claimed = false;
+    refundTable.updateMany.mockImplementation(async () => {
+      if (claimed) return { count: 0 };
+      claimed = true;
+      return { count: 1 };
+    });
+    await Promise.all([reconcilePendingRefunds(), notifyFailedRefunds()]);
+    expect(mockNotifyFailed).toHaveBeenCalledTimes(1);
+    expect(stageRefundFailedEmail).toHaveBeenCalledTimes(1);
+    expect(stageRefundFailedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ refund: refundTable }),
+      expect.objectContaining({ paymentId: "pay_1" }),
+    );
+    refundTable.updateMany.mockResolvedValue({ count: 1 });
+  });
+  test("a staging crash rolls back the claim and a new invocation can deliver the notice", async () => {
+    const row = {
+      id: "failed_crash",
+      paymentId: "pay_1",
+      amountPaise: 1000,
+      currency: "INR",
+      metadata: {},
+      failureReason: null,
+      failedAt: null,
+      payment: { userId: "user_1", organizationId: null },
+    };
+    let claimed = false;
+    refundTable.findMany.mockImplementation(async () => (claimed ? [] : [row]));
+    refundTable.updateMany.mockImplementation(async () => {
+      claimed = true;
+      return { count: 1 };
+    });
+    (prisma.$transaction as jest.Mock).mockImplementationOnce(
+      async (fn: (tx: unknown) => Promise<unknown>) => {
+        try {
+          return await fn({ refund: refundTable });
+        } catch (error) {
+          claimed = false;
+          throw error;
+        }
+      },
+    );
+    (stageRefundFailedEmail as jest.Mock).mockRejectedValueOnce(
+      new Error("staging interrupted"),
+    );
+    await expect(notifyFailedRefunds()).rejects.toThrow("staging interrupted");
+    expect(claimed).toBe(false);
+    await notifyFailedRefunds();
+    expect(claimed).toBe(true);
+    expect(stageRefundFailedEmail).toHaveBeenCalledTimes(2);
+    refundTable.updateMany.mockResolvedValue({ count: 1 });
   });
 });

@@ -115,8 +115,7 @@ async function reportRollupGaps(gaps: RollupGaps): Promise<void> {
 }
 
 /**
- * `limit` caps the invoices issued plus failures per run; an org the rollup
- * skips does not count. With `windowStart`, only orgs holding an accrual from
+ * `limit` caps all examined organizations, including skipped rollups. With `windowStart`, only orgs holding an accrual from
  * before it are selected, so a later slice never re-invoices a billed org.
  */
 export async function settleInvoiceAccruals(
@@ -159,7 +158,12 @@ export async function settleInvoiceAccruals(
     },
     select: { organizationId: true },
     distinct: ["organizationId"],
-    orderBy: { organizationId: "asc" },
+    orderBy: [
+      {
+        organization: { lastAccrualRollupAt: { sort: "asc", nulls: "first" } },
+      },
+      { organizationId: "asc" },
+    ],
   });
 
   let invoicesCreated = 0;
@@ -167,7 +171,7 @@ export async function settleInvoiceAccruals(
   let visited = 0;
   const gaps: RollupGaps = { heldForPo: [], noGstState: [] };
   for (const row of rows) {
-    if (opts.limit !== undefined && invoicesCreated + failed >= opts.limit) {
+    if (visited >= (opts.limit ?? 10)) {
       break;
     }
     visited += 1;
@@ -181,6 +185,8 @@ export async function settleInvoiceAccruals(
     } catch (err) {
       failed++;
       await reportRollupFailure(row.organizationId, err);
+    } finally {
+      await prisma.$executeRaw`UPDATE "Organization" SET "lastAccrualRollupAt" = now() WHERE id = ${row.organizationId}`;
     }
   }
   await reportRollupGaps(gaps);

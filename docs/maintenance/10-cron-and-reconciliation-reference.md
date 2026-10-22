@@ -4,7 +4,7 @@ type: reference
 band: maintenance
 audience: sde2
 status: live
-last-reviewed: 2026-10-18
+last-reviewed: 2026-10-22
 ---
 
 # Cron, Sidecars and Reconciliation — Operational Reference
@@ -82,6 +82,14 @@ Two subtleties worth knowing before you alert on status codes:
 - A valid value is clamped to a maximum of 500. It is clamped, not rejected.
 
 `parseLimitParamOrDefault()` exists so a per-row job can never be invoked unbounded by _any_ caller, not just the ticker. Several jobs also declare their own hard caps in the registry, independent of `?limit=` — for example the stale-slot release arm of `expire-stale-requests` releases at most 200 rows per run regardless of the query parameter.
+
+### Payment, refund and top-up polling
+
+Payment status, pending-refund and abandoned top-up polling order by nullable `lastReconciledAt` (never polled first), then ID. Every completed attempt rotates the row, including unchanged provider state and transient failure. The cursor write does not change `updatedAt`, so polling does not postpone business aging. A run interrupted before a row starts leaves that row ahead of completed attempts on the next run.
+
+Defaults are 50 payment candidates, 10 pending refunds and 25 abandoned top-ups. Payment and refund cohorts share their respective limit across candidate queries. Jobs stop starting rows at their execution deadline; an in-flight database transaction or provider operation must still finish or hit its own timeout. Refund polling reserves time for stranded successful cascades and failed-refund notices instead of letting pending work consume the entire invocation. Failed notices are capped at 10 by default and stage their notification and email in the same transaction that claims `failedNotifiedAt`; post-commit delivery failure remains recoverable by the existing outboxes. The invoice-accrual rollup counts every examined organization against its limit, including skipped organizations, and rotates it with `Organization.lastAccrualRollupAt` even after a skip or failure. Existing accrual, deactivation and window predicates still select the billable cohort.
+
+Before deploying this code, an operator must apply the additive columns/indexes described by `prisma/schema.prisma` and `prisma/sql/reconciliation-cursors.sql`. The SQL artifact is for a controlled schema operation; this change does not run it automatically. No cursor backfill is necessary: existing NULL values receive priority.
 
 ## The Netlify ticker
 

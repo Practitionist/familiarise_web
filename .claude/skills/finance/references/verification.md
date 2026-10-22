@@ -35,7 +35,7 @@ For flows that do not need a real signature — exercising `handlePaymentSuccess
 
 ## Driving the sweeps
 
-Every scheduled job has an HTTP twin under `app/api/cleanup/*`, gated by a `CRON_SECRET` bearer token and wrapped in `withCronLock`. Calling a cleanup route directly with the secret is how a sweep is exercised on demand instead of waiting for the Netlify ticker or a GitHub Actions run. Routes invoked by the ticker accept an optional `?limit=` — a positive integer, refused with `400 INVALID_LIMIT` if unparseable and clamped at a per-route cap (500) if it overshoots — so a verification run can take a small, fast bite of a backlog instead of the unbounded default a nightly run would process.
+Every scheduled job has an HTTP twin under `app/api/cleanup/*`, gated by a `CRON_SECRET` bearer token and wrapped in `withCronLock`. Calling a cleanup route directly with the secret is how a sweep is exercised on demand instead of waiting for the Netlify ticker or a GitHub Actions run. Routes invoked by the ticker accept an optional `?limit=` — a positive integer, refused with `400 INVALID_LIMIT` if unparseable and clamped at a per-route cap (500) if it overshoots — so a verification run can take a small bite of a backlog. Payment/refund/top-up pollers also enforce bounded defaults and rotate on `lastReconciledAt`; do not update `updatedAt` as a retry cursor because other jobs use it for business aging. Verify unchanged and transiently failing provider rows rotate, unstarted rows survive interruption, and overlapping entrypoints cannot claim the same durable notice twice.
 
 ## Verifying by SQL, not by narration
 

@@ -1270,6 +1270,9 @@ model Organization {
   updatedAt           DateTime             @updatedAt
   supportFlowOutcomes SupportFlowOutcome[]
 
+  // Rotate examined accrual rollups without changing organization aging.
+  lastAccrualRollupAt DateTime? @db.Timestamptz
+
   @@index([status])
   @@index([canSponsor, canHost])
   @@index([kind])
@@ -1280,6 +1283,7 @@ model Organization {
   @@index([dataResidencyRegion])
   @@index([billingAccountId])
   @@map("organizations")
+  @@index([lastAccrualRollupAt, id])
 }
 
 model Invitation {
@@ -1700,8 +1704,12 @@ model WalletTopUp {
   // sweep-orphaned-topup-captures reconciler re-credits them.
   capturedAt  DateTime?
 
+  // Polling progress is separate from business modification and aging.
+  lastReconciledAt DateTime? @db.Timestamptz
+
   @@index([billingAccountId, createdAt])
   @@index([status, createdAt])
+  @@index([status, lastReconciledAt, id])
 }
 
 enum WalletTopUpStatus {
@@ -5852,6 +5860,9 @@ model Payment {
 
   // Allow multiple users to pay for same appointment (webinars/classes)
   @@unique([userId, appointmentId])
+  // Polling progress is separate from business modification and aging.
+  lastReconciledAt DateTime? @db.Timestamptz
+
   @@index([expiresAt, paymentStatus])
   @@index([isMockPayment])
   @@index([paymentStatus])
@@ -5868,6 +5879,7 @@ model Payment {
   @@index([discountCodeId])
   @@index([billingAccountId])
   @@index([attributionReferralId])
+  @@index([paymentStatus, lastReconciledAt, id])
 }
 
 enum PaymentAttributionSource {
@@ -6002,6 +6014,9 @@ model Refund {
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
+  // Polling progress is separate from business modification and aging.
+  lastReconciledAt DateTime? @db.Timestamptz
+
   @@index([paymentId])
   @@index([status])
   @@index([refundId])
@@ -6010,6 +6025,7 @@ model Refund {
   @@index([status, failedNotifiedAt])
   // Finance date-range exports + reconcile-cron age scans.
   @@index([createdAt])
+  @@index([status, lastReconciledAt, id])
 }
 
 enum RefundStatus {
