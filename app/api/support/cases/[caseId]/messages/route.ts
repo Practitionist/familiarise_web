@@ -45,6 +45,8 @@ function buildTurnAppendParams(params: {
     isInternal: staff ? data.isInternal : false,
     clientTurnId: data.clientTurnId,
     expectedLastMessageAt: staff ? data.expectedLastMessageAt : undefined,
+    // Operators reopen through the case status, never through a reply.
+    reopen: staff ? undefined : data.reopen,
   };
 }
 
@@ -121,10 +123,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     );
 
     if (!result.ok) {
-      return NextResponse.json(
-        { code: result.code, error: result.error },
-        { status: result.status },
-      );
+      const { ok: _ok, status, ...body } = result;
+      return NextResponse.json(body, { status });
     }
 
     return NextResponse.json(

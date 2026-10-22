@@ -27,7 +27,43 @@ const FRIENDLY_COPY: Record<string, string> = {
     "You're doing that a bit too quickly — try again in a few minutes.",
   CONFLICT: "That was just updated somewhere else. Refresh and try again.",
   INTERNAL: "Something went wrong on our side. Please try again in a moment.",
+  CASE_DECIDED:
+    "This request has a decision, so it can't be reopened. You can appeal the decision instead.",
+  REOPEN_WINDOW_EXPIRED:
+    "This request was resolved more than 14 days ago. Start a new request if you still need help.",
+  REOPEN_NOT_ALLOWED: "Only the person who raised this request can reopen it.",
+  CASE_ALREADY_DECIDED:
+    "This case already has a decision. An admin can supersede it while its appeal window is open.",
+  DECISION_NOT_ALLOWED:
+    "A problem record is resolved, not decided. Record decisions on its linked incidents.",
+  OUTCOME_NOT_ALLOWED: "That outcome doesn't apply to this kind of case.",
+  DECISION_SUPERSEDED:
+    "That decision was replaced by a newer one. Refresh to see the decision in force.",
+  SUPERSEDE_WINDOW_CLOSED:
+    "The appeal window for this decision has ended, so it can no longer be superseded.",
+  DECISION_APPEALED:
+    "This decision has been appealed. Record the outcome on the appeal instead.",
+  INVALID_TRANSITION:
+    "This request can't move to that status from where it is now. Refresh and try again.",
+  OPEN_CASE_EXISTS:
+    "There's already an open request about this. Continue in that request instead.",
+  IDEMPOTENCY_KEY_REUSED:
+    "This action was already submitted with different details. Refresh and try again.",
 };
+
+/** 409s that describe the case itself: retrying or refreshing returns the same answer. */
+const DEFINITE_CONFLICTS: ReadonlySet<string> = new Set([
+  "CASE_DECIDED",
+  "REOPEN_WINDOW_EXPIRED",
+  "CASE_CLOSED",
+  "CASE_ALREADY_DECIDED",
+  "DECISION_SUPERSEDED",
+  "SUPERSEDE_WINDOW_CLOSED",
+  "DECISION_APPEALED",
+  "INVALID_TRANSITION",
+  "OPEN_CASE_EXISTS",
+  "IDEMPOTENCY_KEY_REUSED",
+]);
 
 export interface SupportErrorPayload {
   code?: string;
@@ -78,7 +114,12 @@ export class SupportRequestError extends Error {
   }
   /** A refusal the server will repeat verbatim: retrying cannot help. */
   get isDefinite(): boolean {
-    return this.status === 403 || this.status === 404 || this.status === 400;
+    return (
+      this.status === 403 ||
+      this.status === 404 ||
+      this.status === 400 ||
+      (this.status === 409 && DEFINITE_CONFLICTS.has(this.code ?? ""))
+    );
   }
 }
 
@@ -95,7 +136,7 @@ export function fieldErrorsOf(detail: unknown): Record<string, string> {
 
 /** A write lost its compare-and-set because the case changed underneath it. */
 export function isStaleCaseError(e: unknown): boolean {
-  return e instanceof SupportRequestError && e.status === 409;
+  return e instanceof SupportRequestError && e.status === 409 && !e.isDefinite;
 }
 
 export async function throwSupportError(

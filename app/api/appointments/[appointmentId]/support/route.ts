@@ -13,6 +13,7 @@ import { z } from "zod";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { runSupportTurn, ORG_PARTY_CATEGORIES } from "@/lib/support/service";
+import { CaseConflictError } from "@/lib/support/case-transitions";
 import { buildSupportContext } from "@/lib/support/context";
 import { flowsForContext } from "@/lib/support/flows";
 import { AppointmentIdParams } from "@/schemas/support";
@@ -41,9 +42,15 @@ const turnSchema = z
       .pipe(z.string().max(2000))
       .optional(),
     urgent: z.boolean().optional(),
+    /** "This didn't fix it" on a resolved human conversation; carries a message. */
+    reopen: z.boolean().optional(),
   })
   .refine((v) => v.category || v.chosenOptionId || v.userMessage, {
     message: "A turn needs a category, a chosen option, or a message",
+  })
+  .refine((v) => !v.reopen || v.userMessage, {
+    message: "Tell us what still isn't fixed",
+    path: ["userMessage"],
   });
 
 export async function GET(
@@ -270,6 +277,8 @@ export async function POST(
       },
     });
   } catch (cause) {
+    if (cause instanceof CaseConflictError)
+      return NextResponse.json(cause.body, { status: cause.status });
     return supportError({
       status: 500,
       code: "INTERNAL",

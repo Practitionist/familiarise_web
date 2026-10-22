@@ -21,6 +21,8 @@ jest.mock("../../lib/support/case-access", () => ({
 }));
 jest.mock("../../lib/support/case-service", () => ({
   executePatchLifecycleTx: jest.fn(),
+  latestCaseDecisionTx: jest.fn(async () => null),
+  caseDecidedDetail: jest.fn(() => ({})),
 }));
 
 type Row = Record<string, unknown>;
@@ -68,6 +70,7 @@ jest.mock("../../lib/prisma", () => {
     },
     supportCaseSubject: { findFirst: jest.fn(async () => null) },
     supportCaseDecision: { findUnique: jest.fn() },
+    supportCaseEvidenceRequest: { findUnique: jest.fn(async () => null) },
     moderationAction: { findUnique: jest.fn() },
     supportCaseEvent: {
       findFirst: jest.fn(

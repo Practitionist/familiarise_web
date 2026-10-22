@@ -8,6 +8,9 @@ export const DEADLINE_HOURS = {
   LEGAL_TAKEDOWN: 3,
 } as const;
 
+/** How long after resolution the customer may say "This didn't fix it" on an undecided case. */
+export const REOPEN_WINDOW_MS = 14 * 24 * HOUR;
+
 export function supportDeadline(
   category: string | null | undefined,
   receivedAt: Date,

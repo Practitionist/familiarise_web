@@ -104,6 +104,18 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       });
     }
 
+    if (
+      parsed.data.legalHold !== undefined &&
+      sessionRole(auth.session.user.role) !== "ADMIN"
+    )
+      return NextResponse.json(
+        {
+          error: "Only an admin can place or lift a legal hold.",
+          code: "FORBIDDEN",
+        },
+        { status: 403 },
+      );
+
     const result = await patchSupportCaseLifecycle({
       ...parsed.data,
       caseId,
@@ -111,10 +123,8 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     });
 
     if (!result.ok) {
-      return NextResponse.json(
-        { error: result.error, code: result.code },
-        { status: result.status },
-      );
+      const { ok: _ok, status, ...body } = result;
+      return NextResponse.json(body, { status });
     }
 
     const updatedCase = result.supportCase;
@@ -130,15 +140,6 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
               organizationId: updatedCase.organizationId,
               updatedAtMs: updatedCase.updatedAt.getTime(),
             },
-            ...(result.cascadedIncidents ?? []).map((inc) => ({
-              id: inc.id,
-              referenceNumber: inc.referenceNumber,
-              title: inc.title,
-              status: "RESOLVED" as const,
-              submitterUserId: inc.submitterUserId,
-              organizationId: inc.organizationId,
-              updatedAtMs: updatedCase.updatedAt.getTime(),
-            })),
           ]
         : [];
 
