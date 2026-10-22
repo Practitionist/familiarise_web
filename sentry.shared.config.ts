@@ -248,13 +248,13 @@ function exceedsErrorBudget(
 // uncaught throw in a Next server wrapper — onRequestError, server component,
 // route handler, server action — is exactly what a preview exists to surface.
 const PREVIEW_ERROR_SAMPLE_RATE = 0.1;
-const NEXT_SERVER_MECHANISM = /^auto\.function\.nextjs\./;
+const NEXT_SERVER_MECHANISM_PREFIX = "auto.function.nextjs.";
 
 export function isUncaughtNextServerError(event: Sentry.Event): boolean {
   return (event.exception?.values ?? []).some(
     (v) =>
       v.mechanism?.handled === false &&
-      NEXT_SERVER_MECHANISM.test(v.mechanism.type),
+      v.mechanism.type.startsWith(NEXT_SERVER_MECHANISM_PREFIX),
   );
 }
 
