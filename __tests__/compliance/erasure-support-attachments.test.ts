@@ -33,7 +33,7 @@ jest.mock("../../lib/novu/client", () => ({
   isNovuConfigured: () => true,
   getNovuClient: () => ({}),
 }));
-const reportSentryError = jest.fn(() => "evt");
+const reportSentryError = jest.fn((..._args: unknown[]) => "evt");
 jest.mock("../../lib/observability/report", () => ({
   ...jest.requireActual("../../lib/observability/report"),
   reportSentryError: (...args: unknown[]) => reportSentryError(...args),
