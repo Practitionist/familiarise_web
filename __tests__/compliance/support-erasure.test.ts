@@ -115,16 +115,17 @@ describe("scrubSupportPiiTx", () => {
 
   it("deletes the collected objects after commit and reports an unconfirmed delete", async () => {
     await expect(
-      removeSupportAttachmentObjects(["support-cases/c1/f1"]),
+      removeSupportAttachmentObjects(["support-cases/c1/f1"], "u1"),
     ).resolves.toEqual([]);
     expect(removeObjects).toHaveBeenCalledWith("support-attachments", [
       "support-cases/c1/f1",
     ]);
 
     (removeObjects as jest.Mock).mockResolvedValueOnce(false);
-    const failures = await removeSupportAttachmentObjects([
-      "support-cases/c1/f2",
-    ]);
+    const failures = await removeSupportAttachmentObjects(
+      ["support-cases/c1/f2"],
+      "u1",
+    );
     expect(failures[0]).toMatch(/^support_attachments: 1 file/);
   });
 });

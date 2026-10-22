@@ -145,4 +145,40 @@ describe("DPDP export of the support record", () => {
       expect.objectContaining({ cursor: { id: "m499" }, skip: 1, take: 500 }),
     );
   });
+
+  it("treats an exactly full page followed by an empty one as complete", async () => {
+    db.supportCaseMessage.findMany
+      .mockResolvedValueOnce(messagePage(0, 500))
+      .mockResolvedValueOnce([]);
+
+    const out = await readSupportExport("u1");
+
+    expect(out.supportMessages).toHaveLength(500);
+    expect(out.supportExportComplete).toBe(true);
+    expect(db.supportCaseMessage.findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("flags the export incomplete when a collection reaches the row bound", async () => {
+    let next = 0;
+    db.supportCaseMessage.findMany.mockImplementation(async () => {
+      const rows = messagePage(next, 500);
+      next += 500;
+      return rows;
+    });
+
+    const out = await readSupportExport("u1");
+
+    expect(out.supportMessages).toHaveLength(20_000);
+    expect(out.supportExportComplete).toBe(false);
+  });
 });
+
+function messagePage(start: number, size: number) {
+  return Array.from({ length: size }, (_, i) => ({
+    id: `m${start + i}`,
+    caseId: "case-own",
+    seq: start + i,
+    body: "x",
+    createdAt: at,
+  }));
+}
