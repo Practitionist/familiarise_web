@@ -269,11 +269,11 @@ describe("readSupportSpend", () => {
       viewer: { userId: "admin-1", role: "ADMIN" },
       now: NOW,
     });
-    expect(all.operators.map((o) => o.userId).sort()).toEqual([
-      "admin-1",
-      "staff-1",
-      "staff-2",
-    ]);
+    const ids = all.operators.map((o) => o.userId);
+    expect(ids).toHaveLength(3);
+    expect(ids).toEqual(
+      expect.arrayContaining(["admin-1", "staff-1", "staff-2"]),
+    );
   });
 
   it("reports per-payment usage: support remedies counted, platform cancels shown apart", async () => {

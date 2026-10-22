@@ -133,22 +133,23 @@ describe("SupportSpendTab", () => {
     expect(
       screen.getAllByText(
         "₹50,000.00 per rolling 24 hours, as the refund doors enforce it.",
-      ).length,
-    ).toBe(2);
+      ),
+    ).toHaveLength(2);
     expect(screen.getByText("₹9,000.00")).toBeInTheDocument();
   });
 
   it("shows platform cancels as not counted toward the per-payment limit", () => {
     renderWithQuery(<SupportSpendTab initial={report()} />);
     expect(
-      screen.getAllByText(/not counted toward the ₹5,000\.00 per-payment limit/)
-        .length,
-    ).toBeGreaterThan(0);
+      screen.getAllByText(
+        /not counted toward the ₹5,000\.00 per-payment limit/,
+      )[0],
+    ).toBeInTheDocument();
     expect(
       screen.getAllByText(
         "Platform cancels by this operator (not counted toward the ₹5,000.00 limit)",
-      ).length,
-    ).toBeGreaterThan(0);
+      )[0],
+    ).toBeInTheDocument();
   });
 
   it("shows holds with the count-only note for older rows", () => {
@@ -164,7 +165,7 @@ describe("SupportSpendTab", () => {
   it("marks an admin operator as uncapped", () => {
     renderWithQuery(<SupportSpendTab initial={report()} />);
     expect(screen.getByText("No staff limits")).toBeInTheDocument();
-    expect(screen.getAllByText("No staff limit").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("No staff limit")[0]).toBeInTheDocument();
   });
 
   it("links each figure to the filtered audit log and each payment to its page", () => {

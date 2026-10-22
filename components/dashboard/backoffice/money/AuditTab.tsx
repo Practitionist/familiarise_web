@@ -29,9 +29,13 @@ const FILTERS: {
   { key: "since", label: "Since (YYYY-MM-DD or ISO time)" },
 ];
 
+// Entries sorted by key, so the comparison ignores the order filters were set in.
+const filterKey = (filters: OpsLogFilters) =>
+  JSON.stringify(
+    Object.entries(filters).sort(([a], [b]) => a.localeCompare(b)),
+  );
 const sameFilters = (a: OpsLogFilters, b: OpsLogFilters) =>
-  JSON.stringify(Object.entries(a).sort()) ===
-  JSON.stringify(Object.entries(b).sort());
+  filterKey(a) === filterKey(b);
 
 async function fetchPage(
   filters: OpsLogFilters,

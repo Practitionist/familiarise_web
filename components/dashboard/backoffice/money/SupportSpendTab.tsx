@@ -21,6 +21,8 @@ import type { OpsLogFilters } from "@/schemas/ops-log";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 const inr = (paise: number) => formatCurrencyAmount(paise, "INR");
+const plural = (count: number, noun: string) =>
+  `${count} ${noun}${count === 1 ? "" : "s"}`;
 
 async function fetchReport(): Promise<SupportSpendReport> {
   const res = await fetch("/api/admin/support-spend");
@@ -130,7 +132,7 @@ function OperatorCard({
           <Figure
             label="Refunds, last 30 days"
             value={inr(refunds.rolling30dPaise)}
-            hint={`${refunds.count30d} refund${refunds.count30d === 1 ? "" : "s"}`}
+            hint={plural(refunds.count30d, "refund")}
           />
         </div>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
@@ -147,7 +149,7 @@ function OperatorCard({
             value={inr(holds.heldPaise30d)}
             hint={
               holds.appliedWithoutAmount30d > 0
-                ? `${holds.appliedWithoutAmount30d} older hold${holds.appliedWithoutAmount30d === 1 ? "" : "s"} recorded without an amount (count only).`
+                ? `${plural(holds.appliedWithoutAmount30d, "older hold")} recorded without an amount (count only).`
                 : undefined
             }
           />

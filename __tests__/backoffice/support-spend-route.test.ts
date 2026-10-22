@@ -96,11 +96,11 @@ describe("GET /api/admin/support-spend", () => {
     const body = (await (await getSpend()).json()) as {
       operators: { userId: string }[];
     };
-    expect(body.operators.map((o) => o.userId).sort()).toEqual([
-      "admin-1",
-      "staff-1",
-      "staff-2",
-    ]);
+    const ids = body.operators.map((o) => o.userId);
+    expect(ids).toHaveLength(3);
+    expect(ids).toEqual(
+      expect.arrayContaining(["admin-1", "staff-1", "staff-2"]),
+    );
   });
 
   it("refuses a non-operator", async () => {
