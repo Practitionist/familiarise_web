@@ -5,6 +5,7 @@
 /** The Audit tab's filters, as they arrive from a drill-through URL or the API query. */
 
 import {
+  isDateOnlySince,
   OpsLogFiltersSchema,
   opsLogFiltersFromSearchParams,
 } from "../../schemas/ops-log";
@@ -42,6 +43,13 @@ describe("OpsLogFiltersSchema", () => {
       OpsLogFiltersSchema.safeParse({ since: "2026-10-22T07:30:00+05:30" })
         .success,
     ).toBe(true);
+  });
+});
+
+describe("isDateOnlySince", () => {
+  it("tells a whole-day since from an instant", () => {
+    expect(isDateOnlySince("2026-10-01")).toBe(true);
+    expect(isDateOnlySince("2026-10-01T00:00:00.000Z")).toBe(false);
   });
 });
 

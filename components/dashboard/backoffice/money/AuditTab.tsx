@@ -26,7 +26,7 @@ const FILTERS: {
   { key: "targetKind", label: "Target kind" },
   { key: "targetId", label: "Target id" },
   { key: "action", label: "Action" },
-  { key: "since", label: "Since (YYYY-MM-DD or ISO time)" },
+  { key: "since", label: "Since (YYYY-MM-DD, IST day start, or ISO time)" },
 ];
 
 // Entries sorted by key, so the comparison ignores the order filters were set in.
@@ -141,7 +141,8 @@ export function AuditTab({
           </div>
           {sinceInvalid ? (
             <p id="audit-since-hint" className="text-sm text-destructive">
-              Enter Since as a date (YYYY-MM-DD) or an ISO time.
+              Enter Since as a date (YYYY-MM-DD, from the start of that IST day)
+              or an ISO time.
             </p>
           ) : null}
           <ResponsiveTable<OpsLogRow>

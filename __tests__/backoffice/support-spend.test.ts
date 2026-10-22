@@ -181,6 +181,105 @@ describe("committedSupportPaiseByPayment", () => {
 });
 
 describe("readSupportSpend", () => {
+  describe("money edge cases", () => {
+    const cancel = (after: Record<string, unknown>, at = ago(2)) =>
+      row(
+        "staff-1",
+        "appointment.cancel.platform",
+        { status: "SUCCEEDED", ...after },
+        at,
+      );
+
+    it("does not count a refund that moved nothing", async () => {
+      mockOpsRows.push(
+        refund("staff-1", "pay-1", 0, ago(1)),
+        refund("staff-1", "pay-2", 10_000, ago(2)),
+      );
+      const staff = await operator("staff-1");
+      expect(staff.refunds.count30d).toBe(1);
+      expect(staff.refunds.rolling30dPaise).toBe(10_000);
+    });
+
+    it("gives a platform cancel that moved nothing no payment usage", async () => {
+      mockOpsRows.push(
+        cancel({
+          paymentIds: ["pay-1"],
+          movedPaise: 0,
+          charges: [{ paymentId: "pay-1", newPaise: 0 }],
+        }),
+        cancel({ paymentIds: ["pay-2"], movedPaise: 0 }),
+      );
+      const staff = await operator("staff-1");
+      expect(staff.payments).toEqual([]);
+      expect(staff.refunds.count30d).toBe(0);
+      expect(staff.refunds.platformCancel30dPaise).toBe(0);
+    });
+
+    it("skips a platform-cancel charge of 0 on a group cancel", async () => {
+      mockOpsRows.push(
+        cancel({
+          paymentIds: ["pay-1", "pay-2"],
+          movedPaise: 250_000,
+          charges: [
+            { paymentId: "pay-1", newPaise: 250_000 },
+            { paymentId: "pay-2", newPaise: 0 },
+          ],
+        }),
+      );
+      const staff = await operator("staff-1");
+      expect(staff.payments.map((p) => p.paymentId)).toEqual(["pay-1"]);
+      expect(staff.payments[0].platformCancelPaise).toBe(250_000);
+    });
+
+    it("reads a negative movedPaise as zero, as the door does", async () => {
+      mockOpsRows.push(
+        refund("staff-1", "pay-1", -50_000, ago(1)),
+        cancel({ paymentIds: ["pay-2"], movedPaise: -20_000 }),
+      );
+      const staff = await operator("staff-1");
+      expect(staff.refunds).toMatchObject({
+        istDayPaise: 0,
+        rolling24hPaise: 0,
+        rolling30dPaise: 0,
+        count30d: 0,
+        platformCancel30dPaise: 0,
+      });
+      expect(staff.refunds.rolling24hPaise).toBe(
+        await rollingRefundPaise(prisma, "staff-1", NOW),
+      );
+      expect(staff.remainingDailyCapPaise).toBe(STAFF_REFUND_ROLLING_PAISE);
+      expect(
+        staff.payments.find((p) => p.paymentId === "pay-2"),
+      ).toBeUndefined();
+    });
+
+    it("sums several partial refunds on one payment", async () => {
+      mockRecommendations.push(
+        { paymentId: "pay-1", amountPaise: 100_000, approved: true },
+        { paymentId: "pay-1", amountPaise: 120_000, approved: true },
+        { paymentId: "pay-1", amountPaise: 130_000, approved: true },
+      );
+      mockOpsRows.push(
+        refund("staff-1", "pay-1", 100_000, ago(1)),
+        refund("staff-1", "pay-1", 120_000, ago(30)),
+        refund("staff-1", "pay-1", 130_000, ago(24 * 10)),
+      );
+      const staff = await operator("staff-1");
+      expect(staff.refunds.rolling24hPaise).toBe(100_000);
+      expect(staff.refunds.rolling30dPaise).toBe(350_000);
+      expect(staff.refunds.count30d).toBe(3);
+      expect(staff.payments).toEqual([
+        {
+          paymentId: "pay-1",
+          supportCommittedPaise: 350_000,
+          platformCancelPaise: 0,
+          remainingPerPaymentPaise: STAFF_REFUND_PER_PAYMENT_PAISE - 350_000,
+          holdsApplied: 0,
+        },
+      ]);
+    });
+  });
+
   it("reports the IST calendar day and the enforced rolling 24 hours separately", async () => {
     mockOpsRows.push(
       // 15:30 IST yesterday: inside the last 24 hours, outside today.

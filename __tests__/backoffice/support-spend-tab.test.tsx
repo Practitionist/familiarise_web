@@ -211,12 +211,16 @@ describe("AuditTab URL filters", () => {
       json: async () => emptyPage(),
     });
     renderWithQuery(<AuditTab initial={emptyPage()} />);
-    const since = screen.getByLabelText("Since (YYYY-MM-DD or ISO time)");
+    const since = screen.getByLabelText(
+      "Since (YYYY-MM-DD, IST day start, or ISO time)",
+    );
     fireEvent.change(since, { target: { value: "2026-10" } });
     expect(since).toHaveAttribute("aria-invalid", "true");
     expect(since).toHaveAttribute("aria-describedby", "audit-since-hint");
     expect(
-      screen.getByText("Enter Since as a date (YYYY-MM-DD) or an ISO time."),
+      screen.getByText(
+        /Enter Since as a date \(YYYY-MM-DD, from the start of that IST day\)/,
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getAllByText("Finish the Since date to see matching actions.")[0],
@@ -226,7 +230,9 @@ describe("AuditTab URL filters", () => {
     fireEvent.change(since, { target: { value: "2026-10-01" } });
     expect(since).toHaveAttribute("aria-invalid", "false");
     expect(
-      screen.queryByText("Enter Since as a date (YYYY-MM-DD) or an ISO time."),
+      screen.queryByText(
+        /Enter Since as a date \(YYYY-MM-DD, from the start of that IST day\)/,
+      ),
     ).not.toBeInTheDocument();
     await screen.findAllByText("No actions match these filters.");
     expect(global.fetch).toHaveBeenCalledWith(
@@ -252,9 +258,9 @@ describe("AuditTab URL filters", () => {
       />,
     );
     expect(screen.getByLabelText("Action")).toHaveValue("support.hold.apply");
-    expect(screen.getByLabelText("Since (YYYY-MM-DD or ISO time)")).toHaveValue(
-      SINCE,
-    );
+    expect(
+      screen.getByLabelText("Since (YYYY-MM-DD, IST day start, or ISO time)"),
+    ).toHaveValue(SINCE);
     expect(screen.getByLabelText("Actor user id")).toHaveValue("staff-1");
     expect(global.fetch).not.toHaveBeenCalled();
     expect(

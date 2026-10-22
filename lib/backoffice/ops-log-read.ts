@@ -1,10 +1,19 @@
 import type { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
-import type { OpsLogFilters } from "@/schemas/ops-log";
+import { istDayStart } from "@/lib/compliance/ist-period";
+import { isDateOnlySince, type OpsLogFilters } from "@/schemas/ops-log";
 import type { OpsLogPage } from "./ops-log-types";
 
 export const OPS_LOG_PAGE_SIZE = 50;
+
+/** A date-only `since` starts at IST midnight, like every other money-area day. */
+function sinceInstant(since: string): Date {
+  // UTC midnight of the date falls at 05:30 IST on that same date.
+  return isDateOnlySince(since)
+    ? istDayStart(new Date(since))
+    : new Date(since);
+}
 
 /**
  * #1771 K-9 — one page of OpsActionLog, newest first. A STAFF viewer reads
@@ -24,7 +33,7 @@ export async function readOpsLog(args: {
     ...(f.targetKind ? { targetKind: f.targetKind } : {}),
     ...(f.targetId ? { targetId: f.targetId } : {}),
     ...(f.action ? { action: f.action } : {}),
-    ...(f.since ? { createdAt: { gte: new Date(f.since) } } : {}),
+    ...(f.since ? { createdAt: { gte: sinceInstant(f.since) } } : {}),
   };
   const page = Math.max(1, Math.floor(args.page) || 1);
   const [rows, total] = await Promise.all([

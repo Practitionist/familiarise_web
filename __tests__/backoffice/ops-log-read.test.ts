@@ -50,7 +50,7 @@ it("lets an admin filter by any actor, or read every row", async () => {
   expect(whereOf()).toEqual({});
 });
 
-it("filters by action and by a since instant", async () => {
+it("filters by action, and starts a date-only since at IST midnight", async () => {
   await readOpsLog({
     viewer: { userId: "admin_1", role: "ADMIN" },
     filters: { action: "support.refund.review", since: "2026-10-01" },
@@ -58,6 +58,25 @@ it("filters by action and by a since instant", async () => {
   });
   expect(whereOf()).toEqual({
     action: "support.refund.review",
-    createdAt: { gte: new Date("2026-10-01T00:00:00.000Z") },
+    createdAt: { gte: new Date("2026-09-30T18:30:00.000Z") },
+  });
+});
+
+it("reads a since instant exactly, as the spend drill-through sends it", async () => {
+  await readOpsLog({
+    viewer: { userId: "admin_1", role: "ADMIN" },
+    filters: { since: "2026-09-22T02:00:00.000Z" },
+    page: 1,
+  });
+  expect(whereOf()).toEqual({
+    createdAt: { gte: new Date("2026-09-22T02:00:00.000Z") },
+  });
+  await readOpsLog({
+    viewer: { userId: "admin_1", role: "ADMIN" },
+    filters: { since: "2026-10-01T07:30:00+05:30" },
+    page: 1,
+  });
+  expect(whereOf()).toEqual({
+    createdAt: { gte: new Date("2026-10-01T02:00:00.000Z") },
   });
 });

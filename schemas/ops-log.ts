@@ -11,7 +11,12 @@ const text = z.preprocess(
 const isoDate = z.string().date();
 const isoInstant = z.string().datetime({ offset: true });
 
-/** An ISO instant, or a `YYYY-MM-DD` date read as UTC midnight; partial dates fail. */
+/** A `since` that names a whole day; the read starts it at IST midnight. */
+export function isDateOnlySince(value: string): boolean {
+  return isoDate.safeParse(value).success;
+}
+
+/** An ISO instant, or a `YYYY-MM-DD` date (the start of that IST day); partial dates fail. */
 const instant = z.preprocess(
   blankToUndefined,
   z
