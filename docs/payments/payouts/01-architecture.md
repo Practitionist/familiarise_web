@@ -118,7 +118,7 @@ graph LR
 | `getConsultantEarnings`     | Fetch earnings for dashboard                                                                                                                                                                                                  | API request                      |
 | `refundEarnings`            | Proportional or full reversal of earnings. Accepts `refundAmount`/`paymentAmount` for partial refunds. Tracks cumulative reversals via `refundedShareAmount`. Supports `forceRefund: true` for PAID earnings (lost disputes). | Webhook: refund, dispute verdict |
 
-Holds are written by `placeEarningsHolds()` and `releaseEarningsHolds()` in `lib/payments/payouts/earnings-holds.ts`, the only writer of the `HELD` status. A hold has a reason (`DISPUTE`, `MODERATION`, `OPERATOR` or `OVERAGE`), and releasing one reason never frees another. Dispute verdicts are settled by `settleDisputeVerdict()` in `app/api/webhooks/utils.ts`; see [earnings lifecycle](./02-earnings-lifecycle.md).
+Holds are written by `placeEarningsHolds()` and `releaseEarningsHolds()` in `lib/payments/payouts/earnings-holds.ts`, the only writer of the `HELD` status. A hold has a reason (`DISPUTE`, `MODERATION`, `OPERATOR`, `OVERAGE` or `SUPPORT_CASE`), and releasing one reason never frees another. Dispute verdicts are settled by `settleDisputeVerdict()` in `app/api/webhooks/utils.ts`; see [earnings lifecycle](./02-earnings-lifecycle.md).
 
 ---
 
