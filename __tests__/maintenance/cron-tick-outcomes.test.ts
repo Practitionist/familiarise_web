@@ -39,6 +39,7 @@ describe("ticker execution outcomes", () => {
   const originalEnv = process.env;
   beforeEach(() => {
     process.env = {
+      NODE_ENV: "test",
       CRON_SECRET: "test",
       CRON_TICK_BASE_URL: "https://app.test",
       SENTRY_DSN: "https://key@sentry.test/1",
