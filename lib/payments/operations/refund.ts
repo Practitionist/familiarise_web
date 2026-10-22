@@ -89,6 +89,7 @@ import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 // Late-bound cycle: reversal-engine imports applyRefundCascade from here.
 import { postPayoutClawback } from "./reversal-engine";
+import { retireSupersededPlaceholderTx } from "./refund-placeholder";
 import {
   accumulatePaidConsultantClawback,
   applyPaidConsultantClawbacks,
@@ -744,35 +745,9 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       if (winner.id === reserved.id) {
         boundRefundRowId = reserved.id;
       } else {
-        await prisma.$transaction(async (tx) => {
-          const winnerFull = await tx.refund.findUniqueOrThrow({
-            where: { id: winner.id },
-            select: { metadata: true },
-          });
-          await tx.supportFinancialRecommendation.updateMany({
-            where: { refundId: reserved.id },
-            data: { refundId: winner.id },
-          });
-          await tx.refund.delete({ where: { id: reserved.id } });
-          await tx.refund.update({
-            where: { id: winner.id },
-            data: {
-              ...(reserved.dedupeKey ? { dedupeKey: reserved.dedupeKey } : {}),
-              metadata: {
-                ...(winnerFull.metadata &&
-                typeof winnerFull.metadata === "object" &&
-                !Array.isArray(winnerFull.metadata)
-                  ? winnerFull.metadata
-                  : {}),
-                ...(reserved.metadata &&
-                typeof reserved.metadata === "object" &&
-                !Array.isArray(reserved.metadata)
-                  ? reserved.metadata
-                  : {}),
-              },
-            },
-          });
-        });
+        await prisma.$transaction((tx) =>
+          retireSupersededPlaceholderTx(tx, reserved, winner.id),
+        );
         boundRefundRowId = winner.id;
         reportSentryMessage(
           `Refund bind race adopted webhook row ${winner.id} for payment ${input.paymentId}`,
