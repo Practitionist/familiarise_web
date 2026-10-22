@@ -17,7 +17,7 @@ import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 
 export const STAFF_REFUND_PER_PAYMENT_PAISE = 500_000;
 export const STAFF_REFUND_ROLLING_PAISE = 5_000_000;
-const ROLLING_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const STAFF_REFUND_ROLLING_WINDOW_MS = 24 * 60 * 60 * 1000;
 const STAFF_REFUND_LOCK_TTL_MS = 120_000;
 /** An approval this recent may still be sending its refund outside any transaction. */
 export const SUPPORT_REFUND_SEND_GRACE_MS = 15 * 60 * 1000;
@@ -30,7 +30,7 @@ export const BOUNDED_REFUND_ACTIONS = [
 
 const MovedPaise = z.object({ movedPaise: z.number().int().nonnegative() });
 
-function movedPaiseOf(after: Prisma.JsonValue | null): number {
+export function movedPaiseOf(after: Prisma.JsonValue | null): number {
   const parsed = MovedPaise.safeParse(after);
   return parsed.success ? parsed.data.movedPaise : 0;
 }
@@ -45,11 +45,36 @@ export async function rollingRefundPaise(
     where: {
       actorUserId,
       action: { in: [...BOUNDED_REFUND_ACTIONS] },
-      createdAt: { gte: new Date(now.getTime() - ROLLING_WINDOW_MS) },
+      createdAt: {
+        gte: new Date(now.getTime() - STAFF_REFUND_ROLLING_WINDOW_MS),
+      },
     },
     select: { after: true },
   });
   return rows.reduce((sum, row) => sum + movedPaiseOf(row.after), 0);
+}
+
+/**
+ * Approved, unvoided support remedies per payment, summed across every
+ * operator: the `priorPaise` the per-payment staff limit counts.
+ */
+export async function committedSupportPaiseByPayment(
+  db: Pick<Tx, "supportFinancialRecommendation">,
+  paymentIds: string[],
+): Promise<Map<string, number>> {
+  const committed = new Map<string, number>();
+  if (paymentIds.length === 0) return committed;
+  // A void clears `approved`, so `approved: true` is exactly the live remedies.
+  const rows = await db.supportFinancialRecommendation.findMany({
+    where: { paymentId: { in: paymentIds }, approved: true },
+    select: { paymentId: true, amountPaise: true },
+  });
+  for (const row of rows)
+    committed.set(
+      row.paymentId,
+      (committed.get(row.paymentId) ?? 0) + Number(row.amountPaise),
+    );
+  return committed;
 }
 
 export interface RefundCharge {

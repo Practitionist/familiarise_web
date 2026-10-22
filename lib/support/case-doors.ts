@@ -24,6 +24,38 @@ const HoldOutcome = z.object({
   cancelledPayoutIds: z.array(z.string()).optional(),
 });
 
+/** Payee money net of refunds on the earnings this hold froze or released; 0 for a replay. */
+async function heldPaiseOf(
+  tx: Tx,
+  hold: { consultantEarningIds: string[]; orgEarningIds: string[] },
+): Promise<number> {
+  const consultant = hold.consultantEarningIds.length
+    ? await tx.consultantEarnings.findMany({
+        where: { id: { in: hold.consultantEarningIds } },
+        select: { consultantSharePaise: true, refundedShareAmount: true },
+      })
+    : [];
+  const org = hold.orgEarningIds.length
+    ? await tx.organizationEarnings.findMany({
+        where: { id: { in: hold.orgEarningIds } },
+        select: { orgSharePaise: true, refundedAmountPaise: true },
+      })
+    : [];
+  const net = (total: number | bigint, refunded: number | bigint) =>
+    Math.max(0, Number(total) - Number(refunded));
+  return (
+    consultant.reduce(
+      (sum, row) =>
+        sum + net(row.consultantSharePaise, row.refundedShareAmount),
+      0,
+    ) +
+    org.reduce(
+      (sum, row) => sum + net(row.orgSharePaise, row.refundedAmountPaise),
+      0,
+    )
+  );
+}
+
 async function runCaseAction(
   tx: Tx,
   actor: OpsActor,
@@ -59,7 +91,7 @@ async function runHold(
   return {
     target: { kind: "Payment", id: hold.paymentId },
     correlationId: `support-case:${caseId}`,
-    after: { caseId, ...hold },
+    after: { caseId, ...hold, heldPaise: await heldPaiseOf(tx, hold) },
     response: { data },
   };
 }
