@@ -14,6 +14,7 @@ import { applyRefundCascade } from "@/lib/payments/operations/refund";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { txDouble } from "../fixtures/tx-double";
 import { createEarningsHoldStore } from "../fixtures/earnings-hold-store";
+import { memLedgerJournals } from "../fixtures/mem-ledger-journals";
 
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 jest.mock("../../lib/api/organizations/wallet", () => ({
@@ -111,23 +112,7 @@ function makeWorld(rail: "CARD" | "WALLET") {
         },
       ),
     },
-    ledgerTransaction: {
-      findUnique: jest.fn(
-        async ({ where }: { where: { idempotencyKey: string } }) => {
-          const i = txns.findIndex(
-            (t) => t.idempotencyKey === where.idempotencyKey,
-          );
-          return i < 0 ? null : { id: `ltxn-${i}` };
-        },
-      ),
-      create: jest.fn(async ({ data }: { data: Txn }) => {
-        txns.push(data);
-        return { id: `ltxn-${txns.length - 1}` };
-      }),
-    },
-    ledgerAccount: {
-      upsert: jest.fn(async ({ where }: { where: { id: string } }) => where),
-    },
+    ...memLedgerJournals(txns),
     ledgerEntry: {
       findMany: jest.fn(
         async ({
