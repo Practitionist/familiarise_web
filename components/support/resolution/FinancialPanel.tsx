@@ -183,7 +183,7 @@ function ReviewDialog({
         </AlertDialogHeader>
         {preview !== null && preview.committedPaise > 0 && (
           <p className="text-xs text-muted-foreground">
-            Other approved support refunds on this payment:{" "}
+            Already refunded or committed on this payment:{" "}
             {inr(preview.committedPaise)}.
           </p>
         )}

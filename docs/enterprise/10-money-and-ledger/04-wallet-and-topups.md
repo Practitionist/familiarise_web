@@ -3,7 +3,7 @@ title: Wallet & Top-ups
 band: 10-money-and-ledger
 audience: sde2
 status: partial
-last-reviewed: 2026-06-05
+last-reviewed: 2026-10-23
 ---
 
 # Wallet & Top-ups
@@ -128,7 +128,7 @@ Both legs are positive integer paise and sum equal, so `postLedgerTxn` accepts i
 
 ## 4. `walletDebit` — spending the wallet
 
-When an org-WALLET-funded booking is checked out, `walletDebit(tx, { billingAccountId, amountPaise, reason, … })` runs the **overdraft guard**:
+When an org-WALLET-funded booking is checked out, the commit first checks the **wallet-freeze gate**: `isWalletFrozen()` (`lib/payments/wallet-freeze.ts`) is read inside the checkout transaction in `lib/payments/checkout/commit/org-utilization.ts`, and a frozen wallet throws `WalletFrozenError` (409), so a drifted wallet cannot spend. Then `walletDebit(tx, { billingAccountId, amountPaise, reason, … })` runs the **overdraft guard**:
 
 ```sql
 UPDATE "BillingAccount"
@@ -143,6 +143,8 @@ If `rowsAffected === 0`, the balance was insufficient and it throws `WalletInsuf
 That refusal carries the stable code `WALLET_INSUFFICIENT_FUNDS` and `httpStatus` 402 (#1477), so checkout rethrows it unchanged, `POST /api/checkout` answers 402 with copy telling the buyer to ask their billing admin for a top-up, and Sentry records it as an expected outcome rather than a payment fault. It reports only the requested amount, never the available balance: the guard refuses without reading the row, and re-reading it would add a query inside the checkout transaction that `PG_POOL_MAX=1` would serialise behind everything else.
 
 > **Important:** `walletDebit` only moves the **cache**. It does **not** post a journal leg. The accounting leg `Dr WALLET` is posted later from the settlement layer (`createEarningsFromPayment`), where the full fee/payable/GST split is known — that single balanced `booking:<paymentId>` transaction is also the authoritative wallet-history record. See [Booking → earnings](05-booking-to-earnings.md) and [Payment legs](09-payment-legs.md).
+>
+> **The journal leg is asserted, not assumed.** After `createEarningsFromPayment` returns, `assertWalletDebitJournaled()` (`lib/api/organizations/wallet.ts`, called from `lib/payments/checkout/commit/ledger.ts`) looks for a `Dr WALLET` line in `booking:<paymentId>` and throws `WalletDebitUnjournaledError` (`WALLET_DEBIT_UNJOURNALED`) if there is none. The whole checkout transaction then rolls back, so the cache move never commits without its journal line. This is an application check on the one path that could otherwise drift the cache; it does not replace the nightly `WALLET_BALANCE_DRIFT` audit.
 
 `walletCredit` is the mirror: it bumps the cache for any reason, but **only posts a journal txn when `reason === "TOPUP"`**. Refund credits post their WALLET leg from the refund layer (next section), not here — this keeps each cash event owning exactly one posting.
 
@@ -150,7 +152,12 @@ That refusal carries the stable code `WALLET_INSUFFICIENT_FUNDS` and `httpStatus
 
 ## 5. Top-up refund
 
-**There is no in-app door that refunds a top-up today.** A door to start one is planned, and this section describes only what exists: the webhook that books a refund that was issued at the gateway (for example from the Razorpay dashboard). When Razorpay reports a refund of a confirmed top-up, `handleRefundCreated` (`app/api/webhooks/utils.ts`) finds the `WalletTopUp` by `providerPaymentId` (status `CONFIRMED`) and reverses the original posting:
+Two paths book a top-up refund, and both call `bookTopUpRefund()` (`lib/payments/operations/wallet-refund.ts`) with the same journal key, so whichever arrives second is a no-op.
+
+- **An admin door.** `POST /api/admin/billing-accounts/[billingAccountId]/refund-remaining` (`refundRemainingWalletBalance()` in the same file) returns the wallet balance as gateway refunds against the organisation's `CONFIRMED` top-ups, newest first. Each gateway refund carries the dedupe key `wallet-refund:<billingAccountId>:<topUpId>`, and its journal entry is booked under `topup-refund:<gatewayRefundId>`, the key the webhook uses. It is a step-up, second-admin door (above ₹25,000 it answers `202`), and it refuses a drifted wallet with `409 WALLET_DRIFTED` before any money moves.
+- **A refund issued at the gateway** (for example from the Razorpay dashboard). When Razorpay reports a refund of a confirmed top-up, `handleRefundCreated` (`app/api/webhooks/utils.ts`) finds the `WalletTopUp` by `providerPaymentId` (status `CONFIRMED`) and books it.
+
+Each booking reverses the original posting:
 
 ```
 LedgerTransaction kind=TOPUP_REFUND  idempotencyKey="topup-refund:<gatewayRefundId>"
@@ -172,48 +179,39 @@ Notes:
 
 Every wallet movement is a journal posting:
 
-| Event                             | Journal                                                              | Cache effect                                  |
-| --------------------------------- | -------------------------------------------------------------------- | --------------------------------------------- |
-| Top-up confirmed                  | `Dr GATEWAY_CLEARING / Cr WALLET` (`topup:<orderId>`)                | `walletBalance += amount`                     |
-| Booking debit                     | `Dr WALLET …` inside `booking:<paymentId>`                           | `walletBalance -= amount` (via `walletDebit`) |
-| Top-up refund (gateway-initiated) | `Dr WALLET / Cr GATEWAY_CLEARING` (`topup-refund:<gatewayRefundId>`) | `walletBalance -= min(amount, balance)`       |
+| Event                             | Journal                                                                                                                                | Cache effect                                     |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Top-up confirmed                  | `Dr GATEWAY_CLEARING / Cr WALLET` (`topup:<orderId>`)                                                                                  | `walletBalance += amount`                        |
+| Booking debit                     | `Dr WALLET …` inside `booking:<paymentId>`                                                                                             | `walletBalance -= amount` (via `walletDebit`)    |
+| Top-up refund (gateway-initiated) | `Dr WALLET / Cr GATEWAY_CLEARING` (`topup-refund:<gatewayRefundId>`)                                                                   | `walletBalance -= min(amount, balance)`          |
+| Operator correction               | `WALLET_ADJUSTMENT`, `walletadj:<billingAccountId>:<key>`: credit `Dr PLATFORM_PROMO / Cr WALLET`, debit `Dr WALLET / Cr PLATFORM_FEE` | `walletBalance ± amount` in the same transaction |
 
-The org's true balance is always `-ledgerBalancePaise({ kind: "WALLET", organizationId })` (WALLET is credit-normal, so the amount we owe is the negative of the signed balance). The reconcile cron's `WALLET_BALANCE_DRIFT` check asserts this equals the cache; any drift is an incident, never a thing to patch by hand. See [Ledger integrity](13-ledger-integrity.md).
+The org's true balance is always `-ledgerBalancePaise({ kind: "WALLET", organizationId })` (WALLET is credit-normal, so the amount we owe is the negative of the signed balance). The reconcile cron's `WALLET_BALANCE_DRIFT` check asserts this equals the cache; any drift is an incident. See [Ledger integrity](13-ledger-integrity.md).
+
+The operator correction is `adjustWallet()` (`lib/api/organizations/wallet.ts`), reached through `POST /api/admin/billing-accounts/[billingAccountId]/wallet-adjustment` (step-up, second-admin above ₹25,000). Because it moves the cache and the journal by the same signed amount, it cannot close a drift between them. Use it to give or take real value from an organisation, not to repair the cache. A drift is repaired by posting a balanced correcting journal for whichever side is wrong; see the repair steps in [Ledger integrity](13-ledger-integrity.md).
 
 ---
 
-## 7. Wallet floor + auto-top-up (#777 §C) — NOTIFY-ONLY today
+## 7. Wallet floor and low-balance alert (notify-only)
 
 A WALLET-funded org can set a **minimum balance** so it learns the pool is running low _before_ a booking gets refused for insufficient funds. The fields live on `BillingAccount`:
 
 ```prisma
 model BillingAccount {
-  // ... wallet funding ...
-  walletBalance Int? // paise
-
-  /// #777 §C — wallet minimum-balance + auto-top-up. When walletBalance drops
-  /// below minBalancePaise the auto-top-up cron charges autoTopUpMandateId for
-  /// autoTopUpAmountPaise. All-null = manual top-up only (current behavior).
-  minBalancePaise      Int?
-  autoTopUpEnabled     Boolean   @default(false)
-  autoTopUpAmountPaise Int?
-  autoTopUpMandateId   String? // gateway recurring-payment token
-  autoTopUpLastFiredAt DateTime? // idempotency: rate-limit the cron per account
+  walletBalance        BigInt?    // paise; NULL for INVOICE-funded accounts
+  minBalancePaise      BigInt?    // the floor; null means no alert
+  autoTopUpLastFiredAt DateTime?  // low-balance alert cooldown, CAS-stamped by the cron
 }
 ```
 
-> 🟡 **Designed for auto-charge; shipped as notify-only.** The schema comment describes the _intended_ end state (cron charges the mandate). The current cron (`jobs/billing/wallet-low-balance.ts`) **moves no money and creates no `WalletTopUp`** — Razorpay recurring mandates aren't wired yet, so `autoTopUpEnabled` / `autoTopUpAmountPaise` / `autoTopUpMandateId` are written-but-unread by this wave (`TODO(#777)`). It detects the dip, **notifies finance** (`notifyOrgWalletLow`), and stamps the cooldown. Don't document auto-debit as live.
+> The wallet never auto-charges. The earlier auto-top-up columns (`autoTopUpEnabled`, `autoTopUpAmountPaise`, `autoTopUpMandateId`) were removed from the schema. The cron (`jobs/billing/wallet-low-balance.ts`) moves no money and creates no `WalletTopUp`: it detects the dip, **notifies finance** (`notifyOrgWalletLow`), and stamps the cooldown in `autoTopUpLastFiredAt` (the column keeps its old name).
 
-**The cron** (daily 05:15 IST, `.github/workflows/wallet-low-balance.yml`):
+**The cron** (the `wallet-low-balance` target on the Netlify ticker, `netlify/functions/cron-tick.mts`, inside its daily window that opens at 23:30 UTC, after `dunning`):
 
 1. Select WALLET `BillingAccount`s with a non-null `minBalancePaise` whose `autoTopUpLastFiredAt` is null or older than 24h (the `walletBalance < minBalancePaise` comparison can't be a Prisma column-compare, so it's narrowed here and checked in JS).
 2. Skip any whose live `walletBalance >= minBalancePaise`.
 3. **Claim** the row with a conditional `updateMany WHERE autoTopUpLastFiredAt = <value-read>` → stamp `now`. `autoTopUpLastFiredAt` doubles as the **idempotency gate + 24h notify cooldown**: a second replica or same-day re-run sees `count === 0` and skips, so an org is alerted at most once per day.
 4. Fire `notifyOrgWalletLow` (Novu) with the balance, the floor, and a deep link to the billing top-up surface.
-
-When real mandates land, the charge (a `WalletTopUp` + `Dr GATEWAY_CLEARING / Cr WALLET` posting, exactly like a manual top-up in §3.2) slots into step 3 inside the claim's transaction — the idempotency gate is already there.
-
-> **Regulatory constraint for the future mandate work (RBI e-mandate framework, effective 21 April 2026).** When the auto-charge wave is built it must be designed inside RBI's recurring-payment rules, not bolted on after: a registered e-mandate with explicit customer consent and tokenized card credentials (merchants may not store raw card data), a pre-debit notification at least 24 hours before each charge, and **Additional Factor Authentication for any single recurring debit above ₹15,000** (the higher ₹1,00,000 carve-outs cover insurance, mutual funds, and credit-card bills — not wallet top-ups). The practical consequence: `autoTopUpAmountPaise` should be capped at ₹15,000 per charge to stay AFA-free, and a larger refill should be modelled as multiple mandate-sized charges or a notify-to-pay flow. Notify-only remains the legally trivial posture today because no recurring debit exists at all.
 
 > **Related — overage-as-expansion.** A low wallet is the _funding-side_ nudge; the [program-overage](05-booking-to-earnings.md) preview is the _consumption-side_ one (a member about to breach a program cap). Both steer an org toward topping up / expanding rather than hitting a hard `BLOCK`. They are independent surfaces — overage meters a `ProgramAssignment` cap, the floor watches the wallet pool — but share the "warn before refuse" philosophy.
 
@@ -224,7 +222,7 @@ When real mandates land, the charge (a `WalletTopUp` + `Dr GATEWAY_CLEARING / Cr
 - **A `walletBalance` cache at all (vs always-derive).** The wallet is the _one_ place the money model keeps a balance-shaped column, and only because an overdraft guard must atomically test-and-decrement under concurrency — `UPDATE … WHERE walletBalance >= amount` needs a real column; you can't run that predicate against a derived `SUM`. The cost is a standing reconciliation invariant (`WALLET_BALANCE_DRIFT`); the benefit is the booking hot path stays a single conditional statement instead of a sum-then-check race. See [money model overview §4](01-money-model-overview.md).
 - **`walletDebit` moves only the cache; the journal leg posts at settlement.** A booking's `Dr WALLET` leg is posted later inside the balanced `booking:<paymentId>` transaction, where the full fee/payable/GST split is known — not at debit time. This keeps "one cash event, one posting": the cache decrement reserves the funds atomically, the journal records the accounting once. The cost is that the cache and the journal leg are written at _different moments_ (reconciled nightly); the alternative — posting a half-known journal leg at debit time — would need a correction once the split resolved.
 - **Failed top-ups are deleted, not tombstoned.** `handleOrgPaymentFailure` deletes the `PENDING`/un-captured row so the UI immediately offers "retry" rather than showing a dead `FAILED` attempt. The `FAILED` enum value is kept for paths that _want_ the tombstone. Trade-off: a cleaner retry UX vs losing the failed-attempt history (acceptable — a never-captured top-up moved no money).
-- **Auto-top-up shipped notify-only, mandate fields written-but-unread (#777 §C).** The schema models the _intended_ end state (cron charges a recurring mandate), but Razorpay recurring mandates aren't wired, so the cron only detects the dip and notifies. Writing the fields now (and reading them later) lets the schema freeze before launch without committing to auto-debit on day one. See §7.
+- **Low-balance is an alert, not an auto-charge.** The mandate columns were deleted rather than kept as written-but-unread fields; the cron only detects the dip and notifies. A recurring-debit wallet would have to be designed afresh inside RBI's e-mandate rules.
 
 ## 9. What this design survived
 
