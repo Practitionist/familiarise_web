@@ -13,6 +13,12 @@ describe("job outcomes", () => {
     [{ success: false, failed: 1 }, "failure", 500],
     [{ overallSuccess: false }, "failure", 500],
     [{ report: { ok: false } }, "partial_failure", 207],
+    [{ ok: false, summary: { status: "RUNNING" } }, "success", 200],
+    [
+      { success: true, report: { ok: false, summary: { status: "RUNNING" } } },
+      "success",
+      200,
+    ],
     [{ held: true }, "held", 503],
     [{ stillFailing: 1 }, "partial_failure", 207],
     [{ orgErrors: 1 }, "partial_failure", 207],

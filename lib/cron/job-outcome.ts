@@ -8,6 +8,11 @@ export const jobOutcomeSchema = z.enum([
 ]);
 export type JobOutcome = z.infer<typeof jobOutcomeSchema>;
 
+const auditSchema = z.object({
+  ok: z.unknown(),
+  summary: z.object({ status: z.unknown() }).optional().catch(undefined),
+});
+
 const resultSchema = z.object({
   success: z.unknown(),
   overallSuccess: z.unknown(),
@@ -20,7 +25,8 @@ const resultSchema = z.object({
   errorCount: z.unknown(),
   exhaustedReported: z.unknown(),
   errors: z.unknown(),
-  report: z.object({ ok: z.unknown() }).optional().catch(undefined),
+  report: auditSchema.optional().catch(undefined),
+  summary: z.object({ status: z.unknown() }).optional().catch(undefined),
 });
 
 function positive(value: unknown): boolean {
@@ -43,8 +49,8 @@ export function jobOutcome(result: unknown): JobOutcome {
     (Array.isArray(value.errors)
       ? value.errors.length > 0
       : positive(value.errors)) ||
-    value.ok === false ||
-    value.report?.ok === false
+    (value.ok === false && value.summary?.status !== "RUNNING") ||
+    (value.report?.ok === false && value.report.summary?.status !== "RUNNING")
   ) {
     return "partial_failure";
   }

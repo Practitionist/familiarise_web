@@ -34,7 +34,7 @@ The typed outcome in `lib/cron/job-outcome.ts` maps existing worker counters int
 success, partial failure, failure or hold. Execution history stores the outcome;
 partial failures and failures are FAILED, intentional holds are CANCELLED, and
 successes are COMPLETED. Results also record the existing Sentry deployment environment so shared-database preview runs can be distinguished. HTTP responses carry `X-Job-Outcome`; the ticker uses it
-instead of interpreting every 207 as healthy. Remaining work by itself is not a
+instead of interpreting every 207 as healthy. A resumable audit report with summary status RUNNING is continuation, not failed reconciliation; only the completed report establishes audit correctness. Remaining work by itself is not a
 failure. A lease-held 409 is an attempted run, never fresh successful work.
 
 A per-job lease does not serialize different jobs touching the same payment or
