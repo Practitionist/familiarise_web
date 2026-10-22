@@ -577,12 +577,14 @@ export async function headR2Object(opts: {
 /** Delete an object, treating 404 Not Found as success. */
 export async function deleteR2Object(opts: {
   key: string;
+  signal?: AbortSignal;
 }): Promise<{ success: boolean; notFound?: boolean; error?: string }> {
   const signed = signR2Request({ method: "DELETE", key: opts.key });
 
   const response = await fetch(signed.url, {
     method: "DELETE",
     headers: signed.headers,
+    signal: opts.signal,
   });
 
   if (response.status === 404) {

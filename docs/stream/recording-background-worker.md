@@ -1,0 +1,27 @@
+# Recording transfer background worker
+
+`netlify/functions/recording-transfer.mts` provides an authenticated, unscheduled Netlify background adapter for the existing `transfer-recordings` core. POST `/.netlify/functions/recording-transfer` with the `CRON_SECRET` bearer. The adapter uses `cleanupRoute`, so authentication, maintenance admission and failure handling share the HTTP cleanup boundary. It calls the core in-process rather than waiting on a Next.js HTTP request, and uses the existing job Sentry bootstrap/flush for the standalone function runtime.
+
+Each core invocation examines one retry-eligible READY recording, ordered by source expiry and ID. The query excludes rows in backoff, missing expiry metadata and expired sources. A copy still streams up to 20 GiB with the existing 12-minute abort signal. One stale claim and 100 newly exhausted alerts are the maximum ancillary rows selected per run. R2 cleanup requests have independent 15-second deadlines, and prior-attempt cleanup is awaited before the worker exits.
+
+The Postgres cron lease is fail-closed and lasts 15 minutes. The 15-minute stale-claim threshold exceeds the copy deadline. An atomic claim increments `transferAttempts` and returns the source plus an ownership stamp. Completion and failure updates require the same attempt and `updatedAt`, so a late worker cannot publish over, release, or delete the object belonging to a later attempt. Retention skips active TRANSFERRING rows and can expire a completed copy on a later pass. Removal or erasure that changes the row's status prevents publication; a losing copy removes only its own attempt object.
+
+A successful background invocation receives HTTP 202 before work runs. That proves admission to Netlify's queue only, including requests whose bearer is subsequently rejected. `SystemJobExecution` records the core's eventual result; a failed copy returns `success: false`. Backlog and source-expiry health must be observed separately because a completed one-row slice does not prove all obligations are complete. Netlify retries failed asynchronous executions after one minute and, on a second failure, after a further two minutes. Claims, attempt-specific keys and durable backoff protect these retries.
+
+## Activation and schedule handoff
+
+This change leaves both the ticker and Actions schedules unchanged. The adapter has no `schedule` property. Code readiness does not authorize copying unclassified production rows.
+
+1. Deploy the adapter and verify its deployed function configuration is background mode with the expected environment, database pool limit and R2 credentials. A deploy preview is suitable for packaging checks; do not invoke a shared-database copy there.
+2. Read-only, classify the candidate cohort as real source obligations versus fixtures. For genuine rows, verify the Stream source and expiry using provider metadata. Missing `streamUrlExpiresAt` remains excluded; do not infer expiry from fixture timestamps or bulk-fill it.
+3. Once the source cohort is verified and production recovery is explicitly authorized, invoke one adapter POST. Check the eventual `SystemJobExecution` result and verify the specific row became AVAILABLE with PLATFORM storage, matching R2 bytes and its original retention/erasure behavior. HTTP 202 alone fails this gate.
+4. Prepare one reviewed cutover that makes the active platform ticker invoke this adapter and removes automatic transfer dispatch from `cron-intra-day.yml`. Retain a manual recovery door. Never enable both automatic clocks. The dispatcher must record 202 as accepted rather than completed.
+5. Verify successive bounded invocations drain distinct eligible rows, transient failures preserve backoff, and missing/expired source obligations page an operator. Keep standby fleet gating and an independent absence/backlog monitor.
+
+Netlify documents a 30-second scheduled execution ceiling and a 15-minute background ceiling. One 12-minute copy leaves room for database, cleanup and telemetry; a copy that consistently cannot finish must use a different execution host rather than increasing the short HTTP timeout.
+
+Sources: [Netlify background execution and retries](https://docs.netlify.com/build/functions/background-functions/), [Netlify function limits](https://docs.netlify.com/build/functions/configuration/), `lib/stream/recording-transfer-service.ts`, `lib/cron/cleanup-registry.ts`, `lib/cron/cleanup-route.ts`.
+
+## Deprecated & Superseded Approaches
+
+The core previously admitted multiple concurrent copies over a 25-minute run budget and counted attempts only on handled failure. An interrupted run could therefore reuse an attempt object key. The one-copy envelope and atomic attempt ownership replace those assumptions. The existing Actions clock remains the scheduler until the verified handoff above; no production activation is implied by adding this adapter.

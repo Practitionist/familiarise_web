@@ -327,7 +327,7 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
   "transfer-recordings": async () => {
     const result = await transferRecordings();
     return {
-      success: result.failed === 0,
+      success: result.success,
       totalProcessed: result.processed,
       succeededCount: result.succeeded,
       failedCount: result.failed,
