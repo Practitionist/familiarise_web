@@ -45,6 +45,7 @@ import { goHref } from "@/lib/dashboard/go";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { applyRefundCascade } from "../../lib/payments/operations/refund";
+import { retireSupersededPlaceholderTx } from "../../lib/payments/operations/refund-placeholder";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 
 // Threshold: Only reconcile refunds older than 1 hour
@@ -710,11 +711,11 @@ async function bindGatewayRefundToPlaceholder(
 
   const winner = await prisma.refund.findUnique({
     where: { refundId: gatewayRefund.refundId },
-    select: { id: true, paymentId: true, metadata: true },
+    select: { id: true, paymentId: true },
   });
   const placeholder = await prisma.refund.findUnique({
     where: { id: placeholderRowId },
-    select: { paymentId: true, dedupeKey: true, metadata: true },
+    select: { id: true, paymentId: true, dedupeKey: true, metadata: true },
   });
   if (!winner || !placeholder || winner.paymentId !== placeholder.paymentId) {
     // Collision outside the same payment is an integrity fault, not a race.
@@ -722,19 +723,9 @@ async function bindGatewayRefundToPlaceholder(
       `Refund id collision across payments while reconciling ${placeholderRowId} -> ${gatewayRefund.refundId}`,
     );
   }
-  await prisma.$transaction([
-    prisma.refund.delete({ where: { id: placeholderRowId } }),
-    prisma.refund.update({
-      where: { id: winner.id },
-      data: {
-        ...(placeholder.dedupeKey ? { dedupeKey: placeholder.dedupeKey } : {}),
-        metadata: {
-          ...prismaMetadataObject(winner.metadata),
-          ...prismaMetadataObject(placeholder.metadata),
-        } as Prisma.InputJsonValue,
-      },
-    }),
-  ]);
+  await prisma.$transaction((tx) =>
+    retireSupersededPlaceholderTx(tx, placeholder, winner.id),
+  );
   return "superseded";
 }
 

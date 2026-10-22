@@ -67,9 +67,10 @@ see [Razorpay’s dispute documentation](https://razorpay.com/docs/payments/disp
 ### Ownership and authorization
 
 - Staff investigate, communicate, apply and release support payout holds, and
-  execute bounded case refunds: ₹5,000 per payment across its support remedies
-  and ₹50,000 per staff member over a rolling 24 hours, summed from their
-  `OpsActionLog` rows (`lib/support/money-policy.ts`). Admin executes above
+  execute bounded case refunds: ₹5,000 per payment across its live refunds from
+  every door and its approved support remedies, and ₹50,000 per staff member
+  over a rolling 24 hours, summed from their `OpsActionLog` rows
+  (`lib/support/money-policy.ts`). Admin executes above
   those limits, voids failed approvals, and owns payouts, settlements,
   clawbacks, chargeback responses and restricted enforcement reversals.
 - A platform operator who is not a party to a booking cancels it only through
@@ -166,14 +167,17 @@ may instead void an approval whose refund failed or never started. Approvals
 without a live refund are listed in the Refunds needs-human queue. Gateway
 acceptance and bank receipt are distinct states in the UI. A `REFUND_APPROVED`
 decision needs an approved recommendation with a pending or sent refund, and
-`REFUND_DECLINED` needs none approved.
+`REFUND_DECLINED` needs none approved. Because a decision resolves the case and
+releases its payout holds, no decision is recorded while a recommendation awaits
+review, and once a decision is in force its recommendations can only be declined;
+the one exception is retrying a failed refund under a `REFUND_APPROVED` decision.
 
 Refund review uses the shared money door (`supportRefunds.executeBounded`): a
 fresh session, a reason of at least five characters, the per-operator money-action
 budget, the in-door maintenance check (refused in DEGRADED or OFFLINE, and when
 the phase cannot be read) and an `OpsActionLog` row whose `after` names the
-payment, amount, refund, rail and refund status. When this remedy plus the
-remedies already approved on its payment exceed ₹25,000 and at least two admins
+payment, amount, refund, rail and refund status. When this remedy plus what is
+already refunded or committed on its payment exceeds ₹25,000 and at least two admins
 are active, it waits in Money → Approvals; a different admin approves the stored
 request before execution. A single active admin can execute it directly. The
 recommendation remains undecided while approval is pending. Execution retains the

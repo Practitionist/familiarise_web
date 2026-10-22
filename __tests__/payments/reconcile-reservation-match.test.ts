@@ -24,20 +24,26 @@ jest.mock("../../lib/prisma", () => {
   const refund = {
     findMany: jest.fn(),
     findUnique: jest.fn(),
+    findUniqueOrThrow: jest.fn().mockResolvedValue({ metadata: {} }),
     update: jest.fn().mockResolvedValue({}),
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-    delete: jest.fn().mockResolvedValue({}),
+    deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+  };
+  const supportFinancialRecommendation = {
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
   };
   return {
     __esModule: true,
     default: {
       refund,
-      $executeRaw: jest.fn().mockResolvedValue(1), // The stranded-refund backstop selects its cohort ids with raw SQL.
+      supportFinancialRecommendation,
+      $executeRaw: jest.fn().mockResolvedValue(1),
+      // The stranded-refund backstop selects its cohort ids with raw SQL.
       $queryRaw: jest.fn(),
       // #1589 N-P0-01 — the SUCCEEDED mark now runs in its own tx with the
       // payer's notice; the tx sees the same refund table.
       $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
-        fn({ refund }),
+        fn({ refund, supportFinancialRecommendation }),
       ),
     },
   };
@@ -91,6 +97,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
   LONG_JOB_TTL_MS: 35 * 60_000,
 }));
 
+import { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { listRefunds, getRefund } from "../../lib/payments";
 import { RefundError } from "../../lib/payments/core/types";
@@ -109,10 +116,12 @@ interface ReconcileRefundMock {
   findUnique: jest.Mock;
   update: jest.Mock;
   updateMany: jest.Mock;
-  delete: jest.Mock;
+  deleteMany: jest.Mock;
 }
 interface ReconcilePrismaMock {
   refund: ReconcileRefundMock;
+  supportFinancialRecommendation: { updateMany: jest.Mock };
+  $transaction: jest.Mock;
   $queryRaw: jest.Mock;
 }
 
@@ -786,5 +795,48 @@ describe("bounded refund polling and durable failure notices", () => {
     expect(claimed).toBe(true);
     expect(stageRefundFailedEmail).toHaveBeenCalledTimes(2);
     refundTable.updateMany.mockResolvedValue({ count: 1 });
+  });
+});
+
+describe("reconcilePendingRefunds — placeholder superseded by a webhook row", () => {
+  test("re-points the support recommendation to the winner before deleting the placeholder", async () => {
+    const db = prisma as unknown as ReconcilePrismaMock;
+    refundTable.findMany
+      .mockResolvedValueOnce([placeholderRow()])
+      .mockResolvedValueOnce([]);
+    mockList.mockResolvedValueOnce([
+      {
+        refundId: "rfnd_won",
+        amount: 10_000,
+        currency: "INR",
+        status: "processed",
+        metadata: { reservationId: "res_1" },
+      },
+    ]);
+    db.$transaction.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError("dup", {
+        code: "P2002",
+        clientVersion: "test",
+      }),
+    );
+    refundTable.findUnique
+      .mockResolvedValueOnce({ id: "row_webhook", paymentId: "pay_1" })
+      .mockResolvedValueOnce({
+        id: "res_1",
+        paymentId: "pay_1",
+        dedupeKey: null,
+        metadata: {},
+      });
+
+    const result = await reconcilePendingRefunds();
+
+    expect(result.errors).toEqual([]);
+    expect(db.supportFinancialRecommendation.updateMany).toHaveBeenCalledWith({
+      where: { refundId: "res_1" },
+      data: { refundId: "row_webhook" },
+    });
+    expect(
+      db.supportFinancialRecommendation.updateMany.mock.invocationCallOrder[0],
+    ).toBeLessThan(refundTable.deleteMany.mock.invocationCallOrder[0]);
   });
 });
