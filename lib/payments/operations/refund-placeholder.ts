@@ -28,7 +28,20 @@ export async function retireSupersededPlaceholderTx(
     where: { refundId: placeholder.id },
     data: { refundId: winnerId },
   });
-  await tx.refund.delete({ where: { id: placeholder.id } });
+  const retired = await tx.refund.deleteMany({
+    where: { id: placeholder.id, status: "PENDING", cascadedAt: null },
+  });
+  if (retired.count === 0) {
+    // A concurrent retirement already removed it; a surviving row changed state and must not be dropped.
+    const still = await tx.refund.findUnique({
+      where: { id: placeholder.id },
+      select: { id: true },
+    });
+    if (!still) return;
+    throw new Error(
+      `Refund placeholder ${placeholder.id} is no longer a pending, uncascaded reservation; refusing to retire it`,
+    );
+  }
   await tx.refund.update({
     where: { id: winnerId },
     data: {

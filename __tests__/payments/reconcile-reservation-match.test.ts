@@ -27,7 +27,7 @@ jest.mock("../../lib/prisma", () => {
     findUniqueOrThrow: jest.fn().mockResolvedValue({ metadata: {} }),
     update: jest.fn().mockResolvedValue({}),
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-    delete: jest.fn().mockResolvedValue({}),
+    deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
   };
   const supportFinancialRecommendation = {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -108,7 +108,7 @@ interface ReconcileRefundMock {
   findUnique: jest.Mock;
   update: jest.Mock;
   updateMany: jest.Mock;
-  delete: jest.Mock;
+  deleteMany: jest.Mock;
 }
 interface ReconcilePrismaMock {
   refund: ReconcileRefundMock;
@@ -710,6 +710,6 @@ describe("reconcilePendingRefunds — placeholder superseded by a webhook row", 
     });
     expect(
       db.supportFinancialRecommendation.updateMany.mock.invocationCallOrder[0],
-    ).toBeLessThan(refundTable.delete.mock.invocationCallOrder[0]);
+    ).toBeLessThan(refundTable.deleteMany.mock.invocationCallOrder[0]);
   });
 });
