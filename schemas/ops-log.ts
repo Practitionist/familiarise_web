@@ -8,14 +8,21 @@ const text = z.preprocess(
   z.string().trim().max(200).optional(),
 );
 
-/** An ISO instant, or a `YYYY-MM-DD` date read as UTC midnight. */
+const isoDate = z.string().date();
+const isoInstant = z.string().datetime({ offset: true });
+
+/** An ISO instant, or a `YYYY-MM-DD` date read as UTC midnight; partial dates fail. */
 const instant = z.preprocess(
   blankToUndefined,
   z
     .string()
     .trim()
     .max(64)
-    .refine((value) => !Number.isNaN(Date.parse(value)), "Not a date")
+    .refine(
+      (value) =>
+        isoDate.safeParse(value).success || isoInstant.safeParse(value).success,
+      "Use YYYY-MM-DD or an ISO time",
+    )
     .optional(),
 );
 

@@ -12,7 +12,7 @@ import {
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import type { OpsLogPage, OpsLogRow } from "@/lib/backoffice/ops-log-types";
-import type { OpsLogFilters } from "@/schemas/ops-log";
+import { OpsLogFiltersSchema, type OpsLogFilters } from "@/schemas/ops-log";
 import { enumLabel } from "@/lib/labels/money-labels";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 
@@ -85,6 +85,9 @@ export function AuditTab({
     Object.entries(filters).filter(([, v]) => v?.trim()),
   ) as OpsLogFilters;
   const pristine = page === 1 && sameFilters(active, initialFilters);
+  // A half-typed date would read as "no rows"; hold the query until it parses.
+  const sinceInvalid = !OpsLogFiltersSchema.shape.since.safeParse(active.since)
+    .success;
   const { data } = useQuery({
     queryKey: ["money-audit", active, page],
     queryFn: () => fetchPage(active, page),
@@ -94,6 +97,7 @@ export function AuditTab({
       : undefined,
     placeholderData: keepPreviousData,
     staleTime: 15_000,
+    enabled: !sinceInvalid,
   });
   const lastPage = data
     ? Math.max(1, Math.ceil(data.total / data.pageSize))
@@ -118,6 +122,12 @@ export function AuditTab({
                 aria-label={f.label}
                 placeholder={f.label}
                 value={filters[f.key] ?? ""}
+                aria-invalid={f.key === "since" && sinceInvalid}
+                aria-describedby={
+                  f.key === "since" && sinceInvalid
+                    ? "audit-since-hint"
+                    : undefined
+                }
                 onChange={(e) => {
                   setPage(1);
                   setFilters((all) => ({ ...all, [f.key]: e.target.value }));
@@ -125,13 +135,20 @@ export function AuditTab({
               />
             ))}
           </div>
+          {sinceInvalid ? (
+            <p id="audit-since-hint" className="text-sm text-destructive">
+              Enter Since as a date (YYYY-MM-DD) or an ISO time.
+            </p>
+          ) : null}
           <ResponsiveTable<OpsLogRow>
             columns={columns}
-            rows={data?.rows ?? []}
+            rows={sinceInvalid ? [] : (data?.rows ?? [])}
             getRowId={(r) => r.id}
             empty={
               <p className="py-8 text-center text-sm text-muted-foreground">
-                No actions match these filters.
+                {sinceInvalid
+                  ? "Finish the Since date to see matching actions."
+                  : "No actions match these filters."}
               </p>
             }
           />

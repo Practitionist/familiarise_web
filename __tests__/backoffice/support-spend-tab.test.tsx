@@ -1,5 +1,5 @@
 import * as React from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const mockCapability = { basePath: "/dashboard/admin", role: "ADMIN" };
@@ -196,6 +196,43 @@ describe("SupportSpendTab", () => {
 });
 
 describe("AuditTab URL filters", () => {
+  const emptyPage = () => ({
+    rows: [],
+    total: 0,
+    page: 1,
+    pageSize: 50,
+    fetchedAt: new Date().toISOString(),
+  });
+
+  it("holds the query and flags Since while the date is partial", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => emptyPage(),
+    });
+    renderWithQuery(<AuditTab initial={emptyPage()} />);
+    const since = screen.getByLabelText("Since (YYYY-MM-DD or ISO time)");
+    fireEvent.change(since, { target: { value: "2026-10" } });
+    expect(since).toHaveAttribute("aria-invalid", "true");
+    expect(since).toHaveAttribute("aria-describedby", "audit-since-hint");
+    expect(
+      screen.getByText("Enter Since as a date (YYYY-MM-DD) or an ISO time."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Finish the Since date to see matching actions.")[0],
+    ).toBeInTheDocument();
+    expect(global.fetch).not.toHaveBeenCalled();
+
+    fireEvent.change(since, { target: { value: "2026-10-01" } });
+    expect(since).toHaveAttribute("aria-invalid", "false");
+    expect(
+      screen.queryByText("Enter Since as a date (YYYY-MM-DD) or an ISO time."),
+    ).not.toBeInTheDocument();
+    await screen.findAllByText("No actions match these filters.");
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("since=2026-10-01"),
+    );
+  });
+
   it("seeds the inputs from the drill-through filters", () => {
     renderWithQuery(
       <AuditTab

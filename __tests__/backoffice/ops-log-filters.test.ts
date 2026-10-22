@@ -29,6 +29,20 @@ describe("OpsLogFiltersSchema", () => {
       false,
     );
   });
+
+  it.each(["2", "2026-", "2026-10", "2026-10-2", "2026-02-30", "2026-10-22T0"])(
+    "refuses the partial or impossible date %s that Date.parse would accept",
+    (since) => {
+      expect(OpsLogFiltersSchema.safeParse({ since }).success).toBe(false);
+    },
+  );
+
+  it("accepts an instant with an offset", () => {
+    expect(
+      OpsLogFiltersSchema.safeParse({ since: "2026-10-22T07:30:00+05:30" })
+        .success,
+    ).toBe(true);
+  });
 });
 
 describe("opsLogFiltersFromSearchParams", () => {
