@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { reportSentryError } from "@/lib/observability/report";
 import type { Db, Tx } from "@/lib/prisma";
 import { SUPPORT_EVIDENCE_BUCKET } from "./attachment-policy";
 
@@ -121,16 +122,26 @@ export async function supportAttachmentPaths(
   return rows.map((row) => row.storagePath);
 }
 
-/** Deletes the objects after commit; a failure line asks for a re-run. */
+/** Deletes the objects after commit. Never throws: a failure line asks for a re-run. */
 export async function removeSupportAttachmentObjects(
   paths: string[],
+  userId: string,
 ): Promise<string[]> {
   if (paths.length === 0) return [];
-  const { removeObjects } = await import("@/lib/supabase-storage-core");
-  const removed = await removeObjects(SUPPORT_EVIDENCE_BUCKET, paths);
-  return removed
-    ? []
-    : [
-        `support_attachments: ${paths.length} file(s) not confirmed deleted — re-run required`,
-      ];
+  let failure: unknown;
+  try {
+    const { removeObjects } = await import("@/lib/supabase-storage-core");
+    if (await removeObjects(SUPPORT_EVIDENCE_BUCKET, paths)) return [];
+    failure = new Error("Support attachment deletion was not confirmed");
+  } catch (error) {
+    failure = error;
+  }
+  reportSentryError(failure, {
+    subsystem: "support",
+    op: "removeSupportAttachmentObjects",
+    extra: { userId, files: paths.length },
+  });
+  return [
+    `support_attachments: ${paths.length} file(s) not confirmed deleted — re-run required`,
+  ];
 }

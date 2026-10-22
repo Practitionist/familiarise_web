@@ -50,6 +50,15 @@ jest.mock("../../lib/novu/client", () => ({
   getNovuClient: () => ({}),
 }));
 
+const removeObjects = jest.fn(
+  async (_bucket: string, _paths: string[]) => true,
+);
+jest.mock("../../lib/supabase-storage-core", () => ({
+  __esModule: true,
+  removeObjects: (bucket: string, paths: string[]) =>
+    removeObjects(bucket, paths),
+}));
+
 import { scrubUser } from "@/lib/compliance/erasure/scrub-user";
 import { supportScrubModels } from "../fixtures/support-erasure-models";
 
@@ -61,15 +70,31 @@ function models(overrides: Record<string, unknown>) {
   });
 }
 
-const tx = models({
-  ...supportScrubModels(),
-  collaborator: { updateManyAndReturn: jest.fn(async () => []) },
-  erasureRequest: { findFirst: jest.fn(async () => null) },
-});
+const PATH = "support-cases/c1/evidence/e1/f1.pdf";
 
-function makeDb(erased = false) {
+/** Support models where the user uploaded the given evidence files. */
+function supportModels(attachments: jest.Mock) {
+  const base = supportScrubModels();
+  return {
+    ...base,
+    supportCaseAttachment: {
+      ...base.supportCaseAttachment,
+      findMany: attachments,
+    },
+  };
+}
+
+function makeDb(
+  erased = false,
+  attachments: jest.Mock = jest.fn(async () => []),
+) {
+  const tx = models({
+    ...supportModels(attachments),
+    collaborator: { updateManyAndReturn: jest.fn(async () => []) },
+    erasureRequest: { findFirst: jest.fn(async () => null) },
+  });
   return models({
-    ...supportScrubModels(),
+    ...supportModels(attachments),
     user: {
       findUnique: jest.fn(async () => ({
         id: "u1",
@@ -86,6 +111,7 @@ function makeDb(erased = false) {
 }
 
 beforeEach(() => {
+  removeObjects.mockReset().mockResolvedValue(true);
   deleteSubscriber.mockClear();
   deleteSubscriber.mockResolvedValue(true);
   novuConfigured = true;
@@ -156,5 +182,45 @@ describe("Novu off-boarding on the admin erasure path", () => {
     deleteSubscriber.mockResolvedValue(false);
     await scrubUser(makeDb(true) as never, "u1");
     expect(deleteSubscriber).toHaveBeenCalledWith("u1");
+  });
+});
+
+describe("support evidence files on the erasure paths", () => {
+  const uploaded = () => jest.fn(async () => [{ storagePath: PATH }]);
+
+  it("completes the first scrub and still off-boards Novu when storage throws", async () => {
+    removeObjects.mockRejectedValue(new Error("storage down"));
+    const result = await scrubUser(makeDb(false, uploaded()) as never, "u1");
+    expect(result.scrubbed).toBe(true);
+    expect(result.vendorFailures).toEqual([
+      expect.stringMatching(/^support_attachments:/),
+    ]);
+    expect(deleteSubscriber).toHaveBeenCalledWith("u1");
+  });
+
+  it("retries the file delete when an erased user is scrubbed again", async () => {
+    const result = await scrubUser(makeDb(true, uploaded()) as never, "u1");
+    expect(result.scrubbed).toBe(false);
+    expect(removeObjects).toHaveBeenCalledWith("support-attachments", [PATH]);
+    expect(result.vendorFailures).toEqual([]);
+  });
+
+  it("reports, not throws, when the retry cannot list the files", async () => {
+    const failing = jest.fn(async () => {
+      throw new Error("db down");
+    });
+    const result = await scrubUser(makeDb(true, failing) as never, "u1");
+    expect(result.vendorFailures).toEqual([
+      expect.stringMatching(/support-attachments: storage cleanup failed/),
+    ]);
+    expect(deleteSubscriber).toHaveBeenCalledWith("u1");
+  });
+
+  it("reports, not throws, when the retry's storage delete throws", async () => {
+    removeObjects.mockRejectedValue(new Error("storage down"));
+    const result = await scrubUser(makeDb(true, uploaded()) as never, "u1");
+    expect(result.vendorFailures).toEqual([
+      expect.stringMatching(/^support_attachments:/),
+    ]);
   });
 });

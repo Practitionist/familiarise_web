@@ -527,16 +527,17 @@ async function retryErasedUserVendorCleanup(
     now,
   );
   const documentFailures = await eraseUserSessionDocuments(prisma, userId, now);
-  const supportFailures = await removeSupportAttachmentObjects(
-    await supportAttachmentPaths(prisma, userId),
-  ).catch((error_: unknown) => {
-    reportSentryError(error_, {
-      subsystem: "compliance",
-      op: "scrubUser.removeSupportAttachmentObjects",
-      extra: { userId },
-    });
-    return ["support-attachments: storage cleanup failed; re-run erasure"];
-  });
+  const supportFailures = await supportAttachmentPaths(prisma, userId).then(
+    (paths) => removeSupportAttachmentObjects(paths, userId),
+    (error_: unknown) => {
+      reportSentryError(error_, {
+        subsystem: "compliance",
+        op: "scrubUser.supportAttachmentPaths",
+        extra: { userId },
+      });
+      return ["support-attachments: storage cleanup failed; re-run erasure"];
+    },
+  );
   vendorFailures.push(
     ...recordingFailures,
     ...documentFailures,
@@ -1081,6 +1082,7 @@ export async function scrubUser(
   const documentFailures = await eraseUserSessionDocuments(prisma, userId, now);
   const supportFailures = await removeSupportAttachmentObjects(
     supportAttachmentPathsToRemove,
+    userId,
   );
 
   const vendorFailures = [
