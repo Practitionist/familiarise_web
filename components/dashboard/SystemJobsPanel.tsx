@@ -51,6 +51,14 @@ export interface SystemJob {
 }
 
 const SYSTEM_JOBS: SystemJob[] = [
+  {
+    id: "maintenance-booking-remediation",
+    name: "Maintenance booking remediation",
+    description:
+      "Process one explicitly confirmed booking cancellation; held until maintenance ends.",
+    schedule: "Every 15 minutes",
+    category: "Appointments",
+  },
   // Payments
   {
     id: "cleanup-abandoned-payments",

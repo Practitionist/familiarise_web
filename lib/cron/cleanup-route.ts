@@ -10,6 +10,7 @@ import { captureThrottled } from "@/lib/observability/throttled-capture";
 import {
   assertNotInMaintenance,
   MaintenanceActiveError,
+  MaintenanceUnavailableError,
 } from "@/lib/maintenance-cron";
 
 /**
@@ -253,6 +254,13 @@ export function cleanupRoute<T extends object>(opts: {
         error instanceof InvalidWindowStartError
       ) {
         return { body: { error: error.message }, status: 400, ok: true };
+      }
+      if (error instanceof MaintenanceUnavailableError) {
+        return {
+          body: { error: error.message, code: "MAINTENANCE_STATE_UNREADABLE" },
+          status: 503,
+          ok: false,
+        };
       }
       if (error instanceof MaintenanceActiveError) {
         return {

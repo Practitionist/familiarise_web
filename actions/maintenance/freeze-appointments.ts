@@ -1,21 +1,12 @@
-"use server";
-
-/**
- * Appointment Freeze — called when entering OFFLINE maintenance phase.
- *
- * Finds upcoming appointments within the maintenance window,
- * cancels them with a system-initiated reason, and notifies affected users.
- */
+/** Explicitly confirmed whole-booking cancellation with durable refund and notice obligations. */
 
 import * as Sentry from "@sentry/nextjs";
 
 import { notifyAppointmentCancelled } from "@/lib/novu/service";
-import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import {
-  driveRefundOwed,
   stampRefundsOwed,
   type RefundOwedMarker,
 } from "@/lib/payments/operations/refund-owed";
@@ -30,7 +21,7 @@ import {
 } from "@/lib/booking/transitions";
 import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { softCancelTrialAppointment } from "@/lib/trials/cancellation";
+import { softCancelTrialAppointmentInTx } from "@/lib/trials/cancellation";
 import prisma, { type Tx } from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 
@@ -76,13 +67,13 @@ function buildCancellationNotification(params: {
 }
 
 /** The slot graph the freeze works from — one query, typed once for the helpers. */
-async function findAffectedSlots(maintenanceStart: Date, windowEnd: Date) {
+async function findAffectedSlots(appointmentIds: string[]) {
   // Find all slots that overlap with the maintenance window
   return prisma.appointmentOccurrence.findMany({
     where: {
-      startsAt: { lte: windowEnd },
-      endsAt: { gte: maintenanceStart },
       isTentative: false,
+      deletedAt: null,
+      appointmentId: { in: appointmentIds },
     },
     include: {
       appointment: {
@@ -493,7 +484,7 @@ async function closeFrozenSlots(tx: Tx, ctx: FreezeContext): Promise<void> {
  * is safe (re-invoking continues where it stopped) and no single slow
  * appointment can blow a shared transaction budget.
  */
-async function freezeOneAppointment(ctx: FreezeContext) {
+async function freezeOneAppointment(ctx: FreezeContext, durationMs: number) {
   return prisma.$transaction(async (tx) => {
     const effects = noEffects();
 
@@ -509,6 +500,39 @@ async function freezeOneAppointment(ctx: FreezeContext) {
     effects.refunds.push(...owed);
 
     await closeFrozenSlots(tx, ctx);
+    for (const trialId of effects.trialsToTombstone)
+      await softCancelTrialAppointmentInTx(tx, trialId);
+    for (const { userIds, data } of effects.notifications) {
+      await notifyAppointmentCancelled(userIds, data, {
+        tx,
+        deferAttempt: true,
+        dedupeKey: `maintenance-cancel:${ctx.appointment.id}`,
+      });
+      await stageAppointmentCancelledEmail(tx, {
+        appointmentId: ctx.appointment.id,
+        userIds,
+        startsAt: data.dateTime ? new Date(data.dateTime) : undefined,
+        cancelledBy: "Familiarise",
+        reason: data.reason,
+        dashboardUrl:
+          data.dashboardUrl ?? notificationHref(null, "appointments"),
+      });
+    }
+    for (const subscriptionId of effects.subscriptionIds) {
+      const subscription = await tx.subscription.findUnique({
+        where: { id: subscriptionId },
+        select: { schedulingPeriodEndsAt: true },
+      });
+      if (subscription?.schedulingPeriodEndsAt)
+        await tx.subscription.update({
+          where: { id: subscriptionId },
+          data: {
+            schedulingPeriodEndsAt: new Date(
+              subscription.schedulingPeriodEndsAt.getTime() + durationMs,
+            ),
+          },
+        });
+    }
     // Leaving a proposal open reserves openForAppointmentId forever and lets
     // the expiry sweep act on a cancelled booking. #1846 — the shared helper
     // declines through the CAS and writes the history row the raw update skipped.
@@ -531,13 +555,10 @@ function earliestSlotOf(slots: AffectedSlot[]): AffectedSlot {
 
 export async function freezeAppointments(
   maintenanceStart: Date,
-  maintenanceEnd: Date | null,
+  maintenanceEnd: Date,
+  appointmentIds: string[],
 ) {
-  // Default to 4 hours if no end time provided
-  const windowEnd =
-    maintenanceEnd ?? new Date(maintenanceStart.getTime() + 4 * 60 * 60 * 1000);
-
-  const affectedSlots = await findAffectedSlots(maintenanceStart, windowEnd);
+  const affectedSlots = await findAffectedSlots(appointmentIds);
 
   if (affectedSlots.length === 0) {
     return {
@@ -545,9 +566,7 @@ export async function freezeAppointments(
       skippedAlreadyTerminal: 0,
       freezeErrors: 0,
       notified: 0,
-      refundsIssued: 0,
-      refundsSkippedAlreadyRefunded: 0,
-      refundErrors: 0,
+      refundsQueued: 0,
       subscriptionsExtended: 0,
     };
   }
@@ -565,57 +584,41 @@ export async function freezeAppointments(
 
   let cancelled = 0;
   let notified = 0;
-  let refundsIssued = 0;
-  let refundsSkippedAlreadyRefunded = 0;
-  let refundErrors = 0;
-  let firstRefundError: unknown;
+  let refundsQueued = 0;
   let subscriptionsExtended = 0;
   // Appointments whose transaction failed outright (not a terminal skip) —
   // the loop continues so one bad appointment can't abort the freeze.
   let freezeErrors = 0;
+  let firstFreezeError: unknown;
 
-  // Track subscription IDs affected by cancellation for scheduling period extension
-  const affectedSubscriptionIds = new Set<string>();
-
-  // Refunds run AFTER the transactions commit — they do gateway I/O, which
-  // never belongs inside a transaction. Only SUCCEEDED payments refund;
-  // refundBookingPayment routes every rail (gateway, org_*, free_) and clamps
-  // to the refundable balance (#1162).
-  const pendingRefunds: RefundOwedMarker[] = [];
-  // Trials tombstone through their own domain helper post-tx (#1074 rule).
-  const trialAppointmentsToTombstone: string[] = [];
   let skippedAlreadyTerminal = 0;
 
-  // Collect notification payloads to send AFTER the transaction commits.
-  // External API calls (Novu) cannot be rolled back, so they must run
-  // outside the transaction to avoid notifying users about cancellations
-  // that were later rolled back.
+  // Notices are already staged transactionally; count their intended recipients.
   const pendingNotifications: NotificationPayload[] = [];
 
   for (const appointmentId of Object.keys(slotsByAppointment)) {
     try {
       const slots = slotsByAppointment[appointmentId];
-      const outcome = await freezeOneAppointment({
-        appointment: slots[0].appointment,
-        slots,
-        earliestSlot: earliestSlotOf(slots),
-      });
+      const outcome = await freezeOneAppointment(
+        {
+          appointment: slots[0].appointment,
+          slots,
+          earliestSlot: earliestSlotOf(slots),
+        },
+        maintenanceEnd.getTime() - maintenanceStart.getTime(),
+      );
 
       if (outcome.skipped) {
         skippedAlreadyTerminal++;
         continue;
       }
       pendingNotifications.push(...outcome.notifications);
-      pendingRefunds.push(...outcome.refunds);
-      trialAppointmentsToTombstone.push(...outcome.trialsToTombstone);
-      for (const id of outcome.subscriptionIds) affectedSubscriptionIds.add(id);
+      refundsQueued += outcome.refunds.length;
+      subscriptionsExtended += outcome.subscriptionIds.length;
       cancelled++;
     } catch (err) {
       freezeErrors++;
-      Sentry.captureException(
-        err instanceof Error ? err : new Error(String(err)),
-        { tags: { subsystem: "maintenance" } },
-      );
+      firstFreezeError ??= err;
       console.error(
         JSON.stringify({
           event: "maintenance_freeze_appointment_failed",
@@ -627,147 +630,18 @@ export async function freezeAppointments(
     }
   }
 
-  // Refunds are driven AFTER the transactions commit; each was stamped owed in
-  // its freeze commit, so a failure here is retried by the retry-auto-refunds sweep.
-  // #1074 — trials tombstone through their domain helper (never deleted).
-  for (const trialAppointmentId of trialAppointmentsToTombstone) {
-    try {
-      await softCancelTrialAppointment(trialAppointmentId);
-    } catch (err) {
-      Sentry.captureException(
-        err instanceof Error ? err : new Error(String(err)),
-        { tags: { subsystem: "maintenance" } },
-      );
-    }
-  }
-
-  for (const owed of pendingRefunds) {
-    // The marker's key makes a re-invoked freeze and the retry sweep one
-    // refund with this drive; a failure stays on the marker for the sweep.
-    const outcome = await driveRefundOwed(owed);
-    if (outcome.kind === "refunded" || outcome.kind === "replayed") {
-      refundsIssued++;
-    } else if (outcome.kind === "settled") {
-      refundsSkippedAlreadyRefunded++;
-    } else {
-      refundErrors++;
-      if (outcome.kind === "failed") firstRefundError ??= outcome.error;
-      console.error(
-        JSON.stringify({
-          event: "maintenance_refund_failed",
-          paymentId: owed.paymentId,
-          outcome: outcome.kind,
-          timestamp: new Date().toISOString(),
-        }),
-      );
-    }
-  }
-  // One Sentry event per freeze, never per payment.
-  if (firstRefundError !== undefined) {
+  if (firstFreezeError !== undefined)
     Sentry.captureException(
-      firstRefundError instanceof Error
-        ? firstRefundError
-        : new Error(String(firstRefundError)),
-      { tags: { subsystem: "maintenance" }, extra: { refundErrors } },
+      firstFreezeError instanceof Error
+        ? firstFreezeError
+        : new Error(String(firstFreezeError)),
+      { tags: { subsystem: "maintenance" }, extra: { freezeErrors } },
     );
-  }
 
-  // Extend scheduling period for affected subscriptions.
-  // Only extend subscriptions that still have future slots (partial cancellation).
-  const subscriptionIdList = Array.from(affectedSubscriptionIds);
-  if (subscriptionIdList.length > 0) {
-    const maintenanceDurationMs =
-      windowEnd.getTime() - maintenanceStart.getTime();
-    for (const subId of subscriptionIdList) {
-      try {
-        const sub = await prisma.subscription.findUnique({
-          where: { id: subId },
-          select: { schedulingPeriodEndsAt: true },
-        });
-        if (sub?.schedulingPeriodEndsAt) {
-          await prisma.subscription.update({
-            where: { id: subId },
-            data: {
-              schedulingPeriodEndsAt: new Date(
-                sub.schedulingPeriodEndsAt.getTime() + maintenanceDurationMs,
-              ),
-            },
-          });
-          subscriptionsExtended++;
-        }
-      } catch (err) {
-        Sentry.captureException(
-          err instanceof Error ? err : new Error(String(err)),
-          { tags: { subsystem: "maintenance" } },
-        );
-        console.error(
-          JSON.stringify({
-            event: "maintenance_subscription_extend_failed",
-            subscriptionId: subId,
-            error: err instanceof Error ? err.message : String(err),
-            timestamp: new Date().toISOString(),
-          }),
-        );
-      }
-    }
-  }
-
-  // Send all notifications AFTER the transaction commits.
-  // Fire-and-forget: notification failures don't affect the freeze result.
-  const notificationFailures: Array<{ appointmentId?: string; err: unknown }> =
-    [];
-  for (const { userIds, data } of pendingNotifications) {
-    try {
-      const [bellResults, emailRows] = await Promise.all([
-        Promise.resolve(
-          notifyAppointmentCancelled(userIds, data, {
-            deferAttempt: true,
-          }),
-        ).catch(() => []),
-        stageAppointmentCancelledEmail(prisma, {
-          appointmentId: data.appointmentId ?? "",
-          userIds,
-          startsAt: data.dateTime ? new Date(data.dateTime) : undefined,
-          cancelledBy: "Familiarise",
-          reason: data.reason,
-          dashboardUrl:
-            data.dashboardUrl ?? notificationHref(null, "appointments"),
-        }).catch(() => []),
-      ]);
-      await flushNotificationsAfter(
-        {
-          bells: (bellResults ?? []).map((r) => r?.staged),
-          emails: [{ rows: emailRows, emailType: "APPOINTMENT_CANCELLED" }],
-        },
-        "freeze-appointments",
-      );
-      notified += userIds.length;
-    } catch (err) {
-      notificationFailures.push({ appointmentId: data.appointmentId, err });
-      console.error(
-        JSON.stringify({
-          event: "maintenance_freeze_notification_failed",
-          appointmentId: data.appointmentId,
-          error: err instanceof Error ? err.message : String(err),
-          timestamp: new Date().toISOString(),
-        }),
-      );
-    }
-  }
-  if (notificationFailures.length > 0) {
-    const first = notificationFailures[0].err;
-    Sentry.captureException(
-      first instanceof Error ? first : new Error(String(first)),
-      {
-        tags: { subsystem: "maintenance" },
-        level: "warning",
-        extra: {
-          failureCount: notificationFailures.length,
-          appointmentIds: notificationFailures.map((f) => f.appointmentId),
-        },
-      },
-    );
-  }
+  notified = pendingNotifications.reduce(
+    (count, notice) => count + notice.userIds.length,
+    0,
+  );
 
   console.log(
     JSON.stringify({
@@ -776,12 +650,10 @@ export async function freezeAppointments(
       skippedAlreadyTerminal,
       freezeErrors,
       notified,
-      refundsIssued,
-      refundsSkippedAlreadyRefunded,
-      refundErrors,
+      refundsQueued,
       subscriptionsExtended,
       windowStart: maintenanceStart.toISOString(),
-      windowEnd: windowEnd.toISOString(),
+      windowEnd: maintenanceEnd.toISOString(),
       timestamp: new Date().toISOString(),
     }),
   );
@@ -791,9 +663,7 @@ export async function freezeAppointments(
     skippedAlreadyTerminal,
     freezeErrors,
     notified,
-    refundsIssued,
-    refundsSkippedAlreadyRefunded,
-    refundErrors,
+    refundsQueued,
     subscriptionsExtended,
   };
 }

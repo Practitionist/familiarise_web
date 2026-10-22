@@ -1,10 +1,7 @@
-import * as Sentry from "@sentry/nextjs";
 import {
   drainActiveSessions,
   unfreezeChannelsAfterMaintenance,
 } from "@/actions/maintenance/drain-sessions";
-import { reportSentryError } from "@/lib/observability/report";
-import { freezeAppointments } from "@/actions/maintenance/freeze-appointments";
 import { pauseDiscountCodes } from "@/actions/maintenance/pause-discount-codes";
 import { runPostRecovery } from "@/actions/maintenance/post-recovery";
 import { MaintenancePhase } from "@prisma/client";
@@ -13,15 +10,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { createIncident, resolveIncident } from "@/lib/betterstack";
-import { notifyMaintenanceScheduled } from "@/lib/novu/service";
-import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
 import { requireAdminAuth } from "@/lib/auth-helpers";
 import { getMaintenanceState, setMaintenanceState } from "@/lib/maintenance";
 import { signMaintenanceBypassCookie } from "@/lib/maintenance-edge";
 import prisma from "@/lib/prisma";
+import {
+  withCronLock,
+  CronLockHeldError,
+  CronLockUnavailableError,
+} from "@/lib/cron/with-cron-lock";
+import { captureThrottled } from "@/lib/observability/throttled-capture";
 
-// Local wrapper preserves the existing call sites that expect `{ userId }`.
-// Maintenance is now strictly ADMIN-only (was previously allowing STAFF too).
 async function requireAdmin() {
   const result = await requireAdminAuth();
   if (result.error) return { error: result.error };
@@ -29,75 +28,46 @@ async function requireAdmin() {
 }
 
 const postSchema = z.object({
-  phase: z.enum(["DEGRADED", "OFFLINE"]).optional(),
-  reason: z.string().optional(),
-  estimatedEnd: z.string().optional(),
+  phase: z.enum(["DEGRADED", "OFFLINE"]),
+  reason: z.string().trim().min(5).max(1000),
+  estimatedEnd: z.string().datetime({ offset: true }).optional(),
   bypassDisputeCheck: z.boolean().optional(),
 });
 
 const patchSchema = z.object({
   phase: z.enum(["DEGRADED", "OFFLINE"]).optional(),
-  reason: z.string().optional(),
-  estimatedEnd: z.string().optional(),
+  reason: z.string().trim().min(5).max(1000),
+  estimatedEnd: z.string().datetime({ offset: true }).optional(),
 });
+const endSchema = z.object({ reason: z.string().trim().min(5).max(1000) });
 
-type OfflineActivationResult = {
-  drain?: Awaited<ReturnType<typeof drainActiveSessions>>;
-  freeze?: Awaited<ReturnType<typeof freezeAppointments>>;
-  discounts?: Awaited<ReturnType<typeof pauseDiscountCodes>>;
-  errors: string[];
-};
-
-function parseOptionalDate(value?: string): Date | null {
-  if (!value) return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    throw new Error("estimatedEnd must be a valid ISO date/time string");
-  }
-  return parsed;
-}
-
-function formatError(prefix: string, error: unknown): string {
-  return `${prefix}: ${error instanceof Error ? error.message : String(error)}`;
-}
-
-async function runOfflineActivation(
-  estimatedEnd: Date | null,
-): Promise<OfflineActivationResult> {
-  const result: OfflineActivationResult = { errors: [] };
-  const start = new Date();
-
-  try {
-    result.drain = await drainActiveSessions();
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "admin" } },
+async function activateOffline() {
+  const window = await prisma.maintenanceWindow.findFirstOrThrow({
+    where: { organizationId: null, phase: "OFFLINE" },
+    orderBy: { createdAt: "desc" },
+  });
+  if (window.offlineActivatedAt) return null;
+  await pauseDiscountCodes();
+  const drain = await drainActiveSessions();
+  if (
+    drain.errors.length ||
+    drain.remainingSessions ||
+    drain.remainingChannelFreezes
+  )
+    return NextResponse.json(
+      {
+        error:
+          "OFFLINE setup is incomplete. Retry activation before starting schema work.",
+        phase: "OFFLINE",
+        setup: drain,
+      },
+      { status: 503 },
     );
-    result.errors.push(formatError("drainActiveSessions failed", error));
-  }
-
-  try {
-    result.freeze = await freezeAppointments(start, estimatedEnd);
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "admin" } },
-    );
-    result.errors.push(formatError("freezeAppointments failed", error));
-  }
-
-  try {
-    result.discounts = await pauseDiscountCodes();
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "admin" } },
-    );
-    result.errors.push(formatError("pauseDiscountCodes failed", error));
-  }
-
-  return result;
+  await prisma.maintenanceWindow.updateMany({
+    where: { id: window.id, phase: "OFFLINE", offlineActivatedAt: null },
+    data: { offlineActivatedAt: new Date() },
+  });
+  return null;
 }
 
 /**
@@ -111,6 +81,7 @@ export async function GET() {
   const [state, recentWindows] = await Promise.all([
     getMaintenanceState(),
     prisma.maintenanceWindow.findMany({
+      where: { organizationId: null },
       orderBy: { createdAt: "desc" },
       take: 20,
     }),
@@ -131,7 +102,7 @@ export async function GET() {
  * POST /api/admin/maintenance
  * Start maintenance mode.
  */
-export async function POST(request: NextRequest) {
+async function startMaintenance(request: NextRequest) {
   const auth = await requireAdmin();
   if ("error" in auth && auth.error) return auth.error;
 
@@ -156,15 +127,7 @@ export async function POST(request: NextRequest) {
     );
   }
   const { phase, reason, estimatedEnd, bypassDisputeCheck } = parsed.data;
-  let estimatedEndDate: Date | null = null;
-  try {
-    estimatedEndDate = parseOptionalDate(estimatedEnd);
-  } catch (error) {
-    return NextResponse.json(
-      { error: formatError("Invalid estimatedEnd", error) },
-      { status: 400 },
-    );
-  }
+  const estimatedEndDate = estimatedEnd ? new Date(estimatedEnd) : null;
 
   // Block if open disputes have response deadlines within the maintenance window (+48h buffer)
   if (estimatedEndDate && !bypassDisputeCheck) {
@@ -190,67 +153,57 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const targetPhase =
-    phase === "DEGRADED" ? MaintenancePhase.DEGRADED : MaintenancePhase.OFFLINE;
-
+  const targetPhase = phase;
+  const currentState = await getMaintenanceState();
+  if (currentState.phase !== "OFF") {
+    if (currentState.phase !== targetPhase)
+      return NextResponse.json(
+        { error: "Use PATCH to change the active phase" },
+        { status: 409 },
+      );
+    await setMaintenanceState(targetPhase, {
+      reason: currentState.reason ?? reason,
+      auditReason: reason,
+      estimatedEnd: currentState.estimatedEnd ?? undefined,
+      bypassSecret: currentState.bypassSecret ?? undefined,
+      betterstackIncidentId: currentState.betterstackIncidentId,
+      startedBy: auth.userId,
+    });
+    if (targetPhase === "OFFLINE") {
+      const incomplete = await activateOffline();
+      if (incomplete) return incomplete;
+    }
+    return NextResponse.json({
+      ...currentState,
+      bypassCookieToken: currentState.bypassSecret
+        ? await signMaintenanceBypassCookie(currentState.bypassSecret)
+        : null,
+    });
+  }
   const bypassSecret = crypto.randomUUID();
   const bypassCookieToken = await signMaintenanceBypassCookie(bypassSecret);
-
-  let betterstackIncidentId: string | null = null;
-  if (targetPhase === MaintenancePhase.OFFLINE) {
-    betterstackIncidentId = await createIncident(
-      "Platform Maintenance",
-      reason || "Scheduled platform maintenance in progress",
-    );
-  }
+  const betterstackIncidentId =
+    targetPhase === "OFFLINE"
+      ? await createIncident("Platform Maintenance", reason)
+      : null;
 
   await setMaintenanceState(targetPhase, {
     reason,
     estimatedEnd: estimatedEndDate?.toISOString(),
     bypassSecret,
     startedBy: auth.userId,
-    betterstackIncidentId: betterstackIncidentId ?? undefined,
+    betterstackIncidentId,
   });
 
-  // The scheduling moment: broadcast the advance notice (Started/Ended
-  // fire from the drain/post-recovery actions). Stage synchronously and
-  // flush in after().
-  await stageNowAttemptAfter("maintenance.scheduled", () =>
-    notifyMaintenanceScheduled(
-      {
-        phase: targetPhase,
-        ...(reason ? { reason } : {}),
-        ...(estimatedEndDate
-          ? { estimatedEnd: estimatedEndDate.toISOString() }
-          : {}),
-      },
-      { deferAttempt: true },
-    ),
-  );
-
-  let offlineActivation: OfflineActivationResult | undefined;
-  if (targetPhase === MaintenancePhase.OFFLINE) {
-    offlineActivation = await runOfflineActivation(estimatedEndDate);
+  if (targetPhase === "OFFLINE") {
+    const incomplete = await activateOffline();
+    if (incomplete) return incomplete;
   }
-
   return NextResponse.json({
     phase: targetPhase,
     bypassSecret,
     bypassCookieToken,
     betterstackIncidentId,
-    message: `Maintenance mode set to ${targetPhase}`,
-    ...(offlineActivation?.drain !== undefined
-      ? { drain: offlineActivation.drain }
-      : {}),
-    ...(offlineActivation?.freeze !== undefined
-      ? { freeze: offlineActivation.freeze }
-      : {}),
-    ...(offlineActivation?.discounts !== undefined
-      ? { discounts: offlineActivation.discounts }
-      : {}),
-    ...(offlineActivation && offlineActivation.errors.length > 0
-      ? { setupErrors: offlineActivation.errors }
-      : {}),
   });
 }
 
@@ -258,7 +211,7 @@ export async function POST(request: NextRequest) {
  * PATCH /api/admin/maintenance
  * Update maintenance phase or config (e.g., transition DEGRADED ↔ OFFLINE, update ETA).
  */
-export async function PATCH(request: NextRequest) {
+async function updateMaintenance(request: NextRequest) {
   const auth = await requireAdmin();
   if ("error" in auth && auth.error) return auth.error;
 
@@ -283,16 +236,7 @@ export async function PATCH(request: NextRequest) {
     );
   }
   const { phase, reason, estimatedEnd } = parsed.data;
-  let estimatedEndDate: Date | null | undefined;
-  try {
-    estimatedEndDate =
-      estimatedEnd === undefined ? undefined : parseOptionalDate(estimatedEnd);
-  } catch (error) {
-    return NextResponse.json(
-      { error: formatError("Invalid estimatedEnd", error) },
-      { status: 400 },
-    );
-  }
+  const estimatedEndDate = estimatedEnd ? new Date(estimatedEnd) : undefined;
 
   const currentState = await getMaintenanceState();
   if (currentState.phase === "OFF") {
@@ -304,8 +248,8 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
-  const currentPhase = currentState.phase as MaintenancePhase;
-  const targetPhase = phase ? (phase as MaintenancePhase) : currentPhase;
+  const currentPhase = currentState.phase;
+  const targetPhase = phase ?? currentPhase;
   const nextReason = reason ?? currentState.reason ?? undefined;
   const nextEstimatedEnd =
     estimatedEndDate === undefined
@@ -323,10 +267,34 @@ export async function PATCH(request: NextRequest) {
     );
   } else if (
     currentPhase === MaintenancePhase.OFFLINE &&
-    targetPhase !== MaintenancePhase.OFFLINE &&
-    betterstackIncidentId
+    targetPhase !== MaintenancePhase.OFFLINE
   ) {
-    await resolveIncident(betterstackIncidentId);
+    if (!currentState.offlineActivatedAt)
+      return NextResponse.json(
+        {
+          error:
+            "Finish Retry Offline Setup before recovery so uncertain vendor operations are acknowledged.",
+        },
+        { status: 503 },
+      );
+    const recovery = await runPostRecovery();
+    const chat = await unfreezeChannelsAfterMaintenance();
+    if (
+      recovery.errors.length ||
+      !recovery.database ||
+      !recovery.redis ||
+      chat.errors.length ||
+      chat.remaining
+    )
+      return NextResponse.json(
+        {
+          error: "Recovery incomplete; OFFLINE remains active",
+          recovery,
+          chat,
+        },
+        { status: 503 },
+      );
+    if (betterstackIncidentId) await resolveIncident(betterstackIncidentId);
     betterstackIncidentId = null;
   }
 
@@ -334,34 +302,18 @@ export async function PATCH(request: NextRequest) {
     reason: nextReason,
     estimatedEnd: nextEstimatedEnd,
     bypassSecret: currentState.bypassSecret ?? undefined,
-    betterstackIncidentId: betterstackIncidentId ?? undefined,
+    betterstackIncidentId,
+    startedBy: auth.userId,
   });
 
-  let offlineActivation: OfflineActivationResult | undefined;
-  if (
-    currentPhase !== MaintenancePhase.OFFLINE &&
-    targetPhase === MaintenancePhase.OFFLINE
-  ) {
-    offlineActivation = await runOfflineActivation(estimatedEndDate ?? null);
+  if (targetPhase === "OFFLINE") {
+    const incomplete = await activateOffline();
+    if (incomplete) return incomplete;
   }
-
   return NextResponse.json({
     phase: targetPhase,
     betterstackIncidentId,
     transition: `${currentPhase} -> ${targetPhase}`,
-    message: `Maintenance updated to ${targetPhase}`,
-    ...(offlineActivation?.drain !== undefined
-      ? { drain: offlineActivation.drain }
-      : {}),
-    ...(offlineActivation?.freeze !== undefined
-      ? { freeze: offlineActivation.freeze }
-      : {}),
-    ...(offlineActivation?.discounts !== undefined
-      ? { discounts: offlineActivation.discounts }
-      : {}),
-    ...(offlineActivation && offlineActivation.errors.length > 0
-      ? { setupErrors: offlineActivation.errors }
-      : {}),
   });
 }
 
@@ -369,92 +321,98 @@ export async function PATCH(request: NextRequest) {
  * DELETE /api/admin/maintenance
  * End maintenance mode (set phase=OFF).
  */
-export async function DELETE() {
+async function endMaintenance(request: NextRequest) {
   const auth = await requireAdmin();
   if ("error" in auth && auth.error) return auth.error;
-
+  const body: unknown = await request.json().catch(() => null);
+  const parsed = endSchema.safeParse(body);
+  if (!parsed.success)
+    return NextResponse.json(
+      { error: "Provide a recovery reason between 5 and 1000 characters." },
+      { status: 400 },
+    );
   const currentState = await getMaintenanceState();
-
-  if (currentState.betterstackIncidentId) {
-    await resolveIncident(currentState.betterstackIncidentId);
+  if (currentState.phase === "OFF") {
+    await setMaintenanceState(MaintenancePhase.OFF, {
+      endedBy: auth.userId,
+      auditReason: parsed.data.reason,
+    });
+    return NextResponse.json({ phase: "OFF", alreadyEnded: true });
   }
-
+  if (currentState.phase === "OFFLINE" && !currentState.offlineActivatedAt)
+    return NextResponse.json(
+      {
+        error:
+          "Finish Retry Offline Setup before recovery so uncertain vendor operations are acknowledged.",
+      },
+      { status: 503 },
+    );
+  const recovery = await runPostRecovery();
+  const chat = await unfreezeChannelsAfterMaintenance();
+  if (
+    !recovery.database ||
+    !recovery.redis ||
+    recovery.errors.length ||
+    chat.errors.length ||
+    chat.remaining
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Recovery incomplete; maintenance remains active. Retry recovery.",
+        recovery,
+        chat,
+      },
+      { status: 503 },
+    );
+  }
+  if (currentState.betterstackIncidentId)
+    await resolveIncident(currentState.betterstackIncidentId);
   await setMaintenanceState(MaintenancePhase.OFF, {
     endedBy: auth.userId,
+    auditReason: parsed.data.reason,
   });
+  return NextResponse.json({ phase: "OFF", recovery, chat });
+}
 
-  // #1146 — the unfreeze must not be able to be skipped by something upstream
-  // of it throwing.
-  //
-  // This used to be a bare `await`, with the chat unfreeze below it. Every step
-  // inside `runPostRecovery` is individually wrapped today, so a rejection is
-  // unlikely in practice — but the call site took no responsibility for it, and
-  // a single future unguarded `await` inside that function would make an OFF
-  // transition skip the unfreeze entirely and brick group chat with no signal.
-  // Stream grants `use-frozen-channel` to no role, so "bricked" means unwritable
-  // by every user AND every admin, with no error and no visible cause.
-  //
-  // The recovery report is best-effort; the unfreeze is not.
-  let recoveryResult: Awaited<ReturnType<typeof runPostRecovery>>;
+async function control<T>(run: () => Promise<T>): Promise<T | NextResponse> {
+  const auth = await requireAdmin();
+  if ("error" in auth && auth.error) return auth.error;
   try {
-    recoveryResult = await runPostRecovery();
+    return await withCronLock(
+      "maintenance-control",
+      { failMode: "closed", ttlMs: 120_000 },
+      run,
+    );
   } catch (error) {
-    reportSentryError(error, {
-      subsystem: "admin",
-      op: "maintenance.post-recovery",
-    });
-    recoveryResult = {
-      database: false,
-      redis: false,
-      notification: false,
-      errors: [formatError("runPostRecovery failed", error)],
-    };
-  }
-
-  // #1134 — the drain freezes group chat channels on the way into OFFLINE, and
-  // Stream grants `use-frozen-channel` to NO role by default, so a channel left
-  // frozen is unwritable by every user AND every admin, with no visible cause.
-  // Shipping the freeze without its inverse would leave a release window in
-  // which ending maintenance silently bricks group chat, which is why both
-  // halves are in this PR rather than four apart.
-  //
-  // Best-effort: a chat failure must not stop maintenance from ending. But it is
-  // REPORTED and returned — a silent unfreeze failure is indistinguishable from
-  // success, and being invisible is the entire problem with a frozen channel.
-  let chat:
-    Awaited<ReturnType<typeof unfreezeChannelsAfterMaintenance>> | undefined;
-  try {
-    chat = await unfreezeChannelsAfterMaintenance();
-    if (chat.errors.length > 0) {
-      reportSentryError(
-        new Error(
-          `Maintenance unfreeze partially failed: ${chat.errors.length} channel(s)`,
-        ),
-        {
-          subsystem: "stream",
-          op: "maintenance.unfreeze",
-          extra: { errors: chat.errors.slice(0, 10) },
-        },
+    if (error instanceof CronLockHeldError)
+      return NextResponse.json(
+        { error: "Another maintenance change is running" },
+        { status: 409 },
       );
-    }
-  } catch (error) {
-    reportSentryError(error, {
-      subsystem: "stream",
-      op: "maintenance.unfreeze",
+    if (error instanceof CronLockUnavailableError)
+      return NextResponse.json(
+        { error: "Maintenance change lock is unavailable" },
+        { status: 503 },
+      );
+    captureThrottled("maintenance:control", error, {
+      subsystem: "maintenance",
     });
-    chat = {
-      unfrozen: 0,
-      errors: [error instanceof Error ? error.message : String(error)],
-      source: "none",
-    };
+    return NextResponse.json(
+      {
+        error:
+          "Maintenance change is incomplete. Check the current state and retry after restoring prerequisites.",
+      },
+      { status: 503 },
+    );
   }
-
-  return NextResponse.json({
-    phase: "OFF",
-    message: "Maintenance mode ended",
-    recovery: recoveryResult,
-    // Surfaced, not swallowed: the caller is an operator ending maintenance and
-    // needs to know if chat did not come back with it.
-    chat,
-  });
+}
+export async function POST(request: NextRequest) {
+  return control(() => startMaintenance(request));
+}
+export async function PATCH(request: NextRequest) {
+  return control(() => updateMaintenance(request));
+}
+export async function DELETE(request: NextRequest) {
+  return control(() => endMaintenance(request));
 }

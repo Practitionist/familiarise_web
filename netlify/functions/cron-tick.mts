@@ -62,6 +62,7 @@ const TARGETS = [
   "settle-cancelled-sessions",
   // Voids a declared platform incident's sessions and applies each learner's remedy.
   "settle-platform-incidents",
+  "maintenance-booking-remediation",
   // #1846 N2 — re-drives the auto-refunds the capture webhook tried once.
   "retry-auto-refunds",
   // #1859 M-P0-14 — SUCCEEDED with no appointment: the stranded-money cohort.
@@ -139,6 +140,7 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "settle-cancelled-sessions": 10,
   // A gateway refund per remedy row, same bite as the session sweep.
   "settle-platform-incidents": 10,
+  "maintenance-booking-remediation": 1,
   // #1846 N2 — a gateway refund per payment, same bite as the session sweep.
   "retry-auto-refunds": 10,
   // #1583 P1 — the five booking sweeps used to be appended `?limit=50` here and
@@ -229,6 +231,7 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "settle-cancelled-sessions": 30,
   // Hourly at :30, the one slot with room under the 8-target cap every hour; the refunds wait 48 h anyway.
   "settle-platform-incidents": 60,
+  "maintenance-booking-remediation": 15,
   "retry-auto-refunds": 15,
   // #1775 — 30 minutes, not 15. Both jobs are latency-relevant but not
   // minute-relevant: auto-complete's own buffer is one hour after a session
@@ -302,6 +305,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "expire-stale-requests": 10,
   "settle-cancelled-sessions": 25,
   "settle-platform-incidents": 30,
+  "maintenance-booking-remediation": 0,
   "retry-auto-refunds": 10,
   // Thirty-minute session-outcome jobs and orphan healer on staggered slots
   "auto-complete-appointments": 15,
@@ -343,7 +347,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
 };
 
 /** The most targets one tick may fire; pinned by the cadence test. */
-export const MAX_TARGETS_PER_TICK = 9;
+export const MAX_TARGETS_PER_TICK = 10;
 
 /**
  * A UTC calendar window. Inside it the target fires on its every/offset slots;

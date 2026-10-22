@@ -40,6 +40,7 @@ export const FINANCIAL_JOB_NAMES = new Set([
   "settle-cancelled-sessions",
   // Voids a declared incident's sessions and refunds them through the front door.
   "settle-platform-incidents",
+  "maintenance-booking-remediation",
   // #1846 N2 — re-drives the capture webhook's owed auto-refunds.
   "retry-auto-refunds",
   // Orphan auto-heal refunds stranded captures through the refund front door.

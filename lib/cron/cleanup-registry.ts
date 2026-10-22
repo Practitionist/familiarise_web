@@ -1224,6 +1224,19 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to settle cancelled class sessions",
       }),
 
+    // @cleanup-twin maintenance-booking-remediation
+    "maintenance-booking-remediation": () =>
+      cleanupRoute({
+        job: "maintenance-booking-remediation",
+        run: async () => {
+          const { runMaintenanceRemediationSlice } =
+            await import("@/lib/maintenance-remediation");
+          return runMaintenanceRemediationSlice();
+        },
+        summarize: (r) => ({ processed: r.processed }),
+        failureMessage: "Failed to process confirmed maintenance cancellations",
+      }),
+
     // @cleanup-twin settle-platform-incidents
     "settle-platform-incidents": () =>
       cleanupRoute({

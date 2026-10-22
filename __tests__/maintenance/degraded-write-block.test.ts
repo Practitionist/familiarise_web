@@ -193,7 +193,7 @@ describe("unreadable maintenance state", () => {
     }
   });
 
-  it("fails closed for booking and money writes only, never for reads", () => {
+  it("fails closed for non-exempt mutations and permits ordinary reads", () => {
     expect(
       isFailClosedWhenUnreadable("/api/bookings/booking_1/abandon", "POST"),
     ).toBe(true);
@@ -205,6 +205,9 @@ describe("unreadable maintenance state", () => {
       ),
     ).toBe(true);
     expect(isFailClosedWhenUnreadable("/api/checkout", "GET")).toBe(false);
-    expect(isFailClosedWhenUnreadable("/api/waitlist", "POST")).toBe(false);
+    expect(isFailClosedWhenUnreadable("/api/waitlist", "POST")).toBe(true);
+    expect(isFailClosedWhenUnreadable("/api/webhooks/razorpay", "POST")).toBe(
+      false,
+    );
   });
 });

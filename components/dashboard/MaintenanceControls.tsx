@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { z } from "zod";
 import {
   CheckCircle2,
   AlertTriangle,
@@ -21,29 +22,38 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { MaintenanceBookingRemediation } from "@/components/dashboard/MaintenanceBookingRemediation";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 
-interface MaintenanceState {
-  phase: string;
-  reason: string | null;
-  estimatedEnd: string | null;
-  bypassSecret: string | null;
-  bypassCookieToken?: string | null;
-}
-
-interface MaintenanceWindow {
-  id: string;
-  phase: string;
-  reason: string | null;
-  startedAt: string | null;
-  endedAt: string | null;
-  estimatedEnd: string | null;
-  startedBy: string | null;
-  endedBy: string | null;
-  createdAt: string;
-}
+const phaseSchema = z.enum(["OFF", "DEGRADED", "OFFLINE"]);
+const stateSchema = z.object({
+  phase: phaseSchema,
+  reason: z.string().nullable(),
+  estimatedEnd: z.string().nullable(),
+  bypassSecret: z.string().nullable(),
+  bypassCookieToken: z.string().nullable().optional(),
+});
+const responseSchema = z.object({
+  state: stateSchema,
+  bypassCookieToken: z.string().nullable().optional(),
+  history: z.array(
+    z.object({
+      id: z.string(),
+      phase: phaseSchema,
+      reason: z.string().nullable(),
+      startedAt: z.string().nullable(),
+      endedAt: z.string().nullable(),
+      estimatedEnd: z.string().nullable(),
+      startedBy: z.string().nullable(),
+      endedBy: z.string().nullable(),
+      createdAt: z.string(),
+    }),
+  ),
+});
+type MaintenanceState = z.infer<typeof stateSchema>;
+type MaintenanceWindow = z.infer<typeof responseSchema>["history"][number];
 
 function toLocalDatetime(iso: string | null): string {
   if (!iso) return "";
@@ -102,8 +112,9 @@ export default function MaintenanceControls() {
   const fetchState = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/maintenance");
-      if (!res.ok) return;
-      const data = await res.json();
+      if (!res.ok) throw new Error("Maintenance state is unavailable");
+      const raw: unknown = await res.json();
+      const data = responseSchema.parse(raw);
       setState(data.state);
       setHistory(data.history);
 
@@ -121,6 +132,8 @@ export default function MaintenanceControls() {
         }
       }
     } catch (error) {
+      setState(null);
+      setHistory([]);
       // API call to /api/admin/maintenance failed — network error or server 5xx
       console.error("Failed to fetch maintenance state:", error);
       toast({
@@ -156,7 +169,7 @@ export default function MaintenanceControls() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           phase,
-          reason: reason || undefined,
+          reason,
           estimatedEnd: estimatedEndIso,
         }),
       });
@@ -174,8 +187,6 @@ export default function MaintenanceControls() {
       setBypassSecret(data?.bypassSecret ?? null);
       setBypassCookieToken(data?.bypassCookieToken ?? null);
       setHasEdits(false);
-      await fetchState();
-      await refreshBanner();
 
       if (Array.isArray(data?.setupErrors) && data.setupErrors.length > 0) {
         toast({
@@ -184,7 +195,14 @@ export default function MaintenanceControls() {
           variant: "destructive",
         });
       }
+    } catch {
+      toast({
+        title: "Maintenance request failed",
+        description: "Refresh the current status, then retry the action.",
+        variant: "destructive",
+      });
     } finally {
+      await Promise.allSettled([fetchState(), refreshBanner()]);
       setActionLoading(false);
     }
   };
@@ -205,7 +223,7 @@ export default function MaintenanceControls() {
       }
 
       const body: Record<string, string | undefined> = {
-        reason: reason || undefined,
+        reason,
         estimatedEnd: estimatedEndIso,
       };
       if (overrides?.phase) body.phase = overrides.phase;
@@ -227,8 +245,6 @@ export default function MaintenanceControls() {
       }
 
       setHasEdits(false);
-      await fetchState();
-      await refreshBanner();
 
       if (Array.isArray(data?.setupErrors) && data.setupErrors.length > 0) {
         toast({
@@ -237,7 +253,14 @@ export default function MaintenanceControls() {
           variant: "destructive",
         });
       }
+    } catch {
+      toast({
+        title: "Maintenance request failed",
+        description: "Refresh the current status, then retry the action.",
+        variant: "destructive",
+      });
     } finally {
+      await Promise.allSettled([fetchState(), refreshBanner()]);
       setActionLoading(false);
     }
   };
@@ -245,7 +268,11 @@ export default function MaintenanceControls() {
   const endMaintenance = async () => {
     setActionLoading(true);
     try {
-      const res = await fetch("/api/admin/maintenance", { method: "DELETE" });
+      const res = await fetch("/api/admin/maintenance", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
 
       const data = await res.json().catch(() => null);
       if (!res.ok) {
@@ -262,9 +289,14 @@ export default function MaintenanceControls() {
       setReason("");
       setEstimatedEnd("");
       setHasEdits(false);
-      await fetchState();
-      await refreshBanner();
+    } catch {
+      toast({
+        title: "Maintenance request failed",
+        description: "Refresh the current status, then retry the action.",
+        variant: "destructive",
+      });
     } finally {
+      await Promise.allSettled([fetchState(), refreshBanner()]);
       setActionLoading(false);
     }
   };
@@ -304,6 +336,24 @@ export default function MaintenanceControls() {
       </div>
     );
   }
+
+  if (!state)
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Maintenance status unavailable</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p role="alert">
+            The current state could not be loaded. Refresh before changing
+            maintenance.
+          </p>
+          <Button variant="outline" onClick={() => void fetchState()}>
+            Refresh status
+          </Button>
+        </CardContent>
+      </Card>
+    );
 
   const isActive = state?.phase && state.phase !== "OFF";
 
@@ -459,7 +509,9 @@ export default function MaintenanceControls() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="eta">Estimated End</Label>
+              <Label htmlFor="eta">
+                Estimated End (does not reopen the site)
+              </Label>
               <Input
                 id="eta"
                 type="datetime-local"
@@ -477,7 +529,7 @@ export default function MaintenanceControls() {
             <div className="flex flex-wrap gap-3 pt-2">
               <Button
                 onClick={() => startMaintenance("DEGRADED")}
-                disabled={actionLoading}
+                disabled={actionLoading || reason.trim().length < 5}
                 className="bg-yellow-500 hover:bg-yellow-600 text-white dark:bg-yellow-600 dark:hover:bg-yellow-700"
               >
                 {actionLoading && (
@@ -488,7 +540,10 @@ export default function MaintenanceControls() {
               {/* #1527 Q10 — taking the whole site down is typed-confirmed. */}
               <ConfirmDialog
                 trigger={
-                  <Button disabled={actionLoading} variant="destructive">
+                  <Button
+                    disabled={actionLoading || reason.trim().length < 5}
+                    variant="destructive"
+                  >
                     {actionLoading && (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     )}
@@ -508,7 +563,7 @@ export default function MaintenanceControls() {
               {hasEdits && (
                 <Button
                   onClick={() => updateMaintenance()}
-                  disabled={actionLoading}
+                  disabled={actionLoading || reason.trim().length < 5}
                 >
                   {actionLoading && (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -519,7 +574,10 @@ export default function MaintenanceControls() {
               {state?.phase === "DEGRADED" && (
                 <ConfirmDialog
                   trigger={
-                    <Button disabled={actionLoading} variant="destructive">
+                    <Button
+                      disabled={actionLoading || reason.trim().length < 5}
+                      variant="destructive"
+                    >
                       Escalate to Offline
                     </Button>
                   }
@@ -533,8 +591,17 @@ export default function MaintenanceControls() {
               )}
               {state?.phase === "OFFLINE" && (
                 <Button
+                  variant="outline"
+                  onClick={() => updateMaintenance({ phase: "OFFLINE" })}
+                  disabled={actionLoading || reason.trim().length < 5}
+                >
+                  Retry Offline Setup
+                </Button>
+              )}
+              {state?.phase === "OFFLINE" && (
+                <Button
                   onClick={() => updateMaintenance({ phase: "DEGRADED" })}
-                  disabled={actionLoading}
+                  disabled={actionLoading || reason.trim().length < 5}
                   className="bg-yellow-500 hover:bg-yellow-600 text-white dark:bg-yellow-600 dark:hover:bg-yellow-700"
                 >
                   Downgrade to Degraded
@@ -542,7 +609,7 @@ export default function MaintenanceControls() {
               )}
               <Button
                 onClick={endMaintenance}
-                disabled={actionLoading}
+                disabled={actionLoading || reason.trim().length < 5}
                 variant="outline"
                 className="text-green-700 border-green-300 hover:bg-green-50 dark:text-green-400 dark:border-green-900 dark:hover:bg-green-950/40"
               >
@@ -552,6 +619,13 @@ export default function MaintenanceControls() {
           )}
         </CardContent>
       </Card>
+
+      {history[0] && (
+        <MaintenanceBookingRemediation
+          key={history[0].id}
+          windowId={history[0].id}
+        />
+      )}
 
       {/* Bypass Secret */}
       {bypassSecret && (
@@ -593,7 +667,9 @@ export default function MaintenanceControls() {
               <p>
                 Cookie:{" "}
                 <code className="bg-muted px-1 rounded break-all">
-                  maintenance_bypass={bypassCookieToken || bypassSecret}
+                  {bypassCookieToken
+                    ? `maintenance_bypass=${bypassCookieToken}`
+                    : "Signed cookie unavailable; refresh status."}
                 </code>
               </p>
             </div>
