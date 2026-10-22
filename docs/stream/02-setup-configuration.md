@@ -289,7 +289,7 @@ Stream provides default channel types. For Familiarise, configure:
 
 **Navigation:** Dashboard → Chat → Roles & Permissions
 
-Only platform `ADMIN` and `STAFF` accounts receive the global `admin` role in Stream (`mapRoleToStream` in `lib/user.ts`). All other accounts (`CONSULTANT`, `CONSULTEE`, `USER`) receive the standard `user` role, while event hosts receive channel-scoped `channel_moderator` grants on their own `team` channels (`assignRoles` in `actions/stream/chat/channel.action.ts` and `lib/stream/event-channel-service.ts`).
+Every account, platform `ADMIN` and `STAFF` included, receives the standard Stream `user` role (`mapRoleToStream` in `lib/user.ts`); no account holds Stream's global `admin`, while event hosts receive channel-scoped `channel_moderator` grants on their own `team` channels (`assignRoles` in `actions/stream/chat/channel.action.ts` and `lib/stream/event-channel-service.ts`).
 
 #### Role Mapping (`lib/user.ts`)
 

@@ -166,11 +166,12 @@ describe("Stream Chat Types", () => {
   });
 
   describe("Role mapping", () => {
-    it("should map application roles to Stream roles", () => {
-      expect(mapRoleToStream("ADMIN")).toBe("admin");
+    it("maps every application role, operators included, to Stream user", () => {
+      expect(mapRoleToStream("ADMIN")).toBe("user");
+      expect(mapRoleToStream("STAFF")).toBe("user");
       expect(mapRoleToStream("CONSULTANT")).toBe("user");
       expect(mapRoleToStream("CONSULTEE")).toBe("user");
-      expect(mapRoleToStream("STAFF")).toBe("admin");
+      expect(mapRoleToStream(null)).toBe("user");
     });
   });
 });
