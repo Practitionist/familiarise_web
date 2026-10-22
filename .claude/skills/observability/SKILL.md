@@ -98,3 +98,19 @@ The high-priority alert workflow 3606037 now filters on `environment: production
 The owner still has to create an `org:read` Sentry token and set `SENTRY_STATS_TOKEN` on Netlify production, with the optional `SENTRY_QUOTA_PERIOD_START_DAY` and `SENTRY_ERROR_QUOTA`. In one to two months the owner plans to upgrade to the Team plan (US$26 a month billed annually, 50,000 errors, pay-as-you-go), and at that point the DSN key rate limit and the 10% preview sample should be revisited. Issue #1933 stays open until then.
 
 For the email map, the pre-launch delivery guard and ops alert routing, see [docs/email/README.md](../../../docs/email/README.md).
+
+## Operational job absence checks
+
+`GET /api/health/jobs` is a bearer-protected read-only capability freshness probe.
+It returns503 for missing/overdue COMPLETED evidence or an unreadable history,
+using `endedAt` and actual core job names. Required capabilities/SLOs live in
+`lib/cron/operational-health.ts`; they are monitoring policy, not another schedule.
+The shared heartbeat, a RUNNING attempt, an accepted background dispatch, or an
+HTTP200 from the public health route cannot replace this evidence.
+
+Configure the external monitor with CRON_SECRET in a protected Authorization
+header, never a URL parameter. Calendar-only/config-gated jobs and business
+backlog/vendor correctness need separate checks. Verify accepted telemetry and
+actual alert delivery after deployment; tests establish probe behavior, not that
+the vendor monitor is configured. Planned maintenance suppresses notifications
+externally without advancing successful-work freshness.

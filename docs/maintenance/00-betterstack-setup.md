@@ -368,3 +368,48 @@ The API key exists but the call failed. Check:
 ### Status page not showing incident
 
 BetterStack incidents automatically appear on the status page linked to your account. No manual configuration needed. If the incident was created but not showing, wait 1-2 minutes for propagation.
+
+## Independent capability freshness probe
+
+Configure an external HTTP monitor for `GET /api/health/jobs` after deploying the
+route. Supply `Authorization: Bearer <CRON_SECRET>` as a protected monitor header;
+never put the secret in the URL. The endpoint is read-only, uncached and returns
+503 when required completion evidence is missing/stale or history cannot be read.
+It returns401 before querying for an unauthorized caller.
+
+The required capabilities and completion SLOs live in
+`lib/cron/operational-health.ts`. These are monitoring budgets, not a second
+scheduler. Fifteen-minute recovery/delivery loops have45minutes to accommodate a
+missed tick and lease recovery; thirty-minute session-outcome loops have90minutes;
+recording transfer has8hours against its six-hour schedule; breach alerts have
+3hours; daily execution-history pruning has36hours. Support SLA scanning has1hour.
+
+The probe queries recent COMPLETED executions by their actual core job names,
+including `reconcile-pending-refunds` and `send-appointment-reminders`, whose HTTP
+slugs differ. It uses `endedAt`, not a new RUNNING attempt or shared heartbeat.
+One healthy email drain cannot conceal stopped recording transfers or compliance
+alerts. FAILED, CANCELLED and RUNNING rows do not refresh this evidence.
+
+This checks a selected always-on operational set. Calendar/configuration-gated
+jobs, backlog drain capacity, vendor effect correctness, and alert delivery need
+separate checks. Existing historical COMPLETED rows are only as trustworthy as the
+worker's outcome recording; deploy truthful outcome recording and exercise real
+failure cases before claiming complete coverage. The probe does not write rows,
+invoke jobs, send a test payment or repair vendor state.
+
+During an approved maintenance window, suppress notifications through the external
+monitor's maintenance mechanism; do not turn a blocked completion into success.
+After deployment verify both a healthy probe and a controlled missing-capability
+failure in an isolated environment. A200 from the existing public `/api/health`
+remains insufficient proof of fleet coverage.
+
+See [Better Stack HTTP monitor configuration](https://betterstack.com/docs/uptime/api/create-a-new-monitor/)
+for protected request headers and expected-status monitoring.
+
+The shared database also contains preview/admin executions. This probe requires
+execution `result.environment` to match the serving deployment's existing
+`NEXT_PUBLIC_SENTRY_ENVIRONMENT` (or `SENTRY_ENVIRONMENT`). Untagged historical rows
+do not establish production freshness. Missing environment configuration returns
+503 `JOB_ENVIRONMENT_UNCONFIGURED`. Deploy environment-tagged execution recording
+before expecting the probe to turn healthy, and verify context configuration;
+environment tags reduce ambiguity but do not replace isolated production data.
