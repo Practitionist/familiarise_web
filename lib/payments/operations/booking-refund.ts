@@ -553,6 +553,7 @@ export async function restoreClassSeatCredits(input: {
             initiatedByUserId: input.initiatedByUserId,
             reason: input.reason,
             share: { num: restoredPaise, den: creditValue },
+            completes: restoredPaise >= stillUsed,
           });
           notice = await stageRefundNotice(tx, payment, restoredPaise);
           return {
@@ -696,6 +697,8 @@ async function reverseFreeCreditSettlement(
     reason: string;
     /** #1771 K-5 — reverse only num/den of the booking (a partial credit return). */
     share?: { num: number; den: number };
+    /** This return exhausts the credit, so it takes the DISCOUNT's exact remainder. */
+    completes?: boolean;
   },
 ): Promise<void> {
   const share = input.share;
@@ -898,7 +901,7 @@ async function reverseFreeCreditSettlement(
       tx,
       input.paymentId,
       part,
-      !share,
+      input.completes ?? !share,
     );
     if (discountBackPaise > 0) {
       credits.push({

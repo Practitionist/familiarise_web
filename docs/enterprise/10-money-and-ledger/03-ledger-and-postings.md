@@ -219,7 +219,7 @@ The wallet cache is reduced only by what it still holds (the `billing_account_wa
 
 ### 4.7 Booking refund — `REFUND` (`refund:<refundId>`)
 
-A booking is refunded (fully or partially). The original booking legs are reversed **proportionally**: the fee/payable/GST credits become debits, and the funding legs become credits. The `DISCOUNT` the payment's booking and carve journals debited comes back as a credit in the same proportion, and the refund that completes the payment takes the exact remainder of the `DISCOUNT`, the shares and the GST, so a full refund (in one go or split) leaves every account of the payment at zero. `PLATFORM_FEE` carries the balancing _plug_ so the set ties out; on a full refund it equals the booking's fee.
+A booking is refunded (fully or partially). The original booking legs are reversed **proportionally**: the fee/payable/GST credits become debits, and the funding legs become credits. The `DISCOUNT` the payment's booking and carve journals debited comes back as a credit in the same proportion, and the refund that completes the payment takes the exact remainder of the `DISCOUNT`, the shares and the GST, so a full refund (in one go or split) leaves every account of the payment at zero, except that a refund past the GST credit-note cutoff reverses no GST, so `GST_PAYABLE` keeps that part and the platform bears it. `PLATFORM_FEE` carries the balancing _plug_ so the set ties out; on a full refund it equals the booking's fee.
 
 ```
 Dr PLATFORM_FEE              platform plug (funding − consultant − org − GST share)

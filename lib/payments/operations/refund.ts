@@ -1784,14 +1784,15 @@ export async function applyRefundCascade(
       // Past the s.34(2) cutoff the GST stays with the government and the platform bears it.
       const taxPaise = payment.taxAmount ?? 0;
       const cutoffSourceDate = linkedOrgInvoice?.issuedAt ?? payment.createdAt;
+      const gstShare = completesFullRefund
+        ? Math.max(0, taxPaise - basis.gstReversedPaise)
+        : proportion(taxPaise);
       const gstRev =
         forgivenInvoice ||
         (taxPaise > 0 &&
           isPastGstCreditNoteCutoff(cutoffSourceDate, cascadeNow))
           ? 0
-          : completesFullRefund
-            ? Math.max(0, taxPaise - basis.gstReversedPaise)
-            : proportion(taxPaise);
+          : gstShare;
       // #775 — a CHARGE_MEMBER side-payment refund: the member's capture
       // credited ORG_PAYABLE (overage:<paymentId> txn), so refunding it must
       // pull that relief credit BACK from the org — not bill the platform.
@@ -1815,10 +1816,7 @@ export async function applyRefundCascade(
       if (platformPlug > 0) {
         if (overageCapture && orgId) {
           // The org was credited net of GST; GST kept past the cutoff is the platform's to bear.
-          const absorbedGst = Math.min(
-            platformPlug,
-            proportion(taxPaise) - gstRev,
-          );
+          const absorbedGst = Math.min(platformPlug, gstShare - gstRev);
           if (platformPlug - absorbedGst > 0) {
             debits.push({
               account: { kind: "ORG_PAYABLE", organizationId: orgId },
