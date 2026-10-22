@@ -3,7 +3,7 @@ title: Operational runbooks
 band: 50-operations
 audience: sde4
 status: partial
-last-reviewed: 2026-10-01
+last-reviewed: 2026-10-23
 ---
 
 # Operational runbooks
@@ -337,12 +337,17 @@ run again.
 **Correcting drift:** the journal is append-only. Never edit or delete a
 `LedgerTransaction`/`LedgerEntry` row to "fix" a finding — post a
 balanced **counter-transaction** (Σ DEBIT == Σ CREDIT) that reverses the
-bad legs, then re-run reconcile. `WALLET_BALANCE_DRIFT` is the lone
-exception: the balance is a derived cache, so re-deriving it from the
-WALLET account is a legitimate repair (the journal is the source of
-truth). Once the cache is re-derived and reconcile is clean, clear the
-cron's protective spend-freeze on that account with a `WALLET_UNFREEZE`
-so bookings can debit the wallet again.
+bad legs, then re-run reconcile. `WALLET_BALANCE_DRIFT` follows the same
+rule: find the root cause, then post a balanced correcting
+`LedgerTransaction` for whichever side (the cache or the journal) is
+wrong, as owner-applied SQL. Overwriting the cache to match the journal
+is not a repair, and the `adjustWallet` door cannot close the gap, since
+it moves both by the same amount. Once reconcile is clean, clear the
+cron's protective spend-freeze with
+`POST /api/admin/billing-accounts/[billingAccountId]/unfreeze`, which
+refuses with `WALLET_STILL_DRIFTED` while the two still disagree. The
+worked example is in
+[ledger integrity](../10-money-and-ledger/13-ledger-integrity.md).
 
 **Never** auto-close a finding. Every row represents real money drift.
 
