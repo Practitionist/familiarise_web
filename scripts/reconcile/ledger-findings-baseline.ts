@@ -56,26 +56,35 @@ const isoDate = z
  * raise at match time, so a renamed or retired kind is rejected rather than
  * silently never matching.
  */
-export const ledgerBaselineEntrySchema = z.object({
-  kind: z.string().min(1),
-  organizationId: z.string().min(1).optional(),
-  billingAccountId: z.string().min(1).optional(),
-  paymentId: z.string().min(1).optional(),
-  payoutId: z.string().min(1).optional(),
-  invoiceId: z.string().min(1).optional(),
-  programAssignmentId: z.string().min(1).optional(),
-  billingSubscriptionId: z.string().min(1).optional(),
-  /** Pins one `details` key for findings that carry no entity id of their own. */
-  detail: z
-    .object({ key: z.string().min(1), value: z.string().min(1) })
-    .optional(),
-  deltaPaise: z.number().int(),
-  /** How many findings of this fingerprint the entry excuses. Defaults to one. */
-  occurrences: z.number().int().positive().optional().default(1),
-  owner: z.string().min(1),
-  reason: z.string().min(1),
-  expires: isoDate,
-});
+export const ledgerBaselineEntrySchema = z
+  .object({
+    kind: z.string().min(1),
+    organizationId: z.string().min(1).optional(),
+    billingAccountId: z.string().min(1).optional(),
+    paymentId: z.string().min(1).optional(),
+    payoutId: z.string().min(1).optional(),
+    invoiceId: z.string().min(1).optional(),
+    programAssignmentId: z.string().min(1).optional(),
+    billingSubscriptionId: z.string().min(1).optional(),
+    /** Pins one `details` key for findings that carry no entity id of their own. */
+    detail: z
+      .object({ key: z.string().min(1), value: z.string().min(1) })
+      .optional(),
+    deltaPaise: z.number().int(),
+    /** How many findings of this fingerprint the entry excuses. Defaults to one. */
+    occurrences: z.number().int().positive().optional().default(1),
+    owner: z.string().min(1),
+    reason: z.string().min(1),
+    expires: isoDate,
+  })
+  .refine(
+    (entry) =>
+      entry.kind !== "EARNINGS_WITHOUT_BOOKING_TXN" || !!entry.paymentId,
+    {
+      message: "missing booking journal baselines must pin paymentId",
+      path: ["paymentId"],
+    },
+  );
 
 /** A baseline entry as authored. The kind must be one the auditor can raise. */
 export type LedgerBaselineEntry = Omit<
@@ -201,13 +210,6 @@ export const LEDGER_FINDINGS_BASELINE: LedgerBaselineEntry[] = [
     deltaPaise: 1_990_000,
     owner: "finance",
     reason: "seeded demo booking",
-    expires: "2026-12-15",
-  },
-  {
-    kind: "EARNINGS_WITHOUT_BOOKING_TXN",
-    deltaPaise: 7,
-    owner: "finance",
-    reason: "seeded demo booking, one paise rounding artefact",
     expires: "2026-12-15",
   },
   {

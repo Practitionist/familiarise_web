@@ -18,6 +18,7 @@ const programAssignmentFindMany = jest.fn(async (_a: unknown) => {
 const db = {
   ledgerReconciliationReport: {
     create: async () => ({ id: "rep_1" }),
+    update: jest.fn(async (_a: unknown) => ({})),
   },
   billingAccount: {
     findMany: async () => [
@@ -63,5 +64,16 @@ describe("runReconcileLedgers onWalletDrift", () => {
       }),
     ]);
     expect(programAssignmentFindMany).toHaveBeenCalled();
+    expect(db.ledgerReconciliationReport.update).toHaveBeenCalledWith({
+      where: { id: "rep_1" },
+      data: expect.objectContaining({
+        ok: false,
+        summary: expect.objectContaining({
+          status: "FAILED",
+          error: "cut off",
+        }),
+        findings: [expect.objectContaining({ billingAccountId: "ba_1" })],
+      }),
+    });
   });
 });

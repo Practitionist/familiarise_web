@@ -772,14 +772,19 @@ async function stepEarningsLedger(ctx: StepCtx): Promise<void> {
 async function stepUnjournaledEarnings(ctx: StepCtx): Promise<void> {
   // Earnings first: a row and its booking journal commit in one transaction, so
   // any earnings row read here has its journal visible to the read below.
-  const earningsPaymentRows = await prisma.consultantEarnings.findMany({
-    select: { paymentId: true },
-    distinct: ["paymentId"],
-  });
-  const bookingTxns = await prisma.ledgerTransaction.findMany({
-    where: { kind: "BOOKING", paymentId: { not: null } },
-    select: { paymentId: true },
-  });
+  const { earningsPaymentRows, bookingTxns } = await prisma.$transaction(
+    async (tx) => ({
+      earningsPaymentRows: await tx.consultantEarnings.findMany({
+        select: { paymentId: true },
+        distinct: ["paymentId"],
+      }),
+      bookingTxns: await tx.ledgerTransaction.findMany({
+        where: { kind: "BOOKING", paymentId: { not: null } },
+        select: { paymentId: true },
+      }),
+    }),
+    { isolationLevel: "RepeatableRead" },
+  );
   const coveredPaymentIds = new Set(
     bookingTxns.map((t) => t.paymentId).filter((p): p is string => !!p),
   );
@@ -787,17 +792,16 @@ async function stepUnjournaledEarnings(ctx: StepCtx): Promise<void> {
     (e) => e.paymentId && !coveredPaymentIds.has(e.paymentId),
   );
   const earningsPaymentsWithoutBookingTxn = unjournaled.length;
-  const unjournaledMax = Number(process.env.RECONCILE_UNJOURNALED_MAX ?? 0);
-  if (earningsPaymentsWithoutBookingTxn > unjournaledMax) {
+  for (const { paymentId } of unjournaled) {
     ctx.findings.push({
       kind: "EARNINGS_WITHOUT_BOOKING_TXN",
-      expectedPaise: unjournaledMax,
-      actualPaise: earningsPaymentsWithoutBookingTxn,
-      deltaPaise: earningsPaymentsWithoutBookingTxn - unjournaledMax,
+      paymentId,
+      expectedPaise: 1,
+      actualPaise: 0,
+      deltaPaise: -1,
       details: {
-        unit: "payments",
-        samplePaymentIds: unjournaled.slice(0, 10).map((e) => e.paymentId),
-        note: "Earnings-bearing payments missing a BOOKING ledger transaction exceed the allowed threshold.",
+        unit: "transactions",
+        note: "Earnings-bearing payment has no BOOKING ledger transaction.",
       },
     });
   }
@@ -1544,18 +1548,12 @@ async function stepReferralCreditLiability(ctx: StepCtx): Promise<void> {
 async function executeSteps(
   opts: ReconcileScope,
   reportId: string,
+  ctx: StepCtx,
 ): Promise<{
   ctx: StepCtx;
   durationMs: number;
 }> {
   const startedAt = Date.now();
-  const ctx: StepCtx = {
-    opts,
-    now: new Date(startedAt),
-    findings: [],
-    counts: { ...EMPTY_COUNTS },
-  };
-
   await stepWalletBalance(ctx);
   const walletDrift = ctx.findings.filter(
     (f) => f.kind === "WALLET_BALANCE_DRIFT",
@@ -1610,7 +1608,33 @@ async function runReconcileLedgersUnlocked(
     },
     select: { id: true },
   });
-  const { ctx, durationMs } = await executeSteps(opts, row.id);
+  const startedAt = Date.now();
+  const ctx: StepCtx = {
+    opts,
+    now: new Date(startedAt),
+    findings: [],
+    counts: { ...EMPTY_COUNTS },
+  };
+  let durationMs: number;
+  try {
+    ({ durationMs } = await executeSteps(opts, row.id, ctx));
+  } catch (error) {
+    await prisma.ledgerReconciliationReport.update({
+      where: { id: row.id },
+      data: {
+        ok: false,
+        durationMs: Date.now() - startedAt,
+        summary: {
+          ...ctx.counts,
+          status: "FAILED",
+          discrepanciesCount: ctx.findings.length,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        findings: ctx.findings as unknown as Prisma.InputJsonValue,
+      },
+    });
+    throw error;
+  }
   // The findings are raw evidence and are all persisted. The checked-in
   // baseline only decides which of them fail the run.
   const baseline = evaluateLedgerBaseline({
