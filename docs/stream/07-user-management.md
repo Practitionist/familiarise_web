@@ -138,6 +138,20 @@ The role is written at upsert time (`upsertUserToStream` /
 `upsertUsersToStream` in `actions/stream/chat/user.action.ts`), so a Stream user
 upserted while operators mapped to `admin` keeps that role until re-upserted.
 
+### Rollout: downgrade existing operator roles
+
+**Owner end-phase step, run by hand once after deploy. It is not a script.** An
+operator can connect without triggering the upsert, so their stored `admin`
+role has to be cleared server-side:
+
+1. List the operator ids read-only:
+   `SELECT id FROM "User" WHERE role IN ('ADMIN', 'STAFF');`
+2. For each id, partial-update the Stream user to `role: "user"` (Stream
+   dashboard, or `users_update_partial` with `set: { role: "user" }`), then
+   revoke their tokens (`revokeUserToken(id, new Date())`) so sessions minted
+   under `admin` drop.
+3. Verify that `query_users` with `{ role: { $eq: "admin" } }` returns no users.
+
 ### Current Implementation
 
 **Function Signature:**

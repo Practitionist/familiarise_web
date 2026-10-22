@@ -295,11 +295,13 @@ Every account, platform `ADMIN` and `STAFF` included, receives the standard Stre
 
 | App Role     | Global Stream Role | Channel-Scoped Role (Owned Group Events) | Effective Permissions                    |
 | ------------ | ------------------ | ---------------------------------------- | ---------------------------------------- |
-| `ADMIN`      | `admin`            | —                                        | Full system access                       |
-| `STAFF`      | `admin`            | —                                        | Full system access                       |
+| `ADMIN`      | `user`             | —                                        | Read and send messages in joined threads |
+| `STAFF`      | `user`             | —                                        | Read and send messages in joined threads |
 | `CONSULTANT` | `user`             | `channel_moderator`                      | Moderate own group channels; standard DM |
 | `CONSULTEE`  | `user`             | —                                        | Read and send messages in joined threads |
 | `USER`       | `user`             | —                                        | Standard permissions                     |
+
+Operators (`ADMIN`, `STAFF`) hold no extra Stream permission in the browser. Their moderation and support powers (report actions, bans, message removal) run in server routes that use the API-secret clients in `lib/stream-client.ts`, which bypass Stream's permission checks and are audited on our side. See `docs/stream/07-user-management.md` for the rollout step that downgrades operators who still hold `admin`.
 
 ### 3. Enable Chat Features
 
