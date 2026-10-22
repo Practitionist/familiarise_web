@@ -61,11 +61,11 @@ function eligibilityWhere(): Prisma.SupportCaseWhereInput {
   return db.supportCase.findMany.mock.calls[0][0].where;
 }
 
-it("selects cases closed 180+ days ago with no hold, no recent appeal and no purge yet, bounded and oldest first", async () => {
+it("selects cases closed 180+ days ago with no hold, no recent appeal and no purge yet, overscanned and oldest first", async () => {
   await purgeExpiredSupportEvidence({ limit: 4, now, errors: [] });
   const args = db.supportCase.findMany.mock.calls[0][0];
-  expect(args.take).toBe(4);
-  expect(args.orderBy).toEqual({ closedAt: "asc" });
+  expect(args.take).toBe(16);
+  expect(args.orderBy).toEqual([{ closedAt: "asc" }, { id: "asc" }]);
   expect(args.where).toMatchObject({
     closedAt: { lte: cutoff },
     legalHoldAt: null,
@@ -261,6 +261,44 @@ it("on a CAS miss marks the deleted files only: no rename, no scrub, no event", 
   expect(db.tx.supportCaseEvidenceRequest.updateMany).not.toHaveBeenCalled();
   expect(db.tx.supportCaseEvent.updateMany).not.toHaveBeenCalled();
   expect(db.tx.supportCaseEvent.create).not.toHaveBeenCalled();
+});
+
+it("cases that keep failing storage do not block an eligible case behind them", async () => {
+  const stuck = Array.from({ length: 5 }, (_, i) => ({
+    id: `stuck-${i}`,
+    attachments: [{ storagePath: `stuck/${i}` }],
+  }));
+  db.supportCase.findMany.mockResolvedValue([
+    ...stuck,
+    { id: "ready", attachments: [{ storagePath: "ready/a" }] },
+    { id: "next", attachments: [] },
+  ]);
+  mockRemoveObjects.mockImplementation(
+    async (_bucket: string, paths: string[]) => !paths[0].startsWith("stuck/"),
+  );
+  const errors: string[] = [];
+  const result = await purgeExpiredSupportEvidence({ limit: 2, now, errors });
+
+  expect(db.supportCase.findMany.mock.calls[0][0].take).toBe(8);
+  expect(result).toEqual({ casesPurged: 2, filesDeleted: 1 });
+  expect(errors).toHaveLength(5);
+  expect(db.tx.supportCaseEvent.create).toHaveBeenCalledWith({
+    data: expect.objectContaining({ caseId: "ready", kind: "EVIDENCE_PURGED" }),
+  });
+});
+
+it("stops once limit cases are purged", async () => {
+  db.supportCase.findMany.mockResolvedValue(
+    ["a", "b", "c"].map((id) => ({ id, attachments: [] })),
+  );
+  const result = await purgeExpiredSupportEvidence({
+    limit: 2,
+    now,
+    errors: [],
+  });
+  expect(result.casesPurged).toBe(2);
+  expect(db.$transaction).toHaveBeenCalledTimes(2);
+  expect(db.supportCase.count).toHaveBeenCalledTimes(2);
 });
 
 it("skips the run when the live-dispute set reaches its cap", async () => {
