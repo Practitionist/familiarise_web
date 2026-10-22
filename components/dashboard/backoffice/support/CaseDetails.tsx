@@ -21,6 +21,7 @@ import { formatDateLabel } from "@/lib/time/display";
 import { humanizeEnum } from "@/lib/ui/tone";
 import type { CaseBooking, CaseWorkspace } from "@/types/support-case";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { CaseChatPanel } from "./CaseChatPanel";
 
 const day = (iso: string | null) =>
   iso ? formatDateLabel(new Date(iso)) : "—";
@@ -144,6 +145,7 @@ export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
         paymentId={data.payment?.id}
         basePath={basePath}
       />
+      {can("supportChat.read") && <CaseChatPanel caseId={data.caseId} />}
       <Section title="Person">
         <Facts items={personItems} />
       </Section>
