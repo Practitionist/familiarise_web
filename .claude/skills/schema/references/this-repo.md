@@ -116,6 +116,48 @@ On 2026-10-02 the Subscriptions tab of the Requests inbox returned 500 on produc
 
 A read-only drift check with Prisma 7 is `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`, because `--from-url` no longer exists. That diff proposes dropping the hand-applied sidecar partial uniques `appointment_feedback_level_key` and `consultant_earnings_occurrence_key`, so never fix drift with a plain `db push`, and run `npm run db:sidecars` after any reset.
 
+## The deploy preview runs the branch's code (2026-10-22)
+
+The Netlify deploy preview for a pull request serves that branch's code from the
+shared Postgres, so a branch's schema is not a proposal for the database — it is
+a claim about what the database already contains. A column the branch declares
+and the database lacks is a 500 on every read of that model, and the preview
+BUILD still passes, because the build only runs `prisma generate`.
+
+This has now happened three times: the #1997 columns (#2027), the
+`RescheduleRequestStatus.COUNTERED` enum value (2026-10-02), and
+`ConsultationPlan.sortOrder` (#2229, Sentry `FAMILIARISE_WEB-7A`).
+
+So the rule from `docs/prisma/README.md` — _push before, or together with, the
+deploy that reads the column_ — has a precedent rather than a procedure: the
+2026-10-02 enum value and the #1878 columns were applied directly with
+`ALTER TYPE … ADD VALUE` and `ALTER TABLE … ADD COLUMN` rather than through a
+push. An additive change is safe to apply before the deploy that reads it,
+because the running code ignores a column it does not know about.
+
+`scripts/ci/check-db-schema-required.ts` enforces it on pull requests. It
+diffs the branch's MERGE BASE schema against the branch's own schema — schema
+to schema, so a branch behind its base is not judged on objects it never
+touched — and then asks the live catalog whether each of those objects is
+there. Only objects whose absence makes a query fail are checked: a column, a
+table, an enum type, an enum value.
+
+Two things it deliberately does NOT do. It does not read the other direction of
+the drift (the database carrying objects the schema does not want): that is the
+reconcile push's business, and reading it is what made the earlier
+`check-db-drift.ts` block every schema-bearing pull request until it was
+removed from PR CI. And it does not run on pushes, because a push to `dev`
+legitimately leads the live database until the orchestrator pushes the merge;
+`db-live-drift.yml` covers the merged state.
+
+The live drift carried today is in `prisma/sql/known-drift.json`, as 33
+reviewed statements. The legacy support-ticket tables in it are NOT dead:
+`origin/prod` does not carry #2257 yet and still queries them, so they are
+re-created empty as a stop-gap and the reconcile push waits for `dev` to be
+promoted to `prod`. The pre-#2041 recording-storage columns and the six orphan
+indexes ARE dead, but a `db push` runs the whole plan at once, so they go with
+the group above rather than separately.
+
 To reproduce a `lib/data` reader locally and see the real Prisma error, run `NODE_OPTIONS="--conditions=react-server" npx tsx --env-file=.env --tsconfig tsconfig.json <script>`. Without `--env-file`, Prisma silently connects to localhost.
 
 ## The cutover to versioned migrations

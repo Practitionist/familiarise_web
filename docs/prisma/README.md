@@ -38,6 +38,12 @@ frozen: additive changes only, with renames, drops and type changes deferred to
 launch cutover. Both rules are stated at the top of `prisma/schema.prisma` and
 enforced in review.
 
+The same database also serves every Netlify **deploy preview**, and that is the
+constraint that catches people out: a preview runs the _branch's_ code against
+the _live_ database, so a branch whose schema declares a column the database
+does not have deploys a preview that 500s on every read of that model. Nothing
+in the build sees it, because the build only generates the Prisma client.
+
 ## Pushing schema to the shared database: lessons from the catch-up push
 
 The live database once fell several changes behind `prisma/schema.prisma` and stayed there for days: a whole earlier schema change (new columns, foreign-key `Restrict` swaps, partial uniques, a CHECK) was merged but never pushed, and production readers that selected a missing column returned 500. The catch-up push of 2026-10-09 closed it, and its lessons now bind every push.
@@ -48,6 +54,61 @@ The live database once fell several changes behind `prisma/schema.prisma` and st
 4. **Check drift read-only before and after.** `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script` lists what a push would do. After a clean push the only statements left are the three sidecar-owned partial-unique drops (`appointment_feedback_level_key`, `consultant_earnings_occurrence_key`, `organization_earnings_split_key`), which are expected.
 5. **The daily drift check needs a sink outside Sentry.** `db-live-drift.yml` compares the live database to the schema every day, but a failure that can reach only Sentry is silently dropped when the error quota is exhausted. See [the ingest canary](../observability/sentry/06-ingest-canary.md#the-scheduled-drift-check-needs-a-sink-outside-sentry).
 6. **Pending schema in a merged PR breaks readers invisibly.** A column the code selects but the database lacks fails every full-row read of that model (a `P2022`), and nothing in `tsc` or the unit tests sees it. Push before, or together with, the deploy that reads the column, and smoke-test one full-row reader of each changed model.
+
+## The deploy preview runs against the live database
+
+A Netlify deploy preview for a pull request serves that branch's code from the
+shared Postgres. So the branch's schema is not a proposal for the database — it
+is a claim about what the database already contains, and until the database
+agrees, every reader of the new object 500s with _"does not exist in the current
+database"_. The preview build passes, because the build only runs
+`prisma generate`.
+
+`scripts/ci/check-db-schema-required.ts` is the check that closes the gap. It
+diffs the branch's **merge base** schema against the branch's own schema, which
+is exactly what this pull request adds — a branch behind its base is not judged
+on objects it never touched — and then asks the live catalog whether each of
+those objects is there. Only objects whose absence makes a query fail are
+checked: a column, a table, an enum type, an enum value. A missing index costs
+a sequential scan, not a 500.
+
+It runs as the `schema-required` job in `ci.yaml`, on pull requests that touch
+`prisma/schema.prisma`, from same-repository branches only, and it reads the
+live database through `secrets.DATABASE_URL` — not `secrets.ENV_FILE`, because a
+pull-request job has no business holding every production API key.
+
+The other direction — the database carrying objects the schema does not want —
+is deliberately **not** checked. That is the reconcile push's business, it is
+not a runtime failure, and a live-database check in both directions blocks every
+schema-bearing pull request. That is what retired the earlier
+`check-db-drift.ts`; see the deprecated section below.
+
+When it fails, it prints the DDL to apply. Applying it is a decision, not a
+formality: the columns are additive, so applying them before the deploy that
+reads them is safe, and the merge-time push then has nothing left to do.
+
+### The legacy drift currently carried
+
+`prisma/sql/known-drift.json` holds 33 reviewed entries: statements that a
+reconcile push would run against the live database, each with an owner, a
+reason and an expiry. They fall into two groups, and the difference matters.
+
+- **The pre-#2257 support-ticket tables** (`SupportTicket`, `SupportMessage`,
+  `SupportResponse`, `SupportTicketAttachment`, `AppointmentSupportThread`,
+  `support_ticket_counters` and their enums). `dev` replaced them with the
+  `SupportCase` family, but `origin/prod` does not carry #2257 yet and still
+  queries them, so they were re-created empty as a stop-gap. **They are not
+  dead, and dropping them before `dev` is promoted to `prod` re-breaks the SLA
+  sweep, the privacy export and staff support metrics.** Tracked in #2271.
+- **The pre-#2041 recording-storage columns and their enum**, plus six indexes
+  the schema no longer declares. No schema declares them and no code reads
+  them, so they are dead — but a `db push` runs the whole plan at once, so they
+  go with the group above rather than separately.
+
+The reconcile push is therefore sequenced behind the `dev` → `prod` promotion:
+preflight, push, sidecars, assert, then empty the allowlist again. Until then
+the entries keep the daily drift monitor honest about what is pending instead
+of failing on it every morning.
 
 ## Related material
 
@@ -65,5 +126,5 @@ they cannot live in the Prisma schema, are covered by `/finance`.
 ## Deprecated & Superseded Approaches
 
 - **Two-copy SQL sidecar duplication (`apply-sidecars.ts` inline regex arrays + `prisma/sql/*.sql`)**: Previously, sidecar constraint names were hardcoded in multiple verification scripts while SQL definitions lived in `prisma/sql/*.sql`. Superseded by a single parser (`scripts/db/sidecar-objects.ts`) that derives all expected `CHECK` constraints, partial unique indexes, exclusion constraints, and triggers directly from `prisma/sql/*.sql`.
-- **Live-DB CI drift blocking feature PRs**: Running `check-db-drift.ts` against the shared live database inside PR checks blocked unmerged schema/auth PRs whenever a branch added an enum label or column not yet pushed to live Postgres. Superseded by running `prisma db push` + `apply-sidecars.ts` + `check-db-drift.ts` against a hermetic `postgres:17` service container in `ci.yaml` on PRs, while keeping `.github/workflows/db-live-drift.yml` as a read-only live-DB monitor on `dev`/cron.
+- **Whole-schema live-DB drift blocking feature PRs**: Running `check-db-drift.ts` against the shared live database inside PR checks blocked unmerged schema/auth PRs whenever a branch added an enum label or column not yet pushed to live Postgres. Superseded by running `prisma db push` + `apply-sidecars.ts` + `check-db-drift.ts` against a hermetic `postgres:17` service container in `ci.yaml` on PRs, while keeping `.github/workflows/db-live-drift.yml` as a read-only live-DB monitor on `dev`/cron. What was retired is the WHOLE-schema comparison in both directions; a narrower check — this branch's own delta against the live catalog — now runs on pull requests as `scripts/ci/check-db-schema-required.ts`, because the blocking came from the database carrying objects the schema does not want, not from the branch's new objects being absent.
 - **One-off constraint swap & migration logs (`scripts/db/swap-occurrence-overlap-constraint.ts`, `02-pre-mvp-reset-runbook.md`, `03-cutover-to-migrations.md`, `04-prisma-7-migration.md`)**: Retired after the Prisma 7 adapter cutover (`@prisma/adapter-pg` in `lib/prisma.ts`) and `occurrence_no_confirmed_overlap` GiST constraint were finalized in `prisma/sql/check-constraints.sql` (it covers only confirmed, non-tentative, live host rows). Do not recreate standalone migration scripts outside `prisma/sql/*.sql`.
