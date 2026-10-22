@@ -88,11 +88,7 @@ they differ.
 
 ### Anatomy of a cron run
 
-Business-row jobs use a **claim gate** to keep concurrent workers from
-applying the same mutation. A lease alone does not deduplicate sequential
-external effects. The row claim is a conditional `updateMany` (or an idempotency
-stamp) that lets exactly one runner own a row. If `count === 0`, someone
-else already claimed it — skip, don't retry-into-a-double. Knowing this
+Business-row jobs use a **claim gate**: a successful conditional `updateMany` or unique write establishes ownership. An idempotency stamp is exclusive only when written conditionally or uniquely; a plain read followed by a stamp does not prevent a race. External effects also need a stable provider idempotency key where supported, because a lease alone does not deduplicate sequential attempts. Zero claimed rows means the claim predicate no longer matches, whether another worker claimed it or the row ceased to qualify. Knowing this
 shape tells you, for any "the cron isn't working" page, _where_ to look:
 no rows scanned ⇒ the schedule didn't fire; rows scanned but 0 claimed ⇒
 a stamp is already set (often the fix already happened); rows claimed but
