@@ -4,27 +4,35 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { RefundDoorDialog, type RefundDoor } from "./RefundDoorDialog";
 
-interface NeedsHuman {
-  id: string;
-  message: string;
-  createdAt: string;
-  paymentId: string | null;
-  /** A credit seat gets the credit door, a held paid seat the refund door, a support remedy its case. */
-  kind?: "credit" | "held-paid-seat" | "support-recommendation";
-  occurrenceId?: string | null;
-  unitPaise?: number | null;
-  caseId?: string | null;
-}
+const NeedsHumanList = z.object({
+  items: z.array(
+    z.object({
+      id: z.string(),
+      message: z.string(),
+      createdAt: z.string(),
+      paymentId: z.string().nullable(),
+      /** A credit seat gets the credit door, a held paid seat the refund door, a support remedy its case. */
+      kind: z
+        .enum(["credit", "held-paid-seat", "support-recommendation"])
+        .optional(),
+      occurrenceId: z.string().nullish(),
+      unitPaise: z.number().nullish(),
+      caseId: z.string().nullish(),
+    }),
+  ),
+});
+type NeedsHuman = z.infer<typeof NeedsHumanList>["items"][number];
 
 async function fetchNeeds(): Promise<{ items: NeedsHuman[] }> {
   const res = await fetch("/api/admin/refunds/needs-human");
   if (!res.ok) throw new Error("Failed to load");
-  return res.json() as Promise<{ items: NeedsHuman[] }>;
+  return NeedsHumanList.parse(await res.json());
 }
 
 /** #1834 — a held seat opens the refund door keyed to its session, at its unit. */
