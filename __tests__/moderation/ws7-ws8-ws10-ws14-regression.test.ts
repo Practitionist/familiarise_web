@@ -526,10 +526,25 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     ).not.toContain("familiarisenow.com");
   });
 
-  test("POST /api/contact creates the canonical SupportCase in the same transaction as allocateTicketReference for public grievances and skips allocation when zero operators exist", async () => {
+  test("POST /api/contact creates the canonical SupportCase in the same transaction as allocateTicketReference, held by the public-intake user, and stages the receipt email there", async () => {
     mockGetSession.mockResolvedValue(null);
-    mockUser.findFirst.mockResolvedValueOnce({ id: "operator-admin-1" });
+    mockUser.findUnique.mockResolvedValueOnce({
+      id: "system-public-grievance-intake",
+    });
     mockUser.findMany.mockResolvedValue([{ id: "operator-admin-1" }]);
+    const tx = {
+      user: mockUser,
+      supportCase: mockSupportCase,
+      membership: mockMembership,
+      notificationOutbox: { upsert: jest.fn() },
+      emailSuppression: { findUnique: jest.fn().mockResolvedValue(null) },
+      failedEmail: {
+        create: jest.fn().mockResolvedValue({ id: "staged-email" }),
+      },
+    };
+    mockTransaction.mockImplementationOnce(
+      async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
+    );
     mockAllocateTicketReference.mockResolvedValueOnce("FAM-2026-000042");
     mockSupportCase.create.mockResolvedValueOnce({
       id: "case-42",
@@ -572,43 +587,21 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
           category: "GRIEVANCE",
           status: "OPEN",
           priority: "HIGH",
-          requesterUserId: "operator-admin-1",
-          submitterUserId: "operator-admin-1",
+          requesterUserId: "system-public-grievance-intake",
+          submitterUserId: "system-public-grievance-intake",
           externalRequesterEmail: "asha@example.com",
         }),
       }),
     );
 
-    mockAllocateTicketReference.mockClear();
-    mockSupportCase.create.mockClear();
-    mockUser.findFirst.mockResolvedValueOnce(null);
-    mockUser.findMany.mockResolvedValue([]);
-
-    const noOperatorReq = new NextRequest("http://localhost/api/contact", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        firstName: "Asha",
-        lastName: "Verma",
-        email: "asha@example.com",
-        subject: "Unresolved billing dispute",
-        message: "Please review my double charge urgently.",
-        category: "grievance",
+    expect(tx.failedEmail.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          recipient: "asha@example.com",
+          entityRef: "case-created:case-42",
+        }),
       }),
-    });
-
-    const noOperatorRes = await postContactRoute(noOperatorReq);
-    const noOperatorBody = await noOperatorRes.json();
-
-    expect(noOperatorRes.status).toBe(202);
-    expect(noOperatorBody).toEqual({
-      ok: true,
-      referenceNumber: null,
-      message:
-        "Grievance received — our Grievance Officer will open a case and email your tracking reference within 24 hours.",
-    });
-    expect(mockAllocateTicketReference).not.toHaveBeenCalled();
-    expect(mockSupportCase.create).not.toHaveBeenCalled();
+    );
   });
 
   test("POST /api/report preserves the newest reporter statement because each reporter has their own row", async () => {
