@@ -13,6 +13,7 @@ import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { stageSupportTicketUpdateEmail } from "@/lib/email/senders/people";
 import { caseCorrespondentIds } from "./case-access";
 import { releaseAllCaseHolds } from "./case-holds";
+import { endCaseChatAccessTx } from "./chat-access-end";
 import { caseKeyOf } from "./case-key";
 import { stageCaseResolutionCsatPromptTx } from "./case-service";
 import { stageExternalRequesterEmail } from "./external-requester";
@@ -182,6 +183,12 @@ async function resolveIncidentTx(
     caseId: inc.id,
     actorId,
     note: "Released when the case was resolved",
+  });
+  await endCaseChatAccessTx(tx, {
+    caseId: inc.id,
+    actorId,
+    reason: "CASE_RESOLVED",
+    now,
   });
   await stageResolvedNoticeTx(tx, inc, now, out);
   await stageCaseResolutionCsatPromptTx(tx, inc, now);

@@ -17,6 +17,7 @@ import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { slaStateOf } from "./sla";
 import { cascadeResolvedProblems } from "./problem-cascade";
 import { purgeExpiredSupportEvidence } from "./evidence-retention";
+import { sweepSupportChatAccess } from "./chat-sweep";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -33,6 +34,8 @@ const DISPUTE_WINDOW_CAP = 500;
 const PROBLEM_CASCADE_CAP = 10;
 // Each purged case is a storage round trip plus a transaction.
 const EVIDENCE_PURGE_CAP = 5;
+// Each chat-access step is a Stream round trip or a short transaction per row.
+const CHAT_ACCESS_CAP = 10;
 
 type SlaNoticeKind = "ack" | "res";
 type SlaNoticeLevel = "warn" | "breach";
@@ -78,6 +81,10 @@ export interface SupportSlaSweepResult {
   incidentsCascaded: number;
   evidenceCasesPurged: number;
   evidenceFilesDeleted: number;
+  chatAccessEnded: number;
+  chatInterventionsJoined: number;
+  chatInterventionsLeft: number;
+  chatReviewNotices: number;
   disputeNoticesStaged: number;
   errors: string[];
 }
@@ -760,7 +767,8 @@ function moderationDeadlineIds(
 
 /**
  * Single background sweep for support SLA warnings/breaches, 28-day RESOLVED auto-close,
- * resolved-problem incident cascade, 180-day evidence purge,
+ * resolved-problem incident cascade, 180-day evidence purge, chat-access expiry,
+ * Stream join/leave retries and post-decision review notices,
  * T-72h / T-24h dispute deadlines and one page for disputes due within 12 h or past due.
  * Collects row errors and reports to Sentry at most once.
  */
@@ -837,6 +845,12 @@ export async function runSupportSlaSweep(opts?: {
       limit: Math.min(limit, EVIDENCE_PURGE_CAP),
       now,
       errors,
+    });
+    const chatAccess = await sweepSupportChatAccess({
+      limit: Math.min(limit, CHAT_ACCESS_CAP),
+      now,
+      errors,
+      stagedBells,
     });
     const admins = operators.filter((o) => o.role === "ADMIN");
     const disputeNoticesStaged = await processDisputeDeadlineAlerts(
@@ -989,6 +1003,10 @@ export async function runSupportSlaSweep(opts?: {
       incidentsCascaded: cascade.cascaded,
       evidenceCasesPurged: evidencePurge.casesPurged,
       evidenceFilesDeleted: evidencePurge.filesDeleted,
+      chatAccessEnded: chatAccess.ended,
+      chatInterventionsJoined: chatAccess.joined,
+      chatInterventionsLeft: chatAccess.left,
+      chatReviewNotices: chatAccess.notices,
       disputeNoticesStaged,
       errors,
     };

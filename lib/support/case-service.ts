@@ -29,6 +29,10 @@ import { stageExternalRequesterEmail } from "./external-requester";
 import { allocateTicketReference } from "./reference";
 import { releaseAllCaseHolds } from "./case-holds";
 import {
+  endCaseChatAccessTx,
+  scheduleInterventionLeave,
+} from "./chat-access-end";
+import {
   assertCaseTransition,
   caseTransitionRefusal,
 } from "./case-transitions";
@@ -1610,12 +1614,21 @@ export async function executePatchLifecycleTx(
   if (
     (input.status === "RESOLVED" || input.status === "CLOSED") &&
     input.status !== existing.status
-  )
+  ) {
     await releaseAllCaseHolds(tx, {
       caseId: input.caseId,
       actorId: input.actorId,
       note: `Released when the case was ${input.status.toLowerCase()}`,
     });
+    const endedChat = await endCaseChatAccessTx(tx, {
+      caseId: input.caseId,
+      actorId: input.actorId,
+      reason: "CASE_RESOLVED",
+      now,
+    });
+    if (endedChat.some((grant) => grant.needsLeave))
+      scheduleInterventionLeave(input.caseId);
+  }
 
   if (input.status === "RESOLVED" && existing.status !== "RESOLVED")
     await stageCaseResolutionCsatPromptTx(tx, existing, now);
