@@ -137,12 +137,14 @@ deploy that reads the column_ — has a precedent rather than a procedure: the
 push. An additive change is safe to apply before the deploy that reads it,
 because the running code ignores a column it does not know about.
 
-`scripts/ci/check-db-schema-required.ts` enforces it on pull requests. It
-diffs the branch's MERGE BASE schema against the branch's own schema — schema
-to schema, so a branch behind its base is not judged on objects it never
-touched — and then asks the live catalog whether each of those objects is
-there. Only objects whose absence makes a query fail are checked: a column, a
-table, an enum type, an enum value.
+`scripts/ci/check-db-schema-required.ts` enforces it on pull requests, from
+`.github/workflows/schema-required.yml`. It diffs the branch's MERGE BASE schema
+against the branch's own schema — schema to schema, so a branch behind its base
+is not judged on objects it never touched — and then asks the live catalog
+whether each of those objects is there. Only objects whose absence makes a
+query fail are checked: a column, a table, an enum type, an enum value. A
+recreated enum is checked label by label, because the plan that replaces an
+enum carries no `ADD VALUE` of its own.
 
 Two things it deliberately does NOT do. It does not read the other direction of
 the drift (the database carrying objects the schema does not want): that is the
@@ -152,13 +154,15 @@ removed from PR CI. And it does not run on pushes, because a push to `dev`
 legitimately leads the live database until the orchestrator pushes the merge;
 `db-live-drift.yml` covers the merged state.
 
-The live drift carried today is in `prisma/sql/known-drift.json`, as 33
-reviewed statements. The legacy support-ticket tables in it are NOT dead:
-`origin/prod` does not carry #2257 yet and still queries them, so they are
-re-created empty as a stop-gap and the reconcile push waits for `dev` to be
-promoted to `prod`. The pre-#2041 recording-storage columns and the six orphan
-indexes ARE dead, but a `db push` runs the whole plan at once, so they go with
-the group above rather than separately.
+The live drift carried today is in `prisma/sql/known-drift.json`, in two
+lists. `destructiveStatementsAllowed` is what a push MAY run, and
+`knownDivergences` is what the daily drift check tolerates but a push must NOT
+remove yet — tolerating a divergence and permitting its removal are not the
+same decision. The legacy support-ticket tables are in the second list: NOT
+dead, because `origin/prod` does not carry #2257 yet and still queries them,
+so they are re-created empty as a stop-gap and the reconcile push waits for
+`dev` to be promoted to `prod`. The pre-#2041 recording-storage columns and the
+six orphan indexes ARE dead, and a push may remove them.
 
 ## The cutover to versioned migrations
 

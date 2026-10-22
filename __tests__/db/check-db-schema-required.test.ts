@@ -95,13 +95,40 @@ CREATE TYPE "LedgerAccountKind_new" AS ENUM ('CASH', 'WALLET');
 -- AlterType
 ALTER TYPE "SupportCaseStatus" ADD VALUE 'ON_HOLD';
 `);
+    // The replacement type carries its own labels, so each one is required of
+    // the ORIGINAL type as well.
     expect(required.map((r) => r.kind)).toEqual([
       "table",
       "enumType",
       "enumValue",
+      "enumValue",
+      "enumValue",
     ]);
-    expect(required[2].owner).toBe("SupportCaseStatus");
-    expect(required[2].name).toBe("ON_HOLD");
+    expect(required[2].owner).toBe("LedgerAccountKind");
+    expect(required[2].name).toBe("CASH");
+    expect(required[3].name).toBe("WALLET");
+    expect(required[4].owner).toBe("SupportCaseStatus");
+    expect(required[4].name).toBe("ON_HOLD");
+  });
+
+  it("requires every label of a recreated enum, because the plan carries no ADD VALUE", () => {
+    // Prisma recreates an enum whose value set changed and swaps it in. That
+    // plan has no `ALTER TYPE … ADD VALUE`, so a label the branch declares and
+    // the live enum lacks would otherwise go unchecked — the same 500 as the
+    // missing `RescheduleRequestStatus.COUNTERED` value.
+    const required = requiredObjects(
+      `-- CreateType\nCREATE TYPE "SupportCaseStatus_new" AS ENUM ('OPEN', 'IN_PROGRESS', 'ON_HOLD');`,
+    );
+    const values = required.filter((r) => r.kind === "enumValue");
+    expect(values.map((r) => r.name)).toEqual([
+      "OPEN",
+      "IN_PROGRESS",
+      "ON_HOLD",
+    ]);
+    expect(values.every((r) => r.owner === "SupportCaseStatus")).toBe(true);
+    expect(values[2].ddl).toBe(
+      `ALTER TYPE "SupportCaseStatus" ADD VALUE IF NOT EXISTS 'ON_HOLD';`,
+    );
   });
 
   it("reads an empty plan as nothing to require", () => {
@@ -170,6 +197,17 @@ describe("the live catalog comparison", () => {
     );
     expect(enumType.name).toBe("SupportCaseStatus_new");
     expect(isPresent(enumType, catalog)).toBe(true);
+  });
+
+  it("misses a label the live enum does not have, even when the type exists", () => {
+    // The type is present and the label is not. The label is what the branch's
+    // code writes, and writing an unknown label is the same 500.
+    const required = requiredObjects(
+      `-- CreateType\nCREATE TYPE "SupportCaseStatus_new" AS ENUM ('OPEN', 'ON_HOLD');`,
+    );
+    const values = required.filter((r) => r.kind === "enumValue");
+    expect(isPresent(values[0], catalog)).toBe(false);
+    expect(isPresent(values[1], catalog)).toBe(true);
   });
 
   it("finds an enum value and misses one that is not there", () => {

@@ -132,6 +132,25 @@ export function requiredObjects(plan: string): RequiredObject[] {
         name: createdType[1],
         ddl: `${statement.trim()};`,
       });
+      // Prisma recreates an enum whose value set changed by building a
+      // replacement type under a `_new` suffix and swapping it in. That plan
+      // carries no `ALTER TYPE … ADD VALUE`, so a label the branch's schema
+      // declares and the live enum lacks would otherwise go unchecked — the
+      // same 500 as the missing `COUNTERED` value. Each label of the
+      // replacement is required of the ORIGINAL type.
+      if (createdType[1].endsWith("_new")) {
+        const owner = createdType[1].replace(/_new$/, "");
+        const labels = /\bAS\s+ENUM\s*\(([^)]*)\)/i.exec(statement)?.[1] ?? "";
+        for (const m of labels.matchAll(/'((?:[^']|'')*)'/g)) {
+          const name = m[1].replace(/''/g, "'");
+          out.push({
+            kind: "enumValue",
+            owner,
+            name,
+            ddl: `ALTER TYPE "${owner}" ADD VALUE IF NOT EXISTS '${name}';`,
+          });
+        }
+      }
       continue;
     }
 
@@ -346,6 +365,16 @@ export function isPresent(o: RequiredObject, catalog: LiveCatalog): boolean {
 async function main(): Promise<void> {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
+    // A gate that cannot run must not pass. Outside CI there is simply no live
+    // database to compare against and skipping is the useful answer; inside
+    // CI the secret being unset or renamed is a fault, not an answer.
+    if (process.env.GITHUB_ACTIONS === "true") {
+      console.error(
+        "check-db-schema-required: DATABASE_URL is empty in CI — refusing to pass without a live database to compare against.",
+      );
+      process.exitCode = 1;
+      return;
+    }
     console.log(
       "check-db-schema-required: DATABASE_URL unset — skipping (no live database to compare against)",
     );

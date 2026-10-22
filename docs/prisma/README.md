@@ -50,7 +50,7 @@ The live database once fell several changes behind `prisma/schema.prisma` and st
 
 1. **The order is fixed: preflight, push, sidecars, assert.** `npm run db:preflight -- --print` shows the plan Prisma is about to run, `db:push:schema` chains the preflight ahead of `prisma db push` and then applies the sidecars, and `npm run db:push` finishes by running `scripts/ci/check-db-sidecars.ts`, which confirms every named sidecar object exists. A plain `prisma db push` skips all of this and drops the sidecar partial uniques, because the schema omits them by design. These are human-run commands; an agent never runs them.
 2. **Prisma's own AI-consent guard is a feature.** The Prisma CLI detects that it is being driven by an AI agent and refuses destructive actions unless the human explicitly consents to that specific action. Do not work around it: the destructive statements (dropped columns, foreign-key swaps, unique replacements) are exactly the ones a person must read and approve.
-3. **Destructive statements are allowlisted per push, then removed.** The preflight refuses any plan statement that destroys or re-points an existing object unless that exact statement is listed in `prisma/sql/known-drift.json` under `destructiveStatementsAllowed` with an owner and expiry. After the push the list is emptied again, so a populated list always means a push is pending.
+3. **Destructive statements are allowlisted per push, then removed.** The preflight refuses any plan statement that destroys or re-points an existing object unless that exact statement is listed in `prisma/sql/known-drift.json` under `destructiveStatementsAllowed` with an owner and expiry. After the push the list is emptied again, so a populated list always means a push is pending. A divergence that must not be removed yet belongs under `knownDivergences` instead, which the daily drift check tolerates and the preflight does not — see [the legacy drift currently carried](#the-legacy-drift-currently-carried).
 4. **Check drift read-only before and after.** `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script` lists what a push would do. After a clean push the only statements left are the three sidecar-owned partial-unique drops (`appointment_feedback_level_key`, `consultant_earnings_occurrence_key`, `organization_earnings_split_key`), which are expected.
 5. **The daily drift check needs a sink outside Sentry.** `db-live-drift.yml` compares the live database to the schema every day, but a failure that can reach only Sentry is silently dropped when the error quota is exhausted. See [the ingest canary](../observability/sentry/06-ingest-canary.md#the-scheduled-drift-check-needs-a-sink-outside-sentry).
 6. **Pending schema in a merged PR breaks readers invisibly.** A column the code selects but the database lacks fails every full-row read of that model (a `P2022`), and nothing in `tsc` or the unit tests sees it. Push before, or together with, the deploy that reads the column, and smoke-test one full-row reader of each changed model.
@@ -72,10 +72,16 @@ those objects is there. Only objects whose absence makes a query fail are
 checked: a column, a table, an enum type, an enum value. A missing index costs
 a sequential scan, not a 500.
 
-It runs as the `schema-required` job in `ci.yaml`, on pull requests that touch
-`prisma/schema.prisma`, from same-repository branches only, and it reads the
-live database through `secrets.DATABASE_URL` — not `secrets.ENV_FILE`, because a
-pull-request job has no business holding every production API key.
+It runs as its own workflow, `.github/workflows/schema-required.yml`, on pull
+requests that touch `prisma/schema.prisma`, from same-repository branches only,
+and it reads the live database through `secrets.DATABASE_URL` — not
+`secrets.ENV_FILE`, because a pull-request job has no business holding every
+production API key.
+
+It is its own workflow rather than a job in `ci.yaml` for one reason: `ci.yaml`
+is disabled while the Actions minutes are exhausted, and a gate in a disabled
+workflow is not a gate. The comparison is schema-to-schema, so a pull request
+that adds no schema object never reads the database at all.
 
 The other direction — the database carrying objects the schema does not want —
 is deliberately **not** checked. That is the reconcile push's business, it is
@@ -89,26 +95,38 @@ reads them is safe, and the merge-time push then has nothing left to do.
 
 ### The legacy drift currently carried
 
-`prisma/sql/known-drift.json` holds 33 reviewed entries: statements that a
-reconcile push would run against the live database, each with an owner, a
-reason and an expiry. They fall into two groups, and the difference matters.
+`prisma/sql/known-drift.json` records the statements the live database and the
+schema disagree about, each with an owner, a reason and an expiry. It holds
+them in **two lists**, because tolerating a divergence and permitting its
+removal are not the same decision.
 
-- **The pre-#2257 support-ticket tables** (`SupportTicket`, `SupportMessage`,
-  `SupportResponse`, `SupportTicketAttachment`, `AppointmentSupportThread`,
-  `support_ticket_counters` and their enums). `dev` replaced them with the
-  `SupportCase` family, but `origin/prod` does not carry #2257 yet and still
-  queries them, so they were re-created empty as a stop-gap. **They are not
-  dead, and dropping them before `dev` is promoted to `prod` re-breaks the SLA
-  sweep, the privacy export and staff support metrics.** Tracked in #2271.
-- **The pre-#2041 recording-storage columns and their enum**, plus six indexes
-  the schema no longer declares. No schema declares them and no code reads
-  them, so they are dead — but a `db push` runs the whole plan at once, so they
-  go with the group above rather than separately.
+| List                           | Read by               | Means                                                              |
+| ------------------------------ | --------------------- | ------------------------------------------------------------------ |
+| `destructiveStatementsAllowed` | `db:preflight`        | a statement a reconcile push **may run**                           |
+| `knownDivergences`             | the daily drift check | a divergence the database carries that must **not** be dropped yet |
+
+The daily drift check tolerates both, so the job reports what is pending
+instead of failing on it every morning. The preflight honours only the first,
+so a push cannot drop something that is not yet safe to drop. The two lists
+currently hold:
+
+- **`knownDivergences` — the pre-#2257 support-ticket tables** (20 statements):
+  `SupportTicket`, `SupportMessage`, `SupportResponse`, `SupportTicketAttachment`,
+  `AppointmentSupportThread`, `support_ticket_counters` and their enums. `dev`
+  replaced them with the `SupportCase` family, but `origin/prod` does not carry
+  #2257 yet and still queries them, so they were re-created empty as a
+  stop-gap. **They are not dead, and dropping them before `dev` is promoted to
+  `prod` re-breaks the SLA sweep, the privacy export and staff support
+  metrics.** Tracked in #2271. This is why `npm run db:preflight` still refuses
+  a push: correctly.
+- **`destructiveStatementsAllowed` — the pre-#2041 recording-storage columns and
+  their enum, plus six indexes the schema no longer declares** (13 statements).
+  No schema declares them and no code reads them, so they are dead and a push
+  may remove them.
 
 The reconcile push is therefore sequenced behind the `dev` → `prod` promotion:
-preflight, push, sidecars, assert, then empty the allowlist again. Until then
-the entries keep the daily drift monitor honest about what is pending instead
-of failing on it every morning.
+move the 20 entries from `knownDivergences` to `destructiveStatementsAllowed`,
+preflight, push, sidecars, assert, then empty both lists again.
 
 ## Related material
 
