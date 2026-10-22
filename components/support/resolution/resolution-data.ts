@@ -123,13 +123,16 @@ export function decisionInForce(decisions: readonly Decision[]) {
   return decisions.findLast((d) => !superseded.has(d.id)) ?? null;
 }
 
-const APPEAL_OUTCOMES: readonly DecisionOutcome[] = ["UPHELD", "OVERTURNED"];
+const APPEAL_OUTCOMES: ReadonlySet<DecisionOutcome> = new Set([
+  "UPHELD",
+  "OVERTURNED",
+]);
 
 /** Appeals are upheld or overturned; every other case gets a remedy outcome. */
 export function outcomesFor(data: CaseResolution): DecisionOutcome[] {
   return Outcome.options.filter(
     (value) =>
-      data.isAppeal === APPEAL_OUTCOMES.includes(value) &&
+      data.isAppeal === APPEAL_OUTCOMES.has(value) &&
       (data.canExecuteMoney ||
         (value !== "REFUND_APPROVED" && value !== "REFUND_DECLINED")),
   );

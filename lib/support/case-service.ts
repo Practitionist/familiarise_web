@@ -1232,56 +1232,67 @@ function buildStatusDatesPatch(
   return { resolvedAt: null, closedAt: null, ...bankedPause };
 }
 
-async function recordLifecycleAuditEvents(
-  tx: Tx,
+type LifecycleAuditBefore = {
+  status: z.infer<typeof SupportCaseStatusSchema>;
+  priority: z.infer<typeof SupportPrioritySchema>;
+  assignedToId: string | null;
+  caseKind: z.infer<typeof SupportCaseKindSchema>;
+  problemCaseId: string | null;
+  legalHoldAt: Date | null;
+};
+type AuditRow = Prisma.SupportCaseEventCreateManyInput;
+
+function statusAuditRow(
   input: PatchSupportCaseInput,
-  existing: {
-    status: z.infer<typeof SupportCaseStatusSchema>;
-    priority: z.infer<typeof SupportPrioritySchema>;
-    assignedToId: string | null;
-    caseKind: z.infer<typeof SupportCaseKindSchema>;
-    problemCaseId: string | null;
-    legalHoldAt: Date | null;
-  },
+  existing: LifecycleAuditBefore,
+  now: Date,
+): AuditRow | null {
+  if (!input.status || input.status === existing.status) return null;
+  const wasSettled =
+    existing.status === "RESOLVED" || existing.status === "CLOSED";
+  const isActiveTarget =
+    input.status === "OPEN" || input.status === "IN_PROGRESS";
+  return {
+    caseId: input.caseId,
+    actorId: input.actorId,
+    kind: wasSettled && isActiveTarget ? "REOPENED" : "STATUS_CHANGED",
+    fromValue: existing.status,
+    toValue: input.status,
+    // The problem-resolution job reads this note as the linked incidents' closing message.
+    note:
+      input.status === "RESOLVED" ? input.closingMessage?.trim() || null : null,
+    createdAt: now,
+  };
+}
+
+function legalHoldAuditRow(
+  input: PatchSupportCaseInput,
+  existing: LifecycleAuditBefore,
   noteTrimmed: string | null,
   now: Date,
-): Promise<void> {
-  const auditRows: Prisma.SupportCaseEventCreateManyInput[] = [];
+): AuditRow | null {
+  if (!legalHoldChanges(input, existing)) return null;
+  return {
+    caseId: input.caseId,
+    actorId: input.actorId,
+    kind: "LEGAL_HOLD_CHANGED",
+    fromValue: existing.legalHoldAt ? "ON" : "OFF",
+    toValue: input.legalHold ? "ON" : "OFF",
+    note: noteTrimmed,
+    createdAt: now,
+  };
+}
 
-  if (input.status && input.status !== existing.status) {
-    const wasSettled =
-      existing.status === "RESOLVED" || existing.status === "CLOSED";
-    const isActiveTarget =
-      input.status === "OPEN" || input.status === "IN_PROGRESS";
-    auditRows.push({
-      caseId: input.caseId,
-      actorId: input.actorId,
-      kind: wasSettled && isActiveTarget ? "REOPENED" : "STATUS_CHANGED",
-      fromValue: existing.status,
-      toValue: input.status,
-      // The problem-resolution job reads this note as the linked incidents' closing message.
-      note:
-        input.status === "RESOLVED"
-          ? input.closingMessage?.trim() || null
-          : null,
-      createdAt: now,
-    });
-  }
-
-  if (legalHoldChanges(input, existing)) {
-    auditRows.push({
-      caseId: input.caseId,
-      actorId: input.actorId,
-      kind: "LEGAL_HOLD_CHANGED",
-      fromValue: existing.legalHoldAt ? "ON" : "OFF",
-      toValue: input.legalHold ? "ON" : "OFF",
-      note: noteTrimmed,
-      createdAt: now,
-    });
-  }
-
-  if (input.priority && input.priority !== existing.priority) {
-    auditRows.push({
+/** Priority, assignee and problem-link rows, in that order. */
+function routingAuditRows(
+  input: PatchSupportCaseInput,
+  existing: LifecycleAuditBefore,
+  noteTrimmed: string | null,
+  now: Date,
+): AuditRow[] {
+  const rows: AuditRow[] = [];
+  if (input.priority && input.priority !== existing.priority)
+    rows.push({
       caseId: input.caseId,
       actorId: input.actorId,
       kind: "PRIORITY_CHANGED",
@@ -1289,13 +1300,11 @@ async function recordLifecycleAuditEvents(
       toValue: input.priority,
       createdAt: now,
     });
-  }
-
   if (
     input.assignedToId !== undefined &&
     input.assignedToId !== existing.assignedToId
-  ) {
-    auditRows.push({
+  )
+    rows.push({
       caseId: input.caseId,
       actorId: input.actorId,
       kind: input.assignedToId ? "ASSIGNED" : "UNASSIGNED",
@@ -1304,14 +1313,12 @@ async function recordLifecycleAuditEvents(
       note: noteTrimmed,
       createdAt: now,
     });
-  }
-
   if (
     input.problemCaseId !== undefined &&
     existing.caseKind === "INCIDENT" &&
     input.problemCaseId !== existing.problemCaseId
-  ) {
-    auditRows.push({
+  )
+    rows.push({
       caseId: input.caseId,
       actorId: input.actorId,
       kind: "LINKED_PROBLEM",
@@ -1319,7 +1326,21 @@ async function recordLifecycleAuditEvents(
       toValue: input.problemCaseId,
       createdAt: now,
     });
-  }
+  return rows;
+}
+
+async function recordLifecycleAuditEvents(
+  tx: Tx,
+  input: PatchSupportCaseInput,
+  existing: LifecycleAuditBefore,
+  noteTrimmed: string | null,
+  now: Date,
+): Promise<void> {
+  const auditRows = [
+    statusAuditRow(input, existing, now),
+    legalHoldAuditRow(input, existing, noteTrimmed, now),
+    ...routingAuditRows(input, existing, noteTrimmed, now),
+  ].filter((row): row is AuditRow => row !== null);
 
   async function stepAudit(index: number): Promise<void> {
     if (index >= auditRows.length) return;
