@@ -179,16 +179,50 @@ export function describeObject(o: RequiredObject): string {
   return o.name;
 }
 
-/** The git ref this branch diverged from. */
-function baseRef(argv: string[]): string {
+/**
+ * `git`, resolved to a fixed location.
+ *
+ * A bare command name is resolved through PATH, and PATH is not a list of
+ * fixed, unwriteable directories — on a machine that can write to any PATH
+ * entry, "git" may not be git. The Prisma binary below is already an absolute
+ * path for the same reason.
+ */
+const GIT_CANDIDATES = [
+  "/usr/bin/git",
+  "/opt/homebrew/bin/git",
+  "/usr/local/bin/git",
+  "/bin/git",
+];
+
+function gitBin(): string {
+  const found = GIT_CANDIDATES.find((p) => fs.existsSync(p));
+  if (!found) {
+    throw new Error(
+      `git was not found in any fixed location (${GIT_CANDIDATES.join(", ")})`,
+    );
+  }
+  return found;
+}
+
+/**
+ * The git ref this branch diverged from.
+ *
+ * The ref reaches a child process, so it is checked to be a ref and nothing
+ * else: a leading `-` would make git read it as an option rather than a name.
+ */
+export function baseRef(argv: string[]): string {
   const i = argv.indexOf("--base");
-  if (i !== -1 && argv[i + 1]) return argv[i + 1];
-  return "origin/dev";
+  const ref = i !== -1 && argv[i + 1] ? argv[i + 1] : "origin/dev";
+  if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(ref)) {
+    throw new Error(`--base is not a usable git ref: ${ref}`);
+  }
+  return ref;
 }
 
 /** The base branch's schema, as a file the diff can read. */
 function baseSchemaFile(ref: string): string {
-  const mergeBase = execFileSync("git", ["merge-base", "HEAD", ref], {
+  const git = gitBin();
+  const mergeBase = execFileSync(git, ["merge-base", "HEAD", ref], {
     cwd: ROOT,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "inherit"],
@@ -197,7 +231,7 @@ function baseSchemaFile(ref: string): string {
     throw new Error(`no merge base between HEAD and ${ref}`);
   }
   const schema = execFileSync(
-    "git",
+    git,
     ["show", `${mergeBase}:prisma/schema.prisma`],
     { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
   );
@@ -318,9 +352,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  const ref = baseRef(process.argv.slice(2));
   let plan: string;
+  let ref = "origin/dev";
   try {
+    ref = baseRef(process.argv.slice(2));
     plan = branchPlan(baseSchemaFile(ref));
   } catch (error) {
     // A diff that cannot be computed is not a pass.

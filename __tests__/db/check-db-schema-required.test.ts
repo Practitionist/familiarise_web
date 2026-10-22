@@ -14,6 +14,7 @@
  */
 
 import {
+  baseRef,
   describeObject,
   isPresent,
   requiredObjects,
@@ -211,5 +212,29 @@ describe("the report line", () => {
         ddl: "",
       }),
     ).toBe("SupportCaseStatus.ON_HOLD (enum value)");
+  });
+});
+
+describe("the base ref", () => {
+  it("defaults to the release branch", () => {
+    expect(baseRef([])).toBe("origin/dev");
+  });
+
+  it("takes the branch it is given", () => {
+    expect(baseRef(["--base", "origin/feat/storefront"])).toBe(
+      "origin/feat/storefront",
+    );
+  });
+
+  it("refuses a ref that git would read as an option", () => {
+    // The ref reaches a child process. `execFileSync` does not use a shell, so
+    // there is no shell injection, but a leading `-` is still an option to git
+    // rather than a name.
+    expect(() => baseRef(["--base", "--upload-pack=evil"])).toThrow(
+      "not a usable git ref",
+    );
+    expect(() => baseRef(["--base", "origin/dev; rm -rf /"])).toThrow(
+      "not a usable git ref",
+    );
   });
 });
