@@ -162,12 +162,15 @@ const EXPLORE_COLUMNS: NavColumn[] = [
 const EXPLORE_CATEGORIES: NavCategoryChip[] = [
   { label: "Technology", href: "/explore/experts?domain=Technology" },
   { label: "Business", href: "/explore/experts?domain=Business" },
-  { label: "Creative Arts", href: "/explore/experts?domain=Creative Arts" },
+  {
+    label: "Creative Arts",
+    href: `/explore/experts?domain=${encodeURIComponent("Creative Arts")}`,
+  },
   { label: "Education", href: "/explore/experts?domain=Education" },
   { label: "Health", href: "/explore/experts?domain=Health" },
   {
     label: "Personal Dev",
-    href: "/explore/experts?domain=Personal Development",
+    href: `/explore/experts?domain=${encodeURIComponent("Personal Development")}`,
   },
 ];
 

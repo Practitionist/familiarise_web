@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowUpRight, MessageSquare } from "lucide-react";
+import { MessageSquare } from "lucide-react";
 
 // Brand glyphs as inline SVGs — lucide deprecated brand icons, so the footer
 // owns these five paths (Font Awesome 6 brand geometry) instead of pulling
@@ -78,9 +78,6 @@ import familiariseLogoWhite from "@/public/avif/static/assets/logos/images/logos
 interface FooterLink {
   label: string;
   href: string;
-  /** Renders the outbound glyph. Flagged explicitly rather than matched on
-   *  display text, which silently breaks the moment the copy is reworded. */
-  external?: boolean;
 }
 
 // Mirrors the Navbar's IA (Explore / Solutions / Enterprise / Company / Legal).
@@ -129,7 +126,7 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
       { label: "Blog", href: "/blog" },
       { label: "Pricing", href: "/pricing" },
       { label: "How it works", href: "/#how-it-works" },
-      { label: "Become an expert", href: "/become-an-expert", external: true },
+      { label: "Become an expert", href: "/become-an-expert" },
     ],
   },
   {
@@ -147,12 +144,15 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
 const EXPERTISE_LINKS: FooterLink[] = [
   { label: "Technology", href: "/explore/experts?domain=Technology" },
   { label: "Business", href: "/explore/experts?domain=Business" },
-  { label: "Creative Arts", href: "/explore/experts?domain=Creative Arts" },
+  {
+    label: "Creative Arts",
+    href: `/explore/experts?domain=${encodeURIComponent("Creative Arts")}`,
+  },
   { label: "Education", href: "/explore/experts?domain=Education" },
   { label: "Health", href: "/explore/experts?domain=Health" },
   {
     label: "Personal Development",
-    href: "/explore/experts?domain=Personal Development",
+    href: `/explore/experts?domain=${encodeURIComponent("Personal Development")}`,
   },
 ];
 
@@ -351,7 +351,6 @@ const Footer: React.FC = () => {
                       className="text-sm text-zinc-400 hover:text-white transition-colors inline-flex items-center gap-1"
                     >
                       {link.label}
-                      {link.external && <ArrowUpRight className="w-3 h-3" />}
                     </Link>
                   </li>
                 ))}
