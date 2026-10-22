@@ -239,6 +239,30 @@ it("does not touch storage for a case that gained a hold after the scan", async 
   expect(result.casesPurged).toBe(0);
 });
 
+it("on a CAS miss marks the deleted files only: no rename, no scrub, no event", async () => {
+  db.supportCase.findMany.mockResolvedValue([
+    { id: "case-1", attachments: [{ storagePath: "c1/a.png" }] },
+  ]);
+  db.tx.supportCase.updateMany.mockResolvedValue({ count: 0 });
+  const errors: string[] = [];
+  const result = await purgeExpiredSupportEvidence({ limit: 4, now, errors });
+
+  expect(result).toEqual({ casesPurged: 0, filesDeleted: 0 });
+  expect(errors).toHaveLength(1);
+  expect(db.tx.supportCase.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+    db.tx.supportCaseAttachment.updateMany.mock.invocationCallOrder[0],
+  );
+  expect(db.tx.supportCaseAttachment.updateMany).toHaveBeenCalledTimes(1);
+  expect(db.tx.supportCaseAttachment.updateMany).toHaveBeenCalledWith({
+    where: { caseId: "case-1", deletedAt: null },
+    data: { deletedAt: now },
+  });
+  expect(db.tx.supportCaseMessage.updateMany).not.toHaveBeenCalled();
+  expect(db.tx.supportCaseEvidenceRequest.updateMany).not.toHaveBeenCalled();
+  expect(db.tx.supportCaseEvent.updateMany).not.toHaveBeenCalled();
+  expect(db.tx.supportCaseEvent.create).not.toHaveBeenCalled();
+});
+
 it("skips the run when the live-dispute set reaches its cap", async () => {
   db.dispute.findMany.mockResolvedValue(
     Array.from({ length: 2_000 }, (_, i) => ({

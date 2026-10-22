@@ -218,14 +218,6 @@ export async function purgeExpiredSupportEvidence({
       }
       const purged = await prisma.$transaction(
         async (tx) => {
-          await tx.supportCaseAttachment.updateMany({
-            where: { caseId: c.id, deletedAt: null },
-            data: { deletedAt: now },
-          });
-          await tx.supportCaseAttachment.updateMany({
-            where: { caseId: c.id },
-            data: { originalName: PURGED_ATTACHMENT_NAME },
-          });
           const scrubbed = await tx.supportCase.updateMany({
             where: { id: c.id, ...eligible },
             data: {
@@ -237,7 +229,16 @@ export async function purgeExpiredSupportEvidence({
               externalRequesterName: null,
             },
           });
+          // The objects are gone either way; only an eligible case loses its names and text.
+          await tx.supportCaseAttachment.updateMany({
+            where: { caseId: c.id, deletedAt: null },
+            data: { deletedAt: now },
+          });
           if (scrubbed.count === 0) return false;
+          await tx.supportCaseAttachment.updateMany({
+            where: { caseId: c.id },
+            data: { originalName: PURGED_ATTACHMENT_NAME },
+          });
           await tx.supportCaseMessage.updateMany({
             where: { caseId: c.id },
             data: { body: PURGED_SUPPORT_TEXT, metadata: Prisma.DbNull },
