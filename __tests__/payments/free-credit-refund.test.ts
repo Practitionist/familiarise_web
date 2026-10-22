@@ -81,6 +81,13 @@ const tx = {
   },
 };
 
+// No payment here carries a booked DISCOUNT or an earlier refund's GST.
+jest.mock("../../lib/payments/ledger/refund-reversal-basis", () => ({
+  refundReversalBasis: async () => ({
+    discountBackPaise: 0,
+    gstReversedPaise: 0,
+  }),
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {

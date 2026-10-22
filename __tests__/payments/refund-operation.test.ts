@@ -482,6 +482,13 @@ function projectSelect(row: Row, select: Record<string, unknown>): Row {
 // Mock the prisma module — same client returned for both top-level + tx.
 // ---------------------------------------------------------------------------
 
+// No payment here carries a booked DISCOUNT or an earlier refund's GST.
+jest.mock("../../lib/payments/ledger/refund-reversal-basis", () => ({
+  refundReversalBasis: async () => ({
+    discountBackPaise: 0,
+    gstReversedPaise: 0,
+  }),
+}));
 jest.mock("../../lib/prisma", () => {
   const stub = txStub();
   return {

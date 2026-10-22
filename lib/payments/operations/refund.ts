@@ -123,6 +123,7 @@ import {
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
+import { refundReversalBasis } from "@/lib/payments/ledger/refund-reversal-basis";
 // Late-bound cycle: refund-owed reaches refundPayment through booking-refund.
 import { stampRefundOwed, type RefundOwedMarker } from "./refund-owed";
 
@@ -1144,6 +1145,10 @@ export async function applyRefundCascade(
 
   const proportion = (original: number): number =>
     prorate(original, input.amountPaise, payment.amount);
+  // Floor share per refund; the refund that completes the payment takes the
+  // whole remainder, so a split refund still ends every share at exactly zero.
+  const shareReversal = (total: number, reversed: number): number =>
+    completesFullRefund ? Math.max(0, total - reversed) : proportion(total);
 
   // -----------------------------------------------------------------------
   // Step 4: Reverse PaymentLegs proportionally with last-leg-absorbs-remainder.
@@ -1341,12 +1346,18 @@ export async function applyRefundCascade(
   const trancheAbsorb = new Map(
     allocateCycleClawback(
       trancheRows,
-      proportion(trancheRows.reduce((s, e) => s + e.consultantSharePaise, 0)),
+      shareReversal(
+        trancheRows.reduce((s, e) => s + e.consultantSharePaise, 0),
+        trancheRows.reduce((s, e) => s + e.refundedShareAmount, 0),
+      ),
     ).map((a) => [a.id, a.absorbPaise] as const),
   );
   const reversalOf = (earnings: (typeof payment.earnings)[number]): number =>
     typeof earnings.cycleOrdinal !== "number"
-      ? proportion(earnings.consultantSharePaise)
+      ? shareReversal(
+          earnings.consultantSharePaise,
+          earnings.refundedShareAmount,
+        )
       : (trancheAbsorb.get(earnings.id) ?? 0);
 
   let consultantEarningsReversed = 0;
@@ -1453,7 +1464,10 @@ export async function applyRefundCascade(
     // readyAmount negative, blocking the whole batch) — and it diverged from the
     // gateway-refund path (`refundEarnings`), which already reverses org-share
     // only. `floor` proportion matches the leg/consultant reversals to the paise.
-    const orgShareRev = proportion(orgEarn.orgSharePaise);
+    const orgShareRev = shareReversal(
+      orgEarn.orgSharePaise,
+      orgEarn.refundedAmountPaise,
+    );
     if (orgShareRev <= 0) continue;
 
     // #789 review — cap at the org share, mirroring the ConsultantEarnings
@@ -1664,7 +1678,7 @@ export async function applyRefundCascade(
   // -----------------------------------------------------------------------
   // Step 9 (#771 P0-5): double-entry reversal (dual-write). A refund reverses
   // recognized revenue / payable / GST and returns the funding to its source.
-  // Balanced by construction — PLATFORM_FEE absorbs the rounding/discount plug.
+  // Balanced by construction — PLATFORM_FEE absorbs the rounding plug.
   // Wrapped so a ledger imbalance can never block the refund during dual-write.
   // -----------------------------------------------------------------------
   try {
@@ -1706,6 +1720,21 @@ export async function applyRefundCascade(
           amountPaise: reverse,
         });
       }
+    }
+    const basis = await refundReversalBasis(
+      tx,
+      payment.id,
+      proportion,
+      completesFullRefund,
+    );
+    // A funded booking's DISCOUNT goes back with its funding, so the plug
+    // below returns the platform fee instead of crediting the discount to it.
+    if (credits.length > 0 && basis.discountBackPaise > 0) {
+      credits.push({
+        account: { kind: "DISCOUNT" },
+        direction: "CREDIT",
+        amountPaise: basis.discountBackPaise,
+      });
     }
     // #1003 — a LICENSE-funded booking has exactly one leg and it is worth
     // zero (the contract absorbs the cost, so no money moves per booking), yet
@@ -1760,7 +1789,9 @@ export async function applyRefundCascade(
         (taxPaise > 0 &&
           isPastGstCreditNoteCutoff(cutoffSourceDate, cascadeNow))
           ? 0
-          : proportion(taxPaise);
+          : completesFullRefund
+            ? Math.max(0, taxPaise - basis.gstReversedPaise)
+            : proportion(taxPaise);
       // #775 — a CHARGE_MEMBER side-payment refund: the member's capture
       // credited ORG_PAYABLE (overage:<paymentId> txn), so refunding it must
       // pull that relief credit BACK from the org — not bill the platform.
@@ -1860,7 +1891,7 @@ export async function applyRefundCascade(
         });
       }
       if (platformPlug < 0) {
-        // Reversed shares exceed the funding returned (rounding / discount /
+        // Reversed shares exceed the funding returned (rounding /
         // referral-credit-funded portion). #778 §C residual policy: PLATFORM_FEE
         // absorbs the shortfall so the reversal is ALWAYS balanced. The prior
         // `platformPlug >= 0` guard silently dropped the posting on this path,

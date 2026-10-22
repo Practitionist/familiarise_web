@@ -61,6 +61,7 @@ import { seatLedger } from "@/lib/booking/class-series";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
+import { refundReversalBasis } from "@/lib/payments/ledger/refund-reversal-basis";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
 import { isPastGstCreditNoteCutoff } from "@/lib/compliance/gst-credit-note-cutoff";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -892,6 +893,20 @@ async function reverseFreeCreditSettlement(
       direction: "CREDIT",
       amountPaise: promoTotal,
     });
+    // A coupon on a credit-funded booking was booked to DISCOUNT; it returns with the credits.
+    const { discountBackPaise } = await refundReversalBasis(
+      tx,
+      input.paymentId,
+      part,
+      !share,
+    );
+    if (discountBackPaise > 0) {
+      credits.push({
+        account: { kind: "DISCOUNT" },
+        direction: "CREDIT",
+        amountPaise: discountBackPaise,
+      });
+    }
   } else if (discountBack > 0) {
     credits.push({
       account: { kind: "DISCOUNT" },

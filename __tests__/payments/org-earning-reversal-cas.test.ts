@@ -38,6 +38,13 @@ const mockRecordTdsReversal = jest.fn();
 const mockPaymentFindUnique = jest.fn();
 const mockFindDeduped = jest.fn(async (..._a: unknown[]) => null as unknown);
 
+// No payment here carries a booked DISCOUNT or an earlier refund's GST.
+jest.mock("../../lib/payments/ledger/refund-reversal-basis", () => ({
+  refundReversalBasis: async () => ({
+    discountBackPaise: 0,
+    gstReversedPaise: 0,
+  }),
+}));
 jest.mock("../../lib/payments/tax/tds-service", () => ({
   recordTdsReversal: (...a: unknown[]) => mockRecordTdsReversal(...a),
 }));
