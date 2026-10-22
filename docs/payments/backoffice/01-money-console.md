@@ -97,7 +97,10 @@ dialog under Operations → Appointments carries an "Ops actions" panel
 opens only the existing door routes. Every booking type lists its sessions
 with their outcome and the `session.set-outcome` door, and shows its money
 state; an admin also gets a link that opens the Refunds section's issue door
-pre-filled with the payment. A class booking adds the class doors described
+pre-filled with the payment. Any operator holding `appointments.manage` can
+release the booking, or one session of a subscription or class, for
+rescheduling through `POST /api/staff/appointments/[id]/reschedule`, the only
+way a STAFF or ADMIN who is not a party moves a booking. A class booking adds the class doors described
 above: cancel a session, grant a make-up with the reason-gated 14-day bypass,
 skip a make-up (admin), the exit-right state, the reliability flag with an
 ops note, and, for an admin, cancelling the whole series and running the

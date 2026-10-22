@@ -720,6 +720,8 @@ POST /api/appointments/{appointmentId}/reschedule?type={APPOINTMENT_TYPE}
 
 Requires an active session. Returns `401 Unauthorized` if not authenticated.
 
+The caller must be a party: the expert or a host-org operator, the consultee, or an admin of the funding organization. A STAFF or ADMIN who is not a party is refused with 403 `PLATFORM_RESCHEDULE_DOOR_REQUIRED`; they reschedule through `POST /api/staff/appointments/{appointmentId}/reschedule` (surface `appointments.manage`, step-up, a typed reason, the booking maintenance gate and one `OpsActionLog` row with the sessions before and the release after). That door runs this route under a one-request grant (`lib/booking/platform-reschedule.ts`), so the lock, the CAS transitions, the 24-hour window and the notices are the same. An operator is neither party, so the release opens no proposal and counts against neither side's cap.
+
 ### Query Parameters
 
 | Parameter | Required | Values                                             | Description                                                                                                     |
@@ -764,6 +766,7 @@ If the body is empty, unparseable, or missing the slot fields, the system treats
 | Status | Condition                               | Error Class                | Example Message                                                          |
 | ------ | --------------------------------------- | -------------------------- | ------------------------------------------------------------------------ |
 | 401    | Not authenticated                       | --                         | `Unauthorized`                                                           |
+| 403    | STAFF/ADMIN non-party without the door  | --                         | `PLATFORM_RESCHEDULE_DOOR_REQUIRED`                                      |
 | 400    | Invalid request body or missing `type`  | --                         | Varies                                                                   |
 | 400    | Slot within 24 hours                    | `ReschedulePolicyError`    | `Cannot reschedule: slot starts in 18 hours (minimum 24 hours required)` |
 | 404    | Appointment not found                   | `AppointmentNotFoundError` | `appointment not found: apt_123`                                         |
