@@ -1,9 +1,7 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useId, useRef, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   AlertDialog,
@@ -14,95 +12,23 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useToast } from "@/hooks/use-toast";
-import { throwSupportError } from "@/lib/support/error-copy";
 import { formatDateTimeLabel } from "@/lib/time/display";
-import { humanizeEnum } from "@/lib/ui/tone";
-import { formatCurrencyAmount } from "@/utils/formatting";
-import { z } from "zod";
 import { CaseAttachments } from "../CaseAttachments";
+import { FinancialPanel } from "./FinancialPanel";
+import { ReasonAction } from "./ReasonAction";
 import {
   DECISION_APPEAL_DAYS,
   Outcome,
   OUTCOME_LABEL,
-  rupeesToPaise,
   useCaseAction,
   useCaseResolution,
-  type CaseActionPayload,
+  type RunCaseAction,
   type CaseResolution,
   type DecisionOutcome,
-  type RefundProposal,
 } from "./resolution-data";
 
-type Run = (payload: CaseActionPayload, onDone?: () => void) => void;
+type Run = RunCaseAction;
 const when = (iso: string) => formatDateTimeLabel(new Date(iso));
-
-/** A one-off action that asks for its own reason inline before it runs. */
-function ReasonAction({
-  label,
-  confirmLabel,
-  busy,
-  minLength = 1,
-  onConfirm,
-}: Readonly<{
-  label: string;
-  confirmLabel: string;
-  busy: boolean;
-  minLength?: number;
-  onConfirm: (reason: string, done: () => void) => void;
-}>) {
-  const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState("");
-  const field = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    if (open) field.current?.focus();
-  }, [open]);
-  if (!open)
-    return (
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={busy}
-        onClick={() => setOpen(true)}
-      >
-        {label}
-      </Button>
-    );
-  return (
-    <form
-      className="space-y-2"
-      onSubmit={(event) => {
-        event.preventDefault();
-        onConfirm(reason.trim(), () => {
-          setOpen(false);
-          setReason("");
-        });
-      }}
-    >
-      <Textarea
-        ref={field}
-        aria-label={`Reason: ${label}`}
-        value={reason}
-        onChange={(event) => setReason(event.target.value)}
-        placeholder="Reason (kept in the case's private history)"
-        required
-      />
-      <div className="flex gap-2">
-        <Button size="sm" disabled={busy || reason.trim().length < minLength}>
-          {confirmLabel}
-        </Button>
-        <Button
-          size="sm"
-          type="button"
-          variant="ghost"
-          onClick={() => setOpen(false)}
-        >
-          Cancel
-        </Button>
-      </div>
-    </form>
-  );
-}
 
 function DecisionDialog({
   data,
@@ -329,296 +255,6 @@ function EvidenceRequestsPanel({
   );
 }
 
-const Preview = z.object({
-  data: z.object({
-    refundablePaise: z.number(),
-    amountPaise: z.number(),
-    rail: z.string(),
-    blockedReason: z.string().nullable(),
-  }),
-});
-type RefundPreview = z.infer<typeof Preview>["data"] & {
-  recommendationId: string;
-};
-
-function recommendationStatus(rec: CaseResolution["recommendations"][number]) {
-  if (!rec.decidedAt) return "Awaiting administrator review";
-  if (!rec.approved) return "Declined";
-  return rec.refund
-    ? `Approved · ${humanizeEnum(rec.refund.status)}`
-    : "Approved";
-}
-
-function FinancialPanel({
-  caseId,
-  paymentId,
-  basePath,
-  data,
-  busy,
-  run,
-  proposal,
-}: Readonly<{
-  caseId: string;
-  paymentId?: string;
-  basePath: string;
-  data: CaseResolution;
-  busy: boolean;
-  run: Run;
-  proposal: (RefundProposal & { recommendationId: string }) | null;
-}>) {
-  const { toast } = useToast();
-  const reviewReasonId = useId();
-  const [amount, setAmount] = useState("");
-  const [recommendReason, setRecommendReason] = useState("");
-  const [preview, setPreview] = useState<RefundPreview | null>(null);
-  const [reviewReason, setReviewReason] = useState("");
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const canMoney = data.canExecuteMoney;
-  const amountPaise = rupeesToPaise(amount);
-  const amountValid = amountPaise !== null;
-  const loadPreview = async (recommendationId: string) => {
-    setPreviewLoading(true);
-    try {
-      const response = await fetch(
-        `/api/support/cases/${caseId}/recommendations/${recommendationId}/preview`,
-      );
-      if (!response.ok) await throwSupportError(response, "refund preview");
-      setReviewReason("");
-      setPreview({
-        ...Preview.parse(await response.json()).data,
-        recommendationId,
-      });
-    } catch (error) {
-      toast({
-        title: "Refund preview unavailable",
-        description: error instanceof Error ? error.message : undefined,
-        variant: "destructive",
-      });
-    } finally {
-      setPreviewLoading(false);
-    }
-  };
-  const pendingProposal =
-    canMoney &&
-    proposal &&
-    data.recommendations.some(
-      (rec) => rec.id === proposal.recommendationId && !rec.decidedAt,
-    )
-      ? proposal
-      : null;
-  return (
-    <details>
-      <summary className="cursor-pointer font-medium">Financial review</summary>
-      <div className="mt-2 space-y-3">
-        {pendingProposal && (
-          <output className="block space-y-1 rounded border border-border p-3">
-            <span className="block font-medium">
-              Waiting for another admin’s approval
-            </span>
-            <span className="block text-xs text-muted-foreground">
-              The refund has not been sent. This request expires{" "}
-              {when(pendingProposal.expiresAt)}.
-            </span>
-            <Link
-              className="text-xs underline"
-              href={`${basePath}/money/approvals`}
-            >
-              View money approvals
-            </Link>
-          </output>
-        )}
-        {data.recommendations.map((rec) => (
-          <div
-            key={rec.id}
-            className="space-y-1 rounded border border-border p-2 text-xs"
-          >
-            <p>
-              {formatCurrencyAmount(rec.amountPaise, "INR")} · {rec.reason}
-            </p>
-            <p>{recommendationStatus(rec)}</p>
-            {canMoney && (!rec.decidedAt || (rec.approved && !rec.refund)) && (
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={busy || previewLoading}
-                  onClick={() => void loadPreview(rec.id)}
-                >
-                  {rec.approved ? "Retry approved refund" : "Review refund"}
-                </Button>
-                {!rec.decidedAt && (
-                  <ReasonAction
-                    label="Decline"
-                    confirmLabel="Decline recommendation"
-                    minLength={5}
-                    busy={busy}
-                    onConfirm={(reason, done) =>
-                      run(
-                        {
-                          action: "REVIEW_REFUND",
-                          recommendationId: rec.id,
-                          approve: false,
-                          reason,
-                        },
-                        done,
-                      )
-                    }
-                  />
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-        {paymentId && (
-          <form
-            className="space-y-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (amountPaise === null) return;
-              run(
-                {
-                  action: "RECOMMEND_REFUND",
-                  paymentId,
-                  amountPaise,
-                  reason: recommendReason.trim(),
-                },
-                () => {
-                  setAmount("");
-                  setRecommendReason("");
-                },
-              );
-            }}
-          >
-            <p className="text-xs text-muted-foreground">
-              For a booking paid entirely with credits, enter 0 to request full
-              credit restoration.
-            </p>
-            <Input
-              aria-label="Recommended refund in rupees"
-              type="number"
-              min="0"
-              step="0.01"
-              value={amount}
-              onChange={(event) => setAmount(event.target.value)}
-              placeholder="Refund amount (₹)"
-            />
-            <Textarea
-              aria-label="Reason for the refund recommendation"
-              value={recommendReason}
-              onChange={(event) => setRecommendReason(event.target.value)}
-              placeholder="Why this refund is recommended"
-            />
-            <Button
-              size="sm"
-              disabled={busy || !recommendReason.trim() || !amountValid}
-            >
-              Recommend refund
-            </Button>
-          </form>
-        )}
-        {data.holds.map((hold) => (
-          <div
-            key={hold.id}
-            className="space-y-1 rounded border border-border p-2 text-xs"
-          >
-            <p>
-              {hold.reason} · {hold.releasedAt ? "Released" : "Payment held"}
-            </p>
-            {canMoney && !hold.releasedAt && (
-              <ReasonAction
-                label="Release hold"
-                confirmLabel="Release this hold"
-                busy={busy}
-                onConfirm={(reason, done) =>
-                  run({ action: "RELEASE_HOLD", holdId: hold.id, reason }, done)
-                }
-              />
-            )}
-          </div>
-        ))}
-        {canMoney && paymentId && (
-          <ReasonAction
-            label="Hold payment"
-            confirmLabel="Hold this payment"
-            busy={busy}
-            onConfirm={(reason, done) =>
-              run({ action: "APPLY_HOLD", paymentId, reason }, done)
-            }
-          />
-        )}
-        {canMoney && (
-          <p className="text-xs text-muted-foreground">
-            Reviewing a refund needs a reason of at least 5 characters. Refunds
-            over ₹25,000 need another admin’s approval when at least two admins
-            are active.
-          </p>
-        )}
-      </div>
-      <AlertDialog
-        open={preview !== null}
-        onOpenChange={(open) => {
-          if (!open) setPreview(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Review refund</AlertDialogTitle>
-            <AlertDialogDescription>
-              {preview &&
-                (preview.rail === "CREDITS"
-                  ? "Restore the booking's credits in full. No cash refund is sent."
-                  : `${formatCurrencyAmount(preview.amountPaise, "INR")} through ${preview.rail}. Current refundable balance: ${formatCurrencyAmount(preview.refundablePaise, "INR")}.`)}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <p className="text-xs text-muted-foreground">
-            If another admin’s approval is required, this creates an approval
-            request and the refund waits for their decision.
-          </p>
-          {preview?.blockedReason && (
-            <p role="alert" className="text-sm text-destructive">
-              {preview.blockedReason}
-            </p>
-          )}
-          <label htmlFor={reviewReasonId} className="text-sm font-medium">
-            Refund review reason
-          </label>
-          <Textarea
-            id={reviewReasonId}
-            value={reviewReason}
-            onChange={(event) => setReviewReason(event.target.value)}
-            placeholder="At least 5 characters"
-          />
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
-            <Button
-              disabled={
-                busy ||
-                Boolean(preview?.blockedReason) ||
-                reviewReason.trim().length < 5
-              }
-              onClick={() => {
-                if (preview)
-                  run(
-                    {
-                      action: "REVIEW_REFUND",
-                      recommendationId: preview.recommendationId,
-                      approve: true,
-                      reason: reviewReason.trim(),
-                      expectedRefundablePaise: preview.refundablePaise,
-                    },
-                    () => setPreview(null),
-                  );
-              }}
-            >
-              Confirm refund review
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </details>
-  );
-}
-
 /** Staff-only resolution tools; each panel keeps its own reason so text never crosses actions. */
 export function StaffCaseResolution({
   caseId,
@@ -627,9 +263,6 @@ export function StaffCaseResolution({
 }: Readonly<{ caseId: string; paymentId?: string; basePath: string }>) {
   const query = useCaseResolution(caseId);
   const action = useCaseAction(caseId);
-  const [proposal, setProposal] = useState<
-    (RefundProposal & { recommendationId: string }) | null
-  >(null);
   if (query.isPending)
     return (
       <p className="text-xs text-muted-foreground">Loading case resolution…</p>
@@ -645,12 +278,7 @@ export function StaffCaseResolution({
   const busy = action.isPending;
   const run: Run = (payload, onDone) =>
     action.mutate(payload, {
-      onSuccess: (result) => {
-        // Only a refund review changes the pending proposal; other actions leave it shown.
-        if (result) setProposal(result);
-        else if (payload.action === "REVIEW_REFUND") setProposal(null);
-        onDone?.();
-      },
+      onSuccess: () => onDone?.(),
     });
   return (
     <section
@@ -692,18 +320,7 @@ export function StaffCaseResolution({
         data={data}
         busy={busy}
         run={run}
-        proposal={proposal}
       />
-      {data.ownershipScope !== "PERSONAL" && (
-        <ReasonAction
-          label="Record organization handover"
-          confirmLabel="Record handover"
-          busy={busy}
-          onConfirm={(reason, done) =>
-            run({ action: "HANDOVER", reason }, done)
-          }
-        />
-      )}
     </section>
   );
 }

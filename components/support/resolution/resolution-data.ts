@@ -65,15 +65,21 @@ const Resolution = z.object({
         reason: z.string(),
         approved: z.boolean().nullable(),
         decidedAt: z.string().nullable(),
+        releaseSeat: z.boolean(),
+        voidedAt: z.string().nullable(),
+        voidedById: z.string().nullable(),
         refund: z.object({ id: z.string(), status: z.string() }).nullable(),
       }),
     ),
     holds: z.array(
       z.object({
+        /** The HOLD_APPLIED event id; RELEASE_HOLD takes it as holdId. */
         id: z.string(),
         paymentId: z.string(),
         reason: z.string(),
+        createdAt: z.string(),
         releasedAt: z.string().nullable(),
+        earningsHeld: z.number(),
       }),
     ),
     evidenceRequests: z.array(
@@ -92,6 +98,10 @@ const Resolution = z.object({
     ),
     canManage: z.boolean(),
     canExecuteMoney: z.boolean(),
+    canManageHolds: z.boolean(),
+    canVoidRecommendations: z.boolean(),
+    /** Per-payment cumulative ceiling across live support refunds; null is unbounded. */
+    refundLimitPaise: z.number().nullable(),
     ownershipScope: z.enum(["PERSONAL", "ORG_OPERATIONS", "ORG_BILLING"]),
     updatedAt: z.string(),
   }),
@@ -142,6 +152,7 @@ export type CaseActionPayload =
       paymentId: string;
       amountPaise: number;
       reason: string;
+      releaseSeat: boolean;
     }
   | {
       action: "REVIEW_REFUND";
@@ -152,7 +163,44 @@ export type CaseActionPayload =
     }
   | { action: "APPLY_HOLD"; paymentId: string; reason: string }
   | { action: "RELEASE_HOLD"; holdId: string; reason: string }
-  | { action: "HANDOVER"; reason: string };
+  | { action: "VOID_RECOMMENDATION"; recommendationId: string; reason: string };
+
+export type RunCaseAction = (
+  payload: CaseActionPayload,
+  onDone?: () => void,
+) => void;
+
+const PendingApprovals = z.object({
+  proposals: z.array(
+    z.object({
+      targetKind: z.string(),
+      targetId: z.string(),
+      expiresAt: z.string(),
+    }),
+  ),
+});
+
+/**
+ * Open second-admin proposals by recommendation id, read from Money → Approvals.
+ * That list is admin-only, and only admins can trigger a second approval.
+ */
+export function usePendingRefundApprovals(caseId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: [...supportKeys.case(caseId), "pending-approvals"],
+    enabled,
+    queryFn: async () => {
+      const response = await fetch("/api/admin/ops-proposals?status=PROPOSED");
+      if (!response.ok)
+        await throwSupportError(response, "pending approvals load");
+      const { proposals } = PendingApprovals.parse(await response.json());
+      return Object.fromEntries(
+        proposals
+          .filter((p) => p.targetKind === "SupportFinancialRecommendation")
+          .map((p) => [p.targetId, p.expiresAt]),
+      );
+    },
+  });
+}
 
 /** One staff case-action mutation; every success or failure refreshes the case subtree. */
 export function useCaseAction(caseId: string) {

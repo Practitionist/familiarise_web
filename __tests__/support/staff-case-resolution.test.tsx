@@ -27,10 +27,23 @@ const resolution = {
   evidenceRequests: [],
   recipients: [],
   canManage: true,
-  canExecuteMoney: false,
+  canExecuteMoney: true,
+  canManageHolds: true,
+  canVoidRecommendations: false,
+  refundLimitPaise: 500_000,
   ownershipScope: "ORG_OPERATIONS",
   updatedAt: STALE,
 };
+
+/** Applies a payout hold through its own inline reason. */
+function holdPayout() {
+  fireEvent.click(screen.getByText("Financial review"));
+  fireEvent.click(screen.getByRole("button", { name: "Hold payout" }));
+  fireEvent.change(screen.getByLabelText("Reason: Hold payout"), {
+    target: { value: "Chargeback opened" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Hold this payout" }));
+}
 
 function client() {
   return new QueryClient({
@@ -97,21 +110,19 @@ describe("StaffCaseResolution", () => {
     qc.setQueryData(supportKeys.workspace("case_1"), { updatedAt: FRESH });
     render(
       <QueryClientProvider client={qc}>
-        <StaffCaseResolution caseId="case_1" basePath="/dashboard/admin" />
+        <StaffCaseResolution
+          caseId="case_1"
+          paymentId="pay_1"
+          basePath="/dashboard/admin"
+        />
       </QueryClientProvider>,
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Record organization handover" }),
-    );
-    fireEvent.change(
-      screen.getByLabelText("Reason: Record organization handover"),
-      { target: { value: "Billing team owns this" } },
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Record handover" }));
+    holdPayout();
     await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
     expect(sentBody()).toMatchObject({
-      action: "HANDOVER",
-      reason: "Billing team owns this",
+      action: "APPLY_HOLD",
+      paymentId: "pay_1",
+      reason: "Chargeback opened",
       expectedUpdatedAt: FRESH,
     });
     await waitFor(() =>
@@ -132,19 +143,28 @@ describe("StaffCaseResolution", () => {
     await qc.invalidateQueries({ queryKey: supportKeys.workspace("case_1") });
     render(
       <QueryClientProvider client={qc}>
+        <StaffCaseResolution
+          caseId="case_1"
+          paymentId="pay_1"
+          basePath="/dashboard/admin"
+        />
+      </QueryClientProvider>,
+    );
+    holdPayout();
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
+    expect(sentBody().expectedUpdatedAt).toBe(FRESH);
+    qc.clear();
+  });
+
+  it("has no organization handover control", () => {
+    const qc = client();
+    qc.setQueryData(supportKeys.resolution("case_1"), resolution);
+    render(
+      <QueryClientProvider client={qc}>
         <StaffCaseResolution caseId="case_1" basePath="/dashboard/admin" />
       </QueryClientProvider>,
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Record organization handover" }),
-    );
-    fireEvent.change(
-      screen.getByLabelText("Reason: Record organization handover"),
-      { target: { value: "Billing team owns this" } },
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Record handover" }));
-    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
-    expect(sentBody().expectedUpdatedAt).toBe(FRESH);
+    expect(screen.queryByText(/handover/i)).not.toBeInTheDocument();
     qc.clear();
   });
 
@@ -154,7 +174,11 @@ describe("StaffCaseResolution", () => {
     qc.setQueryData(supportKeys.workspace("case_1"), { updatedAt: FRESH });
     render(
       <QueryClientProvider client={qc}>
-        <StaffCaseResolution caseId="case_1" basePath="/dashboard/admin" />
+        <StaffCaseResolution
+          caseId="case_1"
+          paymentId="pay_1"
+          basePath="/dashboard/admin"
+        />
       </QueryClientProvider>,
     );
     fireEvent.click(screen.getByText("Decision"));
