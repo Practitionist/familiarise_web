@@ -269,7 +269,7 @@ it("releases every case hold, restoring status but never another owner's hold", 
       actorId: "admin-1",
       note: "Released when the case was resolved",
     }),
-  ).toBe(1);
+  ).toEqual([{ holdId: "evt-case-1-pay-1", paymentId: "pay-1" }]);
 
   expect(store.consultant[0]).toMatchObject({ status: "READY" });
   expect(store.activeReasons("oe-1")).toEqual(["DISPUTE"]);
@@ -287,7 +287,7 @@ it("releases every case hold, restoring status but never another owner's hold", 
       actorId: "admin-1",
       note: "again",
     }),
-  ).toBe(0);
+  ).toEqual([]);
 });
 
 it("refuses when an earning stays batched in a payout it could not cancel", async () => {

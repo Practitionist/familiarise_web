@@ -11,7 +11,9 @@ const mockStageExternal = jest.fn(async (..._args: unknown[]) => ({
   staged: { id: "ext-row" },
   message: { to: "ext@example.test" },
 }));
-const mockReleaseHolds = jest.fn(async (..._args: unknown[]) => 0);
+const mockReleaseHolds = jest.fn(async (..._args: unknown[]) => []);
+const mockHoldEvents = jest.fn(async (..._args: unknown[]) => [] as unknown[]);
+const mockOpenRecommendation = jest.fn(async (..._args: unknown[]) => null);
 const mockCsat = jest.fn(async (..._args: unknown[]) => undefined);
 jest.mock("../../lib/novu/stage-bell", () => ({
   stageBell: (tx: unknown, args: { dedupeKey: string }) =>
@@ -26,10 +28,15 @@ jest.mock("../../lib/support/external-requester", () => ({
     mockStageExternal(...args),
 }));
 jest.mock("../../lib/support/case-holds", () => ({
+  caseHoldEvents: (...args: unknown[]) => mockHoldEvents(...args),
+  activeHolds: (events: unknown[]) => events,
   releaseAllCaseHolds: (...args: unknown[]) => mockReleaseHolds(...args),
 }));
 jest.mock("../../lib/support/case-service", () => ({
   stageCaseResolutionCsatPromptTx: (...args: unknown[]) => mockCsat(...args),
+  openRecommendationTx: (...args: unknown[]) => mockOpenRecommendation(...args),
+  moneyDoorsRefusal: async () => null,
+  recordLifecycleHoldReleaseTx: async () => undefined,
 }));
 jest.mock("../../lib/support/case-access", () => ({
   caseCorrespondentIds: jest.fn(async () => ["customer"]),
@@ -79,6 +86,7 @@ const incident = (id: string, overrides: Record<string, unknown> = {}) => ({
   ownershipScope: "PERSONAL",
   externalRequesterEmail: null,
   status: "OPEN",
+  updatedAt: now,
   messageSeq: 3,
   awaitingUserSince: null,
   pausedSeconds: 0,
@@ -126,6 +134,7 @@ it("resolves each incident in its own transaction with the problem's notice, hol
       where: {
         id: "a",
         status: "OPEN",
+        updatedAt: now,
         messageSeq: 3,
         awaitingUserSince: null,
         pausedSeconds: 0,
@@ -186,6 +195,20 @@ it("skips an incident whose problem was reopened (CAS misses) without staging an
   expect(db.tx.supportCaseEvent.create).not.toHaveBeenCalled();
   expect(mockStageBell).not.toHaveBeenCalled();
   expect(mockReleaseHolds).not.toHaveBeenCalled();
+});
+
+it("leaves open and reports an incident whose holds sit under an open recommendation", async () => {
+  db.supportCase.findMany.mockResolvedValue([incident("a"), incident("b")]);
+  mockHoldEvents.mockResolvedValueOnce([{ id: "hold-1", caseId: "a" }]);
+  mockOpenRecommendation.mockResolvedValueOnce({ id: "rec-1" } as never);
+  const errors: string[] = [];
+  const result = await cascadeResolvedProblems({ limit: 10, now, errors });
+  expect(result).toMatchObject({
+    cascaded: 1,
+    heldOpen: [{ caseId: "a", code: "RECOMMENDATION_OPEN" }],
+  });
+  expect(db.tx.supportCase.updateMany).toHaveBeenCalledTimes(1);
+  expect(errors).toEqual([]);
 });
 
 it("writes no closing message when the problem's RESOLVED event has no note", async () => {

@@ -12,9 +12,14 @@ import { supportTicketStatusLabel } from "@/lib/novu/humanize";
 import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { stageSupportTicketUpdateEmail } from "@/lib/email/senders/people";
 import { caseCorrespondentIds } from "./case-access";
-import { releaseAllCaseHolds } from "./case-holds";
+import { activeHolds, caseHoldEvents, releaseAllCaseHolds } from "./case-holds";
 import { caseKeyOf } from "./case-key";
-import { stageCaseResolutionCsatPromptTx } from "./case-service";
+import {
+  moneyDoorsRefusal,
+  openRecommendationTx,
+  recordLifecycleHoldReleaseTx,
+  stageCaseResolutionCsatPromptTx,
+} from "./case-service";
 import { stageExternalRequesterEmail } from "./external-requester";
 import { userRepliedPatch } from "./sla";
 
@@ -28,6 +33,7 @@ interface OpenIncident {
   ownershipScope: SupportCaseOwnership;
   externalRequesterEmail: string | null;
   status: SupportCaseStatus;
+  updatedAt: Date;
   messageSeq: number;
   awaitingUserSince: Date | null;
   pausedSeconds: number;
@@ -40,9 +46,19 @@ interface StagedNotices {
   emails: StagedRecipientEmail[];
 }
 
+/** An incident the cascade left open because releasing its payout holds was refused. */
+interface HeldOpenIncident {
+  caseId: string;
+  code: string;
+}
+
 interface ProblemCascadeResult extends StagedNotices {
   cascaded: number;
+  heldOpen: HeldOpenIncident[];
 }
+
+/** The money doors' gate, read at most once per run and only when an incident has holds. */
+type DoorsGate = () => Promise<string | null>;
 
 const RESOLVED_LABEL = supportTicketStatusLabel("RESOLVED");
 
@@ -111,14 +127,25 @@ async function stageResolvedNoticeTx(
   }
 }
 
-/** Resolves one incident; the CAS re-checks the problem is still RESOLVED. */
+/**
+ * Resolves one incident; the CAS re-checks the problem is still RESOLVED and that
+ * no hold or recommendation landed since the scan. An incident whose holds sit
+ * under an open recommendation, or meet closed money doors, stays open under that code.
+ */
 async function resolveIncidentTx(
   tx: Tx,
   inc: OpenIncident,
   now: Date,
   out: StagedNotices,
-): Promise<boolean> {
+  doors: DoorsGate,
+): Promise<boolean | string> {
   if (!inc.problemCaseId) return false;
+  const held = activeHolds(await caseHoldEvents(tx, [inc.id]));
+  if (held.length > 0) {
+    if (await openRecommendationTx(tx, inc.id)) return "RECOMMENDATION_OPEN";
+    const refused = await doors();
+    if (refused) return refused;
+  }
   const resolution = await tx.supportCaseEvent.findFirst({
     where: {
       caseId: inc.problemCaseId,
@@ -136,6 +163,7 @@ async function resolveIncidentTx(
     where: {
       id: inc.id,
       status: inc.status,
+      updatedAt: inc.updatedAt,
       messageSeq: inc.messageSeq,
       awaitingUserSince: inc.awaitingUserSince,
       pausedSeconds: inc.pausedSeconds,
@@ -178,11 +206,28 @@ async function resolveIncidentTx(
       createdAt: now,
     },
   });
-  await releaseAllCaseHolds(tx, {
+  const note = "Released when the case was resolved";
+  const released = await releaseAllCaseHolds(tx, {
     caseId: inc.id,
     actorId,
-    note: "Released when the case was resolved",
+    note,
   });
+  if (released.length > 0) {
+    const actor = actorId
+      ? await tx.user.findUnique({
+          where: { id: actorId },
+          select: { role: true },
+        })
+      : null;
+    await recordLifecycleHoldReleaseTx(tx, {
+      caseId: inc.id,
+      actorId,
+      actorRole: actor?.role ?? "SYSTEM",
+      status: "RESOLVED",
+      reason: `${note} via problem ${inc.problemCase?.referenceNumber ?? inc.problemCaseId}`,
+      released,
+    });
+  }
   await stageResolvedNoticeTx(tx, inc, now, out);
   await stageCaseResolutionCsatPromptTx(tx, inc, now);
   return true;
@@ -201,7 +246,12 @@ export async function cascadeResolvedProblems({
   now: Date;
   errors: string[];
 }): Promise<ProblemCascadeResult> {
-  const result: ProblemCascadeResult = { cascaded: 0, bells: [], emails: [] };
+  const result: ProblemCascadeResult = {
+    cascaded: 0,
+    heldOpen: [],
+    bells: [],
+    emails: [],
+  };
   if (limit <= 0) return result;
   let incidents: OpenIncident[];
   try {
@@ -224,6 +274,7 @@ export async function cascadeResolvedProblems({
         ownershipScope: true,
         externalRequesterEmail: true,
         status: true,
+        updatedAt: true,
         messageSeq: true,
         awaitingUserSince: true,
         pausedSeconds: true,
@@ -238,17 +289,24 @@ export async function cascadeResolvedProblems({
     return result;
   }
 
+  let gate: Promise<string | null> | undefined;
+  const doors: DoorsGate = () =>
+    (gate ??= moneyDoorsRefusal().then((refusal) => refusal?.code ?? null));
   // Sequential: each incident commits on its own before the next starts.
   for (const inc of incidents) {
     const staged: StagedNotices = { bells: [], emails: [] };
     try {
       const resolved = await prisma.$transaction(
-        (tx) => resolveIncidentTx(tx, inc, now, staged),
+        (tx) => resolveIncidentTx(tx, inc, now, staged, doors),
         {
           maxWait: ALLOCATION_TX_MAX_WAIT_MS,
           timeout: ALLOCATION_TX_TIMEOUT_MS,
         },
       );
+      if (typeof resolved === "string") {
+        result.heldOpen.push({ caseId: inc.id, code: resolved });
+        continue;
+      }
       if (!resolved) continue;
       result.cascaded += 1;
       result.bells.push(...staged.bells);
