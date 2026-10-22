@@ -57,16 +57,24 @@ export async function rollingRefundPaise(
 /**
  * Approved, unvoided support remedies per payment, summed across every
  * operator: the `priorPaise` the per-payment staff limit counts.
+ * `excludeRecommendationId` leaves out the remedy being priced.
  */
 export async function committedSupportPaiseByPayment(
   db: Pick<Tx, "supportFinancialRecommendation">,
   paymentIds: string[],
+  { excludeRecommendationId }: { excludeRecommendationId?: string } = {},
 ): Promise<Map<string, number>> {
   const committed = new Map<string, number>();
   if (paymentIds.length === 0) return committed;
   // A void clears `approved`, so `approved: true` is exactly the live remedies.
   const rows = await db.supportFinancialRecommendation.findMany({
-    where: { paymentId: { in: paymentIds }, approved: true },
+    where: {
+      paymentId: { in: paymentIds },
+      approved: true,
+      ...(excludeRecommendationId
+        ? { id: { not: excludeRecommendationId } }
+        : {}),
+    },
     select: { paymentId: true, amountPaise: true },
   });
   for (const row of rows)

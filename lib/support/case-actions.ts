@@ -43,6 +43,7 @@ import { isUniqueViolation } from "@/lib/db/pg-errors";
 import {
   assertBoundedRefund,
   assertNotOwnRemedy,
+  committedSupportPaiseByPayment,
   STAFF_REFUND_PER_PAYMENT_PAISE,
   SUPPORT_REFUND_SEND_GRACE_MS,
 } from "./money-policy";
@@ -506,6 +507,12 @@ export async function quoteCaseRefund(
   recommendation: { id: string; paymentId: string },
 ) {
   const payment = await linkedPayment(tx, caseId, recommendation.paymentId);
+  const committed = await committedSupportPaiseByPayment(
+    tx,
+    [recommendation.paymentId],
+    { excludeRecommendationId: recommendation.id },
+  );
+  const committedPaise = committed.get(recommendation.paymentId) ?? 0;
   const others = await tx.supportFinancialRecommendation.findMany({
     where: {
       paymentId: recommendation.paymentId,
@@ -514,10 +521,6 @@ export async function quoteCaseRefund(
     },
     select: { amountPaise: true, refund: { select: { status: true } } },
   });
-  const committedPaise = others.reduce(
-    (sum, other) => sum + Number(other.amountPaise),
-    0,
-  );
   const unrefundedPaise = others
     .filter((other) => !isLiveRefund(other.refund))
     .reduce((sum, other) => sum + Number(other.amountPaise), 0);
