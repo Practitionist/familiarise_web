@@ -412,9 +412,14 @@ describe("lib/storage/r2-client", () => {
         stream,
         signal: controller.signal,
       });
-      const assertion = expect(upload).rejects.toThrow("deadline");
+      const outcome = upload.then(
+        () => ({ error: null }),
+        (error: unknown) => ({ error }),
+      );
       controller.abort(new Error("deadline"));
-      await assertion;
+      await expect(outcome).resolves.toEqual({
+        error: controller.signal.reason,
+      });
       expect(canceled).toHaveBeenCalledWith(controller.signal.reason);
       expect(fetchMock).not.toHaveBeenCalled();
     });
@@ -434,11 +439,16 @@ describe("lib/storage/r2-client", () => {
         partSize: 4,
         signal: controller.signal,
       });
-      const assertion = expect(upload).rejects.toThrow("deadline");
+      const outcome = upload.then(
+        () => ({ error: null }),
+        (error: unknown) => ({ error }),
+      );
       await new Promise(setImmediate);
       expect(fetchMock).toHaveBeenCalledTimes(3);
       controller.abort(new Error("deadline"));
-      await assertion;
+      await expect(outcome).resolves.toEqual({
+        error: controller.signal.reason,
+      });
       expect(
         fetchMock.mock.calls.some(([, init]) => init.method === "DELETE"),
       ).toBe(true);
