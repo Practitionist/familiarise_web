@@ -221,18 +221,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (parsed.data.category === "grievance" && !referenceNumber) {
-    return NextResponse.json(
-      {
-        ok: true,
-        referenceNumber: null,
-        message:
-          "Grievance received — our Grievance Officer will open a case and email your tracking reference within 24 hours.",
-      },
-      { status: 202 },
-    );
-  }
-
   return NextResponse.json(
     { ok: true, ...(referenceNumber ? { referenceNumber } : {}) },
     { status: 202 },
