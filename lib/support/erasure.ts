@@ -128,16 +128,19 @@ export async function removeSupportAttachmentObjects(
   userId: string,
 ): Promise<string[]> {
   if (paths.length === 0) return [];
+  let failure: unknown;
   try {
     const { removeObjects } = await import("@/lib/supabase-storage-core");
     if (await removeObjects(SUPPORT_EVIDENCE_BUCKET, paths)) return [];
+    failure = new Error("Support attachment deletion was not confirmed");
   } catch (error) {
-    reportSentryError(error, {
-      subsystem: "support",
-      op: "removeSupportAttachmentObjects",
-      extra: { userId, files: paths.length },
-    });
+    failure = error;
   }
+  reportSentryError(failure, {
+    subsystem: "support",
+    op: "removeSupportAttachmentObjects",
+    extra: { userId, files: paths.length },
+  });
   return [
     `support_attachments: ${paths.length} file(s) not confirmed deleted — re-run required`,
   ];

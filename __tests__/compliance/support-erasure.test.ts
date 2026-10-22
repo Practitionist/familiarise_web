@@ -128,6 +128,13 @@ describe("scrubSupportPiiTx", () => {
     );
     expect(failures[0]).toMatch(/^support_attachments: 1 file/);
   });
+
+  it("returns a re-run line instead of throwing when storage throws", async () => {
+    (removeObjects as jest.Mock).mockRejectedValueOnce(new Error("down"));
+    await expect(
+      removeSupportAttachmentObjects(["support-cases/c1/f3"], "u1"),
+    ).resolves.toEqual([expect.stringMatching(/^support_attachments: 1 file/)]);
+  });
 });
 
 describe("unverified-account purge", () => {
