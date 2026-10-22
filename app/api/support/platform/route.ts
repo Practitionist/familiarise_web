@@ -20,7 +20,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { getSession } from "@/lib/auth-server";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { supportError } from "@/lib/api/support-http";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { assertBodySize } from "@/lib/validation/limits";
@@ -340,10 +340,9 @@ async function handleEscalatedTurn(
 
 export async function GET() {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return supportError({ status: 401, code: "UNAUTHORIZED" });
-    }
+    const auth = await requireApiAuth();
+    if (auth.error) return auth.error;
+    const { session } = auth;
     const ctx = await buildPlatformContext(session.user.id);
     const flows = platformFlowsForContext(ctx).map((f) => ({
       id: f.id,
@@ -365,10 +364,9 @@ export async function POST(req: NextRequest) {
   let userId: string | null = null;
   let flowId: string | null = null;
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return supportError({ status: 401, code: "UNAUTHORIZED" });
-    }
+    const auth = await requireApiAuth();
+    if (auth.error) return auth.error;
+    const { session } = auth;
     userId = session.user.id;
 
     const tooLarge = assertBodySize(req);

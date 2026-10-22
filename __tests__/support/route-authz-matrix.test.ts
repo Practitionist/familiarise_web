@@ -744,7 +744,6 @@ const HANDLERS: HandlerCase[] = [
         request("GET", "/api/appointments/appt-1/support"),
         params({ appointmentId: "appt-1" }),
       ),
-    // getSession() without the opt-in hides an unenrolled operator: 401, not 428.
     matrix: {
       anonymous: 401,
       owner: "pass",
@@ -755,7 +754,7 @@ const HANDLERS: HandlerCase[] = [
       orgLearner: 403,
       staff: "pass",
       admin: "pass",
-      staffNo2fa: 401,
+      staffNo2fa: 428,
     },
   },
   {
@@ -777,7 +776,7 @@ const HANDLERS: HandlerCase[] = [
       orgLearner: 403,
       staff: "pass",
       admin: "pass",
-      staffNo2fa: 401,
+      staffNo2fa: 428,
     },
   },
   {
@@ -1260,7 +1259,7 @@ const HANDLERS: HandlerCase[] = [
       orgManager: "pass",
       staff: "pass",
       admin: "pass",
-      staffNo2fa: 401,
+      staffNo2fa: 428,
     },
   },
   {
@@ -1278,7 +1277,7 @@ const HANDLERS: HandlerCase[] = [
       orgManager: "pass",
       staff: "pass",
       admin: "pass",
-      staffNo2fa: 401,
+      staffNo2fa: 428,
     },
   },
   {
@@ -1341,6 +1340,13 @@ const HANDLERS: HandlerCase[] = [
       staff: "pass",
       admin: "pass",
     },
+  },
+  {
+    name: "POST /api/support/tickets (malformed body)",
+    call: () =>
+      tickets.POST(request("POST", "/api/support/tickets", { title: "x" })),
+    // Authorization runs before the body is read.
+    matrix: { ...AUTHED, owner: 403, staff: 400, admin: 400 },
   },
 ];
 

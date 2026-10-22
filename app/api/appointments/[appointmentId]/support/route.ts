@@ -20,6 +20,7 @@ import { AppointmentIdParams } from "@/schemas/support";
 import { SupportThreadCategoryEnum } from "@/schemas/enums";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import { assertBodySize } from "@/lib/validation/limits";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { stripCallbackTags } from "@/lib/validation/phone";
 import { applyRateLimit, supportTurnLimiter } from "@/lib/rate-limit";
 import {
@@ -63,6 +64,9 @@ export async function GET(
   if (!id.ok) return id.response;
   const { appointmentId } = id.data;
   try {
+    // Operators without a second factor get the 2FA 428 like every other support route.
+    const session = await requireApiAuth();
+    if (session.error) return session.error;
     const auth = await authorizeAppointment(appointmentId, true);
     if ("code" in auth)
       return appointmentAuthzError(auth, {
@@ -194,6 +198,9 @@ export async function POST(
   if (!id.ok) return id.response;
   const { appointmentId } = id.data;
   try {
+    // Operators without a second factor get the 2FA 428 like every other support route.
+    const session = await requireApiAuth();
+    if (session.error) return session.error;
     const auth = await authorizeAppointment(appointmentId, true);
     if ("code" in auth)
       return appointmentAuthzError(auth, {
