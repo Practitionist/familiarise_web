@@ -47,6 +47,8 @@ const FRIENDLY_COPY: Record<string, string> = {
     "This request can't move to that status from where it is now. Refresh and try again.",
   OPEN_CASE_EXISTS:
     "There's already an open request about this. Continue in that request instead.",
+  REFUND_APPROVED_EXISTS:
+    "A refund on this case is approved, pending or sent. Void or reconcile it first.",
   IDEMPOTENCY_KEY_REUSED:
     "This action was already submitted with different details. Refresh and try again.",
 };
@@ -63,6 +65,7 @@ const DEFINITE_CONFLICTS: ReadonlySet<string> = new Set([
   "INVALID_TRANSITION",
   "OPEN_CASE_EXISTS",
   "IDEMPOTENCY_KEY_REUSED",
+  "REFUND_APPROVED_EXISTS",
 ]);
 
 export interface SupportErrorPayload {

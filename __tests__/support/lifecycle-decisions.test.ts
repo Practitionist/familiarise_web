@@ -326,6 +326,50 @@ describe("superseding a decision", () => {
     });
   });
 
+  it("refuses to supersede an approved refund while that refund is live", async () => {
+    jest
+      .mocked(latestCaseDecisionTx)
+      .mockResolvedValue(latest({ outcome: "REFUND_APPROVED" }) as never);
+    await expect(
+      performCaseAction("case-1", admin, supersede()),
+    ).rejects.toMatchObject({ code: "REFUND_APPROVED_EXISTS", status: 409 });
+    expect(db.supportFinancialRecommendation.findFirst).toHaveBeenCalledWith({
+      where: {
+        caseId: "case-1",
+        approved: true,
+        refund: { status: { in: ["PENDING", "SUCCEEDED"] } },
+      },
+      select: { id: true },
+    });
+    expect(db.supportCaseDecision.create).not.toHaveBeenCalled();
+  });
+
+  it("supersedes an approved refund once no refund under it is live", async () => {
+    jest
+      .mocked(latestCaseDecisionTx)
+      .mockResolvedValue(latest({ outcome: "REFUND_APPROVED" }) as never);
+    db.supportFinancialRecommendation.findFirst.mockResolvedValue(null);
+    await expect(
+      performCaseAction("case-1", admin, supersede()),
+    ).resolves.toMatchObject({
+      outcome: "SERVICE_REMEDY",
+      supersedesDecisionId: "decision-1",
+    });
+  });
+
+  it("lets an approved refund be restated with a corrected explanation", async () => {
+    jest
+      .mocked(latestCaseDecisionTx)
+      .mockResolvedValue(latest({ outcome: "REFUND_APPROVED" }) as never);
+    await expect(
+      performCaseAction(
+        "case-1",
+        admin,
+        supersede({ outcome: "REFUND_APPROVED" }),
+      ),
+    ).resolves.toMatchObject({ outcome: "REFUND_APPROVED" });
+  });
+
   it("will not silently reinstate a reversed moderation action", async () => {
     db.supportCase.findFirst.mockResolvedValue({
       ...incident,

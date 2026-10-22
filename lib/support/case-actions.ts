@@ -937,6 +937,40 @@ async function recordCaseDecisionTx(
   return { ...decision, restoredConsultantProfileId };
 }
 
+/** A correction may not orphan what the decision in force already did: a reversed moderation action or a live refund. */
+async function assertSupersedeKeepsEffects(
+  tx: Tx,
+  supportCase: SupportCase,
+  latest: SupportCaseDecision,
+  outcome: ActionInput<"DECIDE">["outcome"],
+) {
+  // Reinstating a reversed moderation action is not automated.
+  if (
+    latest.outcome === "OVERTURNED" &&
+    outcome !== "OVERTURNED" &&
+    supportCase.appealOfModerationActionId
+  )
+    throw new CaseActionError(
+      "COMPENSATING_ACTION_REQUIRED",
+      "The moderation action was already reversed. Reinstate it from moderation first.",
+    );
+  if (latest.outcome !== "REFUND_APPROVED" || outcome === "REFUND_APPROVED")
+    return;
+  const live = await tx.supportFinancialRecommendation.findFirst({
+    where: {
+      caseId: supportCase.id,
+      approved: true,
+      refund: { status: { in: ["PENDING", "SUCCEEDED"] } },
+    },
+    select: { id: true },
+  });
+  if (live)
+    throw new CaseActionError(
+      "REFUND_APPROVED_EXISTS",
+      "A refund under this decision is pending or sent. Void or reconcile it before superseding.",
+    );
+}
+
 /**
  * An admin correction of the decision in force, while its appeal window is
  * open and before anyone appeals. It keeps the original appeal deadline and
@@ -977,16 +1011,7 @@ async function supersedeDecisionTx(
       "DECISION_APPEALED",
       "This decision has been appealed. Record the outcome on the appeal instead.",
     );
-  // Reinstating a reversed moderation action is not automated.
-  if (
-    latest.outcome === "OVERTURNED" &&
-    input.outcome !== "OVERTURNED" &&
-    supportCase.appealOfModerationActionId
-  )
-    throw new CaseActionError(
-      "COMPENSATING_ACTION_REQUIRED",
-      "The moderation action was already reversed. Reinstate it from moderation first.",
-    );
+  await assertSupersedeKeepsEffects(tx, supportCase, latest, input.outcome);
   await assertDecisionMatchesMoney(tx, caseId, input.outcome);
   const restoredConsultantProfileId =
     latest.outcome === "OVERTURNED"
