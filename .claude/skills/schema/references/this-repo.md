@@ -116,6 +116,8 @@ On 2026-10-02 the Subscriptions tab of the Requests inbox returned 500 on produc
 
 A read-only drift check with Prisma 7 is `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`, because `--from-url` no longer exists. That diff proposes dropping the hand-applied sidecar partial uniques `appointment_feedback_level_key` and `consultant_earnings_occurrence_key`, so never fix drift with a plain `db push`, and run `npm run db:sidecars` after any reset.
 
+To reproduce a `lib/data` reader locally and see the real Prisma error, run `NODE_OPTIONS="--conditions=react-server" npx tsx --env-file=.env --tsconfig tsconfig.json <script>`. Without `--env-file`, Prisma silently connects to localhost.
+
 ## The deploy preview runs the branch's code (2026-10-22)
 
 The Netlify deploy preview for a pull request serves that branch's code from the
@@ -157,8 +159,6 @@ re-created empty as a stop-gap and the reconcile push waits for `dev` to be
 promoted to `prod`. The pre-#2041 recording-storage columns and the six orphan
 indexes ARE dead, but a `db push` runs the whole plan at once, so they go with
 the group above rather than separately.
-
-To reproduce a `lib/data` reader locally and see the real Prisma error, run `NODE_OPTIONS="--conditions=react-server" npx tsx --env-file=.env --tsconfig tsconfig.json <script>`. Without `--env-file`, Prisma silently connects to localhost.
 
 ## The cutover to versioned migrations
 
