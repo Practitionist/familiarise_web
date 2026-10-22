@@ -66,7 +66,8 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-  CRON["hourly ticker slices (full scope)<br/>/api/cleanup/reconcile-ledgers"] --> RUN["runReconcileLedgers"]
+  CRON["hourly ticker slices (full scope)<br/>/api/cleanup/reconcile-ledgers"] --> SLICE["runReconcileLedgersSlice"]
+  SLICE --> RUN["shared lease and persisted comparisons"]
   ADMIN["POST /api/admin/reconcile-ledgers<br/>(on demand; synchronous, full scope or one organisation)"] --> RUN
   RUN --> G1
   RUN --> G2
@@ -101,7 +102,10 @@ flowchart TD
     CRS["CLAWBACK_RECEIVABLE_STALE"]
   end
   G1 & G2 & G3 & G4 --> RPT["LedgerReconciliationReport<br/>{ ok, summary, findings[] }"]
-  RPT --> BL["split against the checked-in baseline"]
+  RPT --> STATE{"report status"}
+  STATE -- RUNNING --> PARTIAL["200 · incomplete · ok:false"]
+  STATE -- FAILED --> FAIL["500 · checkpoint retained"]
+  STATE -- COMPLETED --> BL["split against the checked-in baseline"]
   BL --> OK{"any unbaselined finding?<br/>baseline malformed?"}
   OK -- no --> CLEAN["200 · ok:true"]
   OK -- yes --> PAGE["207 · ok:false"]

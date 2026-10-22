@@ -245,7 +245,7 @@ On a real over-cap checkout, `recordOverageAtCheckout` (`lib/payments/billing/ov
 
 The `chargeStatus` state machine itself is a single guarded transition (`transitionOverage`, `overage-transitions.ts`); the overage-event lifecycle table of states (`PENDING/ACCRUED/CHARGED/BLOCKED/REVERSED/FAILED`) is in [funding & programs](../00-foundations/03-funding-and-programs.md) / [programs](../30-programs-and-lifecycle/02-programs.md).
 
-An overage always keeps the `BOOKING` journal balanced: `surchargePaise` is credited to `PLATFORM_FEE` (an over-cap surcharge is a platform markup for exceeding the program cap, while the consultant is paid out of `originalAmount`), and the 18% GST on `surchargePaise` is credited to `GST_PAYABLE`, matching `OrganizationInvoice.taxAmount` and the nightly ledger reconciler.
+An overage always keeps the `BOOKING` journal balanced: `surchargePaise` is credited to `PLATFORM_FEE` (an over-cap surcharge is a platform markup for exceeding the program cap, while the consultant is paid out of `originalAmount`), and the 18% GST on `surchargePaise` is credited to `GST_PAYABLE`, matching `OrganizationInvoice.taxAmount` and the scheduled ledger reconciler.
 
 The refusals checkout can raise from inside its transaction all carry a machine-readable code, and the catch around that transaction rethrows any error whose code is registered in `BUSINESS_ERROR_CODES` instead of rewriting it. `PROGRAM_CAP_EXHAUSTED` therefore reaches the buyer as the HTTP 402 it was thrown as, with a toast that names the admin action, rather than as the 500 "Something Went Wrong" it used to collapse into.
 

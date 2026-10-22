@@ -196,4 +196,4 @@ When an enterprise employee books a session, the checkout engine resolves:
   - `session-outcome-classifier`: Hourly (`HELD` / `LEARNER_ABSENT` / `HOST_ABSENT` / `CUT_SHORT` evaluation + escrow release).
   - `recording-transfer`: Daily (transfers `STREAM_S3` recordings to `PLATFORM` storage before Stream's 14-day TTL).
   - `chat-lifecycle`: Daily (`+7d` freeze and `+90d` PII purge).
-  - `reconcile-ledgers`: Nightly at 03:55 UTC on the Netlify ticker (26-invariant financial verification).
+  - `reconcile-ledgers`: Daily audits advance through hourly `:55` bounded ticker slices when capacity permits; persisted checkpoints retain the historical tail.

@@ -11,7 +11,7 @@ last-reviewed: 2026-06-05
 ## Context
 
 The platform has a large family of recurring jobs: release earnings from
-hold, process the weekly payout batch, reconcile the ledgers nightly,
+hold, process the weekly payout batch, run ledger integrity audits,
 sweep abandoned top-ups, clean up stale invitations, dispatch outbound
 webhooks, alert on MSME and dispute deadlines, and dozens more — there are
 roughly fifty scheduled workflows under `.github/workflows/`. The
@@ -113,5 +113,5 @@ follow-up cron-schedule-audit issue.
 
 This ADR records the original decision. The money jobs no longer follow it. The Netlify five-minute ticker (`netlify/functions/cron-tick.mts`) now runs the money reconcilers and batch jobs through the `CRON_SECRET`-gated twins in `lib/cron/cleanup-registry.ts`, as described in [ADR 27](27-state-as-outbox-and-scheduled-ticker.md). In particular:
 
-- `reconcile-ledgers` runs daily at 03:55 UTC, `reconcile-disputes` hourly at `:00` and `tds-return-draft` on the 5th of January, April, July and October. Their `jobs/**` entry points and workflow steps are deleted; do not re-create them. To run one by hand, `POST /api/cleanup/<job>` with `Authorization: Bearer $CRON_SECRET`, or use the admin system-jobs console.
+- `reconcile-ledgers` advances a persisted daily audit through hourly `:55` slices, yielding when settlement/statutory jobs fill the dispatch cap, `reconcile-disputes` hourly at `:00` and `tds-return-draft` on the 5th of January, April, July and October. Their `jobs/**` entry points and workflow steps are deleted; do not re-create them. To run one by hand, `POST /api/cleanup/<job>` with `Authorization: Bearer $CRON_SECRET`, or use the admin system-jobs console.
 - A twin answers `200` when clean, `207` when it found something that needs attention, and `500` on failure. The exit-code convention of a GitHub Actions job process (`0`, `1`, `2`) no longer applies to these jobs.

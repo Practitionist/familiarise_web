@@ -230,16 +230,16 @@ AppointmentStatus:
 
 All payment, refund, dispute, and payout cleanup/reconciliation jobs are registered in `lib/cron/cleanup-registry.ts` and exposed through a single dynamic route (`app/api/cleanup/[job]/route.ts`) protected by `CRON_SECRET` and serialized via Postgres leases (`lib/cron/with-cron-lock.ts`).
 
-| Job Slug (`lib/cron/cleanup-registry.ts`) | Implementation                                    | Schedule                                                   |
-| ----------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------- |
-| `abandoned-payments`                      | `scripts/appointments/cleanup-tentative-slots.ts` | Every 5 min (`cron-tick.mts`)                              |
-| `approval-payments`                       | `scripts/appointments/cleanup-tentative-slots.ts` | Every 15 min (`cron-tick.mts`)                             |
-| `reconcile-refunds`                       | `scripts/refunds/reconcile-refunds.ts`            | Every 15 min (`cron-tick.mts`) & 6h (`cron-intra-day.yml`) |
-| `reconcile-disputes`                      | `scripts/disputes/reconcile-disputes.ts`          | Hourly at `:00` (`cron-tick.mts`)                          |
-| `reconcile-payment-status`                | `scripts/payments/reconcile-payment-status.ts`    | Every 15 min (`cron-tick.mts`) & 2h (`cron-intra-day.yml`) |
-| `sync-payment-earnings`                   | `scripts/payments/sync-payment-earnings.ts`       | Every 15 min (`cron-tick.mts`) & 4h (`cron-intra-day.yml`) |
-| `reconcile-payouts`                       | `scripts/payouts/reconcile-payouts.ts`            | Every 6 hours (`cron-intra-day.yml`)                       |
-| `reconcile-ledgers`                       | `scripts/reconcile/reconcile-ledgers.ts`          | Daily at 03:55 UTC (`cron-tick.mts`)                       |
+| Job Slug (`lib/cron/cleanup-registry.ts`) | Implementation                                    | Schedule                                                    |
+| ----------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------- |
+| `abandoned-payments`                      | `scripts/appointments/cleanup-tentative-slots.ts` | Every 5 min (`cron-tick.mts`)                               |
+| `approval-payments`                       | `scripts/appointments/cleanup-tentative-slots.ts` | Every 15 min (`cron-tick.mts`)                              |
+| `reconcile-refunds`                       | `scripts/refunds/reconcile-refunds.ts`            | Every 15 min (`cron-tick.mts`) & 6h (`cron-intra-day.yml`)  |
+| `reconcile-disputes`                      | `scripts/disputes/reconcile-disputes.ts`          | Hourly at `:00` (`cron-tick.mts`)                           |
+| `reconcile-payment-status`                | `scripts/payments/reconcile-payment-status.ts`    | Every 15 min (`cron-tick.mts`) & 2h (`cron-intra-day.yml`)  |
+| `sync-payment-earnings`                   | `scripts/payments/sync-payment-earnings.ts`       | Every 15 min (`cron-tick.mts`) & 4h (`cron-intra-day.yml`)  |
+| `reconcile-payouts`                       | `scripts/payouts/reconcile-payouts.ts`            | Every 6 hours (`cron-intra-day.yml`)                        |
+| `reconcile-ledgers`                       | `scripts/reconcile/reconcile-ledgers.ts`          | Hourly `:55` slices when capacity permits (`cron-tick.mts`) |
 
 ### Payment Core, Payouts & Ledger Files
 
