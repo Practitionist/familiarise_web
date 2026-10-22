@@ -12,12 +12,7 @@
  * - File manually deleted from storage
  * - System errors during upload/delete operations
  *
- * This module exports the core reconciliation function.
- * It is imported by:
- * - jobs/reconcile-document-storage.ts (GitHub Actions)
- * - app/api/cleanup/reconcile-document-storage/route.ts (API endpoint)
- *
- * Schedule: Daily
+ * Registered as `reconcile-document-storage` in lib/cron/cleanup-registry.ts.
  */
 
 import prisma from "../../lib/prisma";
@@ -187,8 +182,9 @@ async function documentsBucketPaths(): Promise<Set<string>> {
 async function supportAttachmentPaths(): Promise<Set<string>> {
   const rows = await prisma.supportCaseAttachment.findMany({
     where: {
+      // A deleted row no longer protects its object, so a failed purge or erasure removal is swept as an orphan.
       OR: [
-        { completedAt: { not: null } },
+        { completedAt: { not: null }, deletedAt: null },
         {
           completedAt: null,
           deletedAt: null,

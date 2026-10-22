@@ -113,6 +113,20 @@ describe("reconcile-document-storage orphan sweep", () => {
   });
 });
 
+describe("reconcile-document-storage support attachment references", () => {
+  it("lets a deleted attachment row's object be swept as an orphan", async () => {
+    await reconcileDocumentStorage();
+
+    const where = (prisma.supportCaseAttachment.findMany as jest.Mock).mock
+      .calls[0][0].where;
+    expect(where.OR).toContainEqual({
+      completedAt: { not: null },
+      deletedAt: null,
+    });
+    expect(where.OR).not.toContainEqual({ completedAt: { not: null } });
+  });
+});
+
 describe("reconcile-document-storage listing failure", () => {
   it("aborts without deleting or flagging anything when a bucket listing fails", async () => {
     listFailures.add("support-attachments/");
