@@ -8,24 +8,20 @@ jest.mock("../../lib/supabase-storage-core", () => ({
 }));
 jest.mock("../../lib/prisma", () => {
   const tx = {
-    supportCase: { updateMany: jest.fn() },
-    supportCaseAttachment: { updateMany: jest.fn() },
+    $executeRaw: jest.fn(),
+    supportCase: { count: jest.fn(), update: jest.fn() },
+    supportCaseAttachment: { findMany: jest.fn(), updateMany: jest.fn() },
     supportCaseMessage: { updateMany: jest.fn() },
     supportCaseEvidenceRequest: { updateMany: jest.fn() },
     supportCaseEvent: { create: jest.fn(), updateMany: jest.fn() },
   };
   const db = {
     dispute: { findMany: jest.fn() },
-    supportCase: { findMany: jest.fn(), count: jest.fn() },
+    supportCase: { findMany: jest.fn() },
     $transaction: jest.fn((fn: (t: typeof tx) => unknown) => fn(tx)),
     tx,
   };
-  return {
-    __esModule: true,
-    default: db,
-    ALLOCATION_TX_MAX_WAIT_MS: 1000,
-    ALLOCATION_TX_TIMEOUT_MS: 1000,
-  };
+  return { __esModule: true, default: db, ALLOCATION_TX_MAX_WAIT_MS: 1000 };
 });
 
 import { Prisma } from "@prisma/client";
@@ -34,11 +30,12 @@ import { purgeExpiredSupportEvidence } from "../../lib/support/evidence-retentio
 
 const db = prisma as unknown as {
   dispute: { findMany: jest.Mock };
-  supportCase: { findMany: jest.Mock; count: jest.Mock };
+  supportCase: { findMany: jest.Mock };
   $transaction: jest.Mock;
   tx: {
-    supportCase: { updateMany: jest.Mock };
-    supportCaseAttachment: { updateMany: jest.Mock };
+    $executeRaw: jest.Mock;
+    supportCase: { count: jest.Mock; update: jest.Mock };
+    supportCaseAttachment: { findMany: jest.Mock; updateMany: jest.Mock };
     supportCaseMessage: { updateMany: jest.Mock };
     supportCaseEvidenceRequest: { updateMany: jest.Mock };
     supportCaseEvent: { create: jest.Mock; updateMany: jest.Mock };
@@ -47,18 +44,34 @@ const db = prisma as unknown as {
 const DAY = 24 * 3_600_000;
 const now = new Date("2026-10-22T00:00:00Z");
 const cutoff = new Date(now.getTime() - 180 * DAY);
+let files: Record<string, string[]> = {};
+
+function seedCases(byCase: Record<string, string[]>) {
+  files = byCase;
+  db.supportCase.findMany.mockResolvedValue(
+    Object.keys(byCase).map((id) => ({ id })),
+  );
+}
 
 beforeEach(() => {
   jest.clearAllMocks();
+  files = {};
   mockRemoveObjects.mockResolvedValue(true);
   db.dispute.findMany.mockResolvedValue([]);
   db.supportCase.findMany.mockResolvedValue([]);
-  db.supportCase.count.mockResolvedValue(1);
-  db.tx.supportCase.updateMany.mockResolvedValue({ count: 1 });
+  db.tx.supportCase.count.mockResolvedValue(1);
+  db.tx.supportCaseAttachment.findMany.mockImplementation(
+    async ({ where }: { where: { caseId: string } }) =>
+      (files[where.caseId] ?? []).map((storagePath) => ({ storagePath })),
+  );
 });
 
 function eligibilityWhere(): Prisma.SupportCaseWhereInput {
   return db.supportCase.findMany.mock.calls[0][0].where;
+}
+
+function lockedCaseIds(): string[] {
+  return db.tx.$executeRaw.mock.calls.map((call) => call[1]);
 }
 
 it("selects cases closed 180+ days ago with no hold, no recent appeal and no purge yet, overscanned and oldest first", async () => {
@@ -120,25 +133,46 @@ it("excludes cases linked to a payment under a live dispute (derived hold)", asy
   });
 });
 
-it("deletes the files, then scrubs free text and records one EVIDENCE_PURGED event, keeping decisions untouched", async () => {
-  db.supportCase.findMany.mockResolvedValue([
-    {
-      id: "case-1",
-      attachments: [{ storagePath: "c1/a.png" }, { storagePath: "c1/b.pdf" }],
-    },
-  ]);
+it("locks the case row, re-checks eligibility, deletes the files and scrubs in that one transaction", async () => {
+  seedCases({ "case-1": ["c1/a.png", "c1/b.pdf"] });
   const errors: string[] = [];
   const result = await purgeExpiredSupportEvidence({ limit: 4, now, errors });
 
   expect(errors).toEqual([]);
   expect(result).toEqual({ casesPurged: 1, filesDeleted: 2 });
+  expect(db.$transaction).toHaveBeenCalledTimes(1);
+  const lockSql = (db.tx.$executeRaw.mock.calls[0][0] as string[]).join("?");
+  expect(lockSql).toMatch(/FROM "SupportCase" WHERE id = \? FOR UPDATE/);
+  expect(lockedCaseIds()).toEqual(["case-1"]);
+  expect(db.tx.supportCase.count).toHaveBeenCalledWith({
+    where: expect.objectContaining({ id: "case-1", legalHoldAt: null }),
+  });
+  const lockAt = db.tx.$executeRaw.mock.invocationCallOrder[0];
+  const recheckAt = db.tx.supportCase.count.mock.invocationCallOrder[0];
+  const storageAt = mockRemoveObjects.mock.invocationCallOrder[0];
+  const scrubAt = db.tx.supportCase.update.mock.invocationCallOrder[0];
+  expect(lockAt).toBeLessThan(recheckAt);
+  expect(recheckAt).toBeLessThan(storageAt);
+  expect(storageAt).toBeLessThan(scrubAt);
   expect(mockRemoveObjects).toHaveBeenCalledWith("support-attachments", [
     "c1/a.png",
     "c1/b.pdf",
   ]);
-  expect(mockRemoveObjects.mock.invocationCallOrder[0]).toBeLessThan(
-    db.$transaction.mock.invocationCallOrder[0],
+  expect(db.$transaction.mock.calls[0][1]).toEqual(
+    expect.objectContaining({ timeout: 60_000 }),
   );
+
+  expect(db.tx.supportCase.update).toHaveBeenCalledWith({
+    where: { id: "case-1" },
+    data: {
+      title: "Support request",
+      description: expect.any(String),
+      callbackPhone: null,
+      callbackWindow: null,
+      externalRequesterEmail: null,
+      externalRequesterName: null,
+    },
+  });
   expect(db.tx.supportCaseAttachment.updateMany).toHaveBeenCalledWith({
     where: { caseId: "case-1", deletedAt: null },
     data: { deletedAt: now },
@@ -147,18 +181,6 @@ it("deletes the files, then scrubs free text and records one EVIDENCE_PURGED eve
     where: { caseId: "case-1" },
     data: { originalName: expect.any(String) },
   });
-  const scrub = db.tx.supportCase.updateMany.mock.calls[0][0];
-  expect(scrub.where).toMatchObject({ id: "case-1", legalHoldAt: null });
-  expect(scrub.data).toEqual({
-    title: "Support request",
-    description: expect.any(String),
-    callbackPhone: null,
-    callbackWindow: null,
-    externalRequesterEmail: null,
-    externalRequesterName: null,
-  });
-  expect(scrub.data).not.toHaveProperty("status");
-  expect(scrub.data).not.toHaveProperty("referenceNumber");
   expect(db.tx.supportCaseMessage.updateMany).toHaveBeenCalledWith({
     where: { caseId: "case-1" },
     data: { body: expect.any(String), metadata: Prisma.DbNull },
@@ -190,26 +212,35 @@ it("deletes the files, then scrubs free text and records one EVIDENCE_PURGED eve
     },
     data: { note: null },
   });
-  const scrubbedKinds =
-    db.tx.supportCaseEvent.updateMany.mock.calls[0][0].where.kind.notIn;
-  expect(scrubbedKinds).not.toContain("STATUS_CHANGED");
-  expect(scrubbedKinds).not.toContain("REOPENED");
   expect(db.tx.supportCaseEvent.create).toHaveBeenCalledTimes(1);
   expect(db.tx.supportCaseEvent.create).toHaveBeenCalledWith({
     data: expect.objectContaining({
       caseId: "case-1",
       kind: "EVIDENCE_PURGED",
+      toValue: "2",
       createdAt: now,
     }),
   });
   expect(db.tx).not.toHaveProperty("supportCaseDecision");
 });
 
-it("leaves the case whole and reports when storage does not confirm the delete", async () => {
-  db.supportCase.findMany.mockResolvedValue([
-    { id: "case-1", attachments: [{ storagePath: "c1/a.png" }] },
-    { id: "case-2", attachments: [] },
-  ]);
+it("a case on legal hold by the time its lock is taken keeps its files and text", async () => {
+  seedCases({ "case-1": ["c1/a.png"] });
+  db.tx.supportCase.count.mockResolvedValue(0);
+  const errors: string[] = [];
+  const result = await purgeExpiredSupportEvidence({ limit: 4, now, errors });
+
+  expect(lockedCaseIds()).toEqual(["case-1"]);
+  expect(mockRemoveObjects).not.toHaveBeenCalled();
+  expect(db.tx.supportCase.update).not.toHaveBeenCalled();
+  expect(db.tx.supportCaseAttachment.updateMany).not.toHaveBeenCalled();
+  expect(db.tx.supportCaseEvent.create).not.toHaveBeenCalled();
+  expect(result.casesPurged).toBe(0);
+  expect(errors).toEqual([]);
+});
+
+it("writes nothing and reports when storage does not confirm the delete", async () => {
+  seedCases({ "case-1": ["c1/a.png"], "case-2": [] });
   mockRemoveObjects.mockResolvedValueOnce(false);
   const errors: string[] = [];
   const result = await purgeExpiredSupportEvidence({ limit: 4, now, errors });
@@ -218,61 +249,32 @@ it("leaves the case whole and reports when storage does not confirm the delete",
     "evidence-purge case case-1: 1 file(s) not confirmed deleted",
   ]);
   expect(result).toEqual({ casesPurged: 1, filesDeleted: 0 });
-  expect(db.$transaction).toHaveBeenCalledTimes(1);
+  expect(db.tx.supportCase.update).toHaveBeenCalledTimes(1);
+  expect(db.tx.supportCase.update).toHaveBeenCalledWith(
+    expect.objectContaining({ where: { id: "case-2" } }),
+  );
   expect(db.tx.supportCaseAttachment.updateMany).not.toHaveBeenCalledWith(
     expect.objectContaining({ where: { caseId: "case-1", deletedAt: null } }),
   );
 });
 
-it("does not touch storage for a case that gained a hold after the scan", async () => {
-  db.supportCase.findMany.mockResolvedValue([
-    { id: "case-1", attachments: [{ storagePath: "c1/a.png" }] },
-  ]);
-  db.supportCase.count.mockResolvedValue(0);
-  const result = await purgeExpiredSupportEvidence({
-    limit: 4,
-    now,
-    errors: [],
-  });
-  expect(mockRemoveObjects).not.toHaveBeenCalled();
-  expect(db.$transaction).not.toHaveBeenCalled();
-  expect(result.casesPurged).toBe(0);
-});
-
-it("on a CAS miss marks the deleted files only: no rename, no scrub, no event", async () => {
-  db.supportCase.findMany.mockResolvedValue([
-    { id: "case-1", attachments: [{ storagePath: "c1/a.png" }] },
-  ]);
-  db.tx.supportCase.updateMany.mockResolvedValue({ count: 0 });
+it("a failed transaction goes to errors and the next case still runs", async () => {
+  seedCases({ "case-1": [], "case-2": [] });
+  db.tx.supportCase.update.mockRejectedValueOnce(new Error("lock timeout"));
   const errors: string[] = [];
   const result = await purgeExpiredSupportEvidence({ limit: 4, now, errors });
-
-  expect(result).toEqual({ casesPurged: 0, filesDeleted: 0 });
-  expect(errors).toHaveLength(1);
-  expect(db.tx.supportCase.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
-    db.tx.supportCaseAttachment.updateMany.mock.invocationCallOrder[0],
-  );
-  expect(db.tx.supportCaseAttachment.updateMany).toHaveBeenCalledTimes(1);
-  expect(db.tx.supportCaseAttachment.updateMany).toHaveBeenCalledWith({
-    where: { caseId: "case-1", deletedAt: null },
-    data: { deletedAt: now },
-  });
-  expect(db.tx.supportCaseMessage.updateMany).not.toHaveBeenCalled();
-  expect(db.tx.supportCaseEvidenceRequest.updateMany).not.toHaveBeenCalled();
-  expect(db.tx.supportCaseEvent.updateMany).not.toHaveBeenCalled();
-  expect(db.tx.supportCaseEvent.create).not.toHaveBeenCalled();
+  expect(errors).toEqual(["evidence-purge case case-1: lock timeout"]);
+  expect(result.casesPurged).toBe(1);
 });
 
 it("cases that keep failing storage do not block an eligible case behind them", async () => {
-  const stuck = Array.from({ length: 5 }, (_, i) => ({
-    id: `stuck-${i}`,
-    attachments: [{ storagePath: `stuck/${i}` }],
-  }));
-  db.supportCase.findMany.mockResolvedValue([
-    ...stuck,
-    { id: "ready", attachments: [{ storagePath: "ready/a" }] },
-    { id: "next", attachments: [] },
-  ]);
+  seedCases({
+    ...Object.fromEntries(
+      Array.from({ length: 5 }, (_, i) => [`stuck-${i}`, [`stuck/${i}`]]),
+    ),
+    ready: ["ready/a"],
+    next: [],
+  });
   mockRemoveObjects.mockImplementation(
     async (_bucket: string, paths: string[]) => !paths[0].startsWith("stuck/"),
   );
@@ -288,9 +290,7 @@ it("cases that keep failing storage do not block an eligible case behind them", 
 });
 
 it("stops once limit cases are purged", async () => {
-  db.supportCase.findMany.mockResolvedValue(
-    ["a", "b", "c"].map((id) => ({ id, attachments: [] })),
-  );
+  seedCases({ a: [], b: [], c: [] });
   const result = await purgeExpiredSupportEvidence({
     limit: 2,
     now,
@@ -298,7 +298,7 @@ it("stops once limit cases are purged", async () => {
   });
   expect(result.casesPurged).toBe(2);
   expect(db.$transaction).toHaveBeenCalledTimes(2);
-  expect(db.supportCase.count).toHaveBeenCalledTimes(2);
+  expect(lockedCaseIds()).toEqual(["a", "b"]);
 });
 
 it("skips the run when the live-dispute set reaches its cap", async () => {
@@ -315,14 +315,9 @@ it("skips the run when the live-dispute set reaches its cap", async () => {
 });
 
 it("batches large attachment sets in chunks of 100", async () => {
-  db.supportCase.findMany.mockResolvedValue([
-    {
-      id: "case-1",
-      attachments: Array.from({ length: 150 }, (_, i) => ({
-        storagePath: `c1/${i}`,
-      })),
-    },
-  ]);
+  seedCases({
+    "case-1": Array.from({ length: 150 }, (_, i) => `c1/${i}`),
+  });
   await purgeExpiredSupportEvidence({ limit: 4, now, errors: [] });
   expect(mockRemoveObjects).toHaveBeenCalledTimes(2);
   expect(mockRemoveObjects.mock.calls[0][1]).toHaveLength(100);
