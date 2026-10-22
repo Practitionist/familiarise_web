@@ -28,6 +28,7 @@ import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { resolveSentryUserId } from "@/lib/observability/identity";
 import { PURPOSE_CODE_META } from "@/lib/compliance/purpose-codes";
+import { readSupportExport } from "@/lib/support/privacy-export";
 
 export async function GET() {
   const session = await getSession();
@@ -43,7 +44,7 @@ export async function GET() {
       grievances,
       payments,
       rawConsumerInvoices,
-      supportTickets,
+      support,
       participations,
     ] = await Promise.all([
       prisma.user.findUnique({
@@ -215,19 +216,7 @@ export async function GET() {
           issuedAt: true,
         },
       }),
-      prisma.supportTicket.findMany({
-        where: { userId },
-        orderBy: { createdAt: "desc" },
-        take: 100,
-        select: {
-          id: true,
-          title: true,
-          category: true,
-          priority: true,
-          status: true,
-          createdAt: true,
-        },
-      }),
+      readSupportExport(userId),
       prisma.appointmentParticipant.findMany({
         where: { userId },
         orderBy: { createdAt: "desc" },
@@ -371,7 +360,7 @@ export async function GET() {
           appointmentParticipations: participations,
           payments,
           consumerInvoices,
-          supportTickets,
+          ...support,
           dpdpGrievances: grievances,
         },
       },

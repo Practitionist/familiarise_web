@@ -290,6 +290,54 @@ describe("Stream security, consent gates, and organization boundaries", () => {
     });
   });
 
+  describe("token minting is self-only for every role", () => {
+    it.each([
+      ["STAFF", "chatTokenProvider"],
+      ["ADMIN", "chatTokenProvider"],
+      ["STAFF", "tokenProvider"],
+      ["ADMIN", "tokenProvider"],
+    ] as const)(
+      "refuses a %s caller minting %s for another user",
+      async (role, action) => {
+        mockGetSession.mockResolvedValueOnce({
+          user: { id: "operator-1", role },
+        });
+        const actions = await import("../../actions/stream/chat/stream.action");
+
+        await expect(actions[action]("customer-1")).rejects.toThrow(
+          "Forbidden: cannot mint a token for another user",
+        );
+        expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
+        expect(mockCheckConsent).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(["STAFF", "ADMIN", "CONSULTEE"])(
+      "mints chat and video tokens for a %s caller's own id",
+      async (role) => {
+        const session = { user: { id: "self-1", role } };
+        const self = { id: "self-1", erasedAt: null, banned: false };
+        mockGetSession
+          .mockResolvedValueOnce(session)
+          .mockResolvedValueOnce(session);
+        mockPrisma.user.findUnique
+          .mockResolvedValueOnce(self)
+          .mockResolvedValueOnce(self);
+        const { chatTokenProvider, tokenProvider } =
+          await import("../../actions/stream/chat/stream.action");
+
+        await expect(chatTokenProvider("self-1")).resolves.toEqual({
+          ok: true,
+          data: "chat-token-123",
+        });
+        await expect(tokenProvider("self-1")).resolves.toEqual({
+          ok: true,
+          data: "video-token-123",
+        });
+      },
+    );
+  });
+
   describe("Enterprise organization Stream revocation and wind-down", () => {
     it("revokes org-scoped channels on member removal without revoking global user token", async () => {
       mockPrisma.webinar.findMany.mockResolvedValueOnce([{ id: "web-org-1" }]);

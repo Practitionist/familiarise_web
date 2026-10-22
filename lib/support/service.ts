@@ -1,24 +1,21 @@
-/**
- * #appt-support — the orchestrator that ties the channel-agnostic resolver core
- * to persistence. One entry point (`runSupportTurn`) drives a per-appointment
- * thread forward one turn: find-or-create the thread, build the shared context,
- * run the active channel's resolver, persist the exchange, advance the cursor,
- * and — on escalation — hand off to a HUMAN by linking the existing ops
- * SupportTicket queue (no parallel system).
- *
- * Money actions are only ever REQUESTED here (returned as `actions`); execution
- * is a separate, server-validated seam — a refund never fires from a flow graph.
- */
+/** Appointment help uses the same case and conversation as the support inbox. */
 
+import { createHash } from "node:crypto";
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
+  type Tx,
 } from "@/lib/prisma";
 import type {
   SupportChannel,
   SupportThreadCategory,
-  SupportThreadStatus,
+  SupportCaseOwnership,
+  SupportCaseStatus,
+  SupportCase,
+  SupportPriority,
 } from "@prisma/client";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { seatOrganizationId } from "@/lib/booking/participants";
 import { stripCallbackTags } from "@/lib/validation/phone";
 import { buildSupportContext } from "./context";
@@ -30,20 +27,24 @@ import {
   escalationBrief,
   isBareHumanRequest,
 } from "./escalation";
+import { supportDeadline } from "./deadline-policy";
 import { escalationPriority, issueTypeForReason } from "./priority";
 import {
-  notifyRequesterOfTicket,
-  notifySupportStaff,
-  notifyStaffOfTicketActivity,
-  raiseReusedTicketToHigh,
-} from "./create-ticket";
-import { allocateMessageSeq } from "./message-seq";
+  appendSupportCaseTurn,
+  createOrReuseSupportCase,
+  latestCaseDecisionTx,
+  openCaseConflict,
+  stageSupportCaseIntakeTx,
+} from "./case-service";
+import { assertCaseTransition, CaseConflictError } from "./case-transitions";
+import { SupportThreadCategoryEnum } from "@/schemas/enums";
+import { z } from "zod";
 import { recordFlowOutcome } from "./deflection";
-import { allocateTicketReference } from "./reference";
 import { slaDeadlinesFor, userRepliedPatch } from "./sla";
 import type { SupportAction, SupportContext, SupportTurnResult } from "./types";
 
 export interface RunTurnInput {
+  clientTurnId?: string;
   /** Chosen intent — set on the first turn (or to switch intents). */
   category?: SupportThreadCategory;
   /** A selected flowchart option id (SELF_SERVE advance). */
@@ -52,6 +53,8 @@ export interface RunTurnInput {
   userMessage?: string;
   /** The customer flagged this hand-off as urgent. */
   urgent?: boolean;
+  /** "This didn't fix it" on a resolved human conversation. */
+  reopen?: boolean;
   /**
    * Caller reached this appointment only via the org-operator party branch.
    * Restricted to org-party categories while permitting human escalation inside them.
@@ -140,29 +143,76 @@ export async function runSupportTurn(
     ? appt.organizationId
     : await seatOrganizationId(prisma, appt, userId);
 
-  // Find-or-create keyed on (appointmentId, userId) so concurrent opens converge cleanly.
-  const thread = await prisma.appointmentSupportThread.upsert({
-    where: { appointmentId_userId: { appointmentId, userId } },
-    create: {
+  const intakeId = input.clientTurnId
+    ? `appointment-${createHash("sha256").update(input.clientTurnId).digest("hex")}`
+    : `appointment-${crypto.randomUUID()}`;
+  const previous = await prisma.supportCase.findFirst({
+    where: {
       appointmentId,
-      userId,
+      requesterUserId: userId,
+      submitterUserId: userId,
       organizationId: threadOrgId,
-      category: input.category ?? "OTHER",
+      ownershipScope: input.isOrgParty ? "ORG_OPERATIONS" : "PERSONAL",
+      closedAt: null,
+      deletedAt: null,
     },
-    update: {},
+    orderBy: { createdAt: "desc" },
   });
+  // A new intent on a resolved human conversation starts its own request.
+  const reusable =
+    previous &&
+    !(
+      input.category &&
+      previous.activeChannel === "HUMAN" &&
+      previous.status === "RESOLVED"
+    )
+      ? previous
+      : null;
+  const thread =
+    reusable ??
+    (
+      await createOrReuseSupportCase({
+        clientIntakeId: intakeId,
+        requesterUserId: userId,
+        submitterUserId: userId,
+        appointmentId,
+        organizationId: threadOrgId,
+        ownershipScope: input.isOrgParty ? "ORG_OPERATIONS" : "PERSONAL",
+        category: input.category ?? "OTHER",
+        title: "Appointment support",
+        description: "Appointment help requested",
+        initialSender: "SYSTEM",
+        activeChannel: "SELF_SERVE",
+      })
+    ).supportCase;
+  if (
+    input.clientTurnId &&
+    (await prisma.supportCaseMessage.findUnique({
+      where: {
+        caseId_clientTurnId: {
+          caseId: thread.id,
+          clientTurnId: input.clientTurnId,
+        },
+      },
+      select: { id: true },
+    }))
+  )
+    return replayedTurn(thread);
+  const storedCategory = SupportThreadCategoryEnum.parse(
+    thread.category ?? "OTHER",
+  );
 
   // Explicit intent selection re-scopes the thread to that category's entry node.
   const ctx = await buildSupportContext(
     thread.id,
     appointmentId,
     userId,
-    input.category ?? thread.category,
+    input.category ?? storedCategory,
   );
   if (!ctx) return null;
 
   // Switching intent restarts the flow at its entry node.
-  let category = thread.category;
+  let category = storedCategory;
   let currentNodeId = thread.currentNodeId;
   if (input.category) {
     category = input.category;
@@ -173,11 +223,13 @@ export async function runSupportTurn(
     currentNodeId = null;
   }
 
-  if (
-    thread.activeChannel === "HUMAN" &&
-    !(thread.status === "RESOLVED" && input.category)
-  ) {
-    return persistHumanTurn(thread, input.userMessage);
+  if (thread.activeChannel === "HUMAN") {
+    return persistHumanTurn(
+      thread,
+      input.userMessage,
+      input.clientTurnId,
+      input.reopen,
+    );
   }
 
   const flow = flowForCategory(ctx, category);
@@ -185,7 +237,6 @@ export async function runSupportTurn(
     return escalate(
       ctx,
       thread.id,
-      thread.supportTicketId,
       category,
       {
         messages: [
@@ -199,6 +250,8 @@ export async function runSupportTurn(
       input.userMessage,
       "no_flow",
       input.urgent,
+      input.clientTurnId,
+      thread.updatedAt,
     );
   }
 
@@ -220,7 +273,6 @@ export async function runSupportTurn(
     return escalate(
       ctx,
       thread.id,
-      thread.supportTicketId,
       category,
       {
         messages: [
@@ -238,6 +290,8 @@ export async function runSupportTurn(
       input.userMessage,
       `${category.toLowerCase()}_human`,
       input.urgent,
+      input.clientTurnId,
+      thread.updatedAt,
     );
   }
 
@@ -263,7 +317,6 @@ export async function runSupportTurn(
       return escalate(
         ctx,
         thread.id,
-        thread.supportTicketId,
         category,
         {
           messages: [
@@ -283,6 +336,8 @@ export async function runSupportTurn(
         input.userMessage,
         terminal.reason ?? "recording_missing",
         input.urgent,
+        input.clientTurnId,
+        thread.updatedAt,
       );
     }
   }
@@ -295,18 +350,19 @@ export async function runSupportTurn(
     return escalate(
       ctx,
       thread.id,
-      thread.supportTicketId,
       category,
       escalating,
       input.userMessage,
       decision.reason ?? "escalated",
       input.urgent,
+      input.clientTurnId,
+      thread.updatedAt,
     );
   }
 
   if (turn.unrecognized) {
-    const recentMessages = await prisma.supportMessage.findMany({
-      where: { threadId: thread.id },
+    const recentMessages = await prisma.supportCaseMessage.findMany({
+      where: { caseId: thread.id },
       orderBy: { seq: "desc" },
       take: 8,
       select: { sender: true, body: true, metadata: true },
@@ -315,7 +371,6 @@ export async function runSupportTurn(
       return escalate(
         ctx,
         thread.id,
-        thread.supportTicketId,
         category,
         {
           messages: [
@@ -333,22 +388,33 @@ export async function runSupportTurn(
         input.userMessage,
         "repeated_unrecognized",
         input.urgent,
+        input.clientTurnId,
+        thread.updatedAt,
       );
     }
   }
 
   const status = turn.resolved ? "RESOLVED" : "IN_PROGRESS";
   const wroteMessages = !!input.userMessage || turn.messages.length > 0;
-  let refusedStatus: SupportThreadStatus | null = null;
-  const accepted = await prisma.$transaction(
+  let refusedStatus: SupportCaseStatus | null = null;
+  const acceptance = prisma.$transaction(
     async (tx) => {
-      const moved = await tx.appointmentSupportThread.updateMany({
-        where: { id: thread.id, status: { not: "CLOSED" } },
+      assertCaseTransition(thread.status, status, {
+        decided: await isResolvedAndDecidedTx(tx, thread),
+        actor: "CUSTOMER",
+      });
+      // A guided turn never changes the channel, so a human case never drops back to self-serve.
+      const moved = await tx.supportCase.updateMany({
+        where: {
+          id: thread.id,
+          updatedAt: thread.updatedAt,
+          deletedAt: null,
+          closedAt: null,
+        },
         data: {
           category,
           currentNodeId: turn.nextNodeId,
           status,
-          activeChannel: "SELF_SERVE",
           resolvedAt: turn.resolved ? new Date() : null,
           ...(wroteMessages ? { lastMessageAt: new Date() } : {}),
         },
@@ -371,8 +437,14 @@ export async function runSupportTurn(
       let seq = await allocateMessageSeq(tx, thread.id, outgoing.length);
       async function stepOutgoing(idx: number): Promise<void> {
         if (idx >= outgoing.length) return;
-        await tx.supportMessage.create({
-          data: { threadId: thread.id, seq: ++seq, ...outgoing[idx] },
+        await tx.supportCaseMessage.create({
+          data: {
+            caseId: thread.id,
+            authorUserId: outgoing[idx].sender === "USER" ? userId : null,
+            seq: ++seq,
+            clientTurnId: idx === 0 ? input.clientTurnId : undefined,
+            ...outgoing[idx],
+          },
         });
         return stepOutgoing(idx + 1);
       }
@@ -381,12 +453,27 @@ export async function runSupportTurn(
     },
     { maxWait: ALLOCATION_TX_MAX_WAIT_MS, timeout: ALLOCATION_TX_TIMEOUT_MS },
   );
+  const accepted = await acceptance.catch(async (error: unknown) => {
+    throw await openScopeConflictOr(error, { ...thread, category }, thread.id);
+  });
 
   if (!accepted) {
-    const current = await prisma.appointmentSupportThread.findUniqueOrThrow({
+    const current = await prisma.supportCase.findUniqueOrThrow({
       where: { id: thread.id },
-      select: { status: true },
     });
+    if (
+      input.clientTurnId &&
+      (await prisma.supportCaseMessage.findUnique({
+        where: {
+          caseId_clientTurnId: {
+            caseId: thread.id,
+            clientTurnId: input.clientTurnId,
+          },
+        },
+        select: { id: true },
+      }))
+    )
+      return replayedTurn(current);
     refusedStatus = current.status;
   }
 
@@ -406,110 +493,106 @@ export async function runSupportTurn(
   return {
     threadId: thread.id,
     status: refusedStatus ?? status,
-    activeChannel: "SELF_SERVE",
+    activeChannel: thread.activeChannel,
     currentNodeId: accepted ? turn.nextNodeId : thread.currentNodeId,
     messages: accepted ? turn.messages : [],
     actions: accepted ? turn.actions : [],
     escalated: false,
     resolved: accepted && turn.resolved,
     accepted,
-    supportTicketId: thread.supportTicketId,
+    supportTicketId: null,
     reason: turn.reason,
     outcomeId: recorded,
   };
 }
 
-/** Persist a message on a thread already handed to a human. */
+/** Only a resolved case can carry a decision; open statuses skip the read. */
+async function isResolvedAndDecidedTx(
+  tx: Tx,
+  supportCase: Pick<SupportCase, "id" | "status">,
+): Promise<boolean> {
+  return (
+    supportCase.status === "RESOLVED" &&
+    (await latestCaseDecisionTx(tx, supportCase.id)) !== null
+  );
+}
+
+/** A unique violation on a category or ownership write, as the 409 naming the open case in that slot. */
+async function openScopeConflictOr(
+  error: unknown,
+  attempted: Parameters<typeof openCaseConflict>[0],
+  caseId: string,
+): Promise<unknown> {
+  if (!isUniqueViolation(error)) return error;
+  const conflict = await openCaseConflict(attempted, caseId);
+  if (!conflict) return error;
+  const { status, ...body } = conflict;
+  return new CaseConflictError(body, status);
+}
+
+async function allocateMessageSeq(
+  tx: import("@/lib/prisma").Tx,
+  caseId: string,
+  count: number,
+) {
+  const row = await tx.supportCase.update({
+    where: { id: caseId },
+    data: { messageSeq: { increment: count } },
+    select: { messageSeq: true },
+  });
+  return row.messageSeq - count;
+}
+
+function replayedTurn(thread: SupportCase): RunTurnResult {
+  return {
+    threadId: thread.id,
+    status: thread.status,
+    activeChannel: thread.activeChannel,
+    currentNodeId: thread.currentNodeId,
+    messages: [],
+    actions: [],
+    escalated: thread.activeChannel === "HUMAN",
+    resolved: thread.status === "RESOLVED",
+    accepted: true,
+    supportTicketId: thread.activeChannel === "HUMAN" ? thread.id : null,
+    replyByAt: thread.ackDueAt?.toISOString() ?? null,
+  };
+}
+
+const REOPEN_REFUSALS: ReadonlySet<string> = new Set([
+  "CASE_DECIDED",
+  "REOPEN_WINDOW_EXPIRED",
+  "REOPEN_NOT_ALLOWED",
+]);
+
 async function persistHumanTurn(
-  thread: {
-    id: string;
-    status: SupportThreadStatus;
-    supportTicketId: string | null;
-    organizationId: string | null;
-  },
+  thread: SupportCase,
   userMessage: string | undefined,
+  clientTurnId?: string,
+  reopen?: boolean,
 ): Promise<RunTurnResult> {
-  let status = thread.status;
-  let messageId: string | null = null;
-  let accepted = true;
-
-  if (userMessage) {
-    const written = await prisma.$transaction(
-      async (tx) => {
-        const moved = await tx.appointmentSupportThread.updateMany({
-          where: { id: thread.id, status: { not: "CLOSED" } },
-          data: {
-            messageSeq: { increment: 1 },
-            lastMessageAt: new Date(),
-            status: "ESCALATED",
-            resolvedAt: null,
-          },
-        });
-        if (moved.count === 0) return null;
-        if (thread.supportTicketId) {
-          await tx.supportTicket.updateMany({
-            where: { id: thread.supportTicketId, status: "RESOLVED" },
-            data: { status: "OPEN", resolvedAt: null },
-          });
-        }
-
-        const row = await tx.appointmentSupportThread.findUniqueOrThrow({
-          where: { id: thread.id },
-          select: { messageSeq: true, status: true },
-        });
-        const message = await tx.supportMessage.create({
-          data: {
-            threadId: thread.id,
-            sender: "USER",
-            body: userMessage,
-            seq: row.messageSeq,
-          },
-          select: { id: true },
-        });
-        return { id: message.id, status: row.status };
-      },
-      { maxWait: ALLOCATION_TX_MAX_WAIT_MS, timeout: ALLOCATION_TX_TIMEOUT_MS },
-    );
-
-    if (!written) {
-      const current = await prisma.appointmentSupportThread.findUniqueOrThrow({
-        where: { id: thread.id },
-        select: { status: true },
-      });
-      status = current.status;
-      accepted = false;
-    } else {
-      messageId = written.id;
-      status = written.status;
-
-      if (thread.supportTicketId) {
-        await resumeTicketClock(thread.supportTicketId).catch((error) => {
-          console.error("support: SLA resume failed", {
-            ticketId: thread.supportTicketId,
-            error,
-          });
-        });
-        await notifyStaffOfTicketActivity(
-          thread.supportTicketId,
-          thread.organizationId,
-          messageId ?? undefined,
-        ).catch((error) => {
-          console.error("support: user-reply notification failed", {
-            threadId: thread.id,
-            error,
-          });
-        });
-      }
-    }
-  }
-
-  const ticketAck = thread.supportTicketId
-    ? await prisma.supportTicket.findUnique({
-        where: { id: thread.supportTicketId },
-        select: { ackDueAt: true },
+  const result = userMessage
+    ? await appendSupportCaseTurn({
+        caseId: thread.id,
+        authorUserId: thread.requesterUserId,
+        sender: "USER",
+        body: userMessage,
+        isInternal: false,
+        clientTurnId,
+        reopen,
       })
     : null;
-
+  if (result && !result.ok && REOPEN_REFUSALS.has(result.code)) {
+    const { ok: _ok, status, ...body } = result;
+    throw new CaseConflictError(body, status);
+  }
+  const reopened =
+    reopen === true &&
+    result?.ok === true &&
+    !result.replayed &&
+    thread.status === "RESOLVED";
+  let status: SupportCaseStatus = thread.status;
+  if (reopened) status = thread.assignedToId ? "IN_PROGRESS" : "OPEN";
   return {
     threadId: thread.id,
     status,
@@ -519,239 +602,275 @@ async function persistHumanTurn(
     actions: [],
     escalated: true,
     resolved: false,
-    accepted,
-    supportTicketId: thread.supportTicketId,
-    replyByAt: ticketAck?.ackDueAt?.toISOString() ?? null,
+    accepted: result?.ok ?? true,
+    supportTicketId: thread.id,
+    replyByAt: thread.ackDueAt?.toISOString() ?? null,
   };
 }
 
-/** The ball is back with us, so the resolution clock restarts. */
-async function resumeTicketClock(ticketId: string): Promise<void> {
-  const ticket = await prisma.supportTicket.findUnique({
-    where: { id: ticketId },
-    select: { awaitingUserSince: true, pausedSeconds: true },
-  });
-  if (!ticket) return;
-  const claimed = await prisma.supportTicket.updateMany({
-    where: {
-      id: ticketId,
-      awaitingUserSince: ticket.awaitingUserSince,
-      pausedSeconds: ticket.pausedSeconds,
-    },
-    data: { lastMessageAt: new Date(), ...userRepliedPatch(ticket) },
-  });
-  if (claimed.count === 0) {
-    await prisma.supportTicket.update({
-      where: { id: ticketId },
-      data: { lastMessageAt: new Date() },
-    });
-  }
+interface EscalationTurn {
+  messages: {
+    sender: string;
+    body: string;
+    metadata?: Record<string, unknown>;
+  }[];
+  nextNodeId: string | null;
+  actions: SupportAction[];
+  resolved: boolean;
+  escalate: boolean;
+  reason?: string;
+  chosenLabel?: string;
+  promises?: ReadonlyArray<{ id: string; text: string }>;
 }
 
-/** Hand the thread to a human: persist the exchange, create/link a SupportTicket
- *  in the existing ops queue, and flip the channel to HUMAN. */
+function escalationDescription(
+  priorTurns: ReadonlyArray<{ sender: string; body: string }>,
+  turn: EscalationTurn,
+  userMessage: string | undefined,
+  category: SupportThreadCategory,
+  reason: string,
+): string {
+  const priorUserSteps = priorTurns
+    .filter((message) => message.sender === "USER")
+    .map((message) => message.body);
+  const typed = userMessage?.trim();
+  return stripCallbackTags(
+    escalationBrief({
+      customerAsk:
+        typed && !isBareHumanRequest(typed)
+          ? typed
+          : (priorUserSteps.findLast((body) => !isBareHumanRequest(body)) ??
+            turn.chosenLabel ??
+            null),
+      path:
+        [
+          ...priorUserSteps,
+          ...(turn.chosenLabel ? [turn.chosenLabel] : []),
+        ].join(" → ") || null,
+      botSaid:
+        turn.messages.find((message) => message.sender === "BOT")?.body ??
+        priorTurns.findLast((message) => message.sender === "BOT")?.body ??
+        null,
+      reason,
+      topic: category,
+      promises: turn.promises,
+    }),
+  );
+}
+
+function handoffPriority(
+  prior: Pick<SupportCase, "activeChannel" | "priority">,
+  priority: SupportPriority,
+  urgent: boolean | undefined,
+): SupportPriority {
+  if (prior.activeChannel !== "HUMAN") return priority;
+  if (urgent && ["LOW", "MEDIUM"].includes(prior.priority)) return "HIGH";
+  return prior.priority;
+}
+
+/**
+ * An org billing dispute moves to the billing team's queue when the filer may
+ * read that queue; otherwise it stays with operations so the filer keeps sight of it.
+ */
+async function escalationOwnershipTx(
+  tx: Tx,
+  prior: Pick<SupportCase, "ownershipScope" | "organizationId">,
+  userId: string,
+  reason: string,
+): Promise<SupportCaseOwnership> {
+  if (
+    reason !== "org_billing_dispute" ||
+    prior.ownershipScope !== "ORG_OPERATIONS" ||
+    !prior.organizationId
+  )
+    return prior.ownershipScope;
+  const member = await tx.membership.findFirst({
+    where: { userId, organizationId: prior.organizationId, status: "ACTIVE" },
+    select: { role: true },
+  });
+  return member && hasOrgPermission(member.role, "supportCases.billing.manage")
+    ? "ORG_BILLING"
+    : prior.ownershipScope;
+}
+
 async function escalate(
   ctx: SupportContext,
   threadId: string,
-  existingTicketId: string | null,
   category: SupportThreadCategory,
-  turn: {
-    messages: {
-      sender: string;
-      body: string;
-      metadata?: Record<string, unknown>;
-    }[];
-    nextNodeId: string | null;
-    actions: SupportAction[];
-    resolved: boolean;
-    escalate: boolean;
-    reason?: string;
-    /** Label of the chip that produced this turn, recorded as the USER message. */
-    chosenLabel?: string;
-    promises?: ReadonlyArray<{ id: string; text: string }>;
-  },
+  turn: EscalationTurn,
   userMessage: string | undefined,
   reason: string,
   urgent: boolean | undefined,
+  clientTurnId: string | undefined,
+  expectedUpdatedAt: Date,
 ): Promise<RunTurnResult> {
   const effectiveReason = turn.reason ?? reason;
   const priority = escalationPriority(effectiveReason, urgent);
-  const issueType = issueTypeForReason(effectiveReason);
-
-  let createdTicket: {
-    id: string;
-    title: string;
-    organizationId: string | null;
-    referenceNumber: string | null;
-    userId: string;
-    ackDueAt: Date | null;
-    createdAt: Date;
-  } | null = null;
-
-  const normalizeSender = (
-    raw: string,
-  ): "BOT" | "SYSTEM" | "USER" | "AGENT" => {
-    if (raw === "SYSTEM" || raw === "USER" || raw === "AGENT") return raw;
-    return "BOT";
-  };
-
-  let turnMessageId: string | undefined;
-  const ticketId = await prisma.$transaction(
+  const now = new Date();
+  let attempted: Parameters<typeof openCaseConflict>[0] | null = null;
+  const handoff = prisma.$transaction(
     async (tx) => {
-      const claimed = await tx.appointmentSupportThread.updateMany({
-        where: { id: threadId, status: { not: "CLOSED" } },
-        data: {
-          category,
-          currentNodeId: null,
-          status: "ESCALATED",
-          activeChannel: "HUMAN",
-          lastMessageAt: new Date(),
-        },
+      const prior = await tx.supportCase.findUniqueOrThrow({
+        where: { id: threadId },
       });
-      if (claimed.count === 0) return null;
-
+      if (
+        clientTurnId &&
+        (await tx.supportCaseMessage.findUnique({
+          where: { caseId_clientTurnId: { caseId: threadId, clientTurnId } },
+          select: { id: true },
+        }))
+      )
+        return { supportCase: prior, firstHandoff: false, replayed: true };
+      if (prior.closedAt || prior.deletedAt) return null;
+      assertCaseTransition(prior.status, "ESCALATED", {
+        decided: await isResolvedAndDecidedTx(tx, prior),
+        actor: "CUSTOMER",
+      });
+      const ownershipScope = await escalationOwnershipTx(
+        tx,
+        prior,
+        ctx.userId,
+        effectiveReason,
+      );
+      attempted = { ...prior, category, ownershipScope };
       const priorTurns = (
-        await tx.supportMessage.findMany({
-          where: { threadId },
+        await tx.supportCaseMessage.findMany({
+          where: { caseId: threadId, isInternal: false },
           orderBy: { seq: "desc" },
           take: 6,
         })
       ).reverse();
-
-      const userSaid = [turn.chosenLabel, userMessage].filter(
-        (s): s is string => !!s,
+      const description = escalationDescription(
+        priorTurns,
+        turn,
+        userMessage,
+        category,
+        effectiveReason,
       );
+      const moved = await tx.supportCase.updateMany({
+        where: {
+          id: threadId,
+          updatedAt: expectedUpdatedAt,
+          closedAt: null,
+          deletedAt: null,
+        },
+        data: {
+          category,
+          ownershipScope,
+          status: "ESCALATED",
+          activeChannel: "HUMAN",
+          currentNodeId: null,
+          title: `Support for ${ctx.planTitle ?? `${ctx.appointmentType.toLowerCase()} appointment`}`,
+          description,
+          issueType: issueTypeForReason(effectiveReason),
+          priority: handoffPriority(prior, priority, urgent),
+          ...(prior.activeChannel === "HUMAN"
+            ? {}
+            : {
+                ...slaDeadlinesFor(priority, now),
+                ...supportDeadline(category, now),
+                receivedAt: now,
+              }),
+          lastMessageAt: now,
+          resolvedAt: null,
+          ...userRepliedPatch(prior),
+        },
+      });
+      if (!moved.count) return null;
       const outgoing = [
-        ...userSaid.map((body) => ({
-          sender: "USER" as const,
-          body,
-          metadata: undefined,
-        })),
-        ...turn.messages.map((m) => ({
-          sender: normalizeSender(m.sender),
-          body: m.body,
-          metadata:
-            typeof m.metadata === "object" && m.metadata !== null
-              ? m.metadata
-              : undefined,
+        ...[turn.chosenLabel, userMessage]
+          .filter((body): body is string => Boolean(body))
+          .map((body) => ({
+            sender: "USER" as const,
+            body,
+            metadata: undefined,
+          })),
+        ...turn.messages.map((message) => ({
+          ...message,
+          sender: z
+            .enum(["BOT", "SYSTEM", "USER", "AGENT"])
+            .parse(message.sender),
         })),
       ];
       let seq = await allocateMessageSeq(tx, threadId, outgoing.length);
-      async function stepEscalationOutgoing(idx: number): Promise<void> {
-        if (idx >= outgoing.length) return;
-        const stored = await tx.supportMessage.create({
-          data: { threadId, seq: ++seq, ...outgoing[idx] },
-          select: { id: true },
-        });
-        turnMessageId ??= stored.id;
-        return stepEscalationOutgoing(idx + 1);
-      }
-      await stepEscalationOutgoing(0);
-
-      let linkedTicketId = existingTicketId;
-      if (linkedTicketId) {
-        await tx.supportTicket.updateMany({
-          where: { id: linkedTicketId, status: "RESOLVED" },
-          data: { status: "OPEN", resolvedAt: null },
-        });
-        if (urgent) await raiseReusedTicketToHigh(tx, linkedTicketId);
-      } else {
-        const openedAt = new Date();
-        const referenceNumber = await allocateTicketReference(tx, openedAt);
-        const { ackDueAt, resolutionDueAt } = slaDeadlinesFor(
-          priority,
-          openedAt,
-        );
-        const priorUserSteps = priorTurns
-          .filter((t) => t.sender === "USER")
-          .map((t) => t.body);
-        const pathSteps = [
-          ...priorUserSteps,
-          ...(turn.chosenLabel ? [turn.chosenLabel] : []),
-        ].filter(Boolean);
-        const lastBotMessage =
-          turn.messages.find((m) => m.sender === "BOT")?.body ??
-          priorTurns.filter((t) => t.sender === "BOT").at(-1)?.body;
-        const typed = userMessage?.trim();
-        const customerAsk =
-          typed && !isBareHumanRequest(typed)
-            ? typed
-            : (priorUserSteps.filter((b) => !isBareHumanRequest(b)).at(-1) ??
-              (turn.chosenLabel?.trim() || null));
-
-        const ticket = await tx.supportTicket.create({
+      // Sequential writes preserve allocated message order and the first turn's replay identity.
+      for (const [index, message] of outgoing.entries()) {
+        await tx.supportCaseMessage.create({
           data: {
-            userId: ctx.userId,
-            title: `Support for ${ctx.planTitle ?? `${ctx.appointmentType.toLowerCase()} appointment`}`,
-            description: stripCallbackTags(
-              escalationBrief({
-                customerAsk,
-                path: pathSteps.join(" → ") || null,
-                botSaid: lastBotMessage ?? null,
-                reason: effectiveReason,
-                topic: category,
-                promises: turn.promises,
-              }),
-            ),
-            priority,
-            referenceNumber,
-            lastMessageAt: openedAt,
-            ackDueAt,
-            resolutionDueAt,
-            category,
-            issueType: issueType ?? undefined,
-            paymentId: ctx.paymentId,
-            organizationId: ctx.organizationId,
-          },
-          select: {
-            id: true,
-            title: true,
-            organizationId: true,
-            referenceNumber: true,
-            userId: true,
-            ackDueAt: true,
-            createdAt: true,
+            caseId: threadId,
+            seq: ++seq,
+            clientTurnId: index === 0 ? clientTurnId : undefined,
+            sender: message.sender,
+            body: message.body,
+            authorUserId: message.sender === "USER" ? ctx.userId : null,
+            // JSON serialization omits undefined fields before Prisma persists metadata.
+            metadata:
+              message.sender === "BOT" || message.sender === "SYSTEM"
+                ? JSON.parse(
+                    JSON.stringify({
+                      ...message.metadata,
+                      promises:
+                        turn.promises?.map((promise) => promise.text) ?? [],
+                    }),
+                  )
+                : undefined,
           },
         });
-        linkedTicketId = ticket.id;
-        createdTicket = ticket;
       }
-
-      await tx.appointmentSupportThread.update({
-        where: { id: threadId },
-        data: { supportTicketId: linkedTicketId },
+      await tx.supportCaseEvent.create({
+        data: {
+          caseId: threadId,
+          actorId: ctx.userId,
+          kind: "STATUS_CHANGED",
+          fromValue: prior.status,
+          toValue: "ESCALATED",
+        },
       });
-      return linkedTicketId;
+      if (prior.activeChannel !== "HUMAN")
+        await tx.supportCaseEvent.create({
+          data: {
+            caseId: threadId,
+            actorId: ctx.userId,
+            kind: "CHANNEL_CHANGED",
+            fromValue: prior.activeChannel,
+            toValue: "HUMAN",
+          },
+        });
+      const supportCase = await tx.supportCase.findUniqueOrThrow({
+        where: { id: threadId },
+      });
+      if (prior.activeChannel !== "HUMAN")
+        await stageSupportCaseIntakeTx(tx, supportCase, "USER");
+      return {
+        supportCase,
+        firstHandoff: prior.activeChannel !== "HUMAN",
+        replayed: false,
+      };
     },
     { maxWait: ALLOCATION_TX_MAX_WAIT_MS, timeout: ALLOCATION_TX_TIMEOUT_MS },
   );
-
-  if (ticketId === null) {
-    const current = await prisma.appointmentSupportThread.findUniqueOrThrow({
-      where: { id: threadId },
-      select: {
-        status: true,
-        activeChannel: true,
-        currentNodeId: true,
-        supportTicketId: true,
-      },
-    });
+  const result = await handoff.catch(async (error: unknown) => {
+    throw attempted
+      ? await openScopeConflictOr(error, attempted, threadId)
+      : error;
+  });
+  if (!result) {
     return {
       threadId,
-      status: current.status,
-      activeChannel: current.activeChannel,
-      currentNodeId: current.currentNodeId,
+      status: "CLOSED",
+      activeChannel: "HUMAN",
+      currentNodeId: null,
       messages: [],
       actions: [],
       escalated: false,
       resolved: false,
       accepted: false,
-      supportTicketId: current.supportTicketId,
-      reason: effectiveReason,
+      supportTicketId: threadId,
     };
   }
-
-  const recorded = await recordFlowOutcome({
+  const supportCase = result.supportCase;
+  if (result.replayed) return replayedTurn(supportCase);
+  const outcomeId = await recordFlowOutcome({
     scope: "APPOINTMENT",
     flowKey: category,
     terminalNodeId: null,
@@ -760,63 +879,6 @@ async function escalate(
     userId: ctx.userId,
     organizationId: ctx.organizationId,
   });
-
-  let replyByAt: string | null = null;
-  if (createdTicket) {
-    const minted: {
-      id: string;
-      title: string;
-      organizationId: string | null;
-      referenceNumber: string | null;
-      userId: string;
-      ackDueAt: Date | null;
-      createdAt: Date;
-    } = createdTicket;
-    replyByAt = minted.ackDueAt?.toISOString() ?? null;
-    await Promise.all([
-      notifySupportStaff(minted).catch((error) => {
-        console.error("support: staff notification failed for escalation", {
-          ticketId: minted.id,
-          error,
-        });
-      }),
-      notifyRequesterOfTicket({
-        id: minted.id,
-        title: minted.title,
-        referenceNumber: minted.referenceNumber,
-        userId: minted.userId,
-        ackDueAt: minted.ackDueAt,
-        createdAt: minted.createdAt,
-        organizationId: minted.organizationId,
-      }).catch((error) => {
-        console.error("support: requester receipt failed for escalation", {
-          ticketId: minted.id,
-          error,
-        });
-      }),
-    ]);
-  } else {
-    const existing = await prisma.supportTicket.findUnique({
-      where: { id: ticketId },
-      select: { ackDueAt: true },
-    });
-    replyByAt = existing?.ackDueAt?.toISOString() ?? null;
-    await resumeTicketClock(ticketId).catch((error) => {
-      console.error("support: SLA resume failed", { ticketId, error });
-    });
-    await notifyStaffOfTicketActivity(
-      ticketId,
-      ctx.organizationId,
-      turnMessageId,
-      "reopened",
-    ).catch((error) => {
-      console.error("support: re-escalation notification failed", {
-        threadId,
-        error,
-      });
-    });
-  }
-
   return {
     threadId,
     status: "ESCALATED",
@@ -826,9 +888,10 @@ async function escalate(
     actions: turn.actions,
     escalated: true,
     resolved: false,
-    supportTicketId: ticketId,
+    accepted: true,
+    supportTicketId: threadId,
     reason: effectiveReason,
-    outcomeId: recorded,
-    replyByAt,
+    outcomeId,
+    replyByAt: supportCase.ackDueAt?.toISOString() ?? null,
   };
 }

@@ -3,19 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { useCaseTimeline } from "./useCaseTimeline";
 import { useToast } from "@/hooks/use-toast";
 import {
   SupportRequestError,
   throwSupportError,
 } from "@/lib/support/error-copy";
+import { supportKeys } from "@/lib/support/support-keys";
 
 /**
- * #appt-support / #1527 — the per-appointment support conversation: the
- * guided flow's prompts as options, free text, and the hand-off to a person.
- * Moved out of the retired "Get help" drawer so the request PAGE drives the
- * same API with the same behaviour. It only DISPLAYS the actions a resolver
- * requests (e.g. an eligible refund %); execution is a separate
- * server-validated surface, never fired from here.
+ * The per-appointment support conversation: flow options, free text and the
+ * hand-off to a person. Resolver actions are only displayed, never executed here.
  */
 
 export type Sender = "USER" | "BOT" | "AGENT" | "SYSTEM";
@@ -29,6 +27,7 @@ interface MessageMetadata {
 
 export interface ThreadMessage {
   id: string;
+  seq?: number;
   sender: Sender;
   body: string;
   metadata?: MessageMetadata | null;
@@ -43,6 +42,10 @@ export interface SupportThread {
   activeChannel: string;
   category?: string;
   currentNodeId: string | null;
+  resolvedAt?: string | null;
+  csatRating?: number | null;
+  hasMore?: boolean;
+  nextBeforeSeq?: number | null;
   messages: ThreadMessage[];
   /** Present once escalated — the deadline committed to at intake. */
   supportTicket?: {
@@ -88,11 +91,14 @@ interface TurnResult {
 
 /** One turn's payload, kept so a failed send can be repeated verbatim. */
 export interface TurnVars {
+  clientTurnId?: string;
   category?: string;
   chosenOptionId?: string;
   userMessage?: string;
   /** The customer flagged the escalation as urgent. */
   urgent?: boolean;
+  /** "This didn't fix it": reopens an undecided, recently resolved request. */
+  reopen?: boolean;
   /** Client-only echo of what was pressed. Never sent. */
   chosenLabel?: string;
 }
@@ -100,9 +106,6 @@ export interface TurnVars {
 /** Ids for locally-rendered bubbles; never collide with the server's uuids. */
 let localSeq = 0;
 const nextLocalId = () => `local-${++localSeq}`;
-
-export const supportThreadKey = (appointmentId: string) =>
-  ["support-thread", appointmentId] as const;
 
 /** The one fetcher for this cache entry, so every reader gets one shape. */
 export async function fetchSupportThread(
@@ -181,7 +184,7 @@ export function describeAction(a: SupportAction): string | null {
       : "Cancelling now is outside the refund window — no refund would apply.";
   }
   if (a.kind === "SHOW_INVOICES") {
-    return "Invoices and GST receipts live on your Payments page.";
+    return "Invoices and GST receipts live on your Billing page.";
   }
   return null;
 }
@@ -210,7 +213,7 @@ export function useSupportThread(
   >({});
   const { toast } = useToast();
   const qc = useQueryClient();
-  const queryKey = supportThreadKey(appointmentId);
+  const queryKey = supportKeys.thread(appointmentId);
 
   // Undo the optimistic bubble. A turn sent before the first GET resolves has
   // NO snapshot to restore, so the pending bubble is filtered out instead.
@@ -243,6 +246,38 @@ export function useSupportThread(
       chosenLabel: _chosenLabel,
       ...body
     }: TurnVars): Promise<TurnResult> => {
+      const current = qc.getQueryData<ThreadData>(queryKey)?.thread;
+      if (
+        current?.activeChannel === "HUMAN" &&
+        current.id !== "local" &&
+        body.userMessage &&
+        !body.category &&
+        !body.chosenOptionId
+      ) {
+        const res = await fetch(`/api/support/cases/${current.id}/messages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            body: body.userMessage,
+            clientTurnId: body.clientTurnId,
+            ...(body.reopen ? { reopen: true } : {}),
+          }),
+        });
+        if (!res.ok) await throwSupportError(res, "support reply");
+        // A plain reply is a follow-up; only "This didn't fix it" reopens.
+        return {
+          status:
+            body.reopen && current.status === "RESOLVED"
+              ? "OPEN"
+              : current.status,
+          activeChannel: "HUMAN",
+          currentNodeId: current.currentNodeId,
+          messages: [],
+          escalated: false,
+          resolved: false,
+          actions: [],
+        };
+      }
       const res = await fetch(`/api/appointments/${appointmentId}/support`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -368,7 +403,34 @@ export function useSupportThread(
       }))
     : [];
 
-  const messages = thread?.messages ?? [];
+  const latestMessages = thread?.messages ?? [];
+  const history = useCaseTimeline(
+    thread?.id ?? "unstarted",
+    latestMessages.map((message) => ({
+      id: message.id,
+      seq: message.seq,
+      author: message.sender,
+      authorName: null,
+      body: message.body,
+      internal: false,
+      at: message.createdAt,
+    })),
+    thread?.nextBeforeSeq,
+    thread?.hasMore,
+  );
+  const latestById = new Map(
+    latestMessages.map((message) => [message.id, message]),
+  );
+  const messages: ThreadMessage[] = history.timeline.map(
+    (message) =>
+      latestById.get(message.id) ?? {
+        id: message.id,
+        seq: message.seq,
+        sender: message.author,
+        body: message.body,
+        createdAt: message.at,
+      },
+  );
   const isHuman = thread?.activeChannel === "HUMAN";
   const isResolved = thread?.status === "RESOLVED";
   const isClosed = thread?.status === "CLOSED";
@@ -390,7 +452,10 @@ export function useSupportThread(
     (vars: TurnVars): boolean => {
       if (inFlight.current) return false;
       inFlight.current = true;
-      mutateTurn(vars, { onSettled: () => (inFlight.current = false) });
+      mutateTurn(
+        { ...vars, clientTurnId: vars.clientTurnId ?? crypto.randomUUID() },
+        { onSettled: () => (inFlight.current = false) },
+      );
       return true;
     },
     [mutateTurn],
@@ -409,9 +474,7 @@ export function useSupportThread(
     if (!seedCategory || seeded.current || !data) return;
     const t = data.thread;
     const intent = data.intents.find((i) => i.category === seedCategory);
-    // #1527 — CodeRabbit delta: seed only into a fresh or resolved thread;
-    // an open BOT-only thread was falling through and got re-seeded on
-    // every remount, duplicating the intent turn.
+    // Seed only a fresh or resolved thread, so a remount never repeats the intent turn.
     if ((t && t.status !== "RESOLVED") || !intent) {
       seeded.current = true;
       return;
@@ -433,6 +496,7 @@ export function useSupportThread(
     data,
     thread,
     messages,
+    history,
     availableIntents,
     options,
     isHuman,

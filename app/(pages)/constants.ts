@@ -36,10 +36,10 @@ export const GRIEVANCE_OFFICER = {
 } as const;
 
 export const POLICY_DATES = {
-  privacyLastUpdated: "October 2026",
-  termsLastUpdated: "October 2026",
-  refundLastUpdated: "October 2026",
-  grievanceLastUpdated: "October 2026",
+  privacyLastUpdated: "October 22, 2026",
+  termsLastUpdated: "October 21, 2026",
+  refundLastUpdated: "October 21, 2026",
+  grievanceLastUpdated: "October 21, 2026",
   reviewsPolicyLastUpdated: "October 2026",
 } as const;
 

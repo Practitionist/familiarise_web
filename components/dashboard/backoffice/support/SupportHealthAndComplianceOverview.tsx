@@ -42,7 +42,7 @@ const ComplianceReportPayloadSchema = z.object({
   month: z.number(),
   received: z.number(),
   acknowledgedWithin24h: z.number(),
-  disposedWithin15d: z.number(),
+  resolvedWithinDeadline: z.number(),
   grievances: z.number().optional(),
   appealed: z.number(),
   cases: z.array(ComplianceReportCaseRowSchema),
@@ -245,10 +245,10 @@ export function SupportHealthAndComplianceOverview({
               </div>
               <div className="rounded-md border border-border p-2">
                 <p className="text-base font-semibold">
-                  {complianceQuery.data.disposedWithin15d}
+                  {complianceQuery.data.resolvedWithinDeadline}
                 </p>
                 <p className="text-[11px] text-muted-foreground">
-                  Disposed ≤ 15d
+                  Resolved by deadline
                 </p>
               </div>
               <div className="rounded-md border border-border p-2">

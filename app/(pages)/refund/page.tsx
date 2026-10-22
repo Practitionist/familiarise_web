@@ -637,7 +637,7 @@ export default function RefundPolicyPage() {
               <Separator className="my-6" />
 
               <h2 className="text-2xl font-semibold mt-6 mb-4">
-                10. Disputed Charges
+                10. Wrong or Unauthorised Charges
               </h2>
               <p>
                 If you believe you have been incorrectly charged or notice
@@ -653,9 +653,7 @@ export default function RefundPolicyPage() {
                     {COMPANY_INFO.email}
                   </a>
                 </li>
-                <li>
-                  Provide details of the disputed charge with transaction ID
-                </li>
+                <li>Provide details of the charge, with the transaction ID</li>
                 <li>Do not initiate a chargeback before contacting us</li>
                 <li>We will investigate and resolve within 7 business days</li>
               </ol>
@@ -727,9 +725,7 @@ export default function RefundPolicyPage() {
 
               <Separator className="my-6" />
 
-              <h2 className="text-2xl font-semibold mt-6 mb-4">
-                13. Appeals and Disputes
-              </h2>
+              <h2 className="text-2xl font-semibold mt-6 mb-4">13. Appeals</h2>
               <p>
                 If your refund request is denied and you believe the decision
                 was incorrect:

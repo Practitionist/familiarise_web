@@ -27,6 +27,7 @@ import { EMAIL_BUDGET_MS } from "@/lib/email";
 import { sendCollaboratorWithdrawnEmail } from "@/lib/email/senders/collaborators";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { requireFreshSession } from "@/lib/auth/step-up";
+import { supportRetainedHistoryCount } from "@/lib/support/erasure";
 
 /**
  * Convert empty strings to undefined so Prisma skips the field update.
@@ -276,6 +277,7 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
     erasureRequestCount,
     profile,
     consulteeProfile,
+    supportHistoryCount,
   ] = await Promise.all([
     soleOwnerOrganizationsForUser(prisma, id),
     moneyInFlightForUser(prisma, id),
@@ -308,6 +310,7 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
       where: { userId: id },
       select: { id: true },
     }),
+    supportRetainedHistoryCount(prisma, id),
   ]);
 
   if (hasMoneyInFlight(inFlight)) {
@@ -380,7 +383,8 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
         seatCount +
         programAssignmentCount +
         erasureRequestCount +
-        consultantMoneyCount >
+        consultantMoneyCount +
+        supportHistoryCount >
       0,
   };
 }

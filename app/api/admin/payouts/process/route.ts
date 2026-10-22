@@ -21,7 +21,7 @@ export const POST = withOpsAction(
     target: () => ({ kind: "PayoutRun", id: "approved" }),
     run: async ({ actor }) => {
       await assertMoneyOpsBudget(actor.userId);
-      // #1846 N6 — a short lock and a run budget keep the payout lock from
+      // A short lock and run budget keep the payout lock from
       // outliving a Lambda killed at its limit; unstarted payouts stay APPROVED.
       const results = await processApprovedPayouts({
         ...REQUEST_PAYOUT_RUN_BOUNDS,

@@ -14,13 +14,6 @@ export interface OpsLogRow {
   after: unknown;
 }
 
-export interface OpsLogFilters {
-  actorUserId?: string;
-  surface?: string;
-  targetKind?: string;
-  targetId?: string;
-}
-
 export interface OpsLogPage {
   rows: OpsLogRow[];
   total: number;

@@ -62,7 +62,7 @@ const BY_TOPIC: Partial<Record<CaseTopic, SavedReply[]>> = {
     {
       id: "pay-invoice",
       title: "Where the invoice is",
-      body: "Your invoice is on your Payments page. Open the payment and use the invoice link to download it.",
+      body: "Your invoice is on your Billing page. Open the payment and use the invoice link to download it.",
     },
     {
       id: "pay-refund-timing",

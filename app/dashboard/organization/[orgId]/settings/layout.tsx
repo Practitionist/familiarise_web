@@ -11,11 +11,7 @@ import {
 
 import { useOrgRole } from "../useOrgRole";
 
-/**
- * Org Settings (#1527) on the shared SettingsLayout: a grouped left nav from
- * `md` up, one URL per section. Only the sections the role may open are
- * listed; each section page re-checks its gate on the server.
- */
+/** Settings uses a grouped hub and a dedicated URL for each permitted form. */
 export default function OrgSettingsLayout({
   children,
 }: Readonly<{ children: ReactNode }>) {
@@ -30,8 +26,6 @@ export default function OrgSettingsLayout({
       description="Profile, sign-in, billing contacts and integrations."
       groups={orgSettingsGroups(orgId, role)}
       basePath={orgSettingsHref(orgId)}
-      // The mobile section list, as in the consultant hub.
-      listHref={`${orgSettingsHref(orgId)}?view=sections`}
     >
       {children}
     </SettingsLayout>

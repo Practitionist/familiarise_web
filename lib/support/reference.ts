@@ -1,17 +1,4 @@
-/**
- * #705 — human-readable support ticket references.
- *
- * `SupportTicket.id` is a uuid: unusable in an email subject and impossible to
- * read back over a phone line. The two staff surfaces had each invented their
- * own truncation (one took the first 8 characters, the other the last, so they
- * disagreed about the same ticket) and users were shown no identifier at all.
- *
- * Year-scoped rather than a single lifetime series: a plain counter publishes
- * the all-time ticket count to anyone who files two tickets and subtracts —
- * the German tank problem, which is exactly how the Allies estimated German
- * production from sequential part serial numbers. Resetting each January caps
- * the leak at the current year.
- */
+/** Year-scoped FAM references, allocated inside the case transaction. */
 
 import type { Tx } from "@/lib/prisma";
 
@@ -43,7 +30,7 @@ export async function allocateTicketReference(
   now: Date = new Date(),
 ): Promise<string> {
   const istYear = new Date(now.getTime() + 330 * 60_000).getUTCFullYear();
-  const counter = await tx.supportTicketCounter.upsert({
+  const counter = await tx.supportCaseCounter.upsert({
     where: { year: istYear },
     create: { year: istYear, nextSeq: 2 }, // seeds the row AND allocates seq 1
     update: { nextSeq: { increment: 1 } },

@@ -24,6 +24,7 @@ const mockMembership = {
 const mockUser = {
   findUnique: jest.fn().mockResolvedValue({ id: "reviewer-user" }),
   findFirst: jest.fn(),
+  findMany: jest.fn(),
 };
 const mockDispute = {
   findUnique: jest.fn(),
@@ -34,6 +35,9 @@ const mockAppointment = {
   findMany: jest.fn(),
 };
 const mockSupportTicket = {
+  create: jest.fn(),
+};
+const mockSupportCase = {
   create: jest.fn(),
 };
 const mockTransaction = jest.fn();
@@ -69,6 +73,9 @@ jest.mock("../../lib/prisma", () => ({
     },
     get supportTicket() {
       return mockSupportTicket;
+    },
+    get supportCase() {
+      return mockSupportCase;
     },
     $transaction: (...args: unknown[]) => mockTransaction(...args),
   },
@@ -150,6 +157,8 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
           consultantProfile: { update: jest.fn() },
           user: mockUser,
           supportTicket: mockSupportTicket,
+          supportCase: mockSupportCase,
+          notificationOutbox: { upsert: jest.fn() },
         }),
     );
   });
@@ -221,7 +230,7 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     expect(res.status).toBe(400);
   });
 
-  test("POST /api/report enforces consultant or host OWNER/MAINTAINER gate on reviews and appends subsequent reporter statement", async () => {
+  test("POST /api/report enforces consultant or host OWNER/MAINTAINER gate on reviews and gives each reporter their own receipt", async () => {
     mockGetSession.mockResolvedValue({
       user: { id: "outsider-user", role: "CONSULTEE" },
     });
@@ -254,15 +263,11 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
       user: { id: "org-admin-user", role: "CONSULTANT" },
     });
     mockMembership.findFirst.mockResolvedValue({ id: "mem-1" });
-    mockModerationReport.findFirst
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        id: "rep-open-1",
-        reportCount: 1,
-        description: "First reporter statement",
-        contentText: "Unfair review",
-      });
-    mockModerationReport.updateMany.mockResolvedValue({ count: 1 });
+    // No open report from this reporter yet, so this is their own row.
+    mockModerationReport.findFirst.mockResolvedValue(null);
+    mockModerationReport.create.mockResolvedValue({
+      id: "rep-own-1",
+    });
 
     const secondReq = new NextRequest("http://localhost/api/report", {
       method: "POST",
@@ -276,19 +281,38 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
       }),
     });
     const secondRes = await createReportRoute(secondReq);
-    expect(secondRes.status).toBe(200);
-    expect(mockModerationReport.updateMany).toHaveBeenCalledWith({
-      where: {
-        id: "rep-open-1",
-        reportCount: 1,
-        status: { in: ["PENDING", "UNDER_REVIEW"] },
-      },
-      data: {
-        reportCount: { increment: 1 },
-        description:
-          "First reporter statement\nReporter 2 (COERCION_OR_RETALIATION): Demanded refund to remove 1-star",
-      },
+    expect(secondRes.status).toBe(201);
+    // Each reporter gets their own row, carrying their own statement.
+    expect(mockModerationReport.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          reportedById: "org-admin-user",
+          targetUserId: "reviewer-user",
+          reviewId: "rev-1",
+          description: "Demanded refund to remove 1-star",
+        }),
+      }),
+    );
+
+    // A second report by the SAME reporter for the same content is a
+    // duplicate, not an append: the receipt is per reporter.
+    mockModerationReport.findFirst.mockResolvedValue({
+      id: "rep-own-1",
     });
+    const repeatReq = new NextRequest("http://localhost/api/report", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "REVIEW",
+        targetUserId: "reviewer-user",
+        reviewId: "rev-1",
+        reason: "COERCION_OR_RETALIATION",
+        description: "Demanded refund to remove 1-star",
+      }),
+    });
+    const repeatRes = await createReportRoute(repeatReq);
+    expect(repeatRes.status).toBe(409);
+    expect(mockModerationReport.create).toHaveBeenCalledTimes(1);
   });
 
   test("DELETE /api/staff/moderation/reviews/[reviewId] returns alreadyRemoved without re-purging cache", async () => {
@@ -502,12 +526,28 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     ).not.toContain("familiarisenow.com");
   });
 
-  test("POST /api/contact creates SupportTicket in the same transaction as allocateTicketReference for public grievances and skips allocation when zero operators exist", async () => {
+  test("POST /api/contact creates the canonical SupportCase in the same transaction as allocateTicketReference, held by the public-intake user, and stages the receipt email there", async () => {
     mockGetSession.mockResolvedValue(null);
-    mockUser.findFirst.mockResolvedValueOnce({ id: "operator-admin-1" });
+    mockUser.findUnique.mockResolvedValueOnce({
+      id: "system-public-grievance-intake",
+    });
+    mockUser.findMany.mockResolvedValue([{ id: "operator-admin-1" }]);
+    const tx = {
+      user: mockUser,
+      supportCase: mockSupportCase,
+      membership: mockMembership,
+      notificationOutbox: { upsert: jest.fn() },
+      emailSuppression: { findUnique: jest.fn().mockResolvedValue(null) },
+      failedEmail: {
+        create: jest.fn().mockResolvedValue({ id: "staged-email" }),
+      },
+    };
+    mockTransaction.mockImplementationOnce(
+      async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
+    );
     mockAllocateTicketReference.mockResolvedValueOnce("FAM-2026-000042");
-    mockSupportTicket.create.mockResolvedValueOnce({
-      id: "ticket-42",
+    mockSupportCase.create.mockResolvedValueOnce({
+      id: "case-42",
       referenceNumber: "FAM-2026-000042",
     });
     mockSendContactInquiryEmail.mockResolvedValue({
@@ -538,8 +578,8 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     });
     expect(mockTransaction).toHaveBeenCalledTimes(1);
     expect(mockAllocateTicketReference).toHaveBeenCalledTimes(1);
-    expect(mockSupportTicket.create).toHaveBeenCalledTimes(1);
-    expect(mockSupportTicket.create).toHaveBeenCalledWith(
+    expect(mockSupportCase.create).toHaveBeenCalledTimes(1);
+    expect(mockSupportCase.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           referenceNumber: "FAM-2026-000042",
@@ -547,43 +587,24 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
           category: "GRIEVANCE",
           status: "OPEN",
           priority: "HIGH",
-          userId: "operator-admin-1",
+          requesterUserId: "system-public-grievance-intake",
+          submitterUserId: "system-public-grievance-intake",
+          externalRequesterEmail: "asha@example.com",
         }),
       }),
     );
 
-    mockAllocateTicketReference.mockClear();
-    mockSupportTicket.create.mockClear();
-    mockUser.findFirst.mockResolvedValueOnce(null);
-
-    const noOperatorReq = new NextRequest("http://localhost/api/contact", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        firstName: "Asha",
-        lastName: "Verma",
-        email: "asha@example.com",
-        subject: "Unresolved billing dispute",
-        message: "Please review my double charge urgently.",
-        category: "grievance",
+    expect(tx.failedEmail.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          recipient: "asha@example.com",
+          entityRef: "case-created:case-42",
+        }),
       }),
-    });
-
-    const noOperatorRes = await postContactRoute(noOperatorReq);
-    const noOperatorBody = await noOperatorRes.json();
-
-    expect(noOperatorRes.status).toBe(202);
-    expect(noOperatorBody).toEqual({
-      ok: true,
-      referenceNumber: null,
-      message:
-        "Grievance received — our Grievance Officer will open a case and email your tracking reference within 24 hours.",
-    });
-    expect(mockAllocateTicketReference).not.toHaveBeenCalled();
-    expect(mockSupportTicket.create).not.toHaveBeenCalled();
+    );
   });
 
-  test("POST /api/report preserves newest reporter statement when aggregated description exceeds 4000 chars", async () => {
+  test("POST /api/report preserves the newest reporter statement because each reporter has their own row", async () => {
     mockGetSession.mockResolvedValue({
       user: { id: "org-admin-user", role: "CONSULTANT" },
     });
@@ -597,15 +618,8 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
       consulteeProfile: { userId: "reviewer-user" },
     });
     mockMembership.findFirst.mockResolvedValue({ id: "mem-1" });
-    mockModerationReport.findFirst
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        id: "rep-open-long",
-        reportCount: 15,
-        description: "A".repeat(3990),
-        contentText: "Long history review",
-      });
-    mockModerationReport.updateMany.mockResolvedValue({ count: 1 });
+    mockModerationReport.findFirst.mockResolvedValue(null);
+    mockModerationReport.create.mockResolvedValue({ id: "rep-own-long" });
 
     const req = new NextRequest("http://localhost/api/report", {
       method: "POST",
@@ -619,16 +633,15 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
       }),
     });
     const res = await createReportRoute(req);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
 
+    // The reporter's own statement is stored whole: it is never appended to
+    // a shared row, so nothing can truncate it away.
     const writtenDescription: string =
-      mockModerationReport.updateMany.mock.calls[0][0].data.description;
-    expect(writtenDescription).toHaveLength(4000);
-    expect(
-      writtenDescription.endsWith(
-        "\nReporter 16 (HARASSMENT_OR_ABUSE): Latest reporter statement must never be truncated away",
-      ),
-    ).toBe(true);
+      mockModerationReport.create.mock.calls[0][0].data.description;
+    expect(writtenDescription).toBe(
+      "Latest reporter statement must never be truncated away",
+    );
   });
 
   test("PUT and DELETE on /api/user/reviews/[id] share reviewWriteLimiter and repeat author DELETE returns 200", async () => {

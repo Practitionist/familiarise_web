@@ -47,20 +47,14 @@ Earlier builds mapped every user to the "admin" role in Stream Chat regardless o
 #### Current Code
 
 ```typescript
-export function mapRoleToStream(role: string | null | undefined): string {
-  switch (role?.toUpperCase()) {
-    case "ADMIN":
-    case "STAFF":
-      return "admin";
-    default:
-      return "user";
-  }
+export function mapRoleToStream(_role: string | null | undefined): string {
+  return "user";
 }
 ```
 
 #### How Hosts Get Moderation
 
-Only platform staff and admins receive Stream's global `admin` role. Everyone else, consultants included, is mapped to the plain `user` role. Channel creation happens server-side, and each host is given a channel-scoped `channel_moderator` grant on their own host channels at creation time. Hosts therefore moderate the channels they own without receiving global admin permissions or moderation rights over unrelated peer direct-message channels.
+Every account, platform staff and admins included, is mapped to the plain Stream `user` role; nobody holds global `admin`. Channel creation happens server-side, and each host is given a channel-scoped `channel_moderator` grant on their own host channels at creation time. Hosts therefore moderate the channels they own without receiving global admin permissions or moderation rights over unrelated peer direct-message channels.
 
 ---
 

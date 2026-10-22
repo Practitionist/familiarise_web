@@ -9,6 +9,7 @@
 
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   CaseConversation,
   type ComposerMode,
@@ -19,25 +20,29 @@ type CaseData = Parameters<typeof CaseConversation>[0]["data"];
 function render(status: string, mode: ComposerMode): string {
   const data = {
     key: "t_1",
-    ticketId: "1",
+    kind: "case",
+    // A canonical case is what unlocks private notes.
+    caseId: "0f8fad5b-6bd8-4e9d-9c9f-aa1166a3cb17",
     status,
     timeline: [],
     handoffSummary: null,
   } as unknown as CaseData;
   return renderToStaticMarkup(
-    <CaseConversation
-      data={data}
-      mode={mode}
-      onModeChange={jest.fn()}
-      replyDraft="Thanks for waiting"
-      onReplyDraftChange={jest.fn()}
-      sending={false}
-      onSend={jest.fn()}
-      replies={[]}
-      suggested={[]}
-      helpArticles={[]}
-      onInsert={jest.fn()}
-    />,
+    <QueryClientProvider client={new QueryClient()}>
+      <CaseConversation
+        data={data}
+        mode={mode}
+        onModeChange={jest.fn()}
+        replyDraft="Thanks for waiting"
+        onReplyDraftChange={jest.fn()}
+        sending={false}
+        onSend={jest.fn()}
+        replies={[]}
+        suggested={[]}
+        helpArticles={[]}
+        onInsert={jest.fn()}
+      />
+    </QueryClientProvider>,
   );
 }
 
@@ -45,6 +50,7 @@ describe("CaseConversation on a closed case", () => {
   it("disables the public reply and says private notes still work", () => {
     const html = render("CLOSED", "reply");
     expect(html).toContain("the customer can&#x27;t receive replies");
+    expect(html).toContain("Private notes are still allowed");
     expect(html).toMatch(/<textarea[^>]* disabled=""/);
     expect(html).toMatch(
       /<button[^>]* disabled=""[^>]*>(?:(?!<button).)*Send reply/,

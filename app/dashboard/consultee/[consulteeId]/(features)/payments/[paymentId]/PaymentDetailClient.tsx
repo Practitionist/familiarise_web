@@ -121,7 +121,7 @@ export function PaymentDetailClient({
   return (
     <div className="max-w-3xl space-y-6">
       <PageHeader
-        back={{ href: `${basePath}/payments?tab=history`, label: "Payments" }}
+        back={{ href: `${basePath}/payments?tab=history`, label: "Billing" }}
         title={row.planTitle}
         description={moneyState.line}
         meta={

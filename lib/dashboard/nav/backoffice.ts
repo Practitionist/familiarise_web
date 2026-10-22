@@ -1,5 +1,3 @@
-import { Settings } from "lucide-react";
-
 import {
   buildBackofficeNav,
   type BackofficeNavOptions,
@@ -24,8 +22,6 @@ export function buildBackofficeDashboardNav(
   return {
     basePath: cap.basePath,
     groups,
-    // The operator's own profile page (#1527 header account menu).
-    settings: { name: "Settings", icon: Settings, path: "settings" },
     // Staff answer requests rather than file them: the Help menu shows only
     // the public Help Center.
     support: null,

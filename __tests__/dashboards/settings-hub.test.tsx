@@ -43,12 +43,8 @@ describe("settings hub redirects (#1785)", () => {
     });
   });
 
-  it("sends a bare /settings and an unknown tab to the first section", async () => {
-    // #1527 §14 — Account leads the hub now.
-    await expect(redirectOf({})).resolves.toEqual({
-      url: `${BASE}/settings/account`,
-      status: 308,
-    });
+  it("keeps the hub open and redirects an unknown old tab to Account", async () => {
+    await expect(redirectOf({})).resolves.toBeNull();
     await expect(redirectOf({ tab: "nope" })).resolves.toEqual({
       url: `${BASE}/settings/account`,
       status: 308,

@@ -183,12 +183,35 @@ describe("org support triage never carries conversation content (#support-hub)",
 describe("unified support case reader redacts org-filed transcripts from member requesters (ADR 20)", () => {
   const src = read("lib/support/case-service.ts");
 
-  it("returns empty messages and filedByOrganizationNotice when requester !== submitter", () => {
-    expect(src).toContain("viewer.userId === supportCase.requesterUserId");
+  it("routes the reader through the shared projection and returns an empty transcript", () => {
     expect(src).toContain(
-      "supportCase.requesterUserId !== supportCase.submitterUserId",
+      "projectCaseForViewer(supportCase, viewer.userId, canCorrespond)",
     );
     expect(src).toContain("messages: []");
-    expect(src).toContain("filedByOrganizationNotice: true");
+  });
+
+  it.each([
+    "app/api/support/cases/route.ts",
+    "app/api/support/requests/route.ts",
+    "lib/support/own-case-read.ts",
+    "lib/support/privacy-export.ts",
+  ])("%s uses the same projection rule", (rel) => {
+    expect(read(rel)).toContain("projectCaseForViewer(");
+  });
+
+  it("the non-staff reader is an explicit allowlist, not a row spread", () => {
+    const start = src.indexOf("export async function readSupportCaseForViewer");
+    const body = src.slice(start, src.indexOf("\nasync function ", start));
+    const nonStaff = body.slice(body.lastIndexOf("return {"));
+    expect(nonStaff).not.toContain("...supportCase");
+    for (const field of [
+      "scopeKey",
+      "clientIntakeId",
+      "statutoryDueAt",
+      "externalRequesterEmail",
+      "authorUserId",
+      "metadata",
+    ])
+      expect(nonStaff).not.toContain(field);
   });
 });

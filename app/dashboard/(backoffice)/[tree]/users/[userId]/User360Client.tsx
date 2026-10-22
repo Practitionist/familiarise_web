@@ -477,7 +477,7 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
             rows={data.tickets}
             getRowId={(t) => t.id}
             // #1527 — each ticket opens as a case in the Support inbox.
-            getRowHref={(t) => `${basePath}/support/t_${t.id}`}
+            getRowHref={(t) => `${basePath}/support/c_${t.id}`}
             empty={<Empty>No tickets.</Empty>}
           />
         </Section>

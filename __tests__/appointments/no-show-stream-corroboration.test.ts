@@ -34,7 +34,7 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     consultation: { findMany: (...a: unknown[]) => mockFindMany(...a) },
-    supportTicket: { findFirst: (...a: unknown[]) => mockFindFirst(...a) },
+    supportCase: { findFirst: (...a: unknown[]) => mockFindFirst(...a) },
     $disconnect: jest.fn(),
   },
 }));
@@ -155,7 +155,7 @@ describe("nobody joined — ticket, never an automatic refund", () => {
     const ticket = mockCreateTicket.mock.calls[0][0];
     // The consultee paid and got nothing, so the ticket is theirs.
     expect(ticket.userId).toBe("consultee-1");
-    expect(ticket.consultationId).toBe("consult-1");
+    expect(ticket.appointmentId).toBe("appt-1");
     expect(ticket.description).toContain("NOT auto-refunded");
   });
 

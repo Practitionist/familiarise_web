@@ -401,7 +401,7 @@ const connectChat = useCallback(async () => {
         id: userDetails.id,
         name: userDetails.name ?? userDetails.id,
         image: userDetails.image ?? undefined,
-        role: streamRole, // "admin" only for staff/admins, "user" for everyone else
+        role: streamRole, // "user" for every account, staff and admins included
       },
       () => getCachedToken("chat"),
     );
@@ -460,7 +460,7 @@ const connectChat = useCallback(async () => {
 
 - Singleton pattern: `StreamChat.getInstance()` returns same instance
 - User upserted to Stream database before connection
-- Role mapping via `mapRoleToStream()` (returns "admin" only for staff/admins, "user" for everyone else)
+- Role mapping via `mapRoleToStream()` (returns "user" for every account, staff and admins included)
 - Token provided as callback function
 - Channel sync only runs once per session
 - Errors thrown to trigger retry logic

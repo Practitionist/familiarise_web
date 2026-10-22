@@ -11,7 +11,7 @@
  * Sentry policy: 5xx capture the ORIGINAL exception (full stack) with route
  * context; 4xx capture as warnings so client/server contract drift is visible
  * without paging anyone — except 401/429, which are expected client behavior
- * and stay uncaptured on every path. `detail` echoes to the client only for
+ * and stay uncaptured on every path, and causeless NOT_FOUND/FORBIDDEN. `detail` echoes to the client only for
  * client-fault statuses; 5xx detail is Sentry-only.
  *
  * DELIVERY, not just capture: every capture below is followed by a flush
@@ -46,11 +46,14 @@ export type SupportErrorCode =
 /** Default user-facing copy per code — every string safe to show verbatim. */
 const USER_COPY: Record<SupportErrorCode, string> = {
   UNAUTHORIZED: "Please sign in to continue.",
-  INVALID_ID: "This link looks broken — open the session from your dashboard and try again.",
-  VALIDATION_FAILED: "Some details are missing or invalid. Please check and retry.",
+  INVALID_ID:
+    "This link looks broken — open the session from your dashboard and try again.",
+  VALIDATION_FAILED:
+    "Some details are missing or invalid. Please check and retry.",
   NOT_FOUND: "We couldn't find that anymore — it may have been removed.",
   FORBIDDEN: "You don't have access to this.",
-  RATE_LIMITED: "You're doing that a bit too quickly — try again in a few minutes.",
+  RATE_LIMITED:
+    "You're doing that a bit too quickly — try again in a few minutes.",
   CONFLICT: "That was just updated somewhere else. Refresh and try again.",
   INTERNAL: "Something went wrong on our side. Please try again in a moment.",
 };
@@ -98,8 +101,13 @@ export function supportError(opts: {
   const message = opts.message ?? USER_COPY[opts.code];
   const tags = { subsystem: "support", code: opts.code };
   const extra = { ...opts.context, detail: opts.detail };
-  // Expected client behavior (auth, throttling) is noise on EVERY path.
-  const ignored = opts.status === 401 || opts.status === 429;
+  // Expected client behavior (auth, throttling) is noise on EVERY path; a
+  // causeless not-found or forbidden is a stale or guessed link, not drift.
+  const ignored =
+    opts.status === 401 ||
+    opts.status === 429 ||
+    (opts.cause === undefined &&
+      (opts.code === "NOT_FOUND" || opts.code === "FORBIDDEN"));
 
   if (opts.cause !== undefined) {
     // Devs first: local runs often have no DSN, so the SDK would swallow it.
@@ -161,7 +169,9 @@ export async function parseRouteParams<S extends z.ZodTypeAny>(
   schema: S,
   raw: unknown,
   context: Record<string, unknown>,
-): Promise<{ ok: true; data: z.infer<S> } | { ok: false; response: NextResponse }> {
+): Promise<
+  { ok: true; data: z.infer<S> } | { ok: false; response: NextResponse }
+> {
   // Route handlers hand us the `params` PROMISE — awaiting a plain value is a
   // no-op, so both call styles work.
   const parsed = schema.safeParse(await raw);

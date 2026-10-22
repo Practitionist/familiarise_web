@@ -25,7 +25,7 @@ Every commit merged to `dev` and `prod` must build and run simultaneously on bot
    - Never delete custom domains (`familiarisenow.com`, `www.familiarisenow.com`, `familiarise.in`, `dev.familiarisenow.com`) from standby Netlify (`Domain management`).
 2. **Platform-Scoped Client IP Header Trust (`lib/request-ip.ts`)**:
    - Trust `x-nf-client-connection-ip` **only** when `process.env.NETLIFY === "true"`. Outside Netlify, external clients can spoof `x-nf-client-connection-ip` to bypass Upstash and BetterAuth rate limits.
-   - Trust `x-vercel-forwarded-for` **only** when `process.env.VERCEL === "1"`, `fly-client-ip` **only** when `process.env.FLY_APP_NAME` is set, and `cf-connecting-ip` / rightmost `x-forwarded-for` behind Cloudflare / Cloud Run GFE.
+   - Trust `x-vercel-forwarded-for` **only** when `process.env.VERCEL === "1"`, `fly-client-ip` **only** when `process.env.FLY_APP_NAME` is set, and otherwise only the rightmost `x-forwarded-for` hop appended by the platform front end (Cloud Run GFE). `getClientIp` (rate limits) and BetterAuth's `ipAddressHeaders` both read this one list.
 3. **Standard `Vary: Cookie` Alongside `Netlify-Vary`**:
    - Any public cacheable API route whose response varies by authentication state (e.g., `/api/user/consultants/[id]`) must return `Cache-Control: private, no-store` when a session cookie is present and include standard `Vary: Cookie, Accept-Encoding` alongside `Netlify-Vary` on anonymous responses so non-Netlify CDNs never serve anonymous cached payloads to signed-in users.
 4. **Conditional `output: "standalone"` & Native `sharp` Tracing (`next.config.mjs`)**:

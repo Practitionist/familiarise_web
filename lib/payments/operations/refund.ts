@@ -150,6 +150,7 @@ export type RefundInput = {
    * the first refund instead of moving money twice. Refund.dedupeKey is unique.
    */
   dedupeKey?: string;
+  supportRecommendationId?: string;
 };
 
 export type RefundResult = {
@@ -508,6 +509,13 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
               status: RefundStatus.PENDING,
               refundId: `pending_${globalThis.crypto.randomUUID()}`,
               dedupeKey: input.dedupeKey ?? null,
+              ...(input.supportRecommendationId
+                ? {
+                    supportRecommendation: {
+                      connect: { id: input.supportRecommendationId },
+                    },
+                  }
+                : {}),
               paymentGateway: payment.paymentGateway,
               exchangeRateAtRefund: payment.exchangeRateAtCheckout,
               displayCurrency: payment.displayCurrencyAtCheckout,
@@ -736,13 +744,17 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       if (winner.id === reserved.id) {
         boundRefundRowId = reserved.id;
       } else {
-        const winnerFull = await prisma.refund.findUniqueOrThrow({
-          where: { id: winner.id },
-          select: { metadata: true },
-        });
-        await prisma.$transaction([
-          prisma.refund.delete({ where: { id: reserved.id } }),
-          prisma.refund.update({
+        await prisma.$transaction(async (tx) => {
+          const winnerFull = await tx.refund.findUniqueOrThrow({
+            where: { id: winner.id },
+            select: { metadata: true },
+          });
+          await tx.supportFinancialRecommendation.updateMany({
+            where: { refundId: reserved.id },
+            data: { refundId: winner.id },
+          });
+          await tx.refund.delete({ where: { id: reserved.id } });
+          await tx.refund.update({
             where: { id: winner.id },
             data: {
               ...(reserved.dedupeKey ? { dedupeKey: reserved.dedupeKey } : {}),
@@ -757,10 +769,10 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
                 !Array.isArray(reserved.metadata)
                   ? reserved.metadata
                   : {}),
-              } as Prisma.InputJsonValue,
+              },
             },
-          }),
-        ]);
+          });
+        });
         boundRefundRowId = winner.id;
         reportSentryMessage(
           `Refund bind race adopted webhook row ${winner.id} for payment ${input.paymentId}`,

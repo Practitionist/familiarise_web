@@ -66,7 +66,7 @@ import {
   attemptSettledInvoiceNotices,
 } from "@/lib/payments/billing/org-invoice-settlement";
 import { isPastGstCreditNoteCutoff } from "@/lib/compliance/gst-credit-note-cutoff";
-import { releaseClawbackRecovery } from "@/lib/payments/payouts/clawback-recovery";
+import { cancelOpenPayoutsForPayment } from "@/lib/payments/payouts/cancel-open-payouts";
 import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
 import {
   applyReversal,
@@ -1053,79 +1053,11 @@ async function placeDisputeHolds(
   disputeRowId: string,
   disputeId: string,
 ): Promise<{ consultant: number; org: number }> {
-  const failureReason = `Cancelled: linked payment entered dispute ${disputeId}`;
-  const openConsultantPayoutIds = [
-    ...new Set(
-      (
-        await tx.consultantEarnings.findMany({
-          where: {
-            paymentId,
-            status: EarningStatus.BATCHED,
-            payout: { status: { in: ["PENDING", "APPROVED"] } },
-          },
-          select: { payoutId: true },
-        })
-      )
-        .map((r) => r.payoutId)
-        .filter((id): id is string => Boolean(id)),
-    ),
-  ];
-  // Cancel first: only a payout the CAS moved may hand its earnings back.
-  const cancelledConsultant: string[] = [];
-  for (const id of openConsultantPayoutIds) {
-    const { count } = await tx.consultantPayout.updateMany({
-      where: { id, status: { in: ["PENDING", "APPROVED"] } },
-      data: { status: "CANCELLED", failureReason },
-    });
-    if (count === 1) cancelledConsultant.push(id);
-  }
-  if (cancelledConsultant.length > 0) {
-    await tx.consultantEarnings.updateMany({
-      where: {
-        payoutId: { in: cancelledConsultant },
-        status: EarningStatus.BATCHED,
-      },
-      data: { status: EarningStatus.READY, payoutId: null },
-    });
-    for (const id of cancelledConsultant) {
-      await releaseClawbackRecovery(tx, id);
-    }
-  }
-
-  const openOrgPayoutIds = [
-    ...new Set(
-      (
-        await tx.organizationEarnings.findMany({
-          where: {
-            paymentId,
-            status: EarningStatus.BATCHED,
-            orgPayout: { status: { in: ["PENDING", "APPROVED"] } },
-          },
-          select: { orgPayoutId: true },
-        })
-      )
-        .map((r) => r.orgPayoutId)
-        .filter((id): id is string => Boolean(id)),
-    ),
-  ];
-  const cancelledOrg: string[] = [];
-  for (const id of openOrgPayoutIds) {
-    const { count } = await tx.organizationPayout.updateMany({
-      where: { id, status: { in: ["PENDING", "APPROVED"] } },
-      data: { status: "CANCELLED", failureReason },
-    });
-    if (count === 1) cancelledOrg.push(id);
-  }
-  if (cancelledOrg.length > 0) {
-    await tx.organizationEarnings.updateMany({
-      where: {
-        orgPayoutId: { in: cancelledOrg },
-        status: EarningStatus.BATCHED,
-      },
-      data: { status: EarningStatus.READY, orgPayoutId: null },
-    });
-    for (const id of cancelledOrg) await releaseClawbackRecovery(tx, id);
-  }
+  await cancelOpenPayoutsForPayment(
+    tx,
+    paymentId,
+    `Cancelled: linked payment entered dispute ${disputeId}`,
+  );
 
   const hold = { reason: EarningsHoldReason.DISPUTE, sourceRef: disputeRowId };
   const consultantIds = (

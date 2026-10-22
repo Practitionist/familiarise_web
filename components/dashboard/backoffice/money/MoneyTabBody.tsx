@@ -9,8 +9,11 @@ import { ReconcileTab } from "./ReconcileTab";
 import { IncidentsTab } from "./IncidentsTab";
 import { ApprovalsTab } from "./ApprovalsTab";
 import { AuditTab } from "./AuditTab";
+import { SupportSpendTab } from "./SupportSpendTab";
 import { readOpsLog } from "@/lib/backoffice/ops-log-read";
+import { readSupportSpend } from "@/lib/backoffice/support-spend";
 import { can, type BackofficeCapability } from "@/lib/backoffice/capability";
+import { opsLogFiltersFromSearchParams } from "@/schemas/ops-log";
 
 /**
  * #1771 K-2 — one tab's body. Each mounts the page component that already
@@ -21,10 +24,12 @@ export async function MoneyTabBody({
   tabKey,
   cap,
   viewer,
+  searchParams,
 }: Readonly<{
   tabKey: string;
   cap: BackofficeCapability;
   viewer: { userId: string; role: string };
+  searchParams: Record<string, string | string[] | undefined>;
 }>) {
   switch (tabKey) {
     case "payments":
@@ -69,13 +74,24 @@ export async function MoneyTabBody({
       return <ApprovalsTab viewerId={viewer.userId} />;
     case "incidents":
       return <IncidentsTab canDeclare={can(cap, "incidents.declare")} />;
-    case "audit":
-      // #1771 K-9 — RSC-seeded: the first page ships with the HTML.
+    case "support-spend":
       return (
-        <AuditTab
-          initial={await readOpsLog({ viewer, filters: {}, page: 1 })}
+        <SupportSpendTab
+          initial={await readSupportSpend({ viewer, now: new Date() })}
         />
       );
+    case "audit": {
+      // #1771 K-9 — RSC-seeded: the first page ships with the HTML.
+      const filters = opsLogFiltersFromSearchParams(searchParams);
+      return (
+        <AuditTab
+          // A new filtered link remounts the tab with its own seed.
+          key={JSON.stringify(filters)}
+          initial={await readOpsLog({ viewer, filters, page: 1 })}
+          initialFilters={filters}
+        />
+      );
+    }
     default:
       return null;
   }

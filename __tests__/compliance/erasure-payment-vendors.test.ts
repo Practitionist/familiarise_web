@@ -47,6 +47,7 @@ jest.mock("../../lib/novu/client", () => ({
 }));
 
 import { scrubUser } from "@/lib/compliance/erasure/scrub-user";
+import { supportScrubModels } from "../fixtures/support-erasure-models";
 
 // Every model answers every call with an empty result unless overridden.
 function models(overrides: Record<string, unknown>) {
@@ -60,6 +61,7 @@ function models(overrides: Record<string, unknown>) {
 const payoutAccountUpdate = jest.fn(async () => ({ count: 1 }));
 const userUpdate = jest.fn(async () => ({}));
 const tx = models({
+  ...supportScrubModels(),
   payoutAccount: { updateMany: payoutAccountUpdate },
   collaborator: { updateManyAndReturn: jest.fn(async () => []) },
   erasureRequest: { findFirst: jest.fn(async () => null) },

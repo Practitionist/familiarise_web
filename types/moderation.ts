@@ -139,6 +139,8 @@ export interface ModerationReportAction {
  * is usually empty.
  */
 export interface ModerationReport {
+  acknowledgementDueAt?: string | null;
+  resolutionDueAt?: string | null;
   id: string;
   type: string;
   reason: string;

@@ -57,6 +57,8 @@ export interface DisputeDetails {
   /** Present only for viewers holding `disputes.manage`. */
   evidence?: JsonValue | null;
   evidenceSubmittedAt: string | null;
+  assignedToUserId: string | null;
+  assignedTo: { id: string; name: string } | null;
   createdAt: string;
   updatedAt: string;
   payment: {

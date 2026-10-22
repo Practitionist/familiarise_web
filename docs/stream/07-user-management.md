@@ -123,59 +123,41 @@ Stream Chat uses a role-based permission system. The `mapRoleToStream` function 
 
 ### Least-Privilege Mapping
 
-The mapping now follows least privilege. Only platform staff and admins receive Stream's global `admin` role; every other user, consultants included, is mapped to the plain `user` role. Consultants no longer get a blanket administrative grant. Instead, channel creation happens server-side and each host is given a channel-scoped `channel_moderator` grant on their own host channels at creation time, rather than a global moderation grant that would also cover peer direct-message channels.
+The mapping follows least privilege. Every account, platform staff and admins included, is mapped to the plain `user` role; nobody holds Stream's global `admin`. Instead, channel creation happens server-side and each host is given a channel-scoped `channel_moderator` grant on their own host channels at creation time, rather than a global moderation grant that would also cover peer direct-message channels.
 
-Worth stating plainly how bad the previous version was, because the current
-mapping reads as unremarkable and it is not: **every branch of the old switch
-returned `admin`, including the `if (!role)` fallback.** Every account on the
-platform held Stream global admin. The docblock said so out loud — "using admin
-for consultants and consultees to ensure team channel access… can be refined
-later with custom roles."
+### Operators are plain Stream users
 
-### Decision: keep `ADMIN`/`STAFF` → Stream `admin`
+Stream's `admin` role bypasses channel permission checks, so an operator token
+could read any private DM from the browser with no audit. Operators therefore
+hold `user` like everyone else, and `chatTokenProvider` / `tokenProvider` mint
+only for the caller (no role is exempt). Every staff chat action goes through
+server routes that use the API-secret clients in `lib/stream-client.ts` and are
+audited there; no operator surface reads channels in the browser.
 
-**Status: accepted.** Reviewed again while adding the DM eligibility gate; kept
-as-is.
+The role is written at upsert time (`upsertUserToStream` /
+`upsertUsersToStream` in `actions/stream/chat/user.action.ts`), so a Stream user
+upserted while operators mapped to `admin` keeps that role until re-upserted.
 
-What it costs is real and should be understood rather than forgotten: Stream's
-`admin` role bypasses channel permission checks, so a staff token can read any
-channel — including any private consultant↔consultee DM — from the browser.
-The blast radius of a stolen staff session is every conversation on the
-platform. It is a deliberate trade, not an oversight.
+### Rollout: downgrade existing operator roles
 
-Two alternatives were considered and rejected **for now**. Both remain open, and
-either would be a strict improvement if the operational cost is acceptable when
-someone next looks at this:
+**Owner end-phase step, run by hand once after deploy. It is not a script.** An
+operator can connect without triggering the upsert, so their stored `admin`
+role has to be cleared server-side:
 
-1. **Map everyone to `user`; do moderation server-side.** Staff would hold no
-   special client-side role at all, and every moderation or support action would
-   go through the server clients in `lib/stream-client.ts`, which present the
-   API secret and bypass Stream's permission system anyway — so nothing is lost
-   operationally _unless_ a support surface needs to read channels directly in
-   the browser. This is the least-privilege answer and removes the skeleton key
-   entirely. It is the option to take if a staff account is ever compromised, or
-   before the platform holds conversations it would be damaging to leak in bulk.
-   Migration cost: one `upsertUsers` sweep to re-stamp existing staff rows,
-   since the role is written at upsert time and the 5-minute sync cache means
-   stale rows linger until they next reconnect.
-2. **A Stream custom role granting `ReadChannel` and nothing else.** Staff could
-   observe without being able to write, delete, or reconfigure. More precise
-   than either of the above, and Stream allows up to 25 custom roles. Rejected
-   for now on maintenance grounds: it is a role defined outside this repo (via
-   the dashboard or an API call) that must be kept in step with the code, and we
-   have no deployment path for chat roles yet. `scripts/stream/ensure-chat-type-grants.ts`
-   is the obvious place to grow one.
-
-Note that option 1 does **not** conflict with the grants script: that script
-revokes `create-channel` from `user` and `guest`, which is orthogonal to whether
-staff hold `admin`.
+1. List the operator ids read-only:
+   `SELECT id FROM "User" WHERE role IN ('ADMIN', 'STAFF');`
+2. For each id, partial-update the Stream user to `role: "user"` (Stream
+   dashboard, or `users_update_partial` with `set: { role: "user" }`), then
+   revoke their tokens (`revokeUserToken(id, new Date())`) so sessions minted
+   under `admin` drop.
+3. Verify that `query_users` with `{ role: { $eq: "admin" } }` returns no users.
 
 ### Current Implementation
 
 **Function Signature:**
 
 ```typescript
-export function mapRoleToStream(role: string | null | undefined): string;
+export function mapRoleToStream(_role: string | null | undefined): string;
 ```
 
 **Parameters:**
@@ -184,19 +166,13 @@ export function mapRoleToStream(role: string | null | undefined): string;
 
 **Returns:**
 
-- `string`: The Stream Chat role — `admin` for staff and admins, and `user` for everyone else
+- `string`: The Stream Chat role — always `user`
 
 **Current Behavior:**
 
 ```typescript
-export function mapRoleToStream(role: string | null | undefined): string {
-  switch (role?.toUpperCase()) {
-    case "ADMIN":
-    case "STAFF":
-      return "admin";
-    default:
-      return "user";
-  }
+export function mapRoleToStream(_role: string | null | undefined): string {
+  return "user";
 }
 ```
 
@@ -718,6 +694,6 @@ See [API Endpoints - Manual Sync](./10-api-endpoints.md#post-apistreamsyncmanual
 
 ## Deprecated & Superseded Approaches
 
-- **Universal Global `admin` Role Mapping**: Superseded by strict least-privilege mapping (`mapRoleToStream` grants `admin` solely to `ADMIN`/`STAFF`, mapping all consultants and learners to `user`).
+- **Global `admin` Role Mapping**: Every account once mapped to Stream `admin`, later only `ADMIN`/`STAFF` did, alongside an operator bypass for minting tokens for other users. Superseded by mapping every account to `user` and self-only minting, because both paths gave operators silent, unaudited browser reads of any chat.
 - **Uncensored Email PII in Stream User Metadata**: Superseded by `stripStreamUserEmails` and DPDP `STREAM_DATA_PROCESSING` filtering (`droppedIds`) prior to `upsertUsers`.
 - **Ad-Hoc Account Scrubbing**: Superseded by `eraseStreamPrincipalFootprint` (`lib/compliance/erasure/scrub-user.ts`) with retry persistence (`StreamRevocationRetry`).

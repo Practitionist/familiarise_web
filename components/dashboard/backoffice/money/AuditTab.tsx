@@ -11,11 +11,8 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import type {
-  OpsLogFilters,
-  OpsLogPage,
-  OpsLogRow,
-} from "@/lib/backoffice/ops-log-types";
+import type { OpsLogPage, OpsLogRow } from "@/lib/backoffice/ops-log-types";
+import { OpsLogFiltersSchema, type OpsLogFilters } from "@/schemas/ops-log";
 import { enumLabel } from "@/lib/labels/money-labels";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 
@@ -28,7 +25,17 @@ const FILTERS: {
   { key: "surface", label: "Surface" },
   { key: "targetKind", label: "Target kind" },
   { key: "targetId", label: "Target id" },
+  { key: "action", label: "Action" },
+  { key: "since", label: "Since (YYYY-MM-DD, IST day start, or ISO time)" },
 ];
+
+// Entries sorted by key, so the comparison ignores the order filters were set in.
+const filterKey = (filters: OpsLogFilters) =>
+  JSON.stringify(
+    Object.entries(filters).sort(([a], [b]) => a.localeCompare(b)),
+  );
+const sameFilters = (a: OpsLogFilters, b: OpsLogFilters) =>
+  filterKey(a) === filterKey(b);
 
 async function fetchPage(
   filters: OpsLogFilters,
@@ -65,19 +72,26 @@ const columns: ResponsiveColumn<OpsLogRow>[] = [
 
 /**
  * #1771 K-9 — the console's audit log, newest first, seeded by the server
- * render. Staff see their own rows only; the API enforces it too.
+ * render. Staff see their own rows only; the API enforces it too. The URL's
+ * filters seed the inputs, so other tabs can link to a filtered view.
  */
-export function AuditTab({ initial }: Readonly<{ initial: OpsLogPage }>) {
+export function AuditTab({
+  initial,
+  initialFilters = {},
+}: Readonly<{ initial: OpsLogPage; initialFilters?: OpsLogFilters }>) {
   // The read scopes by the viewer's ROLE, not the tree (ops-log-read.ts):
   // an admin in the staff tree still reads every row.
   const viewerIsAdmin = useBackofficeCapability().role === "ADMIN";
-  const [filters, setFilters] = useState<OpsLogFilters>({});
+  const [filters, setFilters] = useState<OpsLogFilters>(initialFilters);
   const [page, setPage] = useState(1);
   // Blank filters leave the key, so a cleared filter is the seeded key again.
   const active = Object.fromEntries(
     Object.entries(filters).filter(([, v]) => v?.trim()),
   ) as OpsLogFilters;
-  const pristine = page === 1 && Object.keys(active).length === 0;
+  const pristine = page === 1 && sameFilters(active, initialFilters);
+  // A half-typed date would read as "no rows"; hold the query until it parses.
+  const sinceInvalid = !OpsLogFiltersSchema.shape.since.safeParse(active.since)
+    .success;
   const { data } = useQuery({
     queryKey: ["money-audit", active, page],
     queryFn: () => fetchPage(active, page),
@@ -87,6 +101,7 @@ export function AuditTab({ initial }: Readonly<{ initial: OpsLogPage }>) {
       : undefined,
     placeholderData: keepPreviousData,
     staleTime: 15_000,
+    enabled: !sinceInvalid,
   });
   const lastPage = data
     ? Math.max(1, Math.ceil(data.total / data.pageSize))
@@ -104,13 +119,19 @@ export function AuditTab({ initial }: Readonly<{ initial: OpsLogPage }>) {
       />
       <Card>
         <CardContent className="pt-6 space-y-4">
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {FILTERS.filter((f) => viewerIsAdmin || !f.adminOnly).map((f) => (
               <Input
                 key={f.key}
                 aria-label={f.label}
                 placeholder={f.label}
                 value={filters[f.key] ?? ""}
+                aria-invalid={f.key === "since" && sinceInvalid}
+                aria-describedby={
+                  f.key === "since" && sinceInvalid
+                    ? "audit-since-hint"
+                    : undefined
+                }
                 onChange={(e) => {
                   setPage(1);
                   setFilters((all) => ({ ...all, [f.key]: e.target.value }));
@@ -118,13 +139,21 @@ export function AuditTab({ initial }: Readonly<{ initial: OpsLogPage }>) {
               />
             ))}
           </div>
+          {sinceInvalid ? (
+            <p id="audit-since-hint" className="text-sm text-destructive">
+              Enter Since as a date (YYYY-MM-DD, from the start of that IST day)
+              or an ISO time.
+            </p>
+          ) : null}
           <ResponsiveTable<OpsLogRow>
             columns={columns}
-            rows={data?.rows ?? []}
+            rows={sinceInvalid ? [] : (data?.rows ?? [])}
             getRowId={(r) => r.id}
             empty={
               <p className="py-8 text-center text-sm text-muted-foreground">
-                No actions match these filters.
+                {sinceInvalid
+                  ? "Finish the Since date to see matching actions."
+                  : "No actions match these filters."}
               </p>
             }
           />

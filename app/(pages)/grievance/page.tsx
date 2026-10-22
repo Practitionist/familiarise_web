@@ -10,6 +10,7 @@ import {
   POLICY_DATES,
   getMailtoLink,
 } from "../constants";
+import { DEADLINE_HOURS } from "@/lib/support/deadline-policy";
 
 export const metadata = {
   title: `Grievance Redressal | ${COMPANY_INFO.name}`,
@@ -129,6 +130,15 @@ export default function GrievanceRedressalPage() {
                   resolution{" "}
                   <strong>({GRIEVANCE_OFFICER.resolutionPromise})</strong>{" "}
                   standard across all consumer grievances.
+                </li>
+                <li>
+                  {/* counsel: confirm the 36-hour and 2-hour removal timelines against the IT Rules as amended in 2026. */}
+                  <strong>Content removal requests:</strong> Complaints asking
+                  us to remove unlawful content are resolved within{" "}
+                  <strong>{DEADLINE_HOURS.CONTENT_REMOVAL} hours</strong>.
+                  Complaints about intimate or sexual images of a person, or
+                  about impersonation, are acted on within{" "}
+                  <strong>{DEADLINE_HOURS.INTIMATE_CONTENT} hours</strong>.
                 </li>
                 <li>
                   <strong>

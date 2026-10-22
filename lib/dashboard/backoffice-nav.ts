@@ -9,6 +9,7 @@ import {
   Coins,
   CreditCard,
   FileWarning,
+  Gauge,
   Gift,
   Home,
   Inbox,
@@ -20,6 +21,7 @@ import {
   RefreshCw,
   RotateCcw,
   Scale,
+  Settings,
   ScrollText,
   Shield,
   Siren,
@@ -99,6 +101,7 @@ const MONEY_ICONS: Record<MoneyTabKey, LucideIcon> = {
   reconcile: ArrowLeftRight,
   approvals: ListChecks,
   incidents: Siren,
+  "support-spend": Gauge,
   audit: ScrollText,
 };
 
@@ -161,6 +164,12 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
     {
       label: "Operations",
       items: [
+        {
+          name: "Settings",
+          icon: Settings,
+          path: "settings",
+          surface: "users.read",
+        },
         {
           name: "Appointments",
           icon: CalendarCheck,

@@ -21,6 +21,7 @@ export type MoneyTabKey =
   | "reconcile"
   | "approvals"
   | "incidents"
+  | "support-spend"
   | "audit";
 
 export interface MoneyTab {
@@ -90,6 +91,14 @@ export const MONEY_TABS: readonly MoneyTab[] = [
     description:
       "Declared platform outages, the sessions they voided and each learner's remedy.",
     surface: "incidents.read",
+  },
+  {
+    key: "support-spend",
+    label: "Support spend",
+    description: "Refunds and holds per operator against the staff limits.",
+    // The figures are read from the ops log, so it follows the audit log's
+    // scoping: staff see their own row, admins every operator.
+    surface: "opsLog.read",
   },
 ];
 

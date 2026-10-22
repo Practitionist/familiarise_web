@@ -32,8 +32,7 @@ export interface DashboardBreadcrumbsInput {
   offeringsConfig?: OfferingsCrumbConfig;
 }
 
-// Opaque record ids (cuid / uuid) in nested routes carry no meaning as crumbs;
-// nor does a support case key (`t_<id>`, #1527), whose page names itself.
+// Opaque record IDs are replaced by the page’s human label or omitted.
 const looksLikeRecordId = (segment: string) =>
   parseCaseKey(segment) !== null ||
   /^[a-z0-9]{20,}$/i.test(segment) ||
@@ -63,7 +62,16 @@ interface SegmentCrumbCtx {
 
 function resolveSegmentCrumb(ctx: Readonly<SegmentCrumbCtx>): Crumb | null {
   const { seg, acc, overrideLabel, pageLabels } = ctx;
-  if (looksLikeRecordId(seg)) {
+  if (acc.endsWith("/support/requests")) {
+    return {
+      label: "Support requests",
+      href: acc.slice(0, -"/requests".length),
+    };
+  }
+  if (
+    looksLikeRecordId(seg) ||
+    (ctx.paramValues.has(seg) && acc.includes("/support/evidence/"))
+  ) {
     // The record's human name belongs where its id was.
     return overrideLabel ? { label: overrideLabel, href: acc } : null;
   }

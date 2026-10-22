@@ -6,6 +6,7 @@ import { Ratelimit } from "@upstash/ratelimit";
 import redis from "@/lib/redis-edge";
 import { NextResponse } from "next/server";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
+import { clientIpFrom } from "@/lib/request-ip";
 
 type RatelimitRedis = ConstructorParameters<typeof Ratelimit>[0]["redis"];
 
@@ -262,18 +263,11 @@ export async function applyRateLimit(
   }
 }
 
-/**
- * Extract the client IP from request headers.
- */
+/** The client IP from the header this runtime's edge sets (`lib/request-ip.ts`). */
 export function getClientIp(req: {
-  ip?: string;
   headers: { get(name: string): string | null };
 }): string {
-  const ip =
-    req.ip ??
-    req.headers.get("x-nf-client-connection-ip")?.trim() ??
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return ip || "unknown_ip";
+  return clientIpFrom(req.headers);
 }
 
 /**

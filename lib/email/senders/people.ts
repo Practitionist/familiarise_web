@@ -5,7 +5,7 @@
 
 import * as React from "react";
 import { Button, Section, Text } from "react-email";
-import type { SupportTicketStatus } from "@prisma/client";
+import type { SupportCaseStatus } from "@prisma/client";
 import { EmailLayout } from "@/emails/components/EmailLayout";
 import {
   button,
@@ -165,14 +165,14 @@ export const stageSupportTicketResponseEmail =
     buildSupportTicketResponseEmail,
   );
 
-export function supportNextStepText(status: SupportTicketStatus): string {
+export function supportNextStepText(status: SupportCaseStatus): string {
   switch (status) {
     case "OPEN":
       return "It is back in the queue and a member of the support team will pick it up.";
     case "IN_PROGRESS":
       return "A member of the support team is working on it and will reply on the ticket.";
-    case "ON_HOLD":
-      return "We are waiting on something before we can continue, and we will let you know as soon as it moves.";
+    case "ESCALATED":
+      return "The platform team is reviewing it and will update you in the support request.";
     case "RESOLVED":
       return "If this fixed the problem, nothing more is needed. If it did not, reply on the ticket and it will be reopened.";
     case "CLOSED":
@@ -185,7 +185,7 @@ export interface SupportTicketUpdateEmailArgs {
   ownerUserId: string;
   reference?: string;
   title: string;
-  statusCode: SupportTicketStatus;
+  statusCode: SupportCaseStatus;
   statusLabel: string;
   ticketUrl: string;
 }

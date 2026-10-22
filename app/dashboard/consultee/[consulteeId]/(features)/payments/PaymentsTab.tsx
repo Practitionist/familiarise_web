@@ -266,7 +266,7 @@ export function PaymentsTab({
   return (
     <DashboardErrorBoundary>
       <PageHeader
-        title="Payments"
+        title="Billing"
         description="What you owe, what you paid, and your credits"
       />
       <UrlTabs
@@ -278,7 +278,7 @@ export function PaymentsTab({
           },
           {
             value: "history",
-            label: "History",
+            label: "Payments & invoices",
             content: (
               <div className="space-y-4">
                 <FilterBar

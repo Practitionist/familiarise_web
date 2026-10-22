@@ -11,7 +11,7 @@
  * through to the FailedEmail retry worker rather than being swallowed.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
@@ -20,7 +20,13 @@ import { getSession } from "@/lib/auth-server";
 import { sendContactInquiryEmail } from "@/lib/email";
 import { applyRateLimit, getClientIp, spamLimiter } from "@/lib/rate-limit";
 import { allocateTicketReference } from "@/lib/support/reference";
+import { supportDeadline } from "@/lib/support/deadline-policy";
 import { slaDeadlinesFor } from "@/lib/support/sla";
+import { stageSupportCaseIntakeTx } from "@/lib/support/case-service";
+import {
+  resolvePublicIntakeUserId,
+  stageExternalIntakeReceiptTx,
+} from "@/lib/support/external-requester";
 import { INQUIRY_CATEGORIES } from "@/app/(pages)/constants";
 
 const CATEGORY_SET = new Set<string>(INQUIRY_CATEGORIES.map((c) => c.value));
@@ -88,40 +94,81 @@ async function recordContactLeadIfApplicable(
   }
 }
 
+/**
+ * A signed-in filer's grievance belongs to their account and is answered in
+ * the dashboard; an anonymous one is held by the public-intake system user and
+ * receives staff content only once its email address is confirmed.
+ */
 async function recordPublicGrievanceTicket(
   data: z.infer<typeof ContactBodySchema>,
 ): Promise<string | null> {
   if (data.category !== "grievance") return null;
   const session = await getSession().catch(() => null);
-  const sessionUserId = session?.user?.id ?? null;
+  const sessionUser = session?.user?.id
+    ? await prisma.user.findUnique({
+        where: { id: session.user.id },
+        select: { id: true, email: true, name: true },
+      })
+    : null;
+  const ownerId = sessionUser?.id ?? (await resolvePublicIntakeUserId());
+  const name = sessionUser?.name ?? `${data.firstName} ${data.lastName}`.trim();
+  const email = sessionUser?.email ?? data.email;
 
   return prisma.$transaction(async (tx) => {
-    const fallbackOwner = sessionUserId
-      ? null
-      : await tx.user.findFirst({
-          where: { role: { in: ["ADMIN", "STAFF"] } },
-          select: { id: true },
-          orderBy: { createdAt: "asc" },
-        });
-    const userId = sessionUserId ?? fallbackOwner?.id ?? null;
-    if (!userId) return null;
-
     const now = new Date();
     const ref = await allocateTicketReference(tx, now);
-    const name = `${data.firstName} ${data.lastName}`.trim();
-    await tx.supportTicket.create({
+    const caseId = randomUUID();
+    const supportCase = await tx.supportCase.create({
       data: {
+        id: caseId,
+        // Each grievance is its own scope: one holder carries every anonymous
+        // filing, so the open-case dedupe key must never merge them.
+        scopeKey: `GRIEVANCE:${caseId}`,
         referenceNumber: ref,
         title: `[Grievance] ${data.subject || "Public Grievance"}`,
-        description: `Submitted via public form by ${name} <${data.email}>\n\n${data.message}`,
+        description: sessionUser
+          ? data.message
+          : `Submitted via public form by ${name} <${email}>\n\n${data.message}`,
         category: "GRIEVANCE",
         status: "OPEN",
         priority: "HIGH",
-        userId,
+        requesterUserId: ownerId,
+        submitterUserId: ownerId,
+        activeChannel: "HUMAN",
+        externalRequesterEmail: sessionUser ? null : email,
+        externalRequesterName: sessionUser ? null : name,
+        messageSeq: 1,
+        messages: {
+          create: {
+            seq: 1,
+            sender: "USER",
+            authorUserId: sessionUser?.id ?? null,
+            body: data.message,
+            metadata: sessionUser
+              ? { origin: "public-grievance" }
+              : { origin: "public-grievance", email, name },
+          },
+        },
+        events: {
+          create: {
+            kind: "CREATED",
+            toValue: "OPEN",
+            actorId: sessionUser?.id ?? null,
+          },
+        },
         lastMessageAt: now,
         ...slaDeadlinesFor("HIGH", now),
+        ...supportDeadline("GRIEVANCE", now),
+        receivedAt: now,
       },
     });
+    await stageSupportCaseIntakeTx(tx, supportCase, "USER");
+    if (!sessionUser)
+      await stageExternalIntakeReceiptTx(tx, {
+        caseId: supportCase.id,
+        reference: ref,
+        to: email,
+      });
     return ref;
   });
 }
@@ -171,18 +218,6 @@ export async function POST(req: NextRequest) {
           "We could not send your message right now. Please email us directly and we will pick it up.",
       },
       { status: 502 },
-    );
-  }
-
-  if (parsed.data.category === "grievance" && !referenceNumber) {
-    return NextResponse.json(
-      {
-        ok: true,
-        referenceNumber: null,
-        message:
-          "Grievance received — our Grievance Officer will open a case and email your tracking reference within 24 hours.",
-      },
-      { status: 202 },
     );
   }
 

@@ -82,9 +82,6 @@ export interface PersonalDashboardCoreProps<P> {
   fetchProfile: () => Promise<P | null>;
   /** False for the consultee tree, whose profile gates on the route param. */
   profileGatesOnUser?: boolean;
-  profileStreamUserId?: (
-    profile: P | null | undefined,
-  ) => string | null | undefined;
   profileDisplayName?: (
     profile: P | null | undefined,
   ) => string | null | undefined;
@@ -229,7 +226,6 @@ export function PersonalDashboardLayoutCore<P>({
   profileQueryKey,
   fetchProfile,
   profileGatesOnUser = true,
-  profileStreamUserId,
   profileDisplayName,
   profileDisplayImage,
   profileOwnerName,
@@ -373,9 +369,8 @@ export function PersonalDashboardLayoutCore<P>({
     offeringsConfig,
   });
 
-  const streamUserId = profileStreamUserId
-    ? profileStreamUserId(profileData)
-    : userDetails?.id;
+  // Always the signed-in viewer: Stream tokens are minted only for the caller.
+  const streamUserId = userDetails?.id;
 
   // Memoize StreamProvider children to prevent re-initialization on tab
   // switches. Must be called before any early returns (Rules of Hooks).

@@ -20,6 +20,7 @@ import { INBOX_FILTER_KEYS, INBOX_PAGE_SIZE } from "@/lib/support/inbox-query";
 import { slaHint, slaStatusBadge } from "@/lib/support/sla-hint";
 import type { InboxListResponse, InboxRow } from "@/types/support-case";
 import { cn } from "@/utils/tailwind";
+import { supportKeys } from "@/lib/support/support-keys";
 
 function CaseRow({
   row,
@@ -28,7 +29,7 @@ function CaseRow({
 }: Readonly<{ row: InboxRow; href: string; active: boolean }>) {
   const slaStatus = slaStatusBadge(row.sla);
   const sla = slaHint(row.sla);
-  const selfServe = row.kind === "thread" && row.channel !== "HUMAN";
+  const selfServe = row.channel !== "HUMAN";
   return (
     <li>
       <Link
@@ -57,7 +58,7 @@ function CaseRow({
           <span className="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
             {CASE_TOPIC_LABEL[row.topic]}
           </span>
-          <StatusBadge {...caseStatus(row.kind, row.status)} size="sm" />
+          <StatusBadge {...caseStatus(row.status)} size="sm" />
           {selfServe && (
             <StatusBadge label="Self-serve" tone="neutral" variant="dot" />
           )}
@@ -90,7 +91,7 @@ export function CaseList({
   const qs = query.toString();
 
   const cases = useQuery({
-    queryKey: ["support-inbox", qs],
+    queryKey: supportKeys.inboxList(qs),
     queryFn: async (): Promise<InboxListResponse> => {
       const res = await fetch(`/api/staff/support-inbox?${qs}`);
       if (!res.ok) await throwSupportError(res, "support inbox load");

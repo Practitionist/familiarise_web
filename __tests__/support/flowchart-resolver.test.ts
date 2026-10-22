@@ -147,7 +147,7 @@ describe("flow availability by context", () => {
     expect(operator).toContain("ORG_ADMIN_DISPUTE");
   });
 
-  it("routes the org dispute flow: billing → self-serve, conduct → escalate", () => {
+  it("routes the org dispute flow: billing and conduct both escalate", () => {
     const flow = flowForCategory(
       ctx({ isOrgContext: true, isOrgOperator: true }),
       "ORG_ADMIN_DISPUTE",
@@ -157,9 +157,35 @@ describe("flow availability by context", () => {
     expect(billing?.kind).toBe("TERMINAL");
     expect(conduct?.kind).toBe("TERMINAL");
     if (billing?.kind !== "TERMINAL" || conduct?.kind !== "TERMINAL") return;
-    expect(billing.resolved).toBe(true);
+    // The billing branch used to self-resolve onto the read-only chargeback panel.
+    expect(billing.resolved).toBeFalsy();
+    expect(billing.escalate).toBe(true);
+    expect(billing.reason).toBe("org_billing_dispute");
+    expect(billing.body).not.toMatch(/Billing → Disputes/);
     expect(conduct.escalate).toBe(true);
     expect(conduct.reason).toBe("org_conduct_dispute");
+  });
+
+  it("splits the consultee invoice branch into download and a GST correction escalation", async () => {
+    const flow = flowForCategory(ctx(), "PAYMENT_STATUS")!;
+    const r = new FlowchartResolver(flow);
+    const prompt = await r.resolveTurn(ctx(), "start", {
+      chosenOptionId: "invoice",
+    });
+    expect(prompt.nextNodeId).toBe("invoice");
+    expect(prompt.escalate).toBe(false);
+
+    const download = await r.resolveTurn(ctx(), "invoice", {
+      chosenOptionId: "download",
+    });
+    expect(download.resolved).toBe(true);
+    expect(download.actions).toEqual([{ kind: "SHOW_INVOICES" }]);
+
+    const wrong = await r.resolveTurn(ctx(), "invoice", {
+      chosenOptionId: "gstwrong",
+    });
+    expect(wrong.escalate).toBe(true);
+    expect(wrong.reason).toBe("gst_invoice_wrong");
   });
 
   it("carries machine-readable reasons on escalating terminals", () => {

@@ -44,7 +44,7 @@ jest.mock("../../lib/prisma", () => ({
     appointmentOccurrence: { findFirst: jest.fn(), findMany: jest.fn() },
     // #1580 — the co-presenter lookup; no collaborator on these fixtures.
     collaborator: { findFirst: jest.fn(async () => null) },
-    appointmentSupportThread: { findFirst: jest.fn(async () => null) },
+    supportCase: { findFirst: jest.fn(async () => null) },
     appointmentFeedback: {
       create: jest.fn(async () => ({ id: "fb1" })),
       update: jest.fn(async () => ({ id: "fb1" })),
@@ -170,14 +170,38 @@ describe("#1540 — one read for the whole booking", () => {
     );
   });
 
-  it("has no tombstone to filter on: a private rating is excluded, never removed", async () => {
-    // #1562 dropped `AppointmentFeedback.deletedAt` — it had no writer and nobody
-    // is protected by hiding a staff-only note; ratings protection is
-    // `excludedFromAggregateAt`, which the aggregates filter and this read does not.
+  it("filters removed ratings for attendees and providers", async () => {
     await get(`http://x/api/appointments/${APPT}/feedback?scope=booking`);
-    expect(mockedFeedbackFindMany.mock.calls[0][0].where).not.toHaveProperty(
-      "deletedAt",
-    );
+    expect(mockedFeedbackFindMany.mock.calls[0][0].where).toMatchObject({
+      deletedAt: null,
+      userId: "u1",
+    });
+    mockedRaterRole.mockReturnValue("PROVIDER");
+    await get(`http://x/api/appointments/${APPT}/feedback`);
+    expect(mockedFeedbackFindMany.mock.calls[1][0].where).toMatchObject({
+      deletedAt: null,
+      raterRole: "CONSULTEE",
+    });
+    expect(mockedFeedbackFindMany.mock.calls[1][0].select).toMatchObject({
+      comment: false,
+      ratingCause: false,
+    });
+  });
+
+  it("softens the prompt only for the caller's live canonical support case", async () => {
+    const support = prisma.supportCase.findFirst as jest.Mock;
+    support.mockResolvedValueOnce({ id: "case" });
+    const response = await get(`http://x/api/appointments/${APPT}/feedback`);
+    expect((await response.json()).supportOpen).toBe(true);
+    expect(support).toHaveBeenCalledWith({
+      where: {
+        appointmentId: APPT,
+        requesterUserId: "u1",
+        deletedAt: null,
+        status: { in: ["OPEN", "IN_PROGRESS", "ESCALATED"] },
+      },
+      select: { id: true },
+    });
   });
 });
 
@@ -225,7 +249,7 @@ describe("a rating identifies the meeting — the occurrence row (#1554)", () =>
 
     expect(mockedCreate).toHaveBeenCalledTimes(1);
     expect(mockedUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "fb1" } }),
+      expect.objectContaining({ where: { id: "fb1", deletedAt: null } }),
     );
   });
 
@@ -304,6 +328,21 @@ describe("#1300 — only a changed opinion is an edit", () => {
       consultantProfileId: "cp-1",
     }),
   );
+
+  it("refuses edits to removed ratings", async () => {
+    mockedFeedbackFindFirst.mockResolvedValue({
+      id: "fb1",
+      rating: 4,
+      comment: null,
+      deletedAt: new Date(),
+    });
+    const response = await POST(post("slot-a", 5), {
+      params: Promise.resolve({ appointmentId: APPT }),
+    });
+    expect(response.status).toBe(409);
+    expect(mockedUpdate).not.toHaveBeenCalled();
+    expect(mockedCreate).not.toHaveBeenCalled();
+  });
 
   it("does not stamp updatedAt when the same rating is re-submitted", async () => {
     // `@updatedAt` was the original spelling and it could not express this at all:

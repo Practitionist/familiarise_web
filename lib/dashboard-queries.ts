@@ -114,18 +114,6 @@ export const consulteeFetchers = {
       `/api/user/consultees/${consulteeId}`,
       "Profile fetch failed",
     ),
-
-  feedback: () =>
-    fetchWithErrorHandling<Record<string, unknown>[]>(
-      `/api/user/feedbacks`,
-      "Feedback fetch failed",
-    ),
-
-  supportTickets: () =>
-    fetchWithErrorHandling<Record<string, unknown>[]>(
-      `/api/user/support-tickets`,
-      "Support tickets fetch failed",
-    ),
 };
 
 // User fetchers (shared)
@@ -268,24 +256,6 @@ export function createConsulteeQueries(
       queryKey: ["consultee-profile", consulteeId] as const,
       queryFn: () => consulteeFetchers.profile(consulteeId),
       staleTime: STALE_TIMES.LONG,
-      gcTime: GC_TIME,
-      retry: 2,
-    },
-
-    // Feedback data
-    feedback: {
-      queryKey: ["consultee-feedback"] as const,
-      queryFn: () => consulteeFetchers.feedback(),
-      staleTime: STALE_TIMES.MEDIUM,
-      gcTime: GC_TIME,
-      retry: 2,
-    },
-
-    // Support tickets
-    supportTickets: {
-      queryKey: ["consultee-support-tickets"] as const,
-      queryFn: () => consulteeFetchers.supportTickets(),
-      staleTime: STALE_TIMES.MEDIUM,
       gcTime: GC_TIME,
       retry: 2,
     },

@@ -90,7 +90,7 @@ export interface SupportTurnResult {
   nextNodeId: string | null;
   /** Resolver-requested actions for the caller to validate + perform. */
   actions: SupportAction[];
-  /** True → the caller must hand off to a human (create/link a SupportTicket). */
+  /** True → the caller must hand off to a human (create/reuse a SupportCase). */
   escalate: boolean;
   /** True → the thread is resolved. */
   resolved: boolean;

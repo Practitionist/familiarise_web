@@ -9,6 +9,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import type { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { parsePagination } from "@/lib/enterprise/validators";
 import { OrgIdParams } from "@/schemas/support";
@@ -22,12 +23,13 @@ const ORG_TICKET_SELECT = {
   referenceNumber: true,
   title: true,
   issueType: true,
+  ownershipScope: true,
   category: true,
   status: true,
   createdAt: true,
   updatedAt: true,
-  user: { select: { name: true } },
-} satisfies Prisma.SupportTicketSelect;
+  requester: { select: { name: true } },
+} satisfies Prisma.SupportCaseSelect;
 
 export async function GET(
   req: NextRequest,
@@ -46,10 +48,22 @@ export async function GET(
     if (access.error) return access.error;
 
     const { page, pageSize } = parsePagination(new URL(req.url));
-    const where = { organizationId: orgId };
+    const scopes = [
+      ...(hasOrgPermission(access.member.role, "supportCases.operations.manage")
+        ? ["ORG_OPERATIONS" as const]
+        : []),
+      ...(hasOrgPermission(access.member.role, "supportCases.billing.manage")
+        ? ["ORG_BILLING" as const]
+        : []),
+    ];
+    const where: Prisma.SupportCaseWhereInput = {
+      organizationId: orgId,
+      deletedAt: null,
+      ownershipScope: { in: scopes },
+    };
     const [total, tickets] = await prisma.$transaction([
-      prisma.supportTicket.count({ where }),
-      prisma.supportTicket.findMany({
+      prisma.supportCase.count({ where }),
+      prisma.supportCase.findMany({
         where,
         orderBy: { updatedAt: "desc" },
         skip: (page - 1) * pageSize,
@@ -59,9 +73,9 @@ export async function GET(
     ]);
 
     return NextResponse.json({
-      data: tickets.map(({ user, ...t }) => ({
+      data: tickets.map(({ requester, ...t }) => ({
         ...t,
-        requesterName: user.name,
+        requesterName: requester.name,
       })),
       total,
       page,

@@ -1,9 +1,6 @@
 "use client";
 
-/**
- * Org Support › Organization requests (#1527): platform requests members
- * tagged "About: this org". Subject and metadata only (ADR 20).
- */
+/** Organization-owned correspondence, filtered by current operations/billing grants. */
 
 import Link from "next/link";
 import { useMemo } from "react";
@@ -21,6 +18,7 @@ import { useListParams } from "@/hooks/useListParams";
 import { caseKeyOf } from "@/lib/support/case-key";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 import { ISSUE_TYPE_LABELS } from "@/utils/supportTicketUrl";
+import { supportKeys } from "@/lib/support/support-keys";
 
 const PAGE_SIZE = 20;
 
@@ -47,7 +45,6 @@ const STATUS_TONE: Record<string, Tone> = {
   OPEN: "caution",
   IN_PROGRESS: "info",
   ESCALATED: "info",
-  ON_HOLD: "caution",
   RESOLVED: "success",
   CLOSED: "neutral",
 };
@@ -66,7 +63,7 @@ function buildColumns(orgId: string): ResponsiveColumn<OrgTicketRow>[] {
       primary: true,
       cell: (t) => (
         <Link
-          href={`/dashboard/organization/${orgId}/support/requests/${caseKeyOf({ kind: "ticket", id: t.id })}`}
+          href={`/dashboard/organization/${orgId}/support/requests/${caseKeyOf({ kind: "case", id: t.id })}`}
           className="group block min-w-0"
         >
           <span className="block truncate font-medium text-foreground group-hover:underline">
@@ -134,7 +131,7 @@ export function OrgSupportRequests({ orgId }: Readonly<{ orgId: string }>) {
   const { page, setPage } = useListParams();
   const columns = useMemo(() => buildColumns(orgId), [orgId]);
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["org-support-tickets", orgId, page],
+    queryKey: supportKeys.orgRequests(orgId, page),
     queryFn: async (): Promise<OrgTicketsPage> => {
       const res = await fetch(
         `/api/organizations/${orgId}/support-tickets?page=${page}&pageSize=${PAGE_SIZE}`,
@@ -143,6 +140,7 @@ export function OrgSupportRequests({ orgId }: Readonly<{ orgId: string }>) {
       return res.json();
     },
     placeholderData: keepPreviousData,
+    refetchOnMount: "always",
   });
 
   return (
@@ -158,7 +156,7 @@ export function OrgSupportRequests({ orgId }: Readonly<{ orgId: string }>) {
           <EmptyState
             icon={Inbox}
             title="No organization requests"
-            description="Requests members raise about this organization appear here. The conversation stays between them and our team."
+            description="Your organization’s operations and billing requests appear here. Authorized teammates can follow the conversation with the platform team."
           />
         }
       />
