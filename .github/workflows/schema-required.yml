@@ -9,7 +9,11 @@
 #
 # Its own workflow rather than a job in ci.yaml: ci.yaml is disabled while the
 # Actions minutes are exhausted, and a gate in a disabled workflow is not a
-# gate. This one runs today.
+# gate — it never appears, so a required check would read as success.
+#
+# While the organisation's Actions budget is exhausted this workflow still
+# appears and still reports FAILURE, because a budget-blocked job is a failed
+# job rather than a skipped one. It starts running when the budget resets.
 #
 # The workflow-level `paths` filter is what keeps it cheap — only a pull
 # request that touches the schema pays for it. The comparison itself is

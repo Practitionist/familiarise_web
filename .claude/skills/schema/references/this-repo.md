@@ -138,7 +138,9 @@ push. An additive change is safe to apply before the deploy that reads it,
 because the running code ignores a column it does not know about.
 
 `scripts/ci/check-db-schema-required.ts` enforces it on pull requests, from
-`.github/workflows/schema-required.yml`. It diffs the branch's MERGE BASE schema
+`.github/workflows/schema-required.yml` — a workflow of its own, because
+`ci.yaml` is disabled while the Actions minutes are exhausted and a gate in a
+disabled workflow never appears. It diffs the branch's MERGE BASE schema
 against the branch's own schema — schema to schema, so a branch behind its base
 is not judged on objects it never touched — and then asks the live catalog
 whether each of those objects is there. Only objects whose absence makes a

@@ -80,8 +80,9 @@ production API key.
 
 It is its own workflow rather than a job in `ci.yaml` for one reason: `ci.yaml`
 is disabled while the Actions minutes are exhausted, and a gate in a disabled
-workflow is not a gate. The comparison is schema-to-schema, so a pull request
-that adds no schema object never reads the database at all.
+workflow is not a gate — it never appears, so a required check would read as
+success. The comparison is schema-to-schema, so a pull request that adds no
+schema object never reads the database at all.
 
 The other direction — the database carrying objects the schema does not want —
 is deliberately **not** checked. That is the reconcile push's business, it is
