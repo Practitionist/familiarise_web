@@ -33,6 +33,8 @@ export interface PlatformSupportContext {
   userId: string;
   /** Caller holds an ACTIVE org membership with operator grants. */
   isOperator: boolean;
+  /** Caller holds billing.read in an ACTIVE membership (finance roles included). */
+  isBillingReader: boolean;
   /** Caller has a live consultant profile, so earns and is taxed on payouts. */
   isExpert: boolean;
   /** The caller's ACTIVE-membership org ids (attribution candidates). */
@@ -306,7 +308,7 @@ const orgOperatorBillingFlow: PlatformFlowDefinition = {
     operator_procurement: "BILLING_QUESTION",
     gst_invoice_wrong: "TAX_GST",
   },
-  available: (ctx) => ctx.isOperator,
+  available: (ctx) => ctx.isOperator || ctx.isBillingReader,
   nodes: {
     start: {
       id: "start",

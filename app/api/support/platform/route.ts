@@ -172,6 +172,9 @@ async function buildPlatformContext(
     isOperator: memberships.some((m) =>
       hasOrgPermission(m.role, "operations.read"),
     ),
+    isBillingReader: memberships.some((m) =>
+      hasOrgPermission(m.role, "billing.read"),
+    ),
     isExpert: consultantProfile !== null,
     organizationIds: memberships.map((m) => m.organizationId),
     billingOrgIds: memberships

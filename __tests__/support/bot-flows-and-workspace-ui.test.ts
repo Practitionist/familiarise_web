@@ -10,6 +10,7 @@ describe("flow commitments, handoff choices and organization triage", () => {
     {
       userId: "user1",
       isOperator: false,
+      isBillingReader: false,
       isExpert: false,
       organizationIds: [],
       billingOrgIds: [],

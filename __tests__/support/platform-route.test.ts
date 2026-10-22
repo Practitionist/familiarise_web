@@ -335,6 +335,31 @@ describe("operator billing ownership", () => {
     );
   });
 
+  it("lets a BILLING_ADMIN reach the flow and file into the org billing queue", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "u1" } });
+    (prisma.membership.findMany as jest.Mock).mockResolvedValueOnce([
+      { organizationId: "org-a", role: "BILLING_ADMIN" },
+    ]);
+    const json = await (await dispute()).json();
+    expect(json.data.escalated).toBe(true);
+    expect(createOrReuseSupportCase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: "org-a",
+        ownershipScope: "ORG_BILLING",
+      }),
+    );
+  });
+
+  it("keeps the flow from a member with neither operations nor billing access", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "u1" } });
+    (prisma.membership.findMany as jest.Mock).mockResolvedValueOnce([
+      { organizationId: "org-a", role: "LEARNER" },
+    ]);
+    const res = await dispute();
+    expect(res.status).toBe(404);
+    expect(createOrReuseSupportCase).not.toHaveBeenCalled();
+  });
+
   it("keeps a MANAGER's escalation personal so they can still see it", async () => {
     mockedGetSession.mockResolvedValue({ user: { id: "u1" } });
     (prisma.membership.findMany as jest.Mock).mockResolvedValueOnce([

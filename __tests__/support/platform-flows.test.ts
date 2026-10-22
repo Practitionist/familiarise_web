@@ -24,6 +24,7 @@ function ctx(
   return {
     userId: "u1",
     isOperator: false,
+    isBillingReader: false,
     isExpert: false,
     organizationIds: [],
     billingOrgIds: [],
@@ -45,6 +46,12 @@ describe("platform flow availability", () => {
       (f) => f.id,
     );
     expect(ids).toContain("ORG_OPERATOR_BILLING");
+  });
+
+  it("offers the operator billing flow to billing readers without operations access", () => {
+    expect(
+      platformFlowForId(ctx({ isBillingReader: true }), "ORG_OPERATOR_BILLING"),
+    ).toBeDefined();
   });
 
   it("looks up a flow only when its gate passes", () => {
