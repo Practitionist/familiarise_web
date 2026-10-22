@@ -1,8 +1,8 @@
 /**
  * Who may move support and platform-cancel refunds, and how much.
  *
- * STAFF execute bounded refunds: at most ₹5,000 per payment, counted across
- * every live support remedy on that payment, and at most ₹50,000 per staff
+ * STAFF execute bounded refunds: at most ₹5,000 refunded per payment, counted
+ * across every live refund and approved support remedy on it, and at most ₹50,000 per staff
  * member over a rolling 24 hours, summed from their own ops-log rows. ADMIN
  * executes above those limits; the door's second-admin rule still applies.
  */
@@ -54,15 +54,39 @@ export async function rollingRefundPaise(
   return rows.reduce((sum, row) => sum + movedPaiseOf(row.after), 0);
 }
 
-/**
- * Approved, unvoided support remedies per payment, summed across every
- * operator: the `priorPaise` the per-payment staff limit counts.
- */
-export async function committedSupportPaiseByPayment(
-  db: Pick<Tx, "supportFinancialRecommendation">,
+/** Live refunds per payment that no support remedy owns: cancels and direct refunds from any door. */
+export async function liveNonRemedyRefundPaiseByPayment(
+  db: Pick<Tx, "refund">,
   paymentIds: string[],
 ): Promise<Map<string, number>> {
-  const committed = new Map<string, number>();
+  const live = new Map<string, number>();
+  if (paymentIds.length === 0) return live;
+  const rows = await db.refund.findMany({
+    where: {
+      paymentId: { in: paymentIds },
+      status: { in: ["PENDING", "SUCCEEDED"] },
+      deletedAt: null,
+      supportRecommendation: { is: null },
+    },
+    select: { paymentId: true, amountPaise: true },
+  });
+  for (const row of rows)
+    live.set(
+      row.paymentId,
+      (live.get(row.paymentId) ?? 0) + Number(row.amountPaise),
+    );
+  return live;
+}
+
+/**
+ * Approved, unvoided support remedies plus other live refunds per payment: the
+ * `priorPaise` the per-payment staff limit counts. A remedy's own refund counts once, as the remedy.
+ */
+export async function committedSupportPaiseByPayment(
+  db: Pick<Tx, "supportFinancialRecommendation" | "refund">,
+  paymentIds: string[],
+): Promise<Map<string, number>> {
+  const committed = await liveNonRemedyRefundPaiseByPayment(db, paymentIds);
   if (paymentIds.length === 0) return committed;
   // A void clears `approved`, so `approved: true` is exactly the live remedies.
   const rows = await db.supportFinancialRecommendation.findMany({
@@ -81,7 +105,7 @@ export interface RefundCharge {
   paymentId: string;
   /** New money this action sends back; 0 for a decline or a keyed replay. */
   newPaise: number;
-  /** Money already committed on the payment by other live support remedies. */
+  /** Money already refunded or committed on the payment by other refunds and remedies. */
   priorPaise: number;
 }
 

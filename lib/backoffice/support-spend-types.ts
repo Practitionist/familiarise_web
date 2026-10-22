@@ -3,9 +3,9 @@ import type { OpsLogFilters } from "@/schemas/ops-log";
 /** One payment an operator refunded, cancelled or held inside the spend window. */
 export interface SupportSpendPayment {
   paymentId: string;
-  /** Approved, unvoided support remedies on the payment by every operator: what the per-payment limit counts. */
+  /** Live refunds and approved, unvoided support remedies on the payment from every door: what the per-payment limit counts. */
   supportCommittedPaise: number;
-  /** This operator's platform-cancel refunds on the payment in the window; the per-payment limit does not count them. */
+  /** This operator's platform-cancel refunds on the payment in the window; also inside `supportCommittedPaise`. */
   platformCancelPaise: number;
   /** What the per-payment staff limit still allows; null for an operator without staff limits. */
   remainingPerPaymentPaise: number | null;
