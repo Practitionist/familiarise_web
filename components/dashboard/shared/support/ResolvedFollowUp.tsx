@@ -16,7 +16,8 @@ export const CASE_RESOLUTION_ANCHOR = "support-case-resolution";
 
 /**
  * A resolved request takes follow-ups without reopening. An undecided one may
- * be reopened for 14 days; a decided one offers only its appeal.
+ * be reopened for 14 days; a decided one offers only its appeal, unless it
+ * already decides an appeal.
  */
 export function ResolvedFollowUp({
   caseId,
@@ -40,7 +41,12 @@ export function ResolvedFollowUp({
     !!resolvedAt &&
     Date.now() - new Date(resolvedAt).getTime() <= REOPEN_WINDOW_MS;
   let action: React.ReactNode = null;
-  if (appealUntil && appealUntil.getTime() > Date.now())
+  // A decision on an appeal is final, so it offers no further appeal.
+  const canAppeal =
+    !resolution.data?.isAppeal &&
+    appealUntil !== null &&
+    appealUntil.getTime() > Date.now();
+  if (canAppeal)
     action = (
       <Button variant="outline" size="sm" asChild>
         <a href={`#${CASE_RESOLUTION_ANCHOR}`}>

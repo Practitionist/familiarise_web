@@ -11,13 +11,15 @@ import {
 
 type Decision = CaseResolution["decisions"][number];
 
-/** Only the decision in force can be appealed; a replaced one says so. */
+/** Only the decision in force can be appealed, never one that decides an appeal; a replaced one says so. */
 function DecisionCard({
   decision,
   inForce,
-}: Readonly<{ decision: Decision; inForce: boolean }>) {
+  appealable,
+}: Readonly<{ decision: Decision; inForce: boolean; appealable: boolean }>) {
   const appealOpen =
     inForce &&
+    appealable &&
     decision.appealUntil !== null &&
     new Date(decision.appealUntil).getTime() > Date.now();
   return (
@@ -63,6 +65,7 @@ export function CustomerCaseResolution({
               key={decision.id}
               decision={decision}
               inForce={decision.id === current?.id}
+              appealable={!query.data?.isAppeal}
             />
           ))}
         </>

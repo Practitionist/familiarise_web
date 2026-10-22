@@ -115,12 +115,18 @@ describe("a resolved request", () => {
     legalHoldAt: null,
     isAdmin: false,
   });
-  function renderResolved(decisions: unknown[]) {
+  function renderResolved(
+    decisions: unknown[],
+    overrides: Record<string, unknown> = {},
+  ) {
     const qc = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: Infinity } },
     });
     qc.setQueryData(supportKeys.ownCase("case-1"), resolvedCase);
-    qc.setQueryData(supportKeys.resolution("case-1"), resolution(decisions));
+    qc.setQueryData(supportKeys.resolution("case-1"), {
+      ...resolution(decisions),
+      ...overrides,
+    });
     render(
       <QueryClientProvider client={qc}>
         <SupportRequestView
@@ -172,6 +178,32 @@ describe("a resolved request", () => {
       "href",
       "#support-case-resolution",
     );
+    qc.clear();
+  });
+
+  it("offers no further appeal on a decision that already decides an appeal", () => {
+    const qc = renderResolved(
+      [
+        {
+          id: "dec_appeal",
+          outcome: "UPHELD",
+          explanation: "The original decision stands.",
+          createdAt: "2026-10-20T12:00:00.000Z",
+          appealUntil: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+          supersedesDecisionId: null,
+        },
+      ],
+      { isAppeal: true },
+    );
+    expect(
+      screen.queryByRole("link", { name: /^Appeal by / }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "This didn't fix it" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Appeal this decision" }),
+    ).not.toBeInTheDocument();
     qc.clear();
   });
 });
