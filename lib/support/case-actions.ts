@@ -1182,6 +1182,12 @@ async function reviewRefundTx(
         "ALREADY_DECIDED",
         "This recommendation already has a decision.",
       );
+    // A serializable retry of a lost claim lands here; only the decider may retry the refund.
+    if (recommendation.decidedById !== actor.userId)
+      throw new CaseActionError(
+        "CONFLICT",
+        "Another administrator reviewed this recommendation.",
+      );
     if (input.approve && !isLiveRefund(recommendation.refund))
       await claimRefundRetry(tx, caseId, actor, recommendation, input);
     return recommendation;
