@@ -164,32 +164,41 @@ describe("what a decision may be recorded on", () => {
     "OVERTURNED",
   ] as const;
   const APPEAL_ONLY = new Set(["UPHELD", "OVERTURNED"]);
-  it.each(
-    OUTCOMES.flatMap((outcome) =>
-      [
-        { kind: "incident", row: incident },
-        { kind: "appeal", row: appeal },
-      ].map(({ kind, row }) => ({ outcome, kind, row })),
-    ),
-  )("$outcome on an $kind", async ({ outcome, kind, row }) => {
-    db.supportCase.findFirst.mockResolvedValue(row as never);
-    const allowed = (kind === "appeal") === APPEAL_ONLY.has(outcome);
-    const attempt = performCaseAction("case-1", admin, decide({ outcome }));
-    if (allowed) {
-      await expect(attempt).resolves.toMatchObject({ outcome });
+  const matrix = OUTCOMES.flatMap((outcome) =>
+    [
+      { kind: "incident", row: incident },
+      { kind: "appeal", row: appeal },
+    ].map(({ kind, row }) => ({
+      outcome,
+      kind,
+      row,
+      allowed: (kind === "appeal") === APPEAL_ONLY.has(outcome),
+    })),
+  );
+  it.each(matrix.filter((entry) => entry.allowed))(
+    "records $outcome on an $kind",
+    async ({ outcome, row }) => {
+      db.supportCase.findFirst.mockResolvedValue(row as never);
+      await expect(
+        performCaseAction("case-1", admin, decide({ outcome })),
+      ).resolves.toMatchObject({ outcome });
       expect(executePatchLifecycleTx).toHaveBeenCalledWith(
         expect.anything(),
         expect.not.objectContaining({ closingMessage: expect.anything() }),
         expect.any(Date),
       );
-    } else {
-      await expect(attempt).rejects.toMatchObject({
-        code: "OUTCOME_NOT_ALLOWED",
-        status: 400,
-      });
+    },
+  );
+  it.each(matrix.filter((entry) => !entry.allowed))(
+    "refuses $outcome on an $kind",
+    async ({ outcome, row }) => {
+      db.supportCase.findFirst.mockResolvedValue(row as never);
+      await expect(
+        performCaseAction("case-1", admin, decide({ outcome })),
+      ).rejects.toMatchObject({ code: "OUTCOME_NOT_ALLOWED", status: 400 });
       expect(db.supportCaseDecision.create).not.toHaveBeenCalled();
-    }
-  });
+    },
+  );
 });
 
 describe("decisions are terminal", () => {

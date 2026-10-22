@@ -53,52 +53,62 @@ const cases = STATUSES.flatMap((from) =>
   ),
 );
 
+function expectedCode(
+  from: SupportCaseStatus,
+  to: SupportCaseStatus,
+  actor: CaseTransitionActor,
+  decided: boolean,
+): string | null {
+  const key = `${from}>${to}`;
+  if (from === to) return null;
+  if (decided && UNDECIDED_ONLY.has(key)) return "CASE_DECIDED";
+  return ALLOWED[key]?.includes(actor) ? null : "INVALID_TRANSITION";
+}
+
+function thrown(run: () => void): unknown {
+  try {
+    run();
+  } catch (error) {
+    return error;
+  }
+  return null;
+}
+
 describe("case status transition table", () => {
   it.each(cases)(
     "$from → $to by $actor (decided: $decided)",
     ({ from, to, actor, decided }) => {
-      const key = `${from}>${to}`;
       const refusal = caseTransitionRefusal(from, to, { decided, actor });
-      if (from === to) {
-        expect(refusal).toBeNull();
-        return;
-      }
-      if (decided && UNDECIDED_ONLY.has(key)) {
-        expect(refusal).toMatchObject({ status: 409, code: "CASE_DECIDED" });
-        return;
-      }
-      if (ALLOWED[key]?.includes(actor)) expect(refusal).toBeNull();
-      else
-        expect(refusal).toMatchObject({
-          status: 409,
-          code: "INVALID_TRANSITION",
-        });
+      expect(refusal?.code ?? null).toBe(
+        expectedCode(from, to, actor, decided),
+      );
+      expect([undefined, 409]).toContain(refusal?.status);
     },
   );
 
   it("never lets a decided case leave RESOLVED except to close", () => {
-    for (const to of STATUSES.filter((s) => s !== "RESOLVED"))
-      for (const actor of ACTORS) {
-        const refusal = caseTransitionRefusal("RESOLVED", to, {
-          decided: true,
-          actor,
-        });
-        if (to === "CLOSED" && actor !== "CUSTOMER") expect(refusal).toBeNull();
-        else expect(refusal).not.toBeNull();
-      }
+    const allowed = STATUSES.filter((s) => s !== "RESOLVED").flatMap((to) =>
+      ACTORS.filter(
+        (actor) =>
+          caseTransitionRefusal("RESOLVED", to, { decided: true, actor }) ===
+          null,
+      ).map((actor) => `${to}:${actor}`),
+    );
+    expect(allowed).toEqual(["CLOSED:STAFF", "CLOSED:SYSTEM"]);
   });
 
   it("throws a conflict whose body carries no status field", () => {
-    expect.assertions(3);
-    try {
-      assertCaseTransition("CLOSED", "OPEN", { decided: true, actor: "STAFF" });
-    } catch (error) {
-      expect(error).toBeInstanceOf(CaseConflictError);
-      expect((error as CaseConflictError).status).toBe(409);
-      expect((error as CaseConflictError).body).toEqual({
-        code: "CASE_DECIDED",
-        error: expect.any(String),
-      });
-    }
+    const error = thrown(() =>
+      assertCaseTransition("CLOSED", "OPEN", { decided: true, actor: "STAFF" }),
+    );
+    expect(error).toBeInstanceOf(CaseConflictError);
+    expect(error).toMatchObject({
+      status: 409,
+      body: { code: "CASE_DECIDED", error: expect.any(String) },
+    });
+    expect(Object.keys((error as CaseConflictError).body)).toEqual([
+      "code",
+      "error",
+    ]);
   });
 });
