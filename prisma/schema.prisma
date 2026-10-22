@@ -419,6 +419,9 @@ model SupportCase {
   csatRating Int?      @db.SmallInt
   csatAt     DateTime? @db.Timestamptz
 
+  /// Set by an admin; blocks the 180-day post-closure evidence purge.
+  legalHoldAt DateTime? @db.Timestamptz
+
   externalRequesterEmail     String?                          @db.VarChar(320)
   externalRequesterName      String?                          @db.VarChar(200)
   ownershipScope             SupportCaseOwnership             @default(PERSONAL)
@@ -550,6 +553,10 @@ model SupportCaseDecision {
   appealUntil      DateTime      @db.Timestamptz
   createdAt        DateTime      @default(now()) @db.Timestamptz
   appeals          SupportCase[] @relation("CaseDecisionAppeals")
+  /// A correcting decision names the one it replaces; one original per case is a sidecar partial index.
+  supersedesDecisionId String?              @unique
+  supersedes           SupportCaseDecision? @relation("DecisionSupersedes", fields: [supersedesDecisionId], references: [id], onDelete: Restrict)
+  supersededBy         SupportCaseDecision? @relation("DecisionSupersedes")
 
   @@unique([caseId, clientActionId])
   @@index([caseId, createdAt])
@@ -655,6 +662,9 @@ enum SupportCaseEventKind {
   RECOMMENDATION_VOIDED
   HOLD_APPLIED
   HOLD_RELEASED
+  CHANNEL_CHANGED
+  LEGAL_HOLD_CHANGED
+  EVIDENCE_PURGED
 }
 
 // #appt-support — per-appointment private CSAT (1-5), distinct from the public
@@ -844,6 +854,11 @@ enum SupportIssueType {
   CHARGED_TWICE
   REFUND_REQUEST
   BILLING_QUESTION
+
+  // Tax
+  TAX_GST
+  TDS_CERTIFICATE
+  PAN_CARD_MISMATCH
 
   // Documents
   DOCUMENT_ISSUE
