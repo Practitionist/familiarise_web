@@ -43,6 +43,7 @@ import { isUniqueViolation } from "@/lib/db/pg-errors";
 import {
   assertBoundedRefund,
   assertNotOwnRemedy,
+  liveNonRemedyRefundPaiseByPayment,
   STAFF_REFUND_PER_PAYMENT_PAISE,
   SUPPORT_REFUND_SEND_GRACE_MS,
 } from "./money-policy";
@@ -549,7 +550,8 @@ export async function readCaseResolution(caseId: string, actor: CaseActor) {
 /**
  * What a recommendation may still refund: the payment's refundable balance
  * less other approved support remedies on it that have no live refund yet,
- * plus the remedies already committed on the payment and any blocker.
+ * plus what other refunds and remedies already committed on the payment and
+ * any blocker.
  */
 export async function quoteCaseRefund(
   tx: Tx,
@@ -565,9 +567,12 @@ export async function quoteCaseRefund(
     },
     select: { amountPaise: true, refund: { select: { status: true } } },
   });
+  const nonRemedy = await liveNonRemedyRefundPaiseByPayment(tx, [
+    recommendation.paymentId,
+  ]);
   const committedPaise = others.reduce(
     (sum, other) => sum + Number(other.amountPaise),
-    0,
+    nonRemedy.get(recommendation.paymentId) ?? 0,
   );
   const unrefundedPaise = others
     .filter((other) => !isLiveRefund(other.refund))
@@ -827,6 +832,35 @@ async function assertDecisionMatchesMoney(
   }
 }
 
+/** Deciding releases the case's payout holds, so every recommendation must be reviewed or voided first. */
+async function assertNoOpenRecommendation(tx: Tx, caseId: string) {
+  const open = await tx.supportFinancialRecommendation.findFirst({
+    where: { caseId, decidedAt: null, voidedAt: null },
+    select: { id: true },
+  });
+  if (open)
+    throw new CaseActionError(
+      "RECOMMENDATION_OPEN",
+      "This case has a refund recommendation awaiting review. Review or void it before recording a decision.",
+    );
+}
+
+/** A decision released the case's holds; only a failed refund under REFUND_APPROVED may still be retried. */
+async function assertUndecidedForApproval(
+  tx: Tx,
+  caseId: string,
+  retry: boolean,
+) {
+  const decision = await latestCaseDecisionTx(tx, caseId);
+  if (!decision || (retry && decision.outcome === "REFUND_APPROVED")) return;
+  throw new CaseActionError(
+    "CASE_ALREADY_DECIDED",
+    "This case already has a decision, so its refund recommendations can only be declined.",
+    409,
+    caseDecidedDetail(decision),
+  );
+}
+
 const APPEAL_OUTCOMES: ReadonlySet<string> = new Set(["UPHELD", "OVERTURNED"]);
 
 /** Problems are resolved, not decided; appeals are upheld or overturned; incidents get a remedy outcome. */
@@ -896,6 +930,7 @@ async function recordCaseDecisionTx(
       caseDecidedDetail(latest),
     );
   await assertDecisionMatchesMoney(tx, caseId, input.outcome);
+  await assertNoOpenRecommendation(tx, caseId);
   const restoredConsultantProfileId = await reverseModerationIfOverturned(
     tx,
     supportCase,
@@ -1213,11 +1248,14 @@ async function reviewRefundTx(
         "CONFLICT",
         "Another administrator reviewed this recommendation.",
       );
-    if (input.approve && !isLiveRefund(recommendation.refund))
+    if (input.approve && !isLiveRefund(recommendation.refund)) {
+      await assertUndecidedForApproval(tx, caseId, true);
       await claimRefundRetry(tx, caseId, actor, recommendation, input);
+    }
     return recommendation;
   }
-  if (input.approve)
+  if (input.approve) {
+    await assertUndecidedForApproval(tx, caseId, false);
     await assertRefundExecutable(
       tx,
       caseId,
@@ -1225,6 +1263,7 @@ async function reviewRefundTx(
       recommendation,
       input.expectedRefundablePaise,
     );
+  }
   const decidedAt = new Date();
   const claimed = await tx.supportFinancialRecommendation.updateMany({
     where: { id: recommendation.id, decidedAt: null },

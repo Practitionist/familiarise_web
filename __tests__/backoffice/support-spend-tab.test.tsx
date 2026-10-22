@@ -138,17 +138,15 @@ describe("SupportSpendTab", () => {
     expect(screen.getByText("₹9,000.00")).toBeInTheDocument();
   });
 
-  it("shows platform cancels as not counted toward the per-payment limit", () => {
+  it("shows platform cancels as counted toward the per-payment limit", () => {
     renderWithQuery(<SupportSpendTab initial={report()} />);
     expect(
       screen.getAllByText(
-        /not counted toward the ₹5,000\.00 per-payment limit/,
+        /the daily limit and the ₹5,000\.00 per-payment limit/,
       )[0],
     ).toBeInTheDocument();
     expect(
-      screen.getAllByText(
-        "Platform cancels by this operator (not counted toward the ₹5,000.00 limit)",
-      )[0],
+      screen.getAllByText("Platform cancels by this operator")[0],
     ).toBeInTheDocument();
   });
 
