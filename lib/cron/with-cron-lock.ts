@@ -93,7 +93,13 @@ async function recordJobFinish(
             : outcome === "held"
               ? "CANCELLED"
               : "FAILED",
-        result: { outcome },
+        result: {
+          outcome,
+          environment:
+            process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT ??
+            process.env.SENTRY_ENVIRONMENT ??
+            "unknown",
+        },
         endedAt: now,
         durationMs: Math.max(0, now.getTime() - acquiredAtMs),
         errorLog:

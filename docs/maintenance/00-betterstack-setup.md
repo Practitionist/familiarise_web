@@ -392,3 +392,5 @@ A target timeout is ambiguous: the worker can still finish. Recovery drills must
 exercise sequential replay and different jobs competing for the same domain row,
 in addition to the per-job lease race. Never acknowledge all outstanding work as
 healthy merely because another invocation holds the lease.
+
+Execution history records the existing Sentry deployment environment in each completed result. Preview completions in the shared database must not establish production freshness; verify environment configuration as well as completion status.

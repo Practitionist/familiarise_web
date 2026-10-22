@@ -33,7 +33,7 @@ liveness hint, not evidence that every capability completed.
 The typed outcome in `lib/cron/job-outcome.ts` maps existing worker counters into
 success, partial failure, failure or hold. Execution history stores the outcome;
 partial failures and failures are FAILED, intentional holds are CANCELLED, and
-successes are COMPLETED. HTTP responses carry `X-Job-Outcome`; the ticker uses it
+successes are COMPLETED. Results also record the existing Sentry deployment environment so shared-database preview runs can be distinguished. HTTP responses carry `X-Job-Outcome`; the ticker uses it
 instead of interpreting every 207 as healthy. Remaining work by itself is not a
 failure. A lease-held 409 is an attempted run, never fresh successful work.
 

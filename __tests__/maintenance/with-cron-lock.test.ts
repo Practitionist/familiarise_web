@@ -277,7 +277,10 @@ describe("execution outcomes", () => {
       await withCronLock("job", { failMode: "closed" }, async () => result);
       expect(delegate.updateMany).toHaveBeenCalledWith({
         where: { id: "exec-1", status: "RUNNING" },
-        data: expect.objectContaining({ status, result: { outcome } }),
+        data: expect.objectContaining({
+          status,
+          result: expect.objectContaining({ outcome }),
+        }),
       });
       expect(mockRedisSet).not.toHaveBeenCalled();
     },
