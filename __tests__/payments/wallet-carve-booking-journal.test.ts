@@ -11,6 +11,7 @@
 
 import { createEarningsFromPayment } from "@/lib/payments/payouts/earnings-service";
 import { recordOverageAtCheckout } from "@/lib/payments/billing/overage-settlement";
+import { walletCredit } from "@/lib/api/organizations/wallet";
 import { txDouble } from "../fixtures/tx-double";
 import { createEarningsHoldStore } from "../fixtures/earnings-hold-store";
 
@@ -228,5 +229,13 @@ describe("wallet-funded booking with a member overage carve", () => {
     expect(world.net("DISCOUNT|_|_|INR")).toBe(BASE);
     expect(world.net("PLATFORM_FEE|_|_|INR")).toBe(-228_014);
     expect(world.balanced()).toBe(true);
+    expect(walletCredit).toHaveBeenCalledTimes(1);
+    expect(walletCredit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        billingAccountId: "ba-iitm",
+        amountPaise: BASE,
+      }),
+    );
   });
 });
