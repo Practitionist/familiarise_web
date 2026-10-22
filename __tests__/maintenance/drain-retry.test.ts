@@ -115,6 +115,22 @@ it("reports an active-call backlog instead of completing setup", async () => {
     "Offline setup has a remaining backlog; retry activation.",
   );
 });
+it("does not end a call whose identity changed before its maintenance claim", async () => {
+  findMeetings
+    .mockResolvedValueOnce([
+      {
+        id: "changed",
+        streamCallId: "previous-call",
+        occurrence: { appointment: { participants: [] } },
+      },
+    ])
+    .mockResolvedValueOnce([]);
+  updateMeetings.mockResolvedValueOnce({ count: 0 });
+  countMeetings.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+  const result = await drainActiveSessions();
+  expect(endCall).not.toHaveBeenCalled();
+  expect(result.remainingSessions).toBe(1);
+});
 it("clears only acknowledged unfreezes", async () => {
   findMeetings.mockResolvedValue([row("good"), row("bad")]);
   updateChannel.mockImplementation((id: string) =>

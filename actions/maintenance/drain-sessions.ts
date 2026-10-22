@@ -125,13 +125,18 @@ export async function drainActiveSessions(): Promise<DrainResult> {
 
   for (const session of activeSessions) {
     if (!client || Date.now() + 2 * VENDOR_TIMEOUT_MS > deadline) break;
-    await prisma.meeting.updateMany({
-      where: { id: session.id, endedAt: null },
+    const claimed = await prisma.meeting.updateMany({
+      where: {
+        id: session.id,
+        endedAt: null,
+        streamCallId: session.streamCallId,
+      },
       data: {
         maintenanceWindowId: window.id,
         maintenanceChannelRecoveredAt: null,
       },
     });
+    if (!claimed.count) continue;
     const call = client.video.call(
       STREAM_CALL_TYPE,
       toCallId(session.streamCallId),
