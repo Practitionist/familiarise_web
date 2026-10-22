@@ -6,6 +6,13 @@
 import type { Config } from "jest";
 import nextJest from "next/jest.js";
 
+// The database tier (`jest.db.config.ts`): its suites plus their guard and
+// seed helpers. Only CI's disposable Postgres runs them, so this config skips them.
+export const DB_TIER_PATTERNS = [
+  "\\.db\\.test\\.ts$",
+  "/__tests__/db/(guard|seed)\\.ts$",
+];
+
 const createJestConfig = nextJest({
   // Provide the path to your Next.js app to load next.config.js and .env files in your test environment
   dir: "./",
@@ -192,6 +199,7 @@ const config: Config = {
     "/setup\\.ts$",
     "/\\.claude/worktrees/",
     "/__tests__/fixtures/",
+    ...DB_TIER_PATTERNS,
   ],
 
   // The regexp pattern or array of patterns that Jest uses to detect test files

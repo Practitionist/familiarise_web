@@ -23,8 +23,12 @@ CI races. Tests, typechecking, lint and builds run in CI/CD for this change.
 18. Feedback/reviews do not automatically create cases or money movements.
 
 `__tests__/support` covers case services, authorization, evidence, financial review,
-case addressing, SLA sweeps and request presentation. The support-concurrency CI
-script verifies actual database uniqueness and race behavior. Existing payment
+case addressing, SLA sweeps and request presentation. The database tier in
+`__tests__/db/support` (`npx jest -c jest.db.config.ts`) verifies actual database
+uniqueness and race behavior: intake and reopen on the open-scope index, double
+decisions, refund claims, clientActionId and clientTurnId replays, and the
+problem cascade against a reopen. Only CI's `db-guards` job runs it, against its
+disposable Postgres; the guard refuses any other database. Existing payment
 and payout regressions cover the money boundaries. A rendered preview is visual
 and API evidence, not proof that gateway refunds or external filings completed.
 

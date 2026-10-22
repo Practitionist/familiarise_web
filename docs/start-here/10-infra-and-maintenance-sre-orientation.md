@@ -426,7 +426,7 @@ Four independent layers verify the sidecars, so a silent loss is unlikely but no
 | `typecheck`  | `tsc --noEmit`, supply-chain audit, and four static guards: money columns, auth schema, workflow secrets manifest, docs drift |
 | `unit-tests` | Jest, split into two shards                                                                                                   |
 | `build`      | `next build`. Skipped on ordinary pull requests; the Netlify deploy preview is the build gate there.                          |
-| `db-guards`  | Throwaway Postgres → `db push` → sidecars → assert. Proves a fresh database can be rebuilt with every invariant.              |
+| `db-guards`  | Throwaway Postgres → `db push` → sidecars → assert → support race tier. Proves a fresh database keeps every invariant.        |
 
 **Two gates are deliberately advisory.** Knip (dead code) runs with `continue-on-error`. CodeRabbit is report-only by explicit policy — reviews do not block merges, and comments are triaged by hand against the code.
 
