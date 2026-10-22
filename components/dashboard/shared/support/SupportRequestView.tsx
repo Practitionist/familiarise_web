@@ -48,6 +48,11 @@ import type { ArticleLink } from "@/types/support-case";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
 
+import {
+  CASE_RESOLUTION_ANCHOR,
+  REOPEN_MESSAGE,
+  ResolvedFollowUp,
+} from "./ResolvedFollowUp";
 import { SessionConversation } from "./SessionConversation";
 
 export interface SupportRequestViewProps {
@@ -237,21 +242,25 @@ function ticketLiveAnnouncement(sending: boolean, offline: boolean): string {
 }
 
 function TicketComposer({
+  caseId,
   closed,
   resolved,
+  resolvedAt,
   requestsHref,
   draft,
   sending,
   onDraftChange,
   onSubmit,
 }: Readonly<{
+  caseId: string;
   closed: boolean;
   resolved: boolean;
+  resolvedAt: string | null | undefined;
   requestsHref: string;
   draft: string;
   sending: boolean;
   onDraftChange: (value: string) => void;
-  onSubmit: (message: string) => void;
+  onSubmit: (message: string, reopen?: boolean) => void;
 }>) {
   const field = useRef<HTMLTextAreaElement>(null);
   if (closed) {
@@ -279,21 +288,22 @@ function TicketComposer({
       }}
     >
       {resolved && (
-        <p id="support-reply-reopens" className="text-xs text-muted-foreground">
-          This request is marked resolved. Replying reopens it.
-        </p>
+        <ResolvedFollowUp
+          caseId={caseId}
+          resolvedAt={resolvedAt}
+          disabled={sending}
+          onReopen={() => onSubmit(draft.trim() || REOPEN_MESSAGE, true)}
+        />
       )}
       <Textarea
         ref={field}
         aria-label="Reply"
-        aria-describedby={resolved ? "support-reply-reopens" : undefined}
+        aria-describedby={resolved ? "support-reply-follow-up" : undefined}
         rows={3}
         value={draft}
         onChange={(e) => onDraftChange(e.target.value)}
         placeholder={
-          resolved
-            ? "Reply to reopen this request…"
-            : "Write a reply to our team…"
+          resolved ? "Add a follow-up…" : "Write a reply to our team…"
         }
       />
       <div className="flex justify-end">
@@ -346,19 +356,30 @@ function TicketRequest({
       q.state.data?.status === "CLOSED" ? false : 30_000,
   });
   const reply = useMutation({
-    mutationFn: async (message: string) => {
+    mutationFn: async ({
+      message,
+      reopen,
+    }: {
+      message: string;
+      reopen?: boolean;
+    }) => {
+      const turnKey = `${reopen ? "reopen" : "reply"}:${message}`;
       const clientTurnId =
-        pendingTurns.current.get(message) ?? crypto.randomUUID();
-      pendingTurns.current.set(message, clientTurnId);
+        pendingTurns.current.get(turnKey) ?? crypto.randomUUID();
+      pendingTurns.current.set(turnKey, clientTurnId);
       const res = await fetch(`/api/support/cases/${ticketId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: message, clientTurnId }),
+        body: JSON.stringify({
+          body: message,
+          clientTurnId,
+          ...(reopen ? { reopen: true } : {}),
+        }),
       });
       if (!res.ok) await throwSupportError(res, "request reply");
-      pendingTurns.current.delete(message);
+      pendingTurns.current.delete(turnKey);
     },
-    onSuccess: (_result, message) => {
+    onSuccess: (_result, { message }) => {
       setDraft((current) => (current.trim() === message ? "" : current));
       void invalidateSupportCase(qc, ticketId);
     },
@@ -429,7 +450,11 @@ function TicketRequest({
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div className="min-w-0 space-y-4">
           <StatusTimeline stage={requestStage({ status: data.status })} />
-          {data.canReply && <CustomerCaseResolution caseId={data.caseId} />}
+          {data.canReply && (
+            <div id={CASE_RESOLUTION_ANCHOR}>
+              <CustomerCaseResolution caseId={data.caseId} />
+            </div>
+          )}
           <div className="flex flex-col rounded-lg border border-border bg-card">
             <div
               ref={scroll.container}
@@ -509,13 +534,17 @@ function TicketRequest({
             <div className="border-t border-border p-4">
               {data.canReply && (
                 <TicketComposer
+                  caseId={data.caseId}
                   closed={closed}
                   resolved={resolved}
+                  resolvedAt={data.resolvedAt}
                   requestsHref={props.requestsHref}
                   draft={draft}
                   sending={reply.isPending}
                   onDraftChange={setDraft}
-                  onSubmit={(msg) => reply.mutate(msg)}
+                  onSubmit={(message, reopen) =>
+                    reply.mutate({ message, reopen })
+                  }
                 />
               )}
             </div>
