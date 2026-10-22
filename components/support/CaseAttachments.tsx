@@ -28,6 +28,8 @@ const Upload = z.object({
   data: z.object({ id: z.string(), uploadUrl: z.string() }),
 });
 
+const ALLOWED_TYPES = new Set<string>(SUPPORT_ATTACHMENT_MIME_TYPES);
+
 /** The upload route's allowlist, checked here so a wrong file fails before any round trip. */
 const EXTENSION_TYPES: Record<string, SupportAttachmentMimeType> = {
   pdf: "application/pdf",
@@ -51,7 +53,7 @@ export function attachmentProblem(file: {
   size: number;
 }): string | null {
   const type = attachmentType(file);
-  if (!SUPPORT_ATTACHMENT_MIME_TYPES.some((allowed) => allowed === type))
+  if (!ALLOWED_TYPES.has(type))
     return "Choose a PDF, JPEG, PNG, WebP, text or Word (.docx) file.";
   if (file.size > SUPPORT_ATTACHMENT_MAX_BYTES)
     return "Files can be up to 20 MB.";

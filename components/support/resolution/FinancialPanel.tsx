@@ -23,7 +23,6 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 import { ReasonAction } from "./ReasonAction";
 import {
   rupeesToPaise,
-  usePendingRefundApprovals,
   type CaseResolution,
   type RunCaseAction,
 } from "./resolution-data";
@@ -57,6 +56,13 @@ export function unsentRefund(rec: Recommendation, now: number): boolean {
     rec.decidedAt !== null &&
     now - new Date(rec.decidedAt).getTime() >= REFUND_SEND_GRACE_MS
   );
+}
+
+function heldEarningsLabel(count: number) {
+  if (count === 0) return "No unpaid earnings to hold";
+  return count === 1
+    ? "1 unpaid earning held"
+    : `${count} unpaid earnings held`;
 }
 
 function recommendationStatus(rec: Recommendation) {
@@ -353,11 +359,6 @@ export function FinancialPanel({
   const [voiding, setVoiding] = useState<Recommendation | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const canMoney = data.canExecuteMoney;
-  const pending = usePendingRefundApprovals(
-    caseId,
-    data.canVoidRecommendations &&
-      data.recommendations.some((rec) => !rec.decidedAt),
-  ).data;
   const now = Date.now();
   const loadPreview = async (recommendationId: string) => {
     setPreviewLoading(true);
@@ -385,7 +386,7 @@ export function FinancialPanel({
       <summary className="cursor-pointer font-medium">Financial review</summary>
       <div className="mt-2 space-y-3">
         {data.recommendations.map((rec) => {
-          const awaiting = !rec.decidedAt ? pending?.[rec.id] : undefined;
+          const awaiting = rec.decidedAt ? null : rec.pendingApprovalExpiresAt;
           const unsent = unsentRefund(rec, now);
           return (
             <div
@@ -408,12 +409,14 @@ export function FinancialPanel({
                     The refund has not been sent. This request expires{" "}
                     {when(awaiting)}.
                   </span>
-                  <Link
-                    className="underline"
-                    href={`${basePath}/money/approvals`}
-                  >
-                    View money approvals
-                  </Link>
+                  {data.canVoidRecommendations && (
+                    <Link
+                      className="underline"
+                      href={`${basePath}/money/approvals`}
+                    >
+                      View money approvals
+                    </Link>
+                  )}
                 </output>
               )}
               <div className="flex flex-wrap gap-2">
@@ -447,7 +450,7 @@ export function FinancialPanel({
                     Void
                   </Button>
                 )}
-                {canMoney && !rec.decidedAt && (
+                {canMoney && !rec.decidedAt && !awaiting && (
                   <ReasonAction
                     label="Decline"
                     confirmLabel="Decline recommendation"
@@ -491,9 +494,7 @@ export function FinancialPanel({
             </p>
             {!hold.releasedAt && (
               <p className="text-muted-foreground">
-                {hold.earningsHeld === 0
-                  ? "No unpaid earnings to hold"
-                  : `${hold.earningsHeld} unpaid earning${hold.earningsHeld === 1 ? "" : "s"} held`}
+                {heldEarningsLabel(hold.earningsHeld)}
               </p>
             )}
             {data.canManageHolds && !hold.releasedAt && (

@@ -2,7 +2,7 @@
 
 /** Session quality aggregates and scoped support activity; member correspondence stays private. */
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Star, MessageSquareText, ShieldAlert } from "lucide-react";
@@ -21,7 +21,7 @@ const TriageList = z.object({
     z.object({
       id: z.string(),
       appointmentId: z.string(),
-      category: z.string(),
+      category: z.string().nullable(),
       status: z.string(),
       activeChannel: z.string(),
       lastMessageAt: z.string(),
@@ -42,7 +42,7 @@ const TriageList = z.object({
 type TriageRow = z.infer<typeof TriageList>["data"][number];
 
 export function isOrgOperatorThread(t: {
-  category: string;
+  category: string | null;
   submitterUserId?: string | null;
   member: { id: string };
 }): boolean {
@@ -103,7 +103,8 @@ function OrgThreadRow({
           </span>
         </p>
         <p className="text-xs text-muted-foreground">
-          {humanizeEnum(t.category)} · last activity{" "}
+          {t.category ? humanizeEnum(t.category) : "Support request"} · last
+          activity{" "}
           {new Date(t.lastMessageAt).toLocaleDateString(undefined, {
             day: "numeric",
             month: "short",
@@ -205,6 +206,24 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
       </Button>
     </div>
   ) : null;
+  const rows = threads.data?.data ?? [];
+  let threadList: ReactNode;
+  if (threadsError) threadList = threadsError;
+  else if (threads.isLoading) threadList = <Skeleton className="h-24 w-full" />;
+  else if (rows.length === 0)
+    threadList = (
+      <p className="text-sm text-muted-foreground">
+        No member conversations match this filter.
+      </p>
+    );
+  else
+    threadList = (
+      <ul className="divide-y divide-border rounded-lg border border-border">
+        {rows.map((t) => (
+          <OrgThreadRow key={t.id} thread={t} orgId={orgId} />
+        ))}
+      </ul>
+    );
 
   return (
     <div className="space-y-8">
@@ -326,21 +345,7 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
             ))}
           </div>
         </div>
-        {threadsError ? (
-          threadsError
-        ) : threads.isLoading ? (
-          <Skeleton className="h-24 w-full" />
-        ) : (threads.data?.data.length ?? 0) === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No member conversations match this filter.
-          </p>
-        ) : (
-          <ul className="divide-y divide-border rounded-lg border border-border">
-            {threads.data!.data.map((t) => (
-              <OrgThreadRow key={t.id} thread={t} orgId={orgId} />
-            ))}
-          </ul>
-        )}
+        {threadList}
         {(threads.data?.withheld.sensitivePersonal ?? 0) > 0 && (
           <p className="mt-2 text-xs text-muted-foreground">
             {threads.data!.withheld.sensitivePersonal} personal{" "}

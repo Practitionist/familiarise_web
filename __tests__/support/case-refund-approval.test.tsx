@@ -33,6 +33,7 @@ const recommendation: CaseResolution["recommendations"][number] = {
   voidedAt: null,
   voidedById: null,
   refund: null,
+  pendingApprovalExpiresAt: null,
 };
 const base: CaseResolution = {
   decisions: [],
@@ -56,8 +57,6 @@ let preview = {
   blockedReason: null as string | null,
   committedPaise: 0,
 };
-let proposals: { targetKind: string; targetId: string; expiresAt: string }[] =
-  [];
 const originalFetch = global.fetch;
 const originalUuid = Object.getOwnPropertyDescriptor(
   global.crypto,
@@ -72,7 +71,6 @@ beforeEach(() => {
     blockedReason: null,
     committedPaise: 0,
   };
-  proposals = [];
   Object.defineProperty(global.crypto, "randomUUID", {
     configurable: true,
     value: () => "00000000-0000-4000-8000-000000000001",
@@ -80,10 +78,7 @@ beforeEach(() => {
   global.fetch = jest.fn().mockImplementation(async (input: string) => ({
     ok: true,
     status: 200,
-    json: async () =>
-      input.includes("/ops-proposals")
-        ? { proposals }
-        : { data: input.includes("/preview") ? preview : base },
+    json: async () => ({ data: input.includes("/preview") ? preview : base }),
   }));
   mockToast.mockClear();
   mockPost.mockReset().mockResolvedValue({
@@ -126,15 +121,15 @@ function sentBody() {
   return JSON.parse(init.body) as Record<string, unknown>;
 }
 
-it("derives the second-admin wait from Money approvals, not local state", async () => {
-  proposals = [
-    {
-      targetKind: "SupportFinancialRecommendation",
-      targetId: "rec_1",
-      expiresAt: "2026-10-21T12:00:00.000Z",
-    },
-  ];
-  const client = renderPanel(base);
+const awaitingApproval = {
+  ...base,
+  recommendations: [
+    { ...recommendation, pendingApprovalExpiresAt: "2026-10-21T12:00:00.000Z" },
+  ],
+};
+
+it("reads the second-admin wait from the resolution, not local state", async () => {
+  const client = renderPanel(awaitingApproval);
   const pending = await screen.findByRole("status");
   expect(pending).toHaveTextContent("Waiting for another admin’s approval");
   expect(
@@ -142,6 +137,28 @@ it("derives the second-admin wait from Money approvals, not local state", async 
   ).toHaveAttribute("href", "/dashboard/admin/money/approvals");
   expect(
     screen.queryByRole("button", { name: "Review refund" }),
+  ).not.toBeInTheDocument();
+  expect(global.fetch).not.toHaveBeenCalledWith(
+    expect.stringContaining("/ops-proposals"),
+  );
+  client.clear();
+});
+
+it("hides Review and Decline from staff while an approval is open, without the admin link", async () => {
+  const client = renderPanel({
+    ...awaitingApproval,
+    canVoidRecommendations: false,
+    refundLimitPaise: 500_000,
+  });
+  await screen.findByRole("status");
+  expect(
+    screen.queryByRole("button", { name: "Review refund" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Decline" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("link", { name: "View money approvals" }),
   ).not.toBeInTheDocument();
   client.clear();
 });

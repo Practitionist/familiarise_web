@@ -26,9 +26,11 @@ const row = {
   },
 };
 
+let rows: Record<string, unknown>[] = [row];
+
 function threads(sensitivePersonal: number) {
   return {
-    data: [row],
+    data: rows,
     withheld: { sensitivePersonal },
     pagination: { page: 1, perPage: 30, total: 1, pages: 1 },
   };
@@ -51,6 +53,10 @@ function renderTriage(sensitivePersonal: number) {
   );
 }
 
+beforeEach(() => {
+  rows = [row];
+});
+
 describe("organization support triage", () => {
   it("says how many sensitive personal requests are withheld", async () => {
     renderTriage(2);
@@ -58,6 +64,14 @@ describe("organization support triage", () => {
       await screen.findByText(/2 personal requests are not listed/),
     ).toBeTruthy();
     expect(screen.getByText("Career call")).toBeTruthy();
+  });
+
+  it("lists a request that has no category", async () => {
+    rows = [{ ...row, category: null }];
+    renderTriage(0);
+    expect(
+      await screen.findByText(/Support request · last activity/),
+    ).toBeTruthy();
   });
 
   it("says nothing when no request is withheld", async () => {

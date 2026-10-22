@@ -69,6 +69,8 @@ const Resolution = z.object({
         voidedAt: z.string().nullable(),
         voidedById: z.string().nullable(),
         refund: z.object({ id: z.string(), status: z.string() }).nullable(),
+        /** Set while a second-admin approval proposal is open. */
+        pendingApprovalExpiresAt: z.string().nullable(),
       }),
     ),
     holds: z.array(
@@ -169,38 +171,6 @@ export type RunCaseAction = (
   payload: CaseActionPayload,
   onDone?: () => void,
 ) => void;
-
-const PendingApprovals = z.object({
-  proposals: z.array(
-    z.object({
-      targetKind: z.string(),
-      targetId: z.string(),
-      expiresAt: z.string(),
-    }),
-  ),
-});
-
-/**
- * Open second-admin proposals by recommendation id, read from Money → Approvals.
- * That list is admin-only, and only admins can trigger a second approval.
- */
-export function usePendingRefundApprovals(caseId: string, enabled: boolean) {
-  return useQuery({
-    queryKey: [...supportKeys.case(caseId), "pending-approvals"],
-    enabled,
-    queryFn: async () => {
-      const response = await fetch("/api/admin/ops-proposals?status=PROPOSED");
-      if (!response.ok)
-        await throwSupportError(response, "pending approvals load");
-      const { proposals } = PendingApprovals.parse(await response.json());
-      return Object.fromEntries(
-        proposals
-          .filter((p) => p.targetKind === "SupportFinancialRecommendation")
-          .map((p) => [p.targetId, p.expiresAt]),
-      );
-    },
-  });
-}
 
 /** One staff case-action mutation; every success or failure refreshes the case subtree. */
 export function useCaseAction(caseId: string) {
