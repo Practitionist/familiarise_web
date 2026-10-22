@@ -18,10 +18,13 @@ import { FinancialPanel } from "./FinancialPanel";
 import { ReasonAction } from "./ReasonAction";
 import {
   DECISION_APPEAL_DAYS,
+  decisionInForce,
   Outcome,
   OUTCOME_LABEL,
+  outcomesFor,
   useCaseAction,
   useCaseResolution,
+  useLegalHold,
   type RunCaseAction,
   type CaseResolution,
   type DecisionOutcome,
@@ -30,19 +33,42 @@ import {
 type Run = RunCaseAction;
 const when = (iso: string) => formatDateTimeLabel(new Date(iso));
 
+/**
+ * Records the case's decision. Once one exists only an admin may supersede it,
+ * while its appeal window is open; the correction keeps that window.
+ */
 function DecisionDialog({
   data,
   busy,
   run,
 }: Readonly<{ data: CaseResolution; busy: boolean; run: Run }>) {
-  const [outcome, setOutcome] = useState<DecisionOutcome>("NO_REMEDY");
+  const outcomes = outcomesFor(data);
+  const [outcome, setOutcome] = useState<DecisionOutcome>(
+    outcomes[0] ?? "NO_REMEDY",
+  );
   const [explanation, setExplanation] = useState("");
   const [privateRationale, setPrivateRationale] = useState("");
   const [confirming, setConfirming] = useState(false);
-  const appealUntil = new Date(Date.now() + DECISION_APPEAL_DAYS * 86_400_000);
+  const current = decisionInForce(data.decisions);
+  const supersedable =
+    current?.appealUntil !== null &&
+    current?.appealUntil !== undefined &&
+    new Date(current.appealUntil).getTime() > Date.now();
+  if (current && !(data.isAdmin && supersedable))
+    return (
+      <p className="text-xs text-muted-foreground">
+        This case has a decision. An admin can supersede it while its appeal
+        window is open; after that the customer can only appeal.
+      </p>
+    );
+  const appealUntil = current?.appealUntil
+    ? new Date(current.appealUntil)
+    : new Date(Date.now() + DECISION_APPEAL_DAYS * 86_400_000);
   return (
     <details>
-      <summary className="cursor-pointer font-medium">Decision</summary>
+      <summary className="cursor-pointer font-medium">
+        {current ? "Supersede decision" : "Decision"}
+      </summary>
       <form
         className="mt-2 space-y-2"
         onSubmit={(event) => {
@@ -56,17 +82,11 @@ function DecisionDialog({
           value={outcome}
           onChange={(event) => setOutcome(Outcome.parse(event.target.value))}
         >
-          {Outcome.options
-            .filter(
-              (value) =>
-                data.canExecuteMoney ||
-                !["REFUND_APPROVED", "REFUND_DECLINED"].includes(value),
-            )
-            .map((value) => (
-              <option key={value} value={value}>
-                {OUTCOME_LABEL[value]}
-              </option>
-            ))}
+          {outcomes.map((value) => (
+            <option key={value} value={value}>
+              {OUTCOME_LABEL[value]}
+            </option>
+          ))}
         </select>
         <Textarea
           aria-label="Explanation for the customer"
@@ -88,10 +108,13 @@ function DecisionDialog({
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Record this decision?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {current ? "Supersede this decision?" : "Record this decision?"}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              Decisions can&apos;t be edited once recorded. Recording one
-              resolves the case and notifies the customer.
+              {current
+                ? "The new decision replaces the one in force and notifies the customer. The case stays resolved."
+                : "Decisions can't be edited once recorded. Recording one resolves the case and notifies the customer."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <dl className="space-y-2 text-sm">
@@ -110,7 +133,7 @@ function DecisionDialog({
             <div>
               <dt className="text-xs text-muted-foreground">Appeal window</dt>
               <dd>
-                The customer can appeal until about{" "}
+                The customer can appeal until {current ? "" : "about "}
                 {formatDateTimeLabel(appealUntil)}.
               </dd>
             </div>
@@ -128,6 +151,7 @@ function DecisionDialog({
                     ...(privateRationale.trim()
                       ? { privateRationale: privateRationale.trim() }
                       : {}),
+                    ...(current ? { supersedesDecisionId: current.id } : {}),
                   },
                   () => {
                     setConfirming(false);
@@ -137,12 +161,36 @@ function DecisionDialog({
                 )
               }
             >
-              Record decision and resolve
+              {current ? "Supersede decision" : "Record decision and resolve"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </details>
+  );
+}
+
+function LegalHoldToggle({
+  caseId,
+  legalHoldAt,
+}: Readonly<{ caseId: string; legalHoldAt: string | null }>) {
+  const hold = useLegalHold(caseId);
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+      <p className="text-muted-foreground">
+        {legalHoldAt
+          ? `Legal hold since ${when(legalHoldAt)}: evidence is kept past the retention period.`
+          : "No legal hold: evidence is deleted 180 days after the case closes."}
+      </p>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={hold.isPending}
+        onClick={() => hold.mutate(!legalHoldAt)}
+      >
+        {legalHoldAt ? "Lift legal hold" : "Place legal hold"}
+      </Button>
+    </div>
   );
 }
 
@@ -276,6 +324,9 @@ export function StaffCaseResolution({
   const data = query.data;
   if (!data.canManage) return null;
   const busy = action.isPending;
+  const superseded = new Set(
+    data.decisions.map((decision) => decision.supersedesDecisionId),
+  );
   const run: Run = (payload, onDone) =>
     action.mutate(payload, {
       onSuccess: () => onDone?.(),
@@ -286,12 +337,18 @@ export function StaffCaseResolution({
       className="space-y-4 rounded-lg border border-border bg-card p-3 text-sm"
     >
       <h3 className="font-semibold">Resolution and review</h3>
+      {data.isAdmin && (
+        <LegalHoldToggle caseId={caseId} legalHoldAt={data.legalHoldAt} />
+      )}
       {data.decisions.map((decision) => (
         <div
           key={decision.id}
           className="space-y-2 border-b border-border pb-3"
         >
-          <p className="font-medium">{OUTCOME_LABEL[decision.outcome]}</p>
+          <p className="font-medium">
+            {OUTCOME_LABEL[decision.outcome]}
+            {superseded.has(decision.id) ? " · Superseded" : ""}
+          </p>
           <p className="whitespace-pre-wrap">{decision.explanation}</p>
           {decision.privateRationale && (
             <p className="rounded border border-dashed border-border p-2 text-xs">
@@ -306,7 +363,14 @@ export function StaffCaseResolution({
           </p>
         </div>
       ))}
-      <DecisionDialog data={data} busy={busy} run={run} />
+      {data.caseKind === "PROBLEM" ? (
+        <p className="text-xs text-muted-foreground">
+          A problem record is resolved, not decided. Record decisions on its
+          linked incidents.
+        </p>
+      ) : (
+        <DecisionDialog data={data} busy={busy} run={run} />
+      )}
       <EvidenceRequestsPanel
         caseId={caseId}
         data={data}

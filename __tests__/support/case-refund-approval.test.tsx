@@ -48,6 +48,10 @@ const base: CaseResolution = {
   refundLimitPaise: null,
   ownershipScope: "PERSONAL",
   updatedAt: "2026-10-20T12:00:00.000Z",
+  caseKind: "INCIDENT",
+  isAppeal: false,
+  legalHoldAt: null,
+  isAdmin: false,
 };
 
 let preview = {

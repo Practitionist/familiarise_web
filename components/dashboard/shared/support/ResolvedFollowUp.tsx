@@ -1,6 +1,9 @@
 "use client";
 
-import { useCaseResolution } from "@/components/support/resolution/resolution-data";
+import {
+  decisionInForce,
+  useCaseResolution,
+} from "@/components/support/resolution/resolution-data";
 import { Button } from "@/components/ui/button";
 import { REOPEN_WINDOW_MS } from "@/lib/support/deadline-policy";
 import { formatDateLabel } from "@/lib/time/display";
@@ -27,8 +30,7 @@ export function ResolvedFollowUp({
   onReopen: () => void;
 }>) {
   const resolution = useCaseResolution(caseId);
-  const decisions = resolution.data?.decisions ?? [];
-  const decision = decisions[decisions.length - 1];
+  const decision = decisionInForce(resolution.data?.decisions ?? []);
   const appealUntil = decision?.appealUntil
     ? new Date(decision.appealUntil)
     : null;

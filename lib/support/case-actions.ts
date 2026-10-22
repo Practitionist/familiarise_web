@@ -536,6 +536,13 @@ export async function readCaseResolution(caseId: string, actor: CaseActor) {
       actor.role === "ADMIN" ? null : STAFF_REFUND_PER_PAYMENT_PAISE,
     ownershipScope: supportCase.ownershipScope,
     updatedAt: supportCase.updatedAt,
+    caseKind: supportCase.caseKind,
+    isAppeal: Boolean(
+      supportCase.appealOfDecisionId || supportCase.appealOfModerationActionId,
+    ),
+    legalHoldAt: staff ? supportCase.legalHoldAt : null,
+    /** Supersede and legal hold are admin-only. */
+    isAdmin: actor.role === "ADMIN",
   };
 }
 

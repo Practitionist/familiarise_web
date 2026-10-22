@@ -18,6 +18,7 @@ const resolution = {
       explanation: "The session was delivered as booked.",
       createdAt: "2026-10-19T10:00:00.000Z",
       appealUntil: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+      supersedesDecisionId: null,
     },
   ],
   recommendations: [],
@@ -31,6 +32,10 @@ const resolution = {
   refundLimitPaise: null,
   ownershipScope: "ORG_OPERATIONS",
   updatedAt: "2026-10-20T12:00:00.000Z",
+  caseKind: "INCIDENT",
+  isAppeal: false,
+  legalHoldAt: null,
+  isAdmin: false,
 };
 
 const originalFetch = global.fetch;
@@ -98,6 +103,37 @@ describe("CustomerCaseResolution", () => {
       decisionId: "dec_1",
       reason: "The expert never joined.",
     });
+    qc.clear();
+  });
+
+  it("offers the appeal only on the decision in force", () => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    });
+    qc.setQueryData(supportKeys.resolution("case_1"), {
+      ...resolution,
+      decisions: [
+        resolution.decisions[0],
+        {
+          ...resolution.decisions[0],
+          id: "dec_2",
+          outcome: "SERVICE_REMEDY",
+          explanation: "We will rebook the session.",
+          supersedesDecisionId: "dec_1",
+        },
+      ],
+    });
+    render(
+      <QueryClientProvider client={qc}>
+        <CustomerCaseResolution caseId="case_1" />
+      </QueryClientProvider>,
+    );
+    expect(
+      screen.getByText(/No remedy · Replaced by a later decision/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: "Appeal this decision" }),
+    ).toHaveLength(1);
     qc.clear();
   });
 });

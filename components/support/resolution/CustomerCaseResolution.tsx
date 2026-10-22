@@ -3,6 +3,7 @@
 import { formatDateLabel, formatDateTimeLabel } from "@/lib/time/display";
 import { AppealAction } from "./AppealAction";
 import {
+  decisionInForce,
   OUTCOME_LABEL,
   useCaseResolution,
   type CaseResolution,
@@ -10,13 +11,21 @@ import {
 
 type Decision = CaseResolution["decisions"][number];
 
-function DecisionCard({ decision }: Readonly<{ decision: Decision }>) {
+/** Only the decision in force can be appealed; a replaced one says so. */
+function DecisionCard({
+  decision,
+  inForce,
+}: Readonly<{ decision: Decision; inForce: boolean }>) {
   const appealOpen =
+    inForce &&
     decision.appealUntil !== null &&
     new Date(decision.appealUntil).getTime() > Date.now();
   return (
     <article className="space-y-2 rounded-lg border border-border p-3">
-      <h4 className="font-medium">{OUTCOME_LABEL[decision.outcome]}</h4>
+      <h4 className="font-medium">
+        {OUTCOME_LABEL[decision.outcome]}
+        {inForce ? "" : " · Replaced by a later decision"}
+      </h4>
       <p className="whitespace-pre-wrap">{decision.explanation}</p>
       <p className="text-xs text-muted-foreground">
         Decided {formatDateLabel(new Date(decision.createdAt))}
@@ -40,6 +49,7 @@ export function CustomerCaseResolution({
 }: Readonly<{ caseId: string }>) {
   const query = useCaseResolution(caseId);
   const decisions = query.data?.decisions ?? [];
+  const current = decisionInForce(decisions);
   return (
     <section
       aria-label="Case resolution"
@@ -49,7 +59,11 @@ export function CustomerCaseResolution({
         <>
           <h3 className="font-semibold">Decision</h3>
           {decisions.map((decision) => (
-            <DecisionCard key={decision.id} decision={decision} />
+            <DecisionCard
+              key={decision.id}
+              decision={decision}
+              inForce={decision.id === current?.id}
+            />
           ))}
         </>
       )}
