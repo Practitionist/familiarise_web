@@ -124,6 +124,14 @@ jest.mock("../../lib/prisma", () => {
       }),
     },
     supportFinancialRecommendation: { findMany: async () => [] },
+    consultantEarnings: {
+      findMany: async () => [
+        { consultantSharePaise: 80_000, refundedShareAmount: 20_000 },
+      ],
+    },
+    organizationEarnings: {
+      findMany: async () => [{ orgSharePaise: 30_000, refundedAmountPaise: 0 }],
+    },
     opsActionLog: {
       findMany: async () => mockOpsRows,
       create: async ({ data }: { data: Record<string, unknown> }) => {
@@ -286,6 +294,61 @@ describe("support refund door audit", () => {
   });
 });
 
+describe("support hold door audit", () => {
+  const apply = () =>
+    post(
+      applySupportHoldDoor,
+      {
+        action: "APPLY_HOLD",
+        clientActionId: "h-1",
+        expectedUpdatedAt: "2026-10-20T10:00:00.000Z",
+        paymentId: "pay-1",
+      },
+      { caseId: "case-1" },
+    );
+
+  it("records the held payee money, net of refunds, in the ops-log row", async () => {
+    mockPerformCaseActionTx.mockResolvedValue({
+      holdId: "hold-1",
+      paymentId: "pay-1",
+      replayed: false,
+      consultantEarningIds: ["ce-1"],
+      orgEarningIds: ["oe-1"],
+      cancelledPayoutIds: [],
+    });
+    expect((await apply()).status).toBe(200);
+    expect(mockAuditRows).toContainEqual(
+      expect.objectContaining({
+        action: "support.hold.apply",
+        targetId: "pay-1",
+        after: expect.objectContaining({
+          caseId: "case-1",
+          holdId: "hold-1",
+          replayed: false,
+          heldPaise: 90_000,
+        }),
+      }),
+    );
+  });
+
+  it("records 0 for a replay that froze nothing", async () => {
+    mockPerformCaseActionTx.mockResolvedValue({
+      holdId: "hold-1",
+      paymentId: "pay-1",
+      replayed: true,
+      consultantEarningIds: [],
+      orgEarningIds: [],
+      cancelledPayoutIds: [],
+    });
+    expect((await apply()).status).toBe(200);
+    expect(mockAuditRows).toContainEqual(
+      expect.objectContaining({
+        after: expect.objectContaining({ replayed: true, heldPaise: 0 }),
+      }),
+    );
+  });
+});
+
 describe("platform cancel door", () => {
   const cancel = (expectedRefundPaise: number) =>
     post(
@@ -314,6 +377,7 @@ describe("platform cancel door", () => {
           status: "SUCCEEDED",
           movedPaise: 400_000,
           paymentIds: ["pay-1"],
+          charges: [{ paymentId: "pay-1", newPaise: 400_000 }],
         }),
       }),
     );

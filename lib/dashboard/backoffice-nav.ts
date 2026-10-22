@@ -9,6 +9,7 @@ import {
   Coins,
   CreditCard,
   FileWarning,
+  Gauge,
   Gift,
   Home,
   Inbox,
@@ -100,6 +101,7 @@ const MONEY_ICONS: Record<MoneyTabKey, LucideIcon> = {
   reconcile: ArrowLeftRight,
   approvals: ListChecks,
   incidents: Siren,
+  "support-spend": Gauge,
   audit: ScrollText,
 };
 

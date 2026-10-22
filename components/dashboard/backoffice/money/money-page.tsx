@@ -20,7 +20,11 @@ import { MoneyTabBody } from "./MoneyTabBody";
  * tree's audience or the viewer's own surfaces) lands on the first section
  * they hold, never on an error boundary (QA #1824).
  */
-export async function renderMoneyTab(args: { tab: string; tree: string }) {
+export async function renderMoneyTab(args: {
+  tab: string;
+  tree: string;
+  searchParams: Record<string, string | string[] | undefined>;
+}) {
   if (!isBackofficeTree(args.tree)) notFound();
   const treePath = `/dashboard/${args.tree}`;
   const retired = retiredMoneyTabHref(treePath, args.tab);
@@ -40,6 +44,7 @@ export async function renderMoneyTab(args: { tab: string; tree: string }) {
       tabKey={tab.key}
       cap={cap}
       viewer={{ userId: session.user.id, role: String(cap.role) }}
+      searchParams={args.searchParams}
     />
   );
 }

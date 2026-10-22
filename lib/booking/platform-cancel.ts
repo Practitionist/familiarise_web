@@ -12,7 +12,10 @@ import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
-import type { RefundCharge } from "@/lib/support/money-policy";
+import {
+  committedSupportPaiseByPayment,
+  type RefundCharge,
+} from "@/lib/support/money-policy";
 
 const grants = new WeakMap<Request, { opsActionId: string }>();
 
@@ -24,21 +27,6 @@ export function platformCancelGrant(
   request: Request,
 ): { opsActionId: string } | null {
   return grants.get(request) ?? null;
-}
-
-/** Support remedies already approved per payment, for the per-payment staff limit. */
-async function committedSupportRemedies(paymentIds: string[]) {
-  const rows = await prisma.supportFinancialRecommendation.findMany({
-    where: { paymentId: { in: paymentIds }, approved: true },
-    select: { paymentId: true, amountPaise: true },
-  });
-  const committed = new Map<string, number>();
-  for (const row of rows)
-    committed.set(
-      row.paymentId,
-      (committed.get(row.paymentId) ?? 0) + Number(row.amountPaise),
-    );
-  return committed;
 }
 
 /**
@@ -66,7 +54,10 @@ export async function platformCancelCharges(
       where: { appointmentId, paymentStatus: "SUCCEEDED", deletedAt: null },
       select: { id: true, amount: true, ...REFUNDABLE_BALANCE_SELECT },
     });
-    const committed = await committedSupportRemedies(payments.map((p) => p.id));
+    const committed = await committedSupportPaiseByPayment(
+      prisma,
+      payments.map((p) => p.id),
+    );
     return payments.map((payment) => ({
       paymentId: payment.id,
       newPaise: refundableBalancePaise(Number(payment.amount), payment),
@@ -79,7 +70,9 @@ export async function platformCancelCharges(
     subscriptionId: appointment.subscriptionId,
   });
   if (!ctx.paidPayment) return [];
-  const committed = await committedSupportRemedies([ctx.paidPayment.id]);
+  const committed = await committedSupportPaiseByPayment(prisma, [
+    ctx.paidPayment.id,
+  ]);
   return [
     {
       paymentId: ctx.paidPayment.id,

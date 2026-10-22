@@ -121,6 +121,10 @@ async function cancelUnderGrant(
     after: {
       paymentIds: charges.map((charge) => charge.paymentId),
       movedPaise: charges.reduce((sum, charge) => sum + charge.newPaise, 0),
+      charges: charges.map(({ paymentId, newPaise }) => ({
+        paymentId,
+        newPaise,
+      })),
     },
     response: { data: payload },
     afterCommit: release,
