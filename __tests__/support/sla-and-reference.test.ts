@@ -20,7 +20,6 @@ import {
   slaDeadlinesFor,
   slaStateOf,
   effectiveResolutionDueAt,
-  applyStaffReply,
   userRepliedPatch,
   type SlaClock,
 } from "@/lib/support/sla";
@@ -138,56 +137,20 @@ describe("the resolution clock pauses while we are waiting on the user", () => {
     ).toEqual({});
   });
 
-  it("claims each milestone in the WHERE clause, so the FIRST reply wins", async () => {
-    // Reading the row and then writing unconditionally is not enough: at READ
-    // COMMITTED two staff replying at the same instant both see null, and the
-    // later write moves a timestamp that is supposed to be the first one. The
-    // guard has to be a condition the database evaluates.
-    const calls: {
-      where: Record<string, unknown>;
-      data: Record<string, unknown>;
-    }[] = [];
-    const tx = {
-      supportTicket: {
-        updateMany: jest.fn(async (a: never) => {
-          calls.push(a as never);
-          return { count: 1 };
-        }),
-        findUnique: jest.fn(async () => ({ awaitingUserSince: null })),
-      },
-    };
-    await applyStaffReply(tx as never, "t1", T0);
-
-    const ack = calls.find(
-      (c) => "acknowledgedAt" in c.data && c.where.acknowledgedAt !== undefined,
-    );
-    const first = calls.find((c) => "firstAgentReplyAt" in c.data);
-    expect(ack!.where).toEqual({ id: "t1", acknowledgedAt: null });
-    expect(first!.where).toEqual({ id: "t1", firstAgentReplyAt: null });
-  });
-
-  it("banks an open wait exactly once, guarded by a compare-and-swap", async () => {
-    const openedAt = new Date(T0.getTime() - DAY);
-    const calls: {
-      where: Record<string, unknown>;
-      data: Record<string, unknown>;
-    }[] = [];
-    const tx = {
-      supportTicket: {
-        updateMany: jest.fn(async (a: never) => {
-          calls.push(a as never);
-          return { count: 1 };
-        }),
-        findUnique: jest.fn(async () => ({ awaitingUserSince: openedAt })),
-      },
-    };
-    await applyStaffReply(tx as never, "t1", T0);
-
-    const bank = calls.find((c) => "pausedSeconds" in c.data);
-    // Increment, not a read-modify-write, and only for the row still holding
-    // the timestamp we read — the loser of a race banks nothing.
-    expect(bank!.data.pausedSeconds).toEqual({ increment: 24 * 3600 });
-    expect(bank!.where).toEqual({ id: "t1", awaitingUserSince: openedAt });
+  it("does not let a customer wait extend an absolute deadline", () => {
+    const deadline = new Date(T0.getTime() + DAY);
+    const row = clock({
+      resolutionDueAt: deadline,
+      statutoryDueAt: deadline,
+      awaitingUserSince: T0,
+      pausedSeconds: 0,
+    });
+    expect(
+      effectiveResolutionDueAt(row, new Date(T0.getTime() + 2 * DAY)),
+    ).toEqual(deadline);
+    expect(
+      slaStateOf(row, new Date(T0.getTime() + 2 * DAY)).resolutionBreached,
+    ).toBe(true);
   });
 });
 
@@ -203,13 +166,13 @@ describe("ticket reference", () => {
     // allocates seq 1 — an off-by-one here would hand two tickets the same
     // number on the very first day of a year.
     const tx = {
-      supportTicketCounter: {
+      supportCaseCounter: {
         upsert: jest.fn().mockResolvedValue({ nextSeq: 2 }),
       },
     };
     return allocateTicketReference(tx as never, T0).then((ref) => {
       expect(ref).toBe("FAM-2026-000001");
-      const args = tx.supportTicketCounter.upsert.mock.calls[0][0];
+      const args = tx.supportCaseCounter.upsert.mock.calls[0][0];
       // Uniqueness comes from the DB doing the increment, not from us reading
       // and writing back — that read-modify-write is the race.
       expect(args.update).toEqual({ nextSeq: { increment: 1 } });
@@ -220,7 +183,7 @@ describe("ticket reference", () => {
   it("hands concurrent allocators distinct numbers", async () => {
     let next = 1;
     const tx = {
-      supportTicketCounter: {
+      supportCaseCounter: {
         upsert: jest.fn().mockImplementation(async () => ({ nextSeq: ++next })),
       },
     };

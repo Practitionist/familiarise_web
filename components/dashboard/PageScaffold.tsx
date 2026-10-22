@@ -19,6 +19,7 @@ import { cn } from "@/utils/tailwind";
 
 export interface PageHeaderProps {
   title: ReactNode;
+  headingLevel?: 1 | 2;
   description?: ReactNode;
   /** Legacy name for `description`. */
   subtitle?: ReactNode;
@@ -40,6 +41,7 @@ export interface PageHeaderProps {
  */
 export function PageHeader({
   title,
+  headingLevel = 1,
   description,
   subtitle,
   actions,
@@ -49,8 +51,9 @@ export function PageHeader({
   className,
 }: Readonly<PageHeaderProps>) {
   const desc = description ?? subtitle;
+  const Heading = headingLevel === 2 ? "h2" : "h1";
   return (
-    <header className={cn("mb-6", className)}>
+    <header className={cn(headingLevel === 2 ? "mb-4" : "mb-6", className)}>
       {breadcrumbs && breadcrumbs.length > 0 && (
         <nav aria-label="Breadcrumb" className="mb-2">
           <ol className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
@@ -85,9 +88,16 @@ export function PageHeader({
       )}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight text-foreground sm:text-[22px]">
+          <Heading
+            className={cn(
+              "font-semibold tracking-tight text-foreground",
+              headingLevel === 2
+                ? "text-base sm:text-lg"
+                : "text-xl sm:text-[22px]",
+            )}
+          >
             {title}
-          </h1>
+          </Heading>
           {desc && (
             <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
               {desc}

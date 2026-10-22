@@ -32,9 +32,10 @@ export async function readReviewReportSignals(
       },
       select: { payment: { select: { appointmentId: true } } },
     }),
-    prisma.appointmentSupportThread.findMany({
+    prisma.supportCase.findMany({
       where: {
         appointmentId: { in: uniqueIds },
+        deletedAt: null,
         status: { notIn: ["RESOLVED", "CLOSED"] },
       },
       select: { appointmentId: true },
@@ -53,7 +54,7 @@ export async function readReviewReportSignals(
   }
 
   const openTicketSet = new Set<string>(
-    openThreads.map((t) => t.appointmentId),
+    openThreads.flatMap((t) => (t.appointmentId ? [t.appointmentId] : [])),
   );
 
   const disputeSet = new Set<string>();
@@ -90,8 +91,8 @@ export async function readReviewReportContext(
         take: 1,
         select: { createdAt: true },
       },
-      supportThreads: {
-        where: { status: { notIn: ["RESOLVED", "CLOSED"] } },
+      supportCases: {
+        where: { deletedAt: null, status: { notIn: ["RESOLVED", "CLOSED"] } },
         select: { id: true },
       },
       payment: {
@@ -119,7 +120,7 @@ export async function readReviewReportContext(
   const latestRefund = refunds[0] ?? null;
   const latestRefundStatus = latestRefund?.status ?? null;
   const hasDispute = appointment.payment.some((p) => p.disputes.length > 0);
-  const openSupportCount = appointment.supportThreads.length;
+  const openSupportCount = appointment.supportCases.length;
   const signals: string[] = [];
 
   const latestReview = appointment.consultantReviews[0];

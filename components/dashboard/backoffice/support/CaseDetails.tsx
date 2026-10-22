@@ -1,7 +1,8 @@
 "use client";
 
+import { StaffCaseResolution } from "@/components/support/resolution/StaffCaseResolution";
 import Link from "next/link";
-import { ExternalLink, FileText, Phone } from "lucide-react";
+import { ExternalLink, Phone } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
@@ -16,18 +17,13 @@ import {
   trialStatusBadge,
 } from "@/lib/labels/session-labels";
 import { buildEngineeringEscalationHref } from "@/lib/support/callback-info";
+import { formatDateLabel } from "@/lib/time/display";
 import { humanizeEnum } from "@/lib/ui/tone";
 import type { CaseBooking, CaseWorkspace } from "@/types/support-case";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 const day = (iso: string | null) =>
-  iso
-    ? new Date(iso).toLocaleDateString(undefined, {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-      })
-    : "—";
+  iso ? formatDateLabel(new Date(iso)) : "—";
 
 const linkClass =
   "text-sm font-medium text-foreground underline-offset-4 hover:underline";
@@ -143,6 +139,11 @@ export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
 
   return (
     <div className="space-y-5">
+      <StaffCaseResolution
+        caseId={data.caseId}
+        paymentId={data.payment?.id}
+        basePath={basePath}
+      />
       <Section title="Person">
         <Facts items={personItems} />
       </Section>
@@ -209,13 +210,7 @@ export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
                   {c.subject}
                 </Link>
                 <p className="text-xs text-muted-foreground">
-                  {
-                    caseStatus(
-                      c.key.startsWith("t_") ? "ticket" : "thread",
-                      c.status,
-                    ).label
-                  }{" "}
-                  · {day(c.at)}
+                  {caseStatus(c.status).label} · {day(c.at)}
                 </p>
               </li>
             ))}
@@ -226,27 +221,6 @@ export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
       {data.sentryIssues && (
         <Section title="Recent errors">
           <SentryIssuesSection sentryIssues={data.sentryIssues} />
-        </Section>
-      )}
-
-      {data.attachments.length > 0 && (
-        <Section title="Attachments">
-          <ul className="space-y-1.5">
-            {data.attachments.map((a) => (
-              <li key={a.id}>
-                <a
-                  href={a.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 text-sm text-foreground underline-offset-4 hover:underline"
-                >
-                  <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                  <span className="truncate">{a.name}</span>
-                  <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
-                </a>
-              </li>
-            ))}
-          </ul>
         </Section>
       )}
 

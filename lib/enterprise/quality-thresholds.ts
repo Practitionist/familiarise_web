@@ -43,6 +43,7 @@ export function orgQualitySignalWhere(
   level: OrgQualityLevel = "occurrence",
 ) {
   return {
+    deletedAt: null,
     organizationId,
     raterRole: "CONSULTEE" as const,
     excludedFromAggregateAt: null,

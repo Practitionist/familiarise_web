@@ -154,6 +154,15 @@ describe("Sentry policy", () => {
     );
   });
 
+  it.each(["NOT_FOUND", "FORBIDDEN"] as const)(
+    "a causeless %s is a stale or guessed link — uncaptured",
+    (code) => {
+      supportError({ status: code === "NOT_FOUND" ? 404 : 403, code });
+      expect(mockedCaptureException).not.toHaveBeenCalled();
+      expect(mockedCaptureMessage).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([401, 429])(
     "%i without cause is expected client noise — uncaptured",
     (status) => {

@@ -24,6 +24,7 @@ import { PATCH as billingAccount } from "@/app/api/admin/organizations/[orgId]/b
 import { POST as orgPayoutApprove } from "@/app/api/admin/org-payouts/[id]/approve/route";
 import { POST as walletAdjustment } from "@/app/api/admin/billing-accounts/[billingAccountId]/wallet-adjustment/route";
 import { POST as walletRefundRemaining } from "@/app/api/admin/billing-accounts/[billingAccountId]/refund-remaining/route";
+import { reviewSupportRefundDoor } from "@/lib/support/refund-door";
 
 const PROPOSABLE_DOORS: ReadonlyMap<string, ProposableOpsDoor> = new Map(
   [
@@ -37,6 +38,7 @@ const PROPOSABLE_DOORS: ReadonlyMap<string, ProposableOpsDoor> = new Map(
     orgPayoutApprove,
     walletAdjustment,
     walletRefundRemaining,
+    reviewSupportRefundDoor,
   ].map((door) => [door.proposalRoute, door]),
 );
 

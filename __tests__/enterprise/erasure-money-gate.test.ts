@@ -50,6 +50,7 @@ const counts = {
   organizationInvoice: 0,
 };
 const tx = {
+  ...supportScrubModels(),
   user: { update: jest.fn(async () => ({})) },
   consultantProfile: { updateMany: jest.fn(async () => ({ count: 0 })) },
   consulteeProfile: { updateMany: jest.fn(async () => ({ count: 1 })) },
@@ -101,6 +102,7 @@ jest.mock("../../lib/prisma", () => ({
 import { NextRequest } from "next/server";
 import prisma from "../../lib/prisma";
 import { POST } from "../../app/api/admin/erasure-requests/[id]/process/route";
+import { supportScrubModels } from "../fixtures/support-erasure-models";
 
 function post() {
   return POST(

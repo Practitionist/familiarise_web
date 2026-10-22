@@ -41,6 +41,19 @@ describe("resolveDashboardLanding", () => {
 });
 
 describe("resolveGoHref", () => {
+  it("keeps workspace help links in the operator's own workspace", () => {
+    const viewer = {
+      role: "ORG_WORKSPACE",
+      orgWorkspaceProfileId: "workspace-1",
+    };
+    expect(resolveGoHref("auto", ["support", "feedback"], viewer)).toBe(
+      "/dashboard/org-workspace/workspace-1/support/feedback",
+    );
+    expect(resolveGoHref("auto", ["support", "reports"], viewer)).toBe(
+      "/dashboard/org-workspace/workspace-1/support/reports",
+    );
+    expect(resolveGoHref("auto", ["appointments"], viewer)).toBe("/dashboard");
+  });
   const dual = {
     role: "CONSULTANT",
     consultantProfileId: "cp-1",

@@ -94,7 +94,7 @@ export const tokenProvider = async (userId: string): Promise<string>
 export const tokenProvider = async (userId: string) => {
   try {
     // 0. Session bind : a token may only be minted for the authenticated
-    //    session user; staff/admins may mint for anyone. Stream's server-side
+    //    session user, whatever their role. Stream's server-side
     //    API skips permission checks, so this is the only guard against spoofing.
     await assertCanMintToken(userId);
 
@@ -173,7 +173,7 @@ export const chatTokenProvider = async (userId: string): Promise<string>
 export const chatTokenProvider = async (userId: string) => {
   try {
     // 0. Session bind : mint only for the authenticated session user
-    //    (staff/admins may mint for anyone).
+    //    (no role is exempt).
     await assertCanMintToken(userId);
 
     // 1. Validate API credentials
@@ -652,7 +652,7 @@ if (requestedUserId !== session.user.id) {
 }
 ```
 
-This is implemented in the `tokenProvider` and `chatTokenProvider` server actions (`actions/stream/chat/stream.action.ts`): both require a session, refuse to mint a token for a different user unless the caller is admin or staff, and refuse banned users outright. The banned-user check matters because Stream token revocation is timestamp-based — a moderated user could otherwise immediately re-mint a fresh token dated after the revocation and reconnect.
+This is implemented in the `tokenProvider` and `chatTokenProvider` server actions (`actions/stream/chat/stream.action.ts`): both require a session, refuse to mint a token for a different user whatever the caller's role, and refuse banned users outright. The banned-user check matters because Stream token revocation is timestamp-based — a moderated user could otherwise immediately re-mint a fresh token dated after the revocation and reconnect.
 
 ### Moderation: Revocation and Deactivation
 

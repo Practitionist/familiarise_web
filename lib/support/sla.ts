@@ -1,27 +1,10 @@
-/**
- * #705 — support SLA clocks.
- *
- * India makes an escalation ladder a legal artifact rather than a nicety. Two
- * regimes can apply: the Consumer Protection (E-Commerce) Rules 2020 (grievance
- * officer, acknowledge <= 48h, redress <= 1 month) and the IT Rules 2021
- * (acknowledge <= 24h, dispose <= 15 days). We size to the TIGHTER one, because
- * meeting it satisfies both and we do not have to first settle whether the
- * platform is an intermediary.
- *
- * The per-priority targets below sit INSIDE those caps — they are an internal
- * service goal, never a relaxation of the statutory number.
- */
+/** Internal response targets are capped by category-specific, non-pausing statutory deadlines. */
 
-import type {
-  SupportCaseStatus,
-  SupportPriority,
-  SupportTicketStatus,
-} from "@prisma/client";
-import type { Tx } from "@/lib/prisma";
+import type { SupportCaseStatus, SupportPriority } from "@prisma/client";
 
 /** The statutory ceilings. Nothing here may exceed these. */
 export const STATUTORY_ACK_HOURS = 24;
-export const STATUTORY_RESOLUTION_DAYS = 15;
+export const STATUTORY_RESOLUTION_DAYS = 7;
 export const ACK_PROMISE_COPY = "within 24 hours";
 
 const HOUR_MS = 3_600_000;
@@ -109,13 +92,14 @@ export function tightenDeadlinesForPriorityRaise(
 
 /** The subset of a ticket or unified support case the clock reads. */
 export interface SlaClock {
-  status: SupportTicketStatus | SupportCaseStatus;
+  status: SupportCaseStatus;
   ackDueAt: Date | null;
   acknowledgedAt: Date | null;
   resolutionDueAt: Date | null;
   resolvedAt: Date | null;
   awaitingUserSince: Date | null;
   pausedSeconds: number;
+  statutoryDueAt?: Date | null;
 }
 
 /**
@@ -149,9 +133,13 @@ export function effectiveResolutionDueAt(
   clock: SlaClock,
   now: Date = new Date(),
 ): Date | null {
-  if (!clock.resolutionDueAt) return null;
+  if (!clock.resolutionDueAt) return clock.statutoryDueAt ?? null;
+  const internalDue =
+    clock.resolutionDueAt.getTime() + pausedSecondsAt(clock, now) * 1000;
   return new Date(
-    clock.resolutionDueAt.getTime() + pausedSecondsAt(clock, now) * 1000,
+    clock.statutoryDueAt
+      ? Math.min(internalDue, clock.statutoryDueAt.getTime())
+      : internalDue,
   );
 }
 
@@ -198,54 +186,6 @@ export function slaStateOf(clock: SlaClock, now: Date = new Date()): SlaState {
         ? resolutionDue.getTime() - now.getTime()
         : null,
   };
-}
-
-/**
- * The writes a STAFF reply makes: the ball moves to the user, so the resolution
- * clock stops. `firstAgentReplyAt` is set once and never moved — it is the
- * number that predicts CSAT, and an auto-acknowledgement must not claim it.
- */
-export async function applyStaffReply(
-  tx: Tx,
-  ticketId: string,
-  now: Date = new Date(),
-): Promise<void> {
-  // First-write-wins, expressed in the WHERE clause so the DATABASE decides it
-  // rather than a value we read a moment ago. Reading the row first and then
-  // writing unconditionally is not enough even inside a transaction: at READ
-  // COMMITTED two staff replying at the same instant both see null, and the
-  // later write moves a timestamp that is supposed to be the first one.
-  await tx.supportTicket.updateMany({
-    where: { id: ticketId, acknowledgedAt: null },
-    data: { acknowledgedAt: now },
-  });
-  await tx.supportTicket.updateMany({
-    where: { id: ticketId, firstAgentReplyAt: null },
-    data: { firstAgentReplyAt: now },
-  });
-
-  // Bank the wait that was already running, then restart the clock. The CAS on
-  // `awaitingUserSince` is what stops two simultaneous replies banking the same
-  // interval twice — only the one whose read is still current matches.
-  const current = await tx.supportTicket.findUnique({
-    where: { id: ticketId },
-    select: { awaitingUserSince: true },
-  });
-  const open = openWaitSeconds(
-    { awaitingUserSince: current?.awaitingUserSince ?? null },
-    now,
-  );
-  if (current?.awaitingUserSince && open > 0) {
-    const banked = await tx.supportTicket.updateMany({
-      where: { id: ticketId, awaitingUserSince: current.awaitingUserSince },
-      data: { pausedSeconds: { increment: open }, awaitingUserSince: now },
-    });
-    if (banked.count > 0) return;
-  }
-  await tx.supportTicket.updateMany({
-    where: { id: ticketId },
-    data: { awaitingUserSince: now },
-  });
 }
 
 /**

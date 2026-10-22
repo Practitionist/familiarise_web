@@ -1,23 +1,12 @@
 "use client";
 
-/**
- * #support-hub — ORG SUPPORT TRIAGE (per-org dashboard, `operations.read`).
- *
- * Three things live here, all metadata-level by ADR 20:
- *  1. CSAT aggregate — the "org quality signal" (avg + count; no per-member
- *     rows exist to show, deliberately).
- *  2. Members' support conversations — status/category/who/when. NO
- *     transcripts: a member's support chat is content, and content belongs to
- *     the participant (and, once escalated, the platform's team).
- *  3. Raise concern — the org-party thread entry: an operator opens THEIR OWN
- *     conversation on a specific session (ORG_ADMIN_DISPUTE / sponsorship
- *     intents, served and enforced server-side).
- */
+/** Session quality aggregates and scoped support activity; member correspondence stays private. */
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Star, MessageSquareText, ShieldAlert } from "lucide-react";
+import { z } from "zod";
 
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
@@ -25,26 +14,35 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useRequireOrgAccess } from "../useOrgRole";
 import { caseKeyOf } from "@/lib/support/case-key";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
+import { supportKeys } from "@/lib/support/support-keys";
 
-interface TriageRow {
-  id: string;
-  appointmentId: string;
-  category: string;
-  status: string;
-  activeChannel: string;
-  lastMessageAt: string;
-  createdAt: string;
-  submitterUserId?: string | null;
-  member: { id: string; name: string | null };
-  appointment: {
-    appointmentType: string;
-    startsAt: string | null;
-    planTitle: string | null;
-  };
-}
+const TriageList = z.object({
+  data: z.array(
+    z.object({
+      id: z.string(),
+      appointmentId: z.string(),
+      category: z.string().nullable(),
+      status: z.string(),
+      activeChannel: z.string(),
+      lastMessageAt: z.string(),
+      createdAt: z.string(),
+      canCorrespond: z.boolean().optional(),
+      submitterUserId: z.string().nullish(),
+      member: z.object({ id: z.string(), name: z.string().nullable() }),
+      appointment: z.object({
+        appointmentType: z.string().nullish(),
+        startsAt: z.string().nullable(),
+        planTitle: z.string().nullable(),
+      }),
+    }),
+  ),
+  /** Personal requests in sensitive categories are counted, never listed. */
+  withheld: z.object({ sensitivePersonal: z.number() }),
+});
+type TriageRow = z.infer<typeof TriageList>["data"][number];
 
 export function isOrgOperatorThread(t: {
-  category: string;
+  category: string | null;
   submitterUserId?: string | null;
   member: { id: string };
 }): boolean {
@@ -105,7 +103,8 @@ function OrgThreadRow({
           </span>
         </p>
         <p className="text-xs text-muted-foreground">
-          {humanizeEnum(t.category)} · last activity{" "}
+          {t.category ? humanizeEnum(t.category) : "Support request"} · last
+          activity{" "}
           {new Date(t.lastMessageAt).toLocaleDateString(undefined, {
             day: "numeric",
             month: "short",
@@ -124,10 +123,10 @@ function OrgThreadRow({
         />
         <Button variant="outline" size="sm" asChild>
           <Link
-            href={`/dashboard/organization/${orgId}/support/requests/${caseKeyOf({ kind: "booking", id: t.appointmentId })}`}
+            href={`/dashboard/organization/${orgId}/support/requests/${caseKeyOf({ kind: t.canCorrespond ? "case" : "booking", id: t.canCorrespond ? t.id : t.appointmentId })}`}
           >
             <ShieldAlert className="mr-1.5 h-3.5 w-3.5" />
-            Raise concern
+            {t.canCorrespond ? "View request" : "Raise concern"}
           </Link>
         </Button>
       </div>
@@ -157,17 +156,16 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
   });
 
   const threads = useQuery({
-    queryKey: ["org-support-threads", orgId, status],
+    queryKey: supportKeys.orgThreads(orgId, status),
     enabled: allowed,
-    queryFn: async (): Promise<TriageRow[]> => {
+    queryFn: async () => {
       const params = new URLSearchParams({ pageSize: "30" });
       if (status) params.set("status", status);
       const res = await fetch(
         `/api/organizations/${orgId}/support-threads?${params}`,
       );
       if (!res.ok) throw new Error("Failed to load support triage");
-      const json = await res.json();
-      return json.data;
+      return TriageList.parse(await res.json());
     },
   });
 
@@ -208,14 +206,32 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
       </Button>
     </div>
   ) : null;
+  const rows = threads.data?.data ?? [];
+  let threadList: ReactNode;
+  if (threadsError) threadList = threadsError;
+  else if (threads.isLoading) threadList = <Skeleton className="h-24 w-full" />;
+  else if (rows.length === 0)
+    threadList = (
+      <p className="text-sm text-muted-foreground">
+        No member conversations match this filter.
+      </p>
+    );
+  else
+    threadList = (
+      <ul className="divide-y divide-border rounded-lg border border-border">
+        {rows.map((t) => (
+          <OrgThreadRow key={t.id} thread={t} orgId={orgId} />
+        ))}
+      </ul>
+    );
 
   return (
     <div className="space-y-8">
       {/* Quality signal — aggregates only (ADR 20) */}
       <section>
-        <h2 className="mb-3 text-sm font-semibold text-foreground">
+        <h3 className="mb-3 text-sm font-semibold text-foreground">
           Session quality
-        </h2>
+        </h3>
         <div className="grid gap-3 sm:grid-cols-2">
           {summaryError ? (
             summaryError
@@ -306,10 +322,9 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
       {/* Members' support conversations — metadata triage */}
       <section>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-            <MessageSquareText className="h-4 w-4" /> Members&apos; support
-            conversations
-          </h2>
+          <h3 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+            <MessageSquareText className="h-4 w-4" /> Member support activity
+          </h3>
           <div className="flex gap-1">
             <Button
               size="sm"
@@ -330,25 +345,21 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
             ))}
           </div>
         </div>
-        {threadsError ? (
-          threadsError
-        ) : threads.isLoading ? (
-          <Skeleton className="h-24 w-full" />
-        ) : (threads.data?.length ?? 0) === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No member conversations match this filter.
+        {threadList}
+        {(threads.data?.withheld.sensitivePersonal ?? 0) > 0 && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {threads.data!.withheld.sensitivePersonal} personal{" "}
+            {threads.data!.withheld.sensitivePersonal === 1
+              ? "request is"
+              : "requests are"}{" "}
+            not listed because of their sensitive category.
           </p>
-        ) : (
-          <ul className="divide-y divide-border rounded-lg border border-border">
-            {threads.data!.map((t) => (
-              <OrgThreadRow key={t.id} thread={t} orgId={orgId} />
-            ))}
-          </ul>
         )}
         <p className="mt-2 text-xs text-muted-foreground">
-          Conversations are shown as status only — what a member discusses with
-          support stays between them and the platform. &quot;Raise concern&quot;
-          opens your organization&apos;s own conversation about that session.
+          Member requests show status only; their conversations stay private.
+          Authorized teammates can open organization-owned requests. &quot;Raise
+          concern&quot; starts your organization&apos;s own request about that
+          session.
         </p>
       </section>
     </div>

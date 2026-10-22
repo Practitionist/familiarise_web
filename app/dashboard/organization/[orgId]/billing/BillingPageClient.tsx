@@ -65,7 +65,7 @@ export function BillingPageClient({
 }) {
   const { can } = useOrgRole(orgId);
   const requestHref = (ticketId: string) =>
-    `/dashboard/organization/${orgId}/support/requests/${caseKeyOf({ kind: "ticket", id: ticketId })}`;
+    `/dashboard/organization/${orgId}/support/requests/${caseKeyOf({ kind: "case", id: ticketId })}`;
   const { allowed } = useRequireOrgAccess(orgId, {
     permission: "billing.read",
     canSponsor: true,
@@ -135,6 +135,7 @@ export function BillingPageClient({
                 defaults={{
                   issueType: "BILLING_QUESTION",
                   organizationId: orgId,
+                  ownershipScope: "ORG_BILLING",
                   title: `Invoice request for ${orgName}`,
                   description:
                     "Please issue an invoice for: \n\nBilling period or bookings covered: \nPurchase order number (if any): ",
@@ -227,7 +228,7 @@ export function BillingPageClient({
             },
             {
               value: "disputes",
-              label: "Disputes",
+              label: "Payment disputes",
               show: can("disputes.read"),
               content: <DisputesPanel orgId={orgId} />,
             },
@@ -247,6 +248,11 @@ export function BillingPageClient({
             defaults={{
               issueType: "BILLING_QUESTION",
               title: `Billing question from ${orgName}`,
+              // Only billing correspondents may file into the org billing queue.
+              ...(can("supportCases.billing.manage") && {
+                organizationId: orgId,
+                ownershipScope: "ORG_BILLING",
+              }),
             }}
             trigger={
               <button

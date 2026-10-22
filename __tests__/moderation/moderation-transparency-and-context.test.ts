@@ -1,7 +1,7 @@
 /**
  * @jest-environment node
  */
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 const mockModerationReport = {
   findFirst: jest.fn(),
@@ -36,6 +36,11 @@ const mockAppointmentFeedback = {
   updateMany: jest.fn(),
 };
 const mockAppointmentSupportThread = {
+  findFirst: jest.fn(),
+  findMany: jest.fn(),
+  count: jest.fn(),
+};
+const mockSupportCase = {
   findFirst: jest.fn(),
   findMany: jest.fn(),
   count: jest.fn(),
@@ -100,6 +105,9 @@ jest.mock("../../lib/prisma", () => ({
     get appointmentSupportThread() {
       return mockAppointmentSupportThread;
     },
+    get supportCase() {
+      return mockSupportCase;
+    },
     get refund() {
       return mockRefund;
     },
@@ -123,6 +131,15 @@ jest.mock("../../lib/auth-server", () => ({
 jest.mock("../../lib/auth-helpers", () => ({
   requirePrivilegedAuth: (...args: unknown[]) =>
     mockRequirePrivilegedAuth(...args),
+  requireApiAuth: async () => {
+    const session = await mockGetSession();
+    if (!session?.user) {
+      return {
+        error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+      };
+    }
+    return { session };
+  },
   isPrivileged: jest.fn().mockReturnValue(false),
 }));
 
@@ -275,7 +292,13 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
           status: "DISMISSED",
           createdAt: new Date("2026-10-01T10:00:00Z"),
           resolvedAt: new Date("2026-10-02T12:00:00Z"),
-          actions: [{ actionType: "NO_ACTION" }],
+          actions: [
+            {
+              id: "act-1",
+              actionType: "NO_ACTION",
+              createdAt: new Date("2026-10-02T12:00:00Z"),
+            },
+          ],
         },
         {
           id: "fedcba98-7654-3210-fedc-ba9876543210",
@@ -283,7 +306,13 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
           status: "ACTION_TAKEN",
           createdAt: new Date("2026-10-03T10:00:00Z"),
           resolvedAt: new Date("2026-10-04T12:00:00Z"),
-          actions: [{ actionType: "CONTENT_REMOVED" }],
+          actions: [
+            {
+              id: "act-2",
+              actionType: "CONTENT_REMOVED",
+              createdAt: new Date("2026-10-04T12:00:00Z"),
+            },
+          ],
         },
       ]);
       mockModerationReport.count.mockResolvedValue(2);
@@ -303,6 +332,8 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
           createdAt: "2026-10-01T10:00:00.000Z",
           resolvedAt: "2026-10-02T12:00:00.000Z",
           outcome: "NO_ACTION_TAKEN",
+          moderationActionId: "act-1",
+          appealUntil: "2027-04-02T12:00:00.000Z",
         },
         {
           reportId: "fedcba98-7654-3210-fedc-ba9876543210",
@@ -312,6 +343,8 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
           createdAt: "2026-10-03T10:00:00.000Z",
           resolvedAt: "2026-10-04T12:00:00.000Z",
           outcome: "CONTENT_REMOVED",
+          moderationActionId: "act-2",
+          appealUntil: "2027-04-04T12:00:00.000Z",
         },
       ]);
       expect(body.reports[0]).not.toHaveProperty("notes");
@@ -328,9 +361,7 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
       mockRefund.findMany.mockResolvedValue([
         { payment: { appointmentId: "apt-1" } },
       ]);
-      mockAppointmentSupportThread.findMany.mockResolvedValue([
-        { appointmentId: "apt-2" },
-      ]);
+      mockSupportCase.findMany.mockResolvedValue([{ appointmentId: "apt-2" }]);
       mockDispute.findMany.mockResolvedValue([]);
 
       const signals = await readReviewReportSignals(["apt-1", "apt-2"]);
@@ -349,7 +380,7 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
         id: "apt-1",
         occurrences: [{ completionStatus: "COMPLETED" }],
         consultantReviews: [{ createdAt: new Date("2026-10-07T10:00:00Z") }],
-        supportThreads: [{ id: "thread-open-1" }],
+        supportCases: [{ id: "case-open-1" }],
         payment: [
           {
             refunds: [
@@ -568,10 +599,10 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
       });
       mockAppointmentOccurrence.findMany.mockResolvedValue([]);
       mockAppointmentFeedback.findMany.mockResolvedValue([]);
-      // Only consultee-1's own thread is open; another attendee's is not visible.
-      mockAppointmentSupportThread.findFirst.mockImplementation(
-        async ({ where }: { where: { userId: string } }) =>
-          where.userId === "consultee-1" ? { id: "thread-1" } : null,
+      // Only consultee-1's own case is open; another attendee's is not visible.
+      mockSupportCase.findFirst.mockImplementation(
+        async ({ where }: { where: { requesterUserId: string } }) =>
+          where.requesterUserId === "consultee-1" ? { id: "case-1" } : null,
       );
 
       const req = new NextRequest(

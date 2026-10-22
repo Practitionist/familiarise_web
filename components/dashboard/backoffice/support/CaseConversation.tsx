@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Lock, Send } from "lucide-react";
+import { Eye, Lock, Send } from "lucide-react";
 
+import { CaseAttachments } from "@/components/support/CaseAttachments";
+import { useCaseTimeline } from "@/components/support/useCaseTimeline";
 import { SupportBubble } from "@/components/support/SupportBubble";
+import { useThreadScroll } from "@/components/support/useThreadScroll";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type { SavedReply } from "@/lib/support/saved-replies";
@@ -33,15 +36,11 @@ function writeNote(caseKey: string, value: string) {
   }
 }
 
-const NOTE_HINT_ID = "support-note-hint";
 const CLOSED_HINT_ID = "support-closed-hint";
 
 /**
- * #1527 — the case timeline and its composer. Reply and Private note keep
- * separate drafts, so switching modes can never send a note's text to the
- * user; the note draft is kept per case in this browser (localStorage).
- * Saved replies and Help Center links come in through the Insert menu and
- * the suggestion chips, always into the reply.
+ * The case timeline and its composer. Reply and Private note keep separate
+ * drafts, so switching modes never sends a note's text to the customer.
  */
 export function CaseConversation({
   data,
@@ -70,7 +69,12 @@ export function CaseConversation({
   onInsert: (text: string) => void;
   onSelectReply?: (reply: SavedReply) => void;
 }>) {
-  const canNote = !!data.ticketId;
+  const history = useCaseTimeline(
+    data.caseId,
+    data.timeline,
+    data.nextBeforeSeq,
+    data.hasMore,
+  );
   const [note, setNote] = useState("");
   const [noteSaved, setNoteSaved] = useState(false);
 
@@ -85,22 +89,35 @@ export function CaseConversation({
     setNoteSaved(true);
   };
 
-  const endRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
-  }, [data.key, data.timeline.length]);
+  const scroll = useThreadScroll<HTMLDivElement>(
+    data.key,
+    history.timeline.length,
+  );
 
-  const isNote = mode === "note" && canNote;
+  const isNote = mode === "note";
   const replyLocked = data.status === "CLOSED" && !isNote;
   const draft = isNote ? note : replyDraft;
+  const latestDraft = useRef({ key: data.key, note, reply: replyDraft });
+  useEffect(() => {
+    latestDraft.current = { key: data.key, note, reply: replyDraft };
+  }, [data.key, note, replyDraft]);
+  const composer = useRef<HTMLTextAreaElement>(null);
   const submit = async () => {
     const message = draft.trim();
     if (!message || sending || replyLocked) return;
     try {
       await onSend(message, isNote);
     } catch {
+      composer.current?.focus();
       return;
     }
+    composer.current?.focus();
+    const current = latestDraft.current;
+    if (
+      current.key !== data.key ||
+      (isNote ? current.note : current.reply).trim() !== message
+    )
+      return;
     if (isNote) changeNote("");
     else onReplyDraftChange("");
     setNoteSaved(false);
@@ -132,25 +149,56 @@ export function CaseConversation({
           )}
         </div>
       )}
-      <div className="max-h-[60vh] flex-1 space-y-3 overflow-y-auto p-4">
-        {data.timeline.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No messages yet.</p>
-        ) : (
-          data.timeline.map((m) => (
-            <SupportBubble
-              key={m.id}
-              perspective="staff"
-              author={m.author}
-              authorName={m.authorName}
-              body={m.body}
-              at={m.at}
-              internal={m.internal}
-            />
-          ))
+      <div
+        ref={scroll.container}
+        onScroll={scroll.onScroll}
+        className="max-h-[60vh] flex-1 space-y-3 overflow-y-auto p-4"
+      >
+        {history.hasMore && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={history.loading}
+            onClick={() => void scroll.loadOlderAnchored(history.loadOlder)}
+          >
+            Load older messages
+          </Button>
         )}
-        <div ref={endRef} />
+        <div role="log" aria-label="Conversation" className="space-y-3">
+          {history.timeline.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No messages yet.</p>
+          ) : (
+            history.timeline.map((m) => (
+              <SupportBubble
+                key={m.id}
+                perspective="staff"
+                author={m.author}
+                authorName={m.authorName}
+                body={m.body}
+                at={m.at}
+                internal={m.internal}
+              />
+            ))
+          )}
+        </div>
       </div>
 
+      <CaseAttachments
+        caseId={data.caseId}
+        canUpload={data.status !== "CLOSED" && !isNote}
+        uploadNote={
+          <span className="inline-flex items-center gap-1 font-medium text-foreground">
+            <Eye className="h-3 w-3" aria-hidden />
+            Visible to the customer
+          </span>
+        }
+      />
+      {isNote && data.status !== "CLOSED" && (
+        <p className="px-3 text-xs text-muted-foreground">
+          Files can&apos;t be attached to a private note. Switch to Reply to
+          share a file; the customer will see it.
+        </p>
+      )}
       <div className="space-y-2 border-t border-border p-3">
         {suggested.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
@@ -170,7 +218,7 @@ export function CaseConversation({
         )}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div
-            role="tablist"
+            role="group"
             aria-label="Composer mode"
             className="flex items-center gap-1"
           >
@@ -178,20 +226,10 @@ export function CaseConversation({
               <button
                 key={m}
                 type="button"
-                role="tab"
-                aria-selected={mode === m}
-                disabled={m === "note" && !canNote}
-                aria-describedby={
-                  m === "note" && !canNote ? NOTE_HINT_ID : undefined
-                }
-                title={
-                  m === "note" && !canNote
-                    ? "Private notes need a ticket; this conversation has not been escalated."
-                    : undefined
-                }
+                aria-pressed={mode === m}
                 onClick={() => onModeChange(m)}
                 className={cn(
-                  "inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50",
+                  "inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
                   mode === m
                     ? "bg-foreground text-background"
                     : "text-muted-foreground hover:text-foreground",
@@ -201,14 +239,6 @@ export function CaseConversation({
                 {m === "reply" ? "Reply" : "Private note"}
               </button>
             ))}
-            {!canNote && (
-              <span
-                id={NOTE_HINT_ID}
-                className="text-[11px] text-muted-foreground"
-              >
-                Needs a ticket
-              </span>
-            )}
           </div>
           <CaseInsertMenu
             replies={replies}
@@ -223,12 +253,12 @@ export function CaseConversation({
             id={CLOSED_HINT_ID}
             className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground"
           >
-            {canNote
-              ? "This request is closed, so the customer can't receive replies. Private notes are still allowed."
-              : "This conversation is closed, so the customer can't receive replies."}
+            This request is closed, so the customer can&apos;t receive replies.
+            Private notes are still allowed.
           </p>
         )}
         <Textarea
+          ref={composer}
           aria-label={isNote ? "Private note" : "Reply to the customer"}
           aria-describedby={replyLocked ? CLOSED_HINT_ID : undefined}
           disabled={replyLocked}

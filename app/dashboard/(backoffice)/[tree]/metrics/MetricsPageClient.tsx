@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/select";
 import { durationLabel } from "@/lib/support/case-format";
 import type { InboxStats } from "@/types/support-case";
+import { supportKeys } from "@/lib/support/support-keys";
 
 interface StaffMetrics {
   supportMetrics: {
@@ -127,7 +128,7 @@ export default function StaffMetricsPage() {
   });
 
   const slaStats = useQuery<InboxStats>({
-    queryKey: ["support-inbox-stats"],
+    queryKey: supportKeys.inboxStats(),
     queryFn: async () => {
       const res = await fetch("/api/staff/support-inbox/stats");
       if (!res.ok) throw new Error("Failed to fetch support SLA stats");

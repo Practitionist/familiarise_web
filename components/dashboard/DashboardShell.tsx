@@ -40,10 +40,7 @@ import {
 } from "@/lib/dashboard/nav/find-index";
 
 export type DashboardShellKind =
-  | "personal"
-  | "organization"
-  | "workspace"
-  | "backoffice";
+  "personal" | "organization" | "workspace" | "backoffice";
 
 export interface DashboardShellProps {
   /** Keys the persisted sidebar-collapse state. */
@@ -143,7 +140,7 @@ export function DashboardShell({
           bar away; <main> is the only scrollport. The right panel must NOT be
           overflow-hidden — a second scrollport breaks sticky page chrome. */}
       <div className="flex h-screen-maintenance overflow-hidden bg-zinc-50 dark:bg-zinc-950">
-        <div className="hidden h-full shrink-0 md:block">
+        <div className="hidden h-full min-h-0 shrink-0 overflow-hidden md:block">
           <CollapsibleSidebar
             groups={groups}
             basePath={nav.basePath}
@@ -194,7 +191,6 @@ export function DashboardShell({
           <MobileNav
             basePath={nav.basePath}
             groups={groups}
-            settings={nav.settings}
             orgSettings={account.orgSettings}
             onOpenFind={openFind}
             support={nav.support}

@@ -63,7 +63,7 @@ describe("unverifiedUserPurgeWhere", () => {
       memberships: { none: {} },
       erasureRequests: { none: {} },
       dpdpGrievances: { none: {} },
-      supportTickets: { none: {} },
+      supportCasesSubmitted: { none: {} },
       recordingPurchases: { none: {} },
     });
   });

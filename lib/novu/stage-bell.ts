@@ -19,6 +19,7 @@ export async function stageBell(
     dedupeKey: string;
     entityRef?: string;
     deferrable?: boolean;
+    notBefore?: Date;
   },
 ): Promise<StagedTrigger | null> {
   if (args.recipients.length === 0) return null;
@@ -28,11 +29,15 @@ export async function stageBell(
     { tx, deferrable: args.deferrable },
   );
   if (policy.allowedRecipients.length === 0) return null;
+  const notBefore =
+    args.notBefore && policy.notBefore
+      ? new Date(Math.max(args.notBefore.getTime(), policy.notBefore.getTime()))
+      : (args.notBefore ?? policy.notBefore);
   return stageTrigger({
     tx,
     ...args,
     recipients: policy.allowedRecipients,
-    ...(policy.notBefore ? { notBefore: policy.notBefore } : {}),
+    ...(notBefore ? { notBefore } : {}),
     kind: policy.allowedRecipients.length > 1 ? "MULTI" : "SINGLE",
   });
 }

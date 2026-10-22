@@ -80,10 +80,11 @@ const ISSUE_TYPE_BY_REASON: Readonly<Record<string, SupportIssueType>> = {
   refund_missing: "REFUND_REQUEST",
   high_value_refund: "REFUND_REQUEST",
   sponsorship_charge: "BILLING_QUESTION",
+  gst_invoice_wrong: "TAX_GST",
+  org_billing_dispute: "BILLING_QUESTION",
 
   // Org-party concerns are conduct/relationship, not a session defect.
   org_conduct_dispute: "GENERAL_INQUIRY",
-  routed_org_disputes: "GENERAL_INQUIRY",
 };
 
 /**

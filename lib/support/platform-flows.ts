@@ -6,7 +6,7 @@
  * holds the cursor for the length of one sitting and replays it to the server
  * each turn; the server validates every transition against this registry. A
  * terminal either self-serves (resolved — nothing persisted) or escalates,
- * which is the ONLY write: a `SupportTicket` created via the shared factory
+ * which is the ONLY write: a `SupportCase` created via the shared factory
  * with the walked path summarized into the description.
  *
  * Reuses the appointment scope's FlowNode/FlowOption node shapes and the same
@@ -17,7 +17,7 @@
  * `SupportIssueType` ticket taxonomy — no new enums, ops queue stays uniform.
  */
 
-import type { SupportIssueType } from "@prisma/client";
+import type { SupportCaseOwnership, SupportIssueType } from "@prisma/client";
 import type { FlowNode } from "./types";
 
 export type PlatformFlowId =
@@ -25,6 +25,7 @@ export type PlatformFlowId =
   | "ACCOUNT_ACCESS"
   | "PLATFORM_TECHNICAL"
   | "ORG_OPERATOR_BILLING"
+  | "EXPERT_TAX"
   | "GENERAL";
 
 /** Facts the platform intake resolves per request. */
@@ -32,8 +33,14 @@ export interface PlatformSupportContext {
   userId: string;
   /** Caller holds an ACTIVE org membership with operator grants. */
   isOperator: boolean;
+  /** Caller holds billing.read in an ACTIVE membership (finance roles included). */
+  isBillingReader: boolean;
+  /** Caller has a live consultant profile, so earns and is taxed on payouts. */
+  isExpert: boolean;
   /** The caller's ACTIVE-membership org ids (attribution candidates). */
   organizationIds: string[];
+  /** ACTIVE-membership orgs where the caller holds supportCases.billing.manage. */
+  billingOrgIds: string[];
 }
 
 export interface PlatformFlowDefinition {
@@ -61,6 +68,7 @@ const paymentsBillingFlow: PlatformFlowDefinition = {
     payment_deducted_unconfirmed: "PAYMENT_FAILED",
     double_charge: "CHARGED_TWICE",
     refund_missing: "REFUND_REQUEST",
+    gst_invoice_wrong: "TAX_GST",
   },
   nodes: {
     start: {
@@ -124,7 +132,7 @@ const paymentsBillingFlow: PlatformFlowDefinition = {
     tracking: {
       id: "tracking",
       kind: "TERMINAL",
-      body: "Gateway refunds typically land in 5–7 working days depending on your bank. You can watch its status on your Payments page.",
+      body: "Gateway refunds typically land in 5–7 working days depending on your bank. You can watch its status on your Billing page.",
       action: { kind: "SHOW_REFUND_STATUS" },
       resolved: true,
       promises: [
@@ -149,10 +157,30 @@ const paymentsBillingFlow: PlatformFlowDefinition = {
     },
     invoice: {
       id: "invoice",
+      kind: "PROMPT",
+      body: "Do you need a copy of an invoice, or is something on it wrong?",
+      options: [
+        { id: "download", label: "I need to download it", next: "download" },
+        {
+          id: "gstwrong",
+          label: "My GST invoice is wrong (GSTIN, state or amount)",
+          next: "gstwrong",
+        },
+      ],
+    },
+    download: {
+      id: "download",
       kind: "TERMINAL",
-      body: "Invoices and GST receipts live on your Payments page — download any of them anytime.",
+      body: "Invoices and GST receipts live on your Billing page — download any of them anytime.",
       action: { kind: "SHOW_INVOICES" },
       resolved: true,
+    },
+    gstwrong: {
+      id: "gstwrong",
+      kind: "TERMINAL",
+      body: "Thanks — tell us which invoice it is and what's wrong (GSTIN, state or amount), and our billing team will review it and reply here.",
+      escalate: true,
+      reason: "gst_invoice_wrong",
     },
   },
 };
@@ -278,8 +306,9 @@ const orgOperatorBillingFlow: PlatformFlowDefinition = {
   issueTypeByReason: {
     operator_invoice: "BILLING_QUESTION",
     operator_procurement: "BILLING_QUESTION",
+    gst_invoice_wrong: "TAX_GST",
   },
-  available: (ctx) => ctx.isOperator,
+  available: (ctx) => ctx.isOperator || ctx.isBillingReader,
   nodes: {
     start: {
       id: "start",
@@ -296,10 +325,46 @@ const orgOperatorBillingFlow: PlatformFlowDefinition = {
     },
     invoice: {
       id: "invoice",
+      kind: "PROMPT",
+      body: "What do you need with the invoice?",
+      options: [
+        {
+          id: "download",
+          label: "Download an invoice or credit note",
+          next: "download",
+        },
+        {
+          id: "dispute",
+          label: "Question or dispute a charge or invoice",
+          next: "dispute",
+        },
+        {
+          id: "gstwrong",
+          label: "Our GST invoice is wrong (GSTIN, state or amount)",
+          next: "gstwrong",
+        },
+      ],
+    },
+    download: {
+      id: "download",
       kind: "TERMINAL",
-      body: "Your org's invoices and credit notes are on the Billing page; charge disputes go through Billing → Disputes where finance can act on the specific invoice.",
+      body: "Your organization's invoices and credit notes are on its Billing page, ready to download.",
       action: { kind: "SHOW_INVOICES" },
       resolved: true,
+    },
+    dispute: {
+      id: "dispute",
+      kind: "TERMINAL",
+      body: "Tell us which charge or invoice it is and what looks wrong. Our billing team will review it and reply on this request.",
+      escalate: true,
+      reason: "operator_invoice",
+    },
+    gstwrong: {
+      id: "gstwrong",
+      kind: "TERMINAL",
+      body: "Tell us which invoice it is and what's wrong (GSTIN, state or amount). Our billing team will review it and reply on this request.",
+      escalate: true,
+      reason: "gst_invoice_wrong",
     },
     po: {
       id: "po",
@@ -307,6 +372,79 @@ const orgOperatorBillingFlow: PlatformFlowDefinition = {
       body: "Our enterprise team will pick this up and respond with your organization's account manager copied.",
       escalate: true,
       reason: "operator_procurement",
+    },
+  },
+};
+
+// --- Expert: tax on earnings (TDS certificates, PAN) ---------------------------
+const expertTaxFlow: PlatformFlowDefinition = {
+  id: "EXPERT_TAX",
+  title: "Tax on my earnings",
+  description: "TDS certificates (Form 16A) and PAN details",
+  entryNodeId: "start",
+  issueType: "TDS_CERTIFICATE",
+  issueTypeByReason: {
+    tds_certificate: "TDS_CERTIFICATE",
+    pan_mismatch: "PAN_CARD_MISMATCH",
+  },
+  available: (ctx) => ctx.isExpert,
+  nodes: {
+    start: {
+      id: "start",
+      kind: "PROMPT",
+      body: "What do you need help with?",
+      options: [
+        { id: "tds", label: "My TDS certificate (Form 16A)", next: "tds" },
+        { id: "pan", label: "My PAN doesn't match", next: "pan" },
+      ],
+    },
+    tds: {
+      id: "tds",
+      kind: "PROMPT",
+      body: 'TDS deducted from your earnings is listed under Earnings & payouts → Summary → Tax & TDS, with challan numbers and Form 16A (Form 131) references by financial year and quarter. "Export FY Earnings & Tax CSV" downloads all of it. Did you find what you need?',
+      options: [
+        { id: "found", label: "Yes, found it", next: "tdsfound" },
+        {
+          id: "missing",
+          label: "My certificate is missing or wrong",
+          next: "tdsmissing",
+        },
+      ],
+    },
+    tdsfound: {
+      id: "tdsfound",
+      kind: "TERMINAL",
+      body: "Glad that helped.",
+      resolved: true,
+    },
+    tdsmissing: {
+      id: "tdsmissing",
+      kind: "TERMINAL",
+      body: "Tell us the financial year and quarter, and what's missing or wrong. Our team will check your TDS records and reply here. Please don't type your full PAN.",
+      escalate: true,
+      reason: "tds_certificate",
+    },
+    pan: {
+      id: "pan",
+      kind: "PROMPT",
+      body: "Your PAN is under Settings → Get paid → Tax details, where we show its last four characters. If it's wrong, enter the correct one there; a changed PAN is verified again. Does it match now?",
+      options: [
+        { id: "fixed", label: "Yes, it's right now", next: "panfixed" },
+        { id: "stuck", label: "It still doesn't match", next: "panstuck" },
+      ],
+    },
+    panfixed: {
+      id: "panfixed",
+      kind: "TERMINAL",
+      body: "Thanks — your tax details are up to date.",
+      resolved: true,
+    },
+    panstuck: {
+      id: "panstuck",
+      kind: "TERMINAL",
+      body: "Tell us where you see the mismatch, for example on a Form 16A or in Form 26AS. Our team will review your tax details and reply here. Please don't type your full PAN.",
+      escalate: true,
+      reason: "pan_mismatch",
     },
   },
 };
@@ -366,6 +504,7 @@ export const ALL_PLATFORM_FLOWS: PlatformFlowDefinition[] = [
   accountAccessFlow,
   platformTechnicalFlow,
   orgOperatorBillingFlow,
+  expertTaxFlow,
   generalFlow,
 ];
 
@@ -430,4 +569,18 @@ export function resolveOrgAttribution(args: {
     return { ok: true, organizationId: activeOrganizationIds[0] };
   }
   return { ok: true, organizationId: null };
+}
+
+/** Operator-billing escalations go to the org billing team when the filer is one of its correspondents. */
+export function platformOwnershipScope(args: {
+  flowId: string;
+  organizationId: string | null;
+  billingOrgIds: readonly string[];
+}): SupportCaseOwnership {
+  const { flowId, organizationId, billingOrgIds } = args;
+  return flowId === "ORG_OPERATOR_BILLING" &&
+    organizationId !== null &&
+    billingOrgIds.includes(organizationId)
+    ? "ORG_BILLING"
+    : "PERSONAL";
 }

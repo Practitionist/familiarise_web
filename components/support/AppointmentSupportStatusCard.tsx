@@ -14,10 +14,8 @@ import { Bot, Headset, UserRound } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  fetchSupportThread,
-  supportThreadKey,
-} from "@/components/support/useSupportThread";
+import { fetchSupportThread } from "@/components/support/useSupportThread";
+import { supportKeys } from "@/lib/support/support-keys";
 
 function statusVariant(
   status: string,
@@ -46,7 +44,7 @@ export function AppointmentSupportStatusCard({
 }) {
   // Same key and fetcher as the request page, so they share one cache entry.
   const { data } = useQuery({
-    queryKey: supportThreadKey(appointmentId),
+    queryKey: supportKeys.thread(appointmentId),
     queryFn: () => fetchSupportThread(appointmentId),
   });
 

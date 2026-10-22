@@ -1,28 +1,38 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { useParams, useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { RefundDoorDialog, type RefundDoor } from "./RefundDoorDialog";
 
-interface NeedsHuman {
-  id: string;
-  message: string;
-  createdAt: string;
-  paymentId: string | null;
-  /** #1834 — a credit seat gets the credit door; a held paid seat the refund door. */
-  kind?: "credit" | "held-paid-seat";
-  occurrenceId?: string | null;
-  unitPaise?: number | null;
-}
+const NeedsHumanList = z.object({
+  items: z.array(
+    z.object({
+      id: z.string(),
+      message: z.string(),
+      createdAt: z.string(),
+      paymentId: z.string().nullable(),
+      /** A credit seat gets the credit door, a held paid seat the refund door, a support remedy its case. */
+      kind: z
+        .enum(["credit", "held-paid-seat", "support-recommendation"])
+        .optional(),
+      occurrenceId: z.string().nullish(),
+      unitPaise: z.number().nullish(),
+      caseId: z.string().nullish(),
+    }),
+  ),
+});
+type NeedsHuman = z.infer<typeof NeedsHumanList>["items"][number];
 
 async function fetchNeeds(): Promise<{ items: NeedsHuman[] }> {
   const res = await fetch("/api/admin/refunds/needs-human");
   if (!res.ok) throw new Error("Failed to load");
-  return res.json() as Promise<{ items: NeedsHuman[] }>;
+  return NeedsHumanList.parse(await res.json());
 }
 
 /** #1834 — a held seat opens the refund door keyed to its session, at its unit. */
@@ -48,6 +58,7 @@ function doorFor(item: NeedsHuman) {
  */
 export function RefundDoorsPanel() {
   const params = useSearchParams();
+  const tree = useParams<{ tree?: string }>()?.tree ?? "admin";
   const linkedPayment = params.get("paymentId");
   // A booking's Ops actions link here with `?door=issue&paymentId=…`.
   const [open, setOpen] = useState<{
@@ -92,7 +103,7 @@ export function RefundDoorsPanel() {
         </div>
         {items.length > 0 && (
           <div className="space-y-2">
-            <p className="text-sm font-medium">Seats waiting for a human</p>
+            <p className="text-sm font-medium">Refunds waiting for a human</p>
             <ul className="divide-y divide-border rounded-md border">
               {items.map((item) => (
                 <li
@@ -100,7 +111,16 @@ export function RefundDoorsPanel() {
                   className="flex flex-wrap items-center justify-between gap-2 p-3 text-sm"
                 >
                   <span className="min-w-0 flex-1">{item.message}</span>
-                  {item.paymentId && (
+                  {item.kind === "support-recommendation" && item.caseId && (
+                    <Button size="sm" variant="outline" asChild>
+                      <Link
+                        href={`/dashboard/${tree}/support/c_${item.caseId}`}
+                      >
+                        Open case
+                      </Link>
+                    </Button>
+                  )}
+                  {item.kind !== "support-recommendation" && item.paymentId && (
                     <Button
                       size="sm"
                       variant="outline"

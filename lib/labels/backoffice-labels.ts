@@ -2,8 +2,7 @@ import type {
   DisputeStatus,
   OrgStatus,
   SupportPriority,
-  SupportThreadStatus,
-  SupportTicketStatus,
+  SupportCaseStatus,
 } from "@prisma/client";
 
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
@@ -29,11 +28,11 @@ function resolve<K extends string>(
   );
 }
 
-// A ticket waiting on support is on "you"; on hold waits on the customer.
-export const TICKET_STATUS: Record<SupportTicketStatus, ToneLabel> = {
+// Customer waiting is tracked by the case clock, independently of its status.
+export const TICKET_STATUS: Record<SupportCaseStatus, ToneLabel> = {
   OPEN: { label: "Open", tone: "warning" },
   IN_PROGRESS: { label: "In progress", tone: "info" },
-  ON_HOLD: { label: "On hold", tone: "caution" },
+  ESCALATED: { label: "Escalated", tone: "critical" },
   RESOLVED: { label: "Resolved", tone: "success" },
   CLOSED: { label: "Closed", tone: "neutral" },
 };
@@ -63,22 +62,8 @@ export const DISPUTE_STATUS: Record<DisputeStatus, ToneLabel> = {
 export const disputeStatus = (v: string | null | undefined) =>
   resolve(DISPUTE_STATUS, v);
 
-// Open/escalated wait on support; in progress is being worked.
-export const THREAD_STATUS: Record<SupportThreadStatus, ToneLabel> = {
-  OPEN: { label: "Open", tone: "warning" },
-  IN_PROGRESS: { label: "In progress", tone: "info" },
-  ESCALATED: { label: "Escalated", tone: "critical" },
-  RESOLVED: { label: "Resolved", tone: "success" },
-  CLOSED: { label: "Closed", tone: "neutral" },
-};
-export const threadStatus = (v: string | null | undefined) =>
-  resolve(THREAD_STATUS, v);
-
-/** #1527 — a Support inbox case: a ticket, or a not-yet-escalated conversation. */
-export const caseStatus = (
-  kind: "ticket" | "thread",
-  v: string | null | undefined,
-) => (kind === "ticket" ? ticketStatus(v) : threadStatus(v));
+export const caseStatus = (v: string | null | undefined) =>
+  resolve(TICKET_STATUS, v);
 
 export const ORG_STATUS: Record<OrgStatus, ToneLabel> = {
   PENDING_VERIFICATION: { label: "Pending verification", tone: "warning" },

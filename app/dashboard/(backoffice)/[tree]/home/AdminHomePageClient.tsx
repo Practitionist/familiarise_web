@@ -39,6 +39,7 @@ import type {
   RecentRefund,
 } from "@/types/payments";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { supportKeys } from "@/lib/support/support-keys";
 
 // Fetch admin dashboard stats
 async function fetchAdminStats(): Promise<AdminDashboardStats> {
@@ -120,7 +121,7 @@ function NeedsAttention() {
   const { basePath, can } = useBackofficeCapability();
   const counts = useBackofficeNavCounts();
   const supportStats = useQuery({
-    queryKey: ["support-inbox-stats"],
+    queryKey: supportKeys.inboxStats(),
     queryFn: async (): Promise<{
       openCases: number;
       slaBreaches: number;

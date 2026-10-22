@@ -52,8 +52,8 @@ export interface ConsulteePaymentRow {
   paymentGateway: string;
   appointmentType: string | null;
   appointmentId: string | null;
-  /** #1675 — the buyer already has a support thread on this booking. */
-  hasSupportThread: boolean;
+  /** The buyer already has a support case on this booking. */
+  hasSupportCase: boolean;
   planTitle: string;
   consultantName: string;
   organizationId: string | null;
@@ -248,9 +248,12 @@ export function paymentRowSelect(userId: string) {
       select: {
         id: true,
         appointmentType: true,
-        // #1675 — the buyer's own support thread on this booking, when one
-        // exists, is where a failed refund's "Contact support" goes.
-        supportThreads: { where: { userId }, select: { id: true }, take: 1 },
+        // Failed-refund help reuses the buyer’s own active correspondence.
+        supportCases: {
+          where: { requesterUserId: userId, deletedAt: null },
+          select: { id: true },
+          take: 1,
+        },
         consultation: {
           select: {
             status: true,
@@ -392,7 +395,7 @@ export function toRow(p: PaymentRecord): ConsulteePaymentRow {
     paymentGateway: p.paymentGateway,
     appointmentType: a?.appointmentType ?? null,
     appointmentId: a?.id ?? null,
-    hasSupportThread: (a?.supportThreads.length ?? 0) > 0,
+    hasSupportCase: (a?.supportCases.length ?? 0) > 0,
     planTitle: plan?.title ?? "Payment",
     consultantName,
     organizationId: p.organizationId,

@@ -17,6 +17,7 @@ it("hides the admin-only sections from staff and keeps the rest", () => {
     "disputes",
     "payouts",
     "incidents",
+    "support-spend",
   ]);
   expect(moneyTabsFor("ADMIN").map((t) => t.key)).toEqual(
     expect.arrayContaining(["earnings", "reconcile"]),

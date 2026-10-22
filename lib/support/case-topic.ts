@@ -72,6 +72,9 @@ const ISSUE_TOPIC: Record<SupportIssueType, CaseTopic> = {
   CHARGED_TWICE: "payments",
   REFUND_REQUEST: "payments",
   BILLING_QUESTION: "payments",
+  TAX_GST: "payments",
+  TDS_CERTIFICATE: "payments",
+  PAN_CARD_MISMATCH: "payments",
   DOCUMENT_ISSUE: "documents",
   WANT_TO_CANCEL: "cancellation",
   CANCELLATION_ISSUE: "cancellation",
@@ -113,27 +116,28 @@ const issueTypesOf = (topic: CaseTopic) =>
     (t) => ISSUE_TOPIC[t] === topic,
   );
 
-/** The `where` that selects exactly the tickets `ticketTopic` files under `topic`. */
-export function ticketTopicWhere(
+/** Match the same category and issue precedence used by ticketTopic. */
+export function supportCaseTopicWhere(
   topic: CaseTopic,
-): Prisma.SupportTicketWhereInput {
-  const noThreadCategory: Prisma.SupportTicketWhereInput = {
-    OR: [{ category: null }, { category: { notIn: THREAD_CATEGORIES } }],
-  };
-  const byIssue: Prisma.SupportTicketWhereInput[] = [
+): Prisma.SupportCaseWhereInput {
+  const byIssue: Prisma.SupportCaseWhereInput[] = [
     { issueType: { in: issueTypesOf(topic) } },
   ];
   if (topic === "other") byIssue.push({ issueType: null });
   return {
     OR: [
       { category: { in: threadCategoriesOf(topic) } },
-      { AND: [noThreadCategory, { OR: byIssue }] },
+      {
+        AND: [
+          {
+            OR: [
+              { category: null },
+              { category: { notIn: THREAD_CATEGORIES } },
+            ],
+          },
+          { OR: byIssue },
+        ],
+      },
     ],
   };
-}
-
-export function threadTopicWhere(
-  topic: CaseTopic,
-): Prisma.AppointmentSupportThreadWhereInput {
-  return { category: { in: threadCategoriesOf(topic) } };
 }

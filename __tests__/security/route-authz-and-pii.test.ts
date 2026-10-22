@@ -50,7 +50,6 @@ describe("consultant statutory PII is never returned by a bare include", () => {
     "app/api/user/reviews/[id]/route.ts",
     "app/api/dashboard/consultee/[consulteeId]/route.ts",
     "app/api/admin/earnings/route.ts",
-    "app/api/staff/support-tickets/[ticketId]/route.ts",
   ];
 
   it.each(ROUTES)("%s selects an allowlist", (rel) => {

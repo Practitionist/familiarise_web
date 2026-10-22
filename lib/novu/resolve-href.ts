@@ -88,10 +88,7 @@ export function scopedHref(args: {
  */
 export function supportRequestHref(
   caseKey: string,
-  organizationId?: string | null,
+  _organizationId?: string | null,
 ): string {
-  const path = `support/requests/${caseKey}`;
-  return organizationId
-    ? `${getAppUrl()}/dashboard/organization/${organizationId}/${path}`
-    : `${getAppUrl()}/dashboard/go/auto/${path}`;
+  return `${getAppUrl()}/dashboard/support/${caseKey}`;
 }

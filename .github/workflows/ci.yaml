@@ -464,3 +464,7 @@ jobs:
 
       - name: Database sidecar guard
         run: node_modules/.bin/tsx scripts/ci/check-db-sidecars.ts
+
+      - name: Support transaction races on disposable Postgres
+        # Only ever the throwaway container above; __tests__/db/guard.ts refuses any other DATABASE_URL.
+        run: node_modules/.bin/jest -c jest.db.config.ts

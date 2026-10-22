@@ -89,6 +89,7 @@ import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 // Late-bound cycle: reversal-engine imports applyRefundCascade from here.
 import { postPayoutClawback } from "./reversal-engine";
+import { retireSupersededPlaceholderTx } from "./refund-placeholder";
 import {
   accumulatePaidConsultantClawback,
   applyPaidConsultantClawbacks,
@@ -150,6 +151,7 @@ export type RefundInput = {
    * the first refund instead of moving money twice. Refund.dedupeKey is unique.
    */
   dedupeKey?: string;
+  supportRecommendationId?: string;
 };
 
 export type RefundResult = {
@@ -508,6 +510,13 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
               status: RefundStatus.PENDING,
               refundId: `pending_${globalThis.crypto.randomUUID()}`,
               dedupeKey: input.dedupeKey ?? null,
+              ...(input.supportRecommendationId
+                ? {
+                    supportRecommendation: {
+                      connect: { id: input.supportRecommendationId },
+                    },
+                  }
+                : {}),
               paymentGateway: payment.paymentGateway,
               exchangeRateAtRefund: payment.exchangeRateAtCheckout,
               displayCurrency: payment.displayCurrencyAtCheckout,
@@ -736,31 +745,9 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       if (winner.id === reserved.id) {
         boundRefundRowId = reserved.id;
       } else {
-        const winnerFull = await prisma.refund.findUniqueOrThrow({
-          where: { id: winner.id },
-          select: { metadata: true },
-        });
-        await prisma.$transaction([
-          prisma.refund.delete({ where: { id: reserved.id } }),
-          prisma.refund.update({
-            where: { id: winner.id },
-            data: {
-              ...(reserved.dedupeKey ? { dedupeKey: reserved.dedupeKey } : {}),
-              metadata: {
-                ...(winnerFull.metadata &&
-                typeof winnerFull.metadata === "object" &&
-                !Array.isArray(winnerFull.metadata)
-                  ? winnerFull.metadata
-                  : {}),
-                ...(reserved.metadata &&
-                typeof reserved.metadata === "object" &&
-                !Array.isArray(reserved.metadata)
-                  ? reserved.metadata
-                  : {}),
-              } as Prisma.InputJsonValue,
-            },
-          }),
-        ]);
+        await prisma.$transaction((tx) =>
+          retireSupersededPlaceholderTx(tx, reserved, winner.id),
+        );
         boundRefundRowId = winner.id;
         reportSentryMessage(
           `Refund bind race adopted webhook row ${winner.id} for payment ${input.paymentId}`,

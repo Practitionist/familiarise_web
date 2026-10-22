@@ -7,7 +7,7 @@
  * server validates every transition against the platform registry and never
  * trusts client state beyond "which node are you on". A terminal either
  * self-serves (nothing persisted) or escalates — the only write, a
- * SupportTicket via the shared factory with the walked path summarized in.
+ * SupportCase via the shared factory with the walked path summarized in.
  *
  * GET  → the intent catalog for this caller (chips for the intake sheet).
  * POST → advance one turn: {flowId, nodeId?, chosenOptionId?/userMessage, orgId?}.
@@ -20,7 +20,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { getSession } from "@/lib/auth-server";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { supportError } from "@/lib/api/support-http";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { assertBodySize } from "@/lib/validation/limits";
@@ -31,6 +31,7 @@ import {
   platformFlowsForContext,
   platformFlowForId,
   issueTypeForFlow,
+  platformOwnershipScope,
   resolveOrgAttribution,
   type PlatformSupportContext,
 } from "@/lib/support/platform-flows";
@@ -39,6 +40,7 @@ import {
   findRecentOpenEscalation,
   raiseReusedTicketToHigh,
 } from "@/lib/support/create-ticket";
+import { appendSupportCaseTurn } from "@/lib/support/case-service";
 import { escalationPriority } from "@/lib/support/priority";
 import { recordFlowOutcome } from "@/lib/support/deflection";
 import {
@@ -50,6 +52,7 @@ import {
 const turnSchema = z
   .object({
     flowId: z.string().min(1).max(64),
+    clientTurnId: z.string().min(1).max(128).optional(),
     /** Client-held cursor; null/omitted = first turn (entry prompt). */
     nodeId: z.string().max(64).nullable().optional(),
     chosenOptionId: z.string().max(200).optional(),
@@ -154,16 +157,29 @@ function extractTerminalNodeId(
 async function buildPlatformContext(
   userId: string,
 ): Promise<PlatformSupportContext> {
-  const memberships = await prisma.membership.findMany({
-    where: { userId, status: "ACTIVE" },
-    select: { organizationId: true, role: true },
-  });
+  const [memberships, consultantProfile] = await Promise.all([
+    prisma.membership.findMany({
+      where: { userId, status: "ACTIVE" },
+      select: { organizationId: true, role: true },
+    }),
+    prisma.consultantProfile.findFirst({
+      where: { userId, deletedAt: null },
+      select: { id: true },
+    }),
+  ]);
   return {
     userId,
     isOperator: memberships.some((m) =>
       hasOrgPermission(m.role, "operations.read"),
     ),
+    isBillingReader: memberships.some((m) =>
+      hasOrgPermission(m.role, "billing.read"),
+    ),
+    isExpert: consultantProfile !== null,
     organizationIds: memberships.map((m) => m.organizationId),
+    billingOrgIds: memberships
+      .filter((m) => hasOrgPermission(m.role, "supportCases.billing.manage"))
+      .map((m) => m.organizationId),
   };
 }
 
@@ -202,9 +218,10 @@ async function handleEscalatedTurn(
   flow: PlatformFlow,
   turn: WalkResult,
   input: TurnInput,
-  userId: string,
+  ctx: PlatformSupportContext,
   organizationId: string | null,
 ): Promise<NextResponse> {
+  const userId = ctx.userId;
   const rl = await applyRateLimit(spamLimiter, `tickets:${userId}`);
   if (rl) return rl;
 
@@ -246,8 +263,21 @@ async function handleEscalatedTurn(
     organizationId,
   );
   if (recent) {
+    const appended = await appendSupportCaseTurn({
+      caseId: recent.id,
+      authorUserId: userId,
+      sender: "USER",
+      body: description,
+      isInternal: false,
+      clientTurnId: input.clientTurnId,
+    });
+    if (!appended.ok)
+      return NextResponse.json(
+        { error: appended.error },
+        { status: appended.status },
+      );
     if (input.urgent) await raiseReusedTicketToHigh(prisma, recent.id);
-    const recentTicket = await prisma.supportTicket.findUnique({
+    const recentTicket = await prisma.supportCase.findUnique({
       where: { id: recent.id },
       select: { ackDueAt: true },
     });
@@ -269,11 +299,17 @@ async function handleEscalatedTurn(
 
   const ticket = await createSupportTicket({
     userId,
+    clientIntakeId: input.clientTurnId,
     title: `${flow.title}: ${reason.replaceAll("_", " ").toLowerCase()}`,
     description,
     priority,
     issueType,
     organizationId,
+    ownershipScope: platformOwnershipScope({
+      flowId: flow.id,
+      organizationId,
+      billingOrgIds: ctx.billingOrgIds,
+    }),
     filedBy: "requester",
   });
 
@@ -304,10 +340,9 @@ async function handleEscalatedTurn(
 
 export async function GET() {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return supportError({ status: 401, code: "UNAUTHORIZED" });
-    }
+    const auth = await requireApiAuth();
+    if (auth.error) return auth.error;
+    const { session } = auth;
     const ctx = await buildPlatformContext(session.user.id);
     const flows = platformFlowsForContext(ctx).map((f) => ({
       id: f.id,
@@ -329,10 +364,9 @@ export async function POST(req: NextRequest) {
   let userId: string | null = null;
   let flowId: string | null = null;
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return supportError({ status: 401, code: "UNAUTHORIZED" });
-    }
+    const auth = await requireApiAuth();
+    if (auth.error) return auth.error;
+    const { session } = auth;
     userId = session.user.id;
 
     const tooLarge = assertBodySize(req);
@@ -410,7 +444,7 @@ export async function POST(req: NextRequest) {
       flow,
       turn,
       input,
-      session.user.id,
+      ctx,
       attribution.organizationId,
     );
   } catch (cause) {

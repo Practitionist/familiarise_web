@@ -2,7 +2,11 @@
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { format } from "date-fns";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { goHref } from "@/lib/dashboard/go";
+import { caseKeyOf, parseCaseKey } from "@/lib/support/case-key";
 import {
   Attachment,
   useChatContext,
@@ -19,6 +23,7 @@ import {
   XIcon,
   FlagIcon,
   CalendarIcon,
+  LifeBuoyIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -48,6 +53,7 @@ import {
 } from "@/components/ui/popover";
 
 export const CustomMessage = () => {
+  const pathname = usePathname();
   const { message } = useMessageContext();
   const { client, channel } = useChatContext();
   const messageComposer = useMessageComposerController();
@@ -132,6 +138,16 @@ export const CustomMessage = () => {
     return typeof nested === "string" ? nested : null;
   };
   const bookingAppointmentId = readMessageString("booking_appointment_id");
+  const bookingRef = parseCaseKey(`b_${bookingAppointmentId ?? ""}`);
+  const dashboardBase = pathname?.match(
+    /^\/dashboard\/(?:organization|consultant|consultee|org-workspace)\/[A-Za-z0-9-]+(?=\/|$)/,
+  )?.[0];
+  const requestsBase = dashboardBase
+    ? `${dashboardBase}/support/requests`
+    : goHref("auto", "support/requests");
+  const bookingHelpHref = bookingRef
+    ? `${requestsBase}/${caseKeyOf(bookingRef)}`
+    : null;
   const isBookingContext = Boolean(
     bookingAppointmentId ||
     msgRecord.kind === "booking_context" ||
@@ -493,6 +509,18 @@ export const CustomMessage = () => {
                 >
                   {formattedBookingStartsAt}
                 </div>
+              )}
+              {bookingHelpHref && (
+                <Link
+                  href={bookingHelpHref}
+                  prefetch={false}
+                  className="mt-2 inline-flex min-h-9 items-center gap-1.5 rounded px-1 text-xs font-medium underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                  aria-label={`Get help with ${bookingTitle}`}
+                  title="Contact the Familiarise team about this appointment"
+                >
+                  <LifeBuoyIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                  Get help
+                </Link>
               )}
             </div>
           )}

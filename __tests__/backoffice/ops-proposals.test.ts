@@ -13,19 +13,132 @@ jest.mock("../../lib/observability/report", () => ({
 }));
 jest.mock("../../lib/api/after-safe", () => ({ scheduleAfter: jest.fn() }));
 jest.mock("../../lib/auth/step-up", () => ({
-  requireFreshSession: () => null,
+  requireFreshSession: () =>
+    mockState.stale
+      ? jest
+          .requireActual<typeof import("next/server")>("next/server")
+          .NextResponse.json(
+            { error: "Confirm it is you", code: "REAUTH_REQUIRED" },
+            { status: 403 },
+          )
+      : null,
 }));
 
 let mockViewer = "admin_a";
 jest.mock("../../lib/auth-helpers", () => ({
-  requireBackofficeSurface: async () => ({
-    session: { user: { id: mockViewer, role: "ADMIN" } },
+  requireApiAuth: async () => ({
+    session: { user: { id: mockViewer, role: mockState.role } },
   }),
+  requireBackofficeSurface: async (surface: BackofficeSurface) =>
+    jest
+      .requireActual<typeof import("../../lib/auth/backoffice-permissions")>(
+        "../../lib/auth/backoffice-permissions",
+      )
+      .hasBackofficePermission(mockState.role, surface)
+      ? { session: { user: { id: mockViewer, role: mockState.role } } }
+      : {
+          error: jest
+            .requireActual<typeof import("next/server")>("next/server")
+            .NextResponse.json({ code: "FORBIDDEN" }, { status: 403 }),
+        },
+}));
+jest.mock("../../lib/backoffice/maintenance-gate", () => ({
+  assertMoneyDoorsOpen: jest.fn(),
+}));
+jest.mock("../../lib/support/case-doors", () => ({}));
+
+jest.mock("../../lib/backoffice/money-limit", () => ({
+  assertMoneyOpsBudget: jest.fn(),
 }));
 
 type Row = Record<string, unknown> & { id: string; expiresAt: Date };
 const mockRows = new Map<string, Row>();
-const mockState = { admins: 2, seq: 0 };
+const mockState: {
+  admins: number;
+  seq: number;
+  role: "ADMIN" | "STAFF";
+  stale: boolean;
+  caseExists: boolean;
+  recommendationCaseId: string;
+  recommendationAmount: number;
+  recommendationApproved: boolean | null;
+  recommendationRefundId: string | null;
+  committedPaise: number;
+  originalReviewerId: string | null;
+} = {
+  admins: 2,
+  seq: 0,
+  role: "ADMIN",
+  stale: false,
+  caseExists: true,
+  recommendationCaseId: "case_1",
+  recommendationAmount: 5_000_000,
+  recommendationApproved: null,
+  recommendationRefundId: null,
+  committedPaise: 0,
+  originalReviewerId: null,
+};
+const mockRefundReviews = jest.fn();
+const mockScopeReads = jest.fn();
+const mockAuditRows = jest.fn();
+
+jest.mock("../../lib/support/case-actions", () => {
+  const { CaseRefundReviewSchema } = jest.requireActual<
+    typeof import("../../schemas/support-refund-review")
+  >("../../schemas/support-refund-review");
+  class CaseActionError extends Error {
+    constructor(
+      readonly code: string,
+      message: string,
+      readonly status = 409,
+    ) {
+      super(message);
+    }
+  }
+  const { OpsRefusal } = jest.requireActual<
+    typeof import("../../lib/backoffice/ops-refusal-error")
+  >("../../lib/backoffice/ops-refusal-error");
+  return {
+    CaseActionError,
+    CaseActionRequestSchema: CaseRefundReviewSchema,
+    readCaseResolution: jest.fn(),
+    // Wiring double: the real pricing and staff limits are pinned in
+    // __tests__/support/case-money-hardening.test.ts.
+    priceCaseRefundReview: async (
+      _tx: unknown,
+      caseId: string,
+      actor: { role: string },
+      body: { approve: boolean },
+    ) => {
+      if (caseId !== mockState.recommendationCaseId)
+        throw new CaseActionError(
+          "NOT_FOUND",
+          "Recommendation not found.",
+          404,
+        );
+      if (!body.approve || mockState.recommendationRefundId) return 0;
+      if (actor.role === "STAFF" && mockState.recommendationAmount > 500_000)
+        throw new OpsRefusal("ADMIN_REQUIRED", "Needs an admin.", 403);
+      return mockState.recommendationAmount + mockState.committedPaise;
+    },
+    assertIndependentReviewer: async (
+      _tx: unknown,
+      _supportCase: unknown,
+      reviewerId: string,
+    ) => {
+      if (mockState.originalReviewerId === reviewerId)
+        throw new CaseActionError(
+          "INDEPENDENT_REVIEW_REQUIRED",
+          "A different eligible operator must review this appeal.",
+          403,
+        );
+    },
+    performCaseAction: async (...args: unknown[]) => {
+      mockRefundReviews(...args);
+      return { ok: true };
+    },
+  };
+});
 
 function mockMatches(row: Row, where: Record<string, unknown>): boolean {
   return Object.entries(where).every(([key, want]) => {
@@ -50,7 +163,47 @@ function mockMatches(row: Row, where: Record<string, unknown>): boolean {
 jest.mock("../../lib/prisma", () => {
   const db = {
     user: { count: async () => mockState.admins },
-    opsActionLog: { create: async () => ({ id: "log" }) },
+    supportCase: {
+      findFirst: async ({ where }: { where: { id: string } }) => {
+        mockScopeReads(where);
+        return mockState.caseExists && where.id === "case_1"
+          ? {
+              id: "case_1",
+              ownershipScope: "PERSONAL",
+              submitterUserId: "customer",
+              requesterUserId: "customer",
+              organizationId: null,
+              appealOfDecisionId: null,
+              appealOfModerationActionId: null,
+            }
+          : null;
+      },
+    },
+    supportFinancialRecommendation: {
+      findFirst: async ({
+        where,
+      }: {
+        where: { id: string; caseId: string };
+      }) =>
+        where.id === "rec_1" && where.caseId === mockState.recommendationCaseId
+          ? {
+              id: "rec_1",
+              amountPaise: mockState.recommendationAmount,
+              approved: mockState.recommendationApproved,
+              decidedAt:
+                mockState.recommendationApproved === null ? null : new Date(),
+              refund: mockState.recommendationRefundId
+                ? { id: mockState.recommendationRefundId }
+                : null,
+            }
+          : null,
+    },
+    opsActionLog: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        mockAuditRows(data);
+        return { id: "log" };
+      },
+    },
     opsActionProposal: {
       create: async ({ data }: { data: Row }) => {
         const open = [...mockRows.values()].some(
@@ -156,9 +309,14 @@ jest.mock(
 );
 
 import { NextRequest } from "next/server";
+import type { BackofficeSurface } from "../../lib/auth/backoffice-permissions";
 import { POST as refund } from "../../app/api/admin/refunds/issue/route";
 import { POST as approve } from "../../app/api/admin/ops-proposals/[id]/approve/route";
 import { POST as reject } from "../../app/api/admin/ops-proposals/[id]/reject/route";
+import { POST as supportRefund } from "../../app/api/support/cases/[caseId]/actions/route";
+import { assertMoneyOpsBudget } from "../../lib/backoffice/money-limit";
+import { OpsRefusal } from "../../lib/backoffice/ops-refusal-error";
+import { CaseActionError } from "../../lib/support/case-actions";
 
 const call = (
   door: typeof approve,
@@ -183,6 +341,21 @@ beforeEach(() => {
   mockRows.clear();
   mockRan.mockClear();
   mockState.admins = 2;
+  mockState.role = "ADMIN";
+  mockState.stale = false;
+  mockState.caseExists = true;
+  mockState.recommendationCaseId = "case_1";
+  mockState.recommendationAmount = 5_000_000;
+  mockState.recommendationApproved = null;
+  mockState.recommendationRefundId = null;
+  mockState.committedPaise = 0;
+  mockState.originalReviewerId = null;
+  mockViewer = "admin_a";
+  mockRefundReviews.mockReset();
+  mockScopeReads.mockClear();
+  mockAuditRows.mockClear();
+  jest.mocked(assertMoneyOpsBudget).mockReset();
+  jest.mocked(assertMoneyOpsBudget).mockResolvedValue(undefined);
 });
 
 it("runs directly below the threshold, or above it with one admin", async () => {
@@ -245,4 +418,200 @@ it("leaves a failed replay APPROVED with its code, and frees the target", async 
     decisionReason: expect.stringContaining("execution failed: FAILED"),
   });
   expect((await propose(5_000_000)).status).toBe(202);
+});
+
+const reviewSupportRefund = (body: Record<string, unknown> = {}) =>
+  supportRefund(
+    new NextRequest("https://x.test/api/support/cases/case_1/actions", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "REVIEW_REFUND",
+        recommendationId: "rec_1",
+        approve: true,
+        reason: "The session was not delivered",
+        clientActionId: "review_1",
+        expectedUpdatedAt: "2026-10-20T12:00:00.000Z",
+        expectedRefundablePaise: 5_000_000,
+        ...body,
+      }),
+    }),
+    { params: Promise.resolve({ caseId: "case_1" }) },
+  );
+
+describe("case refund review shares the admin money policy", () => {
+  it("holds a case recommendation and replays its original request as a different admin", async () => {
+    const proposed = await reviewSupportRefund();
+    expect(proposed.status).toBe(202);
+    const { proposalId } = await proposed.json();
+    expect(mockRefundReviews).not.toHaveBeenCalled();
+    expect(mockRows.get(proposalId)).toMatchObject({
+      surface: "/api/support/cases/[caseId]/actions",
+      action: "support.refund.review",
+      targetKind: "SupportFinancialRecommendation",
+      targetId: "rec_1",
+      routeParams: { caseId: "case_1" },
+    });
+
+    expect((await call(approve, {}, { id: proposalId })).status).toBe(403);
+    mockViewer = "admin_b";
+    expect((await call(approve, {}, { id: proposalId })).status).toBe(200);
+    expect(mockRefundReviews).toHaveBeenCalledWith(
+      "case_1",
+      { userId: "admin_b", role: "ADMIN" },
+      expect.objectContaining({
+        action: "REVIEW_REFUND",
+        recommendationId: "rec_1",
+        clientActionId: "review_1",
+        expectedUpdatedAt: "2026-10-20T12:00:00.000Z",
+        expectedRefundablePaise: 5_000_000,
+      }),
+    );
+    expect(assertMoneyOpsBudget).toHaveBeenCalledWith("admin_b");
+    expect(mockRows.get(proposalId)?.status).toBe("EXECUTED");
+    expect(mockAuditRows).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "support.refund.review",
+        targetId: "rec_1",
+        after: expect.objectContaining({ caseId: "case_1", proposalId }),
+      }),
+    );
+    expect((await call(approve, {}, { id: proposalId })).status).toBe(409);
+    expect(mockRefundReviews).toHaveBeenCalledTimes(1);
+  });
+
+  it("executes at the threshold or with only one admin, without opening a proposal", async () => {
+    mockState.recommendationAmount = 2_500_000;
+    expect((await reviewSupportRefund()).status).toBe(200);
+    mockState.recommendationAmount = 5_000_000;
+    mockState.admins = 1;
+    expect((await reviewSupportRefund()).status).toBe(200);
+    expect(mockRows.size).toBe(0);
+    expect(mockRefundReviews).toHaveBeenCalledTimes(2);
+    expect(assertMoneyOpsBudget).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a high-value recommendation directly and audits the review", async () => {
+    const response = await reviewSupportRefund({ approve: false });
+    expect(response.status).toBe(200);
+    expect(mockRows.size).toBe(0);
+    expect(mockRefundReviews).toHaveBeenCalledWith(
+      "case_1",
+      { userId: "admin_a", role: "ADMIN" },
+      expect.objectContaining({ approve: false }),
+    );
+    expect(mockAuditRows).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "support.refund.review",
+        after: expect.objectContaining({ approved: false }),
+      }),
+    );
+  });
+
+  it("returns an existing keyed refund without requesting a second approval", async () => {
+    mockState.recommendationApproved = true;
+    mockState.recommendationRefundId = "refund_existing";
+    expect((await reviewSupportRefund()).status).toBe(200);
+    expect(mockRows.size).toBe(0);
+    expect(mockRefundReviews).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["missing-case", "other-case-recommendation", "original-reviewer"])(
+    "authorizes %s before opening any proposal",
+    async (scenario) => {
+      if (scenario === "missing-case") mockState.caseExists = false;
+      if (scenario === "other-case-recommendation")
+        mockState.recommendationCaseId = "case_other";
+      if (scenario === "original-reviewer")
+        mockState.originalReviewerId = "admin_a";
+      const response = await reviewSupportRefund();
+      expect(response.status).toBe(
+        scenario === "original-reviewer" ? 403 : 404,
+      );
+      expect(mockRows.size).toBe(0);
+      expect(mockRefundReviews).not.toHaveBeenCalled();
+    },
+  );
+
+  it("prices the remedy with those already committed on its payment, so a split still needs a second admin", async () => {
+    mockState.recommendationAmount = 1_000_000;
+    mockState.committedPaise = 2_000_000;
+    expect((await reviewSupportRefund()).status).toBe(202);
+    expect(mockRefundReviews).not.toHaveBeenCalled();
+  });
+
+  it("lets staff execute within the limit, and refuses above it without opening a proposal", async () => {
+    mockState.role = "STAFF";
+    mockViewer = "staff_a";
+    mockState.recommendationAmount = 400_000;
+    expect((await reviewSupportRefund()).status).toBe(200);
+    mockState.recommendationAmount = 5_000_000;
+    const refused = await reviewSupportRefund();
+    expect(refused.status).toBe(403);
+    expect((await refused.json()).code).toBe("ADMIN_REQUIRED");
+    expect(mockRows.size).toBe(0);
+    expect(mockRefundReviews).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a staff approval of a proposal", async () => {
+    const { proposalId } = await (await reviewSupportRefund()).json();
+    mockState.role = "STAFF";
+    mockViewer = "staff_a";
+    expect((await call(approve, {}, { id: proposalId })).status).toBe(403);
+    expect(mockRefundReviews).not.toHaveBeenCalled();
+  });
+
+  it("refuses an approval without the previewed refundable balance", async () => {
+    const response = await reviewSupportRefund({
+      expectedRefundablePaise: undefined,
+    });
+    expect(response.status).toBe(400);
+    expect(mockRefundReviews).not.toHaveBeenCalled();
+  });
+
+  it.each(["stale-session", "short-reason"])(
+    "refuses %s before case reads or execution",
+    async (scenario) => {
+      if (scenario === "stale-session") mockState.stale = true;
+      const response = await reviewSupportRefund(
+        scenario === "short-reason" ? { reason: "ok" } : {},
+      );
+      expect(response.status).toBe(scenario === "short-reason" ? 400 : 403);
+      expect(mockScopeReads).not.toHaveBeenCalled();
+      expect(mockRows.size).toBe(0);
+      expect(mockRefundReviews).not.toHaveBeenCalled();
+    },
+  );
+
+  it("applies the shared execution budget before a refund can run", async () => {
+    mockState.recommendationAmount = 1000;
+    jest
+      .mocked(assertMoneyOpsBudget)
+      .mockRejectedValueOnce(
+        new OpsRefusal("RATE_LIMITED", "Wait and try again.", 429),
+      );
+    const response = await reviewSupportRefund();
+    expect(response.status).toBe(429);
+    expect(mockRefundReviews).not.toHaveBeenCalled();
+  });
+
+  it("preserves a changed-preview refusal when a second admin executes", async () => {
+    const proposed = await reviewSupportRefund();
+    const { proposalId } = await proposed.json();
+    mockViewer = "admin_b";
+    mockRefundReviews.mockImplementationOnce(() => {
+      throw new CaseActionError(
+        "PREVIEW_CHANGED",
+        "Refresh the refund preview.",
+      );
+    });
+    const response = await call(approve, {}, { id: proposalId });
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("PREVIEW_CHANGED");
+    expect(mockRows.get(proposalId)).toMatchObject({
+      status: "APPROVED",
+      decisionReason: expect.stringContaining(
+        "execution failed: PREVIEW_CHANGED",
+      ),
+    });
+  });
 });

@@ -12,14 +12,14 @@
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    supportTicket: { findFirst: jest.fn(async () => null) },
+    supportCase: { findFirst: jest.fn(async () => null) },
   },
 }));
 
 import prisma from "../../lib/prisma";
 import { findRecentOpenEscalation } from "../../lib/support/create-ticket";
 
-const mockedFind = prisma.supportTicket.findFirst as jest.Mock;
+const mockedFind = prisma.supportCase.findFirst as jest.Mock;
 
 beforeEach(() => {
   mockedFind.mockClear();
@@ -41,7 +41,7 @@ describe("findRecentOpenEscalation", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           organizationId: "org-1",
-          status: "OPEN",
+          status: { in: ["OPEN", "IN_PROGRESS", "ESCALATED"] },
         }),
       }),
     );

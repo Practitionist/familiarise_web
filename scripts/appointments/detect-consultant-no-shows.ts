@@ -397,13 +397,12 @@ async function streamPresenceAcross(
   return { sawSomeone, evidenceMissing };
 }
 
-/** Has a ticket already been raised for this consultation on a previous run? */
-async function bothAbsentTicketExists(
-  consultationId: string,
-): Promise<boolean> {
-  const existing = await prisma.supportTicket.findFirst({
+/** A prior case, including a closed one, prevents duplicate automatic intake. */
+async function bothAbsentTicketExists(appointmentId: string): Promise<boolean> {
+  const existing = await prisma.supportCase.findFirst({
     where: {
-      consultationId,
+      appointmentId,
+      deletedAt: null,
       issueType: SupportIssueType.TECHNICAL_ISSUES,
       title: { startsWith: BOTH_ABSENT_TITLE_PREFIX },
     },
@@ -476,7 +475,9 @@ export async function detectBothAbsent(
 
       // Idempotent: this runs on a cron, and `createSupportTicket` documents
       // that callers own their own dedup.
-      if (await bothAbsentTicketExists(consultation.id)) continue;
+      const appointmentId = consultation.appointment?.id;
+      if (!appointmentId || (await bothAbsentTicketExists(appointmentId)))
+        continue;
 
       const planTitle = consultation.consultationPlan?.title ?? "consultation";
       await createSupportTicket({
@@ -495,7 +496,7 @@ export async function detectBothAbsent(
           `Needs a human decision on whether to refund.`,
         priority: "HIGH",
         issueType: SupportIssueType.TECHNICAL_ISSUES,
-        consultationId: consultation.id,
+        appointmentId,
         organizationId: consultation.appointment?.organizationId ?? null,
         filedBy: "system",
       });

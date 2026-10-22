@@ -1,9 +1,5 @@
 import { z } from "zod";
-import {
-  SupportTicketStatusEnum,
-  SupportPriorityEnum,
-  SupportIssueTypeEnum,
-} from "./enums";
+import { SupportPriorityEnum, SupportIssueTypeEnum } from "./enums";
 import {
   MAX_SHORT_FIELD_LENGTH,
   MAX_TEXT_LENGTH,
@@ -30,22 +26,6 @@ export const CreateSupportTicketSchema = z.object({
   organizationId: z.string().min(1).max(64).optional(),
 });
 
-export const UpdateSupportTicketSchema = z.object({
-  status: SupportTicketStatusEnum.optional(),
-  /** The `updatedAt` the caller rendered; a stale tab answers 409. */
-  expectedUpdatedAt: z.string().datetime(),
-  priority: SupportPriorityEnum.optional(),
-  assignedToId: z.string().nullable().optional(),
-  refundId: z.string().optional(),
-  note: z.string().trim().max(1000).optional(),
-});
-
-export const CreateSupportResponseSchema = z.object({
-  message: z.string().trim().min(1, "Message is required").max(MAX_TEXT_LENGTH),
-  isInternal: z.boolean().default(false),
-  expectedLastMessageAt: z.string().datetime().optional(),
-});
-
 // ---------------------------------------------------------------------------
 // Route param schemas — the ONE definition of "what an id looks like" for the
 // support surface. Deliberately NOT .uuid()/.cuid(): ids are opaque strings
@@ -54,18 +34,28 @@ export const CreateSupportResponseSchema = z.object({
 // looked like data bugs. Length-bounded so garbage can't reach Prisma.
 // ---------------------------------------------------------------------------
 
-export const DeleteSupportAttachmentSchema = z.object({
-  attachmentId: z.string().min(1).max(64),
-});
-
 export const AppointmentIdParams = z.object({
   appointmentId: z.string().min(1).max(64),
 });
 
-export const SupportThreadIdParams = z.object({
-  threadId: z.string().min(1).max(64),
-});
-
 export const OrgIdParams = z.object({
   orgId: z.string().min(1).max(64),
+});
+
+const OpaqueId = z.string().min(1).max(64);
+
+export const CaseIdParams = z.object({ caseId: OpaqueId });
+
+export const AttachmentIdParams = z.object({ attachmentId: OpaqueId });
+
+export const EvidenceRequestIdParams = z.object({ requestId: OpaqueId });
+
+export const CaseRecommendationParams = z.object({
+  caseId: OpaqueId,
+  recommendationId: OpaqueId,
+});
+
+/** Optional evidence-request scope on a case attachment list. */
+export const CaseAttachmentQuery = z.object({
+  evidenceRequestId: OpaqueId.optional(),
 });

@@ -88,6 +88,7 @@ import { getSession } from "@/lib/auth-server";
 import { authorizeEventAccess, isPrivileged } from "@/lib/auth-helpers";
 import { POST as rescheduleHandler } from "@/app/api/appointments/[appointmentId]/reschedule/route";
 import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/cancel/route";
+import { grantPlatformCancel } from "@/lib/booking/platform-cancel";
 
 // ─── Session Factories ──────────────────────────────────────────────────────
 
@@ -914,7 +915,7 @@ describe("Cancel Route — Authorization", () => {
     expect(res.status).toBe(200);
   });
 
-  it("should allow ADMIN to cancel any appointment", async () => {
+  it("should allow ADMIN to cancel any appointment through the platform door's grant", async () => {
     (getSession as jest.Mock).mockResolvedValue(adminSession());
     (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
       makeWebinarAppointment(),
@@ -925,10 +926,33 @@ describe("Cancel Route — Authorization", () => {
     );
 
     const req = makeCancelRequest("apt-1");
+    grantPlatformCancel(req, "ops-1");
     const res = await cancelHandler(req, makeParams("apt-1"));
 
     expect(res.status).toBe(200);
   });
+
+  it.each([
+    ["ADMIN", adminSession],
+    ["STAFF", staffSession],
+  ])(
+    "should refuse a %s non-party cancel that skipped the audited platform door",
+    async (_role, session) => {
+      (getSession as jest.Mock).mockResolvedValue(session());
+      (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
+        makeWebinarAppointment(),
+      );
+
+      const res = await cancelHandler(
+        makeCancelRequest("apt-1"),
+        makeParams("apt-1"),
+      );
+
+      expect(res.status).toBe(403);
+      expect((await res.json()).code).toBe("PLATFORM_CANCEL_DOOR_REQUIRED");
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    },
+  );
 
   it("should reject consultee from cancelling webinar (consultant-only)", async () => {
     (getSession as jest.Mock).mockResolvedValue(consulteeSession());

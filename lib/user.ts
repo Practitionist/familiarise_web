@@ -47,20 +47,14 @@ export const fetchConsulteeDetails = async (
 /**
  * Maps application user roles to Stream Chat roles.
  *
- * Least privilege (#899): only platform staff get Stream's global `admin`.
- * Everyone else — consultants included — is a plain `user`; channel creation
- * is server-side, and hosts get channel-scoped `channel_moderator` on their
- * own channels at creation time instead of a global grant.
+ * Every account, staff and admin included, is a plain Stream `user`; operator
+ * chat access goes through audited server routes, never a browser client.
+ * Hosts get channel-scoped `channel_moderator` on their own channels at
+ * creation time instead of a global grant.
  *
- * @param role The application user role
+ * @param _role The application user role (unused: every role maps to `user`)
  * @returns The corresponding Stream Chat role
  */
-export function mapRoleToStream(role: string | null | undefined): string {
-  switch (role?.toUpperCase()) {
-    case "ADMIN":
-    case "STAFF":
-      return "admin";
-    default:
-      return "user";
-  }
+export function mapRoleToStream(_role: string | null | undefined): string {
+  return "user";
 }

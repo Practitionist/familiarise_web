@@ -13,7 +13,7 @@
  *
  * These cases pin the prefix semantics that replaced it, plus the routes the
  * list had never covered at all: slot availability, per-appointment documents,
- * feedback and support, and every org money rail.
+ * feedback, and every org money rail. Appointment help stays open.
  */
 
 import {
@@ -43,7 +43,6 @@ const BLOCKED = [
   "/api/appointments/appt_1/documents/doc_1",
   "/api/appointments/appt_1/documents/consultant",
   "/api/appointments/appt_1/feedback",
-  "/api/appointments/appt_1/support",
 
   // Slots: approval-rail bookings and every availability write.
   "/api/scheduling/request-for-approval",
@@ -103,6 +102,8 @@ const BLOCKED = [
 ];
 
 const NOT_BLOCKED = [
+  // Appointment help is a DB-only intake that customers need most during an outage.
+  "/api/appointments/appt_1/support",
   // The org read surfaces stay writable-by-omission: only the money rails and
   // seat changes are on the list, so ordinary org routes must not match.
   "/api/organizations/org_1/appointments",

@@ -49,6 +49,13 @@ describe("issueTypeForReason", () => {
     expect(issueTypeForReason("refund_missing")).toBe("REFUND_REQUEST");
   });
 
+  it("types tax and org-billing escalations into the payments queue", () => {
+    expect(issueTypeForReason("gst_invoice_wrong")).toBe("TAX_GST");
+    expect(issueTypeForReason("org_billing_dispute")).toBe("BILLING_QUESTION");
+    // The retired self-serve terminal no longer types anything.
+    expect(issueTypeForReason("routed_org_disputes")).toBeNull();
+  });
+
   it("returns null for an unclassified reason rather than a catch-all", () => {
     // no_flow is free text straight to a human: genuinely unclassified, and it
     // should read that way in the queue rather than be filed as OTHER.

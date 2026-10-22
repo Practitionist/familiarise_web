@@ -22,7 +22,6 @@ import {
 } from "@/components/ui/sheet";
 import {
   SidebarNavGroups,
-  SidebarNavLink,
   formatNavBadge,
   type CollapsibleSidebarGroup,
   type CollapsibleSidebarItem,
@@ -38,8 +37,6 @@ import type { PinnedCta, SupportLinks } from "@/lib/dashboard/nav/types";
 export interface MobileNavProps {
   basePath: string;
   groups: CollapsibleSidebarGroup[];
-  /** Personal / back-office Settings (a nav-relative row). */
-  settings?: CollapsibleSidebarItem;
   /** Opens Find (#1527); the sheet closes first. */
   onOpenFind?: () => void;
   /** #1527 — the avatar menu's "<Org> settings", repeated here. */
@@ -70,7 +67,6 @@ const TAB_CLASS =
 export function MobileNav({
   basePath,
   groups,
-  settings,
   orgSettings,
   onOpenFind,
   support,
@@ -88,7 +84,6 @@ export function MobileNav({
   const close = () => setOpen(false);
 
   const items = groups.flatMap((g) => g.items);
-  if (settings) items.push(settings);
   const tabItems = tabs
     .map((path) => items.find((item) => item.path === path))
     .filter((item): item is CollapsibleSidebarItem => !!item)
@@ -217,26 +212,19 @@ export function MobileNav({
                 Send feedback
               </Link>
             )}
-            {/* #1527 — the header has no room for the avatar menu's
-                Settings on phones, so the sheet keeps the row. */}
-            {settings && (
-              <SidebarNavLink
-                item={settings}
-                basePath={basePath}
-                pathname={pathname}
-                onNavigate={close}
-              />
-            )}
-            {orgSettings && (
-              <Link
-                href={orgSettings.href}
-                onClick={close}
-                className={SHEET_ROW_CLASS}
-              >
-                <Building2 className="h-5 w-5 shrink-0" />
-                <span className="truncate">{orgSettings.label}</span>
-              </Link>
-            )}
+            {orgSettings &&
+              !items.some(
+                (item) => `${basePath}/${item.path}` === orgSettings.href,
+              ) && (
+                <Link
+                  href={orgSettings.href}
+                  onClick={close}
+                  className={SHEET_ROW_CLASS}
+                >
+                  <Building2 className="h-5 w-5 shrink-0" />
+                  <span className="truncate">{orgSettings.label}</span>
+                </Link>
+              )}
             <button
               type="button"
               onClick={onSignOut}

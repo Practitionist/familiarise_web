@@ -1,638 +1,339 @@
 "use client";
 
-/**
- * #support-hub — the Swiggy-style Support & Feedback hub: ONE role-agnostic
- * surface with two subtabs.
- *
- *  • Sessions — your recent sessions (tap → the session's request page)
- *    and every support conversation you've opened, bucketed by status, newest
- *    activity first.
- *  • Platform — flowchart intake for platform issues (stateless; escalates
- *    into a ticket) and your ticket list, same bucketing/sorting.
- *
- * The panels are deliberately scope-free: `/api/user/support-tickets`,
- * `/api/user/support-threads` and `/api/appointments` all key off the session,
- * so consultee, consultant, org operator and staff mount the same component.
- * #1527 — it is the Requests tab of the Support requests page; Feedback is
- * that page's sibling tab (deep-linked below). Articles live only in the
- * public Help Center.
- */
-
-import { useMemo } from "react";
 import Link from "next/link";
+import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  MessageSquareText,
-  CalendarDays,
-  ChevronRight,
-  Bot,
-  UserRound,
-  Headset,
-  Building2,
-  LifeBuoy,
-} from "lucide-react";
-
+import { CalendarDays, Inbox } from "lucide-react";
+import { z } from "zod";
 import { Button } from "@/components/ui/button";
-import { UrlTabs } from "@/components/dashboard/UrlTabs";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus } from "lucide-react";
-import { PlatformSupportSheet } from "@/components/support/PlatformSupportSheet";
+import { EmptyState } from "@/components/dashboard/EmptyState";
+import { ErrorState } from "@/components/dashboard/ErrorState";
+import { FilterBar } from "@/components/dashboard/FilterBar";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { TablePagination } from "@/components/dashboard/TablePagination";
+import { useListParams } from "@/hooks/useListParams";
+import { useSession } from "@/lib/auth-client";
 import { caseKeyOf } from "@/lib/support/case-key";
-import { CreateTicketDialog } from "./CreateTicketDialog";
 import { throwSupportError } from "@/lib/support/error-copy";
+import { supportKeys } from "@/lib/support/support-keys";
+import { CreateTicketDialog } from "./CreateTicketDialog";
+import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 
-// ---------------------------------------------------------------------------
-// Types + small helpers
-// ---------------------------------------------------------------------------
-
-interface ThreadRow {
-  id: string;
-  appointmentId: string;
-  category: string;
-  status: string;
-  activeChannel: string;
-  lastMessageAt: string;
-  createdAt: string;
-  lastMessage: { sender: string; body: string } | null;
-  appointment: {
-    appointmentType: string;
-    startsAt: string | null;
-    organizationName?: string | null;
-    planTitle: string | null;
-  };
-}
-
-interface TicketRow {
-  id: string;
-  /** #705 — the speakable handle. Null on tickets that predate it. */
-  referenceNumber?: string | null;
-  title: string;
-  status: string;
-  updatedAt: string;
-  createdAt: string;
-  responses?: { message: string; createdAt: string; isInternal: boolean }[];
-  /** Set when raised "About" an org (#1527). */
-  organization?: { id: string; name: string } | null;
-}
-
-interface AppointmentRow {
-  id: string;
-  consultation?: { consultationPlan?: { title?: string } };
-  subscription?: { subscriptionPlan?: { title?: string } };
-  webinar?: { webinarPlan?: { title?: string } };
-  class?: { classPlan?: { title?: string } };
-  occurrences?: { startsAt: string }[];
-  organization?: { id: string; name: string } | null;
-}
-
-interface OrgMembership {
-  organizationId: string;
-  orgName: string;
-  role: string;
-}
-
-const STATUS_LABELS: Record<string, string> = {
-  OPEN: "Open",
-  IN_PROGRESS: "In progress",
-  ESCALATED: "With our team",
-  ON_HOLD: "With our team",
-  RESOLVED: "Resolved",
-  CLOSED: "Closed",
+const Cases = z.object({
+  data: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      referenceNumber: z.string().nullable(),
+      status: z.string(),
+      appointmentId: z.string().nullable(),
+      lastMessageAt: z.string(),
+      organization: z.object({ id: z.string(), name: z.string() }).nullable(),
+    }),
+  ),
+  pagination: z.object({
+    page: z.number(),
+    pageSize: z.number(),
+    total: z.number(),
+  }),
+});
+const Plan = z.object({ title: z.string().nullish() });
+const Appointments = z.object({
+  items: z.array(
+    z.object({
+      id: z.string(),
+      appointmentType: z.string().optional(),
+      consultation: z.object({ consultationPlan: Plan.nullish() }).nullish(),
+      subscription: z.object({ subscriptionPlan: Plan.nullish() }).nullish(),
+      webinar: z.object({ webinarPlan: Plan.nullish() }).nullish(),
+      class: z.object({ classPlan: Plan.nullish() }).nullish(),
+      occurrences: z.array(z.object({ startsAt: z.string() })).optional(),
+      organization: z.object({ name: z.string() }).nullish(),
+    }),
+  ),
+});
+const STATUS_TONES: Record<string, Tone> = {
+  OPEN: "caution",
+  IN_PROGRESS: "info",
+  ESCALATED: "info",
+  RESOLVED: "success",
+  CLOSED: "neutral",
 };
+const DATE_TIME = new Intl.DateTimeFormat("en-IN", {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
 
-function statusVariant(
-  status: string,
-): "default" | "secondary" | "outline" | "destructive" {
-  if (status === "RESOLVED") return "secondary";
-  if (status === "CLOSED") return "outline";
-  if (status === "ESCALATED" || status === "ON_HOLD") return "destructive";
-  return "default";
-}
+type PickerAppointment = z.infer<typeof Appointments>["items"][number];
 
-/** Bucket key for the three user-facing groups. */
-function bucketOf(status: string): "open" | "team" | "resolved" {
-  if (status === "ESCALATED" || status === "ON_HOLD") return "team";
-  if (status === "RESOLVED" || status === "CLOSED") return "resolved";
-  return "open";
-}
-
-const BUCKETS: { key: "open" | "team" | "resolved"; label: string }[] = [
-  { key: "open", label: "Open" },
-  { key: "team", label: "With our team" },
-  { key: "resolved", label: "Resolved" },
-];
-
-function fmtDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
+/** Upcoming occurrences soonest first, then past ones most recent first. */
+export function byRelevantOccurrence(
+  items: PickerAppointment[],
+  now: number,
+): { appointment: PickerAppointment; startsAt: string | undefined }[] {
+  const ranked = items.map((appointment) => {
+    const times = (appointment.occurrences ?? [])
+      .map((o) => new Date(o.startsAt).getTime())
+      .filter((t) => Number.isFinite(t));
+    const upcoming = times.filter((t) => t >= now);
+    const at = upcoming.length > 0 ? Math.min(...upcoming) : Math.max(...times);
+    return {
+      appointment,
+      at: Number.isFinite(at) ? at : null,
+      upcoming: upcoming.length > 0,
+    };
   });
-}
-
-function planTitleOf(a: AppointmentRow): string {
-  return (
-    a.consultation?.consultationPlan?.title ??
-    a.subscription?.subscriptionPlan?.title ??
-    a.webinar?.webinarPlan?.title ??
-    a.class?.classPlan?.title ??
-    "Session"
-  );
-}
-
-/** Bucket rows by status preserving the server's last-activity order. */
-function bucketize<T extends { status: string }>(
-  rows: T[],
-): Record<"open" | "team" | "resolved", T[]> {
-  const out = { open: [], team: [], resolved: [] } as Record<
-    "open" | "team" | "resolved",
-    T[]
-  >;
-  for (const r of rows) out[bucketOf(r.status)].push(r);
-  return out;
-}
-
-// ---------------------------------------------------------------------------
-// Subtab: Sessions
-// ---------------------------------------------------------------------------
-
-function SessionsTab({ requestsBase }: Readonly<{ requestsBase: string }>) {
-  const threads = useQuery({
-    queryKey: ["user-support-threads"],
-    queryFn: async (): Promise<ThreadRow[]> => {
-      const res = await fetch("/api/user/support-threads");
-      if (!res.ok) await throwSupportError(res, "conversations load");
-      const { data } = await res.json();
-      return data;
-    },
+  ranked.sort((a, b) => {
+    if (a.at === null || b.at === null) return a.at === null ? 1 : -1;
+    if (a.upcoming !== b.upcoming) return a.upcoming ? -1 : 1;
+    return a.upcoming ? a.at - b.at : b.at - a.at;
   });
-
-  // Active org memberships — org-hosted sessions live under the org scope
-  // (personal pins organizationId: null, ADR 19), so without this merge an
-  // org LEARNER/EXPERT would have no per-session support entry point.
-  const memberships = useQuery({
-    queryKey: ["user-org-memberships"],
-    queryFn: async (): Promise<OrgMembership[]> => {
-      const res = await fetch("/api/user/org-memberships");
-      if (!res.ok) return [];
-      const { data } = await res.json();
-      return data;
-    },
-    staleTime: 60_000,
-  });
-
-  // Capped once so the cache key and the request always agree — keying on
-  // membership COUNT served stale org sets when content changed under a
-  // constant count, and refetched needlessly when a 4th+ org changed.
-  const orgIds = useMemo(
-    () => (memberships.data ?? []).slice(0, 3).map((m) => m.organizationId),
-    [memberships.data],
-  );
-
-  const appointments = useQuery({
-    queryKey: ["support-hub-recent-sessions", orgIds],
-    enabled: memberships.isSuccess,
-    queryFn: async (): Promise<AppointmentRow[]> => {
-      // Personal (B2C) first, then each ACTIVE org's member scope — capped at
-      // three orgs so a pathological membership list can't fan out.
-      const orgs = (memberships.data ?? []).filter((m) =>
-        orgIds.includes(m.organizationId),
-      );
-      const fetchScope = async (orgScope?: string) => {
-        const qs = orgScope
-          ? `?pageSize=5&orgScope=${encodeURIComponent(orgScope)}`
-          : "?pageSize=5";
-        const res = await fetch(`/api/appointments${qs}`);
-        if (!res.ok) return [];
-        const json = await res.json();
-        // `listAppointmentsScoped` returns { items, total, page, perPage }.
-        // The `data`/`appointments` fallbacks never matched, so the recent-
-        // sessions picker was unconditionally empty and the whole Sessions tab
-        // read as "you have no sessions" for users who plainly did.
-        return (json.items ??
-          json.data ??
-          json.appointments ??
-          []) as AppointmentRow[];
-      };
-      const [personal, ...orgLists] = await Promise.all([
-        fetchScope(),
-        ...orgs.map((m) => fetchScope(m.organizationId)),
-      ]);
-      const orgNameById = new Map(
-        orgs.map((m) => [m.organizationId, m.orgName]),
-      );
-      // Merge + dedupe (a session can only be in one scope by construction,
-      // but dedupe keeps the invariant local rather than trusted).
-      const seen = new Set<string>();
-      const merged: AppointmentRow[] = [];
-      for (const row of [...personal, ...orgLists.flat()]) {
-        if (seen.has(row.id)) continue;
-        seen.add(row.id);
-        merged.push(row);
-      }
-      // Most recent slot first — the picker is "your recent sessions".
-      return merged
-        .slice()
-        .sort(
-          (a, b) =>
-            Date.parse(b.occurrences?.[0]?.startsAt ?? "0") -
-            Date.parse(a.occurrences?.[0]?.startsAt ?? "0"),
-        )
-        .slice(0, 8)
-        .map((r) =>
-          r.organization
-            ? {
-                ...r,
-                organization: {
-                  ...r.organization,
-                  name:
-                    orgNameById.get(r.organization.id) ?? r.organization.name,
-                },
-              }
-            : r,
-        );
-    },
-  });
-
-  const buckets = useMemo(() => bucketize(threads.data ?? []), [threads.data]);
-
-  // #1527 — a session's request page, keyed by its booking (case-key.ts).
-  const requestHref = (appointmentId: string) =>
-    `${requestsBase}/${caseKeyOf({ kind: "booking", id: appointmentId })}`;
-
-  return (
-    <div className="space-y-8">
-      {/* Recent sessions — pick one, get help (the Swiggy order-picker) */}
-      <section>
-        <h3 className="mb-3 text-sm font-semibold text-foreground">
-          Your recent sessions
-        </h3>
-        {appointments.isLoading || memberships.isLoading ? (
-          <div className="space-y-2">
-            <Skeleton className="h-14 w-full" />
-            <Skeleton className="h-14 w-full" />
-          </div>
-        ) : appointments.isError ? (
-          <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
-            Couldn't load your recent sessions.{" "}
-            <Button
-              variant="outline"
-              size="sm"
-              className="ml-1"
-              onClick={() => appointments.refetch()}
-            >
-              Retry
-            </Button>
-          </div>
-        ) : (appointments.data?.length ?? 0) === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No sessions yet — help for any booking appears here.
-          </p>
-        ) : (
-          <ul className="divide-y divide-border rounded-lg border border-border">
-            {appointments.data!.map((a) => (
-              <li
-                key={a.id}
-                className="flex items-center justify-between gap-3 px-4 py-3"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-foreground">
-                    {planTitleOf(a)}
-                    {a.organization && (
-                      <span className="ml-2 inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
-                        <Building2 className="h-3 w-3" />
-                        {a.organization.name}
-                      </span>
-                    )}
-                  </p>
-                  <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <CalendarDays className="h-3 w-3" />
-                    {fmtDate(a.occurrences?.[0]?.startsAt)}
-                  </p>
-                </div>
-                <Button variant="outline" size="sm" asChild>
-                  <Link href={requestHref(a.id)}>
-                    <LifeBuoy className="mr-1.5 h-4 w-4" />
-                    Get help
-                  </Link>
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {/* Existing conversations, bucketed by status */}
-      <section>
-        <h3 className="mb-3 text-sm font-semibold text-foreground">
-          Your support conversations
-        </h3>
-        {threads.isLoading ? (
-          <Skeleton className="h-20 w-full" />
-        ) : threads.isError ? (
-          <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
-            Couldn't load your support conversations.{" "}
-            <Button
-              variant="outline"
-              size="sm"
-              className="ml-1"
-              onClick={() => threads.refetch()}
-            >
-              Retry
-            </Button>
-          </div>
-        ) : (threads.data?.length ?? 0) === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Nothing open — when you raise an issue about a session it lives
-            here.
-          </p>
-        ) : (
-          <div className="space-y-6">
-            {BUCKETS.map(({ key, label }) =>
-              buckets[key].length > 0 ? (
-                <div key={key}>
-                  <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    {label} ({buckets[key].length})
-                  </p>
-                  <ul className="divide-y divide-border rounded-lg border border-border">
-                    {buckets[key].map((t) => (
-                      <li key={t.id} className="px-4 py-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-foreground">
-                              {t.appointment.planTitle ?? "Session"}
-                              {t.appointment.organizationName && (
-                                <span className="ml-2 inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
-                                  <Building2 className="h-3 w-3" />
-                                  {t.appointment.organizationName}
-                                </span>
-                              )}
-                              <span className="ml-2 text-xs font-normal text-muted-foreground">
-                                {fmtDate(t.appointment.startsAt)}
-                              </span>
-                            </p>
-                            {t.lastMessage && (
-                              <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-muted-foreground">
-                                {t.lastMessage.sender === "USER" ? (
-                                  <UserRound className="h-3 w-3 shrink-0" />
-                                ) : (
-                                  <Bot className="h-3 w-3 shrink-0" />
-                                )}
-                                {t.lastMessage.body}
-                              </p>
-                            )}
-                          </div>
-                          <div className="flex shrink-0 items-center gap-2">
-                            <Badge variant={statusVariant(t.status)}>
-                              {t.activeChannel === "HUMAN"
-                                ? "With our team"
-                                : (STATUS_LABELS[t.status] ?? t.status)}
-                            </Badge>
-                            <Button variant="ghost" size="sm" asChild>
-                              <Link href={requestHref(t.appointmentId)}>
-                                View
-                                <ChevronRight className="ml-1 h-4 w-4" />
-                              </Link>
-                            </Button>
-                          </div>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null,
-            )}
-          </div>
-        )}
-      </section>
-    </div>
-  );
+  return ranked.map(({ appointment, at }) => ({
+    appointment,
+    startsAt: at === null ? undefined : new Date(at).toISOString(),
+  }));
 }
 
-// ---------------------------------------------------------------------------
-// Subtab: Platform
-// ---------------------------------------------------------------------------
-
-function PlatformTab({
-  orgId,
-  feedbackHref,
-  requestsBase,
-}: Readonly<{
-  orgId?: string;
-  feedbackHref?: string;
-  requestsBase: string;
-}>) {
-  const requestHref = (ticketId: string) =>
-    `${requestsBase}/${caseKeyOf({ kind: "ticket", id: ticketId })}`;
-  const tickets = useQuery({
-    queryKey: ["user-support-tickets"],
-    queryFn: async (): Promise<TicketRow[]> => {
-      const res = await fetch("/api/user/support-tickets");
-      if (!res.ok) await throwSupportError(res, "requests load");
-      return res.json();
-    },
-  });
-
-  /** Last activity = latest visible reply, else the ticket's own clock. */
-  const sorted = useMemo(() => {
-    const rows = tickets.data ?? [];
-    return [...rows].sort((a, b) => {
-      const la = Math.max(
-        Date.parse(a.updatedAt),
-        ...(a.responses ?? []).map((r) => Date.parse(r.createdAt)),
-      );
-      const lb = Math.max(
-        Date.parse(b.updatedAt),
-        ...(b.responses ?? []).map((r) => Date.parse(r.createdAt)),
-      );
-      return lb - la;
-    });
-  }, [tickets.data]);
-
-  const buckets = useMemo(() => bucketize(sorted), [sorted]);
-
-  return (
-    <div className="space-y-8">
-      {/* Platform issue intake */}
-      <section>
-        <h3 className="mb-3 text-sm font-semibold text-foreground">
-          Get help with the platform
-        </h3>
-        <div className="flex flex-col gap-3 rounded-lg border border-border p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-medium text-foreground">
-              Payments, account, sign-in or site trouble
-            </p>
-            <p className="text-xs text-muted-foreground">
-              A few quick questions and we&apos;ll either fix it on the spot or
-              route you to the right team with full context.
-            </p>
-          </div>
-          <PlatformSupportSheet orgId={orgId} requestHref={requestHref} />
-        </div>
-        {feedbackHref && (
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button variant="ghost" size="sm" asChild>
-              {/* Internal dashboard route (all callers pass relative
-                  dashboard hrefs) — Link so it prefetches. */}
-              <Link href={feedbackHref}>
-                <MessageSquareText className="mr-1.5 h-4 w-4" />
-                Share feedback
-              </Link>
-            </Button>
-          </div>
-        )}
-      </section>
-
-      {/* Tickets, bucketed by status, latest activity first */}
-      <section>
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold text-foreground">My requests</h3>
-          <CreateTicketDialog requestHref={requestHref} />
-        </div>
-        {tickets.isError ? (
-          // Distinguishing a failed load from a genuine empty list matters
-          // here more than most places: "No platform requests yet" invites the
-          // user to file a request they may already have open.
-          <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border p-6 text-center">
-            <p className="text-sm text-muted-foreground">
-              {(tickets.error as Error)?.message ??
-                "Couldn't load your requests."}
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => tickets.refetch()}
-            >
-              Retry
-            </Button>
-          </div>
-        ) : tickets.isLoading ? (
-          <Skeleton className="h-20 w-full" />
-        ) : sorted.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border p-6 text-center">
-            <p className="text-sm text-muted-foreground">
-              No platform requests yet.
-            </p>
-            <div className="mt-3">
-              <CreateTicketDialog
-                requestHref={requestHref}
-                trigger={
-                  <Button variant="outline" size="sm">
-                    <Plus className="mr-1.5 h-4 w-4" />
-                    Create your first request
-                  </Button>
-                }
-              />
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {BUCKETS.map(({ key, label }) =>
-              buckets[key].length > 0 ? (
-                <div key={key}>
-                  <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    {label} ({buckets[key].length})
-                  </p>
-                  <ul className="divide-y divide-border rounded-lg border border-border">
-                    {buckets[key].map((t) => {
-                      const lastReply = [...(t.responses ?? [])].pop();
-                      return (
-                        <li key={t.id}>
-                          <Link
-                            href={requestHref(t.id)}
-                            className="flex items-start justify-between gap-3 px-4 py-3 transition-colors hover:bg-muted/50"
-                          >
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-medium text-foreground">
-                                {t.title || "Support request"}
-                                {t.organization && (
-                                  <span className="ml-2 inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
-                                    <Building2 className="h-3 w-3" />
-                                    {t.organization.name}
-                                  </span>
-                                )}
-                              </p>
-                              {t.referenceNumber && (
-                                <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
-                                  {t.referenceNumber}
-                                </p>
-                              )}
-                              {lastReply && (
-                                <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-muted-foreground">
-                                  <Headset className="h-3 w-3 shrink-0" />
-                                  {lastReply.message}
-                                </p>
-                              )}
-                            </div>
-                            <Badge variant={statusVariant(t.status)}>
-                              {STATUS_LABELS[t.status] ?? t.status}
-                            </Badge>
-                          </Link>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              ) : null,
-            )}
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Hub
-// ---------------------------------------------------------------------------
-
+/** One personal inbox; appointment descriptions use booking facts rather than generated summaries. */
 export function SupportHub({
-  orgId,
-  feedbackHref,
   requestsBase,
-  defaultView = "sessions",
-}: {
-  /** Profile id of the mounting dashboard (consultee/consultant). Kept in the
-   *  public signature for parity with the standalone request pages; the hub
-   *  itself doesn't consume it. */
-  profileId?: string;
-  /** Active org id in operator trees — attributes platform tickets. */
-  orgId?: string;
-  feedbackHref?: string;
-  /** `<tree>/support/requests` — each request's own page (#1527). */
-  requestsBase: string;
-  /** Which subtab opens when the URL names none (#1527 — the workspace, with
-   *  no sessions of its own, opens on Platform). */
-  defaultView?: "sessions" | "platform";
-}) {
-  // #1527 — real tabs in the URL (`?view=`), replacing the hand-rolled pill
-  // buttons; the page (not this hub) owns the gutter. UrlTabs opens the first
-  // tab when the URL names none, so the default goes first.
-  const sessions = {
-    value: "sessions",
-    label: "Sessions",
-    content: <SessionsTab requestsBase={requestsBase} />,
-  };
-  const platform = {
-    value: "platform",
-    label: "Platform",
-    content: (
-      <PlatformTab
-        orgId={orgId}
-        feedbackHref={feedbackHref}
-        requestsBase={requestsBase}
+  appointmentsHref,
+}: Readonly<{ requestsBase: string; appointmentsHref?: string }>) {
+  const { data: session } = useSession();
+  const list = useListParams<"context" | "status">({
+    filterKeys: ["context", "status"],
+  });
+  const [pickAppointment, setPickAppointment] = useState(false);
+  const context = list.filters.context;
+  const status = list.filters.status;
+  const query = useQuery({
+    queryKey: supportKeys.requestList(session?.user.id, {
+      page: list.page,
+      context,
+      status,
+    }),
+    enabled: Boolean(session?.user.id),
+    refetchOnMount: "always",
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        ownership: "personal",
+        page: String(list.page),
+      });
+      if (context) params.set("scope", context);
+      if (status) params.set("status", status);
+      const response = await fetch(`/api/support/requests?${params}`);
+      if (!response.ok) await throwSupportError(response, "requests load");
+      return Cases.parse(await response.json());
+    },
+  });
+  const appointments = useQuery({
+    queryKey: supportKeys.appointmentPicker(session?.user.id),
+    enabled: pickAppointment && Boolean(session?.user.id),
+    queryFn: async () => {
+      const response = await fetch("/api/appointments?pageSize=20");
+      if (!response.ok) await throwSupportError(response, "appointments load");
+      return byRelevantOccurrence(
+        Appointments.parse(await response.json()).items,
+        Date.now(),
+      ).slice(0, 8);
+    },
+  });
+  const requestHref = (id: string) =>
+    `${requestsBase}/${caseKeyOf({ kind: "case", id })}`;
+  let appointmentContent: ReactNode;
+  if (!pickAppointment) {
+    appointmentContent = null;
+  } else if (appointments.isPending) {
+    appointmentContent = <Skeleton className="h-20 w-full" />;
+  } else if (appointments.isError) {
+    appointmentContent = (
+      <ErrorState
+        title="Couldn't load appointments"
+        onRetry={() => void appointments.refetch()}
       />
-    ),
-  };
+    );
+  } else if (appointments.data.length === 0) {
+    appointmentContent = (
+      <p className="text-sm text-muted-foreground">No appointments yet.</p>
+    );
+  } else {
+    appointmentContent = (
+      <ul className="divide-y divide-border">
+        {appointments.data.map(({ appointment: a, startsAt }) => {
+          const title =
+            a.consultation?.consultationPlan?.title ??
+            a.subscription?.subscriptionPlan?.title ??
+            a.webinar?.webinarPlan?.title ??
+            a.class?.classPlan?.title ??
+            "Appointment";
+          return (
+            <li
+              key={a.id}
+              className="flex flex-wrap items-center justify-between gap-3 py-3"
+            >
+              <div>
+                <p className="text-sm font-medium">{title}</p>
+                <p className="text-xs text-muted-foreground">
+                  {[
+                    startsAt
+                      ? DATE_TIME.format(new Date(startsAt))
+                      : "Time not set",
+                    a.appointmentType ? humanizeEnum(a.appointmentType) : null,
+                    a.organization?.name,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+              </div>
+              <Button size="sm" variant="outline" asChild>
+                <Link
+                  href={`${requestsBase}/${caseKeyOf({ kind: "booking", id: a.id })}`}
+                >
+                  Get help
+                </Link>
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
+    );
+  }
+  let requestList: ReactNode;
+  if (query.isPending) {
+    requestList = <Skeleton className="h-40 w-full" />;
+  } else if (query.isError) {
+    requestList = (
+      <ErrorState
+        title="Couldn't load your support requests"
+        onRetry={() => void query.refetch()}
+      />
+    );
+  } else if (query.data.data.length === 0) {
+    requestList = (
+      <EmptyState
+        icon={Inbox}
+        title={
+          context || status
+            ? "No requests match these filters"
+            : "No support requests yet"
+        }
+        description="Requests you raise personally appear here. Organization-owned requests stay in that organization’s Help & support area."
+      />
+    );
+  } else {
+    requestList = (
+      <ul className="divide-y divide-border rounded-lg border border-border">
+        {query.data.data.map((row) => (
+          <li key={row.id}>
+            <Link
+              href={requestHref(row.id)}
+              className="flex flex-wrap items-start justify-between gap-3 px-4 py-4 transition-colors hover:bg-muted/50"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">{row.title}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {[
+                    row.referenceNumber,
+                    row.appointmentId ? "Appointment" : "Account & platform",
+                    row.organization?.name,
+                    `Updated ${DATE_TIME.format(new Date(row.lastMessageAt))}`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+              </div>
+              <StatusBadge
+                label={humanizeEnum(row.status)}
+                tone={STATUS_TONES[row.status] ?? "neutral"}
+                size="sm"
+              />
+            </Link>
+          </li>
+        ))}
+      </ul>
+    );
+  }
   return (
-    <UrlTabs
-      paramName="view"
-      tabs={
-        defaultView === "platform" ? [platform, sessions] : [sessions, platform]
-      }
-    />
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <CreateTicketDialog
+          requestHref={(id) =>
+            `/dashboard/support/${caseKeyOf({ kind: "case", id })}`
+          }
+        />
+        {appointmentsHref && (
+          <Button
+            variant="outline"
+            onClick={() => setPickAppointment(!pickAppointment)}
+            aria-expanded={pickAppointment}
+            aria-controls="support-appointment-picker"
+          >
+            <CalendarDays className="mr-2 h-4 w-4" aria-hidden />
+            Get help with an appointment
+          </Button>
+        )}
+      </div>
+      {pickAppointment && (
+        <section
+          id="support-appointment-picker"
+          className="space-y-3 rounded-lg border border-border p-4"
+        >
+          <h3 className="text-sm font-semibold">Choose an appointment</h3>
+          {appointmentContent}
+          <p className="text-sm text-muted-foreground">
+            Looking for another booking?{" "}
+            <Link
+              className="underline underline-offset-4"
+              href={appointmentsHref ?? "/dashboard"}
+            >
+              View all appointments
+            </Link>
+          </p>
+        </section>
+      )}
+      <FilterBar
+        selects={[
+          {
+            key: "context",
+            label: "Context",
+            value: context ?? "all",
+            options: [
+              { value: "all", label: "All contexts" },
+              { value: "session", label: "Appointments" },
+              { value: "platform", label: "Account & platform" },
+            ],
+            onChange: (value) =>
+              list.setFilter("context", value === "all" ? null : value),
+          },
+          {
+            key: "status",
+            label: "Status",
+            value: status ?? "all",
+            options: [
+              { value: "all", label: "All statuses" },
+              ...Object.keys(STATUS_TONES).map((value) => ({
+                value,
+                label: humanizeEnum(value),
+              })),
+            ],
+            onChange: (value) =>
+              list.setFilter("status", value === "all" ? null : value),
+          },
+        ]}
+        canClear={Boolean(context || status)}
+        onClear={list.clear}
+      />
+      {requestList}
+      {query.data &&
+        query.data.pagination.total > query.data.pagination.pageSize && (
+          <TablePagination
+            page={query.data.pagination.page}
+            pageSize={query.data.pagination.pageSize}
+            total={query.data.pagination.total}
+            onPageChange={list.setPage}
+          />
+        )}
+    </div>
   );
 }

@@ -28,6 +28,7 @@ jest.mock("../../lib/auth-server", () => ({
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
   isPrivileged: jest.fn(),
+  requireApiAuth: jest.fn(async () => ({ session: { user: { id: "u1" } } })),
 }));
 jest.mock("../../lib/auth/org-permissions", () => ({
   __esModule: true,
@@ -48,7 +49,7 @@ jest.mock("../../lib/api/appointment-access", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    appointmentSupportThread: { findUnique: jest.fn() },
+    supportCase: { findFirst: jest.fn(), findUnique: jest.fn() },
   },
 }));
 
@@ -81,8 +82,7 @@ import {
 } from "../../app/api/appointments/[appointmentId]/support/route";
 
 const mockedAuthorize = authorizeAppointment as jest.Mock;
-const mockedFindThread = prisma.appointmentSupportThread
-  .findUnique as jest.Mock;
+const mockedFindThread = prisma.supportCase.findFirst as jest.Mock;
 const mockedBuildContext = buildSupportContext as jest.Mock;
 const mockedRunTurn = runSupportTurn as jest.Mock;
 
@@ -176,7 +176,7 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
     );
   });
 
-  it("never throttles conversation turns (SFR-02-04)", async () => {
+  it("meters turns on the generous per-user turn budget, never the 5/h spam bucket (SFR-02-04)", async () => {
     mockedRunTurn.mockResolvedValue({
       messages: [],
       nextNodeId: null,
@@ -189,10 +189,25 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
       expect(res.status).toBe(200);
     }
     expect(mockedRunTurn).toHaveBeenCalledTimes(6);
-    expect(applyRateLimit).not.toHaveBeenCalled();
+    expect(applyRateLimit).toHaveBeenCalledTimes(6);
+    for (const [limiter, key] of (applyRateLimit as jest.Mock).mock.calls) {
+      expect(limiter).toEqual({ id: "supportTurnLimiter" });
+      expect(key).toBe("appt-turn:u1");
+    }
   });
 
-  it("never calls applyRateLimit across typed turns followed by human chip (SFR-02-04)", async () => {
+  it("answers the limiter's 429 without running the turn", async () => {
+    (applyRateLimit as jest.Mock).mockResolvedValueOnce(
+      new Response(null, { status: 429 }),
+    );
+    const res = await POST(req("POST", { userMessage: "again" }), {
+      params: Promise.resolve({ appointmentId: SLUG }),
+    });
+    expect(res.status).toBe(429);
+    expect(mockedRunTurn).not.toHaveBeenCalled();
+  });
+
+  it("reaches a human across typed turns and the human chip within the turn budget (SFR-02-04)", async () => {
     mockedRunTurn.mockResolvedValue({
       messages: [{ sender: "BOT", body: "How can I help?" }],
       nextNodeId: "n2",
@@ -211,7 +226,10 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
       expect(res.status).toBe(200);
     }
     expect(mockedRunTurn).toHaveBeenCalledTimes(payloads.length);
-    expect(applyRateLimit).not.toHaveBeenCalled();
+    expect(applyRateLimit).not.toHaveBeenCalledWith(
+      { id: "spamLimiter" },
+      expect.anything(),
+    );
   });
 
   it("passes the customer's urgent flag through to the hand-off", async () => {

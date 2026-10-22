@@ -95,31 +95,23 @@ async function countRecontactedUsers(
   earliestAt: Date,
 ): Promise<number> {
   const userIds = [...firstResolvedByUser.keys()];
-  const [subsequentOutcomes, subsequentCases, subsequentTickets] =
-    await Promise.all([
-      prisma.supportFlowOutcome.findMany({
-        where: {
-          userId: { in: userIds },
-          createdAt: { gt: earliestAt },
-        },
-        select: { id: true, userId: true, createdAt: true },
-      }),
-      prisma.supportCase.findMany({
-        where: {
-          requesterUserId: { in: userIds },
-          createdAt: { gt: earliestAt },
-          deletedAt: null,
-        },
-        select: { requesterUserId: true, createdAt: true },
-      }),
-      prisma.supportTicket.findMany({
-        where: {
-          userId: { in: userIds },
-          createdAt: { gt: earliestAt },
-        },
-        select: { userId: true, createdAt: true },
-      }),
-    ]);
+  const [subsequentOutcomes, subsequentCases] = await Promise.all([
+    prisma.supportFlowOutcome.findMany({
+      where: {
+        userId: { in: userIds },
+        createdAt: { gt: earliestAt },
+      },
+      select: { id: true, userId: true, createdAt: true },
+    }),
+    prisma.supportCase.findMany({
+      where: {
+        requesterUserId: { in: userIds },
+        createdAt: { gt: earliestAt },
+        deletedAt: null,
+      },
+      select: { requesterUserId: true, createdAt: true },
+    }),
+  ]);
 
   const recontacted = new Set<string>();
   for (const o of subsequentOutcomes) {
@@ -136,12 +128,6 @@ async function countRecontactedUsers(
     const first = firstResolvedByUser.get(c.requesterUserId);
     if (first && isWithinRecontactWindow(first.at, c.createdAt)) {
       recontacted.add(c.requesterUserId);
-    }
-  }
-  for (const t of subsequentTickets) {
-    const first = firstResolvedByUser.get(t.userId);
-    if (first && isWithinRecontactWindow(first.at, t.createdAt)) {
-      recontacted.add(t.userId);
     }
   }
   return recontacted.size;
@@ -201,7 +187,7 @@ export interface SupportHealthMetrics extends DeflectionSummary {
   csatAverage: number | null;
   csatCount: number;
   ackWithin24hRate: number | null;
-  disposedWithin15dRate: number | null;
+  resolvedWithinDeadlineRate: number | null;
   medianFirstReplyMinutes: number | null;
 }
 
@@ -211,12 +197,13 @@ function summarizeHealthTimings(
     acknowledgedAt: Date | null;
     resolvedAt: Date | null;
     pausedSeconds: number;
+    statutoryDueAt: Date | null;
     firstAgentReplyAt: Date | null;
   }>,
   now: Date,
 ): {
   ackWithin24hRate: number | null;
-  disposedWithin15dRate: number | null;
+  resolvedWithinDeadlineRate: number | null;
   medianFirstReplyMinutes: number | null;
 } {
   const ackMissCutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -238,14 +225,15 @@ function summarizeHealthTimings(
   const resolvedRows = combined.filter(
     (r): r is typeof r & { resolvedAt: Date } => r.resolvedAt !== null,
   );
-  const disposedWithin15d = resolvedRows.filter(
+  const resolvedWithinDeadline = resolvedRows.filter(
     (r) =>
-      r.resolvedAt.getTime() - r.createdAt.getTime() - r.pausedSeconds * 1000 <=
-      15 * 24 * 3_600_000,
+      r.resolvedAt.getTime() <=
+      (r.statutoryDueAt?.getTime() ??
+        r.createdAt.getTime() + 7 * 24 * 3_600_000),
   ).length;
-  const disposedWithin15dRate =
+  const resolvedWithinDeadlineRate =
     resolvedRows.length > 0
-      ? Math.round((disposedWithin15d / resolvedRows.length) * 1000) / 10
+      ? Math.round((resolvedWithinDeadline / resolvedRows.length) * 1000) / 10
       : null;
 
   const firstReplyMinutes = combined
@@ -262,34 +250,34 @@ function summarizeHealthTimings(
       ? Math.round(firstReplyMinutes[Math.floor(firstReplyMinutes.length / 2)])
       : null;
 
-  return { ackWithin24hRate, disposedWithin15dRate, medianFirstReplyMinutes };
+  return {
+    ackWithin24hRate,
+    resolvedWithinDeadlineRate,
+    medianFirstReplyMinutes,
+  };
 }
 
 export async function supportHealthMetrics(
   since: Date,
   now: Date = new Date(),
 ): Promise<SupportHealthMetrics> {
-  const [deflection, cases, tickets] = await Promise.all([
+  const [deflection, cases] = await Promise.all([
     deflectionSince(since),
     prisma.supportCase.findMany({
-      where: { createdAt: { gte: since }, deletedAt: null },
+      where: {
+        receivedAt: { gte: since },
+        activeChannel: "HUMAN",
+        deletedAt: null,
+      },
       select: {
         createdAt: true,
+        receivedAt: true,
         acknowledgedAt: true,
         resolvedAt: true,
         pausedSeconds: true,
+        statutoryDueAt: true,
         firstAgentReplyAt: true,
         csatRating: true,
-      },
-    }),
-    prisma.supportTicket.findMany({
-      where: { createdAt: { gte: since } },
-      select: {
-        createdAt: true,
-        acknowledgedAt: true,
-        resolvedAt: true,
-        pausedSeconds: true,
-        firstAgentReplyAt: true,
       },
     }),
   ]);
@@ -303,7 +291,13 @@ export async function supportHealthMetrics(
       ? Math.round((ratings.reduce((a, b) => a + b, 0) / csatCount) * 100) / 100
       : null;
 
-  const timings = summarizeHealthTimings([...cases, ...tickets], now);
+  const timings = summarizeHealthTimings(
+    cases.map((supportCase) => ({
+      ...supportCase,
+      createdAt: supportCase.receivedAt ?? supportCase.createdAt,
+    })),
+    now,
+  );
 
   return {
     ...deflection,

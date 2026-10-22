@@ -115,7 +115,9 @@ describe("personal + workspace nav targets resolve", () => {
     expect(
       buildBackofficeDashboardNav(backofficeCap("admin")).support,
     ).toBeNull();
-    expect(buildWorkspaceNav("ow-1").support?.feedbackHref).toBeNull();
+    expect(buildWorkspaceNav("ow-1").support?.feedbackHref).toBe(
+      "/dashboard/org-workspace/ow-1/support/feedback",
+    );
     const helpPages = [
       buildConsultantNav("cp-1").support?.requestsHref,
       buildConsulteeNav("ce-1").support?.requestsHref,
@@ -199,7 +201,7 @@ describe("org nav targets resolve for every role × capability", () => {
       canHost: true,
       consultantProfileId: "cp-1",
     });
-    expect(flattenNav(nav).length).toBeLessThanOrEqual(17);
+    expect(flattenNav(nav).length).toBeLessThanOrEqual(18);
     expect(nav.mobileTabs).toEqual([
       "home",
       "appointments",
@@ -214,7 +216,7 @@ describe("org nav targets resolve for every role × capability", () => {
  * walked from the same matrix the page gates and API guards read.
  */
 describe("org nav role walk (#1527 matrix)", () => {
-  const OPS = ["support", "analytics"];
+  const OPS = ["analytics"];
   // #1527 — Library (Documents · Recordings) is every member's.
   const BASE = [
     "home",
@@ -223,6 +225,7 @@ describe("org nav role walk (#1527 matrix)", () => {
     "members",
     "documents",
     "recordings",
+    "support",
   ];
   const EXPECTED: Record<MemberRole, string[]> = {
     OWNER: [
@@ -232,6 +235,7 @@ describe("org nav role walk (#1527 matrix)", () => {
       "catalog",
       "billing",
       "payouts",
+      "settings",
       ...OPS,
       "audit",
       "consent",
@@ -243,6 +247,7 @@ describe("org nav role walk (#1527 matrix)", () => {
       "catalog",
       "billing",
       "payouts",
+      "settings",
       ...OPS,
       "audit",
       "consent",
@@ -255,7 +260,7 @@ describe("org nav role walk (#1527 matrix)", () => {
       "contracts",
       "billing",
       "payouts",
-      "support",
+      "settings",
       "audit",
     ],
     // Decision 1 (no Payouts) and no Contracts; programs for seat assignment.
@@ -337,37 +342,43 @@ describe("no redundant group nesting", () => {
   });
 });
 
-// #1527 — Settings: the avatar menu (+ mobile sheet) everywhere. Personal and
-// back office carry it as `nav.settings`; the org and workspace entries come
-// from the shell's account props, so their navs hold no settings row at all.
 describe("where Settings lives", () => {
-  const inGroups = (nav: DashboardNav) =>
-    nav.groups.flatMap((g) => g.items).some((i) => i.path === "settings");
-
   it.each([
     ["consultant", buildConsultantNav("cp-1")],
     ["consultee", buildConsulteeNav("ce-1")],
+    ["workspace", buildWorkspaceNav("ow-1")],
     ["admin", buildBackofficeDashboardNav(backofficeCap("admin"))],
-  ] as const)("%s: account Settings, never a rail row", (_name, nav) => {
-    expect(nav.settings?.name).toBe("Settings");
-    expect(inGroups(nav)).toBe(false);
+    ["staff", buildBackofficeDashboardNav(backofficeCap("staff"))],
+  ] as const)("%s exposes Settings once under Operations", (_name, nav) => {
+    expect(
+      nav.groups
+        .find((group) => group.label === "Operations")
+        ?.items.some((item) => item.path === "settings"),
+    ).toBe(true);
+    expect(
+      flattenNav(nav).filter((item) => item.path === "settings"),
+    ).toHaveLength(1);
   });
 
   it.each([
-    [
-      "organization",
-      buildOrganizationNav({
-        orgId: "org-1",
-        role: "OWNER",
-        canSponsor: true,
-        canHost: true,
-        consultantProfileId: null,
-      }),
-    ],
-    ["workspace", buildWorkspaceNav("ow-1")],
-  ] as const)("%s: no settings row in the rail", (_name, nav) => {
-    expect(nav.settings).toBeUndefined();
-    expect(inGroups(nav)).toBe(false);
+    "OWNER",
+    "MAINTAINER",
+    "BILLING_ADMIN",
+    "MANAGER",
+    "SUPPORT",
+    "EXPERT",
+    "LEARNER",
+  ] as const)("%s sees only permitted organization settings", (role) => {
+    const nav = buildOrganizationNav({
+      orgId: "org-1",
+      role,
+      canSponsor: true,
+      canHost: true,
+      consultantProfileId: null,
+    });
+    expect(flattenNav(nav).some((item) => item.path === "settings")).toBe(
+      canOpenOrgSettings(role),
+    );
   });
 
   it("the avatar menu's org entry follows the settings sections", () => {

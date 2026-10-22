@@ -1,9 +1,12 @@
 "use client";
 
+import { useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
+import { freshCaseUpdatedAt } from "@/components/support/resolution/resolution-data";
 import { useToast } from "@/hooks/use-toast";
 import { isStaleCaseError, throwSupportError } from "@/lib/support/error-copy";
+import { invalidateSupportCase } from "@/lib/support/support-keys";
 import type { CaseWorkspace } from "@/types/support-case";
 
 async function send(url: string, method: "POST" | "PATCH", body: object) {
@@ -18,16 +21,17 @@ async function send(url: string, method: "POST" | "PATCH", body: object) {
   if (!res.ok) await throwSupportError(res, `${method} ${url}`);
 }
 
-/**
- * #1527 — every write from the case workspace, through the EXISTING routes
- * and their guards: a ticket case uses the ticket routes (which mirror into
- * its thread), a conversation that was never escalated uses the thread route.
- */
 export function useCaseMutations(c: CaseWorkspace | undefined) {
   const qc = useQueryClient();
   const { toast } = useToast();
-  const ticketUrl = c?.ticketId && `/api/staff/support-tickets/${c.ticketId}`;
-  const threadUrl = c?.threadId && `/api/staff/support-threads/${c.threadId}`;
+  const pendingTurns = useRef(new Map<string, string>());
+  const caseId = c?.caseId;
+  const caseUrl = caseId ? `/api/support/cases/${caseId}` : "";
+
+  const refresh = () => {
+    if (caseId) void invalidateSupportCase(qc, caseId);
+    void qc.invalidateQueries({ queryKey: ["backoffice-nav-counts"] });
+  };
 
   const settle = (
     title: string,
@@ -35,18 +39,11 @@ export function useCaseMutations(c: CaseWorkspace | undefined) {
   ) => ({
     onSuccess: () => {
       toast({ title });
-      for (const key of [
-        ["support-case", c?.key],
-        ["support-inbox"],
-        ["support-inbox-stats"],
-        ["backoffice-nav-counts"],
-      ]) {
-        void qc.invalidateQueries({ queryKey: key });
-      }
+      refresh();
     },
     onError: (e: unknown) => {
       if (isStaleCaseError(e)) {
-        void qc.invalidateQueries({ queryKey: ["support-case", c?.key] });
+        refresh();
         toast({
           title:
             conflictMessage?.title ?? "The case changed — review and retry",
@@ -64,6 +61,9 @@ export function useCaseMutations(c: CaseWorkspace | undefined) {
     },
   });
 
+  const expectedUpdatedAt = async () =>
+    (caseId ? await freshCaseUpdatedAt(qc, caseId) : undefined) ?? c?.updatedAt;
+
   const reply = useMutation({
     mutationFn: async ({
       message,
@@ -72,17 +72,19 @@ export function useCaseMutations(c: CaseWorkspace | undefined) {
       message: string;
       note: boolean;
     }) => {
-      if (ticketUrl) {
-        return send(`${ticketUrl}/responses`, "POST", {
-          message,
-          isInternal: note,
-          ...(note || !c?.lastMessageAt
-            ? {}
-            : { expectedLastMessageAt: c.lastMessageAt }),
-        });
-      }
-      if (note || !threadUrl) throw new Error("Private notes need a ticket");
-      return send(threadUrl, "POST", { message });
+      const turnKey = `${caseId}:${note}:${message}`;
+      const clientTurnId =
+        pendingTurns.current.get(turnKey) ?? crypto.randomUUID();
+      pendingTurns.current.set(turnKey, clientTurnId);
+      await send(`${caseUrl}/messages`, "POST", {
+        body: message,
+        isInternal: note,
+        clientTurnId,
+        ...(note || !c?.lastMessageAt
+          ? {}
+          : { expectedLastMessageAt: c.lastMessageAt }),
+      });
+      pendingTurns.current.delete(turnKey);
     },
     ...settle("Sent", {
       title: "New message arrived before your send",
@@ -91,37 +93,27 @@ export function useCaseMutations(c: CaseWorkspace | undefined) {
     }),
   });
 
-  const key = c?.key;
-
   const setStatus = useMutation({
-    mutationFn: (status: "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED") => {
-      const expectedUpdatedAt =
-        qc.getQueryData<CaseWorkspace>(["support-case", key])?.updatedAt ??
-        c?.updatedAt;
-      return ticketUrl
-        ? send(ticketUrl, "PATCH", {
-            status,
-            expectedUpdatedAt,
-          })
-        : send(threadUrl ?? "", "PATCH", { status });
-    },
+    mutationFn: async (
+      status: "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED",
+    ) =>
+      send(caseUrl, "PATCH", {
+        status,
+        expectedUpdatedAt: await expectedUpdatedAt(),
+      }),
     ...settle("Status updated"),
   });
 
   const update = useMutation({
-    mutationFn: (patch: {
+    mutationFn: async (patch: {
       assignedToId?: string | null;
       priority?: string;
       note?: string;
-    }) => {
-      const expectedUpdatedAt =
-        qc.getQueryData<CaseWorkspace>(["support-case", key])?.updatedAt ??
-        c?.updatedAt;
-      return send(ticketUrl ?? "", "PATCH", {
+    }) =>
+      send(caseUrl, "PATCH", {
         ...patch,
-        expectedUpdatedAt,
-      });
-    },
+        expectedUpdatedAt: await expectedUpdatedAt(),
+      }),
     ...settle("Case updated"),
   });
 

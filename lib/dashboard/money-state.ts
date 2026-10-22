@@ -145,6 +145,7 @@ export type RefundInput = {
   /** #1780 — the gateway's refund id once it has one; a placeholder before. */
   refundId?: string | null;
   createdAt?: Date | string | null;
+  updatedAt?: Date | string | null;
 };
 
 export type DisputeInput = { status: string };
@@ -863,15 +864,11 @@ function deriveTimeline(
 // Razorpay (rfnd_) and Stripe (re_) ids; the front doors stamp a placeholder first.
 const GATEWAY_REFUND_ID = /^(rfnd_|re_)/;
 
-/**
- * #1780 — one event per refund: requested (no gateway id yet), processing
- * (the gateway has it), completed (partial when it returns less than was
- * paid) or failed, with the arrival time of the rail it goes back to. The row
- * records CARD for every gateway charge, so card and UPI are both named.
- */
-const REFUND_ETA_CARD_OR_UPI = "cards take 5–7 working days, UPI 1–3";
+/** Refund progress records gateway processing, not acknowledgement from the recipient’s bank. */
+const REFUND_ETA_CARD_OR_UPI =
+  "bank arrival varies; receipt is not yet confirmed";
 const REFUND_ETA: Partial<Record<string, string>> = {
-  CREDITS: "back as credits instantly",
+  CREDITS: "returns as credits after processing",
   ORG: "back to the organisation",
 };
 
@@ -881,10 +878,15 @@ function completedRefundLabel(
   amountPaise: Parameters<typeof money>[0],
   currency: Parameters<typeof money>[1],
 ): string {
-  if (!partial) return "Refunded";
+  if (!partial)
+    return funding === "ORG" || funding === "CREDITS"
+      ? "Refunded"
+      : "Refund processed · bank arrival not confirmed";
   // Locked 2026-09-13: a sponsored member paid nothing, so no amount.
   if (funding === "ORG") return "Refunded (partial)";
-  return `Refunded ${money(amountPaise, currency)} (partial)`;
+  return funding === "CREDITS"
+    ? `Refunded ${money(amountPaise, currency)} (partial)`
+    : `Partial refund processed · ${money(amountPaise, currency)} · bank arrival not confirmed`;
 }
 
 function refundTimeline(input: BookingPresentationInput): TimelineEvent[] {
@@ -893,8 +895,12 @@ function refundTimeline(input: BookingPresentationInput): TimelineEvent[] {
   const funding = paymentFunding(paid);
   const eta = REFUND_ETA[funding] ?? REFUND_ETA_CARD_OR_UPI;
   return input.refunds.map((r): TimelineEvent => {
-    const at = toDateOrNull(r.createdAt);
     const status = normalizeStatus(r.status);
+    const at = toDateOrNull(
+      status === "SUCCEEDED" || status === "FAILED"
+        ? (r.updatedAt ?? r.createdAt)
+        : r.createdAt,
+    );
     if (status === "FAILED") {
       return {
         at,

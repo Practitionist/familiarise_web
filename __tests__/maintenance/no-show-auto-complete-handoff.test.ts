@@ -85,7 +85,7 @@ jest.mock("../../lib/prisma", () => {
       updateManyAndReturn: jest.fn(),
       count: jest.fn(async () => 0),
     },
-    supportTicket: { findFirst: jest.fn() },
+    supportCase: { findFirst: jest.fn() },
     maintenanceWindow: { findMany: jest.fn(async () => []) },
     platformIncident: { findMany: jest.fn(async () => []) },
     bookingStatusHistory: { create: jest.fn() },
@@ -192,7 +192,7 @@ beforeEach(() => {
   db.appointmentOccurrence.updateManyAndReturn.mockResolvedValue([
     { id: "occ-1", appointmentId: "apt-1" },
   ]);
-  db.supportTicket.findFirst.mockResolvedValue(null);
+  db.supportCase.findFirst.mockResolvedValue(null);
   db.consultation.findUnique.mockResolvedValue({
     status: "APPROVED",
     appointment: { id: "appt-1" },

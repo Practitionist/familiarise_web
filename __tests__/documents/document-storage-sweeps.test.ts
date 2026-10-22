@@ -67,7 +67,7 @@ jest.mock("../../lib/prisma", () => ({
     },
     planMaterial: { findMany: jest.fn() },
     profileVerificationDocument: { findMany: jest.fn() },
-    supportTicketAttachment: { findMany: jest.fn(async () => []) },
+    supportCaseAttachment: { findMany: jest.fn(async () => []) },
   },
 }));
 
@@ -110,6 +110,20 @@ describe("reconcile-document-storage orphan sweep", () => {
     expect(result.errors).toEqual([
       "1 orphaned files in support-attachments were not removed",
     ]);
+  });
+});
+
+describe("reconcile-document-storage support attachment references", () => {
+  it("lets a deleted attachment row's object be swept as an orphan", async () => {
+    await reconcileDocumentStorage();
+
+    const where = (prisma.supportCaseAttachment.findMany as jest.Mock).mock
+      .calls[0][0].where;
+    expect(where.OR).toContainEqual({
+      completedAt: { not: null },
+      deletedAt: null,
+    });
+    expect(where.OR).not.toContainEqual({ completedAt: { not: null } });
   });
 });
 
