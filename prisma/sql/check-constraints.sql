@@ -1344,3 +1344,65 @@ CREATE UNIQUE INDEX IF NOT EXISTS "support_decision_one_original_per_case"
 -- Keeps the post-closure evidence purge scan cheap as closed cases accumulate.
 CREATE INDEX IF NOT EXISTS "support_case_closed_at_idx"
   ON "SupportCase" ("closedAt") WHERE "closedAt" IS NOT NULL;
+
+-- SPLIT
+ALTER TABLE "SupportCaseChatAccess" DROP CONSTRAINT IF EXISTS "support_chat_access_shape";
+-- SPLIT
+-- An ended grant names why; only an intervention touches Stream membership; OPEN_CASE never justifies an intervention.
+ALTER TABLE "SupportCaseChatAccess" ADD CONSTRAINT "support_chat_access_shape"
+  CHECK (("endedAt" IS NULL) = ("endReason" IS NULL)
+    AND "expiresAt" > "createdAt"
+    AND cardinality("scopeUserIds") >= 1
+    AND ("kind" = 'INTERVENE' OR ("streamJoinedAt" IS NULL AND "streamLeftAt" IS NULL))
+    AND ("streamLeftAt" IS NULL OR "streamJoinedAt" IS NOT NULL)
+    AND ("reviewNoticeAt" IS NULL OR "endedAt" IS NOT NULL)
+    AND ("kind" = 'READ' OR "basis" <> 'OPEN_CASE'));
+
+-- SPLIT
+-- One Familiarise Support seat per channel across all cases.
+CREATE UNIQUE INDEX IF NOT EXISTS "support_chat_one_live_intervention_per_channel"
+  ON "SupportCaseChatAccess" ("channelType", "channelId") WHERE "kind" = 'INTERVENE' AND "endedAt" IS NULL;
+
+-- SPLIT
+-- One live read grant per operator per case.
+CREATE UNIQUE INDEX IF NOT EXISTS "support_chat_one_live_read_per_operator"
+  ON "SupportCaseChatAccess" ("caseId", "grantedById") WHERE "kind" = 'READ' AND "endedAt" IS NULL;
+
+-- SPLIT
+-- Keeps the SLA-sweep expiry, Stream-leave and review-notice scans cheap.
+CREATE INDEX IF NOT EXISTS "support_chat_access_live_expiry_idx"
+  ON "SupportCaseChatAccess" ("expiresAt") WHERE "endedAt" IS NULL;
+-- SPLIT
+CREATE INDEX IF NOT EXISTS "support_chat_access_pending_leave_idx"
+  ON "SupportCaseChatAccess" ("endedAt")
+  WHERE "kind" = 'INTERVENE' AND "streamJoinedAt" IS NOT NULL AND "streamLeftAt" IS NULL;
+-- SPLIT
+CREATE INDEX IF NOT EXISTS "support_chat_access_pending_notice_idx"
+  ON "SupportCaseChatAccess" ("caseId") WHERE "endedAt" IS NOT NULL AND "reviewNoticeAt" IS NULL;
+
+-- SPLIT
+-- The access log is append-only: only the end, Stream and notice stamps may be set, once each.
+CREATE OR REPLACE FUNCTION assert_support_chat_access_append_only() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'Chat access grants are an access log and cannot be deleted'; END IF;
+  IF (NEW."caseId", NEW."kind", NEW."basis", NEW."grantedById", NEW."opsActionId", NEW."channelType", NEW."channelId",
+      NEW."scopeUserIds", NEW."windowStart", NEW."organizationIds", NEW."withholdNotice", NEW."expiresAt", NEW."createdAt")
+     IS DISTINCT FROM
+     (OLD."caseId", OLD."kind", OLD."basis", OLD."grantedById", OLD."opsActionId", OLD."channelType", OLD."channelId",
+      OLD."scopeUserIds", OLD."windowStart", OLD."organizationIds", OLD."withholdNotice", OLD."expiresAt", OLD."createdAt")
+     OR (OLD."endedAt" IS NOT NULL AND (NEW."endedAt", NEW."endedById", NEW."endReason")
+       IS DISTINCT FROM (OLD."endedAt", OLD."endedById", OLD."endReason"))
+     OR (OLD."streamJoinedAt" IS NOT NULL AND NEW."streamJoinedAt" IS DISTINCT FROM OLD."streamJoinedAt")
+     OR (OLD."streamLeftAt" IS NOT NULL AND NEW."streamLeftAt" IS DISTINCT FROM OLD."streamLeftAt")
+     OR (OLD."reviewNoticeAt" IS NOT NULL AND NEW."reviewNoticeAt" IS DISTINCT FROM OLD."reviewNoticeAt") THEN
+    RAISE EXCEPTION 'Chat access grants only gain end, Stream and notice stamps';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+-- SPLIT
+DROP TRIGGER IF EXISTS support_chat_access_append_only ON "SupportCaseChatAccess";
+-- SPLIT
+CREATE TRIGGER support_chat_access_append_only
+  BEFORE UPDATE OR DELETE ON "SupportCaseChatAccess"
+  FOR EACH ROW EXECUTE FUNCTION assert_support_chat_access_append_only();
