@@ -328,13 +328,15 @@ export default function PrivacyPolicyPage() {
                       </td>
                       <td className="p-2 align-top">
                         {/* counsel: confirm 180 days after closure is adequate for limitation periods and consumer-forum claims. */}
-                        {/* counsel: sign-off needed on the split between deleted personal content and the decision and payment records we keep. */}
+                        {/* counsel: sign-off needed on the split: request, messages, files, chat excerpts and staff case notes deleted; decision explanations and refund and payment-hold reasons kept with the payment and refund records. */}
                         <strong>Case-linked</strong> — Your request text,
-                        messages, uploaded files and any booking chat excerpts
-                        saved to the case are deleted or anonymised 180 days
-                        after the case and any appeal close, unless a legal hold
-                        applies or we need them for a legal claim. We keep the
-                        decision record and the related payment and refund
+                        messages, uploaded files, any booking chat excerpts
+                        saved to the case and our team&rsquo;s case notes are
+                        deleted or anonymised 180 days after the case and any
+                        appeal close, unless a legal hold applies or we need
+                        them for a legal claim. We keep the decision record
+                        (including its explanation), the reasons for any refund
+                        or payment hold, and the related payment and refund
                         records as the law requires. Staff access logs follow
                         the security-log period above.
                       </td>
@@ -731,15 +733,16 @@ export default function PrivacyPolicyPage() {
                   appeal.
                 </li>
                 {/* counsel: confirm early erasure on request may be refused while a case is open, given the other party's interest in the same evidence. */}
-                {/* counsel: sign-off needed on the split between deleted personal content and the decision and payment records we keep. */}
+                {/* counsel: sign-off needed on the split: request, messages, files, chat excerpts and staff case notes deleted; decision explanations and refund and payment-hold reasons kept with the payment and refund records. */}
                 <li>
-                  <strong>Erasure:</strong> your request text, messages, files
-                  and any chat excerpts saved to a case are deleted or
-                  anonymised 180 days after the case and any appeal close. If
-                  you ask us to erase them sooner, we will, unless we need them
-                  for an open case, a legal claim or a legal hold. The decision
-                  record and payment and refund records are kept as the law
-                  requires.
+                  <strong>Erasure:</strong> your request text, messages, files,
+                  any chat excerpts saved to a case and our team&rsquo;s case
+                  notes are deleted or anonymised 180 days after the case and
+                  any appeal close. If you ask us to erase them sooner, we will,
+                  unless we need them for an open case, a legal claim or a legal
+                  hold. The decision record (including its explanation), the
+                  reasons for any refund or payment hold, and payment and refund
+                  records are kept as the law requires.
                 </li>
                 <li>
                   <strong>Appeal and grievance:</strong> you can appeal a
@@ -798,14 +801,16 @@ export default function PrivacyPolicyPage() {
                   Maintain business records for tax and accounting purposes
                 </li>
               </ul>
-              {/* counsel: sign-off needed on the split between deleted personal content and the decision and payment records we keep. */}
+              {/* counsel: sign-off needed on the split: request, messages, files, chat excerpts and staff case notes deleted; decision explanations and refund and payment-hold reasons kept with the payment and refund records. */}
               <p>
                 The personal content of a support case (your request text,
-                messages, uploaded files and any booking chat excerpts saved to
-                the case) is deleted or anonymised 180 days after the case and
-                any appeal close, unless a legal hold applies or we need it for
-                a legal claim. We keep the decision record and the related
-                payment and refund records as the law requires.
+                messages, uploaded files, any booking chat excerpts saved to the
+                case and our team&rsquo;s case notes) is deleted or anonymised
+                180 days after the case and any appeal close, unless a legal
+                hold applies or we need it for a legal claim. We keep the
+                decision record (including its explanation), the reasons for any
+                refund or payment hold, and the related payment and refund
+                records as the law requires.
               </p>
               <p>
                 When you delete your account, we will delete or anonymize your

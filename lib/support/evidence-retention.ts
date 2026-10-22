@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, type SupportCaseEventKind } from "@prisma/client";
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
@@ -13,6 +13,17 @@ const PURGED_SUPPORT_TEXT = "[deleted after the retention period]";
 // Titles are requester free text (a grievance title embeds its subject), so they go too.
 const PURGED_SUPPORT_TITLE = "Support request";
 const PURGED_ATTACHMENT_NAME = "Deleted after the retention period";
+// Notes on these events are the decision, money and retention record; every other event note is purged.
+const RECORD_EVENT_KINDS: SupportCaseEventKind[] = [
+  "HOLD_APPLIED",
+  "HOLD_RELEASED",
+  "RECOMMENDATION_PROPOSED",
+  "RECOMMENDATION_DECIDED",
+  "RECOMMENDATION_VOIDED",
+  "DECISION_RECORDED",
+  "LEGAL_HOLD_CHANGED",
+  "EVIDENCE_PURGED",
+];
 const STORAGE_BATCH = 100;
 // Live disputes are few; at the cap the derived-hold set may be incomplete, so the run purges nothing.
 const LIVE_DISPUTE_CAP = 2_000;
@@ -91,6 +102,7 @@ function purgeEligibleWhere(
   return {
     closedAt: { lte: cutoff },
     legalHoldAt: null,
+    // Purged once: content added after a staff reopen of a purged case is not purged again.
     events: { none: { kind: "EVIDENCE_PURGED" } },
     decisions: {
       none: {
@@ -145,7 +157,7 @@ async function removeCaseObjects(paths: string[]): Promise<boolean> {
 
 /**
  * Deletes the files and personal free text of support cases past the 180-day
- * retention, keeping the case skeleton, decisions and payment links. A case
+ * retention, keeping the case skeleton, decisions, money-event notes and payment links. A case
  * whose files are not confirmed deleted is left whole and retried next run.
  */
 export async function purgeExpiredSupportEvidence({
@@ -237,6 +249,14 @@ export async function purgeExpiredSupportEvidence({
           await tx.supportCaseEvidenceRequest.updateMany({
             where: { caseId: c.id, responseBody: { not: null } },
             data: { responseBody: PURGED_SUPPORT_TEXT },
+          });
+          await tx.supportCaseEvent.updateMany({
+            where: {
+              caseId: c.id,
+              note: { not: null },
+              kind: { notIn: RECORD_EVENT_KINDS },
+            },
+            data: { note: null },
           });
           await tx.supportCaseEvent.create({
             data: {

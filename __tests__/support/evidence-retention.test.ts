@@ -12,7 +12,7 @@ jest.mock("../../lib/prisma", () => {
     supportCaseAttachment: { updateMany: jest.fn() },
     supportCaseMessage: { updateMany: jest.fn() },
     supportCaseEvidenceRequest: { updateMany: jest.fn() },
-    supportCaseEvent: { create: jest.fn() },
+    supportCaseEvent: { create: jest.fn(), updateMany: jest.fn() },
   };
   const db = {
     dispute: { findMany: jest.fn() },
@@ -41,7 +41,7 @@ const db = prisma as unknown as {
     supportCaseAttachment: { updateMany: jest.Mock };
     supportCaseMessage: { updateMany: jest.Mock };
     supportCaseEvidenceRequest: { updateMany: jest.Mock };
-    supportCaseEvent: { create: jest.Mock };
+    supportCaseEvent: { create: jest.Mock; updateMany: jest.Mock };
   };
 };
 const DAY = 24 * 3_600_000;
@@ -171,6 +171,29 @@ it("deletes the files, then scrubs free text and records one EVIDENCE_PURGED eve
     where: { caseId: "case-1", responseBody: { not: null } },
     data: { responseBody: expect.any(String) },
   });
+  expect(db.tx.supportCaseEvent.updateMany).toHaveBeenCalledWith({
+    where: {
+      caseId: "case-1",
+      note: { not: null },
+      kind: {
+        notIn: [
+          "HOLD_APPLIED",
+          "HOLD_RELEASED",
+          "RECOMMENDATION_PROPOSED",
+          "RECOMMENDATION_DECIDED",
+          "RECOMMENDATION_VOIDED",
+          "DECISION_RECORDED",
+          "LEGAL_HOLD_CHANGED",
+          "EVIDENCE_PURGED",
+        ],
+      },
+    },
+    data: { note: null },
+  });
+  const scrubbedKinds =
+    db.tx.supportCaseEvent.updateMany.mock.calls[0][0].where.kind.notIn;
+  expect(scrubbedKinds).not.toContain("STATUS_CHANGED");
+  expect(scrubbedKinds).not.toContain("REOPENED");
   expect(db.tx.supportCaseEvent.create).toHaveBeenCalledTimes(1);
   expect(db.tx.supportCaseEvent.create).toHaveBeenCalledWith({
     data: expect.objectContaining({
