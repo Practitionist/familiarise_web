@@ -9,8 +9,8 @@ import nextJest from "next/jest.js";
 // The database tier (`jest.db.config.ts`): its suites plus their guard and
 // seed helpers. Only CI's disposable Postgres runs them, so this config skips them.
 export const DB_TIER_PATTERNS = [
-  "\\.db\\.test\\.ts$",
-  "/__tests__/db/(guard|seed)\\.ts$",
+  String.raw`\.db\.test\.ts$`,
+  String.raw`/__tests__/db/(guard|seed)\.ts$`,
 ];
 
 const createJestConfig = nextJest({

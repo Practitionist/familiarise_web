@@ -467,4 +467,4 @@ jobs:
 
       - name: Support transaction races on disposable Postgres
         # Only ever the throwaway container above; __tests__/db/guard.ts refuses any other DATABASE_URL.
-        run: npx jest -c jest.db.config.ts
+        run: node_modules/.bin/jest -c jest.db.config.ts

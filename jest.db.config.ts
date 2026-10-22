@@ -5,7 +5,7 @@
  */
 import type { Config } from "jest";
 
-export default async (): Promise<Config> => {
+export default async function dbTierConfig(): Promise<Config> {
   // Jest loads configs with Node's type stripping, which needs the `.ts` extension a static import can't carry here.
   const {
     default: baseConfig,
@@ -31,4 +31,4 @@ export default async (): Promise<Config> => {
       "<rootDir>/__tests__/db/setup.ts",
     ],
   };
-};
+}
