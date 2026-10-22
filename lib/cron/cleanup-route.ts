@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
+import { jobOutcome } from "@/lib/cron/job-outcome";
 import {
   CronLockHeldError,
   CronLockUnavailableError,
@@ -24,12 +25,11 @@ import {
  *   operator has to look" — a discrepancy, a double booking, a dispute that was
  *   already paid.
  */
-export function statusFor(
-  result: { success?: boolean },
-  needsAttention = false,
-): number {
-  if (result.success === false) return 500;
-  return needsAttention ? 207 : 200;
+export function statusFor(result: unknown, needsAttention = false): number {
+  const outcome = jobOutcome(result);
+  if (outcome === "failure") return 500;
+  if (outcome === "held") return 503;
+  return needsAttention || outcome === "partial_failure" ? 207 : 200;
 }
 
 /** Ceiling on an explicit `?limit=`; above this it is clamped, not rejected. */
@@ -216,9 +216,9 @@ export function cleanupRoute<T extends object>(opts: {
       console.log(`${job} completed:`, summary);
       Sentry.logger.info(`cron:${job} finished`, summary);
 
-      const responseStatus = status
-        ? status(result)
-        : statusFor(result as { success?: boolean });
+      const inferredStatus = statusFor(result);
+      const responseStatus =
+        inferredStatus === 200 ? (status?.(result) ?? 200) : inferredStatus;
       return {
         body: result,
         status: responseStatus,
@@ -291,7 +291,21 @@ export function cleanupRoute<T extends object>(opts: {
     if (canary || !outcome.ok) {
       await Sentry.flush?.(2_000);
     }
-    return NextResponse.json(outcome.body, { status: outcome.status });
+    const resultOutcome =
+      outcome.status === 409 ||
+      (outcome.status === 503 &&
+        (jobOutcome(outcome.body) === "held" ||
+          (typeof outcome.body === "object" &&
+            outcome.body !== null &&
+            "phase" in outcome.body)))
+        ? "held"
+        : outcome.status >= 400
+          ? "failure"
+          : jobOutcome(outcome.body);
+    return NextResponse.json(outcome.body, {
+      status: outcome.status,
+      headers: { "X-Job-Outcome": resultOutcome },
+    });
   }
 
   return { GET: handle, POST: handle };
