@@ -154,7 +154,7 @@ That refusal carries the stable code `WALLET_INSUFFICIENT_FUNDS` and `httpStatus
 
 Two paths book a top-up refund, and both call `bookTopUpRefund()` (`lib/payments/operations/wallet-refund.ts`) with the same journal key, so whichever arrives second is a no-op.
 
-- **An admin door.** `POST /api/admin/billing-accounts/[billingAccountId]/refund-remaining` (`refundRemainingWalletBalance()` in the same file) returns the wallet balance as gateway refunds against the organisation's `CONFIRMED` top-ups, newest first, each keyed `wallet-refund:<billingAccountId>:<topUpId>`. It is a step-up, second-admin door (above ₹25,000 it answers `202`), and it refuses a drifted wallet with `409 WALLET_DRIFTED` before any money moves.
+- **An admin door.** `POST /api/admin/billing-accounts/[billingAccountId]/refund-remaining` (`refundRemainingWalletBalance()` in the same file) returns the wallet balance as gateway refunds against the organisation's `CONFIRMED` top-ups, newest first. Each gateway refund carries the dedupe key `wallet-refund:<billingAccountId>:<topUpId>`, and its journal entry is booked under `topup-refund:<gatewayRefundId>`, the key the webhook uses. It is a step-up, second-admin door (above ₹25,000 it answers `202`), and it refuses a drifted wallet with `409 WALLET_DRIFTED` before any money moves.
 - **A refund issued at the gateway** (for example from the Razorpay dashboard). When Razorpay reports a refund of a confirmed top-up, `handleRefundCreated` (`app/api/webhooks/utils.ts`) finds the `WalletTopUp` by `providerPaymentId` (status `CONFIRMED`) and books it.
 
 Each booking reverses the original posting:

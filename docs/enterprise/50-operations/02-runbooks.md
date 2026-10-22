@@ -303,6 +303,8 @@ longer matches its journal postings.
 3. For each finding, identify the root cause — nearly always a
    half-applied transaction caused by a webhook that died before
    commit. Manually re-run the affected webhook replay (see above).
+   `WALLET_BALANCE_DRIFT` is the exception: do not replay a webhook for
+   it; follow **Correcting drift** below.
 4. Once reconciled, trigger a fresh audit via `POST` to the admin
    endpoint with `{ organizationId }` scoped to the affected org and
    confirm `ok=true`.
@@ -337,7 +339,9 @@ run again.
 **Correcting drift:** the journal is append-only. Never edit or delete a
 `LedgerTransaction`/`LedgerEntry` row to "fix" a finding — post a
 balanced **counter-transaction** (Σ DEBIT == Σ CREDIT) that reverses the
-bad legs, then re-run reconcile. `WALLET_BALANCE_DRIFT` follows the same
+bad legs, then re-run reconcile. `LedgerTransaction.idempotencyKey` is
+unique, so give the correction one fixed key tied to the finding, reuse it
+on every retry, and after a timeout look that key up before posting again. `WALLET_BALANCE_DRIFT` follows the same
 rule: find the root cause, then post a balanced correcting
 `LedgerTransaction` for whichever side (the cache or the journal) is
 wrong, as owner-applied SQL. Overwriting the cache to match the journal
