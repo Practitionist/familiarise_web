@@ -42,10 +42,7 @@ jest.mock("../../lib/prisma", () => {
       findFirst: jest.fn(async () => null),
       findUnique: jest.fn(async () => null),
     },
-    failedEmail: {
-      findMany: jest.fn(async () => []),
-      findFirst: jest.fn(async () => null),
-    },
+    failedEmail: { findFirst: jest.fn(async () => null) },
     moderationReport: { findMany: jest.fn(async () => []) },
     supportCaseEvidenceRequest: { findMany: jest.fn(async () => []) },
     $transaction: jest.fn(),
