@@ -28,13 +28,9 @@ const mockReverseBookingUtilization = jest.fn();
 const mockRecordTdsReversal = jest.fn();
 const mockWalletCredit = jest.fn();
 
-// No payment here carries a booked DISCOUNT or an earlier refund's GST.
-jest.mock("../../lib/payments/ledger/refund-reversal-basis", () => ({
-  refundReversalBasis: async () => ({
-    discountBackPaise: 0,
-    gstReversedPaise: 0,
-  }),
-}));
+jest.mock("../../lib/payments/ledger/refund-reversal-basis", () =>
+  jest.requireActual("../fixtures/no-refund-reversal-basis"),
+);
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: (...a: unknown[]) => mockPostLedgerTxn(...a),
 }));
