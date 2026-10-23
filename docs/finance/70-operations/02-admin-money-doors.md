@@ -1,193 +1,205 @@
-# The Money console
+---
+title: Admin money doors and the Money console
+type: reference
+band: 70-operations
+audience: sde3
+status: live
+last-reviewed: 2026-10-23
+---
 
-Operators used to reach payments, refunds, payouts and disputes through four
-separate pages, each with its own URL, its own access guard, and no shared
-record of who had touched what. Since #1771 they are one console, reachable
-at `/dashboard/admin/money/<section>` for admins and
-`/dashboard/staff/[staffId]/money/<section>` for staff, with every mutation
-passing through one audited door. Each section is its own item in the
-sidebar's Money group, next to Invoices and Subscriptions; there is no
-in-page tab bar.
+# Admin money doors and the Money console
 
-## Sections, and who sees them
+Every back-office action that moves money, holds money or runs a money job goes through one shell, `withOpsAction` in `lib/backoffice/ops-action-log.ts`, and is surfaced in one place: the Money console at `/dashboard/admin/money/<section>` for admins and `/dashboard/staff/[staffId]/money/<section>` for staff. This page lists the sections, the checks every door applies, the exact thresholds, which doors need a second admin, and the on-demand jobs the console can start. The rule behind all of it is simple: staff see every money surface and own support; only an admin executes money, and staff executes only bounded support refunds and holds.
 
-`lib/backoffice/money-tabs.ts` declares the section list once. The sidebar
-(`lib/dashboard/backoffice-nav.ts`) turns each entry into an item and the
-shared `[tab]` page guards it, and both filter the list through
-`BACKOFFICE_PERMISSIONS` (`lib/auth/backoffice-permissions.ts`), so a section
-is never visible to a role whose route guard would then turn it away. The
-table below lists every section with the surfaces that gate it.
+## The sections and who sees them
 
-| Section   | Surface                       | What it is for                                                                               |
-| --------- | ----------------------------- | -------------------------------------------------------------------------------------------- |
-| Payments  | `payments.read`               | Every payment, with its status and rail.                                                     |
-| Refunds   | `refunds.read` / `.manage`    | Refunds issued, pending and failed, plus the admin refund doors.                             |
-| Disputes  | `disputes.read` / `.manage`   | Chargebacks and their evidence deadlines.                                                    |
-| Payouts   | `payouts.read` / `.manage`    | Consultant payouts waiting, in flight and paid, including the instant-payout approval queue. |
-| Earnings  | `payouts.manage`              | Consultant earnings, with hold and release.                                                  |
-| Reconcile | `payouts.manage`              | Runs the four reconcile jobs on demand and shows when each last ran.                         |
-| Incidents | `incidents.read` / `.declare` | Declared platform outages, the sessions they voided and each learner's remedy.               |
+`lib/backoffice/money-tabs.ts` declares the list once. The sidebar and the shared `[tab]` page both filter it through `BACKOFFICE_PERMISSIONS` (`lib/auth/backoffice-permissions.ts`), so a role never sees a section its route guard would refuse. `OPERATORS` below means ADMIN and STAFF.
 
-Staff hold `payouts.read`, so they see the Payouts section read-only: the
-list, the trend and the earnings view render, while the approve and reject
-buttons do not, and every payout and earnings mutation (approve or reject,
-including an instant payout waiting for approval, hold and release, and
-every reconcile run) stays `payouts.manage`, which only an admin holds. The
-earnings read follows `payouts.read`, but the Earnings section is where hold
-and release live, so it and the Reconcile section are gated by
-`payouts.manage` and appear for admins only. The reconcile reads
-(`GET /api/admin/reconcile` and `GET /api/admin/reconcile-ledgers`) stay
-admin-only too, because the ledger reports expose cross-organisation
-aggregates. A support agent resolving a billing ticket can therefore see a
-payment, refund, dispute or payout without being able to move money.
-Staff hold `incidents.read`, so they see the Incidents section and its suggestions; declaring an incident and running one now are `incidents.declare`, which only an admin holds. Approval Payments stays its own page rather than a money section, because
-it chases an unpaid pay-link rather than moving money once it lands.
+| Section       | Surface that gates it | Held by   | What it is for                                                                                                                                      |
+| ------------- | --------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Payments      | `payments.read`       | Operators | Every payment with its status and rail.                                                                                                             |
+| Refunds       | `refunds.read`        | Operators | Refunds issued, pending and failed; the refund and credit-restore doors need `refunds.manage` (admin).                                              |
+| Disputes      | `disputes.read`       | Operators | Chargebacks and their evidence deadlines; the update door needs `disputes.manage` (admin).                                                          |
+| Payouts       | `payouts.read`        | Operators | Consultant payouts waiting, in flight and paid, with the instant-payout approval queue.                                                             |
+| Org payouts   | `payouts.manage`      | Admin     | Organisation payouts with platform co-approval, hold and release.                                                                                   |
+| Earnings      | `payouts.manage`      | Admin     | Consultant and organisation earnings with hold and release.                                                                                         |
+| Reconcile     | `payouts.manage`      | Admin     | Starts four reconcile jobs on demand and shows when each last ran.                                                                                  |
+| Approvals     | `payments.manage`     | Admin     | Money actions above ₹25,000 waiting for a second admin.                                                                                             |
+| Incidents     | `incidents.read`      | Operators | Declared platform outages, the sessions they voided and each learner's remedy; declaring needs `incidents.declare` (admin).                         |
+| Support spend | `opsLog.read`         | Operators | Refunds and holds per operator against the staff limits. A staff viewer sees only their own row.                                                    |
+| Audit log     | `opsLog.read`         | Operators | Every console action: who, what, on which row, and why. It sits at the end of the sidebar outside the Money group but keeps the `/money/audit` URL. |
 
-The four pages the hub replaced — `/dashboard/admin/{payments,refunds,
-disputes,payouts}` — now answer a 308 to their section, carrying their
-query string over (`moneyHubHref`), so a bookmarked or linked URL keeps
-working. The sidebar links straight to each section's `/money/<section>` URL.
+The four pages the console replaced (`/dashboard/admin/payments`, `refunds`, `disputes`, `payouts`) answer a 308 to their section with the query string carried over (`moneyHubHref`). The old `/money/class-series` URL answers a 308 to Appointments filtered to classes (`retiredMoneyTabHref`).
 
-## Every mutation is a door, and every door is a `withOpsAction`
+## What every door checks
 
-`lib/backoffice/ops-action-log.ts`'s `withOpsAction` is the route shell every
-console mutation is built on: it gates the surface through
-`requireBackofficeSurface`, parses a Zod body that always includes a `reason`
-of at least five characters, runs the door's handler, and writes exactly one
-`OpsActionLog` row recording the actor, their role, the surface, the action,
-the target kind and id, the reason, and a before/after snapshot.
+A door is a route built by `withOpsAction(surface, action, shape, door, options)`. The shell applies the first four checks before the door runs, in this order; the door's own handler applies the maintenance and throttle checks when it runs, which for a proposal is when the approved replay runs. Each check has a named enforcer:
 
-A door is one of two shapes:
+| Check        | Rule                                                                                                                                                                                                                                                                                              | Enforcer                                                                                         |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Surface      | The caller's role must hold the door's surface, for example `payments.manage`, `refunds.manage`, `payouts.manage`, `invoices.manage`, `disputes.manage`, `incidents.declare`, `referrals.manage` or a bounded staff surface; the door index below names each door's surface.                      | `requireBackofficeSurface`                                                                       |
+| Step-up      | The session must have been created or re-authenticated in the last 15 minutes, else 403 `REAUTH_REQUIRED`. Most money doors set `stepUp: true`; the earnings hold and release, dispute update and dispute evidence, referral credit, fee-schedule, class-series and session-outcome doors do not. | `requireFreshSession`, `STEP_UP_WINDOW_MS` in `lib/auth/step-up.ts`                              |
+| Reason       | A typed `reason` of 5 to 1,000 characters is required; shorter answers 400 `INVALID_BODY`.                                                                                                                                                                                                        | `opsReasonSchema`                                                                                |
+| Second admin | An amount strictly above ₹25,000 (2,500,000 paise) becomes a proposal when at least two active admins exist. This is decided before the door runs.                                                                                                                                                | `requiresSecondApprover`, `SECOND_APPROVAL_THRESHOLD_PAISE` in `lib/backoffice/ops-proposals.ts` |
+| Maintenance  | The edge gate blocks the listed admin routes in DEGRADED. Inside the door, the support case doors, the support refund approval and the platform cancel refuse 503 `MAINTENANCE` outside phase `OFF` and 503 `MAINTENANCE_UNKNOWN` when the phase cannot be read.                                  | `assertMoneyDoorsOpen`; see [the maintenance gate](03-maintenance-gate-and-recovery.md)          |
+| Throttle     | The refund, payout create and process, wallet adjustment and refund-remaining, dispute-evidence, class-series refund, support refund approval and platform cancel doors share a budget of 10 money actions per minute per actor, else 429 `RATE_LIMITED`.                                         | `assertMoneyOpsBudget`, `moneyOpsLimiter`                                                        |
+| Audit        | Exactly one `OpsActionLog` row per door.                                                                                                                                                                                                                                                          | `recordOpsAction`                                                                                |
 
-- **A transactional door** runs its handler and writes the audit row inside
-  the same database transaction, so a refused or rolled-back mutation leaves
-  no row behind — the log only ever describes something that actually
-  happened.
-- **A gateway door** — a Razorpay call, for instance — cannot sit inside a
-  Postgres transaction, so its row is written immediately after the call
-  returns, carrying `after.status` set to `SUCCEEDED` or to `FAILED` with the
-  refusal code either way. The row is written once and never retried. If that
-  write fails after the gateway call, the failure is paged to Sentry and the
-  door still answers with the call's outcome, because a lost audit row for
-  money that already moved is worse than a noisy alert.
+There are two shapes of door. A **transactional door** runs its handler and writes the audit row in one database transaction, so a refused or rolled-back door leaves no row. A **gateway door** (a Razorpay call, for example) cannot sit inside a Postgres transaction, so it writes its row right after the call returns, with `after.status` set to `SUCCEEDED`, or to `FAILED` with the refusal code. That row is written once and never retried. If the write fails after money has moved, the failure is paged to Sentry and the door still answers with the call's outcome, because a lost audit row is better than a false failure for money that already moved. Typed refusals (`OpsRefusal` in `lib/backoffice/ops-refusal.ts`) return their own codes, such as `ALREADY_RUNNING` or `WALLET_STILL_DRIFTED`, instead of a generic 500.
 
-Typed refusals (`lib/backoffice/ops-refusal.ts`) come back with their own
-codes instead of a generic 500, so the console can show "already contested"
-or "nothing left to restore" rather than a crash.
+## Second-admin approval
 
-## Staff support, admin money — the same split as everywhere else
+When a door's amount is above ₹25,000 and at least two admins are active (`countActiveAdmins`: role `ADMIN`, not banned), the door does not act. It answers `202` with a `PROPOSED` row in `OpsActionProposal`, and writes an `ops-proposal.propose` audit row. A **different** admin approves it at `POST /api/admin/ops-proposals/[id]/approve`, which needs a fresh step-up and a reason. The approval replays the stored request body through the same door, as the approver, links that door's `OpsActionLog` row to the proposal and marks it `EXECUTED`. The proposer may withdraw their own proposal at `.../reject` but may not approve it (`SAME_ADMIN`).
 
-The console repeats the platform's one rule for privileged access: staff own
-support end-to-end and read every money surface, and admin alone executes
-money. The class doors read this literally as two surfaces,
-`classSeries.support` and `classSeries.money`: a staff member can cancel a
-session for the host, grant a make-up (including an ops-only bypass of the
-14-day window, itself reason-gated), clear or re-flag the reliability flag,
-and leave a note — none of it moves money. Skipping a make-up, cancelling a
-whole series with refunds, and every refund or credit-restore door are
-`classSeries.money` and `refunds.manage`, admin-only, because every one of
-them does. See [the class-series money-rules ADR](../../decisions/2026-09-25-class-series-money-rules.md)
-for what each door does and why it exists.
+```mermaid
+sequenceDiagram
+    participant A as Admin A (proposer)
+    participant D as Money door
+    participant P as OpsActionProposal
+    participant B as Admin B (approver)
+    A->>D: POST with reason, amount over 25,000 rupees
+    D->>D: amount over threshold and 2+ active admins
+    D->>P: insert PROPOSED, expires in 24 h
+    D-->>A: 202 proposalId, expiresAt
+    B->>P: POST approve (fresh step-up, reason)
+    P->>P: CAS PROPOSED to APPROVED, B is not A
+    P->>D: replay stored body as B
+    D->>D: run door, write audit row linked to proposal
+    P->>P: CAS APPROVED to EXECUTED
+    D-->>B: 200 with the door's result
+```
 
-## Per-booking Ops actions
+The rules that keep this honest:
 
-The class doors no longer have a section of their own. Each booking's detail
-dialog under Operations → Appointments carries an "Ops actions" panel
-(`BookingOpsPanel`), which reads `GET /api/staff/appointments/[id]/ops` and
-opens only the existing door routes. Every booking type lists its sessions
-with their outcome and the `session.set-outcome` door, and shows its money
-state; an admin also gets a link that opens the Refunds section's issue door
-pre-filled with the payment. A class booking adds the class doors described
-above: cancel a session, grant a make-up with the reason-gated 14-day bypass,
-skip a make-up (admin), the exit-right state, the reliability flag with an
-ops note, and, for an admin, cancelling the whole series and running the
-14-day sweep for one session. A subscription booking gives an admin its
-48-hour sweep. Webinars get no class door, because those doors are keyed to a
-class. The old `/money/class-series` URL answers a 308 to Appointments
-filtered to classes, and the sessions-needing-a-decision queue now heads the
-Appointments page.
+- **One open proposal per action and target.** The partial unique index `ops_action_proposal_one_open_key` refuses a second; the door answers `PROPOSAL_PENDING`. An expired row is flipped to `EXPIRED` when the next proposal opens, so it never holds the slot.
+- **Expiry is read, not swept.** A proposal lives 24 hours (`PROPOSAL_TTL_MS`). The console and the list route compute "expired" from `expiresAt`, so no job runs for it. Approving after expiry answers `PROPOSAL_EXPIRED`.
+- **Status changes are compare-and-set.** `decideProposal` and `markProposalExecuted` use `updateMany` with the expected prior status, so two admins deciding at once cannot both win (`PROPOSAL_DECIDED`).
+- **A failed replay leaves the row `APPROVED`** with the failure noted on it, so the approval is never silently lost.
+- **An amount that cannot be priced counts as above the threshold.**
+- **One admin only.** With a single active admin the door acts at once; the rule needs two.
 
-## The refund and credit doors
+The doors that take a second approver, with the amount each is priced at:
 
-The Refunds tab's "Issue refund" always calls `refundBookingPayment` — the
-one front door every refund in the codebase goes through — so a console
-refund carries the same idempotency and ledger guarantees as an automatic
-one. "Ladder override" reprices the same cancellation quote with an operator
--supplied percentage (`ladderOverrideAmount`, `lib/backoffice/refund-doors.ts`)
-and then calls the same refund door; it can never move money outside the
-existing quote arithmetic, only substitute the percentage. "Return N sessions
-of credits" calls `restoreClassSeatCredits` for a credit-funded seat whose
-partial return the automatic credit rail cannot express on its own (the ADR
-above, decision 10) — a full return still happens automatically wherever the
-automatic path can reach it.
+| Door                                                                                                                                                                           | Priced at                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| Refund issue (`POST /api/admin/refunds/issue`) and the legacy refund door (`POST /api/admin/refunds`, which also requires an `Idempotency-Key` header of 10 to 255 characters) | The refund amount                                                                                 |
+| Support refund approval (`reviewSupportRefundDoor`, `lib/support/refund-door.ts`)                                                                                              | The recommended refund                                                                            |
+| Organisation invoice issue and void                                                                                                                                            | The invoice total                                                                                 |
+| Bank-transfer receipt on an invoice                                                                                                                                            | The transfer amount                                                                               |
+| Overage settle-to-org                                                                                                                                                          | Base plus surcharge plus the organisation's GST                                                   |
+| Credit-limit change (`PATCH .../billing-account`)                                                                                                                              | The raise; switching to `INVOICE` funding counts as raising from zero, and unlimited is unbounded |
+| Organisation payout approve (platform co-approval)                                                                                                                             | The net payout                                                                                    |
+| Wallet adjustment                                                                                                                                                              | The absolute amount                                                                               |
+| Wallet refund-remaining                                                                                                                                                        | The whole cached balance                                                                          |
 
-## Reconcile, from a button instead of a terminal
+For example, with three active admins, Olivia Brown asks to refund ₹40,000 (4,000,000 paise) on Wed 21 Oct 2026 at 11:00 IST. The door answers 202, and the proposal expires at 11:00 IST on Thu 22 Oct. Patrick Brown re-authenticates at 15:00 IST and approves at 15:10 IST, inside the 15-minute step-up window (at 15:30 he would get `REAUTH_REQUIRED` and have to re-authenticate first). The refund then runs as Patrick, under his own dedupe key. A refund of exactly ₹25,000 would have run at once, because the rule is "strictly above". If nobody approved by Thursday 11:00 IST, Olivia would have to propose it again.
 
-The Reconcile tab starts the same four jobs the CRON_SECRET-gated routes run
-on a schedule — ledger reconciliation, pending refunds, payment status, and
-the earnings healer (`sync-payment-earnings`) — through
-`POST /api/admin/reconcile/[job]`. Each job keeps its own cron lock
-(`withCronLock`), so a job already running answers a 409 "already running"
-instead of a second overlapping pass, and the tab shows each job's last run
-from the same heartbeat the scheduled invocation writes.
+## Door index
 
-## Platform incidents
+Every route below is a `withOpsAction` door unless marked a read. `2nd` marks a door that takes a second admin above ₹25,000. Reads do not go through the shell, so they need no step-up or reason and write no ops-log row.
 
-When the call platform or the app fails for everyone, no presence evidence exists, and the session-outcome classifier could read the silence as a learner absence, which forfeits the learner's money. The Incidents section lets an admin declare the failure window so that every eligible session it overlaps is voided as the platform's miss and each learner receives the remedy for their product. Sessions already cancelled or rescheduled, and voids that already carry a refund or are settled, are skipped. Voiding and refunding is done by the `settle-platform-incidents` sweep, not by the declare door, which only records the window.
+| Route                                                        | Verb      | Surface                              | Purpose                                                                                                   | 2nd |
+| ------------------------------------------------------------ | --------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------- | --- |
+| `/api/admin/refunds/issue`                                   | POST      | `refunds.manage`                     | Issue a refund, or a ladder override with `tierOverridePct`, through `refundBookingPayment`               | yes |
+| `/api/admin/refunds`                                         | POST      | `refunds.manage`                     | Legacy refund door (payment or whole event); needs `Idempotency-Key`                                      | yes |
+| `/api/admin/refunds/credits`                                 | POST      | `refunds.manage`                     | Return N sessions of credits to a credit-funded seat                                                      | no  |
+| `/api/admin/payouts`                                         | POST      | `payouts.manage`                     | Create a consultant payout batch                                                                          | no  |
+| `/api/admin/payouts/[id]`                                    | POST      | `payouts.manage`                     | Approve or reject a consultant payout                                                                     | no  |
+| `/api/admin/payouts/process`                                 | POST      | `payouts.manage`                     | Disburse approved payouts now                                                                             | no  |
+| `/api/admin/org-payouts/[id]/approve`                        | POST      | `payouts.manage`                     | Platform co-approval of an organisation payout; refuses the batch creator and the organisation's approver | yes |
+| `/api/admin/org-payouts/[id]/hold`, `.../release`            | POST      | `payouts.manage`                     | Place or clear a platform hold on a `PENDING` or `APPROVED` organisation payout                           | no  |
+| `/api/admin/org-payouts`                                     | GET       | `payouts.read`                       | List organisation payouts with `platformApprovalRequiredAt` and `platformHeldAt` (read)                   | n/a |
+| `/api/admin/payout-accounts/unfreeze`                        | POST      | `payouts.manage`                     | Lift a payee's payout freeze                                                                              | no  |
+| `/api/admin/earnings/[id]/hold`, `.../release`               | POST      | `payouts.manage`                     | Operator hold or release of one earning (no step-up)                                                      | no  |
+| `/api/admin/disputes/[disputeId]`                            | PATCH     | `disputes.manage`                    | Assign or update a dispute                                                                                | no  |
+| `/api/admin/billing-accounts/[id]/wallet-adjustment`         | POST      | `payments.manage`                    | Signed wallet correction                                                                                  | yes |
+| `/api/admin/billing-accounts/[id]/refund-remaining`          | POST      | `payments.manage`                    | Return the wallet balance to the card                                                                     | yes |
+| `/api/admin/billing-accounts/[id]/unfreeze`                  | POST      | `payments.manage`                    | Lift a wallet-spend freeze after the drift is repaired                                                    | no  |
+| `/api/admin/organizations/[orgId]/billing-account`           | PATCH     | `invoices.manage`                    | Set `creditLimit` and switch to `INVOICE` funding behind the verified-domain gate                         | yes |
+| `/api/admin/organizations/[orgId]/invoices`                  | POST      | `invoices.manage`                    | Raise a manual invoice                                                                                    | no  |
+| `.../invoices/[invoiceId]/issue`, `.../void`, `.../payments` | POST      | `invoices.manage`                    | Issue a draft, void as a credit note, record a bank-transfer receipt                                      | yes |
+| `.../overages/[overageEventId]/settle-to-org`                | POST      | `invoices.manage`                    | Settle an unpaid member overage to the organisation                                                       | yes |
+| `/api/admin/reconcile/[job]`                                 | POST      | `payouts.manage`                     | Run one of the four reconcile jobs                                                                        | no  |
+| `/api/admin/reconcile-ledgers`                               | POST, GET | `payouts.manage`                     | Run the ledger audit now, or list reports                                                                 | no  |
+| `/api/admin/ops-proposals`                                   | GET       | `payments.manage`                    | List second-approval proposals by effective status (read)                                                 | n/a |
+| `/api/admin/ops-proposals/[id]/approve`, `.../reject`        | POST      | `payments.manage`                    | Approve (replays the stored request) or close a proposal                                                  | n/a |
+| `/api/admin/incidents`, `.../[incidentId]/settle`            | POST      | `incidents.declare`                  | Declare a platform incident, or settle one now                                                            | no  |
+| `/api/payments/[paymentId]/recover`                          | POST      | `payments.manage`                    | Build the booking for a captured payment whose metadata failed validation, from corrected metadata        | no  |
+| `/api/payments/disputes`                                     | POST      | `disputes.manage`                    | Draft or submit dispute evidence (no step-up); the multipart file upload on this route is not a door      | no  |
+| `/api/admin/fee-schedules`, `.../[scheduleId]/approve`       | POST      | `payments.manage`                    | Propose or approve a platform fee schedule (its own maker-checker rule, no step-up)                       | no  |
+| `/api/admin/referrals/credits`, `.../[creditId]/reverse`     | POST      | `referrals.manage`                   | Grant or reverse a referral credit (no step-up)                                                           | no  |
+| `/api/admin/settlements/lines`                               | GET       | `requirePrivilegedAuth` (no surface) | Settlement reconciliation lines, filterable by status (read)                                              | n/a |
+| `/api/admin/support-spend`                                   | GET       | `opsLog.read`                        | Per-operator refund and hold spend (read)                                                                 | n/a |
 
-### The Incidents tab
+## Staff caps on support money
 
-The tab (`components/dashboard/backoffice/money/IncidentsTab.tsx`, read through `GET /api/admin/incidents`) lists incidents newest first. Each row shows the window in the viewer's zone, the reason, who declared it, a status and the remedy counts. The status reads "Voiding sessions" until the retroactive pass has decided every overlapping session (`enumeratedAt`), "Remedies in progress" after that, and "Settled" once the ops report is staged and every remedy is finished (`settledAt`). The counts are remedies due, done, and "need a human", which are the dead-lettered rows described in the runbook below.
+Staff can move money only through bounded support doors. `assertBoundedRefund` (`lib/support/money-policy.ts`) refuses a STAFF refund that would push either limit, with 403 `ADMIN_REQUIRED` for the per-payment limit and 403 `STAFF_DAILY_LIMIT` for the rolling limit:
 
-### The declare door
+| Limit                          | Value                                                    | How it is counted                                                                                                            |
+| ------------------------------ | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Per payment                    | ₹5,000 (500,000 paise, `STAFF_REFUND_PER_PAYMENT_PAISE`) | Every live refund on the payment (pending or succeeded, whichever door made it) plus every approved support remedy on it.    |
+| Per operator, rolling 24 hours | ₹50,000 (5,000,000 paise, `STAFF_REFUND_ROLLING_PAISE`)  | The sum of `after.movedPaise` on that operator's own `support.refund.review` and `appointment.cancel.platform` ops-log rows. |
 
-`POST /api/admin/incidents` is a `withOpsAction` door on the `incidents.declare` surface (admin only) with step-up authentication, so the admin must have re-verified their second factor recently. It writes an `OpsActionLog` row with action `incident.declare` and target kind `PlatformIncident`. The window is checked by `incidentWindowSchema()` in `lib/booking/platform-incidents.ts`, and a bad window answers 400 `INVALID_WINDOW` with a message:
+An admin is not capped, but above ₹25,000 the second-admin rule still applies. For example, a STAFF operator refunded ₹3,000 (300,000 paise) on one payment for a service complaint on Mon 19 Oct 2026 at 11:00 IST. A further ₹2,500 on the same payment would total ₹5,500, so the staff execute attempt answers `ADMIN_REQUIRED` and an admin sends it. A service complaint (`SupportCase`) is not a dispute: it ends in a `SupportFinancialRecommendation` that a second operator decides and that then goes through `refundBookingPayment`; see [service complaints and remedies](../30-refunds-disputes/03-service-complaints-and-remedies.md). The Support spend section reads those same ops-log rows (`readSupportSpend` in `lib/backoffice/support-spend.ts`) and enforces nothing itself.
 
-| Rule                         | Message                                               |
+## Class-series doors and per-booking ops actions
+
+The class doors have no section of their own. A booking's detail dialog under Operations, Appointments carries an Ops actions panel (`BookingOpsPanel`) that opens only existing door routes. The class doors are split across two surfaces: `classSeries.support` (operators: cancel a session for the host, grant a make-up including the reason-gated bypass of the 14-day window, set or clear the reliability flag, leave a note) and `classSeries.money` (admin only: skip a make-up, cancel a whole series with refunds, the 14-day settle sweep for one session). Every refund or credit-restore door is also `refunds.manage`. The Refunds tab's "Ladder override" reprices the same cancellation quote with an operator-supplied percentage (`ladderOverrideAmount`, `lib/backoffice/refund-doors.ts`) and then calls the same refund door, so it can never move money outside the quote arithmetic. "Return N sessions of credits" calls `restoreClassSeatCredits` for a credit-funded seat whose partial return the automatic credit rail cannot express. The decisions behind these doors are in [the class-series money rules](../../decisions/2026-09-25-class-series-money-rules.md).
+
+The same panel carries the booking-level platform doors. "Reschedule booking" (and a per-session "Reschedule" for subscription and class sessions) calls `POST /api/staff/appointments/[id]/reschedule` under `appointments.manage`, after step-up and only while booking doors are open (`assertBookingDoorsOpen`, closed in DEGRADED or OFFLINE maintenance). It only releases the time, so the customer picks the new times, and it is the only way an operator who is not a party moves a booking. "Cancel booking" calls `POST /api/staff/appointments/[id]/cancel` under `appointments.cancelForPlatform`, behind the refund preview, a reason and step-up, for the whole booking only; a STAFF refusal at the caps above (`ADMIN_REQUIRED`, `STAFF_DAILY_LIMIT`, `STAFF_REFUND_IN_PROGRESS`) says an admin has to send it. The Subscriptions inspector cancels through the same door. Operators who are not parties see a link to this panel instead of the participant Reschedule and Cancel buttons.
+
+## Running jobs from the console
+
+The Reconcile section starts four jobs without exposing the `CRON_SECRET`, through `POST /api/admin/reconcile/[job]` (surface `payouts.manage`, step-up, reason, one ops-log row). `RECONCILE_JOBS` (`lib/backoffice/reconcile-jobs.ts`) names them:
+
+| Job id           | Lock name                   | What it does                                                                |
+| ---------------- | --------------------------- | --------------------------------------------------------------------------- |
+| `ledgers`        | `reconcile-ledgers`         | Re-checks every cached balance against its journal; runs in the background. |
+| `refunds`        | `reconcile-pending-refunds` | Asks the gateway about every refund still pending.                          |
+| `payment-status` | `reconcile-payment-status`  | Asks the gateway about every payment still pending.                         |
+| `earnings`       | `sync-payment-earnings`     | Writes the earnings rows a captured payment is missing.                     |
+
+Each job runs in-process under its own `withCronLock` lease, so a job already running answers 409 `ALREADY_RUNNING`. For refunds, payment status and earnings a click takes one bounded batch of 25 rows, and the scheduled runs drain the rest; the ledger job starts one full background run. The route refuses with 503 `MAINTENANCE` in DEGRADED and OFFLINE. The full ledger run is also exposed as `POST /api/admin/reconcile-ledgers`. Any other registered job can be run from `POST /api/admin/system-jobs/run`; see [scheduled money jobs](01-scheduled-jobs.md).
+
+## Declaring a platform incident
+
+When the call platform or the app fails for everyone, no presence evidence exists, and the session-outcome classifier could read the silence as a learner absence and forfeit the learner's money. The Incidents section lets an admin declare the failure window so every eligible overlapping session is voided as the platform's miss and each learner gets the remedy for their product. The declare door only records the window; the `settle-platform-incidents` sweep does the voiding and refunding. `POST /api/admin/incidents` is a `withOpsAction` door on `incidents.declare` with step-up, audit action `incident.declare`, target kind `PlatformIncident`. `incidentWindowSchema` (`lib/booking/platform-incidents.ts`) enforces the window:
+
+| Rule                         | Message on 400 `INVALID_WINDOW`                       |
 | ---------------------------- | ----------------------------------------------------- |
 | Start before end             | The window must start before it ends.                 |
 | Already ended                | Only a window that has already ended can be declared. |
 | Ended within the last 7 days | The window must have ended within the last 7 days.    |
 | At most 24 hours long        | A window can be at most 24 hours long.                |
 
-An exact repeat of an earlier window returns the first incident with a 200 instead of a 201, because `PlatformIncident` has `@@unique([startsAt, endsAt])` and `declareIncident()` inserts with `skipDuplicates`. The repeat still writes an audit row. There is no edit and no delete door: a session that was voided by mistake is overturned through the existing `session.set-outcome` door, and the refund door re-checks under the appointment lock that the session is still `VOIDED`, so that overturn wins over a pending incident refund.
+An exact repeat of an earlier window returns the first incident with 200 instead of 201, because `PlatformIncident` has `@@unique([startsAt, endsAt])` and `declareIncident` inserts with `skipDuplicates`. There is no edit and no delete door: a session voided by mistake is overturned through the `session.set-outcome` door, and the refund door re-checks under the appointment lock that the session is still `VOIDED`. The suggestion panel (`readIncidentSuggestions`, `lib/backoffice/incidents-read.ts`) buckets the last seven days by hour and suggests an hour with at least 5 signals and at least three times the hourly mean; it only pre-fills the form. "Run now" (`POST /api/admin/incidents/[incidentId]/settle`, step-up, audit action `incident.settle`) runs the same sweep under the same lease scoped to one incident, and refuses 503 `MAINTENANCE` outside phase `OFF`. The procedure for following an incident is in [the money runbooks](05-money-runbooks.md).
 
-### The suggestion panel
+## The audit log
 
-Above the list, `readIncidentSuggestions()` (`lib/backoffice/incidents-read.ts`) buckets the last seven days by hour and counts three kinds of signal: sessions with a `PLATFORM_OUTAGE`, `INCONCLUSIVE`, `OFFLINE` or `NOBODY_JOINED` outcome, meetings that ended for an unexpected `Meeting.endedReason`, and webhook events that recorded an error. An hour is suggested when it has at least five signals and at least three times the hourly mean. The panel never declares anything: "Declare this window" only pre-fills the form for an admin to confirm. The Sentry ingest canary is deliberately not a signal, because it keeps no verdict history and it tests whether Sentry accepts events, not whether the app is serving.
+`OpsActionLog` has no admin-only write path: every row on it was written by a `withOpsAction` door, and the audit log is a paged read over exactly those rows, answered `Cache-Control: no-store`. Staff see only the rows they wrote; admins see all. Filters are actor, surface and target, so "what did this operator do to this refund" is one query.
 
-### Run now
+## Where in code
 
-Each unsettled incident has a "Run now" button for an admin (`POST /api/admin/incidents/[incidentId]/settle`, surface `incidents.declare`, step-up, audit action `incident.settle`). It runs the same sweep under the same `settle-platform-incidents` cron lock, scoped to that incident, so it can never overlap the hourly run; if the lock is held it answers the usual 409 "already running". It refuses with 503 `MAINTENANCE` while maintenance is DEGRADED or OFFLINE, because it moves money. It does not bring forward the 48-hour wait for a consultation or paid-trial refund, and it does not retry a dead-lettered row.
+| Concern                      | File                                                                         |
+| ---------------------------- | ---------------------------------------------------------------------------- |
+| Door shell, proposals, audit | `lib/backoffice/ops-action-log.ts`, `lib/backoffice/ops-proposals.ts`        |
+| Approve and reject           | `app/api/admin/ops-proposals/[id]/approve/route.ts`, `.../reject/route.ts`   |
+| Console sections             | `lib/backoffice/money-tabs.ts`, `lib/dashboard/backoffice-nav.ts`            |
+| Permissions                  | `lib/auth/backoffice-permissions.ts`                                         |
+| Step-up                      | `lib/auth/step-up.ts`                                                        |
+| Staff caps                   | `lib/support/money-policy.ts`                                                |
+| Reconcile from the console   | `app/api/admin/reconcile/[job]/route.ts`, `lib/backoffice/reconcile-jobs.ts` |
 
-### Runbook: declaring and following an incident
+## Related
 
-1. **Confirm the outage.** Check the suggestion panel and the status page for the hour. Pick a window that has ended, covers every affected session, and is no longer than 24 hours. A window that is too wide voids healthy sessions that overlap it, because any overlap counts.
-2. **Declare it.** In Money, Incidents, enter the start and end (shown in your own zone), write a reason of at least five characters and confirm with your second factor. For example, an outage from Sun 18 Oct 2026 00:30 to 02:30 IST is declared as that window; the audit log shows `incident.declare` against the new incident.
-3. **Know what each learner gets.** The sweep writes one remedy per live seat that held the session before it started:
-   - Consultation: 100% of the remaining balance, refunded 48 hours after the void.
-   - Paid trial: the same 48-hour refund, and the trial is cancelled in the same commit, which frees the expert pair.
-   - Free trial: cancelled straight away, which frees the pair.
-   - Subscription: the session goes back to the plan allowance and the plan end moves seven days later, straight away.
-   - Webinar: 100% of the seat, refunded straight away.
-   - Class: nothing beyond the void; the existing 14-day make-up window or the one-unit refund applies.
+- [The maintenance gate](03-maintenance-gate-and-recovery.md) for which doors DEGRADED blocks and which fail closed.
+- [Wallet and top-ups](../50-b2b/02-wallet-and-top-ups.md) for the wallet adjustment, unfreeze and refund-remaining doors.
+- [Organisation payouts](../40-payouts/05-org-payouts-and-clawbacks.md) for co-approval and platform hold.
 
-   Each learner gets one `PLATFORM_INCIDENT_DIGEST` email per incident once their straight-away remedies are applied, and it does not wait for a 48-hour refund. Ops gets one report email when everything is finished.
+## Deprecated & Superseded Approaches
 
-4. **Read the tab.** Within about an hour the status moves to "Remedies in progress". "Due" falls as the 48-hour refunds come due and the hourly run applies them, and the incident reaches "Settled" after the last one. A refund is visible in Refunds under the key `incident:<incident>:<occurrence>:<user>`.
-5. **Handle "need a human".** A remedy is dead-lettered after three counted failures, with `lastError` starting `dead-letter:`. The usual cause is a marker conflict: the payment already owes another door's refund under a different key, and the marker is never overwritten. Open the payment, let the other refund finish or fail, then refund the learner by hand with the Refunds section's "Issue refund" door. A dead-lettered refund leaves the session unsettled, so the day-14 `settle-cancelled-sessions` sweep also refunds it under its own `occ:` key, capped to the remaining balance, which means a manual refund and the sweep can never pay twice. A dead-lettered row counts as terminal, so it no longer holds the incident open.
-6. **Never retry by editing rows.** If a remedy looks stuck, "Run now" is the only supported lever.
-
-## The audit log is the log's only reader
-
-The audit log is not a Money section. It is its own item at the end of the
-sidebar, outside the Money group, because it covers every console door, and
-it still lives at `/money/audit`.
-
-`OpsActionLog` has no admin-only write path and no back door: every row on
-it was written by a `withOpsAction` door, and the audit log is a paged,
-RSC-seeded read over exactly those rows, answered `Cache-Control: no-store`
-like every other money GET. Staff see only the rows they themselves wrote;
-admins see every row. Filters are by actor, surface and target, so "what did
-this operator do to this refund" is one query rather than a grep through
-Sentry breadcrumbs.
+1. **Four separate money pages**, each with its own guard and no shared record. They were replaced by the console; the old URLs only redirect.
+2. **A tab bar inside one money page.** Each section is its own sidebar item and URL.
+3. **Class-series as a Money section.** The doors moved onto each class booking's Ops actions panel.
+4. **A direct staff refund route.** Staff refunds are only the bounded support doors above; no door lets staff exceed the caps.
+5. **Editing a `Refund` or `OpsActionProposal` row by hand to unstick it.** Status moves are compare-and-set; use the door, the reconcile job or a new proposal.

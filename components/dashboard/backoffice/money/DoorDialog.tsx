@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -24,14 +24,26 @@ export function DoorDialog({
   door,
   invalidate,
   onClose,
+  canConfirm = true,
+  refusalCopy,
+  children,
 }: Readonly<{
   door: Door | null;
   invalidate: readonly (readonly unknown[])[];
   onClose: () => void;
+  canConfirm?: boolean;
+  refusalCopy?: Readonly<Record<string, string>>;
+  /** Shown above the reason, such as the refund a cancel will send. */
+  children?: ReactNode;
 }>) {
   const [startsAt, setStartsAt] = useState("");
   const [bypass, setBypass] = useState(false);
-  const mutation = useOpsDoor({ success: "Done", invalidate, onDone: onClose });
+  const mutation = useOpsDoor({
+    success: "Done",
+    invalidate,
+    onDone: onClose,
+    refusalCopy,
+  });
   if (!door) return null;
   const isMakeUp = door.extra === "make-up";
   const extraBody = (): Record<string, unknown> =>
@@ -46,7 +58,7 @@ export function DoorDialog({
       description={door.description}
       confirmLabel={door.confirm}
       pending={mutation.isPending}
-      canConfirm={!isMakeUp || startsAt !== ""}
+      canConfirm={canConfirm && (!isMakeUp || startsAt !== "")}
       onConfirm={(reason) =>
         mutation.mutate({
           url: door.url,
@@ -54,6 +66,7 @@ export function DoorDialog({
         })
       }
     >
+      {children}
       {isMakeUp && (
         <>
           <div className="space-y-1.5">

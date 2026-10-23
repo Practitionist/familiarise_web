@@ -28,7 +28,7 @@ lib/cron/cleanup-route.ts             CRON_SECRET · ?limit= · maintenance gate
    ↑
 withCronLock()                        SystemJobExecution lease
    ↑
-   ├── netlify/functions/cron-tick.mts          every 5 min, 28 targets
+   ├── netlify/functions/cron-tick.mts          every 5 min, the TARGETS array
    └── .github/workflows/cron-*.yml             daily / weekly / statutory
 ```
 
@@ -42,11 +42,11 @@ Three things are banned by the repository's own rules, because in practice the c
 
 Every dispatch calls `assertNotInMaintenance(job)` from `lib/maintenance-cron.ts` before the lock is taken. The phase lives in Upstash Redis and is read with a short success cache.
 
-| Phase      | Effect on scheduled work                                                           |
-| ---------- | ---------------------------------------------------------------------------------- |
-| `OFF`      | Everything runs                                                                    |
-| `DEGRADED` | Only the 28 names in `FINANCIAL_JOB_NAMES` (`lib/cron/financial-jobs.ts`) are held |
-| `OFFLINE`  | Every job is held                                                                  |
+| Phase      | Effect on scheduled work                                                        |
+| ---------- | ------------------------------------------------------------------------------- |
+| `OFF`      | Everything runs                                                                 |
+| `DEGRADED` | Only the names in `FINANCIAL_JOB_NAMES` (`lib/cron/financial-jobs.ts`) are held |
+| `OFFLINE`  | Every job is held                                                               |
 
 A held job raises `MaintenanceActiveError`, which the route turns into a `503` carrying the phase. The ticker recognises the phase in the body and records the target as _held_, not _failed_.
 
@@ -101,42 +101,11 @@ Before deploying this code, an operator must apply the additive columns/indexes 
 ((minuteOfDay - offset) mod every + every) mod every < 5
 ```
 
-Two consequences follow from that formula. A tick that fires up to four minutes late still counts as its slot, and — critically — the per-target intervals and offsets spread work so that **no single five-minute tick fires more than eight targets**. Before phase staggering was introduced, nineteen targets fired simultaneously at the same four minutes past the hour, which saturated the single-connection Postgres pool that Netlify functions run with.
+Two consequences follow from that formula. A tick that fires up to four minutes late still counts as its slot, and — critically — the per-target intervals and offsets spread work so that **no single five-minute tick fires more than `MAX_TARGETS_PER_TICK` targets**. Before phase staggering was introduced, nineteen targets fired simultaneously at the same four minutes past the hour, which saturated the single-connection Postgres pool that Netlify functions run with.
 
-### The 28 ticker targets
+### The ticker targets
 
-| Slug                               | Every   | Fires at                    | Default limit |
-| ---------------------------------- | ------- | --------------------------- | ------------- |
-| `sweep-stuck-webhook-events`       | 15 min  | :00 :15 :30 :45             | 50            |
-| `sweep-orphaned-topup-captures`    | 15 min  | :00 :15 :30 :45             | 50            |
-| `dispatch-outbound-webhooks`       | 15 min  | :00 :15 :30 :45             | 15            |
-| `sync-payment-earnings`            | 15 min  | :00 :15 :30 :45             | 50            |
-| `retry-failed-emails`              | 15 min  | :00 :15 :30 :45             | 20            |
-| `alert-orphaned-payments`          | 15 min  | :00 :15 :30 :45             | 10            |
-| `process-data-exports`             | 10 min  | :00 :10 :20 :30 :40 :50     | 50            |
-| `sentry-ingest-canary`             | 6 hours | 00:00 06:00 12:00 18:00 UTC | n/a           |
-| `settle-platform-incidents`        | 60 min  | :30                         | 10            |
-| `release-earnings`                 | 15 min  | :05 :20 :35 :50             | 50            |
-| `reconcile-refunds`                | 15 min  | :05 :20 :35 :50             | 10            |
-| `abandoned-payments`               | 15 min  | :05 :20 :35 :50             | 10            |
-| `reconcile-payment-status`         | 15 min  | :05 :20 :35 :50             | 50            |
-| `reconcile-orphaned-confirmations` | 15 min  | :05 :20 :35 :50             | 10            |
-| `expire-unpaid-trials`             | 15 min  | :05 :20 :35 :50             | 25            |
-| `drain-notification-outbox`        | 10 min  | :05 :15 :25 :35 :45 :55     | 20            |
-| `vest-referral-credits`            | 30 min  | :05 :35                     | 10            |
-| `reschedule-proposals`             | 15 min  | :10 :25 :40 :55             | 25            |
-| `appointment-reminders`            | 15 min  | :10 :25 :40 :55             | 25            |
-| `tentative-occurrences`            | 15 min  | :10 :25 :40 :55             | 200           |
-| `expire-stale-requests`            | 15 min  | :10 :25 :40 :55             | 20            |
-| `retry-auto-refunds`               | 15 min  | :10 :25 :40 :55             | 10            |
-| `reconcile-orphaned-payments`      | 30 min  | :10 :40                     | 10            |
-| `support-sla-sweep`                | 30 min  | :10 :40                     | 20            |
-| `auto-complete-appointments`       | 30 min  | :15 :45                     | 25            |
-| `detect-consultant-no-shows`       | 30 min  | :20 :50                     | 10            |
-| `settle-cancelled-sessions`        | 30 min  | :25 :55                     | 10            |
-| `retry-moderation-enforcement`     | 30 min  | :25 :55                     | n/a           |
-
-The stagger holds: **each of the twelve five-minute tick slots fires seven or eight targets** — `:00` fires seven, every other slot eight, which `__tests__/maintenance/cron-tick-targets.test.ts` pins between five and eight. Before offsets were introduced, nineteen targets fired simultaneously at `:00`, `:15`, `:30` and `:45`, which saturated the single-connection Postgres pool that Netlify functions run with.
+The targets, their cadence and phase, their `limit` and their timeouts are in `netlify/functions/cron-tick.mts` (`TARGETS`, `TARGET_EVERY_MINUTES`, `TARGET_OFFSET_MINUTES`, `TARGET_WINDOWS`, `TARGET_LIMITS`, `TARGET_TIMEOUTS_MS`). The money subset is rendered by schedule, with the DEGRADED hold, in [scheduled money jobs](../finance/70-operations/01-scheduled-jobs.md), generated from the same file. The stagger is pinned by `MAX_TARGETS_PER_TICK` and the cadence test (`__tests__/maintenance/cron-tick-targets.test.ts`).
 
 ### Why the ticker always answers 200
 
@@ -288,16 +257,13 @@ Recorded here so the next reader does not trust the prose over the source. The a
 
 | Area                             | Documented                                                                                     | Actual                                                                                                                                                                                                   |
 | -------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Platform cron switch             | An Upstash key that mutes the ticker on a hot-standby host so both hosts never fire            | No such gate exists. The documented sub-minute failback step is a no-op                                                                                                                                  |
 | Standalone container build       | A conditional `output: "standalone"` for non-Netlify hosts                                     | No `output` key is set. The production Dockerfile is not standalone                                                                                                                                      |
 | Image optimisation exclusion     | `sharp` excluded only on Netlify or Vercel, so container hosts keep in-process optimisation    | It is excluded unconditionally                                                                                                                                                                           |
 | Client IP trust                  | Platform-scoped headers trusted only on their matching runtime                                 | Trusted unconditionally, so off-Netlify a caller can choose its own rate-limit key                                                                                                                       |
 | Smoke-test auth header           | A dedicated cron header for the failback drain command                                         | The route accepts only `Authorization: Bearer`; the documented command returns 401                                                                                                                       |
 | Overlap constraint name          | A constraint named `slot_no_confirmed_overlap` in the agent instructions                       | The object is `occurrence_no_confirmed_overlap`                                                                                                                                                          |
-| Cron registry size               | Various counts of "47", "48" and "56" slugs across docs and comments                           | 57 registry slugs, 13 jobs with no HTTP twin, 28 ticker targets                                                                                                                                          |
 | Cron schedule staggering         | That CI enforces stagger minutes across the fleet                                              | `scripts/ci/check-workflow-hygiene.ts` checks the secrets manifest, not staggering. Stagger minutes are maintained by hand                                                                               |
 | Dead job names in the alert list | `cascade-refund-earnings` and `release-pending-trust-earnings` listed in `MONEY_CRITICAL_JOBS` | Both jobs were folded into the `reconcile-refunds` and `release-earnings` cores. The names remain in `scripts/ci/notify-ops-failure.sh` where they can never match, so those two failures would not page |
-| Actions as a fleet backstop      | That the GitHub Actions cron fleet backs up the ticker                                         | It does not. Twenty-seven of the 28 ticker targets have no Actions workflow at all, and `auto-complete-appointments` and `detect-consultant-no-shows` gate money with the ticker as their only scheduler |
 
 The general rule these rows all illustrate: **verify a named object with a grep before building on it.** The repository has taught an agent a phantom constraint before, and agents trust these files as doctrine.
 

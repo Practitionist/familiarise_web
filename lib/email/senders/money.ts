@@ -495,6 +495,8 @@ export interface OrgBillingEmailArgs {
   invoiceNumber?: string | null;
   dueDate?: Date | null;
   newBalancePaise?: Paise | null;
+  /** Part of a top-up that paid down what the org owed instead of reaching the wallet. */
+  receivableSettledPaise?: Paise | null;
   dashboardUrl: string;
 }
 
@@ -545,6 +547,9 @@ function buildOrgBillingEmail(args: OrgBillingEmailArgs): {
           invoiceNumber: args.invoiceNumber,
           dueDateText: args.dueDate ? dateText(args.dueDate, r.zone) : null,
           newBalanceText,
+          settledText: args.receivableSettledPaise
+            ? money(args.receivableSettledPaise, args.currency)
+            : null,
           dashboardUrl: absolute(args.dashboardUrl),
           unsubscribeUrl: r.unsubscribeUrl,
         }),
