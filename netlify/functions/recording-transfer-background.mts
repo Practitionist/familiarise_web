@@ -1,4 +1,4 @@
-import { NextRequest } from "next/server";
+import { NextRequest } from "next/server.js";
 import { cleanupRoute } from "../../lib/cron/cleanup-route";
 import { transferRecordings } from "../../lib/stream/recording-transfer-service";
 import {

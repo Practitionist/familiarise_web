@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { NextResponse, type NextRequest } from "next/server";
+// Native Node ESM workers require the explicit package file extension.
+import { NextResponse, type NextRequest } from "next/server.js";
 import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 import { jobOutcome, type JobOutcome } from "@/lib/cron/job-outcome";

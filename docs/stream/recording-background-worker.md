@@ -20,6 +20,14 @@ This change leaves both the ticker and Actions schedules unchanged. The adapter 
 
 Netlify documents a 30-second scheduled execution ceiling and a 15-minute background ceiling. One 12-minute copy leaves room for database, cleanup and telemetry; a copy that consistently cannot finish must use a different execution host rather than increasing the short HTTP timeout.
 
+## Native Node packaging
+
+The standalone entry and shared cleanup factory import Next's request/response classes from `next/server.js`. Their native ESM output runs outside Next's module resolver; the extensionless package subpath fails under the tested Node 22 runtime. Keep that explicit extension in both places. [Node package specifiers](https://nodejs.org/api/esm.html#import-specifiers).
+
+CLI 26.0.2's installed `zip-it-and-ship-it` 14.7.0 produced an API-v2/background artifact. In a local process with networking denied and a disposable invalid database target, the original compiled application failed with `ERR_MODULE_NOT_FOUND` for `next/server`. A fresh bundle from the corrected source loaded and rejected an unauthenticated POST with zero fetch attempts; an earlier diagnostic changed only the two compiled specifiers and reproduced the same result. This verifies the compiled application/authentication path with canonical local dependencies.
+
+The worktree's default NFT artifact retained its external `node_modules` symlink without its dependencies. It is not a self-contained deployment artifact and must not be uploaded as proof of packaging. Preserve the canonical dependency symlink in worktrees; verify the actual CI/CLI artifact's dependency contents and deployed loading separately. No application build, database operation or recording copy was part of this check.
+
 ## Deployed runtime evidence
 
 On 23 October 2026, a dependency-free function using both `config.background: true` and the `-background` suffix completed a 75-second wait on this account through CLI 26.0.2. The unpublished branch deployment returned 202; its logs contained START, END after 75,002 ms, and a 75,366 ms runtime report. Both temporary deployments were deleted afterwards, and the published deployment remained unchanged. The probe had no application, database, storage or scheduled work.

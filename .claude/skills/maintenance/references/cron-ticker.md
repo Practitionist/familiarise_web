@@ -122,6 +122,8 @@ Calendar-window schedules also require explicit missed-window recovery.
 
 The recording background entry is `netlify/functions/recording-transfer-background.mts`. Preserve the supported filename suffix as well as its background config when packaging with the CLI. A dependency-free CLI 26.0.2 branch probe completed after 75 seconds on this account; the temporary drafts were removed. This proves the isolated runtime path, while the application bundle and actual copy handoff still require verification. HTTP 202 is admission only. For unpublished alias logs, use the deployment branch and ID when function metadata omits its branch. See `docs/stream/recording-background-worker.md` and [Netlify background functions](https://docs.netlify.com/build/functions/background-functions/).
 
+The native entry and shared cleanup factory need the explicit `next/server.js` package subpath. A network-denied compiled-module check catches the extensionless ESM import failure that CommonJS Jest loading misses. The worktree's default NFT archive can retain the external dependency symlink without its target; inspect dependency contents before treating a local archive as deployable. Keep the required canonical worktree dependency symlink.
+
 ## Deprecated & Superseded Approaches
 
 Redis cron locks, production fallbacks for incomplete unit-test mocks, and shared
