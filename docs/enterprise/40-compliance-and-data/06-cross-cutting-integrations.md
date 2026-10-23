@@ -230,7 +230,7 @@ Each section also lists:
 ### B.7 Double-entry ledger discipline — ✅ Wired
 
 - **Schema:** money journal — `LedgerAccount` (10+ kinds: CASH, WALLET, PLATFORM_FEE, PLATFORM_PROMO, DISCOUNT, CONSULTANT_PAYABLE, ORG_PAYABLE, ORG_RECEIVABLE, TDS_PAYABLE, GST_PAYABLE, UNAPPLIED_RECEIPTS) / `LedgerTransaction` (`idempotencyKey @unique`) / `LedgerEntry` (DEBIT|CREDIT, `amountPaise` BigInt) — plus the usage ledger `UsageLedgerEntry` (`engagementsConsumed`, `minutesConsumed`, `priceAtBookingPaise`, `wasOverage`) and `LedgerReconciliationReport`.
-- **Code paths:** every money-moving site posts one balanced `LedgerTransaction` (`Σ DEBIT == Σ CREDIT`) via [`postLedgerTxn`](../../../lib/payments/ledger/post.ts). Reconcile cron [`scripts/reconcile/reconcile-ledgers.ts`](../../../scripts/reconcile/reconcile-ledgers.ts) asserts journal + aggregate invariants nightly; the Netlify ticker runs it through `/api/cleanup/reconcile-ledgers`.
+- **Code paths:** every money-moving site posts one balanced `LedgerTransaction` (`Σ DEBIT == Σ CREDIT`) via [`postLedgerTxn`](../../../lib/payments/ledger/post.ts). Reconcile cron [`scripts/reconcile/reconcile-ledgers.ts`](../../../scripts/reconcile/reconcile-ledgers.ts) compares projections and missing business postings in bounded coherent snapshots; the Netlify ticker advances it through `/api/cleanup/reconcile-ledgers`.
 - **Why:** See `ledger-and-postings`. Two ledgers (money journal + `UsageLedgerEntry`), not three. The journal is append-only; any reversal is a balanced counter-transaction, never an update of the original.
 - **Future work:** none open.
 

@@ -14,9 +14,11 @@ Scheduled jobs ran as GitHub Actions workflows, each a YAML file with a `schedul
 
 ## What replaced it
 
-Every money job now runs on the Netlify five-minute ticker (`netlify/functions/cron-tick.mts`), which calls the `CRON_SECRET`-gated twins registered in `lib/cron/cleanup-registry.ts` and holds mutual exclusion in a Postgres lease. The reasoning, the fleet switch and the failure handling are in [ADR 27](27-state-as-outbox-and-scheduled-ticker.md); the job list is generated in [scheduled money jobs](../../finance/70-operations/01-scheduled-jobs.md).
+Every money job now runs on the Netlify five-minute ticker (`netlify/functions/cron-tick.mts`), which calls the `CRON_SECRET`-gated twins registered in `lib/cron/cleanup-registry.ts` and holds mutual exclusion in a Postgres lease. The reasoning, the fleet switch and the failure handling are in [ADR 27](27-state-as-outbox-and-scheduled-ticker.md); the job list is listed in [scheduled money jobs](../../finance/70-operations/01-scheduled-jobs.md).
 
 GitHub Actions remains the scheduler only for non-money housekeeping, in `.github/workflows/cron-daily.yml`, `cron-weekly.yml` and `cron-intra-day.yml`, which run housekeeping either through the cleanup twins over HTTP or through a `tsx` entry point under `jobs/`.
+
+The ledger audit progresses through bounded canonical slices offered hourly at `:55`, yielding to other due work at the ticker design bound. It does not require an Actions backstop or a background driver.
 
 ## Delete if found
 
