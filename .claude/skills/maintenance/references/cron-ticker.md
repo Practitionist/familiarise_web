@@ -28,6 +28,10 @@ The ticker always returns HTTP `200` so Netlify does not retry the entire tick 3
 
 Every route the ticker invokes accepts an optional `?limit=` (via `parseLimitParam`), capping the batch a single tick processes (default 50, or 10 for `abandoned-payments`; max 500; `400 INVALID_LIMIT` on malformed input).
 
+## Job history and messaging retention
+
+`prune-system-job-executions` is currently owned by the daily Actions workflow. Its registered HTTP core accepts `?limit=` and always runs bounded: default 100, maximum 500 rows per phase, eight phases, and a 16-second start budget. `hasMore` indicates continuation; it is not a failure or a drained-backlog guarantee. The existing CLI repeats at most 40 slices of 500 within a 16-second start budget and stops on no progress. No ticker activation or retention-window change is implied. Final mutations repeat eligibility so an admin-requeued message is preserved, and scrubbing keeps the delivery/legacy retention clocks unchanged. See [the execution and replay contract](../../../../docs/maintenance/messaging-retention.md).
+
 ## Workflow concurrency groups
 
 Every scheduled GitHub Actions workflow declares `concurrency: { group: ${{ github.workflow }}, cancel-in-progress: false }` so overlapping runs queue rather than cancel mid-flight.
