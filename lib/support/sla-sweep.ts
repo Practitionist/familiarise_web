@@ -1,6 +1,7 @@
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
+  type Tx,
 } from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { stageBell } from "@/lib/novu/stage-bell";
@@ -18,6 +19,9 @@ import { slaStateOf } from "./sla";
 import { cascadeResolvedProblems } from "./problem-cascade";
 import { purgeExpiredSupportEvidence } from "./evidence-retention";
 import { sweepSupportChatAccess } from "./chat-sweep";
+import { releaseAllCaseHolds } from "./case-holds";
+import { endCaseChatAccessTx } from "./chat-access-end";
+import { recordLifecycleHoldReleaseTx } from "./case-service";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -511,6 +515,26 @@ async function processCandidateSlaNotices(
   );
 }
 
+/** No human acts on an auto-close, so the system releases the case's payout holds and ends its chat grants without step-up. */
+async function releaseAutoClosedCaseTx(tx: Tx, caseId: string, now: Date) {
+  const note = "Released when the case was auto-closed";
+  await recordLifecycleHoldReleaseTx(tx, {
+    caseId,
+    actorId: null,
+    actorRole: "SYSTEM",
+    status: "CLOSED",
+    reason: note,
+    released: await releaseAllCaseHolds(tx, { caseId, actorId: null, note }),
+  });
+  // The chat arm later in this run clears Familiarise Support from any grant still seated.
+  await endCaseChatAccessTx(tx, {
+    caseId,
+    actorId: null,
+    reason: "CASE_RESOLVED",
+    now,
+  });
+}
+
 async function autoCloseResolvedRows(
   now: Date,
   limit: number,
@@ -551,6 +575,7 @@ async function autoCloseResolvedRows(
                   createdAt: now,
                 },
               });
+              await releaseAutoClosedCaseTx(tx, c.id, now);
             }
             return res.count;
           },
