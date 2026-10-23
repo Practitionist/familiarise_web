@@ -38,6 +38,12 @@ frozen: additive changes only, with renames, drops and type changes deferred to
 launch cutover. Both rules are stated at the top of `prisma/schema.prisma` and
 enforced in review.
 
+No schema change goes through an MCP server. The Supabase MCP entry in
+`.mcp.json.example` is read-only and project-scoped, so it can inspect the live
+schema, but it cannot run direct DDL or DML. Read-only is defense-in-depth, not
+a hard boundary; the human-run `db:push` preflight and sidecar sequence remain
+the only schema write path.
+
 ## Pushing schema to the shared database: lessons from the catch-up push
 
 The live database once fell several changes behind `prisma/schema.prisma` and stayed there for days: a whole earlier schema change (new columns, foreign-key `Restrict` swaps, partial uniques, a CHECK) was merged but never pushed, and production readers that selected a missing column returned 500. The catch-up push of 2026-10-09 closed it, and its lessons now bind every push.

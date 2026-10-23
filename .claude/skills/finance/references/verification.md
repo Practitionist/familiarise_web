@@ -37,9 +37,18 @@ For flows that do not need a real signature — exercising `handlePaymentSuccess
 
 Every scheduled job has an HTTP twin under `app/api/cleanup/*`, gated by a `CRON_SECRET` bearer token and wrapped in `withCronLock`. Calling a cleanup route directly with the secret is how a sweep is exercised on demand instead of waiting for the Netlify ticker or a GitHub Actions run. Routes invoked by the ticker accept an optional `?limit=` — a positive integer, refused with `400 INVALID_LIMIT` if unparseable and clamped at a per-route cap (500) if it overshoots — so a verification run can take a small, fast bite of a backlog instead of the unbounded default a nightly run would process.
 
+## Razorpay MCP is opt-in and write-capable
+
+The shared `.mcp.json.example` does not include Razorpay. To use the remote,
+copy `.mcp.razorpay.example.json` to the gitignored `.mcp.razorpay.json` and
+start the session with `claude --mcp-config .mcp.razorpay.json` (or merge the
+`rzp-mcp-server` block into `.mcp.json`). The remote exposes order, capture and
+refund tools and has no read-only mode; use a test-mode key and never production
+credentials.
+
 ## Verifying by SQL, not by narration
 
-After every mutation, check the actual rows through the Supabase MCP tools against project `pzmbxqdgibfkhjwzeprf` (the one Supabase project that serves both dev and prod — every mutating script here is a production operation). The checklist after any money scenario:
+After every mutation, check the actual rows through the read-only Supabase MCP tools against project `pzmbxqdgibfkhjwzeprf` (the one Supabase project that serves both dev and prod — every mutating script here is a production operation, and nothing is mutated through MCP). The checklist after any money scenario:
 
 - **Legs.** Every `PaymentLeg` on the payment sums correctly per the identity in the doctrine page, and any reversal leg is negative and does not exceed its original sibling.
 - **Ledger.** The `LedgerTransaction` for the event has balanced `LedgerEntry` rows, and its `idempotencyKey` matches the expected shape (`booking:<paymentId>`, `orgpayout:<payoutId>`, and so on) so a second run of the same scenario would not double-post.

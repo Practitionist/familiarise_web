@@ -9,6 +9,9 @@
 > for the Supabase + Chrome DevTools idioms, and
 > [`prompts/enterprise-tests/_shared/case-template.md`](../enterprise-tests/_shared/case-template.md)
 > for the fix-and-retest gate.
+>
+> **MCP write rule:** the Supabase MCP is read-only. Direct writes in this tour
+> are operator-run; prepare the SQL and pause for the operator.
 
 ---
 

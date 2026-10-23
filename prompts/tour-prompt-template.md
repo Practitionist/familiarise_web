@@ -5,6 +5,10 @@
 > The output of this meta-prompt is a single Markdown file that an AI
 > agent can run end-to-end with a human at its side, pausing to explain
 > at every step.
+>
+> **MCP write rule:** the Supabase MCP is read-only. Any user or fixture
+> creation in a generated tour is operator-run SQL; the agent prepares it and
+> pauses for the human.
 
 ---
 
