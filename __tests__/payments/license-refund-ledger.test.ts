@@ -332,6 +332,13 @@ describe("bookings that genuinely have nothing to reverse", () => {
   });
 });
 
+/** An earlier refund whose cascade already ran. */
+const cascaded = {
+  status: "SUCCEEDED",
+  cascadedAt: new Date("2026-10-01T00:00:00Z"),
+  deletedAt: null,
+};
+
 describe("a replay sale's playback", () => {
   it("survives a partial refund and is revoked once the charge is fully refunded", async () => {
     const replay = { appointmentId: null, paymentIntent: "order_replay" };
@@ -350,7 +357,7 @@ describe("a replay sale's playback", () => {
 
     payment = paymentRow({
       ...replay,
-      refunds: [{ id: "rf-0", amountPaise: GROSS / 2, status: "SUCCEEDED" }],
+      refunds: [{ id: "rf-0", amountPaise: GROSS / 2, ...cascaded }],
     });
     const fullTx = txStub();
     await applyRefundCascade(fullTx as never, {
@@ -454,7 +461,7 @@ describe("charged batch overages on a partial refund then the remainder", () => 
     payment = paymentRow({
       ...walletParent,
       refunds: [
-        { id: "rf-0", amountPaise: GROSS / 4, status: "SUCCEEDED" },
+        { id: "rf-0", amountPaise: GROSS / 4, ...cascaded },
         { id: REFUND_ID, amountPaise: (GROSS * 3) / 4, status: "SUCCEEDED" },
       ],
     });

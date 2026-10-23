@@ -56,7 +56,13 @@ type Txn = {
   paymentId: string | null;
   entries: { create: Entry[] };
 };
-type Refund = { id: string; amountPaise: number; status: string };
+type Refund = {
+  id: string;
+  amountPaise: number;
+  status: string;
+  cascadedAt: Date | null;
+  deletedAt: null;
+};
 
 function makeWorld(rail: "CARD" | "WALLET") {
   const txns: Txn[] = [];
@@ -207,14 +213,30 @@ function makeWorld(rail: "CARD" | "WALLET") {
       ],
     });
   };
-  const refund = async (id: string, amountPaise: number) => {
+  // A gateway-SUCCEEDED refund whose cascade has not run yet.
+  const settle = (id: string, amountPaise: number) => {
+    refunds.push({
+      id,
+      amountPaise,
+      status: "SUCCEEDED",
+      cascadedAt: null,
+      deletedAt: null,
+    });
+  };
+  const cascade = async (id: string) => {
+    const row = refunds.find((r) => r.id === id);
+    if (!row) throw new Error(`no refund ${id}`);
     await applyRefundCascade(txDouble(tx), {
       paymentId: PAYMENT_ID,
       refundId: id,
-      amountPaise,
+      amountPaise: row.amountPaise,
       reason: "cancellation",
     });
-    refunds.push({ id, amountPaise, status: "SUCCEEDED" });
+    row.cascadedAt = new Date();
+  };
+  const refund = async (id: string, amountPaise: number) => {
+    settle(id, amountPaise);
+    await cascade(id);
   };
   const nets = () => {
     const out: Record<string, number> = {};
@@ -226,7 +248,7 @@ function makeWorld(rail: "CARD" | "WALLET") {
     }
     return out;
   };
-  return { book, carve, refund, nets };
+  return { book, carve, settle, cascade, refund, nets };
 }
 
 const zeroed = (nets: Record<string, number>) =>
@@ -263,6 +285,22 @@ describe("a refund reverses the booking's DISCOUNT pro rata", () => {
       DISCOUNT - Math.floor((DISCOUNT * first) / FUNDED),
     );
     await world.refund("rf-2", FUNDED - first);
+    expect(world.nets()).toEqual(zeroed(world.nets()));
+  });
+
+  it("two SUCCEEDED but uncascaded refunds each reverse their own share; the second takes the remainder", async () => {
+    const world = makeWorld("WALLET");
+    await world.book();
+    await world.carve();
+    const first = Math.floor(FUNDED * 0.4);
+    world.settle("rf-1", first);
+    world.settle("rf-2", FUNDED - first);
+
+    await world.cascade("rf-1");
+    expect(world.nets().DISCOUNT).toBe(
+      DISCOUNT - Math.floor((DISCOUNT * first) / FUNDED),
+    );
+    await world.cascade("rf-2");
     expect(world.nets()).toEqual(zeroed(world.nets()));
   });
 });

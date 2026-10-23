@@ -1039,7 +1039,15 @@ export async function applyRefundCascade(
         },
       },
       // #1582 C-P0-03 — the cumulative cap at cascade time (owner decision Q3).
-      refunds: { select: { id: true, amountPaise: true, status: true } },
+      refunds: {
+        select: {
+          id: true,
+          amountPaise: true,
+          status: true,
+          cascadedAt: true,
+          deletedAt: true,
+        },
+      },
       disputes: REFUNDABLE_BALANCE_SELECT.disputes,
     },
   });
@@ -1080,15 +1088,19 @@ export async function applyRefundCascade(
     });
   }
 
-  // This refund completes the payment's full refund when it and every other
-  // SUCCEEDED refund together reach the amount.
-  const otherSucceededPaise = payment.refunds
+  // This refund completes the payment when it and the SUCCEEDED refunds already
+  // cascaded reach the amount; an uncascaded refund has not reversed anything yet.
+  const otherCascadedPaise = payment.refunds
     .filter(
-      (r) => r.id !== rawInput.refundId && r.status === RefundStatus.SUCCEEDED,
+      (r) =>
+        r.id !== rawInput.refundId &&
+        r.status === RefundStatus.SUCCEEDED &&
+        r.cascadedAt !== null &&
+        r.deletedAt === null,
     )
     .reduce((sum, r) => sum + r.amountPaise, 0);
   const completesFullRefund =
-    otherSucceededPaise + input.amountPaise >= payment.amount;
+    otherCascadedPaise + input.amountPaise >= payment.amount;
 
   // Replay sales are the only appointment-less payments that grant playback;
   // only a full refund revokes it, so a partial goodwill refund keeps access.
