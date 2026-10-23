@@ -304,10 +304,13 @@ it("hides Void from staff without the admin permission", () => {
   client.clear();
 });
 
-it("keeps the seat unless staff explicitly cancel the service", async () => {
+it("keeps the seat unless staff explicitly release it, and says the booking is not cancelled", async () => {
   const client = renderPanel(base, "pay_1");
-  const seat = screen.getByLabelText("Also cancel the service (release seat)");
+  const seat = screen.getByLabelText("Also release the customer's seat");
   expect(seat).not.toBeChecked();
+  expect(seat).toHaveAccessibleDescription(
+    /loses access to the sessions and recordings.*does not cancel the booking or its sessions; use Cancel booking in the booking's Ops panel/,
+  );
   fireEvent.change(screen.getByLabelText("Recommended refund in rupees"), {
     target: { value: "1500" },
   });

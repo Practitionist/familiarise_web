@@ -1,6 +1,6 @@
 import { createChannel } from "@/actions/stream/chat/channel.action";
 import { liveParticipant } from "@/lib/booking/participants";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { CLASS_PREFIX, WEBINAR_PREFIX } from "@/lib/stream-channel-ids";
 import { getStreamChatClient, isStreamConfigured } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
@@ -52,6 +52,7 @@ function resolveAppointmentKind(
  */
 export async function resolveCanonicalMeetingChannel(
   appointment: AppointmentForMirroring | null | undefined,
+  db: Pick<Tx, "appointmentParticipant"> = prisma,
 ): Promise<CanonicalMeetingChannel | null> {
   if (!appointment) return null;
 
@@ -83,7 +84,7 @@ export async function resolveCanonicalMeetingChannel(
 
   if (!consultantUserId || !appointment.id) return null;
 
-  const consulteeSeat = await prisma.appointmentParticipant.findFirst({
+  const consulteeSeat = await db.appointmentParticipant.findFirst({
     where: {
       appointmentId: appointment.id,
       userId: { not: consultantUserId },

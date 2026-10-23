@@ -190,6 +190,31 @@ jest.mock("../../lib/support/case-doors", () => ({
   voidSupportRecommendationDoor: jest.fn(async () => mockDoorResponse()),
 }));
 
+// Chat-access doors own their surface, step-up and audit (covered by chat-doors.test.ts).
+jest.mock("../../lib/support/chat-doors", () => ({
+  __esModule: true,
+  openChatReadDoor: jest.fn(async () => mockDoorResponse()),
+  startInterventionDoor: jest.fn(async () => mockDoorResponse()),
+  endChatReadDoor: jest.fn(async () => mockDoorResponse()),
+  endInterventionDoor: jest.fn(async () => mockDoorResponse()),
+}));
+jest.mock("../../lib/support/chat-transcript", () => ({
+  __esModule: true,
+  readTranscriptPage: jest.fn(async () => ({
+    messages: [],
+    nextBefore: null,
+    windowStart: new Date(0).toISOString(),
+  })),
+}));
+jest.mock("../../lib/stream/support-intervention", () => ({
+  __esModule: true,
+  probeSupportChannel: jest.fn(async () => ({ exists: true, frozen: false })),
+  postSupportMessage: jest.fn(async () => ({
+    messageId: "fs-grant-1-draft_0001",
+    replayed: false,
+  })),
+}));
+
 jest.mock("../../lib/support/service", () => ({
   __esModule: true,
   runSupportTurn: jest.fn(async () => ({
@@ -230,6 +255,9 @@ import * as appeals from "../../app/api/support/appeals/route";
 import * as attachment from "../../app/api/support/attachments/[attachmentId]/route";
 import * as caseActions from "../../app/api/support/cases/[caseId]/actions/route";
 import * as caseAttachments from "../../app/api/support/cases/[caseId]/attachments/route";
+import * as caseChat from "../../app/api/support/cases/[caseId]/chat/route";
+import * as caseChatMessages from "../../app/api/support/cases/[caseId]/chat/messages/route";
+import * as caseChatTranscript from "../../app/api/support/cases/[caseId]/chat/transcript/route";
 import * as caseCsat from "../../app/api/support/cases/[caseId]/csat/route";
 import * as caseMessages from "../../app/api/support/cases/[caseId]/messages/route";
 import * as caseReceipt from "../../app/api/support/cases/[caseId]/receipt/route";
@@ -980,6 +1008,121 @@ const HANDLERS: HandlerCase[] = [
       other: 404,
       staff: 404,
       admin: 404,
+    },
+  },
+  {
+    name: "GET /api/support/cases/[caseId]/chat",
+    call: () =>
+      caseChat.GET(
+        request("GET", "/api/support/cases/case-personal/chat"),
+        caseParams(),
+      ),
+    // Org admins never reach a booking chat; operators only.
+    matrix: {
+      ...AUTHED,
+      owner: 403,
+      expert: 403,
+      other: 403,
+      orgOwner: 403,
+      orgManager: 403,
+      staff: "pass",
+      admin: "pass",
+    },
+  },
+  {
+    name: "POST /api/support/cases/[caseId]/chat (OPEN_READ)",
+    call: () =>
+      caseChat.POST(
+        request("POST", "/api/support/cases/case-personal/chat", {
+          action: "OPEN_READ",
+          reason: "Reported messages",
+        }),
+        caseParams(),
+      ),
+    matrix: {
+      ...AUTHED,
+      owner: 403,
+      expert: 403,
+      other: 403,
+      orgOwner: 403,
+      orgManager: 403,
+      staff: "pass",
+      admin: "pass",
+    },
+  },
+  {
+    name: "POST /api/support/cases/[caseId]/chat (END_INTERVENTION)",
+    call: () =>
+      caseChat.POST(
+        request("POST", "/api/support/cases/case-personal/chat", {
+          action: "END_INTERVENTION",
+          grantId: "grant-1",
+          reason: "Evidence received",
+        }),
+        caseParams(),
+      ),
+    matrix: {
+      ...AUTHED,
+      owner: 403,
+      expert: 403,
+      orgOwner: 403,
+      staff: "pass",
+      admin: "pass",
+    },
+  },
+  {
+    name: "POST /api/support/cases/[caseId]/chat (malformed body)",
+    call: () =>
+      caseChat.POST(
+        request("POST", "/api/support/cases/case-personal/chat", {
+          action: "WATCH",
+        }),
+        caseParams(),
+      ),
+    // Authorization runs before the body is read.
+    matrix: { ...AUTHED, owner: 403, staff: 400, admin: 400 },
+  },
+  {
+    name: "GET /api/support/cases/[caseId]/chat/transcript",
+    call: () =>
+      caseChatTranscript.GET(
+        request(
+          "GET",
+          "/api/support/cases/case-personal/chat/transcript?grantId=grant-1",
+        ),
+        caseParams(),
+      ),
+    matrix: {
+      ...AUTHED,
+      owner: 403,
+      expert: 403,
+      other: 403,
+      orgOwner: 403,
+      orgManager: 403,
+      staff: "pass",
+      admin: "pass",
+    },
+  },
+  {
+    name: "POST /api/support/cases/[caseId]/chat/messages",
+    call: () =>
+      caseChatMessages.POST(
+        request("POST", "/api/support/cases/case-personal/chat/messages", {
+          grantId: "grant-1",
+          clientActionId: "draft_0001",
+          text: "Please share the receipt here.",
+        }),
+        caseParams(),
+      ),
+    matrix: {
+      ...AUTHED,
+      owner: 403,
+      expert: 403,
+      other: 403,
+      orgOwner: 403,
+      orgManager: 403,
+      staff: "pass",
+      admin: "pass",
     },
   },
   {

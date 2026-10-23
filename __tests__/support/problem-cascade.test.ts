@@ -49,6 +49,10 @@ jest.mock("../../lib/prisma", () => {
     supportCase: { updateMany: jest.fn() },
     supportCaseEvent: { findFirst: jest.fn(), create: jest.fn() },
     supportCaseMessage: { create: jest.fn() },
+    supportCaseChatAccess: {
+      findMany: jest.fn(async () => [{ id: "g1", kind: "READ" }]),
+      updateMany: jest.fn(async () => ({ count: 1 })),
+    },
   };
   const db = {
     supportCase: { findMany: jest.fn() },
@@ -73,6 +77,7 @@ const db = prisma as unknown as {
     supportCase: { updateMany: jest.Mock };
     supportCaseEvent: { findFirst: jest.Mock; create: jest.Mock };
     supportCaseMessage: { create: jest.Mock };
+    supportCaseChatAccess: { findMany: jest.Mock; updateMany: jest.Mock };
   };
 };
 const now = new Date("2026-10-22T00:00:00Z");
@@ -172,6 +177,11 @@ it("resolves each incident in its own transaction with the problem's notice, hol
     caseId: "a",
     actorId: "staff",
     note: "Released when the case was resolved",
+  });
+  // Chat access on a cascaded incident ends in the same transaction.
+  expect(db.tx.supportCaseChatAccess.updateMany).toHaveBeenCalledWith({
+    where: { id: "g1", endedAt: null },
+    data: { endedAt: now, endedById: "staff", endReason: "CASE_RESOLVED" },
   });
   expect(mockStageBell).toHaveBeenCalledWith(
     db.tx,
