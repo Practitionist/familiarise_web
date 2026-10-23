@@ -1627,80 +1627,102 @@ async function stepReferralCreditLiability(ctx: StepCtx): Promise<void> {
   }
 }
 
-const STEPS: readonly ((ctx: StepCtx) => Promise<void>)[] = [
-  stepWalletBalance,
-  stepAssignmentMeters,
-  stepOverageIntegrity,
-  stepPayoutTotals,
-  stepSeatCounts,
-  async (ctx) => {
-    if (!ctx.opts.organizationId) await stepRefundCoherence(ctx);
-  },
-  stepEarningsLedger,
-  stepUnjournaledEarnings,
-  stepReversedEarnings,
-  stepCompletedOrgPayouts,
-  stepClawbackGap,
-  async (ctx) => {
-    if (!ctx.opts.organizationId) await stepConsultantPayouts(ctx);
-  },
-  stepSplitSums,
-  stepOverageSettlement,
-  stepPendingTrustParks,
-  async (ctx) => {
-    if (!ctx.opts.organizationId) await stepReferralCreditLiability(ctx);
-  },
-  async (ctx) => {
-    if (!ctx.opts.organizationId) await stepUnappliedReceipts(ctx);
-  },
-  async (ctx) => {
-    ctx.findings.push(
-      ...(await orgInvoiceGstFindings(ctx.opts.organizationId, ctx.db, {
-        afterId: ctx.cursor,
-        size: RECONCILE_PAGE_SIZE,
-        onPage: (ids) => {
-          if (ids.length === RECONCILE_PAGE_SIZE) ctx.nextCursor = ids.at(-1);
+// Checkpoints store the step name, so reordering or inserting steps cannot resume the wrong comparison.
+const STEPS: readonly (readonly [string, (ctx: StepCtx) => Promise<void>])[] = [
+  ["walletBalance", stepWalletBalance],
+  ["assignmentMeters", stepAssignmentMeters],
+  ["overageIntegrity", stepOverageIntegrity],
+  ["payoutTotals", stepPayoutTotals],
+  ["seatCounts", stepSeatCounts],
+  [
+    "refundCoherence",
+    async (ctx) => {
+      if (!ctx.opts.organizationId) await stepRefundCoherence(ctx);
+    },
+  ],
+  ["earningsLedger", stepEarningsLedger],
+  ["unjournaledEarnings", stepUnjournaledEarnings],
+  ["reversedEarnings", stepReversedEarnings],
+  ["completedOrgPayouts", stepCompletedOrgPayouts],
+  ["clawbackGap", stepClawbackGap],
+  [
+    "consultantPayouts",
+    async (ctx) => {
+      if (!ctx.opts.organizationId) await stepConsultantPayouts(ctx);
+    },
+  ],
+  ["splitSums", stepSplitSums],
+  ["overageSettlement", stepOverageSettlement],
+  ["pendingTrustParks", stepPendingTrustParks],
+  [
+    "referralCreditLiability",
+    async (ctx) => {
+      if (!ctx.opts.organizationId) await stepReferralCreditLiability(ctx);
+    },
+  ],
+  [
+    "unappliedReceipts",
+    async (ctx) => {
+      if (!ctx.opts.organizationId) await stepUnappliedReceipts(ctx);
+    },
+  ],
+  [
+    "orgInvoiceGst",
+    async (ctx) => {
+      ctx.findings.push(
+        ...(await orgInvoiceGstFindings(ctx.opts.organizationId, ctx.db, {
+          afterId: ctx.cursor,
+          size: RECONCILE_PAGE_SIZE,
+          onPage: (ids) => {
+            if (ids.length === RECONCILE_PAGE_SIZE) ctx.nextCursor = ids.at(-1);
+          },
+        })),
+      );
+    },
+  ],
+  [
+    "walletOverageGst",
+    async (ctx) => {
+      ctx.findings.push(
+        ...(await walletOverageGstFindings(ctx.opts.organizationId, ctx.db, {
+          afterId: ctx.cursor,
+          size: RECONCILE_PAGE_SIZE,
+          onPage: (ids) => {
+            if (ids.length === RECONCILE_PAGE_SIZE) ctx.nextCursor = ids.at(-1);
+          },
+        })),
+      );
+    },
+  ],
+  [
+    "staleClawbacks",
+    async (ctx) => {
+      const accounts = await ctx.db.ledgerAccount.findMany({
+        ...pageOptions(),
+        where: {
+          ...pageWhere(ctx),
+          kind: {
+            in: ctx.opts.organizationId
+              ? ["ORG_PAYABLE"]
+              : ["CONSULTANT_RECEIVABLE", "ORG_PAYABLE"],
+          },
+          ...(ctx.opts.organizationId
+            ? { organizationId: ctx.opts.organizationId }
+            : {}),
         },
-      })),
-    );
-  },
-  async (ctx) => {
-    ctx.findings.push(
-      ...(await walletOverageGstFindings(ctx.opts.organizationId, ctx.db, {
-        afterId: ctx.cursor,
-        size: RECONCILE_PAGE_SIZE,
-        onPage: (ids) => {
-          if (ids.length === RECONCILE_PAGE_SIZE) ctx.nextCursor = ids.at(-1);
-        },
-      })),
-    );
-  },
-  async (ctx) => {
-    const accounts = await ctx.db.ledgerAccount.findMany({
-      ...pageOptions(),
-      where: {
-        ...pageWhere(ctx),
-        kind: {
-          in: ctx.opts.organizationId
-            ? ["ORG_PAYABLE"]
-            : ["CONSULTANT_RECEIVABLE", "ORG_PAYABLE"],
-        },
-        ...(ctx.opts.organizationId
-          ? { organizationId: ctx.opts.organizationId }
-          : {}),
-      },
-      select: { id: true },
-    });
-    recordPage(ctx, accounts);
-    ctx.findings.push(
-      ...(await staleClawbackFindings(
-        ctx.now,
-        ctx.opts.organizationId,
-        ctx.db,
-        accounts.map((account) => account.id),
-      )),
-    );
-  },
+        select: { id: true },
+      });
+      recordPage(ctx, accounts);
+      ctx.findings.push(
+        ...(await staleClawbackFindings(
+          ctx.now,
+          ctx.opts.organizationId,
+          ctx.db,
+          accounts.map((account) => account.id),
+        )),
+      );
+    },
+  ],
 ];
 
 const countsSchema = z.object({
@@ -1714,6 +1736,7 @@ const countsSchema = z.object({
 });
 const checkpointSchema = countsSchema.extend({
   nextStep: z.number().int().min(0).max(STEPS.length),
+  stepName: z.string().optional(),
   cursor: z.string().optional(),
   calls: z.number().int().nonnegative(),
   executing: z.boolean().default(false),
@@ -1755,6 +1778,15 @@ async function loadReconciliationReport(opts: ReconcileScope) {
     row &&
     !isReconcileRunInProgress(row) &&
     z.object({ status: z.literal("COMPLETED") }).safeParse(row.summary).success;
+  const resumable =
+    prior?.success &&
+    (prior.data.nextStep === STEPS.length ||
+      prior.data.stepName === STEPS[prior.data.nextStep][0]);
+  // An admin run restarts a failed audit instead of re-running the page that failed it.
+  const restartFailed =
+    !!opts.triggeredById &&
+    !!row &&
+    z.object({ status: z.literal("FAILED") }).safeParse(row.summary).success;
   const completedToday = !!(
     !opts.triggeredById &&
     row &&
@@ -1763,7 +1795,12 @@ async function loadReconciliationReport(opts: ReconcileScope) {
     row.runAt.toISOString().slice(0, 10) ===
       new Date().toISOString().slice(0, 10)
   );
-  if (!row || !prior?.success || (priorComplete && !completedToday)) {
+  if (
+    !row ||
+    !resumable ||
+    restartFailed ||
+    (priorComplete && !completedToday)
+  ) {
     // Old reports have no cursor and cannot safely be resumed.
     if (row && isReconcileRunInProgress(row)) {
       await prisma.ledgerReconciliationReport.update({
@@ -1786,6 +1823,7 @@ async function loadReconciliationReport(opts: ReconcileScope) {
           ...EMPTY_COUNTS,
           status: "RUNNING",
           nextStep: 0,
+          stepName: STEPS[0][0],
           calls: 0,
           executing: false,
           interruptions: 0,
@@ -1825,7 +1863,7 @@ async function runComparisonPage(
         await tx.$executeRaw`SET TRANSACTION READ ONLY`;
         await tx.$executeRaw`SET LOCAL statement_timeout = '6s'`;
         page.db = tx;
-        await STEPS[step](page);
+        await STEPS[step][1](page);
       },
       {
         isolationLevel: "RepeatableRead",
@@ -1900,6 +1938,7 @@ async function runReconcileLedgersUnlocked(
       baselineProblems: baseline.problems,
       status,
       nextStep,
+      ...(nextStep < STEPS.length ? { stepName: STEPS[nextStep][0] } : {}),
       ...(cursor ? { cursor } : {}),
       calls,
       executing,

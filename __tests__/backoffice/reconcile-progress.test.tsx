@@ -50,7 +50,10 @@ it("distinguishes a failed attempt from a completed discrepant report", () => {
   overview.ledgerReport.status = "FAILED";
   render(<ReconcileTab />);
   expect(
-    screen.getByText(/failed to finish; retry to continue/),
+    screen.getByText(/failed to finish; restart the audit/),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Restart audit" }),
   ).toBeInTheDocument();
   expect(screen.queryByText(/found drift/)).not.toBeInTheDocument();
 });

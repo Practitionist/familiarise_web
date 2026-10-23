@@ -130,14 +130,14 @@ These payments never see a capture webhook, so checkout also mints the consumer 
 
 ## 7. Invariants
 
-| Rule                                             | Enforcer                                                         | Test                                                   | Repair                                  |
-| ------------------------------------------------ | ---------------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------- |
-| Payment, legs and hold commit together           | One Serializable transaction in `commitCheckout`                 | `__tests__/payments/checkout-pool-1-nesting.test.ts`   | None needed; the transaction rolls back |
-| Funding legs sum to `Payment.amount`             | `payment_legs_sum_to_amount` trigger                             | `__tests__/enterprise/payment-leg-invariant.test.ts`   | None; uncommittable                     |
-| One order per logical attempt                    | `clientIdempotencyKey` unique, `findReusablePendingOrderPayment` | `__tests__/payments/checkout-open-order-reuse.test.ts` | `abandoned-payments` expires leftovers  |
-| A 1:1 slot is held by one buyer                  | Redis slot lock plus `occurrence_no_confirmed_overlap`           | `__tests__/payments/checkout-lock-ttl.test.ts`         | `cleanup-tentative-occurrences`         |
-| Only INR is charged                              | `assertInrSettlement`; `payment_currency_inr` CHECK              | `__tests__/payments/currency-and-tax-gates.test.ts`    | None; refused at the boundary           |
-| Status moves only from the expected prior status | CAS-in-WHERE on every `Payment` update                           | `__tests__/payments/cancel-pending-checkout.test.ts`   | `reconcile-payment-status`              |
+| Rule                                             | Enforcer                                                         | Test                                                                | Repair                                  |
+| ------------------------------------------------ | ---------------------------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------- |
+| Payment, legs and hold commit together           | One Serializable transaction in `commitCheckout`                 | `__tests__/payments/checkout-pool-1-nesting.test.ts`                | None needed; the transaction rolls back |
+| Funding legs sum to `Payment.amount`             | `payment_legs_sum_to_amount` trigger                             | `__tests__/payments/dispute-payout-block.test.ts` (source contract) | None; uncommittable                     |
+| One order per logical attempt                    | `clientIdempotencyKey` unique, `findReusablePendingOrderPayment` | `__tests__/payments/checkout-open-order-reuse.test.ts`              | `abandoned-payments` expires leftovers  |
+| A 1:1 slot is held by one buyer                  | Redis slot lock plus `occurrence_no_confirmed_overlap`           | `__tests__/payments/checkout-lock-ttl.test.ts`                      | `cleanup-tentative-occurrences`         |
+| Only INR is charged                              | `assertInrSettlement`; `payment_currency_inr` CHECK              | `__tests__/payments/currency-and-tax-gates.test.ts`                 | None; refused at the boundary           |
+| Status moves only from the expected prior status | CAS-in-WHERE on every `Payment` update                           | `__tests__/payments/cancel-pending-checkout.test.ts`                | `reconcile-payment-status`              |
 
 ## Where in code
 

@@ -453,6 +453,59 @@ test("an authenticated manual request starts a fresh audit after today's complet
   expect(db.ledgerReconciliationReport.create).toHaveBeenCalledTimes(2);
 });
 
+test("an authenticated manual request restarts a failed audit while a scheduled run resumes it", async () => {
+  reads.programAssignment.findMany.mockRejectedValueOnce(
+    new Error("deterministic failure"),
+  );
+  await expect(runReconcileLedgers({ scope: "full" })).rejects.toThrow(
+    "deterministic failure",
+  );
+  const failedId = stored?.id;
+  expect(stored?.summary).toMatchObject({ status: "FAILED", nextStep: 1 });
+  db.ledgerReconciliationReport.create.mockImplementationOnce(
+    async ({ data }: { data: Omit<StoredReport, "id" | "runAt"> }) => {
+      stored = { ...data, id: "report-2", runAt: new Date() };
+      return stored;
+    },
+  );
+  const fresh = await runReconcileLedgers({
+    scope: "full",
+    triggeredById: "admin-1",
+  });
+  expect(fresh.id).not.toBe(failedId);
+  expect(fresh.summary.status).toBe("COMPLETED");
+  expect(db.ledgerReconciliationReport.create).toHaveBeenCalledTimes(2);
+});
+
+test("a checkpoint whose step name no longer matches its index is not resumed", async () => {
+  await runReconcileLedgers({ scope: "full" });
+  stored = {
+    ...stored!,
+    runAt: new Date("2026-10-21T03:55:00Z"),
+    summary: {
+      ...(stored!.summary as object),
+      status: "RUNNING",
+      nextStep: 7,
+      stepName: "walletBalance",
+      calls: 1,
+      executing: false,
+    },
+  };
+  const report = await runReconcileLedgers({ scope: "full" });
+  expect(db.ledgerReconciliationReport.update).toHaveBeenCalledWith(
+    expect.objectContaining({
+      data: expect.objectContaining({
+        summary: expect.objectContaining({
+          status: "FAILED",
+          error: "Interrupted audit had no resumable checkpoint",
+        }),
+      }),
+    }),
+  );
+  expect(db.ledgerReconciliationReport.create).toHaveBeenCalledTimes(2);
+  expect(report.summary.status).toBe("COMPLETED");
+});
+
 test("an exception expiring during a multi-day audit cannot excuse its final verdict", async () => {
   const previous = [...LEDGER_FINDINGS_BASELINE];
   LEDGER_FINDINGS_BASELINE.splice(0, LEDGER_FINDINGS_BASELINE.length, {

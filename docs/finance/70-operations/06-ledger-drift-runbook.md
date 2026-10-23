@@ -15,7 +15,7 @@ The rule that governs every step: **a finding is an incident signal, never a thi
 
 ## Step 1: confirm what fired
 
-Read the newest report and its `summary.status` first. RUNNING means incomplete, with `ok: false` until completion; FAILED retains its checkpoint for retry. Only a completed report provides a final clean/discrepant verdict. From the console use Reconcile, then the ledger run; over HTTP an admin session can call `GET /api/admin/reconcile-ledgers?onlyDirty=true`, which lists only reports with `ok = false`. From SQL:
+Read the newest report and its `summary.status` first. RUNNING means incomplete, with `ok: false` until completion; FAILED retains its checkpoint for the scheduled retry; an authenticated admin run restarts it as a fresh audit. Only a completed report provides a final clean/discrepant verdict. From the console use Reconcile, then the ledger run; over HTTP an admin session can call `GET /api/admin/reconcile-ledgers?onlyDirty=true`, which lists only reports with `ok = false`. From SQL:
 
 ```sql
 SELECT id, "runAt", scope, ok,
@@ -74,7 +74,7 @@ For every kind except the wallet, the order is the same. First stop the writer f
 
 ## Step 4: verify
 
-Resume an unfinished audit from the console’s Continue audit action or the cleanup door. To verify a correction after completion, start a fresh authenticated run from the console or an organisation-scoped `POST /api/admin/reconcile-ledgers` with `{ organizationId, reason }` to re-check only the affected organisation (the full-scope-only checks are skipped in that mode). Confirm the new report has `ok = true`. A held execution lease answers 409; an idle RUNNING or FAILED checkpoint can resume. A cleanup slice may return RUNNING, so continue until COMPLETED before claiming a fresh verdict. Both admin doors advance one bounded slice; repeat to resume an unfinished audit. Use an authenticated admin door for a fresh re-check after completion; the scheduler reuses the current day’s completed audit. If the finding persists, you corrected the wrong side or the writer is still diverging.
+Resume an unfinished audit from the console’s Continue audit action or the cleanup door. To verify a correction after completion, start a fresh authenticated run from the console or an organisation-scoped `POST /api/admin/reconcile-ledgers` with `{ organizationId, reason }` to re-check only the affected organisation (the full-scope-only checks are skipped in that mode). Confirm the new report has `ok = true`. A held execution lease answers 409; an idle RUNNING checkpoint resumes, and an admin run on a FAILED one starts a fresh audit. A cleanup slice may return RUNNING, so continue until COMPLETED before claiming a fresh verdict. Both admin doors advance one bounded slice; repeat to resume an unfinished audit. Use an authenticated admin door for a fresh re-check after completion; the scheduler reuses the current day’s completed audit. If the finding persists, you corrected the wrong side or the writer is still diverging.
 
 ## Updating the baseline
 

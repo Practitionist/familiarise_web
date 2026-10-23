@@ -32,7 +32,7 @@ function ledgerVerdict(
     case "RUNNING":
       return "in progress; continue the audit";
     case "FAILED":
-      return "failed to finish; retry to continue";
+      return "failed to finish; restart the audit";
     case "UNKNOWN":
       return "completion status unavailable";
     case "COMPLETED":
@@ -104,10 +104,12 @@ export function ReconcileTab() {
                 </div>
                 <Button variant="outline" onClick={() => setRunning(job)}>
                   {job.key === "ledgers" &&
-                  data?.ledgerReport &&
-                  ["RUNNING", "FAILED"].includes(data.ledgerReport.status)
+                  data?.ledgerReport?.status === "RUNNING"
                     ? "Continue audit"
-                    : "Run now"}
+                    : job.key === "ledgers" &&
+                        data?.ledgerReport?.status === "FAILED"
+                      ? "Restart audit"
+                      : "Run now"}
                 </Button>
               </li>
             ))}
