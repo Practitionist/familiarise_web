@@ -39,88 +39,19 @@ Complete these steps after ending maintenance mode. Items are ordered by priorit
 
 This is the most critical post-maintenance step for financial integrity.
 
-- [ ] **Stripe**: Check for failed webhook deliveries
-  - Path: Stripe Dashboard > Developers > Webhooks > select endpoint > Recent deliveries
-  - Filter by: Status = Failed, Time = during maintenance window
-  - **Action**: For any failed deliveries, click "Resend" to retry
-  - Common failures: `payment_intent.succeeded` (most critical)
-
 - [ ] **Razorpay**: Check for failed webhook deliveries
   - Path: Razorpay Dashboard > Webhooks > Recent Deliveries
   - Filter by time range covering the maintenance window
-  - **Action**: Note any failed deliveries for manual reconciliation
+  - **Action**: Resend any failed delivery from the dashboard (the receiver dedupes on the event id), then run the stuck-event sweep; see [webhook recovery](../finance/70-operations/04-webhook-recovery.md)
 
 ## 4. Run Critical Reconciliation Jobs
 
-Manually trigger these jobs in order. Use the admin system jobs dashboard or run directly:
+The money recovery order, with each job run as `POST /api/cleanup/<slug>` and the bearer secret (or from the admin system-jobs runner), is in [the maintenance gate and recovery for money](../finance/70-operations/03-maintenance-gate-and-recovery.md#re-driving-money-after-maintenance-ends). It covers stuck webhook events, payment status, orphaned captures and top-ups, earnings, refunds, disputes and payouts.
 
-### Priority 1: Payment Reconciliation
+Two non-money jobs belong in this step as well; run them the same way:
 
-```bash
-# Check for payments that succeeded during maintenance but have no appointment
-npx tsx jobs/payments/reconcile-payment-status.ts
-```
-
-- [ ] Verify output: no "succeeded payments needing appointment creation" flagged
-- [ ] If flagged: these need manual appointment creation or webhook replay
-
-### Priority 2: Occurrence Availability Reconciliation
-
-```bash
-# Fix any occurrence-availability inconsistencies caused by interrupted operations
-npx tsx jobs/appointments/reconcile-occurrence-availability.ts
-```
-
-- [ ] Verify output: no double bookings detected, no orphaned tentative flags
-
-### Priority 3: Payment-Earnings Sync
-
-```bash
-# Ensure earnings records match payments
-npx tsx jobs/earnings/sync-payment-earnings.ts
-```
-
-- [ ] Verify output: no missing earnings entries created
-
-### Priority 4: Dispute Reconciliation
-
-```bash
-# Sync dispute status changes that occurred during maintenance
-curl -X POST "$APP_URL/api/cleanup/reconcile-disputes?limit=10" \
-  -H "Authorization: Bearer $CRON_SECRET"
-```
-
-The Netlify ticker also runs this job hourly at `:00`; the call above is only needed to avoid waiting for the next hour. The admin system-jobs console can run it as well.
-
-- [ ] Verify output: all dispute statuses match gateway state
-
-### Priority 5: Refund Reconciliation
-
-```bash
-# Sync any refund status changes that occurred during maintenance
-npx tsx jobs/refunds/reconcile-pending-refunds.ts
-```
-
-- [ ] Verify output: all refund statuses synced
-
-### Priority 5b: Document Storage Reconciliation
-
-```bash
-# Sync document-storage state that may have drifted during maintenance
-npx tsx jobs/cleanup/reconcile-document-storage.ts
-```
-
-- [ ] Verify output: no orphaned or missing document-storage rows flagged
-
-### Priority 6: Payout Reconciliation (if applicable)
-
-```bash
-# Only run if maintenance overlapped with payout processing (Monday 8-10 PM UTC)
-curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
-  "$APP_URL/api/cleanup/reconcile-payout-status"
-```
-
-- [ ] Verify output: all payout statuses match gateway state
+- `reconcile-occurrence-availability` fixes occurrence-availability inconsistencies from interrupted operations. Verify that no double bookings or orphaned tentative flags remain.
+- `reconcile-document-storage` syncs document-storage state that drifted during the window. Verify that no orphaned or missing rows are flagged.
 
 ## 5. Verify BetterStack
 
@@ -184,12 +115,8 @@ curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
 
 ## 8. Verify Cron Job Resume
 
-- [ ] Check that cron jobs resume on their next schedule (phase-staggered `netlify/functions/cron-tick.mts` every 5 min + GitHub Actions backstops):
-  - Every 5 min: `drain-notification-outbox`, `dispatch-outbound-webhooks`, `reconcile-orphaned-confirmations`, `sweep-stuck-webhook-events`
-  - Every 15 min (phase-staggered across `:00`, `:05`, `:10`): `cleanup-abandoned-payments`, `reconcile-pending-refunds`, `retry-failed-emails`, `retry-auto-refunds`
-  - Every 30 min: `reconcile-payment-status`
-  - Hourly: Several jobs (see [Cron Jobs Reference](./04-cron-jobs-reference.md))
-  - Verify `/api/health` reports `cron.stale: false`
+- [ ] Check that jobs resume on their next schedule. The Netlify ticker (`netlify/functions/cron-tick.mts`, every five minutes) is the scheduler for the money and recovery jobs; the schedule of each money job is in [scheduled money jobs](../finance/70-operations/01-scheduled-jobs.md), and a job held during DEGRADED simply runs again on its next slot.
+- [ ] Verify `/api/health` reports `cron.stale: false`.
 
 ## Recovery Troubleshooting
 
@@ -212,8 +139,7 @@ curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
    AND "createdAt" > NOW() - INTERVAL '24 hours'
    ORDER BY "createdAt" DESC;
    ```
-2. For Stripe: Use the dashboard to manually resend specific events
-3. For other gateways: May need to manually reconcile using the reconciliation jobs
+2. Use the Razorpay dashboard to resend specific events, or run `sweep-stuck-webhook-events` (see [webhook recovery](../finance/70-operations/04-webhook-recovery.md))
 
 ### Appointments created with wrong data
 

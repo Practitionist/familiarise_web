@@ -22,7 +22,7 @@ The flowchart below routes you from "new developer" to the band that owns your a
 flowchart LR
   START([new developer]) --> OV["00-foundations/<br/>overview · org-types · funding-and-programs"]
   OV --> PATH{your area?}
-  PATH -->|money / ledger| MONEY["10-money-and-ledger/<br/>money-model · chart-of-accounts · postings · wallet<br/>booking→earnings · earnings-lifecycle · payouts · invoicing<br/>payment-legs · refunds · disputes · payment-webhooks · integrity"]
+  PATH -->|money / ledger| MONEY["docs/finance/<br/>money-in · ledger · refunds · payouts<br/>B2B · tax · operations · decisions"]
   PATH -->|identity / SSO| IAM["roles-and-permissions (00-foundations/)<br/>20-iam-and-security/<br/>sso · jit · rate-limiting · security-headers"]
   PATH -->|programs / app| PROG["30-programs-and-lifecycle/<br/>concurrency · programs · expert-lifecycle<br/>dashboard · discovery · feature-flags<br/>contract-lifecycle · cycle-engine"]
   PATH -->|compliance / data| COMP["40-compliance-and-data/<br/>compliance · deletion · data-export<br/>webhooks · workspace-prefs · integrations"]
@@ -53,7 +53,7 @@ This path gives you the system shape, the role model, and just enough of the mon
 This path makes you productive inside any one band and safe at its boundaries with the others.
 
 1. Everything in the SDE1 path.
-2. All of [`10-money-and-ledger/`](../finance/20-ledger/01-double-entry-model.md) in order — the money story only makes sense read front to back.
+2. The finance documentation, starting at [`docs/finance/`](../finance/README.md) — the money story only makes sense read front to back.
 3. All of [`20-iam-and-security/`](20-iam-and-security/01-sso-and-authentication.md) — SSO, JIT, rate limiting, headers.
 4. All of [`30-programs-and-lifecycle/`](30-programs-and-lifecycle/01-concurrency-and-idempotency.md) — programs are where the commercial terms live.
 5. [compliance map](40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md), [deletion-policy](40-compliance-and-data/02-deletion-policy.md), [data-export](40-compliance-and-data/03-data-export.md), and [outbound-webhooks](40-compliance-and-data/04-outbound-webhooks.md).
@@ -76,7 +76,7 @@ This path covers the whole surface and the regulatory rails the money flows must
 1. Everything in the SDE3 path.
 2. [03-booking-and-money-machinery](../start-here/03-booking-and-money-machinery.md) — the canonical cross-rail booking, org-scoping, and money narrative.
 3. [compliance map](40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md) together with the authoritative rule set in [`docs/compliance/`](../compliance/00-overview.md).
-4. [live-payout-go-live-runbook](50-operations/05-live-payout-go-live-runbook.md) — the one flag flip with real-money consequences.
+4. [go-live checklist](../finance/70-operations/07-go-live-checklist.md) — the one flag flip with real-money consequences.
 5. [scenarios-and-examples](60-scenarios-and-verdicts/01-scenarios-and-examples.md) — worked end-to-end enterprise scenarios.
 
 ---
@@ -85,16 +85,16 @@ This path covers the whole surface and the regulatory rails the money flows must
 
 The table below lists every band in reading order, with the documents each one contains.
 
-| Band folder                  | Section                                          | Docs                                                                                                                                                                     |
-| ---------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `00-foundations/`            | **Foundations**                                  | overview, org types, funding & programs, roles, lifecycle, scheduling glossary                                                                                           |
-| `10-money-and-ledger/`       | **Money & ledger**                               | money model, chart of accounts, postings, wallet, booking→earnings, earnings lifecycle, payouts, invoicing, payment legs, refunds, disputes, payment webhooks, integrity |
-| `20-iam-and-security/`       | **IAM / SSO / security**                         | SSO, JIT, rate-limiting, security headers                                                                                                                                |
-| `30-programs-and-lifecycle/` | **Programs / dashboard / discovery / lifecycle** | concurrency & idempotency, programs, experts, dashboard, discovery, feature flags, contract lifecycle, cycle engine & rollover                                           |
-| `40-compliance-and-data/`    | **Compliance / integrations / data**             | compliance map, deletion, data export, outbound webhooks, workspace prefs, cross-cutting integrations, RBI payment aggregator posture                                    |
-| `50-operations/`             | **Operations**                                   | API reference, runbooks, monitoring, system events, live-payout go-live, chaos test, required secrets, capacity ladder, load gate, Novu console conditions               |
-| `60-scenarios-and-verdicts/` | **Scenarios**                                    | worked end-to-end scenarios                                                                                                                                              |
-| `70-design-decisions/`       | **Design decisions (ADRs)**                      | why the ledger, money representation, payouts, auth, and webhook designs are what they are                                                                               |
+| Band folder                  | Section                                          | Docs                                                                                                                                            |
+| ---------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `00-foundations/`            | **Foundations**                                  | overview, org types, funding & programs, roles, lifecycle, scheduling glossary                                                                  |
+| `docs/finance/`              | **Money & ledger** (moved)                       | the money story: checkout, ledger, refunds, payouts, organisation funding, tax and operations                                                   |
+| `20-iam-and-security/`       | **IAM / SSO / security**                         | SSO, JIT, rate-limiting, security headers                                                                                                       |
+| `30-programs-and-lifecycle/` | **Programs / dashboard / discovery / lifecycle** | concurrency & idempotency, programs, experts, dashboard, discovery, feature flags, contract lifecycle, cycle engine & rollover                  |
+| `40-compliance-and-data/`    | **Compliance / integrations / data**             | compliance map, deletion, data export, outbound webhooks, workspace prefs, cross-cutting integrations, RBI payment aggregator posture           |
+| `50-operations/`             | **Operations**                                   | API reference, non-money runbooks, monitoring, system events, chaos test, required secrets, capacity ladder, load gate, Novu console conditions |
+| `60-scenarios-and-verdicts/` | **Scenarios**                                    | worked end-to-end scenarios                                                                                                                     |
+| `70-design-decisions/`       | **Design decisions (ADRs)**                      | why the ledger, money representation, payouts, auth, and webhook designs are what they are                                                      |
 
 ---
 
@@ -113,25 +113,25 @@ These six docs define the primitives every other band assumes: what an organizat
 | 05  | [organization-lifecycle](00-foundations/05-organization-lifecycle.md) | `OrgStatus` + contract/program state machines    |
 | 06  | [scheduling-glossary](00-foundations/06-scheduling-glossary.md)       | canonical booking and scheduling terminology     |
 
-### Money & ledger — `10-money-and-ledger/`
+### Money & ledger — now in `docs/finance/`
 
-This band tells the money story front to back: how value enters (wallet, invoice, card), how it splits into earnings, and how it leaves (payouts), all through one double-entry journal.
+The money and ledger band moved to [`docs/finance/`](../finance/README.md), which tells the same story front to back and adds the gateway, tax and operations pages. Where each former document lives:
 
-| #   | Doc                                                                                | Focus                                                               |
-| --- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| 01  | [money-model-overview](../finance/20-ledger/01-double-entry-model.md)              | integer paise, double-entry, derived balances                       |
-| 02  | [chart-of-accounts](../finance/20-ledger/02-chart-of-accounts.md)                  | the 13 accounts, normal sides, deterministic ids                    |
-| 03  | [ledger-and-postings](10-money-and-ledger/03-ledger-and-postings.md)               | `postLedgerTxn`, the balance invariant, every flow's legs           |
-| 04  | [wallet-and-topups](10-money-and-ledger/04-wallet-and-topups.md)                   | `WalletTopUp` lifecycle, wallet-as-cache                            |
-| 05  | [booking-to-earnings](10-money-and-ledger/05-booking-to-earnings.md)               | booking → earnings → bps split, rate cards                          |
-| 06  | [earnings-lifecycle](../finance/40-payouts/02-earnings-lifecycle.md)               | `EarningStatus` machine, holds, `PENDING_TRUST`, refund decrements  |
-| 07  | [payout-pipeline](10-money-and-ledger/07-payout-pipeline.md)                       | earnings roll-up → payout, RazorpayX states, TDS/MSME, `ORG_PAYOUT` |
-| 08  | [invoicing](10-money-and-ledger/08-invoicing.md)                                   | GST, IRN, PO match, `ORG_RECEIVABLE`, refunds                       |
-| 09  | [payment-legs](../finance/20-ledger/03-payment-legs.md)                            | stackable funding legs → ledger debits                              |
-| 10  | [refunds](10-money-and-ledger/10-refunds.md)                                       | `applyRefundCascade`, gateway refund mechanics, credit notes        |
-| 11  | [disputes](10-money-and-ledger/11-disputes.md)                                     | `DisputeStatus` machine, evidence/contest, lost-dispute reversal    |
-| 12  | [payment-webhooks](../finance/10-money-in/02-capture-confirmation-and-webhooks.md) | inbound gateway events, signature verify, idempotency               |
-| 13  | [ledger-integrity](../finance/20-ledger/06-integrity-and-reconciliation.md)        | the reconciler: set-based checks + report                           |
+| Former document      | Now                                                                                                                                                                             |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| money-model-overview | [double-entry model](../finance/20-ledger/01-double-entry-model.md)                                                                                                             |
+| chart-of-accounts    | [chart of accounts](../finance/20-ledger/02-chart-of-accounts.md)                                                                                                               |
+| ledger-and-postings  | [postings](../finance/20-ledger/04-postings.md)                                                                                                                                 |
+| wallet-and-topups    | [wallet and top-ups](../finance/50-b2b/02-wallet-and-top-ups.md)                                                                                                                |
+| booking-to-earnings  | [rate cards and overage](../finance/50-b2b/03-rate-cards-and-overage.md)                                                                                                        |
+| earnings-lifecycle   | [earnings lifecycle](../finance/40-payouts/02-earnings-lifecycle.md)                                                                                                            |
+| payout-pipeline      | [consultant payouts](../finance/40-payouts/03-consultant-payouts.md) and [organisation payouts](../finance/40-payouts/05-org-payouts-and-clawbacks.md)                          |
+| invoicing            | [invoices, purchase orders and dunning](../finance/50-b2b/04-invoices-purchase-orders-and-dunning.md) and [GST invoices](../finance/60-tax/02-gst-invoices-and-credit-notes.md) |
+| payment-legs         | [payment legs](../finance/20-ledger/03-payment-legs.md)                                                                                                                         |
+| refunds              | [refunds](../finance/30-refunds-disputes/01-refunds.md)                                                                                                                         |
+| disputes             | [chargebacks](../finance/30-refunds-disputes/02-chargebacks.md)                                                                                                                 |
+| payment-webhooks     | [capture confirmation and webhooks](../finance/10-money-in/02-capture-confirmation-and-webhooks.md)                                                                             |
+| ledger-integrity     | [integrity and reconciliation](../finance/20-ledger/06-integrity-and-reconciliation.md)                                                                                         |
 
 ### IAM / SSO / security — `20-iam-and-security/`
 
@@ -177,18 +177,18 @@ These docs map the regulatory rails (DPDP, GST, TDS, MSME) onto the models and c
 
 This band is the on-call surface: every route, cron, alert, and go-live runbook.
 
-| #   | Doc                                                                            | Focus                                                        |
-| --- | ------------------------------------------------------------------------------ | ------------------------------------------------------------ |
-| 01  | [api-reference](50-operations/01-api-reference.md)                             | exhaustive route table (roles + audit actions)               |
-| 02  | [runbooks](50-operations/02-runbooks.md)                                       | incident response + scheduled tasks                          |
-| 03  | [monitoring](50-operations/03-monitoring.md)                                   | log taxonomy, alerts, dashboards                             |
-| 04  | [system-events](50-operations/04-system-events.md)                             | system-event / audit-action taxonomy                         |
-| 05  | [live-payout-go-live-runbook](50-operations/05-live-payout-go-live-runbook.md) | flip `ENABLE_LIVE_PAYOUTS` safely (sandbox proof + rollback) |
-| 06  | [chaos-test-runbook](50-operations/06-chaos-test-runbook.md)                   | chaos and fault-injection drills                             |
-| 07  | [required-secrets](50-operations/07-required-secrets.md)                       | production and CI secret inventory                           |
-| 08  | [capacity-ladder](50-operations/08-capacity-ladder.md)                         | infrastructure scaling thresholds                            |
-| 09  | [load-gate-runbook](50-operations/09-load-gate-runbook.md)                     | k6 load gate verification                                    |
-| 10  | [novu-console-conditions](50-operations/10-novu-console-conditions.md)         | Novu workflow step conditions                                |
+| #   | Doc                                                                            | Focus                                                                                |
+| --- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| 01  | [api-reference](50-operations/01-api-reference.md)                             | exhaustive route table (roles + audit actions)                                       |
+| 02  | [runbooks](50-operations/02-runbooks.md)                                       | non-money incident response + scheduled tasks (money runbooks are in `docs/finance`) |
+| 03  | [monitoring](50-operations/03-monitoring.md)                                   | log taxonomy, alerts, dashboards                                                     |
+| 04  | [system-events](50-operations/04-system-events.md)                             | system-event / audit-action taxonomy                                                 |
+| 05  | [live-payout-go-live-runbook](50-operations/05-live-payout-go-live-runbook.md) | superseded by the finance go-live checklist; pending removal                         |
+| 06  | [chaos-test-runbook](50-operations/06-chaos-test-runbook.md)                   | chaos and fault-injection drills                                                     |
+| 07  | [required-secrets](50-operations/07-required-secrets.md)                       | production and CI secret inventory                                                   |
+| 08  | [capacity-ladder](50-operations/08-capacity-ladder.md)                         | infrastructure scaling thresholds                                                    |
+| 09  | [load-gate-runbook](50-operations/09-load-gate-runbook.md)                     | k6 load gate verification                                                            |
+| 10  | [novu-console-conditions](50-operations/10-novu-console-conditions.md)         | Novu workflow step conditions                                                        |
 
 ### Scenarios — `60-scenarios-and-verdicts/`
 
