@@ -10,9 +10,9 @@ There is no `prisma/migrations` directory. The schema is managed with
 `prisma db push`, which reconciles the database to the schema file and writes no
 migration history, and there is therefore no `_prisma_migrations` table, no
 baseline, and nothing for `prisma migrate deploy` to apply. This is a deliberate
-pre-launch choice rather than an oversight: the data is seed data, a full reset
-is scheduled before launch, and versioned migrations over data that is about to
-be discarded would be maintenance with no payoff.
+pre-launch choice rather than an oversight: the shape is still being finalised,
+the live database is baselined at the freeze rather than reset, and versioned
+migrations before the shape settles would be maintenance with no payoff.
 
 Three consequences follow, and they are the reason this file exists.
 
@@ -32,7 +32,7 @@ The third is that **the schema is frozen**. The banner at the top of
 `prisma/schema.prisma` records the freeze from #705: additive changes are
 allowed, so new nullable columns and new models are fine, while renames, drops
 of live columns and type changes are not. A change that needs one of those is a
-reset-day decision, not a pull request.
+freeze-table decision for the owner, not a pull request.
 
 ## The sidecars
 
@@ -85,8 +85,8 @@ Worth knowing precisely: `DIRECT_URL` here is the provider's **session-mode**
 pooler on port 5432, not an unmediated connection to the database host. Session
 mode is sufficient for DDL, which transaction mode is not, so the arrangement is
 correct — but it is a pooler, and a long-running single session such as a
-whole-column `\copy` is exactly what it is worst at. The reset runbook uses
-`psql "$DIRECT_URL"` for that reason and says so.
+whole-column `\copy` is exactly what it is worst at. Use
+`psql "$DIRECT_URL"` for that reason.
 
 The runtime also runs with `PG_POOL_MAX=1` in the deployed environment, which
 serialises Prisma queries. That has no bearing on DDL, but it does mean a
@@ -100,15 +100,13 @@ Edit `prisma/schema.prisma`, keeping to the freeze: additive only, money columns
 as `BigInt` paise, and enums declared below the models that use them. Add any
 constraint or trigger the change needs to the appropriate file in `prisma/sql/`
 rather than assuming `db push` will carry it. Update the seed suite so it
-populates the new shape from the first day, because the doctrine here is to
-write new tables from every code path rather than to backfill — the reasoning is
-in `docs/prisma/02-pre-mvp-reset-runbook.md`. Run the type-check and the affected
+populates the new shape from the first day, because new tables are written from every code path rather than backfilled. Run the type-check and the affected
 jest suites locally. Then let the orchestrator run `npm run db:push` once, at
 merge, and confirm `npm run db:assert-sidecars` passes afterwards.
 
 Do not write a data migration for pre-reset rows. Do not push from a worktree to
 prove a test passes. If a change genuinely requires a rename, a drop or a type
-change, say so and stop; that is a reset-day decision.
+change, say so and stop; that is a freeze-table decision.
 
 ## Live-database drift (2026-10-02)
 
@@ -132,9 +130,9 @@ and a database rebuilt from that baseline would come up without the money
 invariants or the overlap constraint. The three SQL files must be appended to
 the baseline migration, or committed as a migration that immediately follows it.
 
-The full ordered runbook, including the reset it depends on, is
-`docs/prisma/03-cutover-to-migrations.md`. It is the file to open on launch day,
-not this one.
+The full ordered plan, including the freeze table it depends on, is
+`docs/prisma/02-schema-freeze-and-migration-cutover.md`. It is the file to open
+on launch day, not this one.
 
 ## Related skills and documents
 
@@ -145,7 +143,6 @@ recipes to use instead. `/finance` covers the money invariants that the sidecars
 enforce, which is the reason those invariants are not expressible in the Prisma
 schema in the first place.
 
-Under `docs/prisma/`, the general reference is `01-migrations-guide.md`, the reset
-procedure is `02-pre-mvp-reset-runbook.md`, the launch cutover is
-`03-cutover-to-migrations.md`, the completed Prisma 6 to 7 upgrade is recorded in
-`04-prisma-7-migration.md`, and the model-by-model diagrams are in `00-schema-map.md`.
+Under `docs/prisma/`, the general reference is `01-migrations-guide.md`, the
+freeze and cutover plan is `02-schema-freeze-and-migration-cutover.md`, and the
+model-by-model diagrams are in `00-schema-map.md`.
