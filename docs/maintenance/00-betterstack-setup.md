@@ -429,3 +429,29 @@ public label uses the server label; an explicitly empty public label fails
 configuration instead of falling back. Confirm required workers are scheduled and
 producing these tagged completions before enabling the monitor; a configured SLO
 does not establish that its scheduler is active.
+
+## Execution freshness and monitor acceptance
+
+Operational work and CI have separate owners. The active platform ticker owns
+production recovery and business jobs; GitHub Actions owns code verification,
+security and configuration drift checks, and manual race/load exercises. Remaining
+non-money Actions jobs are migration work until their bounded replacement runs
+are observed.
+
+A tick's HTTP200 is not a health assertion. Workers return `X-Job-Outcome`, and
+execution history distinguishes successful completion, partial failure, failure
+and hold. Only an owned successful finish advances the shared heartbeat. Monitor
+individual capabilities and oldest outstanding work so a healthy email drain
+cannot mask stopped recording copies or compliance alerts.
+
+Sentry's `cron-tick` monitor must be active and accept check-ins. Rejected check-ins
+produce `cron-checkin-rejected` in function logs. Verify missed-check-in alert
+routing separately; a disabled monitor accepts no events. Monitor configuration
+and delivery proof are deployment gates, not properties established by a unit test.
+
+A target timeout is ambiguous: the worker can still finish. Recovery drills must
+exercise sequential replay and different jobs competing for the same domain row,
+in addition to the per-job lease race. Never acknowledge all outstanding work as
+healthy merely because another invocation holds the lease.
+
+Execution history records the existing Sentry deployment environment in each completed result. Preview completions in the shared database must not establish production freshness; verify environment configuration as well as completion status.

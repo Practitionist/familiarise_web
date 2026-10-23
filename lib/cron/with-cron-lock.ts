@@ -4,30 +4,15 @@ import {
   CronLockUnavailableError,
 } from "@/lib/cron/cron-lock-errors";
 import { isPoolExhaustion, isUniqueViolation } from "@/lib/db/pg-errors";
+import { jobOutcome, type JobOutcome } from "@/lib/cron/job-outcome";
 
-/**
- * #476 / #1915 — distributed mutual exclusion for cron job entries backed by a
- * Postgres lease on `SystemJobExecution`.
- *
- * Schedule overlap, workflow_dispatch re-runs, and the GH-Actions + CRON_SECRET
- * HTTP double entry can all run the same job twice; jobs whose side effects are
- * only partially idempotent (dunning emails, notify fan-outs) must not
- * double-run.
- *
- * A job holds the lease while a `SystemJobExecution` row with
- * `jobName, status = "RUNNING", startedAt > now - ttlMs` exists, enforced at
- * the database level by `SystemJobExecution_running_jobName_key`
- * (`prisma/sql/check-constraints.sql`).
- */
+// Postgres leases prevent overlap; each worker must independently tolerate replay.
 
 export { CronLockHeldError, CronLockUnavailableError };
 
 const DEFAULT_TTL_MS = 15 * 60 * 1000; // workflows set timeout-minutes: 10
 /** Payout/reconcile family runs up to 30 min (ADR 05) — lock must outlive it. */
 export const LONG_JOB_TTL_MS = 35 * 60 * 1000;
-
-/** Test-only: retained for call-site compatibility. */
-export function resetCronHealthCacheForTesting(): void {}
 
 export interface CronLockOpts {
   ttlMs?: number;
@@ -46,49 +31,9 @@ const ERROR_LOG_MAX_CHARS = 8_000;
 
 const LEASE_EXPIRED_SWEEP_MESSAGE = "Lease expired (stale RUNNING row swept)";
 
-type SystemJobExecutionDelegate = {
-  findFirst?: (args: {
-    where: {
-      jobName: string;
-      status: "RUNNING";
-      startedAt: { gt: Date };
-    };
-    select: { id: true };
-  }) => Promise<{ id: string } | null>;
-  create?: (args: {
-    data: {
-      jobId: string;
-      jobName: string;
-      status: "RUNNING";
-      triggeredBy: string;
-    };
-    select: { id: true };
-  }) => Promise<{ id: string } | null>;
-  update?: (args: {
-    where: { id: string };
-    data: {
-      status?: "RUNNING" | "COMPLETED" | "FAILED";
-      startedAt?: Date;
-      endedAt?: Date;
-      durationMs?: number;
-      errorLog?: string;
-    };
-  }) => Promise<unknown>;
-  updateMany?: (args: {
-    where: {
-      id?: string;
-      jobName?: string;
-      status: "RUNNING";
-      startedAt?: { lte: Date };
-    };
-    data: {
-      startedAt?: Date;
-      status?: "FAILED";
-      endedAt?: Date;
-      errorLog?: string;
-    };
-  }) => Promise<{ count: number }>;
-};
+type SystemJobExecutionDelegate = Awaited<
+  ReturnType<typeof getExecutionDelegate>
+>;
 
 const PRISMA_CONNECTION_ERROR_CODES = new Set([
   "P1001",
@@ -114,49 +59,47 @@ function isDbConnectionOrPoolError(error: unknown): boolean {
   );
 }
 
-async function getExecutionDelegate(): Promise<SystemJobExecutionDelegate | null> {
-  try {
-    const mod = await import("@/lib/prisma");
-    const prisma = mod.default as unknown as
-      { systemJobExecution?: SystemJobExecutionDelegate } | undefined;
-    return prisma?.systemJobExecution ?? null;
-  } catch {
-    return null;
-  }
+async function getExecutionDelegate() {
+  const { default: prisma } = await import("@/lib/prisma");
+  return prisma.systemJobExecution;
 }
 
 async function touchRedisHeartbeat(): Promise<void> {
   try {
-    const mod = await import("@/lib/redis");
-    const redis = mod.default as
-      { set?: (key: string, value: string) => Promise<unknown> } | undefined;
-    if (redis && typeof redis.set === "function") {
-      await Promise.resolve(
-        redis.set("cron:heartbeat:last", new Date().toISOString()),
-      ).catch(() => {});
-    }
+    const { default: redis } = await import("@/lib/redis");
+    await redis.set("cron:heartbeat:last", new Date().toISOString());
   } catch {
-    // Non-fatal: Postgres SystemJobExecution is the authoritative trail.
+    // Execution history remains authoritative when Redis is unavailable.
   }
 }
 
 async function recordJobFinish(
   jobName: string,
-  delegate: SystemJobExecutionDelegate | null,
+  delegate: SystemJobExecutionDelegate,
   executionId: string | null,
   acquiredAtMs: number,
+  outcome: JobOutcome,
   error?: unknown,
 ): Promise<void> {
-  if (error === undefined) {
-    await touchRedisHeartbeat();
-  }
-  if (!executionId || typeof delegate?.update !== "function") return;
+  if (!executionId) return;
   try {
     const now = new Date();
-    await delegate.update({
-      where: { id: executionId },
+    const finished = await delegate.updateMany({
+      where: { id: executionId, status: "RUNNING" },
       data: {
-        status: error === undefined ? "COMPLETED" : "FAILED",
+        status:
+          outcome === "success"
+            ? "COMPLETED"
+            : outcome === "held"
+              ? "CANCELLED"
+              : "FAILED",
+        result: {
+          outcome,
+          environment:
+            process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT ??
+            process.env.SENTRY_ENVIRONMENT ??
+            "unknown",
+        },
         endedAt: now,
         durationMs: Math.max(0, now.getTime() - acquiredAtMs),
         errorLog:
@@ -167,6 +110,8 @@ async function recordJobFinish(
               ).slice(0, ERROR_LOG_MAX_CHARS),
       },
     });
+    if (finished.count > 0 && outcome === "success")
+      await touchRedisHeartbeat();
   } catch (err) {
     console.warn(`[${jobName}] job-trail finish write failed:`, err);
   }
@@ -178,49 +123,39 @@ export async function withCronLock<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   const ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
-  const delegate = await getExecutionDelegate();
-
-  // Graceful fallback when `prisma.systemJobExecution` is omitted in partial unit-test mocks.
-  if (!delegate || typeof delegate.create !== "function") {
-    return fn();
-  }
+  let delegate: SystemJobExecutionDelegate;
 
   let executionId: string | null = null;
   try {
+    delegate = await getExecutionDelegate();
     const now = new Date();
     const cutoff = new Date(now.getTime() - ttlMs);
 
     // Sweep stale RUNNING rows whose lease has expired before checking or
     // inserting, so `SystemJobExecution_running_jobName_key` is released for
     // crashed runs while preserving an explicit audit trail.
-    if (typeof delegate.updateMany === "function") {
-      await delegate.updateMany({
-        where: {
-          jobName,
-          status: "RUNNING",
-          startedAt: { lte: cutoff },
-        },
-        data: {
-          status: "FAILED",
-          endedAt: now,
-          errorLog: LEASE_EXPIRED_SWEEP_MESSAGE,
-        },
-      });
-    }
+    await delegate.updateMany({
+      where: {
+        jobName,
+        status: "RUNNING",
+        startedAt: { lte: cutoff },
+      },
+      data: {
+        status: "FAILED",
+        endedAt: now,
+        errorLog: LEASE_EXPIRED_SWEEP_MESSAGE,
+      },
+    });
 
-    if (typeof delegate.findFirst === "function") {
-      const active = await delegate.findFirst({
-        where: {
-          jobName,
-          status: "RUNNING",
-          startedAt: { gt: cutoff },
-        },
-        select: { id: true },
-      });
-      if (active) {
-        throw new CronLockHeldError(jobName);
-      }
-    }
+    const active = await delegate.findFirst({
+      where: {
+        jobName,
+        status: "RUNNING",
+        startedAt: { gt: cutoff },
+      },
+      select: { id: true },
+    });
+    if (active) throw new CronLockHeldError(jobName);
 
     const row = await delegate.create({
       data: {
@@ -234,7 +169,7 @@ export async function withCronLock<T>(
     if (row === null) {
       throw new CronLockHeldError(jobName);
     }
-    executionId = row?.id ?? null;
+    executionId = row.id;
   } catch (err) {
     if (err instanceof CronLockHeldError) {
       throw err;
@@ -259,23 +194,27 @@ export async function withCronLock<T>(
 
   try {
     const result = await fn();
-    const softFailed =
-      result !== null &&
-      typeof result === "object" &&
-      (("overallSuccess" in result &&
-        (result as { overallSuccess?: unknown }).overallSuccess === false) ||
-        ("success" in result &&
-          (result as { success?: unknown }).success === false));
+    const outcome = jobOutcome(result);
     await recordJobFinish(
       jobName,
       delegate,
       executionId,
       acquiredAtMs,
-      softFailed ? new Error("Job returned success=false") : undefined,
+      outcome,
+      outcome === "failure" || outcome === "partial_failure"
+        ? new Error(`Job returned ${outcome}`)
+        : undefined,
     );
     return result;
   } catch (err) {
-    await recordJobFinish(jobName, delegate, executionId, acquiredAtMs, err);
+    await recordJobFinish(
+      jobName,
+      delegate,
+      executionId,
+      acquiredAtMs,
+      "failure",
+      err,
+    );
     throw err;
   } finally {
     renewal.stop();
@@ -288,7 +227,7 @@ function startLeaseRenewal(
   executionId: string | null,
   ttlMs: number,
 ): { stop: () => void } {
-  if (!executionId || typeof delegate.updateMany !== "function") {
+  if (!executionId) {
     return { stop: () => {} };
   }
   let lost = false;
@@ -296,7 +235,7 @@ function startLeaseRenewal(
     async () => {
       if (lost) return;
       try {
-        const res = await delegate.updateMany!({
+        const res = await delegate.updateMany({
           where: { id: executionId, status: "RUNNING" },
           data: { startedAt: new Date() },
         });
