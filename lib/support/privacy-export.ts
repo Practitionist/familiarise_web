@@ -29,7 +29,8 @@ const order = [{ createdAt: "asc" as const }, { id: "asc" as const }];
 /**
  * The account's support record for a DPDP §11 export: their cases (including
  * grievances), their own messages, evidence they were asked for and gave,
- * files they uploaded, and their ratings. Internal staff notes are excluded.
+ * files they uploaded, their ratings, and staff access to their booking chats.
+ * Internal staff notes, operator identities and chat content are excluded.
  */
 export async function readSupportExport(userId: string) {
   const access = await visibleCaseAccess({ userId, role: "CONSULTEE" });
@@ -118,6 +119,34 @@ export async function readSupportExport(userId: string) {
       },
     }),
   );
+  const chatAccess = await readAllPages((cursor) =>
+    prisma.supportCaseChatAccess.findMany({
+      where: {
+        // The sweep stamps reviewNoticeAt on withheld grants too and never
+        // releases them, so a withheld grant stays out of the export.
+        withholdNotice: false,
+        supportCase: { deletedAt: null },
+        OR: [
+          { scopeUserIds: { has: userId } },
+          { supportCase: { requesterUserId: userId } },
+          { supportCase: { submitterUserId: userId } },
+        ],
+      },
+      orderBy: order,
+      take: EXPORT_BATCH,
+      ...cursor,
+      select: {
+        id: true,
+        createdAt: true,
+        kind: true,
+        basis: true,
+        expiresAt: true,
+        endedAt: true,
+        endReason: true,
+        supportCase: { select: { referenceNumber: true } },
+      },
+    }),
+  );
 
   const caseRows = cases.rows.map((row) => {
     const view = projectCaseForViewer(row, userId, access.canCorrespond(row));
@@ -166,10 +195,20 @@ export async function readSupportExport(userId: string) {
         rating: row.csatRating,
         ratedAt: row.csatAt,
       })),
+    supportChatAccess: chatAccess.rows.map((grant) => ({
+      createdAt: grant.createdAt,
+      kind: grant.kind,
+      basis: grant.basis,
+      caseReferenceNumber: grant.supportCase.referenceNumber,
+      expiresAt: grant.expiresAt,
+      endedAt: grant.endedAt,
+      endReason: grant.endReason,
+    })),
     supportExportComplete:
       cases.complete &&
       messages.complete &&
       evidence.complete &&
-      attachments.complete,
+      attachments.complete &&
+      chatAccess.complete,
   };
 }

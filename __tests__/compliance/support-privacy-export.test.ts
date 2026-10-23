@@ -8,6 +8,7 @@ jest.mock("../../lib/prisma", () => ({
     supportCaseMessage: { findMany: jest.fn() },
     supportCaseEvidenceRequest: { findMany: jest.fn() },
     supportCaseAttachment: { findMany: jest.fn() },
+    supportCaseChatAccess: { findMany: jest.fn() },
   },
 }));
 
@@ -19,6 +20,7 @@ const db = prisma as unknown as {
   supportCaseMessage: { findMany: jest.Mock };
   supportCaseEvidenceRequest: { findMany: jest.Mock };
   supportCaseAttachment: { findMany: jest.Mock };
+  supportCaseChatAccess: { findMany: jest.Mock };
 };
 
 const at = new Date("2026-10-01T00:00:00Z");
@@ -84,6 +86,7 @@ beforeEach(() => {
       deletedAt: null,
     },
   ]);
+  db.supportCaseChatAccess.findMany.mockResolvedValue([]);
 });
 
 describe("DPDP export of the support record", () => {
@@ -170,6 +173,109 @@ describe("DPDP export of the support record", () => {
 
     expect(out.supportMessages).toHaveLength(20_000);
     expect(out.supportExportComplete).toBe(false);
+  });
+});
+
+describe("DPDP export of staff chat access", () => {
+  const grant = {
+    id: "g1",
+    createdAt: at,
+    kind: "READ",
+    basis: "OPEN_CASE",
+    expiresAt: at,
+    endedAt: at,
+    endReason: "CASE_RESOLVED",
+    supportCase: { referenceNumber: "FAM-1" },
+  };
+  const findArgs = () => db.supportCaseChatAccess.findMany.mock.calls[0][0];
+
+  it("lists each grant with its case reference, and nothing about who or what", async () => {
+    db.supportCaseChatAccess.findMany.mockResolvedValueOnce([
+      grant,
+      {
+        ...grant,
+        id: "g2",
+        kind: "INTERVENE",
+        basis: "SAFETY",
+        endedAt: null,
+        endReason: null,
+      },
+    ]);
+
+    const out = await readSupportExport("u1");
+
+    expect(out.supportChatAccess).toEqual([
+      {
+        createdAt: at,
+        kind: "READ",
+        basis: "OPEN_CASE",
+        caseReferenceNumber: "FAM-1",
+        expiresAt: at,
+        endedAt: at,
+        endReason: "CASE_RESOLVED",
+      },
+      {
+        createdAt: at,
+        kind: "INTERVENE",
+        basis: "SAFETY",
+        caseReferenceNumber: "FAM-1",
+        expiresAt: at,
+        endedAt: null,
+        endReason: null,
+      },
+    ]);
+    expect(Object.keys(findArgs().select).sort()).toEqual([
+      "basis",
+      "createdAt",
+      "endReason",
+      "endedAt",
+      "expiresAt",
+      "id",
+      "kind",
+      "supportCase",
+    ]);
+    expect(findArgs().select.supportCase).toEqual({
+      select: { referenceNumber: true },
+    });
+  });
+
+  it("covers cases the user filed or asked for, and grants scoped to them", async () => {
+    await readSupportExport("u1");
+    expect(findArgs().where).toEqual(
+      expect.objectContaining({
+        supportCase: { deletedAt: null },
+        OR: [
+          { scopeUserIds: { has: "u1" } },
+          { supportCase: { requesterUserId: "u1" } },
+          { supportCase: { submitterUserId: "u1" } },
+        ],
+      }),
+    );
+  });
+
+  it("never lists a grant whose review notice was withheld", async () => {
+    await readSupportExport("u1");
+    expect(findArgs().where.withholdNotice).toBe(false);
+  });
+
+  it("pages grants and counts them in the completeness flag", async () => {
+    let next = 0;
+    db.supportCaseChatAccess.findMany.mockImplementation(async () => {
+      const rows = Array.from({ length: 500 }, (_, i) => ({
+        ...grant,
+        id: `g${next + i}`,
+      }));
+      next += 500;
+      return rows;
+    });
+
+    const out = await readSupportExport("u1");
+
+    expect(out.supportChatAccess).toHaveLength(20_000);
+    expect(out.supportExportComplete).toBe(false);
+    expect(db.supportCaseChatAccess.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: { id: "g19499" }, skip: 1, take: 500 }),
+    );
   });
 });
 
