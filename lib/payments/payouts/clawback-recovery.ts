@@ -82,6 +82,7 @@ export const ORG_CLAWBACK_KEY_FILTER = {
     ORG_CLAWBACK_KEY_PREFIX,
     CLAWBACK_RECOVERY_KEY_PREFIX,
     CLAWBACK_RECOVERY_RELEASE_KEY_PREFIX,
+    CLAWBACK_VOID_KEY_PREFIX,
   ].map((prefix) => ({ idempotencyKey: { startsWith: prefix } })),
 };
 
@@ -246,15 +247,31 @@ export async function releaseClawbackRecovery(
   });
 }
 
+/** Entries that raise what the payee owes: receivable debits, or clawback-journal credits on ORG_PAYABLE. */
+function owedRaisingEntries(payee: ClawbackPayee) {
+  return payee.rail === "CONSULTANT"
+    ? {
+        accountId: ledgerAccountId(receivableAccount(payee)),
+        direction: "DEBIT" as const,
+      }
+    : {
+        accountId: ledgerAccountId(payableAccount(payee)),
+        direction: "CREDIT" as const,
+        transaction: ORG_CLAWBACK_KEY_FILTER,
+      };
+}
+
 /**
- * Voids the still-unrecovered part of each clawback raised against a consultant
- * payout the bank returned: its earnings reopen net of the refund, so that part
- * would net twice. Later payouts are taken to recover the oldest debits first.
+ * Voids the still-unrecovered part of each clawback raised against a payout
+ * the bank returned: its earnings reopen net of the refund, so that part would
+ * net twice. Later payouts are taken to recover the oldest debts first.
  * Returns what is voided and what had already been recovered and stays booked.
  */
 export async function voidClawbacksRaisedOnPayout(
   tx: PrismaLike,
-  input: { payoutId: string; consultantProfileId: string },
+  input: { payoutId: string } & (
+    { consultantProfileId: string } | { organizationId: string }
+  ),
 ): Promise<{ voidedPaise: number; alreadyRecoveredPaise: number }> {
   const { payoutId } = input;
   const raised = await tx.ledgerTransaction.findMany({
@@ -266,13 +283,13 @@ export async function voidClawbacksRaisedOnPayout(
   });
   if (raised.length === 0) return { voidedPaise: 0, alreadyRecoveredPaise: 0 };
 
-  const receivable: AccountRef = {
-    kind: "CONSULTANT_RECEIVABLE",
-    consultantProfileId: input.consultantProfileId,
-  };
-  const balance = Math.max(0, await ledgerBalancePaise(tx, receivable));
+  const payee: ClawbackPayee =
+    "consultantProfileId" in input
+      ? { rail: "CONSULTANT", consultantProfileId: input.consultantProfileId }
+      : { rail: "ORG", organizationId: input.organizationId };
+  const balance = await outstandingClawbackPaise(tx, payee);
   const debits = await tx.ledgerEntry.findMany({
-    where: { accountId: ledgerAccountId(receivable), direction: "DEBIT" },
+    where: owedRaisingEntries(payee),
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     select: { transactionId: true, amountPaise: true },
   });
