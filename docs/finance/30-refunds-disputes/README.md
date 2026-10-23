@@ -1,63 +1,55 @@
-# Refunds, service complaints and chargebacks
+---
+title: Refunds, chargebacks and service complaints
+type: explanation
+audience: engineers, support staff and finance operators
+status: live
+last-reviewed: 2026-10-23
+---
 
-The active gateway is Razorpay with INR settlement. Booking refunds use
-`refundBookingPayment`: gateway, organization-funded and credit-funded bookings
-share the same front door while returning value through their original funding
-rail. Staff can inspect money; admin executes financial remedies.
+# Refunds, chargebacks and service complaints
 
-## Service complaint to refund
+Three different things move or threaten to move a buyer's money, and they are handled by three different mechanisms. Mixing them up is the commonest mistake in this area, so the first job of this section is to name them.
 
-A customer files a `SupportCase` linked to the booking/payment. Staff investigate
-and collect private expert/host evidence. A structured recommendation records the
-payment, paise and reason. Admin reviews the current refundable balance and
-approves or declines. Approval uses a stable recommendation key on the existing
-refund operation; the reservation links the `Refund` in the same transaction.
+| Term              | What it is                                                                                                                | Record        | Page                                                                     |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------- | ------------------------------------------------------------------------ |
+| Refund            | Money the platform sends back to the payer for a booking, on a cancellation, a rejection, an incident or a remedy         | `Refund`      | [refunds](01-refunds.md)                                                 |
+| Dispute           | A gateway chargeback: the cardholder's bank asks Razorpay to pull the money back. Always means a chargeback in these docs | `Dispute`     | [chargebacks](02-chargebacks.md)                                         |
+| Service complaint | A person's complaint about a booking, worked by support staff. It moves no money by itself                                | `SupportCase` | [service complaints and remedies](03-service-complaints-and-remedies.md) |
 
-The gateway call happens outside the reservation transaction. A capture/refund
-webhook or reconciliation adopts provider truth, then runs the existing ledger,
-earnings reversal and tax credit-note cascade. A webhook binding race transfers
-the recommendation before retiring its placeholder refund. Repeated requests
-cannot duplicate the financial effect.
+A service complaint can lead to a refund, and a dispute can be filed on a payment that was also refunded, but each keeps its own record, status vocabulary and owner. A `SupportCase` never carries a `DisputeStatus`, and a `Dispute` never carries a case status.
 
-Gateway processing, settled refund state and actual bank arrival are distinct.
-The dashboard shows the known state and provider reference, not an unsupported
-promise that a gateway acceptance means the bank already credited the buyer.
-Credit-funded bookings restore their credits in full and send no cash refund.
+## The map
 
-## Issuing-bank chargebacks
+```mermaid
+flowchart LR
+  subgraph Buyer["What the buyer does"]
+    CAN["Cancels a booking"]
+    CMP["Files a complaint"]
+    BNK["Asks their bank"]
+  end
+  CAN --> RF["Refund<br/>refundBookingPayment"]
+  CMP --> SC["SupportCase<br/>recommend, review"]
+  SC -->|"approved remedy"| RF
+  BNK --> DS["Dispute<br/>Razorpay webhooks"]
+  RF --> CAS["applyRefundCascade<br/>legs, earnings, journal, credit note"]
+  DS -->|"lost"| CB["settleLostDispute<br/>earnings, journal, credit note"]
+  DS -->|"live"| HOLD["earnings and payout holds,<br/>refund blocked"]
+```
 
-`Dispute` records are gateway chargebacks, not customer support complaints.
-Their provider reference, `dueBy`, status and evidence workflow remain separate
-from a linked case. Admin accepts/contests through the existing Razorpay action;
-staff investigate and supply context. Assignment is audited and concurrency
-controlled. The provider's deadline governs evidence submission.
+## What is shared
 
-Live disputes retain automatic earnings holds and refund/payout guards. Admin
-can independently apply a service-case payment hold to eligible unpaid earnings.
-Releasing that hold does not release a bank dispute or refund reservation.
-Completed or in-flight transfers cannot be recalled merely by recording a hold.
+- **One front door for refunds.** Every refund, whatever started it, goes through `refundBookingPayment`, which picks the gateway, in-ledger or credits rail from the payment's intent.
+- **Hard limits that apply to all three.** A payment can never have more refunded and charged back than it was paid: the `payment_refunds_within_amount` trigger refuses a `Refund` write that would exceed `Payment.amount` once chargebacks lost are counted. A live dispute blocks a new refund, and an uncascaded or pending refund blocks a payout.
+- **Money in integer paise, INR only, with balanced immutable journals.** See [the double-entry model](../20-ledger/01-double-entry-model.md).
 
-Organization views derive scope from actual sponsorship billing and host
-revenue. A payment's reporting tag alone neither grants financial visibility nor
-establishes who bears a chargeback loss. Counts and disputed amounts are computed
-server-side across the complete filtered result, independently of pagination.
+Legal credit-note and GST treatment is in [GST invoices and credit notes](../60-tax/02-gst-invoices-and-credit-notes.md). The support product that owns a complaint end to end is in [support architecture](../../support/10-production-architecture.md).
 
-## Engineering references
+## Where in code
 
-- [Support architecture](../../support/10-production-architecture.md)
-- [Financial architecture](../00-overview/01-money-map.md)
-- [Organization refund accounting](../../enterprise/10-money-and-ledger/10-refunds.md)
-- [Organization payout pipeline](../../enterprise/10-money-and-ledger/07-payout-pipeline.md)
-
-Money retains conditional state updates, Serializable reservations, cumulative
-refund caps, the single capture writer, integer paise and immutable balanced
-ledger postings. Database constraints are not duplicated by application sweeps.
-Tax treatment and legal commercial-model classifications remain unchanged.
+- `lib/payments/operations/`: `booking-refund.ts`, `refund.ts`, `refund-owed.ts`, `cancellation-policy.ts`.
+- `app/api/webhooks/utils.ts`, `lib/payments/dispute-status.ts`: disputes.
+- `lib/support/case-actions.ts`, `refund-door.ts`, `case-holds.ts`: complaints.
 
 ## Deprecated & Superseded Approaches
 
-Stripe and webhook-only Razorpay evidence descriptions in older references are
-superseded by the Razorpay-only implementation. Internal service complaints do
-not use gateway dispute statuses. A universal refund-arrival promise and totals
-computed from the latest page are superseded by provider-specific guidance and
-server-side aggregates.
+Stripe-era refund and dispute descriptions, a webhook-only account of Razorpay evidence, and any statement that a gateway accepting a refund means the buyer's bank has credited them are superseded: the platform records the gateway's state and reference and promises nothing about bank arrival. Delete any internal "dispute" wording that refers to a service complaint, and any totals computed from the latest page of a list instead of server-side aggregates.
