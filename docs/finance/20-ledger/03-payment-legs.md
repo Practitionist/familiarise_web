@@ -1,160 +1,158 @@
 ---
-title: Payment legs & stackable funding
-band: 10-money-and-ledger
-audience: sde2
+title: Payment legs
+type: reference
+audience: engineers changing funding, refunds or the booking journal
 status: live
-last-reviewed: 2026-09-03
+last-reviewed: 2026-10-23
 ---
 
-# Payment legs & stackable funding
+# Payment legs
 
-**What this covers:** how one booking can be funded by several sources at once (`PaymentLeg`), and how each leg source maps to a **debit in the `BOOKING` ledger posting**. This is the funding side of [booking → earnings](../../enterprise/10-money-and-ledger/05-booking-to-earnings.md).
+A `Payment` says how much was charged. Its `PaymentLeg` rows say what funded it. One booking can be funded by several sources at once, such as an organisation's wallet and a referral credit, and the legs become the debit side of the booking journal. This page lists the leg sources, the identity that ties legs to the payment amount, who enforces it, and what a refund does to each leg.
 
-> A single checkout can stack funding: a wallet covers most of the price, a referral credit chips in, the learner's card picks up the rest. `PaymentLeg` models it — one `Payment` and N legs, of which every funding leg except the platform-issued referral credit sums to `Payment.amount`. Those same legs become the **debit side** of the booking journal transaction.
-
----
-
-## 1. Schema
+## 1. The model
 
 ```prisma
 model PaymentLeg {
   id          String           @id @default(uuid())
   paymentId   String
-  payment     Payment          @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   source      PaymentLegSource
-  amountPaise Int
-  sourceRef   String?   // referral-credit id | gateway txn id | accrual ref
-  createdAt   DateTime  @default(now())
+  amountPaise BigInt
+  sourceRef   String?
+  createdAt   DateTime         @default(now())
+
   @@unique([paymentId, source])
   @@index([paymentId])
   @@index([source])
 }
+```
 
+```prisma
 enum PaymentLegSource {
-  CARD                      // external gateway charge
-  WALLET                    // BillingAccount wallet debit
-  REFERRAL_CREDIT           // platform-issued personal credit
-  INVOICE_ACCRUAL           // rolled into an OrganizationInvoice at month-end
-  OVERAGE_INVOICE_ACCRUAL   // program-overage portion, billed via invoice
-  LICENSE                   // absorbed by a LICENSED_SEAT program (no money moves)
+  CARD // external gateway charge
+  WALLET // BillingAccount wallet debit (was SEAT_PACK)
+  REFERRAL_CREDIT // platform-issued personal credit
+  INVOICE_ACCRUAL // rolled into an OrganizationInvoice at month-end
+  OVERAGE_INVOICE_ACCRUAL // marginal charge beyond a LICENSED_SEAT cap (CHARGE_ORG path); distinct source prevents @@unique([paymentId, source]) collision with the base INVOICE_ACCRUAL leg
+  LICENSE // absorbed by a LICENSED_SEAT program (no money moves)
+  INVOICE_ACCRUAL_REVERSAL
+  OVERAGE_INVOICE_ACCRUAL_REVERSAL
 }
 ```
 
----
+At most one leg of each source exists per payment (`@@unique([paymentId, source])`), so a duplicate insert fails with `P2002` instead of corrupting a sum. That is also why `OVERAGE_INVOICE_ACCRUAL` is its own value: a charge-the-organisation overage needs a second invoice leg on a payment that already carries a base `INVOICE_ACCRUAL` leg. If split billing across sub-organisations ever becomes real, the unique index would be dropped for a group id.
 
-## 2. Each leg → the account it debits in the `BOOKING` posting
+## 2. Each source, its writer and its debit
+
+| Source                             | Written by                                                                 | `sourceRef` holds                                              | Booking journal debit                |
+| ---------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------ |
+| `CARD`                             | `settleCheckoutLegs`, the approval mint, overage and recording handlers    | The Razorpay order id (a `premint_` id until the order exists) | `GATEWAY_CLEARING`                   |
+| `WALLET`                           | `recordCheckoutUtilization`, with the wallet debit in the same transaction | The `ProgramAssignment` id                                     | `WALLET` of the organisation         |
+| `INVOICE_ACCRUAL`                  | `recordCheckoutUtilization` on the invoice rail                            | The `ProgramAssignment` id                                     | `ORG_RECEIVABLE` of the organisation |
+| `OVERAGE_INVOICE_ACCRUAL`          | Overage settlement for a charge-the-organisation overage                   | The `ProgramAssignment` id                                     | `ORG_RECEIVABLE`                     |
+| `LICENSE`                          | `recordCheckoutUtilization` on a licensed seat, amount 0                   | The `ProgramAssignment` id                                     | none, no money moves                 |
+| `REFERRAL_CREDIT`                  | `applyCreditsToPayment` (`lib/referrals/service.ts`)                       | The first `ReferralCreditUsage` id                             | `PLATFORM_PROMO`                     |
+| `INVOICE_ACCRUAL_REVERSAL`         | The refund cascade on a still-unbilled accrual                             | The original sibling's `sourceRef`                             | none; the refund journal carries it  |
+| `OVERAGE_INVOICE_ACCRUAL_REVERSAL` | The same, for the overage accrual                                          | The original sibling's `sourceRef`                             | none                                 |
+
+`resolveBookingJournalDebits` (`lib/payments/payouts/earnings-service.ts`) sums the legs by source and emits one debit per non-zero bucket, then adds a `DISCOUNT` debit for any gap between list price plus tax and the funding debits. A licensed booking's `taxAmount` is 0, because the licence invoice books the GST.
 
 ```mermaid
 flowchart LR
   subgraph Legs["PaymentLeg.source"]
     C[CARD]
     W[WALLET]
-    IA["INVOICE_ACCRUAL /<br/>OVERAGE_INVOICE_ACCRUAL"]
+    IA["INVOICE_ACCRUAL and<br/>OVERAGE_INVOICE_ACCRUAL"]
     RC[REFERRAL_CREDIT]
-    LIC["LICENSE (0)"]
+    LIC["LICENSE, amount 0"]
   end
-  subgraph Debits["BOOKING transaction — debit legs"]
-    CASH[(GATEWAY_CLEARING)]
-    WALLET[("WALLET(org)")]
-    AR[("ORG_RECEIVABLE(org)")]
-    PROMO[(PLATFORM_PROMO)]
+  subgraph Debits["booking:paymentId, debit lines"]
+    GC[("GATEWAY_CLEARING")]
+    WL[("WALLET of the org")]
+    AR[("ORG_RECEIVABLE of the org")]
+    PR[("PLATFORM_PROMO")]
   end
-  C --> CASH
-  W --> WALLET
+  C --> GC
+  W --> WL
   IA --> AR
-  RC --> PROMO
-  LIC -. "no money moves" .-> X[" "]
+  RC --> PR
+  LIC -.->|"nothing posts"| X[" "]
 ```
 
-`earnings-service.ts` sums the legs by source and emits one debit per non-zero bucket; `LICENSE` legs (`amountPaise = 0`) post nothing, and a licensed booking's `taxAmount` is 0 because the licence invoice books the GST. The credit side is the fee/payable/GST split ([§3 of booking → earnings](../../enterprise/10-money-and-ledger/05-booking-to-earnings.md)).
+## 3. The sum identity
 
-| Source                             | Writer                      | Trigger                                                                                                              | Booking debit                        |
-| ---------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `CARD`                             | checkout handler            | learner paid via gateway; `amountPaise` = remainder after wallet + credits                                           | `GATEWAY_CLEARING`                   |
-| `WALLET`                           | `walletDebit()`             | sponsor org `fundingSource = WALLET`; leg written in the same tx as the cache decrement                              | `WALLET(org)`                        |
-| `REFERRAL_CREDIT`                  | referral consumption helper | platform referral credits applied at checkout                                                                        | `PLATFORM_PROMO`                     |
-| `INVOICE_ACCRUAL`                  | checkout handler            | sponsor org `fundingSource = INVOICE`; no cash at booking, sum-per-cycle becomes the invoice                         | `ORG_RECEIVABLE(org)`                |
-| `OVERAGE_INVOICE_ACCRUAL`          | checkout handler            | program-overage portion billed via invoice                                                                           | `ORG_RECEIVABLE(org)`                |
-| `LICENSE`                          | checkout handler            | active `LICENSED_SEAT` assignment absorbs the session; `amountPaise = 0`                                             | — (no money)                         |
-| `INVOICE_ACCRUAL_REVERSAL`         | refund cascade              | refund against a still-unbilled accrual; carries a **negative** amount that nets against the original sibling (#786) | — (refund posting carries the money) |
-| `OVERAGE_INVOICE_ACCRUAL_REVERSAL` | refund cascade              | same as above, for the overage accrual                                                                               | —                                    |
+For every payment, the sum of the non-reversal legs, excluding `REFERRAL_CREDIT` and `LICENSE`, equals `Payment.amount`. `Payment.amount` is the figure funded after discounts, tax and referral credits, so on the personal card rail it is the gateway charge, and on organisation rails it is the funded amount with no gateway call. A `REFERRAL_CREDIT` leg records value that was already taken out of `amount`, and adding it back would demand the same credit twice, so it is excluded. A `LICENSE` leg is 0 by design.
 
----
+A payment whose only non-reversal legs are zero-value `LICENSE` legs skips the sum comparison, because `Payment.amount` stays at the full list price while the leg is deliberately 0. That carve removes the sum check and nothing else: the reversal-pair rule still applies.
 
-## 3. Invariants
+**Reversal legs.** A refund never edits an original leg. It adds or grows a negative `*_REVERSAL` sibling, so the original legs always still sum to `Payment.amount`. A reversal leg must be negative, and its magnitude may never exceed the sum of its original sibling.
 
-1. **Sum identity.** `sum(non-reversal, non-REFERRAL_CREDIT PaymentLeg.amountPaise) === Payment.amount` (LICENSE is 0 and stays in the sum). `Payment.amount` is the amount funded by the non-reversal, non-`REFERRAL_CREDIT` legs, which is the figure left after discounts and tax and **after** referral credits have been deducted. On the PERSONAL card rail that is the gateway charge; on org-funded rails (wallet, invoice accrual) it is the funded amount and no gateway call is made. A `REFERRAL_CREDIT` leg therefore records value that has already been taken out of `amount`, and adding it back into the sum would demand the same credit twice, so it is excluded (#1347). The credit leg is still written, because it is the `PLATFORM_PROMO` debit in the booking journal (§2); it simply does not participate in the funding identity. A payment whose only funding legs are zero-value `LICENSE` legs is exempt from the comparison altogether, because the licence is absorbed at contract time and the leg is deliberately ₹0 while `Payment.amount` stays at the full list price, and the constraint trigger carries that same carve so it can never reject at `COMMIT` a checkout the checker waves through. That exemption removes the sum comparison and nothing else: both the checker and the trigger still apply the reversal-pair rules below to such a payment, because a reversal leg that exceeds the original it reverses is corrupt under either reading of the sum. Since #786 the funding legs are append-only: a refund never mutates the original leg, it nets through a negative `*_REVERSAL` sibling, so the original legs always still sum to `Payment.amount`. Each reversal leg must be negative and may never exceed its original sibling in magnitude. Enforced at checkout, and made uncommittable by the `payment_legs_sum_to_amount` constraint trigger in `prisma/sql/payment-legs-triggers.sql`; no application sweep re-verifies it, and the auditor no longer carries a leg-sum check ([ledger integrity](06-integrity-and-reconciliation.md)).
-2. **Leg count ≥ 1.** A `SUCCEEDED` payment with zero legs is a data bug.
-3. **Source uniqueness per payment.** `@@unique([paymentId, source])` — a duplicate-source leg fails on insert (`P2002`) rather than corrupting the sum. Reversal legs respect the same rule: there is at most one reversal sibling per source, and subsequent partial refunds net into it. If split-billing across sub-orgs becomes real, drop this and add a `legGroupId` (tracked follow-up).
-4. **`sourceRef` for reversal.** Populated for `REFERRAL_CREDIT` (→ `ReferralCredit.id`) and where a gateway/accrual ref exists. `WALLET` legs no longer reference a per-row wallet log (`WalletEntry` was removed in #772) — the authoritative wallet movement is the booking journal's `Dr WALLET(org)` leg; the cache decrement is `walletDebit()`. `LICENSE`/`CARD` may omit `sourceRef`.
+| Rule                                                      | Enforcer                                                                                                                         | Test                                                 | Repair                        |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ----------------------------- |
+| Legs sum to `Payment.amount` (with the carve-outs)        | `payment_legs_sum_to_amount` constraint trigger, deferred to `COMMIT`; also `payment_amount_vs_legs` on `Payment.amount` updates | `__tests__/enterprise/payment-leg-invariant.test.ts` | None; uncommittable           |
+| A reversal leg is negative and no larger than its sibling | The same trigger (`assert_payment_legs_ok`)                                                                                      | `__tests__/enterprise/payment-leg-invariant.test.ts` | None; uncommittable           |
+| A non-reversal leg is not negative                        | `payment_leg_nonreversal_nonnegative` CHECK                                                                                      | none (database)                                      | None                          |
+| One leg per source per payment                            | `@@unique([paymentId, source])`                                                                                                  | none (database)                                      | None                          |
+| Checkout reports drift without failing the sale           | `checkPaymentLegsSumToAmount` logs `payment_leg_sum_mismatch` in `settleCheckoutLegs`                                            | `__tests__/payments/checkout-price-parity.test.ts`   | The trigger is the hard guard |
 
----
+The trigger fires on `PaymentLeg` writes and on `Payment.amount` updates, validates both payments when a leg is re-parented, and re-checks the whole payment each time, which is idempotent when several rows commit together. Because it is a database guarantee, no application sweep re-verifies the identity and the ledger auditor carries no leg-sum check. The TypeScript twin, `checkPaymentLegsSumToAmount` in `lib/payments/payment-legs.ts`, serves checkout logging and tests.
 
-## 4. Worked example: a stacked checkout
+## 4. Worked examples
 
-Learner price ₹5,000 (500,000 paise). INVOICE-funded org with a `LICENSED_SEAT` program covering CONSULT plans up to ₹3,000/session; the remainder is `CHARGE_MEMBER`. Learner has ₹500 of referral credits.
+### A card payment with a referral credit
+
+Charlotte Brown books Hannah Anderson's ₹2,000 consultation with a 10 % code and ₹400 of credit, as in [checkout and pricing](../10-money-in/01-checkout-and-pricing.md). `Payment.amount` is 172,400 paise.
 
 ```
-price:                500,000
-  - licence absorbs:  300,000  → PaymentLeg(LICENSE,         amountPaise=0)
-  - overage amount:   200,000
-    - referral covers: 50,000  → PaymentLeg(REFERRAL_CREDIT, amountPaise=50000)
-    - card covers:    150,000  → PaymentLeg(CARD,            amountPaise=150000)
-
-Payment.amount (PERSONAL card rail: gateway charge): 150,000
-funding sum (LICENSE 0 + CARD 150,000):           150,000  ==  Payment.amount
+CARD             172,400   counts toward the sum  → 172,400 = Payment.amount
+REFERRAL_CREDIT   40,000   excluded from the sum
 ```
 
-`Payment.amount` is 150,000 rather than 200,000 because the ₹500 of referral credit was deducted before the order was minted, so the learner's card was only ever asked for the remaining ₹1,500. The `REFERRAL_CREDIT` leg still carries its 50,000, but the sum identity in §3 skips it, which is exactly what stops the credit being demanded a second time. The resulting booking posting debits `PLATFORM_PROMO` 50,000 + `GATEWAY_CLEARING` 150,000 against the fee/payable/GST credits.
+The booking journal debits `GATEWAY_CLEARING` 172,400 and `PLATFORM_PROMO` 40,000, and a `DISCOUNT` line of 20,000 closes the gap to list price plus tax (232,400). If the discount plug were based on `Payment.amount` instead of the funding debits, the credit would be counted twice and the booking transaction would fail to balance; basing it on the funding-leg debits is what keeps a credit-funded booking posting at all.
 
-### 4.1 A wallet + referral + card stack
+### A wallet-funded booking
 
-The canonical three-source stack the mental model opens with. It illustrates the arithmetic of the identity; a single checkout does not necessarily write all three legs today, because the CARD leg exists only on the gateway rail. A learner books a ₹3,000 (300,000 paise) session sponsored by a **WALLET-funded org** (`fundingSource = WALLET`) that has ₹2,000 of wallet balance left; the learner also holds ₹200 of referral credit; the card covers the rest. Checkout allocates **in priority order** — entitlement/wallet first, then platform credits, card last:
+A learner at IIT Madras books a ₹5,000 session on the organisation's wallet. With 18 % GST the funded amount is 590,000 paise, so one leg is written and the wallet cache decrements by the same figure in the same transaction:
 
 ```
-price:                    300,000
-  - wallet covers:        200,000  → PaymentLeg(WALLET,          amountPaise=200000)
-  - referral covers:       20,000  → PaymentLeg(REFERRAL_CREDIT, amountPaise=20000)
-  - card covers:           80,000  → PaymentLeg(CARD,            amountPaise=80000)
-
-Payment.amount (post-credit):              280,000
-funding sum (WALLET 200,000 + CARD 80,000): 280,000  ==  Payment.amount
+WALLET   590,000   → Payment.amount = 590,000, no gateway call
 ```
 
-The `walletDebit()` overdraft guard ([wallet & top-ups §4](../../enterprise/10-money-and-ledger/04-wallet-and-topups.md)) atomically tests-and-decrements the ₹2,000 → ₹0 cache in the same tx the `WALLET` leg is written. The booking posting then debits `WALLET(org) 200,000` + `PLATFORM_PROMO 20,000` (the referral credit the platform eats) + `GATEWAY_CLEARING 80,000`, balanced against the fee/payable/GST credits ([booking → earnings §3](../../enterprise/10-money-and-ledger/05-booking-to-earnings.md#3-the-booking-posting)). Three sources, three legs, one `Payment` — and the journal's debit side is exactly those three legs summed by source ([ledger & postings §4.2](../../enterprise/10-money-and-ledger/03-ledger-and-postings.md#42-booking--booking-bookingpaymentid)). Note that `Payment.amount` here is 280,000 and not the full 300,000, because the ₹200 of referral credit was netted out of it before the order was minted. That is the same asymmetry the `DISCOUNT` plug exists to absorb: the plug is computed from the sum of the funding-leg **debits**, which does include `PLATFORM_PROMO`, so the credit is counted exactly once on the journal side and zero times on the `Payment.amount` side (the trap behind the [booking → earnings §7 war story](../../enterprise/10-money-and-ledger/05-booking-to-earnings.md#7-design-decisions--trade-offs)).
+### A licensed seat
 
----
+Olivia Anderson, a Wipro learner, books under Wipro's licensed-seat programme. The programme absorbed the cost at contract time, so:
 
-## 5. Refunds
+```
+LICENSE   0   → the sum comparison is skipped; Payment.amount is the full price
+```
 
-Refunds are a `Refund` row (not an inverse leg) plus a `REFUND` journal transaction that reverses the booking legs proportionally ([ledger & postings §4.7](../../enterprise/10-money-and-ledger/03-ledger-and-postings.md)):
+If the booking passes the programme's cap and the programme charges the member for overage, the extra is a separate parent-linked side payment with its own `CARD` leg, not a second leg on the booking. See [rate cards and overage](../50-b2b/03-rate-cards-and-overage.md).
 
-- `WALLET` legs → the refund's `Cr WALLET(org)` returns spending power; the cache is credited via `walletCredit(reason=REFUND)`.
-- `REFERRAL_CREDIT` legs → referral balance re-credited.
-- `CARD` legs → gateway refund issued.
-- `INVOICE_ACCRUAL` legs → credit line on the next invoice cycle.
-- `LICENSE` legs → no money; `BookingUtilization.reversedAt` set and `engagementsUsed` decremented ([programs](../../enterprise/30-programs-and-lifecycle/02-programs.md)).
+## 5. What a refund does to each leg
 
----
+`applyRefundCascade` reverses legs in proportion to the refund, and the last leg absorbs the rounding remainder so the parts equal the refund to the paise. See [refunds](../30-refunds-disputes/01-refunds.md#4-the-refund-cascade).
 
-## 6. Design decisions & trade-offs
+- `WALLET`: `walletCredit` returns the spending power, and the cache and the `WALLET` ledger line move together.
+- `INVOICE_ACCRUAL` and `OVERAGE_INVOICE_ACCRUAL`: if the invoice is not yet paid, a negative reversal sibling is created or grown. If it is paid, the organisation earnings clawback and a credit note handle the money.
+- `LICENSE`: no money; the booking utilisation reversal restores the engagement.
+- `CARD`: the gateway refund moves the cash.
+- `REFERRAL_CREDIT`: restored by `reverseCreditsForPayment` after the refund row reads `SUCCEEDED`, not inside the cascade.
+- `*_REVERSAL`: never reversed again.
 
-- **Stackable legs, not single-source payments.** The whole reason `PaymentLeg` exists: a real checkout funds _one_ booking from _several_ pools at once — a sponsor's wallet, the learner's referral credit, and a card top-up, as in §4.1. A single `Payment.fundingSource` enum would force "pick one," which means either refusing a booking the wallet can't fully cover or losing the credit. Modelling each contribution as a leg lets the price be satisfied by any combination, and makes the booking journal's debit side a direct sum-by-source of the legs ([ledger & postings §4.2](../../enterprise/10-money-and-ledger/03-ledger-and-postings.md#42-booking--booking-bookingpaymentid)). The cost is a child table + the sum-identity invariant (§3); the benefit is funding composes.
-- **`PaymentLeg`, not N columns on `Payment`.** Given legs must exist, the next question is rows vs columns. Sources are unbounded (already 6, more coming); columns would mean wide, mostly-null rows + a migration per new source. The leg table indexes the `(paymentId, source)` join settlement and analytics need, and `sourceRef` avoids a JOIN to the credit/referral table from every settlement query.
-- **`@@unique([paymentId, source])` — one leg per source, dodged by a distinct overage source.** A duplicate-source leg fails on insert (`P2002`) rather than corrupting the sum (§3). This is also _why_ `OVERAGE_INVOICE_ACCRUAL` is a separate enum value from `INVOICE_ACCRUAL`: a `CHARGE_ORG` overage needs its own leg on a payment that may already carry a base `INVOICE_ACCRUAL` leg, and a distinct source sidesteps the unique clash without a `legGroupId`. If split-billing across sub-orgs ever becomes real, the trade-off flips — drop the unique and add `legGroupId` (tracked follow-up).
+When a payment's legs sum to more than its amount, the cascade leaves `REFERRAL_CREDIT` out of the proportional split so the funding that was actually paid is what is returned.
 
-## 7. What this design survived
+## Where in code
 
-- **The `CHARGE_ORG` overage that double-billed via an extra leg (`7f7e7d12`, #785 C3).** When an org-charged overage was recorded at checkout, the code **added** an `OVERAGE_INVOICE_ACCRUAL` leg for the marginal _on top of_ the base `INVOICE_ACCRUAL` leg — but the base leg already covered the over-cap pass-through (`basePaise`). Because `rollupOrgInvoiceAccruals` sums **both** leg sources into the invoice ([invoicing §9](../../enterprise/10-money-and-ledger/08-invoicing.md#9-overage-roll-up-into-a-line-item-715--775)), the org was billed `basePaise` **twice**, and `sum(PaymentLeg.amountPaise)` no longer equalled `Payment.amount` — which the `payment_legs_sum_to_amount` trigger now rejects at COMMIT. The fix **carves** `basePaise` _out_ of the base `INVOICE_ACCRUAL` leg and writes only the genuinely-additional surcharge as the overage leg, so the two legs sum to the price exactly. The symmetric `CHARGE_MEMBER` carve (so `basePaise` isn't collected on both the org's parent leg and the member's side-charge) shipped in the same commit — latent, since no `CHARGE_MEMBER` program is configured yet. This is the invariant in §3 rule 1 doing its job: the leg-sum identity is what made a silent double-bill a _loud_ reconcile finding.
+- `prisma/schema.prisma`: `PaymentLeg`, `PaymentLegSource`.
+- `prisma/sql/payment-legs-triggers.sql`: `assert_payment_legs_ok` and the three triggers.
+- `lib/payments/payment-legs.ts`: `checkPaymentLegsSumToAmount`, `sourceRefKindFor`.
+- `lib/payments/checkout/commit/payment-legs.ts`, `org-utilization.ts`: the checkout writers.
 
-- **The two definitions of `Payment.amount` that could not both be true (2026-09-03, #1347).** The schema has always described `Payment.amount` as the final amount charged to the gateway, taken after discounts and tax and **after** referral credits are deducted, and checkout writes a `CARD` leg equal to exactly that figure. The referral consumption helper then writes a positive `REFERRAL_CREDIT` leg for the credit it just applied, so the legs on a credit-funded booking added up to `amount` _plus_ the credit. Rule 1 of §3, the checkout sweep, and the `payment_legs_sum_to_amount` constraint trigger all read the identity as a plain sum over every non-reversal leg, so the trigger — which is deferred to `COMMIT` and is live on the database — raised `check_violation` and rolled back the entire checkout transaction for any booking that spent referral credit. The two readings of `amount` were irreconcilable: either the field meant the pre-credit price, in which case the gateway was being asked for the wrong number, or the credit leg did not belong in the sum. The resolution keeps the field's long-standing meaning and narrows the identity instead, so the funding sum now excludes `REFERRAL_CREDIT` in the checker, in the trigger, and in this document. The credit leg is untouched and still posts as the `PLATFORM_PROMO` debit; the `DISCOUNT` plug in `earnings-service.ts` already based itself on the sum of funding-leg debits including `PLATFORM_PROMO`, so the journal side needed no change at all.
+## Related
 
----
+- [Postings](04-postings.md) for the booking and refund journals built from legs.
+- [Funding rails](../50-b2b/01-funding-rails-and-permutations.md).
 
-### Related docs
+## Deprecated & Superseded Approaches
 
-- [Funding & programs](../../enterprise/00-foundations/03-funding-and-programs.md) — how each `FundingSource` maps to a leg source.
-- [Booking → earnings](../../enterprise/10-money-and-ledger/05-booking-to-earnings.md) — the credit side of the booking posting.
-- [Wallet & top-ups](../../enterprise/10-money-and-ledger/04-wallet-and-topups.md) — `WALLET` leg mechanics.
-- [Invoicing](../../enterprise/10-money-and-ledger/08-invoicing.md) — how `INVOICE_ACCRUAL` legs roll up.
-- [Ledger & postings](../../enterprise/10-money-and-ledger/03-ledger-and-postings.md) — the full booking/refund transactions.
+An earlier definition of the identity summed every non-reversal leg including `REFERRAL_CREDIT`. Because `Payment.amount` already excludes the credit, the trigger rejected every checkout that spent credit, so the identity was narrowed and the credit leg kept for the journal; delete any checker or doc that adds the credit leg back into the sum. A refund once edited the original accrual leg; it now nets through a negative sibling. `WalletEntry` no longer records wallet movement: the authoritative movement is the journal's `Dr WALLET` line, and the cache write is `walletDebit`. `lib/payments/payment-legs.ts` describes the `CARD` `sourceRef` as a gateway payment id and mentions Stripe and a `WalletEntry` row; the code stores the order id and neither of those exists.

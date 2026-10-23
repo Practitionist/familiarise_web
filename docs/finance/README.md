@@ -7,23 +7,31 @@ This folder is the home of the money subsystem docs. The pages below were moved 
 ### 00-overview
 
 - [01-money-map.md](00-overview/01-money-map.md)
+- [02-glossary-and-status-reference.md](00-overview/02-glossary-and-status-reference.md)
 
 ### 10-money-in
 
+- [01-checkout-and-pricing.md](10-money-in/01-checkout-and-pricing.md)
 - [02-capture-confirmation-and-webhooks.md](10-money-in/02-capture-confirmation-and-webhooks.md)
 - [03-razorpay-webhook-reference.md](10-money-in/03-razorpay-webhook-reference.md)
 - [04-razorpay-gateway-and-currency.md](10-money-in/04-razorpay-gateway-and-currency.md)
+- [05-approval-payments.md](10-money-in/05-approval-payments.md)
 
 ### 20-ledger
 
 - [01-double-entry-model.md](20-ledger/01-double-entry-model.md)
 - [02-chart-of-accounts.md](20-ledger/02-chart-of-accounts.md)
 - [03-payment-legs.md](20-ledger/03-payment-legs.md)
+- [04-postings.md](20-ledger/04-postings.md)
 - [06-integrity-and-reconciliation.md](20-ledger/06-integrity-and-reconciliation.md)
+- [07-referral-credits.md](20-ledger/07-referral-credits.md)
 
 ### 30-refunds-disputes
 
 - [README.md](30-refunds-disputes/README.md)
+- [01-refunds.md](30-refunds-disputes/01-refunds.md)
+- [02-chargebacks.md](30-refunds-disputes/02-chargebacks.md)
+- [03-service-complaints-and-remedies.md](30-refunds-disputes/03-service-complaints-and-remedies.md)
 
 ### 40-payouts
 

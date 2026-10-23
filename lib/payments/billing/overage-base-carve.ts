@@ -1,6 +1,7 @@
 import { EarningStatus, EarningsHoldReason } from "@prisma/client";
 
 import type { Tx } from "@/lib/prisma";
+import type { Posting } from "@/lib/payments/ledger/post";
 import { prorate } from "@/lib/payments/utils/money";
 import {
   releaseEarningsHolds,
@@ -31,7 +32,9 @@ import {
  * Dependency-light (Prisma types only) so the sweep jobs can import it.
  */
 
-export type CarveOutcome = "restored" | "recarved" | "none" | "invoiced";
+/** "receivable": a wallet parent's base the wallet could not fully cover, booked as ORG_RECEIVABLE. */
+export type CarveOutcome =
+  "restored" | "recarved" | "none" | "invoiced" | "receivable";
 
 type CarveRef = { overageEventId: string } | { sidePaymentId: string };
 
@@ -153,10 +156,11 @@ async function loadCarveContext(
 }
 
 /**
- * The Dr WALLET line for a base restored onto a wallet-funded parent. The
- * parent's booking journal funded the carved base from its DISCOUNT plug, so
- * the restore moves it: Dr WALLET / Cr DISCOUNT, once per overage event. A
- * parent whose booking journal has not posted yet tallies the restored leg itself.
+ * The restore journal for a wallet-funded parent. The parent's booking journal
+ * funded the carved base from its DISCOUNT plug, so the restore moves it off
+ * DISCOUNT: Dr WALLET for what the wallet covered, Dr ORG_RECEIVABLE for the
+ * rest, once per overage event. A parent whose booking journal has not posted
+ * yet tallies the WALLET leg itself, so only the receivable posts here.
  */
 async function journalWalletBaseRestore(
   tx: Tx,
@@ -164,30 +168,43 @@ async function journalWalletBaseRestore(
     parentPaymentId: string;
     ownerOrgId: string;
     overageEventId: string;
-    basePaise: number;
+    walletPaise: number;
+    receivablePaise: number;
   },
 ): Promise<void> {
   const booking = await tx.ledgerTransaction.findUnique({
     where: { idempotencyKey: `booking:${args.parentPaymentId}` },
     select: { id: true },
   });
-  if (!booking) return;
+  const walletPaise = booking ? args.walletPaise : 0;
+  if (walletPaise + args.receivablePaise === 0) return;
   const { postLedgerTxn } = await import("@/lib/payments/ledger/post");
+  const debits: Posting[] = [
+    {
+      account: { kind: "WALLET", organizationId: args.ownerOrgId },
+      direction: "DEBIT",
+      amountPaise: walletPaise,
+    },
+    {
+      account: { kind: "ORG_RECEIVABLE", organizationId: args.ownerOrgId },
+      direction: "DEBIT",
+      amountPaise: args.receivablePaise,
+    },
+  ];
   const posted = await postLedgerTxn(tx, {
     idempotencyKey: `overage-restore:${args.overageEventId}`,
     kind: "OVERAGE_MEMBER",
     paymentId: args.parentPaymentId,
-    description: `Abandoned member overage ${args.overageEventId}: base restored onto the org wallet`,
+    description:
+      args.receivablePaise > 0
+        ? `Abandoned member overage ${args.overageEventId}: base restored, ${args.receivablePaise} paise the org wallet could not cover booked as receivable`
+        : `Abandoned member overage ${args.overageEventId}: base restored onto the org wallet`,
     postings: [
-      {
-        account: { kind: "WALLET", organizationId: args.ownerOrgId },
-        direction: "DEBIT",
-        amountPaise: args.basePaise,
-      },
+      ...debits.filter((d) => d.amountPaise > 0),
       {
         account: { kind: "DISCOUNT" },
         direction: "CREDIT",
-        amountPaise: args.basePaise,
+        amountPaise: walletPaise + args.receivablePaise,
       },
     ],
   });
@@ -199,13 +216,52 @@ async function journalWalletBaseRestore(
   }
 }
 
+/** Debits up to `amountPaise` from the wallet, never below zero; returns what it took. */
+async function debitWalletUpTo(
+  tx: Tx,
+  billingAccountId: string,
+  amountPaise: number,
+  paymentId: string,
+): Promise<{ ownerOrgId: string; debitedPaise: number }> {
+  const { walletDebit, WalletInsufficientFundsError } =
+    await import("@/lib/api/organizations/wallet");
+  const tryDebit = async (paise: number) => {
+    try {
+      const { ownerOrgId } = await walletDebit(tx, {
+        billingAccountId,
+        amountPaise: paise,
+        reason: "BOOKING",
+        paymentId,
+      });
+      return ownerOrgId;
+    } catch (err) {
+      if (err instanceof WalletInsufficientFundsError) return null;
+      throw err;
+    }
+  };
+  const fullOwner = await tryDebit(amountPaise);
+  if (fullOwner) return { ownerOrgId: fullOwner, debitedPaise: amountPaise };
+
+  const acct = await tx.billingAccount.findUniqueOrThrow({
+    where: { id: billingAccountId },
+    select: { walletBalance: true, ownerOrgId: true },
+  });
+  const available = Math.min(
+    Math.max(Number(acct.walletBalance ?? 0), 0),
+    amountPaise,
+  );
+  const debited = available > 0 && (await tryDebit(available)) ? available : 0;
+  return { ownerOrgId: acct.ownerOrgId, debitedPaise: debited };
+}
+
 /**
  * FAILED edge: return the carved basePaise to the parent's INVOICE_ACCRUAL
  * or WALLET leg + amount and release any overage-held earnings on the parent
  * payment. For LICENSE parents (whose booking leg is ₹0 and cannot absorb the
  * uncollected over-cap base), leave parent earnings held so uncollected base
- * is never disbursed. Call ONLY after a successful PENDING→FAILED CAS, in the
- * same tx.
+ * is never disbursed. A wallet short of the base gives what it holds and the
+ * rest books as ORG_RECEIVABLE ("receivable"). Call ONLY after a successful
+ * PENDING→FAILED CAS, in the same tx.
  */
 export async function restoreOverageBaseCarve(
   tx: Tx,
@@ -243,37 +299,42 @@ export async function restoreOverageBaseCarve(
     select: { amountPaise: true },
   });
   if (walletLeg) {
+    let walletPaise = ctx.event.basePaise;
     if (ctx.parent.billingAccountId) {
-      const { walletDebit } = await import("@/lib/api/organizations/wallet");
-      const { ownerOrgId } = await walletDebit(tx, {
-        billingAccountId: ctx.parent.billingAccountId,
-        amountPaise: ctx.event.basePaise,
-        reason: "BOOKING",
-        paymentId: ctx.parent.id,
-      });
+      const { ownerOrgId, debitedPaise } = await debitWalletUpTo(
+        tx,
+        ctx.parent.billingAccountId,
+        ctx.event.basePaise,
+        ctx.parent.id,
+      );
+      walletPaise = debitedPaise;
       await journalWalletBaseRestore(tx, {
         parentPaymentId: ctx.parent.id,
         ownerOrgId,
         overageEventId: ctx.event.id,
-        basePaise: ctx.event.basePaise,
+        walletPaise,
+        receivablePaise: ctx.event.basePaise - walletPaise,
       });
     }
-    await tx.payment.updateMany({
-      where: { id: ctx.parent.id },
-      data: { amount: { increment: ctx.event.basePaise } },
-    });
-    await tx.paymentLeg.update({
-      where: {
-        paymentId_source: { paymentId: ctx.parent.id, source: "WALLET" },
-      },
-      data: { amountPaise: { increment: ctx.event.basePaise } },
-    });
+    // Only the wallet-covered part joins the WALLET leg; the rest lives on ORG_RECEIVABLE.
+    if (walletPaise > 0) {
+      await tx.payment.updateMany({
+        where: { id: ctx.parent.id },
+        data: { amount: { increment: walletPaise } },
+      });
+      await tx.paymentLeg.update({
+        where: {
+          paymentId_source: { paymentId: ctx.parent.id, source: "WALLET" },
+        },
+        data: { amountPaise: { increment: walletPaise } },
+      });
+    }
     await releaseOverageHeldParentEarnings(
       tx,
       ctx.parent.id,
       ctx.sidePaymentId,
     );
-    return "restored";
+    return walletPaise < ctx.event.basePaise ? "receivable" : "restored";
   }
 
   // Guarded parent-first write: the invoiced check rides the UPDATE's WHERE
