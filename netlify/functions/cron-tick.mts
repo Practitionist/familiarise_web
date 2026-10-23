@@ -25,6 +25,7 @@
  */
 
 import { z } from "zod";
+import { jobOutcomeSchema, type JobOutcome } from "../../lib/cron/job-outcome";
 
 export const config = { schedule: "*/5 * * * *" };
 
@@ -600,15 +601,20 @@ async function hitTarget(
   secret: string,
   name: Target,
   now: Date,
+  deadline: number,
 ): Promise<{
   name: string;
   status: number;
   maintenance?: boolean;
   errorBody?: string;
+  outcome?: JobOutcome;
 }> {
   const { url, timeoutMs } = targetRequest(baseUrl, name, now);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(
+    () => controller.abort(),
+    Math.max(1, Math.min(timeoutMs, deadline - Date.now())),
+  );
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -618,6 +624,10 @@ async function hitTarget(
       },
       signal: controller.signal,
     });
+    const parsedOutcome = jobOutcomeSchema.safeParse(
+      res.headers.get("x-job-outcome"),
+    );
+    const outcome = parsedOutcome.success ? parsedOutcome.data : undefined;
     // Only the twin's own maintenance refusal carries `phase`; a platform or
     // dependency 503 does not, and must stay visible as a failure (#1598 P1-W03).
     let maintenance = false;
@@ -643,6 +653,7 @@ async function hitTarget(
     return {
       name,
       status: res.status,
+      outcome,
       maintenance,
       ...(errorBody ? { errorBody } : {}),
     };
@@ -672,7 +683,11 @@ export function bucketFor(
   status: number,
   maintenance = false,
   name = "",
+  outcome?: JobOutcome,
 ): "ok" | "held" | "failed" {
+  if (outcome === "failure" || outcome === "partial_failure") return "failed";
+  if (outcome === "held") return "held";
+  if (outcome === "success" && status === 200) return "ok";
   if (status === 200) return "ok";
   if (status === 207) {
     return PARTIAL_FAILURE_TARGETS.has(name) ? "failed" : "ok";
@@ -860,7 +875,7 @@ async function sendCheckIn(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CRON_CHECKIN_TIMEOUT_MS);
   try {
-    await fetch(url, {
+    const response = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -880,7 +895,15 @@ async function sendCheckIn(
       }),
       signal: controller.signal,
     });
+    if (!response.ok)
+      console.error(
+        JSON.stringify({
+          event: "cron-checkin-rejected",
+          status: response.status,
+        }),
+      );
   } catch {
+    console.error(JSON.stringify({ event: "cron-checkin-unavailable" }));
     // Belt and suspenders: fetch failures are swallowed here too, even
     // though every call site also treats this as fire-and-forget.
   } finally {
@@ -933,6 +956,7 @@ export async function otherActivePlatform(
 }
 
 export default async function cronTick(_req: Request): Promise<Response> {
+  const started = Date.now();
   const otherPlatform = await otherActivePlatform();
   if (otherPlatform !== null) {
     console.log(
@@ -959,12 +983,13 @@ export default async function cronTick(_req: Request): Promise<Response> {
   // backtracking; strip one slash at a time instead.
   let baseUrl = process.env.CRON_TICK_BASE_URL || process.env.URL || "";
   while (baseUrl.endsWith("/")) baseUrl = baseUrl.slice(0, -1);
-  const started = Date.now();
   const tickDate = new Date(Math.round(started / 60_000) * 60_000);
   const targets = dueTargets(tickDate);
 
   const settled = await Promise.allSettled(
-    targets.map((name) => hitTarget(baseUrl, secret, name, tickDate)),
+    targets.map((name) =>
+      hitTarget(baseUrl, secret, name, tickDate, started + 24_000),
+    ),
   );
 
   const ok: string[] = [];
@@ -982,7 +1007,9 @@ export default async function cronTick(_req: Request): Promise<Response> {
       result.status === "fulfilled" && result.value.maintenance === true;
     const errorBody =
       result.status === "fulfilled" ? result.value.errorBody : undefined;
-    const bucket = bucketFor(status, maintenance, name);
+    const outcome =
+      result.status === "fulfilled" ? result.value.outcome : undefined;
+    const bucket = bucketFor(status, maintenance, name, outcome);
     if (bucket === "ok") ok.push(name);
     else if (bucket === "held") lockHeld.push(name);
     else {
@@ -1004,29 +1031,34 @@ export default async function cronTick(_req: Request): Promise<Response> {
     durationMs,
   };
   console.log(JSON.stringify(body));
-  // #1868 — the Sentry ingest canary is deliberately NOT reported here. An
-  // unhealthy canary answers 503 with no `phase`, so `bucketFor` files it
-  // under `failed` — and `alertFailedTargets` reports failures to Sentry, which
-  // is precisely the system whose outage the canary just detected. During a
-  // quota outage that is one Sentry event per tick that can never arrive, and
-  // after recovery one more per tick spent from the allowance we are trying to
-  // protect. A monitor that reports its own failure through the failing system
-  // is not a monitor. The email alert is the canary's channel, and it fails
-  // open, so nothing is lost by excluding it here.
-  //
-  // It stays in `failed` for the HTTP status and the body, so a 503 from the
-  // canary is still visible in the tick's own output and in the job-execution
-  // history — only the Sentry report is suppressed.
-  await alertFailedTargets(
-    failedForAlert.filter((f) => reportableToSentry(f.name)),
-    tickDate,
-  );
-
-  // #1861 P4a — one heartbeat check-in per tick, sent after the targets so it
-  // never delays them. Health follows `failed`, not the (always-200) HTTP
-  // status; see statusFor's #1686 rationale for why the two diverge.
-  await sendCheckIn(failed.length > 0 ? "error" : "ok", durationMs);
+  // Check-in and alert waiting share the remaining ticker budget; aborts do not cancel target work.
+  await Promise.all([
+    sendCheckIn(failed.length > 0 ? "error" : "ok", durationMs),
+    boundedAlert(
+      failedForAlert.filter((f) => reportableToSentry(f.name)),
+      tickDate,
+      started + 27_000,
+    ),
+  ]);
 
   // #1686 — 200 even with a non-empty `failed`; see statusFor.
   return jsonResponse(body, statusFor(failed));
+}
+
+async function boundedAlert(
+  failed: Parameters<typeof alertFailedTargets>[0],
+  tickDate: Date,
+  deadline: number,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      alertFailedTargets(failed, tickDate),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, Math.max(1, deadline - Date.now()));
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }

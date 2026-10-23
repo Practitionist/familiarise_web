@@ -46,6 +46,7 @@ import {
   AlertTriangle,
   Trash2,
   ShieldOff,
+  LifeBuoy,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -59,6 +60,11 @@ import type {
   ModerationSideEffects,
   ModerationStats,
 } from "@/types/moderation";
+import type { LinkedReportCase } from "@/schemas/moderation";
+import {
+  OpenReportCaseDialog,
+  ReportCaseLink,
+} from "@/components/dashboard/shared/ReportSupportCase";
 
 interface ReportContextSignals {
   hasRefund: boolean;
@@ -78,9 +84,12 @@ interface ReportBookingContext {
 
 type ModerationReportItem = ModerationReport & {
   contextSignals?: ReportContextSignals | null;
+  /** The support case staff opened from this report, if any. */
+  supportCase?: LinkedReportCase | null;
 };
 
 type ModerationReportDetailWithContext = ModerationReportDetail & {
+  supportCase?: LinkedReportCase | null;
   bookingContext?: ReportBookingContext | null;
   /** Excluding the reported review would take the expert's score below the publication gate. */
   exclusionDropsBelowGate?: boolean;
@@ -413,15 +422,53 @@ function ActionAuditTrail({
   );
 }
 
+/** A report unlocks no chat on its own; staff open a support case from it instead. */
+function ReportSupportCaseSection({
+  linkedCase,
+  basePath,
+  canOpen,
+  onOpen,
+}: Readonly<{
+  linkedCase: LinkedReportCase | null;
+  basePath: string;
+  canOpen: boolean;
+  onOpen: () => void;
+}>) {
+  if (!linkedCase && !canOpen) return null;
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3">
+      <div>
+        <Label className="text-sm font-medium">Support case</Label>
+        <p className="text-xs text-muted-foreground">
+          {linkedCase
+            ? "Chat access, if needed, is requested on this case."
+            : "No case yet. Open one for the reporter to work this report with them."}
+        </p>
+      </div>
+      {linkedCase ? (
+        <ReportCaseLink basePath={basePath} supportCase={linkedCase} />
+      ) : (
+        <Button type="button" variant="outline" size="sm" onClick={onOpen}>
+          <LifeBuoy className="mr-2 h-4 w-4" />
+          Open support case
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export function ModerationPage() {
-  const { can } = useBackofficeCapability();
+  const { can, basePath } = useBackofficeCapability();
   const [activeTab, setActiveTab] = useState("reports");
   const [searchQuery, setSearchQuery] = useState("");
   // #997 secondary findings — the reports list used to fetch all PENDING
   // reports and substring-search every keystroke client-side. Debounce and
   // send the query to the server instead.
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [selectedReport, setSelectedReport] = useState<ModerationReport | null>(
+  const [selectedReport, setSelectedReport] =
+    useState<ModerationReportItem | null>(null);
+  // Keyed by report so closing one report never reopens the dialog on the next.
+  const [caseDialogReportId, setCaseDialogReportId] = useState<string | null>(
     null,
   );
   const [moderationNote, setModerationNote] = useState("");
@@ -970,6 +1017,12 @@ export function ModerationPage() {
                               {report.contextSignals?.hasDispute && (
                                 <Badge variant="secondary">Dispute</Badge>
                               )}
+                              {report.supportCase && (
+                                <ReportCaseLink
+                                  basePath={basePath}
+                                  supportCase={report.supportCase}
+                                />
+                              )}
                             </div>
                             {title.secondary && (
                               <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
@@ -1344,6 +1397,16 @@ export function ModerationPage() {
                     )}
                   </div>
                 )}
+                <ReportSupportCaseSection
+                  linkedCase={
+                    selectedReportDetail?.supportCase ??
+                    selectedReport.supportCase ??
+                    null
+                  }
+                  basePath={basePath}
+                  canOpen={can("tickets.manage")}
+                  onOpen={() => setCaseDialogReportId(selectedReport.id)}
+                />
                 {selectedReport.latestAction && (
                   <EnforcementSummary action={selectedReport.latestAction} />
                 )}
@@ -1474,6 +1537,16 @@ export function ModerationPage() {
           )}
         </ResponsiveModalContent>
       </ResponsiveModal>
+      {selectedReport && (
+        <OpenReportCaseDialog
+          reportId={selectedReport.id}
+          basePath={basePath}
+          open={caseDialogReportId === selectedReport.id}
+          onOpenChange={(open) =>
+            setCaseDialogReportId(open ? selectedReport.id : null)
+          }
+        />
+      )}
       {selectedReport && confirmAction && (
         <ConfirmDialog
           open

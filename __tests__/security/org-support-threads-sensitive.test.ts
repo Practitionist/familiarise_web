@@ -47,7 +47,11 @@ describe("org support triage withholds members' complaints about the org", () =>
       ],
     });
     expect(ORG_SENSITIVE_PERSONAL_CATEGORIES).toEqual(
-      expect.arrayContaining(["ORG_ADMIN_DISPUTE", "QUALITY_COMPLAINT"]),
+      expect.arrayContaining([
+        "ORG_ADMIN_DISPUTE",
+        "QUALITY_COMPLAINT",
+        "SAFETY_CONCERN",
+      ]),
     );
   });
 

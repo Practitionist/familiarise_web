@@ -29,7 +29,8 @@ const order = [{ createdAt: "asc" as const }, { id: "asc" as const }];
 /**
  * The account's support record for a DPDP §11 export: their cases (including
  * grievances), their own messages, evidence they were asked for and gave,
- * files they uploaded, and their ratings. Internal staff notes are excluded.
+ * files they uploaded, their ratings, and staff access to their booking chats.
+ * Internal staff notes, operator identities and chat content are excluded.
  */
 export async function readSupportExport(userId: string) {
   const access = await visibleCaseAccess({ userId, role: "CONSULTEE" });
@@ -118,6 +119,45 @@ export async function readSupportExport(userId: string) {
       },
     }),
   );
+  const chatAccess = await readAllPages((cursor) =>
+    prisma.supportCaseChatAccess.findMany({
+      where: {
+        // Only grants whose "we reviewed messages" notice went out. The sweep
+        // stamps reviewNoticeAt on withheld batches too, and one withheld grant
+        // withholds every grant on its case, so such cases never appear.
+        reviewNoticeAt: { not: null },
+        withholdNotice: false,
+        supportCase: {
+          deletedAt: null,
+          chatAccess: { none: { withholdNotice: true } },
+        },
+        OR: [
+          { scopeUserIds: { has: userId } },
+          { supportCase: { requesterUserId: userId } },
+          { supportCase: { submitterUserId: userId } },
+        ],
+      },
+      orderBy: order,
+      take: EXPORT_BATCH,
+      ...cursor,
+      select: {
+        id: true,
+        createdAt: true,
+        kind: true,
+        basis: true,
+        expiresAt: true,
+        endedAt: true,
+        endReason: true,
+        supportCase: {
+          select: {
+            referenceNumber: true,
+            requesterUserId: true,
+            submitterUserId: true,
+          },
+        },
+      },
+    }),
+  );
 
   const caseRows = cases.rows.map((row) => {
     const view = projectCaseForViewer(row, userId, access.canCorrespond(row));
@@ -166,10 +206,26 @@ export async function readSupportExport(userId: string) {
         rating: row.csatRating,
         ratedAt: row.csatAt,
       })),
+    supportChatAccess: chatAccess.rows.map((grant) => {
+      // A party who did not file the case (e.g. the reported user) sees the access, not whose case or why.
+      const ownCase =
+        grant.supportCase.requesterUserId === userId ||
+        grant.supportCase.submitterUserId === userId;
+      return {
+        createdAt: grant.createdAt,
+        kind: grant.kind,
+        basis: ownCase ? grant.basis : null,
+        caseReferenceNumber: ownCase ? grant.supportCase.referenceNumber : null,
+        expiresAt: grant.expiresAt,
+        endedAt: grant.endedAt,
+        endReason: grant.endReason,
+      };
+    }),
     supportExportComplete:
       cases.complete &&
       messages.complete &&
       evidence.complete &&
-      attachments.complete,
+      attachments.complete &&
+      chatAccess.complete,
   };
 }
