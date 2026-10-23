@@ -248,6 +248,75 @@ export async function orgClawbackNetOfTds(
 }
 
 /**
+ * Refund-driven clawback of an org share a COMPLETED payout already paid:
+ * TDS reversal, counter, audit row and journal in one place for every refund door.
+ */
+export async function clawBackCompletedOrgPayout(
+  tx: Tx,
+  input: {
+    orgPayout: {
+      id: string;
+      netPayoutPaise: number;
+      clawbackInitiatedAt: Date | null;
+    };
+    organizationId: string;
+    orgEarningsId: string;
+    paymentId: string;
+    refundId: string;
+    /** The org share the refund reversed, gross of TDS. */
+    grossPaise: number;
+    /** The request behind the reversal, recorded on the audit row. */
+    amountPaise: number;
+    label: string;
+    initiatedByUserId: string | null;
+  },
+): Promise<void> {
+  const { orgPayout, organizationId } = input;
+  const clawbackPaise = await orgClawbackNetOfTds(tx, {
+    orgPayoutId: orgPayout.id,
+    organizationId,
+    grossPaise: input.grossPaise,
+    netPayoutPaise: orgPayout.netPayoutPaise,
+    refundId: input.refundId,
+  });
+  await tx.organizationPayout.update({
+    where: { id: orgPayout.id },
+    data: {
+      clawbackAmountPaise: { increment: clawbackPaise },
+      // The first clawback's timestamp survives later partial refunds.
+      clawbackInitiatedAt: orgPayout.clawbackInitiatedAt
+        ? undefined
+        : new Date(),
+    },
+  });
+  await tx.orgAuditLog.create({
+    data: {
+      organizationId,
+      actorMembershipId: null,
+      category: "PAYOUT",
+      action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
+      description: `${input.label}: ${clawbackPaise} paise from payout ${orgPayout.id}`,
+      details: {
+        paymentId: input.paymentId,
+        refundId: input.refundId,
+        orgEarningsId: input.orgEarningsId,
+        orgPayoutId: orgPayout.id,
+        amountPaise: input.amountPaise,
+        clawbackAmountPaise: clawbackPaise,
+        initiatedByUserId: input.initiatedByUserId,
+      } as Prisma.InputJsonValue,
+    },
+  });
+  // The counter and the journal are one write: a failed post rolls the tx back.
+  await postPayoutClawback(tx, {
+    refundId: input.refundId,
+    payoutId: orgPayout.id,
+    amountPaise: clawbackPaise,
+    organizationId,
+  });
+}
+
+/**
  * The org clawback journal `Dr ORG_RECEIVABLE / Cr ORG_PAYABLE`, idempotent on
  * `clawback:<driver>:<payoutId>`; every writer of `clawbackAmountPaise` posts it.
  */

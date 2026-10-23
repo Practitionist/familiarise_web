@@ -64,7 +64,6 @@ import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { refundReversalBasis } from "@/lib/payments/ledger/refund-reversal-basis";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
 import { isPastGstCreditNoteCutoff } from "@/lib/compliance/gst-credit-note-cutoff";
-import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   attemptTrigger,
   notifyRefundProcessed,
@@ -82,11 +81,7 @@ import {
   attemptStaged as attemptStagedEmails,
   type StagedRecipientEmail,
 } from "@/lib/email/send-to-recipients";
-import {
-  applyReversal,
-  orgClawbackNetOfTds,
-  postPayoutClawback,
-} from "./reversal-engine";
+import { applyReversal, clawBackCompletedOrgPayout } from "./reversal-engine";
 import {
   accumulatePaidConsultantClawback,
   applyPaidConsultantClawbacks,
@@ -857,48 +852,17 @@ async function reverseFreeCreditSettlement(
       orgEarn.orgPayout?.status === "COMPLETED" &&
       orgApplied > 0
     ) {
-      const clawbackPaise = await orgClawbackNetOfTds(tx, {
-        orgPayoutId: orgEarn.orgPayoutId,
+      // Gated on the APPLIED figure: a zero must post nothing, as `postLedgerTxn` throws on it.
+      await clawBackCompletedOrgPayout(tx, {
+        orgPayout: { ...orgEarn.orgPayout, id: orgEarn.orgPayoutId },
         organizationId: orgEarn.organizationId,
+        orgEarningsId: orgEarn.id,
+        paymentId: input.paymentId,
+        refundId: input.refundId,
         grossPaise: orgApplied,
-        netPayoutPaise: orgEarn.orgPayout.netPayoutPaise,
-        refundId: input.refundId,
-      });
-      await tx.organizationPayout.update({
-        where: { id: orgEarn.orgPayoutId },
-        data: {
-          clawbackAmountPaise: { increment: clawbackPaise },
-          clawbackInitiatedAt: orgEarn.orgPayout.clawbackInitiatedAt
-            ? undefined
-            : new Date(),
-        },
-      });
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId: orgEarn.organizationId,
-          actorMembershipId: null,
-          category: "PAYOUT",
-          action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
-          description: `Credit-funded cancellation clawback: ${clawbackPaise} paise from payout ${orgEarn.orgPayoutId}`,
-          details: {
-            paymentId: input.paymentId,
-            refundId: input.refundId,
-            orgEarningsId: orgEarn.id,
-            orgPayoutId: orgEarn.orgPayoutId,
-            amountPaise: clawbackPaise,
-            initiatedByUserId: input.initiatedByUserId,
-          } as Prisma.InputJsonValue,
-        },
-      });
-      // #1582 C-P1-02c — journal the clawback in the same tx as the counter.
-      // Gated on the APPLIED figure, never the request: a zero (refused CAS, or
-      // a cap that leaves nothing) must post NOTHING, because `postLedgerTxn`
-      // THROWS on a non-positive amount.
-      await postPayoutClawback(tx, {
-        refundId: input.refundId,
-        payoutId: orgEarn.orgPayoutId,
-        amountPaise: clawbackPaise,
-        organizationId: orgEarn.organizationId,
+        amountPaise: orgApplied,
+        label: "Credit-funded cancellation clawback",
+        initiatedByUserId: input.initiatedByUserId,
       });
     }
   }

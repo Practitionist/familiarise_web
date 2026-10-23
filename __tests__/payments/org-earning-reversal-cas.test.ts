@@ -95,16 +95,10 @@ jest.mock("../../lib/payments/operations/refund", () => ({
     }
   },
 }));
+// The real clawback writers, so their posting is observable; only the dispatcher is mocked.
 jest.mock("../../lib/payments/operations/reversal-engine", () => ({
+  ...jest.requireActual("../../lib/payments/operations/reversal-engine"),
   applyReversal: (...a: unknown[]) => mockApplyReversal(...a),
-  // The REAL clawback journal, so "posted nothing" is observable rather than
-  // assumed: `postLedgerTxn` is the boundary mock above.
-  postPayoutClawback: jest.requireActual(
-    "../../lib/payments/operations/reversal-engine",
-  ).postPayoutClawback,
-  orgClawbackNetOfTds: jest.requireActual(
-    "../../lib/payments/operations/reversal-engine",
-  ).orgClawbackNetOfTds,
 }));
 
 const tx: Record<string, Record<string, jest.Mock>> = {
