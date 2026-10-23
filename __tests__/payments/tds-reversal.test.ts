@@ -149,3 +149,89 @@ describe("recordTdsReversal", () => {
     expect(created).toHaveLength(0);
   });
 });
+
+describe("two reversals on one payout in one quarter", () => {
+  it("both commit, and the one reversal row the unique key allows sums them", async () => {
+    // A stateful tx that enforces (consultant, FY, quarter, payout, isReversal).
+    const rows: Row[] = [{ ...ORIGINAL, challanNumber: null }];
+    const adjustments: Row[] = [];
+    const key = (r: Row) =>
+      [
+        r.consultantProfileId,
+        r.financialYear,
+        r.quarter,
+        r.payoutId,
+        r.isReversal,
+      ].join("|");
+    const tx = {
+      tDSRecord: {
+        findFirst: jest.fn(async () => rows.find((r) => !r.isReversal) ?? null),
+        findMany: jest.fn(async () => rows.filter((r) => r.isReversal)),
+        create: jest.fn(async ({ data }: { data: Row }) => {
+          if (rows.some((r) => key(r) === key(data))) {
+            throw Object.assign(new Error("Unique constraint failed"), {
+              code: "P2002",
+            });
+          }
+          const row = {
+            id: `tdsr_${rows.length + 1}`,
+            reportedInForm26Q: false,
+            challanNumber: null,
+            ...data,
+          };
+          rows.push(row);
+          return row;
+        }),
+        updateMany: jest.fn(
+          async ({
+            where,
+            data,
+          }: {
+            where: Row;
+            data: { tdsDeducted: { decrement: number } };
+          }) => {
+            const row = rows.find(
+              (r) =>
+                r.id === where.id &&
+                r.tdsDeducted === where.tdsDeducted &&
+                r.reportedInForm26Q === false,
+            );
+            if (!row) return { count: 0 };
+            row.tdsDeducted =
+              (row.tdsDeducted as number) - data.tdsDeducted.decrement;
+            return { count: 1 };
+          },
+        ),
+      },
+      consultantEarnings: { findUnique: jest.fn(async () => null) },
+      tdsAdjustment: {
+        create: jest.fn(async ({ data }: { data: Row }) => {
+          adjustments.push(data);
+          return data;
+        }),
+      },
+    } as never;
+
+    // Two bookings of the one payout refunded: 30 % then 20 % of the withholding.
+    await recordTdsReversal(tx, {
+      ...PARAMS,
+      refundAmountPaise: 3_000,
+      refundId: "rf_1",
+    });
+    await recordTdsReversal(tx, {
+      ...PARAMS,
+      refundAmountPaise: 2_000,
+      refundId: "rf_2",
+    });
+
+    const reversals = rows.filter((r) => r.isReversal);
+    expect(reversals).toHaveLength(1);
+    expect(reversals[0].tdsDeducted).toBe(-500);
+    expect(
+      adjustments.map((a) => [a.refundId, a.amountPaise, a.tdsRecordId]),
+    ).toEqual([
+      ["rf_1", -300, reversals[0].id],
+      ["rf_2", -200, reversals[0].id],
+    ]);
+  });
+});

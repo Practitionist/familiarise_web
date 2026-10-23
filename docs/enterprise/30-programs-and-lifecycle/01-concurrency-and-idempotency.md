@@ -83,11 +83,11 @@ Swap `BLOCK` for `CHARGE_ORG` (Wipro's actual seed config) and tab B doesn't 402
 
 ## Rate-card bump (two-step in one transaction)
 
-`bumpRateCard` closes the current card (`effectiveTo = at`) and inserts a new one (`effectiveFrom = at`) inside a single transaction. A degenerate same-instant race can overlap the two rows, but `findEffective` orders by `effectiveFrom DESC` so the winner's row wins every lookup, and the money impact is nil because earnings already carry their bps snapshots (see [booking → earnings](../10-money-and-ledger/05-booking-to-earnings.md)).
+`bumpRateCard` closes the current card (`effectiveTo = at`) and inserts a new one (`effectiveFrom = at`) inside a single transaction. A degenerate same-instant race can overlap the two rows, but `findEffective` orders by `effectiveFrom DESC` so the winner's row wins every lookup, and the money impact is nil because earnings already carry their bps snapshots (see [booking → earnings](../../finance/50-b2b/03-rate-cards-and-overage.md)).
 
 ## PO balance (atomic compare-and-swap)
 
-The purchase-order balance decrements via `updateMany WHERE status='ACTIVE' AND remainingAmountPaise >= amount` in one statement, so two POSTs racing for the last ₹1 cannot both win (see [invoicing §6](../10-money-and-ledger/08-invoicing.md)).
+The purchase-order balance decrements via `updateMany WHERE status='ACTIVE' AND remainingAmountPaise >= amount` in one statement, so two POSTs racing for the last ₹1 cannot both win (see [invoicing §6](../../finance/50-b2b/04-invoices-purchase-orders-and-dunning.md)).
 
 ## Domain-claim uniqueness
 
@@ -109,7 +109,7 @@ The governing rule is that every side-effect entry point derives its idempotency
 
 ## The money journal — `LedgerTransaction.idempotencyKey`
 
-Every cash event posts through `postLedgerTxn`, which is idempotent on a structured, unique key. A repeat call is a no-op that returns `{ created: false }`; a racing duplicate hits the `@unique` `P2002`, aborts its transaction, and the retry lands on the fast path (see [ledger & postings §2](../10-money-and-ledger/03-ledger-and-postings.md)). The keys each money flow derives are listed below.
+Every cash event posts through `postLedgerTxn`, which is idempotent on a structured, unique key. A repeat call is a no-op that returns `{ created: false }`; a racing duplicate hits the `@unique` `P2002`, aborts its transaction, and the retry lands on the fast path (see [ledger & postings §2](../../finance/20-ledger/04-postings.md)). The keys each money flow derives are listed below.
 
 | Flow              | Key                              |
 | ----------------- | -------------------------------- |
@@ -142,7 +142,7 @@ Payment-order and top-up flows key off the provider order id that the server its
 | Invoice payment              | `razorpay_order_id`                      | `P2002` on `OrganizationInvoice.providerPaymentOrderId`                         |
 | One-time / day-pass checkout | `razorpay_order_id`                      | same                                                                            |
 
-The server never accepts a client-supplied key — it reuses the `razorpay_order_id` it minted. Top-up confirmation is doubly idempotent: the `WalletTopUp` claim is `updateMany WHERE status='PENDING'` (exactly one delivery wins) **and** the `topup:` ledger key dedupes the posting ([wallet & top-ups](../10-money-and-ledger/04-wallet-and-topups.md)).
+The server never accepts a client-supplied key — it reuses the `razorpay_order_id` it minted. Top-up confirmation is doubly idempotent: the `WalletTopUp` claim is `updateMany WHERE status='PENDING'` (exactly one delivery wins) **and** the `topup:` ledger key dedupes the posting ([wallet & top-ups](../../finance/50-b2b/02-wallet-and-top-ups.md)).
 
 ## Invoices
 
@@ -222,10 +222,10 @@ it("is idempotent on replay", async () => {
 
 ### Related docs
 
-- [Wallet & top-ups](../10-money-and-ledger/04-wallet-and-topups.md) — the debit/credit + top-up idempotency specifics.
-- [Ledger & postings](../10-money-and-ledger/03-ledger-and-postings.md) — `postLedgerTxn` idempotency.
+- [Wallet & top-ups](../../finance/50-b2b/02-wallet-and-top-ups.md) — the debit/credit + top-up idempotency specifics.
+- [Ledger & postings](../../finance/20-ledger/04-postings.md) — `postLedgerTxn` idempotency.
 - [Programs](02-programs.md) — the assignment-claim flow.
-- [Booking → earnings](../10-money-and-ledger/05-booking-to-earnings.md) — rate-card bump semantics.
+- [Booking → earnings](../../finance/50-b2b/03-rate-cards-and-overage.md) — rate-card bump semantics.
 - [Ledger integrity](../../finance/20-ledger/06-integrity-and-reconciliation.md) — the drift checks that backstop these guards.
 - [Cycle engine & rollover](08-cycle-engine-and-rollover.md) — the successor-mint + roll/close claim gates.
 - [Contract lifecycle](07-contract-lifecycle.md) — the auto-renew / expire claim gates.
