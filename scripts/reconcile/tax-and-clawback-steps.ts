@@ -12,6 +12,7 @@ import type { LedgerDirection, Prisma } from "@prisma/client";
 import {
   CLAWBACK_RECOVERY_KEY_PREFIX,
   CLAWBACK_RECOVERY_RELEASE_KEY_PREFIX,
+  CLAWBACK_VOID_KEY_PREFIX,
   ORG_CLAWBACK_KEY_FILTER,
   RECOVERY_RELEASING_STATUSES,
   type ClawbackPayee,
@@ -305,10 +306,11 @@ export async function walletOverageGstFindings(
 
 type ReceivableEvent = {
   payeeId: string;
-  kind: "OWED" | "RECOVERED" | "RELEASED";
+  kind: "OWED" | "RECOVERED" | "RELEASED" | "VOIDED";
   paise: number;
   at: Date;
   payoutId: string | null;
+  idempotencyKey: string;
 };
 
 /** The date the oldest still-unrecovered clawback was booked, or null when none is owed. */
@@ -323,11 +325,22 @@ export function oldestUnrecoveredAt(events: ReceivableEvent[]): Date | null {
     0,
   );
   let covered = 0;
+  const voidedByOrigin = new Map<string, number>();
+  for (const event of events) {
+    if (event.kind !== "VOIDED") continue;
+    const origin = event.idempotencyKey.slice(CLAWBACK_VOID_KEY_PREFIX.length);
+    voidedByOrigin.set(origin, (voidedByOrigin.get(origin) ?? 0) + event.paise);
+  }
   const owed = events
     .filter((e) => e.kind === "OWED")
     .sort((a, b) => a.at.getTime() - b.at.getTime());
   for (const e of owed) {
-    covered += e.paise;
+    const voided = Math.min(e.paise, voidedByOrigin.get(e.idempotencyKey) ?? 0);
+    voidedByOrigin.set(
+      e.idempotencyKey,
+      (voidedByOrigin.get(e.idempotencyKey) ?? 0) - voided,
+    );
+    covered += e.paise - voided;
     if (covered > recovered) return e.at;
   }
   return null;
@@ -375,6 +388,7 @@ function classify(
 ): ReceivableEvent["kind"] {
   if (key.startsWith(CLAWBACK_RECOVERY_RELEASE_KEY_PREFIX)) return "RELEASED";
   if (key.startsWith(CLAWBACK_RECOVERY_KEY_PREFIX)) return "RECOVERED";
+  if (key.startsWith(CLAWBACK_VOID_KEY_PREFIX)) return "VOIDED";
   // The consultant receivable is debited when owed; the org twin credits ORG_PAYABLE.
   if (rail === "CONSULTANT")
     return direction === "DEBIT" ? "OWED" : "RECOVERED";
@@ -423,6 +437,7 @@ async function staleForRail(
       paise: sumPaise(e.amountPaise),
       at: e.createdAt,
       payoutId: e.transaction.payoutId,
+      idempotencyKey: e.transaction.idempotencyKey,
     });
     byPayee.set(payeeId, list);
   }
