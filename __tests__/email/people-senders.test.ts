@@ -39,6 +39,7 @@ import { loadEmailRecipients } from "@/lib/email/preferences";
 import {
   sendAccountSuspendedEmail,
   sendSupportTicketUpdateEmail,
+  supportNextStepText,
 } from "@/lib/email/senders/people";
 
 // Every switch off: a gated category would skip this user.
@@ -111,4 +112,12 @@ it("support update: a recipient who turned support mail off is skipped", async (
 
   expect(result).toEqual({ sent: 0, skipped: 1, failed: 0 });
   expect(mockDeliver).not.toHaveBeenCalled();
+});
+
+it("support update: the resolved next step points to the reopen button and appeal, not a reply", () => {
+  const text = supportNextStepText("RESOLVED");
+  expect(text).toContain("A reply won't reopen it");
+  expect(text).toContain('"This didn\'t fix it" within 14 days');
+  expect(text).toContain("appeal");
+  expect(text).not.toMatch(/will be reopened/);
 });

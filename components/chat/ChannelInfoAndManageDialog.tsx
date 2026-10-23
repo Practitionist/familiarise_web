@@ -33,6 +33,7 @@ import {
   BellOffIcon,
   InfoIcon,
   Loader2Icon,
+  ShieldCheckIcon,
   Trash2Icon,
   UserMinusIcon,
   UserPlusIcon,
@@ -42,9 +43,14 @@ import {
 import { useState } from "react";
 import { Channel } from "stream-chat";
 import { useChatContext } from "stream-chat-react";
-import { getChannelDisplayInfo, viewerOwnsChannel } from "./utils/channelUtils";
+import {
+  channelHasSupportMember,
+  getChannelDisplayInfo,
+  viewerOwnsChannel,
+} from "./utils/channelUtils";
 import { AddMembersDialog } from "./AddMembersDialog";
 import { isEventChannel } from "@/lib/stream-channel-ids";
+import { isSupportStreamUser } from "@/lib/stream/support-user";
 import { addMemberToChannel } from "@/actions/stream/chat/member.action";
 
 interface ChannelMember {
@@ -86,6 +92,7 @@ export const ChannelInfoAndManageDialog = ({
         memberCount,
         statusText: `${memberCount} ${memberCount === 1 ? "member" : "members"}`,
         fullGroupName: undefined,
+        hasSupport: channelHasSupportMember(channel),
       };
 
   const displayName = displayInfo.displayName;
@@ -110,12 +117,15 @@ export const ChannelInfoAndManageDialog = ({
   const creatorId = channel.data?.created_by?.id ?? channel.data?.created_by_id;
 
   const isEventOwner = isEvent && viewerOwnsChannel(creatorId, client?.userID);
+  // Stream refuses member changes while support has access; Support's seat is the visible signal.
+  const canRemoveMembers = isEventOwner && !displayInfo.hasSupport;
 
-  // Get the other user's ID for 1-on-1 DMs (for block/report)
+  // Get the other user's ID for 1-on-1 DMs (for block/report). Support is
+  // never the counterparty, so it can't be blocked or reported from here.
   const otherUserId =
     isDirectMessage && !displayInfo.isGroupDM
       ? Object.keys(channel.state.members || {}).find(
-          (id) => id !== client?.userID,
+          (id) => id !== client?.userID && !isSupportStreamUser(id),
         )
       : null;
 
@@ -206,7 +216,10 @@ export const ChannelInfoAndManageDialog = ({
   };
 
   const handleRemoveMember = async (memberId: string) => {
-    if (!client?.userID || !isEventOwner) return;
+    // Support leaves only through the audited staff route.
+    if (!client?.userID || !canRemoveMembers || isSupportStreamUser(memberId)) {
+      return;
+    }
 
     setIsLoading(true);
     try {
@@ -264,6 +277,7 @@ export const ChannelInfoAndManageDialog = ({
 
   // Clear all messages from the channel
   const handleClearChat = async () => {
+    if (displayInfo.hasSupport) return;
     setIsLoading(true);
     try {
       await channel.truncate();
@@ -286,6 +300,8 @@ export const ChannelInfoAndManageDialog = ({
 
   // Permission check for clear chat (truncate)
   const canTruncateChannel = (() => {
+    // Truncate is channel-wide, so it would erase the thread Support is reviewing.
+    if (displayInfo.hasSupport) return false;
     // In 1-on-1 DMs, both users can clear their view
     if (isDirectMessage && !displayInfo.isGroupDM) return true;
     // Elsewhere only the creator: truncate runs client-side, and only the creator's
@@ -550,16 +566,18 @@ export const ChannelInfoAndManageDialog = ({
                           )}
                         </Button>
 
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full flex items-center justify-center gap-2"
-                          onClick={() => setShowClearConfirm(true)}
-                          disabled={isLoading}
-                        >
-                          <Trash2Icon className="h-4 w-4" />
-                          Clear Chat
-                        </Button>
+                        {canTruncateChannel && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full flex items-center justify-center gap-2"
+                            onClick={() => setShowClearConfirm(true)}
+                            disabled={isLoading}
+                          >
+                            <Trash2Icon className="h-4 w-4" />
+                            Clear Chat
+                          </Button>
+                        )}
 
                         <Button
                           variant="outline"
@@ -668,6 +686,15 @@ export const ChannelInfoAndManageDialog = ({
                           <span className="truncate font-medium">
                             {member.name || member.id}
                           </span>
+                          {isSupportStreamUser(member.id) && (
+                            <span className="ml-2 inline-flex shrink-0 items-center gap-0.5 rounded bg-info/10 px-1.5 py-0.5 text-[10px] font-semibold text-info">
+                              <ShieldCheckIcon
+                                className="h-3 w-3"
+                                aria-hidden="true"
+                              />
+                              Staff
+                            </span>
+                          )}
                         </div>
                       ),
                     },
@@ -681,9 +708,11 @@ export const ChannelInfoAndManageDialog = ({
                       ),
                     },
                   ]}
-                  /* Show remove button for event owner consultants */
+                  /* Event owners may remove attendees, never Support, and no one while Support is in */
                   rowActions={(member) =>
-                    isEventOwner && member.id !== client?.userID ? (
+                    canRemoveMembers &&
+                    member.id !== client?.userID &&
+                    !isSupportStreamUser(member.id) ? (
                       <Button
                         variant="ghost"
                         size="sm"

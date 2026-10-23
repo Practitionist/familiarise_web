@@ -43,10 +43,11 @@ import { isUniqueViolation } from "@/lib/db/pg-errors";
 import {
   assertBoundedRefund,
   assertNotOwnRemedy,
-  liveNonRemedyRefundPaiseByPayment,
+  committedSupportPaiseByPayment,
   SUPPORT_REFUND_SEND_GRACE_MS,
 } from "./money-policy";
 import { STAFF_REFUND_PER_PAYMENT_PAISE } from "./staff-refund-limits";
+import { deliveringPartiesByAppointment } from "./evidence-parties";
 import {
   activeHolds,
   caseHoldEvents,
@@ -285,8 +286,9 @@ type EvidenceRecipientDb = Pick<
 >;
 
 /**
- * Current evidence parties per appointment, read in four queries for the whole
- * batch. Pure reads: pass `prisma` outside a transaction, `tx` inside one.
+ * Current evidence parties per appointment: the delivering parties plus the
+ * host organization's operators. Pure reads: pass `prisma` outside a
+ * transaction, `tx` inside one.
  */
 export async function evidenceRecipientsByAppointment(
   db: EvidenceRecipientDb,
@@ -294,61 +296,12 @@ export async function evidenceRecipientsByAppointment(
 ): Promise<Map<string, { id: string; name: string }[]>> {
   const result = new Map<string, { id: string; name: string }[]>();
   if (appointmentIds.length === 0) return result;
-  const plan = { consultantProfileId: true } as const;
-  // Only delivering collaborators answer for a session; crew seats never do.
-  const groupPlan = {
-    ...plan,
-    collaborators: {
-      where: { status: "ACCEPTED" as const, tier: "PRESENTER" as const },
-      select: { consultantProfileId: true },
-    },
-  };
-  const bookings = await db.appointment.findMany({
-    where: { id: { in: [...new Set(appointmentIds)] } },
-    select: {
-      id: true,
-      participants: {
-        where: {
-          role: "CONSULTANT",
-          status: { in: ["CONFIRMED", "ATTENDED"] },
-        },
-        select: { userId: true },
-      },
-      consultation: { select: { consultationPlan: { select: plan } } },
-      subscription: { select: { subscriptionPlan: { select: plan } } },
-      webinar: { select: { webinarPlan: { select: groupPlan } } },
-      class: { select: { classPlan: { select: groupPlan } } },
-      payment: { select: { hostOrganizationId: true } },
-    },
-  });
-  const profileIdsOf = (booking: (typeof bookings)[number]) =>
-    [
-      booking.consultation?.consultationPlan.consultantProfileId,
-      booking.subscription?.subscriptionPlan.consultantProfileId,
-      booking.webinar?.webinarPlan.consultantProfileId,
-      booking.class?.classPlan.consultantProfileId,
-      ...(booking.webinar?.webinarPlan.collaborators ?? []).map(
-        (c) => c.consultantProfileId,
-      ),
-      ...(booking.class?.classPlan.collaborators ?? []).map(
-        (c) => c.consultantProfileId,
-      ),
-    ].filter((profileId): profileId is string => Boolean(profileId));
-  const hostIdsOf = (booking: (typeof bookings)[number]) =>
-    booking.payment.flatMap((p) =>
-      p.hostOrganizationId ? [p.hostOrganizationId] : [],
-    );
-  const allProfileIds = [...new Set(bookings.flatMap(profileIdsOf))];
-  const allHostIds = [...new Set(bookings.flatMap(hostIdsOf))];
-  const profiles = allProfileIds.length
-    ? await db.consultantProfile.findMany({
-        where: { id: { in: allProfileIds }, deletedAt: null },
-        select: { id: true, user: { select: { id: true } } },
-      })
-    : [];
-  const profileUser = new Map(
-    profiles.flatMap((p) => (p.user ? [[p.id, p.user.id] as const] : [])),
-  );
+  const parties = await deliveringPartiesByAppointment(db, appointmentIds);
+  const allHostIds = [
+    ...new Set(
+      [...parties.values()].flatMap((p) => [...p.hostOrganizationIds]),
+    ),
+  ];
   const operators = allHostIds.length
     ? await db.membership.findMany({
         where: {
@@ -360,16 +313,12 @@ export async function evidenceRecipientsByAppointment(
       })
     : [];
   const peopleByBooking = new Map(
-    bookings.map((booking) => {
-      const people = new Set(booking.participants.map((p) => p.userId));
-      for (const profileId of profileIdsOf(booking)) {
-        const userId = profileUser.get(profileId);
-        if (userId) people.add(userId);
-      }
-      const hosts = new Set(hostIdsOf(booking));
+    [...parties].map(([bookingId, booking]) => {
+      const people = new Set(booking.deliveringIds);
       for (const m of operators)
-        if (hosts.has(m.organizationId)) people.add(m.userId);
-      return [booking.id, people] as const;
+        if (booking.hostOrganizationIds.has(m.organizationId))
+          people.add(m.userId);
+      return [bookingId, people] as const;
     }),
   );
   const everyone = [
@@ -564,6 +513,12 @@ export async function quoteCaseRefund(
   recommendation: { id: string; paymentId: string },
 ) {
   const payment = await linkedPayment(tx, caseId, recommendation.paymentId);
+  const committed = await committedSupportPaiseByPayment(
+    tx,
+    [recommendation.paymentId],
+    { excludeRecommendationId: recommendation.id },
+  );
+  const committedPaise = committed.get(recommendation.paymentId) ?? 0;
   const others = await tx.supportFinancialRecommendation.findMany({
     where: {
       paymentId: recommendation.paymentId,
@@ -572,13 +527,6 @@ export async function quoteCaseRefund(
     },
     select: { amountPaise: true, refund: { select: { status: true } } },
   });
-  const nonRemedy = await liveNonRemedyRefundPaiseByPayment(tx, [
-    recommendation.paymentId,
-  ]);
-  const committedPaise = others.reduce(
-    (sum, other) => sum + Number(other.amountPaise),
-    nonRemedy.get(recommendation.paymentId) ?? 0,
-  );
   const unrefundedPaise = others
     .filter((other) => !isLiveRefund(other.refund))
     .reduce((sum, other) => sum + Number(other.amountPaise), 0);

@@ -13,6 +13,7 @@ import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { stageSupportTicketUpdateEmail } from "@/lib/email/senders/people";
 import { caseCorrespondentIds } from "./case-access";
 import { activeHolds, caseHoldEvents, releaseAllCaseHolds } from "./case-holds";
+import { endCaseChatAccessTx } from "./chat-access-end";
 import { caseKeyOf } from "./case-key";
 import {
   moneyDoorsRefusal,
@@ -61,7 +62,7 @@ interface ProblemCascadeResult extends StagedNotices {
 type DoorsGate = () => Promise<string | null>;
 
 /** Scan past `limit` so incidents held open do not starve the ones that can resolve. */
-const HELD_OPEN_SCAN_FACTOR = 2;
+export const HELD_OPEN_SCAN_FACTOR = 2;
 
 const RESOLVED_LABEL = supportTicketStatusLabel("RESOLVED");
 
@@ -236,6 +237,12 @@ async function resolveIncidentTx(
       released,
     });
   }
+  await endCaseChatAccessTx(tx, {
+    caseId: inc.id,
+    actorId,
+    reason: "CASE_RESOLVED",
+    now,
+  });
   await stageResolvedNoticeTx(tx, inc, now, out);
   await stageCaseResolutionCsatPromptTx(tx, inc, now);
   return true;
