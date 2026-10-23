@@ -2,10 +2,16 @@ import type { Tx } from "@/lib/prisma";
 
 type DeliveringDb = Pick<Tx, "appointment" | "consultantProfile">;
 
+/** A payment that makes its payer and host organization parties to a booking. */
+export const CAPTURED_PAYMENT_WHERE = {
+  paymentStatus: "SUCCEEDED",
+  deletedAt: null,
+} as const;
+
 export interface BookingParties {
   /** Consultant seats, plan consultants and accepted PRESENTER collaborators; crew never. */
   deliveringIds: Set<string>;
-  /** Organizations hosting delivery through the booking's payments. */
+  /** Organizations hosting delivery through the booking's captured payments. */
   hostOrganizationIds: Set<string>;
 }
 
@@ -42,7 +48,10 @@ export async function deliveringPartiesByAppointment(
       subscription: { select: { subscriptionPlan: { select: plan } } },
       webinar: { select: { webinarPlan: { select: groupPlan } } },
       class: { select: { classPlan: { select: groupPlan } } },
-      payment: { select: { hostOrganizationId: true } },
+      payment: {
+        where: CAPTURED_PAYMENT_WHERE,
+        select: { hostOrganizationId: true },
+      },
     },
   });
   const profileIdsOf = (booking: (typeof bookings)[number]) =>

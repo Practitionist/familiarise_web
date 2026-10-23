@@ -14,6 +14,7 @@ import { formatReportReference } from "@/lib/moderation/report-reference";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { caseKeyOf } from "@/lib/support/case-key";
+import { CAPTURED_PAYMENT_WHERE } from "@/lib/support/evidence-parties";
 import { stageSupportCaseIntakeTx } from "@/lib/support/case-service";
 import { supportDeadline } from "@/lib/support/deadline-policy";
 import { issueTypeForReason, priorityForReason } from "@/lib/support/priority";
@@ -56,7 +57,7 @@ export function bookingPartyWhere(
       { participants: { some: liveParticipant(userId) } },
       {
         payment: {
-          some: { userId, paymentStatus: "SUCCEEDED", deletedAt: null },
+          some: { userId, ...CAPTURED_PAYMENT_WHERE },
         },
       },
       { consultation: { consultationPlan: { consultantProfile: owns } } },
