@@ -154,8 +154,6 @@ Redis distributed locking.
 
 ---
 
----
-
 ### Notifications
 
 Notification system: Resend (transactional email) + Novu (multi-channel orchestration).
@@ -325,37 +323,6 @@ Generic software architecture patterns and learning material (not Familiarise-sp
 Internal team documentation — onboarding, testing guides, and contributor resources.
 
 - [platform-testing-playbook.md](./team/platform-testing-playbook.md) - Comprehensive platform feature walkthrough and testing checklists
-
----
-
-### Market Research
-
-Vendor and pattern research intended to be **reusable in other companies**, not
-just here. Numbered, with the claims register separated from the conclusions so
-a stale fact is visible rather than silently inherited. Read
-[market-research/00-index.md](./market-research/00-index.md) first — it states
-the confidence legend and what is deliberately out of scope.
-
-- [00-index.md](./market-research/00-index.md) - Orientation, re-use method, confidence legend
-- [01-consent-and-terms-landscape.md](./market-research/01-consent-and-terms-landscape.md) - How Indian companies notify a terms change; what the law requires vs what the market does
-- [02-observability-vendors.md](./market-research/02-observability-vendors.md) - Sentry vs SigNoz vs GlitchTip vs CubeAPM vs Datadog vs Better Stack; the recommendation
-- [03-competitor-patterns.md](./market-research/03-competitor-patterns.md) - Mechanisms observed, indexed by pattern rather than by company
-- [04-reusable-substrate.md](./market-research/04-reusable-substrate.md) - **The portable part.** State machines, gate expression, retention engine, jurisdiction model
-- [05-claims-register.md](./market-research/05-claims-register.md) - Every load-bearing claim, its source, its confidence, and what is genuinely open
-
----
-
-### Competitors
-
-Competitor analysis and research.
-
-- [README.md](./competition/competitors/README.md) - Competitors overview
-- [01-topmate-io.md](./competition/competitors/01-topmate-io.md) - Topmate analysis
-- [02-preplaced-in.md](./competition/competitors/02-preplaced-in.md) - Preplaced analysis
-- [03-metvy-com.md](./competition/competitors/03-metvy-com.md) - Metvy analysis
-- [04-upgrad-com.md](./competition/competitors/04-upgrad-com.md) - upGrad analysis
-- [05-propeers-in.md](./competition/competitors/05-propeers-in.md) - ProPeers analysis
-- [06-growthschool-io.md](./competition/competitors/06-growthschool-io.md) - GrowthSchool analysis
 
 ---
 

@@ -7,7 +7,7 @@ description: Work on this repo's DPDP/consent/erasure/retention subsystem and th
 
 The index for the data-protection domain: what a person agreed to, what that
 permits, how it stops, and how it is proven to a regulator. The facts live in
-`docs/compliance/` and `docs/market-research/`; this skill holds the doctrine
+`docs/compliance/`; this skill holds the doctrine
 and the decision procedure.
 
 ## Standing instruction — India-first
@@ -79,12 +79,13 @@ different layers. Building only the legal view is the standard mistake.
 
 The intended use of this work is **another company**. So:
 
-- The portable architecture — state machines, gate, retention engine,
-  jurisdiction registry — is in `docs/market-research/04-reusable-substrate.md`.
-  A new country is a new entry in `jurisdictions/`, never a rewrite.
-- `docs/market-research/05-claims-register.md` is the pattern to extend: every
-  decision traces to a row with a source, a date checked, and a confidence
-  marker. **A decision with no row is a guess.**
+- The portable architecture is four separations (contract acceptance versus
+  data-processing consent, consent versus erasure, state versus evidence,
+  gate versus policy), a whitelist consent gate, a per-data-class retention
+  engine and a jurisdiction registry. A new country is a new entry in
+  `jurisdictions/`, never a rewrite.
+- Every decision should trace to a claim with a source, a date checked and a
+  confidence marker. **A decision with no such claim is a guess.**
 - Do not copy the India answers. Copy the questions and the sources.
 
 ## Money-adjacent consequences

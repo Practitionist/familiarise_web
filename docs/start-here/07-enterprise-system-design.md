@@ -2116,7 +2116,7 @@ The retry implementation is `scripts/cleanup/retry-moderation-enforcement.ts`. A
 
 The scrub preserves immutable payment, ledger, invoice, payout, refund, and tax rows; it clears user-facing identity and bank fields, but keeps processor IDs required to revoke or deactivate remote objects. It also withdraws live consent artifacts and stores a pseudonymous subject reference. A privacy response should explain what remains and the retention basis in plain language.
 
-A complete data inventory must cover more than `User` and `ConsentArtifact`. `FailedEmail` stores recipient and rendered body for retry; `NotificationOutbox` stores recipients and payload; `EmailEvent`, `EmailSuppression`, `DpdpGrievance`, `DataBreach`, export jobs/objects, audit logs, and error telemetry may also contain personal data. `scrubUser` does not directly remove every such row. The separate privacy posture in `docs/compliance/09-dpdp-and-privacy.md` identifies Sentry as a live processor with an unresolved inventory/transfer/erasure assessment; this design does not treat its event store as erased when a local account is scrubbed. Each class needs a purpose, recipient, retention period, and erase/retain action; some should be cancelled or redacted during erasure, while others may need a documented legal or security basis to survive.
+A complete data inventory must cover more than `User` and `ConsentArtifact`. `FailedEmail` stores recipient and rendered body for retry; `NotificationOutbox` stores recipients and payload; `EmailEvent`, `EmailSuppression`, `DpdpGrievance`, `DataBreach`, export jobs/objects, audit logs, and error telemetry may also contain personal data. `scrubUser` does not directly remove every such row. The separate privacy posture in `docs/compliance/02-dpdp-and-privacy.md` identifies Sentry as a live processor with an unresolved inventory/transfer/erasure assessment; this design does not treat its event store as erased when a local account is scrubbed. Each class needs a purpose, recipient, retention period, and erase/retain action; some should be cancelled or redacted during erasure, while others may need a documented legal or security basis to survive.
 
 **Concurrency recommendation:** the admin process route reads a request and later changes its status to `IN_PROGRESS` with a normal update. A conditional `updateMany` claim on `status=PENDING`, checking that exactly one row changed, would prevent two admins from simultaneously processing one request. Evaluate the ordering of the money gate and claim so a concurrent retry cannot bypass either check. Keep the data gate and claim in one appropriately scoped transaction if the final design requires it.
 
@@ -2279,17 +2279,17 @@ The ticker always responds successfully after target execution and reports failu
 
 #### 8.2.2. Batch schedules
 
-GitHub Actions run daily and weekly operations such as audit pruning, consent retention, tax drafts, payouts, and compliance deadline reminders. Some additional jobs run hourly. Read the current `.github/workflows/*.yml`, not only `docs/enterprise/50-operations/02-runbooks.md`: the runbook catalog contains old wrappers/cadences and need a separate refresh against the current registry and schedules.
+GitHub Actions retains non-money batch schedules such as audit pruning, consent retention and breach deadline alerts, plus CI/CD. Money reconciliation, payouts and statutory exports are owned by the active platform ticker in bounded slices. A configured workflow does not prove a recent successful run. Read the executable schedules and the [job inventory](../maintenance/04-cron-jobs-reference.md) before changing ownership; a lease does not prevent sequential duplicate executions.
 
-| Work category            | Examples                                                        | Current scheduling shape                   | Recovery signal                             |
-| ------------------------ | --------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------- |
-| Latency-sensitive repair | payment confirmation, refund/status reconcile, earnings release | Netlify 5m tick, selected 10–30m cadence   | target status, row backlog, system event    |
-| Delivery outbox          | outbound webhooks, Resend, Novu                                 | Netlify ticker with target limits          | pending/retry/dead-letter counts            |
-| User lifecycle sweeps    | booking reminders/expiry, Stream erasure                        | Netlify ticker at configured interval      | summary counts and retry rows               |
-| Data export              | `process-data-exports`                                          | 10m ticker target                          | `OrgDataExportJob` state and summary        |
-| Statutory monitoring     | breach deadline, MSME risk                                      | hourly/daily GitHub Actions                | structured alert + admin queue              |
-| Long-running batch       | ledger, payout, tax/accounting exports                          | GitHub Actions or controlled admin trigger | `SystemJobExecution`, job summary, runbook  |
-| Retention                | audit and consent records                                       | daily or weekly Actions schedule           | deleted/count summary and retention backlog |
+| Work category            | Examples                                                        | Current scheduling shape                              | Recovery signal                                  |
+| ------------------------ | --------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------ |
+| Latency-sensitive repair | payment confirmation, refund/status reconcile, earnings release | Netlify 5m tick, selected 10–30m cadence              | target status, row backlog, system event         |
+| Delivery outbox          | outbound webhooks, Resend, Novu                                 | Netlify ticker with target limits                     | pending/retry/dead-letter counts                 |
+| User lifecycle sweeps    | booking reminders/expiry, Stream erasure                        | Netlify ticker at configured interval                 | summary counts and retry rows                    |
+| Data export              | `process-data-exports`                                          | 10m ticker target                                     | `OrgDataExportJob` state and summary             |
+| Statutory monitoring     | breach deadline, MSME risk                                      | breach alerts: Actions; MSME risk: ticker             | structured alert + admin queue                   |
+| Money batch              | ledger, payout, tax/accounting exports                          | bounded ticker slices or authenticated manual batches | completed report, execution evidence and backlog |
+| Retention                | audit and consent records                                       | daily or weekly Actions schedule                      | deleted/count summary and retention backlog      |
 
 #### 8.2.3. Cron lease and job execution
 

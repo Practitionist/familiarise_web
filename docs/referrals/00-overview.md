@@ -28,7 +28,7 @@ The full resolution order is in [01-architecture.md](./01-architecture.md).
 
 ## What the money rules guarantee
 
-The rules below are enforced in code and, where marked, in Postgres. The reasoning behind each rule is in [04-reward-economics-and-decisions.md](./04-reward-economics-and-decisions.md).
+The rules below are enforced in code and, where marked, in Postgres. The reasoning behind each rule is in [03-reward-economics-and-decisions.md](./03-reward-economics-and-decisions.md).
 
 - A promotional credit or discount never costs more than the platform earns on the order it touches. The welcome discount is capped at the order's take rate, and credit redemption is capped at the smaller of the configured cap and that take.
 - A buyer may hold only one live welcome-discounted order at a time. A partial unique index in `prisma/sql/check-constraints.sql` enforces this.
@@ -84,9 +84,9 @@ The table below lists where each part of the system lives.
 
 - [01 — Architecture and flows](./01-architecture.md)
 - [02 — API reference](./02-api-reference.md)
-- [03 — Credit system and ledger](./03-credit-system.md)
-- [04 — Economics, guards and owner decisions](./04-reward-economics-and-decisions.md)
-- [05 — Authentication and onboarding integration](./05-auth-onboarding-integration.md)
+- [Credit system and ledger](../finance/20-ledger/07-referral-credits.md)
+- [03 — Economics, guards and owner decisions](./03-reward-economics-and-decisions.md)
+- [04 — Authentication and onboarding integration](./04-auth-onboarding-integration.md)
 
 ## Deprecated & Superseded Approaches
 
