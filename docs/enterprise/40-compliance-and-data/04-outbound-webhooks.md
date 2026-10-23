@@ -19,7 +19,7 @@ audit-log export.
 > **inbound** Razorpay/RazorpayX gateway webhooks Familiarise _receives_
 > (rows in `WebhookEvent`), which back payment idempotency and money
 > side-effects; those are documented separately at
-> [`../10-money-and-ledger/12-payment-webhooks.md`](../10-money-and-ledger/12-payment-webhooks.md).
+> [`02-capture-confirmation-and-webhooks.md`](../../finance/10-money-in/02-capture-confirmation-and-webhooks.md).
 > The two share the word "webhook" and nothing else — different table,
 > different direction, different signing scheme. The "Jobs & schedule"
 > section below spells out which crons touch which table.

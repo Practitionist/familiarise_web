@@ -8,7 +8,7 @@ last-reviewed: 2026-06-05
 
 # Chart of accounts
 
-**What this covers:** the sixteen `LedgerAccountKind` buckets every posting touches, which side each is _normal_ on (so you can read a balance correctly), and how an account is scoped + addressed deterministically. This is the vocabulary the [postings doc](03-ledger-and-postings.md) speaks.
+**What this covers:** the sixteen `LedgerAccountKind` buckets every posting touches, which side each is _normal_ on (so you can read a balance correctly), and how an account is scoped + addressed deterministically. This is the vocabulary the [postings doc](../../enterprise/10-money-and-ledger/03-ledger-and-postings.md) speaks.
 
 > **Reading a balance.** `ledgerBalancePaise()` returns the **signed** balance `Σ(DEBIT) − Σ(CREDIT)` in paise. For a **debit-normal** account that number is the balance as-is. For a **credit-normal** account (every liability and revenue), the meaningful figure — _the amount we owe / the revenue we booked_ — is the **negative** of it. That single sign flip is why callers must know an account's normal side.
 
@@ -147,7 +147,7 @@ The deterministic id (`<kind>|<org|_>|<consultant|_>|<currency>`) is a deliberat
 - **Upsert-dedupe over a separate "find-or-create".** With a UUID PK, two concurrent first-postings to the same scope would each `findFirst` (miss) then `create` (one wins, one hits a unique violation or — worse, without the composite unique — duplicates the account). A scope-derived id makes `upsert({ where: { id } })` converge with no race.
 - **The Postgres nullable-unique gotcha.** A platform account has `organizationId = NULL` and `consultantProfileId = NULL`. A `@@unique([organizationId, consultantProfileId, kind, currency])` index does **not** dedupe two such rows, because Postgres treats each `NULL` as distinct. Encoding the nulls as the literal `"_"` inside the id string makes the dedupe exact. The composite unique stays as a backstop; the id is the working guard.
 
-> **The id embeds currency for a reason — and that reason is #783.** Because `<currency>` is the last id segment, keying a posting by `displayCurrencyAtCheckout` instead of leaving it unset (→ `INR`) would mint a _different_ account (`WALLET|iit-madras|_|USD`) and silently split the org's wallet across two ids — breaking receivable/payable clearing. The ledger is INR-denominated (Razorpay settles INR; `amountPaise` is INR paise; no FX before posting), so every posting leaves `currency` unset. The `ledger_account_currency_inr` CHECK in `prisma/sql/check-constraints.sql` is the standing guard: Postgres rejects a non-INR `LedgerAccount` at write time. See [ledger & postings §5.5](03-ledger-and-postings.md).
+> **The id embeds currency for a reason — and that reason is #783.** Because `<currency>` is the last id segment, keying a posting by `displayCurrencyAtCheckout` instead of leaving it unset (→ `INR`) would mint a _different_ account (`WALLET|iit-madras|_|USD`) and silently split the org's wallet across two ids — breaking receivable/payable clearing. The ledger is INR-denominated (Razorpay settles INR; `amountPaise` is INR paise; no FX before posting), so every posting leaves `currency` unset. The `ledger_account_currency_inr` CHECK in `prisma/sql/check-constraints.sql` is the standing guard: Postgres rejects a non-INR `LedgerAccount` at write time. See [ledger & postings §5.5](../../enterprise/10-money-and-ledger/03-ledger-and-postings.md).
 
 ## 4. How the accounts net out (sanity check)
 
@@ -159,7 +159,7 @@ After a booking fully settles and the consultant + org are paid, the platform's 
 
 ### Related docs
 
-- [Money model overview](01-money-model-overview.md) — why derived, why integer paise.
-- [Ledger & postings](03-ledger-and-postings.md) — the exact legs each flow posts to these accounts.
-- [Ledger integrity](13-ledger-integrity.md) — the reconciler that re-sums these accounts.
+- [Money model overview](01-double-entry-model.md) — why derived, why integer paise.
+- [Ledger & postings](../../enterprise/10-money-and-ledger/03-ledger-and-postings.md) — the exact legs each flow posts to these accounts.
+- [Ledger integrity](06-integrity-and-reconciliation.md) — the reconciler that re-sums these accounts.
 - Ground truth: `lib/payments/ledger/post.ts` (`ledgerAccountId`, `AccountRef`), `prisma/schema.prisma` (`LedgerAccountKind`, `LedgerDirection`, `LedgerAccount`).

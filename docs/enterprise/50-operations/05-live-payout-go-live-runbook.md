@@ -12,7 +12,7 @@ last-reviewed: 2026-06-05
 > approved, but approved payouts stay `APPROVED` and are never claimed to
 > `PROCESSING`, so money does **not** leave the gateway. The plain-language
 > summary of the payout model and the four go-live steps is
-> [how payouts work](../../payments/payouts/00-how-payouts-work.md). This runbook makes flipping the flag a de-risked,
+> [how payouts work](../../finance/40-payouts/01-how-payouts-work.md). This runbook makes flipping the flag a de-risked,
 > one-variable operation. Related: [payout-pipeline](../10-money-and-ledger/07-payout-pipeline.md),
 > [runbooks](02-runbooks.md).
 

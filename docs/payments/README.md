@@ -8,16 +8,16 @@ Complete documentation for the Familiarise payment system — checkout, gateways
 
 ## Overview
 
-| #   | Document                                                                     | Description                                                                                                                                 |
-| --- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| 01  | [Architecture](./01-architecture.md)                                         | System design, database models, complete data flow                                                                                          |
-| 02  | [Setup](./02-setup.md)                                                       | Payment gateway configuration, environment variables                                                                                        |
-| 03  | [Status Enums Reference](./03-status-enums-reference.md)                     | All payment, refund, dispute, and booking status values                                                                                     |
-| 04  | [B2C/B2B Funding Seam](./04-b2c-b2b-funding-seam.md)                         | Where the consumer and organisation funding paths meet and diverge                                                                          |
-| 05  | [High-Level Design](./05-high-level-design.md)                               | Four Mermaid diagrams: B2C payment, refunds and payouts, B2B funding, cross-cutting layers                                                  |
-| 06  | [B2C Tax Invoices](./06-b2c-tax-invoice.md)                                  | Consumer tax invoices, credit notes, and the outward-supplies register                                                                      |
-| —   | [Money System HLD](../start-here/02-money-system-hld.md)                     | Price derivation through payout and refund on one page, with the refund policy decisions and the India note                                 |
-| —   | [Booking & Money Machinery](../start-here/03-booking-and-money-machinery.md) | Canonical cross-rail visual guide: B2C & B2B booking lifecycle, org scoping (`?orgScope=`), permission matrices, and 20 ledger permutations |
+| #   | Document                                                                       | Description                                                                                                                                 |
+| --- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| 01  | [Architecture](./01-architecture.md)                                           | System design, database models, complete data flow                                                                                          |
+| 02  | [Setup](./02-setup.md)                                                         | Payment gateway configuration, environment variables                                                                                        |
+| 03  | [Status Enums Reference](./03-status-enums-reference.md)                       | All payment, refund, dispute, and booking status values                                                                                     |
+| 04  | [B2C/B2B Funding Seam](../finance/50-b2b/01-funding-rails-and-permutations.md) | Where the consumer and organisation funding paths meet and diverge                                                                          |
+| 05  | [High-Level Design](../finance/00-overview/01-money-map.md)                    | Four Mermaid diagrams: B2C payment, refunds and payouts, B2B funding, cross-cutting layers                                                  |
+| 06  | [B2C Tax Invoices](../finance/60-tax/02-gst-invoices-and-credit-notes.md)      | Consumer tax invoices, credit notes, and the outward-supplies register                                                                      |
+| —   | [Money System HLD](../start-here/02-money-system-hld.md)                       | Price derivation through payout and refund on one page, with the refund policy decisions and the India note                                 |
+| —   | [Booking & Money Machinery](../start-here/03-booking-and-money-machinery.md)   | Canonical cross-rail visual guide: B2C & B2B booking lifecycle, org scoping (`?orgScope=`), permission matrices, and 20 ledger permutations |
 
 ## Subsections
 
