@@ -47,9 +47,9 @@ type RemediationRequest = z.infer<typeof requestsSchema>["requests"][number];
 
 export function MaintenanceBookingRemediation({
   windowId,
-}: {
+}: Readonly<{
   windowId: string;
-}) {
+}>) {
   const [startsAt, setStartsAt] = useState("");
   const [endsAt, setEndsAt] = useState("");
   const [reason, setReason] = useState("");
@@ -257,11 +257,7 @@ export function MaintenanceBookingRemediation({
             </p>
           )}
         </div>
-        {message && (
-          <p role="status" className="text-sm">
-            {message}
-          </p>
-        )}
+        {message && <output className="block text-sm">{message}</output>}
       </CardContent>
     </Card>
   );

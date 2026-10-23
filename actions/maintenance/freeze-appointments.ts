@@ -71,7 +71,7 @@ function buildCancellationNotification(params: {
 }
 
 /** The slot graph the freeze works from — one query, typed once for the helpers. */
-async function findAffectedSlots(tx: Tx, appointmentId: string) {
+function findAffectedSlots(tx: Tx, appointmentId: string) {
   // Read cap+1 rows so oversized bookings fail before any cancellation.
   return tx.appointmentOccurrence.findMany({
     where: {

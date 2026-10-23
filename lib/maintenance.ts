@@ -12,17 +12,7 @@ import prisma from "@/lib/prisma";
 import redis from "@/lib/redis";
 import { recordOpsAction } from "@/lib/backoffice/ops-action-log";
 import { REDIS_KEYS } from "@/lib/maintenance-keys";
-import {
-  invalidateMaintenancePhaseCache,
-  readMaintenancePhase,
-  resetMaintenancePhaseCacheForTesting,
-} from "@/lib/maintenance-cron";
-
-export {
-  invalidateMaintenancePhaseCache,
-  readMaintenancePhase,
-  resetMaintenancePhaseCacheForTesting,
-};
+import { invalidateMaintenancePhaseCache } from "@/lib/maintenance-cron";
 
 export interface MaintenanceState {
   phase: MaintenancePhase;

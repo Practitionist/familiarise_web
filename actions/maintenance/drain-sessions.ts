@@ -7,14 +7,17 @@ import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
 import { StreamClient } from "@stream-io/node-sdk";
 import { z } from "zod";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
-import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
+import {
+  CLASS_PREFIX,
+  getChannelTypeFromId,
+  WEBINAR_PREFIX,
+} from "@/lib/stream-channel-ids";
 import {
   chunk,
   pause,
   STREAM_BATCH_PAUSE_MS,
   STREAM_CONCURRENCY_LIMIT,
 } from "@/lib/stream/batch";
-import { CLASS_PREFIX, WEBINAR_PREFIX } from "@/lib/stream-channel-ids";
 import prisma from "@/lib/prisma";
 import { notifyMaintenanceStarted } from "@/lib/novu/service";
 
@@ -257,7 +260,7 @@ export async function unfreezeChannelsAfterMaintenance(): Promise<{
   };
 }
 
-async function currentMaintenanceWindow() {
+function currentMaintenanceWindow() {
   return prisma.maintenanceWindow.findFirst({
     where: { organizationId: null, phase: { not: "OFF" } },
     orderBy: { createdAt: "desc" },
