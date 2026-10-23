@@ -16,6 +16,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../../.." && pwd)"
 TARGETS=(
   "$ROOT/.claude/skills/finance/references/razorpay"
   "$ROOT/.claude/agents"
+  "$ROOT/docs/payments/gateways/razorpay"
+  "$ROOT/docs/payments/webhooks"
   "$ROOT/docs/finance/10-money-in"
   "$ROOT/docs/finance/40-payouts/04-razorpayx.md"
 )
