@@ -4,11 +4,11 @@
  * A refund or lost dispute that lands after a payee was paid leaves them owing
  * the platform: on the consultant rail that balance sits on
  * CONSULTANT_RECEIVABLE, on the org rail it is the net of the `clawback:*`
- * journals on the org's ORG_PAYABLE (those journals book the amount against
- * CASH). When a payout is built, the outstanding balance is netted from it,
- * the remainder carries to the next payout, and the TDS base is untouched:
- * the payout row keeps its gross amount and the recovery lives only in the
- * ledger, under one key per payout.
+ * journals on the org's ORG_PAYABLE (booked against ORG_RECEIVABLE). When a
+ * payout is built, the outstanding balance is netted from it, the remainder
+ * carries to the next payout, and the TDS base is untouched: the payout row
+ * keeps its gross amount and the recovery lives only in the ledger, under one
+ * key per payout.
  *
  * A recovery attached to a payout that later fails, is cancelled or is
  * reversed is released (re-opened) in the transaction that makes that move.
@@ -66,14 +66,14 @@ function payableAccount(payee: ClawbackPayee): AccountRef {
     : { kind: "ORG_PAYABLE", organizationId: payee.organizationId };
 }
 
-/** The account a recovery credits: the consultant receivable, or CASH where the org clawback booked it. */
+/** The account a recovery credits: the payee's receivable the clawback debited. */
 function receivableAccount(payee: ClawbackPayee): AccountRef {
   return payee.rail === "CONSULTANT"
     ? {
         kind: "CONSULTANT_RECEIVABLE",
         consultantProfileId: payee.consultantProfileId,
       }
-    : { kind: "CASH" };
+    : { kind: "ORG_RECEIVABLE", organizationId: payee.organizationId };
 }
 
 /** Journals that move the org rail's clawback balance on ORG_PAYABLE. */

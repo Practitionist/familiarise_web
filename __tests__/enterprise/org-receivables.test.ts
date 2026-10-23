@@ -51,6 +51,7 @@ import {
   getOrgReceivables,
   ORG_RECEIVABLES_PAGE_SIZE,
 } from "@/lib/data/org-receivables";
+import { ORG_CLAWBACK_KEY_FILTER } from "@/lib/payments/payouts/clawback-recovery";
 
 const ORG = "org-1";
 /** The deterministic account id `ledgerAccountId` derives for this org. */
@@ -148,7 +149,10 @@ describe("the totals describe the account, not the page", () => {
 
     expect(mockLedgerEntryFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { accountId: ACCOUNT_ID },
+        where: {
+          accountId: ACCOUNT_ID,
+          transaction: { NOT: ORG_CLAWBACK_KEY_FILTER },
+        },
         orderBy: { createdAt: "desc" },
         take: ORG_RECEIVABLES_PAGE_SIZE,
       }),

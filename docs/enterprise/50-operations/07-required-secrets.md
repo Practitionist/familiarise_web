@@ -271,7 +271,7 @@ grows.
 receive INR in India. The payout throw is the intended behaviour, the product
 now says so during consultant onboarding and on the earnings page
 (`components/payouts/IndiaOnlyPayoutNotice.tsx`), and the reasoning is written
-up in `docs/payments/gateways/README.md`. Revisit only when there are
+up in `docs/finance/10-money-in/04-razorpay-gateway-and-currency.md`. Revisit only when there are
 consultants abroad actually waiting to be paid; the work is Section 195
 withholding, TRC/Form 10F capture and 15CA/15CB filing, and it needs a CA.
 Original note follows.
