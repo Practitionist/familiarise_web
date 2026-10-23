@@ -14,20 +14,25 @@ const HIGH_REASONS = new Set([
   "high_value_refund", // set by decideEscalation on large refund exposure
 ]);
 
+/** Reasons that page the queue at URGENT (a person may be at risk or being defrauded). */
+const URGENT_REASONS = new Set(["safety_threat", "fraud_scam", "safety_other"]);
+
 /** Everything escalates at MEDIUM unless mapped otherwise here. */
 export function priorityForReason(
   reason: string | null | undefined,
 ): SupportPriority {
+  if (reason && URGENT_REASONS.has(reason)) return "URGENT";
   if (reason && HIGH_REASONS.has(reason)) return "HIGH";
   return "MEDIUM";
 }
 
-/** A customer who flags the hand-off as urgent gets at least HIGH, never a silent MEDIUM. */
+/** A customer who flags the hand-off as urgent gets at least HIGH; the flag never lowers an URGENT reason. */
 export function escalationPriority(
   reason: string | null | undefined,
   urgent: boolean | undefined,
 ): SupportPriority {
-  return urgent ? "HIGH" : priorityForReason(reason);
+  const base = priorityForReason(reason);
+  return urgent && base !== "URGENT" ? "HIGH" : base;
 }
 
 /**
@@ -85,6 +90,11 @@ const ISSUE_TYPE_BY_REASON: Readonly<Record<string, SupportIssueType>> = {
 
   // Org-party concerns are conduct/relationship, not a session defect.
   org_conduct_dispute: "GENERAL_INQUIRY",
+
+  // No safety member exists in the enum; the SAFETY_CONCERN category carries the meaning.
+  safety_threat: "GENERAL_INQUIRY",
+  fraud_scam: "GENERAL_INQUIRY",
+  safety_other: "GENERAL_INQUIRY",
 };
 
 /**

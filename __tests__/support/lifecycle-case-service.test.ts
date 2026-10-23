@@ -13,7 +13,9 @@ jest.mock("../../lib/novu/resolve-href", () => ({
   supportRequestHref: (key: string) => `/dashboard/support/${key}`,
 }));
 jest.mock("../../lib/support/case-holds", () => ({
-  releaseAllCaseHolds: jest.fn(async () => 0),
+  caseHoldEvents: jest.fn(async () => []),
+  activeHolds: jest.fn(() => []),
+  releaseAllCaseHolds: jest.fn(async () => []),
 }));
 jest.mock("../../lib/prisma", () => {
   const db = {
@@ -31,6 +33,10 @@ jest.mock("../../lib/prisma", () => {
       create: jest.fn(),
     },
     supportCaseEvent: { create: jest.fn() },
+    supportCaseChatAccess: {
+      findMany: jest.fn(async () => []),
+      updateMany: jest.fn(async () => ({ count: 1 })),
+    },
     supportCaseDecision: { findFirst: jest.fn() },
     user: {
       findMany: jest.fn(async () => [{ id: "staff" }]),
@@ -415,13 +421,13 @@ describe("staff lifecycle patch", () => {
     db.supportCase.findUniqueOrThrow.mockResolvedValueOnce(
       record({ caseKind: "PROBLEM", status: "RESOLVED" }) as never,
     );
+    db.supportCase.findMany.mockResolvedValueOnce([]);
     const result = await patchSupportCaseLifecycle(
       patch({ status: "RESOLVED", closingMessage: "  Fixed upstream  " }),
       now,
     );
     expect(result).toMatchObject({ ok: true });
     expect(result).not.toHaveProperty("cascadedIncidents");
-    expect(db.supportCase.findMany).not.toHaveBeenCalled();
     expect(db.supportCase.updateMany).toHaveBeenCalledTimes(1);
     expect(db.supportCaseEvent.create).toHaveBeenCalledWith({
       data: expect.objectContaining({

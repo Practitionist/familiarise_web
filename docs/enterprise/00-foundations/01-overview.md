@@ -109,27 +109,27 @@ engagement #13 and has gone past the cap, and by
 [funding-and-programs](03-funding-and-programs.md), which explains
 `coveredPlanTypes` and `OverageBehavior`. The payment legs themselves —
 `makeLeg` and the per-source `sourceRef` invariant — are documented in
-[payment-legs](../10-money-and-ledger/09-payment-legs.md). The three-way split and
+[payment-legs](../../finance/20-ledger/03-payment-legs.md). The three-way split and
 the BOOKING posting are split across
-[booking-to-earnings](../10-money-and-ledger/05-booking-to-earnings.md), which
+[booking-to-earnings](../../finance/50-b2b/03-rate-cards-and-overage.md), which
 explains `RateCard` resolution and the bps snapshot, and
-[ledger-and-postings](../10-money-and-ledger/03-ledger-and-postings.md). The
+[ledger-and-postings](../../finance/20-ledger/04-postings.md). The
 eventual payout is the subject of
-[payout-pipeline](../10-money-and-ledger/07-payout-pipeline.md): the `PENDING`
+[payout-pipeline](../../finance/40-payouts/05-org-payouts-and-clawbacks.md): the `PENDING`
 earnings rows are later rolled into an `OrganizationPayout` or `ConsultantPayout`,
 and disbursement is a separate cron gated by `ENABLE_LIVE_PAYOUTS`.
 
 This booking spine is the happy path. When money has to flow backwards or a
 booking is contested, three further money-band docs pick up the thread: a
 refund unwinds the booking and its earnings through the reversal engine in
-[refunds](../10-money-and-ledger/10-refunds.md); a chargeback or contested
+[refunds](../../finance/30-refunds-disputes/01-refunds.md); a chargeback or contested
 payment runs through the dispute lifecycle in
-[disputes](../10-money-and-ledger/11-disputes.md); and the gateway events that
+[disputes](../../finance/30-refunds-disputes/02-chargebacks.md); and the gateway events that
 drive top-up confirmation, refund settlement, and dispute notifications are
-handled in [payment-webhooks](../10-money-and-ledger/12-payment-webhooks.md). The
+handled in [payment-webhooks](../../finance/10-money-in/02-capture-confirmation-and-webhooks.md). The
 ongoing state of an earnings row after this booking — `PENDING` to `PAID` to
 `REVERSED` — is tracked in
-[earnings-lifecycle](../10-money-and-ledger/06-earnings-lifecycle.md).
+[earnings-lifecycle](../../finance/40-payouts/02-earnings-lifecycle.md).
 
 > **Why the ledger posts after checkout rather than inside it.** The
 > `walletBalance` debit that happens during checkout moves only the cache. The
@@ -138,7 +138,7 @@ ongoing state of an earnings row after this booking — `PENDING` to `PAID` to
 > `booking:<paymentId>`. A single-consultant booking posts its journal inline,
 > whereas a multi-collaborator booking defers the journal until every share is
 > resolved (#773). See
-> [booking-to-earnings](../10-money-and-ledger/05-booking-to-earnings.md) §1.
+> [booking-to-earnings](../../finance/50-b2b/03-rate-cards-and-overage.md) §1.
 
 ## Design history
 
@@ -160,11 +160,11 @@ the journey — each entry links to the band doc that carries the full story.
   `WalletEntry` + `FundingLedgerEntry` + `SettlementLedgerEntry` were
   replaced by `LedgerTransaction` / `LedgerEntry` / `LedgerAccount` +
   `WalletTopUp`; `walletBalance` became a derived cache asserted by the
-  reconciler. See [money-model-overview](../10-money-and-ledger/01-money-model-overview.md).
+  reconciler. See [money-model-overview](../../finance/20-ledger/01-double-entry-model.md).
 - **#776 — v1 money core (+ #785 review hardening).** The reversal engine,
   credit notes, refund-cascade unification and idempotency keys (its O(1)
-  balance snapshot was later removed; balances aggregate from the journal). See [money-model-overview](../10-money-and-ledger/01-money-model-overview.md)
-  and [ledger-integrity](../10-money-and-ledger/13-ledger-integrity.md).
+  balance snapshot was later removed; balances aggregate from the journal). See [money-model-overview](../../finance/20-ledger/01-double-entry-model.md)
+  and [ledger-integrity](../../finance/20-ledger/06-integrity-and-reconciliation.md).
 - **#777 — v2 customer experience (shipped as PR #787).** The state-aware
   `/home` activation + action center, field-level RBAC on org PATCH, and the
   revenue levers (IRN payload mapper, wallet floor, overage-as-expansion).
@@ -558,7 +558,7 @@ On the money model, the three single-entry logs (`WalletEntry`,
 double-entry journal — `LedgerTransaction`, `LedgerEntry`, and `LedgerAccount` —
 together with `WalletTopUp`. `BillingAccount.walletBalance` is now a derived cache
 of the org's `WALLET` account, asserted by the reconciler. See the
-[money and ledger band](../10-money-and-ledger/01-money-model-overview.md) for the
+[money and ledger band](../../finance/20-ledger/01-double-entry-model.md) for the
 full picture.
 
 ## System architecture
@@ -603,9 +603,9 @@ flowchart TB
 The full, current doc index — the section map, the reading paths, and the
 `NN-slug → purpose` table for every doc — lives in [README.md](../README.md). It
 is intentionally not duplicated here, so that there is only one place to keep in
-sync. The money and ledger band lives under `10-money-and-ledger/`, and the right
+sync. The money and ledger material lives in `docs/finance/`, and the right
 place to start is
-[money-model-overview](../10-money-and-ledger/01-money-model-overview.md). The
+[money-model-overview](../../finance/20-ledger/01-double-entry-model.md). The
 commercial-lifecycle band under `30-programs-and-lifecycle/` ends with the two
 #779 §A docs. The first is
 [contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md), which
@@ -710,7 +710,7 @@ The former `playbooks/` and `reference/` directories were folded into this band.
 The SSO testing recipes and the typed error codes moved into
 [sso-and-authentication](../20-iam-and-security/01-sso-and-authentication.md). The
 money vocabulary — refund, reimbursement, payout, referral, and credits — moved
-into [money-model-overview](../10-money-and-ledger/01-money-model-overview.md). The
+into [money-model-overview](../../finance/20-ledger/01-double-entry-model.md). The
 capability-by-funding matrix moved into
 [funding-and-programs](03-funding-and-programs.md). The clustered schema view is
 the one shown above.

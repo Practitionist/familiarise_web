@@ -49,7 +49,10 @@ declare module "stream-chat" {
    * Custom message data extension for Stream Chat messages.
    */
   interface CustomMessageData {
-    // Add custom message fields here if needed
+    /** Set on staff posts sent as the Familiarise Support user. */
+    support_message?: boolean;
+    /** Names a support system message: `support_joined` / `support_left`. */
+    support_event?: "support_joined" | "support_left";
   }
 
   /**
@@ -118,7 +121,4 @@ export type StreamChannelType =
  * Event channel types for linking to app entities.
  */
 export type EventChannelType =
-  | "webinar"
-  | "class"
-  | "consultation"
-  | "subscription";
+  "webinar" | "class" | "consultation" | "subscription";

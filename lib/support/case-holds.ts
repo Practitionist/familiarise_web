@@ -205,13 +205,18 @@ export function activeHolds(events: CaseHoldEvent[]): CaseHoldEvent[] {
   return [...latest.values()].filter((event) => event.kind === "HOLD_APPLIED");
 }
 
-/** Releases every hold the case still has, with a HOLD_RELEASED event per payment. */
+export interface ReleasedCaseHold {
+  holdId: string;
+  paymentId: string | null;
+}
+
+/** Releases every hold the case still has, with a HOLD_RELEASED event per payment; returns the holds released. */
 export async function releaseAllCaseHolds(
   tx: Tx,
   input: { caseId: string; actorId: string | null; note: string },
-): Promise<number> {
+): Promise<ReleasedCaseHold[]> {
   const open = activeHolds(await caseHoldEvents(tx, [input.caseId]));
-  if (open.length === 0) return 0;
+  if (open.length === 0) return [];
   await releaseCaseHoldRows(tx, {
     caseId: input.caseId,
     releasedById: input.actorId,
@@ -228,7 +233,7 @@ export async function releaseAllCaseHolds(
       },
     });
   }
-  return open.length;
+  return open.map((hold) => ({ holdId: hold.id, paymentId: hold.toValue }));
 }
 
 /**

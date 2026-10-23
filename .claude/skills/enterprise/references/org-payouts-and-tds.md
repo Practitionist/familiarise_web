@@ -28,4 +28,4 @@ Organisation and consultant clawbacks used to be recovered by hand: the amount s
 
 ## Sources
 
-`docs/enterprise/10-money-and-ledger/07-payout-pipeline.md`, `docs/enterprise/10-money-and-ledger/13-ledger-integrity.md`, `docs/payments/gateways/razorpay/03-payout-flow.md`.
+`docs/finance/40-payouts/05-org-payouts-and-clawbacks.md`, `docs/finance/20-ledger/06-integrity-and-reconciliation.md`, `docs/finance/40-payouts/04-razorpayx.md`.

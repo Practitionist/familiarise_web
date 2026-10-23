@@ -25,6 +25,7 @@ import type { LedgerTransactionKind, OrgInvoiceStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { ledgerAccountId } from "@/lib/payments/ledger/post";
+import { ORG_CLAWBACK_KEY_FILTER } from "@/lib/payments/payouts/clawback-recovery";
 import { sumPaise } from "@/lib/payments/utils/money";
 
 /** How many postings the page shows before it says there are more. */
@@ -95,16 +96,18 @@ export async function getOrgReceivables(
   // is capped, and a total computed over a capped page is a wrong total.
   // One snapshot: a counter-posting committed between separate reads would
   // make the totals and the page disagree.
+  // Payout clawbacks share the account but are netted from payouts, never invoiced.
+  const where = { accountId, transaction: { NOT: ORG_CLAWBACK_KEY_FILTER } };
   const [byDirection, totalPostings, entries] = await prisma.$transaction(
     [
       prisma.ledgerEntry.groupBy({
         by: ["direction"],
-        where: { accountId },
+        where,
         _sum: { amountPaise: true },
       }),
-      prisma.ledgerEntry.count({ where: { accountId } }),
+      prisma.ledgerEntry.count({ where }),
       prisma.ledgerEntry.findMany({
-        where: { accountId },
+        where,
         orderBy: { createdAt: "desc" },
         take: limit,
         select: {

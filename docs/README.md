@@ -85,50 +85,16 @@ Calendar display, synchronization, and UI components.
 
 ---
 
-### Payments
+### Finance
 
-Payment system, checkout flows, gateway integrations, payouts, refunds, and more. See [payments/README.md](./payments/README.md) for full index.
+The money subsystem: checkout and pricing, capture and webhooks, the double-entry ledger, refunds and chargebacks, payouts and TDS, organisation funding, tax, and operations. See [finance/README.md](./finance/README.md) for the full index and reading paths.
 
-- [01-architecture.md](./payments/01-architecture.md) - Payment architecture
-- [02-setup.md](./payments/02-setup.md) - Payment system setup
-- [03-status-enums-reference.md](./payments/03-status-enums-reference.md) - Status enums reference
-- [04-abandoned-solutions.md](./payments/04-abandoned-solutions.md) - Abandoned payment handling
-- [01-booking-system-hld.md](./start-here/01-booking-system-hld.md) - Booking system high-level design: pipeline, allocation, concurrency layers, state machines, cron architecture
-- [02-money-system-hld.md](./start-here/02-money-system-hld.md) - Money system high-level design: pricing, capture, legs, ledger, earnings, payouts, refunds and policy decisions
+- [02-money-system-hld.md](./start-here/02-money-system-hld.md) - Money system high-level design: the 20-30 minute explainer
 - [03-booking-and-money-machinery.md](./start-here/03-booking-and-money-machinery.md) - Worked guide with the seeded cast, entity model and worked numeric examples
-
-#### Checkout Flow
-
-- [checkout-flow/01-overview-and-consultation.md](./payments/checkout-flow/01-overview-and-consultation.md) - System overview, consultation & subscription
-- [checkout-flow/02-webinar-and-class.md](./payments/checkout-flow/02-webinar-and-class.md) - Webinar & class flows
-- [checkout-flow/03-payment-processing.md](./payments/checkout-flow/03-payment-processing.md) - Checkout API, gateway integration
-- [checkout-flow/04-edge-cases.md](./payments/checkout-flow/04-edge-cases.md) - Race conditions, timeouts, mock payments
-- [checkout-flow/05-status-flows.md](./payments/checkout-flow/05-status-flows.md) - Status lifecycle
-- [checkout-flow/06-known-issues.md](./payments/checkout-flow/06-known-issues.md) - Known issues and fixes
-
-#### Gateways
-
-- [gateways/razorpay/](./payments/gateways/razorpay/) - Razorpay setup, architecture, payout flow, KYC
-
-#### Approval Payments
-
-- [approval-payments/](./payments/approval-payments/) - Consultant-approves-first workflow (7 docs)
-
-#### Refunds & Disputes
-
-- [refunds-disputes/](./payments/refunds-disputes/) - Two-phase refund pattern, dispute lifecycle (6 docs)
-
-#### Cancellations & Rescheduling
-
-- [cancellations-rescheduling/](./payments/cancellations-rescheduling/) - Refund triggers, payment reuse on reschedule
-
-#### Payouts
-
-- [payouts/](./payments/payouts/) - Earnings lifecycle, batch processing, gateway disbursement (8 docs)
-
-#### Webhooks
-
-- [webhooks/](./payments/webhooks/) - Webhook monitoring, Razorpay schema
+- [01-booking-system-hld.md](./start-here/01-booking-system-hld.md) - Booking system high-level design: pipeline, allocation, concurrency layers, state machines, cron architecture
+- [finance/00-overview/01-money-map.md](./finance/00-overview/01-money-map.md) - Diagram-first system map
+- [finance/70-operations/05-money-runbooks.md](./finance/70-operations/05-money-runbooks.md) - Symptom-first money runbooks
+- [finance/90-decisions/README.md](./finance/90-decisions/README.md) - The money ADRs and the gateway decision
 
 ---
 
@@ -185,8 +151,6 @@ Redis distributed locking.
 - [redis/locking/01_MIGRATION_GUIDE.md](./upstash/redis/locking/01_MIGRATION_GUIDE.md) - Migration guide
 - [redis/locking/02_API_REFERENCE.md](./upstash/redis/locking/02_API_REFERENCE.md) - API reference
 - [redis/locking/03_DISTRIBUTED_LOCKING_DEEP_DIVE.md](./upstash/redis/locking/03_DISTRIBUTED_LOCKING_DEEP_DIVE.md) - Deep dive
-
----
 
 ---
 
@@ -338,9 +302,7 @@ Prisma operations and migration documentation.
 - [prisma/README.md](./prisma/README.md) - **Full index**, and which document applies to the current posture
 - [00-schema-map.md](./prisma/00-schema-map.md) - Domain diagrams of the Prisma schema
 - [01-migrations-guide.md](./prisma/01-migrations-guide.md) - General-purpose Prisma Migrate reference
-- [02-pre-mvp-reset-runbook.md](./prisma/02-pre-mvp-reset-runbook.md) - The one-time reset that finalises the launch schema
-- [03-cutover-to-migrations.md](./prisma/03-cutover-to-migrations.md) - Launch-day runbook: `db push` to versioned migrations
-- [04-prisma-7-migration.md](./prisma/04-prisma-7-migration.md) - Record of the Prisma 6 to 7 upgrade
+- [02-schema-freeze-and-migration-cutover.md](./prisma/02-schema-freeze-and-migration-cutover.md) - Pre-launch shape freeze and the `db push` to versioned-migrations cutover plan
 
 ---
 
@@ -354,53 +316,11 @@ Generic software architecture patterns and learning material (not Familiarise-sp
 
 ## Business & Research
 
-### Finances
-
-CFO-level business documentation. See [finances/README.md](./finances/README.md) for full index.
-
-- [01-saas-metrics-monthly.md](./finances/01-saas-metrics-monthly.md) - SaaS metrics
-- [02-tax-compliance-india.md](./finances/02-tax-compliance-india.md) - Tax compliance
-- [03-tax-compliance-marketplace-obligations.md](./finances/03-tax-compliance-marketplace-obligations.md) - Marketplace obligations
-- [04-tax-essentials-simplified.md](./finances/04-tax-essentials-simplified.md) - Simplified tax guide
-
----
-
 ### Team
 
 Internal team documentation — onboarding, testing guides, and contributor resources.
 
 - [platform-testing-playbook.md](./team/platform-testing-playbook.md) - Comprehensive platform feature walkthrough and testing checklists
-
----
-
-### Market Research
-
-Vendor and pattern research intended to be **reusable in other companies**, not
-just here. Numbered, with the claims register separated from the conclusions so
-a stale fact is visible rather than silently inherited. Read
-[market-research/00-index.md](./market-research/00-index.md) first — it states
-the confidence legend and what is deliberately out of scope.
-
-- [00-index.md](./market-research/00-index.md) - Orientation, re-use method, confidence legend
-- [01-consent-and-terms-landscape.md](./market-research/01-consent-and-terms-landscape.md) - How Indian companies notify a terms change; what the law requires vs what the market does
-- [02-observability-vendors.md](./market-research/02-observability-vendors.md) - Sentry vs SigNoz vs GlitchTip vs CubeAPM vs Datadog vs Better Stack; the recommendation
-- [03-competitor-patterns.md](./market-research/03-competitor-patterns.md) - Mechanisms observed, indexed by pattern rather than by company
-- [04-reusable-substrate.md](./market-research/04-reusable-substrate.md) - **The portable part.** State machines, gate expression, retention engine, jurisdiction model
-- [05-claims-register.md](./market-research/05-claims-register.md) - Every load-bearing claim, its source, its confidence, and what is genuinely open
-
----
-
-### Competitors
-
-Competitor analysis and research.
-
-- [README.md](./competition/competitors/README.md) - Competitors overview
-- [01-topmate-io.md](./competition/competitors/01-topmate-io.md) - Topmate analysis
-- [02-preplaced-in.md](./competition/competitors/02-preplaced-in.md) - Preplaced analysis
-- [03-metvy-com.md](./competition/competitors/03-metvy-com.md) - Metvy analysis
-- [04-upgrad-com.md](./competition/competitors/04-upgrad-com.md) - upGrad analysis
-- [05-propeers-in.md](./competition/competitors/05-propeers-in.md) - ProPeers analysis
-- [06-growthschool-io.md](./competition/competitors/06-growthschool-io.md) - GrowthSchool analysis
 
 ---
 

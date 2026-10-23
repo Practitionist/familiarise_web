@@ -36,10 +36,15 @@ jest.mock("../../scripts/refunds/reconcile-pending-refunds", () => {
 });
 jest.mock("../../scripts/payments/reconcile-payment-status", () => ({}));
 jest.mock("../../scripts/earnings/sync-payment-earnings", () => ({}));
-jest.mock("../../lib/backoffice/ledger-run", () => ({}));
+const runLedger = jest.fn();
+jest.mock("../../lib/backoffice/ledger-run", () => ({
+  startLedgerReconciliation: (input: unknown) => runLedger(input),
+}));
 
 import { NextRequest } from "next/server";
 import { POST } from "../../app/api/admin/reconcile/[job]/route";
+
+beforeEach(() => jest.clearAllMocks());
 
 it("answers 409 ALREADY_RUNNING and logs the attempt", async () => {
   const res = await POST(
@@ -47,7 +52,7 @@ it("answers 409 ALREADY_RUNNING and logs the attempt", async () => {
       method: "POST",
       body: JSON.stringify({ reason: "refund stuck since noon" }),
     }),
-    { params: Promise.resolve({ job: "refunds" } as never) },
+    { params: Promise.resolve({ job: "refunds" }) },
   );
   expect(res.status).toBe(409);
   expect((await res.json()).code).toBe("ALREADY_RUNNING");
@@ -59,3 +64,29 @@ it("answers 409 ALREADY_RUNNING and logs the attempt", async () => {
     },
   });
 });
+
+it.each([
+  ["RUNNING", 200],
+  ["COMPLETED", 207],
+  ["FAILED", 500],
+])(
+  "exposes ledger %s as HTTP %s with the authenticated actor",
+  async (status, expected) => {
+    runLedger.mockResolvedValueOnce({
+      id: "report-1",
+      ok: false,
+      summary: { status },
+      findings: [],
+      frozenWallets: [],
+    });
+    const response = await POST(
+      new NextRequest("https://x.test/api/admin/reconcile/ledgers", {
+        method: "POST",
+        body: JSON.stringify({ reason: "Verify the repaired journal" }),
+      }),
+      { params: Promise.resolve({ job: "ledgers" }) },
+    );
+    expect(response.status).toBe(expected);
+    expect(runLedger).toHaveBeenCalledWith({ triggeredById: "admin_1" });
+  },
+);

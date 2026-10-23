@@ -7,7 +7,8 @@
  * Returns a JSON bundle containing:
  *   1. `personalDataSummary` (§11(1)(a)): The user's account profile, role
  *      profiles, professional background, booking history, payments/invoices,
- *      support tickets, DPDP grievances, and notification/cookie preferences.
+ *      support tickets, staff access to their booking chats, DPDP grievances,
+ *      and notification/cookie preferences.
  *   2. `processingActivities` (§11(1)(a)): Itemised purposes and legal bases
  *      under which Familiarise processes the user's personal data.
  *   3. `sharedWithDataProcessors` (§11(1)(b)): Identities of all Data

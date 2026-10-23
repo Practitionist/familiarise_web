@@ -36,6 +36,7 @@ import { Prisma } from "@prisma/client";
 import { applyRefundCascade, type ApplyRefundCascadeResult } from "./refund";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { ORG_CLAWBACK_KEY_PREFIX } from "@/lib/payments/payouts/clawback-recovery";
+import { recordOrgTdsReversal } from "@/lib/payments/tax/tds-service";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 
@@ -45,10 +46,14 @@ type ReversalSource =
   // An overage side-charge — itself a Payment (parentPaymentId-linked), so it
   // reverses through the booking cascade on that payment id.
   | { kind: "OVERAGE"; overagePaymentId: string }
-  // Gateway-side payout clawback (e.g. a lost dispute on an org-funded booking).
-  | { kind: "PAYOUT_CLAWBACK"; orgPayoutId: string; organizationId: string }
-  // Consultant mirror of PAYOUT_CLAWBACK; cash cannot be pulled on this rail,
-  // so the recovery is booked as a receivable.
+  // Clawback of a host org's share already paid out, booked as a receivable.
+  | {
+      kind: "PAYOUT_CLAWBACK";
+      orgPayoutId: string;
+      organizationId: string;
+      orgEarningsId: string;
+    }
+  // Consultant mirror of PAYOUT_CLAWBACK, also booked as a receivable.
   | {
       kind: "CONSULTANT_CLAWBACK";
       consultantPayoutId: string;
@@ -114,12 +119,7 @@ export async function applyReversal(
     }
 
     case "PAYOUT_CLAWBACK": {
-      const posted = await reversePayoutClawback(
-        tx,
-        input,
-        input.source.orgPayoutId,
-        input.source.organizationId,
-      );
+      const posted = await reversePayoutClawback(tx, input, input.source);
       return {
         kind: "PAYOUT_CLAWBACK",
         cascades: [],
@@ -151,22 +151,20 @@ export async function applyReversal(
 }
 
 /**
- * Gateway-side payout clawback. The original payout posted
- * `Dr ORG_PAYABLE / Cr CASH`; clawback recovers cash:
- * `Dr CASH / Cr ORG_PAYABLE`. Idempotent on `clawback:<refundId>:<payoutId>`.
- * Stamps the clawback amount/timestamp on the payout and writes an audit row.
+ * Org payout clawback, net of the TDS reversed on the share: no cash comes back,
+ * so the debt is a receivable netted from the next payout. Stamps the counter.
  */
 async function reversePayoutClawback(
   tx: Tx,
   input: ApplyReversalInput,
-  orgPayoutId: string,
-  organizationId: string,
+  share: { orgPayoutId: string; organizationId: string; orgEarningsId: string },
 ): Promise<boolean> {
+  const { orgPayoutId, organizationId, orgEarningsId } = share;
   if (input.amountPaise <= 0) return false;
 
   const payout = await tx.organizationPayout.findUnique({
     where: { id: orgPayoutId },
-    select: { id: true, clawbackInitiatedAt: true },
+    select: { id: true, clawbackInitiatedAt: true, netPayoutPaise: true },
   });
   if (!payout) {
     reportSentryMessage(
@@ -180,10 +178,17 @@ async function reversePayoutClawback(
     return false;
   }
 
+  const clawbackPaise = await orgClawbackNetOfTds(tx, {
+    orgPayoutId,
+    organizationId,
+    grossPaise: input.amountPaise,
+    netPayoutPaise: payout.netPayoutPaise,
+  });
+
   await tx.organizationPayout.update({
     where: { id: orgPayoutId },
     data: {
-      clawbackAmountPaise: { increment: input.amountPaise },
+      clawbackAmountPaise: { increment: clawbackPaise },
       clawbackInitiatedAt: payout.clawbackInitiatedAt ? undefined : new Date(),
     },
   });
@@ -194,11 +199,13 @@ async function reversePayoutClawback(
       actorMembershipId: null,
       category: "PAYOUT",
       action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
-      description: `Payout clawback: ${input.amountPaise} paise from payout ${orgPayoutId} (${input.reason})`,
+      description: `Payout clawback: ${clawbackPaise} paise from payout ${orgPayoutId} (${input.reason})`,
       details: {
         refundId: input.refundId,
+        orgEarningsId,
         orgPayoutId,
         amountPaise: input.amountPaise,
+        clawbackAmountPaise: clawbackPaise,
         initiatedByUserId: input.initiatedByUserId ?? null,
       } as Prisma.InputJsonValue,
     },
@@ -207,7 +214,8 @@ async function reversePayoutClawback(
   await postPayoutClawback(tx, {
     refundId: input.refundId,
     payoutId: orgPayoutId,
-    amountPaise: input.amountPaise,
+    orgEarningsId,
+    amountPaise: clawbackPaise,
     organizationId,
   });
 
@@ -215,36 +223,134 @@ async function reversePayoutClawback(
 }
 
 /**
- * The clawback journal: `Dr CASH / Cr ORG_PAYABLE`, idempotent on
- * `clawback:<refundId>:<payoutId>`. #1582 C-P1-02c — shared by the dispute
- * path and both refund paths so the counter the reconciler compares against
- * (`stepClawbackGap`) always has a matching posting. INR-only, so the ledger
- * account currency is left unset as post.ts documents.
+ * Reverses the TDS the org payout withheld on a reversed share, pro rata to its
+ * net, and returns the clawback net of it: the org never received that tax.
+ */
+export async function orgClawbackNetOfTds(
+  tx: Tx,
+  input: {
+    orgPayoutId: string;
+    organizationId: string;
+    grossPaise: number;
+    netPayoutPaise: number;
+    refundId?: string;
+  },
+): Promise<number> {
+  const reversal = await recordOrgTdsReversal(tx, {
+    orgPayoutId: input.orgPayoutId,
+    organizationId: input.organizationId,
+    refundId: input.refundId,
+    reversalBasis: {
+      kind: "PROPORTIONAL",
+      refundAmountPaise: input.grossPaise,
+      payoutAmountPaise: input.netPayoutPaise,
+    },
+  });
+  return input.grossPaise - (reversal?.reversedPaise ?? 0);
+}
+
+/**
+ * Refund-driven clawback of an org share a COMPLETED payout already paid:
+ * TDS reversal, counter, audit row and journal in one place for every refund door.
+ */
+export async function clawBackCompletedOrgPayout(
+  tx: Tx,
+  input: {
+    orgPayout: {
+      id: string;
+      netPayoutPaise: number;
+      clawbackInitiatedAt: Date | null;
+    };
+    organizationId: string;
+    orgEarningsId: string;
+    paymentId: string;
+    refundId: string;
+    /** The org share the refund reversed, gross of TDS. */
+    grossPaise: number;
+    /** The request behind the reversal, recorded on the audit row. */
+    amountPaise: number;
+    label: string;
+    initiatedByUserId: string | null;
+  },
+): Promise<void> {
+  const { orgPayout, organizationId } = input;
+  const clawbackPaise = await orgClawbackNetOfTds(tx, {
+    orgPayoutId: orgPayout.id,
+    organizationId,
+    grossPaise: input.grossPaise,
+    netPayoutPaise: orgPayout.netPayoutPaise,
+    refundId: input.refundId,
+  });
+  await tx.organizationPayout.update({
+    where: { id: orgPayout.id },
+    data: {
+      clawbackAmountPaise: { increment: clawbackPaise },
+      // The first clawback's timestamp survives later partial refunds.
+      clawbackInitiatedAt: orgPayout.clawbackInitiatedAt
+        ? undefined
+        : new Date(),
+    },
+  });
+  await tx.orgAuditLog.create({
+    data: {
+      organizationId,
+      actorMembershipId: null,
+      category: "PAYOUT",
+      action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
+      description: `${input.label}: ${clawbackPaise} paise from payout ${orgPayout.id}`,
+      details: {
+        paymentId: input.paymentId,
+        refundId: input.refundId,
+        orgEarningsId: input.orgEarningsId,
+        orgPayoutId: orgPayout.id,
+        amountPaise: input.amountPaise,
+        clawbackAmountPaise: clawbackPaise,
+        initiatedByUserId: input.initiatedByUserId,
+      } as Prisma.InputJsonValue,
+    },
+  });
+  // The counter and the journal are one write: a failed post rolls the tx back.
+  await postPayoutClawback(tx, {
+    refundId: input.refundId,
+    payoutId: orgPayout.id,
+    orgEarningsId: input.orgEarningsId,
+    amountPaise: clawbackPaise,
+    organizationId,
+  });
+}
+
+/**
+ * The org clawback journal `Dr ORG_RECEIVABLE / Cr ORG_PAYABLE`; every writer of
+ * `clawbackAmountPaise` posts it, keyed per share so sibling shares on one payout never collide.
  */
 export async function postPayoutClawback(
   tx: Tx,
   input: {
     refundId: string;
     payoutId: string;
+    /** The reversed share; null for a clawback no single share drives. */
+    orgEarningsId: string | null;
     amountPaise: number;
     organizationId: string;
   },
 ): Promise<void> {
-  const { refundId, payoutId, amountPaise, organizationId } = input;
+  const { refundId, payoutId, orgEarningsId, amountPaise, organizationId } =
+    input;
   // The counter-post is part of the reversal, not a side effect: report, then
   // rethrow so the enclosing tx rolls back — an unbalanced journal never commits (#1583 C-P1-09).
   try {
     await postLedgerTxn(tx, {
-      idempotencyKey: `${ORG_CLAWBACK_KEY_PREFIX}${refundId}:${payoutId}`,
+      idempotencyKey: orgClawbackKey(refundId, payoutId, orgEarningsId),
       kind: "ORG_PAYOUT",
       payoutId,
       postings: [
         {
-          account: { kind: "CASH" },
+          account: { kind: "ORG_RECEIVABLE", organizationId },
           direction: "DEBIT",
           amountPaise,
         },
         {
+          // Reclassifies the debit the refund or chargeback left on the payable.
           account: { kind: "ORG_PAYABLE", organizationId },
           direction: "CREDIT",
           amountPaise,
@@ -267,6 +373,16 @@ export async function postPayoutClawback(
     });
     throw err;
   }
+}
+
+/** `clawback:<driver>:<payoutId>[:<orgEarningsId>]`: one org clawback journal per reversed share. */
+function orgClawbackKey(
+  driver: string,
+  payoutId: string,
+  orgEarningsId: string | null,
+): string {
+  const share = orgEarningsId ? `:${orgEarningsId}` : "";
+  return `${ORG_CLAWBACK_KEY_PREFIX}${driver}:${payoutId}${share}`;
 }
 
 /** One clawback per (driver id, payout); the dispute path passes `dispute:<id>`. */

@@ -15,8 +15,9 @@
  *   2. Client completes Razorpay checkout.
  *   3. Webhook calls `confirmTopUp(providerOrderId, providerPaymentId)`.
  *   4. `confirmTopUp` atomically: flips the WalletTopUp PENDING → CONFIRMED
- *      (idempotent claim), bumps walletBalance, and posts the top-up's
- *      double-entry txn (Dr GATEWAY_CLEARING / Cr WALLET) — all in one transaction.
+ *      (idempotent claim), settles the org's open shortfall receivable first,
+ *      bumps walletBalance by the rest, and posts one txn (Dr GATEWAY_CLEARING /
+ *      Cr ORG_RECEIVABLE / Cr WALLET) — all in one transaction.
  *
  * Booking debit flow (at checkout):
  *   1. `walletDebit` atomically decrements the cached balance.
@@ -29,8 +30,9 @@
 import type { WalletReason } from "@prisma/client";
 
 import prisma, { type Db, type Tx } from "@/lib/prisma";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
-import { postLedgerTxn } from "@/lib/payments/ledger/post";
+import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 
 /**
  * #1477 — an org that has run its wallet down is refusing a booking, not
@@ -187,8 +189,6 @@ export async function walletCredit(
     paymentId?: string;
     membershipId?: string;
     notes?: string;
-    providerOrderId?: string;
-    providerPaymentId?: string;
   },
 ): Promise<{ balanceAfter: number; ownerOrgId: string }> {
   if (params.amountPaise <= 0) {
@@ -211,36 +211,7 @@ export async function walletCredit(
   });
   const balanceAfter = readCachedBalance(params.billingAccountId, acct);
 
-  // #771 D1/D5 / #772 B3 — double-entry is now the sole record (WalletEntry
-  // removed). A top-up is a complete 2-leg txn:
-  // the gateway holds the cash for us and we now owe the org a WALLET balance.
-  //   Dr GATEWAY_CLEARING(platform)   Cr WALLET(org)
-  // Booking-debit and refund WALLET legs post from the settlement / refund
-  // layer (where the full split is known), not here.
-  if (params.reason === "TOPUP") {
-    await postLedgerTxn(tx, {
-      idempotencyKey: `topup:${params.providerOrderId ?? params.paymentId ?? `${params.billingAccountId}:${balanceAfter}`}`,
-      kind: "TOPUP",
-      paymentId: params.paymentId ?? null,
-      postings: [
-        {
-          // #783 — ledger is INR-only; never key accounts by acct.currency.
-          account: gatewayCashAccount(),
-          direction: "DEBIT",
-          amountPaise: params.amountPaise,
-        },
-        {
-          account: {
-            kind: "WALLET",
-            organizationId: acct.ownerOrgId,
-          },
-          direction: "CREDIT",
-          amountPaise: params.amountPaise,
-        },
-      ],
-    });
-  }
-
+  // Every caller posts the matching Cr WALLET line in this same transaction.
   // ownerOrgId lets the refund cascade attribute the credit to the org even
   // when the payment itself carries no organizationId (#835 — the wallet is
   // the org's money regardless of how the payment was tagged).
@@ -407,7 +378,11 @@ export async function confirmTopUp(
     providerPaymentId: string;
     amountPaise: number;
   },
-): Promise<{ confirmed: boolean; balanceAfter?: number }> {
+): Promise<{
+  confirmed: boolean;
+  balanceAfter?: number;
+  receivableSettledPaise?: number;
+}> {
   // #785 — record the gateway capture OUTSIDE the tx below so it survives a
   // ledger-post rollback. The whole confirm body is one $transaction, so a
   // walletCredit/postLedgerTxn failure reverts the CONFIRMED claim back to
@@ -471,16 +446,138 @@ export async function confirmTopUp(
           `confirm=${params.amountPaise} paise vs authorized=${topUp.amountPaise} paise`,
       );
     }
+    // A no-op write row-locks the account, so concurrent top-ups settle the receivable one at a time.
+    const { ownerOrgId } = await tx.billingAccount.update({
+      where: { id: topUp.billingAccountId },
+      data: { walletBalance: { increment: 0 } },
+      select: { ownerOrgId: true },
+    });
+    const receivableSettledPaise = Math.min(
+      topUp.amountPaise,
+      await openShortfallReceivablePaise(tx, ownerOrgId),
+    );
+    const walletPaise = topUp.amountPaise - receivableSettledPaise;
+    const credits: Posting[] = [
+      {
+        account: { kind: "ORG_RECEIVABLE", organizationId: ownerOrgId },
+        direction: "CREDIT",
+        amountPaise: receivableSettledPaise,
+      },
+      {
+        account: { kind: "WALLET", organizationId: ownerOrgId },
+        direction: "CREDIT",
+        amountPaise: walletPaise,
+      },
+    ];
+    await postLedgerTxn(tx, {
+      idempotencyKey: `topup:${params.providerOrderId}`,
+      kind: "TOPUP",
+      postings: [
+        {
+          account: gatewayCashAccount(),
+          direction: "DEBIT",
+          amountPaise: topUp.amountPaise,
+        },
+        ...credits.filter((c) => c.amountPaise > 0),
+      ],
+    });
+    if (walletPaise === 0) {
+      const ba = await tx.billingAccount.findUniqueOrThrow({
+        where: { id: topUp.billingAccountId },
+        select: { walletBalance: true },
+      });
+      return {
+        confirmed: true,
+        balanceAfter: ba.walletBalance ?? 0,
+        receivableSettledPaise,
+      };
+    }
     const result = await walletCredit(tx, {
       billingAccountId: topUp.billingAccountId,
-      amountPaise: topUp.amountPaise,
+      amountPaise: walletPaise,
       reason: "TOPUP",
-      providerOrderId: params.providerOrderId,
-      providerPaymentId: params.providerPaymentId,
       notes: `Top-up confirmed via webhook; order=${params.providerOrderId}`,
     });
-    return { confirmed: true, balanceAfter: result.balanceAfter };
+    return {
+      confirmed: true,
+      balanceAfter: result.balanceAfter,
+      receivableSettledPaise,
+    };
   });
+}
+
+/**
+ * Key prefixes of the ORG_RECEIVABLE shortfalls a top-up settles, and of the top-ups and late overage recarves that settled them.
+ * `clawback:` stays off: a payout clawback is recovered from the host's next payout, never a funder's top-up.
+ */
+const TOPUP_SETTLED_RECEIVABLE_KEYS = [
+  "overage-restore:",
+  "overage-recarve:",
+  "topup-refund-shortfall:",
+  "chargeback:",
+  "topup:",
+];
+
+/** The org's open shortfall receivable; invoice accruals stay with the invoices that collect them. */
+export async function openShortfallReceivablePaise(
+  tx: Tx,
+  organizationId: string,
+): Promise<number> {
+  const rows = await tx.ledgerEntry.findMany({
+    where: {
+      account: { kind: "ORG_RECEIVABLE", organizationId },
+      transaction: {
+        OR: TOPUP_SETTLED_RECEIVABLE_KEYS.map((prefix) => ({
+          idempotencyKey: { startsWith: prefix },
+        })),
+      },
+    },
+    select: { direction: true, amountPaise: true },
+  });
+  return Math.max(0, -signedDeltaPaise(rows));
+}
+
+/** Member overage states that can still restore a base onto a wallet parent, or carve it back out. */
+const WALLET_RESTORABLE_OVERAGE_STATUSES = ["PENDING", "FAILED"] as const;
+
+/**
+ * Refuses moving an account off WALLET while the wallet still owes a shortfall
+ * or a member overage could still restore onto it: no top-up could settle either afterwards.
+ */
+export async function assertWalletFundingSwitchable(
+  tx: Tx,
+  billingAccountId: string,
+): Promise<void> {
+  // A no-op write row-locks the account, as confirmTopUp does, before the reads below.
+  const { ownerOrgId } = await tx.billingAccount.update({
+    where: { id: billingAccountId },
+    data: { walletBalance: { increment: 0 } },
+    select: { ownerOrgId: true },
+  });
+  if ((await openShortfallReceivablePaise(tx, ownerOrgId)) > 0) {
+    throw new OpsRefusal(
+      "WALLET_SHORTFALL_OPEN",
+      "Cannot switch funding source while the organization owes a wallet shortfall. Settle it with a top-up first.",
+    );
+  }
+  const unsettled = await tx.overageEvent.count({
+    where: {
+      overageBehavior: "CHARGE_MEMBER",
+      chargeStatus: { in: [...WALLET_RESTORABLE_OVERAGE_STATUSES] },
+      payment: {
+        parentPayment: {
+          billingAccountId,
+          legs: { some: { source: "WALLET" } },
+        },
+      },
+    },
+  });
+  if (unsettled > 0) {
+    throw new OpsRefusal(
+      "WALLET_OVERAGE_UNSETTLED",
+      `Cannot switch funding source while ${unsettled} member overage charge(s) on wallet-funded bookings are unpaid. Wait until they are paid or reversed.`,
+    );
+  }
 }
 
 /**

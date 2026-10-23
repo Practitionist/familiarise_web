@@ -482,6 +482,9 @@ function projectSelect(row: Row, select: Record<string, unknown>): Row {
 // Mock the prisma module — same client returned for both top-level + tx.
 // ---------------------------------------------------------------------------
 
+jest.mock("../../lib/payments/ledger/refund-reversal-basis", () =>
+  jest.requireActual("../fixtures/no-refund-reversal-basis"),
+);
 jest.mock("../../lib/prisma", () => {
   const stub = txStub();
   return {

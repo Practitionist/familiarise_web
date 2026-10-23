@@ -34,7 +34,7 @@ emails the requester with a 7-day signed-URL link.
 > after the 13 November 2025 notification; the intervening runway is the
 > build window, and the `OrgDataExportJob` schema is already in place.
 > (Source: DPDP Rules 2025 Rule 14, https://www.dpdpa.com/dpdparules/rule14.html;
-> commencement Rule 1(4).) Authoritative: [docs/compliance/09-dpdp-and-privacy.md](../../compliance/09-dpdp-and-privacy.md).
+> commencement Rule 1(4).) Authoritative: [docs/compliance/02-dpdp-and-privacy.md](../../compliance/02-dpdp-and-privacy.md).
 
 ## Schema
 
@@ -133,19 +133,19 @@ BILLING_ADMIN, the governance floor these routes require — hits
 `POST /data-exports`, gets a `202`, and polls the dashboard until the
 job flips `READY`. The 7-day signed URL is long enough to run their
 post-export ETL; after that the link lapses to `EXPIRED` and a fresh
-request is needed. The §11 *access* path is org-tenant-wide; the
-per-data-principal §12 *erasure* path is separate (see
+request is needed. The §11 _access_ path is org-tenant-wide; the
+per-data-principal §12 _erasure_ path is separate (see
 [deletion policy](02-deletion-policy.md)).
 
 ## Routes
 
 Three endpoints form the request-poll-download lifecycle of a DPDP §11 export bundle; all are gated to OWNER or BILLING_ADMIN because every bundle contains financial PII.
 
-| Verb | Path | Behaviour |
-|---|---|---|
-| `POST` | `/api/organizations/[orgId]/data-exports` | Files a request, inserts `OrgDataExportJob(PENDING)`, returns `202 { export }`. |
-| `GET` | `/api/organizations/[orgId]/data-exports` | Lists this org's jobs from the last 30 days (take 50), newest first. Polling surface for the dashboard. |
-| `GET` | `/api/organizations/[orgId]/data-exports/[exportId]/download` | Resolves the signed URL when `status=READY`. `409 EXPORT_NOT_READY` if not ready; `410 EXPORT_EXPIRED` once past `expiresAt`. Returns `{ url, expiresAt }`. |
+| Verb   | Path                                                          | Behaviour                                                                                                                                                   |
+| ------ | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST` | `/api/organizations/[orgId]/data-exports`                     | Files a request, inserts `OrgDataExportJob(PENDING)`, returns `202 { export }`.                                                                             |
+| `GET`  | `/api/organizations/[orgId]/data-exports`                     | Lists this org's jobs from the last 30 days (take 50), newest first. Polling surface for the dashboard.                                                     |
+| `GET`  | `/api/organizations/[orgId]/data-exports/[exportId]/download` | Resolves the signed URL when `status=READY`. `409 EXPORT_NOT_READY` if not ready; `410 EXPORT_EXPIRED` once past `expiresAt`. Returns `{ url, expiresAt }`. |
 
 All three call `requireOrgAccess(orgId, { permission: ["dataExports.people", "dataExports.finance"] })`,
 so a caller needs at least one export key. Each bundle has a kind: the

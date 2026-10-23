@@ -24,13 +24,20 @@ import type { AppointmentVM } from "@/lib/appointments/view-model";
 import type { ConsultantTrialLike } from "@/lib/appointments/map-consultant";
 import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 import { useNowTick } from "@/hooks/use-now-tick";
+import { useSession } from "@/lib/auth-client";
+import { operatorOpsHref } from "@/lib/backoffice/booking-href";
 import {
   getParticipantManagementUrl,
   supportsParticipantManagement,
 } from "./utils/participantHelpers";
 import { useConsultantEventActions } from "./components/useConsultantEventActions";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
-import { chatAffordancesForVm } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
+import {
+  chatAffordancesForVm,
+  consultantUserIdOf,
+  consulteeUserIdOf,
+} from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
+import { OPS_HINT_LABEL } from "@/components/appointments/OperatorOpsHint";
 import { UnscheduleConfirmationDialog } from "@/components/appointments/UnscheduleConfirmationDialog";
 
 type DialogKind = "cancel" | "unschedule";
@@ -125,6 +132,15 @@ export function useConsultantAppointmentsAdapter(
   const [dialog, setDialog] = useState<DialogKind | null>(null);
 
   const isDev = process.env.NEXT_PUBLIC_ENABLE_DEV_TOOLS === "true";
+
+  const viewer = useSession().data?.user;
+  const isPartyTo = (vm: AppointmentVM): boolean =>
+    Boolean(
+      viewer &&
+      ((viewer.consultantProfileId &&
+        viewer.consultantProfileId === consultantId) ||
+        [consultantUserIdOf(vm), consulteeUserIdOf(vm)].includes(viewer.id)),
+    );
 
   const typeLabel = activeVm
     ? TYPE_LABEL[activeVm.kind]
@@ -345,9 +361,20 @@ export function useConsultantAppointmentsAdapter(
           router.push(getParticipantManagementUrl(appointment, consultantId)),
       });
     }
-    if (
-      canOfferReschedule(vm, lifecycleOk, inactive, timingsOk, rawOccurrences)
-    ) {
+    const mayReschedule = canOfferReschedule(
+      vm,
+      lifecycleOk,
+      inactive,
+      timingsOk,
+      rawOccurrences,
+    );
+    const mayCancel = Boolean(
+      vm.appointmentId && vm.kind !== "TRIAL" && lifecycleOk && !inactive,
+    );
+    const opsHref = vm.appointmentId
+      ? operatorOpsHref(viewer, isPartyTo(vm), vm.appointmentId)
+      : null;
+    if (mayReschedule && !opsHref) {
       items.push({
         key: "reschedule",
         label: "Reschedule",
@@ -364,7 +391,14 @@ export function useConsultantAppointmentsAdapter(
         onClick: () => openDialog(vm, "unschedule"),
       });
     }
-    if (vm.appointmentId && vm.kind !== "TRIAL" && lifecycleOk && !inactive) {
+    if (opsHref && (mayReschedule || mayCancel)) {
+      items.push({
+        key: "ops-hint",
+        label: OPS_HINT_LABEL,
+        href: opsHref,
+        onClick: () => router.push(opsHref),
+      });
+    } else if (mayCancel) {
       items.push({
         key: "cancel",
         label: "Cancel booking",

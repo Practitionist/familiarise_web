@@ -10,7 +10,7 @@ const PURGED_SUPPORT_TEXT = "[deleted after the retention period]";
 // Titles are requester free text (a grievance title embeds its subject), so they go too.
 const PURGED_SUPPORT_TITLE = "Support request";
 const PURGED_ATTACHMENT_NAME = "Deleted after the retention period";
-// Notes on these events are the decision, money and retention record; every other event note is purged.
+// Notes on these events are the decision, money, retention and staff-access record; every other event note is purged.
 const RECORD_EVENT_KINDS: SupportCaseEventKind[] = [
   "HOLD_APPLIED",
   "HOLD_RELEASED",
@@ -20,6 +20,11 @@ const RECORD_EVENT_KINDS: SupportCaseEventKind[] = [
   "DECISION_RECORDED",
   "LEGAL_HOLD_CHANGED",
   "EVIDENCE_PURGED",
+  // The staff chat-access log follows the security-log period, not the 180-day purge.
+  "CHAT_ACCESS_GRANTED",
+  "CHAT_ACCESS_ENDED",
+  "CHAT_SUPPORT_MESSAGE",
+  "CHAT_REVIEW_NOTIFIED",
 ];
 const STORAGE_BATCH = 100;
 // Storage runs under the case's row lock; room for several 100-path batches and their existence re-checks.

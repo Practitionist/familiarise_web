@@ -14,9 +14,11 @@ import type { Tx } from "@/lib/prisma";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import { countActiveAdmins } from "@/lib/backoffice/ops-proposals";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
+import {
+  STAFF_REFUND_PER_PAYMENT_PAISE,
+  STAFF_REFUND_ROLLING_PAISE,
+} from "@/lib/support/staff-refund-limits";
 
-export const STAFF_REFUND_PER_PAYMENT_PAISE = 500_000;
-export const STAFF_REFUND_ROLLING_PAISE = 5_000_000;
 export const STAFF_REFUND_ROLLING_WINDOW_MS = 24 * 60 * 60 * 1000;
 const STAFF_REFUND_LOCK_TTL_MS = 120_000;
 /** An approval this recent may still be sending its refund outside any transaction. */
@@ -81,16 +83,24 @@ export async function liveNonRemedyRefundPaiseByPayment(
 /**
  * Approved, unvoided support remedies plus other live refunds per payment: the
  * `priorPaise` the per-payment staff limit counts. A remedy's own refund counts once, as the remedy.
+ * `excludeRecommendationId` leaves out the remedy being priced.
  */
 export async function committedSupportPaiseByPayment(
   db: Pick<Tx, "supportFinancialRecommendation" | "refund">,
   paymentIds: string[],
+  { excludeRecommendationId }: { excludeRecommendationId?: string } = {},
 ): Promise<Map<string, number>> {
   const committed = await liveNonRemedyRefundPaiseByPayment(db, paymentIds);
   if (paymentIds.length === 0) return committed;
   // A void clears `approved`, so `approved: true` is exactly the live remedies.
   const rows = await db.supportFinancialRecommendation.findMany({
-    where: { paymentId: { in: paymentIds }, approved: true },
+    where: {
+      paymentId: { in: paymentIds },
+      approved: true,
+      ...(excludeRecommendationId
+        ? { id: { not: excludeRecommendationId } }
+        : {}),
+    },
     select: { paymentId: true, amountPaise: true },
   });
   for (const row of rows)
