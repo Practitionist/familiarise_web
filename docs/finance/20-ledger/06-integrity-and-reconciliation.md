@@ -63,12 +63,15 @@ flowchart TD
   CRON["Ticker: POST /api/cleanup/reconcile-ledgers<br/>hourly :55 when capacity permits"] --> RUN["Create or resume persisted audit pages"]
   ADMIN["Admin door: POST /api/admin/reconcile-ledgers<br/>step-up, reason, ops log"] --> RUN
   RUN --> W["Wallet step first"]
-  W -->|"WALLET_BALANCE_DRIFT, cron run"| FRZ["onWalletDrift freeze<br/>WALLET_FREEZE event"]
-  REP -->|"admin run, after return"| AFRZ["freezeDriftedWallets<br/>WALLET_FREEZE event"]
-  RUN --> REST["All other checks"]
+  W -->|"WALLET_BALANCE_DRIFT, every entry point"| FRZ["onWalletDrift freeze<br/>WALLET_FREEZE event"]
+  W -->|"no drift"| REST["All other checks"]
+  FRZ --> REST
   REST --> BL["Split against the checked-in baseline"]
   BL --> REP["LedgerReconciliationReport row"]
-  REP --> OK{"Any unbaselined finding<br/>or baseline problem?"}
+  RUN -->|"comparison fails"| F["500; persist FAILED at the same checkpoint"]
+  REP --> DONE{"Audit completed?"}
+  DONE -- no --> CONT["200 RUNNING; continue audit"]
+  DONE -- yes --> OK{"Any unbaselined finding<br/>or baseline problem?"}
   OK -- no --> G["200, ok"]
   OK -- yes --> P["207, respondToLedgerDrift:<br/>SystemEvent and one Sentry report"]
 ```
@@ -94,7 +97,7 @@ Both admin doors advance the same bounded `runReconcileLedgers` core, optionally
 
 An authenticated manual request creates a fresh audit after a completed verdict, allowing verification after an operator correction on the same UTC day. A scheduled request reuses the completed daily audit. Cron query parameters cannot impersonate the admin actor or force a fresh manual report. Cohort aging remains anchored to the report start, while baseline expiry is evaluated at the current save time so an exception cannot outlive its expiry during a multi-day audit.
 
-Each newly checked wallet page invokes the same freeze hook before its checkpoint advances, including the admin path. Resuming later pages does not re-apply historical wallet findings and undo an operator’s intervening repair/unfreeze. The scheduled wrapper aggregates wallet findings and uses a persisted logical-report key for fatal-alert deduplication. `respondToLedgerDrift` retains the standing-findings alert policy; do not capture once per row or once per page. Other job gates still determine admission during maintenance.
+Each newly checked wallet page invokes the same freeze hook before its checkpoint advances, including the admin path. Resuming later pages does not re-apply historical wallet findings and undo an operator’s intervening repair/unfreeze. The scheduled wrapper aggregates wallet findings and uses a persisted logical-report key for fatal-alert deduplication. `respondToLedgerDrift` retains the standing-findings alert policy; do not capture once per row or once per page. A failed comparison retains its page and prevents a completed verdict. Repeated failure requires fixing that comparison or its data/capacity issue; retrying or creating another report cannot make the same unchecked obligation clean. No page is skipped after a retry count. Other job gates still determine admission during maintenance.
 
 A payment with earnings and no BOOKING journal raises one `EARNINGS_WITHOUT_BOOKING_TXN` finding pinned to that payment (`details.unit: transactions`, expected/actual 1/0). Aggregate coverage counts remain informational. The baseline is an exact, expiring exception list, not a count allowance for a moving set of missing payments.
 
@@ -127,7 +130,7 @@ The auditor compares caches with the journal. It does not check the `GATEWAY_CLE
 
 - `scripts/reconcile/reconcile-ledgers.ts` — `runReconcileLedgers`, `RECONCILE_FINDING_KINDS`, `walletDriftFindings`.
 - `scripts/reconcile/ledger-findings-baseline.ts` — the baseline entries and `evaluateLedgerBaseline`.
-- `scripts/reconcile/ledger-drift-response.ts` — `respondToLedgerDrift`, `freezeDriftingWallets`.
+- `scripts/reconcile/ledger-drift-response.ts` — `respondToLedgerDrift`, `reportWalletDriftFreeze`.
 - `lib/payments/wallet-freeze.ts` — `isWalletFrozen`, `freezeWalletSpend`, `unfreezeWalletSpend`, `freezeDriftedWallets`.
 - `lib/backoffice/ledger-run.ts` — `startLedgerReconciliation`, the helper behind the admin door.
 - `LedgerReconciliationReport` in `prisma/schema.prisma`.

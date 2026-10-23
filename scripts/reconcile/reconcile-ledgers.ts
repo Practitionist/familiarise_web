@@ -169,8 +169,7 @@ function pageOptions() {
 }
 
 function recordPage(ctx: StepCtx, rows: readonly { id: string }[]) {
-  if (rows.length === RECONCILE_PAGE_SIZE)
-    ctx.nextCursor = rows[rows.length - 1].id;
+  if (rows.length === RECONCILE_PAGE_SIZE) ctx.nextCursor = rows.at(-1)?.id;
 }
 
 // --- (A): per BillingAccount wallet balance vs derived WALLET account (set-based) ---
@@ -238,16 +237,16 @@ export function walletDriftFindings(scope: {
     async (tx) => {
       await tx.$executeRaw`SET TRANSACTION READ ONLY`;
       await tx.$executeRaw`SET LOCAL statement_timeout = '6s'`;
+      let accountFilter: Prisma.BillingAccountWhereInput = {};
+      if (scope.billingAccountId)
+        accountFilter = { id: scope.billingAccountId };
+      else if (scope.afterId) accountFilter = { id: { gt: scope.afterId } };
       const accounts = await tx.billingAccount.findMany({
         orderBy: { id: "asc" },
         ...(scope.take ? { take: scope.take } : {}),
         where: {
           ...(scope.organizationId ? { ownerOrgId: scope.organizationId } : {}),
-          ...(scope.billingAccountId
-            ? { id: scope.billingAccountId }
-            : scope.afterId
-              ? { id: { gt: scope.afterId } }
-              : {}),
+          ...accountFilter,
         },
         select: {
           id: true,
@@ -281,7 +280,7 @@ export function walletDriftFindings(scope: {
         findings,
         accountsChecked: accounts.length,
         ...(scope.take && accounts.length === scope.take
-          ? { nextCursor: accounts[accounts.length - 1].id }
+          ? { nextCursor: accounts.at(-1)?.id }
           : {}),
       };
     },
@@ -819,8 +818,7 @@ async function stepUnjournaledEarnings(ctx: StepCtx): Promise<void> {
     take: RECONCILE_PAGE_SIZE,
   });
   if (earningsPaymentRows.length === RECONCILE_PAGE_SIZE)
-    ctx.nextCursor =
-      earningsPaymentRows[earningsPaymentRows.length - 1].paymentId;
+    ctx.nextCursor = earningsPaymentRows.at(-1)?.paymentId;
   const bookingTxns = await ctx.db.ledgerTransaction.findMany({
     where: {
       kind: "BOOKING",
@@ -1051,7 +1049,7 @@ async function stepSplitSums(ctx: StepCtx): Promise<void> {
     _sum: { platformFeePaise: true, consultantSharePaise: true },
   });
   if (ceAgg.length === RECONCILE_PAGE_SIZE)
-    ctx.nextCursor = ceAgg[ceAgg.length - 1].paymentId;
+    ctx.nextCursor = ceAgg.at(-1)?.paymentId;
   const paymentIdsWithCe = ceAgg
     .map((r) => r.paymentId)
     .filter((p): p is string => !!p);
@@ -1333,7 +1331,7 @@ async function stepUnappliedReceipts(ctx: StepCtx): Promise<void> {
     take: RECONCILE_PAGE_SIZE,
   });
   if (parked.length === RECONCILE_PAGE_SIZE)
-    ctx.nextCursor = parked[parked.length - 1].paymentId ?? undefined;
+    ctx.nextCursor = parked.at(-1)?.paymentId ?? undefined;
   const paymentIds = parked
     .map((t) => t.paymentId)
     .filter((p): p is string => !!p);
@@ -1661,8 +1659,7 @@ const STEPS: readonly ((ctx: StepCtx) => Promise<void>)[] = [
         afterId: ctx.cursor,
         size: RECONCILE_PAGE_SIZE,
         onPage: (ids) => {
-          if (ids.length === RECONCILE_PAGE_SIZE)
-            ctx.nextCursor = ids[ids.length - 1];
+          if (ids.length === RECONCILE_PAGE_SIZE) ctx.nextCursor = ids.at(-1);
         },
       })),
     );
@@ -1673,8 +1670,7 @@ const STEPS: readonly ((ctx: StepCtx) => Promise<void>)[] = [
         afterId: ctx.cursor,
         size: RECONCILE_PAGE_SIZE,
         onPage: (ids) => {
-          if (ids.length === RECONCILE_PAGE_SIZE)
-            ctx.nextCursor = ids[ids.length - 1];
+          if (ids.length === RECONCILE_PAGE_SIZE) ctx.nextCursor = ids.at(-1);
         },
       })),
     );
@@ -1749,10 +1745,7 @@ const findingSchema = z.object({
   details: z.record(jsonValueSchema).optional(),
 });
 
-async function runReconcileLedgersUnlocked(
-  opts: ReconcileScope,
-): Promise<ReconcileReport> {
-  const invocationStartedAt = Date.now();
+async function loadReconciliationReport(opts: ReconcileScope) {
   let row = await prisma.ledgerReconciliationReport.findFirst({
     where: { scope: opts.scope },
     orderBy: { runAt: "desc" },
@@ -1802,6 +1795,76 @@ async function runReconcileLedgersUnlocked(
       },
     });
   }
+  return { row, completedToday };
+}
+
+async function runComparisonPage(
+  page: StepCtx,
+  step: number,
+  reportId: string,
+  findings: Finding[],
+): Promise<void> {
+  if (step === 0) {
+    await stepWalletBalance(page);
+    if (page.findings.length > 0) {
+      for (const finding of page.findings) {
+        const existing = findings.findIndex(
+          (previous) =>
+            previous.kind === "WALLET_BALANCE_DRIFT" &&
+            previous.billingAccountId === finding.billingAccountId,
+        );
+        if (existing >= 0) findings[existing] = finding;
+        else findings.push(finding);
+      }
+      await page.opts.onWalletDrift?.(reportId, page.findings);
+      page.findings = [];
+    }
+  } else {
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+        await tx.$executeRaw`SET LOCAL statement_timeout = '6s'`;
+        page.db = tx;
+        await STEPS[step](page);
+      },
+      {
+        isolationLevel: "RepeatableRead",
+        maxWait: 1_000,
+        timeout: COMPARISON_TIMEOUT_MS,
+      },
+    );
+  }
+}
+
+function mergePageFindings(findings: Finding[], pageFindings: Finding[]): void {
+  for (const finding of pageFindings) {
+    const priorStale =
+      finding.kind === "CLAWBACK_RECEIVABLE_STALE"
+        ? findings.find((previous) => previous.kind === finding.kind)
+        : undefined;
+    if (priorStale) {
+      priorStale.actualPaise += finding.actualPaise;
+      priorStale.deltaPaise += finding.deltaPaise;
+      const previousDetails = z
+        .object({ payees: z.number(), sample: z.array(jsonValueSchema) })
+        .parse(priorStale.details);
+      const pageDetails = z
+        .object({ payees: z.number(), sample: z.array(jsonValueSchema) })
+        .parse(finding.details);
+      priorStale.details = {
+        ...priorStale.details,
+        payees: previousDetails.payees + pageDetails.payees,
+        sample: [...previousDetails.sample, ...pageDetails.sample].slice(0, 20),
+      };
+    } else findings.push(finding);
+  }
+}
+
+async function runReconcileLedgersUnlocked(
+  opts: ReconcileScope,
+): Promise<ReconcileReport> {
+  const invocationStartedAt = Date.now();
+  const { row, completedToday } = await loadReconciliationReport(opts);
   const checkpoint = checkpointSchema.parse(row.summary);
   const ctx: StepCtx = {
     opts,
@@ -1875,61 +1938,9 @@ async function runReconcileLedgersUnlocked(
         cursor,
         nextCursor: undefined,
       };
-      if (nextStep === 0) {
-        await stepWalletBalance(page);
-        if (page.findings.length > 0) {
-          for (const finding of page.findings) {
-            const existing = ctx.findings.findIndex(
-              (previous) =>
-                previous.kind === "WALLET_BALANCE_DRIFT" &&
-                previous.billingAccountId === finding.billingAccountId,
-            );
-            if (existing >= 0) ctx.findings[existing] = finding;
-            else ctx.findings.push(finding);
-          }
-          await opts.onWalletDrift?.(row.id, page.findings);
-          page.findings = [];
-        }
-      } else {
-        await prisma.$transaction(
-          async (tx) => {
-            await tx.$executeRaw`SET TRANSACTION READ ONLY`;
-            await tx.$executeRaw`SET LOCAL statement_timeout = '6s'`;
-            page.db = tx;
-            await STEPS[nextStep](page);
-          },
-          {
-            isolationLevel: "RepeatableRead",
-            maxWait: 1_000,
-            timeout: COMPARISON_TIMEOUT_MS,
-          },
-        );
-      }
+      await runComparisonPage(page, nextStep, row.id, ctx.findings);
       ctx.counts = page.counts;
-      for (const finding of page.findings) {
-        const priorStale =
-          finding.kind === "CLAWBACK_RECEIVABLE_STALE"
-            ? ctx.findings.find((previous) => previous.kind === finding.kind)
-            : undefined;
-        if (priorStale) {
-          priorStale.actualPaise += finding.actualPaise;
-          priorStale.deltaPaise += finding.deltaPaise;
-          const previousDetails = z
-            .object({ payees: z.number(), sample: z.array(jsonValueSchema) })
-            .parse(priorStale.details);
-          const pageDetails = z
-            .object({ payees: z.number(), sample: z.array(jsonValueSchema) })
-            .parse(finding.details);
-          priorStale.details = {
-            ...priorStale.details,
-            payees: previousDetails.payees + pageDetails.payees,
-            sample: [...previousDetails.sample, ...pageDetails.sample].slice(
-              0,
-              20,
-            ),
-          };
-        } else ctx.findings.push(finding);
-      }
+      mergePageFindings(ctx.findings, page.findings);
       cursor = page.nextCursor;
       if (!cursor) nextStep++;
       if (nextStep === STEPS.length) return save("COMPLETED");

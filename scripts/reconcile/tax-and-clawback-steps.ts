@@ -167,137 +167,130 @@ export async function walletOverageGstFindings(
   page?: { afterId?: string; size: number; onPage: (ids: string[]) => void },
 ): Promise<Finding[]> {
   const findings: Finding[] = [];
-  {
-    const where: Prisma.OverageEventWhereInput = {
-      overageBehavior: "CHARGE_ORG",
-      chargeStatus: "CHARGED",
-      surchargePaise: { gt: 0 },
-      invoiceLineItemId: null,
-      paymentId: { not: null },
-      ...(organizationId
-        ? { programAssignment: { program: { contract: { organizationId } } } }
-        : {}),
-    };
-    const paymentPage = page
-      ? await db.overageEvent.groupBy({
-          by: ["paymentId"],
-          where: {
-            ...where,
-            paymentId: {
-              not: null,
-              ...(page.afterId ? { gt: page.afterId } : {}),
-            },
+  const where: Prisma.OverageEventWhereInput = {
+    overageBehavior: "CHARGE_ORG",
+    chargeStatus: "CHARGED",
+    surchargePaise: { gt: 0 },
+    invoiceLineItemId: null,
+    paymentId: { not: null },
+    ...(organizationId
+      ? { programAssignment: { program: { contract: { organizationId } } } }
+      : {}),
+  };
+  const paymentPage = page
+    ? await db.overageEvent.groupBy({
+        by: ["paymentId"],
+        where: {
+          ...where,
+          paymentId: {
+            not: null,
+            ...(page.afterId ? { gt: page.afterId } : {}),
           },
-          orderBy: { paymentId: "asc" },
-          take: page.size,
-        })
-      : null;
-    const paymentIds = paymentPage
-      ?.map((row) => row.paymentId)
-      .filter((id): id is string => id !== null);
-    if (paymentIds) page?.onPage(paymentIds);
-    const walletOverages = await db.overageEvent.findMany({
-      where: {
-        ...where,
-        ...(paymentIds ? { paymentId: { in: paymentIds } } : {}),
-      },
-      select: {
-        id: true,
-        surchargePaise: true,
-        paymentId: true,
-        programAssignment: {
-          select: {
-            program: {
-              select: {
-                contract: {
-                  select: {
-                    organizationId: true,
-                    organization: { select: { dataResidencyRegion: true } },
-                  },
+        },
+        orderBy: { paymentId: "asc" },
+        take: page.size,
+      })
+    : null;
+  const selectedPaymentIds = paymentPage
+    ?.map((row) => row.paymentId)
+    .filter((id): id is string => id !== null);
+  if (selectedPaymentIds) page?.onPage(selectedPaymentIds);
+  const walletOverages = await db.overageEvent.findMany({
+    where: {
+      ...where,
+      ...(selectedPaymentIds ? { paymentId: { in: selectedPaymentIds } } : {}),
+    },
+    select: {
+      id: true,
+      surchargePaise: true,
+      paymentId: true,
+      programAssignment: {
+        select: {
+          program: {
+            select: {
+              contract: {
+                select: {
+                  organizationId: true,
+                  organization: { select: { dataResidencyRegion: true } },
                 },
               },
             },
           },
         },
       },
+    },
+  });
+
+  if (walletOverages.length === 0) return findings;
+  const expectedByPayment = new Map<
+    string,
+    { organizationId: string; surchargeTaxPaise: number }
+  >();
+  for (const ev of walletOverages) {
+    if (!ev.paymentId) continue;
+    const contract = ev.programAssignment.program.contract;
+    const tax = surchargeTaxPaise(
+      sumPaise(ev.surchargePaise),
+      contract.organization ? orgBuyerCountry(contract.organization) : "IN",
+    );
+    if (tax <= 0) continue;
+    const prev = expectedByPayment.get(ev.paymentId);
+    expectedByPayment.set(ev.paymentId, {
+      organizationId: contract.organizationId,
+      surchargeTaxPaise: (prev?.surchargeTaxPaise ?? 0) + tax,
     });
+  }
 
-    if (walletOverages.length > 0) {
-      const expectedByPayment = new Map<
-        string,
-        { organizationId: string; surchargeTaxPaise: number }
-      >();
-      for (const ev of walletOverages) {
-        if (!ev.paymentId) continue;
-        const contract = ev.programAssignment.program.contract;
-        const tax = surchargeTaxPaise(
-          sumPaise(ev.surchargePaise),
-          contract.organization ? orgBuyerCountry(contract.organization) : "IN",
-        );
-        if (tax <= 0) continue;
-        const prev = expectedByPayment.get(ev.paymentId);
-        expectedByPayment.set(ev.paymentId, {
-          organizationId: contract.organizationId,
-          surchargeTaxPaise: (prev?.surchargeTaxPaise ?? 0) + tax,
-        });
-      }
+  const paymentIds = [...expectedByPayment.keys()];
+  if (paymentIds.length === 0) return findings;
+  const [gstEntries, payments] = await Promise.all([
+    db.ledgerEntry.findMany({
+      where: {
+        account: { kind: "GST_PAYABLE" },
+        transaction: { paymentId: { in: paymentIds } },
+      },
+      select: {
+        direction: true,
+        amountPaise: true,
+        transaction: { select: { paymentId: true } },
+      },
+    }),
+    db.payment.findMany({
+      where: { id: { in: paymentIds } },
+      select: { id: true, taxAmount: true },
+    }),
+  ]);
+  const gstByPayment = new Map<string, number>();
+  for (const e of gstEntries) {
+    const pid = e.transaction.paymentId;
+    if (!pid) continue;
+    const signed =
+      e.direction === "CREDIT"
+        ? sumPaise(e.amountPaise)
+        : -sumPaise(e.amountPaise);
+    gstByPayment.set(pid, (gstByPayment.get(pid) ?? 0) + signed);
+  }
+  const taxAmountByPayment = new Map(
+    payments.map((p) => [p.id, sumPaise(p.taxAmount)]),
+  );
 
-      const paymentIds = [...expectedByPayment.keys()];
-      if (paymentIds.length > 0) {
-        const [gstEntries, payments] = await Promise.all([
-          db.ledgerEntry.findMany({
-            where: {
-              account: { kind: "GST_PAYABLE" },
-              transaction: { paymentId: { in: paymentIds } },
-            },
-            select: {
-              direction: true,
-              amountPaise: true,
-              transaction: { select: { paymentId: true } },
-            },
-          }),
-          db.payment.findMany({
-            where: { id: { in: paymentIds } },
-            select: { id: true, taxAmount: true },
-          }),
-        ]);
-        const gstByPayment = new Map<string, number>();
-        for (const e of gstEntries) {
-          const pid = e.transaction.paymentId;
-          if (!pid) continue;
-          const signed =
-            e.direction === "CREDIT"
-              ? sumPaise(e.amountPaise)
-              : -sumPaise(e.amountPaise);
-          gstByPayment.set(pid, (gstByPayment.get(pid) ?? 0) + signed);
-        }
-        const taxAmountByPayment = new Map(
-          payments.map((p) => [p.id, sumPaise(p.taxAmount)]),
-        );
-
-        for (const [paymentId, meta] of expectedByPayment) {
-          const posted = gstByPayment.get(paymentId) ?? 0;
-          const paymentTax = taxAmountByPayment.get(paymentId) ?? 0;
-          const expected = Math.max(meta.surchargeTaxPaise, paymentTax);
-          if (
-            posted < meta.surchargeTaxPaise ||
-            Math.abs(expected - posted) > 1
-          ) {
-            findings.push({
-              kind: "ORG_INVOICE_GST_MISMATCH",
-              organizationId: meta.organizationId,
-              paymentId,
-              expectedPaise: expected,
-              actualPaise: posted,
-              deltaPaise: posted - expected,
-              details: {
-                surchargeTaxPaise: meta.surchargeTaxPaise,
-                note: "Wallet-collected CHARGE_ORG overage surcharge is missing its expected GST_PAYABLE posting on the payment journal (#2005).",
-              },
-            });
-          }
-        }
-      }
+  for (const [paymentId, meta] of expectedByPayment) {
+    const posted = gstByPayment.get(paymentId) ?? 0;
+    const paymentTax = taxAmountByPayment.get(paymentId) ?? 0;
+    const expected = Math.max(meta.surchargeTaxPaise, paymentTax);
+    if (posted < meta.surchargeTaxPaise || Math.abs(expected - posted) > 1) {
+      findings.push({
+        kind: "ORG_INVOICE_GST_MISMATCH",
+        organizationId: meta.organizationId,
+        paymentId,
+        expectedPaise: expected,
+        actualPaise: posted,
+        deltaPaise: posted - expected,
+        details: {
+          surchargeTaxPaise: meta.surchargeTaxPaise,
+          note: "Wallet-collected CHARGE_ORG overage surcharge is missing its expected GST_PAYABLE posting on the payment journal (#2005).",
+        },
+      });
     }
   }
 
