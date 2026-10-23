@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import prisma from "@/lib/prisma";
-import { getSession } from "@/lib/auth-server";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { applyRateLimit, documentReviewLimiter } from "@/lib/rate-limit";
 import {
   FileRouteError,
@@ -24,7 +24,7 @@ import {
 } from "@/lib/documents/document-notify";
 import {
   UploadedFileSchema,
-  discardUpload,
+  discardRefusedUpload,
   documentRowData,
   lockAppointment,
   requireWritableParty,
@@ -60,9 +60,9 @@ const CLOSED: ReadonlySet<DocumentReviewStatus> = new Set([
  */
 export async function POST(request: Request, { params }: RouteContext) {
   return answerFileRoute(async () => {
-    const session = await getSession();
-    if (!session?.user?.id) return fileApiError("UNAUTHORIZED");
-    const userId = session.user.id;
+    const auth = await requireApiAuth();
+    if (auth.error) return auth.error;
+    const userId = auth.session.user.id;
     const limited = await applyRateLimit(documentReviewLimiter, userId);
     if (limited) return limited;
 
@@ -81,6 +81,52 @@ export async function POST(request: Request, { params }: RouteContext) {
       outcome = await withVersionConflictRetry(() =>
         prisma.$transaction(async (tx) => {
           await lockAppointment(tx, appointmentId);
+
+          // A replay of a request whose response was lost returns the rows the
+          // first attempt wrote, before the window and status checks can turn
+          // a success into a refusal.
+          const replayedReply = body.reply
+            ? await tx.appointmentDocument.findFirst({
+                where: {
+                  appointmentId,
+                  storagePath: body.reply.storagePath,
+                  deletedAt: null,
+                  uploadedByRole: "CONSULTANT",
+                },
+                select: {
+                  id: true,
+                  originalName: true,
+                  rootDocumentId: true,
+                  versionNo: true,
+                },
+              })
+            : null;
+          if (replayedReply) {
+            const target = await tx.appointmentDocument.findFirst({
+              where: { id: documentId, appointmentId, deletedAt: null },
+              select: {
+                id: true,
+                originalName: true,
+                rootDocumentId: true,
+                versionNo: true,
+                reviewStatus: true,
+              },
+            });
+            if (!target) throw new FileRouteError("NOT_FOUND");
+            // The reply must belong to the target's thread; a replay against
+            // an unrelated document is not a replay of this request.
+            const replyRoot = replayedReply.rootDocumentId ?? replayedReply.id;
+            const targetRoot = target.rootDocumentId ?? target.id;
+            if (replyRoot !== targetRoot) throw new FileRouteError("NOT_FOUND");
+            return {
+              party: null,
+              doc: target,
+              statusChanged: false,
+              nextStatus: target.reviewStatus,
+              reply: replayedReply,
+            };
+          }
+
           const party = await requireWritableParty(tx, appointmentId, userId);
           if (party.role !== "expert") throw new FileRouteError("FORBIDDEN");
 
@@ -97,9 +143,11 @@ export async function POST(request: Request, { params }: RouteContext) {
               rootDocumentId: true,
               versionNo: true,
               reviewStatus: true,
+              isStorageMissing: true,
             },
           });
           if (!doc) throw new FileRouteError("NOT_FOUND");
+          if (doc.isStorageMissing) throw new FileRouteError("STORAGE_MISSING");
           const rootId = doc.rootDocumentId ?? doc.id;
           const newerLearnerVersion = {
             deletedAt: null,
@@ -184,7 +232,13 @@ export async function POST(request: Request, { params }: RouteContext) {
         }),
       );
     } catch (error) {
-      if (body.reply) await discardUpload(body.reply.storagePath);
+      if (body.reply) {
+        await discardRefusedUpload({
+          appointmentId,
+          userId,
+          storagePath: body.reply.storagePath,
+        });
+      }
       if (error instanceof ThreadSlotError) {
         throw new FileRouteError(error.code);
       }
@@ -192,15 +246,17 @@ export async function POST(request: Request, { params }: RouteContext) {
     }
 
     const { party, doc, statusChanged, nextStatus, reply } = outcome;
-    if (statusChanged) {
-      await notifyDocumentReviewOutcome(
-        party,
-        doc,
-        nextStatus,
-        body.reviewNotes ?? null,
-      );
-    } else if (reply) {
-      await notifyDocumentAdded(party, reply);
+    if (party) {
+      if (statusChanged) {
+        await notifyDocumentReviewOutcome(
+          party,
+          doc,
+          nextStatus,
+          body.reviewNotes ?? null,
+        );
+      } else if (reply) {
+        await notifyDocumentAdded(party, reply);
+      }
     }
 
     return NextResponse.json(

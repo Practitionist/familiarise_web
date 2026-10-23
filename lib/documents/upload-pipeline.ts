@@ -163,6 +163,21 @@ export async function discardUpload(storagePath: string): Promise<void> {
   await deleteAppointmentDocument(storagePath).catch(() => false);
 }
 
+/**
+ * A live row already committed for this object. A request replayed after a
+ * lost response must return that row, never write a second one and never
+ * delete the bytes the first request committed.
+ */
+export async function findCommittedUpload(
+  tx: Pick<PrismaLike, "appointmentDocument">,
+  appointmentId: string,
+  storagePath: string,
+): Promise<AppointmentDocument | null> {
+  return tx.appointmentDocument.findFirst({
+    where: { appointmentId, storagePath, deletedAt: null },
+  });
+}
+
 /** Best-effort delete of a refused commit's object: only the caller's own folder, never a committed file. */
 export async function discardRefusedUpload(args: {
   appointmentId: string;
@@ -205,12 +220,22 @@ export async function commitDocumentUpload(args: {
   if (preflight.role === "expert" && parentDocumentId) {
     throw new FileRouteError("INVALID_INPUT");
   }
-  const stored = await verifyPartyUpload(preflight, input);
 
   try {
+    const stored = await verifyPartyUpload(preflight, input);
     return await withVersionConflictRetry(() =>
       prisma.$transaction(async (tx) => {
         await lockAppointment(tx, appointmentId);
+        const replayed = await findCommittedUpload(
+          tx,
+          appointmentId,
+          input.storagePath,
+        );
+        if (replayed) {
+          const party = await resolveDocumentParty(tx, appointmentId, userId);
+          if (!party) throw new FileRouteError("NOT_FOUND");
+          return { document: replayed, party };
+        }
         const party = await requireWritableParty(tx, appointmentId, userId);
         const slot = await resolveDocumentThreadSlot(tx, {
           appointmentId,
@@ -234,7 +259,11 @@ export async function commitDocumentUpload(args: {
       }),
     );
   } catch (error) {
-    await discardUpload(input.storagePath);
+    await discardRefusedUpload({
+      appointmentId,
+      userId,
+      storagePath: input.storagePath,
+    });
     if (error instanceof ThreadSlotError) {
       throw new FileRouteError(error.code);
     }

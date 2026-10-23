@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { FileViewer, FileViewerError } from "@/components/documents/FileViewer";
-import { getSession } from "@/lib/auth-server";
+import { requireApiSession } from "@/lib/auth-helpers";
 import { authorizeAppointmentDocument } from "@/lib/documents/file-access";
 import { getDocumentViewerUrl } from "@/lib/documents/urls";
 
@@ -18,12 +18,12 @@ export default async function DocumentViewerPage({
 }: Readonly<{ params: Promise<{ documentId: string }> }>) {
   const { documentId } = await params;
   const callbackPath = getDocumentViewerUrl(documentId);
-  const session = await getSession();
-  if (!session?.user?.id) {
+  const auth = await requireApiSession();
+  if (auth.error) {
     return <FileViewerError code="UNAUTHORIZED" callbackPath={callbackPath} />;
   }
   const access = await authorizeAppointmentDocument(
-    session.user.id,
+    auth.session.user.id,
     documentId,
   );
   return <FileViewer access={access} callbackPath={callbackPath} />;

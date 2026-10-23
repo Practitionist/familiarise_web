@@ -30,6 +30,30 @@ export function isReviewTransitionAllowed(
   return REVIEW_TRANSITIONS[from].includes(to);
 }
 
+/**
+ * A replay is idempotent, so the only unique violation worth retrying is a
+ * lost race on `(thread, versionNo)`. Retrying `P2002` blindly turned a
+ * replayed storage path into a delete of the object the first request
+ * committed.
+ */
+const THREAD_VERSION_CONFLICT =
+  /versionno|appointment_doc_thread_version_unique/i;
+const STORAGE_PATH_CONFLICT = /storagepath|active_storagepath_key/i;
+
+function isThreadVersionConflict(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  if ((error as { code?: string }).code !== "P2002") return false;
+  const target = (error as { meta?: { target?: unknown } }).meta?.target;
+  const targetText = Array.isArray(target)
+    ? target.join(",")
+    : typeof target === "string"
+      ? target
+      : "";
+  if (!targetText) return false;
+  if (STORAGE_PATH_CONFLICT.test(targetText)) return false;
+  return THREAD_VERSION_CONFLICT.test(targetText);
+}
+
 export async function withVersionConflictRetry<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
@@ -38,12 +62,7 @@ export async function withVersionConflictRetry<T>(
     try {
       return await fn();
     } catch (error) {
-      if (
-        attempt < 2 &&
-        typeof error === "object" &&
-        error !== null &&
-        (error as { code?: string }).code === "P2002"
-      ) {
+      if (attempt < 2 && isThreadVersionConflict(error)) {
         attempt += 1;
         continue;
       }
