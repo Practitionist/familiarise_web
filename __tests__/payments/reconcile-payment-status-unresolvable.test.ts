@@ -547,7 +547,7 @@ describe("payment polling progress after interrupted runs", () => {
                   (a, b) =>
                     (a.lastReconciledAt?.getTime() ?? 0) -
                       (b.lastReconciledAt?.getTime() ?? 0) ||
-                    a.id.localeCompare(b.id),
+                    (a.id < b.id ? -1 : 1),
                 )
                 .slice(0, q.take)
             : [],
@@ -560,12 +560,10 @@ describe("payment polling progress after interrupted runs", () => {
         if (row) row.lastReconciledAt = new Date();
         return 1;
       });
-    mockFetch
-      .mockReset()
-      .mockResolvedValue({
-        ok: true,
-        json: async () => ({ status: "created" }),
-      });
+    mockFetch.mockReset().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "created" }),
+    });
     for (let i = 0; i < 3; i++) await reconcilePaymentStatus({ limit: 10 });
     expect(new Set(mockFetch.mock.calls.map(([url]) => url)).size).toBe(25);
     expect(stamp).toHaveBeenCalledTimes(30);
@@ -582,5 +580,58 @@ describe("payment polling progress after interrupted runs", () => {
     await reconcilePaymentStatus({ startedAt: Date.now() - 20_000 });
     expect(mockFetch).not.toHaveBeenCalled();
     expect(prisma.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it("does not start a gateway read with under 3 s of budget left, leaving the row unstamped", async () => {
+    setRazorpayEnv();
+    (prisma.payment.findMany as jest.Mock)
+      .mockReset()
+      .mockResolvedValueOnce([pendingRow])
+      .mockResolvedValueOnce([]);
+    mockFetch.mockReset().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "created" }),
+    });
+    (prisma.$executeRaw as jest.Mock).mockClear();
+    const result = await reconcilePaymentStatus({
+      startedAt: Date.now() - 14_000,
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+    expect(result.totalProcessed).toBe(0);
+  });
+
+  it("keeps a timed-out row first in the rotation but stamps an ordinary gateway error", async () => {
+    setRazorpayEnv();
+    const timedOut = {
+      ...pendingRow,
+      id: "pay-a-timeout",
+      paymentIntent: "o1",
+    };
+    const failed = { ...pendingRow, id: "pay-b-500", paymentIntent: "o2" };
+    (prisma.payment.findMany as jest.Mock)
+      .mockReset()
+      .mockResolvedValueOnce([timedOut, failed])
+      .mockResolvedValueOnce([]);
+    mockFetch
+      .mockReset()
+      .mockRejectedValueOnce(
+        Object.assign(new Error("The operation was aborted due to timeout"), {
+          name: "TimeoutError",
+        }),
+      )
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: { description: "server error" } }),
+      });
+    const stamp = (prisma.$executeRaw as jest.Mock).mockClear();
+    const result = await reconcilePaymentStatus();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(stamp.mock.calls.map((c) => c[1])).toEqual(["pay-b-500"]);
+    expect(result.errors).toEqual([
+      expect.stringContaining("pay-a-timeout"),
+      expect.stringContaining("pay-b-500"),
+    ]);
   });
 });

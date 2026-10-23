@@ -448,7 +448,7 @@ test("skipped invoice cohorts rotate so later organizations are examined", async
       .sort(
         (a, b) =>
           (a.lastAccrualRollupAt?.getTime() ?? 0) -
-            (b.lastAccrualRollupAt?.getTime() ?? 0) || a.id.localeCompare(b.id),
+            (b.lastAccrualRollupAt?.getTime() ?? 0) || (a.id < b.id ? -1 : 1),
       )
       .slice(0, take),
   );

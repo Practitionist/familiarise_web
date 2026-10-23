@@ -261,7 +261,7 @@ describe("bounded top-up recovery polling", () => {
         .sort(
           (a, b) =>
             (a.lastReconciledAt?.getTime() ?? 0) -
-              (b.lastReconciledAt?.getTime() ?? 0) || a.id.localeCompare(b.id),
+              (b.lastReconciledAt?.getTime() ?? 0) || (a.id < b.id ? -1 : 1),
         )
         .slice(0, q.take),
     );

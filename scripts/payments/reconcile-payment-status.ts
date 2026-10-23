@@ -18,8 +18,14 @@
  */
 
 import { PRE_MINT_INTENT_PREFIX } from "@/lib/payments/pre-mint-intent";
-import { startDeadline } from "@/lib/cron/run-deadline";
-import { LEAST_RECENTLY_RECONCILED } from "@/lib/payments/payouts/reconcile-cursor";
+import {
+  startDeadline,
+  SWEEP_START_DEADLINE_MS,
+} from "@/lib/cron/run-deadline";
+import {
+  compareLeastRecentlyReconciled,
+  LEAST_RECENTLY_RECONCILED,
+} from "@/lib/payments/payouts/reconcile-cursor";
 import prisma from "../../lib/prisma";
 import { PaymentStatus, PaymentGateway, Prisma } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
@@ -39,6 +45,9 @@ const MIN_AGE_MINUTES = 5;
 
 // Don't reconcile payments older than 7 days
 const MAX_AGE_DAYS = 7;
+
+// A gateway read is not started with less budget than this left; the row stays unstamped and first.
+const GATEWAY_READ_HEADROOM_MS = 3_000;
 
 // #1757 — a PENDING row this old whose id the gateway does not know is retired,
 // not re-reported every tick; younger ones may still be gateway lag.
@@ -104,7 +113,7 @@ type GatewayLookup =
       amountPaise?: number;
     }
   | { kind: "unknown_id"; detail: string }
-  | { kind: "gateway_error"; detail: string };
+  | { kind: "gateway_error"; detail: string; timedOut?: boolean };
 
 export interface ReconcilePaymentStatusOptions {
   /** Maximum candidates examined per run across both cohorts; defaults to 50. */
@@ -202,6 +211,7 @@ async function getRazorpayPaymentStatus(
     return {
       kind: "gateway_error",
       detail: error instanceof Error ? error.message : String(error),
+      timedOut: error instanceof Error && error.name === "TimeoutError",
     };
   }
 }
@@ -327,11 +337,7 @@ async function reconcilePaymentStatusUnlocked(
       (p) => !stalePendingPayments.some((s) => s.id === p.id),
     ),
   ]
-    .sort(
-      (a, b) =>
-        (a.lastReconciledAt?.getTime() ?? 0) -
-          (b.lastReconciledAt?.getTime() ?? 0) || a.id.localeCompare(b.id),
-    )
+    .sort(compareLeastRecentlyReconciled)
     .slice(0, limit);
   let totalProcessed = 0;
 
@@ -349,9 +355,22 @@ async function reconcilePaymentStatusUnlocked(
     `Found ${stalePendingPayments.length} stale PENDING payments to reconcile, ${orphanCandidates.length} orphan candidate(s) past the orphan age`,
   );
 
+  const gatewayDeadlineAt = startedAt + SWEEP_START_DEADLINE_MS;
   for (const payment of cohort) {
     if (pastDeadline()) break;
+    const needsGatewayRead =
+      payment.paymentGateway === PaymentGateway.RAZORPAY &&
+      !!payment.paymentIntent &&
+      razorpayConfigured;
+    if (
+      needsGatewayRead &&
+      gatewayDeadlineAt - Date.now() < GATEWAY_READ_HEADROOM_MS
+    ) {
+      break;
+    }
     totalProcessed++;
+    // A timed-out read is not a poll; the row keeps its place in the rotation.
+    let rotate = true;
     try {
       // #1861 P4b — every key is written each row ("none" when unknown), so a
       // captured error never carries a previous row's ids.
@@ -386,7 +405,7 @@ async function reconcilePaymentStatusUnlocked(
         }
         lookup = await getRazorpayPaymentStatus(
           payment.paymentIntent,
-          startedAt + 16_000,
+          gatewayDeadlineAt,
         );
       } else if (payment.paymentGateway !== PaymentGateway.STRIPE) {
         // Permanent: neither this sweep nor the retire path can read this gateway.
@@ -468,6 +487,7 @@ async function reconcilePaymentStatusUnlocked(
       }
 
       if (lookup.kind === "gateway_error") {
+        if (lookup.timedOut) rotate = false;
         console.log(`   Could not get status from gateway - skipping`);
         errors.push(
           `Payment ${payment.id}: Could not query gateway status (${lookup.detail})`,
@@ -627,7 +647,9 @@ async function reconcilePaymentStatusUnlocked(
       }
     } finally {
       try {
-        await prisma.$executeRaw`UPDATE "Payment" SET "lastReconciledAt" = now() WHERE id = ${payment.id}`;
+        if (rotate) {
+          await prisma.$executeRaw`UPDATE "Payment" SET "lastReconciledAt" = now() WHERE id = ${payment.id}`;
+        }
       } catch (error) {
         errors.push(
           `Polling cursor Payment ${payment.id}: ${error instanceof Error ? error.message : String(error)}`,

@@ -12,7 +12,10 @@
  */
 
 import { startDeadline } from "@/lib/cron/run-deadline";
-import { LEAST_RECENTLY_RECONCILED } from "@/lib/payments/payouts/reconcile-cursor";
+import {
+  compareLeastRecentlyReconciled,
+  LEAST_RECENTLY_RECONCILED,
+} from "@/lib/payments/payouts/reconcile-cursor";
 import prisma from "../../lib/prisma";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import { PaymentGateway, Prisma, RefundStatus } from "@prisma/client";
@@ -203,11 +206,7 @@ async function reconcilePendingRefundsUnlocked(
   });
   // Select across both rails before processing either, so a slow rail cannot starve the other.
   const pending = [...placeholders, ...realIds]
-    .sort(
-      (a, b) =>
-        (a.lastReconciledAt?.getTime() ?? 0) -
-          (b.lastReconciledAt?.getTime() ?? 0) || a.id.localeCompare(b.id),
-    )
+    .sort(compareLeastRecentlyReconciled)
     .slice(0, limit);
   const stalePlaceholders = pending.filter((r) =>
     r.refundId.startsWith("pending_"),

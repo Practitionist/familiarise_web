@@ -217,10 +217,9 @@ describe("payment-legs sum trigger — sidecar wiring (source contract)", () => 
     );
     expect(pkg.scripts["db:sidecars"]).toBeDefined();
 
-    // The CI sidecar checker (scripts/ci/check-db-sidecars.ts) auto-discovers
-    // every prisma/sql/*.sql and parses trigger declarations into expected
-    // live-catalog objects (line 57). The contract is canonical formatting —
-    // verify ours matches the exact shape that regex is built for.
+    // The CI sidecar checker parses trigger declarations from every
+    // SIDECAR_FILES entry into expected live-catalog objects; verify ours
+    // matches the exact shape that regex is built for.
     const checker = readFileSync(
       // #1319 — the parser moved to the shared module both entry points use.
       path.join(process.cwd(), "scripts", "db", "sidecar-objects.ts"),

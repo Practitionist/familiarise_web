@@ -158,7 +158,7 @@ The remaining 29 registry slugs and the 13 jobs with no HTTP twin are catalogued
 
 ## Sidecars
 
-The three SQL files under `prisma/sql/` are hand-written and idempotent. Each statement is preceded by a `DROP ... IF EXISTS`, statements are separated by a literal `-- SPLIT` marker, and each runs in its own short transaction with `lock_timeout = '3s'` so an unobtainable lock fails fast instead of blocking the table.
+The three sidecar files under `prisma/sql/` (`check-constraints.sql`, `ledger-triggers.sql`, `payment-legs-triggers.sql`, listed in `SIDECAR_FILES` in `scripts/db/sidecar-objects.ts`) are hand-written and idempotent. Each statement is preceded by a `DROP ... IF EXISTS`, statements are separated by a literal `-- SPLIT` marker, and each runs in its own short transaction with `lock_timeout = '3s'` so an unobtainable lock fails fast instead of blocking the table. `reconciliation-cursors.sql` in the same folder is not a sidecar: it is a one-off operator rollout of columns and indexes the schema already declares, so neither `db:sidecars` nor the sidecar checks read it.
 
 | File                        | `ADD CONSTRAINT` | Indexes | Triggers |
 | --------------------------- | ---------------- | ------- | -------- |
