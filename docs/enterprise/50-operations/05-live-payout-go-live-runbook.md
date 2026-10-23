@@ -8,14 +8,14 @@ last-reviewed: 2026-06-05
 
 # Live-payout go-live runbook
 
-> **Superseded.** The go-live procedure, with the corrected environment checks, the static-egress requirement and the rollback, is the [money go-live checklist](../../finance/70-operations/07-go-live-checklist.md). This file is pending removal.
+> **Superseded.** The go-live procedure, with the corrected environment checks, the static-egress requirement and the rollback, is the [money go-live checklist](../../finance/70-operations/07-go-live-checklist.md). This stub keeps the numbering of this folder contiguous.
 
 > **Status:** `ENABLE_LIVE_PAYOUTS` is **OFF**. Payouts are batched and
 > approved, but approved payouts stay `APPROVED` and are never claimed to
 > `PROCESSING`, so money does **not** leave the gateway. The plain-language
 > summary of the payout model and the four go-live steps is
 > [how payouts work](../../finance/40-payouts/01-how-payouts-work.md). This runbook makes flipping the flag a de-risked,
-> one-variable operation. Related: [payout-pipeline](../10-money-and-ledger/07-payout-pipeline.md),
+> one-variable operation. Related: [payout-pipeline](../../finance/40-payouts/05-org-payouts-and-clawbacks.md),
 > [runbooks](02-runbooks.md).
 
 The disbursement code is real (`lib/payments/payouts/org-payout-service.ts`
@@ -86,7 +86,7 @@ is real money on the first run — so the prerequisites below are hard gates.
 The checklist above proves the _submission_ path, but the gateway's own
 lifecycle has three sharp edges that only matter once real money is
 moving. Each is documented in detail in
-[`payout-pipeline`](../10-money-and-ledger/07-payout-pipeline.md) §3; they
+[`payout-pipeline`](../../finance/40-payouts/05-org-payouts-and-clawbacks.md) §3; they
 are summarised here as go-live concerns because the prove-before-flip work
 must account for them before any high-value payout ships.
 
@@ -151,7 +151,7 @@ step for the ones that need real sandbox creds):
 | Idempotency key never null                | schema `@unique` + creator stamps `payout_<profile>_<batch>`                                                                                                                             |
 | Real sandbox submit succeeds              | **manual**: set `RAZORPAYX_SANDBOX_KEY`/`_SECRET`, submit one payout against the RazorpayX sandbox host, confirm the `payout.processed` webhook lands and `markOrgPayoutCompleted` fires |
 | `TDS_ENGINE` is not accidentally `LEGACY` | inspect the deployed environment: the default is `"194O"` (Section 194-O, the e-commerce-operator posture), `LEGACY` is deprecated and must be an explicit opt-in                        |
-| `ENABLE_TDS_194O_GROSS` is not `"false"`  | the 194-O gross base is on by default; `"false"` is shadow mode that withholds on the net share, per [TDS overview](../../compliance/02-tds-overview.md)                                 |
+| `ENABLE_TDS_194O_GROSS` is not `"false"`  | the 194-O gross base is on by default; `"false"` is shadow mode that withholds on the net share, per [TDS overview](../../finance/60-tax/03-tds-rules-and-returns.md)                    |
 
 ## Flip procedure
 

@@ -957,7 +957,7 @@ Rescheduling does **not** trigger any payment operations:
 
 The original payment covers the new slots once the consultant re-allocates. From the payment system's perspective, a reschedule is invisible -- it only affects appointment slots and event statuses, not financial records.
 
-**Cross-reference:** [`docs/payments/cancellations-rescheduling/02-rescheduling-payment-flow.md`](../payments/cancellations-rescheduling/02-rescheduling-payment-flow.md)
+**Cross-reference:** [`docs/finance/30-refunds-disputes/01-refunds.md`](../finance/30-refunds-disputes/01-refunds.md)
 
 ---
 
@@ -1158,8 +1158,8 @@ In practice, this edge case is unlikely because sessions rarely span midnight. B
 
 - [Architecture](./01-architecture.md) -- Slot services (calculation, validation, allocation)
 - [API Reference](./04-api-reference.md) -- Validate and allocate endpoints (used after reschedule)
-- [Rescheduling Payment Flow](../payments/cancellations-rescheduling/02-rescheduling-payment-flow.md) -- Payment reuse details
-- [Cancellation Payment Flow](../payments/cancellations-rescheduling/01-cancellation-payment-flow.md) -- When user cancels instead of rescheduling
+- [Rescheduling Payment Flow](../finance/30-refunds-disputes/01-refunds.md) -- Payment reuse details
+- [Cancellation Payment Flow](../finance/30-refunds-disputes/01-refunds.md) -- When user cancels instead of rescheduling
 
 ## The response loop (2026-08-14, #1163 / #1169 PR 4)
 

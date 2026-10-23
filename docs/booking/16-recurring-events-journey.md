@@ -142,7 +142,7 @@ Consultees find plans through:
 
 A class listing (`ClassPlan`) runs as one or more batches, and each batch is one `Class` row with its own sessions and seats. The explore page shows one card per batch, labelled by its start date and weekday pattern (for example "Starts Mon 28 Sep · Mondays", or "Varies" when the days drift), with running and upcoming batches first, finished batches collapsed under "Past batches", the seats left, the free-cancellation line and an "Enrol in this batch" button that opens checkout with that batch's `eventId`. One pure function, `deriveBatchCards` in `lib/booking/batch-cards.ts`, produces those cards for the explore page, the checkout header and the host's class list, so all three agree on order, label and state.
 
-By default a batch stops taking enrolments when its first session starts. A host can instead let learners join until a later session through "Let learners join until session N" in the class editor, which writes `ClassPlan.lateJoinUntilSession` (at least 1 and at most the plan's `totalSessions`; empty means session 1). A learner who joins after the first session pays only for the sessions that have not started, as described in `docs/payments/checkout-flow/02-webinar-and-class.md`, and the seat records that count in `AppointmentParticipant.sessionsPurchased`. Checkout refuses a batch past its cutoff with the typed 409 `ENROLMENT_CLOSED`.
+By default a batch stops taking enrolments when its first session starts. A host can instead let learners join until a later session through "Let learners join until session N" in the class editor, which writes `ClassPlan.lateJoinUntilSession` (at least 1 and at most the plan's `totalSessions`; empty means session 1). A learner who joins after the first session pays only for the sessions that have not started, as described in `docs/finance/10-money-in/01-checkout-and-pricing.md`, and the seat records that count in `AppointmentParticipant.sessionsPurchased`. Checkout refuses a batch past its cutoff with the typed 409 `ENROLMENT_CLOSED`.
 
 A late joiner does not see recordings of the sessions that ran before their seat unless the host turns on "Late joiners can watch earlier recordings" (`ClassPlan.lateJoinersGetPastRecordings`). A learner whose only seats on the listing are late joins also does not see recordings of the listing's other batches, because those would replay the sessions they did not buy. The class recordings list, the learner's recordings list and the single-recording read all apply both rules through the recordings loader (`loadRecordingViews` in `lib/stream/recording-slots.ts`).
 
@@ -530,7 +530,7 @@ All cron jobs are triggered by GitHub Actions workflows in `.github/workflows/`.
 | Cancellation flow                        | `docs/booking/08-cancellation-flow.md`              |
 | Trial sessions (subscription-only)       | `docs/booking/09-trials.md`                         |
 | Event capacity (class/webinar-only)      | `docs/booking/02-event-types-and-validation.md`     |
-| Payout architecture                      | `docs/payments/payouts/01-architecture.md`          |
-| Earnings lifecycle                       | `docs/payments/payouts/02-earnings-lifecycle.md`    |
+| Payout architecture                      | `docs/finance/40-payouts/03-consultant-payouts.md`  |
+| Earnings lifecycle                       | `docs/finance/40-payouts/02-earnings-lifecycle.md`  |
 | Collaborator revenue sharing             | `docs/collaborators/03-revenue-sharing.md`          |
 | Cron jobs overview                       | `docs/booking/13-cron-jobs-and-background-tasks.md` |

@@ -59,7 +59,7 @@ question, not just a code change.
    transaction**. An asynchronous best-effort log is not evidence.
 5. **Check whether the law imputes erasure.** PECR/ICO: yes. Bavarian DPA: no.
    CJEU C-129/21: scoped to the purpose. **Unsettled — resolve per purpose in
-   writing.** See `docs/market-research/05-claims-register.md` §I1.
+   writing.** This is the highest-risk open ambiguity in the domain.
 6. **Test**: gate flips false immediately; re-grant produces a **new** row and
    never mutates the withdrawn one.
 
@@ -142,8 +142,11 @@ New data purpose ► §A1 (consent)  ← ALWAYS a separate flow
 A new processor ─► §C3, plus a DPA question
 ```
 
-Never let one carry the other. See
-`docs/market-research/01-consent-and-terms-landscape.md` §6.
+Never let one carry the other: a ToS re-acceptance is not purpose-specific or
+granular, so it cannot supply DPDP s.6(1)'s clear affirmative action, and
+GDPR Art 7(4) / EDPB 03/2022 treat bundled consent as not freely given. India
+has no express anti-bundling clause, which makes it the riskier place to rely
+on one.
 
 ### §C2 — The ToS change
 
@@ -182,17 +185,19 @@ it was communicated. That is a legal review question.
    retention, and RBI payment data — which reaches us _contractually_ through
    the payment provider, not by geography. The control is "never put payment
    payloads in telemetry", enforced in code.
-4. If residency becomes a contractual requirement, see
-   `docs/market-research/02-observability-vendors.md` §5.
+4. DPDP s.16 / Rule 15 is a may-restrict power about foreign states, and the
+   draft critical-data localisation clause was dropped, so the real lever is
+   minimisation. Only a customer contract or board policy would make India
+   residency for telemetry a requirement.
 
 ---
 
 ## D. Answering "is this compliant?"
 
-Work the claims register, not your memory.
-`docs/market-research/05-claims-register.md` has every load-bearing claim with
-a source and a confidence marker, plus a section of genuinely **open**
-questions.
+Work from a claims register, not your memory: every load-bearing claim has a
+source, a date checked and a confidence marker, and genuinely **open**
+questions are listed separately. The register is maintained outside this
+repo.
 
 Say which of the two you are dealing with:
 

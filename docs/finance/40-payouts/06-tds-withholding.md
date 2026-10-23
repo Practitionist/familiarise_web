@@ -22,7 +22,7 @@ Two engines exist in the code. The 194-O engine is the default and is the one th
 - **Legacy engine (`TDS_ENGINE=LEGACY`).** Keeps the older rule of a ₹50,000 yearly threshold (`TDS_THRESHOLD_PAISE`, 5,000,000 paise in `lib/payments/tax/tds-service.ts`) applied to the cumulative net share, and taxes only the part above it. The rate still comes from the 194-O rate row, so it is the threshold that differs, not the rate. This engine is a flag-only fallback. The file `tds-service.ts` is still imported by the 194-O engine for its financial-year arithmetic and its record writers, so it is not dead code.
 - **Shadow mode.** `ENABLE_TDS_194O_GROSS` defaults to on (`lib/feature-flags.ts`). Set to `false`, the planner withholds on the net share instead and records a `TDS_194O_GROSS_SHADOW_DIFF` system event whenever the gross-based figure would have been different.
 
-The organisation rail has no engine switch. It always uses the computation in [Organisation payouts](05-org-payouts-and-clawbacks.md).
+The organisation rail has no engine switch. It always uses the computation in [Organisation payouts](05-org-payouts-and-clawbacks.md). Its base, `netPayoutPaise` (the share after the platform fee), is pending CA confirmation, since the consultant rail withholds on the gross.
 
 ## The base: gross consideration
 
@@ -96,8 +96,9 @@ When a refund lands after TDS was recorded, `recordTdsReversal` (`lib/payments/t
 - The total reversed is capped at the original withholding, so an app refund followed by a lost chargeback cannot reverse twice.
 - If the original quarter is not yet reported, the reversal is filed in that quarter. If the original has been reported (`reportedInForm26Q` or a challan number), the adjustment is filed in the current quarter, because correcting a filed return is a manual accountant action.
 - If the bank returns a completed payout, the whole TDS record is reversed and any credit that was paid is re-owed, so the next payout recomputes it.
+- The unique key allows one reversal row per payout and quarter, so a second reversal in the same quarter (two refunds, a refund then a chargeback, or a refund then a bank return) decrements the existing unfiled row with a compare-and-set on its prior amount. Each reversal still writes its own `TdsAdjustment`.
 
-The organisation rail reverses through `recordOrgTdsReversal`.
+The organisation rail reverses through `recordOrgTdsReversal`: in full on a bank return, and pro rata on a refund, a lost chargeback, a credit-funded cancellation or a completion shortfall, where the reversed fraction is the reversed share over `netPayoutPaise` (`orgClawbackNetOfTds`). The reversed TDS is not yet journaled on either rail: `TDS_PAYABLE` moves only on payout completion and bank return, so after a refund-driven reversal the payable keeps a residual debit equal to the TDS reversed.
 
 ## Rules and their enforcers
 

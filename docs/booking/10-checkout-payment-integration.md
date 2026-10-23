@@ -292,13 +292,13 @@ For subscriptions specifically, the legacy flow logs a warning since all new sub
 
 ## Cross-References
 
-| Topic                                              | Document                                            |
-| -------------------------------------------------- | --------------------------------------------------- |
-| Payment checkout flow (frontend perspective)       | `docs/payments/checkout-flow/`                      |
-| Payment status enums and transitions               | `docs/payments/03-status-enums-reference.md`        |
-| Concurrency and distributed locking                | `docs/booking/12-concurrency-and-locking.md`        |
-| Payment gateway configuration                      | `docs/payments/gateways/`                           |
-| Payout and earnings architecture                   | `docs/payments/payouts/`                            |
-| Approval payments (pay-later) flow                 | `docs/payments/approval-payments/`                  |
-| Cancellation and refund flows                      | `docs/payments/cancellations-rescheduling/`         |
-| Cron jobs (expired payment cleanup, earnings sync) | `docs/booking/13-cron-jobs-and-background-tasks.md` |
+| Topic                                              | Document                                                       |
+| -------------------------------------------------- | -------------------------------------------------------------- |
+| Payment checkout flow (frontend perspective)       | `docs/finance/10-money-in/01-checkout-and-pricing.md`          |
+| Payment status enums and transitions               | `docs/finance/00-overview/02-glossary-and-status-reference.md` |
+| Concurrency and distributed locking                | `docs/booking/12-concurrency-and-locking.md`                   |
+| Payment gateway configuration                      | `docs/finance/10-money-in/04-razorpay-gateway-and-currency.md` |
+| Payout and earnings architecture                   | `docs/finance/40-payouts/01-how-payouts-work.md`               |
+| Approval payments (pay-later) flow                 | `docs/finance/10-money-in/05-approval-payments.md`             |
+| Cancellation and refund flows                      | `docs/finance/30-refunds-disputes/01-refunds.md`               |
+| Cron jobs (expired payment cleanup, earnings sync) | `docs/booking/13-cron-jobs-and-background-tasks.md`            |
