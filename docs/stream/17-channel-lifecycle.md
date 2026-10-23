@@ -153,6 +153,40 @@ A webinar or class may span multiple appointments across cohorts but owns
 **one** event channel, so its age is computed from the **latest** slot `endsAt`
 across all non-deleted occurrences.
 
+## Organisation wind-down completion
+
+`wind-down-deactivated-orgs` records `STREAM_ORG_WOUND_DOWN` only after the
+organisation's call/channel work completes without errors. The tagged-channel
+query uses `frozen: false`; a truncated vendor page is unfinished work, even if
+every returned messaging channel was frozen successfully. A thrown enumeration
+error is also incomplete, including a not-found-shaped query error. Expected
+not-found responses for an individual channel retain their idempotent handling.
+
+Neither the wind-down marker nor `STREAM_ORG_RETENTION_COMPLETE` may be written
+after a scan or channel failure in that organisation's current pass. The retention
+marker checks the error count from before that organisation's wind-down, so a
+successful empty purge cannot hide an earlier incomplete channel scan. An earlier
+organisation's failure does not prevent a later organisation from recording its
+own completed work; the overall invocation remains unsuccessful. Direct unexpected
+member-removal exceptions are collected and reported once per invocation.
+
+The shared pager reads at most 30 channels per page and stops before requesting an
+offset above 1000, returning up to 1020 channels. A successfully frozen messaging
+prefix leaves the `frozen: false` query, so a retry can reach its tail. This is not
+general continuation: an unchanged prefix of non-messaging channels or persistent
+failures can keep hiding that tail. Those workloads remain unsupported until a
+reviewed bounded progress repair exists. Existing completion markers are not
+re-audited or backfilled by this change.
+
+The 100-organisation and 250-removed-member outer caps do not bound their related
+surface, recording or vendor work. Keep the current scheduling owner and require a
+separate runtime/capacity review before putting this core on a short HTTP ticker.
+No schedule, retention policy, global token revocation or source repair is enabled
+by these completion checks.
+
+Sources: [Stream channel query limits](https://getstream.io/chat/docs/javascript/query-channels/),
+`jobs/stream/wind-down-deactivated-orgs.ts`, `lib/stream/batch.ts`.
+
 ## The sync expected-set contract
 
 `syncUserEventChannels` in `actions/stream/chat/event-channel.action.ts` is the

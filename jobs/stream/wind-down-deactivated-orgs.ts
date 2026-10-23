@@ -1,8 +1,10 @@
 import "dotenv/config";
 
-import * as Sentry from "@sentry/nextjs";
-
 import prisma from "../../lib/prisma";
+import {
+  createRunFailureReporter,
+  type RunFailureReporter,
+} from "../../lib/observability/run-failures";
 import {
   getStreamChatClient,
   isExpectedStreamError,
@@ -67,8 +69,17 @@ type DeactivatedOrgRow = {
 };
 
 export async function windDownDeactivatedOrgs(): Promise<WindDownDeactivatedOrgsResult> {
-  return withCronLock("wind-down-deactivated-orgs", { failMode: "open" }, () =>
-    windDownDeactivatedOrgsUnlocked(),
+  return withCronLock(
+    "wind-down-deactivated-orgs",
+    { failMode: "open" },
+    async () => {
+      const failures = createRunFailureReporter("stream");
+      try {
+        return await windDownDeactivatedOrgsUnlocked(failures);
+      } finally {
+        failures.flush();
+      }
+    },
   );
 }
 
@@ -164,7 +175,9 @@ async function loadCandidateDeactivatedOrgs(
   return [...freshOrgs, ...retentionReadyOrgs];
 }
 
-async function windDownDeactivatedOrgsUnlocked(): Promise<WindDownDeactivatedOrgsResult> {
+async function windDownDeactivatedOrgsUnlocked(
+  failures: RunFailureReporter,
+): Promise<WindDownDeactivatedOrgsResult> {
   const result: WindDownDeactivatedOrgsResult = {
     orgsScanned: 0,
     callsEnded: 0,
@@ -200,7 +213,7 @@ async function windDownDeactivatedOrgsUnlocked(): Promise<WindDownDeactivatedOrg
     }
   }
 
-  await drainPendingMemberRemovals(now, result);
+  await drainPendingMemberRemovals(now, result, failures);
 
   if (result.errors.length > 0) {
     result.success = false;
@@ -371,22 +384,22 @@ async function collectAllOrgDmChannelIds(
   }
 
   try {
-    const { channels: taggedChannels } = await queryOrgTaggedChannels(
-      chat,
-      orgId,
-      { frozen: false },
-    );
+    const { channels: taggedChannels, truncated } =
+      await queryOrgTaggedChannels(chat, orgId, { frozen: false });
+    if (truncated) {
+      result.errors.push(
+        `org ${orgId} queryChannelsPaged: truncated after ${taggedChannels.length} channels; wind-down remains incomplete`,
+      );
+    }
     for (const ch of taggedChannels) {
       if (ch.id && ch.type === "messaging") {
         dmChannelIds.add(ch.id);
       }
     }
   } catch (err) {
-    if (!isExpectedStreamError(err)) {
-      result.errors.push(
-        `org ${orgId} queryChannelsPaged: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    result.errors.push(
+      `org ${orgId} queryChannelsPaged: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
   return Array.from(dmChannelIds);
 }
@@ -478,13 +491,13 @@ async function purgeExpiredOrgRecordings(
   org: DeactivatedOrgRow,
   now: Date,
   result: WindDownDeactivatedOrgsResult,
+  orgErrorsBefore: number,
 ): Promise<void> {
   if (!prisma.recording?.findMany) return;
   const retentionDays =
     org.streamRecordingRetentionDays ?? DEFAULT_RETENTION_DAYS;
   const deactivatedAnchor = resolveDeactivatedAnchor(org);
   const retentionCutoff = new Date(now.getTime() - retentionDays * DAY_MS);
-  const purgeErrorsBefore = result.errors.length;
 
   const expiredRecordings = await prisma.recording.findMany({
     where: {
@@ -508,7 +521,7 @@ async function purgeExpiredOrgRecordings(
 
   if (
     deactivatedAnchor <= retentionCutoff &&
-    result.errors.length === purgeErrorsBefore &&
+    result.errors.length === orgErrorsBefore &&
     prisma.orgAuditLog?.create
   ) {
     await prisma.orgAuditLog.create({
@@ -580,7 +593,7 @@ async function windDownSingleOrg(
     }
   }
 
-  await purgeExpiredOrgRecordings(org, now, result);
+  await purgeExpiredOrgRecordings(org, now, result, errorsBefore);
 }
 
 async function loadRejoinedMemberKeys(
@@ -603,6 +616,7 @@ async function loadRejoinedMemberKeys(
 async function drainSingleRemovedMember(
   row: { userId: string; organizationId: string },
   result: WindDownDeactivatedOrgsResult,
+  failures: RunFailureReporter,
 ): Promise<void> {
   try {
     const outcome = await revokeMemberStreamAccess({
@@ -620,16 +634,17 @@ async function drainSingleRemovedMember(
     result.errors.push(
       `removed member ${row.userId}@${row.organizationId}: ${err instanceof Error ? err.message : String(err)}`,
     );
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "stream", op: "wind-down-deactivated-orgs" } },
-    );
+    failures.add("wind-down-member-removal", err, {
+      userId: row.userId,
+      organizationId: row.organizationId,
+    });
   }
 }
 
 async function drainPendingMemberRemovals(
   now: Date,
   result: WindDownDeactivatedOrgsResult,
+  failures: RunFailureReporter,
 ): Promise<void> {
   if (!prisma.membership?.findMany) return;
   const windowFrom = new Date(
@@ -658,7 +673,7 @@ async function drainPendingMemberRemovals(
 
   for (const row of uniquePairs) {
     if (rejoinedKeys.has(`${row.userId}:${row.organizationId}`)) continue;
-    await drainSingleRemovedMember(row, result);
+    await drainSingleRemovedMember(row, result, failures);
   }
 }
 

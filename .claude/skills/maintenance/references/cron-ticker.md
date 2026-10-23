@@ -39,6 +39,18 @@ Every scheduled GitHub Actions workflow declares `concurrency: { group: ${{ gith
 3. **Single scheduler**: Put sub-hourly recovery sweeps in `netlify/functions/cron-tick.mts` (`TARGETS`), and daily/weekly/monthly jobs in a `TARGET_WINDOWS` slot or, if they cannot run bounded inside the ticker's timeout, in GitHub Actions — never both. Every tick must stay at or under `MAX_TARGETS_PER_TICK`.
 4. **Financial jobs**: If the job mutates money or payouts, include its slug in `FINANCIAL_JOB_NAMES` (`lib/cron/financial-jobs.ts`).
 
+## Stream organisation wind-down
+
+`wind-down-deactivated-orgs` must not record either organisation completion marker
+after a truncated/failed tagged-channel scan or channel failure in that pass. Its
+retention marker uses the organisation's pre-wind-down error count, not a fresh
+post-error baseline. Other organisations can finish independently while the run
+still reports failure. The pager's offset ceiling and the unbounded related
+surface/recording work remain capacity gates: a frozen messaging prefix can leave
+the filter, but an unchanged prefix does not guarantee tail progress. Do not add a
+ticker target or second automatic clock on the strength of these marker checks.
+See `docs/stream/17-channel-lifecycle.md#organisation-wind-down-completion`.
+
 ## Sources
 
 `AGENTS.md`, `lib/cron/cleanup-registry.ts`, `lib/cron/cleanup-route.ts`, `lib/cron/with-cron-lock.ts`, `netlify/functions/cron-tick.mts`.
