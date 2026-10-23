@@ -186,6 +186,7 @@ describe("what a decision may be recorded on", () => {
         expect.anything(),
         expect.not.objectContaining({ closingMessage: expect.anything() }),
         expect.any(Date),
+        { actorRole: "ADMIN", freshSession: false },
       );
     },
   );
@@ -237,6 +238,7 @@ describe("decisions are terminal", () => {
       expect.anything(),
       expect.objectContaining({ status: "RESOLVED" }),
       expect.any(Date),
+      { actorRole: "ADMIN", freshSession: false },
     );
   });
 });

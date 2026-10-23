@@ -159,7 +159,7 @@ The gate in one line: the report is ok when `unbaselinedCount` is zero **and** `
 
 ## 5. When a finding fires
 
-A finding is an **incident signal, never a thing to hand-patch.** The drift is a symptom; the fix is upstream (the writer that diverged), and the correction — if money is involved — is a **counter-transaction**, not a SQL `UPDATE` on a balance. See [runbooks](../50-operations/02-runbooks.md) for the per-finding triage procedure (which writer to inspect, how to post a correcting entry, when to page).
+A finding is an **incident signal, never a thing to hand-patch.** The drift is a symptom; the fix is upstream (the writer that diverged), and the correction — if money is involved — is a **counter-transaction**, not a SQL `UPDATE` on a balance. See [runbooks](../../enterprise/50-operations/02-runbooks.md) for the per-finding triage procedure (which writer to inspect, how to post a correcting entry, when to page).
 
 For `WALLET_BALANCE_DRIFT` the steps are:
 
@@ -180,11 +180,11 @@ For `WALLET_BALANCE_DRIFT` the steps are:
 
 ### Related docs
 
-- [Money model overview](01-money-model-overview.md) §4 — the reconciled-cache contract.
-- [Ledger & postings](03-ledger-and-postings.md) — the postings these checks re-sum.
-- [Payment legs](09-payment-legs.md) — the leg-sum invariant, enforced by the `payment_legs_sum_to_amount` trigger.
-- [Runbooks](../50-operations/02-runbooks.md) — per-finding incident response.
-- [Monitoring](../50-operations/03-monitoring.md) — alerting on report `ok:false`.
+- [Money model overview](01-double-entry-model.md) §4 — the reconciled-cache contract.
+- [Ledger & postings](../../enterprise/10-money-and-ledger/03-ledger-and-postings.md) — the postings these checks re-sum.
+- [Payment legs](03-payment-legs.md) — the leg-sum invariant, enforced by the `payment_legs_sum_to_amount` trigger.
+- [Runbooks](../../enterprise/50-operations/02-runbooks.md) — per-finding incident response.
+- [Monitoring](../../enterprise/50-operations/03-monitoring.md) — alerting on report `ok:false`.
 - Ground truth: `scripts/reconcile/reconcile-ledgers.ts`, `scripts/reconcile/ledger-findings-baseline.ts`, `LedgerReconciliationReport` in `prisma/schema.prisma`.
 
 ---

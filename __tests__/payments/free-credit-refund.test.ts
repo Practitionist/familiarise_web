@@ -81,6 +81,9 @@ const tx = {
   },
 };
 
+jest.mock("../../lib/payments/ledger/refund-reversal-basis", () =>
+  jest.requireActual("../fixtures/no-refund-reversal-basis"),
+);
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {

@@ -30,43 +30,44 @@ The gap they left open was in the error boundary rather than in the gate itself.
 
 ### API Routes by Category
 
-| Route Category                                                                  | DEGRADED                                 | OFFLINE                    | Risk Level |
-| ------------------------------------------------------------------------------- | ---------------------------------------- | -------------------------- | ---------- |
-| **Webhooks** (`/api/webhooks/*`)                                                | Exempt -- always processed               | Exempt -- always processed | Low        |
-| **Health** (`/api/health`)                                                      | Exempt -- always responds                | Exempt -- always responds  | None       |
-| **Auth** (`/api/auth/*`)                                                        | Exempt -- always works                   | Exempt -- always works     | None       |
-| **Maintenance API** (`/api/admin/maintenance`)                                  | Exempt                                   | Exempt                     | None       |
-| **Checkout** (`POST /api/checkout`, `DELETE /api/checkout/pending/[paymentId]`) | **Writes blocked (503)**                 | Blocked (503)              | HIGH       |
-| **Checkout verify** (`GET /api/checkout/verify` without `sync`)                 | Allowed (read-only status poll)          | Blocked (503)              | LOW        |
-| **Cancel appointment** (`/api/appointments/[id]/cancel`)                        | **Writes blocked (503)**                 | Blocked                    | MEDIUM     |
-| **Reschedule** (`/api/appointments/[id]/reschedule`)                            | **Writes blocked (503)**                 | Blocked                    | MEDIUM     |
-| **Documents** (`/api/appointments/[id]/documents`)                              | Allowed                                  | Blocked                    | LOW        |
-| **Consultations** (`/api/bookings/consultations`)                               | GET: Allowed, POST/PATCH: **blocked**    | Blocked                    | HIGH       |
-| **Subscriptions** (`/api/bookings/subscriptions`)                               | GET: Allowed, POST: **blocked**          | Blocked                    | HIGH       |
+| Route Category                                                                  | DEGRADED                                          | OFFLINE                    | Risk Level |
+| ------------------------------------------------------------------------------- | ------------------------------------------------- | -------------------------- | ---------- |
+| **Webhooks** (`/api/webhooks/*`)                                                | Exempt -- always processed                        | Exempt -- always processed | Low        |
+| **Health** (`/api/health`)                                                      | Exempt -- always responds                         | Exempt -- always responds  | None       |
+| **Auth** (`/api/auth/*`)                                                        | Exempt -- always works                            | Exempt -- always works     | None       |
+| **Maintenance API** (`/api/admin/maintenance`)                                  | Exempt                                            | Exempt                     | None       |
+| **Checkout** (`POST /api/checkout`, `DELETE /api/checkout/pending/[paymentId]`) | **Writes blocked (503)**                          | Blocked (503)              | HIGH       |
+| **Checkout verify** (`GET /api/checkout/verify` without `sync`)                 | Allowed (read-only status poll)                   | Blocked (503)              | LOW        |
+| **Cancel appointment** (`/api/appointments/[id]/cancel`)                        | **Writes blocked (503)**                          | Blocked                    | MEDIUM     |
+| **Reschedule** (`/api/appointments/[id]/reschedule`)                            | **Writes blocked (503)**                          | Blocked                    | MEDIUM     |
+| **Documents** (`/api/appointments/[id]/documents`)                              | Allowed                                           | Blocked                    | LOW        |
+| **Consultations** (`/api/bookings/consultations`)                               | GET: Allowed, POST/PATCH: **blocked**             | Blocked                    | HIGH       |
+| **Subscriptions** (`/api/bookings/subscriptions`)                               | GET: Allowed, POST: **blocked**                   | Blocked                    | HIGH       |
 | **Webinars** (`/api/bookings/webinars`)                                         | GET: Allowed, POST, PATCH and DELETE: **blocked** | Blocked                    | MEDIUM     |
 | **Classes** (`/api/bookings/classes`)                                           | GET: Allowed, POST, PATCH and DELETE: **blocked** | Blocked                    | MEDIUM     |
-| **Allocate slots** (`/api/bookings/*/allocate`)                                 | **Writes blocked (503)**                 | Blocked                    | HIGH       |
-| **Validate** (`/api/bookings/*/validate`)                                       | Allowed (read-only)                      | Blocked                    | LOW        |
-| **Trials** (`/api/trials`, `/api/trials/[id]`)                                  | **Writes blocked (503)**                 | Blocked                    | MEDIUM     |
-| **Plans** (`/api/plans/*`)                                                      | GET: Allowed, POST/PATCH: Allowed (gap)  | Blocked                    | MEDIUM     |
-| **Slot appointments** (`/api/scheduling/appointments`)                          | **Writes blocked (503)** (Mar 2026)      | Blocked                    | HIGH       |
-| **Waitlist / newsletter** (`/api/waitlist`)                                     | **Writes blocked (503)** (Mar 2026)      | Blocked                    | LOW        |
-| **Referrals** (`/api/referrals`)                                                | **Writes blocked (503)** (Mar 2026)      | Blocked                    | MEDIUM     |
-| **Collaborations** (`/api/collaborations`)                                      | **Writes blocked (503)** (Mar 2026)      | Blocked                    | MEDIUM     |
-| **Disputes** (`/api/payments/disputes`)                                         | **Writes blocked (503)** (Mar 2026)      | Blocked                    | HIGH       |
-| **Admin payouts** (`/api/admin/payouts`)                                        | **Writes blocked (503)** (Mar 2026)      | Blocked                    | HIGH       |
-| **Payment recovery** (`/api/payments/*/recover`)                                | **Writes blocked (503)** (#1741)         | Blocked                    | HIGH       |
-| **Recording purchase** (`/api/recordings/*/purchase`)                           | **Writes blocked (503)** (#1741)         | Blocked                    | HIGH       |
-| **Overage order** (`/api/overage/*/order`)                                      | **Writes blocked (503)** (#1741)         | Blocked                    | HIGH       |
-| **Participants** (`/api/participants`)                                          | **Writes blocked (503)** (#1741)         | Blocked                    | MEDIUM     |
-| **Meetings join/end** (`/api/meetings/*/join`, `/api/meetings/*/end`)           | **Writes blocked (503)** (#1741)         | Blocked                    | MEDIUM     |
-| **Checkout verify sync** (`GET /api/checkout/verify?sync=true`)                 | **Blocked (503)** (#1741)                | Blocked                    | HIGH       |
-| **Admin refunds** (`/api/admin/refunds`)                                        | **Writes blocked (503)** (#1598 P1-W02a) | Blocked                    | HIGH       |
-| **TDS filing marks** (`/api/admin/tds`)                                         | **Writes blocked (503)** (#1598 P1-W02a) | Blocked                    | MEDIUM     |
-| **Billing-account writes** (`/api/admin/billing-accounts`)                      | **Writes blocked (503)** (#1598 P1-W02a) | Blocked                    | HIGH       |
-| **User routes** (`/api/user/*`)                                                 | Allowed                                  | Blocked                    | LOW        |
-| **Admin routes** (`/api/admin/*`, other than the three rows above)              | Allowed                                  | Blocked                    | LOW        |
-| **Staff routes** (`/api/staff/*`)                                               | Allowed                                  | Blocked                    | LOW        |
+| **Allocate slots** (`/api/bookings/*/allocate`)                                 | **Writes blocked (503)**                          | Blocked                    | HIGH       |
+| **Validate** (`/api/bookings/*/validate`)                                       | Allowed (read-only)                               | Blocked                    | LOW        |
+| **Trials** (`/api/trials`, `/api/trials/[id]`)                                  | **Writes blocked (503)**                          | Blocked                    | MEDIUM     |
+| **Plans** (`/api/plans/*`)                                                      | GET: Allowed, POST/PATCH: Allowed (gap)           | Blocked                    | MEDIUM     |
+| **Slot appointments** (`/api/scheduling/appointments`)                          | **Writes blocked (503)** (Mar 2026)               | Blocked                    | HIGH       |
+| **Waitlist / newsletter** (`/api/waitlist`)                                     | **Writes blocked (503)** (Mar 2026)               | Blocked                    | LOW        |
+| **Referrals** (`/api/referrals`)                                                | **Writes blocked (503)** (Mar 2026)               | Blocked                    | MEDIUM     |
+| **Collaborations** (`/api/collaborations`)                                      | **Writes blocked (503)** (Mar 2026)               | Blocked                    | MEDIUM     |
+| **Disputes** (`/api/payments/disputes`)                                         | **Writes blocked (503)** (Mar 2026)               | Blocked                    | HIGH       |
+| **Admin payouts** (`/api/admin/payouts`)                                        | **Writes blocked (503)** (Mar 2026)               | Blocked                    | HIGH       |
+| **Payment recovery** (`/api/payments/*/recover`)                                | **Writes blocked (503)** (#1741)                  | Blocked                    | HIGH       |
+| **Recording purchase** (`/api/recordings/*/purchase`)                           | **Writes blocked (503)** (#1741)                  | Blocked                    | HIGH       |
+| **Overage order** (`/api/overage/*/order`)                                      | **Writes blocked (503)** (#1741)                  | Blocked                    | HIGH       |
+| **Participants** (`/api/participants`)                                          | **Writes blocked (503)** (#1741)                  | Blocked                    | MEDIUM     |
+| **Meetings join/end** (`/api/meetings/*/join`, `/api/meetings/*/end`)           | **Writes blocked (503)** (#1741)                  | Blocked                    | MEDIUM     |
+| **Checkout verify sync** (`GET /api/checkout/verify?sync=true`)                 | **Blocked (503)** (#1741)                         | Blocked                    | HIGH       |
+| **Admin refunds** (`/api/admin/refunds`)                                        | **Writes blocked (503)** (#1598 P1-W02a)          | Blocked                    | HIGH       |
+| **TDS filing marks** (`/api/admin/tds`)                                         | **Writes blocked (503)** (#1598 P1-W02a)          | Blocked                    | MEDIUM     |
+| **Billing-account writes** (`/api/admin/billing-accounts`)                      | **Writes blocked (503)** (#1598 P1-W02a)          | Blocked                    | HIGH       |
+| **Admin money writes** (org payouts, org invoices, earnings, disputes, credits) | **Writes blocked (503)**                          | Blocked                    | HIGH       |
+| **User routes** (`/api/user/*`)                                                 | Allowed                                           | Blocked                    | LOW        |
+| **Admin routes** (`/api/admin/*`, other than the money rows above)              | Allowed                                           | Blocked                    | LOW        |
+| **Staff routes** (`/api/staff/*`)                                               | Allowed                                           | Blocked                    | LOW        |
 
 ### Infrastructure Components
 
@@ -105,6 +106,7 @@ The gap they left open was in the error boundary rather than in the gate itself.
 | `/api/admin/refunds`                          | The admin refund front door is a money write, not a read (#1598 P1-W02a)                                                 |
 | `/api/admin/tds`                              | Prevent marking a TDS filing as reported mid-maintenance (#1598 P1-W02a)                                                 |
 | `/api/admin/billing-accounts`                 | Prevent a wallet unfreeze mid-maintenance (#1598 P1-W02a)                                                                |
+| `/api/admin/org-payouts`, `earnings`, ...     | Every other admin door that moves money; the full list is `WRITE_BLOCKED_IN_DEGRADED`                                    |
 
 **Status**: checkout (the POST and the `sync=true` verify GET; the plain verify GET stays a read), appointment cancel/reschedule, event CRUD (webinars, classes), and trial routes are all now write-blocked in DEGRADED mode too — see `lib/maintenance-edge.ts`'s `WRITE_BLOCKED_IN_DEGRADED` list for the current, complete set of doors.
 
