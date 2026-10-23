@@ -103,13 +103,14 @@ jest.mock("../../lib/prisma", () => {
           writtenAgreementWithFamiliarise: false,
         })),
       },
-      payment: {
-        findMany: jest.fn(async () =>
-          ORGS.filter((o) => !billedOrgs.has(o)).map((organizationId) => ({
-            organizationId,
-          })),
+      organization: {
+        findMany: jest.fn(async ({ take }: { take: number }) =>
+          ORGS.filter((o) => !billedOrgs.has(o))
+            .slice(0, take)
+            .map((id) => ({ id })),
         ),
       },
+      $executeRaw: jest.fn(async () => 1),
       $transaction: jest.fn(async (fn: (t: unknown) => Promise<unknown>) =>
         fn(tx),
       ),
@@ -192,8 +193,9 @@ it("invoices each org once across slices of two", async () => {
   const runs = [];
   for (let i = 0; i < 3; i++)
     runs.push(await settleInvoiceAccruals({ limit: 2 }));
+  // `remaining` peeks one row past the slice, so it is a lower bound.
   expect(runs.map((r) => [r.invoicesCreated, r.remaining])).toEqual([
-    [2, 2],
+    [2, 1],
     [2, 0],
     [0, 0],
   ]);

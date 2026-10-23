@@ -48,6 +48,8 @@ export function useOpsDoor(opts: {
   invalidate: readonly (readonly unknown[])[];
   onDone?: (data: Record<string, unknown>) => void;
   onFailed?: () => void;
+  /** A door's own copy for a refusal code, in place of the route's message. */
+  refusalCopy?: Readonly<Record<string, string>>;
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -66,7 +68,9 @@ export function useOpsDoor(opts: {
     onError: (err: Error) => {
       toast({
         title: "Not done",
-        description: err.message,
+        description:
+          (err instanceof OpsDoorError && opts.refusalCopy?.[err.code]) ||
+          err.message,
         variant: "destructive",
       });
       opts.onFailed?.();

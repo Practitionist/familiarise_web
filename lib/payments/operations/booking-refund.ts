@@ -61,9 +61,9 @@ import { seatLedger } from "@/lib/booking/class-series";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
+import { refundReversalBasis } from "@/lib/payments/ledger/refund-reversal-basis";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
 import { isPastGstCreditNoteCutoff } from "@/lib/compliance/gst-credit-note-cutoff";
-import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   attemptTrigger,
   notifyRefundProcessed,
@@ -81,7 +81,7 @@ import {
   attemptStaged as attemptStagedEmails,
   type StagedRecipientEmail,
 } from "@/lib/email/send-to-recipients";
-import { applyReversal, postPayoutClawback } from "./reversal-engine";
+import { applyReversal, clawBackCompletedOrgPayout } from "./reversal-engine";
 import {
   accumulatePaidConsultantClawback,
   applyPaidConsultantClawbacks,
@@ -552,6 +552,7 @@ export async function restoreClassSeatCredits(input: {
             initiatedByUserId: input.initiatedByUserId,
             reason: input.reason,
             share: { num: restoredPaise, den: creditValue },
+            completes: restoredPaise >= stillUsed,
           });
           notice = await stageRefundNotice(tx, payment, restoredPaise);
           return {
@@ -695,6 +696,8 @@ async function reverseFreeCreditSettlement(
     reason: string;
     /** #1771 K-5 — reverse only num/den of the booking (a partial credit return). */
     share?: { num: number; den: number };
+    /** This return exhausts the credit, so it takes the DISCOUNT's exact remainder. */
+    completes?: boolean;
   },
 ): Promise<void> {
   const share = input.share;
@@ -735,7 +738,13 @@ async function reverseFreeCreditSettlement(
           refundedAmountPaise: true,
           status: true,
           orgPayoutId: true,
-          orgPayout: { select: { status: true, clawbackInitiatedAt: true } },
+          orgPayout: {
+            select: {
+              status: true,
+              clawbackInitiatedAt: true,
+              netPayoutPaise: true,
+            },
+          },
         },
       },
     },
@@ -843,41 +852,17 @@ async function reverseFreeCreditSettlement(
       orgEarn.orgPayout?.status === "COMPLETED" &&
       orgApplied > 0
     ) {
-      await tx.organizationPayout.update({
-        where: { id: orgEarn.orgPayoutId },
-        data: {
-          clawbackAmountPaise: { increment: orgApplied },
-          clawbackInitiatedAt: orgEarn.orgPayout.clawbackInitiatedAt
-            ? undefined
-            : new Date(),
-        },
-      });
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId: orgEarn.organizationId,
-          actorMembershipId: null,
-          category: "PAYOUT",
-          action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
-          description: `Credit-funded cancellation clawback: ${orgApplied} paise from payout ${orgEarn.orgPayoutId}`,
-          details: {
-            paymentId: input.paymentId,
-            refundId: input.refundId,
-            orgEarningsId: orgEarn.id,
-            orgPayoutId: orgEarn.orgPayoutId,
-            amountPaise: orgApplied,
-            initiatedByUserId: input.initiatedByUserId,
-          } as Prisma.InputJsonValue,
-        },
-      });
-      // #1582 C-P1-02c — journal the clawback in the same tx as the counter.
-      // Gated on the APPLIED figure, never the request: a zero (refused CAS, or
-      // a cap that leaves nothing) must post NOTHING, because `postLedgerTxn`
-      // THROWS on a non-positive amount.
-      await postPayoutClawback(tx, {
-        refundId: input.refundId,
-        payoutId: orgEarn.orgPayoutId,
-        amountPaise: orgApplied,
+      // Gated on the APPLIED figure: a zero must post nothing, as `postLedgerTxn` throws on it.
+      await clawBackCompletedOrgPayout(tx, {
+        orgPayout: { ...orgEarn.orgPayout, id: orgEarn.orgPayoutId },
         organizationId: orgEarn.organizationId,
+        orgEarningsId: orgEarn.id,
+        paymentId: input.paymentId,
+        refundId: input.refundId,
+        grossPaise: orgApplied,
+        amountPaise: orgApplied,
+        label: "Credit-funded cancellation clawback",
+        initiatedByUserId: input.initiatedByUserId,
       });
     }
   }
@@ -892,6 +877,20 @@ async function reverseFreeCreditSettlement(
       direction: "CREDIT",
       amountPaise: promoTotal,
     });
+    // A coupon on a credit-funded booking was booked to DISCOUNT; it returns with the credits.
+    const { discountBackPaise } = await refundReversalBasis(
+      tx,
+      input.paymentId,
+      part,
+      input.completes ?? !share,
+    );
+    if (discountBackPaise > 0) {
+      credits.push({
+        account: { kind: "DISCOUNT" },
+        direction: "CREDIT",
+        amountPaise: discountBackPaise,
+      });
+    }
   } else if (discountBack > 0) {
     credits.push({
       account: { kind: "DISCOUNT" },

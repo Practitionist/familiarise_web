@@ -27,6 +27,7 @@ import {
   type TdsDeducteeType,
   type TdsReturnSourceRow,
 } from "@/lib/compliance/tds-return";
+import { equivalentTdsSections } from "@/lib/compliance/tds";
 import { decryptPAN } from "@/lib/payments/tax/pan-crypto";
 import { uploadPrivateFinanceObject } from "@/lib/storage/private-finance-object";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -380,11 +381,11 @@ async function loadDeducteeIdentities(
 }
 
 /**
- * §393 payment codes: one code per section, from the newest effective-dated
- * rate row that was already in force when the quarter closed. Filing a quarter
- * under a rate that took effect after it ended misclassifies the line.
+ * §393 payment codes keyed by the recorded section, each from the newest rate
+ * row for that section or its cross-cutover equivalent already in force when
+ * the quarter closed. A rate that took effect after the quarter misclassifies it.
  */
-async function loadPaymentCodesBySection(
+export async function loadPaymentCodesBySection(
   sections: string[],
   financialYear: string,
   quarter: number,
@@ -394,16 +395,16 @@ async function loadPaymentCodesBySection(
 
   const rates = await prisma.tdsRate.findMany({
     where: {
-      section: { in: sections },
+      section: { in: [...new Set(sections.flatMap(equivalentTdsSections))] },
       effectiveFrom: { lt: quarterEndExclusiveUTC(financialYear, quarter) },
     },
     orderBy: { effectiveFrom: "desc" },
     select: { section: true, paymentCode: true },
   });
-  for (const r of rates) {
-    if (!paymentCodeBySection.has(r.section)) {
-      paymentCodeBySection.set(r.section, r.paymentCode);
-    }
+  for (const section of sections) {
+    const aliases = equivalentTdsSections(section);
+    const newest = rates.find((r) => aliases.includes(r.section));
+    paymentCodeBySection.set(section, newest?.paymentCode ?? null);
   }
   return paymentCodeBySection;
 }

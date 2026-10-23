@@ -14,6 +14,7 @@ import {
   type TAppointmentDetail,
 } from "@/lib/data/appointment-detail";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import { operatorOpsHref } from "@/lib/backoffice/booking-href";
 
 import DetailPageClient from "./DetailPageClient";
 import { DelivererDetailClient } from "./DelivererDetailClient";
@@ -215,6 +216,8 @@ export default async function OrgAppointmentDetailPage({
         !hasConfirmedLiveSession
       }
       isSubscription={appointment.subscription !== null}
+      // Branches 1 and 2 returned every party, so an operator here is not one.
+      opsHref={operatorOpsHref(access.session.user, false, appointmentId)}
     />
   );
 }

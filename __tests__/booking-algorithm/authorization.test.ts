@@ -7,7 +7,8 @@
  *
  * Covers:
  * - authorizeEventAccess: consultant, consultee, stranger, admin for all 4 event types
- * - Reschedule route: participant check via if-else chain, ADMIN/STAFF bypass
+ * - Reschedule route: participant check via if-else chain, ADMIN/STAFF only
+ *   through the platform door's grant
  * - Cancel route: participant check, ADMIN/STAFF bypass, stranger gets 403
  *
  * Verifies Part 1 Bug 02 (allocate/validate auth), Part 1 Bug 03 (reschedule auth),
@@ -89,6 +90,7 @@ import { authorizeEventAccess, isPrivileged } from "@/lib/auth-helpers";
 import { POST as rescheduleHandler } from "@/app/api/appointments/[appointmentId]/reschedule/route";
 import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/cancel/route";
 import { grantPlatformCancel } from "@/lib/booking/platform-cancel";
+import { grantPlatformReschedule } from "@/lib/booking/platform-reschedule";
 
 // ─── Session Factories ──────────────────────────────────────────────────────
 
@@ -762,7 +764,7 @@ describe("Reschedule Route — Authorization", () => {
     expect(res.status).toBe(200);
   });
 
-  it("should allow ADMIN to reschedule any appointment", async () => {
+  it("should allow ADMIN to reschedule any appointment through the platform door's grant", async () => {
     (getSession as jest.Mock).mockResolvedValue(adminSession());
     const mockTx = makeMockTx(makeWebinarAppointment());
     (prisma.$transaction as jest.Mock).mockImplementation(
@@ -770,12 +772,13 @@ describe("Reschedule Route — Authorization", () => {
     );
 
     const req = makeRescheduleRequest("apt-1", "WEBINAR");
+    grantPlatformReschedule(req, "ops-1");
     const res = await rescheduleHandler(req, makeParams("apt-1"));
 
     expect(res.status).toBe(200);
   });
 
-  it("should allow STAFF to reschedule any appointment", async () => {
+  it("should allow STAFF to reschedule any appointment through the platform door's grant", async () => {
     (getSession as jest.Mock).mockResolvedValue(staffSession());
     const mockTx = makeMockTx(makeClassAppointment());
     (prisma.$transaction as jest.Mock).mockImplementation(
@@ -783,7 +786,71 @@ describe("Reschedule Route — Authorization", () => {
     );
 
     const req = makeRescheduleRequest("apt-1", "CLASS");
+    grantPlatformReschedule(req, "ops-1");
     const res = await rescheduleHandler(req, makeParams("apt-1"));
+
+    expect(res.status).toBe(200);
+  });
+
+  it.each([
+    ["ADMIN", adminSession, makeWebinarAppointment],
+    ["STAFF", staffSession, makeConsultationAppointment],
+  ])(
+    "should refuse a %s non-party reschedule that skipped the audited platform door",
+    async (_role, session, appointment) => {
+      (getSession as jest.Mock).mockResolvedValue(session());
+      const mockTx = makeMockTx(appointment());
+      (prisma.$transaction as jest.Mock).mockImplementation(
+        async (callback: any) => callback(mockTx),
+      );
+
+      const res = await rescheduleHandler(
+        makeRescheduleRequest("apt-1", appointment().appointmentType),
+        makeParams("apt-1"),
+      );
+
+      expect(res.status).toBe(403);
+      expect((await res.json()).code).toBe("PLATFORM_RESCHEDULE_DOOR_REQUIRED");
+      expect(
+        mockTx.appointmentOccurrence.updateManyAndReturn,
+      ).not.toHaveBeenCalled();
+      expect(mockTx.bookingStatusHistory.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it("should not let a platform cancel grant stand in for a reschedule grant", async () => {
+    (getSession as jest.Mock).mockResolvedValue(staffSession());
+    const mockTx = makeMockTx(makeConsultationAppointment());
+    (prisma.$transaction as jest.Mock).mockImplementation(
+      async (callback: any) => callback(mockTx),
+    );
+
+    const req = makeRescheduleRequest("apt-1", "CONSULTATION");
+    grantPlatformCancel(req, "ops-1");
+    const res = await rescheduleHandler(req, makeParams("apt-1"));
+
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("PLATFORM_RESCHEDULE_DOOR_REQUIRED");
+  });
+
+  it("should let an ADMIN who is the booking's consultant reschedule without a grant", async () => {
+    (getSession as jest.Mock).mockResolvedValue(
+      makeSession({
+        id: "consultant-user",
+        role: "ADMIN",
+        twoFactorEnabled: true,
+        consultantProfileId: "cp-001",
+      }),
+    );
+    const mockTx = makeMockTx(makeConsultationAppointment());
+    (prisma.$transaction as jest.Mock).mockImplementation(
+      async (callback: any) => callback(mockTx),
+    );
+
+    const res = await rescheduleHandler(
+      makeRescheduleRequest("apt-1", "CONSULTATION"),
+      makeParams("apt-1"),
+    );
 
     expect(res.status).toBe(200);
   });

@@ -64,7 +64,7 @@ a separate funding model — it's a `LICENSED_SEAT` Program with
 `coveredEngagementsPerCycle = null`. The old PREPAID_UNLIMITED enum value
 pretended the two were distinct; they are not.
 
-Each funding source determines which ledger account a sponsored booking debits (via its `PaymentLeg.source` → the `BOOKING` posting; see [payment legs](../10-money-and-ledger/09-payment-legs.md) and [ledger & postings](../10-money-and-ledger/03-ledger-and-postings.md)):
+Each funding source determines which ledger account a sponsored booking debits (via its `PaymentLeg.source` → the `BOOKING` posting; see [payment legs](../../finance/20-ledger/03-payment-legs.md) and [ledger & postings](../../finance/20-ledger/04-postings.md)):
 
 ```mermaid
 flowchart LR
@@ -124,9 +124,9 @@ operational load.)
 | Failure mode that bites        | margin erosion if usage spikes (cap it with a `LICENSED_SEAT` engagement ceiling instead of `null`) | a _captured-but-uncredited_ top-up stranding money — the bug #785 fixed (`ca6e9073`)                           | silent stuck money: a stuck `CHARGE_MEMBER` or an unpaid invoice — the dunning + timeout work #779 §D added (`59482e83`)            |
 
 Operational claims here are grounded in the money-band docs:
-[wallet-and-topups](../10-money-and-ledger/04-wallet-and-topups.md) (cache vs
-journal, auto-top-up), [invoicing](../10-money-and-ledger/08-invoicing.md)
-(roll-up, GST, dunning, IRN), and [payout-pipeline](../10-money-and-ledger/07-payout-pipeline.md).
+[wallet-and-topups](../../finance/50-b2b/02-wallet-and-top-ups.md) (cache vs
+journal, auto-top-up), [invoicing](../../finance/50-b2b/04-invoices-purchase-orders-and-dunning.md)
+(roll-up, GST, dunning, IRN), and [payout-pipeline](../../finance/40-payouts/05-org-payouts-and-clawbacks.md).
 
 ## Programs layer
 
@@ -314,7 +314,7 @@ engine — see [cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle
 
 ## Capability × funding combinations
 
-The sell-supported matrix — capability (`canSponsor`/`canHost`, see [organization-types](02-organization-types.md)) × funding source. The create call sets the booleans + (for sponsors) `fundingSource`; checkout writes the leg shown (→ which ledger account it debits, see [payment-legs](../10-money-and-ledger/09-payment-legs.md)). Worked end-to-end cases: [scenarios-and-examples](../60-scenarios-and-verdicts/01-scenarios-and-examples.md).
+The sell-supported matrix — capability (`canSponsor`/`canHost`, see [organization-types](02-organization-types.md)) × funding source. The create call sets the booleans + (for sponsors) `fundingSource`; checkout writes the leg shown (→ which ledger account it debits, see [payment-legs](../../finance/20-ledger/03-payment-legs.md)). Worked end-to-end cases: [scenarios-and-examples](../60-scenarios-and-verdicts/01-scenarios-and-examples.md).
 
 | Capability | Funding   | Create (key fields)                                                     | Checkout leg → ledger                                                        | Cron                               |
 | ---------- | --------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ---------------------------------- |
@@ -390,13 +390,13 @@ flowchart LR
 
 ## Related docs
 
-The [wallet-and-topups](../10-money-and-ledger/04-wallet-and-topups.md) doc covers
+The [wallet-and-topups](../../finance/50-b2b/02-wallet-and-top-ups.md) doc covers
 wallet top-ups, debits, and refunds, while
-[invoicing](../10-money-and-ledger/08-invoicing.md) covers invoice generation, GST,
+[invoicing](../../finance/50-b2b/04-invoices-purchase-orders-and-dunning.md) covers invoice generation, GST,
 and the purchase-order three-way match. The
 [programs](../30-programs-and-lifecycle/02-programs.md) doc is the deeper dive into
 `Program`, `ProgramAssignment`, `BookingUtilization`, and `OverageEvent`, and
-[payment-legs](../10-money-and-ledger/09-payment-legs.md) documents the
+[payment-legs](../../finance/20-ledger/03-payment-legs.md) documents the
 `PaymentLeg` model that carries the per-source breakdown of every payment. For the
 commercial lifecycle,
 [contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md) explains
