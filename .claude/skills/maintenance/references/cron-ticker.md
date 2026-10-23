@@ -30,12 +30,23 @@ whose execution was expired cannot overwrite that history. Only an owned,
 successful finish refreshes `cron:heartbeat:last`. This shared timestamp is a
 liveness hint, not evidence that every capability completed.
 
-The typed outcome in `lib/cron/job-outcome.ts` maps existing worker counters into
-success, partial failure, failure or hold. Execution history stores the outcome;
-partial failures and failures are FAILED, intentional holds are CANCELLED, and
-successes are COMPLETED. Results also record the existing Sentry deployment environment so shared-database preview runs can be distinguished. HTTP responses carry `X-Job-Outcome`; the ticker uses it
-instead of interpreting every 207 as healthy. A resumable audit report with summary status RUNNING is continuation, not failed reconciliation; only the completed report establishes audit correctness. Remaining work by itself is not a
-failure. A lease-held 409 is an attempted run, never fresh successful work.
+The typed outcome in `lib/cron/job-outcome.ts` classifies a result as success,
+partial failure, failure or hold. A job's own `success`/`overallSuccess` boolean
+is its verdict and outranks every counter. Only a result with no verdict is read
+from its counters: a positive `failed` or `exhaustedReported`, a non-empty
+`errors` array, or a completed audit report with `ok: false`. A resumable audit
+report with summary status RUNNING is continuation, not failed reconciliation.
+Remaining work by itself is never a failure. Execution history stores the
+outcome: partial failures and failures are FAILED, intentional holds are
+CANCELLED, and successes are COMPLETED. Results also record the Sentry deployment
+environment, so shared-database preview runs can be told apart.
+
+HTTP responses carry `X-Job-Outcome`. When a registry entry supplies a `status`
+callback, that status is authoritative and the header follows it: 4xx or 5xx is
+`failure`, and any 2xx is `success`, so the ticker's `PARTIAL_FAILURE_TARGETS`
+list still decides whether a 207 counts as failed. Only an entry without a
+callback gets `statusFor` and the inferred outcome. A lease-held 409 is an
+attempted run, never fresh successful work.
 
 A per-job lease does not serialize different jobs touching the same payment or
 payout. Conditional state transitions, transactionally staged obligations and
@@ -62,7 +73,23 @@ that accepted check-ins and missed-run alerts actually arrive. Independent
 absence monitoring must inspect completed capabilities and oldest outstanding
 obligations, not the ticker's always-200 response or `/api/health` alone.
 
+## `?limit=` semantics
+
+`parseLimitParam` (`lib/cron/cleanup-route.ts`) reads an optional `?limit=`. An
+absent key means the route's own default, a value above 500 is clamped, and an
+empty, non-numeric, zero, negative or fractional value answers
+`400 INVALID_LIMIT` without running the job. Per-row routes use
+`parseLimitParamOrDefault`, so every caller is bounded, not only the ticker. The
+ticker sends `limit=50` unless `TARGET_LIMITS` overrides it, for example 10 for
+`abandoned-payments`. A `null` override sends no limit to a route that takes
+none, such as `reconcile-ledgers`.
+
 ## Adding a job
+
+Never create 3-layer wrappers. A job has one implementation, registered in
+`CLEANUP_JOB_BUILDERS` and wrapped in `withCronLock`. Do not add a parallel
+`app/api/cleanup/<job>/route.ts`, `jobs/<domain>/<job>.ts` or
+`scripts/<domain>/<job>.ts` wrapper.
 
 1. Register one implementation, maintenance classification, and active schedule.
 2. Bound candidate reads, examined rows and runtime; preserve durable continuation.
@@ -70,6 +97,12 @@ obligations, not the ticker's always-200 response or `/api/health` alone.
 4. Stage delivery obligations atomically with the state claim using the supplied tx.
 5. Test same-job overlap, cross-job races, sequential replay and missed schedules.
 6. Update the generated job reference and operational recovery instructions.
+7. Put a ticker job in `TARGETS` with an offset or a `TARGET_WINDOWS` slot so
+   that no tick fires more than `MAX_TARGETS_PER_TICK` (9) targets; the cadence
+   test pins it.
+8. If the job moves money or payouts, add its slug to `FINANCIAL_JOB_NAMES`
+   (`lib/cron/financial-jobs.ts`). The maintenance gate then also stops it in
+   `DEGRADED`, and the lock-registry test requires a fail-closed lock.
 
 Some existing jobs intentionally take no row limit. That is not evidence that
 an unbounded implementation fits a function envelope; inspect its actual work.

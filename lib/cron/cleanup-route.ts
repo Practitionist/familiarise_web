@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
-import { jobOutcome } from "@/lib/cron/job-outcome";
+import { jobOutcome, type JobOutcome } from "@/lib/cron/job-outcome";
 import {
   CronLockHeldError,
   CronLockUnavailableError,
@@ -30,6 +30,11 @@ export function statusFor(result: unknown, needsAttention = false): number {
   if (outcome === "failure") return 500;
   if (outcome === "held") return 503;
   return needsAttention || outcome === "partial_failure" ? 207 : 200;
+}
+
+/** Outcome for an explicit per-job status; a 207 stays "success" so the ticker's 207 allowlist decides. */
+function outcomeOfStatus(httpStatus: number): JobOutcome {
+  return httpStatus >= 400 ? "failure" : "success";
 }
 
 /** Ceiling on an explicit `?limit=`; above this it is clamped, not rejected. */
@@ -170,7 +175,7 @@ export function cleanupRoute<T extends object>(opts: {
   run: (req: NextRequest, ctx: { startedAt: number }) => Promise<T>;
   /** What to log on finish; defaults to the whole result. */
   summarize?: (result: T) => Record<string, unknown>;
-  /** Defaults to {@link statusFor} with no needs-attention flag. */
+  /** Authoritative when present; otherwise {@link statusFor} with no needs-attention flag. */
   status?: (result: T) => number;
   failureMessage?: string;
   /** Extra `message` field on the 401 body, for routes that carry one. */
@@ -182,9 +187,12 @@ export function cleanupRoute<T extends object>(opts: {
   const { job, run, summarize, status, failureMessage, unauthorizedMessage } =
     opts;
 
-  async function executeCleanupJob(
-    req: NextRequest,
-  ): Promise<{ body: unknown; status: number; ok: boolean }> {
+  async function executeCleanupJob(req: NextRequest): Promise<{
+    body: unknown;
+    status: number;
+    ok: boolean;
+    outcome: JobOutcome;
+  }> {
     const startedAt = Date.now();
     try {
       const authHeader = req.headers.get("authorization");
@@ -199,6 +207,7 @@ export function cleanupRoute<T extends object>(opts: {
             : { error: "Unauthorized" },
           status: 401,
           ok: true,
+          outcome: "failure",
         };
       }
       // The cron core is shared with the jobs/** entrypoint, which exits on
@@ -216,19 +225,24 @@ export function cleanupRoute<T extends object>(opts: {
       console.log(`${job} completed:`, summary);
       Sentry.logger.info(`cron:${job} finished`, summary);
 
-      const inferredStatus = statusFor(result);
-      const responseStatus =
-        inferredStatus === 200 ? (status?.(result) ?? 200) : inferredStatus;
+      // An explicit per-job mapping is authoritative, so the outcome header follows its status.
+      const responseStatus = status ? status(result) : statusFor(result);
       return {
         body: result,
         status: responseStatus,
         ok: responseStatus < 500,
+        outcome: status ? outcomeOfStatus(responseStatus) : jobOutcome(result),
       };
     } catch (error) {
       // #476 — concurrent invocation (schedule overlap / manual re-run)
       // skips with a 409 instead of double-running.
       if (error instanceof CronLockHeldError) {
-        return { body: { error: error.message }, status: 409, ok: true };
+        return {
+          body: { error: error.message },
+          status: 409,
+          ok: true,
+          outcome: "held",
+        };
       }
       // #1822 Q-2 — one Redis outage is one report: a key shared by every job,
       // 15-min window per instance; the first job to hit it is tagged.
@@ -245,20 +259,31 @@ export function cleanupRoute<T extends object>(opts: {
           },
           CRON_FAILURE_REPORT_WINDOW_MS,
         );
-        return { body: { error: error.message }, status: 503, ok: false };
+        return {
+          body: { error: error.message },
+          status: 503,
+          ok: false,
+          outcome: "failure",
+        };
       }
       // Each message is its 400 error code.
       if (
         error instanceof InvalidLimitError ||
         error instanceof InvalidWindowStartError
       ) {
-        return { body: { error: error.message }, status: 400, ok: true };
+        return {
+          body: { error: error.message },
+          status: 400,
+          ok: true,
+          outcome: "failure",
+        };
       }
       if (error instanceof MaintenanceActiveError) {
         return {
           body: { error: error.message, phase: error.phase },
           status: error.httpStatus,
           ok: true,
+          outcome: "held",
         };
       }
       // The exception text stays in Sentry and the server log. It used to be
@@ -281,6 +306,7 @@ export function cleanupRoute<T extends object>(opts: {
         body: { error: failureMessage ?? `Failed to run ${job}` },
         status: 500,
         ok: false,
+        outcome: "failure",
       };
     }
   }
@@ -291,20 +317,9 @@ export function cleanupRoute<T extends object>(opts: {
     if (canary || !outcome.ok) {
       await Sentry.flush?.(2_000);
     }
-    const resultOutcome =
-      outcome.status === 409 ||
-      (outcome.status === 503 &&
-        (jobOutcome(outcome.body) === "held" ||
-          (typeof outcome.body === "object" &&
-            outcome.body !== null &&
-            "phase" in outcome.body)))
-        ? "held"
-        : outcome.status >= 400
-          ? "failure"
-          : jobOutcome(outcome.body);
     return NextResponse.json(outcome.body, {
       status: outcome.status,
-      headers: { "X-Job-Outcome": resultOutcome },
+      headers: { "X-Job-Outcome": outcome.outcome },
     });
   }
 
