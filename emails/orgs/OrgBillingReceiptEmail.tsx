@@ -19,6 +19,7 @@ export interface OrgBillingReceiptEmailProps {
   invoiceNumber?: string | null;
   dueDateText?: string | null;
   newBalanceText?: string | null;
+  settledText?: string | null;
   dashboardUrl: string;
   unsubscribeUrl?: string | null;
 }
@@ -50,6 +51,7 @@ function OrgBillingBody(props: {
   amountText: string;
   dueDateText?: string | null;
   newBalanceText?: string | null;
+  settledText?: string | null;
 }) {
   if (props.kind === "INVOICE_ISSUED") {
     return (
@@ -80,6 +82,12 @@ function OrgBillingBody(props: {
     <Text style={paragraph}>
       Your wallet top-up of <strong>{props.amountText}</strong> for{" "}
       <strong>{props.orgName}</strong> has been credited
+      {props.settledText ? (
+        <>
+          . <strong>{props.settledText}</strong> of it settled an amount your
+          organisation owed us
+        </>
+      ) : null}
       {props.newBalanceText ? (
         <>
           . Updated balance: <strong>{props.newBalanceText}</strong>
@@ -98,6 +106,7 @@ export const OrgBillingReceiptEmail = ({
   invoiceNumber,
   dueDateText,
   newBalanceText,
+  settledText,
   dashboardUrl,
   unsubscribeUrl,
 }: OrgBillingReceiptEmailProps) => {
@@ -115,6 +124,7 @@ export const OrgBillingReceiptEmail = ({
         amountText={amountText}
         dueDateText={dueDateText}
         newBalanceText={newBalanceText}
+        settledText={settledText}
       />
       <Section style={buttonContainer}>
         <Button style={button} href={dashboardUrl}>

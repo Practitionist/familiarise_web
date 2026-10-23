@@ -37,6 +37,7 @@ import {
   recoverClawbackOnPayout,
   recoverablePaise,
   releaseClawbackRecovery,
+  voidClawbacksRaisedOnPayout,
 } from "./clawback-recovery";
 import { postPayoutClawback } from "@/lib/payments/operations/reversal-engine";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -1903,6 +1904,24 @@ export async function markOrgPayoutReversed(
             reversalBasis: { kind: "FULL" },
           });
           await releaseClawbackRecovery(tx, payoutId);
+          const voided = await voidClawbacksRaisedOnPayout(tx, {
+            payoutId,
+            organizationId: payout.organizationId,
+          });
+          if (voided.alreadyRecoveredPaise > 0) {
+            await recordSystemEventSafe({
+              db: tx,
+              organizationId: payout.organizationId,
+              category: "PAYOUT",
+              severity: "ERROR",
+              message: `PAYOUT_REVERSED_CLAWBACK_ALREADY_RECOVERED: org payout ${payoutId} was reversed after ${voided.alreadyRecoveredPaise}p of the clawbacks raised on it had been recovered from later payouts; that sum is owed back to the organisation`,
+              context: {
+                payoutId,
+                organizationId: payout.organizationId,
+                ...voided,
+              },
+            });
+          }
 
           await tx.orgAuditLog.create({
             data: {
