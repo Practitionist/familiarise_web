@@ -330,7 +330,7 @@ npm uninstall redlock ioredis @types/ioredis
 
 #### ✅ 5.2 Archive Old Documentation
 
-Update `docs/payments/approval-payments/04-distributed-locking.md`:
+Update `docs/finance/10-money-in/05-approval-payments.md`:
 
 ```markdown
 # Distributed Locking (ARCHIVED)
@@ -1167,7 +1167,6 @@ cat logs/stdout.log | jq -r 'select(.event == "lock_released") | .held_duration_
 
 - **[README](./00_README.md)**: Quick start guide
 - **[API Reference](./02_API_REFERENCE.md)**: Complete API documentation
-- **[Legacy Docs](../../payments/approval-payments/04-distributed-locking.md)**: Historical Redlock docs
 
 ---
 

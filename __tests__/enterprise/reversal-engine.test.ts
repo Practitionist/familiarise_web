@@ -74,6 +74,7 @@ describe("applyReversal — PAYOUT_CLAWBACK", () => {
         update: jest.fn().mockResolvedValue({}),
       },
       orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
+      tDSRecord: { findFirst: jest.fn().mockResolvedValue(null) },
     };
     mockPostLedgerTxn.mockRejectedValueOnce(new Error("journal unbalanced"));
 
@@ -89,5 +90,118 @@ describe("applyReversal — PAYOUT_CLAWBACK", () => {
         refundId: "refund-1",
       }),
     ).rejects.toThrow("journal unbalanced");
+  });
+
+  it("books the clawback as a receivable from the host org, never as cash", async () => {
+    const tx = {
+      organizationPayout: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ id: "payout-1", clawbackInitiatedAt: null }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
+      tDSRecord: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+    mockPostLedgerTxn.mockResolvedValueOnce(undefined);
+
+    await applyReversal(tx as never, {
+      source: {
+        kind: "PAYOUT_CLAWBACK",
+        orgPayoutId: "payout-1",
+        organizationId: "org-1",
+      },
+      amountPaise: 100_000,
+      reason: "dispute lost",
+      refundId: "dispute:d-1",
+    });
+
+    expect(mockPostLedgerTxn).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        idempotencyKey: "clawback:dispute:d-1:payout-1",
+        postings: [
+          {
+            account: { kind: "ORG_RECEIVABLE", organizationId: "org-1" },
+            direction: "DEBIT",
+            amountPaise: 100_000,
+          },
+          {
+            account: { kind: "ORG_PAYABLE", organizationId: "org-1" },
+            direction: "CREDIT",
+            amountPaise: 100_000,
+          },
+        ],
+      }),
+    );
+  });
+
+  it("reverses the payout's TDS on the share and claws back only the net", async () => {
+    // P1: net 100,000 withheld 100; the whole share is charged back.
+    const created: Record<string, unknown>[] = [];
+    const tx = {
+      organizationPayout: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "payout-1",
+          clawbackInitiatedAt: null,
+          netPayoutPaise: 100_000,
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
+      tDSRecord: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: "tds-1",
+          financialYear: "2026-27",
+          quarter: 3,
+          tdsDeducted: 100,
+          tdsRateBps: 10,
+          tdsSection: "194O",
+          cumulativeAmountCredited: 100_000,
+          reportedInForm26Q: false,
+        }),
+        findMany: jest.fn().mockResolvedValue([]),
+        create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
+          created.push(data);
+          return { id: "tds-rev-1", ...data };
+        }),
+      },
+      tdsAdjustment: { create: jest.fn().mockResolvedValue({}) },
+    };
+    mockPostLedgerTxn.mockResolvedValueOnce(undefined);
+
+    await applyReversal(tx as never, {
+      source: {
+        kind: "PAYOUT_CLAWBACK",
+        orgPayoutId: "payout-1",
+        organizationId: "org-1",
+      },
+      amountPaise: 100_000,
+      reason: "dispute lost",
+      refundId: "dispute:d-1",
+    });
+
+    expect(created).toEqual([
+      expect.objectContaining({
+        organizationId: "org-1",
+        orgPayoutId: "payout-1",
+        tdsDeducted: -100,
+        isReversal: true,
+      }),
+    ]);
+    expect(tx.organizationPayout.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          clawbackAmountPaise: { increment: 99_900 },
+        }),
+      }),
+    );
+    const [, journal] = mockPostLedgerTxn.mock.calls.at(-1) as [
+      unknown,
+      { postings: { amountPaise: number }[] },
+    ];
+    expect(journal.postings.map((p) => p.amountPaise)).toEqual([
+      99_900, 99_900,
+    ]);
   });
 });

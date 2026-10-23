@@ -1109,7 +1109,7 @@ A booking with no session scheduled at all is a different matter and does refund
 
 **What the cascade reverses**: the refund is not just a gateway call. `applyRefundCascade` reverses the funding legs at their source, returns program engagements to the organisation's cap, increments the consultant's and the organisation's refunded share, claws back an already-completed payout, mints a GST credit note for any invoiced portion, reverses the withheld TDS, restores referral credits, and posts a balanced double-entry reversal. Org-funded bookings carry a synthetic payment intent that no gateway can resolve, so they reverse purely in-ledger through the reversal engine instead of calling out.
 
-**Cross-reference**: [Cancellation Payment Flow](../payments/cancellations-rescheduling/01-cancellation-payment-flow.md)
+**Cross-reference**: [Cancellation Payment Flow](../finance/30-refunds-disputes/01-refunds.md)
 
 ---
 
@@ -1381,8 +1381,8 @@ See [the money HLD](../start-here/02-money-system-hld.md#10-refunds) and worked 
 - [Event Types and Validation](./02-event-types-and-validation.md) -- Differences between event models
 - [API Reference](./04-api-reference.md) -- All booking endpoints including validate and allocate
 - [Rescheduling Flow](./07-rescheduling-flow.md) -- How rescheduling works (contrast with this doc)
-- [Cancellation Payment Flow](../payments/cancellations-rescheduling/01-cancellation-payment-flow.md) -- Refund processing and earnings reversal
-- [Rescheduling Payment Flow](../payments/cancellations-rescheduling/02-rescheduling-payment-flow.md) -- How payment is handled during reschedule
+- [Cancellation Payment Flow](../finance/30-refunds-disputes/01-refunds.md) -- Refund processing and earnings reversal
+- [Rescheduling Payment Flow](../finance/30-refunds-disputes/01-refunds.md) -- How payment is handled during reschedule
 
 ## Deprecated & Superseded Approaches
 

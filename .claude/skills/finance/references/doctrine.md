@@ -60,4 +60,4 @@ A refusal the code anticipated, such as `PROGRAM_CAP_EXHAUSTED` when an organisa
 
 ## Sources
 
-`docs/finance/00-overview/01-money-map.md`, `docs/enterprise/70-design-decisions/21-single-writer-for-payment-confirmation.md`, `docs/enterprise/70-design-decisions/26-gst-principal-model.md`, `docs/enterprise/70-design-decisions/27-state-as-outbox-and-scheduled-ticker.md`, `docs/finance/20-ledger/03-payment-legs.md`, `docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md`, `docs/finance/60-tax/02-gst-invoices-and-credit-notes.md`, `docs/payments/audits/2026-09-03-finance-verdicts.md`.
+`docs/finance/00-overview/01-money-map.md`, `docs/enterprise/70-design-decisions/21-single-writer-for-payment-confirmation.md`, `docs/enterprise/70-design-decisions/26-gst-principal-model.md`, `docs/enterprise/70-design-decisions/27-state-as-outbox-and-scheduled-ticker.md`, `docs/finance/20-ledger/03-payment-legs.md`, `docs/finance/20-ledger/04-postings.md`, `docs/finance/60-tax/02-gst-invoices-and-credit-notes.md`.

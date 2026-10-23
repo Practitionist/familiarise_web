@@ -1301,23 +1301,23 @@ T+48 hours      (If the request was never acted on)
 
 ## 13. Cross-References
 
-| Topic                                                           | Document                                                                                                               |
-| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Slot allocation architecture (services, data model, validation) | [01-architecture.md](./01-architecture.md)                                                                             |
-| Event type rules and validation logic                           | [02-event-types-and-validation.md](./02-event-types-and-validation.md)                                                 |
-| Slot math (30-min intervals, weekly distribution)               | [03-interval-math-and-calculations.md](./03-interval-math-and-calculations.md)                                         |
-| Allocation and validation API endpoints                         | [04-api-reference.md](./04-api-reference.md)                                                                           |
-| Troubleshooting and recent fixes                                | [05-troubleshooting-and-changelog.md](./05-troubleshooting-and-changelog.md)                                           |
-| Reschedule implementation                                       | [07-rescheduling-flow.md](./07-rescheduling-flow.md)                                                                   |
-| Payment system architecture                                     | [../payments/01-architecture.md](../payments/01-architecture.md)                                                       |
-| Checkout flow details                                           | [../payments/checkout-flow/01-overview-and-consultation.md](../payments/checkout-flow/01-overview-and-consultation.md) |
-| Webhook handling and status flows                               | [../payments/checkout-flow/05-status-flows.md](../payments/checkout-flow/05-status-flows.md)                           |
-| Approval payments (pay-later)                                   | [../payments/approval-payments/01-architecture.md](../payments/approval-payments/01-architecture.md)                   |
-| Cancellation and rescheduling payments                          | [../payments/cancellations-rescheduling/README.md](../payments/cancellations-rescheduling/README.md)                   |
-| Payout processing                                               | [../payments/payouts/01-architecture.md](../payments/payouts/01-architecture.md)                                       |
-| Notification system architecture                                | [../notifications/01-architecture.md](../notifications/01-architecture.md)                                             |
-| Notification workflows and API                                  | [../notifications/02-workflows-and-api.md](../notifications/02-workflows-and-api.md)                                   |
-| Database schema (enums, models)                                 | [../../prisma/schema.prisma](../../prisma/schema.prisma)                                                               |
+| Topic                                                           | Document                                                                                               |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Slot allocation architecture (services, data model, validation) | [01-architecture.md](./01-architecture.md)                                                             |
+| Event type rules and validation logic                           | [02-event-types-and-validation.md](./02-event-types-and-validation.md)                                 |
+| Slot math (30-min intervals, weekly distribution)               | [03-interval-math-and-calculations.md](./03-interval-math-and-calculations.md)                         |
+| Allocation and validation API endpoints                         | [04-api-reference.md](./04-api-reference.md)                                                           |
+| Troubleshooting and recent fixes                                | [05-troubleshooting-and-changelog.md](./05-troubleshooting-and-changelog.md)                           |
+| Reschedule implementation                                       | [07-rescheduling-flow.md](./07-rescheduling-flow.md)                                                   |
+| Payment system architecture                                     | [../finance/00-overview/01-money-map.md](../finance/00-overview/01-money-map.md)                       |
+| Checkout flow details                                           | [../finance/10-money-in/01-checkout-and-pricing.md](../finance/10-money-in/01-checkout-and-pricing.md) |
+| Webhook handling and status flows                               | [../finance/10-money-in/01-checkout-and-pricing.md](../finance/10-money-in/01-checkout-and-pricing.md) |
+| Approval payments (pay-later)                                   | [../finance/10-money-in/05-approval-payments.md](../finance/10-money-in/05-approval-payments.md)       |
+| Cancellation and rescheduling payments                          | [../finance/30-refunds-disputes/01-refunds.md](../finance/30-refunds-disputes/01-refunds.md)           |
+| Payout processing                                               | [../finance/40-payouts/03-consultant-payouts.md](../finance/40-payouts/03-consultant-payouts.md)       |
+| Notification system architecture                                | [../notifications/01-architecture.md](../notifications/01-architecture.md)                             |
+| Notification workflows and API                                  | [../notifications/02-workflows-and-api.md](../notifications/02-workflows-and-api.md)                   |
+| Database schema (enums, models)                                 | [../../prisma/schema.prisma](../../prisma/schema.prisma)                                               |
 
 ## Approval-path corrections (2026-08-14, #1169 PR 2)
 
