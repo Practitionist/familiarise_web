@@ -1,46 +1,126 @@
-# State-as-outbox and the Netlify ticker
+# Scheduled work and execution outcomes
 
-This page covers how scheduled work runs in this repository: why there is no message broker or generic outbox table, how the Netlify scheduled ticker closes the gap GitHub Actions leaves, and the checklist for adding a new scheduled job.
+## Current entrypoints
 
-## State-as-outbox (ADR 27)
+`lib/cron/cleanup-registry.ts` supplies the single implementation dispatch for
+`/api/cleanup/[job]`. Its bearer check uses `CRON_SECRET`. The Netlify scheduled
+adapter runs every five minutes; current daily/intra-day/weekly Actions workflows
+still own the non-money jobs that have not yet migrated. An Actions workflow is
+not a backstop for a ticker target. Check executable target metadata and workflow
+steps rather than assuming a registered job is scheduled.
 
-No generic outbox table exists, because the durable state an outbox exists to provide already lives on the domain rows the platform writes anyway: `WebhookEvent` is an inbox with a processed flag, `OutboundWebhookDelivery` and `FailedEmail` are outboxes with their own retry state, and every money-bearing follow-up is keyed on a row that already exists — `Payment`, `Appointment`, `Refund`, `WalletTopUp`. A follow-up that must survive a crash is expressed as a nullable stamp on the row it belongs to, such as `Appointment.chatChannelEnsuredAt`, plus an idempotent ensure-step in an existing sweeper that checks the stamp before doing the work again. The missing piece this ADR closes was never a table; it was a scheduler reliable enough to re-check those stamps on a short interval.
-
-## Dynamic `/api/cleanup/[job]` route and Postgres cron lease
-
-Scheduled HTTP jobs are registered in `lib/cron/cleanup-registry.ts` (`CLEANUP_JOB_BUILDERS`) and dispatched through the single dynamic route `app/api/cleanup/[job]/route.ts` (built by `lib/cron/cleanup-route.ts` and gated by `CRON_SECRET`). Do **not** create per-job `app/api/cleanup/<name>/route.ts` files.
-
-`withCronLock` (`lib/cron/with-cron-lock.ts`) provides distributed mutual exclusion backed by a **Postgres lease on `SystemJobExecution`** (`status = 'RUNNING'` with a 15-minute default TTL and 35 minutes for payout/reconcile jobs), keeping Upstash Redis off the cron path. A financial job (`lib/cron/financial-jobs.ts`) additionally checks `abortIfMaintenance()` / `assertNotInMaintenance()` and exits during a `DEGRADED` or `OFFLINE` maintenance phase; a non-financial job exits only on `OFFLINE`.
+Production operational work belongs on the active platform scheduler: captures,
+refunds, payouts, billing, notification delivery, recording copies, retention and
+compliance deadlines. GitHub Actions owns code verification, security scans,
+configuration/schema drift checks, and explicitly invoked load/race tests.
+Migration of an operational workflow requires bounded work and observed replacement
+progress before deleting its old schedule. Never run shared-database load tests
+on a production schedule.
 
 ## Shared schedule catalog
 
 `lib/cron/schedule.ts` owns target names, cadence, offsets, calendar windows, row limits and request timeouts. `JOB_SCHEDULES` exposes their effective values and `scheduleFor(name)` supports lookup. Dispatchers and generated schedule metadata consume this catalog instead of copying maps or scraping the Netlify adapter. Completion SLOs remain separate from configured cadence. The catalog has no database, vendor client or environment reads. `npm run cron:reference` generates `docs/maintenance/04-cron-jobs-reference.md` from this catalog, executable registry AST properties, worker lease declarations and operational workflow steps. `npm run cron:reference:check` detects stale output; it does not verify deployed execution. Import schedule helpers directly from the catalog; the Netlify adapter contains platform dispatch and failure reporting.
 
-## The Netlify scheduled ticker
+## Lease, replay and failure
 
-`netlify/functions/cron-tick.mts` runs every five minutes and POSTs latency-sensitive recovery sweeps to `/api/cleanup/<job>?limit=N` with `CRON_SECRET`. Each job has one automatic schedule; a shared lease does not justify adding an Actions fallback to a ticker-owned job.
+`withCronLock` uses a Postgres `SystemJobExecution` lease and its partial unique
+index. Fail-closed jobs refuse unavailable acquisition, including failed Prisma
+imports. Tests must supply a faithful delegate instead of relying on an unlocked
+production fallback. Fail-open jobs may continue after a non-connection acquisition
+error only when the operation tolerates replay.
 
-Money reconcilers, money batch jobs and the TDS draft export also run on the ticker: `reconcile-disputes` hourly, `reconcile-ledgers` daily at 03:55 UTC, and `tds-return-draft` on the 5th of Jan/Apr/Jul/Oct (windows in `TARGET_WINDOWS`). Each tick first reads the Upstash key `ops:active_cron_platform` (one GET) and skips every target when it names another host; an absent key or a Redis failure runs the tick.
+Completion uses `updateMany` with the execution id and `status: RUNNING`; a worker
+whose execution was expired cannot overwrite that history. Only an owned,
+successful finish refreshes `cron:heartbeat:last`. This shared timestamp is a
+liveness hint, not evidence that every capability completed.
 
-GitHub Actions is retained only for remaining non-money batch crons, plus manual `workflow_dispatch` runs. Configured workflow ownership does not prove enablement, available budget or successful effects. When a job is already running, the cleanup route maps `CronLockHeldError` to `409`, which the ticker records as `lockHeld`. Maintenance holds are separate, and partial `207` outcomes follow the target-specific policy in `bucketFor()`.
+The typed outcome in `lib/cron/job-outcome.ts` classifies a result as success,
+partial failure, failure or hold. A job's own `success`/`overallSuccess` boolean
+is its verdict and outranks every counter. Only a result with no verdict is read
+from its counters: a positive `failed` or `exhaustedReported`, a non-empty
+`errors` array, or a completed audit report with `ok: false`. A resumable audit
+report with summary status RUNNING is continuation, not failed reconciliation.
+Remaining work by itself is never a failure. Execution history stores the
+outcome: partial failures and failures are FAILED, intentional holds are
+CANCELLED, and successes are COMPLETED. Results also record the Sentry deployment
+environment, so shared-database preview runs can be told apart.
 
-The ticker always returns HTTP `200` to avoid whole-fleet retry amplification; failures are logged on the structured `{"event":"cron-tick",...}` line. Verify accepted monitoring events and completed obligations rather than inferring health from the acknowledgment.
+HTTP responses carry `X-Job-Outcome`. When a registry entry supplies a `status`
+callback, that status is authoritative and the header follows it: 4xx or 5xx is
+`failure`, and any 2xx is `success`, so the ticker's `PARTIAL_FAILURE_TARGETS`
+list still decides whether a 207 counts as failed. Only an entry without a
+callback gets `statusFor` and the inferred outcome. A lease-held 409 is an
+attempted run, never fresh successful work.
+
+A per-job lease does not serialize different jobs touching the same payment or
+payout. Conditional state transitions, transactionally staged obligations and
+vendor idempotency keys protect those boundaries. A lease renewal failure or
+client timeout does not cancel a worker or roll back committed effects. Test
+concurrent jobs, sequential replays, interrupted staging and ambiguous gateway
+responses independently.
+
+## Runtime envelope and monitoring
+
+Netlify scheduled functions have a 30-second limit; their HTTP targets execute as
+separate functions. The ticker starts its budget before the fleet-owner read,
+stops waiting for targets by 24 seconds, and reserves bounded telemetry waiting
+through 27 seconds. Worker-side deadlines must stop new work independently; a
+fetch abort only makes that target's outcome ambiguous.
+
+Each tick reads `ops:active_cron_platform` once. Missing/unreadable state fails
+open as required by AGENTS.md. The switch cannot stop already-running work or
+prove exclusive delivery across hosts during a dependency failure.
+
+Sentry check-in failures log a structured rejection/unavailability event. A
+disabled Sentry monitor accepts no check-ins: verify the monitor is active and
+that accepted check-ins and missed-run alerts actually arrive. Independent
+absence monitoring must inspect completed capabilities and oldest outstanding
+obligations, not the ticker's always-200 response or `/api/health` alone.
 
 ## `?limit=` semantics
 
-The shared parser rejects malformed explicit limits and clamps valid values to 500. An absent limit leaves the default to the registry/core; inspect the generated inventory for each configured request bound and verify that the core enforces bounded work. Omitting a limit is not authorization for an unbounded fallback.
+`parseLimitParam` (`lib/cron/cleanup-route.ts`) reads an optional `?limit=`. An
+absent key means the route's own default, a value above 500 is clamped, and an
+empty, non-numeric, zero, negative or fractional value answers
+`400 INVALID_LIMIT` without running the job. Per-row routes use
+`parseLimitParamOrDefault`, so every caller is bounded, not only the ticker. The
+ticker sends `limit=50` unless `TARGET_LIMITS` overrides it, for example 10 for
+`abandoned-payments`. A `null` override sends no limit to a route that takes
+none, such as `reconcile-ledgers`.
 
-## Workflow concurrency groups
+## Adding a job
 
-Every scheduled GitHub Actions workflow declares `concurrency: { group: ${{ github.workflow }}, cancel-in-progress: false }` so overlapping runs queue rather than cancel mid-flight.
+Never create 3-layer wrappers. A job has one implementation, registered in
+`CLEANUP_JOB_BUILDERS` and wrapped in `withCronLock`. Do not add a parallel
+`app/api/cleanup/<job>/route.ts`, `jobs/<domain>/<job>.ts` or
+`scripts/<domain>/<job>.ts` wrapper.
 
-## Adding or modifying a scheduled job
+1. Register one implementation, maintenance classification, and active schedule.
+2. Bound candidate reads, examined rows and runtime; preserve durable continuation.
+3. Rotate unchanged/error polls so old unresolved rows cannot starve later work.
+4. Stage delivery obligations atomically with the state claim using the supplied tx.
+5. Test same-job overlap, cross-job races, sequential replay and missed schedules.
+6. Update the generated job reference and operational recovery instructions.
+7. Put a ticker job in `lib/cron/schedule.ts` (`TARGETS` with an offset or a `TARGET_WINDOWS` slot) so
+   the cadence/collision tests preserve the nine-target design bound.
+   `MAX_TARGETS_PER_TICK` is not a runtime dispatcher cap.
+8. If the job moves money or payouts, add its slug to `FINANCIAL_JOB_NAMES`
+   (`lib/cron/financial-jobs.ts`). The maintenance gate then also stops it in
+   `DEGRADED`, and the lock-registry test requires a fail-closed lock.
 
-1. **Single implementation**: Put the job logic in one domain module and register it in `lib/cron/cleanup-registry.ts` (`CLEANUP_JOB_BUILDERS`) wrapped in `withCronLock`.
-2. **Never create 3-layer wrappers**: Do not add parallel `app/api/cleanup/<job>/route.ts` + `jobs/<domain>/<job>.ts` + `scripts/<domain>/<job>.ts` files.
-3. **Single scheduler**: Put sub-hourly recovery sweeps in `lib/cron/schedule.ts` (`TARGETS`), and daily/weekly/monthly jobs in a `TARGET_WINDOWS` slot. A long worker needs an appropriate bounded execution runtime; it does not need a second automatic clock. Actions retains only remaining non-money batch jobs until their verified migration — never dual-enable. The `MAX_TARGETS_PER_TICK` value is the tested wave design bound, not a runtime dispatcher cap; run the cadence/collision tests when changing the roster.
-4. **Financial jobs**: If the job mutates money or payouts, include its slug in `FINANCIAL_JOB_NAMES` (`lib/cron/financial-jobs.ts`).
+Some existing jobs intentionally take no row limit. That is not evidence that
+an unbounded implementation fits a function envelope; inspect its actual work.
+Calendar-window schedules also require explicit missed-window recovery.
+
+## Deprecated & Superseded Approaches
+
+Redis cron locks, production fallbacks for incomplete unit-test mocks, and shared
+heartbeats described as proof of complete fleet health are superseded. Recovery
+is not guaranteed by a parallel Actions workflow or by making every HTTP result 200. Keep the required Netlify standby; platform moves change adapters, not
+transaction or replay guarantees.
 
 ## Sources
 
-`AGENTS.md`, `lib/cron/cleanup-registry.ts`, `lib/cron/cleanup-route.ts`, `lib/cron/with-cron-lock.ts`, `netlify/functions/cron-tick.mts`.
+- [Netlify function limits](https://docs.netlify.com/build/functions/configuration/)
+- [Sentry disabled monitor semantics](https://docs.sentry.io/api/crons/update-a-monitor/)
+- [Vercel scheduling limitations](https://vercel.com/docs/cron-jobs/manage-cron-jobs)

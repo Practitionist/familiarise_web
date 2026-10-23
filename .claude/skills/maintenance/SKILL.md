@@ -17,13 +17,31 @@ This is the index for operational and deployment plumbing that is not specific t
 
 ## Non-negotiables
 
-Use one registered implementation per job and keep the required Netlify standby. `lib/cron/schedule.ts` owns configured ticker cadence, windows and HTTP request bounds; the registry does not define phase or timeout fields. Regenerate `docs/maintenance/04-cron-jobs-reference.md` with `npm run cron:reference` and check it with `npm run cron:reference:check`. The generator reads executable builder keys and worker leases through the AST without importing workers. Its inventory includes Actions-only registry gaps and distinguishes configuration from live verification.
+Use one registered implementation per job and keep the required Netlify standby.
+`lib/cron/schedule.ts` owns configured cadence, windows and HTTP request bounds;
+the registry does not define phase or timeout fields. Regenerate the AST-derived
+inventory with `npm run cron:reference` and verify `npm run cron:reference:check`.
+The catalog has no worker, database or environment imports. Its nine-target figure
+is a tested design bound, not a runtime dispatch cap. Configured Actions ownership
+remains migration work until bounded replacements have actually run.
 
-The nine-target wave figure is a tested design bound, not a runtime dispatch cap. The scheduled ticker has a 30-second budget distinct from its HTTP workers; an HTTP timeout or expired lease does not cancel vendor effects. Use one active schedule and preserve row-level CAS, transactional staging and provider idempotency. Operational Actions jobs remain migration work until bounded replacements pass a controlled deployed check.
+Cron leases are Postgres-backed. Closed jobs never run when acquisition fails,
+including Prisma import failures. Completion is conditional on the same execution
+still being RUNNING; only successful owned completion advances freshness. Typed
+outcomes and `X-Job-Outcome` distinguish partial failure and intentional holds.
+Different jobs can still touch the same row: preserve CAS, transactional staging
+and vendor idempotency, and test cross-job races and sequential replay.
 
-Cron leases are Postgres-backed. A declared fail-closed mode and TTL describe requested policy, not proof of acquisition or successful completion. Inspect the active `withCronLock` and outcome implementation when verifying ownership and freshness. The fleet switch fails open when `ops:active_cron_platform` is absent or unreadable, so it is not an exactly-once guarantee. Verify accepted monitoring check-ins and completed obligations; a shared heartbeat or HTTP200 alone is insufficient.
+The scheduled ticker has a 30-second budget, distinct from its HTTP workers.
+A timeout or expired lease does not cancel vendor effects. Fleet selection fails
+open on absent/unreadable `ops:active_cron_platform`, so it is not an exactly-once
+guarantee. Verify accepted Sentry check-ins and independent per-capability absence
+alerts; the shared heartbeat and HTTP200 alone do not prove complete health.
 
-Maintenance bypass cookies remain short-lived HMAC-SHA256 tokens verified through Web Crypto. A cached phase does not quiesce work already in flight. Nothing inside a Prisma `$transaction` may read through the global client; pass its transaction client through every helper. The linked references describe deployed-runtime and environment constraints.
+Maintenance bypass cookies remain short-lived HMAC-SHA256 tokens verified via Web
+Crypto. Follow the active maintenance implementation and recovery instructions;
+never infer that a cached phase quiesces work already in flight. See the linked
+references for transaction-client, deployed-runtime and environment constraints.
 
 ## Worktree verification
 
