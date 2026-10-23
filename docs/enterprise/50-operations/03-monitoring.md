@@ -160,7 +160,7 @@ you have 30 days of traffic data.
 
 ### Critical (page on-call immediately)
 
-The money alerts (webhook backlog, ledger reconciler and wallet drift, signature failures, payout crashes, cycle-engine and renewal stalls, overage, dunning, wallet floor, IRP and MSME) are mapped to their conditions and runbooks in [money runbooks](../../finance/70-operations/05-money-runbooks.md#alerts-that-lead-to-a-runbook). The rows below are the platform alerts that are not about money, plus the subscription cron crash, which is a money alert remediated by money runbook 7.
+The money alerts (webhook backlog, ledger reconciler and wallet drift, signature failures, payout crashes, cycle-engine and renewal stalls, overage, dunning, wallet floor and MSME) are mapped to their conditions and runbooks in [money runbooks](../../finance/70-operations/05-money-runbooks.md#alerts-that-lead-to-a-runbook). The rows below are the platform alerts that are not about money, plus the subscription cron crash, which is a money alert remediated by money runbook 7.
 
 Every row here represents a condition where money integrity, subscription continuity, or cycle correctness is at risk; each cell links to the runbook section that contains the remediation steps.
 
@@ -172,13 +172,14 @@ Every row here represents a condition where money integrity, subscription contin
 
 Each row describes a condition that signals a degraded but not yet broken state — IRP backlog, webhook grace-window lapses, dunning stalls — where a Slack notification gives the on-call team time to investigate before it escalates.
 
-| Alert                                                            | Condition                                                                                                                                                                                             |
-| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Outbound webhook backlog                                         | `WEBHOOK`/WARN `SystemEvent` "queue backlog" (fires at > 200 due deliveries)                                                                                                                          |
-| Webhook secret rotation not adopted                              | `WEBHOOK_DELIVERY_FAILED` for an endpoint still failing > 24h after its `WEBHOOK_SECRET_ROTATED` row (consumer never swapped — grace window lapsed)                                                   |
-| DPDP sweeper skipped                                             | `dpdp.sweeper.counted` without a `dpdp.sweeper.deleted` follow-up for 7 days when `DPDP_SWEEPER_DELETE=true` — **and note** the sweeper has no scheduled workflow today (see `runbooks` catalogue ⚠️) |
-| Transactional email or Novu outbox dead-letter (`#1926`, `#531`) | Any Sentry error event with tag `outbox_dead_letter:true` (`subsystem:email` or `subsystem:novu`), or `email.outbox.pending` / `notifications.outbox.pending` gauge > 100 for 15 min                  |
-| Database pool exhaustion (`#1696`, `#698`, `#1452`)              | Sentry events tagged `pool_exhaustion:true` > 5 in 10 min                                                                                                                                             |
+| Alert                                                            | Condition                                                                                                                                                                                                                                        |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| IRP upload failure rate                                          | `invoice.irp.failed` / `invoice.irp.attempted` > 20 % over a rolling hour, meaningful only when `ENABLE_IRP_UPLOADER=true`; the uploader and its retry are described in [GST invoices](../../finance/60-tax/02-gst-invoices-and-credit-notes.md) |
+| Outbound webhook backlog                                         | `WEBHOOK`/WARN `SystemEvent` "queue backlog" (fires at > 200 due deliveries)                                                                                                                                                                     |
+| Webhook secret rotation not adopted                              | `WEBHOOK_DELIVERY_FAILED` for an endpoint still failing > 24h after its `WEBHOOK_SECRET_ROTATED` row (consumer never swapped — grace window lapsed)                                                                                              |
+| DPDP sweeper skipped                                             | `dpdp.sweeper.counted` without a `dpdp.sweeper.deleted` follow-up for 7 days when `DPDP_SWEEPER_DELETE=true` — **and note** the sweeper has no scheduled workflow today (see `runbooks` catalogue ⚠️)                                            |
+| Transactional email or Novu outbox dead-letter (`#1926`, `#531`) | Any Sentry error event with tag `outbox_dead_letter:true` (`subsystem:email` or `subsystem:novu`), or `email.outbox.pending` / `notifications.outbox.pending` gauge > 100 for 15 min                                                             |
+| Database pool exhaustion (`#1696`, `#698`, `#1452`)              | Sentry events tagged `pool_exhaustion:true` > 5 in 10 min                                                                                                                                                                                        |
 
 ### Info (dashboard only)
 

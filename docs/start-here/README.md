@@ -35,7 +35,7 @@ flowchart LR
   START["docs/start-here/<br/>01 booking HLD · 02 money HLD · 03 machinery"] --> BOOK["docs/booking/<br/>5 event types · slot math · rescheduling · state machines"]
   START --> PAY["docs/finance/<br/>checkout · ledger · refunds · payouts · B2B · tax · operations"]
   START --> ENT["docs/enterprise/<br/>00-foundations through 70-design-decisions (B2B bands)"]
-  START --> COMP["docs/compliance/<br/>GST · TDS 194J · RBI PA · DPDP · MSME"]
+  START --> COMP["docs/compliance/<br/>GST · TDS 194-O · RBI PA · DPDP · MSME"]
   START --> OBS["docs/observability/<br/>Sentry · SystemEvent · GitHub Actions failure sink"]
 ```
 
@@ -43,6 +43,6 @@ flowchart LR
 | ----------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Booking**       | [`docs/booking/README.md`](../booking/README.md)                 | Modifying slot validation, the allocator (`lib/booking/allocation`), rescheduling, cancellations, or recurring series math.                     |
 | **Finance**       | [`docs/finance/README.md`](../finance/README.md)                 | Working on Razorpay checkout, `PaymentLeg`, the ledger, refunds, disputes, payouts, organisation funding, or the Money console.                 |
-| **Enterprise**    | [`docs/enterprise/README.md`](../enterprise/README.md)           | Working on organizations, SSO/JIT, contracts, programs, sponsor wallets, B2B invoicing, or the ledger.                                          |
+| **Enterprise**    | [`docs/enterprise/README.md`](../enterprise/README.md)           | Working on organizations, SSO/JIT, contracts, programs, sponsor wallets, or B2B invoicing.                                                      |
 | **Compliance**    | [`docs/compliance/00-overview.md`](../compliance/00-overview.md) | Touching GST, TDS (section 194-O, section 393(1) Table Sl. 8(v) from 1 April 2026), RBI Payment Aggregator rules, DPDP erasure, or MSME ageing. |
 | **Observability** | [`docs/observability/`](../observability/)                       | Adding Sentry instrumentation, triaging production issues, or inspecting `SystemEvent` / cron failure sinks.                                    |

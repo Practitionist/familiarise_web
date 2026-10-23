@@ -177,18 +177,18 @@ These docs map the regulatory rails (DPDP, GST, TDS, MSME) onto the models and c
 
 This band is the on-call surface: every route, cron, alert, and go-live runbook.
 
-| #   | Doc                                                                            | Focus                                                                                |
-| --- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
-| 01  | [api-reference](50-operations/01-api-reference.md)                             | exhaustive route table (roles + audit actions)                                       |
-| 02  | [runbooks](50-operations/02-runbooks.md)                                       | non-money incident response + scheduled tasks (money runbooks are in `docs/finance`) |
-| 03  | [monitoring](50-operations/03-monitoring.md)                                   | log taxonomy, alerts, dashboards                                                     |
-| 04  | [system-events](50-operations/04-system-events.md)                             | system-event / audit-action taxonomy                                                 |
-| 05  | [live-payout-go-live-runbook](50-operations/05-live-payout-go-live-runbook.md) | superseded by the finance go-live checklist; pending removal                         |
-| 06  | [chaos-test-runbook](50-operations/06-chaos-test-runbook.md)                   | chaos and fault-injection drills                                                     |
-| 07  | [required-secrets](50-operations/07-required-secrets.md)                       | production and CI secret inventory                                                   |
-| 08  | [capacity-ladder](50-operations/08-capacity-ladder.md)                         | infrastructure scaling thresholds                                                    |
-| 09  | [load-gate-runbook](50-operations/09-load-gate-runbook.md)                     | k6 load gate verification                                                            |
-| 10  | [novu-console-conditions](50-operations/10-novu-console-conditions.md)         | Novu workflow step conditions                                                        |
+| #   | Doc                                                                            | Focus                                                                                                            |
+| --- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| 01  | [api-reference](50-operations/01-api-reference.md)                             | exhaustive route table (roles + audit actions)                                                                   |
+| 02  | [runbooks](50-operations/02-runbooks.md)                                       | non-money incident response + scheduled tasks (money runbooks are in `docs/finance`)                             |
+| 03  | [monitoring](50-operations/03-monitoring.md)                                   | log taxonomy, alerts, dashboards                                                                                 |
+| 04  | [system-events](50-operations/04-system-events.md)                             | system-event / audit-action taxonomy                                                                             |
+| 05  | [live-payout-go-live-runbook](50-operations/05-live-payout-go-live-runbook.md) | superseded by the [finance go-live checklist](../finance/70-operations/07-go-live-checklist.md); pending removal |
+| 06  | [chaos-test-runbook](50-operations/06-chaos-test-runbook.md)                   | chaos and fault-injection drills                                                                                 |
+| 07  | [required-secrets](50-operations/07-required-secrets.md)                       | production and CI secret inventory                                                                               |
+| 08  | [capacity-ladder](50-operations/08-capacity-ladder.md)                         | infrastructure scaling thresholds                                                                                |
+| 09  | [load-gate-runbook](50-operations/09-load-gate-runbook.md)                     | k6 load gate verification                                                                                        |
+| 10  | [novu-console-conditions](50-operations/10-novu-console-conditions.md)         | Novu workflow step conditions                                                                                    |
 
 ### Scenarios — `60-scenarios-and-verdicts/`
 

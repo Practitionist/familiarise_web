@@ -46,7 +46,7 @@ A `RateCard` holds three basis-point numbers that sum to 10,000: `platformBps`, 
 7. Organisation-scoped default.
 8. The built-in `DEFAULT_RATE_CARD`: 1,000 / 1,000 / 8,000 bps, which is 10 % platform, 10 % organisation, 80 % expert. It has no id, which is how the code knows a default was used.
 
-Which of these a settling booking can reach depends on one setting. Settlement always passes the host organisation and the membership override. It passes the contract, plan type and plan as well only when `RATE_CARD_SCOPED_RESOLUTION` is exactly `on` (default off; any other value reads as off and is reported once). That is deliberate: turning it on changes which card pays live money, so an organisation should audit its scoped cards first. With it off, a contract- or plan-scoped card can exist and never be chosen. When it is on, the contract is reachable only if the buyer and the host are the same organisation, because a contract belongs to the buying organisation and must never select another tenant's negotiated split.
+Which of these a settling booking can reach depends on one setting. Settlement always passes the host organisation and the membership override. It passes the contract, plan type and plan as well only when `RATE_CARD_SCOPED_RESOLUTION` (trimmed) is `on`. Unset, blank and `off` read as off silently; any other value also reads as off and is reported to Sentry once. That is deliberate: turning it on changes which card pays live money, so an organisation should audit its scoped cards first. With it off, a contract- or plan-scoped card can exist and never be chosen. When it is on, the contract is reachable only if the buyer and the host are the same organisation, because a contract belongs to the buying organisation and must never select another tenant's negotiated split.
 
 ## The split arithmetic
 
@@ -123,7 +123,7 @@ stateDiagram-v2
     CHARGED --> REVERSED: credit-back on full refund
 ```
 
-`BLOCKED` is a defined status that the ceiling's sum excludes, but it is unused: no code writes it, because the circuit breaker refuses by throwing, which rolls the whole booking back, so no event is persisted. Every move is one guarded `updateMany` whose `WHERE` lists the legal from-states, so an illegal transition matches zero rows. Most go through `transitionOverage` (`lib/payments/billing/overage-transitions.ts`); invoice payment (`ACCRUED` to `CHARGED`, `org-invoice-settlement.ts`) and the 14-day timeout (`PENDING` to `FAILED`) write the same guard inline. Corrections are new events, never edits of a charged row.
+`BLOCKED` is a defined status that the ceiling's sum excludes, but it is unused: no code writes it, because the circuit breaker refuses by throwing, which rolls the whole booking back, so no event is persisted. Every move is one guarded `updateMany` whose `WHERE` lists the legal from-states, so an illegal transition matches zero rows. Most go through `transitionOverage` (`lib/payments/billing/overage-transitions.ts`); invoice payment (`ACCRUED` to `CHARGED`, `org-invoice-settlement.ts`) and the 14-day timeout (`PENDING` to `FAILED`) write the same guard inline. Apart from a full refund, which moves the charged event itself to `REVERSED` and stamps `reversedAt`, corrections are new events rather than edits of a charged row.
 
 ### A member who never pays
 

@@ -40,7 +40,7 @@ Money routes (checkout, payment recovery, recording purchase, overage orders, di
 | **Maintenance API** (`/api/admin/maintenance`)                        | Exempt                                            | Exempt                     | None       |
 | **Cancel appointment** (`/api/appointments/[id]/cancel`)              | **Writes blocked (503)**                          | Blocked                    | MEDIUM     |
 | **Reschedule** (`/api/appointments/[id]/reschedule`)                  | **Writes blocked (503)**                          | Blocked                    | MEDIUM     |
-| **Documents** (`/api/appointments/[id]/documents`)                    | Allowed                                           | Blocked                    | LOW        |
+| **Documents** (`/api/appointments/[id]/documents`)                    | GET: Allowed, writes: **blocked**                 | Blocked                    | LOW        |
 | **Consultations** (`/api/bookings/consultations`)                     | GET: Allowed, POST/PATCH: **blocked**             | Blocked                    | HIGH       |
 | **Subscriptions** (`/api/bookings/subscriptions`)                     | GET: Allowed, POST: **blocked**                   | Blocked                    | HIGH       |
 | **Webinars** (`/api/bookings/webinars`)                               | GET: Allowed, POST, PATCH and DELETE: **blocked** | Blocked                    | MEDIUM     |
@@ -61,15 +61,15 @@ Money routes (checkout, payment recovery, recording purchase, overage orders, di
 
 ### Infrastructure Components
 
-| Component                             | DEGRADED                                           | OFFLINE                               | Notes                                               |
-| ------------------------------------- | -------------------------------------------------- | ------------------------------------- | --------------------------------------------------- |
-| **Cron jobs (GitHub Actions)**        | Run normally, log a warning (`abortIfMaintenance`) | Exit 0 cleanly (`abortIfMaintenance`) | See Gap 2 below for the 12 jobs that skip the guard |
-| **Video calls (Stream.io)**           | Active calls continue                              | Active calls continue (gap)           | Stream infrastructure is external                   |
-| **Chat (Stream.io)**                  | Works normally                                     | Works normally (gap)                  | Client-side SDK, not routed through middleware      |
-| **Email notifications (Novu/Resend)** | Sent normally                                      | Sent normally                         | External service, not affected                      |
-| **File storage (Supabase)**           | Accessible                                         | API blocked, but direct URLs work     | Upload routes blocked, existing files accessible    |
-| **Redis**                             | Normal operation                                   | Normal operation                      | Maintenance state stored here                       |
-| **PostgreSQL**                        | Normal operation                                   | May be mid-migration                  | This is the critical component during OFFLINE       |
+| Component                             | DEGRADED                                           | OFFLINE                               | Notes                                                                                                         |
+| ------------------------------------- | -------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| **Cron jobs (GitHub Actions)**        | Run normally, log a warning (`abortIfMaintenance`) | Exit 0 cleanly (`abortIfMaintenance`) | Housekeeping jobs only; the ticker's money jobs are gated by `cleanupRoute` and `FINANCIAL_JOB_NAMES` (Gap 2) |
+| **Video calls (Stream.io)**           | Active calls continue                              | Active calls continue (gap)           | Stream infrastructure is external                                                                             |
+| **Chat (Stream.io)**                  | Works normally                                     | Works normally (gap)                  | Client-side SDK, not routed through middleware                                                                |
+| **Email notifications (Novu/Resend)** | Sent normally                                      | Sent normally                         | External service, not affected                                                                                |
+| **File storage (Supabase)**           | Accessible                                         | API blocked, but direct URLs work     | Upload routes blocked, existing files accessible                                                              |
+| **Redis**                             | Normal operation                                   | Normal operation                      | Maintenance state stored here                                                                                 |
+| **PostgreSQL**                        | Normal operation                                   | May be mid-migration                  | This is the critical component during OFFLINE                                                                 |
 
 ## Current Gaps
 

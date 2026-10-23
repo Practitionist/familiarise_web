@@ -107,7 +107,8 @@ Two non-money jobs belong in this step as well; run them the same way:
 
 - [ ] **Monitor cron job executions** for the next scheduled cycle
   - Check that the next cron job run completes successfully
-  - Path: GitHub Actions > Workflows > look for green checks
+  - Money and recovery jobs run on the Netlify ticker: read the `cron-tick` function's JSON line in Netlify Dashboard > Functions > Logs (each target lands in `ok`, `lockHeld` or `failed`) and the tick's Sentry cron check-in
+  - Non-money housekeeping jobs run in GitHub Actions: GitHub Actions > Workflows > look for green checks
 
 - [ ] **Check error rates** in your monitoring dashboard
   - Compare error rates to pre-maintenance baseline

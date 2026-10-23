@@ -199,4 +199,4 @@ The booking terms (hold, tentative, CAS-in-WHERE and sweep) are in [the booking 
 6. **A single dispute-time `HELD` flip** let one dispute release money that a ban or an operator still held. It was replaced by reason-scoped `EarningsHold` rows.
 7. **Reconcile checks that Postgres now enforces** (`LEDGER_TXN_IMBALANCE`, `PAYMENT_LEG_SUM_MISMATCH`, `INVOICE_TOTAL_MISMATCH`) were deleted from the auditor.
 8. **Tenant-side credit raises, `INVOICE` funding switches, manual invoice creation and invoice voiding** were removed from the organisation routes; only the platform doors do these.
-9. **A `PARTIALLY_REFUNDED` payment status.** It does not exist; refunds are `Refund` rows and the payment stays `SUCCEEDED`.
+9. **A `PARTIALLY_REFUNDED` payment status.** It is not a persisted `PaymentStatus`; refunds are `Refund` rows and the payment stays `SUCCEEDED`. `paymentDisplayStatus` (`lib/appointments/seat-payments.ts`) derives it for display only.

@@ -42,7 +42,7 @@ Each secret has a grace slot. To rotate the payment secret: set `RAZORPAY_WEBHOO
 
 ### 1.5 Clear sandbox identities from the database
 
-Razorpay rejects every test-mode identifier under a live key (`The id provided does not exist`). The deployment shares one Postgres database between preview and production, so any customer, contact or fund-account id minted under a test key is still stored. Before the first live traffic, the owner runs this once in the cutover window:
+Razorpay rejects every test-mode identifier under a live key (`The id provided does not exist`). The deployment shares one Postgres database between preview and production, so any customer, contact or fund-account id minted under a test key is still stored. Before the first live traffic, the owner runs this once in the cutover window. It has no test-mode predicate and clears every stored Razorpay identity, so never run it again once a live key has minted any: a rerun would orphan live customers and reset verified payout accounts.
 
 ```sql
 BEGIN;

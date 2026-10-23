@@ -30,7 +30,7 @@ Two things now prevent a repeat. The Supabase clients and storage primitives a j
 
 The 2026-09-03 financial audit re-measured GitHub Actions' sub-hourly schedules and confirmed the finding ADR 22 first recorded: GitHub throttles scheduled workflows rather than dropping them outright, so a sub-hourly cron delivers far less often than it declares. `netlify/functions/cron-tick.mts` closes that gap for the recovery sweeps where the delay matters most.
 
-The ticker fires every five minutes and POSTs its 28 due targets to `/api/cleanup/<slug>?limit=N` with a `CRON_SECRET` bearer token and a per-target abort timeout. ADR 27 records why this is a scheduler fix rather than a new outbox table: the durable state an outbox exists to provide already lives on the domain rows — `Payment`, `Appointment`, `Refund`, `WalletTopUp`, `WebhookEvent`, `OutboundWebhookDelivery`, `FailedEmail` — that these sweeps already walk.
+The ticker fires every five minutes and POSTs its due targets (the `TARGETS` array) to `/api/cleanup/<slug>?limit=N` with a `CRON_SECRET` bearer token and a per-target abort timeout. ADR 27 records why this is a scheduler fix rather than a new outbox table: the durable state an outbox exists to provide already lives on the domain rows — `Payment`, `Appointment`, `Refund`, `WalletTopUp`, `WebhookEvent`, `OutboundWebhookDelivery`, `FailedEmail` — that these sweeps already walk.
 
 Every tick request carries a `?limit=`, and every route reads it as an optional cap on the batch a single run may touch, defaulting to today's behaviour when the parameter is absent, so a nightly GitHub Actions run still processes the whole backlog while a five-minute tick stays inside its own budget. The default the ticker sends is fifty, but a target may override it — `abandoned-payments` is sent ten, because its per-row cost includes a gateway cancel round trip rather than a database write alone. Whatever a smaller bite leaves behind is picked up by the unbounded GitHub Actions run.
 
@@ -44,7 +44,7 @@ A tick and a GitHub Actions run of the same job cannot both proceed: both go thr
 
 Three ticker sweeps — `sweep-stuck-webhook-events`, `reconcile-orphaned-confirmations` and `sweep-orphaned-topup-captures` — do move money, but they do it by re-driving a webhook that DEGRADED already exempts rather than by opening a new financial object, so they are deliberately absent from `FINANCIAL_JOB_NAMES` (`lib/cron/financial-jobs.ts`) and keep running in DEGRADED.
 
-GitHub Actions still owns every daily and weekly business cron, but it is **not** a backstop for ticker targets: a job listed in `TARGETS` in `netlify/functions/cron-tick.mts` runs only on the ticker unless a workflow also names it, and `__tests__/maintenance/cleanup-job-scheduler-drift.test.ts` fails for any registry job with no scheduler. Twenty-seven of the 28 ticker targets have no Actions workflow at all; only `alert-orphaned-payments` is also named in a fleet workflow.
+GitHub Actions still owns every daily and weekly business cron, but it is **not** a backstop for ticker targets: a job listed in `TARGETS` in `netlify/functions/cron-tick.mts` runs only on the ticker unless a workflow also names it, and `__tests__/maintenance/cleanup-job-scheduler-drift.test.ts` fails for any registry job with no scheduler. Only `alert-orphaned-payments` among the ticker targets is also named in a fleet workflow; the rest have no Actions workflow at all.
 
 ## Set-Based Ledger Reconciliation
 

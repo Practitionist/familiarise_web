@@ -101,6 +101,16 @@ WHERE status IN ('APPROVED', 'PROCESSING', 'FAILED')
 ORDER BY "createdAt" DESC LIMIT 25;
 ```
 
+For an organisation payout, which also shows platform co-approval and holds:
+
+```sql
+SELECT id, "organizationId", status, "gatewayPayoutId", "failureReason", "processedAt",
+       "approvedAt", "orgApprovedBy", "platformApprovalRequiredAt", "platformHeldAt"
+FROM "OrganizationPayout"
+WHERE status IN ('APPROVED', 'PROCESSING', 'FAILED')
+ORDER BY "createdAt" DESC LIMIT 25;
+```
+
 - **`APPROVED` and never claimed.** If `ENABLE_LIVE_PAYOUTS` is not `"true"`, this is the freeze working: the consultant run returns nothing and an approved organisation payout is not claimed (`submittedToGateway: false`); `process-payouts` reports "parked by design" in its `notice`. Rows stay `APPROVED`; they do not move to `PROCESSING`. If the flag is on, check the `process-payouts` answer for a held lock or a short RazorpayX balance, and for an organisation payout that still waits for platform co-approval or carries `platformHeldAt` (see [admin money doors](02-admin-money-doors.md)).
 - **`PROCESSING` for more than a day.** `handle-stuck-payouts` asks RazorpayX about payouts stuck in `PROCESSING` for over 24 hours, and `reconcile-payout-status` polls `PENDING` and `PROCESSING` rows older than 48 hours. A row with a `providerPayoutId` is reconciled against the gateway rather than re-submitted, so a retry cannot double-pay. A payout can legitimately take longer than a day on a bank rail; do not retry it by hand.
 - **`PROCESSING` with a `gateway-outcome-unknown` note.** The gateway call may have been accepted, so the row deliberately stays `PROCESSING`; the two reconcilers above resolve it against RazorpayX. Do not retry it by hand.

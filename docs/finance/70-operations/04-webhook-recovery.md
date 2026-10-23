@@ -24,7 +24,7 @@ A `WebhookEvent` row is described by `processed`, `error`, `claimedAt` and `defe
 
 A row counts as stuck once it is older than 6 minutes (`staleMinutes`) with no live claim. The claim is a compare-and-set stamp on `claimedAt` (`reclaimStaleProcessingWebhookEvent`): if a frozen function container thaws after the sweep took over, its completion write matches zero rows and is discarded, so a stale run can never overwrite the sweep's result.
 
-The sweep runs on the five-minute ticker every 15 minutes at `:00` (see [scheduled money jobs](01-scheduled-jobs.md)). One run loops for up to 15 seconds in batches of 200 and gives each event its own 15-second deadline, so one slow upstream call cannot starve the rest. It never reports to Sentry per row: it raises at most one warning per run when an unprocessed event has `deferCount` of 5 or more, or is older than one hour, and one more when re-driven events are still failing.
+The sweep runs on the five-minute ticker every 15 minutes at `:00` (see [scheduled money jobs](01-scheduled-jobs.md)). One run starts batches of 200 for up to 15 seconds and processes each batch one event at a time, each with its own 15-second deadline. The budget is checked only between batches, so one slow upstream call can use up a run and leave the rest of its batch for the next tick. It never reports to Sentry per row: it raises at most one warning per run when an unprocessed event has `deferCount` of 5 or more, or is older than one hour, and one more when re-driven events are still failing.
 
 ## Step 1: confirm what is stuck
 
@@ -34,8 +34,10 @@ Run this read-only query against the production database (never in a transaction
 SELECT id, provider, "eventType", "eventId", processed, "deferCount",
        "claimedAt", "receivedAt", error
 FROM "WebhookEvent"
-WHERE processed = false
-   OR (error IS NOT NULL AND error NOT LIKE 'permanent:%' AND error NOT LIKE 'gave up:%')
+WHERE "receivedAt" < now() - interval '6 minutes'
+  AND ("claimedAt" IS NULL OR "claimedAt" < now() - interval '6 minutes')
+  AND ((processed = false AND error IS NULL)
+       OR (error IS NOT NULL AND error NOT LIKE 'permanent:%' AND error NOT LIKE 'gave up:%'))
 ORDER BY "receivedAt" ASC
 LIMIT 25;
 ```
@@ -79,7 +81,7 @@ A handler answers a `DeferSignal` instead of failing when the row it needs has n
 4. **A `permanent:` or `gave up:` row you believe is valid.** The sweep will not touch it again. Do not edit the row by hand: a manual `UPDATE` of `processed` or `claimedAt` breaks the claim fencing described above. Find the money effect it should have had (a refund, a payment, a payout status) and drive that through its own reconciler or door: `reconcile-refunds`, `reconcile-disputes`, `reconcile-payout-status` or the admin refund door.
 5. **A signature that stopped verifying.** If events are being rejected after a secret rotation, fix the secret, not the verifier: see the rotation notes in [the Razorpay gateway page](../10-money-in/04-razorpay-gateway-and-currency.md). Never loosen signature verification to unblock a row.
 
-Re-sending an event from the Razorpay dashboard is always safe, because the receiver dedupes on `eventId`: an already processed event is acknowledged and ignored.
+Re-sending an event from the Razorpay dashboard is safe within 30 days of its first delivery, because the receiver dedupes on `eventId` through the `WebhookEvent` row: an already processed event is acknowledged and ignored. After `archive-webhook-events` deletes that row at 30 days, a re-sent event is dispatched again, and only the handlers' own idempotency protects it.
 
 ## Step 4: verify
 
