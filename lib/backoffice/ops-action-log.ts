@@ -40,7 +40,7 @@ export const opsReasonSchema = z
 
 export interface OpsActionInput {
   id?: string;
-  actorUserId: string;
+  actorUserId: string | null;
   actorRole: string;
   surface: BackofficeSurface;
   action: string;

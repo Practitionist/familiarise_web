@@ -58,4 +58,4 @@ Four of the five questions ADR 26 records are unresolved by design, not by overs
 
 ## Sources
 
-`lib/compliance/gst-credit-note-cutoff.ts`, `docs/compliance/02-tds-overview.md`, `docs/compliance/03-gst-overview.md`, `docs/enterprise/70-design-decisions/26-gst-principal-model.md`, `docs/payments/06-b2c-tax-invoice.md`, `lib/compliance/tds-194o.ts`.
+`lib/compliance/gst-credit-note-cutoff.ts`, `docs/compliance/02-tds-overview.md`, `docs/compliance/03-gst-overview.md`, `docs/enterprise/70-design-decisions/26-gst-principal-model.md`, `docs/finance/60-tax/02-gst-invoices-and-credit-notes.md`, `lib/compliance/tds-194o.ts`.

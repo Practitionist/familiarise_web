@@ -1,6 +1,6 @@
 # Webhook Monitoring, Recovery Sweeps & Retention Guide
 
-> **Scope:** Operational monitoring, observability signals, stuck-webhook recovery (`sweep-stuck-webhook-events`), and weekly storage retention (`archive-webhook-events`) across Razorpay/RazorpayX, Stream, Resend, Novu, and Stripe. Organization double-entry ledger mechanics live in [`docs/enterprise/10-money-and-ledger/12-payment-webhooks.md`](../../enterprise/10-money-and-ledger/12-payment-webhooks.md).
+> **Scope:** Operational monitoring, observability signals, stuck-webhook recovery (`sweep-stuck-webhook-events`), and weekly storage retention (`archive-webhook-events`) across Razorpay/RazorpayX, Stream, Resend, Novu, and Stripe. Organization double-entry ledger mechanics live in [`docs/finance/10-money-in/02-capture-confirmation-and-webhooks.md`](../10-money-in/02-capture-confirmation-and-webhooks.md).
 
 ---
 

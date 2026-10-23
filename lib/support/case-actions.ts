@@ -123,7 +123,12 @@ export const CaseActionRequestSchema = CaseActionSchema.superRefine(
   },
 );
 export type CaseAction = z.infer<typeof CaseActionSchema>;
-export type CaseActor = { userId: string; role: UserRole | null };
+export type CaseActor = {
+  userId: string;
+  role: UserRole | null;
+  /** Re-authenticated within the step-up window; a decision that releases payout holds needs it. */
+  freshSession?: boolean;
+};
 
 export class CaseActionError extends Error {
   constructor(
@@ -946,6 +951,7 @@ async function recordCaseDecisionTx(
       status: "RESOLVED",
     },
     new Date(),
+    { actorRole: actor.role ?? "UNKNOWN", freshSession: !!actor.freshSession },
   );
   if (!moved.ok)
     throw new CaseActionError(moved.code, moved.error, moved.status);

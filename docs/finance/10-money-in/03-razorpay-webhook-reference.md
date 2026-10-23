@@ -1,7 +1,7 @@
 # Razorpay & RazorpayX Webhook Schema & Invariant Reference
 
 > **Canonical Implementation:** [`schemas/webhooks/razorpay.ts`](../../../schemas/webhooks/razorpay.ts), [`app/api/webhooks/razorpay/signature.ts`](../../../app/api/webhooks/razorpay/signature.ts), [`app/api/webhooks/razorpay/route.ts`](../../../app/api/webhooks/razorpay/route.ts), and [`app/api/webhooks/razorpay-dispatch.ts`](../../../app/api/webhooks/razorpay-dispatch.ts).  
-> **Organization Ledger & Settlement Details:** See [`docs/enterprise/10-money-and-ledger/12-payment-webhooks.md`](../../enterprise/10-money-and-ledger/12-payment-webhooks.md).
+> **Organization Ledger & Settlement Details:** See [`docs/finance/10-money-in/02-capture-confirmation-and-webhooks.md`](02-capture-confirmation-and-webhooks.md).
 
 ---
 

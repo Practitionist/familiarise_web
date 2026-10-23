@@ -76,6 +76,8 @@ export interface SupportSlaSweepResult {
   orgEscalationEmailsSent: number;
   autoClosedCount: number;
   incidentsCascaded: number;
+  /** Incidents left open because releasing their payout holds was refused. */
+  incidentsHeldOpen: number;
   evidenceCasesPurged: number;
   evidenceFilesDeleted: number;
   disputeNoticesStaged: number;
@@ -1020,6 +1022,7 @@ export async function runSupportSlaSweep(opts?: {
       orgEscalationEmailsSent,
       autoClosedCount,
       incidentsCascaded: cascade.cascaded,
+      incidentsHeldOpen: cascade.heldOpen.length,
       evidenceCasesPurged: evidencePurge.casesPurged,
       evidenceFilesDeleted: evidencePurge.filesDeleted,
       disputeNoticesStaged,
