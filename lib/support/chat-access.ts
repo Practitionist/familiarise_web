@@ -199,6 +199,11 @@ export async function resolveCaseChat(
   };
 }
 
+function partyRole(chat: CaseChat, userId: string): ChatParty["role"] {
+  if (userId === chat.reporterId) return "REPORTER";
+  return chat.deliveringIds.includes(userId) ? "DELIVERING" : "ATTENDEE";
+}
+
 /** Group channels need staff-picked targets unless an attendee filed the case. */
 export function requiresTargets(chat: CaseChat): boolean {
   if (chat.kind === "DM") return false;
@@ -439,12 +444,7 @@ export async function readCaseChatStatus(
   const parties: ChatParty[] = partyIds.map((userId) => ({
     userId,
     name: nameOf.get(userId) ?? "Former user",
-    role:
-      userId === chat.reporterId
-        ? "REPORTER"
-        : chat.deliveringIds.includes(userId)
-          ? "DELIVERING"
-          : "ATTENDEE",
+    role: partyRole(chat, userId),
   }));
   return {
     ...base,

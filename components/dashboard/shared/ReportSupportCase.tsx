@@ -175,11 +175,12 @@ export function OpenReportCaseDialog({
           </ResponsiveModalDescription>
         </ResponsiveModalHeader>
 
-        {options.isPending ? (
+        {options.isPending && (
           <div className="flex justify-center py-6">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
-        ) : options.isError ? (
+        )}
+        {options.isError && (
           <p className="text-sm text-destructive">
             {options.error.message}{" "}
             <button
@@ -190,7 +191,8 @@ export function OpenReportCaseDialog({
               Retry
             </button>
           </p>
-        ) : (
+        )}
+        {options.isSuccess && (
           <form
             className="space-y-4"
             onSubmit={(e) => {
@@ -208,30 +210,31 @@ export function OpenReportCaseDialog({
               ) : (
                 options.data.candidates.map((c) => {
                   const mismatch = c.chatMatchesReport === false;
+                  const inputId = `report-case-booking-${c.id}`;
                   return (
                     <label
                       key={c.id}
-                      className={`flex items-start gap-2 rounded-md border p-2 text-sm ${
+                      htmlFor={inputId}
+                      className={`grid grid-cols-[auto_1fr] items-start gap-x-2 rounded-md border p-2 text-sm ${
                         mismatch ? "opacity-60" : "cursor-pointer"
                       }`}
                     >
                       <input
+                        id={inputId}
                         type="radio"
                         name="report-case-booking"
                         value={c.id}
                         checked={appointmentId === c.id}
                         disabled={mismatch}
                         onChange={() => setAppointmentId(c.id)}
-                        className="mt-1"
+                        className="row-span-2 mt-1"
                       />
-                      <span>
-                        <span className="font-medium">
-                          {c.title ?? humanizeEnum(c.type)}
-                        </span>
-                        <span className="block text-xs text-muted-foreground">
-                          {humanizeEnum(c.type)} · {formatStartsAt(c.startsAt)}
-                          {mismatch ? " · not the reported chat" : ""}
-                        </span>
+                      <span className="font-medium">
+                        {c.title ?? humanizeEnum(c.type)}
+                      </span>
+                      <span className="col-start-2 text-xs text-muted-foreground">
+                        {humanizeEnum(c.type)} · {formatStartsAt(c.startsAt)}
+                        {mismatch ? " · not the reported chat" : ""}
                       </span>
                     </label>
                   );

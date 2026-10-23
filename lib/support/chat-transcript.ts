@@ -60,6 +60,97 @@ async function deletedText(messageId: string): Promise<string> {
   return res.message?.text ?? "";
 }
 
+type StreamChannel = ReturnType<
+  ReturnType<typeof getStreamChatClient>["channel"]
+>;
+
+async function queryRawPage(
+  channel: StreamChannel,
+  cursor: string | undefined,
+): Promise<MessageResponse[]> {
+  try {
+    const res = await withStreamCircuitBreaker(() =>
+      channel.query({
+        state: true,
+        watch: false,
+        presence: false,
+        messages: {
+          limit: PAGE_LIMIT,
+          ...(cursor ? { id_lt: cursor } : {}),
+        },
+      }),
+    );
+    return res.messages ?? [];
+  } catch (err) {
+    if (isMissingChannelError(err))
+      throw new OpsRefusal(
+        "CHAT_NOT_FOUND",
+        "This booking chat no longer exists.",
+        404,
+      );
+    throw err;
+  }
+}
+
+/** Pages back from `before` until enough in-window, in-scope messages are kept. */
+async function collectWindow(
+  channel: StreamChannel,
+  windowStart: Date,
+  scopeUserIds: Set<string>,
+  before: string | undefined,
+) {
+  const kept: MessageResponse[] = [];
+  let cursor = before;
+  let reachedStart = false;
+  for (let page = 0; page < MAX_RAW_PAGES && !reachedStart; page++) {
+    const raw = await queryRawPage(channel, cursor);
+    const oldest = raw[0];
+    if (!oldest || raw.length < PAGE_LIMIT) reachedStart = true;
+    if (oldest && createdAtOf(oldest) < windowStart) reachedStart = true;
+    if (oldest) cursor = oldest.id;
+    const inWindow = raw.filter(
+      (m) => createdAtOf(m) >= windowStart && inScope(m, scopeUserIds),
+    );
+    kept.unshift(...inWindow);
+    if (kept.length >= FILL_TARGET) break;
+  }
+  return { kept, cursor, reachedStart };
+}
+
+function attachmentsOf(m: MessageResponse): TranscriptMessage["attachments"] {
+  return (m.attachments ?? []).map((a) => ({
+    type: a.type ?? "file",
+    name: a.title ?? a.fallback ?? a.mime_type ?? a.type ?? "attachment",
+  }));
+}
+
+async function toTranscriptMessages(
+  kept: MessageResponse[],
+  reporterId: string | null,
+): Promise<TranscriptMessage[]> {
+  let lookups = 0;
+  const messages: TranscriptMessage[] = [];
+  for (const m of kept) {
+    const deleted = m.type === "deleted" || Boolean(m.deleted_at);
+    let text = m.text ?? "";
+    if (deleted && lookups < MAX_DELETED_LOOKUPS) {
+      lookups += 1;
+      text = await deletedText(m.id);
+    }
+    messages.push({
+      id: m.id,
+      userId: m.user?.id ?? null,
+      userName: m.user?.name ?? null,
+      role: roleOf(m, reporterId),
+      text,
+      attachments: attachmentsOf(m),
+      createdAt: createdAtOf(m).toISOString(),
+      deletedBySender: deleted,
+    });
+  }
+  return messages;
+}
+
 /** Reads one transcript page under a live grant and audits it before returning. */
 export async function readTranscriptPage(input: {
   caseId: string;
@@ -89,67 +180,13 @@ export async function readTranscriptPage(input: {
     grant.channelId,
   );
 
-  const kept: MessageResponse[] = [];
-  let cursor = input.before;
-  let reachedStart = false;
-  for (let page = 0; page < MAX_RAW_PAGES && !reachedStart; page++) {
-    let raw: MessageResponse[];
-    try {
-      const res = await withStreamCircuitBreaker(() =>
-        channel.query({
-          state: true,
-          watch: false,
-          presence: false,
-          messages: {
-            limit: PAGE_LIMIT,
-            ...(cursor ? { id_lt: cursor } : {}),
-          },
-        }),
-      );
-      raw = res.messages ?? [];
-    } catch (err) {
-      if (isMissingChannelError(err))
-        throw new OpsRefusal(
-          "CHAT_NOT_FOUND",
-          "This booking chat no longer exists.",
-          404,
-        );
-      throw err;
-    }
-    const oldest = raw[0];
-    if (!oldest || raw.length < PAGE_LIMIT) reachedStart = true;
-    if (oldest && createdAtOf(oldest) < grant.windowStart) reachedStart = true;
-    if (oldest) cursor = oldest.id;
-    const inWindow = raw.filter(
-      (m) => createdAtOf(m) >= grant.windowStart && inScope(m, scopeUserIds),
-    );
-    kept.unshift(...inWindow);
-    if (kept.length >= FILL_TARGET) break;
-  }
-
-  let lookups = 0;
-  const messages: TranscriptMessage[] = [];
-  for (const m of kept) {
-    const deleted = m.type === "deleted" || Boolean(m.deleted_at);
-    let text = m.text ?? "";
-    if (deleted && lookups < MAX_DELETED_LOOKUPS) {
-      lookups += 1;
-      text = await deletedText(m.id);
-    }
-    messages.push({
-      id: m.id,
-      userId: m.user?.id ?? null,
-      userName: m.user?.name ?? null,
-      role: roleOf(m, reporterId),
-      text,
-      attachments: (m.attachments ?? []).map((a) => ({
-        type: a.type ?? "file",
-        name: a.title ?? a.fallback ?? a.mime_type ?? a.type ?? "attachment",
-      })),
-      createdAt: createdAtOf(m).toISOString(),
-      deletedBySender: deleted,
-    });
-  }
+  const { kept, cursor, reachedStart } = await collectWindow(
+    channel,
+    grant.windowStart,
+    scopeUserIds,
+    input.before,
+  );
+  const messages = await toTranscriptMessages(kept, reporterId);
 
   await recordSystemEvent({
     category: SUPPORT_CHAT_ACCESS_EVENT_CATEGORY,

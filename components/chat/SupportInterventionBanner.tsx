@@ -17,15 +17,12 @@ export const SupportInterventionBanner = () => {
   if (!membersIncludeSupport(members ?? channel?.state?.members)) return null;
 
   return (
-    <div
-      role="status"
-      className="flex items-center justify-center gap-2 border-b border-info/40 bg-info/10 px-4 py-3 text-sm text-foreground"
-    >
+    <output className="flex items-center justify-center gap-2 border-b border-info/40 bg-info/10 px-4 py-3 text-sm text-foreground">
       <ShieldCheckIcon
         className="h-4 w-4 shrink-0 text-info"
         aria-hidden="true"
       />
-      <p>
+      <span>
         Familiarise Support is in this chat to help with a reported issue. Our
         team can read this conversation while the issue is open.{" "}
         <a
@@ -36,7 +33,7 @@ export const SupportInterventionBanner = () => {
         >
           How we review messages
         </a>
-      </p>
-    </div>
+      </span>
+    </output>
   );
 };

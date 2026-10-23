@@ -131,8 +131,7 @@ export async function joinIntervention(
     },
   });
   if (
-    !grant ||
-    grant.kind !== "INTERVENE" ||
+    grant?.kind !== "INTERVENE" ||
     grant.endedAt ||
     grant.streamJoinedAt ||
     grant.expiresAt <= now
@@ -182,8 +181,7 @@ export async function leaveIntervention(
     },
   });
   if (
-    !grant ||
-    grant.kind !== "INTERVENE" ||
+    grant?.kind !== "INTERVENE" ||
     !grant.endedAt ||
     !grant.streamJoinedAt ||
     grant.streamLeftAt
