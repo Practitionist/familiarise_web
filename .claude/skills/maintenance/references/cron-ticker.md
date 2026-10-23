@@ -42,3 +42,7 @@ Every scheduled GitHub Actions workflow declares `concurrency: { group: ${{ gith
 ## Sources
 
 `AGENTS.md`, `lib/cron/cleanup-registry.ts`, `lib/cron/cleanup-route.ts`, `lib/cron/with-cron-lock.ts`, `netlify/functions/cron-tick.mts`.
+
+## Compliance and retention slices
+
+Consent, breach-deadline alerts and SystemEvent retention have registered bounded cores under lib/compliance and lib/observability. Their existing Actions steps retain automatic ownership until a verified single cutover. Consent deletion remains DPDP_SWEEPER_DELETE-gated and uses the stored retention deadline; event retention remains400days. Breach mail/Novu obligations stage transactionally and resume the oldest unfinished hourly digest, including across hour rollover. Staged or held mail is not delivered-mail evidence. See docs/maintenance/compliance-retention-workers.md; never run a real retention or alerting job to test it against the shared database.

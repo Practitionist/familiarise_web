@@ -90,6 +90,21 @@ type JobResult = {
 type JobFunction = (actorUserId?: string) => Promise<JobResult>;
 
 const JOB_FUNCTIONS: Record<string, JobFunction> = {
+  "consent-retention-sweeper": async () => {
+    const { runConsentRetentionSweeper } =
+      await import("@/lib/compliance/consent-retention");
+    return runConsentRetentionSweeper();
+  },
+  "databreach-deadline-alerts": async () => {
+    const { runDataBreachDeadlineAlerts } =
+      await import("@/lib/compliance/databreach-deadline-alerts");
+    return runDataBreachDeadlineAlerts();
+  },
+  "prune-system-events": async () => {
+    const { pruneSystemEvents } =
+      await import("@/lib/observability/system-event-retention");
+    return pruneSystemEvents();
+  },
   "cleanup-abandoned-payments": async () => {
     const result = await cleanupAbandonedPayments();
     return {

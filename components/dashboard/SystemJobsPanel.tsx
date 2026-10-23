@@ -51,6 +51,30 @@ export interface SystemJob {
 }
 
 const SYSTEM_JOBS: SystemJob[] = [
+  {
+    id: "consent-retention-sweeper",
+    name: "Consent Retention Slice",
+    description:
+      "Examine one expired-retention slice; deletion requires the existing delete gate.",
+    schedule: "Actions weekly; verify execution",
+    category: "Cleanup",
+  },
+  {
+    id: "databreach-deadline-alerts",
+    name: "Breach Deadline Alert Slice",
+    description:
+      "Stage the next bounded recipient slice of the oldest unfinished deadline digest.",
+    schedule: "Actions hourly; verify execution",
+    category: "Alerts",
+  },
+  {
+    id: "prune-system-events",
+    name: "System Event Retention Slice",
+    description:
+      "Remove one oldest-first slice beyond the existing 400-day retention policy.",
+    schedule: "Actions daily; verify execution",
+    category: "Cleanup",
+  },
   // Payments
   {
     id: "cleanup-abandoned-payments",
