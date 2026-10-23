@@ -32,6 +32,7 @@ jest.mock("../../lib/observability/standing-finding", () => ({
     mockReportStandingFinding(args, report),
 }));
 jest.mock("../../lib/support/problem-cascade", () => ({
+  HELD_OPEN_SCAN_FACTOR: 2,
   cascadeResolvedProblems: jest.fn(async () => ({
     cascaded: 0,
     heldOpen: [],

@@ -85,6 +85,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           },
           orderBy: { createdAt: "asc" },
         },
+        supportCase: { select: { id: true, referenceNumber: true } },
       },
     });
 

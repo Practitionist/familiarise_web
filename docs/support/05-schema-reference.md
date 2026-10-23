@@ -12,6 +12,7 @@
 | `SupportCaseDecision`            | Immutable explanation/outcome and appeal deadline                                                             |
 | `SupportFinancialRecommendation` | Paise, payment, author, `releaseSeat`, decision, void and stable refund association                           |
 | `SupportFlowOutcome`             | Body-free terminal self-service analytics                                                                     |
+| `SupportCaseChatAccess`          | Append-only staff grant to one booking chat (READ or INTERVENE): scope, window, expiry, end and Stream stamps |
 
 Ownership is PERSONAL, ORG_OPERATIONS or ORG_BILLING. Organization ownership
 requires an organization. A case may appeal a case decision or moderation action,
@@ -24,6 +25,11 @@ and void shape, and one undecided recommendation per payment. Support payout
 holds are `EarningsHold` rows with reason `SUPPORT_CASE` and the case id as
 `sourceRef`; their intent is the case's `HOLD_APPLIED` / `HOLD_RELEASED` events. Messages have unique
 `[caseId, seq]` and `[caseId, clientTurnId]`. Case decisions reject UPDATE/DELETE.
+Chat-access grants have a shape CHECK, one live intervention per channel, one
+live READ per operator per case, sweep indexes, and a trigger that rejects
+DELETE and every UPDATE except setting the end, Stream and notice stamps once.
+A case may name the moderation report it was opened from (`moderationReportId`,
+unique).
 Prisma represents the normal FKs and indexes; partial indexes and checks live in
 `prisma/sql/check-constraints.sql`.
 
