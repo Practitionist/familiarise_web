@@ -33,6 +33,10 @@ jest.mock("../../lib/prisma", () => {
       create: jest.fn(),
     },
     supportCaseEvent: { create: jest.fn() },
+    supportCaseChatAccess: {
+      findMany: jest.fn(async () => []),
+      updateMany: jest.fn(async () => ({ count: 1 })),
+    },
     supportCaseDecision: { findFirst: jest.fn() },
     user: {
       findMany: jest.fn(async () => [{ id: "staff" }]),

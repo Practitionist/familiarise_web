@@ -67,6 +67,21 @@ describe("saved replies", () => {
       expect(new Set(replies.map((r) => r.id)).size).toBe(replies.length);
     }
   });
+
+  it("never promises that a reply reopens a resolved request", () => {
+    const resolving = savedRepliesFor("other").filter((r) =>
+      ["general-resolved", "macro-resolve-closing"].includes(r.id),
+    );
+    expect(resolving).toHaveLength(2);
+    for (const reply of resolving) {
+      expect(reply.body).toContain("This didn't fix it");
+      expect(reply.body).toContain("won't reopen");
+    }
+    for (const topic of ["payments", "cancellation", "other"] as const) {
+      for (const reply of savedRepliesFor(topic))
+        expect(reply.body).not.toMatch(/will reopen|reopen automatically/i);
+    }
+  });
 });
 
 describe("insert menu articles", () => {

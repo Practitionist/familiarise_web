@@ -26,6 +26,7 @@ const SUPPORT_THREAD_CATEGORIES = [
   "QUALITY_COMPLAINT",
   "SPONSORSHIP_BILLING",
   "ORG_ADMIN_DISPUTE",
+  "SAFETY_CONCERN",
   "OTHER",
 ] as const satisfies readonly SupportThreadCategory[];
 
