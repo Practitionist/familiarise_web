@@ -98,12 +98,10 @@ const globalDb = prisma as unknown as {
   appointment: { findMany: jest.Mock };
 };
 
-const params = { params: Promise.resolve({ reportId: REPORT.id }) };
-
-const post = (body: Record<string, unknown> = {}) =>
+const post = (body: Record<string, unknown> = {}, reportId = REPORT.id) =>
   POST(
     new NextRequest(
-      `https://x.test/api/staff/moderation/reports/${REPORT.id}/case`,
+      `https://x.test/api/staff/moderation/reports/${reportId}/case`,
       {
         method: "POST",
         body: JSON.stringify({
@@ -114,15 +112,15 @@ const post = (body: Record<string, unknown> = {}) =>
         }),
       },
     ),
-    params as never,
+    { params: Promise.resolve({ reportId }) } as never,
   );
 
-const get = () =>
+const get = (reportId = REPORT.id) =>
   GET(
     new NextRequest(
-      `https://x.test/api/staff/moderation/reports/${REPORT.id}/case`,
+      `https://x.test/api/staff/moderation/reports/${reportId}/case`,
     ),
-    params,
+    { params: Promise.resolve({ reportId }) },
   );
 
 const createdData = () => tx.supportCase.create.mock.calls[0][0].data;
@@ -271,6 +269,17 @@ describe("POST — refusals", () => {
   it("404s an unknown report", async () => {
     tx.moderationReport.findUnique.mockResolvedValue(null);
     expect((await post()).status).toBe(404);
+    expectNothingWritten();
+  });
+
+  it("404s a report id that is not a uuid without reading or writing", async () => {
+    const res = await post({}, "not-a-uuid");
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      code: "NOT_FOUND",
+      error: "Report not found.",
+    });
+    expect(tx.moderationReport.findUnique).not.toHaveBeenCalled();
     expectNothingWritten();
   });
 
@@ -441,6 +450,16 @@ describe("GET /api/staff/moderation/reports/[reportId]/case", () => {
   it("refuses a non-operator", async () => {
     mockSession.user = { id: "u-1", role: "CONSULTEE", twoFactorEnabled: true };
     expect((await get()).status).toBe(403);
+  });
+
+  it("404s a report id that is not a uuid without reading", async () => {
+    const res = await get("RPT-0B1C2D3E");
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      error: "Report not found.",
+      code: "NOT_FOUND",
+    });
+    expect(globalDb.moderationReport.findUnique).not.toHaveBeenCalled();
   });
 });
 

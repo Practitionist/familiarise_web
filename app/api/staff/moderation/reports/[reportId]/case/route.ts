@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import {
   openReportCaseTx,
   readReportCaseOptions,
@@ -13,18 +15,26 @@ interface RouteParams {
   params: Promise<{ reportId: string }>;
 }
 
+// ModerationReport.id is a uuid, so anything else can only miss.
+const ReportId = z.string().uuid();
+
+const REPORT_NOT_FOUND = {
+  error: "Report not found.",
+  code: "NOT_FOUND",
+} as const;
+
 /** The open-case dialog's data: the linked case, or the bookings reporter and target share. */
 export async function GET(_req: NextRequest, { params }: RouteParams) {
   const auth = await requireBackofficeSurface("tickets.manage");
   if (auth.error) return auth.error;
-  const { reportId } = await params;
+  const reportId = ReportId.safeParse((await params).reportId);
+  if (!reportId.success) {
+    return NextResponse.json(REPORT_NOT_FOUND, { status: 404 });
+  }
   try {
-    const options = await readReportCaseOptions(reportId);
+    const options = await readReportCaseOptions(reportId.data);
     if (!options) {
-      return NextResponse.json(
-        { error: "Report not found.", code: "NOT_FOUND" },
-        { status: 404 },
-      );
+      return NextResponse.json(REPORT_NOT_FOUND, { status: 404 });
     }
     return NextResponse.json(options);
   } catch (err) {
@@ -44,14 +54,22 @@ export const POST = withOpsAction(
   {
     mode: "tx",
     run: async (tx, { body, actor, params }) => {
+      const reportId = ReportId.safeParse(params.reportId);
+      if (!reportId.success) {
+        throw new OpsRefusal(
+          REPORT_NOT_FOUND.code,
+          REPORT_NOT_FOUND.error,
+          404,
+        );
+      }
       const { linkedCase } = await openReportCaseTx(tx, {
-        reportId: params.reportId,
+        reportId: reportId.data,
         appointmentId: body.appointmentId,
         category: body.category,
         actorUserId: actor.userId,
       });
       return {
-        target: { kind: "ModerationReport", id: params.reportId },
+        target: { kind: "ModerationReport", id: reportId.data },
         response: { case: linkedCase },
         status: 201,
         before: { caseId: null },
