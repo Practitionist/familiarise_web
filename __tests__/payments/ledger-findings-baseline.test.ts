@@ -48,6 +48,44 @@ const entry = (
 });
 
 describe("evaluateLedgerBaseline", () => {
+  it("does not excuse a replacement missing journal with the same count", () => {
+    const finding: Finding = {
+      kind: "EARNINGS_WITHOUT_BOOKING_TXN",
+      paymentId: "replacement-payment",
+      expectedPaise: 1,
+      actualPaise: 0,
+      deltaPaise: -1,
+    };
+    const evaluation = evaluateLedgerBaseline({
+      findings: [finding],
+      entries: [
+        entry({
+          kind: finding.kind,
+          paymentId: "known-fixture",
+          organizationId: undefined,
+          billingAccountId: undefined,
+          deltaPaise: -1,
+        }),
+      ],
+      knownKinds: RECONCILE_FINDING_KINDS,
+      now: NOW,
+    });
+    expect(evaluation.ok).toBe(false);
+    expect(evaluation.unbaselinedCount).toBe(1);
+  });
+
+  it("rejects missing-journal baseline entries without a payment identity", () => {
+    const evaluation = evaluateLedgerBaseline({
+      findings: [],
+      entries: [entry({ kind: "EARNINGS_WITHOUT_BOOKING_TXN" })],
+      knownKinds: RECONCILE_FINDING_KINDS,
+      now: NOW,
+    });
+    expect(evaluation.ok).toBe(false);
+    expect(evaluation.problems).toEqual([
+      expect.stringContaining("must pin paymentId"),
+    ]);
+  });
   it("baselines a finding the entry pins and lets the run pass", () => {
     const evaluation = evaluateLedgerBaseline({
       findings: [walletDrift()],

@@ -8,7 +8,7 @@ last-reviewed: 2026-10-23
 
 # Ledger integrity and reconciliation
 
-The journal is the source of truth for money. A few numbers are cached beside it for speed, such as the wallet balance and the amount columns on earnings, and a few counters are denormalised, such as engagements used and active seat counts. A cache is only safe if something independently re-derives it and raises an alarm when it drifts. That something is the ledger auditor, `runReconcileLedgers` in `scripts/reconcile/reconcile-ledgers.ts`. It is read-only: it writes one `LedgerReconciliationReport` row per run and never touches an audited table. Its single protective side effect is that a wallet whose cache disagrees with the journal has its discretionary spend frozen until a person repairs it.
+The journal is the source of truth for money. A few numbers are cached beside it for speed, such as the wallet balance and the amount columns on earnings, and a few counters are denormalised, such as engagements used and active seat counts. A cache is only safe if something independently re-derives it and raises an alarm when it drifts. That something is the ledger auditor, `runReconcileLedgers` in `scripts/reconcile/reconcile-ledgers.ts`. It is read-only: it writes one `LedgerReconciliationReport` row per logical audit and never touches an audited table. Its single protective side effect is that a wallet whose cache disagrees with the journal has its discretionary spend frozen until a person repairs it.
 
 This page has three jobs. It lists which invariants Postgres already enforces, so nobody writes a JavaScript sweep that re-checks them. It lists what the auditor checks instead. And it says what to do when a finding fires.
 
@@ -22,7 +22,7 @@ The rule in `AGENTS.md` is that an invariant the database enforces at commit is 
 | A posted journal line or header is never edited                                         | `ledger_entry_immutable`, `ledger_transaction_immutable` (`ledger-triggers.sql`)                                              | No checksum of old entries                                                                |
 | A journal line is positive and every ledger account is in rupees                        | `ledger_entry_amount_positive`, `ledger_account_currency_inr` (`check-constraints.sql`)                                       | No currency sweep                                                                         |
 | Payment, refund, dispute, earning and payout rows are in rupees                         | the `*_currency_inr` CHECKs (`check-constraints.sql`)                                                                         | No currency sweep                                                                         |
-| A payment's funding legs sum to the payment amount, and reversal legs never exceed them | `payment_legs_sum_to_amount` (`payment-legs-triggers.sql`), with `payment_amount_vs_legs` and `payment_refunds_within_amount` | The TS twin `checkPaymentLegsSumToAmount` runs at write time only                         |
+| A payment's funding legs sum to the payment amount, and reversal legs never exceed them | `payment_legs_sum_to_amount` (`payment-legs-triggers.sql`), with `payment_amount_vs_legs` and `payment_refunds_within_amount` | No warn-only funding-leg re-read after a booking write                                    |
 | A cached wallet balance is never negative                                               | `billing_account_wallet_nonnegative` (`check-constraints.sql`)                                                                | No negative-balance sweep (drift against the journal is still audited)                    |
 | A batched earning always points at a payout                                             | `consultant_earnings_batched_has_payout`, `org_earnings_batched_has_payout` (`check-constraints.sql`)                         | No orphaned-batch sweep                                                                   |
 | One host's live confirmed sessions never overlap                                        | `occurrence_no_confirmed_overlap` (`check-constraints.sql`)                                                                   | No double-booking sweep for that case                                                     |
@@ -34,7 +34,7 @@ Everything below is what Postgres cannot see: a cache against the journal, a cou
 
 ## What the auditor checks
 
-The auditor emits the finding kinds in `RECONCILE_FINDING_KINDS`. All are set-based SQL aggregations, so a full run finishes in a few seconds inside one request. A run for one organisation (`scope: "org:<id>"`) skips the four full-scope-only checks marked below.
+The auditor emits the finding kinds in `RECONCILE_FINDING_KINDS`. Comparisons use set-based SQL within persisted pages of at most 100 primary entities, retaining their complete related journal history. Each comparison uses a read-only Repeatable Read transaction and passes its transaction client through every helper. Pages do not form one global snapshot of the entire audit. A run for one organisation (`scope: "org:<id>"`) skips the four full-scope-only checks marked below.
 
 | Finding kind                                                                           | Asserts                                                                                                                                                |
 | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -60,22 +60,25 @@ The consultant-payout journal check inside `COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN`
 
 ```mermaid
 flowchart TD
-  CRON["Ticker: POST /api/cleanup/reconcile-ledgers<br/>one slot, 03:55 UTC"] --> RUN["runReconcileLedgers"]
+  CRON["Ticker: POST /api/cleanup/reconcile-ledgers<br/>hourly :55 when capacity permits"] --> RUN["Create or resume persisted audit pages"]
   ADMIN["Admin door: POST /api/admin/reconcile-ledgers<br/>step-up, reason, ops log"] --> RUN
   RUN --> W["Wallet step first"]
-  W -->|"WALLET_BALANCE_DRIFT, cron run"| FRZ["onWalletDrift freeze<br/>WALLET_FREEZE event"]
-  REP -->|"admin run, after return"| AFRZ["freezeDriftedWallets<br/>WALLET_FREEZE event"]
-  RUN --> REST["All other checks"]
+  W -->|"WALLET_BALANCE_DRIFT, every entry point"| FRZ["onWalletDrift freeze<br/>WALLET_FREEZE event"]
+  W -->|"no drift"| REST["All other checks"]
+  FRZ --> REST
   REST --> BL["Split against the checked-in baseline"]
   BL --> REP["LedgerReconciliationReport row"]
-  REP --> OK{"Any unbaselined finding<br/>or baseline problem?"}
+  RUN -->|"comparison fails"| F["500; persist FAILED at the same checkpoint"]
+  REP --> DONE{"Audit completed?"}
+  DONE -- no --> CONT["200 RUNNING; continue audit"]
+  DONE -- yes --> OK{"Any unbaselined finding<br/>or baseline problem?"}
   OK -- no --> G["200, ok"]
   OK -- yes --> P["207, respondToLedgerDrift:<br/>SystemEvent and one Sentry report"]
 ```
 
 ## The baseline of known findings
 
-A finding that is already known must not keep the nightly run red forever, because an auditor that is permanently red is an auditor nobody reads. The auditor splits its findings against a checked-in baseline, `scripts/reconcile/ledger-findings-baseline.ts`, and only the findings the baseline does not excuse fail the run.
+A finding that is already known must not keep the completed logical audit red forever, because an auditor that is permanently red is an auditor nobody reads. The auditor splits its findings against a checked-in baseline, `scripts/reconcile/ledger-findings-baseline.ts`, and only the findings the baseline does not excuse fail the run.
 
 - The baseline never hides evidence. Every finding still lands in the persisted report and still counts in `summary.discrepanciesCount`.
 - An entry pins one finding by fingerprint: the kind, the delta and every entity id the finding carries. A new row, a changed amount or a finding that grew an identifier is never excused.
@@ -86,15 +89,21 @@ The report is ok exactly when `summary.unbaselinedCount` is zero and `summary.ba
 
 ## How a run happens
 
-The Netlify ticker (`netlify/functions/cron-tick.mts`) calls the `reconcile-ledgers` twin once a day at 03:55 UTC, which is 09:25 IST, inside a one-hour window. It is one slot on purpose, because every run writes a report row. The twin runs the full scope under the `reconcile-ledgers` cron lease and answers 200 for a clean run, 207 when there are unbaselined findings, and 500 when the audit or a freeze failed.
+The ticker offers an hourly `:55` slice, yielding that slot to settlement and statutory jobs when dispatch is at its design bound. `runReconcileLedgers` creates or resumes the full-scope audit; a completed daily audit is reused. The cleanup twin returns 200 with `summary.status: RUNNING` for continuation, 200 for a completed clean report, 207 for completed discrepancies, and 500 for a failed slice or freeze. An incomplete report has `ok: false`; that is not a completed corruption verdict.
 
-An administrator can run the same audit on demand through `POST /api/admin/reconcile-ledgers`, an admin money door with step-up, a reason and one `OpsActionLog` row. It runs synchronously, can be scoped to one organisation, and answers 409 if a full-scope run is already in progress. `POST /api/cleanup/reconcile-ledgers` with `Authorization: Bearer $CRON_SECRET` is the HTTP twin for a manual run. While maintenance is DEGRADED the admin door is blocked (`/api/admin/reconcile-ledgers` is in `WRITE_BLOCKED_IN_DEGRADED` in `lib/maintenance-edge.ts`); the nightly twin is not in `FINANCIAL_JOB_NAMES` and keeps running.
+`summary.nextStep` with its `stepName`, optional `cursor`, `calls`, `executing`, `interruptions`, counts and findings persist on the report. Successful comparisons advance the checkpoint. A checkpoint whose `stepName` no longer names the step at `nextStep` is not resumed; a fresh audit starts instead. A caught failure marks it FAILED and retains the unfinished comparison for the scheduled retry, while an authenticated admin run starts a fresh audit from it; a hard interruption leaves executing state that a later owner can resume after lease recovery. Pending audits resume across UTC days, and historical cohorts are not hidden behind a recent-days cutoff. The same fail-closed Postgres lease excludes active admin and scheduled callers. A lease or request timeout does not prove an old process has stopped.
 
-`respondToLedgerDrift` runs only when the report is not ok. It records a `SystemEvent` and reports to Sentry once per standing set of findings, with a seven-day window so the same set does not page every night.
+Both admin doors advance the same bounded `runReconcileLedgers` core, optionally scoped to an organisation. They require ADMIN access, step-up, a reason and an ops-log row. A held lease answers 409; idle checkpoints resume. RUNNING returns 200 for continuation, completed discrepancies return 207, and failures return 500. The Reconcile console shows Continue audit for an unfinished report and Restart audit for a failed one and never labels an incomplete `ok: false` as drift. Unclassified legacy reports display an unavailable completion status.
+
+An authenticated manual request creates a fresh audit after a completed verdict, allowing verification after an operator correction on the same UTC day. A scheduled request reuses the completed daily audit. Cron query parameters cannot impersonate the admin actor or force a fresh manual report. Cohort aging remains anchored to the report start, while baseline expiry is evaluated at the current save time so an exception cannot outlive its expiry during a multi-day audit.
+
+Each newly checked wallet page invokes the same freeze hook before its checkpoint advances, including the admin path. Resuming later pages does not re-apply historical wallet findings and undo an operator’s intervening repair/unfreeze. The scheduled wrapper aggregates wallet findings and uses a persisted logical-report key for fatal-alert deduplication. `respondToLedgerDrift` retains the standing-findings alert policy; do not capture once per row or once per page. A failed comparison retains its page and prevents a completed verdict. Repeated failure requires fixing that comparison or its data/capacity issue; retrying or creating another report cannot make the same unchecked obligation clean. No page is skipped after a retry count. Other job gates still determine admission during maintenance.
+
+A payment with earnings and no BOOKING journal raises one `EARNINGS_WITHOUT_BOOKING_TXN` finding pinned to that payment (`details.unit: transactions`, expected/actual 1/0). Aggregate coverage counts remain informational. The baseline is an exact, expiring exception list, not a count allowance for a moving set of missing payments.
 
 ## Wallet drift: freeze, repair, unfreeze
 
-`BillingAccount.walletBalance` is a reconciled cache of the `WALLET` ledger account. When the wallet step finds a drift, the drifting wallets are frozen (`lib/payments/wallet-freeze.ts`). The nightly cron run freezes them through the `onWalletDrift` hook as soon as the wallet step finishes; the admin door calls `freezeDriftedWallets` only after `runReconcileLedgers` returns, so its freeze follows the report row. The freeze is a `WALLET_FREEZE` event in the append-only `SystemEvent` log, keyed `wallet-freeze:<billingAccountId>`, and the latest event under the key decides the state. It fails closed: an unreadable log blocks spend rather than leaking it. It blocks discretionary spend such as a checkout debit, never a top-up credit and never chargeback recovery. On the cron path the freeze happens right after the wallet step and before the baseline is evaluated, so a baselined wallet drift still freezes spend and still raises one fatal Sentry report per run, even if the run is cut off later. On the admin path a process that dies between the report and the freeze leaves the wallet unfrozen until the next run.
+`BillingAccount.walletBalance` is a reconciled cache of the organisation's WALLET journal. Every entry point freezes a drifting wallet immediately after its page, before checkpoint advancement, even when a finding is baselined. Freeze failures retain that page for retry. The freeze is an append-only `SystemEvent`, keyed `wallet-freeze:<billingAccountId>`, and the latest freeze/unfreeze event decides the state. An unreadable freeze log blocks discretionary spend; top-up credit and chargeback recovery remain separate flows.
 
 A drift is an incident, not something to patch by hand. The repair has three steps.
 
@@ -110,18 +119,18 @@ The auditor compares caches with the journal. It does not check the `GATEWAY_CLE
 
 ## Rules and their enforcers
 
-| Rule                                                              | Enforcer                                                                                                                                                         | Test                                                       | Repair                                           |
-| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------ |
-| A known finding cannot keep the run red forever or hide a new one | Fingerprint, expiry and fail-on-malformed rules in `ledger-findings-baseline.ts`                                                                                 | `__tests__/payments/ledger-findings-baseline.test.ts`      | Fix the finding or renew the entry with a reason |
-| A drifted wallet cannot be spent                                  | `isWalletFrozen` in `lib/payments/wallet-freeze.ts`, read in the checkout transaction                                                                            | `__tests__/maintenance/ledger-drift-response.test.ts`      | Correcting journal, then the unfreeze door       |
-| An unfreeze cannot hide a live drift                              | The `WALLET_STILL_DRIFTED` re-check in the unfreeze route                                                                                                        | `__tests__/enterprise/wallet-doors.test.ts`                | Post the correcting journal first                |
-| Two audits do not overlap while the lease can be taken            | `withCronLock("reconcile-ledgers")`, a Postgres lease taken fail-open (a non-connection lease error runs the audit unlocked), and a 409 for a running full scope | `__tests__/payments/admin-reconcile-ledgers-async.test.ts` | Wait for the running audit                       |
+| Rule                                                              | Enforcer                                                                                                                          | Test                                                       | Repair                                           |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------ |
+| A known finding cannot keep the run red forever or hide a new one | Fingerprint, expiry and fail-on-malformed rules in `ledger-findings-baseline.ts`                                                  | `__tests__/payments/ledger-findings-baseline.test.ts`      | Fix the finding or renew the entry with a reason |
+| A drifted wallet cannot be spent                                  | `isWalletFrozen` in `lib/payments/wallet-freeze.ts`, read in the checkout transaction                                             | `__tests__/maintenance/ledger-drift-response.test.ts`      | Correcting journal, then the unfreeze door       |
+| An unfreeze cannot hide a live drift                              | The `WALLET_STILL_DRIFTED` re-check in the unfreeze route                                                                         | `__tests__/enterprise/wallet-doors.test.ts`                | Post the correcting journal first                |
+| Two audits do not overlap while the lease can be taken            | `withCronLock("reconcile-ledgers")`, a fail-closed Postgres lease shared by admin and scheduled callers; a held lease returns 409 | `__tests__/payments/admin-reconcile-ledgers-async.test.ts` | Wait for the running audit                       |
 
 ## Where in code
 
 - `scripts/reconcile/reconcile-ledgers.ts` — `runReconcileLedgers`, `RECONCILE_FINDING_KINDS`, `walletDriftFindings`.
 - `scripts/reconcile/ledger-findings-baseline.ts` — the baseline entries and `evaluateLedgerBaseline`.
-- `scripts/reconcile/ledger-drift-response.ts` — `respondToLedgerDrift`, `freezeDriftingWallets`.
+- `scripts/reconcile/ledger-drift-response.ts` — `respondToLedgerDrift`, `reportWalletDriftFreeze`.
 - `lib/payments/wallet-freeze.ts` — `isWalletFrozen`, `freezeWalletSpend`, `unfreezeWalletSpend`, `freezeDriftedWallets`.
 - `lib/backoffice/ledger-run.ts` — `startLedgerReconciliation`, the helper behind the admin door.
 - `LedgerReconciliationReport` in `prisma/schema.prisma`.
@@ -135,8 +144,8 @@ The auditor compares caches with the journal. It does not check the `GATEWAY_CLE
 
 ## Deprecated & Superseded Approaches
 
-- **A chunked cursor engine** (`advanceReconcileRun`, `ReconcileCursorState`) walked five tables row by row in TypeScript across many requests. Set-based SQL replaced it and a full run finishes in one request, so any cursor state or `summary.progress` field is dead.
-- **A Netlify background-function driver** (`reconcile-ledgers-background`) looped the cleanup route up to 400 times. It was removed when the admin door became synchronous.
+- **The old row-by-row cursor engine** (`advanceReconcileRun`, `ReconcileCursorState`) is removed. Current bounded pages retain set-based comparisons and persist progress on `LedgerReconciliationReport`; do not restore the old engine or remove the current checkpoint.
+- **A separate background driver** looped the cleanup route. Scheduled progress now belongs to bounded canonical slices; there is no background loop or parallel scheduler for this auditor.
 - **A baseline keyed to one entity id** excused a finding by kind and one id, so the same row with a changed amount stayed hidden. The current baseline pins kind, delta and every identifier.
 - **Application sweeps over database-enforced invariants** (`LEDGER_TXN_IMBALANCE`, `PAYMENT_LEG_SUM_MISMATCH`, `INVOICE_TOTAL_MISMATCH`, `LEDGER_ACCOUNT_NON_INR`) were removed. The triggers and CHECKs in `prisma/sql/` are the enforcers, and a second copy in JavaScript is only weaker.
 - **The trigger name `ledger_balance_check`** appears in older documents and comments. The trigger is `ledger_txn_balanced`.

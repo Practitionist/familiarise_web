@@ -1549,6 +1549,7 @@ export async function settleLostDispute(
           kind: "PAYOUT_CLAWBACK",
           orgPayoutId: oe.orgPayoutId,
           organizationId: oe.organizationId,
+          orgEarningsId: oe.id,
         },
         amountPaise: orgApplied,
         reason: `chargeback lost (dispute ${disputeId})`,

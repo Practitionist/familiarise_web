@@ -1,5 +1,5 @@
 /**
- * What the nightly ledger reconcile does when the auditor finds drift: a system
+ * What scheduled ledger reconciliation does when the auditor finds drift: a system
  * event, a deduplicated Sentry page, and a spend freeze on each wallet whose
  * cache disagrees with the journal. Called by the `reconcile-ledgers` twin,
  * which freezes from the audit's wallet step, before the rest of the audit runs.
@@ -9,14 +9,11 @@ import * as Sentry from "@sentry/nextjs";
 
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
-import {
-  freezeDriftedWallets,
-  type FrozenWallet,
-} from "@/lib/payments/wallet-freeze";
+import type { FrozenWallet } from "@/lib/payments/wallet-freeze";
 
 import type { Finding, ReconcileReport } from "./reconcile-ledgers";
 
-/** A finding set that repeats nightly pages Sentry once a week, or sooner when a new finding appears. */
+/** Repeated findings remind Sentry weekly; new discrepancy identities page sooner. */
 const LEDGER_FINDING_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function respondToLedgerDrift(
@@ -65,25 +62,26 @@ export async function respondToLedgerDrift(
   );
 }
 
-/** Freezes spend on each WALLET_BALANCE_DRIFT account and pages fatal once; other kinds page but do not gate spend. */
-export async function freezeDriftingWallets(
+/** The logical report pages once per standing-finding window, including freeze failures. */
+export async function reportWalletDriftFreeze(
   reportId: string,
   findings: Finding[],
-): Promise<FrozenWallet[]> {
+  frozenWallets: FrozenWallet[],
+): Promise<void> {
   const walletDrift = findings.filter(
     (f) => f.kind === "WALLET_BALANCE_DRIFT" && f.billingAccountId,
   );
-  const frozenWallets: FrozenWallet[] = [];
-  try {
-    await freezeDriftedWallets({ id: reportId, findings }, frozenWallets);
-  } finally {
-    // One fatal per run, keyed on detected drift so a freeze that throws still pages.
-    if (walletDrift.length > 0) {
-      Sentry.captureException(
-        new Error(
-          `WALLET_BALANCE_DRIFT — ${walletDrift.length} billing account(s) drifting, spend frozen for ${frozenWallets.length}`,
-        ),
-        {
+  if (walletDrift.length > 0) {
+    const message = `WALLET_BALANCE_DRIFT — ${walletDrift.length} billing account(s) drifting, spend frozen for ${frozenWallets.length}`;
+    await reportStandingFinding(
+      {
+        key: `reconcile-ledgers:wallet-drift:${reportId}`,
+        ids: [reportId],
+        message,
+        windowMs: LEDGER_FINDING_WINDOW_MS,
+      },
+      () =>
+        Sentry.captureException(new Error(message), {
           level: "fatal",
           tags: { subsystem: "jobs", job: "reconcile-ledgers" },
           fingerprint: ["reconcile-ledgers-wallet-drift"],
@@ -95,9 +93,7 @@ export async function freezeDriftingWallets(
               sample: frozenWallets.slice(0, 10),
             },
           },
-        },
-      );
-    }
+        }),
+    );
   }
-  return frozenWallets;
 }
