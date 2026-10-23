@@ -1,7 +1,7 @@
 /**
- * Familiarise Support is a visible member, but it is not a party: the event
- * owner can't remove it from the member list, and in a DM it is never the
- * user that "Report" or "Block" targets.
+ * Familiarise Support is a visible member, but it is not a party: while it is
+ * in an event channel the owner can't remove anyone (Stream refuses it too),
+ * and in a DM it is never the user that "Report" or "Block" targets.
  */
 import * as React from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
@@ -72,29 +72,39 @@ describe("event channel member list", () => {
     viewerId = "host";
   });
 
-  it("hides the remove control for the support member", () => {
-    const channel = fakeChannel(
-      "team",
-      "webinar-abc",
-      [
-        { id: "host", name: "Host" },
-        { id: "attendee", name: "Asha" },
-        { id: SUPPORT_STREAM_USER_ID, name: SUPPORT_STREAM_USER_NAME },
-      ],
-      "host",
-    );
+  function openMembers(members: Array<{ id: string; name: string }>) {
+    const channel = fakeChannel("team", "webinar-abc", members, "host");
     render(<ChannelInfoAndManageDialog channel={channel} />);
     openDialog();
     fireEvent.mouseDown(screen.getByRole("tab", { name: /Members/ }), {
       button: 0,
     });
+    return screen.getByRole("tabpanel");
+  }
 
-    const panel = screen.getByRole("tabpanel");
+  it("lets the owner remove attendees when support is not in the channel", () => {
+    const panel = openMembers([
+      { id: "host", name: "Host" },
+      { id: "attendee", name: "Asha" },
+    ]);
     expect(
       within(panel).getAllByRole("button", {
         name: "Remove Asha from this channel",
       }).length,
     ).toBeGreaterThan(0);
+  });
+
+  it("hides every remove control while support is in the channel", () => {
+    const panel = openMembers([
+      { id: "host", name: "Host" },
+      { id: "attendee", name: "Asha" },
+      { id: SUPPORT_STREAM_USER_ID, name: SUPPORT_STREAM_USER_NAME },
+    ]);
+    expect(
+      within(panel).queryByRole("button", {
+        name: "Remove Asha from this channel",
+      }),
+    ).not.toBeInTheDocument();
     expect(
       within(panel).queryByRole("button", {
         name: `Remove ${SUPPORT_STREAM_USER_NAME} from this channel`,

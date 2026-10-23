@@ -2,7 +2,7 @@
  * The audited doors that open, start and end case-linked booking chat access.
  * Each is a `withOpsAction` tx door with step-up: the grant row, its case
  * event, the OpsActionLog row (carrying the reason) and the OrgAuditLog rows
- * commit together. Stream membership changes run after commit.
+ * commit together. Stream membership and the channel lock run after commit.
  */
 
 import { z } from "zod";
@@ -17,6 +17,7 @@ import {
   joinIntervention,
   leaveIntervention,
 } from "@/lib/stream/support-intervention";
+import { syncSupportBoundary } from "@/lib/stream/support-boundary";
 import {
   EndChatGrantBody,
   OpenChatReadBody,
@@ -192,6 +193,8 @@ export const openChatReadDoor = withOpsAction(
         },
         response: { grant: projectGrant(grant, actor.userId, now) },
         status: 201,
+        afterCommit: () =>
+          syncSupportBoundary(chat.channelType, chat.channelId),
       };
     },
   },
@@ -285,6 +288,8 @@ export const startInterventionDoor = withOpsAction(
         status: 201,
         afterCommit: async () => {
           for (const id of expiredSeats) await leaveIntervention(id);
+          // Lock first, so no party can remove Support or clear the chat once it is seated.
+          await syncSupportBoundary(chat.channelType, chat.channelId);
           await joinIntervention(grant.id);
           await flushNotificationsAfter({ bells }, "support.chat.intervene");
         },
@@ -351,6 +356,8 @@ export const endChatReadDoor = withOpsAction(
         correlationId: `support-case:${caseId}`,
         after: { caseId, grantId: grant.id, endReason: "ENDED_BY_STAFF" },
         response: { grantId: grant.id },
+        afterCommit: () =>
+          syncSupportBoundary(grant.channelType, grant.channelId),
       };
     },
   },
@@ -375,7 +382,10 @@ export const endInterventionDoor = withOpsAction(
         correlationId: `support-case:${caseId}`,
         after: { caseId, grantId: grant.id, endReason: "ENDED_BY_STAFF" },
         response: { grantId: grant.id },
-        afterCommit: () => leaveIntervention(grant.id),
+        afterCommit: async () => {
+          await leaveIntervention(grant.id);
+          await syncSupportBoundary(grant.channelType, grant.channelId);
+        },
       };
     },
   },

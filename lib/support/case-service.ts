@@ -39,7 +39,7 @@ import { recordOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import {
   endCaseChatAccessTx,
-  scheduleInterventionLeave,
+  scheduleChatAccessRelease,
 } from "./chat-access-end";
 import {
   assertCaseTransition,
@@ -1762,8 +1762,8 @@ export async function executePatchLifecycleTx(
       reason: "CASE_RESOLVED",
       now,
     });
-    if (endedChat.some((grant) => grant.needsLeave))
-      scheduleInterventionLeave(input.caseId);
+    if (endedChat.length > 0)
+      scheduleChatAccessRelease(input.caseId, endedChat);
   }
 
   if (input.status === "RESOLVED" && existing.status !== "RESOLVED")

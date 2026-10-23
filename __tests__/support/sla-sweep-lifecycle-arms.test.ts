@@ -78,7 +78,7 @@ beforeEach(() => {
   mockChatSweep.mockImplementation(
     async ({ stagedBells }: { stagedBells: unknown[] }) => {
       stagedBells.push(chatBell);
-      return { ended: 2, joined: 1, left: 1, notices: 1 };
+      return { ended: 2, joined: 1, left: 1, boundaries: 3, notices: 1 };
     },
   );
 });
@@ -103,6 +103,7 @@ it("runs the cascade and purge arms with their own small bounds and reports thei
     chatAccessEnded: 2,
     chatInterventionsJoined: 1,
     chatInterventionsLeft: 1,
+    chatBoundariesSynced: 3,
     chatReviewNotices: 1,
   });
   expect(mockFlush).toHaveBeenCalledWith(

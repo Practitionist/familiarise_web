@@ -60,6 +60,10 @@ jest.mock("../../lib/stream/support-intervention", () => ({
   joinIntervention: jest.fn(async () => "joined"),
   leaveIntervention: jest.fn(async () => "left"),
 }));
+jest.mock("../../lib/stream/support-boundary", () => ({
+  __esModule: true,
+  syncSupportBoundary: jest.fn(async () => "locked"),
+}));
 jest.mock("../../lib/novu/stage-bell", () => ({
   __esModule: true,
   stageBell: jest.fn(async (_tx: unknown, args: { dedupeKey: string }) => ({
@@ -195,6 +199,10 @@ import {
   leaveIntervention,
   probeSupportChannel,
 } from "../../lib/stream/support-intervention";
+import { syncSupportBoundary } from "../../lib/stream/support-boundary";
+
+const callOrder = (fn: unknown) =>
+  jest.mocked(fn as jest.Mock).mock.invocationCallOrder[0];
 
 const USERS: Record<string, User> = {
   staff: { id: "u-staff", role: "STAFF", twoFactorEnabled: true },
@@ -328,6 +336,15 @@ describe("OPEN_READ", () => {
     expect(probeSupportChannel).not.toHaveBeenCalled();
   });
 
+  it("locks the channel after commit", async () => {
+    await post(READ);
+    expect(syncSupportBoundary).not.toHaveBeenCalled();
+    expect(mockAfter).toHaveLength(1);
+    await mockAfter[0]();
+    expect(syncSupportBoundary).toHaveBeenCalledWith("team", "webinar-web-1");
+    expect(joinIntervention).not.toHaveBeenCalled();
+  });
+
   it("validates group targets against the live participants", async () => {
     const res = await post({ ...READ, targetUserIds: ["u-stranger"] });
     expect(res.status).toBe(400);
@@ -397,6 +414,10 @@ describe("START_INTERVENTION", () => {
     expect(mockAfter).toHaveLength(1);
     await mockAfter[0]();
     expect(joinIntervention).toHaveBeenCalledWith("grant-1");
+    expect(syncSupportBoundary).toHaveBeenCalledWith("team", "webinar-web-1");
+    expect(callOrder(syncSupportBoundary)).toBeLessThan(
+      callOrder(joinIntervention),
+    );
   });
 
   it("refuses an evidence-overdue basis when nothing is overdue", async () => {
@@ -466,6 +487,25 @@ describe("ending grants", () => {
     expect(leaveIntervention).not.toHaveBeenCalled();
     await mockAfter[0]();
     expect(leaveIntervention).toHaveBeenCalledWith("grant-1");
+    expect(syncSupportBoundary).toHaveBeenCalledWith("team", "webinar-web-1");
+    expect(callOrder(leaveIntervention)).toBeLessThan(
+      callOrder(syncSupportBoundary),
+    );
+  });
+
+  it("ending a READ unlocks the channel after commit", async () => {
+    mockState.grant = { ...live, kind: "READ", grantedById: "u-staff" };
+    const res = await post({
+      action: "END_READ",
+      grantId: "grant-1",
+      reason: "Done reviewing the chat",
+    });
+    expect(res.status).toBe(200);
+    expect(syncSupportBoundary).not.toHaveBeenCalled();
+    expect(mockAfter).toHaveLength(1);
+    await mockAfter[0]();
+    expect(syncSupportBoundary).toHaveBeenCalledWith("team", "webinar-web-1");
+    expect(leaveIntervention).not.toHaveBeenCalled();
   });
 
   it("an already-ended grant answers 410", async () => {

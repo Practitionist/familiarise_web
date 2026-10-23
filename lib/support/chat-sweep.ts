@@ -1,7 +1,7 @@
 /**
  * The SLA-sweep arm for case-linked chat access: ends expired grants and
  * grants on cases resolved by writers outside the staff funnel, retries the
- * Stream join and leave, and sends (or records withholding) the post-decision
+ * Stream join, leave and channel lock, and sends (or records withholding) the post-decision
  * "we reviewed messages" notice through the durable outbox. Each step is
  * bounded and commits on its own; failures go to the shared `errors`.
  */
@@ -15,11 +15,14 @@ import {
   joinIntervention,
   leaveIntervention,
 } from "@/lib/stream/support-intervention";
+import { syncSupportBoundary } from "@/lib/stream/support-boundary";
 import { endChatGrantTx } from "./chat-access-end";
 import { CHAT_REVIEWED_STATUS, stagePartyBells } from "./chat-notices";
 
 /** A join this young may still be running in the door's after-commit task. */
 const JOIN_RETRY_AFTER_MS = 2 * 60_000;
+/** Channels whose grants started or ended this recently are re-locked or unlocked every run. */
+const BOUNDARY_RECHECK_MS = 6 * 3_600_000;
 const CLOSED_STATUSES = ["RESOLVED", "CLOSED"] as const;
 const TX = {
   maxWait: ALLOCATION_TX_MAX_WAIT_MS,
@@ -30,6 +33,7 @@ export interface ChatAccessSweepResult {
   ended: number;
   joined: number;
   left: number;
+  boundaries: number;
   notices: number;
 }
 
@@ -99,6 +103,41 @@ async function leaveEndedInterventions(limit: number, errors: string[]) {
     }
   }
   return left;
+}
+
+/**
+ * Backstop for the after-commit channel lock and unlock: a missed call, or a
+ * start racing an end on the same channel, converges here.
+ */
+async function syncRecentBoundaries(
+  limit: number,
+  now: Date,
+  errors: string[],
+) {
+  const since = new Date(now.getTime() - BOUNDARY_RECHECK_MS);
+  const recent = await prisma.supportCaseChatAccess.findMany({
+    where: { OR: [{ createdAt: { gte: since } }, { endedAt: { gte: since } }] },
+    orderBy: { createdAt: "asc" },
+    take: limit,
+    select: { channelType: true, channelId: true },
+  });
+  const channels = new Map(
+    recent.map((g) => [`${g.channelType}:${g.channelId}`, g] as const),
+  );
+  let synced = 0;
+  for (const [cid, g] of channels) {
+    try {
+      const outcome = await syncSupportBoundary(
+        g.channelType,
+        g.channelId,
+        now,
+      );
+      if (outcome !== "gone") synced += 1;
+    } catch (err) {
+      errors.push(`chat-access boundary ${cid}: ${message(err)}`);
+    }
+  }
+  return synced;
 }
 
 async function retryJoins(limit: number, now: Date, errors: string[]) {
@@ -238,12 +277,15 @@ export async function sweepSupportChatAccess({
     ended: 0,
     joined: 0,
     left: 0,
+    boundaries: 0,
     notices: 0,
   };
   if (limit <= 0) return result;
   const steps: [keyof ChatAccessSweepResult, () => Promise<number>][] = [
     ["ended", () => endDueGrants(limit, now, errors)],
     ["left", () => leaveEndedInterventions(limit, errors)],
+    // After ends and leaves, before join retries: Support is only seated in a locked channel.
+    ["boundaries", () => syncRecentBoundaries(limit, now, errors)],
     ["joined", () => retryJoins(limit, now, errors)],
     ["notices", () => sendReviewNotices(limit, now, errors, stagedBells)],
   ];

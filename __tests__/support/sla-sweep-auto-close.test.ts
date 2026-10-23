@@ -35,6 +35,7 @@ jest.mock("../../lib/support/chat-sweep", () => ({
     ended: 0,
     joined: 0,
     left: 0,
+    boundaries: 0,
     notices: 0,
   })),
 }));

@@ -7,6 +7,8 @@ type EndDb = Pick<Tx, "supportCaseChatAccess" | "supportCaseEvent">;
 export interface EndedChatGrant {
   id: string;
   kind: "READ" | "INTERVENE";
+  channelType: string;
+  channelId: string;
   /** True when Familiarise Support still sits in the channel and must leave after commit. */
   needsLeave: boolean;
 }
@@ -46,8 +48,8 @@ export async function endChatGrantTx(
 
 /**
  * Ends every live chat grant on a case inside the caller's transaction (case
- * resolved or closed). Stream membership is never touched here: the caller
- * schedules the leave after commit, and the SLA sweep retries it.
+ * resolved or closed). Stream is never touched here: the caller schedules the
+ * leave and the channel unlock after commit, and the SLA sweep retries both.
  */
 export async function endCaseChatAccessTx(
   tx: EndDb,
@@ -60,7 +62,14 @@ export async function endCaseChatAccessTx(
 ): Promise<EndedChatGrant[]> {
   const live = await tx.supportCaseChatAccess.findMany({
     where: { caseId: input.caseId, endedAt: null },
-    select: { id: true, kind: true, streamJoinedAt: true, streamLeftAt: true },
+    select: {
+      id: true,
+      kind: true,
+      channelType: true,
+      channelId: true,
+      streamJoinedAt: true,
+      streamLeftAt: true,
+    },
   });
   const ended: EndedChatGrant[] = [];
   // One connection per transaction: end each grant in turn.
@@ -69,6 +78,8 @@ export async function endCaseChatAccessTx(
       ended.push({
         id: grant.id,
         kind: grant.kind,
+        channelType: grant.channelType,
+        channelId: grant.channelId,
         needsLeave:
           grant.kind === "INTERVENE" &&
           grant.streamJoinedAt !== null &&
@@ -80,14 +91,27 @@ export async function endCaseChatAccessTx(
 }
 
 /**
- * Clears Familiarise Support from a case's ended interventions once the
- * request settles. Harmless if the transaction rolled back: it only acts on
- * committed ended-but-seated grants, and the SLA sweep retries any miss.
+ * Once the request settles, clears Familiarise Support from the case's ended
+ * interventions and unlocks the ended grants' channels. Harmless if the
+ * transaction rolled back: the leave acts only on committed ended-but-seated
+ * grants, the unlock re-reads live grants, and the SLA sweep retries any miss.
  */
-export function scheduleInterventionLeave(caseId: string): void {
+export function scheduleChatAccessRelease(
+  caseId: string,
+  ended: readonly EndedChatGrant[],
+): void {
+  const channels = new Map(
+    ended.map((g) => [`${g.channelType}:${g.channelId}`, g] as const),
+  );
   void scheduleAfter(async () => {
-    const { leavePendingInterventions } =
-      await import("@/lib/stream/support-intervention");
-    await leavePendingInterventions(caseId);
-  }, "support.chat.leave");
+    const [{ leavePendingInterventions }, { syncSupportBoundary }] =
+      await Promise.all([
+        import("@/lib/stream/support-intervention"),
+        import("@/lib/stream/support-boundary"),
+      ]);
+    if (ended.some((g) => g.needsLeave))
+      await leavePendingInterventions(caseId);
+    for (const g of channels.values())
+      await syncSupportBoundary(g.channelType, g.channelId);
+  }, "support.chat.release");
 }

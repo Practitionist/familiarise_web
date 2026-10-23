@@ -117,6 +117,8 @@ export const ChannelInfoAndManageDialog = ({
   const creatorId = channel.data?.created_by?.id ?? channel.data?.created_by_id;
 
   const isEventOwner = isEvent && viewerOwnsChannel(creatorId, client?.userID);
+  // Stream refuses member changes while support has access; Support's seat is the visible signal.
+  const canRemoveMembers = isEventOwner && !displayInfo.hasSupport;
 
   // Get the other user's ID for 1-on-1 DMs (for block/report). Support is
   // never the counterparty, so it can't be blocked or reported from here.
@@ -215,7 +217,7 @@ export const ChannelInfoAndManageDialog = ({
 
   const handleRemoveMember = async (memberId: string) => {
     // Support leaves only through the audited staff route.
-    if (!client?.userID || !isEventOwner || isSupportStreamUser(memberId)) {
+    if (!client?.userID || !canRemoveMembers || isSupportStreamUser(memberId)) {
       return;
     }
 
@@ -706,9 +708,9 @@ export const ChannelInfoAndManageDialog = ({
                       ),
                     },
                   ]}
-                  /* Event owners may remove attendees, never Support */
+                  /* Event owners may remove attendees, never Support, and no one while Support is in */
                   rowActions={(member) =>
-                    isEventOwner &&
+                    canRemoveMembers &&
                     member.id !== client?.userID &&
                     !isSupportStreamUser(member.id) ? (
                       <Button

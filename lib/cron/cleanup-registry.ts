@@ -1314,6 +1314,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           chatAccessEnded: r.chatAccessEnded,
           chatInterventionsJoined: r.chatInterventionsJoined,
           chatInterventionsLeft: r.chatInterventionsLeft,
+          chatBoundariesSynced: r.chatBoundariesSynced,
           chatReviewNotices: r.chatReviewNotices,
           disputeNoticesStaged: r.disputeNoticesStaged,
           errors: r.errors.length,

@@ -94,6 +94,8 @@ export interface SupportSlaSweepResult {
   chatAccessEnded: number;
   chatInterventionsJoined: number;
   chatInterventionsLeft: number;
+  /** Channels whose support lock was re-applied or cleared. */
+  chatBoundariesSynced: number;
   chatReviewNotices: number;
   disputeNoticesStaged: number;
   errors: string[];
@@ -1094,6 +1096,7 @@ export async function runSupportSlaSweep(opts?: {
       chatAccessEnded: chatAccess.ended,
       chatInterventionsJoined: chatAccess.joined,
       chatInterventionsLeft: chatAccess.left,
+      chatBoundariesSynced: chatAccess.boundaries,
       chatReviewNotices: chatAccess.notices,
       disputeNoticesStaged,
       errors,

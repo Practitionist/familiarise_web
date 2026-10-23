@@ -27,6 +27,10 @@ const mockLeave = jest.fn(async (_caseId: string) => undefined);
 jest.mock("../../lib/stream/support-intervention", () => ({
   leavePendingInterventions: (caseId: string) => mockLeave(caseId),
 }));
+const mockSync = jest.fn(async (_type: string, _id: string) => "unlocked");
+jest.mock("../../lib/stream/support-boundary", () => ({
+  syncSupportBoundary: (type: string, id: string) => mockSync(type, id),
+}));
 jest.mock("../../lib/support/case-access", () => ({
   canCorrespondOnCase: jest.fn(async () => true),
   caseCorrespondentIds: jest.fn(async () => []),
@@ -164,17 +168,21 @@ it("keeps the holds while the case stays open", async () => {
   expect(releaseAllCaseHolds).not.toHaveBeenCalled();
 });
 
-it("ends live chat grants in the same transaction and leaves the chat after commit", async () => {
+it("ends live chat grants in the same transaction and leaves and unlocks the chat after commit", async () => {
   const tx = fakeTx(null, [
     {
       id: "read-1",
       kind: "READ",
+      channelType: "messaging",
+      channelId: "dm-a-b",
       streamJoinedAt: null,
       streamLeftAt: null,
     },
     {
       id: "seat-1",
       kind: "INTERVENE",
+      channelType: "messaging",
+      channelId: "dm-a-b",
       streamJoinedAt: new Date(),
       streamLeftAt: null,
     },
@@ -225,15 +233,28 @@ it("ends live chat grants in the same transaction and leaves the chat after comm
     }),
   });
   expect(mockLeave).not.toHaveBeenCalled();
+  expect(mockSync).not.toHaveBeenCalled();
   expect(mockScheduled).toHaveLength(1);
   await mockScheduled[0]();
   expect(mockLeave).toHaveBeenCalledWith("case-1");
+  // One unlock per channel, after Support has left.
+  expect(mockSync.mock.calls).toEqual([["messaging", "dm-a-b"]]);
+  expect(mockLeave.mock.invocationCallOrder[0]).toBeLessThan(
+    mockSync.mock.invocationCallOrder[0],
+  );
 });
 
-it("schedules no Stream leave when only read grants end", async () => {
+it("only unlocks the channel when only read grants end", async () => {
   await executePatchLifecycleTx(
     fakeTx(null, [
-      { id: "read-1", kind: "READ", streamJoinedAt: null, streamLeftAt: null },
+      {
+        id: "read-1",
+        kind: "READ",
+        channelType: "team",
+        channelId: "webinar-web-1",
+        streamJoinedAt: null,
+        streamLeftAt: null,
+      },
     ]),
     {
       caseId: "case-1",
@@ -242,6 +263,26 @@ it("schedules no Stream leave when only read grants end", async () => {
       status: "CLOSED",
     },
     new Date(),
+    fresh,
   );
+  expect(mockScheduled).toHaveLength(1);
+  await mockScheduled[0]();
+  expect(mockLeave).not.toHaveBeenCalled();
+  expect(mockSync.mock.calls).toEqual([["team", "webinar-web-1"]]);
+});
+
+it("schedules nothing when no chat grant was live", async () => {
+  const moved = await executePatchLifecycleTx(
+    fakeTx(null, []),
+    {
+      caseId: "case-1",
+      actorId: "staff-1",
+      expectedUpdatedAt: updatedAt.toISOString(),
+      status: "CLOSED",
+    },
+    new Date(),
+    fresh,
+  );
+  expect(moved).toMatchObject({ ok: true });
   expect(mockScheduled).toHaveLength(0);
 });

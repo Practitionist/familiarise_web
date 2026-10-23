@@ -5,6 +5,10 @@ jest.mock("../../lib/stream/support-intervention", () => ({
   joinIntervention: jest.fn(async () => "joined"),
   leaveIntervention: jest.fn(async () => "left"),
 }));
+jest.mock("../../lib/stream/support-boundary", () => ({
+  __esModule: true,
+  syncSupportBoundary: jest.fn(async () => "locked"),
+}));
 jest.mock("../../lib/novu/stage-bell", () => ({
   __esModule: true,
   stageBell: jest.fn(async (_tx: unknown, args: { dedupeKey: string }) => ({
@@ -40,6 +44,7 @@ const mockTx = {
 
 function scanKey(where: Row): string {
   if ("reviewNoticeAt" in where) return "notice";
+  if (!("endedAt" in where) && "OR" in where) return "boundary";
   if (where.kind === "INTERVENE" && where.endedAt === null) return "join";
   if (where.kind === "INTERVENE") return "leave";
   return "end";
@@ -65,6 +70,7 @@ import {
   leaveIntervention,
 } from "../../lib/stream/support-intervention";
 import { stageBell } from "../../lib/novu/stage-bell";
+import { syncSupportBoundary } from "../../lib/stream/support-boundary";
 import { sweepSupportChatAccess } from "../../lib/support/chat-sweep";
 
 const NOW = new Date("2026-10-20T10:00:00Z");
@@ -228,4 +234,61 @@ it("collects failures into the shared errors without throwing", async () => {
     "chat-access leave g1: stream 500",
     "chat-access join g2: timeout",
   ]);
+});
+
+describe("channel lock backstop", () => {
+  it("re-syncs each channel with a grant started or ended in the last six hours, once", async () => {
+    mockScans.boundary = [
+      { channelType: "messaging", channelId: "dm-a-b" },
+      { channelType: "team", channelId: "webinar-web-1" },
+      { channelType: "messaging", channelId: "dm-a-b" },
+    ];
+    jest
+      .mocked(syncSupportBoundary)
+      .mockResolvedValueOnce("unlocked")
+      .mockResolvedValueOnce("gone");
+    const { result, errors } = await sweep();
+    expect(errors).toEqual([]);
+    expect(jest.mocked(syncSupportBoundary).mock.calls).toEqual([
+      ["messaging", "dm-a-b", NOW],
+      ["team", "webinar-web-1", NOW],
+    ]);
+    expect(result.boundaries).toBe(1);
+    const prisma = jest.requireMock("../../lib/prisma").default;
+    const scan = (
+      prisma.supportCaseChatAccess.findMany.mock.calls as [
+        { where: Row; take: number },
+      ][]
+    ).find(([args]) => scanKey(args.where) === "boundary");
+    const since = new Date(NOW.getTime() - 6 * 3_600_000);
+    expect(scan?.[0]).toMatchObject({
+      where: {
+        OR: [{ createdAt: { gte: since } }, { endedAt: { gte: since } }],
+      },
+      take: 10,
+    });
+  });
+
+  it("runs after ends and leaves and before join retries", async () => {
+    mockScans.leave = [{ id: "g1" }];
+    mockScans.boundary = [{ channelType: "messaging", channelId: "dm-a-b" }];
+    mockScans.join = [{ id: "g2", caseId: "c", kind: "INTERVENE" }];
+    await sweep();
+    const order = (fn: unknown) =>
+      jest.mocked(fn as jest.Mock).mock.invocationCallOrder[0];
+    expect(order(leaveIntervention)).toBeLessThan(order(syncSupportBoundary));
+    expect(order(syncSupportBoundary)).toBeLessThan(order(joinIntervention));
+  });
+
+  it("folds a failed sync into the shared errors", async () => {
+    mockScans.boundary = [{ channelType: "messaging", channelId: "dm-a-b" }];
+    jest
+      .mocked(syncSupportBoundary)
+      .mockRejectedValueOnce(new Error("stream 503"));
+    const { result, errors } = await sweep();
+    expect(result.boundaries).toBe(0);
+    expect(errors).toEqual([
+      "chat-access boundary messaging:dm-a-b: stream 503",
+    ]);
+  });
 });
