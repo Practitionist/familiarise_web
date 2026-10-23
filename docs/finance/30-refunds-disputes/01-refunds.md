@@ -12,7 +12,7 @@ A refund returns money to a payer for a booking. It looks like one action, but i
 
 ## 1. Front doors and rails
 
-Every refund goes through `refundBookingPayment` (`lib/payments/operations/booking-refund.ts`). It reads the payment's `paymentIntent` and picks a rail before anything moves (`fundingRailForIntent`, `lib/payments/funding-rail.ts`), so a cancellation quote and the refund itself can never name different rails.
+Every booking refund door goes through `refundBookingPayment` (`lib/payments/operations/booking-refund.ts`). The exception is the capture-race auto-refund in `handlePaymentSuccess` Phase 2: an amount mismatch, a capture after cancellation, a double-booking loser and a legacy overlap loser call `refundPayment` directly, because the payment is a gateway capture by construction. `refundBookingPayment` reads the payment's `paymentIntent` and picks a rail before anything moves (`fundingRailForIntent`, `lib/payments/funding-rail.ts`), so a cancellation quote and the refund itself can never name different rails.
 
 | Rail       | Intent prefix | How value returns                                                                                                                                                |
 | ---------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -20,7 +20,7 @@ Every refund goes through `refundBookingPayment` (`lib/payments/operations/booki
 | `INTERNAL` | `org_`        | `refundInternalFundedPayment`: one Serializable transaction, no gateway call; the wallet is credited, the accrual leg netted, or the licence engagement restored |
 | `CREDITS`  | `free_`       | `refundFreeCreditPayment`: the referral credits are restored in full and a zero-amount `Refund` row records it; the credits rail accepts no amount               |
 
-`refundPayment` itself refuses a payment that is not gateway-funded or not `SUCCEEDED`. Callers should not call it directly.
+`refundPayment` itself refuses a payment that is not gateway-funded or not `SUCCEEDED`. Outside the capture-race path above, callers should not call it directly.
 
 | Door                                          | Starts from                                                                      | `Refund.dedupeKey`                                                |
 | --------------------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
@@ -31,20 +31,20 @@ Every refund goes through `refundBookingPayment` (`lib/payments/operations/booki
 | Consultant no-show, request rejection, expiry | `session-outcome-sweep.ts`, `rejection-refund.ts`, the expire sweeps             | `no-show:<slot>:<user>` and similar                               |
 | Platform incident                             | `refundIncidentSeat` (`incident-refunds.ts`)                                     | `incident:<incident>:<occurrence>:<user>`                         |
 | Support remedy                                | `executeApprovedRefund` (`lib/support/case-actions.ts`)                          | `case-recommendation:<recommendationId>`                          |
-| Admin refund and ladder override              | `POST /api/admin/refunds` and `/api/admin/refunds/issue` (step-up, ops log)      | `ops:<uuid from the dialog>`                                      |
+| Admin refund and ladder override              | `POST /api/admin/refunds` and `/api/admin/refunds/issue` (step-up, ops log)      | `admin-refund:<adminId>:<paymentId>:<key>`; `ops:<uuid>` on issue |
 | Capture that funds no booking                 | `handlePaymentSuccess` Phase 2                                                   | The `Auto-refund pending:` marker, not a key                      |
 
 `Refund.dedupeKey` is unique. A repeat call with a spent key returns the first refund, and a `FAILED` or `CANCELLED` row releases its key for a retry (`findDedupedRefund`). Organisation top-up refunds are separate and are described in [wallet and top-ups](../50-b2b/02-wallet-and-top-ups.md).
 
 ## 2. How much is refunded
 
-**The notice ladder.** A booking is bound at purchase to a `CancellationPolicy` version (`Appointment.cancellationPolicyId`), published and immutable, so an organisation editing its ladder later never changes a buyer's terms. With no policy row the platform default applies (`PLATFORM_DEFAULT_TIERS`, `lib/payments/operations/cancellation-policy.ts`): 100 % when the booking starts at least 24 hours away, 50 % at least 2 hours away, 0 % inside two hours. A consultant-initiated cancellation always refunds 100 %. Negative notice (already started) refunds nothing unless the consultant cancelled. A ladder may have up to six rungs and its last rung must start at 0 hours.
+**The notice ladder.** A booking is bound at purchase to a `CancellationPolicy` version (`Appointment.cancellationPolicyId`), published and immutable, so an organisation editing its ladder later never changes a buyer's terms. With no policy row the platform default applies (`PLATFORM_DEFAULT_TIERS`, `lib/payments/operations/cancellation-policy.ts`): 100 % when the booking starts at least 24 hours away, 50 % at least 2 hours away, 0 % inside two hours. A consultant-initiated cancellation refunds the policy's `consultantInitiatedPct`: 100 % under the platform default, and whatever an organisation's published policy sets (0 to 100 %) otherwise. Negative notice (already started) refunds nothing unless the consultant cancelled. A ladder may have up to six rungs and its last rung must start at 0 hours.
 
 **Proration and clamps.** `quoteBookingRefund` prices a 1:1 cancellation in four steps: notice (a booking never scheduled has infinite notice, not negative), the tier, proration for a subscription (the undelivered share of the price), and a clamp to the remaining refundable balance. A booking paid wholly with referral credit restores the credit in full for any non-zero tier rather than escalating, because the credits rail cannot pay a fraction; a zero tier still returns nothing.
 
 **Quote binding.** The cancel preview and the cancel route call the same function. The cancel click sends `expectedRefundPaise`; if the quote computed under the lock differs, the route refuses with `RefundQuoteChangedError` before anything commits, so a buyer is never refunded a different figure from the one they accepted.
 
-**Event seats.** A webinar or class seat cancelled at least `refundWindowHours` before the start refunds in full; inside the window it is refused. The host sets 24 to 168 hours on the plan and the seat keeps the window it was sold under. A class refund unit is the seat's amount divided by `sessionsPurchased`.
+**Event seats.** A webinar seat, or a class seat before any of its sessions has been delivered, cancelled at least `refundWindowHours` before the next start refunds in full; inside the window it is refused. The host sets 24 to 168 hours on the plan and the seat keeps the window it was sold under. Once a class session has been delivered, leaving refunds only the undelivered sessions, each priced by the booking's cancellation ladder at its own notice (`quoteClassSeatRefund` in `cancellation-policy.ts`, called from `lib/booking/seat-leave.ts`). A class refund unit is the seat's amount divided by `sessionsPurchased`, floored.
 
 ### Worked example
 
