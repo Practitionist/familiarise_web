@@ -75,9 +75,9 @@ stateDiagram-v2
 **Review.** The reviewer posts `REVIEW_REFUND` with `approve`, a reason of 5–1,000 characters, and, for an approval, the `expectedRefundablePaise` they saw. `reviewSupportRefundDoor` then:
 
 1. refuses an approval without the preview figure (400 `INVALID_BODY`);
-2. checks the operator's money budget (`assertMoneyOpsBudget()`) and, for an approval, that money doors are open;
+2. checks the operator's money budget (`assertMoneyOpsBudget()` in `lib/backoffice/money-limit.ts`: 10 money actions per minute per operator, otherwise 429 `RATE_LIMITED`) and, for an approval, that money doors are open;
 3. takes the per-staff lock for a STAFF approver;
-4. prices the review for the second-admin rule: this amount plus everything already committed on the payment (`priceCaseRefundReview()`). If that exceeds ₹25,000 and two or more admins are active, the door stores the request as an `OpsActionProposal` (24-hour TTL, `PROPOSAL_TTL_MS`) and answers 202 `PROPOSED`. A different admin approves it from the money approvals queue, which replays the stored body through the same door as that admin; the proposer approving their own proposal gets `SAME_ADMIN`;
+4. prices the review for the second-admin rule: this amount plus everything already committed on the payment (`priceCaseRefundReview()`). If that exceeds ₹25,000 and two or more admins are active, the door stores the request as an `OpsActionProposal` (24-hour TTL, `PROPOSAL_TTL_MS`) and answers 202 `PROPOSED`. A different admin approves it through `POST /api/admin/ops-proposals/[id]/approve` (`payments.manage`, step-up), which replays the stored body through the same door as that admin. The proposer approving their own proposal gets 403 `SAME_ADMIN`; a replay that fails leaves the proposal APPROVED with the failure code noted;
 5. runs `performCaseAction()`, whose `reviewRefundTx()` re-checks independence, the decision state, the blockers, the preview, maker-not-checker and the staff caps, then claims the row with a compare-and-set on `decidedAt IS NULL`;
 6. after the claim commits, `executeApprovedRefund()` calls `refundBookingPayment()` (`lib/payments/operations/booking-refund.ts`) with the recommendation's amount, `dedupeKey = case-recommendation:<id>`, the recommendation id and `keepSeat`.
 
@@ -103,7 +103,7 @@ sequenceDiagram
         Door-->>St: 202 PROPOSED
         Ad->>Door: approve proposal (replayed as Vikram)
     end
-    Door->>DB: re-check caps, preview, maker is not checker; claim decidedAt
+    Door->>DB: re-check caps, preview, maker is not checker, claim decidedAt
     DB-->>Door: committed
     Door->>Pay: dedupeKey case-recommendation:id, keepSeat
     Pay-->>Door: refundId, rail, PENDING or SUCCEEDED
@@ -118,6 +118,7 @@ The caps are defined once in `lib/support/money-policy.ts` (`STAFF_REFUND_PER_PA
 - **Rolling 24 hours.** The same check sums `after.movedPaise` across the staff member's ops-log rows for `support.refund.review` and `appointment.cancel.platform` (`BOUNDED_REFUND_ACTIONS`).
 - **Platform cancels count too.** The platform cancel door prices the refunds its cancel will send (`platformCancelCharges()`): the confirmed quote for a 1:1 booking, and every live seat's whole refundable balance for a webinar or class, each with the same `priorPaise`. It then runs the participant cancel route under a grant and logs `movedPaise`. A 5xx from the cancel keeps the staff lock until its TTL, so a refund of unknown outcome cannot let another one slip past the rolling count.
 - **ADMIN** skips both caps. Any role other than STAFF or ADMIN gets 403 `FORBIDDEN`.
+- **No second admin on platform cancels.** The platform cancel door has no `secondApprover`, so an ADMIN platform cancel above ₹25,000 runs without a second admin, unlike a support refund of the same size. A privileged non-party who calls the participant cancel route directly gets 403 `PLATFORM_CANCEL_DOOR_REQUIRED`.
 
 The per-operator spend view (`lib/backoffice/support-spend.ts`) reads the same ops-log rows over 30 days: STAFF see only their own row, ADMIN see everyone.
 
@@ -150,6 +151,8 @@ stateDiagram-v2
 
 A hold blocks the payout because payout batching picks only `READY` earnings, and a held earning is `HELD`. A payout that was already sent cannot be recalled by a hold.
 
+Two edges are worth knowing. `applyHoldTx()` does not check the case status, so a hold can be applied to a RESOLVED case. The sweep's 28-day auto-close does not release holds, so such a hold survives into CLOSED and must be released by hand with `RELEASE_HOLD`. The hold and void doors run at the database's default isolation inside `withOpsAction()`, not Serializable; they rely on the event-log replay check and the `EarningsHold` unique indexes.
+
 ## Failure modes
 
 | Symptom                                             | Cause                                                                                                   | Recovery                                                                                                                             |
@@ -178,3 +181,5 @@ A hold blocks the payout because payout batching picks only `READY` earnings, an
 - **Case-version guard on second-admin approval.** The approval used to replay a stale `expectedUpdatedAt`, so any message in the 24-hour window left the proposal stuck. The claim is now guarded by the recommendation row and the previewed balance.
 - **Admin-only execution and split approvals.** Every support refund once needed an admin, the ₹25,000 rule could be split across several recommendations, and the author could approve their own. STAFF now execute within caps, the rule prices cumulatively per payment, one recommendation per payment can be open, and maker cannot be checker.
 - **Money doors open during maintenance and STAFF refunds through the participant cancel route.** Both are closed: money doors check `assertMoneyDoorsOpen()`, and a non-party operator cancels only through the platform cancel door, whose refunds count toward the staff caps.
+- **Approval with no way back.** An approval committed before money moved, so a failed refund (a live chargeback, or a Razorpay `notes` field over 512 characters) left the recommendation "Approved" with no retry or void and no chargeback precondition. Approvals now check blockers first, retry and void exist, and the refund reason is the short `Support remedy <reference>`.
+- **The HANDOVER action.** An organization "handover" action, shown even to customers, was removed with the money hardening; a test asserts the action is rejected.

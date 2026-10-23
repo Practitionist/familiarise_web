@@ -107,7 +107,7 @@ sequenceDiagram
     end
     API->>S: channel.query (watch false), 200 per page, id_lt before
     S-->>API: messages
-    API->>API: keep in-window, in-scope messages; up to 3 raw pages for 50 kept
+    API->>API: keep in-window, in-scope messages, up to 3 raw pages for 50 kept
     API->>DB: SystemEvent SUPPORT_CHAT_ACCESS (strict)
     alt audit write fails
         API-->>Op: 500, no messages served
@@ -159,7 +159,7 @@ sequenceDiagram
 
 - **Staff end.** A READ ends only by its opener; any `supportChat.intervene` holder may end an intervention on the case. A missing grant is 404 `GRANT_NOT_FOUND`; an ended one is 410 `GRANT_ENDED`.
 - **At resolution.** When `executePatchLifecycleTx()` moves a case to RESOLVED or CLOSED, it ends every live grant as `CASE_RESOLVED` in the same transaction (`endCaseChatAccessTx()` in `lib/support/chat-access-end.ts`) and schedules the Stream leave after commit. The problem cascade ends its incidents' grants the same way; the sweep's chat arm handles their leave.
-- **Sweep backstop.** The chat arm of `runSupportSlaSweep()` (`sweepSupportChatAccess()` in `lib/support/chat-sweep.ts`, at most 10 rows per step) ends expired grants and grants on resolved, closed or deleted cases; retries pending leaves; retries joins for live unseated interventions older than 2 minutes, ending them as `CHANNEL_GONE` if the channel is gone; and sends review notices. See [the SLA sweep](07-sla-sweep.md#chat-access-backstop).
+- **Sweep backstop.** The chat arm of `runSupportSlaSweep()` (`sweepSupportChatAccess()` in `lib/support/chat-sweep.ts`, at most 10 rows per step) ends expired grants and grants on resolved, closed or deleted cases; retries pending leaves; retries joins for live unseated interventions older than 2 minutes, ending them as `CHANNEL_GONE` if the channel is gone; and sends review notices. See [the SLA sweep](07-sla-sweep.md#5-chat-access-backstop).
 - **Review notice.** Once a case is RESOLVED or CLOSED and no live grant remains, the sweep stamps `reviewNoticeAt` on every ended grant of the case in one transaction and writes `CHAT_REVIEW_NOTIFIED`. It stages a "reviewed: our team read messages from your booking chat" bell keyed `chat-reviewed:<firstGrantId>`, unless any grant on the case has `withholdNotice`, in which case the whole batch is withheld.
 - **Reopen.** A reopened case does not regain its ended grants; staff open new ones.
 
@@ -202,3 +202,6 @@ sequenceDiagram
 
 - **Silent operator reads.** Operators used to hold Stream global `admin`, and STAFF and ADMIN could mint a Stream token for any user, which allowed unaudited chat reads. Every account is now a Stream `user`, cross-user tokens are refused, and staff reach chats only through these audited server routes. Stream users created before the change keep a stored `admin` role until they are upserted again.
 - **Participant-submitted excerpts only.** The first design proposal had staff never read chats and relied on parties pasting excerpts as evidence. Excerpts still work as evidence, but a case-linked, time-boxed grant is now the way staff read a chat.
+- **Design alternatives not adopted.** The intervention design considered marking a channel as "under support review" through channel extra data, calling `watch()` from the server to read transcripts, and extending a live grant. The banner is derived from channel membership instead, transcripts are read with `channel.query` without watching, and a longer need means a new grant with a new reason.
+- **Member counting in the chat UI.** The chat list decided whether a 1:1 chat was usable from the raw member list, so an extra member would have changed how a DM displayed. `partyMembers()` in `components/chat/utils/channelUtils.ts` now leaves Familiarise Support out, and the remove, block and report controls skip it.
+- **Safety reports without their own category.** Before `SAFETY_CONCERN`, a threat or scam could be filed only as a quality complaint or "other", so nothing marked it urgent or let staff intervene on a verified basis. The category now sets URGENT priority, is hidden from organization views, and verifies the SAFETY and FRAUD_OR_SCAM bases.

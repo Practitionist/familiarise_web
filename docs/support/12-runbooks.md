@@ -3,10 +3,180 @@ title: Support runbooks
 type: how-to
 band: domain
 audience: sde2
-status: draft
+status: live
 last-reviewed: 2026-10-23
 ---
 
 # Support runbooks
 
-This page is being rewritten in the support docs PR.
+Each runbook follows the same shape: the symptom, how to confirm it, the impact, the fix, how to verify the fix, and what prevents it. The SQL is read-only. Never write to the shared database by hand: every fix below goes through an audited door or the sweep, so the ops log and case timeline stay true (AGENTS.md §2.3).
+
+## Stuck or failed support refund
+
+**Symptom.** A recommendation shows Approved, but the customer has no refund, or the refund shows FAILED.
+
+**Confirm.**
+
+```sql
+SELECT r.id, r."caseId", r."paymentId", r."amountPaise", r."decidedAt", r."decidedById",
+       r."voidedAt", f.id AS refund_id, f.status AS refund_status
+FROM "SupportFinancialRecommendation" r
+LEFT JOIN "Refund" f ON f.id = r."refundId"
+WHERE r.approved = true AND (f.id IS NULL OR f.status IN ('FAILED', 'CANCELLED'))
+ORDER BY r."decidedAt";
+```
+
+Also look for a refund keyed to the recommendation that is not yet linked: `SELECT id, status FROM "Refund" WHERE "dedupeKey" = 'case-recommendation:<recommendationId>';`. The `support.refund.review` ops-log row for the approval records `refundId`, `rail` and `refundStatus`.
+
+**Impact.** The case cannot be decided `REFUND_APPROVED` (409 `REFUND_NOT_LIVE`), and the money committed by the approval still counts against the payment's staff cap.
+
+**Fix.**
+
+1. If a keyed refund exists and is PENDING, wait: the webhook or the reconcile sweep will settle it. Do not void.
+2. If the refund is FAILED or CANCELLED, or none exists and the approval is older than 15 minutes, the **decider** retries from the case's resolution panel (`REVIEW_REFUND` again with the same verdict and a fresh preview). The retry re-runs every check and writes `RECOMMENDATION_DECIDED` with note `RETRIED`.
+3. If the refund should not be sent (for example a chargeback opened), an **admin** voids it (`VOID_RECOMMENDATION`, step-up, reason required). A void inside 15 minutes of the approval or of a retry is refused with 409 `NOT_VOIDABLE`.
+4. A chargeback that is live blocks every support refund (409 `REFUND_BLOCKED_BY_DISPUTE`); handle the dispute in the disputes console instead.
+
+**Verify.** The query returns no row for the recommendation, the case timeline shows `RECOMMENDATION_VOIDED` or a live refund, and the decision can be recorded.
+
+**Prevention.** [Money remedies](05-money-remedies.md#recommendation-to-refund).
+
+## Failed evidence purge
+
+**Symptom.** The sweep returns HTTP 500 with `evidence-purge case <id>: N file(s) not confirmed deleted`, or `evidence-purge: 2000+ live disputes; purge skipped this run`.
+
+**Confirm.**
+
+```sql
+-- Closed 180+ days, not purged, not on legal hold, no recent appeal
+SELECT c.id, c."referenceNumber", c."closedAt", c."legalHoldAt"
+FROM "SupportCase" c
+WHERE c."closedAt" <= now() - interval '180 days'
+  AND c."legalHoldAt" IS NULL
+  AND NOT EXISTS (SELECT 1 FROM "SupportCaseEvent" e WHERE e."caseId" = c.id AND e.kind = 'EVIDENCE_PURGED')
+  AND NOT EXISTS (
+    SELECT 1 FROM "SupportCaseDecision" d JOIN "SupportCase" a ON a."appealOfDecisionId" = d.id
+    WHERE d."caseId" = c.id AND (a."closedAt" IS NULL OR a."closedAt" > now() - interval '180 days'))
+ORDER BY c."closedAt";
+
+-- Live disputes (each holds its linked cases; 2,000 or more skips the whole arm)
+SELECT "paymentId", status FROM "Dispute"
+WHERE status NOT IN ('WON', 'LOST', 'CHARGE_REFUNDED', 'CLOSED', 'WARNING_CLOSED');
+
+-- Attachment rows still live on a case the purge should have cleared
+SELECT a.id, a."caseId", a."storagePath" FROM "SupportCaseAttachment" a
+JOIN "SupportCase" c ON c.id = a."caseId"
+WHERE a."deletedAt" IS NULL AND c."closedAt" <= now() - interval '180 days';
+```
+
+**Impact.** Personal content stays past the period the privacy policy promises. The failing case does not block other cases, but it fails the run every 30 minutes.
+
+**Fix.**
+
+1. For "not confirmed deleted": check each path in the private `support-attachments` bucket. A storage outage or permission error is the usual cause; once storage answers, the next run retries the case from the start (nothing was written).
+2. If the case must be kept (a dispute or legal claim), an admin places a [legal hold](#placing-or-lifting-a-legal-hold); the purge then skips it.
+3. For "2000+ live disputes": the arm stays off until fewer disputes are live; there is no override.
+
+**Verify.** The case has an `EVIDENCE_PURGED` event whose `toValue` is the file count, its attachment rows are tombstoned, and the next sweep run returns 200.
+
+**Prevention.** [Privacy and retention](08-privacy-and-retention.md#the-180-day-evidence-purge).
+
+## Intervention seat stuck
+
+Applies once the `feat/support-chat-intervention` branch is merged.
+
+**Symptom.** Staff cannot post as Familiarise Support (409 `NOT_JOINED`), or Familiarise Support is still in a chat after the case was resolved.
+
+**Confirm.**
+
+```sql
+-- Ended but still seated: the leave never completed (the sweep retries)
+SELECT id, "caseId", "channelType", "channelId", "endedAt", "endReason", "streamJoinedAt"
+FROM "SupportCaseChatAccess"
+WHERE kind = 'INTERVENE' AND "endedAt" IS NOT NULL
+  AND "streamJoinedAt" IS NOT NULL AND "streamLeftAt" IS NULL
+ORDER BY "endedAt";
+
+-- Live but never seated more than 2 minutes after the grant (join failed or channel frozen)
+SELECT id, "caseId", "channelType", "channelId", "createdAt", "expiresAt"
+FROM "SupportCaseChatAccess"
+WHERE kind = 'INTERVENE' AND "endedAt" IS NULL AND "streamJoinedAt" IS NULL
+  AND "expiresAt" > now() AND "createdAt" < now() - interval '2 minutes';
+
+-- Due to end but not yet ended (sweep lag or errors)
+SELECT a.id, a.kind, a."expiresAt", c.status, c."deletedAt"
+FROM "SupportCaseChatAccess" a JOIN "SupportCase" c ON c.id = a."caseId"
+WHERE a."endedAt" IS NULL
+  AND (a."expiresAt" <= now() OR c.status IN ('RESOLVED', 'CLOSED') OR c."deletedAt" IS NOT NULL);
+```
+
+Sweep errors carry the prefixes `chat-access join`, `chat-access leave` and `chat-access end`.
+
+**Impact.** A stuck join means staff cannot speak in the chat; parties may already have received the "joined" bell. A stuck leave means the banner keeps showing Familiarise Support after the case ended.
+
+**Fix.**
+
+1. Let the sweep retry: it retries joins every run after 2 minutes and leaves every run, 10 rows per step. A frozen channel keeps failing until it is unfrozen; a deleted channel ends the grant as `CHANNEL_GONE`.
+2. To stop a stuck join, end the intervention (`END_INTERVENTION`); the grant ends and no seat is taken.
+3. If Familiarise Support is a member with no seated grant (the add succeeded but the stamp did not, and the grant ended), remove the `familiarise-support` member from that channel in the Stream dashboard. No job reconciles this case.
+4. Check that `familiarise-support` is listed in the `STREAM_SYNC_EXCLUDED_USERS` setting; otherwise the daily Stream user sync can soft-delete it between interventions.
+
+**Verify.** The queries return no rows for the grant; the channel's members no longer include `familiarise-support` (or include it under exactly one live grant).
+
+**Prevention.** [Chat access](06-chat-access-and-intervention.md#failure-modes).
+
+## Placing or lifting a legal hold
+
+**When.** Counsel or the grievance officer asks to preserve a case's evidence beyond the 180-day period, for a dispute, a complaint to an authority or litigation.
+
+**Steps.**
+
+1. An **admin** opens the case in the back office and sets the legal hold with a note naming the request (the note is stored on the `LEGAL_HOLD_CHANGED` event and survives the purge). The API is `PATCH /api/support/cases/[caseId]` with `legalHold: true` and the case's `expectedUpdatedAt`. STAFF get 403 `FORBIDDEN`.
+2. The hold works on a CLOSED case without reopening it.
+3. To lift it, the admin sends `legalHold: false` with a note. If the case is already past 180 days, the next sweep run purges it.
+
+**Confirm.**
+
+```sql
+SELECT c.id, c."referenceNumber", c."closedAt", c."legalHoldAt", e."createdAt", e."toValue", e.note
+FROM "SupportCase" c
+JOIN "SupportCaseEvent" e ON e."caseId" = c.id AND e.kind = 'LEGAL_HOLD_CHANGED'
+WHERE c.id = '<caseId>' ORDER BY e."createdAt";
+```
+
+Derived holds need no action: a live chargeback on a linked payment or an open or recent appeal already blocks the purge.
+
+**Prevention.** [Privacy and retention](08-privacy-and-retention.md#legal-hold).
+
+## Re-running the support sweep
+
+The admin "run job" route does not list `support-sla-sweep`. Re-run it through the cleanup route with the cron secret:
+
+```bash
+curl -X POST -H "Authorization: Bearer $CRON_SECRET" "https://<host>/api/cleanup/support-sla-sweep?limit=20"
+```
+
+Expect 200 when clean, 500 when a row failed (the body lists `errors`), 409 when a run is in flight, and 503 in OFFLINE maintenance. Re-running is safe: every arm is idempotent per row and bounded. Recent runs:
+
+```sql
+SELECT id, status, "startedAt", "endedAt", "durationMs", "triggeredBy", left("errorLog", 300)
+FROM "SystemJobExecution" WHERE "jobName" = 'support-sla-sweep'
+ORDER BY "startedAt" DESC LIMIT 50;
+```
+
+A RUNNING row older than 15 minutes is a crashed run; the next run marks it FAILED.
+
+## DDL end-phase checklist
+
+The support PRs left schema and sidecar changes for the owner to apply at the end, in one controlled window. This checklist is for that window. Do not run it from an agent.
+
+1. **Stop the bleeding first.** Confirm production no longer queries the dropped legacy support tables (the stop-gap or promotion tracked in #2271). A failing `support-sla-sweep` with "table SupportTicket does not exist" means this step is not done.
+2. **Drift check, read-only.** `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`. Review every statement; nothing should drop a sidecar index.
+3. **Apply the schema** for the support columns and tables: recommendation `releaseSeat`, `voidedAt`, `voidedById`; `EarningsHoldReason.SUPPORT_CASE`; `SupportCase.legalHoldAt`; `SupportCaseDecision.supersedesDecisionId`; the event kinds `CHANNEL_CHANGED`, `LEGAL_HOLD_CHANGED`, `EVIDENCE_PURGED`; the tax issue types; and, from the intervention branch, `SupportCaseChatAccess`, its enums, the four chat event kinds, `SAFETY_CONCERN` and `SupportCase.moderationReportId`. Use the exact SQL listed in each PR body.
+4. **Apply the sidecar** (`npm run db:sidecars`, which runs `scripts/db/apply-sidecars.ts --all` over `prisma/sql/*.sql`): the support constraints, indexes and triggers in [the schema reference](11-schema-and-invariants.md#sidecar-objects).
+5. **Verify the sidecar.** `npx tsx scripts/ci/check-db-sidecars.ts` with `DATABASE_URL` pointing at the target (it checks that every named sidecar object is in the live catalog), then rerun the drift check and expect no support statements.
+6. **Bucket check.** The private `support-attachments` bucket exists with the 20 MiB limit and the allowed types (`ensureSupportEvidenceBucket()` in `lib/support/case-attachments.ts` re-applies them).
+7. **Smoke on preview.** A Razorpay test-mode support refund at or below ₹5,000 as STAFF; one above ₹25,000 with a second admin; a payout hold that blocks a payout and releases at resolution; one sweep run returning 200.
+8. **Stream.** Re-upsert existing operator Stream users so none keeps the old global `admin` role, and add `familiarise-support` to `STREAM_SYNC_EXCLUDED_USERS`.
+
+Steps 7 and 8 are owner launch gates; the scorecard lives in #2293.

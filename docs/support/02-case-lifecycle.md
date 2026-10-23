@@ -143,7 +143,7 @@ A successful reopen moves the case to IN_PROGRESS if it has an assignee and OPEN
 
 **A matching intake on a RESOLVED case** appends the description as a follow-up and returns `reused: true, dedupeReason: "resolved_case"`. If the intake asks for a person and the case is undecided, it hands the case to a person instead.
 
-**Closing.** Staff may close a case from any active status. The sweep closes RESOLVED cases 28 days after `resolvedAt` and writes AUTO_CLOSED. A CLOSED case takes no public messages, and the open-scope lookup ignores it, so new intake creates a new case. Staff may reopen a CLOSED case only if it is undecided.
+**Closing.** Staff may close a case from any active status. The sweep closes RESOLVED cases 28 days after `resolvedAt` and writes AUTO_CLOSED. Auto-close releases no payout holds and stages no notice; holds were already released when the case resolved, unless one was applied afterwards. A CLOSED case takes no public messages, and the open-scope lookup ignores it, so new intake creates a new case. Staff may reopen a CLOSED case only if it is undecided.
 
 ## CSAT
 
@@ -174,3 +174,5 @@ Case actions, appeals, external-requester intake and attachments run Serializabl
 - **Channel downgrade.** A resolved human case could drop back to SELF_SERVE with no audit row and leave the queues. The channel now only moves to HUMAN, with a CHANNEL_CHANGED event.
 - **Unhandled reopen collisions.** Reopening a closed case or switching intent used to hit `support_case_open_scope_key` as a 500. It is now 409 `OPEN_CASE_EXISTS` naming the open case.
 - **A universal 15-day clock with customer-wait extensions.** Replaced by fixed category deadlines captured at receipt; see [intake and flows](01-intake-and-flows.md#references-and-clocks).
+- **Staff reopening decided cases, and silent hand-offs.** Staff could reopen a decided case, and a hand-off changed the channel without a STATUS_CHANGED row. The transition table now refuses the reopen with 409 `CASE_DECIDED`, and every hand-off writes both events.
+- **A stale version from the resolution panel.** The staff panel once sent an old `expectedUpdatedAt`, so evidence and refund actions failed right after a reply. The client now reads one `updatedAt` from a single query-key factory (`lib/support/support-keys.ts`).
