@@ -24,6 +24,11 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { softCancelTrialAppointmentInTx } from "@/lib/trials/cancellation";
 import prisma, { type Tx } from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
+import {
+  assertMaintenanceRemediationCapacity,
+  assertRemediationCounts,
+  MAINTENANCE_REMEDIATION_CAPACITY,
+} from "@/lib/maintenance-remediation-capacity";
 
 type NotificationPayload = {
   userIds: string[];
@@ -67,20 +72,22 @@ function buildCancellationNotification(params: {
 }
 
 /** The slot graph the freeze works from — one query, typed once for the helpers. */
-async function findAffectedSlots(appointmentIds: string[]) {
-  // Find all slots that overlap with the maintenance window
+async function findAffectedSlots(appointmentId: string) {
+  // Read cap+1 rows so oversized bookings fail before any cancellation.
   return prisma.appointmentOccurrence.findMany({
     where: {
       isTentative: false,
       deletedAt: null,
-      appointmentId: { in: appointmentIds },
+      appointmentId,
     },
+    take: MAINTENANCE_REMEDIATION_CAPACITY.occurrences + 1,
     include: {
       appointment: {
         include: {
           // #1554 — the roster is the appointment's live participants.
           participants: {
             where: liveParticipant(),
+            take: MAINTENANCE_REMEDIATION_CAPACITY.participants + 1,
             select: { userId: true },
           },
           consultation: {
@@ -160,6 +167,7 @@ async function findAffectedSlots(appointmentIds: string[]) {
           // `deletedAt` rides along so the refund collector can skip retired
           // rows (#781 §B) without a second query.
           payment: {
+            take: MAINTENANCE_REMEDIATION_CAPACITY.payments + 1,
             select: {
               id: true,
               amount: true,
@@ -486,6 +494,7 @@ async function closeFrozenSlots(tx: Tx, ctx: FreezeContext): Promise<void> {
  */
 async function freezeOneAppointment(ctx: FreezeContext, durationMs: number) {
   return prisma.$transaction(async (tx) => {
+    await assertMaintenanceRemediationCapacity(tx, [ctx.appointment.id]);
     const effects = noEffects();
 
     for (const step of FREEZE_STEPS) {
@@ -494,6 +503,13 @@ async function freezeOneAppointment(ctx: FreezeContext, durationMs: number) {
       mergeEffects(effects, result);
     }
 
+    for (const notice of effects.notifications)
+      assertRemediationCounts(ctx.appointment.id, {
+        participants: ctx.appointment.participants.length,
+        occurrences: ctx.slots.length,
+        payments: ctx.appointment.payment.length,
+        recipients: new Set(notice.userIds).size,
+      });
     // Every refund the freeze owes commits with it, in one statement.
     const owed = refundsOwed(ctx.appointment.id, ctx.appointment.payment);
     await stampRefundsOwed(tx, owed);
@@ -556,9 +572,9 @@ function earliestSlotOf(slots: AffectedSlot[]): AffectedSlot {
 export async function freezeAppointments(
   maintenanceStart: Date,
   maintenanceEnd: Date,
-  appointmentIds: string[],
+  appointmentId: string,
 ) {
-  const affectedSlots = await findAffectedSlots(appointmentIds);
+  const affectedSlots = await findAffectedSlots(appointmentId);
 
   if (affectedSlots.length === 0) {
     return {
@@ -570,6 +586,13 @@ export async function freezeAppointments(
       subscriptionsExtended: 0,
     };
   }
+
+  for (const slot of affectedSlots)
+    assertRemediationCounts(appointmentId, {
+      participants: slot.appointment.participants.length,
+      occurrences: affectedSlots.length,
+      payments: slot.appointment.payment.length,
+    });
 
   // Group slots by appointment to avoid duplicate cancellations and N+1 queries
   const slotsByAppointment: Record<string, AffectedSlot[]> = {};

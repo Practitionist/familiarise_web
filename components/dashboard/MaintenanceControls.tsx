@@ -537,6 +537,15 @@ export default function MaintenanceControls() {
                 )}
                 Start Degraded Mode
               </Button>
+              {history[0]?.phase === "OFF" && (
+                <Button
+                  variant="outline"
+                  onClick={endMaintenance}
+                  disabled={actionLoading || reason.trim().length < 5}
+                >
+                  Retry Recovery
+                </Button>
+              )}
               {/* #1527 Q10 — taking the whole site down is typed-confirmed. */}
               <ConfirmDialog
                 trigger={

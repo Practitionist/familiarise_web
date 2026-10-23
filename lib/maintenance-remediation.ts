@@ -6,6 +6,7 @@ import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { assertNotInMaintenance } from "@/lib/maintenance-cron";
 import { liveParticipant } from "@/lib/booking/participants";
 import { SLOT_RESCHEDULABLE_FROM } from "@/lib/booking/transitions";
+import { assertMaintenanceRemediationCapacity } from "@/lib/maintenance-remediation-capacity";
 
 export const remediationInput = z
   .object({
@@ -87,6 +88,10 @@ export async function previewRemediation(
     throw new RemediationInputError(
       "Choose a window affecting between 1 and 20 bookings.",
     );
+  await assertMaintenanceRemediationCapacity(
+    prisma,
+    rows.map((row) => row.id),
+  );
   const preview = {
     ...input,
     appointmentIds: rows.map((r) => r.id),
@@ -181,7 +186,7 @@ export async function runMaintenanceRemediationSlice() {
         const result = await freezeAppointments(
           item.remediation.startsAt,
           item.remediation.endsAt,
-          [item.appointmentId],
+          item.appointmentId,
         );
         if (result.freezeErrors)
           throw new Error(`${result.freezeErrors} booking cancellation errors`);

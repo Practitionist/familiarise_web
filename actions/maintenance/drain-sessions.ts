@@ -16,7 +16,6 @@ import {
 } from "@/lib/stream/batch";
 import { CLASS_PREFIX, WEBINAR_PREFIX } from "@/lib/stream-channel-ids";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
 import { notifyMaintenanceStarted } from "@/lib/novu/service";
 
 const LIVE_SESSION_WINDOW_MS = 6 * 60 * 60 * 1000;
@@ -36,22 +35,9 @@ function maintenanceStreamClient() {
   });
 }
 
-const CONSULTANT_USER_SELECT = {
-  select: {
-    consultantProfile: {
-      select: { user: { select: { id: true } } },
-    },
-  },
-} as const;
-
-const REQUESTED_BY_USER_SELECT = {
-  select: { user: { select: { id: true } } },
-} as const;
-
 interface DrainResult {
   drained: number;
   recordingsStopped: number;
-  notified: number;
   errors: string[];
   remainingSessions: number;
   remainingChannelFreezes: number;
@@ -61,7 +47,6 @@ export async function drainActiveSessions(): Promise<DrainResult> {
   const result: DrainResult = {
     drained: 0,
     recordingsStopped: 0,
-    notified: 0,
     errors: [],
     remainingSessions: 0,
     remainingChannelFreezes: 0,
@@ -82,45 +67,14 @@ export async function drainActiveSessions(): Promise<DrainResult> {
     },
     take: MAX_DRAIN_BATCH,
     orderBy: { createdAt: "desc" },
-    include: {
-      occurrence: {
-        include: {
-          appointment: {
-            include: {
-              participants: {
-                where: liveParticipant(),
-                select: { userId: true },
-              },
-              consultation: {
-                include: {
-                  consultationPlan: CONSULTANT_USER_SELECT,
-                  requestedBy: REQUESTED_BY_USER_SELECT,
-                },
-              },
-              subscription: {
-                include: {
-                  subscriptionPlan: CONSULTANT_USER_SELECT,
-                  requestedBy: REQUESTED_BY_USER_SELECT,
-                },
-              },
-              webinar: {
-                include: {
-                  webinarPlan: CONSULTANT_USER_SELECT,
-                },
-              },
-              class: {
-                include: {
-                  classPlan: CONSULTANT_USER_SELECT,
-                },
-              },
-            },
-          },
-        },
-      },
+    select: {
+      id: true,
+      streamCallId: true,
+      appointmentOccurrenceId: true,
+      isRecording: true,
     },
   });
 
-  const allUserIds = new Set<string>();
   const client = activeSessions.length ? maintenanceStreamClient() : null;
 
   for (const session of activeSessions) {
@@ -141,23 +95,6 @@ export async function drainActiveSessions(): Promise<DrainResult> {
       STREAM_CALL_TYPE,
       toCallId(session.streamCallId),
     );
-    for (const seat of session.occurrence.appointment.participants) {
-      allUserIds.add(seat.userId);
-    }
-
-    const appointment = session.occurrence.appointment;
-    const consultantUserId =
-      appointment.consultation?.consultationPlan?.consultantProfile?.user?.id ??
-      appointment.subscription?.subscriptionPlan?.consultantProfile?.user?.id ??
-      appointment.webinar?.webinarPlan?.consultantProfile?.user?.id ??
-      appointment.class?.classPlan?.consultantProfile?.user?.id;
-    if (consultantUserId) allUserIds.add(consultantUserId);
-
-    const consulteeUserId =
-      appointment.consultation?.requestedBy?.user?.id ??
-      appointment.subscription?.requestedBy?.user?.id;
-    if (consulteeUserId) allUserIds.add(consulteeUserId);
-
     if (session.isRecording) {
       try {
         await call.stopRecording({ recording_type: "composite" });
@@ -229,7 +166,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
       "Offline setup has a remaining backlog; retry activation.",
     );
 
-  if (allUserIds.size > 0) {
+  if (result.drained > 0) {
     try {
       await notifyMaintenanceStarted(
         {
@@ -242,7 +179,6 @@ export async function drainActiveSessions(): Promise<DrainResult> {
           dedupeKey: `maintenance-started:${window.id}`,
         },
       );
-      result.notified = allUserIds.size;
     } catch (err) {
       result.errors.push(
         `Notification: ${err instanceof Error ? err.message : String(err)}`,

@@ -10,6 +10,12 @@
 8. Apply only the reviewed deployment/database procedure. Sidecar replacement uses one transaction per file with a three-second lock timeout; a blocked or failed replacement must roll back rather than leave a DROP committed alone. Run dry-run and isolated tests before any approved production apply.
 9. Keep an operator available until explicit recovery succeeds. If the ETA passes, update it or continue maintenance; do not depend on expiry.
 
+## Bounded booking remediation capacity
+
+The automatic whole-booking cancellation path currently supports at most eight live participants, twelve non-tentative undeleted occurrences, ten payment rows and ten notification recipients per booking. These conservative execution guards are not offering-plan limits or measured throughput guarantees. Preview, confirmation and worker execution recheck capacity; cap-plus-one reads reject growth instead of truncating refund or notification obligations.
+
+Larger bookings remain unsupported by this maintenance action and require a separately reviewed cancellation procedure. No ready large-roster procedure is implied. An oversized queued booking remains pending with a visible error while other items can rotate; it must not be marked completed, partially cancelled or silently dropped. Verify supported-size execution against the deployed runtime before using this action operationally.
+
 ## Deprecated & Superseded Approaches
 
 The maintenance toggle previously guessed a booking cancellation interval and automatically ran refunds. A planned ETA also acted as a state-expiry deadline. The current flow separates communication, access control and explicitly confirmed booking remediation.

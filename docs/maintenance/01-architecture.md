@@ -28,6 +28,12 @@ DELETE checks database and Redis health, restores valid snapshotted discounts an
 
 The reviewed [schema rollout SQL](./maintenance-remediation-schema.sql) adds maintenance setup/vendor fields, the meeting window identity and channel acknowledgement stamps and durable remediation tables to Prisma. Deploy the reviewed schema change through the approved database procedure before deploying code that reads these fields. `prisma generate` only updates the local client; it does not apply the schema. Never run schema push or sidecar apply as a test against the shared database.
 
+## Bounded booking remediation capacity
+
+The automatic whole-booking cancellation path currently supports at most eight live participants, twelve non-tentative undeleted occurrences, ten payment rows and ten notification recipients per booking. These conservative execution guards are not offering-plan limits or measured throughput guarantees. Preview, confirmation and worker execution recheck capacity; cap-plus-one reads reject growth instead of truncating refund or notification obligations.
+
+Larger bookings remain unsupported by this maintenance action and require a separately reviewed cancellation procedure. No ready large-roster procedure is implied. An oversized queued booking remains pending with a visible error while other items can rotate; it must not be marked completed, partially cancelled or silently dropped. Verify supported-size execution against the deployed runtime before using this action operationally.
+
 ## Deprecated & Superseded Approaches
 
 OFFLINE previously cancelled overlapping bookings implicitly and guessed a four-hour horizon when no ETA was supplied. Explicit preview and durable confirmation replace that coupling. ETA-based Redis expiry previously reopened an unattended maintenance window; active state now requires explicit recovery. Recovery previously launched six reconciliation jobs in parallel inside the request; scheduled bounded jobs own those obligations instead.

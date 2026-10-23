@@ -86,7 +86,7 @@ it("processes one selected booking and delegates refund delivery to its durable 
   expect(freeze).toHaveBeenCalledWith(
     item.remediation.startsAt,
     item.remediation.endsAt,
-    ["booking"],
+    "booking",
   );
   expect(updateItem).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -136,7 +136,7 @@ it("binds confirmation to previewed bookings, ADMIN identity and expiry", async 
         },
       ],
       participants: [{ user: { name: "Client" } }],
-      _count: { occurrences: 1, participants: 1 },
+      _count: { occurrences: 1, participants: 1, payment: 0 },
     },
   ]);
   const preview = await previewRemediation(
@@ -177,4 +177,21 @@ it("refuses an unbounded preview cohort", async () => {
       "admin",
     ),
   ).rejects.toThrow("between 1 and 20");
+});
+
+it("refuses a preview whose single booking exceeds the recipient envelope", async () => {
+  findOccurrences.mockResolvedValue([
+    { id: "large", _count: { occurrences: 1, participants: 9000, payment: 1 } },
+  ]);
+  await expect(
+    previewRemediation(
+      {
+        windowId: "window",
+        startsAt: "2026-10-22T01:00:00Z",
+        endsAt: "2026-10-22T02:00:00Z",
+      },
+      "admin",
+    ),
+  ).rejects.toThrow("exceeds automatic maintenance remediation capacity");
+  expect(freeze).not.toHaveBeenCalled();
 });

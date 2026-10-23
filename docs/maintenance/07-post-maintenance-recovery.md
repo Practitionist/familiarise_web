@@ -20,6 +20,8 @@ Retain the statutory follow-ups returned by recovery: inspect the GST outward re
 
 Keep active and standby builds compatible with the same reviewed schema. Exercise restoration and rollback in an isolated environment; production execution records and vendor requests are not a test fixture. Schema generation is local only. Database schema changes and sidecar application require the established explicit production procedure.
 
+If the database has already closed the window but publishing OFF to Redis failed, use **Retry Recovery** in the OFF controls with an audit reason. The existing DELETE door safely republishes OFF for an already-ended window; reloading the page must not remove this recovery action.
+
 ## Deprecated & Superseded Approaches
 
 Recovery used to publish OFF before unfreezing channels and then launch six reconciliation jobs in parallel. The current control path verifies recovery first, reports failures, and leaves reconciliation to bounded, independently observable jobs. ETA expiration is no longer an alternative recovery mechanism.

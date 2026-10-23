@@ -7,7 +7,9 @@ const createItems = jest.fn();
 const audit = jest.fn();
 const transaction = jest.fn();
 const findRequests = jest.fn();
+const capacityRows = jest.fn();
 const tx = {
+  appointment: { findMany: (...args: unknown[]) => capacityRows(...args) },
   maintenanceWindow: {
     findFirst: jest.fn(async () => ({ id: "window" })),
   },
@@ -50,7 +52,7 @@ jest.mock("../../lib/prisma", () => ({
             },
           ],
           participants: [],
-          _count: { occurrences: 1, participants: 0 },
+          _count: { occurrences: 1, participants: 0, payment: 0 },
         },
       ],
     },
@@ -89,6 +91,9 @@ beforeEach(() => {
   createRequest.mockResolvedValue({ count: 1 });
   transaction.mockImplementation((run) => run(tx));
   findRequests.mockResolvedValue([]);
+  capacityRows.mockResolvedValue([
+    { id: "booking", _count: { occurrences: 1, participants: 0, payment: 0 } },
+  ]);
 });
 it("requires ADMIN authorization before previewing or queueing", async () => {
   auth.mockResolvedValue({
@@ -174,4 +179,25 @@ it("bounds request history and scopes it to the chosen window", async () => {
       }),
     }),
   );
+});
+
+it("rechecks capacity after preview and refuses a booking that grew before confirmation", async () => {
+  const preview = await previewRemediation(input, "admin");
+  capacityRows.mockResolvedValue([
+    {
+      id: "booking",
+      _count: { occurrences: 1, participants: 9000, payment: 1 },
+    },
+  ]);
+  const response = await POST(
+    request({
+      token: preview.token,
+      confirmation: preview.confirmation,
+      reason: "Confirmed disruption recovery",
+    }),
+  );
+  expect(response.status).toBe(400);
+  expect(createRequest).not.toHaveBeenCalled();
+  expect(createItems).not.toHaveBeenCalled();
+  expect(audit).not.toHaveBeenCalled();
 });

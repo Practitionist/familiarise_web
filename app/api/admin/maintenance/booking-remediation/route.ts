@@ -14,6 +14,10 @@ import {
   RemediationInputError,
 } from "@/lib/maintenance-remediation";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
+import {
+  assertMaintenanceRemediationCapacity,
+  MaintenanceRemediationCapacityError,
+} from "@/lib/maintenance-remediation-capacity";
 
 const confirmSchema = z.object({
   token: z.string().max(20_000),
@@ -90,6 +94,7 @@ export async function POST(request: NextRequest) {
       });
       if (!window)
         throw new RemediationInputError("Maintenance window not found.");
+      await assertMaintenanceRemediationCapacity(tx, confirmed.appointmentIds);
       const { count } = await tx.maintenanceRemediation.createMany({
         data: [
           {
@@ -136,18 +141,20 @@ export async function POST(request: NextRequest) {
       { status: 202 },
     );
   } catch (error) {
-    if (!(error instanceof RemediationInputError))
+    const invalid =
+      error instanceof RemediationInputError ||
+      error instanceof MaintenanceRemediationCapacityError;
+    if (!invalid)
       captureThrottled("maintenance:booking-remediation", error, {
         subsystem: "maintenance",
       });
     return NextResponse.json(
       {
-        error:
-          error instanceof RemediationInputError
-            ? error.message
-            : "Booking remediation is unavailable. Retry after restoring prerequisites.",
+        error: invalid
+          ? error.message
+          : "Booking remediation is unavailable. Retry after restoring prerequisites.",
       },
-      { status: error instanceof RemediationInputError ? 400 : 503 },
+      { status: invalid ? 400 : 503 },
     );
   }
 }
