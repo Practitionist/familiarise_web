@@ -1,152 +1,159 @@
-# B2C Tax Invoices and Credit Notes
-
-> How a personal buyer gets the statutory tax invoice for their booking, how a refund reverses it with a credit note, and how both reach the monthly GSTR-1 working file. Introduced by #1365 and #1370.
-
+---
+title: GST, tax invoices and credit notes
+type: reference
+audience: engineers changing checkout tax, invoices, credit notes or the GST register, and finance staff reading them
+status: live
+last-reviewed: 2026-10-23
 ---
 
-## Why this exists
+# GST, tax invoices and credit notes
 
-The platform bills as the principal supplier for GST, which ADR 26 records as a locked decision. Checkout charges 18% on the discounted price through `lib/payments/pricing/derive-checkout-amount.ts` and `lib/payments/tax/tax-engine.ts`, and settlement credits `GST_PAYABLE` in `lib/payments/payouts/earnings-service.ts`. Every one of those charges is our own outward supply, so every one of them needs a document that satisfies CGST Rule 46.
+The platform bills as the principal supplier for GST (ADR 26, `docs/enterprise/70-design-decisions/26-gst-principal-model.md`). Every payment is the platform's own outward supply, so every taxable payment needs a document that satisfies CGST Rule 46, every refund needs a credit note under section 34, and the month's documents must reach the GST return as one register. This page is the reference for the rate, the place-of-supply rules, the zero-rating gate, the two document families, their numbering, the credit-note cap and cutoff, the outward-supplies register and the e-invoicing gate. It states only what `lib/compliance/` and `lib/payments/tax/` implement.
 
-Organizations already had that document: an `OrganizationInvoice` with its own gapless per-org series, its own IRP e-invoice fields and its own dunning lifecycle. Personal buyers had nothing. Between the v0 lockdown in #768 and this change, a consumer who paid 18% GST received a payment confirmation and no invoice at all, and there was no register from which the platform's own outward supplies could be filed.
+There is no GST TCS under section 52. The principal-supplier model means the platform does not collect it, and neither the schema nor the code has any machinery for it.
 
-This change adds the document trail and nothing else. It posts no ledger entries, it derives no tax from a rate, and it builds no IRN. Those exclusions are deliberate and are listed in full at the end of this page.
+## The rate and the checkout charge
 
-## What is minted, and when
+GST is 18 percent on every domestic taxable supply the platform makes (`TAX_CONSTANTS.GST_RATE`); a zero-rated export is described below. The default SAC code is 999293, commercial training and coaching. A personal tax invoice always carries 999293, and an organisation invoice carries the organisation's default code (`hsnDefault`) or 999293. The checkout tax result also names a code by service type, 999294 for webinars and classes, but that code is not written onto a document.
 
-Two models carry the documents, both defined in the invoicing section of `prisma/schema.prisma`.
+`deriveCheckoutAmount` (`lib/payments/pricing/derive-checkout-amount.ts`) charges the tax in a fixed order: list price, then discount, then GST on the discounted base through `determineTax` (`lib/payments/tax/tax-engine.ts`), then referral credits against the tax-inclusive total. `determineTax` rounds to the nearest paisa, because GST is a levy and flooring would under-collect.
 
-| Model                | What it is                                                           | Keyed by                                |
-| -------------------- | -------------------------------------------------------------------- | --------------------------------------- |
-| `ConsumerInvoice`    | The Rule 46 tax invoice for one successful consumer payment.         | `paymentId`, unique.                    |
-| `ConsumerCreditNote` | The section 34 credit note that reverses part or all of one invoice. | `refundId` or `disputeId`, both unique. |
+For example, Priya books Hannah's one-hour consultation for ₹1,000 with no discount. GST is ₹180 (18,000 paise) and she pays ₹1,180 (118,000 paise).
 
-`mintConsumerInvoice` in `lib/payments/billing/consumer-invoice.ts` is called from two places, because a payment reaches its confirmed state by two different routes. The capture webhook calls it from `lib/payments/webhooks/handlers.ts` once the booking is confirmed, and the instant-confirm branch of `handleCheckout()` (`lib/payments/checkout/orchestrate.ts`) calls it for mock, zero-amount and org-sponsored checkouts, which never see a webhook at all.
+### Which country is the buyer in
 
-Both call sites wrap the mint in a try/catch that reports to Sentry at warning level and never rethrows. A confirmed booking must not roll back because a document could not be produced, and the monthly register export re-attempts anything that was missed.
+`detectBuyerCountry` (`lib/payments/tax/buyer-country.ts`) takes a two-letter country from the buyer's profile first, then a geo-IP header when present, and otherwise assumes India. The browser language is deliberately not a signal, because it would zero-rate sales on a guess. Domestic means GST is charged.
 
-The mint is a silent no-op, returning a null id rather than throwing, in each of these cases:
+## Zero-rating and the Letter of Undertaking
 
-- the payment is not `SUCCEEDED`, or has been soft-deleted;
-- the payment is org-funded, meaning it carries `billableToOrgInvoiceId` or any payment leg sourced from `WALLET`, `LICENSE`, `INVOICE_ACCRUAL` or `OVERAGE_INVOICE_ACCRUAL`. Those supplies are invoiced to the organization on the org series instead, and giving them a second document would double-count the same supply;
-- `getPlatformSupplier()` returns null because `PLATFORM_GSTIN` is unset or malformed. The process logs this once. Issuing a legal-looking invoice with a fabricated GSTIN is worse than issuing none;
-- the reconstructed total is zero or less.
-
-The idempotency probe on `paymentId` runs before any sequence number is allocated. That ordering is load-bearing: a webhook redelivery that allocated a number first and then discovered the invoice already existed would leave a permanent gap in a gapless statutory series.
-
-## Numbering
-
-Consumer documents run on a platform-wide series, not a per-buyer one, because the supplier is the platform and the series belongs to the supplier. Two counter tables hold the sequences, `platform_invoice_counters` and `platform_credit_note_counters`, and each allocation is an atomic upsert that returns the pre-increment value, exactly as the org counters do.
-
-| Document    | Format                    | Example            | Ceiling                 |
-| ----------- | ------------------------- | ------------------ | ----------------------- |
-| Invoice     | `<PREFIX>-<FY>-<SEQ5>`    | `FAM-2026-00001`   | 99,999 per fiscal year. |
-| Credit note | `<PREFIX>-CN-<FY>-<SEQ4>` | `FAM-CN-2026-0001` | 9,999 per fiscal year.  |
-
-`PREFIX` comes from the optional `PLATFORM_INVOICE_PREFIX` environment variable and defaults to `FAM`. It passes through `fitPrefixToRule46`, which caps the whole number at the sixteen characters Rule 46(b) allows. The credit-note series is separate from the invoice series because Rule 53 requires it to be. Both use `indianFiscalYear`, so a document issued in March lands in the previous fiscal year, reckoned in IST.
+A sale to a buyer outside India is zero-rated, with no GST, only under a Letter of Undertaking (LUT) valid for the current financial year (CGST Rule 96A). `hasValidPlatformLut` (`lib/compliance/lut.ts`) answers from the platform's LUT number and its valid-till date, and the date is inclusive to the end of that day in India time. The code does not cap that date at the financial-year end, so `PLATFORM_LUT_VALID_TILL` must be set no later than 31 March of the year the LUT was filed for. The contract is fail-closed: with no LUT, or an expired one, nothing is zero-rated and the supply is taxed at 18 percent IGST. Both `determineTax` at checkout and `deriveGstBreakdown` at invoicing consult the same function, so the two cannot drift apart. A zero-rated export invoice quotes the LUT number (`lutNumberForSupply`).
 
 ## Place of supply
 
-Section 12(2)(b) of the IGST Act says that where the recipient's address is not on record, a B2C supply is made at the **supplier's** location. That is the opposite of the rule the B2B path follows: `deriveGstBreakdown` falls back to IGST on an unknown buyer state and records `IGST_STATE_UNKNOWN`, because a registered buyer is expected to have a state and a missing one is a defect worth surfacing. For a consumer, a missing state is the statutory norm.
+`deriveGstBreakdown` (`lib/compliance/gst.ts`) decides the tax heads for an organisation invoice. `deriveConsumerInvoiceTax` (`lib/payments/billing/consumer-invoice.ts`) decides them for a personal buyer. Their rules differ for a missing state, on purpose.
 
-`deriveConsumerInvoiceTax` is a pure function that implements this. It never re-derives tax from a rate; the taxable value is the charged total minus the charged tax, so the document agrees with the `GST_PAYABLE` credit to the paise.
+| Buyer                          | Buyer state      | Result                                                                                  | Recorded reason or source                     |
+| ------------------------------ | ---------------- | --------------------------------------------------------------------------------------- | --------------------------------------------- |
+| Organisation (registered, B2B) | Same as supplier | CGST 9% and SGST 9%, CGST floored, SGST takes the odd paisa                             | `INTRA_STATE_CGST_SGST`                       |
+| Organisation                   | Different state  | IGST 18%                                                                                | `INTER_STATE_IGST`                            |
+| Organisation                   | Unknown          | IGST 18%, flagged so a missing state is visible                                         | `IGST_STATE_UNKNOWN`                          |
+| Organisation outside India     | n/a              | Zero-rated under a valid LUT                                                            | `ZERO_RATED_EXPORT`                           |
+| Organisation outside India     | n/a              | 18% IGST without a valid LUT                                                            | `EXPORT_NO_LUT_IGST`                          |
+| Person, state declared         | Same as supplier | CGST and SGST                                                                           | `DECLARED_AT_CHECKOUT` or `PROFILE_ON_RECORD` |
+| Person, state declared         | Different state  | IGST for the whole tax                                                                  | `DECLARED_AT_CHECKOUT` or `PROFILE_ON_RECORD` |
+| Person, no state on record     | Absent           | Placed at the supplier's own state, so CGST and SGST (section 12(2)(b) of the IGST Act) | `SUPPLIER_DEFAULT_12_2_B`                     |
+| Person outside India           | n/a              | Delegated to the same LUT gate, with amounts kept as charged                            | per the gate                                  |
 
-The supplier's own state is settled before that derivation runs. `resolveSupplierStateCode` reads the first two digits of `PLATFORM_GSTIN`, which are the state of registration by law, and falls back to `SUPPLIER_STATE_CODE` only when the GSTIN carries none. The same resolved value is handed to the derivation and stored on the row, so the heads on the document can never disagree with the state printed beside them. When the GSTIN and the environment variable name different states the mint fails closed exactly as a missing GSTIN does: no document is issued, a Sentry warning and a `SystemEvent` name both values, and the monthly register healer re-attempts the payment once the configuration is fixed.
+An organisation's buyer country is India only when its data residency region is India (`orgBuyerCountry`). A registered buyer is expected to have a state, so a missing one is a defect worth surfacing, while for a consumer a missing state is the legal norm. Domestic checkout now asks for a valid state: `handleCheckout` refuses a buyer-paid domestic checkout without one, and the pay-links snapshot the profile state or ask for it. Older payments fall back to the profile state and then to the supplier state.
 
-| Buyer state            | Result                                                                                                                  | `placeOfSupplySource`                          |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Same as the supplier's | CGST and SGST, split with CGST floored and SGST absorbing the odd paise                                                 | `DECLARED_AT_CHECKOUT` or `PROFILE_ON_RECORD`  |
-| A different state      | IGST for the whole tax                                                                                                  | `DECLARED_AT_CHECKOUT` or `PROFILE_ON_RECORD`  |
-| Absent or unresolvable | Placed at the supplier's own state, so CGST and SGST                                                                    | `SUPPLIER_DEFAULT_12_2_B`                      |
-| Outside India          | Delegated to `deriveGstBreakdown` for the LUT gate, then mapped back with the amounts kept anchored to what was charged | Either, depending on whether a state was given |
+The supplier's own state is the first two digits of the platform GSTIN, which is the state of registration by law, with the configured supplier state code as a fallback (`resolveSupplierStateCode`). When the two disagree the mint fails closed, because the heads and the printed state would contradict each other on a number that cannot be corrected in place.
 
-Where the source is `SUPPLIER_DEFAULT_12_2_B`, the rendered PDF carries the footnote "Place of supply determined under s.12(2)(b) IGST Act (no address of the recipient on record)", so a reader can tell a defaulted place of supply from a declared one.
+## Personal tax invoices
 
-## Capturing the buyer's state
+`ConsumerInvoice` is the Rule 46 tax invoice for one successful personal payment, unique per payment. `mintConsumerInvoice` runs from `handlePaymentSuccess` once the booking is confirmed (whichever confirmation door reached it), from the recording-purchase and member-overage success handlers, and from the instant-confirm branch of `handleCheckout` (`lib/payments/checkout/orchestrate.ts`) for mock, zero-amount and sponsored checkouts, which never see a webhook. All of them wrap it in `mintConsumerInvoiceBestEffort`, which reports a failure at warning level and never rethrows. A confirmed booking must not roll back because a document could not be made, and the monthly register export retries anything that was missed.
 
-Checkout can ask for the buyer's state, but it never insists. `app/checkout/components/BillingStateSelect.tsx` is mounted on the consultation, subscription, webinar and class checkout pages, labelled "Billing state (for GST)", and it submits the two-digit numeric code that the GST portal, the invoice and `lib/compliance/gst.ts` all compare on. Leaving it blank is a correct answer, not an incomplete one, because the statutory default applies.
+The mint returns without a document in these cases:
 
-The declared value is written to `Payment.consumerStateCode` in the same transaction that creates the payment, and to `ConsulteeProfile.billingStateCode` when it differs from what the profile already held, so a repeat buyer is never asked twice. `/api/checkout/context` returns the remembered value and the checkout pages pre-fill the picker with it.
+- the payment is not `SUCCEEDED`, or has been soft-deleted;
+- the payment is organisation-funded: it has `billableToOrgInvoiceId` or a payment leg sourced from `WALLET`, `LICENSE`, `INVOICE_ACCRUAL` or `OVERAGE_INVOICE_ACCRUAL`. Those supplies never take a second document on the consumer series;
+- the platform GSTIN is unset or malformed. This is a deliberate fail-open for the booking, not an error: a legal-looking invoice with a fabricated GSTIN is worse than none. The process logs it once and reports one expected Sentry warning, `CONSUMER_INVOICE_MINT_DISABLED`, with the count of skipped payments, and the download routes answer 503 with `SUPPLIER_GSTIN_UNCONFIGURED`. Once the GSTIN is configured, the register healer issues the missed invoices;
+- the supplier state is ambiguous (above), or the reconstructed total is zero or less.
 
-At mint time the resolution order is the declaration on the payment, then the profile, then the statutory default, and `placeOfSupplySource` records which of the three applied.
+The invoice total is the full pre-credit consideration, the amount charged plus any referral credit applied, because a credit the platform funds is a discount, not a reduction of the value supplied. The tax heads are split out of the tax the buyer actually paid, never recomputed from a rate, so the document agrees with the `GST_PAYABLE` credit to the paisa. The idempotency probe on `paymentId` runs before any number is allocated, so a redelivered webhook cannot burn a number and leave a gap in a gapless series.
 
-## Credit notes on refund
+Rule 46 asks a B2C invoice of ₹50,000 (5,000,000 paise) or more to carry the recipient's name, address and state. The mint still issues the invoice without them, because withholding a buyer's document is worse, and sets `needsBuyerAddress` so the register flags it.
 
-A refund never deletes or rewrites the invoice. `mintConsumerCreditNote` issues a section 34 credit note beside it, and the pair is what reconciles.
+## Numbering
 
-The reversal is strictly proportional over the tax-inclusive total and it keeps the same tax head the invoice used, because a credit note may not move a supply from one head to another.
+| Document                 | Format                    | Example            | Ceiling                          |
+| ------------------------ | ------------------------- | ------------------ | -------------------------------- |
+| Consumer invoice         | `<PREFIX>-<FY>-<SEQ5>`    | `FAM-2026-00001`   | 99,999 per fiscal year           |
+| Consumer credit note     | `<PREFIX>-CN-<FY>-<SEQ4>` | `FAM-CN-2026-0001` | 9,999 per fiscal year            |
+| Organisation invoice     | `<PREFIX>-<FY>-<SEQ4>`    | `WIPRO-2026-0001`  | per organisation and fiscal year |
+| Organisation credit note | `<PREFIX>-CN-<FY>-<SEQ4>` | `WIP-CN-2026-0001` | per organisation and fiscal year |
 
-The cap is cumulative rather than per-note. `mintConsumerCreditNote` sums the `totalPaise` of every note already issued against the invoice, inside the same transaction, and credits at most the remainder. This matters because a partial refund and a later lost chargeback are two different idempotency keys against one invoice, so neither one's probe short-circuits the other; without the cumulative cap the pair could reverse more than the platform ever charged and understate the period's output tax. When the invoice is already credited in full the note is refused, a `SystemEvent` is recorded so an operator sees it, and the caller receives a null identifier.
+The consumer series is platform-wide because the supplier is the platform. `PLATFORM_INVOICE_PREFIX` sets the prefix and defaults to `FAM`. Organisation documents take the organisation's `invoiceNumberPrefix` or its slug. `fitPrefixToRule46` (`lib/payments/billing/invoice-numbering.ts`) shortens the prefix so the whole number never exceeds the sixteen characters that Rules 46(b) and 53 allow. The `-CN-` infix costs three more characters, so a credit note's prefix is shorter than its invoice's: the slug `wipro` fits whole in an invoice number and is cut to `WIP` in a credit note. The credit-note series is separate from the invoice series because Rule 53 requires it. The fiscal year in a number is the year in which the financial year starts, reckoned in India time, so a document issued on 31 March 2027 at 23:00 IST is numbered in FY 2026. Each allocation is an atomic upsert on a counter table (`platform_invoice_counters`, `platform_credit_note_counters`, `org_invoice_counters`, `org_credit_note_counters`) that returns the pre-increment value.
 
-The heads are prorated from the invoice's total tax and then split again by the same floor-CGST rule the invoice itself used, rather than each head being prorated on its own. Flooring three heads independently leaves the stored row short of its own total by a paise or two, which the register reports as a reconciliation warning. Prorating once and letting the taxable value absorb the residual makes the identity `taxable + CGST + SGST + IGST == total` hold by construction, and no head on a note can exceed the corresponding head on the invoice.
+## Credit notes
 
-It is called from two places, mirroring the org-side `mintRefundCreditNote` it sits beside: Step 7.5 of the refund cascade in `lib/payments/operations/refund.ts`, and the lost-chargeback branch of `app/api/webhooks/utils.ts`. Both are idempotent on their own trigger, so a webhook redelivery or a cron retry re-reads the existing note.
+A refund never deletes or rewrites an invoice. A credit note beside it reverses part or all of it.
 
-## Downloading a document
+**Personal.** `mintConsumerCreditNote` runs from the refund cascade (`applyRefundCascade` in `lib/payments/operations/refund.ts`), from the credit-only refund path in `lib/payments/operations/booking-refund.ts`, and from the lost-chargeback settlement in `app/api/webhooks/utils.ts`. It is idempotent on `refundId` or `disputeId`, each unique. `deriveConsumerCreditNoteAmounts` sizes it:
 
-| Route                                                          | Returns                                                             |
-| -------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `GET /api/payments/[paymentId]/invoice/pdf`                    | A 302 to a 24-hour signed URL for the tax invoice.                  |
-| `GET /api/payments/[paymentId]/credit-note/[creditNoteId]/pdf` | The same, for a credit note that belongs to that payment's invoice. |
+- The reversal is proportional over the tax-inclusive total and keeps the head the invoice used, because a note may not move a supply from one head to another.
+- The cap is cumulative. A partial refund and a later lost chargeback are two different keys against one invoice, so the function sums the totals of all earlier notes, locks the invoice row, and credits at most the remainder. An invoice already credited in full refuses the note, records a `SystemEvent`, and returns no id.
+- The tax is prorated once from the invoice's total tax and then re-split by the floor-CGST rule, so `taxable + CGST + SGST + IGST = total` holds by construction and no head on a note exceeds the invoice's.
 
-Both routes authorise the payment's own buyer or an ADMIN/STAFF operator, apply the `moneyOpsLimiter` bucket per actor, and return 503 with code `SUPPLIER_GSTIN_UNCONFIGURED` when `PLATFORM_GSTIN` is missing, or 404 with code `INVOICE_NOT_ISSUED` when no document exists. The PDF is rendered on the first request, uploaded to the existing private `org-invoices` bucket under a `consumer/<userId>/<docId>.pdf` path, cached on the row for twenty-four hours, and re-signed without re-rendering on subsequent hits.
+For example, Priya cancels Hannah's session and 50 percent, ₹590 (59,000 paise), is refunded. The note is for 59,000: tax is 18,000 × 59,000 ÷ 118,000 = 9,000 paise and the taxable value is 50,000. If Priya's invoice was CGST and SGST, the note shows 4,500 and 4,500, otherwise IGST 9,000.
 
-The documents render from the snapshot stored on the row rather than from live supplier and buyer records, because a tax invoice must keep saying what it said on the day it was issued.
+**Organisation.** `mintRefundCreditNote` credits only the invoiced part of an organisation-funded payment (the `INVOICE_ACCRUAL` and `OVERAGE_INVOICE_ACCRUAL` legs), and only against an issued invoice (a DRAFT accrual is netted on its leg instead). It caps itself at what the invoice has left (`remainingOrgInvoiceCreditPaise`, the same cumulative cap under a row lock) and restores any purchase-order draw. It does not change the invoice's status: the gateway refund of an invoice payment (`app/api/webhooks/utils.ts`) moves the invoice to `REFUNDED` once the cumulative credit notes cover its total.
 
-Both PDFs register Noto Sans Devanagari from `public/fonts/` and apply it to the buyer's name and address only. Helvetica, which the org documents use throughout, has no Devanagari coverage, so a buyer writing in Hindi or Marathi would otherwise see their own name as a row of boxes. The font is read from a copy traced into the deployment bundle by `outputFileTracingIncludes` in `next.config.mjs`, never fetched over the network, and registration falls back to Helvetica if the file is absent rather than failing the download.
+### The section 34(2) cutoff
 
-The invoice number and a download link appear on the admin payment list and detail pages; on the consultee's own payments tab the row's "View receipt" link resolves to the invoice when one was issued (`receiptHref` in `lib/appointments/payment-display.ts`). A row without one means the payment was org-funded, which is the correct answer rather than a missing document.
+A credit note can reduce output tax only if it is declared by the earlier of 30 November following the end of the financial year of the supply and the date the annual return is filed. The code implements only the 30 November date, because it does not track the annual-return filing date. After that a refund gets a commercial credit note: base value only, no tax. `gstCreditNoteCutoff` (`lib/compliance/gst-credit-note-cutoff.ts`) returns the last instant, the end of 30 November in India time. A supply on 2026-10-17 is in FY 2026-27, so its cutoff is 23:59:59.999 IST on 2027-11-30. A refund of ₹590 after that issues a note for the base ₹500 only, its reason prefixed "Commercial credit note (past the CGST s.34(2) time limit)", and the refund journal reverses no `GST_PAYABLE`, so the platform bears the tax.
 
-The supplier block comes from `getPlatformSupplier()`, whose fail-closed contract, hardcoded legal name and address, and the `pdfkit` font tracing that keeps the render from crashing are described in [required secrets](../../enterprise/50-operations/07-required-secrets.md#the-supplier-identity-on-statutory-documents).
+The refund cascade pins one clock (`cascadeNow`) across the credit-note mint and the ledger's GST reversal, so a refund processed across midnight on 30 November cannot be classified before the cutoff by one step and after it by another. The date the cutoff runs from depends on the path: a booking refund uses the linked organisation invoice's issue date or else the payment's creation, the organisation credit note uses the invoice's issue date, and a cycle invoice's credit note uses its `billingCycleStart` (falling back to the issue date), because the cycle start is its earliest supply.
 
 ## The outward-supplies register
 
-`jobs/compliance/gst-outward-register-export.ts` runs from the Netlify ticker in hourly slices on the second of each month (04:45 to 22:45 UTC) for the previous IST calendar month, well ahead of the eleventh-of-the-month GSTR-1 deadline. Every slice repeats the whole export, so a later slice simply refreshes the file.
+`gst-outward-register-export` (`jobs/compliance/gst-outward-register-export.ts`) runs from the Netlify ticker in hourly slices on the 2nd of each month (04:00 to 23:00 UTC), for the previous India calendar month, ahead of the 11th-of-the-month GSTR-1 deadline. Every slice repeats the whole export, so a later slice only refreshes the file. It does four things in order.
 
-It does four things in order. First it heals: up to `limit` (25 from the ticker) `SUCCEEDED`, non-deleted payments in the period with no consumer invoice are minted, oldest first, each in its own short transaction, and a non-zero count is warned about because it means the checkout mint path missed something. Org-funded and zero-value payments, which the consumer series never invoices, are filtered out of the candidates so they cannot fill every slice. Then it reads every `ConsumerInvoice`, issued `OrganizationInvoice`, `ConsumerCreditNote` and issued `CreditNote` in the period and shapes them into one register through the pure builder in `lib/compliance/gst-outward-register.ts`. Then it uploads the CSV to the private `org-invoices` bucket at `compliance/gst/<first day>_<last day>.csv`, overwriting the previous slice's file. Only after that upload succeeds does it stamp `gstr1ExportedAt` on everything it reported, in one transaction, guarded on the stamp being null so a second run in the same month reports the same documents again without moving anyone's first-reported timestamp.
+1. **Heals.** Up to 25 `SUCCEEDED` payments in the period with no consumer invoice are minted, oldest first. Organisation-funded and zero-value payments are filtered out of the candidates so they cannot fill a slice. A non-zero count is warned about, because it means the checkout mint missed something.
+2. **Reads** every consumer invoice, issued organisation invoice, consumer credit note and issued organisation credit note in the period, except commercial credit notes (they reverse no tax, so they are not GSTR-1 documents; their count is warned about), and shapes them into one register through the pure builder in `lib/compliance/gst-outward-register.ts`.
+3. **Uploads** the CSV to the private `org-invoices` bucket at `compliance/gst/<first day>_<last day>.csv`, overwriting the previous slice's file.
+4. **Stamps** `gstr1ExportedAt` on everything reported, only after the upload succeeded and guarded on the stamp being null, so a re-run never moves anyone's first-reported time.
 
-The CSV header is fixed, because the CA's import template depends on it:
+The CSV header is fixed because the accountant's import template depends on it: `doc_type,doc_number,doc_date,buyer_type,buyer_gstin,place_of_supply,taxable_paise,cgst_paise,sgst_paise,igst_paise,total_paise,sac_code,original_invoice_number,payment_id,supply_date`. The file carries no PAN, bank detail or buyer address. The builder warns about any document with no place of supply, any document whose heads do not reconcile to total minus taxable value, and any B2C document of ₹50,000 or more without a recipient address and state.
 
-```
-doc_type,doc_number,doc_date,buyer_type,buyer_gstin,place_of_supply,taxable_paise,cgst_paise,sgst_paise,igst_paise,total_paise,sac_code,original_invoice_number,payment_id,supply_date
-```
+The job holds its cron lock fail-closed and is in `FINANCIAL_JOB_NAMES`, because its healer allocates numbers from a gapless series. Two concurrent runs would each see a payment as un-invoiced and take a number, and one would lose the unique constraint, leaving a gap that cannot be filled. Not producing the register is recoverable; a gap is not.
 
-The builder raises a warning for any document with no place of supply, any document whose tax heads do not reconcile to the total minus the taxable value, and any B2C document of ₹50,000 or more that lacks the recipient's address and state.
+An administrator fetches a month through `GET /api/admin/compliance/gst-register?period=2026-10`. The route is ADMIN-only, rebuilds the storage path with `gstOutwardRegisterCsvStoragePath`, answers 404 for a month the job has not produced, and otherwise redirects to a signed URL that expires after ten minutes. A file produced through the manual window override (`GST_REGISTER_PERIOD_START` and `GST_REGISTER_PERIOD_END`) is not a calendar month, so no `period` names it and the route cannot fetch it.
 
-The job is fail-closed on its cron lock and is on the financial job list, unlike the read-only compliance drafts beside it. Its healer allocates numbers from a gapless statutory series, and two concurrent runs would both see a payment as un-invoiced, both take a number, and one would lose the unique constraint, leaving a gap that cannot be filled. Not producing the register is recoverable; a gap in the series is not.
+## Downloading a document
 
-### Getting the register
+| Route                                                          | Returns                                                            |
+| -------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `GET /api/payments/[paymentId]/invoice/pdf`                    | A 302 to a 24-hour signed URL for the tax invoice                  |
+| `GET /api/payments/[paymentId]/credit-note/[creditNoteId]/pdf` | The same, for a credit note that belongs to that payment's invoice |
 
-The file is private-bucket storage, so an operator fetches it through `GET /api/admin/compliance/gst-register?period=2026-10`, where `period` is the IST calendar month the supplies belong to. The route is ADMIN-only, resolves that month to the same IST window the job used — the helpers in `lib/compliance/ist-period.ts` — and rebuilds the identical storage path through `gstOutwardRegisterCsvStoragePath()` in `lib/compliance/gst-outward-register.ts`. It answers 404 for a month the job has not produced yet, and otherwise redirects to a signed URL that expires after ten minutes, so a URL left in a browser history or a chat message is dead long before anyone else finds it. The Compliance page in the back office carries the same link, so no operator needs the Supabase dashboard.
+Both routes authorise the payment's own buyer or an operator, apply the `moneyOpsLimiter` per actor, answer 503 `SUPPLIER_GSTIN_UNCONFIGURED` when the GSTIN is missing and 404 `INVOICE_NOT_ISSUED` when no document exists. The PDF renders on the first request from the snapshot stored on the row, not from live records, because a tax invoice must keep saying what it said on the day it was issued. It is cached in the private bucket for 24 hours.
 
-A period exported through the job's manual window override (`GST_REGISTER_PERIOD_START` and `GST_REGISTER_PERIOD_END`) is not a calendar month, so no `period` names it and this route cannot fetch it; that file is reachable only from the bucket itself.
+## E-invoicing for organisation invoices
 
-## The ₹50,000 flag
+A B2B `OrganizationInvoice` with a buyer GSTIN is eligible for an Invoice Reference Number. The `irp-uploader` job (`jobs/compliance/irp-uploader.ts`) runs in the ticker's daily window from 03:00 UTC with ten invoices per slice and sends PENDING invoices issued within the last 30 days through ClearTax. It runs only when the platform GSTIN and the `CLEARTAX_API_KEY`, `CLEARTAX_GSP_TOKEN` and `CLEARTAX_GSTIN` settings are all present; otherwise it touches no invoice and reports a skip. There is no separate enable flag. Personal invoices are outside e-invoicing. An IRN can be cancelled only within 24 hours, so the job holds its lock fail-closed and is a financial job.
 
-Rule 46 requires a B2C invoice of ₹50,000 or more to carry the recipient's name, address and state. The mint still issues the invoice when those are missing, because withholding a buyer's document is a worse outcome than issuing an incomplete one, and sets `needsBuyerAddress` on the row. The register turns that flag into a warning line so finance can chase the address before filing.
+## Rules and their enforcers
 
-## Section 34 cutoff & transaction invariants
+| Rule                                                      | Enforcer                                                                    | Test                                                                   | Repair                                         |
+| --------------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------- |
+| An export is zero-rated only under a valid LUT            | `hasValidPlatformLut`, consulted by `determineTax` and `deriveGstBreakdown` | `__tests__/compliance/lut-gate.test.ts`                                | Configure a current LUT                        |
+| No tax invoice carries a fabricated GSTIN                 | `getPlatformSupplier` returns null for an unset or malformed GSTIN          | `__tests__/compliance/gst-register-requires-platform-supplier.test.ts` | Set the GSTIN; the register healer catches up  |
+| A document number never exceeds sixteen characters        | `fitPrefixToRule46`                                                         | `__tests__/enterprise/gst-doc-number-length.test.ts`                   | Shorten the prefix                             |
+| A webhook redelivery never burns a number                 | The probe on `paymentId` before allocation in `mintConsumerInvoice`         | `__tests__/payments/currency-and-tax-gates.test.ts`                    | None needed                                    |
+| Credit notes never exceed their invoice                   | Cumulative cap under a row lock in `mintConsumerCreditNote`                 | `__tests__/payments/currency-and-tax-gates.test.ts`                    | An operator reviews the recorded `SystemEvent` |
+| Past the section 34(2) cutoff a note carries no tax       | `isPastGstCreditNoteCutoff`                                                 | `__tests__/compliance/gst-credit-note-cutoff.test.ts`                  | None needed                                    |
+| A register row is stamped only after the upload succeeded | The order of upload then stamp in the export job                            | `__tests__/compliance/gst-register-upload-then-stamp.test.ts`          | Re-run the job; the file is overwritten        |
 
-- **Single pinned cutoff clock (`cascadeNow`)**: `applyRefundCascade` pins a single `Date` across `ConsumerCreditNote` minting (`mintConsumerCreditNote(..., { now: cascadeNow })`), B2B `OrganizationInvoice` credit note minting (`mintRefundCreditNote`), and Step 9 `isPastGstCreditNoteCutoff(cutoffSourceDate, cascadeNow)` (`linkedOrgInvoice?.issuedAt ?? payment.createdAt`) so midnight/year-end boundary transitions never diverge between tax document issuance and ledger GST reversal.
-- **B2B rollup invoice cutoff & remaining balance**: For B2B rollup invoices (`OrganizationInvoice`), the Section 34 time limit is evaluated against `invoice.issuedAt`, and invoice status transitions to `REFUNDED` only when cumulative non-cancelled `CreditNote.amountPaise` reaches `invoice.subtotalPaise` (`remainingOrgInvoiceCreditPaise <= 0`).
-- **Single-connection transaction safety (`PG_POOL_MAX=1`)**: `mintConsumerInvoice` and `mintConsumerCreditNote` pass the enclosing interactive transaction client (`db: tx`) into `recordSystemErrorSafe` and `recordSystemEventSafe` so error/audit persistence never competes for a second connection from the pool.
+## Where in code
 
-## What this deliberately does not do
-
-- **It posts nothing to the ledger.** Output tax is already credited to `GST_PAYABLE` at settlement. A second posting from the document trail would double-count the liability.
-- **It derives no tax from a rate.** The heads are split out of the tax the buyer actually paid. A rate-recomputed figure would drift from the settled amount the first time a discount or a rounding boundary moved.
-- **It builds no IRN.** B2C is outside the e-invoicing scope; the IRP fields on `OrganizationInvoice` have no counterpart here.
-- **It does not handle GST-TCS under section 52.** Section 52 TCS does not apply under the principal-supplier model (ADR 26).
-- **It does not block checkout.** The billing-state picker is optional by design, because the statutory default already produces a correct invoice.
-
-## Deprecated & Superseded Approaches
-
-- **Independent `new Date()` reads across credit-note minting and ledger GST reversal**: Superseded by passing a single pinned `cascadeNow` timestamp across Steps 7.5 and 9 of `applyRefundCascade`. Independent clock reads across midnight on November 30 allowed one step to classify a refund as pre-cutoff and the other as post-cutoff.
-- **Global Prisma writes inside `mintConsumerInvoice` / `mintConsumerCreditNote` error handlers**: Superseded by passing `db: tx` to `recordSystemErrorSafe` and `recordSystemEventSafe` to avoid pool exhaustion under `PG_POOL_MAX=1`.
-- **Single `orderId` (`paymentIntent`) keying on secondary replay sale captures**: Superseded by delegating secondary captures whose `gatewayPaymentId` differs from the existing row to `paymentIntent: gatewayPaymentId` (`pay_...`) so duplicate captures never collide or lose auto-refund markers.
+- `lib/compliance/gst.ts`, `lut.ts`, `gst-credit-note-cutoff.ts`, `gst-outward-register.ts`, `irp.ts`, `irp-payload.ts`.
+- `lib/payments/tax/tax-engine.ts`, `buyer-country.ts`.
+- `lib/payments/billing/consumer-invoice.ts`, `invoice-numbering.ts`, `credit-note-numbering.ts`, `create-org-invoice.ts`.
+- `lib/payments/operations/refund.ts` — `applyRefundCascade`, `mintRefundCreditNote`.
+- `jobs/compliance/gst-outward-register-export.ts`, `jobs/compliance/irp-uploader.ts`.
 
 ## Related
 
-- [B2C ↔ B2B funding seam](../50-b2b/01-funding-rails-and-permutations.md)
-- [Invoicing (B2B)](../../enterprise/10-money-and-ledger/08-invoicing.md)
-- [Cron jobs reference](../../maintenance/04-cron-jobs-reference.md)
+- [Tax in plain language](01-tax-explainer.md)
+- [Refunds](../30-refunds-disputes/01-refunds.md)
+- [Invoices, purchase orders and dunning](../50-b2b/04-invoices-purchase-orders-and-dunning.md)
+- [MSME, statutory exports and the calendar](04-msme-statutory-exports-and-calendar.md)
+
+## Deprecated & Superseded Approaches
+
+- **A GST TCS machinery** (`GstTcsBatch`, a GSTR-8 builder, a TCS walkthrough). It was deleted and does not exist. Several compliance notes still describe it.
+- **"International buyers are always 0 percent."** Zero-rating needs a valid LUT; without one the sale is 18 percent IGST.
+- **Workflow files and a flag for e-invoicing** (`irp-uploader.yml`, `ENABLE_IRP_UPLOADER`). Neither exists. The job runs on the ticker and is gated by the GSTIN and ClearTax settings.
+- **Zero-rating on browser language.** Detecting the buyer's country from `Accept-Language` zero-rated every `en-US` browser. It was removed.
+- **Independent clock reads** across credit-note minting and the ledger's GST reversal. They are one pinned `cascadeNow` now.
+- **Database writes through the global client** inside the mint error handlers. They pass the enclosing transaction (`db: tx`) so a single-connection pool cannot deadlock.

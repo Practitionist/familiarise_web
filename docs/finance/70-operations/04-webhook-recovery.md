@@ -1,136 +1,121 @@
-# Webhook Monitoring, Recovery Sweeps & Retention Guide
-
-> **Scope:** Operational monitoring, observability signals, stuck-webhook recovery (`sweep-stuck-webhook-events`), and weekly storage retention (`archive-webhook-events`) across Razorpay/RazorpayX, Stream, Resend, Novu, and Stripe. Organization double-entry ledger mechanics live in [`docs/finance/10-money-in/02-capture-confirmation-and-webhooks.md`](../10-money-in/02-capture-confirmation-and-webhooks.md).
-
+---
+title: Recover stuck webhook events
+type: how-to
+band: 70-operations
+audience: sde3
+status: live
+last-reviewed: 2026-10-23
 ---
 
-## 1. Webhook Lifecycle State Machine (`WebhookEvent`)
+# Recover stuck webhook events
 
-Inbound webhooks backed by `logWebhookEvent` (`lib/webhooks/event-log.ts`) transition through a deterministic four-state machine using `(processed, error, claimedAt, deferCount)`:
+Use this page when a Razorpay or RazorpayX event reached us but its effect never landed: a buyer paid but has no booking, a refund or dispute event keeps waiting, a wallet top-up was captured but not credited, or Sentry shows the warning "sweep-stuck-webhook-events: N webhook event(s) still unprocessed". Every inbound event is first written to the `WebhookEvent` table and then processed, so a lost effect leaves a row you can find and re-drive. How events are received and which handler each one reaches is in [capture confirmation and webhooks](../10-money-in/02-capture-confirmation-and-webhooks.md); this page is only about recovery.
 
-```mermaid
-stateDiagram-v2
-    [*] --> InProgress: logWebhookEvent (processed=false, error=null, claimedAt=null)
-    InProgress --> Succeeded: markWebhookEventProcessed(id, undefined, claim)
-    InProgress --> Deferred: Handler returns DeferSignal (deferCount++)
-    InProgress --> Failed: Handler throws transient error (processed=false, error=msg)
-    InProgress --> Permanent: ZodError / terminal failure (error="permanent: ...")
-    Deferred --> InProgress: sweep-stuck-webhook-events reclaims stale row (>6m)
-    Failed --> InProgress: sweep-stuck-webhook-events retries non-terminal error (<168h)
-    Deferred --> GaveUp: Aged past 168h (error="gave up: ...")
-    Succeeded --> [*]
-    Permanent --> [*]
-    GaveUp --> [*]
-```
+## The four row shapes you will meet
 
-### CAS Lease Fencing (`WebhookClaim`)
+A `WebhookEvent` row is described by `processed`, `error`, `claimedAt` and `deferCount`. The sweep `sweep-stuck-webhook-events` (`scripts/cleanup/sweep-stuck-webhook-events.ts`) treats them as follows.
 
-When `POST /api/webhooks/razorpay` or `POST /api/stream/webhooks` acknowledges HTTP `200` and enters `after()`, it holds a `WebhookClaim` (`{ claimedAt }`). If the Netlify function container freezes before `after()` completes:
+| Shape                                                        | Meaning                                                                                                                               | What the sweep does                                                       |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `processed = false`, `error` empty, `claimedAt` old or empty | Received but not finished: the handler crashed, or it deferred because a prerequisite row (the `Payment`, usually) was not there yet. | Reclaims the row and re-runs the handler.                                 |
+| `error` set, not prefixed `permanent:` or `gave up:`         | A transient failure on an earlier try (the sweep writes `sweep-failed: ...` when its own re-drive throws).                            | Retries until the row is 168 hours old.                                   |
+| `error` starts with `permanent:`                             | The payload failed validation or is otherwise unprocessable.                                                                          | Never retried (`TERMINAL_ERROR_PREFIXES` in `lib/webhooks/event-log.ts`). |
+| `error` starts with `gave up:`                               | A deferred event never became processable within 168 hours.                                                                           | Never retried.                                                            |
 
-1. Once `claimedAt` (or `receivedAt` on initial arrival) ages past **6 minutes**, `sweep-stuck-webhook-events` atomically reclaims the row via `reclaimStaleProcessingWebhookEvent`, stamping a fresh `claimedAt`.
-2. If the frozen container subsequently thaws and reaches `markWebhookEventProcessed(eventId, error, claim)`, the conditional `updateMany({ where: { eventId, claimedAt: claim.claimedAt } })` matches **0 rows** (`Webhook completion fenced: claim was superseded`), preventing stale execution from clobbering the sweeper's result.
+A row counts as stuck once it is older than 6 minutes (`staleMinutes`) with no live claim. The claim is a compare-and-set stamp on `claimedAt` (`reclaimStaleProcessingWebhookEvent`): if a frozen function container thaws after the sweep took over, its completion write matches zero rows and is discarded, so a stale run can never overwrite the sweep's result.
 
----
+The sweep runs on the five-minute ticker every 15 minutes at `:00` (see [scheduled money jobs](01-scheduled-jobs.md)). One run starts batches of 200 for up to 15 seconds and processes each batch one event at a time, each with its own 15-second deadline. The budget is checked only between batches, so one slow upstream call can use up a run and leave the rest of its batch for the next tick. It never reports to Sentry per row: it raises at most one warning per run when an unprocessed event has `deferCount` of 5 or more, or is older than one hour, and one more when re-driven events are still failing.
 
-## 2. Automated Recovery Sweep (`sweep-stuck-webhook-events`)
+## Step 1: confirm what is stuck
 
-Registered in `lib/cron/cleanup-registry.ts` (`POST /api/cleanup/sweep-stuck-webhook-events`) and protected by Postgres `withCronLock("sweep-stuck-webhook-events", { failMode: "closed" })`:
-
-- **Providers Covered**: `"razorpay"`, `"stream"`, and `"novu"`.
-- **Per-Event Execution Timeout**: Each claimed event re-drive executes inside a strict per-event deadline (`Promise.race`) so a slow upstream REST lookup or network stall on one event cannot exhaust the sweep's 15-second batch budget or block `PG_POOL_MAX=1`.
-- **Single-Event Batch Alerting (Sentry Quota Safe)**:
-  - Never calls `Sentry.captureException` per row inside loops.
-  - Emits **at most one consolidated warning per sweep** when any stuck event reaches `deferCount >= 5` or `age > 1 hour` (`sweep-stuck-webhook-events: N webhook event(s) still unprocessed`), listing up to 20 stalled `eventId` entries in structured Sentry context.
-- **Terminal Error Exclusions (`TERMINAL_ERROR_PREFIXES`)**:
-  - Rows prefixed with `"permanent:"` (schema validation failures) or `"gave up:"` (>168 hours unresolvable deferral) are permanently excluded from re-drives.
-
----
-
-## 3. Production SQL Diagnostic Queries
-
-### Inspect Unprocessed or Deferred Webhooks
+Run this read-only query against the production database (never in a transaction that writes):
 
 ```sql
-SELECT
-  id,
-  provider,
-  "eventType",
-  "eventId",
-  processed,
-  "deferCount",
-  "claimedAt",
-  "receivedAt",
-  error
+SELECT id, provider, "eventType", "eventId", processed, "deferCount",
+       "claimedAt", "receivedAt", error
 FROM "WebhookEvent"
-WHERE processed = false
-   OR (error IS NOT NULL AND error NOT LIKE 'permanent:%' AND error NOT LIKE 'gave up:%')
+WHERE "receivedAt" < now() - interval '6 minutes'
+  AND provider IN ('razorpay', 'stream', 'novu')
+  AND ("claimedAt" IS NULL OR "claimedAt" < now() - interval '6 minutes')
+  AND ((processed = false AND error IS NULL)
+       OR (error IS NOT NULL AND "receivedAt" >= now() - interval '168 hours'
+           AND error NOT LIKE 'permanent:%' AND error NOT LIKE 'gave up:%'))
 ORDER BY "receivedAt" ASC
 LIMIT 25;
 ```
 
-### Verify Recent Resend Email Deliveries & Suppressions
+To find the events for one order or payment, search the payload text for the Razorpay `order_` or `pay_` id:
 
 ```sql
-SELECT
-  "svixId",
-  type,
-  recipient,
-  "createdAt"
-FROM "EmailEvent"
-ORDER BY "createdAt" DESC
-LIMIT 20;
-
-SELECT
-  email,
-  reason,
-  "createdAt"
-FROM "EmailSuppression"
-ORDER BY "createdAt" DESC
+SELECT id, provider, "eventType", processed, "deferCount", error, "receivedAt"
+FROM "WebhookEvent"
+WHERE payload::text LIKE '%' || 'pay_XXXXXXXX' || '%'
+ORDER BY "receivedAt" DESC
 LIMIT 20;
 ```
 
-### Diagnose High `deferCount` on Refund or Dispute Events
+Impact depends on the event: a stuck `payment.captured` means a paid buyer without a booking (see "A paid buyer has no booking" in [the money runbooks](05-money-runbooks.md)); a stuck `refund.*` means a refund status that has not updated; a stuck `payout.*` means a payout row that has not moved.
 
-1. Extract the `pay_...` ID from `WebhookEvent.payload` (`payload.refund.entity.payment_id` or `payload.dispute.entity.payment_id`).
-2. Check whether `Payment.gatewayPaymentId` or `Payment.paymentIntent` exists in Postgres:
+## Step 2: read the `deferCount`
+
+A handler answers a `DeferSignal` instead of failing when the row it needs has not arrived. A refund or dispute event commonly arrives before the capture event it belongs to. The row then reads `processed = false`, `error` empty, and `deferCount` grows on each sweep pass. To diagnose a high count:
+
+1. Take the `pay_...` id from the payload (`payload.refund.entity.payment_id` or `payload.dispute.entity.payment_id`).
+2. Look for the payment:
    ```sql
    SELECT id, "paymentIntent", "gatewayPaymentId", "paymentStatus", "createdAt"
    FROM "Payment"
-   WHERE "gatewayPaymentId" = 'pay_...' OR "paymentIntent" = 'order_...';
+   WHERE "gatewayPaymentId" = 'pay_XXXXXXXX' OR "paymentIntent" = 'order_XXXXXXXX';
    ```
-3. If no row exists, `payment.captured` has not yet landed — trigger or inspect `reconcile-payment-status`. If the row exists with `gatewayPaymentId IS NULL`, verify Razorpay API credentials (`RAZORPAY_KEY_ID` / `RAZORPAY_SECRET`) used by fallback `payments.fetch`.
+3. If there is no row, the capture has not been confirmed. Run `reconcile-payment-status` (below); once the payment is confirmed the deferred event processes on the next sweep.
+4. If the row exists but `gatewayPaymentId` is empty, the capture was confirmed without the gateway payment id. Check that `RAZORPAY_KEY_ID` and `RAZORPAY_SECRET` are valid, because the fallback that fills it calls Razorpay's payment fetch.
 
----
+## Step 3: fix
 
-## 4. Environment Configuration & Secret Rotation Checklist
+1. **Wait one cycle or run the sweep now.** The sweep is idempotent. To run it immediately:
+   ```bash
+   curl -sS -X POST -H "Authorization: Bearer $CRON_SECRET" \
+     "$APP_URL/api/cleanup/sweep-stuck-webhook-events?limit=50"
+   ```
+   The answer carries `scanned`, `recovered`, `stillFailing`, `deferred`, `gaveUp` and an `errors` list. A 409 means another run holds the lease; a 503 with a `phase` means maintenance is holding it.
+2. **A deferred capture event.** Run `reconcile-payment-status` the same way. It asks Razorpay about every `PENDING` payment and confirms real captures through the single confirmer, `handlePaymentSuccess`, so the booking is built and the deferred events then drain.
+3. **A capture whose metadata failed validation.** The row is `permanent:` and the payment is `SUCCEEDED` with no booking. Use the admin recover door (`POST /api/payments/[paymentId]/recover`, step-up, reason, one ops-log row): an admin supplies corrected booking metadata, and the door builds the appointment, but only for a target that equals the notes the server minted on the Razorpay order, so a recovery cannot book a different expert.
+4. **A `permanent:` or `gave up:` row you believe is valid.** The sweep will not touch it again. Do not edit the row by hand: a manual `UPDATE` of `processed` or `claimedAt` breaks the claim fencing described above. Find the money effect it should have had (a refund, a payment, a payout status) and drive that through its own reconciler or door: `reconcile-refunds`, `reconcile-disputes`, `reconcile-payout-status` or the admin refund door.
+5. **A signature that stopped verifying.** If events are being rejected after a secret rotation, fix the secret, not the verifier: see the rotation notes in [the Razorpay gateway page](../10-money-in/04-razorpay-gateway-and-currency.md). Never loosen signature verification to unblock a row.
 
-| Variable                               | Provider  | Purpose & Verification Rule                                                                                                             |
-| -------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `RAZORPAY_WEBHOOK_SECRET`              | Razorpay  | Primary HMAC-SHA256 secret for all payment, order, refund, and dispute events.                                                          |
-| `RAZORPAY_WEBHOOK_SECRET_PREVIOUS`     | Razorpay  | Optional grace-window secret during Dashboard secret rotation; emits `WEBHOOK` `WARN` when matched so operators know when to retire it. |
-| `RAZORPAYX_WEBHOOK_SECRET`             | RazorpayX | Dedicated HMAC-SHA256 secret tried **only** when `isPayoutEventName(body)` matches `payout.*` or `fund_account.*`.                      |
-| `STREAM_API_KEY` / `STREAM_API_SECRET` | Stream    | Verifies `X-Api-Key` and `X-Signature` over uncompressed UTF-8 payload bytes.                                                           |
-| `RESEND_WEBHOOK_SECRET`                | Resend    | Svix `whsec_...` secret verifying `svix-id`, `svix-timestamp` (5m window), and `svix-signature`.                                        |
-| `NOVU_WEBHOOK_SECRET`                  | Novu      | Verifies Svix outbound webhooks (`svix-id`, `svix-timestamp`, `svix-signature`, 5m window) or channel HMAC (`x-novu-signature`).        |
+Re-sending an event from the Razorpay dashboard is safe within 30 days of its first delivery, because the receiver dedupes on `eventId` through the `WebhookEvent` row: an already processed event is acknowledged and ignored. After `archive-webhook-events` deletes that row at 30 days, a re-sent event is dispatched again, and only the handlers' own idempotency protects it.
 
----
+## Step 4: verify
 
-## 5. Weekly Multi-Table Retention Archival (`archive-webhook-events`)
+Re-run the Step 1 query and confirm the row is gone from the stuck set (`processed = true` and `error` empty). Then check the business effect: the payment is `SUCCEEDED` and linked to an appointment, the refund row is `SUCCEEDED`, the wallet shows the credit. A clean `reconcile-ledgers` run is the final check that no money drift remains.
 
-Executed weekly on Sunday at 00:00 UTC via `scripts/cleanup/archive-webhook-events.ts` (`POST /api/cleanup/archive-webhook-events`, guarded by `withCronLock("archive-webhook-events", { failMode: "open" })`):
+## What the receiver does during an outage
 
-| Table                     | Condition                                                        | Retention Window | Rationale                                                                                                                         |
-| ------------------------- | ---------------------------------------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `WebhookEvent`            | `processed = true AND error IS NULL`                             | **30 days**      | Retains clean idempotency history far past every provider's retry window (max 5 days on Novu, 3 days on Stripe, 24h on Razorpay). |
-| `WebhookEvent`            | `processed = false AND error LIKE 'permanent:%' \| 'gave up:%'`  | **30 days**      | Prunes unreplayable terminal payloads (`TERMINAL_ERROR_PREFIXES`) after monthly inspection window.                                |
-| `WebhookEvent`            | Other failed rows (`processed = false AND error IS NOT NULL`)    | **90 days**      | Retains non-terminal failed/errored payloads for quarterly financial audit inspection.                                            |
-| `EmailEvent`              | All recorded Resend delivery events                              | **90 days**      | Retains delivery audit logs for 90 days while permanent `EmailSuppression` records persist indefinitely.                          |
-| `OutboundWebhookDelivery` | Terminal rows (`status IN ('SUCCESS', 'FAILED', 'DEAD_LETTER')`) | **30 days**      | Prunes completed enterprise tenant webhook delivery logs without touching active retry queue entries.                             |
+The Razorpay webhook route answers 503 when the database health probe (`isDbHealthy`) fails, so Razorpay retries delivery with backoff for 24 hours. After that window only the sweep and the reconcilers can recover an event, which is why leaving a row unprocessed is safe for hours but not for days.
 
----
+## Retention
+
+The weekly `archive-webhook-events` job (`scripts/cleanup/archive-webhook-events.ts`) deletes clean processed `WebhookEvent` rows after 30 days, terminal `permanent:` and `gave up:` rows after 30 days, other failed rows after 90 days, `EmailEvent` rows after 90 days, and finished `OutboundWebhookDelivery` rows after 30 days. A webhook older than that cannot be replayed from our table, only reconstructed from the gateway.
+
+## Where in code
+
+| Concern                                            | File                                                                   |
+| -------------------------------------------------- | ---------------------------------------------------------------------- |
+| Row writes, claim, terminal prefixes, health probe | `lib/webhooks/event-log.ts`                                            |
+| Recovery sweep                                     | `scripts/cleanup/sweep-stuck-webhook-events.ts`                        |
+| Stale-claim takeover                               | `lib/stream/webhook-receipt.ts` (`reclaimStaleProcessingWebhookEvent`) |
+| Razorpay dispatch and deferral                     | `app/api/webhooks/razorpay-dispatch.ts`                                |
+| Admin recover door                                 | `app/api/payments/[paymentId]/recover/route.ts`                        |
+
+## Related
+
+- [Webhook reference](../10-money-in/03-razorpay-webhook-reference.md) for per-event payloads.
+- [Money runbooks](05-money-runbooks.md) for the symptom-first procedures that start from a buyer or operator report.
 
 ## Deprecated & Superseded Approaches
 
-- **72-Hour Lower Floor on Stuck-Event Sweeping**: Superseded because `archive-webhook-events` retains failed rows for 90 days; skipping stuck rows older than 72 hours orphaned valid events permanently when weekend incidents exceeded 3 days. `maxAgeHours` now emits a warning log without excluding older unprocessed rows.
-- **Unbounded Per-Event Sweep Loop**: Superseded by explicit per-event timeouts (`Promise.race`) inside `sweep-stuck-webhook-events` so a single hung webhook replay cannot starve subsequent rows or exceed Netlify function limits under `PG_POOL_MAX=1`.
-- **Archiving `WebhookEvent` Alone While Leaving `EmailEvent` and `OutboundWebhookDelivery` Unbounded**: Superseded by unified weekly pruning across all three webhook log tables in `archive-webhook-events`.
+1. **A 72-hour floor on sweeping.** Skipping rows older than 72 hours orphaned valid events after a long weekend incident. `maxAgeHours` (default 72) now only logs a warning for older rows; the 168-hour give-up cap is the only age limit.
+2. **An unbounded per-event loop.** Replaced by the per-event 15-second deadline so one hung replay cannot exhaust the run or the single database connection.
+3. **A `status`, `attempts` or `last_error` column on webhook rows.** `WebhookEvent` has no such columns; the state is `processed`, `error`, `claimedAt` and `deferCount`.
+4. **Replaying by POSTing the original payload with a hand-built signature.** Use the sweep or the dashboard resend; the receiver dedupes on `eventId`.
+5. **Stripe webhook recovery.** Stripe was removed; the receivers are Razorpay, Stream, Novu and Resend only.
