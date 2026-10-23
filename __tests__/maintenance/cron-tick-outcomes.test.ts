@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
+import { dueTargets } from "../../lib/cron/schedule";
 
 type Ticker = typeof import("../../netlify/functions/cron-tick.mjs");
 
@@ -83,7 +84,7 @@ describe("ticker execution outcomes", () => {
     const ticker = load(fetchImpl);
     const response = await ticker.default(new Request("https://tick.test"));
     expect(response.status).toBe(200);
-    const expectedTargets = ticker.dueTargets(new Date());
+    const expectedTargets = dueTargets(new Date());
     expect(fetchImpl).toHaveBeenCalledTimes(expectedTargets.length + 1);
     expect(error).toHaveBeenCalledWith(
       JSON.stringify({ event: "cron-checkin-rejected", status: 403 }),
