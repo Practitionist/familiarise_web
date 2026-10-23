@@ -202,18 +202,25 @@ Notification system: Resend (transactional email) + Novu (multi-channel orchestr
 
 ### Support
 
-The `#support-hub` system: per-appointment support threads, stateless platform
-intake, org triage, ticket references, SLA clocks, and the deflection counter.
+The support case system: one `SupportCase` per request, guided self-service and
+intake, the transition table, immutable decisions and appeals, evidence, money
+remedies through the owning domain's doors, staff chat access, the SLA sweep,
+privacy and retention.
 
-- [README.md](./support/README.md) - System overview, the three sibling subsystems, source code map, recommended reading order
-- [01-architecture.md](./support/01-architecture.md) - Two scopes on one engine, the error envelope and Sentry policy, the authz gate, the hub surfaces
-- [02-the-grid.md](./support/02-the-grid.md) - What each record is anchored to, who may see it, and when it exists, across every actor and booking shape
-- [03-ticket-references-and-sla.md](./support/03-ticket-references-and-sla.md) - The `FAM-` reference series and the statutory SLA model
-- [04-deflection-and-support-csat.md](./support/04-deflection-and-support-csat.md) - What fraction the tree resolves, and the two halves of support CSAT
-- [05-schema-reference.md](./support/05-schema-reference.md) - Every support column and index, and why
-- [06-invariants-and-testing.md](./support/06-invariants-and-testing.md) - Sixteen invariants to know before editing, the test map, and how to run the end-to-end QA suite
-- [07-ticket-lifecycle-and-concurrency.md](./support/07-ticket-lifecycle-and-concurrency.md) - Ticket statuses, reopening rules, thread mirroring and the compare-and-set guards
-- [08-intake-callbacks-attachments-and-limits.md](./support/08-intake-callbacks-attachments-and-limits.md) - Intake doors, validated callbacks, receipts, private attachments and per-route rate limits
+- [README.md](./support/README.md) - Index, module map, status vocabulary and reading order
+- [01-intake-and-flows.md](./support/01-intake-and-flows.md) - Intake doors, guided flows, deflection, dedupe and references
+- [02-case-lifecycle.md](./support/02-case-lifecycle.md) - The case service, the status transition table, messages, clocks and CSAT
+- [03-decisions-appeals-and-supersede.md](./support/03-decisions-appeals-and-supersede.md) - Immutable decisions, the appeal window, independent appeals and supersede
+- [04-evidence-and-attachments.md](./support/04-evidence-and-attachments.md) - Evidence requests to the other party, private attachments and their limits
+- [05-money-remedies.md](./support/05-money-remedies.md) - Refund recommendations, the refund doors, staff caps, second-admin approval and payout holds
+- [06-chat-access-and-intervention.md](./support/06-chat-access-and-intervention.md) - Case-linked chat read grants, transcripts and visible Familiarise Support intervention
+- [07-sla-sweep.md](./support/07-sla-sweep.md) - The leased sweep and its arms: notices, auto-close, cascade, purge and the chat backstop
+- [08-privacy-and-retention.md](./support/08-privacy-and-retention.md) - Export, erasure, the 180-day evidence purge and legal hold
+- [09-org-scopes-and-visibility.md](./support/09-org-scopes-and-visibility.md) - Ownership scopes, who can see which record, and support beside feedback and reviews
+- [10-notifications.md](./support/10-notifications.md) - The durable outbox, recipients and guarded delivery
+- [11-schema-and-invariants.md](./support/11-schema-and-invariants.md) - Every support table, each invariant and the enforcer behind it
+- [12-runbooks.md](./support/12-runbooks.md) - Stuck refund, failed purge, stuck intervention seat, legal hold, DDL end-phase checklist
+- [13-decision-records.md](./support/13-decision-records.md) - Short records of the owner decisions that shaped the system
 
 ---
 

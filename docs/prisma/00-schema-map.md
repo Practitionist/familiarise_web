@@ -1691,7 +1691,7 @@ erDiagram
 
 ```
 
-Canonical case evidence, decisions, recommendations, holds, private attachments and the reference counter are documented in [the support schema](../support/05-schema-reference.md). Private session ratings are documented in [feedback](../feedback/03-schema-reference.md).
+Canonical case evidence, decisions, recommendations, holds, private attachments and the reference counter are documented in [the support schema](../support/11-schema-and-invariants.md). Private session ratings are documented in [feedback](../feedback/03-schema-reference.md).
 
 ---
 

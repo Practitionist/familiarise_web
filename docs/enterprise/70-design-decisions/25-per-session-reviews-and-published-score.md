@@ -96,7 +96,7 @@ Merging the two rating objects was also considered and rejected on the regulator
 
 - [ADR 20 — org visibility into member sessions](20-org-visibility-into-member-sessions.md), which is why the private CSAT aggregate is metadata-only and why its cohort floor exists.
 - [The feedback reference](../../feedback/README.md), for the private CSAT rail this decision keeps separate from the public review, and [the reviews reference](../../reviews/README.md), for the model that replaced the one described here.
-- [Support schema reference](../../support/05-schema-reference.md), for the schema additions this decision required.
+- [Support schema reference](../../support/11-schema-and-invariants.md), for the schema additions this decision required.
 
 ---
 

@@ -1,23 +1,26 @@
-# Support and trust
+---
+title: Support system
+type: reference
+band: domain
+audience: sde2
+status: draft
+last-reviewed: 2026-10-23
+---
 
-`SupportCase` owns each support request and its conversation. Appointment,
-payment, account and organization entry points reuse the same lifecycle within
-explicit privacy scopes. Staff investigate; admins execute financial remedies.
+# Support system
 
-Start with [production architecture](10-production-architecture.md). Domain details:
+This index is being rewritten in the support docs PR.
 
-1. [Architecture](01-architecture.md)
-2. [Ownership and scope](02-the-grid.md)
-3. [References and deadlines](03-ticket-references-and-sla.md)
-4. [Self-service and CSAT](04-deflection-and-support-csat.md)
-5. [Schema reference](05-schema-reference.md)
-6. [Invariants and CI verification](06-invariants-and-testing.md)
-7. [Lifecycle and concurrency](07-ticket-lifecycle-and-concurrency.md)
-8. [Intake, callbacks and evidence](08-intake-callbacks-attachments-and-limits.md)
-9. [SLA sweep](09-support-case-and-sla-sweep.md)
-10. [Production architecture](10-production-architecture.md)
-
-## Deprecated & Superseded Approaches
-
-Historical ticket/thread persistence and import compatibility have been removed.
-The pre-MVP database contains disposable mock data; seed canonical cases directly.
+- [01-intake-and-flows.md](./01-intake-and-flows.md) - Intake doors, guided flows, deflection, dedupe and references
+- [02-case-lifecycle.md](./02-case-lifecycle.md) - The case service, the status transition table, messages, clocks and CSAT
+- [03-decisions-appeals-and-supersede.md](./03-decisions-appeals-and-supersede.md) - Immutable decisions, the appeal window, independent appeals and supersede
+- [04-evidence-and-attachments.md](./04-evidence-and-attachments.md) - Evidence requests to the other party, private attachments and their limits
+- [05-money-remedies.md](./05-money-remedies.md) - Refund recommendations, the refund doors, staff caps, second-admin approval and payout holds
+- [06-chat-access-and-intervention.md](./06-chat-access-and-intervention.md) - Case-linked chat read grants, transcripts and visible Familiarise Support intervention
+- [07-sla-sweep.md](./07-sla-sweep.md) - The leased sweep and its arms: notices, auto-close, cascade, purge and the chat backstop
+- [08-privacy-and-retention.md](./08-privacy-and-retention.md) - Export, erasure, the 180-day evidence purge and legal hold
+- [09-org-scopes-and-visibility.md](./09-org-scopes-and-visibility.md) - Ownership scopes, who can see which record, and support beside feedback and reviews
+- [10-notifications.md](./10-notifications.md) - The durable outbox, recipients and guarded delivery
+- [11-schema-and-invariants.md](./11-schema-and-invariants.md) - Every support table, each invariant and the enforcer behind it
+- [12-runbooks.md](./12-runbooks.md) - Stuck refund, failed purge, stuck intervention seat, legal hold, DDL end-phase checklist
+- [13-decision-records.md](./13-decision-records.md) - Short records of the owner decisions that shaped the system

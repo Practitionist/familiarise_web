@@ -50,4 +50,4 @@ Every removal recomputes the consultant's scores inside the same Serializable tr
 
 - [02-two-track-scoring.md](02-two-track-scoring.md) — what happens to the rating once it is stored.
 - [05-moderation-and-reports.md](05-moderation-and-reports.md) — the staff side of removal.
-- [The grid](../support/02-the-grid.md) — the actor-by-operation table this page implements.
+- [The grid](../support/09-org-scopes-and-visibility.md) — the actor-by-operation table this page implements.

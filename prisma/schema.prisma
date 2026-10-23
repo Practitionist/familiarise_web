@@ -340,7 +340,7 @@ model SupportFlowOutcome {
 
   // #1300 — "did the self-serve tree help?" Bound to the flow terminal because a
   // RESOLVED outcome writes no ticket. NULL = not asked or not answered, never a 1.
-  // See docs/support/04-deflection-and-support-csat.md.
+  // See docs/support/01-intake-and-flows.md.
   helpfulRating Int? @db.SmallInt
 
   createdAt DateTime @default(now()) @db.Timestamptz
