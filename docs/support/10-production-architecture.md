@@ -196,9 +196,20 @@ that batched those earnings, as a dispute hold does, and refuses while a payout
 is being sent. The case timeline's `HOLD_APPLIED` / `HOLD_RELEASED` events carry
 the intent, so earnings created later for the payment start held. Apply and
 release run through audited `withOpsAction` doors (`supportHolds.manage`), and
-every hold of a case is released when the case is resolved or closed. Releasing a
-service hold does not release a chargeback, operator or overage hold. Completed
-payouts cannot be recalled by creating a hold.
+every hold of a case is released when staff resolve or close it, by a status
+change, a decision or the problem cascade. A move that would release active holds
+(for a problem, also those of its open incidents) needs a session re-authenticated
+within 15 minutes (`REAUTH_REQUIRED`), open money doors (the same maintenance
+check) and no undecided recommendation on the case (`RECOMMENDATION_OPEN`); it
+writes one `support.case.release-holds` `OpsActionLog` row naming the holds
+released. The cascade never releases a hold placed after the problem's latest
+RESOLVED event (`HOLD_AFTER_PROBLEM_RESOLVED`); staff release it through the
+step-up hold door. The cascade leaves a refused incident open and counts it as
+`incidentsHeldOpen` in the sweep summary; each run scans up to twice its cap of
+ten incidents so held-open incidents do not block the ones that can resolve. A
+customer resolving their own guided case releases nothing; its holds stay listed on the case until staff release them.
+Releasing a service hold does not release a chargeback, operator or overage hold.
+Completed payouts cannot be recalled by creating a hold.
 
 ### Storage, concurrency and deadlines
 
