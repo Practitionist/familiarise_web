@@ -323,10 +323,9 @@ describe("the checked-in baseline", () => {
   it("pins the seeded demo findings by fingerprint", () => {
     const seeded: Array<Partial<LedgerBaselineEntry> & { kind: string }> = [
       {
-        kind: "WALLET_BALANCE_DRIFT",
-        organizationId: "cmu15uwqp03rzc7yog53t9fnn",
-        billingAccountId: "969f23c5-7656-415d-b527-4030a4eff58e",
-        deltaPaise: 570_036,
+        kind: "EARNINGS_WITHOUT_BOOKING_TXN",
+        paymentId: "qa2188_pt",
+        deltaPaise: -1,
       },
       {
         kind: "REFUND_BOOKING_COHERENCE",

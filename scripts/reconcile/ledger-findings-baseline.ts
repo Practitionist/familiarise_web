@@ -118,16 +118,23 @@ export type LedgerBaselineEvaluation = {
  * date in its `expires` field — after which the finding fails the run again.
  */
 export const LEDGER_FINDINGS_BASELINE: LedgerBaselineEntry[] = [
-  {
-    kind: "WALLET_BALANCE_DRIFT",
-    organizationId: "cmu15uwqp03rzc7yog53t9fnn",
-    billingAccountId: "969f23c5-7656-415d-b527-4030a4eff58e",
-    deltaPaise: 570_036,
+  // QA fixtures written straight to the database with earnings and no booking journal.
+  ...[
+    "qa2188_pc1",
+    "qa2188_pc3",
+    "qa2188_pr1",
+    "qa2188_pr2",
+    "qa2188_pr3",
+    "qa2188_pt",
+    "qa2188_px",
+  ].map((paymentId): LedgerBaselineEntry => ({
+    kind: "EARNINGS_WITHOUT_BOOKING_TXN",
+    paymentId,
+    deltaPaise: -1,
     owner: "finance",
-    reason:
-      "2026-10-18 lazy member-overage carves on two wallet bookings credited the cache with no ledger line; correction journal pending",
-    expires: "2026-11-21",
-  },
+    reason: "QA fixture id written without a booking journal",
+    expires: "2026-12-15",
+  })),
   {
     kind: "REFUND_BOOKING_COHERENCE",
     paymentId: "7d747d97-efa6-4bef-9857-8453a5798330",
