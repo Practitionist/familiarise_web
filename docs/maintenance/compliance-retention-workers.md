@@ -18,6 +18,8 @@ The oldest unfinished hourly digest resumes across invocations and hour boundari
 
 Per-recipient email and notification staging commit in the same transaction. An empty or failed email stage rolls back the notification stage, leaves the recipient eligible and reports a run failure. A missing address is excluded; an address changed since selection is rechecked before staging. The configured external officer mailbox receives guarded durable mail when it has no matching user. Ops chat is best effort, and failures aggregate once per run rather than per recipient. No provider send occurs inside the staging transaction.
 
+An invalid optional officer address records a configuration error while eligible admin obligations still stage. The digest remains unfinished; correcting the address resumes it without duplicating prior admin obligations. Persistent staging failures can keep an old digest active across later hours. Repair the failure and monitor unfinished age; elapsed time alone must not mark an unfulfilled alert complete. Fair progression across persistently failing digests remains a rollout gate.
+
 The existing email delivery guard applies to every staged message. Prelaunch holds must not be bypassed to make a test or a monitor green. Track delivery evidence and pending/dead-letter age separately from a completed staging slice.
 
 ## Verification and scheduling handoff

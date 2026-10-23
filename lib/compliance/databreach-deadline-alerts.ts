@@ -182,9 +182,14 @@ export async function runDataBreachDeadlineAlerts(
       }
       if (timedOut()) return result;
       const rawOfficer = process.env.DATABREACH_ALERT_EMAIL?.trim();
-      const officer = rawOfficer
-        ? z.string().email().parse(rawOfficer)
+      const officerResult = rawOfficer
+        ? z.string().email().safeParse(rawOfficer)
         : undefined;
+      const officer = officerResult?.success ? officerResult.data : undefined;
+      if (officerResult && !officerResult.success)
+        result.errors.push(
+          "DATABREACH_ALERT_EMAIL is not a valid email address",
+        );
       const recipients = await pendingRecipients(ref, officer, limit + 1);
       result.hasMore = recipients.length > limit;
       const dueDate = new Date(

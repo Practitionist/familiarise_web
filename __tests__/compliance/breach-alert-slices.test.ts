@@ -190,6 +190,34 @@ it("rolls back notification staging when email staging fails and retries the mis
   expect(new Set(notices)).toEqual(new Set(["00", "01"]));
   expect(emails).toHaveLength(2);
 });
+
+it("reports an invalid optional officer address while preserving admin staging and the unfinished digest", async () => {
+  users = users.slice(0, 2);
+  process.env.DATABREACH_ALERT_EMAIL = "invalid-officer-address";
+  const first = await runDataBreachDeadlineAlerts({ limit: 10 });
+  expect(first.success).toBe(false);
+  expect(first.errors).toEqual([
+    "DATABREACH_ALERT_EMAIL is not a valid email address",
+  ]);
+  expect(first.recipientsStaged).toBe(2);
+  expect(first.officerStaged).toBe(false);
+  expect(first.hasMore).toBe(true);
+  expect(notices).toHaveLength(2);
+  expect(emails).toHaveLength(2);
+  expect(emails.every((row) => row.entityRef.includes(":active:"))).toBe(true);
+  expect(page).toHaveBeenCalledTimes(1);
+
+  process.env.DATABREACH_ALERT_EMAIL = "officer@example.test";
+  const retry = await runDataBreachDeadlineAlerts({ limit: 10 });
+  expect(retry.success).toBe(true);
+  expect(retry.recipientsStaged).toBe(0);
+  expect(retry.officerStaged).toBe(true);
+  expect(emails).toHaveLength(3);
+  expect(notices).toHaveLength(2);
+  expect(emails.every((row) => row.entityRef.includes(":complete:"))).toBe(
+    true,
+  );
+});
 it("counts guarded held mail as persisted progress and excludes missing addresses", async () => {
   users[0].email = "";
   const base = stageEmail.getMockImplementation();

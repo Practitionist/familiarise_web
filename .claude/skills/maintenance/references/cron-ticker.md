@@ -112,6 +112,8 @@ Calendar-window schedules also require explicit missed-window recovery.
 
 Consent, breach-deadline alerts and SystemEvent retention have registered bounded cores under lib/compliance and lib/observability. Their existing Actions steps retain automatic ownership until a verified single cutover. Consent deletion remains DPDP_SWEEPER_DELETE-gated and uses the stored retention deadline; event retention remains 400 days. Breach mail/Novu obligations stage transactionally and resume the oldest unfinished hourly digest, including across hour rollover. Staged or held mail is not delivered-mail evidence. See docs/maintenance/compliance-retention-workers.md; never run a real retention or alerting job to test it against the shared database.
 
+An invalid officer mailbox reports a configuration error while admin alerts still stage; the digest remains active until repaired. Do not complete or abandon an unfinished digest solely because it is old. Persistent staging failures require operator repair and an explicit progression/capacity gate before schedule cutover.
+
 ## Deprecated & Superseded Approaches
 
 Redis cron locks, production fallbacks for incomplete unit-test mocks, and shared
