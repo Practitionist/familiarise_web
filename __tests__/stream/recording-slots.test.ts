@@ -78,6 +78,21 @@ function classBooking(id: string, planId = "plan-1"): BookingRow {
   };
 }
 
+function oneToOneBooking(id = "b1"): BookingRow {
+  return {
+    id,
+    appointmentType: "CONSULTATION",
+    consultation: {
+      requestedById: "cp-l",
+      consultationPlan: { title: "1:1", consultantProfileId: "host" },
+    },
+    subscription: null,
+    trial: null,
+    webinar: null,
+    class: null,
+  };
+}
+
 function session(
   ordinal: number,
   endedDaysAgo: number,
@@ -152,6 +167,14 @@ describe("the slot rule", () => {
       "host",
     );
     expect(recordingViewerOf(classBooking("b2"), LEARNER, false)).toBeNull();
+  });
+
+  it("revokes a 1:1 learner after a full refund but keeps the host and a partial refund", () => {
+    const host = { consultantProfileId: "host", consulteeProfileId: null };
+    const booking = oneToOneBooking();
+    expect(recordingViewerOf(booking, LEARNER, true)?.role).toBe("learner");
+    expect(recordingViewerOf(booking, LEARNER, true, true)).toBeNull();
+    expect(recordingViewerOf(booking, host, true, true)?.role).toBe("host");
   });
 
   it("shows the own batch's recordings as ordered parts", () => {

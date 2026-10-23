@@ -21,6 +21,12 @@ jest.mock("../../lib/novu/client", () => ({
 jest.mock("../../lib/novu/subscriber", () => ({
   deleteSubscriber: jest.fn(async () => true),
 }));
+jest.mock("../../lib/stream/recording-storage", () => ({
+  deleteRecordingAssets: jest.fn(async () => ({ success: true })),
+}));
+jest.mock("../../lib/stream/recording-stream-delete", () => ({
+  deleteStreamRecordingCopy: jest.fn(async () => ({ success: true })),
+}));
 
 const mockRevokeUserToken = jest.fn(async () => ({}));
 const mockDeleteUsers = jest.fn(async () => ({}));
@@ -196,6 +202,11 @@ describe("DPDP erasure Stream principal leg", () => {
         storagePath: null,
         previewClipUrl: null,
         previewClipStoragePath: null,
+        previewClipDuration: null,
+        previewTranscript: null,
+        thumbnailUrl: null,
+        streamRecordingId: null,
+        removedAt: expect.any(Date),
       },
     });
     expect(mockRecordingUpdateMany).toHaveBeenCalledWith(
