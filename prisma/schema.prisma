@@ -584,7 +584,7 @@ model SupportFinancialRecommendation {
   decidedBy      User?       @relation("SupportRecommendationDecider", fields: [decidedById], references: [id], onDelete: Restrict)
   decisionReason String?     @db.Text
   approved       Boolean?
-  /// Cancels the remaining service on execution; false keeps the buyer's seat.
+  /// Marks the funded seat REFUNDED once the refund is sent (no session or recording access; group seats resell); never cancels the booking or its sessions.
   releaseSeat    Boolean     @default(false)
   /// An approval withdrawn because its refund never went live (null or FAILED).
   voidedAt       DateTime?   @db.Timestamptz
