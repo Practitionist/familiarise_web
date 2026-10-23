@@ -88,7 +88,7 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 // Late-bound cycle: reversal-engine imports applyRefundCascade from here.
-import { postPayoutClawback } from "./reversal-engine";
+import { clawBackCompletedOrgPayout } from "./reversal-engine";
 import { retireSupersededPlaceholderTx } from "./refund-placeholder";
 import {
   accumulatePaidConsultantClawback,
@@ -1517,52 +1517,22 @@ export async function applyRefundCascade(
 
     // Clawback: if this earnings row was already rolled into a payout
     // and that payout is COMPLETED (bank wire left), record the
-    // clawback on the payout itself. Manual recovery only in v1.
+    // clawback on the payout itself; the next payout nets it.
     if (
       orgEarn.orgPayoutId &&
       orgEarn.orgPayout?.status === "COMPLETED" &&
       orgApplied > 0
     ) {
-      await tx.organizationPayout.update({
-        where: { id: orgEarn.orgPayoutId },
-        data: {
-          clawbackAmountPaise: { increment: orgApplied },
-          // Only stamp on the FIRST clawback — preserves the
-          // earliest-clawback timestamp across multiple partial
-          // refunds against the same payout.
-          clawbackInitiatedAt: orgEarn.orgPayout.clawbackInitiatedAt
-            ? undefined
-            : new Date(),
-        },
-      });
-
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId: orgEarn.organizationId,
-          actorMembershipId: null,
-          category: "PAYOUT",
-          action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
-          description: `Refund clawback initiated: ${orgApplied} paise from payout ${orgEarn.orgPayoutId}`,
-          details: {
-            paymentId: payment.id,
-            refundId: input.refundId,
-            orgEarningsId: orgEarn.id,
-            orgPayoutId: orgEarn.orgPayoutId,
-            amountPaise: input.amountPaise,
-            clawbackAmountPaise: orgApplied,
-            initiatedByUserId: input.initiatedByUserId ?? null,
-          } as Prisma.InputJsonValue,
-        },
-      });
-
-      // #1582 C-P1-02c — the counter above and this posting are one write; a
-      // failed post rolls the tx back (parity with #1740 M5) rather than
-      // leaving a LEDGER_DUAL_WRITE_GAP for the reconciler to find.
-      await postPayoutClawback(tx, {
-        refundId: input.refundId,
-        payoutId: orgEarn.orgPayoutId,
-        amountPaise: orgApplied,
+      await clawBackCompletedOrgPayout(tx, {
+        orgPayout: { ...orgEarn.orgPayout, id: orgEarn.orgPayoutId },
         organizationId: orgEarn.organizationId,
+        orgEarningsId: orgEarn.id,
+        paymentId: payment.id,
+        refundId: input.refundId,
+        grossPaise: orgApplied,
+        amountPaise: input.amountPaise,
+        label: "Refund clawback initiated",
+        initiatedByUserId: input.initiatedByUserId ?? null,
       });
 
       clawbackInitiated = true;

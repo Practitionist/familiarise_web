@@ -111,20 +111,20 @@ engagement #13 and has gone past the cap, and by
 `makeLeg` and the per-source `sourceRef` invariant — are documented in
 [payment-legs](../../finance/20-ledger/03-payment-legs.md). The three-way split and
 the BOOKING posting are split across
-[booking-to-earnings](../10-money-and-ledger/05-booking-to-earnings.md), which
+[booking-to-earnings](../../finance/50-b2b/03-rate-cards-and-overage.md), which
 explains `RateCard` resolution and the bps snapshot, and
-[ledger-and-postings](../10-money-and-ledger/03-ledger-and-postings.md). The
+[ledger-and-postings](../../finance/20-ledger/04-postings.md). The
 eventual payout is the subject of
-[payout-pipeline](../10-money-and-ledger/07-payout-pipeline.md): the `PENDING`
+[payout-pipeline](../../finance/40-payouts/05-org-payouts-and-clawbacks.md): the `PENDING`
 earnings rows are later rolled into an `OrganizationPayout` or `ConsultantPayout`,
 and disbursement is a separate cron gated by `ENABLE_LIVE_PAYOUTS`.
 
 This booking spine is the happy path. When money has to flow backwards or a
 booking is contested, three further money-band docs pick up the thread: a
 refund unwinds the booking and its earnings through the reversal engine in
-[refunds](../10-money-and-ledger/10-refunds.md); a chargeback or contested
+[refunds](../../finance/30-refunds-disputes/01-refunds.md); a chargeback or contested
 payment runs through the dispute lifecycle in
-[disputes](../10-money-and-ledger/11-disputes.md); and the gateway events that
+[disputes](../../finance/30-refunds-disputes/02-chargebacks.md); and the gateway events that
 drive top-up confirmation, refund settlement, and dispute notifications are
 handled in [payment-webhooks](../../finance/10-money-in/02-capture-confirmation-and-webhooks.md). The
 ongoing state of an earnings row after this booking — `PENDING` to `PAID` to
@@ -138,7 +138,7 @@ ongoing state of an earnings row after this booking — `PENDING` to `PAID` to
 > `booking:<paymentId>`. A single-consultant booking posts its journal inline,
 > whereas a multi-collaborator booking defers the journal until every share is
 > resolved (#773). See
-> [booking-to-earnings](../10-money-and-ledger/05-booking-to-earnings.md) §1.
+> [booking-to-earnings](../../finance/50-b2b/03-rate-cards-and-overage.md) §1.
 
 ## Design history
 
@@ -603,7 +603,7 @@ flowchart TB
 The full, current doc index — the section map, the reading paths, and the
 `NN-slug → purpose` table for every doc — lives in [README.md](../README.md). It
 is intentionally not duplicated here, so that there is only one place to keep in
-sync. The money and ledger band lives under `10-money-and-ledger/`, and the right
+sync. The money and ledger material lives in `docs/finance/`, and the right
 place to start is
 [money-model-overview](../../finance/20-ledger/01-double-entry-model.md). The
 commercial-lifecycle band under `30-programs-and-lifecycle/` ends with the two

@@ -207,7 +207,7 @@ member booked over-cap during the cycle is settled separately:
 
 - **CHARGE_ORG** overage accrues onto the org invoice; the cycle-close +
   invoice path drives `OverageEvent` `PENDING → ACCRUED → CHARGED`
-  (see [invoicing](../10-money-and-ledger/08-invoicing.md)).
+  (see [invoicing](../../finance/50-b2b/04-invoices-purchase-orders-and-dunning.md)).
 - **CHARGE_MEMBER** overage settles instantly at checkout (`PENDING → CHARGED`)
   or times out (`→ FAILED`) via the timeout cron — independent of the cycle
   roll.
@@ -277,5 +277,5 @@ no ended period stays `ACTIVE` past one nightly tick.
   decision table reads.
 - [Concurrency & idempotency](01-concurrency-and-idempotency.md) — the claim
   gates + unique constraints as idempotency anchors.
-- [Invoicing](../10-money-and-ledger/08-invoicing.md) — CHARGE_ORG overage settlement at cycle close.
+- [Invoicing](../../finance/50-b2b/04-invoices-purchase-orders-and-dunning.md) — CHARGE_ORG overage settlement at cycle close.
 - [Ledger integrity](../../finance/20-ledger/06-integrity-and-reconciliation.md) — the reconcile/drift checks.
