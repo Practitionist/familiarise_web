@@ -625,7 +625,6 @@ async function windDownSingleOrg(
       org.id,
       surfaces.dmChannelIds,
       result,
-      failures,
     );
     await freezeOrgDmChannels(chat, org.id, dmChannelIds, result, failures);
 
