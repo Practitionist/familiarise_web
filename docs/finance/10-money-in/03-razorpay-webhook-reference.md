@@ -1,131 +1,83 @@
-# Razorpay & RazorpayX Webhook Schema & Invariant Reference
-
-> **Canonical Implementation:** [`schemas/webhooks/razorpay.ts`](../../../schemas/webhooks/razorpay.ts), [`app/api/webhooks/razorpay/signature.ts`](../../../app/api/webhooks/razorpay/signature.ts), [`app/api/webhooks/razorpay/route.ts`](../../../app/api/webhooks/razorpay/route.ts), and [`app/api/webhooks/razorpay-dispatch.ts`](../../../app/api/webhooks/razorpay-dispatch.ts).  
-> **Organization Ledger & Settlement Details:** See [`docs/finance/10-money-in/02-capture-confirmation-and-webhooks.md`](02-capture-confirmation-and-webhooks.md).
-
+---
+title: Razorpay and RazorpayX webhook reference
+type: reference
+audience: engineers reading or extending webhook handlers
+status: live
+last-reviewed: 2026-10-23
 ---
 
-## 1. Signature Scope, Secret Resolution & Tamper-Proof `eventId`
+# Razorpay and RazorpayX webhook reference
 
-### Multi-Secret HMAC Verification (`signature.ts`)
+This page lists what the platform accepts from Razorpay and RazorpayX: which events the dispatcher handles, the payload fields the handlers read, the wire quirks the Zod schemas normalise, and the ordering rules that make out-of-order delivery safe. How the inbox deduplicates and recovers is in [capture confirmation and webhooks](02-capture-confirmation-and-webhooks.md); this page does not repeat it.
 
-1. `RAZORPAY_WEBHOOK_SECRET` (`role: "current"`): Primary HMAC-SHA256 secret checked against the raw UTF-8 HTTP body (`x-razorpay-signature`, 64-char hex digest via `crypto.timingSafeEqual`).
-2. `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` (`role: "previous"`): Checked during Dashboard secret rotation so in-flight retries signed prior to cutover succeed cleanly while logging a `WEBHOOK` `WARN` `SystemEvent`.
-3. `RAZORPAYX_WEBHOOK_SECRET` (RazorpayX Banking Fallback): Consulted **only** when `isPayoutEventName(rawBody)` returns `true` (`event.startsWith("payout.") || event.startsWith("fund_account.")`). Customer payment, order, refund, and dispute events can never authenticate against `RAZORPAYX_WEBHOOK_SECRET`.
+The contract lives in `schemas/webhooks/razorpay.ts` (shapes), `app/api/webhooks/razorpay/signature.ts` (secrets) and `app/api/webhooks/razorpay-dispatch.ts` (routing). The dispatcher has a `default` branch that logs and ignores any other event, so a new event type is harmless until a case is added.
 
-### `eventId` Derivation (`route.ts`)
+## 1. Events the dispatcher handles
 
-The dedupe key is `${eventType}:${entityId}:${id}`, where `id` is the `x-razorpay-event-id` header when it is present and matches `/^[A-Za-z0-9_-]{1,64}$/`, and a 16-character SHA-256 digest of the raw body otherwise. Razorpay keeps the event id stable across its retries and dashboard replays, so a redelivery collapses at `logWebhookEvent`, while two distinct updates on one entity (a `payout.updated` with a later `utr`, a dispute phase change) carry two ids and both run. The event type and entity id come from the signed body; the header itself is unsigned, so a captured `(body, signature)` pair could be replayed under new ids, which the idempotent handlers absorb without moving money twice.
+| Event                                                                                                                  | Meaning for the platform                                                | Handler                                                           |
+| ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `payment.captured`                                                                                                     | Money for an order is held by Razorpay                                  | `routeCapturedPayment`                                            |
+| `order.paid`                                                                                                           | The order is fully paid; the nested payment entity is optional          | `routeCapturedPayment`                                            |
+| `payment.failed`                                                                                                       | One attempt failed; the order may still be paid by a retry              | `handlePaymentFailure` and its org variants                       |
+| `refund.created`, `refund.processed`                                                                                   | A refund exists or finished                                             | `handleRefundCreated`                                             |
+| `refund.failed`                                                                                                        | A refund did not complete                                               | `handleRefundCreated` with status `failed`                        |
+| `refund.speed_changed`                                                                                                 | A fast refund fell back to normal speed                                 | Writes `speedRequested` and `speedProcessed` to `Refund.metadata` |
+| `payment.dispute.created`                                                                                              | A chargeback or early fraud warning opened                              | `handleDisputeCreated`                                            |
+| `payment.dispute.under_review`                                                                                         | Evidence is with the bank                                               | `handleDisputeUpdated`                                            |
+| `payment.dispute.action_required`                                                                                      | Razorpay needs a response, including a pre-arbitration phase            | `handleDisputeUpdated`                                            |
+| `payment.dispute.won`, `.lost`                                                                                         | Verdict                                                                 | `handleDisputeUpdated` with the verdict status                    |
+| `payment.dispute.closed`                                                                                               | Proceedings ended; the entity's own status and `amount_deducted` decide | `handleDisputeUpdated`                                            |
+| `payout.initiated`, `.updated`, `.queued`, `.pending`, `.processed`, `.reversed`, `.rejected`, `.failed`, `.cancelled` | RazorpayX payout lifecycle                                              | `handleRazorpayPayoutWebhook`                                     |
+| `fund_account.validation.completed`, `.failed`                                                                         | Penny-drop or reverse-penny-drop result                                 | `handleFundAccountValidationWebhook`                              |
+| `settlement.processed`                                                                                                 | Razorpay settled a batch                                                | Logged only                                                       |
 
----
+`payment.authorized` and `settlement.failed` are not handled. Nothing in the code captures manually, and an order minted with a hold deadline carries `capture: automatic` and a capture window (`holdCaptureSettings`), so a payment left authorised is refunded by Razorpay when that window closes.
 
-## 2. Official Wire Quirks & Zod Normalization (`schemas/webhooks/razorpay.ts`)
+Payout events are signed with the RazorpayX secret when they are not signed with the payment secret; see [the webhook inbox](02-capture-confirmation-and-webhooks.md#2-the-webhook-inbox). Their handling is documented in [RazorpayX](../40-payouts/04-razorpayx.md).
 
-### 1. PHP Empty Array `notes: []` Serialization Quirk (`razorpayNotesSchema`)
+## 2. Payload fields the handlers read
 
-When an order, payment, refund, or payout is created without metadata notes, Razorpay's PHP serializer emits `"notes": []` (empty JSON array) instead of `{}` and may echo unquoted numbers or booleans. `razorpayNotesSchema` normalizes `[]`, `null`, `undefined`, and primitive values into a strict `Record<string, string>`:
+| Entity                  | Fields read                                                                                                                                         |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Payment                 | `id` (`pay_…`), `order_id`, `amount` in paise, `currency`, `status`, `notes`, `error_description`, `fee` (GST included), `tax` (the GST on the fee) |
+| Order (`order.paid`)    | `id`, `amount`, `currency`, `status`, `notes`; the order total is not what was settled, so it is not used as a captured amount                      |
+| Refund                  | `id`, `payment_id`, `amount`, `currency`, `status`, `notes` (carries `reservationId`), `speed_requested`, `speed_processed`                         |
+| Dispute                 | `id`, `payment_id`, `amount`, `currency`, `reason_code`, `reason_description`, `status`, `respond_by` in Unix seconds, `phase`, `amount_deducted`   |
+| Payout                  | `id`, `status`, `failure_reason`, `status_details`, `error`, `utr`, `reference_id`                                                                  |
+| Fund account validation | `id`, `reference_id`, `fund_account`, `status`, `results` or `validation_results`, `status_details`                                                 |
 
-```typescript
-export const razorpayNotesSchema = z
-  .unknown()
-  .transform((val): Record<string, string> => {
-    if (!val || typeof val !== "object" || Array.isArray(val)) {
-      return {};
-    }
-    const normalized: Record<string, string> = {};
-    for (const [key, raw] of Object.entries(val)) {
-      if (
-        typeof raw === "string" ||
-        typeof raw === "number" ||
-        typeof raw === "boolean"
-      ) {
-        normalized[key] = String(raw);
-      } else if (raw === null || raw === undefined) {
-        normalized[key] = "";
-      }
-    }
-    return normalized;
-  });
-```
+## 3. Wire quirks and how they are normalised
 
-### 2. Multi-Attempt Checkout Modal Semantics on `payment.failed`
+- **Empty notes arrive as a JSON array.** When an order, payment, refund or payout has no notes, Razorpay serialises `"notes": []`, and may echo numbers or booleans unquoted. `razorpayNotesSchema` turns an array, `null` or a missing value into `{}` and every primitive into a string, so handlers always see a `Record<string, string>`. Outbound orders keep within Razorpay's own limits through `sanitizeRazorpayNotes`: at most 15 keys and 256 characters per value, so the first key written is the one that must matter (`familiarisePaymentId`).
+- **Times are seconds.** `respond_by` and `created_at` are Unix seconds; handlers multiply by 1,000 before building a `Date`.
+- **No `comments` on a dispute.** Dispute text comes from `reason_code`, `reason_description` and the evidence summary the platform submits.
+- **`failure_reason` is deprecated** and often null on payouts. Handlers read `failure_reason`, then `status_details.description`, then `status_details.reason`, then `error.description`, then `error.reason`.
+- **Refund speed.** `speed_requested` is `normal` or `optimum`, never `instant`; `speed_processed` may be `normal`, `instant` or `optimum`.
+- **Validation entities contain nulls.** `fundAccountValidationEntitySchema` normalises null `fund_account`, `results`, `validation_results` and `status_details` to absent.
+- **An unparseable body is permanent.** A Zod failure inside a handler records `permanent: schema mismatch` on the event and is never retried, and the route answers 400 for a body that is not even a valid envelope.
 
-Inside Razorpay Checkout, all payment attempts within one checkout session share a single `order_id` (`Payment.paymentIntent`):
+## 4. Ordering rules
 
-- **In-Transaction `SUCCEEDED` Guard**: `handlePaymentFailure` checks `payment.paymentStatus === "SUCCEEDED"` inside its transaction; if a retry on the same `order_id` already settled `SUCCEEDED`, late-arriving `payment.failed` webhooks from an earlier attempt return immediately as a no-op.
-- **Active Hold Preservation (`expiresAt > now()`)**: While the booking hold has not expired (`expiresAt > now()`), `payment.failed` preserves the active slot reservation, never overwrites customer-facing `Payment.description`, and **never restores applied wallet or referral credits** (preventing both mid-checkout slot cancellation and wallet double-spend exploits while the buyer retries inside the modal).
+Razorpay does not guarantee order, so each handler states what it does when its subject is missing.
 
-### 3. `refund.entity.speed_requested` vs `speed_processed` & In-Place Placeholder Adoption
+- A **refund** event for a payment still `PENDING` returns `DeferSignal`. A refund for an unknown payment falls through to the organisation branches (wallet top-up, then invoice) before being logged.
+- A **refund** whose `notes.reservationId` names a `pending_` placeholder is bound to that row in place (`refundId` replaced by the real `rfnd_…`), so the webhook winning the race against the application's own bind does not create a duplicate. A `refund.failed` for a refund the platform never recorded is ignored, because no money moved. Status moves other than from `PENDING` are ignored, with one exception: a late success on a locally `FAILED` row settles it once, guarded by `Refund.cascadedAt`.
+- A **dispute** event before the payment is captured, or an update before the creation event, returns `DeferSignal` and is re-driven by `sweep-stuck-webhook-events`. Updates are accepted only along the legal transitions of `isLegalDisputeTransition`, and the update itself is a CAS on the prior status.
+- A **`payment.failed`** after the payment is `SUCCEEDED` or `EXPIRED` is ignored. While the hold is still open it preserves the slot, the description and applied credits, because one checkout session shares one `order_id` across several attempts; it records the failed attempt's `gatewayPaymentId` only if none is set.
+- A **verdict** for one dispute releases only that dispute's `DISPUTE` earnings hold. Holds owned by moderation, an operator, an overage or a support case, and holds belonging to another open dispute, stay in place.
 
-- `speed_requested` is `"normal" | "optimum"` (never `"instant"`); `speed_processed` is `"normal" | "instant" | "optimum"`, and incoming `refund.speed_changed` events persist `{ speedRequested, speedProcessed }` on `Refund.metadata`.
-- In `handleRefundCreated`, incoming `refund.created` / `refund.processed` webhooks inspect `refund.entity.notes?.reservationId` inside a Serializable transaction to **adopt existing `pending_<uuid>` reservation rows in place** (`refundId = rfnd_...`) instead of creating duplicate `Refund` rows when the webhook outraces Phase 3 of the outbound HTTP call.
+## Where in code
 
-### 4. Dispute Lifecycle & Multi-Dispute Earnings Guard
+- `schemas/webhooks/razorpay.ts`, `schemas/webhooks/metadata.ts`.
+- `app/api/webhooks/razorpay-dispatch.ts`, `app/api/webhooks/utils.ts` (`handleRefundCreated`, `handleDisputeCreated`, `handleDisputeUpdated`).
+- `lib/payments/dispute-status.ts`, `lib/payments/refund-status.ts`.
 
-- All 6 dispute events (`created`, `under_review`, `action_required`, `won`, `lost`, `closed`) are routed cleanly, and out-of-order deliveries (`payment.dispute.created` arriving before `payment.captured`, or `payment.dispute.*` updates arriving before `payment.dispute.created`) return `DeferSignal` for automatic re-drive by `sweep-stuck-webhook-events`.
-- `respond_by` and `created_at` are Unix epoch **seconds** (multiply by `1000` for JS `Date`). No `comments` field exists on Razorpay Dispute entities (`reason_code`, `reason_description`, and `evidence.summary` carry dispute text).
-- `payment.dispute.action_required` (including `pre_arbitration` escalations) legally transitions `UNDER_REVIEW -> NEEDS_RESPONSE` and refreshes `dueBy`.
-- Winning or closing one dispute releases `HELD` earnings **only** when `tx.dispute.count({ where: { paymentId, id: { not: dispute.id }, status: { notIn: ["WON", "LOST", "CHARGE_REFUNDED", "CLOSED", "WARNING_CLOSED"] } } }) === 0`.
+## Related
 
-### 5. RazorpayX `payout.*` & `fund_account.validation.*` Entities
-
-- `payout.initiated` marks transition into `processing` (`payout.processing` does not exist), while non-terminal events (`payout.queued`, `payout.pending`, `payout.initiated`) preserve `PayoutStatus.PROCESSING` on submitted consultant payouts.
-- `failure_reason` is deprecated and often `null`; always read `failure_reason ?? status_details?.description ?? status_details?.reason ?? error?.description`.
-- Terminal `COMPLETED` transitions exclude terminal statuses via CAS `WHERE` so delayed `payout.processed` / `payout.updated` events never resurrect reversed payouts, while raising `PAYOUT_COMPLETED_AFTER_LOCAL_FAILED` error alerts if RazorpayX disburses a payout previously marked `FAILED`.
-- `markConsultantPayoutReversed` and `markOrgPayoutReversed` handle both `COMPLETED -> REVERSED` (inverse ledger journal + reopening `PAID -> READY` earnings + TDS reversal) and pre-settlement `PENDING`/`PROCESSING`(/`APPROVED`) -> `REVERSED` (detaching `BATCHED -> READY` earnings with no inverse journal) inside **one atomic Prisma transaction (`tx`)**.
-- `fundAccountValidationEntitySchema` normalizes `null` values on `fund_account`, `results`, `validation_results`, and `status_details` to `undefined`. `handleFundAccountValidationWebhook` requires **both** `status === "completed"` and `summary.accountStatus === "valid"` (`account_status === "active"`), updating existing accounts by `fund_account.id` or provisioning Contact + Fund Account + verified `PayoutAccount` under Redis mutex `rpd:settle:<entity.id>` when `fund_account` is omitted on `upi_intent` Reverse Penny Drop completions (`reference_id` + `validation_results.bank_account`).
-
----
-
-## 3. Complete Validated Event Catalog (25 Events)
-
-```typescript
-export const RazorpayEventTypeSchema = z.enum([
-  // Payment & Order Events
-  "payment.authorized",
-  "payment.captured",
-  "payment.failed",
-  "order.paid",
-
-  // Refund Events
-  "refund.created",
-  "refund.processed",
-  "refund.failed",
-  "refund.speed_changed",
-
-  // Dispute Events (All 6 Official Events)
-  "payment.dispute.created",
-  "payment.dispute.under_review",
-  "payment.dispute.action_required",
-  "payment.dispute.won",
-  "payment.dispute.lost",
-  "payment.dispute.closed",
-
-  // Settlement Events
-  "settlement.processed",
-  "settlement.failed",
-
-  // RazorpayX Payout Events (All 9 Official Events)
-  "payout.initiated",
-  "payout.updated",
-  "payout.processed",
-  "payout.reversed",
-  "payout.failed",
-  "payout.rejected",
-  "payout.queued",
-  "payout.pending",
-  "payout.cancelled",
-
-  // RazorpayX Fund Account Validation (Penny Drop & UPI RPD) Events
-  "fund_account.validation.completed",
-  "fund_account.validation.failed",
-]);
-```
-
----
+- [Capture confirmation and webhooks](02-capture-confirmation-and-webhooks.md).
+- [Chargebacks](../30-refunds-disputes/02-chargebacks.md) for what a verdict does to money.
+- [Webhook recovery](../70-operations/04-webhook-recovery.md) for replaying an event.
 
 ## Deprecated & Superseded Approaches
 
-- **Strict `z.record(z.string())` on `notes`**: Superseded by `razorpayNotesSchema` because Razorpay serializes empty notes in PHP as JSON `[]`, which previously threw Zod schema errors on clean payments, refunds, and payouts.
-- **Dispute Entity Schema Assuming a `comments` Field or Blocking `UNDER_REVIEW -> NEEDS_RESPONSE`**: Superseded by `reason_description` / `evidence.summary` extraction and legal `UNDER_REVIEW -> NEEDS_RESPONSE` transitions for `action_required` / `pre_arbitration` phases.
-- **Dropping `fund_account.validation.*` and `payout.cancelled` / `payout.updated` Webhooks**: Superseded by full `RAZORPAYX_WEBHOOK_SECRET` verification via `isPayoutEventName` and atomic single-transaction payout & RPD settlement handlers.
+A `RazorpayEventTypeSchema` enum listing `payment.authorized` and `settlement.failed` was documented here and is not in the code; the dispatcher is a plain switch. A strict `z.record(z.string())` for notes failed on the PHP empty-array quirk and was replaced by `razorpayNotesSchema`. An earlier rule released earnings after a dispute win only when no other dispute was open, by counting disputes; holds are now reason-scoped rows, so each dispute releases only its own. Dropping `fund_account.validation.*` and `payout.cancelled` events was once the default; both are now handled.

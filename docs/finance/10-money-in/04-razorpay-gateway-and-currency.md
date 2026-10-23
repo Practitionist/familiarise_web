@@ -1,85 +1,98 @@
-# Multi-Currency Architecture
+---
+title: Razorpay gateway and currency
+type: reference
+audience: engineers and operators configuring or debugging the payment gateway
+status: live
+last-reviewed: 2026-10-23
+---
 
-## Strategy: India-First, Accept International, Settle in INR
+# Razorpay gateway and currency
 
-Every price in this platform is stored as an integer count of INR paise, and every charge is taken in INR. An international buyer may switch the site into a foreign currency, in which case the prices they read are estimates converted client-side from those INR paise; the order the gateway mints is still an INR order and their card issuer performs the conversion at its own rate. This is a display feature, not a pricing feature, and the rest of this document is mostly about keeping that distinction visible to the person paying.
+This page states which payment gateway the platform runs, what is enforced about currency, how buyer country is decided, what environment variables configure the gateway, and what the display-currency feature does and does not do. The short version is that Razorpay is the only gateway with code behind it, every charge is an INR order, and a foreign currency on screen is a client-side estimate and nothing more.
 
-Settlement being INR-only is enforced, not merely assumed. `assertInrSettlement` in `lib/payments/validation/currency-guards.ts` runs as the first statement of both `createRazorpayOrder` and `createStripeCheckoutSession` and throws a `PaymentError` with code `NON_INR_SETTLEMENT` on anything else. The three administrative surfaces that used to accept a currency choice — organisation creation, the billing-account patch, and purchase-order creation — now validate against `z.literal("INR")`. The `Currency` enum stays on those columns, for the reasons recorded in [ADR 15](../../enterprise/70-design-decisions/15-currency-as-enum-with-display-fields.md), but no API will write a value other than INR into them.
+## 1. One gateway, INR only
 
-### Gateway Selection
+`routeGateway` (`lib/payments/gateway-router.ts`) returns `RAZORPAY` and `INR` for every buyer. An overseas buyer receives the same INR order and pays it with an overseas card; their issuer converts at its own rate. The request body's gateway field is checked with `assertGatewayUsable` first, so a client cannot ask for anything else.
 
-| Buyer Country | Gateway  | Method                                       | Fee                     | Settlement |
-| ------------- | -------- | -------------------------------------------- | ----------------------- | ---------- |
-| India         | Razorpay | Domestic (UPI, cards, netbanking)            | 2% + GST (~2.36%)       | INR, T+2   |
-| International | Razorpay | The same INR order, paid by an overseas card | ~3% + GST               | INR, T+7   |
-| Fallback      | Stripe   | Checkout Sessions                            | ~6.3% (4.3% + 2% forex) | INR, T+5-7 |
+`PaymentGateway` has four enum values (`STRIPE`, `RAZORPAY`, `DODO_PAYMENTS`, `CARD`), but `UNIMPLEMENTED_GATEWAYS` in `lib/payments/constants.ts` lists `STRIPE` and `DODO_PAYMENTS`, and every money path refuses them with `UnsupportedGatewayError`. Searching the application code for Cashfree, Tazapay or Xflow finds one comment and an unused `PayoutRailProvider.CASHFREE_PAYOUTS` value; those gateways have been researched and parked, not built.
 
-The settlement column deserves one clarification, because an earlier revision of this table put the international row at T+1. That figure belongs to the MoneySaver Export Account, not to this flow. Razorpay settles an ordinary international card payment in INR on a [T+7 working-day cycle](https://razorpay.com/docs/payments/international-payments/faqs/), against T+2 for a domestic one, which is also what our own [gateway evaluation](../../payments/gateways/gateway-evaluation-mar-2026.md) recorded.
+Settlement being INR-only is enforced at four independent points, so no single mistake can charge in the wrong currency.
 
-An earlier revision of this table quoted Razorpay's International Bank Transfer product at 1% with zero forex markup and automatic eFIRC. That was a description of a product this codebase has never used. IBT is the MoneySaver Export Account, a virtual-account bank-transfer rail with [no Orders API behind it](https://razorpay.com/docs/payments/international-payments/international-bank-transfer/), so no checkout could have routed through it. The international row above is what the router actually does, and it costs roughly two points more than the figure that used to appear here.
+| Point                 | Enforcer                                                                                                                                                                                                                   |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Order creation        | `assertInrSettlement` (`lib/payments/validation/currency-guards.ts`) is the first statement of `createRazorpayOrder` and throws `NON_INR_SETTLEMENT` (422)                                                                 |
+| Inbound gateway data  | `toCurrencyEnum` throws on any code outside the `Currency` enum, so a webhook carrying another currency dead-letters instead of being booked                                                                               |
+| Administrative inputs | Organisation creation, the billing-account patch and purchase-order creation validate `z.literal("INR")`                                                                                                                   |
+| Database              | `payment_currency_inr`, `refund_currency_inr`, `dispute_currency_inr`, `ledger_account_currency_inr`, `consultant_earnings_currency_inr` and `consultant_payout_currency_inr` CHECKs in `prisma/sql/check-constraints.sql` |
 
-### Why Razorpay for Everything
+A 100x charge was once possible because an organisation could be created with a USD billing currency and its INR paise were sent to Razorpay as dollars; the guards above exist so that cannot recur. The `Currency` enum stays on money columns so a future multi-currency ledger needs no column migration ([ADR 15](../../enterprise/70-design-decisions/15-currency-as-enum-with-display-fields.md)).
 
-Razorpay remains the primary rail for three reasons that survive the correction above. It is still materially cheaper than Stripe for international cards, at roughly 3% against Stripe's 6.3% all-in. It holds an RBI PA-CB licence granted in December 2025, which authorises it for cross-border collection. And it accepts UPI, which is the bulk of domestic volume and something a Stripe-based competitor cannot offer on this rail. That last reason should not be overstated: UPI carries zero MDR because the RBI mandates it, but Razorpay still charges its standard 2% platform fee plus GST on a UPI collection, so the method is cheap for the buyer rather than free for us.
+## 2. Buyer country and tax
 
-## Currency Flow
+Buyer country decides GST (18 % domestic, zero-rated export only under a valid Letter of Undertaking, otherwise 18 % IGST; see `determineTax` in [checkout and pricing](01-checkout-and-pricing.md)). `detectBuyerCountry` (`lib/payments/tax/buyer-country.ts`) uses, in order:
 
-```
-[Consultant sets price in INR paise]
-    ↓
-[Consultee optionally switches display currency; prices are converted client-side for reading only]
-    ↓
-[Checkout: buyer country detected → tax determined → gateway auto-routed]
-    ↓
-[Order minted in INR; assertInrSettlement refuses anything else]
-    ↓
-[Payment recorded with buyerCountry + isInternational flags, plus the display currency and rate snapshot for audit]
-    ↓
-[Earnings created in INR → hold period → TDS calculated → payout in INR]
-```
+1. `User.country` when it is a two-letter code.
+2. The `cf-ipcountry` header, ignoring `XX` and `T1`.
+3. Otherwise India, which charges GST rather than risking a missed collection.
 
-## Buyer Country Detection
+`Accept-Language` is not a signal and must not be reintroduced. In this deployment the first two signals almost never fire (the profile field is free text, and production has no Cloudflare in front of it), so the language header used to decide the tax outcome and `en-US`, common in India, zero-rated domestic sales as exports.
 
-The server runs a two-signal cascade at checkout, with a conservative fallback:
+The payment records `buyerCountry` and `isInternational`. These are tax facts, not routing inputs.
 
-1. `User.country`, when it is a two-letter ISO code — the highest-confidence signal, because someone asserted it.
-2. The `cf-ipcountry` header, when a Cloudflare edge is in front of the deployment.
-3. Fallback to `"IN"`, which charges GST rather than risking a missed collection.
+## 3. Display currency is an estimate
 
-`Accept-Language` was removed from this cascade and must not be reintroduced. It was once the third step, and in this deployment it was effectively the only step that ever fired, because `User.country` is a free-text onboarding field that cannot satisfy the two-letter check and production runs on Netlify with no Cloudflare in front of it. A browser default of `en-US`, which is common in India, therefore zero-rated domestic sales as exports. A browser locale is not evidence a tax authority recognises. The reasoning is recorded in full at `lib/payments/tax/buyer-country.ts` and pinned by `__tests__/payments/currency-and-tax-gates.test.ts`.
+A buyer can switch the site to a supported foreign currency. The conversion happens in the browser from INR paise and is shown with a note under the total: "Estimated in USD. You will be charged ₹5,000.00 in INR by the payment gateway; your card issuer's rate applies." (`app/checkout/components/FxEstimateNote.tsx`). Two fields on `Payment` record what the buyer saw for audit: `displayCurrencyAtCheckout`, validated against `SUPPORTED_CURRENCY_CODES` in `lib/currency-codes.ts`, and `exchangeRateAtCheckout`. No stored amount is ever derived from either.
 
-## Exchange Rate Handling
+Rates come from ExchangeRate-API's open endpoint, configured by `EXCHANGE_RATE_API_URL` and defaulting to `https://open.er-api.com/v6/latest/INR`. `lib/currency.ts` keeps the last response for one hour in a per-instance variable and never serves one older than 24 hours; after that `getExchangeRates` throws, `/api/currency` answers 500, and the client falls back to INR and rupee symbols so the display degrades together. The CDN is the cache that matters: `/api/currency` sends `Cache-Control: public, s-maxage=3600, stale-while-revalidate=86400` and is limited to thirty requests a minute per IP (`currencyLimiter`), because the provider locks out abusive callers. The provider's licence requires visible attribution wherever its rates appear, which `RATE_PROVIDER_NAME` and `RATE_PROVIDER_URL` supply to every surface.
 
-Rates come from ExchangeRate-API's Open Access endpoint, which supports INR as a base currency and needs no API key. The endpoint is read from `EXCHANGE_RATE_API_URL` and defaults to `https://open.er-api.com/v6/latest/INR`, so moving to a paid host or a different provider does not require a code change.
+## 4. Environment
 
-Caching happens in two places, and only one of them matters. `lib/currency.ts` holds the last response in a module-level variable for one hour, which means the cache belongs to a single serverless instance: Netlify runs many instances, there is no shared store on this path, and the admin invalidation endpoint at `/api/admin/exchange-rates` can only ever flush the one instance that happens to serve the flush request. The cache that actually spares the provider is the CDN, which `/api/currency` enables with `Cache-Control: public, s-maxage=3600, stale-while-revalidate=86400`. That route is also rate-limited to thirty requests per minute per IP, because the provider answers abuse with a 429 that locks the caller out for roughly twenty minutes, and a single scripted client could otherwise take FX display down for everyone.
+All variables are read at runtime. Test and live Razorpay modes have separate keys and separate webhook secrets, so a secret generated in test mode rejects every live delivery.
 
-Staleness is bounded. A response older than twenty-four hours is never served, even when the provider is failing: `getExchangeRates` throws instead, `/api/currency` answers 500, the client query exhausts its retries, and `rate` settles at `null`. That null is the important case, and it is handled deliberately rather than papered over. When there is no rate, `useCurrency` reports `currency` as INR, `symbol` as `₹`, and `isEstimate` as `false`, so the whole display degrades together and the site shows honest rupees rather than rupee amounts wearing a foreign symbol. A missing estimate is better than a stale one presented as current.
+| Variable                                    | Purpose                                                                                                                              |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_SECRET`        | Server API credentials for orders, fetches and refunds. The secret is also the key for client signatures.                            |
+| `NEXT_PUBLIC_RAZORPAY_KEY_ID`               | The publishable key the checkout sheet uses; it must be the same account as `RAZORPAY_KEY_ID`.                                       |
+| `RAZORPAY_WEBHOOK_SECRET`                   | HMAC secret for payment webhooks. Distinct from the API secret. Missing means the route answers 500.                                 |
+| `RAZORPAY_WEBHOOK_SECRET_PREVIOUS`          | Set only during a rotation; accepted and reported as a warning while set.                                                            |
+| `RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION`    | Pre-launch override that downgrades the test-key boot guard to a log line. Delete it when live keys go in.                           |
+| `RAZORPAYX_KEY_ID`, `RAZORPAYX_KEY_SECRET`  | RazorpayX credentials; outside production they fall back to the Razorpay keys.                                                       |
+| `RAZORPAYX_ACCOUNT_NUMBER`                  | The RazorpayX account payouts are debited from.                                                                                      |
+| `RAZORPAYX_WEBHOOK_SECRET` and `_PREVIOUS`  | Secret for `payout.*` and `fund_account.*` events only.                                                                              |
+| `RAZORPAYX_EGRESS_PROXY_URL`                | Static-egress proxy; a live RazorpayX key without it makes each payout call refuse (see [RazorpayX](../40-payouts/04-razorpayx.md)). |
+| `ENABLE_LIVE_PAYOUTS`                       | Gates real payout submission and the live-key guard for the payouts client.                                                          |
+| `ENABLE_SAVED_CARDS`, `ENABLE_CHECKOUT_EMI` | Opt-in checkout features (section 5).                                                                                                |
+| `ENABLE_MOCK_PAYMENTS`                      | Allows mock payment helpers outside development; checkout itself honours a mock request only when `NODE_ENV` is `development`.       |
+| `EXCHANGE_RATE_API_URL`                     | Display-currency rate source (section 3).                                                                                            |
 
-## Disclosure and Attribution
+**Test-key guard.** `lib/payments/core/razorpay.ts` runs a check when it loads: a key starting `rzp_test_` with `NODE_ENV=production` throws `RAZORPAY_TEST_KEY_IN_PRODUCTION` (pinned by `__tests__/payments/razorpay-test-key-guard.test.ts`). It is skipped during `next build`, because builds run with `NODE_ENV=production` and legitimately hold test keys, and the override variable downgrades it to an error log while the site runs on test keys before launch. A live RazorpayX key without the egress proxy is reported once per process at load.
 
-An earlier revision of this document claimed the app displayed "Final amount may vary based on current exchange rate". No such string existed anywhere in the codebase, on any checkout page or beside any price. What exists now is `app/checkout/components/FxEstimateNote.tsx`, rendered directly under the Total on all four checkout pages. It appears only while `isEstimate` is true — that is, only when a non-INR currency is selected and a rate is actually available — and it names the INR figure the gateway will take: "Estimated in USD. You will be charged ₹5,000.00 in INR by the payment gateway; your card issuer's rate applies."
+**Rotating the webhook secret** has to be a two-sided change. Save the new secret in the Razorpay dashboard, set the old value as `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` and the new one as `RAZORPAY_WEBHOOK_SECRET` in the same deploy, wait for the warnings to stop, then delete the previous variable. A hard cutover loses events signed in the gap, and Razorpay disables an endpoint that returns non-2xx for 24 hours.
 
-The same component carries the provider attribution, as does the navbar beside the currency switcher. ExchangeRate-API's Open Access tier [requires visible attribution](https://www.exchangerate-api.com/docs/free) wherever its rates are shown, so this is a licence term rather than a courtesy; the link text and target live in `lib/currency-codes.ts` as `RATE_PROVIDER_NAME` and `RATE_PROVIDER_URL` so that every surface that renders a converted figure uses the same one.
+## 5. Gateway behaviour worth knowing
 
-Two fields on `Payment` record what the buyer saw. `displayCurrencyAtCheckout` holds the currency code the checkout page was rendered in, and it is now validated against the shared allowlist in `lib/currency-codes.ts` rather than accepted as any three-letter string; the value originates in `localStorage` and `Intl.NumberFormat` will happily render an invented code, so an unvalidated field meant arbitrary text persisting onto a money row. `exchangeRateAtCheckout` holds the INR-to-display rate at the moment of the order. Both are audit-only. No stored amount is ever derived from either.
+- **Client calls are bounded.** Every SDK call goes through `withRazorpaySdkTimeout` (30 seconds) and a circuit breaker held in Redis. Client errors (4xx other than 429) never trip the breaker; 5xx, 429 and timeouts do. Refunds use raw HTTP with an `AbortSignal` timeout and a required `X-Refund-Idempotency` header, rejected unless it is a valid key, because a repaired key could collide with another refund.
+- **Orders** carry a generated `receipt`, the sanitised notes, `customer_id` when a saved-card customer exists, and a capture window sized to the hold. A stale `customer_id` after a switch from test to live keys is cleared and the order retried without it.
+- **Saved cards** (`ENABLE_SAVED_CARDS`): `ensureRazorpayCustomer` creates the Customer once with `fail_existing: 0` so Razorpay returns the existing one for the same contact, and stores the id by CAS on the null column. Razorpay shows its own tokenisation consent, so the platform keeps no consent table.
+- **EMI** (`ENABLE_CHECKOUT_EMI`): while off, the checkout sheet hides the EMI block; while on, it is offered for gateway-paid totals of at least ₹3,000. The merchant receives the full amount either way, so `Payment.amount` does not change.
 
-## Key Files
+## 6. Vendor facts to confirm
 
-| File                                         | Purpose                                                              |
-| -------------------------------------------- | -------------------------------------------------------------------- |
-| `lib/payments/tax/buyer-country.ts`          | Buyer country detection cascade                                      |
-| `lib/payments/tax/tax-engine.ts`             | Tax determination (GST vs zero-rated)                                |
-| `lib/payments/gateway-router.ts`             | Auto-routing to Razorpay/Stripe                                      |
-| `lib/payments/validation/currency-guards.ts` | `toCurrencyEnum`, `validatePlanCurrency`, `assertInrSettlement`      |
-| `lib/currency.ts`                            | Server-side rate fetch, per-instance cache, staleness bound          |
-| `lib/currency-codes.ts`                      | Shared display-currency allowlist and provider attribution strings   |
-| `hooks/useCurrency.ts`                       | Client-side display hook, including `isEstimate` and the INR degrade |
-| `app/api/currency/route.ts`                  | Public rate endpoint, CDN-cached and IP rate-limited                 |
-| `app/checkout/components/FxEstimateNote.tsx` | The checkout disclosure and its attribution                          |
+Razorpay's fees, settlement cycle and international card availability are commercial terms outside the code. The router's comments record roughly 2 % plus GST domestic and roughly 3 % plus GST for international cards, and the platform reconciles the real fee per capture (`postGatewayFee`) and per settlement ([gateway clearing](../20-ledger/05-gateway-clearing-and-settlement.md)); read those journals, not this page, for what Razorpay actually charged.
 
-## Future Phases
+## Where in code
 
-- **Phase 2**: Multi-currency pricing (consultants set prices in their currency)
-- **Phase 3**: International consultant payouts via Wise
-- **Phase 4**: EU VAT OSS + AU GST collection
+- `lib/payments/gateway-router.ts`, `lib/payments/constants.ts`, `lib/payments/validation/currency-guards.ts`, `lib/payments/validation/gateway-guards.ts`.
+- `lib/payments/core/razorpay.ts`: client, breaker, orders, customers, refunds.
+- `lib/payments/tax/buyer-country.ts`, `lib/payments/tax/tax-engine.ts`.
+- `lib/currency.ts`, `lib/currency-codes.ts`, `app/api/currency/route.ts`, `app/checkout/components/FxEstimateNote.tsx`.
+
+## Related
+
+- [Checkout and pricing](01-checkout-and-pricing.md).
+- [Go-live checklist](../70-operations/07-go-live-checklist.md) for switching to live keys.
+- [Money decisions](../90-decisions/README.md) for why Stripe was removed.
+
+## Deprecated & Superseded Approaches
+
+Stripe was a live fallback gateway until it was removed in October 2026; its checkout-session code, webhook handler, forex-fee table and `createStripeCheckoutSession` guard call are gone, and the `STRIPE` enum value remains only as a refused label. International buyers were once described as routed to a separate rail at one percent with zero forex markup; that was a different Razorpay product the code never used. A "Future Phases" plan for multi-currency pricing, Wise payouts, EU VAT and Australian GST is not scheduled and is not code. Documents that listed `assertNoTestKeysInLiveProduction` as a function describe a guard that is now a module-load block. Delete any of these if found.

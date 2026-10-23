@@ -1,0 +1,162 @@
+---
+title: Refunds
+type: explanation
+audience: engineers changing cancellations, refunds, earnings reversal or the refund journal
+status: live
+last-reviewed: 2026-10-23
+---
+
+# Refunds
+
+A refund returns money to a payer for a booking. It looks like one action, but it has to touch the gateway, the funding legs, the consultant's and organisation's earnings, the journal, the tax documents and the referral credits, and it has to survive a crash between any two of those. This page explains how refunds are started, how the amount is decided, how the two-phase gateway pattern works, what the refund cascade does step by step, and what repairs a refund that did not finish. Chargebacks and service complaints are different mechanisms and are described in [the section index](README.md).
+
+## 1. Front doors and rails
+
+Every refund goes through `refundBookingPayment` (`lib/payments/operations/booking-refund.ts`). It reads the payment's `paymentIntent` and picks a rail before anything moves (`fundingRailForIntent`, `lib/payments/funding-rail.ts`), so a cancellation quote and the refund itself can never name different rails.
+
+| Rail       | Intent prefix | How value returns                                                                                                                                                |
+| ---------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GATEWAY`  | anything else | `refundPayment`: a Razorpay refund to the original instrument                                                                                                    |
+| `INTERNAL` | `org_`        | `refundInternalFundedPayment`: one Serializable transaction, no gateway call; the wallet is credited, the accrual leg netted, or the licence engagement restored |
+| `CREDITS`  | `free_`       | `refundFreeCreditPayment`: the referral credits are restored in full and a zero-amount `Refund` row records it; the credits rail accepts no amount               |
+
+`refundPayment` itself refuses a payment that is not gateway-funded or not `SUCCEEDED`. Callers should not call it directly.
+
+| Door                                          | Starts from                                                                      | `Refund.dedupeKey`                                                |
+| --------------------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Cancellation                                  | `POST /api/appointments/[appointmentId]/cancel`                                  | `cancel:<appointmentId>:<paymentId>`                              |
+| Whole event cancelled                         | `refundWholeEventPayments` and `stampWholeEventRefundsOwed` (`event-refunds.ts`) | A per-seat key scoped by the calling door                         |
+| Attendee removed, seat left                   | `refundRemovedAttendeeSeat`; `lib/booking/seat-leave.ts`                         | `seat-leave:<participantId>` or `seat-exit:<id>`                  |
+| Missed class session, series cancel           | `lib/booking/class-sessions.ts`                                                  | `occ:<occurrenceId>:pay:<paymentId>`, `series-cancel:<paymentId>` |
+| Consultant no-show, request rejection, expiry | `session-outcome-sweep.ts`, `rejection-refund.ts`, the expire sweeps             | `no-show:<slot>:<user>` and similar                               |
+| Platform incident                             | `refundIncidentSeat` (`incident-refunds.ts`)                                     | `incident:<incident>:<occurrence>:<user>`                         |
+| Support remedy                                | `executeApprovedRefund` (`lib/support/case-actions.ts`)                          | `case-recommendation:<recommendationId>`                          |
+| Admin refund and ladder override              | `POST /api/admin/refunds` and `/api/admin/refunds/issue` (step-up, ops log)      | `ops:<uuid from the dialog>`                                      |
+| Capture that funds no booking                 | `handlePaymentSuccess` Phase 2                                                   | The `Auto-refund pending:` marker, not a key                      |
+
+`Refund.dedupeKey` is unique. A repeat call with a spent key returns the first refund, and a `FAILED` or `CANCELLED` row releases its key for a retry (`findDedupedRefund`). Organisation top-up refunds are separate and are described in [wallet and top-ups](../50-b2b/02-wallet-and-top-ups.md).
+
+## 2. How much is refunded
+
+**The notice ladder.** A booking is bound at purchase to a `CancellationPolicy` version (`Appointment.cancellationPolicyId`), published and immutable, so an organisation editing its ladder later never changes a buyer's terms. With no policy row the platform default applies (`PLATFORM_DEFAULT_TIERS`, `lib/payments/operations/cancellation-policy.ts`): 100 % when the booking starts at least 24 hours away, 50 % at least 2 hours away, 0 % inside two hours. A consultant-initiated cancellation always refunds 100 %. Negative notice (already started) refunds nothing unless the consultant cancelled. A ladder may have up to six rungs and its last rung must start at 0 hours.
+
+**Proration and clamps.** `quoteBookingRefund` prices a 1:1 cancellation in four steps: notice (a booking never scheduled has infinite notice, not negative), the tier, proration for a subscription (the undelivered share of the price), and a clamp to the remaining refundable balance. A booking paid wholly with referral credit restores the credit in full for any non-zero tier rather than escalating, because the credits rail cannot pay a fraction; a zero tier still returns nothing.
+
+**Quote binding.** The cancel preview and the cancel route call the same function. The cancel click sends `expectedRefundPaise`; if the quote computed under the lock differs, the route refuses with `RefundQuoteChangedError` before anything commits, so a buyer is never refunded a different figure from the one they accepted.
+
+**Event seats.** A webinar or class seat cancelled at least `refundWindowHours` before the start refunds in full; inside the window it is refused. The host sets 24 to 168 hours on the plan and the seat keeps the window it was sold under. A class refund unit is the seat's amount divided by `sessionsPurchased`.
+
+### Worked example
+
+Charlotte Brown paid ₹1,180 (118,000 paise) for Hannah Anderson's 10:00 IST Monday consultation. She cancels at 11:00 IST Sunday, 23 hours ahead. 23 hours clears the 2-hour rung but not the 24-hour rung, so the tier is 50 % and the quote is 59,000 paise (₹590.00). The cancel transaction moves the appointment to `CANCELLED` by CAS and, in the same commit, stamps `Payment.refundOwedKey = cancel:<appointmentId>:<paymentId>` with `refundOwedPaise = 59000`. Straight after commit the route drives the marker: a `Refund` of 59,000 is reserved `PENDING`, Razorpay is called with the refund's id as its idempotency key, and the cascade runs. The cascade reverses 59,000 of the card leg, Hannah's `CONSULTANT_PAYABLE` by 40,000 (half of 80,000), `GST_PAYABLE` by 9,000, the platform fee by 10,000, and it mints a consumer credit note for ₹590.00. Had the same cancellation come from Hannah, the tier would be 100 % and the refund 118,000.
+
+## 3. The two-phase gateway refund
+
+`refundPayment` follows a fixed sequence so that a crash at any point leaves a row a sweep can finish, and the gateway is never called twice for one logical refund.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant D as Door
+  participant R as refundPayment
+  participant DB as Postgres
+  participant G as Razorpay
+  participant W as refund.processed webhook
+
+  D->>R: paymentId, amount, reason, dedupeKey
+  R->>DB: Phase 1, Serializable: re-check refundable and live disputes
+  R->>DB: create Refund PENDING, refundId pending_uuid
+  R->>G: Phase 2: refund, X-Refund-Idempotency = Refund.id, notes.reservationId
+  alt definitive refusal
+    R->>DB: Refund FAILED, key released
+  else ambiguous error
+    R->>DB: leave PENDING, reconcile-refunds resolves by lookup
+  else accepted
+    R->>DB: bind real refund id (adopt the webhook row if it won)
+    R->>DB: Phase 3, Serializable: PENDING to SUCCEEDED, then applyRefundCascade
+  end
+  W->>DB: may arrive first: binds the placeholder, runs the cascade
+```
+
+**Phase 1** runs in a Serializable transaction. It re-derives the refundable balance as `Payment.amount − (SUCCEEDED and PENDING refunds) − (disputes LOST or CHARGE_REFUNDED)` and refuses an amount above it (`AMOUNT_EXCEEDS_REFUNDABLE`), refuses while a dispute is live (`REFUND_BLOCKED_BY_DISPUTE`), and creates the `PENDING` row with a throwaway `pending_` id. Reading the dispute table inside the transaction makes serializable isolation abort the loser when a lost chargeback interleaves, which closes the double-reversal window. A database trigger is the final guard: `payment_refunds_within_amount` refuses any `Refund` write that would push refunds plus lost chargebacks above `Payment.amount`.
+
+**Phase 2** is outside any transaction, because external input/output must not sit inside one and a serialization retry must not call the gateway twice. `createRefund` posts to Razorpay over raw HTTP with a bounded timeout. The `X-Refund-Idempotency` header is the Phase 1 reservation id, so a retry returns the original refund; a malformed key is rejected rather than repaired, because a repaired key could collide with another refund. A concurrent duplicate is retried once after a second, but a "different request, same key" answer is surfaced as `REFUND_IDEMPOTENCY_KEY_REUSED`. The reservation id also travels in the gateway notes (`reservationId`) so a webhook can bind back to the exact row.
+
+**Phase 3** binds the real gateway refund id. The Razorpay webhook races the REST response, and if the webhook's row (unique on the real id) commits first, the bind hits a unique violation; the placeholder is retired and the surviving webhook row adopted (`retireSupersededPlaceholderTx`), which first re-points any support recommendation that references the placeholder, because that foreign key restricts deletion. When the gateway reports `processed`, one Serializable transaction does `UPDATE Refund SET status = SUCCEEDED WHERE id AND status = PENDING`, then runs `applyRefundCascade`, restores referral credits, and stages the refund-processed notification and email. A gateway answer that is still pending leaves the row `PENDING`; the webhook or the reconcile sweep completes it.
+
+```mermaid
+stateDiagram-v2
+  [*] --> PENDING: reserved
+  PENDING --> SUCCEEDED: gateway processed
+  PENDING --> FAILED: definitive refusal
+  PENDING --> CANCELLED: gateway cancelled
+  FAILED --> SUCCEEDED: late success event
+  SUCCEEDED --> [*]: cascadedAt set once
+```
+
+A `SUCCEEDED` refund is complete only when `cascadedAt` is set. The cascade claims it first (`UPDATE Refund SET cascadedAt = now() WHERE id AND cascadedAt IS NULL`), so the webhook, the Phase 3 transaction and the reconcile sweep can all try and exactly one does the work. If the cascade throws, its transaction rolls back and the claim reverts for a clean retry.
+
+## 4. The refund cascade
+
+`applyRefundCascade` (`lib/payments/operations/refund.ts`) is the single reversal engine. It runs inside the caller's Serializable transaction and is shared by the application path, the Razorpay webhook (`handleRefundCreated`) and the stranded-refund sweep. Its steps are:
+
+1. **Claim and clamp.** Claim `cascadedAt`. Then compute the payment's refundable balance from every other returned refund and every lost chargeback, and reverse at most that, recording `REFUND_CASCADE_CLAMPED` when it had to reduce the figure. This closes the window where a pending refund and a lost dispute would together reverse more than the payment.
+2. **Completion test.** A refund completes the payment when it plus the other `SUCCEEDED` refunds already cascaded reach `Payment.amount`. Only refunds already cascaded count, because an uncascaded refund has reversed nothing yet. A full refund also revokes replay-purchase access. A zero-value payment, or a parked capture whose only record is `UNAPPLIED_RECEIPTS`, takes a short path that reverses only utilisation and the parked cash.
+3. **Reverse the legs** in proportion, the last leg absorbing the remainder: `WALLET` credits the wallet back, accrual legs get a negative `*_REVERSAL` sibling if the invoice is unbilled, `LICENSE` is handled by the utilisation reversal, and `CARD` is the gateway's job. See [payment legs](../20-ledger/03-payment-legs.md).
+4. **Reverse booking utilisation**, restoring the engagement or credit-pool paise in proportion.
+5. **Reverse consultant earnings** with a compare-and-swap that caps the reversal at the share and asserts a legal status transition (`applyCappedEarningReversal`). A share already paid out in a `COMPLETED` payout accumulates a clawback of the net after withholding. Tax withheld on a paid share is reversed through `recordTdsReversal`. A subscription's rows are one tranche per cycle, and the clawback is taken newest tranche first.
+6. **Reverse organisation earnings** the same way, and record a clawback on the organisation payout when it has already completed.
+7. **Mint credit notes** for the invoiced portion: the organisation's GST credit note (`mintRefundCreditNote`) and the personal buyer's consumer credit note (`mintConsumerCreditNote`). Past the CGST s.34(2) cutoff the note is commercial and carries no tax. See [GST invoices and credit notes](../60-tax/02-gst-invoices-and-credit-notes.md).
+8. **Credit back overage** when the completing refund reverses a booking that carried a charged overage: a charge-the-organisation overage is flipped `REVERSED` once its credit note exists; a charge-the-member side payment is stamped refund-owed and refunded by its own cascade.
+9. **Write the audit row** for organisation-tagged payments.
+10. **Post the journal** `refund:<refundId>`, described below.
+
+Referral credits are restored outside the cascade, immediately after the refund row reads `SUCCEEDED`, because the restoration is sized by the cumulative `SUCCEEDED` refund total. The credit's value and expiry depend on who caused the refund ([referral credits](../20-ledger/07-referral-credits.md#5-refunds-and-restoring-credits)).
+
+### The journal and the remainder rule
+
+The `refund:<refundId>` journal is the booking reversed in proportion. Funding legs are credited back, the booked `DISCOUNT` is credited back pro rata with its funding, the consultant and organisation shares and GST are debited back, and `PLATFORM_FEE` takes the balancing plug. `refundReversalBasis` (`lib/payments/ledger/refund-reversal-basis.ts`) reads the payment's `DISCOUNT` and `GST_PAYABLE` lines to size the discount and GST already reversed.
+
+The refund that completes the payment takes the exact remainder of the consultant share, the organisation share, the GST and the `DISCOUNT`, instead of a floor of its own proportion. A payment refunded in one go or in several pieces therefore ends with every one of those shares at exactly zero, with no rounding left behind. A refund past the GST cutoff reverses no GST, so `GST_PAYABLE` keeps that part and the fee plug bears it. If the debit and credit totals ever differ, the cascade throws, records a `LEDGER` system error and rolls back; the refund is retried whole rather than half applied.
+
+The numbers, with a discount and a three-way split, are in [postings](../20-ledger/04-postings.md#7-refunds-refundrefundid).
+
+## 5. When a refund does not finish
+
+| Failure                                                     | Repair                                                                                                                                                                                                                |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Gateway call failed or the function died before the refund  | The door's marker is on `Payment` (`refundOwedKey`, `refundOwedPaise`, `refundOwedReason`). `retry-auto-refunds` drives it under its own key; after `MAX_REFUND_OWED_ATTEMPTS` (3) failures an operator is paged once |
+| Capture refund for a booking that was not confirmed         | The `Auto-refund pending:` description marker, drained by the same sweep; see [capture confirmation](../10-money-in/02-capture-confirmation-and-webhooks.md)                                                          |
+| `PENDING` placeholder with no real id (crash after Phase 2) | `reconcile-refunds` matches it to the gateway refund by the reservation id in the notes, never by guessing; it is failed only if the gateway listing succeeded and shows nothing after 24 hours                       |
+| `PENDING` row with a real id                                | `reconcile-refunds` polls it by id until Razorpay reports processed or failed; it is never aged out locally, because a normal refund legitimately takes days                                                          |
+| `SUCCEEDED` but `cascadedAt` still empty                    | `reconcile-refunds` re-drives the cascade for rows idle for 10 minutes, retiring a row to an operator after 3 failed re-drives                                                                                        |
+
+`stampRefundOwed` is first-writer-wins: a payment that already owes a refund keeps its marker, so two doors never share one. The marker is cleared by compare-and-swap on its key, and a marker the gateway reports as already fully refunded is settled rather than retried. A refund whose payment has a live dispute stays on the marker until the dispute resolves. Operators must never repair a refund by editing a `Refund` row by hand: every status move is compare-and-swap, and a hand edit defeats it. Use the sweep, or the admin refund door.
+
+## 6. Invariants
+
+| Rule                                                   | Enforcer                                                                                    | Test                                                     | Repair                               |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------ |
+| Refunds plus lost chargebacks never exceed the payment | `payment_refunds_within_amount` constraint trigger; the Phase 1 re-check; the cascade clamp | `__tests__/payments/refund-balance.test.ts`              | None; uncommittable                  |
+| One logical refund calls the gateway once              | `Refund.dedupeKey` unique; reservation id as `X-Refund-Idempotency`                         | `__tests__/payments/razorpay-refund-idempotency.test.ts` | `reconcile-refunds`                  |
+| A cascade runs once                                    | `cascadedAt` claim                                                                          | `__tests__/payments/refund-operation.test.ts`            | `reconcile-refunds` stranded pass    |
+| A paid-out share is clawed back, not lost              | `applyPaidConsultantClawbacks`; organisation payout clawback counter                        | `__tests__/payments/consultant-payout-clawback.test.ts`  | Recovery netted from the next payout |
+| A full refund reverses every share exactly             | `completesFullRefund` and `refundReversalBasis`                                             | `__tests__/payments/refund-discount-reversal.test.ts`    | None                                 |
+| A refund is never half applied                         | The cascade rethrows; the Serializable transaction rolls back                               | `__tests__/payments/refund-operation.test.ts`            | Gateway redelivery or the sweep      |
+| A binding race adopts the webhook row                  | `retireSupersededPlaceholderTx`                                                             | `__tests__/payments/refund-placeholder-retire.test.ts`   | None                                 |
+
+## Where in code
+
+- `lib/payments/operations/booking-refund.ts`, `refund.ts`, `refund-owed.ts`, `refund-placeholder.ts`, `cancellation-policy.ts`, `event-refunds.ts`, `incident-refunds.ts`.
+- `lib/payments/ledger/refund-reversal-basis.ts`.
+- `app/api/appointments/[appointmentId]/cancel/route.ts`, `app/api/webhooks/utils.ts` (`handleRefundCreated`).
+- `scripts/refunds/reconcile-pending-refunds.ts`, `scripts/payments/retry-auto-refunds.ts`.
+
+## Related
+
+- [Postings](../20-ledger/04-postings.md) for the refund journal numbers; [chargebacks](02-chargebacks.md); [service complaints](03-service-complaints-and-remedies.md).
+- [Scheduled jobs](../70-operations/01-scheduled-jobs.md); [money runbooks](../70-operations/05-money-runbooks.md).
+
+## Deprecated & Superseded Approaches
+
+A first design held the gateway call inside the database transaction, which keeps a connection open across a network call and re-calls the gateway on a serialization retry; a second moved the call outside with no reservation, which let two refunds race past the balance check. The reserve, call, settle sequence replaced both. An earlier account claimed refunds are not automatic and that an administrator posts to `/api/payments/refunds`; that route does not exist, the cancel route quotes and drives the refund itself, and a hand-written `UPDATE` of a `Refund` row as a repair step is banned. A cascade that "skipped and logged" a ledger imbalance was replaced by one that rolls back. A `cascade-refund-earnings` cron and a `release-pending-trust` cron were documented and never existed: the cascade runs inline. The refund fee-plug used to absorb the whole `DISCOUNT` and floor remainders; the discount now returns with its funding and the completing refund takes the remainder. Refund speed is no longer log-only: `refund.speed_changed` stores both speeds on `Refund.metadata`. Delete references to any of these.
