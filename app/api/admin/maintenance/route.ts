@@ -375,15 +375,21 @@ async function endMaintenance(request: NextRequest) {
   return NextResponse.json({ phase: "OFF", recovery, chat });
 }
 
-async function control<T>(run: () => Promise<T>): Promise<T | NextResponse> {
+async function control(
+  run: () => Promise<NextResponse>,
+): Promise<NextResponse> {
   const auth = await requireAdmin();
   if ("error" in auth && auth.error) return auth.error;
   try {
-    return await withCronLock(
+    const result = await withCronLock(
       "maintenance-control",
       { failMode: "closed", ttlMs: 120_000 },
-      run,
+      async () => {
+        const response = await run();
+        return { success: response.ok, response };
+      },
     );
+    return result.response;
   } catch (error) {
     if (error instanceof CronLockHeldError)
       return NextResponse.json(

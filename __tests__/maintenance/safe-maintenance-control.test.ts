@@ -89,6 +89,9 @@ it("rejects empty requests without changing state or calling a vendor", async ()
   expect((await DELETE(request({}))).status).toBe(400);
   expect(setState).not.toHaveBeenCalled();
   expect(incident).not.toHaveBeenCalled();
+  for (const result of lock.mock.results) {
+    await expect(result.value).resolves.toMatchObject({ success: false });
+  }
 });
 it("activates OFFLINE without invoking booking remediation", async () => {
   const result = await POST(
