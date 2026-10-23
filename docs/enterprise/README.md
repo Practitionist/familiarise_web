@@ -8,9 +8,9 @@ last-reviewed: 2026-06-12
 
 # Familiarise Enterprise — documentation
 
-The **enterprise layer** is a capability-driven B2B surface on top of the marketplace: organizations sponsor and/or host, fund sessions through wallets, invoices, or licenses, run programs with seat or credit caps, and settle money through a double-entry ledger. This folder is the engineer's map of that layer. The **banded folders** are written to be read **in order, as one continuous story**, with each band building on the last: `00-foundations/` → `10-money-and-ledger/` → `20-iam-and-security/` → `30-programs-and-lifecycle/` → `40-compliance-and-data/` → `50-operations/` → `60-scenarios-and-verdicts/`. One band sits outside the story line: `70-design-decisions/` collects the architecture decision records that explain _why_ the system is shaped the way it is. Audit findings and their status are tracked in GitHub issues, not in this folder.
+The **enterprise layer** is a capability-driven B2B surface on top of the marketplace: organizations sponsor and/or host, fund sessions through wallets, invoices, or licenses, run programs with seat or credit caps, and settle money through a double-entry ledger. This folder is the engineer's map of that layer. The **banded folders** are written to be read **in order, as one continuous story**, with each band building on the last: `00-foundations/` → [`docs/finance/`](../finance/README.md) → `20-iam-and-security/` → `30-programs-and-lifecycle/` → `40-compliance-and-data/` → `50-operations/` → `60-scenarios-and-verdicts/`. One band sits outside the story line: `70-design-decisions/` collects the architecture decision records that explain _why_ the system is shaped the way it is. Audit findings and their status are tracked in GitHub issues, not in this folder.
 
-> **New here?** Read the [overview](00-foundations/01-overview.md) for the system shape. For the end-to-end booking, organizational scoping, and money narrative across B2C and B2B, read [03-booking-and-money-machinery](../start-here/03-booking-and-money-machinery.md) first — the cross-rail visual guide with the data model, sequence, state, permission, and 20 double-entry ledger permutation tables — then start at [money-model-overview](../finance/20-ledger/01-double-entry-model.md) and walk the `10-money-and-ledger/` band in order. If you want a curated path matched to your experience level, use the [reading paths](#reading-paths-by-level) below.
+> **New here?** Read the [overview](00-foundations/01-overview.md) for the system shape. For the end-to-end booking, organizational scoping, and money narrative across B2C and B2B, read [03-booking-and-money-machinery](../start-here/03-booking-and-money-machinery.md) first — the cross-rail visual guide with the data model, sequence, state, permission, and 20 double-entry ledger permutation tables — then start at [money-model-overview](../finance/20-ledger/01-double-entry-model.md) and walk [`docs/finance/`](../finance/README.md) in order. If you want a curated path matched to your experience level, use the [reading paths](#reading-paths-by-level) below.
 
 ---
 
@@ -218,8 +218,8 @@ Every document in this tree opens with a YAML frontmatter block. The fields mean
 
 ```yaml
 ---
-title: Payout pipeline # mirrors the H1
-band: 10-money-and-ledger # the band folder slug; "index" for this README and the explainers
+title: Contract lifecycle # mirrors the H1
+band: 30-programs-and-lifecycle # the band folder slug; "index" for this README and the explainers
 audience: sde2 # sde1 | sde2 | sde3 | sde4 — the lowest level for whom this doc is primary reading
 status: live # live | partial | designed-not-active
 last-reviewed: 2026-06-05 # the date a human last verified this doc's claims against code

@@ -147,7 +147,7 @@ Auto-allocation itself has no client-side engine: the client submits `isAuto: tr
 | Read the Muse Spark booking sweep's verdict split, money P0s and follow-ups    | [engineering-log-2026-09-19-muse-spark-sweep.md](./engineering-log-2026-09-19-muse-spark-sweep.md)                                                                             |
 | Understand why an approval pay-link now charges GST                            | [../decisions/2026-09-19-pay-link-gst-parity.md](../decisions/2026-09-19-pay-link-gst-parity.md)                                                                               |
 | Understand booking mode, the pay-link window, request caps and the grid states | [../enterprise/70-design-decisions/33-booking-mode-pay-link-window-and-request-caps.md](../enterprise/70-design-decisions/33-booking-mode-pay-link-window-and-request-caps.md) |
-| Understand the payment system                                                  | [../payments/01-architecture.md](../payments/01-architecture.md)                                                                                                               |
+| Understand the payment system                                                  | [../finance/00-overview/01-money-map.md](../finance/00-overview/01-money-map.md)                                                                                               |
 | Check the database schema                                                      | [../../prisma/schema.prisma](../../prisma/schema.prisma)                                                                                                                       |
 
 ## Recommended Reading Order
@@ -172,7 +172,7 @@ Then reference these as needed:
 
 ## Related Documentation
 
-- **Payments**: [../payments/README.md](../payments/README.md) -- Payment architecture, checkout flows, refunds, payouts
+- **Payments**: [../finance/README.md](../finance/README.md) -- Payment architecture, checkout flows, refunds, payouts
 - **Notifications**: [../notifications/README.md](../notifications/README.md) -- Novu workflows triggered by booking events
 - **Agent-run booking test corpus**: `prompts/booking-algorithm-tests/` -- the E2E prompt corpus that exercises this subsystem; scenario prompts and the harness that runs them
 - **Booking-specific Claude Code skills**: `.claude/skills/booking/` -- doctrine and workflow skills for agents working in this subsystem
