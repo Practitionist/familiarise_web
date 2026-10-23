@@ -19,7 +19,7 @@ the org-create transaction; operator profiles come from `createOperator()`.
 | `ConsulteeProfile`    | Platform learner — goals, career stage, aboutMe.                                                                                    | `consulteeProfileId`    | `/form/onboarding` (CONSULTEE), or **lazily** via `ensureConsulteeProfile(db, userId)` from checkout, slot request-for-approval, and LEARNER invite accept. |
 | `StaffProfile`        | Platform operator (support / moderation / ops).                                                                                     | `staffProfileId`        | `createOperator()` (operators arrive already onboarded).                                                                                                    |
 | `AdminProfile`        | Platform admin.                                                                                                                     | `adminProfileId`        | `createOperator()`.                                                                                                                                         |
-| `OrgWorkspaceProfile` | One row per user who operates an org. Mirrors `StaffProfile` / `AdminProfile` structure. Backs `/dashboard/org-workspace/:id/home`. | `orgWorkspaceProfileId` | `POST /api/organizations` (inside the create transaction) and by the `prisma/scripts/backfill-org-workspace-profiles.ts` one-shot for existing OWNERs.      |
+| `OrgWorkspaceProfile` | One row per user who operates an org. Mirrors `StaffProfile` / `AdminProfile` structure. Backs `/dashboard/org-workspace/:id/home`. | `orgWorkspaceProfileId` | `POST /api/organizations` (inside the create transaction).                                                                                                  |
 
 ### Lazy ConsulteeProfile (Arch-4)
 
@@ -50,7 +50,7 @@ inside the same transaction that creates the `Organization`,
 transaction also completes onboarding, §2), and returns the
 `orgWorkspaceProfileId` on the response body so the client can
 immediately navigate to `/dashboard/org-workspace/:id/home`. See
-`docs/enterprise/12-dashboard-pages.md` for the operator home route.
+`docs/enterprise/30-programs-and-lifecycle/04-dashboard-pages.md` for the operator home route.
 
 ### EXPERT invite accept stays strict (no placeholder)
 
@@ -1150,7 +1150,7 @@ whole design.
 | `lib/profiles/profile-completion.ts`                     | `calculateProfileCompletion()` / `recomputeProfileCompletion()` (#698 OB-1)                       |
 | `utils/scheduling-engine/slotTimeUtils.ts`               | Slot overlap detection, time validation, `getTimezoneOffsetMinutes()`                             |
 | `utils/scheduling-engine/interval-validation.ts`         | `isValidTimeRange()` — duration bounds (30min–12h)                                                |
-| `lib/novu.ts`                                            | `notifyNewConsultantApplication()` — admin notifications                                          |
+| `lib/novu/service.ts`                                    | `notifyNewConsultantApplication()` — admin notifications                                          |
 | `prisma/schema.prisma`                                   | All model definitions                                                                             |
 
 ---
