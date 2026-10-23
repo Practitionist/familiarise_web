@@ -51,6 +51,7 @@ export const FINANCIAL_JOB_NAMES = new Set([
   "auto-renew-contracts",
   "dunning",
   "timeout-member-overages",
+  "sweep-abandoned-overage-charges",
   "advance-program-cycles",
   "expire-contracts",
   // Registers IRNs with the government portal and writes the resulting IRP
