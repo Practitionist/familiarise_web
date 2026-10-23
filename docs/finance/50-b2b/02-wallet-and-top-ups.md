@@ -28,18 +28,19 @@ stateDiagram-v2
     [*] --> PENDING: POST top-ups (initiateTopUp) mints order, row
     PENDING --> CONFIRMED: payment.captured, confirmTopUp claim
     PENDING --> [*]: abandoned-org-top-ups deletes after 48 h if the order holds no payment
-    CONFIRMED --> [*]: Dr GATEWAY_CLEARING, Cr WALLET posted
+    CONFIRMED --> [*]: Dr GATEWAY_CLEARING, Cr ORG_RECEIVABLE then WALLET
 ```
 
 1. **Initiate.** `POST /api/organizations/[orgId]/billing-account/wallet/top-ups` needs a `WALLET` billing account (404 otherwise), a minimum of ₹100 (10,000 paise), and accepts an optional `clientIdempotencyKey` (a UUID) so a double click reuses the pending row. It mints a Razorpay order and writes a `PENDING` `WalletTopUp` keyed by `providerOrderId`. A missing gateway key answers 503 rather than pretending money was charged. No journal exists yet.
 2. **Pay.** The organisation admin completes Razorpay checkout.
 3. **Confirm.** `payment.captured` reaches `handleOrgPaymentSuccess` (`app/api/webhooks/utils.ts`), where the order's `notes.type` is `credit_purchase`. It first compares `notes.amountPaise` to the amount the gateway actually captured and, on a mismatch, writes an audit row and refuses to credit (answering 200 so Razorpay stops retrying). Otherwise it calls `confirmTopUp`.
-4. **`confirmTopUp`.** Before its transaction it stamps `capturedAt` and `providerPaymentId` on the row outside the transaction, so the trace of captured money survives a rollback. Inside one transaction a single conditional `updateMany` flips `PENDING` to `CONFIRMED`; only one racing delivery sees a count of 1, and a redelivery is a no-op that returns the current balance. It then refuses to credit if the confirmed amount differs from the authorised `amountPaise`, and calls `walletCredit`, which raises the cache and posts the top-up journal.
+4. **`confirmTopUp`.** Before its transaction it stamps `capturedAt` and `providerPaymentId` on the row outside the transaction, so the trace of captured money survives a rollback. Inside one transaction a single conditional `updateMany` flips `PENDING` to `CONFIRMED`; only one racing delivery sees a count of 1, and a redelivery is a no-op that returns the current balance. It then refuses to credit if the confirmed amount differs from the authorised `amountPaise`, row-locks the billing account, and settles the organisation's open shortfall receivable first: the net `ORG_RECEIVABLE` debit under `overage-restore:`, `topup-refund-shortfall:` and `chargeback:` keys (invoice accruals are excluded). Only the rest raises the cache through `walletCredit`, and the receipt email shows the settled amount.
 
 ```
 LedgerTransaction  kind TOPUP   key topup:<providerOrderId>
-  Dr GATEWAY_CLEARING   amountPaise     (Razorpay holds the cash for the platform)
-  Cr WALLET(org)        amountPaise     (the platform now owes the organisation)
+  Dr GATEWAY_CLEARING     amountPaise   (Razorpay holds the cash for the platform)
+  Cr ORG_RECEIVABLE(org)  settled       (open shortfall paid down first; omitted when zero)
+  Cr WALLET(org)          the rest      (the platform now owes the organisation)
 ```
 
 The transaction is idempotent twice: the status claim and the unique journal key. Card money is debited to `GATEWAY_CLEARING`, not `CASH`; the daily `reconcile-gateway-settlements` run later moves the net to `CASH`.

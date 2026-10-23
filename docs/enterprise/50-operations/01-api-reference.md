@@ -301,7 +301,7 @@ These two routes expose the org's Stream chat and video metadata; the call/recor
 
 ## Platform admin money doors
 
-The routes under `/api/admin/` that move money, hold money or run a money job are for Familiarise operators, not for members of an organisation. They share one shell, `withOpsAction()`, and one set of rules (surface, 15-minute step-up, reason, one ops-log row, second admin above ₹25,000). The rules, the door index with each route's surface and second-approver status, and the thresholds are in [admin money doors](../../finance/70-operations/02-admin-money-doors.md).
+The routes under `/api/admin/` that move money, hold money or run a money job are for Familiarise operators, not for members of an organisation. They share one shell, `withOpsAction()`, which applies each route's own rules (surface, 15-minute step-up, reason, one ops-log row and, on most doors, a second admin above ₹25,000); some doors are exempt from the step-up or the second approval. The rules, the door index with each route's surface and second-approver status, and the thresholds are in [admin money doors](../../finance/70-operations/02-admin-money-doors.md).
 
 ## Retired audit actions
 

@@ -160,7 +160,7 @@ you have 30 days of traffic data.
 
 ### Critical (page on-call immediately)
 
-The money alerts (webhook backlog, ledger reconciler and wallet drift, signature failures, payout crashes, cycle-engine and renewal stalls, overage, dunning, wallet floor, IRP and MSME) are mapped to their conditions and runbooks in [money runbooks](../../finance/70-operations/05-money-runbooks.md#alerts-that-lead-to-a-runbook). The rows below are the platform alerts that are not about money.
+The money alerts (webhook backlog, ledger reconciler and wallet drift, signature failures, payout crashes, cycle-engine and renewal stalls, overage, dunning, wallet floor, IRP and MSME) are mapped to their conditions and runbooks in [money runbooks](../../finance/70-operations/05-money-runbooks.md#alerts-that-lead-to-a-runbook). The rows below are the platform alerts that are not about money, plus the subscription cron crash, which is a money alert remediated by money runbook 7.
 
 Every row here represents a condition where money integrity, subscription continuity, or cycle correctness is at risk; each cell links to the runbook section that contains the remediation steps.
 

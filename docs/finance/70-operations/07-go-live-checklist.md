@@ -61,7 +61,7 @@ COMMIT;
 
 ### 1.6 Proof for collection: two live ₹1 tests
 
-1. **₹1.00 checkout.** Pay ₹1 by UPI. Confirm the `Payment` is `SUCCEEDED`, the appointment is confirmed, the consumer tax invoice number is at most 16 characters, and `SELECT COALESCE(SUM(debit) - SUM(credit), 0) FROM "LedgerEntry"` is `0`.
+1. **₹1.00 checkout.** Pay ₹1 by UPI. Confirm the `Payment` is `SUCCEEDED`, the appointment is confirmed, the consumer tax invoice number is at most 16 characters, and `SELECT COALESCE(SUM(CASE WHEN direction = 'DEBIT' THEN "amountPaise" ELSE -"amountPaise" END), 0) FROM "LedgerEntry"` is `0`.
 2. **₹1.00 full refund.** Cancel the same booking for a full refund. Confirm the `Refund` becomes `SUCCEEDED` through the live `refund.processed` webhook, the credit note number is at most 16 characters, and the ledger imbalance is still `0`.
 
 ## Part 2: paying out real money (RazorpayX)

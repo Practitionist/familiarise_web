@@ -39,10 +39,10 @@ flowchart LR
   START --> OBS["docs/observability/<br/>Sentry · SystemEvent · GitHub Actions failure sink"]
 ```
 
-| Domain            | Entry Point                                                      | When to Read                                                                                                                    |
-| ----------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| **Booking**       | [`docs/booking/README.md`](../booking/README.md)                 | Modifying slot validation, the allocator (`lib/booking/allocation`), rescheduling, cancellations, or recurring series math.     |
-| **Finance**       | [`docs/finance/README.md`](../finance/README.md)                 | Working on Razorpay checkout, `PaymentLeg`, the ledger, refunds, disputes, payouts, organisation funding, or the Money console. |
-| **Enterprise**    | [`docs/enterprise/README.md`](../enterprise/README.md)           | Working on organizations, SSO/JIT, contracts, programs, sponsor wallets, B2B invoicing, or the ledger.                          |
-| **Compliance**    | [`docs/compliance/00-overview.md`](../compliance/00-overview.md) | Touching GST, TDS (section 194-O), RBI Payment Aggregator rules, DPDP erasure, or MSME ageing.                                  |
-| **Observability** | [`docs/observability/`](../observability/)                       | Adding Sentry instrumentation, triaging production issues, or inspecting `SystemEvent` / cron failure sinks.                    |
+| Domain            | Entry Point                                                      | When to Read                                                                                                                                    |
+| ----------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Booking**       | [`docs/booking/README.md`](../booking/README.md)                 | Modifying slot validation, the allocator (`lib/booking/allocation`), rescheduling, cancellations, or recurring series math.                     |
+| **Finance**       | [`docs/finance/README.md`](../finance/README.md)                 | Working on Razorpay checkout, `PaymentLeg`, the ledger, refunds, disputes, payouts, organisation funding, or the Money console.                 |
+| **Enterprise**    | [`docs/enterprise/README.md`](../enterprise/README.md)           | Working on organizations, SSO/JIT, contracts, programs, sponsor wallets, B2B invoicing, or the ledger.                                          |
+| **Compliance**    | [`docs/compliance/00-overview.md`](../compliance/00-overview.md) | Touching GST, TDS (section 194-O, section 393(1) Table Sl. 8(v) from 1 April 2026), RBI Payment Aggregator rules, DPDP erasure, or MSME ageing. |
+| **Observability** | [`docs/observability/`](../observability/)                       | Adding Sentry instrumentation, triaging production issues, or inspecting `SystemEvent` / cron failure sinks.                                    |
