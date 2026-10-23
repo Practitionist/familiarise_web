@@ -1517,7 +1517,7 @@ export async function applyRefundCascade(
 
     // Clawback: if this earnings row was already rolled into a payout
     // and that payout is COMPLETED (bank wire left), record the
-    // clawback on the payout itself. Manual recovery only in v1.
+    // clawback on the payout itself; the next payout nets it.
     if (
       orgEarn.orgPayoutId &&
       orgEarn.orgPayout?.status === "COMPLETED" &&

@@ -158,7 +158,7 @@ import {
   recoverClawbackOnPayout,
 } from "@/lib/payments/payouts/clawback-recovery";
 
-const CASH = "CASH|_|_|INR";
+const ORG_RECEIVABLE = "ORG_RECEIVABLE|org_1|_|INR";
 const ORG_PAYABLE = "ORG_PAYABLE|org_1|_|INR";
 const payee = { rail: "ORG" as const, organizationId: "org_1" };
 const journal = (
@@ -183,7 +183,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   ledger.length = 0;
   // op_0 completed; a ₹400 refund on one of its earnings raised a clawback on it.
-  journal("clawback:rf_1:op_0", "op_0", CASH, ORG_PAYABLE, 40_000);
+  journal("clawback:rf_1:op_0", "op_0", ORG_RECEIVABLE, ORG_PAYABLE, 40_000);
 });
 
 it("voids the whole clawback when nothing recovered it, so the next payout nets nothing", async () => {
@@ -205,7 +205,13 @@ it("voids the whole clawback when nothing recovered it, so the next payout nets 
 
 it("voids only the remainder once a later payout recovered part of it, and alerts", async () => {
   // op_1 already netted ₹250 of the ₹400 before the bank returned op_0.
-  journal("clawback-recovery:op_1", "op_1", ORG_PAYABLE, CASH, 25_000);
+  journal(
+    "clawback-recovery:op_1",
+    "op_1",
+    ORG_PAYABLE,
+    ORG_RECEIVABLE,
+    25_000,
+  );
 
   await markOrgPayoutReversed("op_0", "bank returned funds");
 

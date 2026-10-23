@@ -45,10 +45,9 @@ type ReversalSource =
   // An overage side-charge — itself a Payment (parentPaymentId-linked), so it
   // reverses through the booking cascade on that payment id.
   | { kind: "OVERAGE"; overagePaymentId: string }
-  // Gateway-side payout clawback (e.g. a lost dispute on an org-funded booking).
+  // Clawback of a host org's share already paid out, booked as a receivable.
   | { kind: "PAYOUT_CLAWBACK"; orgPayoutId: string; organizationId: string }
-  // Consultant mirror of PAYOUT_CLAWBACK; cash cannot be pulled on this rail,
-  // so the recovery is booked as a receivable.
+  // Consultant mirror of PAYOUT_CLAWBACK, also booked as a receivable.
   | {
       kind: "CONSULTANT_CLAWBACK";
       consultantPayoutId: string;
@@ -151,10 +150,8 @@ export async function applyReversal(
 }
 
 /**
- * Gateway-side payout clawback. The original payout posted
- * `Dr ORG_PAYABLE / Cr CASH`; clawback recovers cash:
- * `Dr CASH / Cr ORG_PAYABLE`. Idempotent on `clawback:<refundId>:<payoutId>`.
- * Stamps the clawback amount/timestamp on the payout and writes an audit row.
+ * Org payout clawback: no cash comes back, so the debt is booked as a
+ * receivable netted from the next payout. Stamps the payout counter and audits.
  */
 async function reversePayoutClawback(
   tx: Tx,
@@ -215,11 +212,8 @@ async function reversePayoutClawback(
 }
 
 /**
- * The clawback journal: `Dr CASH / Cr ORG_PAYABLE`, idempotent on
- * `clawback:<refundId>:<payoutId>`. #1582 C-P1-02c — shared by the dispute
- * path and both refund paths so the counter the reconciler compares against
- * (`stepClawbackGap`) always has a matching posting. INR-only, so the ledger
- * account currency is left unset as post.ts documents.
+ * The org clawback journal `Dr ORG_RECEIVABLE / Cr ORG_PAYABLE`, idempotent on
+ * `clawback:<driver>:<payoutId>`; every writer of `clawbackAmountPaise` posts it.
  */
 export async function postPayoutClawback(
   tx: Tx,
@@ -240,11 +234,12 @@ export async function postPayoutClawback(
       payoutId,
       postings: [
         {
-          account: { kind: "CASH" },
+          account: { kind: "ORG_RECEIVABLE", organizationId },
           direction: "DEBIT",
           amountPaise,
         },
         {
+          // Reclassifies the debit the refund or chargeback left on the payable.
           account: { kind: "ORG_PAYABLE", organizationId },
           direction: "CREDIT",
           amountPaise,
