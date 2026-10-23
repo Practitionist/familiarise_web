@@ -155,6 +155,12 @@ function isEcoSection(section: string): boolean {
   return section === "194O" || section === "393-8(v)";
 }
 
+/** 194-O and its IT Act 2025 successor 393-8(v) are one section across the cutover. */
+export function equivalentTdsSections(section: string): string[] {
+  if (!isEcoSection(section)) return [section];
+  return [section, section === "194O" ? "393-8(v)" : "194O"];
+}
+
 function defaultThresholdPaiseForSection(
   section: string,
   lawCode: "IT1961" | "IT2025",
@@ -199,9 +205,7 @@ export async function resolveEffectiveTdsRate(
   const defaultLawCode: "IT1961" | "IT2025" =
     atDate >= IT2025_EFFECTIVE_FROM ? "IT2025" : "IT1961";
 
-  const candidateSections = isEcoSection(normalizedSection)
-    ? [normalizedSection, normalizedSection === "194O" ? "393-8(v)" : "194O"]
-    : [normalizedSection];
+  const candidateSections = equivalentTdsSections(normalizedSection);
 
   if (typeof db?.tdsRate?.findFirst === "function") {
     try {
