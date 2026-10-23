@@ -198,7 +198,7 @@ A lost dispute settles in `settleLostDispute` (`app/api/webhooks/utils.ts`). The
 
 - **Card-funded (personal or organisation-tagged):** `applyB2cChargebackReversal` reads the payment's `booking:<paymentId>` entries, flips each direction and floor-scales it by the reversed fraction, and balances the rounding residual on `PLATFORM_FEE`. For a total loss of booking 1: `Dr PLATFORM_FEE 20,000`, `Dr CONSULTANT_PAYABLE 80,000`, `Dr GST_PAYABLE 18,000`, `Cr GATEWAY_CLEARING 118,000`. For a half loss (59,000 deducted) every line halves. Past the GST cutoff the GST line is omitted and the fee absorbs it.
 - **Organisation-funded (wallet or invoice legs):** the funder bears it. `Dr WALLET(org)` if the wallet can cover the amount and is debited, otherwise `Dr ORG_RECEIVABLE`, against `Cr GATEWAY_CLEARING`.
-- **A consultant share already paid out** is reclassified, not recovered inline: `Dr CONSULTANT_RECEIVABLE / Cr CONSULTANT_PAYABLE` for the net of withholding, key `clawback:dispute:<disputeRowId>:<payoutId>`, and recovered from the next payout. A host organisation's share already paid posts `Dr ORG_RECEIVABLE / Cr ORG_PAYABLE` under the same key shape.
+- **A consultant share already paid out** is reclassified, not recovered inline: `Dr CONSULTANT_RECEIVABLE / Cr CONSULTANT_PAYABLE` for the net of withholding, key `clawback:dispute:<disputeRowId>:<payoutId>`, and recovered from the next payout. A host organisation's share already paid posts `Dr ORG_RECEIVABLE / Cr ORG_PAYABLE` for the net of withholding under the same key shape.
 
 See [chargebacks](../30-refunds-disputes/02-chargebacks.md) for the lifecycle that decides when this runs.
 

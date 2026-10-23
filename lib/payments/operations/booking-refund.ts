@@ -82,7 +82,11 @@ import {
   attemptStaged as attemptStagedEmails,
   type StagedRecipientEmail,
 } from "@/lib/email/send-to-recipients";
-import { applyReversal, postPayoutClawback } from "./reversal-engine";
+import {
+  applyReversal,
+  orgClawbackNetOfTds,
+  postPayoutClawback,
+} from "./reversal-engine";
 import {
   accumulatePaidConsultantClawback,
   applyPaidConsultantClawbacks,
@@ -739,7 +743,13 @@ async function reverseFreeCreditSettlement(
           refundedAmountPaise: true,
           status: true,
           orgPayoutId: true,
-          orgPayout: { select: { status: true, clawbackInitiatedAt: true } },
+          orgPayout: {
+            select: {
+              status: true,
+              clawbackInitiatedAt: true,
+              netPayoutPaise: true,
+            },
+          },
         },
       },
     },
@@ -847,10 +857,17 @@ async function reverseFreeCreditSettlement(
       orgEarn.orgPayout?.status === "COMPLETED" &&
       orgApplied > 0
     ) {
+      const clawbackPaise = await orgClawbackNetOfTds(tx, {
+        orgPayoutId: orgEarn.orgPayoutId,
+        organizationId: orgEarn.organizationId,
+        grossPaise: orgApplied,
+        netPayoutPaise: orgEarn.orgPayout.netPayoutPaise,
+        refundId: input.refundId,
+      });
       await tx.organizationPayout.update({
         where: { id: orgEarn.orgPayoutId },
         data: {
-          clawbackAmountPaise: { increment: orgApplied },
+          clawbackAmountPaise: { increment: clawbackPaise },
           clawbackInitiatedAt: orgEarn.orgPayout.clawbackInitiatedAt
             ? undefined
             : new Date(),
@@ -862,13 +879,13 @@ async function reverseFreeCreditSettlement(
           actorMembershipId: null,
           category: "PAYOUT",
           action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
-          description: `Credit-funded cancellation clawback: ${orgApplied} paise from payout ${orgEarn.orgPayoutId}`,
+          description: `Credit-funded cancellation clawback: ${clawbackPaise} paise from payout ${orgEarn.orgPayoutId}`,
           details: {
             paymentId: input.paymentId,
             refundId: input.refundId,
             orgEarningsId: orgEarn.id,
             orgPayoutId: orgEarn.orgPayoutId,
-            amountPaise: orgApplied,
+            amountPaise: clawbackPaise,
             initiatedByUserId: input.initiatedByUserId,
           } as Prisma.InputJsonValue,
         },
@@ -880,7 +897,7 @@ async function reverseFreeCreditSettlement(
       await postPayoutClawback(tx, {
         refundId: input.refundId,
         payoutId: orgEarn.orgPayoutId,
-        amountPaise: orgApplied,
+        amountPaise: clawbackPaise,
         organizationId: orgEarn.organizationId,
       });
     }

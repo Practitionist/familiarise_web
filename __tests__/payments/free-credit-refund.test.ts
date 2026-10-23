@@ -122,6 +122,9 @@ jest.mock("../../lib/payments/operations/reversal-engine", () => ({
   postPayoutClawback: jest.requireActual(
     "../../lib/payments/operations/reversal-engine",
   ).postPayoutClawback,
+  orgClawbackNetOfTds: jest.requireActual(
+    "../../lib/payments/operations/reversal-engine",
+  ).orgClawbackNetOfTds,
 }));
 
 const mockRestoreUpTo = jest.fn(
@@ -159,6 +162,8 @@ jest.mock("../../lib/payments/payouts/earning-status", () => ({
 
 jest.mock("../../lib/payments/tax/tds-service", () => ({
   recordTdsReversal: (...a: unknown[]) => mockRecordTdsReversal(...a),
+  // No org TDS withheld in these fixtures, so the clawback is the whole share.
+  recordOrgTdsReversal: jest.fn().mockResolvedValue(null),
 }));
 
 // Captured, not executed: the balance assertion below re-derives what the

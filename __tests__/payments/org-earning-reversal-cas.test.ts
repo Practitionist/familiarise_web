@@ -43,6 +43,8 @@ jest.mock("../../lib/payments/ledger/refund-reversal-basis", () =>
 );
 jest.mock("../../lib/payments/tax/tds-service", () => ({
   recordTdsReversal: (...a: unknown[]) => mockRecordTdsReversal(...a),
+  // No org TDS withheld in these fixtures, so the clawback is the whole share.
+  recordOrgTdsReversal: jest.fn().mockResolvedValue(null),
 }));
 
 jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
@@ -100,6 +102,9 @@ jest.mock("../../lib/payments/operations/reversal-engine", () => ({
   postPayoutClawback: jest.requireActual(
     "../../lib/payments/operations/reversal-engine",
   ).postPayoutClawback,
+  orgClawbackNetOfTds: jest.requireActual(
+    "../../lib/payments/operations/reversal-engine",
+  ).orgClawbackNetOfTds,
 }));
 
 const tx: Record<string, Record<string, jest.Mock>> = {

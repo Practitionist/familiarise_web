@@ -39,7 +39,10 @@ import {
   releaseClawbackRecovery,
   voidClawbacksRaisedOnPayout,
 } from "./clawback-recovery";
-import { postPayoutClawback } from "@/lib/payments/operations/reversal-engine";
+import {
+  orgClawbackNetOfTds,
+  postPayoutClawback,
+} from "@/lib/payments/operations/reversal-engine";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { PAYOUT_ALLOWED_FROM } from "@/lib/enterprise/transitions";
 import {
@@ -1233,7 +1236,8 @@ type OrgPayoutCompletionShortfall = {
   netPayoutPaise: number;
 };
 
-async function detectAndAccrueOrgPayoutCompletionShortfall(
+/** Read-only: what the batch's earnings owe less than the payout sent, or null. */
+async function detectOrgPayoutCompletionShortfall(
   tx: Tx,
   payout: {
     id: string;
@@ -1258,34 +1262,47 @@ async function detectAndAccrueOrgPayoutCompletionShortfall(
   if (owedPaise >= payout.netPayoutPaise) {
     return null;
   }
-  const shortfallPaise = payout.netPayoutPaise - owedPaise;
+  return {
+    organizationId: payout.organizationId,
+    shortfallPaise: payout.netPayoutPaise - owedPaise,
+    owedPaise,
+    netPayoutPaise: payout.netPayoutPaise,
+  };
+}
+
+/** Claws the shortfall back net of its TDS; runs after the completion TDSRecord exists. */
+async function accrueOrgPayoutCompletionShortfall(
+  tx: Tx,
+  payoutId: string,
+  shortfall: OrgPayoutCompletionShortfall,
+): Promise<void> {
+  const clawbackPaise = await orgClawbackNetOfTds(tx, {
+    orgPayoutId: payoutId,
+    organizationId: shortfall.organizationId,
+    grossPaise: shortfall.shortfallPaise,
+    netPayoutPaise: shortfall.netPayoutPaise,
+  });
   if (typeof tx.organizationPayout?.update === "function") {
     await tx.organizationPayout.update({
-      where: { id: payout.id },
+      where: { id: payoutId },
       data: {
-        clawbackAmountPaise: { increment: shortfallPaise },
+        clawbackAmountPaise: { increment: clawbackPaise },
       },
     });
   } else {
     await tx.organizationPayout.updateMany({
-      where: { id: payout.id },
+      where: { id: payoutId },
       data: {
-        clawbackAmountPaise: { increment: shortfallPaise },
+        clawbackAmountPaise: { increment: clawbackPaise },
       },
     });
   }
   await postPayoutClawback(tx, {
-    refundId: `shortfall:${payout.id}`,
-    payoutId: payout.id,
-    amountPaise: shortfallPaise,
-    organizationId: payout.organizationId,
+    refundId: `shortfall:${payoutId}`,
+    payoutId,
+    amountPaise: clawbackPaise,
+    organizationId: shortfall.organizationId,
   });
-  return {
-    organizationId: payout.organizationId,
-    shortfallPaise,
-    owedPaise,
-    netPayoutPaise: payout.netPayoutPaise,
-  };
 }
 
 async function recordOrgPayoutCompletionTdsInTx(
@@ -1507,8 +1524,10 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
           data: { status: "PAID" },
         });
 
-        const completionShortfall =
-          await detectAndAccrueOrgPayoutCompletionShortfall(tx, payout);
+        const completionShortfall = await detectOrgPayoutCompletionShortfall(
+          tx,
+          payout,
+        );
 
         await tx.orgAuditLog.create({
           data: {
@@ -1553,6 +1572,14 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
             payout,
             orgTds,
             orgTdsRateBps,
+            completionShortfall?.shortfallPaise ?? 0,
+          );
+        }
+        if (completionShortfall) {
+          await accrueOrgPayoutCompletionShortfall(
+            tx,
+            payoutId,
+            completionShortfall,
           );
         }
 

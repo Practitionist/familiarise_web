@@ -36,6 +36,7 @@ import { Prisma } from "@prisma/client";
 import { applyRefundCascade, type ApplyRefundCascadeResult } from "./refund";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { ORG_CLAWBACK_KEY_PREFIX } from "@/lib/payments/payouts/clawback-recovery";
+import { recordOrgTdsReversal } from "@/lib/payments/tax/tds-service";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 
@@ -150,8 +151,8 @@ export async function applyReversal(
 }
 
 /**
- * Org payout clawback: no cash comes back, so the debt is booked as a
- * receivable netted from the next payout. Stamps the payout counter and audits.
+ * Org payout clawback, net of the TDS reversed on the share: no cash comes back,
+ * so the debt is a receivable netted from the next payout. Stamps the counter.
  */
 async function reversePayoutClawback(
   tx: Tx,
@@ -163,7 +164,7 @@ async function reversePayoutClawback(
 
   const payout = await tx.organizationPayout.findUnique({
     where: { id: orgPayoutId },
-    select: { id: true, clawbackInitiatedAt: true },
+    select: { id: true, clawbackInitiatedAt: true, netPayoutPaise: true },
   });
   if (!payout) {
     reportSentryMessage(
@@ -177,10 +178,17 @@ async function reversePayoutClawback(
     return false;
   }
 
+  const clawbackPaise = await orgClawbackNetOfTds(tx, {
+    orgPayoutId,
+    organizationId,
+    grossPaise: input.amountPaise,
+    netPayoutPaise: payout.netPayoutPaise,
+  });
+
   await tx.organizationPayout.update({
     where: { id: orgPayoutId },
     data: {
-      clawbackAmountPaise: { increment: input.amountPaise },
+      clawbackAmountPaise: { increment: clawbackPaise },
       clawbackInitiatedAt: payout.clawbackInitiatedAt ? undefined : new Date(),
     },
   });
@@ -191,11 +199,12 @@ async function reversePayoutClawback(
       actorMembershipId: null,
       category: "PAYOUT",
       action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
-      description: `Payout clawback: ${input.amountPaise} paise from payout ${orgPayoutId} (${input.reason})`,
+      description: `Payout clawback: ${clawbackPaise} paise from payout ${orgPayoutId} (${input.reason})`,
       details: {
         refundId: input.refundId,
         orgPayoutId,
         amountPaise: input.amountPaise,
+        clawbackAmountPaise: clawbackPaise,
         initiatedByUserId: input.initiatedByUserId ?? null,
       } as Prisma.InputJsonValue,
     },
@@ -204,11 +213,38 @@ async function reversePayoutClawback(
   await postPayoutClawback(tx, {
     refundId: input.refundId,
     payoutId: orgPayoutId,
-    amountPaise: input.amountPaise,
+    amountPaise: clawbackPaise,
     organizationId,
   });
 
   return true;
+}
+
+/**
+ * Reverses the TDS the org payout withheld on a reversed share, pro rata to its
+ * net, and returns the clawback net of it: the org never received that tax.
+ */
+export async function orgClawbackNetOfTds(
+  tx: Tx,
+  input: {
+    orgPayoutId: string;
+    organizationId: string;
+    grossPaise: number;
+    netPayoutPaise: number;
+    refundId?: string;
+  },
+): Promise<number> {
+  const reversal = await recordOrgTdsReversal(tx, {
+    orgPayoutId: input.orgPayoutId,
+    organizationId: input.organizationId,
+    refundId: input.refundId,
+    reversalBasis: {
+      kind: "PROPORTIONAL",
+      refundAmountPaise: input.grossPaise,
+      payoutAmountPaise: input.netPayoutPaise,
+    },
+  });
+  return input.grossPaise - (reversal?.reversedPaise ?? 0);
 }
 
 /**

@@ -88,7 +88,7 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 // Late-bound cycle: reversal-engine imports applyRefundCascade from here.
-import { postPayoutClawback } from "./reversal-engine";
+import { orgClawbackNetOfTds, postPayoutClawback } from "./reversal-engine";
 import { retireSupersededPlaceholderTx } from "./refund-placeholder";
 import {
   accumulatePaidConsultantClawback,
@@ -1523,10 +1523,17 @@ export async function applyRefundCascade(
       orgEarn.orgPayout?.status === "COMPLETED" &&
       orgApplied > 0
     ) {
+      const clawbackPaise = await orgClawbackNetOfTds(tx, {
+        orgPayoutId: orgEarn.orgPayoutId,
+        organizationId: orgEarn.organizationId,
+        grossPaise: orgApplied,
+        netPayoutPaise: orgEarn.orgPayout.netPayoutPaise,
+        refundId: input.refundId,
+      });
       await tx.organizationPayout.update({
         where: { id: orgEarn.orgPayoutId },
         data: {
-          clawbackAmountPaise: { increment: orgApplied },
+          clawbackAmountPaise: { increment: clawbackPaise },
           // Only stamp on the FIRST clawback — preserves the
           // earliest-clawback timestamp across multiple partial
           // refunds against the same payout.
@@ -1542,14 +1549,14 @@ export async function applyRefundCascade(
           actorMembershipId: null,
           category: "PAYOUT",
           action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
-          description: `Refund clawback initiated: ${orgApplied} paise from payout ${orgEarn.orgPayoutId}`,
+          description: `Refund clawback initiated: ${clawbackPaise} paise from payout ${orgEarn.orgPayoutId}`,
           details: {
             paymentId: payment.id,
             refundId: input.refundId,
             orgEarningsId: orgEarn.id,
             orgPayoutId: orgEarn.orgPayoutId,
             amountPaise: input.amountPaise,
-            clawbackAmountPaise: orgApplied,
+            clawbackAmountPaise: clawbackPaise,
             initiatedByUserId: input.initiatedByUserId ?? null,
           } as Prisma.InputJsonValue,
         },
@@ -1561,7 +1568,7 @@ export async function applyRefundCascade(
       await postPayoutClawback(tx, {
         refundId: input.refundId,
         payoutId: orgEarn.orgPayoutId,
-        amountPaise: orgApplied,
+        amountPaise: clawbackPaise,
         organizationId: orgEarn.organizationId,
       });
 
