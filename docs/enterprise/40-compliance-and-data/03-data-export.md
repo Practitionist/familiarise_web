@@ -133,19 +133,19 @@ BILLING_ADMIN, the governance floor these routes require — hits
 `POST /data-exports`, gets a `202`, and polls the dashboard until the
 job flips `READY`. The 7-day signed URL is long enough to run their
 post-export ETL; after that the link lapses to `EXPIRED` and a fresh
-request is needed. The §11 *access* path is org-tenant-wide; the
-per-data-principal §12 *erasure* path is separate (see
+request is needed. The §11 _access_ path is org-tenant-wide; the
+per-data-principal §12 _erasure_ path is separate (see
 [deletion policy](02-deletion-policy.md)).
 
 ## Routes
 
 Three endpoints form the request-poll-download lifecycle of a DPDP §11 export bundle; all are gated to OWNER or BILLING_ADMIN because every bundle contains financial PII.
 
-| Verb | Path | Behaviour |
-|---|---|---|
-| `POST` | `/api/organizations/[orgId]/data-exports` | Files a request, inserts `OrgDataExportJob(PENDING)`, returns `202 { export }`. |
-| `GET` | `/api/organizations/[orgId]/data-exports` | Lists this org's jobs from the last 30 days (take 50), newest first. Polling surface for the dashboard. |
-| `GET` | `/api/organizations/[orgId]/data-exports/[exportId]/download` | Resolves the signed URL when `status=READY`. `409 EXPORT_NOT_READY` if not ready; `410 EXPORT_EXPIRED` once past `expiresAt`. Returns `{ url, expiresAt }`. |
+| Verb   | Path                                                          | Behaviour                                                                                                                                                   |
+| ------ | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST` | `/api/organizations/[orgId]/data-exports`                     | Files a request, inserts `OrgDataExportJob(PENDING)`, returns `202 { export }`.                                                                             |
+| `GET`  | `/api/organizations/[orgId]/data-exports`                     | Lists this org's jobs from the last 30 days (take 50), newest first. Polling surface for the dashboard.                                                     |
+| `GET`  | `/api/organizations/[orgId]/data-exports/[exportId]/download` | Resolves the signed URL when `status=READY`. `409 EXPORT_NOT_READY` if not ready; `410 EXPORT_EXPIRED` once past `expiresAt`. Returns `{ url, expiresAt }`. |
 
 All three call `requireOrgAccess(orgId, { permission: ["dataExports.people", "dataExports.finance"] })`,
 so a caller needs at least one export key. Each bundle has a kind: the
@@ -157,12 +157,11 @@ carries both bundles, so listing or downloading it needs both keys, which
 in practice means an OWNER; a new request accepts only `people` or
 `finance` and can never create a `FULL` job.
 
-The worker logic lives in `scripts/cleanup/process-data-exports.ts`
-(`processDataExports`). It is scheduled as a GitHub Actions cron
-(`.github/workflows/process-data-exports.yml`, every ~10 min) via the
-thin wrapper `jobs/cleanup/process-data-exports.ts`; the same logic is
-also reachable as a `CRON_SECRET`-gated manual trigger at
-`POST /api/cleanup/process-data-exports`.
+The worker logic lives in scripts/cleanup/process-data-exports.ts
+(processDataExports). The Netlify ticker dispatches its registered
+CRON_SECRET-gated POST /api/cleanup/process-data-exports door every ten
+minutes. The same canonical implementation serves explicit operator runs;
+there is no separate Actions wrapper or data-export workflow.
 
 ## Bundle shape
 
