@@ -11,15 +11,17 @@ import {
   CancelRefundPreviewSchema,
   type CancelRefundPreview,
 } from "@/schemas/appointments";
+import {
+  STAFF_REFUND_PER_PAYMENT_PAISE,
+  STAFF_REFUND_ROLLING_PAISE,
+} from "@/lib/support/staff-refund-limits";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { DoorDialog } from "./DoorDialog";
 
 /** The staff refund caps refuse with these codes; the copy names who can finish the cancel. */
 export const PLATFORM_CANCEL_REFUSAL_COPY: Readonly<Record<string, string>> = {
-  ADMIN_REQUIRED:
-    "This cancel refunds more than ₹5,000 on one payment, which only an admin can send. Ask an admin to cancel it.",
-  STAFF_DAILY_LIMIT:
-    "This refund would take you past the ₹50,000 staff refund limit for the last 24 hours. Ask an admin to cancel it.",
+  ADMIN_REQUIRED: `This cancel refunds more than ${formatCurrencyAmount(STAFF_REFUND_PER_PAYMENT_PAISE, "INR")} on one payment, which only an admin can send. Ask an admin to cancel it.`,
+  STAFF_DAILY_LIMIT: `This refund would take you past the ${formatCurrencyAmount(STAFF_REFUND_ROLLING_PAISE, "INR")} staff refund limit for the last 24 hours. Ask an admin to cancel it.`,
   STAFF_REFUND_IN_PROGRESS:
     "Another refund of yours is still being sent. Try again in a moment.",
 };

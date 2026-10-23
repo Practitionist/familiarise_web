@@ -100,9 +100,11 @@ import { readSupportSpend } from "../../lib/backoffice/support-spend";
 import {
   committedSupportPaiseByPayment,
   rollingRefundPaise,
+} from "../../lib/support/money-policy";
+import {
   STAFF_REFUND_PER_PAYMENT_PAISE,
   STAFF_REFUND_ROLLING_PAISE,
-} from "../../lib/support/money-policy";
+} from "../../lib/support/staff-refund-limits";
 
 // 07:30 IST on 22 Oct; the IST day began at 2026-10-21T18:30Z.
 const NOW = new Date("2026-10-22T02:00:00.000Z");

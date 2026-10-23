@@ -35,6 +35,10 @@ jest.mock("../../lib/auth/reauth-client", () => ({
 
 import { BookingOpsPanel } from "../../components/dashboard/backoffice/money/BookingOpsPanel";
 import { PLATFORM_CANCEL_REFUSAL_COPY } from "../../components/dashboard/backoffice/money/PlatformCancelDoor";
+import {
+  STAFF_REFUND_PER_PAYMENT_PAISE,
+  STAFF_REFUND_ROLLING_PAISE,
+} from "../../lib/support/staff-refund-limits";
 import { formatCurrencyAmount } from "../../utils/formatting";
 
 const APPT = "8b2f6c1e-1d2a-4f3b-9c4d-5e6f7a8b9c0d";
@@ -193,6 +197,15 @@ describe("BookingOpsPanel platform cancel", () => {
       );
     },
   );
+
+  it("quotes the staff limits from the policy constants", () => {
+    expect(PLATFORM_CANCEL_REFUSAL_COPY.ADMIN_REQUIRED).toContain(
+      formatCurrencyAmount(STAFF_REFUND_PER_PAYMENT_PAISE, "INR"),
+    );
+    expect(PLATFORM_CANCEL_REFUSAL_COPY.STAFF_DAILY_LIMIT).toContain(
+      formatCurrencyAmount(STAFF_REFUND_ROLLING_PAISE, "INR"),
+    );
+  });
 
   it("keeps the route's own message for any other refusal", async () => {
     mockFetchWithReauth.mockResolvedValue({
