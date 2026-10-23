@@ -163,8 +163,8 @@ export type LeaveOutcome = "left" | "handed-over" | "skipped";
 
 /**
  * Removes Familiarise Support for an ended intervention, announcing before the
- * removal. A newer live intervention on the same channel keeps the seat; a
- * missing channel counts as left.
+ * removal. Another seated, unexpired intervention on the same channel keeps the
+ * seat; a missing channel counts as left.
  */
 export async function leaveIntervention(
   grantId: string,
@@ -194,7 +194,9 @@ export async function leaveIntervention(
       kind: "INTERVENE",
       channelType: grant.channelType,
       channelId: grant.channelId,
+      streamJoinedAt: { not: null },
       endedAt: null,
+      expiresAt: { gt: now },
       id: { not: grantId },
     },
     select: { id: true },

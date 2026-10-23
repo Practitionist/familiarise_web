@@ -44,7 +44,35 @@ jest.mock("../../lib/stream-client", () => ({
 const mockGrant: { current: Record<string, unknown> | null } = {
   current: null,
 };
-const mockSuccessor: { current: { id: string } | null } = { current: null };
+type MockSibling = {
+  id: string;
+  kind: string;
+  channelId: string;
+  streamJoinedAt: Date | null;
+  endedAt: Date | null;
+  expiresAt: Date;
+};
+type SuccessorWhere = {
+  kind: string;
+  channelId: string;
+  endedAt: null;
+  expiresAt: { gt: Date };
+  id: { not: string };
+};
+/** Other grants on the channel; the fake applies the successor filter to them. */
+const mockSiblings: { current: MockSibling[] } = { current: [] };
+const mockSuccessorOf = (where: SuccessorWhere) =>
+  mockSiblings.current
+    .filter(
+      (g) =>
+        g.kind === where.kind &&
+        g.channelId === where.channelId &&
+        g.id !== where.id.not &&
+        g.streamJoinedAt !== null &&
+        g.endedAt === null &&
+        g.expiresAt > where.expiresAt.gt,
+    )
+    .map((g) => ({ id: g.id }))[0] ?? null;
 const mockTx = {
   supportCaseEvent: {
     findFirst: jest.fn(async (): Promise<{ actorId: string } | null> => null),
@@ -65,8 +93,10 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     supportCaseChatAccess: {
       findUnique: jest.fn(async () => mockGrant.current),
-      findFirst: jest.fn(async (args: { where: { endedAt?: null } }) =>
-        args.where.endedAt === null ? mockSuccessor.current : mockGrant.current,
+      findFirst: jest.fn(async (args: { where: SuccessorWhere }) =>
+        args.where.endedAt === null
+          ? mockSuccessorOf(args.where)
+          : mockGrant.current,
       ),
       findMany: jest.fn(async () => []),
       updateMany: jest.fn(async (args: { data: Record<string, unknown> }) => {
@@ -101,7 +131,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockCalls.length = 0;
   mockGrant.current = { ...liveIntervention };
-  mockSuccessor.current = null;
+  mockSiblings.current = [];
   mockChat.queryChannels.mockImplementation(async () => [
     { data: { frozen: false } },
   ]);
@@ -203,14 +233,54 @@ describe("leaveIntervention", () => {
     );
   });
 
+  const sibling = {
+    id: "grant-2",
+    kind: "INTERVENE",
+    channelId: "dm-a-b",
+    streamJoinedAt: new Date(NOW.getTime() - 500),
+    endedAt: null,
+    expiresAt: new Date(NOW.getTime() + 3_600_000),
+  };
+
   it("keeps the seat when a newer intervention is live on the channel", async () => {
     mockGrant.current = ended;
-    mockSuccessor.current = { id: "grant-2" };
+    mockSiblings.current = [sibling];
     await expect(leaveIntervention("grant-1", NOW)).resolves.toBe(
       "handed-over",
     );
     expect(mockChannel.removeMembers).not.toHaveBeenCalled();
     expect(mockCalls).toEqual(["stamp:streamLeftAt"]);
+  });
+
+  it.each([
+    ["expired but not yet ended", { expiresAt: new Date(NOW.getTime() - 1) }],
+    ["never seated", { streamJoinedAt: null }],
+    ["a READ grant", { kind: "READ" }],
+    ["on another channel", { channelId: "dm-x-y" }],
+  ])("leaves when the other grant is %s", async (_label, override) => {
+    mockGrant.current = ended;
+    mockSiblings.current = [{ ...sibling, ...override }];
+    await expect(leaveIntervention("grant-1", NOW)).resolves.toBe("left");
+    expect(mockChannel.removeMembers).toHaveBeenCalledWith([
+      "familiarise-support",
+    ]);
+  });
+
+  it("asks only for seated, unexpired interventions on the channel", async () => {
+    mockGrant.current = ended;
+    await leaveIntervention("grant-1", NOW);
+    expect(prisma.supportCaseChatAccess.findFirst).toHaveBeenCalledWith({
+      where: {
+        kind: "INTERVENE",
+        channelType: "messaging",
+        channelId: "dm-a-b",
+        streamJoinedAt: { not: null },
+        endedAt: null,
+        expiresAt: { gt: NOW },
+        id: { not: "grant-1" },
+      },
+      select: { id: true },
+    });
   });
 
   it("counts a deleted channel as left", async () => {
