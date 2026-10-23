@@ -39,7 +39,7 @@ describe("#1408 — cumulative clawback postings vs the stamped counter", () => 
       deltaPaise: 20_000,
     });
     // Presence alone would have cleared this row.
-    expect(String(findings[0].details?.note)).toContain("exceeds");
+    expect(String(findings[0].details?.note)).toContain("ORG_PAYABLE CREDIT");
   });
 
   it("both clawbacks posted → clean", () => {

@@ -338,7 +338,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "wallet-low-balance": 45,
   // Daily 06:30 window, on the one minute no other window uses.
   "reconcile-gateway-settlements": 55,
-  // :55 is free of every window except the 06:30 settlement window; these two windows are disjoint from it.
+  // Ledger slices use spare :55 capacity; statutory exports and gateway settlement keep priority.
   "reconcile-ledgers": 55,
   "tds-return-draft": 55,
 };
@@ -401,8 +401,6 @@ const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
   "wallet-low-balance": DAILY_2330,
   // After Razorpay's T+1/T+2 settlements land; six hourly slices of one recon page each.
   "reconcile-gateway-settlements": { startMinuteUtc: 390, windowMinutes: 360 },
-  // One slot (03:55): the audit writes a report row per run, so it must not repeat.
-  "reconcile-ledgers": { startMinuteUtc: 180, windowMinutes: 60 },
   // The 5th of Jan/Apr/Jul/Oct, two slots (01:55, 02:55); the export overwrites one private CSV, so a repeat is harmless.
   "tds-return-draft": {
     dayOfMonthUtc: 5,
@@ -446,7 +444,7 @@ export function windowStartFor(name: Target, now: Date): Date | null {
 /** The targets due on this tick; exported so a test can pin the cadence. */
 export function dueTargets(now: Date): Target[] {
   const minuteOfDay = now.getUTCHours() * 60 + now.getUTCMinutes();
-  return TARGETS.filter((name) => {
+  const due = TARGETS.filter((name) => {
     if (name in TARGET_WINDOWS && windowStartFor(name, now) === null) {
       return false;
     }
@@ -455,6 +453,10 @@ export function dueTargets(now: Date): Target[] {
     const offset = TARGET_OFFSET_MINUTES[name] ?? 0;
     return (((minuteOfDay - offset) % every) + every) % every < 5;
   });
+  // The ledger report persists its cursor, so a busy slot can yield without losing coverage.
+  return due.length > MAX_TARGETS_PER_TICK
+    ? due.filter((name) => name !== "reconcile-ledgers")
+    : due;
 }
 
 /** Extra query a target needs beyond `limit`. */
@@ -667,6 +669,7 @@ async function hitTarget(
 /** Targets whose 207 means some rows failed; every other target's 207 is a successful run that flagged rows. */
 const PARTIAL_FAILURE_TARGETS: ReadonlySet<string> = new Set([
   "process-payouts",
+  "reconcile-ledgers",
   // A 207 here is a captured top-up still not credited to its wallet.
   "sweep-orphaned-topup-captures",
   ...Object.keys(TARGET_WINDOWS),

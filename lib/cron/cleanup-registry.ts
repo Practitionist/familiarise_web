@@ -8,6 +8,10 @@ import {
 } from "@/lib/cron/cleanup-route";
 import { reportSentryError } from "@/lib/observability/report";
 import type { FrozenWallet } from "@/lib/payments/wallet-freeze";
+import type {
+  Finding,
+  ReconcileReport,
+} from "@/scripts/reconcile/reconcile-ledgers";
 
 export type CleanupRouteHandlers = {
   GET: (req: NextRequest) => Promise<NextResponse>;
@@ -809,34 +813,53 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "reconcile-ledgers": () =>
       cleanupRoute({
         job: "reconcile-ledgers",
-        run: async (req) => {
+        run: async () => {
           const { runReconcileLedgers } =
             await import("@/scripts/reconcile/reconcile-ledgers");
-          const triggeredById =
-            req.nextUrl.searchParams.get("triggeredById") ?? undefined;
-          const { respondToLedgerDrift, freezeDriftingWallets } =
+          const { respondToLedgerDrift, reportWalletDriftFreeze } =
             await import("@/scripts/reconcile/ledger-drift-response");
-          // Freeze from the wallet step so a run cut off later has already frozen; a freeze failure fails the route once the audit completes.
-          let freezeError: unknown = null;
-          let frozenWallets: FrozenWallet[] = [];
-          const report = await runReconcileLedgers({
-            scope: "full",
-            triggeredById,
-            onWalletDrift: async (reportId, findings) => {
-              try {
-                frozenWallets = await freezeDriftingWallets(reportId, findings);
-              } catch (err) {
-                freezeError = err;
-              }
-            },
-          });
-          if (!report.ok) await respondToLedgerDrift(report);
-          if (freezeError) throw freezeError;
+          const { freezeDriftedWallets } =
+            await import("@/lib/payments/wallet-freeze");
+          // Freeze each page immediately; the report identity deduplicates its fatal alert.
+          const frozenWallets: FrozenWallet[] = [];
+          const walletFindings: Finding[] = [];
+          let walletReportId: string | undefined;
+          let report: ReconcileReport;
+          try {
+            report = await runReconcileLedgers({
+              scope: "full",
+              onWalletDrift: async (reportId, findings) => {
+                walletReportId = reportId;
+                walletFindings.push(...findings);
+                await freezeDriftedWallets(
+                  { id: reportId, findings },
+                  frozenWallets,
+                );
+              },
+            });
+          } finally {
+            if (walletReportId)
+              await reportWalletDriftFreeze(
+                walletReportId,
+                walletFindings,
+                frozenWallets,
+              );
+          }
+          // A reused same-day verdict already raised its drift response.
+          if (
+            report.summary.status !== "RUNNING" &&
+            !report.ok &&
+            !report.reused
+          )
+            await respondToLedgerDrift(report);
           return {
             success: true,
             runId: report.id,
             scope: report.scope,
-            status: "OK" as const,
+            status:
+              report.summary.status === "RUNNING"
+                ? ("RUNNING" as const)
+                : ("OK" as const),
             report,
             frozenWallets,
           };
@@ -852,7 +875,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           unbaselinedCount: r.report.summary?.unbaselinedCount ?? 0,
           frozenWallets: r.frozenWallets.length,
         }),
-        status: (r) => statusFor(r, !r.report.ok),
+        status: (r) => statusFor(r, r.status !== "RUNNING" && !r.report.ok),
         failureMessage: "Failed to run ledger reconciliation",
       }),
 
