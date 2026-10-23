@@ -38,6 +38,9 @@ const mockRecordTdsReversal = jest.fn();
 const mockPaymentFindUnique = jest.fn();
 const mockFindDeduped = jest.fn(async (..._a: unknown[]) => null as unknown);
 
+jest.mock("../../lib/payments/ledger/refund-reversal-basis", () =>
+  jest.requireActual("../fixtures/no-refund-reversal-basis"),
+);
 jest.mock("../../lib/payments/tax/tds-service", () => ({
   recordTdsReversal: (...a: unknown[]) => mockRecordTdsReversal(...a),
 }));
