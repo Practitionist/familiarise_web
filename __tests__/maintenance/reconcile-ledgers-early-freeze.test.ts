@@ -17,7 +17,24 @@ const programAssignmentFindMany = jest.fn(async (_a: unknown) => {
 });
 const db = {
   ledgerReconciliationReport: {
-    create: async () => ({ id: "rep_1" }),
+    findFirst: async () => null,
+    create: async ({
+      data,
+    }: {
+      data: { scope: string; summary: unknown; findings: unknown };
+    }) => ({
+      ...data,
+      id: "rep_1",
+      runAt: new Date(),
+      durationMs: 0,
+      ok: false,
+    }),
+    update: jest.fn(async (_a: unknown) => ({
+      id: "rep_1",
+      runAt: new Date(),
+      durationMs: 0,
+      ok: false,
+    })),
   },
   billingAccount: {
     findMany: async () => [
@@ -63,5 +80,16 @@ describe("runReconcileLedgers onWalletDrift", () => {
       }),
     ]);
     expect(programAssignmentFindMany).toHaveBeenCalled();
+    expect(db.ledgerReconciliationReport.update).toHaveBeenCalledWith({
+      where: { id: "rep_1" },
+      data: expect.objectContaining({
+        ok: false,
+        summary: expect.objectContaining({
+          status: "FAILED",
+          error: "cut off",
+        }),
+        findings: [expect.objectContaining({ billingAccountId: "ba_1" })],
+      }),
+    });
   });
 });

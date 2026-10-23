@@ -171,6 +171,7 @@ async function hitTarget(
 /** Targets whose 207 means some rows failed; every other target's 207 is a successful run that flagged rows. */
 const PARTIAL_FAILURE_TARGETS: ReadonlySet<string> = new Set([
   "process-payouts",
+  "reconcile-ledgers",
   // A 207 here is a captured top-up still not credited to its wallet.
   "sweep-orphaned-topup-captures",
   ...Object.keys(TARGET_WINDOWS),

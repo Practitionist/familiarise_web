@@ -428,6 +428,9 @@ describe("cleanup twins and the DEGRADED money gate (#1599)", () => {
   ];
   /** Money-adjacent twins that deliberately keep running in DEGRADED. */
   const NOT_FINANCIAL: Record<string, string> = {
+    // Read-only audits and protective spend freezes must continue during maintenance.
+    "reconcile-ledgers":
+      "detects drift and blocks discretionary wallet spending",
     // Re-drives a booking confirmation from an already-settled capture and
     // moves no money; #1686 keeps it on every ticker slot for the buyer.
     "reconcile-orphaned-confirmations": "booking re-drive from settled money",
