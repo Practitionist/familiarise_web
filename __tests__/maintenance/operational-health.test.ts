@@ -17,15 +17,22 @@ jest.mock("../../lib/prisma", () => ({
 import prisma from "../../lib/prisma";
 const groupBy = jest.mocked(prisma.systemJobExecution.groupBy);
 const now = new Date("2026-10-22T12:00:00Z");
+const originalEnvironment = process.env;
 
 beforeEach(() => {
   jest.clearAllMocks();
-  process.env.CRON_SECRET = "test";
-  process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "production";
+  process.env = {
+    ...originalEnvironment,
+    CRON_SECRET: "test",
+    NEXT_PUBLIC_SENTRY_ENVIRONMENT: "production",
+  };
   jest.useFakeTimers();
   jest.setSystemTime(now);
 });
-afterEach(() => jest.useRealTimers());
+afterEach(() => {
+  jest.useRealTimers();
+  process.env = originalEnvironment;
+});
 const request = (secret = "test") =>
   new NextRequest("https://app.test/api/health/jobs", {
     headers: { authorization: `Bearer ${secret}` },
@@ -77,6 +84,7 @@ describe("operational absence checks", () => {
     );
   });
   it("does not treat unscoped shared-database history as production evidence", async () => {
+    process.env.SENTRY_ENVIRONMENT = "preview";
     groupBy.mockResolvedValueOnce([]);
     await GET(request());
     expect(groupBy).toHaveBeenCalledWith(
@@ -87,6 +95,37 @@ describe("operational absence checks", () => {
       }),
     );
   });
+  it("uses the server environment when the public environment is absent", async () => {
+    delete process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT;
+    process.env.SENTRY_ENVIRONMENT = "development";
+    groupBy.mockResolvedValueOnce([]);
+    await GET(request());
+    expect(groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          result: { path: ["environment"], equals: "development" },
+        }),
+      }),
+    );
+  });
+  it.each([undefined, ""])(
+    "refuses unconfigured environment %p before querying",
+    async (environment) => {
+      if (environment === undefined) {
+        delete process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT;
+      } else {
+        process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = environment;
+      }
+      delete process.env.SENTRY_ENVIRONMENT;
+      const response = await GET(request());
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({
+        healthy: false,
+        error: "JOB_ENVIRONMENT_UNCONFIGURED",
+      });
+      expect(groupBy).not.toHaveBeenCalled();
+    },
+  );
   it("returns200 only when every required capability completed recently", async () => {
     groupBy.mockResolvedValueOnce(
       fresh().map((r) => ({

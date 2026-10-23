@@ -375,14 +375,14 @@ Configure an external HTTP monitor for `GET /api/health/jobs` after deploying th
 route. Supply `Authorization: Bearer <CRON_SECRET>` as a protected monitor header;
 never put the secret in the URL. The endpoint is read-only, uncached and returns
 503 when required completion evidence is missing/stale or history cannot be read.
-It returns401 before querying for an unauthorized caller.
+It returns 401 before querying for an unauthorized caller.
 
 The required capabilities and completion SLOs live in
 `lib/cron/operational-health.ts`. These are monitoring budgets, not a second
-scheduler. Fifteen-minute recovery/delivery loops have45minutes to accommodate a
-missed tick and lease recovery; thirty-minute session-outcome loops have90minutes;
-recording transfer has8hours against its six-hour schedule; breach alerts have
-3hours; daily execution-history pruning has36hours. Support SLA scanning has1hour.
+scheduler. Fifteen-minute recovery/delivery loops have 45 minutes to accommodate a
+missed tick and lease recovery; thirty-minute session-outcome loops have 90 minutes;
+recording transfer has 8 hours against its six-hour schedule; breach alerts have
+3 hours; daily execution-history pruning has 36 hours. Support SLA scanning has 1 hour.
 
 The probe queries recent COMPLETED executions by their actual core job names,
 including `reconcile-pending-refunds` and `send-appointment-reminders`, whose HTTP
@@ -399,8 +399,16 @@ invoke jobs, send a test payment or repair vendor state.
 
 During an approved maintenance window, suppress notifications through the external
 monitor's maintenance mechanism; do not turn a blocked completion into success.
+The probe reads history without calling the job maintenance gate. Before monitor
+activation, deploy and verify maintenance refusal and truthful outcome recording:
+a refusal before the lease creates no completion, and held or failed runs must
+not be recorded as COMPLETED. Exercise OFFLINE, DEGRADED financial-job holds and
+unreadable maintenance state against those worker gates. As prior successes age
+out, the probe returns 503 even during maintenance; notification suppression does
+not change the recorded evidence.
+
 After deployment verify both a healthy probe and a controlled missing-capability
-failure in an isolated environment. A200 from the existing public `/api/health`
+failure in an isolated environment. A 200 from the existing public `/api/health`
 remains insufficient proof of fleet coverage.
 
 See [Better Stack HTTP monitor configuration](https://betterstack.com/docs/uptime/api/create-a-new-monitor/)
@@ -413,3 +421,9 @@ do not establish production freshness. Missing environment configuration returns
 503 `JOB_ENVIRONMENT_UNCONFIGURED`. Deploy environment-tagged execution recording
 before expecting the probe to turn healthy, and verify context configuration;
 environment tags reduce ambiguity but do not replace isolated production data.
+
+The same environment precedence must be used by the recorder and probe. An unset
+public label uses the server label; an explicitly empty public label fails
+configuration instead of falling back. Confirm required workers are scheduled and
+producing these tagged completions before enabling the monitor; a configured SLO
+does not establish that its scheduler is active.
