@@ -69,6 +69,26 @@ it("distinguishes configured automatic steps from dispatch-only steps and keeps 
   ).toThrow("Unsupported operational step");
 });
 
+it.each(["", " \t"])(
+  "keeps a blank workflow name %p from consuming the next field",
+  (name) => {
+    const rows = workflowJobs(
+      `      - name:${name}
+        id: cleanup-auth-tokens
+        run: npx tsx scripts/cleanup/cleanup-auth-tokens.ts
+`,
+      "fleet.yml",
+    );
+    expect(rows).toEqual([
+      expect.objectContaining({
+        id: "cleanup-auth-tokens",
+        name: "cleanup-auth-tokens",
+        core: "scripts/cleanup/cleanup-auth-tokens.ts",
+      }),
+    ]);
+  },
+);
+
 it("documents every real builder and the four Actions-only registry gaps", () => {
   const jobs = registryJobs(registry, ROOT);
   const document = fs.readFileSync(

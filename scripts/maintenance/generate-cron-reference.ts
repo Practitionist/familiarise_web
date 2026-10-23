@@ -169,7 +169,7 @@ export function workflowJobs(source: string, file: string): WorkflowJob[] {
   return source.split(/(?=^ {6}- name: )/m).flatMap((block) => {
     const id = block.match(/^ {8}id:\s*([a-z0-9-]+)\s*$/m)?.[1];
     if (!id) return [];
-    const name = block.match(/^ {6}- name:\s*(.+)$/m)?.[1]?.trim() ?? id;
+    const name = block.match(/^ {6}- name:([^\r\n]*)/m)?.[1]?.trim() || id;
     const core = block.match(
       /(?:node_modules\/\.bin\/tsx|npx(?: --no-install)? tsx)\s+((?:jobs|scripts)\/[^\s"']+\.ts)/,
     )?.[1];
