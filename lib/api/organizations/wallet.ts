@@ -506,18 +506,19 @@ export async function confirmTopUp(
 }
 
 /**
- * Key prefixes of the ORG_RECEIVABLE shortfalls a top-up settles, and of the top-ups that settled them.
+ * Key prefixes of the ORG_RECEIVABLE shortfalls a top-up settles, and of the top-ups and late overage recarves that settled them.
  * `clawback:` stays off: a payout clawback is recovered from the host's next payout, never a funder's top-up.
  */
 const TOPUP_SETTLED_RECEIVABLE_KEYS = [
   "overage-restore:",
+  "overage-recarve:",
   "topup-refund-shortfall:",
   "chargeback:",
   "topup:",
 ];
 
 /** The org's open shortfall receivable; invoice accruals stay with the invoices that collect them. */
-async function openShortfallReceivablePaise(
+export async function openShortfallReceivablePaise(
   tx: Tx,
   organizationId: string,
 ): Promise<number> {

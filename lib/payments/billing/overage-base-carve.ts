@@ -2,7 +2,7 @@ import { EarningStatus, EarningsHoldReason } from "@prisma/client";
 
 import type { Tx } from "@/lib/prisma";
 import type { Posting } from "@/lib/payments/ledger/post";
-import { prorate } from "@/lib/payments/utils/money";
+import { prorate, sumPaise } from "@/lib/payments/utils/money";
 import {
   releaseEarningsHolds,
   type EarningsHoldDb,
@@ -498,18 +498,133 @@ async function recarveDraftInvoiceBase(
 }
 
 /**
+ * Undoes a wallet restore: the base the restore put on the WALLET leg goes back
+ * to the wallet, and its ORG_RECEIVABLE part is cancelled, or refunded to the
+ * wallet where a top-up already settled it. Mirrors `journalWalletCarveCredit`.
+ */
+async function recarveWalletBase(
+  tx: Tx,
+  ctx: NonNullable<Awaited<ReturnType<typeof loadCarveContext>>>,
+): Promise<CarveOutcome> {
+  const { event, parent } = ctx;
+  const restoreReceivable = await tx.ledgerEntry.findFirst({
+    where: {
+      direction: "DEBIT",
+      account: { kind: "ORG_RECEIVABLE" },
+      transaction: { idempotencyKey: `overage-restore:${event.id}` },
+    },
+    select: { amountPaise: true },
+  });
+  const receivablePaise = sumPaise(restoreReceivable?.amountPaise);
+  const legPaise = event.basePaise - receivablePaise;
+
+  if (legPaise > 0) {
+    const carved = await tx.paymentLeg.updateMany({
+      where: {
+        paymentId: parent.id,
+        source: "WALLET",
+        amountPaise: { gte: legPaise },
+      },
+      data: { amountPaise: { decrement: legPaise } },
+    });
+    if (carved.count === 0) {
+      throw new Error(
+        `recarveOverageBase: WALLET leg on payment ${parent.id} is missing the restored ${legPaise} paise — rolling back`,
+      );
+    }
+    await tx.payment.updateMany({
+      where: { id: parent.id },
+      data: { amount: { decrement: legPaise } },
+    });
+  }
+  if (!parent.billingAccountId) return "recarved";
+
+  const { openShortfallReceivablePaise, walletCredit } =
+    await import("@/lib/api/organizations/wallet");
+  const { ownerOrgId } = await tx.billingAccount.findUniqueOrThrow({
+    where: { id: parent.billingAccountId },
+    select: { ownerOrgId: true },
+  });
+  const receivableBackPaise = Math.min(
+    receivablePaise,
+    await openShortfallReceivablePaise(tx, ownerOrgId),
+  );
+  const settledBackPaise = receivablePaise - receivableBackPaise;
+  if (legPaise + settledBackPaise > 0) {
+    await walletCredit(tx, {
+      billingAccountId: parent.billingAccountId,
+      amountPaise: legPaise + settledBackPaise,
+      reason: "REFUND",
+      paymentId: parent.id,
+    });
+  }
+
+  // Until the parent's booking journal posts, it tallies the WALLET leg itself.
+  const booking = await tx.ledgerTransaction.findUnique({
+    where: { idempotencyKey: `booking:${parent.id}` },
+    select: { id: true },
+  });
+  const walletPaise = (booking ? legPaise : 0) + settledBackPaise;
+  if (walletPaise + receivableBackPaise === 0) return "recarved";
+  const { postLedgerTxn } = await import("@/lib/payments/ledger/post");
+  const credits: Posting[] = [
+    {
+      account: { kind: "WALLET", organizationId: ownerOrgId },
+      direction: "CREDIT",
+      amountPaise: walletPaise,
+    },
+    {
+      account: { kind: "ORG_RECEIVABLE", organizationId: ownerOrgId },
+      direction: "CREDIT",
+      amountPaise: receivableBackPaise,
+    },
+  ];
+  const posted = await postLedgerTxn(tx, {
+    idempotencyKey: `overage-recarve:${event.id}`,
+    kind: "OVERAGE_MEMBER",
+    paymentId: parent.id,
+    description: `Member overage ${event.id} paid late: restored base carved back onto the org wallet`,
+    postings: [
+      {
+        account: { kind: "DISCOUNT" },
+        direction: "DEBIT",
+        amountPaise: walletPaise + receivableBackPaise,
+      },
+      ...credits.filter((c) => c.amountPaise > 0),
+    ],
+  });
+  // The wallet was just credited again; without a fresh journal line that is drift.
+  if (!posted.created) {
+    throw new Error(
+      `recarveOverageBase: overage ${event.id} was already recarved onto the wallet; refusing an unjournaled second credit`,
+    );
+  }
+  return "recarved";
+}
+
+/**
  * Recovery edges (FAILED→PENDING retry, FAILED→CHARGED late capture): carve
- * basePaise back out. Call ONLY after a successful CAS from FAILED, in the
- * same tx. "invoiced" = the parent rolled onto an invoice while FAILED
- * (restored base was billed) — the caller must refuse the retry / flag the
- * capture, because the member paying now would double-collect basePaise.
+ * basePaise back out of the leg the restore put it on. Call ONLY after a
+ * successful CAS from FAILED, in the same tx. "invoiced" = the parent rolled
+ * onto an invoice while FAILED (restored base was billed) — the caller must
+ * refuse the retry / flag the capture, because the member paying now would
+ * double-collect basePaise.
  */
 export async function recarveOverageBase(
-  tx: RecarveTx,
+  tx: Tx,
   ref: CarveRef,
 ): Promise<CarveOutcome> {
   const ctx = await loadCarveContext(tx, ref);
   if (!ctx || ctx.event.basePaise <= 0) return "none";
+
+  // The restore leaves a LICENSE parent untouched, so there is nothing to take back.
+  const parentLeg = (source: "LICENSE" | "WALLET") =>
+    tx.paymentLeg.findUnique({
+      where: { paymentId_source: { paymentId: ctx.parent.id, source } },
+      select: { amountPaise: true },
+    });
+  if (await parentLeg("LICENSE")) return "none";
+  if (await parentLeg("WALLET")) return recarveWalletBase(tx, ctx);
 
   // Guarded parent-first write — same TOCTOU shape as the restore above.
   const parentCut = await tx.payment.updateMany({

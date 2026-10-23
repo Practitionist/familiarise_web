@@ -1300,6 +1300,7 @@ async function accrueOrgPayoutCompletionShortfall(
   await postPayoutClawback(tx, {
     refundId: `shortfall:${payoutId}`,
     payoutId,
+    orgEarningsId: null,
     amountPaise: clawbackPaise,
     organizationId: shortfall.organizationId,
   });
