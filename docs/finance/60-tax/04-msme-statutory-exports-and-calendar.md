@@ -12,9 +12,9 @@ Four scheduled jobs produce the platform's statutory outputs: the monthly GST re
 
 ## The MSME payment deadline
 
-Section 43B(h) of the Income-tax Act says that an expense owed to a micro or small enterprise can be deducted only in the year it is paid if it is paid within 15 days, or within 45 days when a written agreement exists. A payment made later is disallowed as an expense until it is actually paid. The platform pays experts and host organisations, so a payee who is a micro or small enterprise puts a deadline on the platform's payout.
+Section 43B(h) of the Income-tax Act lets an expense owed to a micro or small enterprise be deducted on accrual only if it is paid within the time allowed by section 15 of the MSMED Act: 15 days, or 45 days when a written agreement exists. A payment made later is deductible only in the year it is actually paid. The platform pays experts and host organisations, so a payee who is a micro or small enterprise puts a deadline on the platform's payout.
 
-`computeMsmePaymentDeadline` (`lib/compliance/msme.ts`) takes the payee's MSME status and whether a written agreement is on file, and returns the date.
+`computeMsmePaymentDeadline` (`lib/compliance/msme.ts`) takes the payee's MSME status and whether a written agreement is on file, and returns the date. Section 15 counts from the day the service is accepted or deemed accepted; the platform uses the payout's creation as its internal proxy for that day, because it records no acceptance date.
 
 | Payee's MSME status | Written agreement on file | Deadline from the payout's creation |
 | ------------------- | ------------------------- | ----------------------------------- |

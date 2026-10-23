@@ -52,11 +52,11 @@ If the settlement report instead showed a fee of 2,400 paise while the books had
 
 ## The settlement job
 
-`reconcile-gateway-settlements` (`jobs/reconcile/reconcile-gateway-settlements.ts`) runs on the five-minute ticker between 06:30 and 12:30 UTC, which is 12:00 to 18:00 IST, after Razorpay's T+1 and T+2 settlements have landed. Each slice reads one page of Razorpay's settlement reconciliation report, up to 1,000 rows, for yesterday's IST date first and the day before's second. For each page it does four things in order.
+`reconcile-gateway-settlements` (`jobs/reconcile/reconcile-gateway-settlements.ts`) runs on the five-minute ticker between 06:30 and 12:30 UTC, which is 12:00 to 18:00 IST, after Razorpay's T+1 and T+2 settlements have landed. Each slice reads one page of Razorpay's settlement reconciliation report, up to 1,000 rows, for yesterday's IST date first and the day before's second. For each page it works in this order.
 
-1. It stores each row as a `GatewaySettlementLine`, unique on `[provider, entityId, type]`, so a row seen twice is stored once.
+1. It skips a row already stored as a `GatewaySettlementLine` (unique on `[provider, entityId, type]`), so a row seen twice is stored once.
 2. It matches the row to one of the platform's own money rows: a `Payment`, a wallet top-up, an organisation invoice, a `Refund` or a `Dispute`. A refund of a top-up or an invoice has no `Refund` row, so its journal (`topup-refund:<id>` or `invoice-refund:<id>`) is the record it is compared with.
-3. It books any missing capture fee with `postGatewayFee`.
+3. It books any missing capture fee with `postGatewayFee`, then stores the page's new lines in one `createMany` at the end. A fee posting that throws therefore leaves its line unstored, and the next slice retries it.
 4. Once a day is fully read, it posts one `settlement:<setl_id>` journal per settlement, moving the net of credits less debits from clearing to cash. A negative net reverses the direction, and a settlement whose net is zero posts no journal.
 
 The job holds its cron lock fail-closed (`withCronLock`), reads the Razorpay client through `getRazorpayClient`, and stops at a deadline with a stored prefix so the next slice resumes at the right offset. Without a configured gateway client it reports `NO_GATEWAY_CLIENT` and finishes.

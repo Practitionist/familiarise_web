@@ -14,7 +14,7 @@ There is no GST TCS under section 52. The principal-supplier model means the pla
 
 ## The rate and the checkout charge
 
-GST is 18 percent for every service the platform sells (`TAX_CONSTANTS.GST_RATE`). The default SAC code is 999293, commercial training and coaching. A personal tax invoice always carries 999293, and an organisation invoice carries the organisation's default code (`hsnDefault`) or 999293. The checkout tax result also names a code by service type, 999294 for webinars and classes, but that code is not written onto a document.
+GST is 18 percent on every domestic taxable supply the platform makes (`TAX_CONSTANTS.GST_RATE`); a zero-rated export is described below. The default SAC code is 999293, commercial training and coaching. A personal tax invoice always carries 999293, and an organisation invoice carries the organisation's default code (`hsnDefault`) or 999293. The checkout tax result also names a code by service type, 999294 for webinars and classes, but that code is not written onto a document.
 
 `deriveCheckoutAmount` (`lib/payments/pricing/derive-checkout-amount.ts`) charges the tax in a fixed order: list price, then discount, then GST on the discounted base through `determineTax` (`lib/payments/tax/tax-engine.ts`), then referral credits against the tax-inclusive total. `determineTax` rounds to the nearest paisa, because GST is a levy and flooring would under-collect.
 
@@ -26,7 +26,7 @@ For example, Priya books Hannah's one-hour consultation for ₹1,000 with no dis
 
 ## Zero-rating and the Letter of Undertaking
 
-A sale to a buyer outside India is zero-rated, with no GST, only under a Letter of Undertaking (LUT) valid for the current financial year (CGST Rule 96A). `hasValidPlatformLut` (`lib/compliance/lut.ts`) answers from the platform's LUT number and its valid-till date, and the date is inclusive to the end of that day in India time. The contract is fail-closed: with no LUT, or an expired one, nothing is zero-rated and the supply is taxed at 18 percent IGST. Both `determineTax` at checkout and `deriveGstBreakdown` at invoicing consult the same function, so the two cannot drift apart. A zero-rated export invoice quotes the LUT number (`lutNumberForSupply`).
+A sale to a buyer outside India is zero-rated, with no GST, only under a Letter of Undertaking (LUT) valid for the current financial year (CGST Rule 96A). `hasValidPlatformLut` (`lib/compliance/lut.ts`) answers from the platform's LUT number and its valid-till date, and the date is inclusive to the end of that day in India time. The code does not cap that date at the financial-year end, so `PLATFORM_LUT_VALID_TILL` must be set no later than 31 March of the year the LUT was filed for. The contract is fail-closed: with no LUT, or an expired one, nothing is zero-rated and the supply is taxed at 18 percent IGST. Both `determineTax` at checkout and `deriveGstBreakdown` at invoicing consult the same function, so the two cannot drift apart. A zero-rated export invoice quotes the LUT number (`lutNumberForSupply`).
 
 ## Place of supply
 

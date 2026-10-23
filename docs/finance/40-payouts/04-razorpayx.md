@@ -8,7 +8,7 @@ last-reviewed: 2026-10-23
 
 # RazorpayX payouts and account validation
 
-The platform disburses expert and organisation earnings through RazorpayX, Razorpay's payouts product. The client lives in `lib/payments/payouts/razorpay-payouts.ts` and calls four RazorpayX resources in order: a contact, a fund account, a fund account validation, and finally a payout. RazorpayX is the only payout rail in the code. Card collection is a separate Razorpay product with separate credentials (see [Razorpay gateway and currency](../10-money-in/04-razorpay-gateway-and-currency.md)).
+The platform disburses expert and organisation earnings through RazorpayX, Razorpay's payouts product. The client lives in `lib/payments/payouts/razorpay-payouts.ts` and calls four RazorpayX resources. Onboarding a payout account creates a contact and a fund account and validates it (by bank or by UPI); paying then submits only the payout, against the fund account already on file. RazorpayX is the only payout rail in the code. Card collection is a separate Razorpay product with separate credentials (see [Razorpay gateway and currency](../10-money-in/04-razorpay-gateway-and-currency.md)).
 
 ```mermaid
 flowchart TD
@@ -54,7 +54,7 @@ A payee's first account can be paid at once. A change of default account starts 
 
 `createPayout` posts to `/v1/payouts` from the RazorpayX account number `RAZORPAYX_ACCOUNT_NUMBER`. It sends the fund account id, the amount in paise, the currency (INR only), the mode, the purpose `payout`, `queue_if_low_balance: true`, a `reference_id` equal to the platform's payout id, a narration, and notes.
 
-**Idempotency.** RazorpayX requires an `X-Payout-Idempotency` header of 4 to 36 characters from letters, digits, space, underscore and hyphen, and refuses anything else with a 400. The platform's keys are longer: a consultant payout uses `payout_<consultantProfileId>_<batchId>` and an organisation payout `payout_<uuid>`. `boundPayoutIdempotencyKey` folds a key that is too long or has a forbidden character into `p_` plus the first 32 hex characters of its SHA-256, which is a pure function of the key. The same payout row therefore always maps to the same RazorpayX slot, and a request that timed out after RazorpayX accepted it returns the original payout instead of paying a second time. Reusing a key with a different body is refused by RazorpayX.
+**Idempotency.** RazorpayX requires an `X-Payout-Idempotency` header of 4 to 36 characters from letters, digits, space, underscore and hyphen, and refuses anything else with a 400. The platform's keys are longer: a consultant payout uses `payout_<consultantProfileId>_<batchId>` and an organisation payout `payout_<uuid>`. `boundPayoutIdempotencyKey` folds a key that is too long or has a forbidden character into `p_` plus the first 32 hex characters of its SHA-256, which is a pure function of the key. The same payout row therefore always maps to the same RazorpayX slot, and a request that timed out after RazorpayX accepted it returns the original payout instead of paying a second time, for as long as RazorpayX keeps the key. Its API reference does not state that window, so the stuck-payout and redrive paths look the payout up by `reference_id` before any stale row is resubmitted. Reusing a key with a different body is refused by RazorpayX.
 
 **Mode.** `determinePayoutMode` chooses by account type and amount.
 
