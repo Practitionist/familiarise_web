@@ -44,7 +44,9 @@
     "start": "next start",
     "start-watch": "WATCHPACK_POLLING=true next start",
     "test": "jest",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "cron:reference": "tsx scripts/maintenance/generate-cron-reference.ts",
+    "cron:reference:check": "tsx scripts/maintenance/generate-cron-reference.ts --check"
   },
   "dependencies": {
     "@better-auth/core": "1.7.7",

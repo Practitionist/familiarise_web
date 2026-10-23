@@ -14,7 +14,7 @@ Scheduled HTTP jobs are registered in `lib/cron/cleanup-registry.ts` (`CLEANUP_J
 
 ## Shared schedule catalog
 
-`lib/cron/schedule.ts` owns target names, cadence, offsets, calendar windows, row limits and request timeouts. `JOB_SCHEDULES` exposes their effective values and `scheduleFor(name)` supports capability lookup. Runtime dispatch, health checks and generated operational tables must consume this catalog instead of copying maps or scraping the Netlify adapter. The catalog has no database, vendor client or environment reads. Import schedule helpers directly from the catalog; the Netlify adapter contains platform dispatch and failure reporting.
+`lib/cron/schedule.ts` owns target names, cadence, offsets, calendar windows, row limits and request timeouts. `JOB_SCHEDULES` exposes their effective values and `scheduleFor(name)` supports capability lookup. Runtime dispatch, health checks and generated operational tables must consume this catalog instead of copying maps or scraping the Netlify adapter. The catalog has no database, vendor client or environment reads. `npm run cron:reference` generates `docs/maintenance/04-cron-jobs-reference.md` from this catalog, executable registry AST properties, worker lease declarations and operational workflow steps. `npm run cron:reference:check` detects stale output; it does not verify deployed execution. Import schedule helpers directly from the catalog; the Netlify adapter contains platform dispatch and failure reporting.
 
 ## The Netlify scheduled ticker
 
@@ -40,7 +40,7 @@ Every scheduled GitHub Actions workflow declares `concurrency: { group: ${{ gith
 
 1. **Single implementation**: Put the job logic in one domain module and register it in `lib/cron/cleanup-registry.ts` (`CLEANUP_JOB_BUILDERS`) wrapped in `withCronLock`.
 2. **Never create 3-layer wrappers**: Do not add parallel `app/api/cleanup/<job>/route.ts` + `jobs/<domain>/<job>.ts` + `scripts/<domain>/<job>.ts` files.
-3. **Single scheduler**: Put sub-hourly recovery sweeps in `lib/cron/schedule.ts` (`TARGETS`), and daily/weekly/monthly jobs in a `TARGET_WINDOWS` slot or, if they cannot run bounded inside the ticker's timeout, in GitHub Actions — never both. Every tick must stay at or under `MAX_TARGETS_PER_TICK`.
+3. **Single scheduler**: Put sub-hourly recovery sweeps in `lib/cron/schedule.ts` (`TARGETS`), and daily/weekly/monthly jobs in a `TARGET_WINDOWS` slot. A long worker needs an appropriate bounded execution runtime; it does not need a second automatic clock. Actions retains only remaining non-money batch jobs until their verified migration — never dual-enable. The `MAX_TARGETS_PER_TICK` value is the tested wave design bound, not a runtime dispatcher cap; run the cadence/collision tests when changing the roster.
 4. **Financial jobs**: If the job mutates money or payouts, include its slug in `FINANCIAL_JOB_NAMES` (`lib/cron/financial-jobs.ts`).
 
 ## Sources
