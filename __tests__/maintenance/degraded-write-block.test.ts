@@ -118,6 +118,8 @@ const BLOCKED = [
   "/api/admin/referrals/credits",
   "/api/admin/referrals/credits/cred_1/reverse",
   "/api/admin/class-series/cls_1/cancel-series",
+  "/api/admin/class-series/cls_1/cancel-session",
+  "/api/admin/class-series/cls_1/make-up",
   "/api/admin/class-series/cls_1/skip-make-up",
   "/api/admin/class-series/sweeps/settle-session",
   "/api/admin/class-series/sweeps/unallocated",
@@ -149,7 +151,7 @@ const NOT_BLOCKED = [
   "/api/meetings/mtg_1/recording-consent",
   // Admin writes that move no money stay open.
   "/api/admin/organizations/org_1/verify",
-  "/api/admin/class-series/cls_1/make-up",
+  "/api/admin/class-series/cls_1/note",
   "/api/admin/referrals/waivers",
 ];
 

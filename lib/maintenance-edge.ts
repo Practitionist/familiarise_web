@@ -197,6 +197,8 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/admin/organizations/*/billing-account",
   "/api/admin/organizations/*/overages",
   "/api/admin/class-series/*/cancel-series",
+  "/api/admin/class-series/*/cancel-session",
+  "/api/admin/class-series/*/make-up",
   "/api/admin/class-series/*/skip-make-up",
   "/api/admin/class-series/sweeps",
   "/api/payments/*/recover",
