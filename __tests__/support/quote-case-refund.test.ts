@@ -52,6 +52,8 @@ function mockMatches(row: Row, where: Where | undefined): boolean {
 const mockStore = {
   recommendations: [] as Row[],
   payment: {} as Row,
+  /** Live refunds on the payment that no support remedy owns (cancels, direct refunds). */
+  nonRemedyRefunds: [] as Row[],
 };
 
 jest.mock("../../lib/prisma", () => {
@@ -71,6 +73,7 @@ jest.mock("../../lib/prisma", () => {
       ),
     },
     payment: { findFirst: jest.fn(async () => mockStore.payment) },
+    refund: { findMany: jest.fn(async () => mockStore.nonRemedyRefunds) },
     $transaction: jest.fn(),
   };
   db.$transaction.mockImplementation((callback: (tx: typeof db) => unknown) =>
@@ -104,6 +107,7 @@ const quote = () =>
 beforeEach(() => {
   jest.clearAllMocks();
   mockStore.recommendations = [remedy()];
+  mockStore.nonRemedyRefunds = [];
   mockStore.payment = {
     id: "pay-1",
     amount: 1_000_000,
@@ -128,6 +132,14 @@ describe("quoteCaseRefund committedPaise", () => {
       },
       select: { paymentId: true, amountPaise: true },
     });
+  });
+
+  it("adds live refunds that no remedy owns, such as a platform cancel", async () => {
+    mockStore.recommendations.push(
+      remedy({ id: "rec-2", approved: true, amountPaise: 100_000 }),
+    );
+    mockStore.nonRemedyRefunds = [{ paymentId: "pay-1", amountPaise: 250_000 }];
+    expect((await quote()).committedPaise).toBe(350_000);
   });
 
   it("counts other approved remedies whatever their refund state", async () => {

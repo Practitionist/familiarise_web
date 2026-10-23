@@ -189,6 +189,7 @@ it("ends live chat grants in the same transaction and leaves the chat after comm
       status: "RESOLVED",
     },
     now,
+    fresh,
   );
   const db = tx as unknown as {
     supportCaseChatAccess: { updateMany: jest.Mock };
