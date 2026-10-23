@@ -24,3 +24,7 @@ The nine-target wave figure is a tested design bound, not a runtime dispatch cap
 Cron leases are Postgres-backed. A declared fail-closed mode and TTL describe requested policy, not proof of acquisition or successful completion. Inspect the active `withCronLock` and outcome implementation when verifying ownership and freshness. The fleet switch fails open when `ops:active_cron_platform` is absent or unreadable, so it is not an exactly-once guarantee. Verify accepted monitoring check-ins and completed obligations; a shared heartbeat or HTTP200 alone is insufficient.
 
 Maintenance bypass cookies remain short-lived HMAC-SHA256 tokens verified through Web Crypto. A cached phase does not quiesce work already in flight. Nothing inside a Prisma `$transaction` may read through the global client; pass its transaction client through every helper. The linked references describe deployed-runtime and environment constraints.
+
+## Worktree verification
+
+The Jest configuration keeps an explicit `@/` source mapping while retaining Next.js’s default mocks and transforms. Run targeted suites through the repository config. A CLI `--moduleNameMapper` replaces the entire map and can discard `server-only`, asset and Redis-edge mocks; do not use it as a shortcut for alias resolution.
