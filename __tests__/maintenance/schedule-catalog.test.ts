@@ -29,12 +29,12 @@ describe("shared capability schedule catalog", () => {
 
   it("keeps calendar-gated jobs out of off-window dispatch", () => {
     const outside = new Date("2026-10-22T22:55:00.000Z");
-    const inside = new Date("2026-10-22T03:55:00.000Z");
-    expect(scheduleFor("reconcile-ledgers")?.window).toMatchObject({
-      startMinuteUtc: 180,
-      windowMinutes: 60,
+    const inside = new Date("2026-10-22T06:55:00.000Z");
+    expect(scheduleFor("reconcile-gateway-settlements")?.window).toMatchObject({
+      startMinuteUtc: 390,
+      windowMinutes: 360,
     });
-    expect(dueTargets(outside)).not.toContain("reconcile-ledgers");
-    expect(dueTargets(inside)).toContain("reconcile-ledgers");
+    expect(dueTargets(outside)).not.toContain("reconcile-gateway-settlements");
+    expect(dueTargets(inside)).toContain("reconcile-gateway-settlements");
   });
 });

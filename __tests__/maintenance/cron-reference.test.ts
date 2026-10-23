@@ -140,9 +140,8 @@ it("documents every real builder and the four Actions-only registry gaps", () =>
       document.split("## Actions steps missing registry coverage")[1],
     ).toContain(`\`${id}\``);
   }
-  expect(document).toContain(
-    "tested wave design bound, not a runtime dispatch cap",
-  );
+  expect(document).toContain("tested wave design bound");
+  expect(document).toContain("resumable ledger target yields on crowded slots");
   expect(document).toContain("Configured is not live-verified");
   expect(document).toContain("`send-appointment-reminders`; open;");
   expect(document).toContain("`transfer-recordings`; open; 45 min");
