@@ -9,7 +9,7 @@ last-reviewed: 2026-10-23
 
 # Maintenance gate and recovery for money
 
-Maintenance mode has two blocking phases, and each treats money differently. In **DEGRADED** the site stays readable with a banner, but writes that move or commit money are refused and the financial background jobs are held. In **OFFLINE** every page and API except a short exempt list answers 503 and every background job is held, because the database may be mid-migration. This page lists exactly which money routes and jobs each phase stops, what stays open on purpose, and the order in which to re-drive money work once maintenance ends. The phase itself lives in Redis (`maintenance:phase`), set through `/api/admin/maintenance`; see [the maintenance architecture](../../maintenance/01-architecture.md).
+Maintenance mode has two blocking phases, and each treats money differently. In **DEGRADED** the site stays readable with a banner, money-moving writes on the routes listed below are refused, and only the jobs in `FINANCIAL_JOB_NAMES` are held. In **OFFLINE** every page and API except a short exempt list answers 503 and every background job is held, because the database may be mid-migration. This page lists exactly which money routes and jobs each phase stops, what stays open on purpose, and the order in which to re-drive money work once maintenance ends. The phase itself lives in Redis (`maintenance:phase`), set through `/api/admin/maintenance`; see [the maintenance architecture](../../maintenance/01-architecture.md).
 
 ## What each phase does to money
 

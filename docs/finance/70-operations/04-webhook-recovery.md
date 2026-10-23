@@ -35,9 +35,11 @@ SELECT id, provider, "eventType", "eventId", processed, "deferCount",
        "claimedAt", "receivedAt", error
 FROM "WebhookEvent"
 WHERE "receivedAt" < now() - interval '6 minutes'
+  AND provider IN ('razorpay', 'stream', 'novu')
   AND ("claimedAt" IS NULL OR "claimedAt" < now() - interval '6 minutes')
   AND ((processed = false AND error IS NULL)
-       OR (error IS NOT NULL AND error NOT LIKE 'permanent:%' AND error NOT LIKE 'gave up:%'))
+       OR (error IS NOT NULL AND "receivedAt" >= now() - interval '168 hours'
+           AND error NOT LIKE 'permanent:%' AND error NOT LIKE 'gave up:%'))
 ORDER BY "receivedAt" ASC
 LIMIT 25;
 ```
