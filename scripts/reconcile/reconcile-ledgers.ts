@@ -21,7 +21,7 @@ export type ReconcileScope = {
   scope: string;
   /** When present, limit the audit to a single organization. */
   organizationId?: string;
-  /** Membership id that initiated this run (null for scheduled cron). */
+  /** Authenticated user id that initiated this run (null for scheduled cron). */
   triggeredById?: string;
   /** Awaited as soon as the wallet step finds drift, so a run cut off later in the audit has already acted on it. */
   onWalletDrift?: (reportId: string, findings: Finding[]) => Promise<void>;
@@ -139,7 +139,7 @@ export function clawbackDualWriteGapFindings(
         note:
           actual === 0
             ? "OrganizationPayout.clawbackAmountPaise > 0 but no clawback:* ledger transaction against this payout."
-            : "OrganizationPayout.clawbackAmountPaise exceeds the summed CASH DEBIT of its clawback:* postings — a later clawback's dual write was lost.",
+            : "OrganizationPayout.clawbackAmountPaise exceeds the summed ORG_PAYABLE CREDIT of its clawback:* postings — a later clawback's dual write was lost.",
       },
     });
   }
