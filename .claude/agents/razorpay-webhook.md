@@ -53,4 +53,4 @@ This repo has a single canonical webhook endpoint at `app/api/webhooks/razorpay/
    - `schemas/webhooks/razorpay.ts`
    - `app/api/webhooks/razorpay-dispatch.ts`
    - `__tests__/enterprise/webhook-dispatch-gaps.test.ts`
-   - `.claude/skills/finance/references/razorpay/references/webhooks.md` and `docs/payments/webhooks/02-razorpay-webhook-schema.md`
+   - `.claude/skills/finance/references/razorpay/references/webhooks.md` and `docs/finance/10-money-in/03-razorpay-webhook-reference.md`
