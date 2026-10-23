@@ -148,7 +148,13 @@ export async function readSupportExport(userId: string) {
         expiresAt: true,
         endedAt: true,
         endReason: true,
-        supportCase: { select: { referenceNumber: true } },
+        supportCase: {
+          select: {
+            referenceNumber: true,
+            requesterUserId: true,
+            submitterUserId: true,
+          },
+        },
       },
     }),
   );
@@ -200,15 +206,21 @@ export async function readSupportExport(userId: string) {
         rating: row.csatRating,
         ratedAt: row.csatAt,
       })),
-    supportChatAccess: chatAccess.rows.map((grant) => ({
-      createdAt: grant.createdAt,
-      kind: grant.kind,
-      basis: grant.basis,
-      caseReferenceNumber: grant.supportCase.referenceNumber,
-      expiresAt: grant.expiresAt,
-      endedAt: grant.endedAt,
-      endReason: grant.endReason,
-    })),
+    supportChatAccess: chatAccess.rows.map((grant) => {
+      // A party who did not file the case (e.g. the reported user) sees the access, not whose case or why.
+      const ownCase =
+        grant.supportCase.requesterUserId === userId ||
+        grant.supportCase.submitterUserId === userId;
+      return {
+        createdAt: grant.createdAt,
+        kind: grant.kind,
+        basis: ownCase ? grant.basis : null,
+        caseReferenceNumber: ownCase ? grant.supportCase.referenceNumber : null,
+        expiresAt: grant.expiresAt,
+        endedAt: grant.endedAt,
+        endReason: grant.endReason,
+      };
+    }),
     supportExportComplete:
       cases.complete &&
       messages.complete &&

@@ -185,7 +185,11 @@ describe("DPDP export of staff chat access", () => {
     expiresAt: at,
     endedAt: at,
     endReason: "CASE_RESOLVED",
-    supportCase: { referenceNumber: "FAM-1" },
+    supportCase: {
+      referenceNumber: "FAM-1",
+      requesterUserId: "u1",
+      submitterUserId: "u1",
+    },
   };
   const findArgs = () => db.supportCaseChatAccess.findMany.mock.calls[0][0];
 
@@ -235,8 +239,36 @@ describe("DPDP export of staff chat access", () => {
       "supportCase",
     ]);
     expect(findArgs().select.supportCase).toEqual({
-      select: { referenceNumber: true },
+      select: {
+        referenceNumber: true,
+        requesterUserId: true,
+        submitterUserId: true,
+      },
     });
+  });
+
+  it("hides whose case and why from a party who did not file it", async () => {
+    db.supportCaseChatAccess.findMany.mockResolvedValueOnce([
+      {
+        ...grant,
+        basis: "FRAUD_OR_SCAM",
+        supportCase: {
+          referenceNumber: "FAM-9",
+          requesterUserId: "reporter",
+          submitterUserId: "reporter",
+        },
+      },
+    ]);
+
+    const out = await readSupportExport("u1");
+
+    expect(out.supportChatAccess).toEqual([
+      expect.objectContaining({
+        kind: "READ",
+        basis: null,
+        caseReferenceNumber: null,
+      }),
+    ]);
   });
 
   it("covers cases the user filed or asked for, and grants scoped to them", async () => {

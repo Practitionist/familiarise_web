@@ -1354,7 +1354,7 @@ ALTER TABLE "SupportCaseChatAccess" ADD CONSTRAINT "support_chat_access_shape"
     AND "expiresAt" > "createdAt"
     AND cardinality("scopeUserIds") >= 1
     AND ("kind" = 'INTERVENE' OR ("streamJoinedAt" IS NULL AND "streamLeftAt" IS NULL))
-    AND ("streamLeftAt" IS NULL OR "streamJoinedAt" IS NOT NULL)
+    AND ("streamLeftAt" IS NULL OR ("streamJoinedAt" IS NOT NULL AND "streamLeftAt" >= "streamJoinedAt"))
     AND ("reviewNoticeAt" IS NULL OR "endedAt" IS NOT NULL)
     AND ("kind" = 'READ' OR "basis" <> 'OPEN_CASE'));
 
