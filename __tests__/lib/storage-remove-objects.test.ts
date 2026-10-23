@@ -5,18 +5,16 @@
 // Storage's batch delete returns only the rows it removed, so an empty answer
 // for a non-empty request must not read as success while the object survives.
 const remove = jest.fn();
-const exists = jest.fn();
 const info = jest.fn();
 
 jest.mock("@supabase/supabase-js", () => ({
-  createClient: () => ({ storage: { from: () => ({ remove, exists, info }) } }),
+  createClient: () => ({ storage: { from: () => ({ remove, info }) } }),
 }));
 
 import { deleteAsset } from "../../lib/supabase-storage-core";
 
 beforeEach(() => {
   remove.mockReset();
-  exists.mockReset();
   info.mockReset();
 });
 
@@ -29,14 +27,12 @@ describe("deleteAsset", () => {
 
   it("fails when nothing was removed and the object still exists", async () => {
     remove.mockResolvedValue({ data: [], error: null });
-    exists.mockResolvedValue({ data: true, error: null });
     info.mockResolvedValue({ data: { name: "a/b.pdf" }, error: null });
     await expect(deleteAsset("documents", "a/b.pdf")).resolves.toBe(false);
   });
 
   it("succeeds when nothing was removed because the object is already gone", async () => {
     remove.mockResolvedValue({ data: [], error: null });
-    exists.mockResolvedValue({ data: false, error: { status: 404 } });
     info.mockResolvedValue({
       data: null,
       error: { status: 400, code: "NoSuchKey" },
@@ -49,7 +45,6 @@ describe("deleteAsset", () => {
     await expect(deleteAsset("documents", "a/b.pdf")).resolves.toBe(false);
 
     remove.mockResolvedValueOnce({ data: [], error: null });
-    exists.mockRejectedValueOnce(new Error("network"));
     info.mockRejectedValueOnce(new Error("network"));
     await expect(deleteAsset("documents", "a/b.pdf")).resolves.toBe(false);
   });
@@ -59,14 +54,12 @@ describe("deleteAsset", () => {
     { status: 404, code: "NoSuchBucket" },
   ])("keeps ambiguous storage observations retryable: %j", async (error) => {
     remove.mockResolvedValue({ data: [], error: null });
-    exists.mockResolvedValue({ data: false, error });
     info.mockResolvedValue({ data: null, error });
     await expect(deleteAsset("documents", "a/b.pdf")).resolves.toBe(false);
   });
 
   it("fails closed when metadata returns neither an object nor an absence error", async () => {
     remove.mockResolvedValue({ data: [], error: null });
-    exists.mockResolvedValue({ data: false, error: null });
     info.mockResolvedValue({ data: null, error: null });
     await expect(deleteAsset("documents", "a/b.pdf")).resolves.toBe(false);
   });
