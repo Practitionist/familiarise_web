@@ -381,14 +381,16 @@ The required capabilities and completion SLOs live in
 `lib/cron/operational-health.ts`. These are monitoring budgets, not a second
 scheduler. Fifteen-minute recovery/delivery loops have 45 minutes to accommodate a
 missed tick and lease recovery; thirty-minute session-outcome loops have 90 minutes;
-recording transfer has 8 hours against its six-hour schedule; breach alerts have
-3 hours; daily execution-history pruning has 36 hours. Support SLA scanning has 1 hour.
+support SLA scanning has 1 hour. Only ticker targets are required. Recording
+transfer, breach-deadline alerts and execution-history pruning run only from
+GitHub Actions workflows, which are budget-blocked, so they join the list when they
+move to the ticker.
 
 The probe queries recent COMPLETED executions by their actual core job names,
 including `reconcile-pending-refunds` and `send-appointment-reminders`, whose HTTP
 slugs differ. It uses `endedAt`, not a new RUNNING attempt or shared heartbeat.
-One healthy email drain cannot conceal stopped recording transfers or compliance
-alerts. FAILED, CANCELLED and RUNNING rows do not refresh this evidence.
+One healthy email drain cannot conceal stopped refund reconciliation or session
+reminders. FAILED, CANCELLED and RUNNING rows do not refresh this evidence.
 
 This checks a selected always-on operational set. Calendar/configuration-gated
 jobs, backlog drain capacity, vendor effect correctness, and alert delivery need

@@ -51,13 +51,13 @@ describe("operational absence checks", () => {
     );
     expect(report.healthy).toBe(false);
     expect(
-      report.jobs.find((j) => j.jobName === "transfer-recordings")?.overdue,
+      report.jobs.find((j) => j.jobName === "support-sla-sweep")?.overdue,
     ).toBe(true);
   });
   it("uses each completion budget and real completion time", () => {
     const rows = fresh().map((r) =>
-      r.jobName === "transfer-recordings"
-        ? { ...r, endedAt: new Date(now.getTime() - 7 * 60 * 60 * 1000) }
+      r.jobName === "auto-complete-appointments"
+        ? { ...r, endedAt: new Date(now.getTime() - 80 * 60 * 1000) }
         : r,
     );
     expect(assessOperationalCompletions(rows, now).healthy).toBe(true);
