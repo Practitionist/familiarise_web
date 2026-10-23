@@ -67,6 +67,10 @@ async function reportRollupFailures(failures: RollupFailure[]): Promise<void> {
       failures: failures.slice(0, 50).map((failure) => ({
         organizationId: failure.organizationId,
         phase: failure.phase,
+        message: (failure.error instanceof Error
+          ? failure.error.message
+          : String(failure.error)
+        ).slice(0, 500),
         code:
           failure.error instanceof Prisma.PrismaClientKnownRequestError
             ? failure.error.code

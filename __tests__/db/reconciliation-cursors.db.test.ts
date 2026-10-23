@@ -35,7 +35,6 @@ it("applies cursor DDL twice using the mapped table and matching timestamp types
     );
     expect(index.rows[0]?.name).not.toBeNull();
   } finally {
-    await client.query("ROLLBACK");
     await client.end();
   }
 });
