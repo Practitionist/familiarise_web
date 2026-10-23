@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { requireFreshSession } from "@/lib/auth/step-up";
+import { isFreshSession, requireFreshSession } from "@/lib/auth/step-up";
 import {
   CaseActionError,
   CaseActionRequestSchema,
@@ -91,6 +91,7 @@ export async function POST(req: NextRequest, context: Context) {
       {
         userId: auth.session.user.id,
         role: sessionRole(auth.session.user.role),
+        freshSession: isFreshSession(auth.session.session),
       },
       parsed.data,
     );

@@ -352,4 +352,4 @@ After 3 failed attempts, the payout is flagged for manual review.
 - [01-setup.md](./01-setup.md) — Setup and configuration
 - [02-architecture-and-flow.md](./02-architecture-and-flow.md) — Payment flow and revenue split
 - [Payouts Overview](../../payouts/README.md) — Full payout system documentation
-- [Payouts: Razorpay Implementation](../../payouts/07-razorpay-implementation.md) — Detailed implementation reference
+- [Payouts: Razorpay Implementation](../../../finance/40-payouts/04-razorpayx.md) — Detailed implementation reference
