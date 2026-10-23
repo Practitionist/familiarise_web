@@ -370,6 +370,8 @@ Staff do not read booking chats by default. Stream tokens are minted only for th
 
 A grant is allowed only on an open case (`OPEN`, `IN_PROGRESS` or `ESCALATED`) that a human is handling and that links a booking with a chat (trials have none). A **read** grant lasts 24 hours and is invisible to the parties until the case resolves; then the sweep tells them "our team read messages from your booking chat", unless staff withheld the notice. An **intervention** grant seats a visible "Familiarise Support" member in the chat for 24, 72 or 168 hours (72 by default) and notifies the parties at once. Intervention needs a basis: an overdue evidence request (checked), or a safety or fraud concern (checked when the case came from the safety-concern flow, otherwise asserted by staff with the reason on record).
 
+While an intervention is live, the channel is locked in Stream: `syncSupportBoundary()` sets per-channel grant modifiers that stop the parties (the `user` and `channel_moderator` roles) from changing members, removing Familiarise Support or clearing the history, and clears them when the last intervention ends. The doors lock before Support joins and unlock after it leaves; the sweep re-syncs every channel whose grants changed in the last hour. A covert read changes nothing in Stream, so a party could still clear their own DM during a read; when evidence must be kept, staff open an intervention.
+
 A one-to-one chat is read from seven days before the booking was made. In a group chat staff pick the target attendees, and only the reporter's and the targets' messages are shown. Organisation admins never see transcripts; they get a content-free audit row instead. Grants are append-only: the trigger `support_chat_access_append_only` lets only the end, Stream and notice timestamps be set, once each, so a grant can never be extended, only replaced by a new one.
 
 ```mermaid
@@ -454,7 +456,7 @@ flowchart TD
   A8 --> F["Flush staged bells and emails<br/>one Sentry report if any arm failed"]
 ```
 
-The auto-close moves a case resolved 28 days ago to CLOSED and, in the same transaction, releases any payout hold it still has and ends its live chat grants. No person acts, so it releases as the system (an ops-log row with actor role `SYSTEM`) without step-up (`releaseAutoClosedCaseTx()`).
+The auto-close moves a case resolved 28 days ago to CLOSED and, in the same transaction, releases any payout hold it still has and ends its live chat grants. No person acts, so it releases as the system (an ops-log row with actor role `SYSTEM`) without step-up (`releaseAutoClosedCaseTx()`). A case that still holds a payment is skipped, and stays RESOLVED for a later run, while a refund recommendation on it is open or the money doors are closed.
 
 The problem cascade resolves each incident in its own transaction. It copies the problem's closing note to the incident as a public reply, releases the incident's payout holds, ends its chat grants, and stages a "resolved" bell and email plus the CSAT prompt. An incident stays open, and is retried later, if a hold was placed after the problem resolved, if a refund recommendation is still undecided, or if money doors are closed.
 
@@ -483,7 +485,7 @@ sequenceDiagram
 
 ## 12. Privacy, retention and legal hold
 
-Support data is part of the DPDP export: a user's own cases (cases filed about them by an organisation appear as summaries), their messages without staff notes, evidence requests addressed to them, attachment metadata, ratings and, with the chat-intervention change, staff chat-access grants on cases where the user is a party: only once that grant's "we reviewed messages" notice was released, never when any grant on the case was withheld, and never with the operator's identity or any chat content (`readSupportExport()`). On erasure, `scrubSupportPiiTx()` replaces the user's case text, messages and evidence answers with "[erased]", soft-deletes their attachments and deletes the files after commit. Decisions stay, because they are immutable records.
+Support data is part of the DPDP export: a user's own cases (cases filed about them by an organisation appear as summaries), their messages without staff notes, evidence requests addressed to them, attachment metadata, ratings and, with the chat-intervention change, staff chat-access grants on cases where the user is a party: only once that grant's "we reviewed messages" notice was released, never when any grant on the case was withheld, and never with the operator's identity or any chat content; a party who did not file the case sees neither the basis nor the case reference (`readSupportExport()`). On erasure, `scrubSupportPiiTx()` replaces the user's case text, messages and evidence answers with "[erased]", soft-deletes their attachments and deletes the files after commit. Decisions stay, because they are immutable records.
 
 Evidence does not live forever. **180 days** after a case closes, the sweep deletes its attachment files and scrubs its free text, one case per transaction, at most five cases per run (`purgeExpiredSupportEvidence()`). The clock runs from the latest close across the case and any appeal of its decisions. The case skeleton, the decisions, the refund recommendations and the money links are kept, and an `EVIDENCE_PURGED` event records how many files went.
 

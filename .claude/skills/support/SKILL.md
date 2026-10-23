@@ -46,6 +46,7 @@ Terse rules for agents. The human explanation is in `docs/support/` (start at `d
 - Never resolve incidents inside the problem's transaction. The cascade is the bounded sweep arm.
 - Never add a support payment-hold table or write `EarningStatus.HELD` directly. Use `holdPaymentForCase()` / `releaseCaseHoldRows()` (which call `placeEarningsHolds()` / `releaseEarningsHolds()`).
 - Never release holds without the gate in `holdReleaseRefusalTx()` (no open recommendation, fresh session, money doors open).
+- Never write a channel's `config_overrides` outside `syncSupportBoundary()` (`lib/stream/support-boundary.ts`). It revokes member changes and owner truncation for `user` and `channel_moderator` while an INTERVENE grant is live and clears them when the last one ends; call it after commit wherever a grant starts or ends. A READ must change nothing in Stream.
 - Never mint a Stream token for another user, give operators Stream `admin`, or read a chat with a client `watch()`. Staff reach chats only through the case chat routes, which audit every page.
 - Never let an organization tag grant access to a personal case, and never return message bodies from organization feeds.
 - Never write a JS reconciler for a rule the sidecar already enforces (AGENTS.md §1.3); never add a second scheduler, Redis cron lock or `jobs/` wrapper for the sweep (AGENTS.md §1.1, §1.4).
@@ -55,7 +56,7 @@ Terse rules for agents. The human explanation is in `docs/support/` (start at `d
 ## Gotchas
 
 - `SupportTicket`, `supportTicketId`, `SupportThreadCategory`, `/support-threads`, `support-ticket-update` and the export key `supportTickets` all mean `SupportCase` now. `app/api/support/tickets/route.ts` is a staff-only outbound intake, not a legacy reader.
-- No caller passes actor `SYSTEM` to the transition table; the sweep's auto-close and the cascade write their own compare-and-set. Both still release holds and end chat grants in their transaction (auto-close via `releaseAutoClosedCaseTx()`, as the system with no step-up); keep that if you touch them.
+- No caller passes actor `SYSTEM` to the transition table; the sweep's auto-close and the cascade write their own compare-and-set. Both release holds and end chat grants in their transaction. Auto-close (`releaseAutoClosedCaseTx()`) releases as the system without step-up, but skips a held case while a recommendation is open or money doors are closed (`autoCloseRefusalTx()`); keep that gate if you touch it.
 - The hold and void doors run at default isolation inside `withOpsAction`; `performCaseAction()` (decisions, evidence, recommendations, review) runs Serializable with `withSerializableRetry()`.
 - `applyHoldTx()` has no case-status check; a hold applied after resolution is released by the auto-close.
 - `support-sla-sweep` is not in `/api/admin/system-jobs/run`; re-run via `POST /api/cleanup/support-sla-sweep` with `CRON_SECRET`.
@@ -63,3 +64,5 @@ Terse rules for agents. The human explanation is in `docs/support/` (start at `d
 - `familiarise-support` is a Stream-only user (no `User` row); keep it in `getExcludedUserIds()` in `scripts/stream/stream-sync.ts`.
 - `releaseSeat` only marks the funded participant `REFUNDED` (no session, recording or document access; group seats resell). It never cancels the booking; that is the platform cancel door. The credits rail always releases the seat.
 - Customer copy must never promise that a reply reopens a case.
+- Host organizations are booking parties only through captured payments (`CAPTURED_PAYMENT_WHERE` in `lib/support/evidence-parties.ts`).
+- The DPDP export shows a chat grant's basis and case reference only to the person who filed the case.

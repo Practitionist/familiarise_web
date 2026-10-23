@@ -54,7 +54,7 @@ Candidates are open cases with an acknowledgement or resolution target breached 
 
 ### 2. Auto-close
 
-RESOLVED cases with `resolvedAt` at least 28 days old move to CLOSED with `closedAt = now`, each by its own compare-and-set, with an AUTO_CLOSED event and no actor (`autoCloseResolvedRows()`). In the same transaction, `releaseAutoClosedCaseTx()` releases any payout holds the case still has (HOLD_RELEASED events, one `support.case.release-holds` ops-log row with actor role SYSTEM) and ends live chat-access grants as `CASE_RESOLVED`; no step-up applies because no person acts. A hold can still exist here only if it was applied after the case resolved. No customer notice is sent. `closedAt` starts the 180-day purge clock, so an untouched resolved case is purged no earlier than 208 days after resolution.
+RESOLVED cases with `resolvedAt` at least 28 days old move to CLOSED with `closedAt = now`, each by its own compare-and-set, with an AUTO_CLOSED event and no actor (`autoCloseResolvedRows()`). In the same transaction, `releaseAutoClosedCaseTx()` releases any payout holds the case still has (HOLD_RELEASED events, one `support.case.release-holds` ops-log row with actor role SYSTEM) and ends live chat-access grants as `CASE_RESOLVED`; no step-up applies because no person acts. A case that still holds a payment is skipped, and stays RESOLVED for a later run, while a refund recommendation on it is open or the money doors are closed (`autoCloseRefusalTx()`); the skip is recorded as `auto-close case <id>: left RESOLVED (<code>)` in the run's errors. The arm scans twice the cap and stops after `limit` closes, so skipped cases never crowd out closable ones. No customer notice is sent. `closedAt` starts the 180-day purge clock, so an untouched resolved case is purged no earlier than 208 days after resolution.
 
 ### 3. Problem-to-incident cascade
 
@@ -88,7 +88,7 @@ Closed cases 180 days past `closedAt` have their evidence deleted and their free
 
 ### 5. Chat-access backstop
 
-On the intervention branch, `sweepSupportChatAccess()` (`lib/support/chat-sweep.ts`) runs four bounded steps, 10 rows each: end grants that expired or whose case is resolved, closed or deleted; retry Stream leaves for ended interventions still seated; retry joins for live interventions unseated after 2 minutes (ending them `CHANNEL_GONE` if the channel is gone); and send the post-decision "we reviewed messages" notice once per case. See [chat access](06-chat-access-and-intervention.md#ending-the-sweep-and-the-review-notice).
+On the intervention branch, `sweepSupportChatAccess()` (`lib/support/chat-sweep.ts`) runs five bounded steps, 10 rows each: end grants that expired or whose case is resolved, closed or deleted; retry Stream leaves for ended interventions still seated; re-sync the channel lock for channels whose grants started or ended in the last hour; retry joins for live interventions unseated after 2 minutes (ending them `CHANNEL_GONE` if the channel is gone); and send the post-decision "we reviewed messages" notice once per case. See [chat access](06-chat-access-and-intervention.md#ending-the-sweep-and-the-review-notice).
 
 ### 6. Chargeback deadline alerts
 

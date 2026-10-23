@@ -81,7 +81,7 @@ Staff file a PERSONAL case for a customer with the customer as submitter, so it 
 
 ## Evidence parties
 
-Staff can ask the other side for evidence. The eligible recipients for a booking (`evidenceRecipientsByAppointment()` in `lib/support/case-actions.ts`) are: confirmed or attended consultant participants, the plan's consultant, ACCEPTED PRESENTER collaborators (crew never), and ACTIVE OWNER, MAINTAINER, MANAGER and SUPPORT members of the payment's host organization. Banned users are excluded. A recipient who stops being eligible loses the request (404 on read, 403 "Your delivery or organization access has changed" on answer). Details are in [evidence and attachments](04-evidence-and-attachments.md).
+Staff can ask the other side for evidence. The eligible recipients for a booking (`evidenceRecipientsByAppointment()` in `lib/support/case-actions.ts`) are: confirmed or attended consultant participants, the plan's consultant, ACCEPTED PRESENTER collaborators (crew never), and ACTIVE OWNER, MAINTAINER, MANAGER and SUPPORT members of the host organization of a captured payment on the booking. Banned users are excluded. A recipient who stops being eligible loses the request (404 on read, 403 "Your delivery or organization access has changed" on answer). Details are in [evidence and attachments](04-evidence-and-attachments.md).
 
 ## Worked example
 

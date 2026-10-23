@@ -20,7 +20,7 @@ When a customer complains about a session, staff usually need the other side's a
 - consultant participants with status CONFIRMED or ATTENDED;
 - the plan's consultant (consultation, subscription, webinar or class plan);
 - ACCEPTED collaborators with tier PRESENTER on webinar and class plans (crew never answers for a session);
-- ACTIVE OWNER, MAINTAINER, MANAGER and SUPPORT members of the payment's host organization.
+- ACTIVE OWNER, MAINTAINER, MANAGER and SUPPORT members of the host organization of a captured payment on the booking (`CAPTURED_PAYMENT_WHERE` in `lib/support/evidence-parties.ts` on the intervention branch: SUCCEEDED and not deleted). A failed or abandoned payment makes no organization a party.
 
 Banned users are excluded. A case with no booking has no eligible recipients. On the intervention branch the delivering-party part moves to `deliveringPartiesByAppointment()` in `lib/support/evidence-parties.ts`, which chat access also uses.
 

@@ -17,18 +17,18 @@ Decision records (with their explanation), refund and payment-hold reasons, and 
 
 `GET /api/user/privacy/export` (`app/api/user/privacy/export/route.ts`) returns a JSON file (`schemaVersion: "dpdp-2023-s11-v1"`, `Cache-Control: no-store`). `readSupportExport()` in `lib/support/privacy-export.ts` adds the support part:
 
-| Key                       | Contents                                                                                                                                                                      |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `supportTickets`          | The person's cases. An organization-filed case about them appears only as a summary (`filedByOrganization`). The callback phone appears only if they filed the case.          |
-| `supportGrievances`       | Their cases with category GRIEVANCE.                                                                                                                                          |
-| `supportMessages`         | Their own non-internal messages. Staff internal notes are never exported.                                                                                                     |
-| `supportEvidenceRequests` | Evidence they were asked for and what they answered.                                                                                                                          |
-| `supportAttachments`      | Metadata of files they uploaded; no file contents or URLs.                                                                                                                    |
-| `supportRatings`          | Their CSAT scores.                                                                                                                                                            |
-| `supportChatAccess`       | (Intervention branch.) Staff chat-access grants on their booking chats: date, kind, basis, case reference, expiry and end. Never the operator's identity or any chat content. |
-| `supportExportComplete`   | False if any collection hit the 20,000-row stop (`EXPORT_MAX_ROWS`; pages of 500).                                                                                            |
+| Key                       | Contents                                                                                                                                                                                                              |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `supportTickets`          | The person's cases. An organization-filed case about them appears only as a summary (`filedByOrganization`). The callback phone appears only if they filed the case.                                                  |
+| `supportGrievances`       | Their cases with category GRIEVANCE.                                                                                                                                                                                  |
+| `supportMessages`         | Their own non-internal messages. Staff internal notes are never exported.                                                                                                                                             |
+| `supportEvidenceRequests` | Evidence they were asked for and what they answered.                                                                                                                                                                  |
+| `supportAttachments`      | Metadata of files they uploaded; no file contents or URLs.                                                                                                                                                            |
+| `supportRatings`          | Their CSAT scores.                                                                                                                                                                                                    |
+| `supportChatAccess`       | (Intervention branch.) Staff chat-access grants on their booking chats: date, kind, expiry and end, plus the basis and case reference only if they filed the case. Never the operator's identity or any chat content. |
+| `supportExportComplete`   | False if any collection hit the 20,000-row stop (`EXPORT_MAX_ROWS`; pages of 500).                                                                                                                                    |
 
-A chat-access grant is exported only after its post-decision "we reviewed messages" notice went out: `reviewNoticeAt` is set, neither it nor any other grant on the case was withheld, the case is not deleted, and the person is in the grant's scope or is the case's requester or submitter. A withheld grant therefore never appears, which keeps the export consistent with what the person was told.
+A chat-access grant is exported only after its post-decision "we reviewed messages" notice went out: `reviewNoticeAt` is set, neither it nor any other grant on the case was withheld, the case is not deleted, and the person is in the grant's scope or is the case's requester or submitter. A withheld grant therefore never appears, which keeps the export consistent with what the person was told. A party who did not file the case, such as the reported user, sees that access happened but not whose case it was or why: `basis` and `caseReferenceNumber` are null for them.
 
 The export has no rate limit.
 
