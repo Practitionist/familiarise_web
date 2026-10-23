@@ -213,5 +213,5 @@ An alert names a condition; this table names the runbook. Page for the first gro
 3. **Forcing a job with `npx tsx jobs/...`.** The jobs are reached through `/api/cleanup/<slug>`; the standalone entry points were for the retired Actions scheduler.
 4. **A `cascade-refund-earnings` job.** The refund cascade runs inline in the refund transaction, with `reconcile-refunds` re-driving a cascade that did not commit.
 5. **"`ENABLE_LIVE_PAYOUTS` off freezes payouts at `PROCESSING`."** Rows stay `APPROVED`.
-6. **Dunning has two stages only.** Stage 3 exists behind `ENABLE_DUNNING_SUSPEND`, although the job's header comment still says otherwise.
+6. **"Dunning has two stages and never suspends."** Stage 3 (stamp `dunningSuspendedAt`, refuse new sponsored bookings) runs when `ENABLE_DUNNING_SUSPEND` is `"true"`. The header comment of `jobs/billing/dunning.ts` still describes two stages and is a pending code-comment fix.
 7. **A wallet floor that auto-charges.** `wallet-low-balance` is notify-only; it creates no `WalletTopUp` and charges no mandate.
