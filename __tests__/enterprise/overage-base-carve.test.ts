@@ -17,6 +17,17 @@ import {
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import { createEarningsHoldStore } from "../fixtures/earnings-hold-store";
 
+const mockWalletCredit = jest.fn();
+const mockOpenShortfall = jest.fn();
+jest.mock("../../lib/api/organizations/wallet", () => ({
+  walletCredit: (...a: unknown[]) => mockWalletCredit(...a),
+  openShortfallReceivablePaise: (...a: unknown[]) => mockOpenShortfall(...a),
+}));
+const mockPostLedgerTxn = jest.fn();
+jest.mock("../../lib/payments/ledger/post", () => ({
+  postLedgerTxn: (...a: unknown[]) => mockPostLedgerTxn(...a),
+}));
+
 interface MockOpts {
   event?: object | null;
   parent?: object | null;
@@ -244,6 +255,90 @@ describe("recarveOverageBase", () => {
     await expect(
       recarveOverageBase(m.tx, { overageEventId: "ov1" }),
     ).rejects.toThrow(/missing the restored basePaise/);
+  });
+
+  it("carves a wallet-restored base back onto the wallet and cancels its receivable", async () => {
+    // Restore of 300: the wallet covered 200, 100 booked as ORG_RECEIVABLE, of
+    // which a later top-up settled 60 (40 still open).
+    const m = mockTx({
+      parent: {
+        id: "parent1",
+        billableToOrgInvoiceId: null,
+        billingAccountId: "ba1",
+      },
+    });
+    const t = m.tx as unknown as Record<string, Record<string, unknown>>;
+    t.paymentLeg.findUnique = jest.fn(
+      async (a: { where: { paymentId_source: { source: string } } }) =>
+        a.where.paymentId_source.source === "WALLET"
+          ? { amountPaise: 1_200 }
+          : null,
+    );
+    m.legUpdateMany.mockImplementation(
+      async (a: { where: { source: string } }) => ({
+        count: a.where.source === "WALLET" ? 1 : 0,
+      }),
+    );
+    t.ledgerEntry = {
+      findFirst: jest.fn().mockResolvedValue({ amountPaise: 100 }),
+    };
+    t.ledgerTransaction = {
+      findUnique: jest.fn().mockResolvedValue({ id: "booking-txn" }),
+    };
+    const accountLock = jest.fn().mockResolvedValue({ ownerOrgId: "org1" });
+    t.billingAccount = { update: accountLock };
+    mockOpenShortfall.mockResolvedValue(40);
+    mockWalletCredit.mockResolvedValue({ ownerOrgId: "org1" });
+    mockPostLedgerTxn.mockResolvedValue({ created: true });
+
+    await expect(
+      recarveOverageBase(m.tx, { sidePaymentId: "side1" }),
+    ).resolves.toBe("recarved");
+
+    expect(m.legUpdateMany).toHaveBeenCalledWith({
+      where: {
+        paymentId: "parent1",
+        source: "WALLET",
+        amountPaise: { gte: 200 },
+      },
+      data: { amountPaise: { decrement: 200 } },
+    });
+    // The account row is locked before the open shortfall is read.
+    expect(accountLock).toHaveBeenCalledWith({
+      where: { id: "ba1" },
+      data: { walletBalance: { increment: 0 } },
+      select: { ownerOrgId: true },
+    });
+    expect(accountLock.mock.invocationCallOrder[0]).toBeLessThan(
+      mockOpenShortfall.mock.invocationCallOrder[0],
+    );
+    expect(mockWalletCredit).toHaveBeenCalledWith(
+      m.tx,
+      expect.objectContaining({ billingAccountId: "ba1", amountPaise: 260 }),
+    );
+    expect(mockPostLedgerTxn).toHaveBeenCalledWith(
+      m.tx,
+      expect.objectContaining({
+        idempotencyKey: "overage-recarve:ov1",
+        postings: [
+          {
+            account: { kind: "DISCOUNT" },
+            direction: "DEBIT",
+            amountPaise: 300,
+          },
+          {
+            account: { kind: "WALLET", organizationId: "org1" },
+            direction: "CREDIT",
+            amountPaise: 260,
+          },
+          {
+            account: { kind: "ORG_RECEIVABLE", organizationId: "org1" },
+            direction: "CREDIT",
+            amountPaise: 40,
+          },
+        ],
+      }),
+    );
   });
 
   it("adjusts a DRAFT OrganizationInvoice and its line item in-place and returns recarved (#1900)", async () => {
