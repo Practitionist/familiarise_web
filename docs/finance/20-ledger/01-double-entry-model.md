@@ -63,7 +63,7 @@ IIT Madras tops up its prepaid wallet with ₹5,00,000 by card. The capture post
 | `GATEWAY_CLEARING`                   | DEBIT     | 50,000,000 | ₹5,00,000.00 |
 | `WALLET` (organisation `iit-madras`) | CREDIT    | 50,000,000 | ₹5,00,000.00 |
 
-Debits equal credits, so `ledger_txn_balanced` passes. `WALLET` is a liability: the platform now owes IIT Madras ₹5,00,000 of spending power, and `BillingAccount.walletBalance` rises by 50,000,000 in the same transaction. Later a ₹5,000 booking debits `WALLET` 500,000 and the cache falls by the same amount. If the two ever disagree, the reconciler reports `WALLET_BALANCE_DRIFT` and the wallet is frozen ([integrity and reconciliation](06-integrity-and-reconciliation.md)).
+Debits equal credits, so `ledger_txn_balanced` passes. `WALLET` is a liability: the platform now owes IIT Madras ₹5,00,000 of spending power, and `BillingAccount.walletBalance` rises by 50,000,000 in the same transaction. Later a ₹5,000 session with 18 % GST debits `WALLET` 590,000 and the cache falls by the same amount. If the two ever disagree, the reconciler reports `WALLET_BALANCE_DRIFT` and the wallet is frozen ([integrity and reconciliation](06-integrity-and-reconciliation.md)).
 
 ## 6. Five different money flows
 

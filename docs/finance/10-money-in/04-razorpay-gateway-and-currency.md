@@ -18,12 +18,12 @@ This page states which payment gateway the platform runs, what is enforced about
 
 Settlement being INR-only is enforced at four independent points, so no single mistake can charge in the wrong currency.
 
-| Point                 | Enforcer                                                                                                                                                                                                                   |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Order creation        | `assertInrSettlement` (`lib/payments/validation/currency-guards.ts`) is the first statement of `createRazorpayOrder` and throws `NON_INR_SETTLEMENT` (422)                                                                 |
-| Inbound gateway data  | `toCurrencyEnum` throws on any code outside the `Currency` enum, so a webhook carrying another currency dead-letters instead of being booked                                                                               |
-| Administrative inputs | Organisation creation, the billing-account patch and purchase-order creation validate `z.literal("INR")`                                                                                                                   |
-| Database              | `payment_currency_inr`, `refund_currency_inr`, `dispute_currency_inr`, `ledger_account_currency_inr`, `consultant_earnings_currency_inr` and `consultant_payout_currency_inr` CHECKs in `prisma/sql/check-constraints.sql` |
+| Point                 | Enforcer                                                                                                                                                                                                                                            |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Order creation        | `assertInrSettlement` (`lib/payments/validation/currency-guards.ts`) is the first statement of `createRazorpayOrder` and throws `NON_INR_SETTLEMENT` (422)                                                                                          |
+| Inbound gateway data  | `toCurrencyEnum` throws on a blank or unknown code, so such a webhook dead-letters; it accepts every `Currency` enum value (`INR`, `USD`, `EUR`, `GBP`), and the `refund_currency_inr` and `dispute_currency_inr` CHECKs below reject a non-INR row |
+| Administrative inputs | Organisation creation, the billing-account patch and purchase-order creation validate `z.literal("INR")`                                                                                                                                            |
+| Database              | `payment_currency_inr`, `refund_currency_inr`, `dispute_currency_inr`, `ledger_account_currency_inr`, `consultant_earnings_currency_inr` and `consultant_payout_currency_inr` CHECKs in `prisma/sql/check-constraints.sql`                          |
 
 A 100x charge was once possible because an organisation could be created with a USD billing currency and its INR paise were sent to Razorpay as dollars; the guards above exist so that cannot recur. The `Currency` enum stays on money columns so a future multi-currency ledger needs no column migration ([ADR 15](../../enterprise/70-design-decisions/15-currency-as-enum-with-display-fields.md)).
 
@@ -47,7 +47,7 @@ Rates come from ExchangeRate-API's open endpoint, configured by `EXCHANGE_RATE_A
 
 ## 4. Environment
 
-All variables are read at runtime. Test and live Razorpay modes have separate keys and separate webhook secrets, so a secret generated in test mode rejects every live delivery.
+Server-side variables are read at runtime. `NEXT_PUBLIC_RAZORPAY_KEY_ID` is inlined into the browser bundle at build time, so changing it needs a rebuild and redeploy. Test and live Razorpay modes have separate keys and separate webhook secrets, so a secret generated in test mode rejects every live delivery.
 
 | Variable                                    | Purpose                                                                                                                              |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |

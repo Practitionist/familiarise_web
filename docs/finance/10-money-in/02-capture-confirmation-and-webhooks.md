@@ -113,7 +113,7 @@ It runs in two phases. Phase 1 is one Serializable transaction (15 second timeou
 **Phase 1.**
 
 1. Read the payment by `paymentIntent`. A row still carrying a `premint_` intent is adopted only if the order, read from Razorpay, names that row in its notes and the amount and currency match (`verifiedPreMintAdoption`, `adoptPreMintRow`).
-2. A payment already `SUCCEEDED` with the same amount and gateway id returns at once (idempotent redelivery).
+2. A payment already `SUCCEEDED` returns at once (idempotent redelivery) unless the delivery contradicts it: a supplied captured amount that differs from the row, or a supplied gateway id that differs from a stamped one. A missing amount or id matches, and a row with no gateway id yet is stamped with the supplied one.
 3. Apply the capture-race rules in the table below.
 4. Otherwise CAS the payment `PENDING` to `SUCCEEDED`, stamping `gatewayPaymentId` and `capturedAt`, then confirm the appointment (`confirmExistingAppointment`): tentative occurrences become confirmed, the participant becomes confirmed, a trial becomes `SCHEDULED`.
 5. Create earnings and the `booking:<paymentId>` journal inside a savepoint. If that fails for any reason other than a serialization abort, the booking still confirms and Phase 2 retries the earnings.

@@ -96,6 +96,8 @@ flowchart TB
   end
   subgraph Book["Member books: same checkout"]
     MC["PaymentLeg: WALLET, LICENSE or INVOICE_ACCRUAL<br/>Payment SUCCEEDED, no gateway call for these"]
+    SIDE["CHARGE_MEMBER side Payment<br/>member pays the overage by card: gateway capture"]
+    BLK["BLOCK: checkout refused past the cap"]
   end
   subgraph Bill["Monthly billing"]
     ROLL["settle-invoice-accruals:<br/>INVOICE_ACCRUAL legs into one OrganizationInvoice"]
@@ -108,7 +110,9 @@ flowchart TB
   TOP --> BA
   BA --> POOL --> OVR
   POOL --> MC
-  OVR --> MC
+  OVR -->|"CHARGE_ORG"| MC
+  OVR -->|"CHARGE_MEMBER"| SIDE
+  OVR -->|"BLOCK"| BLK
   MC --> ROLL --> OPAY
   PO -.->|"gates"| ROLL
   MC --> OP --> OT
@@ -152,7 +156,7 @@ Before firing anything, a tick reads the fleet switch `ops:active_cron_platform`
 
 ## 5. Four doors, one writer
 
-A captured payment can be reported through four doors, and only one function is allowed to confirm it. The checkout modal's client return, an on-demand sync, the Razorpay webhook and the `reconcile-payment-status` sweep each learn about a capture differently, yet all resolve to the same order-level facts and hand them to `routeCapturedPayment` (`app/api/webhooks/razorpay-dispatch.ts`), which calls `handlePaymentSuccess`. The admin recover door reaches the same function for a capture that failed metadata validation. A door that is not the webhook fetches the payment from Razorpay first, because a client signature proves the ids belong together, not that money moved.
+A captured payment can be reported through four doors, and only one function is allowed to confirm it. The client verify door (the checkout modal's client return or an on-demand sync, drawn as two boxes), the Razorpay webhook and the `reconcile-payment-status` sweep each learn about a capture differently, yet all resolve to the same order-level facts and hand them to `routeCapturedPayment` (`app/api/webhooks/razorpay-dispatch.ts`), which calls `handlePaymentSuccess`. The fourth, the admin recover door, calls that function directly for a capture that failed metadata validation. The client verify door and the sweep fetch the payment from Razorpay first, because a client signature proves the ids belong together, not that money moved.
 
 ```mermaid
 flowchart TD
@@ -190,7 +194,7 @@ A broker earns its place when a second independently deployed consumer needs the
 ## Where in code
 
 - `lib/payments/checkout/`, `lib/payments/webhooks/handlers.ts`, `app/api/webhooks/razorpay-dispatch.ts`.
-- `lib/payments/operations/refund.ts`, `lib/payments/payouts/`.
+- `lib/payments/operations/booking-refund.ts` (`refundBookingPayment`), `lib/payments/operations/refund.ts`, `lib/payments/payouts/`.
 - `netlify/functions/cron-tick.mts`, `lib/cron/cleanup-registry.ts`, `lib/cron/with-cron-lock.ts`.
 
 ## Related

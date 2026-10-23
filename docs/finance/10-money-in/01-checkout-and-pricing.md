@@ -8,7 +8,7 @@ last-reviewed: 2026-10-23
 
 # Checkout and pricing
 
-Checkout turns a buyer's click into three things that must exist together or not at all: a `Payment` row, the `PaymentLeg` rows that say what funds it, and a tentative booking that holds the slot or seat. This page explains how `handleCheckout` (`lib/payments/checkout/orchestrate.ts`) does that, how the amount is derived, and how the locks, the open-order reuse and the idempotency key keep a double click, a second tab or a crashed request from charging twice. Capture is the next stage and has its own page: [capture and webhooks](02-capture-confirmation-and-webhooks.md).
+Checkout turns a buyer's click into three things that commit together or not at all: a `Payment` row, the `PaymentLeg` rows that say what funds it, and a tentative booking that holds the slot or seat. The one row that outlives a failed commit is the `EXPIRED` tombstone for an already-minted gateway order, described in section 1. This page explains how `handleCheckout` (`lib/payments/checkout/orchestrate.ts`) does that, how the amount is derived, and how the locks, the open-order reuse and the idempotency key keep a double click, a second tab or a crashed request from charging twice. Capture is the next stage and has its own page: [capture and webhooks](02-capture-confirmation-and-webhooks.md).
 
 ## 1. The pipeline in one picture
 
@@ -41,7 +41,7 @@ sequenceDiagram
   H->>L: release locks
 ```
 
-The gateway order is created inside the lock but outside the database transaction, because an external call must never sit inside a Serializable transaction. If the transaction then fails, `handleCheckout` cancels the order and writes an `EXPIRED` tombstone `Payment` for it (`tombstoneAbortedGatewayOrder`), because Razorpay cannot void an order: a buyer who still completes it needs a row for the late capture to land on, where it is refunded automatically.
+The gateway order is created inside the lock but outside the database transaction, because an external call must never sit inside a Serializable transaction. If the transaction then fails, `handleCheckout` writes an `EXPIRED` tombstone `Payment` for the order (`tombstoneAbortedGatewayOrder`), because Razorpay has no order-cancel call: a buyer who still completes it needs a row for the late capture to land on, where it is refunded automatically.
 
 ## 2. How the amount is derived
 
@@ -115,7 +115,7 @@ A buyer who abandons a checkout can release the hold at once with `DELETE /api/c
 Four rails confirm in the checkout transaction itself, because there is nothing to wait for:
 
 - **Wallet, invoice accrual and licence** (`isOrgSponsoredPayment`): the order id is synthetic (`org_wallet_…`, `org_invoice_…`, `org_license_…`), the payment is born `SUCCEEDED`, and the funding leg is `WALLET`, `INVOICE_ACCRUAL` or a zero-value `LICENSE`. A wallet debit is refused if it has no `Dr WALLET` line in the booking journal (`assertWalletDebitJournaled`).
-- **Free** (`amount === 0` with credits applied): the order id is `free_…` and no leg is written because there is no funding amount; the credit is a `REFERRAL_CREDIT` leg only.
+- **Free** (`amount === 0` with credits applied): the order id is `free_…` and no funding leg is written because there is no funding amount; the only leg is the `REFERRAL_CREDIT` leg for the credit.
 - **Mock** (`isMockPayment`, honoured only when `NODE_ENV === "development"`): an `order_mock_…` id and a `SUCCEEDED` row for local work.
 
 These payments never see a capture webhook, so checkout also mints the consumer tax invoice and ensures the chat channels itself. Their refunds do not go to a gateway; see [refunds](../30-refunds-disputes/01-refunds.md).
@@ -135,7 +135,7 @@ These payments never see a capture webhook, so checkout also mints the consumer 
 | Payment, legs and hold commit together           | One Serializable transaction in `commitCheckout`                 | `__tests__/payments/checkout-pool-1-nesting.test.ts`   | None needed; the transaction rolls back |
 | Funding legs sum to `Payment.amount`             | `payment_legs_sum_to_amount` trigger                             | `__tests__/enterprise/payment-leg-invariant.test.ts`   | None; uncommittable                     |
 | One order per logical attempt                    | `clientIdempotencyKey` unique, `findReusablePendingOrderPayment` | `__tests__/payments/checkout-open-order-reuse.test.ts` | `abandoned-payments` expires leftovers  |
-| A slot is held by one buyer                      | Redis slot lock plus `occurrence_no_confirmed_overlap`           | `__tests__/payments/checkout-lock-ttl.test.ts`         | `cleanup-tentative-occurrences`         |
+| A 1:1 slot is held by one buyer                  | Redis slot lock plus `occurrence_no_confirmed_overlap`           | `__tests__/payments/checkout-lock-ttl.test.ts`         | `cleanup-tentative-occurrences`         |
 | Only INR is charged                              | `assertInrSettlement`; `payment_currency_inr` CHECK              | `__tests__/payments/currency-and-tax-gates.test.ts`    | None; refused at the boundary           |
 | Status moves only from the expected prior status | CAS-in-WHERE on every `Payment` update                           | `__tests__/payments/cancel-pending-checkout.test.ts`   | `reconcile-payment-status`              |
 

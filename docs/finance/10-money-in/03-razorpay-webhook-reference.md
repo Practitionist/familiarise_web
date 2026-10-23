@@ -10,7 +10,7 @@ last-reviewed: 2026-10-23
 
 This page lists what the platform accepts from Razorpay and RazorpayX: which events the dispatcher handles, the payload fields the handlers read, the wire quirks the Zod schemas normalise, and the ordering rules that make out-of-order delivery safe. How the inbox deduplicates and recovers is in [capture confirmation and webhooks](02-capture-confirmation-and-webhooks.md); this page does not repeat it.
 
-The contract lives in `schemas/webhooks/razorpay.ts` (shapes), `app/api/webhooks/razorpay/signature.ts` (secrets) and `app/api/webhooks/razorpay-dispatch.ts` (routing). The dispatcher has a `default` branch that logs and ignores any other event, so a new event type is harmless until a case is added.
+The contract lives in `schemas/webhooks/razorpay.ts` (shapes), `app/api/webhooks/razorpay/signature.ts` (secrets) and `app/api/webhooks/razorpay-dispatch.ts` (routing). The dispatcher has a `default` branch that logs and ignores any other event. A new money event Razorpay starts sending is therefore dropped, and local state can go stale until a sweep or a new case catches it, so review the dashboard's subscribed events against the dispatcher whenever either changes.
 
 ## 1. Events the dispatcher handles
 

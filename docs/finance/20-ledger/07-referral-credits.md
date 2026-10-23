@@ -53,7 +53,7 @@ Each movement of a vested balance is a balanced two-line `REFERRAL_CREDIT` trans
 
 In plain words: the platform books the cost of a reward when the credit becomes spendable and owes the holder that amount until they use it. Using it pays the debt down, and a balance that expires unused is released as breakage. Draws, restores and breakage post only when the credit's `vestedAt` is set, which means the vest journal posted the liability.
 
-The booking itself separately debits `PLATFORM_PROMO` for the `REFERRAL_CREDIT` leg when the sale is confirmed, so the platform's cost is recognised once, as a promotion, at the sale. The welcome discount has no ledger line of its own: it is a discount before tax, so it lowers revenue at the sale, and the platform's take funds it.
+The booking itself separately debits `PLATFORM_PROMO` for the `REFERRAL_CREDIT` leg when the sale is confirmed, which offsets the redemption draw's credit to `PLATFORM_PROMO`; the reward's cost stays recognised once, at vest. The welcome discount has no ledger line of its own: it is a discount before tax, so it lowers revenue at the sale, and the platform's take funds it.
 
 ### Worked example
 
