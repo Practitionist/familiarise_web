@@ -12,7 +12,7 @@
 
 ## Bounded booking remediation capacity
 
-The automatic whole-booking cancellation path currently supports at most eight live participants, twelve non-tentative undeleted occurrences, ten payment rows and ten notification recipients per booking. These conservative execution guards are not offering-plan limits or measured throughput guarantees. Preview, confirmation and worker execution recheck capacity; cap-plus-one reads reject growth instead of truncating refund or notification obligations.
+The automatic whole-booking cancellation path currently supports at most eight live participants, twelve non-tentative undeleted occurrences, ten payment rows and ten notification recipients per booking. These conservative execution guards are not offering-plan limits or measured throughput guarantees. Preview, confirmation and worker execution recheck capacity; the worker reads its bounded payment/participant/occurrence graph inside the same Serializable transaction that stages cancellation obligations, so a stale preflight graph is never reused; cap-plus-one reads reject growth instead of truncating refund or notification obligations.
 
 Larger bookings remain unsupported by this maintenance action and require a separately reviewed cancellation procedure. No ready large-roster procedure is implied. An oversized queued booking remains pending with a visible error while other items can rotate; it must not be marked completed, partially cancelled or silently dropped. Verify supported-size execution against the deployed runtime before using this action operationally.
 
