@@ -38,7 +38,7 @@ The table shows where the referral code is applied for each way of signing up.
 
 ## 5. Why capture does not weaken the anti-farming rules
 
-Capture and apply record attribution only. The reward is released later by the vest sweep, after a delivered, held and unrefunded paid session, and it is bounded by the budget and caps described in [04-reward-economics-and-decisions.md](./04-reward-economics-and-decisions.md). Widening capture to OAuth and verified-email signups therefore adds coverage without adding a way to farm rewards.
+Capture and apply record attribution only. The reward is released later by the vest sweep, after a delivered, held and unrefunded paid session, and it is bounded by the budget and caps described in [03-reward-economics-and-decisions.md](./03-reward-economics-and-decisions.md). Widening capture to OAuth and verified-email signups therefore adds coverage without adding a way to farm rewards.
 
 ## 6. Signup verification policy
 

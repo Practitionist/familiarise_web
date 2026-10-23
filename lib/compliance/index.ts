@@ -3,7 +3,7 @@
  *
  * Status as of 2026-07-17:
  *   - tds.ts          — DTAA + section selection live; rate constant
- *                       still being normalised (see compliance docs 01).
+ *                       still being normalised (see docs/finance/60-tax/03-tds-rules-and-returns.md).
  *   - msme.ts         — `computeMsmePaymentDeadline` live (15/45-day rule).
  *   - gst.ts          — `deriveGstBreakdown` live (CGST/SGST/IGST split).
  *   - irp.ts          — env-gated ClearTax connector (production-approval
@@ -14,11 +14,7 @@
  *                       the remaining call-site cascade (Stream /
  *                       analytics) is tracked in #701.
  *   - form15.ts       — schema-only; cross-border remittance refs not
- *                       yet captured. See compliance doc 07.
- *
- * The full live-implementation plan lives in:
- *
- *   docs/compliance/15-implementation-roadmap.md
+ *                       yet captured. See docs/finance/60-tax/03-tds-rules-and-returns.md.
  *
  * Callers MUST treat any function still flagged as a stub ("form15.*") as
  * "sensible default, safe but not compliant" and NOT rely on it for:
