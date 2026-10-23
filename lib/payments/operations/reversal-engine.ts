@@ -47,7 +47,12 @@ type ReversalSource =
   // reverses through the booking cascade on that payment id.
   | { kind: "OVERAGE"; overagePaymentId: string }
   // Clawback of a host org's share already paid out, booked as a receivable.
-  | { kind: "PAYOUT_CLAWBACK"; orgPayoutId: string; organizationId: string }
+  | {
+      kind: "PAYOUT_CLAWBACK";
+      orgPayoutId: string;
+      organizationId: string;
+      orgEarningsId: string;
+    }
   // Consultant mirror of PAYOUT_CLAWBACK, also booked as a receivable.
   | {
       kind: "CONSULTANT_CLAWBACK";
@@ -114,12 +119,7 @@ export async function applyReversal(
     }
 
     case "PAYOUT_CLAWBACK": {
-      const posted = await reversePayoutClawback(
-        tx,
-        input,
-        input.source.orgPayoutId,
-        input.source.organizationId,
-      );
+      const posted = await reversePayoutClawback(tx, input, input.source);
       return {
         kind: "PAYOUT_CLAWBACK",
         cascades: [],
@@ -157,9 +157,9 @@ export async function applyReversal(
 async function reversePayoutClawback(
   tx: Tx,
   input: ApplyReversalInput,
-  orgPayoutId: string,
-  organizationId: string,
+  share: { orgPayoutId: string; organizationId: string; orgEarningsId: string },
 ): Promise<boolean> {
+  const { orgPayoutId, organizationId, orgEarningsId } = share;
   if (input.amountPaise <= 0) return false;
 
   const payout = await tx.organizationPayout.findUnique({
@@ -202,6 +202,7 @@ async function reversePayoutClawback(
       description: `Payout clawback: ${clawbackPaise} paise from payout ${orgPayoutId} (${input.reason})`,
       details: {
         refundId: input.refundId,
+        orgEarningsId,
         orgPayoutId,
         amountPaise: input.amountPaise,
         clawbackAmountPaise: clawbackPaise,
@@ -213,6 +214,7 @@ async function reversePayoutClawback(
   await postPayoutClawback(tx, {
     refundId: input.refundId,
     payoutId: orgPayoutId,
+    orgEarningsId,
     amountPaise: clawbackPaise,
     organizationId,
   });
@@ -311,30 +313,34 @@ export async function clawBackCompletedOrgPayout(
   await postPayoutClawback(tx, {
     refundId: input.refundId,
     payoutId: orgPayout.id,
+    orgEarningsId: input.orgEarningsId,
     amountPaise: clawbackPaise,
     organizationId,
   });
 }
 
 /**
- * The org clawback journal `Dr ORG_RECEIVABLE / Cr ORG_PAYABLE`, idempotent on
- * `clawback:<driver>:<payoutId>`; every writer of `clawbackAmountPaise` posts it.
+ * The org clawback journal `Dr ORG_RECEIVABLE / Cr ORG_PAYABLE`; every writer of
+ * `clawbackAmountPaise` posts it, keyed per share so sibling shares on one payout never collide.
  */
 export async function postPayoutClawback(
   tx: Tx,
   input: {
     refundId: string;
     payoutId: string;
+    /** The reversed share; null for a clawback no single share drives. */
+    orgEarningsId: string | null;
     amountPaise: number;
     organizationId: string;
   },
 ): Promise<void> {
-  const { refundId, payoutId, amountPaise, organizationId } = input;
+  const { refundId, payoutId, orgEarningsId, amountPaise, organizationId } =
+    input;
   // The counter-post is part of the reversal, not a side effect: report, then
   // rethrow so the enclosing tx rolls back — an unbalanced journal never commits (#1583 C-P1-09).
   try {
     await postLedgerTxn(tx, {
-      idempotencyKey: `${ORG_CLAWBACK_KEY_PREFIX}${refundId}:${payoutId}`,
+      idempotencyKey: orgClawbackKey(refundId, payoutId, orgEarningsId),
       kind: "ORG_PAYOUT",
       payoutId,
       postings: [
@@ -367,6 +373,16 @@ export async function postPayoutClawback(
     });
     throw err;
   }
+}
+
+/** `clawback:<driver>:<payoutId>[:<orgEarningsId>]`: one org clawback journal per reversed share. */
+function orgClawbackKey(
+  driver: string,
+  payoutId: string,
+  orgEarningsId: string | null,
+): string {
+  const share = orgEarningsId ? `:${orgEarningsId}` : "";
+  return `${ORG_CLAWBACK_KEY_PREFIX}${driver}:${payoutId}${share}`;
 }
 
 /** One clawback per (driver id, payout); the dispute path passes `dispute:<id>`. */
