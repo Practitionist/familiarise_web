@@ -63,7 +63,8 @@ flowchart TD
   CRON["Ticker: POST /api/cleanup/reconcile-ledgers<br/>one slot, 03:55 UTC"] --> RUN["runReconcileLedgers"]
   ADMIN["Admin door: POST /api/admin/reconcile-ledgers<br/>step-up, reason, ops log"] --> RUN
   RUN --> W["Wallet step first"]
-  W -->|"WALLET_BALANCE_DRIFT"| FRZ["freezeDriftedWallets<br/>WALLET_FREEZE event"]
+  W -->|"WALLET_BALANCE_DRIFT, cron run"| FRZ["onWalletDrift freeze<br/>WALLET_FREEZE event"]
+  REP -->|"admin run, after return"| AFRZ["freezeDriftedWallets<br/>WALLET_FREEZE event"]
   RUN --> REST["All other checks"]
   REST --> BL["Split against the checked-in baseline"]
   BL --> REP["LedgerReconciliationReport row"]
@@ -93,7 +94,7 @@ An administrator can run the same audit on demand through `POST /api/admin/recon
 
 ## Wallet drift: freeze, repair, unfreeze
 
-`BillingAccount.walletBalance` is a reconciled cache of the `WALLET` ledger account. When the wallet step finds a drift, every door that runs a reconcile calls `freezeDriftedWallets` (`lib/payments/wallet-freeze.ts`). The freeze is a `WALLET_FREEZE` event in the append-only `SystemEvent` log, keyed `wallet-freeze:<billingAccountId>`, and the latest event under the key decides the state. It fails closed: an unreadable log blocks spend rather than leaking it. It blocks discretionary spend such as a checkout debit, never a top-up credit and never chargeback recovery. The freeze happens right after the wallet step and before the baseline is evaluated, so a baselined wallet drift still freezes spend and still raises one fatal Sentry report per run.
+`BillingAccount.walletBalance` is a reconciled cache of the `WALLET` ledger account. When the wallet step finds a drift, the drifting wallets are frozen (`lib/payments/wallet-freeze.ts`). The nightly cron run freezes them through the `onWalletDrift` hook as soon as the wallet step finishes; the admin door calls `freezeDriftedWallets` only after `runReconcileLedgers` returns, so its freeze follows the report row. The freeze is a `WALLET_FREEZE` event in the append-only `SystemEvent` log, keyed `wallet-freeze:<billingAccountId>`, and the latest event under the key decides the state. It fails closed: an unreadable log blocks spend rather than leaking it. It blocks discretionary spend such as a checkout debit, never a top-up credit and never chargeback recovery. On the cron path the freeze happens right after the wallet step and before the baseline is evaluated, so a baselined wallet drift still freezes spend and still raises one fatal Sentry report per run, even if the run is cut off later. On the admin path a process that dies between the report and the freeze leaves the wallet unfrozen until the next run.
 
 A drift is an incident, not something to patch by hand. The repair has three steps.
 
@@ -109,12 +110,12 @@ The auditor compares caches with the journal. It does not check the `GATEWAY_CLE
 
 ## Rules and their enforcers
 
-| Rule                                                              | Enforcer                                                                                  | Test                                                       | Repair                                           |
-| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------ |
-| A known finding cannot keep the run red forever or hide a new one | Fingerprint, expiry and fail-on-malformed rules in `ledger-findings-baseline.ts`          | `__tests__/payments/ledger-findings-baseline.test.ts`      | Fix the finding or renew the entry with a reason |
-| A drifted wallet cannot be spent                                  | `isWalletFrozen` in `lib/payments/wallet-freeze.ts`, read in the checkout transaction     | `__tests__/maintenance/ledger-drift-response.test.ts`      | Correcting journal, then the unfreeze door       |
-| An unfreeze cannot hide a live drift                              | The `WALLET_STILL_DRIFTED` re-check in the unfreeze route                                 | `__tests__/enterprise/wallet-doors.test.ts`                | Post the correcting journal first                |
-| Two audits never run at once                                      | `withCronLock("reconcile-ledgers")`, a Postgres lease, and a 409 for a running full scope | `__tests__/payments/admin-reconcile-ledgers-async.test.ts` | Wait for the running audit                       |
+| Rule                                                              | Enforcer                                                                                                                                                         | Test                                                       | Repair                                           |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------ |
+| A known finding cannot keep the run red forever or hide a new one | Fingerprint, expiry and fail-on-malformed rules in `ledger-findings-baseline.ts`                                                                                 | `__tests__/payments/ledger-findings-baseline.test.ts`      | Fix the finding or renew the entry with a reason |
+| A drifted wallet cannot be spent                                  | `isWalletFrozen` in `lib/payments/wallet-freeze.ts`, read in the checkout transaction                                                                            | `__tests__/maintenance/ledger-drift-response.test.ts`      | Correcting journal, then the unfreeze door       |
+| An unfreeze cannot hide a live drift                              | The `WALLET_STILL_DRIFTED` re-check in the unfreeze route                                                                                                        | `__tests__/enterprise/wallet-doors.test.ts`                | Post the correcting journal first                |
+| Two audits do not overlap while the lease can be taken            | `withCronLock("reconcile-ledgers")`, a Postgres lease taken fail-open (a non-connection lease error runs the audit unlocked), and a 409 for a running full scope | `__tests__/payments/admin-reconcile-ledgers-async.test.ts` | Wait for the running audit                       |
 
 ## Where in code
 

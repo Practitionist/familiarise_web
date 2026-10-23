@@ -67,25 +67,25 @@ A payee's first account can be paid at once. A change of default account starts 
 
 The organisation rail always sends to a bank account, so it chooses IMPS or NEFT. RTGS and same-bank transfers exist at RazorpayX but the code never selects them.
 
-**Narration** is limited to 30 characters of letters, digits and spaces; the client strips anything else. **`reference_id`** is the platform's payout id, which is how a lost submission is found again (`listPayouts` by reference).
+**Narration** is optional: organisation payouts send one and consultant payouts omit it. When present it is limited to 30 characters of letters, digits and spaces, and the client strips anything else. **`reference_id`** is the platform's payout id, which is how a lost submission is found again (`listPayouts` by reference).
 
-**Timeout and definitive failure.** Every call has a 30-second ceiling. After the request leaves, only an HTTP 4xx other than 408, 409 and 429 counts as a definitive rejection (`isDefinitiveGatewayRejection`). A timeout, a socket error, an unreadable body or a 5xx cannot tell "rejected" from "accepted but the reply was lost", so it never fails a payout.
+**Timeout and definitive failure.** Every call has a 30-second ceiling. After the request leaves, only an HTTP 4xx other than 408, 409 and 429 counts as a definitive rejection (`isDefinitiveGatewayRejection`). A timeout, a socket error, an unreadable success body or a 5xx cannot tell "rejected" from "accepted but the reply was lost", so it never fails a payout. An error response keeps its HTTP status even when its body cannot be parsed, so an unreadable 400 is still definitive.
 
 ## Status mapping
 
 Webhook events reach `handleRazorpayPayoutWebhook` in `app/api/webhooks/utils.ts`, which first looks for an organisation payout by gateway id or reference, and otherwise treats the event as a consultant payout. The dispatcher in `app/api/webhooks/razorpay-dispatch.ts` accepts `payout.queued`, `payout.pending`, `payout.initiated`, `payout.processed`, `payout.failed`, `payout.rejected`, `payout.reversed`, `payout.cancelled` and `payout.updated`.
 
-| RazorpayX status            | Consultant payout                                                                                          | Organisation payout                                |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `queued`, `pending`         | PENDING, or unchanged while PROCESSING                                                                     | No change                                          |
-| `processing`, `initiated`   | PROCESSING                                                                                                 | No change (already PROCESSING)                     |
-| `processed`                 | COMPLETED, earnings PAID, UTR stored                                                                       | COMPLETED, earnings PAID, UTR stored               |
-| `failed`, `rejected`        | FAILED, earnings back to READY, TDS cleared                                                                | FAILED, earnings back to READY                     |
-| `cancelled`                 | CANCELLED                                                                                                  | FAILED                                             |
-| `reversed`                  | REVERSED: after completion with the inverse journal, before completion with the earnings detached to READY | REVERSED: the same two cases                       |
-| `payout.updated` with a UTR | UTR backfilled, including a late NEFT or RTGS UTR                                                          | UTR stored, and the status in the event is applied |
+| RazorpayX status            | Consultant payout                                                                                          | Organisation payout                                                                                                                 |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `queued`, `pending`         | PENDING, or unchanged while PROCESSING                                                                     | No change                                                                                                                           |
+| `processing`, `initiated`   | PROCESSING                                                                                                 | No change (already PROCESSING)                                                                                                      |
+| `processed`                 | COMPLETED, earnings PAID, UTR stored                                                                       | COMPLETED, earnings PAID, UTR stored                                                                                                |
+| `failed`, `rejected`        | FAILED, earnings back to READY, TDS cleared                                                                | FAILED, earnings back to READY                                                                                                      |
+| `cancelled`                 | CANCELLED                                                                                                  | FAILED                                                                                                                              |
+| `reversed`                  | REVERSED: after completion with the inverse journal, before completion with the earnings detached to READY | REVERSED: the same two cases                                                                                                        |
+| `payout.updated` with a UTR | UTR backfilled, including a late NEFT or RTGS UTR                                                          | UTR written unconditionally, and the event's status is applied through the status helpers, which ignore a stale terminal transition |
 
-An unknown status is recorded as a system event and leaves the payout unchanged. The polling jobs use `mapGatewayStatus`, which treats `queued` and `pending` as PROCESSING and `rejected`, `failed` and `reversed` as FAILED for a payout that was never completed. A reversal of a payout the platform already marked COMPLETED arrives through the webhook or through the reconcile job's completed-payout check.
+An unknown status is recorded as a system event and leaves the payout unchanged. The consultant polling jobs use `mapGatewayStatus`, which treats `queued` and `pending` as PROCESSING and `rejected`, `failed` and `reversed` as FAILED for a payout that was never completed. Organisation polling instead passes the raw status to `applyOrgGatewayStatus`, which stores a pre-completion reversal as REVERSED and writes a UTR only while none is stored. A reversal of a payout the platform already marked COMPLETED arrives through the webhook or through the reconcile job's completed-payout check.
 
 ## Live-key guards
 

@@ -24,7 +24,7 @@ Section 43B(h) of the Income-tax Act says that an expense owed to a micro or sma
 
 The 15 and 45 days are a hard ceiling that a longer payment term cannot extend. The agreement flag defaults to false, so a forgotten flag errs toward the shorter deadline rather than toward a tax disallowance. The status comes from the consultant's profile (`msmeStatus`, `writtenAgreementWithFamiliarise`) or the organisation's MSME information, not from the buyer. `isValidUdyamNumber` checks the registration number format `UDYAM-XX-NN-NNNNNNN`.
 
-Both payout models stamp the deadline when the payout is created, through `resolvePayoutMsmeDeadline` (`lib/payments/payouts/shared-lifecycle.ts`): `mustPayByDate` on `ConsultantPayout` and on `OrganizationPayout`. The date counts from the payout's creation, and a payee with no status is treated as `NONE`, so every payout has a deadline.
+Both payout models stamp the deadline when the payout is created, through `resolvePayoutMsmeDeadline` (`lib/payments/payouts/shared-lifecycle.ts`): `mustPayByDate` on `ConsultantPayout` and on `OrganizationPayout`. The date counts from the moment the payout is created (the call time inside the creating transaction), and a payee with no status is treated as `NONE`, so every payout has a deadline.
 
 For example, LearnPro Academy declares itself a small enterprise with a written agreement. A payout created on 2026-10-20 gets `mustPayByDate` 2026-12-04, 45 days later. Without the agreement it would be 2026-11-04. A payee with status `NONE` would get 2026-12-19.
 
@@ -49,7 +49,7 @@ All four run from the Netlify five-minute ticker (`netlify/functions/cron-tick.m
 | `irp-uploader`                | Daily from 03:00 for 17 hours, hourly slices at :25, ten invoices per slice | 08:55 onward                         | fail-closed | Yes                 | IRN, acknowledgement and QR stored on the organisation invoice           |
 | `msme-payment-alerts`         | Daily at 03:45                                                              | 09:15                                | fail-open   | No                  | A digest to administrators and finance                                   |
 
-Fail-closed means the job does nothing if the lease cannot be taken, because two concurrent runs would damage a gapless number series (the register's healer) or register an e-invoice twice. Fail-open means a repeat is harmless. Every job in this table is also reachable by its HTTP twin, `POST /api/cleanup/<slug>` with `Authorization: Bearer $CRON_SECRET`, which is how to run one by hand.
+Fail-closed means the job does nothing if the lease cannot be taken, because two concurrent runs would damage a gapless number series (the register's healer) or register an e-invoice twice. Fail-open means the job runs unlocked when the lease cannot be taken for a reason other than a lost database connection. For `tds-return-draft` an overlapping run only rewrites the same CSV; `msme-payment-alerts` is not idempotent, so a fail-open run or a manual rerun can send its digest twice. Every job in this table is also reachable by its HTTP twin, `POST /api/cleanup/<slug>` with `Authorization: Bearer $CRON_SECRET`, which is how to run one by hand.
 
 ### What each export needs to run
 
@@ -62,11 +62,11 @@ Fail-closed means the job does nothing if the lease cannot be taken, because two
 
 The code does not enforce these dates; the jobs are scheduled to be ready before them. The accountant owns the filing.
 
-| Date                                    | What it is                                                                                           | The job that feeds it                                             |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| The 11th of each month                  | GSTR-1, outward supplies for the prior month                                                         | The register is ready on the 2nd                                  |
-| 31 July, 31 October, 31 January, 31 May | The quarterly TDS return for the quarter ending in the preceding June, September, December and March | The draft is ready on the 5th of the month after the quarter ends |
-| 15 or 45 days after a payout's creation | The section 43B(h) payment deadline                                                                  | `msme-payment-alerts`, five days before                           |
+| Date                                                                                        | What it is                                                                                           | The job that feeds it                                             |
+| ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| The 11th of each month                                                                      | GSTR-1, outward supplies for the prior month                                                         | The register is ready on the 2nd                                  |
+| 31 July, 31 October, 31 January, 31 May                                                     | The quarterly TDS return for the quarter ending in the preceding June, September, December and March | The draft is ready on the 5th of the month after the quarter ends |
+| 15 or 45 days after a payout's creation for a `MICRO` or `SMALL` payee (60 days for others) | The section 43B(h) payment deadline (statutory only for `MICRO` and `SMALL`)                         | `msme-payment-alerts`, five days before                           |
 
 TDS deposit, advance tax, the half-yearly MSME-1 return and annual GST returns are statutory obligations too, but no job produces them, so they are not tracked here.
 

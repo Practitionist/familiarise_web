@@ -91,7 +91,7 @@ For each payout, `processSinglePayout` does the following in order.
 
 ### When the answer is not clear
 
-`handleProcessSinglePayoutError` applies one rule: only a definitive rejection may fail a payout. A definitive rejection is an HTTP 4xx other than 408, 409 and 429 (`isDefinitiveGatewayRejection`).
+`handleProcessSinglePayoutError` applies one rule: a payout fails only if the request never left (`submittedToGateway` false) or the gateway rejected it definitively. A definitive rejection is an HTTP 4xx other than 408, 409 and 429 (`isDefinitiveGatewayRejection`).
 
 | Situation                                                             | Result                                                                                                              |
 | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -148,7 +148,7 @@ While maintenance is DEGRADED, `/api/admin/payouts`, `/api/consultant/payouts/in
 
 **A clawback is netted.** Hannah was paid ₹12,000 on 2026-10-20. Later Priya's ₹5,000 session in that payout is refunded in full, and Hannah's 400,000 paise share was already paid out with no TDS withheld. The refund posts `Dr CONSULTANT_RECEIVABLE 400,000 / Cr CONSULTANT_PAYABLE 400,000` (key `clawback:<refundId>:<payoutId>`). On Monday 2026-10-26 Hannah has 1,000,000 paise READY. Her outstanding clawback of 400,000 is below the ₹10,000 pause, so the payout is minted with the clawback netted: the recoverable ceiling is 1,000,000 − 50,000 − 200,000 = 750,000, and 400,000 is recovered under `clawback-recovery:<payoutId>` (`Dr CONSULTANT_PAYABLE / Cr CONSULTANT_RECEIVABLE`). The payout row keeps its 1,000,000 gross, and 600,000 paise, less any TDS, reaches Hannah's bank. If the payout fails, the recovery journal is mirrored back and the clawback is owed again.
 
-**A lost answer.** A payout of 1,200,000 paise is sent at 12:00 IST, and the request times out. The payout stays PROCESSING with its idempotency key stored. The next stuck-payout run asks RazorpayX for a payout with reference equal to the payout id. If RazorpayX holds it, its status is applied. If RazorpayX has no record, the payout resets to APPROVED and the retry sends it under the same key, so a request that did reach RazorpayX cannot pay twice.
+**A lost answer.** A payout of 1,200,000 paise is sent at 12:00 IST, and the request times out. The payout stays PROCESSING with its idempotency key stored. The next stuck-payout run asks RazorpayX for a payout with reference equal to the payout id. If RazorpayX holds it, its status is applied. If RazorpayX has no record, the payout resets to APPROVED and the retry sends it under the same key, so RazorpayX can deduplicate a request it did accept. That protection lasts only as long as RazorpayX keeps the idempotency key, which its documentation does not state, so an empty lookup is strong evidence, not proof, that the first request was never accepted.
 
 ## Rules and their enforcers
 
@@ -182,5 +182,5 @@ While maintenance is DEGRADED, `/api/admin/payouts`, `/api/consultant/payouts/in
 - **Stripe transfers and a `STRIPE_CONNECT` payout rail.** Stripe was removed. `PayoutAccountType.STRIPE_CONNECT` and `PayoutMethod.STRIPE_TRANSFER` remain as enum values, and `resolvePayoutMethodFromAccountType` still maps them, but no code sends money through them and a non-RAZORPAY provider throws `Unsupported provider`.
 - **RTGS.** The mode selector chooses only UPI, IMPS or NEFT. The exported `PAYOUT_MODES` constant, with `IMPS_LIMIT` and `RTGS_MIN`, is read nowhere and can be deleted.
 - **A model called `Payout`.** The model is `ConsultantPayout`; the organisation twin is `OrganizationPayout`.
-- **Failing a payout when the gateway call times out.** It released the earnings into the next batch and paid twice. A payout now fails only on a definitive rejection.
+- **Failing a payout when the gateway call times out.** It released the earnings into the next batch and paid twice. A payout now fails only when the request never left or the gateway rejected it definitively.
 - **An instant-payout auto-approve of ₹25,000.** The value is ₹5,000.

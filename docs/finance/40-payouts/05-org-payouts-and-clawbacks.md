@@ -75,7 +75,7 @@ A permanent 4xx from the gateway fails the payout and returns its earnings to RE
 
 ## Completion, failure and reversal
 
-- **Completed** (`markOrgPayoutCompleted`): PROCESSING to COMPLETED, earnings BATCHED to PAID. A shortfall since disbursement becomes a clawback. The ledger posts `orgpayout:<id>` (kind `ORG_PAYOUT`): `Dr ORG_PAYABLE` for the net less recovered clawback, `Cr CASH` for `amountPaise`, `Cr TDS_PAYABLE` for the TDS. A `TDSRecord` is written for the organisation. A `payout.completed` outbound webhook and the notices are staged in the same transaction.
+- **Completed** (`markOrgPayoutCompleted`): PROCESSING to COMPLETED, earnings BATCHED to PAID. A shortfall since disbursement becomes a clawback. The ledger posts `orgpayout:<id>` (kind `ORG_PAYOUT`): `Dr ORG_PAYABLE` for the net less recovered clawback, `Cr CASH` for `amountPaise`, `Cr TDS_PAYABLE` for the TDS. A `TDSRecord` is written for the organisation when TDS was withheld and the payout carries a positive applied rate; withheld TDS with no applied rate writes no record and raises an `ORG_PAYOUT_TDS_RATE_MISSING` system error instead. A `payout.completed` outbound webhook and the notices are staged in the same transaction.
 - **Failed** (`markOrgPayoutFailed`): PROCESSING to FAILED, earnings back to READY, TDS records deleted, clawback recovery released. A FAILED organisation payout is final; a new batch pays the earnings.
 - **Reversed** (`markOrgPayoutReversed`): after completion the inverse journal posts under `orgpayout-reversal:<id>`, PAID earnings reopen as READY, the TDS record is reversed in full and recovery is released. Before completion, the earnings simply detach.
 

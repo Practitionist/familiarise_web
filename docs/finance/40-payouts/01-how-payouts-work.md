@@ -32,7 +32,7 @@ An expert who does not want to wait for Monday can use **Get paid now** on the E
 
 **Worked example.** Hannah has three READY earnings of 400,000 paise each, from three ₹5,000 sessions with different learners. On Monday 2026-10-19 at 20:05 UTC (Tuesday 2026-10-20 at 01:35 IST) the batch job totals 1,200,000 paise (₹12,000). That is above ₹500 and above ₹5,000, so the payout is created PENDING and Hannah's three earnings become BATCHED. An administrator approves it on Tuesday at 11:00 IST. At the next hourly run, 12:00 IST, `process-payouts` checks the dispute and refund gates, plans the TDS, finds that Hannah's year-to-date gross is well under ₹5,00,000 and so withholds nothing, and sends 1,200,000 paise to her verified bank account by IMPS. When RazorpayX reports `payout.processed`, the payout is COMPLETED and the three earnings are PAID.
 
-When the bank's answer never arrives, for example because the request timed out, the payout is never marked FAILED on a guess, because the money might already have left and a second payout would pay the expert twice. It stays PROCESSING, and the `handle-stuck-payouts` and `reconcile-payout-status` jobs ask RazorpayX about it using the platform's own payout id as the reference. [Consultant payouts](03-consultant-payouts.md) describes how each outcome is handled.
+When the bank's answer never arrives, for example because the request timed out, the payout is never marked FAILED on a guess, because the money might already have left and a second payout would pay the expert twice. It stays PROCESSING, and the `handle-stuck-payouts` and `reconcile-payout-status` jobs ask RazorpayX about it: by the stored RazorpayX payout id when the row has one, and, for a row whose reply was lost before that id was saved, `handle-stuck-payouts` looks it up with the platform's own payout id as the reference. [Consultant payouts](03-consultant-payouts.md) describes how each outcome is handled.
 
 ## A host organisation's money
 
@@ -80,6 +80,6 @@ Whether real money leaves is controlled by the `ENABLE_LIVE_PAYOUTS` flag (`lib/
 ## Deprecated & Superseded Approaches
 
 - **Stripe Connect transfers** for experts paid abroad. Stripe was removed and non-resident experts are not paid at all, so any code or text that routes an expert through Stripe is dead.
-- **An instant-payout auto-approve limit of ₹25,000.** The default is ₹5,000 (`AUTO_APPROVE_THRESHOLD`, 500,000 paise). Text that says ₹25,000 is wrong.
+- **An instant-payout auto-approve limit of ₹25,000.** The instant limit is `INSTANT_PAYOUT_AUTO_APPROVE_PAISE`, which an environment variable of the same name can override and which otherwise defaults to the batch threshold `PAYOUT_CONSTANTS.AUTO_APPROVE_THRESHOLD` (₹5,000, 500,000 paise). Text that says ₹25,000 is wrong.
 - **RTGS as a payout mode.** The code selects only UPI, IMPS and NEFT.
 - **Marking a payout FAILED when the gateway call times out.** That released the earnings into the next batch, which then paid twice. The current rule keeps the payout PROCESSING until the bank is asked.
