@@ -351,7 +351,7 @@ cron's protective spend-freeze with
 `POST /api/admin/billing-accounts/[billingAccountId]/unfreeze`, which
 refuses with `WALLET_STILL_DRIFTED` while the two still disagree. The
 worked example is in
-[ledger integrity](../10-money-and-ledger/13-ledger-integrity.md).
+[ledger integrity](../../finance/20-ledger/06-integrity-and-reconciliation.md).
 
 **Never** auto-close a finding. Every row represents real money drift.
 

@@ -18,7 +18,7 @@ Several items below live in the Razorpay / RazorpayX dashboards rather than in c
 
 - [ ] **Razorpay Payments KYC approved** and dashboard badge shows **Activated** (1–3 business days; any KYC query resets SLA).
 - [ ] **Settlement bank account** is the platform's current account and the beneficiary name matches the registered entity exactly.
-- [ ] **Platform GSTIN** is recorded on Razorpay so monthly merchant fee invoices carry B2B input tax credit (separate from consumer/org tax invoices minted in-house — see [../../06-b2c-tax-invoice.md](../../06-b2c-tax-invoice.md)).
+- [ ] **Platform GSTIN** is recorded on Razorpay so monthly merchant fee invoices carry B2B input tax credit (separate from consumer/org tax invoices minted in-house — see [02-gst-invoices-and-credit-notes.md](../../../finance/60-tax/02-gst-invoices-and-credit-notes.md)).
 - [ ] **International / PA-CB acceptance** (if accepting foreign cards): domestic activation + Video KYC completed first; verify `₹25,00,000` per-invoice PA-CB ceiling and automated FIRS / e-FIRA issuance.
 - [ ] **RazorpayX Business Banking current/escrow account** activated and funded before turning on `ENABLE_LIVE_PAYOUTS=true`.
 
