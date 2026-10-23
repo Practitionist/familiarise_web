@@ -245,6 +245,24 @@ export function getStreamCircuitStatus() {
   return streamCircuitBreaker.status();
 }
 
+function reportStreamFailure(
+  error: unknown,
+  failures: RunFailureReporter | undefined,
+  options: { level?: "warning" | "error"; reason?: "stream.billing" } = {},
+) {
+  const context = options.reason ? { reason: options.reason } : {};
+  if (failures) {
+    failures.add("stream-circuit-breaker", error, context, {
+      level: options.level,
+    });
+    return;
+  }
+  Sentry.captureException(error, {
+    tags: { subsystem: "stream", ...context },
+    ...(options.level ? { level: options.level } : {}),
+  });
+}
+
 /** Expected misses do not trip the breaker; sweep callers supply an invocation reporter. */
 export async function withStreamCircuitBreaker<T>(
   operation: () => Promise<T>,
@@ -272,38 +290,17 @@ export async function withStreamCircuitBreaker<T>(
     ) {
       if (fallback) return fallback();
       const unavailable = new StreamUnavailableError();
-      if (failures) {
-        failures.add(
-          "stream-circuit-breaker",
-          unavailable,
-          {},
-          { level: "warning" },
-        );
-      } else {
-        Sentry.captureException(unavailable, {
-          tags: { subsystem: "stream" },
-          level: "warning",
-        });
-      }
+      reportStreamFailure(unavailable, failures, { level: "warning" });
       throw unavailable;
     }
     // A billing refusal is the one class here that needs a HUMAN, not a retry.
     // It is reported before the generic branch and with its own tag, so it does
     // not read as one more Stream error in a flap.
     if (isStreamBillingError(error)) {
-      if (failures) {
-        failures.add(
-          "stream-circuit-breaker",
-          error,
-          { reason: "stream.billing" },
-          { level: "error" },
-        );
-      } else {
-        Sentry.captureException(error, {
-          tags: { subsystem: "stream", reason: "stream.billing" },
-          level: "error",
-        });
-      }
+      reportStreamFailure(error, failures, {
+        reason: "stream.billing",
+        level: "error",
+      });
       throw error;
     }
     // #899 — an expected miss (channel not found) is normal on the lazy
@@ -312,8 +309,7 @@ export async function withStreamCircuitBreaker<T>(
     // alerted on by Stream itself — also not an error page. Only genuine
     // Stream errors are captured.
     if (!(isExpectedStreamError(error) || isRateLimitError(error))) {
-      if (failures) failures.add("stream-circuit-breaker", error);
-      else Sentry.captureException(error, { tags: { subsystem: "stream" } });
+      reportStreamFailure(error, failures);
     }
     throw error;
   }
