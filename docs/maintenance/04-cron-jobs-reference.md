@@ -155,7 +155,7 @@ The long tail: janitors, sweepers, retry drains and the watchdogs. Individually 
 | **Purge deleted documents**<br>`purge-deleted-documents`                     | `0 3 * * *`                   | `lib/documents/document-purge.ts`                    | open   | no        | Tombstones documents past the retention window, then purges tombstones past the grace period, versions before roots, objects before rows          | Skips: OFFLINE            |
 | **Reconcile document storage**<br>`reconcile-document-storage`               | `0 3 * * *`                   | `scripts/cleanup/reconcile-document-storage.ts`      | open   | no        | `AppointmentDocument.{isStorageMissing, missingDetectedAt}`; finds orphaned objects and rows with no object, answering 207 on a missing file      | Skips: OFFLINE            |
 | **Expire stale collaborator invites**<br>`expire-stale-collaborator-invites` | `0 3 * * *`                   | `lib/collaborators/cleanup.ts`                       | open   | no        | Pending invites unanswered for fourteen days → DECLINED via CAS, both parties notified, limit clamped to 50                                       | Skips: OFFLINE            |
-| **Expire onboarding drafts**<br>`expire-onboarding-drafts`                   | `25 0 * * 0`                  | inline in `lib/cron/cleanup-registry.ts`             | none   | no        | `OnboardingDraft` rows not updated for 90 days, under a `pg_column_size` ceiling guard on the payload                                             | Skips: OFFLINE            |
+| **Expire onboarding drafts**<br>`expire-onboarding-drafts`                   | `25 0 * * 0`                  | `scripts/cleanup/expire-onboarding-drafts.ts`        | open   | no        | Bounded `OnboardingDraft` expiry after 90 idle days; final deletion rechecks `updatedAt`                                                          | Skips: OFFLINE            |
 | **Sentry ingest canary**<br>`sentry-ingest-canary`                           | ticker, every 6 hours         | `lib/observability/ingest-canary.ts`                 | none   | no        | Posts one real error event to prove ingest still accepts errors. Alerts by email, never through Sentry, and rides the 70 % quota warning          | Skips: OFFLINE            |
 
 ## Jobs that run regardless of maintenance mode
@@ -184,7 +184,9 @@ Four jobs sit outside the standard wrapper:
 | `cron-heartbeat`       | None, deliberately           | Read-only dead-man watchdog over GitHub Actions and Upstash usage; must never depend on lock acquisition to alert.         |
 | `stream-webhook-drift` | None, deliberately           | Read-only single-request drift check against Stream application settings.                                                  |
 
-Two further jobs hold no lock because they touch nothing durable: `expire-onboarding-drafts`, which wraps its own inline `withCronLock`, and `sentry-ingest-canary`, which only posts a probe event.
+`expire-onboarding-drafts` owns its Postgres lease in the canonical core; it deletes durable rows and is not an unlocked probe. `sentry-ingest-canary` only posts a probe event.
+
+Auth, invitation, draft, webhook and audit retention bounds, final-write predicates and continuation are described in [bounded housekeeping](./housekeeping-bounds.md).
 
 ## Watchdogs
 

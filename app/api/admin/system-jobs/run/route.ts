@@ -205,6 +205,7 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
     const result = await cleanupAuthTokens();
     return {
       success: result.success,
+      hasMore: result.hasMore,
       totalProcessed: result.totalCleaned,
       cleanedCount: result.totalCleaned,
       verificationTokensDeleted: result.verificationTokensDeleted,
@@ -274,6 +275,7 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
     const result = await archiveWebhookEvents();
     return {
       success: result.success,
+      hasMore: result.hasMore,
       processedEventsDeleted: result.processedEventsDeleted,
       failedEventsDeleted: result.failedEventsDeleted,
       totalDeleted: result.totalDeleted,

@@ -226,7 +226,7 @@ failed load never overwrites the stored draft, and the action refuses writes
 once onboarding is complete (except in add mode). Step transitions save after
 800 ms; the professional and verification steps also save field edits after
 2 s. Drafts idle for 90 days are deleted by the `expire-onboarding-drafts`
-registry job (weekly).
+registry job (weekly), through `scripts/cleanup/expire-onboarding-drafts.ts`. Each bounded slice repeats the idle-age predicate at deletion, so an autosave after selection survives. Unfinished work returns `hasMore`; see [housekeeping bounds](../maintenance/housekeeping-bounds.md).
 
 ---
 
@@ -1093,23 +1093,23 @@ whole design.
 
 ### Core Files
 
-| File                                                        | Purpose                                                                                                               |
-| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `app/form/onboarding/page.tsx`                              | Server page — decides add mode from the session                                                                       |
-| `app/form/onboarding/OnboardingWizard.tsx`                  | Orchestrator — step state, form data accumulation, draft hydrate/autosave/conflict/clear, submission                  |
-| `app/onboarding/gate/page.tsx`                              | The onboarding gate for invitees and SSO members                                                                      |
-| `actions/onboarding-gate.action.ts`                         | Gate server action (DOB + consent, eligibility, CAS claim)                                                            |
-| `utils/onboarding-completion.ts`                            | `claimOnboardingCompletion`, `recordOnboardingConsent`, gate eligibility                                              |
-| `utils/onboarding.ts`                                       | All Zod schemas, types, transform functions, validation utilities                                                     |
-| `utils/onboarding-draft.ts`                                 | Draft contract — wire schema, JSON sanitizer, date reviver, size gate                                                 |
-| `utils/onboarding-shared.ts`                                | Data builders, `isFullyOnboarded`, `canAddConsultantIdentity`, `canUploadVerificationDoc`, `shouldSubmitVerification` |
-| `utils/onboarding-server.ts`                                | Server processing (processOnboardingData, upserts, slot sync, verification deferral)                                  |
-| `actions/forms/onboarding.action.ts`                        | Server action entry point                                                                                             |
-| `actions/onboarding-draft.action.ts`                        | Session-scoped draft save (version CAS) / load / clear actions                                                        |
-| `utils/onboarding-telemetry.ts`                             | Client breadcrumbs (Sentry category "onboarding")                                                                     |
-| `lib/cron/cleanup-registry.ts` (`expire-onboarding-drafts`) | 90-day draft expiry                                                                                                   |
-| `schemas/user.ts`                                           | Base Zod schemas (profiles, slots, work experience, education, certs)                                                 |
-| `schemas/shared.ts`                                         | Shared validation helpers (experienceValidation)                                                                      |
+| File                                          | Purpose                                                                                                               |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `app/form/onboarding/page.tsx`                | Server page — decides add mode from the session                                                                       |
+| `app/form/onboarding/OnboardingWizard.tsx`    | Orchestrator — step state, form data accumulation, draft hydrate/autosave/conflict/clear, submission                  |
+| `app/onboarding/gate/page.tsx`                | The onboarding gate for invitees and SSO members                                                                      |
+| `actions/onboarding-gate.action.ts`           | Gate server action (DOB + consent, eligibility, CAS claim)                                                            |
+| `utils/onboarding-completion.ts`              | `claimOnboardingCompletion`, `recordOnboardingConsent`, gate eligibility                                              |
+| `utils/onboarding.ts`                         | All Zod schemas, types, transform functions, validation utilities                                                     |
+| `utils/onboarding-draft.ts`                   | Draft contract — wire schema, JSON sanitizer, date reviver, size gate                                                 |
+| `utils/onboarding-shared.ts`                  | Data builders, `isFullyOnboarded`, `canAddConsultantIdentity`, `canUploadVerificationDoc`, `shouldSubmitVerification` |
+| `utils/onboarding-server.ts`                  | Server processing (processOnboardingData, upserts, slot sync, verification deferral)                                  |
+| `actions/forms/onboarding.action.ts`          | Server action entry point                                                                                             |
+| `actions/onboarding-draft.action.ts`          | Session-scoped draft save (version CAS) / load / clear actions                                                        |
+| `utils/onboarding-telemetry.ts`               | Client breadcrumbs (Sentry category "onboarding")                                                                     |
+| `scripts/cleanup/expire-onboarding-drafts.ts` | 90-day draft expiry                                                                                                   |
+| `schemas/user.ts`                             | Base Zod schemas (profiles, slots, work experience, education, certs)                                                 |
+| `schemas/shared.ts`                           | Shared validation helpers (experienceValidation)                                                                      |
 
 ### Component Files
 

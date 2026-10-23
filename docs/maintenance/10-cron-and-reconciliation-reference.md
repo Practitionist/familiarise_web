@@ -118,14 +118,14 @@ CREATE UNIQUE INDEX "SystemJobExecution_running_jobName_key"
 
 Acquisition sweeps expired `RUNNING` rows, checks for a live one, then inserts. A unique-violation on the race between the check and the insert is collapsed into the same `CronLockHeldError`, so two replicas racing produce exactly one winner.
 
-| Mode     | Count   | Behaviour when the lease table is unreachable                                                                              |
-| -------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `closed` | 29 jobs | Refuses to run; raises `CronLockUnavailableError`, route answers `503`                                                     |
-| `open`   | 23 jobs | Runs unlocked with a warning; no execution trail row is written                                                            |
-| `none`   | 3 jobs  | Deliberately unlocked — see below                                                                                          |
-| bespoke  | 2 jobs  | `create-payout-batch` and `process-payouts` use a Redis lock, because they coordinate interactive admin-triggered runs too |
+| Declared mode     | Policy when the lease table is unreachable                                                                       |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `closed`          | Refuse execution and surface lease unavailability. Verify the actual acquisition failure path before activation. |
+| `open`            | Permit repeat-safe work with a warning; no owned execution row is established.                                   |
+| no core lease     | Inspect the dispatcher and caller; absence of a nearby lock is not proof of deliberate unlocked execution.       |
+| interactive mutex | Payout cores also coordinate with interactive request paths using their existing domain mutexes.                 |
 
-The three unlocked jobs are `expire-onboarding-drafts` (which wraps its own inline `withCronLock` rather than locking inside a core module), `reconcile-sessions` and `sentry-ingest-canary`. The 29 and 23 above plus those three and the two bespoke Redis locks account for all 57 registry slugs.
+`expire-onboarding-drafts` now owns its open-mode Postgres lease in `scripts/cleanup/expire-onboarding-drafts.ts`, rather than inline in the registry. Use the actual core when checking lease policy and bounds; copied aggregate counts drift. See [bounded housekeeping](./housekeeping-bounds.md) for all four cleanup families.
 
 Both closed and open modes flip to **closed** when the error looks like connection or pool exhaustion (`isDbConnectionOrPoolError`). The reasoning is that the pool outage which breaks the lease is precisely the window in which two runners would both believe they held it.
 

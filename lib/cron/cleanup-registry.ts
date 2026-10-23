@@ -36,8 +36,6 @@ const MAX_TENTATIVE_SLOTS = 200;
 const MAX_REFERRAL_VESTS = 50;
 /** Expired credits per breakage run; one Serializable transaction each. */
 const MAX_REFERRAL_BREAKAGE = 500;
-/** Abandoned onboarding drafts are deleted after this many idle days. */
-const ONBOARDING_DRAFT_TTL_DAYS = 90;
 /** Payouts minted per rail per batch slice; each is one transaction. */
 const MAX_PAYOUT_BATCH_UNITS = 10;
 /** Disbursements per rail per run; each is a gateway round trip. */
@@ -229,12 +227,16 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "archive-webhook-events": () =>
       cleanupRoute({
         job: "archive-webhook-events",
-        run: async () => {
+        run: async (req, { startedAt }) => {
           const { archiveWebhookEvents } =
             await import("@/scripts/cleanup/archive-webhook-events");
-          return archiveWebhookEvents();
+          return archiveWebhookEvents({
+            limit: parseLimitParam(req),
+            startedAt,
+          });
         },
         summarize: (r) => ({
+          hasMore: r.hasMore,
           processedEventsDeleted: r.processedEventsDeleted,
           terminalUnprocessedDeleted: r.terminalUnprocessedDeleted,
           failedEventsDeleted: r.failedEventsDeleted,
@@ -248,12 +250,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "auth-tokens": () =>
       cleanupRoute({
         job: "cleanup-auth-tokens",
-        run: async () => {
+        run: async (req, { startedAt }) => {
           const { cleanupAuthTokens } =
             await import("@/lib/auth/cleanup-auth-tokens");
-          return cleanupAuthTokens();
+          return cleanupAuthTokens({ limit: parseLimitParam(req), startedAt });
         },
         summarize: (r) => ({
+          hasMore: r.hasMore,
           verificationTokensDeleted: r.verificationTokensDeleted,
           sessionsDeleted: r.sessionsDeleted,
           idempotencyRecordsDeleted: r.idempotencyRecordsDeleted,
@@ -444,24 +447,15 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "expire-onboarding-drafts": () =>
       cleanupRoute({
         job: "expire-onboarding-drafts",
-        run: async () => {
-          const { default: prisma } = await import("@/lib/prisma");
-          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
-          return withCronLock(
-            "expire-onboarding-drafts",
-            { failMode: "open" },
-            async () => {
-              const cutoff = new Date(
-                Date.now() - ONBOARDING_DRAFT_TTL_DAYS * 24 * 60 * 60 * 1000,
-              );
-              const { count } = await prisma.onboardingDraft.deleteMany({
-                where: { updatedAt: { lt: cutoff } },
-              });
-              return { success: true, deleted: count };
-            },
-          );
+        run: async (req, { startedAt }) => {
+          const { expireOnboardingDrafts } =
+            await import("@/scripts/cleanup/expire-onboarding-drafts");
+          return expireOnboardingDrafts({
+            limit: parseLimitParam(req),
+            startedAt,
+          });
         },
-        summarize: (r) => ({ deleted: r.deleted }),
+        summarize: (r) => ({ deleted: r.deleted, hasMore: r.hasMore }),
         failureMessage: "Failed to expire onboarding drafts",
       }),
 
@@ -671,10 +665,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "prune-audit-logs": () =>
       cleanupRoute({
         job: "prune-audit-logs",
-        run: async () => {
+        run: async (req, { startedAt }) => {
           const { pruneAuditLogs } =
             await import("@/scripts/cleanup/prune-audit-logs");
-          return pruneAuditLogs();
+          return pruneAuditLogs({ limit: parseLimitParam(req), startedAt });
         },
         failureMessage: "Audit prune failed",
       }),

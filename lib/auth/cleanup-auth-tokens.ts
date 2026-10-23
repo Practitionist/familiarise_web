@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { z } from "zod";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
@@ -12,20 +13,38 @@ export interface AuthTokenCleanupResult {
   totalCleaned: number;
   errors: string[];
   timestamp: string;
+  hasMore: boolean;
 }
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Daily auth hygiene sweep, run via `/api/cleanup/auth-tokens`; every step is repeat-safe. */
-export async function cleanupAuthTokens(): Promise<AuthTokenCleanupResult> {
+const cleanupLimit = z.number().int().min(1).max(500).default(100);
+const START_BUDGET_MS = 16_000;
+
+export interface AuthTokenCleanupOptions {
+  limit?: number;
+  startedAt?: number;
+}
+
+/** One bounded auth-hygiene slice; every mutation rechecks expiry. */
+export async function cleanupAuthTokens(
+  options: AuthTokenCleanupOptions = {},
+): Promise<AuthTokenCleanupResult> {
+  const startedAt = options.startedAt ?? Date.now();
   return withCronLock("cleanup-auth-tokens", { failMode: "open" }, () =>
-    cleanupAuthTokensUnlocked(),
+    cleanupAuthTokensUnlocked(options.limit, startedAt),
   );
 }
 
-async function cleanupAuthTokensUnlocked(): Promise<AuthTokenCleanupResult> {
+async function cleanupAuthTokensUnlocked(
+  requestedLimit: number | undefined,
+  startedAt: number,
+): Promise<AuthTokenCleanupResult> {
+  const limit = cleanupLimit.parse(requestedLimit);
+  const outOfTime = () => Date.now() >= startedAt + START_BUDGET_MS;
+  let hasMore = false;
   const errors: string[] = [];
   let verificationTokensDeleted = 0;
   let sessionsDeleted = 0;
@@ -33,36 +52,69 @@ async function cleanupAuthTokensUnlocked(): Promise<AuthTokenCleanupResult> {
   let staleInvitationsExpired = 0;
   const now = new Date();
 
-  try {
-    const res = await prisma.verification.deleteMany({
-      where: { expiresAt: { lt: now } },
-    });
-    verificationTokensDeleted = res.count;
-  } catch (error) {
-    errors.push(`Verification cleanup: ${messageOf(error)}`);
-  }
+  const where = { expiresAt: { lt: now } };
+  const selection = {
+    where,
+    select: { id: true },
+    orderBy: [{ expiresAt: "asc" as const }, { id: "asc" as const }],
+    take: limit,
+  };
+  const prune = async (
+    label: string,
+    pick: () => Promise<{ id: string }[]>,
+    remove: (ids: string[]) => Promise<{ count: number }>,
+    remains: () => Promise<{ id: string } | null>,
+  ): Promise<number> => {
+    if (outOfTime()) {
+      hasMore = true;
+      return 0;
+    }
+    let deleted = 0;
+    try {
+      const rows = await pick();
+      if (rows.length > 0) {
+        if (outOfTime()) {
+          hasMore = true;
+          return 0;
+        }
+        deleted = (await remove(rows.map((row) => row.id))).count;
+      }
+      if (outOfTime()) hasMore = true;
+      else if (await remains()) hasMore = true;
+    } catch (error) {
+      hasMore = true;
+      errors.push(`${label} cleanup: ${messageOf(error)}`);
+    }
+    return deleted;
+  };
+  verificationTokensDeleted = await prune(
+    "Verification",
+    () => prisma.verification.findMany(selection),
+    (ids) =>
+      prisma.verification.deleteMany({ where: { ...where, id: { in: ids } } }),
+    () => prisma.verification.findFirst({ where, select: { id: true } }),
+  );
+  sessionsDeleted = await prune(
+    "Session",
+    () => prisma.session.findMany(selection),
+    (ids) =>
+      prisma.session.deleteMany({ where: { ...where, id: { in: ids } } }),
+    () => prisma.session.findFirst({ where, select: { id: true } }),
+  );
+  // An expired idempotency row may be refreshed in place after selection.
+  idempotencyRecordsDeleted = await prune(
+    "Idempotency",
+    () => prisma.idempotencyRecord.findMany(selection),
+    (ids) =>
+      prisma.idempotencyRecord.deleteMany({
+        where: { ...where, id: { in: ids } },
+      }),
+    () => prisma.idempotencyRecord.findFirst({ where, select: { id: true } }),
+  );
 
-  try {
-    const res = await prisma.session.deleteMany({
-      where: { expiresAt: { lt: now } },
-    });
-    sessionsDeleted = res.count;
-  } catch (error) {
-    errors.push(`Session cleanup: ${messageOf(error)}`);
-  }
-
-  try {
-    // Housekeeping only: withIdempotency already reuses an expired row in place.
-    const res = await prisma.idempotencyRecord.deleteMany({
-      where: { expiresAt: { lt: now } },
-    });
-    idempotencyRecordsDeleted = res.count;
-  } catch (error) {
-    errors.push(`Idempotency cleanup: ${messageOf(error)}`);
-  }
-
-  const inviteResult = await expireStaleInvitations(now);
+  const inviteResult = await expireStaleInvitations(now, limit, outOfTime);
   staleInvitationsExpired = inviteResult.expired;
+  hasMore ||= inviteResult.hasMore;
   for (const err of inviteResult.errors) {
     errors.push(`Stale invitation cleanup: ${err}`);
   }
@@ -86,19 +138,26 @@ async function cleanupAuthTokensUnlocked(): Promise<AuthTokenCleanupResult> {
     totalCleaned,
     errors,
     timestamp: new Date().toISOString(),
+    hasMore,
   };
 }
 
 /** Expires lapsed PENDING invitations, writing one MEMBER/INVITE_EXPIRED audit row each. */
 async function expireStaleInvitations(
   now: Date,
-): Promise<{ expired: number; errors: string[] }> {
+  limit: number,
+  outOfTime: () => boolean,
+): Promise<{ expired: number; errors: string[]; hasMore: boolean }> {
   const errors: string[] = [];
   let expired = 0;
+  let hasMore = false;
+  if (outOfTime()) return { expired, errors, hasMore: true };
 
   try {
     const candidates = await prisma.invitation.findMany({
       where: { status: "PENDING", expiresAt: { lt: now } },
+      take: limit,
+      orderBy: [{ expiresAt: "asc" }, { id: "asc" }],
       select: {
         id: true,
         organizationId: true,
@@ -109,6 +168,10 @@ async function expireStaleInvitations(
     });
 
     for (const invite of candidates) {
+      if (outOfTime()) {
+        hasMore = true;
+        break;
+      }
       try {
         const didExpire = await prisma.$transaction(async (tx) => {
           const { count } = await tx.invitation.updateMany({
@@ -136,12 +199,22 @@ async function expireStaleInvitations(
         });
         if (didExpire) expired += 1;
       } catch (err) {
+        hasMore = true;
         errors.push(`invitation ${invite.id}: ${messageOf(err)}`);
       }
     }
+    if (outOfTime()) hasMore = true;
+    else if (
+      await prisma.invitation.findFirst({
+        where: { status: "PENDING", expiresAt: { lt: now } },
+        select: { id: true },
+      })
+    )
+      hasMore = true;
   } catch (err) {
+    hasMore = true;
     errors.push(messageOf(err));
   }
 
-  return { expired, errors };
+  return { expired, errors, hasMore };
 }
