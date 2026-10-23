@@ -8,7 +8,7 @@ last-reviewed: 2026-10-20
 
 # Invoicing
 
-**What this covers:** the India-compliant `OrganizationInvoice` — its lifecycle, GST breakdown, IRN/e-invoice fields, CGST Rule 46 numbering, the PO 3-way match, the **dunning** escalation, how a cycle's **overage** rolls into a line item, and how invoice payment clears the `ORG_RECEIVABLE` accrued at booking time — plus the **refund credit-note** machinery (CGST Sec 34 / Rule 53). Funding mechanics are in [payment legs](09-payment-legs.md); the postings are in [ledger & postings](03-ledger-and-postings.md).
+**What this covers:** the India-compliant `OrganizationInvoice` — its lifecycle, GST breakdown, IRN/e-invoice fields, CGST Rule 46 numbering, the PO 3-way match, the **dunning** escalation, how a cycle's **overage** rolls into a line item, and how invoice payment clears the `ORG_RECEIVABLE` accrued at booking time — plus the **refund credit-note** machinery (CGST Sec 34 / Rule 53). Funding mechanics are in [payment legs](../../finance/20-ledger/03-payment-legs.md); the postings are in [ledger & postings](03-ledger-and-postings.md).
 
 > _Refreshed 2026-06-05 (#777/#778/#779 mega-audit): added the dunning lifecycle (§7), the overage→`InvoiceLineItem` rollup (§9), the IRP payload mapper (§4), and the refund credit-note unification (§8)._
 
@@ -252,7 +252,7 @@ A refund without a GST credit note is a filing mismatch, so a refund against an 
 
 **What it does** (must run inside the refund tx):
 
-- No-ops (returns `null`) for non-invoiced payments — a CN only makes sense against an issued `OrganizationInvoice`. It also refuses a **DRAFT/un-issued** invoice (minting a Sec 34 note against an undelivered document is a defect; DRAFT accruals are netted down on the leg instead — see [payment legs §5](09-payment-legs.md)).
+- No-ops (returns `null`) for non-invoiced payments — a CN only makes sense against an issued `OrganizationInvoice`. It also refuses a **DRAFT/un-issued** invoice (minting a Sec 34 note against an undelivered document is a defect; DRAFT accruals are netted down on the leg instead — see [payment legs §5](../../finance/20-ledger/03-payment-legs.md)).
 - Reverses the invoice-accrual legs (`INVOICE_ACCRUAL` + `OVERAGE_INVOICE_ACCRUAL`) **proportionally** to the refund (strict proportion, no remainder-absorb — a CN is a tax document).
 - Splits the proportional tax the same way the invoice did: **IGST** (inter-state) or **CGST+SGST** (intra-state, CGST takes the odd-paise remainder), mirroring `OrganizationInvoice`'s breakout so the CN nets cleanly.
 - Allocates a **gapless per-org credit-note number** `<PREFIX>-CN-<FY>-<SEQ>` from `OrgCreditNoteCounter` (`lib/payments/billing/credit-note-numbering.ts`), atomic `UPSERT…RETURNING` — a **separate series from the invoice counter**, as Rule 53 requires.
@@ -289,7 +289,7 @@ The status-level invoice transition is the coarse view (`PAID → REFUNDED` for 
 
 ## 8b. Consumer invoices (B2C) — #1365
 
-Everything above concerns `OrganizationInvoice`, which is the document a sponsoring organization receives. A personal buyer paying by card receives a different document on a different series, and that path is documented separately in [B2C tax invoices and credit notes](../../payments/06-b2c-tax-invoice.md).
+Everything above concerns `OrganizationInvoice`, which is the document a sponsoring organization receives. A personal buyer paying by card receives a different document on a different series, and that path is documented separately in [B2C tax invoices and credit notes](../../finance/60-tax/02-gst-invoices-and-credit-notes.md).
 
 The two families are deliberately separate models rather than one model with nullable columns. `OrganizationInvoice` requires an organization, a billing account and a due date, and those columns are load-bearing for dunning and for the IRP e-invoice payload; a consumer invoice has none of them, is paid before it is issued, and runs on one platform-wide gapless series instead of one series per organization. Collapsing them would make every one of those columns optional and would quietly weaken the B2B guarantees this page describes.
 
@@ -318,7 +318,7 @@ The `base` vs `surcharge` split is itemized on the `OverageEvent` (`basePaise` /
 
 ## 11. Design decisions & trade-offs
 
-- **Invoice-level GST split, not per-line (today).** The GST columns (`cgstPaise`/`sgstPaise`/`igstPaise`) live on `OrganizationInvoice`, computed once for the whole invoice, even though `InvoiceLineItem[]` is a typed child table (#772-era, `51e64547`). A per-line tax split would be more granular (and the IRP payload _does_ split per line at upload time, §4), but the invoice's single intra/inter mode (driven by one place-of-supply) makes per-line tax redundant for a domestic services invoice — every line on a Wipro invoice is the same HSN, same place-of-supply, same rate. The cost is that a future mixed-rate invoice (different HSN per line) would need the split pushed down to the line; the benefit today is one GST computation and one total to enforce instead of N (Postgres enforces the invoice total at write time, so the auditor no longer re-checks it; see [ledger integrity](13-ledger-integrity.md)). The base/surcharge overage itemization (§9) is the first place this pressure shows up — it's itemized on the `OverageEvent` but still written as one combined line.
+- **Invoice-level GST split, not per-line (today).** The GST columns (`cgstPaise`/`sgstPaise`/`igstPaise`) live on `OrganizationInvoice`, computed once for the whole invoice, even though `InvoiceLineItem[]` is a typed child table (#772-era, `51e64547`). A per-line tax split would be more granular (and the IRP payload _does_ split per line at upload time, §4), but the invoice's single intra/inter mode (driven by one place-of-supply) makes per-line tax redundant for a domestic services invoice — every line on a Wipro invoice is the same HSN, same place-of-supply, same rate. The cost is that a future mixed-rate invoice (different HSN per line) would need the split pushed down to the line; the benefit today is one GST computation and one total to enforce instead of N (Postgres enforces the invoice total at write time, so the auditor no longer re-checks it; see [ledger integrity](../../finance/20-ledger/06-integrity-and-reconciliation.md)). The base/surcharge overage itemization (§9) is the first place this pressure shows up — it's itemized on the `OverageEvent` but still written as one combined line.
 - **Dunning rides `OVERDUE` + idempotency-gate stamps, not a new status per reminder.** A `REMINDER_1`/`REMINDER_2`/`REMINDER_3` status ladder would encode the cadence in the type, but it also fragments the lifecycle and makes "is this invoice overdue?" a multi-value check. Instead one `OVERDUE` status loops, and three nullable stamps (`markedOverdueAt`, `dunningReminderCount`, `lastDunningReminderAt`) carry the escalation + double-send guard (§7). The cost is the cadence lives in cron logic, not the schema; the benefit is the status enum stays small and every reminder claim is a conditional `updateMany` that can't double-fire.
 - **IRP upload is two independent gates, fail-soft on missing creds.** `ENABLE_IRP_UPLOADER` (does the cron run at all) and `CLEARTAX_*` (real GSP call vs stub) are deliberately separate (§4): the flag-on/creds-absent combination runs the cron and records `STUB` as a normal retry rather than crashing. This lets the pipeline be exercised before a ClearTax contract exists, and matches the platform's sub-₹5cr size where IRN isn't yet mandatory. The cost is a STUB result that looks like a retry in telemetry; the benefit is the uploader never hard-fails on configuration.
 
@@ -336,9 +336,9 @@ Every invoice kind used to post nothing at issue, which was right only for the r
 ### Related docs
 
 - [Funding & programs](../00-foundations/03-funding-and-programs.md) — the INVOICE funding source.
-- [Payment legs](09-payment-legs.md) — how `INVOICE_ACCRUAL` / `OVERAGE_INVOICE_ACCRUAL` legs roll up.
+- [Payment legs](../../finance/20-ledger/03-payment-legs.md) — how `INVOICE_ACCRUAL` / `OVERAGE_INVOICE_ACCRUAL` legs roll up.
 - [Booking → earnings §6](05-booking-to-earnings.md) — the overage flow that feeds §9, and the refund-failed notify (§6.5).
 - [Ledger & postings](03-ledger-and-postings.md) — the `INVOICE_PAID` / `REFUND` transactions.
-- [Ledger integrity](13-ledger-integrity.md) — `ORG_INVOICE_GST_MISMATCH`, `OVERAGE_CHARGESTATUS_INTEGRITY`.
+- [Ledger integrity](../../finance/20-ledger/06-integrity-and-reconciliation.md) — `ORG_INVOICE_GST_MISMATCH`, `OVERAGE_CHARGESTATUS_INTEGRITY`.
 - [Compliance map](../40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md) → [`../compliance/03-gst-overview.md`](../../compliance/03-gst-overview.md) (GST/IRN) · [`../compliance/06-refund-and-chargeback-tax-adjustments.md`](../../compliance/06-refund-and-chargeback-tax-adjustments.md) (credit notes / TDS adjustments) — authoritative.
 - Ground truth: `lib/payments/billing/{invoice-rollup,invoice-numbering,credit-note-numbering}.ts`, `lib/payments/operations/refund.ts`, `lib/compliance/{irp,irp-payload}.ts`, `jobs/billing/{dunning,settle-invoice-accruals}.ts`, `jobs/compliance/irp-uploader.ts`.

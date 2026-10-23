@@ -76,10 +76,27 @@ export interface SupportSlaSweepResult {
   orgEscalationEmailsSent: number;
   autoClosedCount: number;
   incidentsCascaded: number;
+  /** Incidents left open because releasing their payout holds was refused. */
+  incidentsHeldOpen: number;
   evidenceCasesPurged: number;
   evidenceFilesDeleted: number;
   disputeNoticesStaged: number;
   errors: string[];
+}
+
+const DISPUTE_ALERT_EMAIL_TYPES = ["dispute-deadline-alert"];
+const SLA_ALERT_EMAIL_TYPES = ["support-sla-alert", "support-sla-alert-org"];
+
+// Staged alert emails (keyed by entityRef = the alert's dedupe key) outlive a bell the policy dropped.
+async function alertEmailStaged(
+  db: Pick<typeof prisma, "failedEmail">,
+  entityRef: string,
+  emailTypes: string[],
+): Promise<{ id: string } | null> {
+  return db.failedEmail.findFirst({
+    where: { entityRef, emailType: { in: emailTypes } },
+    select: { id: true },
+  });
 }
 
 function slaNoticeTransitions(
@@ -360,6 +377,10 @@ async function processSingleSlaNotice(
   const subject = `[${label}] ${row.referenceNumber}: ${clockName} clock`;
 
   try {
+    // The email row is the durable marker when every bell is off and no outbox row exists.
+    if (await alertEmailStaged(prisma, dedupeKey, SLA_ALERT_EMAIL_TYPES)) {
+      return { staged: 0, orgEmails: 0 };
+    }
     let newlyStaged = true;
     let countedStaged = 0;
 
@@ -621,13 +642,15 @@ async function stageDisputeDeadlineAlert(
 
     const txResult = await prisma.$transaction(
       async (tx) => {
-        const existing = await tx.notificationOutbox.findFirst({
-          where: {
-            workflowId: NOVU_WORKFLOWS.DISPUTE_UPDATED,
-            entityRef: dedupeKey,
-          },
-          select: { id: true },
-        });
+        const existing =
+          (await tx.notificationOutbox.findFirst({
+            where: {
+              workflowId: NOVU_WORKFLOWS.DISPUTE_UPDATED,
+              entityRef: dedupeKey,
+            },
+            select: { id: true },
+          })) ??
+          (await alertEmailStaged(tx, dedupeKey, DISPUTE_ALERT_EMAIL_TYPES));
         const rowOutbox = await stageBell(tx, {
           workflowId: NOVU_WORKFLOWS.DISPUTE_UPDATED,
           recipients,
@@ -726,8 +749,20 @@ async function processDisputeDeadlineAlerts(
       })) ?? []
     ).map((r) => r.entityRef),
   );
+  const emailStaged = new Set(
+    (
+      (await prisma.failedEmail.findMany({
+        where: {
+          emailType: { in: DISPUTE_ALERT_EMAIL_TYPES },
+          entityRef: { in: pairs.map((p) => p.dedupeKey) },
+        },
+        select: { entityRef: true },
+      })) ?? []
+    ).map((r) => r.entityRef),
+  );
   const unsent = pairs
     .filter((p) => !alreadyStaged.has(p.dedupeKey))
+    .filter((p) => !emailStaged.has(p.dedupeKey))
     .slice(0, limit);
 
   const stagedFlags = await runSequential(unsent, (pair) =>
@@ -987,6 +1022,7 @@ export async function runSupportSlaSweep(opts?: {
       orgEscalationEmailsSent,
       autoClosedCount,
       incidentsCascaded: cascade.cascaded,
+      incidentsHeldOpen: cascade.heldOpen.length,
       evidenceCasesPurged: evidencePurge.casesPurged,
       evidenceFilesDeleted: evidencePurge.filesDeleted,
       disputeNoticesStaged,

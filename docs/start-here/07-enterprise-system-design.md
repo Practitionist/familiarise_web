@@ -1062,7 +1062,7 @@ sequenceDiagram
   H->>DB: SUCCEEDED + earnings + booking ledger
 ```
 
-Gateway capture and payment confirmation are deliberately centralized. Webhook, return route and reconciliation callers route to the confirmation handler rather than writing SUCCEEDED independently. See `docs/payments/05-high-level-design.md` and `lib/payments/webhooks/handlers.ts`.
+Gateway capture and payment confirmation are deliberately centralized. Webhook, return route and reconciliation callers route to the confirmation handler rather than writing SUCCEEDED independently. See `docs/finance/00-overview/01-money-map.md` and `lib/payments/webhooks/handlers.ts`.
 
 ### 4.2. Checkout revalidation and funding selection
 
@@ -1334,7 +1334,7 @@ The journal is money truth. Caches and snapshots must agree with the journal but
 
 Money is persisted as BigInt paise in the database and mapped to JavaScript numbers by `moneyResultExtensions` in `lib/prisma-extensions.ts`, installed through `base.$extends({ result: ... })` in `lib/prisma.ts`. Standard unextended Prisma results retain `bigint`; aggregate/groupBy results bypass these result extensions and require the explicit money conversion helpers. INR is the only settlement currency today. A displayed foreign currency may be captured for checkout, but it does not imply that the wallet, invoice, or payout settles in that currency.
 
-Ledger accounts include CASH, PLATFORM_FEE, GST_PAYABLE, ORG_RECEIVABLE scoped by buyer org, ORG_PAYABLE scoped by host org, WALLET scoped by wallet owner, and CONSULTANT_PAYABLE scoped by expert. The exact account family and posting helpers are in `docs/enterprise/10-money-and-ledger/02-chart-of-accounts.md` and lib/payments/ledger.
+Ledger accounts include CASH, PLATFORM_FEE, GST_PAYABLE, ORG_RECEIVABLE scoped by buyer org, ORG_PAYABLE scoped by host org, WALLET scoped by wallet owner, and CONSULTANT_PAYABLE scoped by expert. The exact account family and posting helpers are in `docs/finance/20-ledger/02-chart-of-accounts.md` and lib/payments/ledger.
 
 ### 5.2. Funding-leg identity
 

@@ -58,6 +58,7 @@ const mockStore = {
   admins: 1,
   payment: {} as Row,
   keyedRefund: null as Row | null,
+  refunds: [] as Row[],
 };
 
 jest.mock("../../lib/prisma", () => {
@@ -112,7 +113,14 @@ jest.mock("../../lib/prisma", () => {
       }),
     },
     payment: { findFirst: jest.fn(async () => mockStore.payment) },
-    refund: { findFirst: jest.fn(async () => mockStore.keyedRefund) },
+    refund: {
+      findFirst: jest.fn(async () => mockStore.keyedRefund),
+      findMany: jest.fn(async ({ where }: { where: Where }) =>
+        mockStore.refunds.filter((r) =>
+          mockMatches(r, { ...where, supportRecommendation: undefined }),
+        ),
+      ),
+    },
     opsActionLog: { findMany: jest.fn(async () => mockStore.opsRows) },
     user: { count: jest.fn(async () => mockStore.admins) },
     $transaction: jest.fn(),
@@ -125,7 +133,10 @@ jest.mock("../../lib/prisma", () => {
 
 import prisma from "../../lib/prisma";
 import { refundBookingPayment } from "../../lib/payments/operations/booking-refund";
-import { executePatchLifecycleTx } from "../../lib/support/case-service";
+import {
+  executePatchLifecycleTx,
+  latestCaseDecisionTx,
+} from "../../lib/support/case-service";
 import { requiresSecondApprover } from "../../lib/backoffice/ops-proposals";
 import {
   CaseActionRequestSchema,
@@ -192,6 +203,7 @@ beforeEach(() => {
   mockStore.opsRows = [];
   mockStore.admins = 1;
   mockStore.keyedRefund = null;
+  mockStore.refunds = [];
   mockStore.payment = {
     id: "pay-1",
     amount: 1_000_000,
@@ -250,6 +262,25 @@ describe("bounded staff refunds", () => {
       ),
     ).rejects.toMatchObject({ code: "ADMIN_REQUIRED" });
     expect(db.supportFinancialRecommendation.updateMany).not.toHaveBeenCalled();
+    expect(refundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("counts a live non-remedy refund, such as a platform cancel, toward the ₹5,000 staff limit", async () => {
+    const cancelRefund = {
+      paymentId: "pay-1",
+      amountPaise: 300_000,
+      status: "SUCCEEDED",
+      deletedAt: null,
+    };
+    mockStore.refunds = [cancelRefund];
+    mockStore.payment.refunds = [cancelRefund];
+    await expect(
+      performCaseAction(
+        "case-1",
+        staff,
+        review(true, { expectedRefundablePaise: 700_000 }),
+      ),
+    ).rejects.toMatchObject({ code: "ADMIN_REQUIRED" });
     expect(refundBookingPayment).not.toHaveBeenCalled();
   });
 
@@ -609,6 +640,28 @@ describe("refund decisions follow the money", () => {
       performCaseAction("case-1", staff, decide("REFUND_DECLINED")),
     ).rejects.toMatchObject({ code: "REFUND_APPROVED_EXISTS" });
     expect(executePatchLifecycleTx).not.toHaveBeenCalled();
+  });
+
+  it("keeps a decision and an open recommendation apart, since deciding releases the holds", async () => {
+    await expect(
+      performCaseAction("case-1", staff, {
+        ...decide("REFUND_DECLINED"),
+        outcome: "NO_REMEDY",
+      }),
+    ).rejects.toMatchObject({ code: "RECOMMENDATION_OPEN" });
+    expect(executePatchLifecycleTx).not.toHaveBeenCalled();
+    jest.mocked(latestCaseDecisionTx).mockResolvedValueOnce({
+      id: "dec-1",
+      outcome: "NO_REMEDY",
+      appealUntil: new Date(),
+    } as never);
+    await expect(
+      performCaseAction("case-1", admin, review(true)),
+    ).rejects.toMatchObject({ code: "CASE_ALREADY_DECIDED" });
+    expect(refundBookingPayment).not.toHaveBeenCalled();
+    await expect(
+      performCaseAction("case-1", admin, review(false)),
+    ).resolves.toMatchObject({ approved: false });
   });
 });
 

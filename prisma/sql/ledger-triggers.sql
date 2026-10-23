@@ -9,7 +9,7 @@
 --
 -- prisma db push / migrate do NOT manage triggers, so this file is applied
 -- separately: `npm run db:triggers` (idempotent) after every push/reset. See
--- docs/enterprise/10-money-and-ledger/13-ledger-integrity.md.
+-- docs/finance/20-ledger/06-integrity-and-reconciliation.md.
 --
 -- Statements are separated by `-- SPLIT` because Prisma's $executeRawUnsafe runs a
 -- single statement per call (extended protocol); the apply script splits on it.

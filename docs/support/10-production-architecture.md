@@ -67,9 +67,10 @@ see [Razorpay’s dispute documentation](https://razorpay.com/docs/payments/disp
 ### Ownership and authorization
 
 - Staff investigate, communicate, apply and release support payout holds, and
-  execute bounded case refunds: ₹5,000 per payment across its support remedies
-  and ₹50,000 per staff member over a rolling 24 hours, summed from their
-  `OpsActionLog` rows (`lib/support/money-policy.ts`). Admin executes above
+  execute bounded case refunds: ₹5,000 per payment across its live refunds from
+  every door and its approved support remedies, and ₹50,000 per staff member
+  over a rolling 24 hours, summed from their `OpsActionLog` rows
+  (`lib/support/money-policy.ts`). Admin executes above
   those limits, voids failed approvals, and owns payouts, settlements,
   clawbacks, chargeback responses and restricted enforcement reversals.
 - A platform operator who is not a party to a booking cancels it only through
@@ -166,14 +167,17 @@ may instead void an approval whose refund failed or never started. Approvals
 without a live refund are listed in the Refunds needs-human queue. Gateway
 acceptance and bank receipt are distinct states in the UI. A `REFUND_APPROVED`
 decision needs an approved recommendation with a pending or sent refund, and
-`REFUND_DECLINED` needs none approved.
+`REFUND_DECLINED` needs none approved. Because a decision resolves the case and
+releases its payout holds, no decision is recorded while a recommendation awaits
+review, and once a decision is in force its recommendations can only be declined;
+the one exception is retrying a failed refund under a `REFUND_APPROVED` decision.
 
 Refund review uses the shared money door (`supportRefunds.executeBounded`): a
 fresh session, a reason of at least five characters, the per-operator money-action
 budget, the in-door maintenance check (refused in DEGRADED or OFFLINE, and when
 the phase cannot be read) and an `OpsActionLog` row whose `after` names the
-payment, amount, refund, rail and refund status. When this remedy plus the
-remedies already approved on its payment exceed ₹25,000 and at least two admins
+payment, amount, refund, rail and refund status. When this remedy plus what is
+already refunded or committed on its payment exceeds ₹25,000 and at least two admins
 are active, it waits in Money → Approvals; a different admin approves the stored
 request before execution. A single active admin can execute it directly. The
 recommendation remains undecided while approval is pending. Execution retains the
@@ -192,9 +196,20 @@ that batched those earnings, as a dispute hold does, and refuses while a payout
 is being sent. The case timeline's `HOLD_APPLIED` / `HOLD_RELEASED` events carry
 the intent, so earnings created later for the payment start held. Apply and
 release run through audited `withOpsAction` doors (`supportHolds.manage`), and
-every hold of a case is released when the case is resolved or closed. Releasing a
-service hold does not release a chargeback, operator or overage hold. Completed
-payouts cannot be recalled by creating a hold.
+every hold of a case is released when staff resolve or close it, by a status
+change, a decision or the problem cascade. A move that would release active holds
+(for a problem, also those of its open incidents) needs a session re-authenticated
+within 15 minutes (`REAUTH_REQUIRED`), open money doors (the same maintenance
+check) and no undecided recommendation on the case (`RECOMMENDATION_OPEN`); it
+writes one `support.case.release-holds` `OpsActionLog` row naming the holds
+released. The cascade never releases a hold placed after the problem's latest
+RESOLVED event (`HOLD_AFTER_PROBLEM_RESOLVED`); staff release it through the
+step-up hold door. The cascade leaves a refused incident open and counts it as
+`incidentsHeldOpen` in the sweep summary; each run scans up to twice its cap of
+ten incidents so held-open incidents do not block the ones that can resolve. A
+customer resolving their own guided case releases nothing; its holds stay listed on the case until staff release them.
+Releasing a service hold does not release a chargeback, operator or overage hold.
+Completed payouts cannot be recalled by creating a hold.
 
 ### Storage, concurrency and deadlines
 

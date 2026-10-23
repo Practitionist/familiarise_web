@@ -8,9 +8,9 @@ last-reviewed: 2026-06-05
 
 # Refunds
 
-**What this covers:** the organization/B2B side of refunds — how a refund reverses org-funded earnings, wallet legs, invoice accruals, and the GST tax position. The consumer-marketplace (B2C) refund flow, the admin refund UI, and the two-phase gateway pattern stay documented in [`docs/payments/refunds-disputes/`](../../payments/refunds-disputes/README.md); this doc is the enterprise lens on the same engine.
+**What this covers:** the organization/B2B side of refunds — how a refund reverses org-funded earnings, wallet legs, invoice accruals, and the GST tax position. The consumer-marketplace (B2C) refund flow, the admin refund UI, and the two-phase gateway pattern stay documented in [`docs/finance/30-refunds-disputes/`](../../finance/30-refunds-disputes/README.md); this doc is the enterprise lens on the same engine.
 
-A refund is money returned to the **buyer** (the consultee), as distinguished from a reimbursement (org → its own member) or a payout (platform → seller); the [money model overview §6](01-money-model-overview.md) draws that vocabulary boundary. Every refund — whoever starts it — flows through one engine, `applyRefundCascade` in `lib/payments/operations/refund.ts`, so the org-side side effects are identical regardless of trigger.
+A refund is money returned to the **buyer** (the consultee), as distinguished from a reimbursement (org → its own member) or a payout (platform → seller); the [money model overview §6](../../finance/20-ledger/01-double-entry-model.md) draws that vocabulary boundary. Every refund — whoever starts it — flows through one engine, `applyRefundCascade` in `lib/payments/operations/refund.ts`, so the org-side side effects are identical regardless of trigger.
 
 ---
 
@@ -81,7 +81,7 @@ Inside the claimed transaction the cascade performs, in order:
 5. **Organization payout clawback via `lib/payments/operations/reversal-engine.ts`**:
    - When reversed `OrganizationEarnings` already rolled into a `COMPLETED` `OrganizationPayout`, `applyReversal` (`kind: "PAYOUT_CLAWBACK"` / `postPayoutClawback`) increments `OrganizationPayout.clawbackAmountPaise`, stamps `clawbackInitiatedAt`, and posts `Dr ORG_RECEIVABLE / Cr ORG_PAYABLE` (`clawback:<refundId>:payout:<orgPayoutId>`) in the same transaction.
 6. **Credit-note mint** (§5).
-7. **Balanced `REFUND` ledger transaction** (`idempotencyKey = refund:<refundId>`) where `PLATFORM_FEE` is the residual plug that absorbs the ≤3-paise floor remainder so the posting always balances. The ledger post never silently swallows a failure: because the cascade runs inside the caller's transaction, a posting failure records a durable `SystemEvent` on its own connection (so the row survives the rollback) and fires a P0 Sentry alert, then **re-throws** to roll the whole cascade back rather than half-applying the earnings/leg reversals with no balanced journal (#812). The caller — the refund cron or the gateway webhook — re-drives the refund, so the customer refund is not lost; it is re-applied atomically. The nightly reconciler's `EARNINGS_LEDGER_DRIFT` and `REVERSED_EARNING_WITHOUT_REFUND_TXN` checks remain the backstop that catches any residual divergence (see [ledger integrity](13-ledger-integrity.md)).
+7. **Balanced `REFUND` ledger transaction** (`idempotencyKey = refund:<refundId>`) where the booked `DISCOUNT` is credited back pro rata with the funding and `PLATFORM_FEE` is the residual plug that absorbs the ≤3-paise floor remainder so the posting always balances. The refund that completes the payment, counting only refunds whose cascade already ran (`cascadedAt` set), takes the exact remainder of every share, the GST and the `DISCOUNT`, while an earlier refund still waiting for its cascade reverses only its own share, so a refund split into parts still nets each account to zero; past the GST credit-note cutoff no GST is reversed, so `GST_PAYABLE` keeps that part and the platform bears it. The ledger post never silently swallows a failure: because the cascade runs inside the caller's transaction, a posting failure records a durable `SystemEvent` on its own connection (so the row survives the rollback) and fires a P0 Sentry alert, then **re-throws** to roll the whole cascade back rather than half-applying the earnings/leg reversals with no balanced journal (#812). The caller — the refund cron or the gateway webhook — re-drives the refund, so the customer refund is not lost; it is re-applied atomically. The nightly reconciler's `EARNINGS_LEDGER_DRIFT` and `REVERSED_EARNING_WITHOUT_REFUND_TXN` checks remain the backstop that catches any residual divergence (see [ledger integrity](../../finance/20-ledger/06-integrity-and-reconciliation.md)).
 
 **Dispute settlement clawbacks (separate `Serializable` transaction).** Unlike voluntary refunds (which refuse to claw back an already-`PAID` B2C consultant payout), a lost chargeback settled by `settleLostDispute` (`app/api/webhooks/utils.ts` and `scripts/disputes/reconcile-disputes.ts`) runs in its own `Serializable` transaction and invokes `applyReversal` (`kind: "CONSULTANT_CLAWBACK"` / `CONSULTANT_PAYOUT_CLAWBACK`, via `reverseConsultantPayoutClawback` and `postConsultantPayoutClawback`) to increment `ConsultantPayout.clawbackAmountPaise` (net of TDS), stamp `clawbackInitiatedAt`, and post `Dr CONSULTANT_RECEIVABLE / Cr CONSULTANT_PAYABLE` (see [Disputes](11-disputes.md)).
 
@@ -154,12 +154,12 @@ When a consultant's earnings are reversed by a refund, any TDS that was withheld
 
 ### Related docs
 
-- [Money model overview](01-money-model-overview.md) — the refund-vs-reimbursement-vs-payout vocabulary and the `REFUND` journal `kind`.
+- [Money model overview](../../finance/20-ledger/01-double-entry-model.md) — the refund-vs-reimbursement-vs-payout vocabulary and the `REFUND` journal `kind`.
 - [Ledger & postings](03-ledger-and-postings.md) — the `refund:<refundId>` and `topup-refund:<gatewayRefundId>` postings in detail.
 - [Wallet & top-ups](04-wallet-and-topups.md) — how a `WALLET`-leg refund credits the org balance back.
-- [Earnings lifecycle](06-earnings-lifecycle.md) — the `HELD`/`REFUNDED` earning states a refund drives.
+- [Earnings lifecycle](../../finance/40-payouts/02-earnings-lifecycle.md) — the `HELD`/`REFUNDED` earning states a refund drives.
 - [Invoicing](08-invoicing.md) — the credit-note section and the invoice the refund adjusts.
 - [Disputes](11-disputes.md) — chargebacks, the other way money leaves via the buyer's bank.
-- [Payment webhooks](12-payment-webhooks.md) — the inbound `refund.*` events that drive this lifecycle.
-- B2C / gateway-generic details: [`docs/payments/refunds-disputes/`](../../payments/refunds-disputes/README.md).
+- [Payment webhooks](../../finance/10-money-in/02-capture-confirmation-and-webhooks.md) — the inbound `refund.*` events that drive this lifecycle.
+- B2C / gateway-generic details: [`docs/finance/30-refunds-disputes/`](../../finance/30-refunds-disputes/README.md).
 - Ground truth: `lib/payments/operations/refund.ts`, `lib/payments/operations/reversal-engine.ts`, `lib/payments/payouts/earning-reversal-cas.ts`, `lib/payments/billing/credit-note-numbering.ts`, `app/api/webhooks/utils.ts`, `scripts/refunds/*.ts`.

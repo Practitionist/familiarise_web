@@ -41,11 +41,7 @@ export const PAYOUT_CONSTANTS = {
   CLAWBACK_RECOVERY_PAUSE_PAISE: 1_000_000,
 } as const;
 
-/**
- * #1771 row 6 — an instant payout at or below this (default ₹25,000) is
- * approved and sent at once; above it, it joins the admin approval queue.
- * `INSTANT_PAYOUT_AUTO_APPROVE_PAISE` overrides it with a positive integer.
- */
+/** Instant payouts at or below this (default ₹5,000, env-overridable) send at once; larger ones queue for admin approval. */
 export const INSTANT_PAYOUT_AUTO_APPROVE_PAISE = (() => {
   const fromEnv = Number(process.env.INSTANT_PAYOUT_AUTO_APPROVE_PAISE);
   return Number.isSafeInteger(fromEnv) && fromEnv > 0
