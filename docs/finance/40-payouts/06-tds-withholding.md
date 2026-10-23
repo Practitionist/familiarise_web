@@ -55,11 +55,11 @@ If the exemption is not available, the base is this payout's own gross. If it is
 
 Because the crossing payout is taxed on the whole year-to-date gross, it carries a catch-up for the earlier, exempt payouts. The sequence in `planConsultantPayoutTds` is:
 
-1. **Prior gross.** `priorFyGrossPaise` sums the gross of earnings in the expert's other live payouts (PROCESSING or COMPLETED) stamped with this financial year.
+1. **Prior gross.** `priorFyGrossPaise` sums the gross of earnings in the expert's other live payouts (PROCESSING or COMPLETED) stamped with this financial year; an older payout with no financial-year stamp counts by its earnings' `paidAt`.
 2. **Required TDS** is 10 basis points of the year-to-date base.
-3. **Assigned TDS** is what the expert's other payouts this year have already withheld, plus carry, less credits, with reversals netted.
+3. **Assigned TDS** is what the expert's other payouts this year have already withheld at the with-PAN rate, plus carry, less credits, with reversals netted. Payouts withheld at the no-PAN rate are left out.
 4. **Due** is required minus assigned.
-5. **Catch-up** is flagged when TDS is required but nothing has been assigned yet. The database allows one catch-up payout per expert per financial year (`consultant_payout_one_tds_catch_up_per_fy`, a unique index on `tdsCatchUpFy` in `prisma/sql/check-constraints.sql`). If two payouts race for it, the loser's staging write fails and it re-plans with `allowCatchUp` false, paying tax on its own gross only.
+5. **Catch-up** is flagged when TDS is required but nothing has been assigned yet. The database allows one catch-up payout per expert per financial year (`consultant_payout_one_tds_catch_up_per_fy`, a unique index on `tdsCatchUpFy` in `prisma/sql/check-constraints.sql`). If two payouts race for it, the loser's staging write fails and it re-plans with `allowCatchUp` false, withholding the increment the winner left but never more than the tax on its own gross.
 6. **Settlement.** `settle194OWithholding` caps what a payout withholds at its capacity, the payout amount less clawback recovery, so the net is never negative. Anything over the capacity is carried to later payouts (`tdsCarryPaise`). A negative due, which happens when refunds pull the year's gross back to ₹5,00,000 or less after a catch-up, comes back as a credit (`tdsCreditPaise`) that is paid out in cash.
 
 ### Worked examples
@@ -103,7 +103,7 @@ The organisation rail reverses through `recordOrgTdsReversal`.
 
 | Rule                                                                   | Enforcer                                                                   | Test                                                       | Repair                                        |
 | ---------------------------------------------------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------- |
-| The 194-O engine runs unless `TDS_ENGINE=LEGACY`                       | `resolveDueTds` in `consultant-tds.ts`                                     | `__tests__/payments/payout-194o-individual-exempt.test.ts` | Remove the override                           |
+| The 194-O engine runs unless `TDS_ENGINE=LEGACY`                       | `resolveDueTds` in `consultant-tds.ts`                                     | `__tests__/payments/dispute-payout-block.test.ts`          | Remove the override                           |
 | The exemption needs an individual or HUF, a PAN and a year at most ₹5L | `resolve194OTaxablePaise` in `lib/compliance/tds-194o.ts`                  | `__tests__/payments/payout-194o-individual-exempt.test.ts` | Verify the PAN, set the entity type           |
 | Only one catch-up per expert per financial year                        | `consultant_payout_one_tds_catch_up_per_fy`; the loser re-plans            | `__tests__/payments/payout-194o-individual-exempt.test.ts` | None needed; the loser pays on its own gross  |
 | A payout never withholds more than it pays                             | `settle194OWithholding` capacity cap                                       | `__tests__/compliance/audit-1132-regressions.test.ts`      | The excess carries to the next payout         |

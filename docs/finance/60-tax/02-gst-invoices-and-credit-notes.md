@@ -50,7 +50,7 @@ The supplier's own state is the first two digits of the platform GSTIN, which is
 
 ## Personal tax invoices
 
-`ConsumerInvoice` is the Rule 46 tax invoice for one successful personal payment, unique per payment. `mintConsumerInvoice` runs from the capture webhook once the booking is confirmed and from the instant-confirm branch of `handleCheckout` (`lib/payments/checkout/orchestrate.ts`) for zero-amount and sponsored checkouts, which never see a webhook. Both wrap it in `mintConsumerInvoiceBestEffort`, which reports a failure at warning level and never rethrows. A confirmed booking must not roll back because a document could not be made, and the monthly register export retries anything that was missed.
+`ConsumerInvoice` is the Rule 46 tax invoice for one successful personal payment, unique per payment. `mintConsumerInvoice` runs from `handlePaymentSuccess` once the booking is confirmed (whichever confirmation door reached it), from the recording-purchase and member-overage success handlers, and from the instant-confirm branch of `handleCheckout` (`lib/payments/checkout/orchestrate.ts`) for mock, zero-amount and sponsored checkouts, which never see a webhook. All of them wrap it in `mintConsumerInvoiceBestEffort`, which reports a failure at warning level and never rethrows. A confirmed booking must not roll back because a document could not be made, and the monthly register export retries anything that was missed.
 
 The mint returns without a document in these cases:
 
@@ -72,7 +72,7 @@ Rule 46 asks a B2C invoice of ₹50,000 (5,000,000 paise) or more to carry the r
 | Organisation invoice     | `<PREFIX>-<FY>-<SEQ4>`    | `WIPRO-2026-0001`  | per organisation and fiscal year |
 | Organisation credit note | `<PREFIX>-CN-<FY>-<SEQ4>` | `WIP-CN-2026-0001` | per organisation and fiscal year |
 
-The consumer series is platform-wide because the supplier is the platform. `PLATFORM_INVOICE_PREFIX` sets the prefix and defaults to `FAM`. Organisation documents take the organisation's `invoiceNumberPrefix` or its slug. `fitPrefixToRule46` (`lib/payments/billing/invoice-numbering.ts`) shortens the prefix so the whole number never exceeds the sixteen characters that Rules 46(b) and 53 allow. The `-CN-` infix costs three more characters, so a credit note's prefix is shorter than its invoice's: the slug `wipro` fits whole in an invoice number and is cut to `WIP` in a credit note. The credit-note series is separate from the invoice series because Rule 53 requires it. The fiscal year in a number is the year in which the financial year starts, reckoned in India time, so a document issued on 31 March 2027 at 23:00 IST is numbered in FY 2026. Each allocation is an atomic upsert on a counter table (`platform_invoice_counters`, `platform_credit_note_counters`, `OrgInvoiceCounter`, `OrgCreditNoteCounter`) that returns the pre-increment value.
+The consumer series is platform-wide because the supplier is the platform. `PLATFORM_INVOICE_PREFIX` sets the prefix and defaults to `FAM`. Organisation documents take the organisation's `invoiceNumberPrefix` or its slug. `fitPrefixToRule46` (`lib/payments/billing/invoice-numbering.ts`) shortens the prefix so the whole number never exceeds the sixteen characters that Rules 46(b) and 53 allow. The `-CN-` infix costs three more characters, so a credit note's prefix is shorter than its invoice's: the slug `wipro` fits whole in an invoice number and is cut to `WIP` in a credit note. The credit-note series is separate from the invoice series because Rule 53 requires it. The fiscal year in a number is the year in which the financial year starts, reckoned in India time, so a document issued on 31 March 2027 at 23:00 IST is numbered in FY 2026. Each allocation is an atomic upsert on a counter table (`platform_invoice_counters`, `platform_credit_note_counters`, `org_invoice_counters`, `org_credit_note_counters`) that returns the pre-increment value.
 
 ## Credit notes
 
@@ -86,7 +86,7 @@ A refund never deletes or rewrites an invoice. A credit note beside it reverses 
 
 For example, Priya cancels Hannah's session and 50 percent, ₹590 (59,000 paise), is refunded. The note is for 59,000: tax is 18,000 × 59,000 ÷ 118,000 = 9,000 paise and the taxable value is 50,000. If Priya's invoice was CGST and SGST, the note shows 4,500 and 4,500, otherwise IGST 9,000.
 
-**Organisation.** `mintRefundCreditNote` credits only the invoiced part of an organisation-funded payment (the `INVOICE_ACCRUAL` and `OVERAGE_INVOICE_ACCRUAL` legs), caps itself at what the issued invoice has left (`remainingOrgInvoiceCreditPaise`), restores any purchase-order draw, and moves the invoice to `REFUNDED` only when the issued credit reaches the invoice's subtotal.
+**Organisation.** `mintRefundCreditNote` credits only the invoiced part of an organisation-funded payment (the `INVOICE_ACCRUAL` and `OVERAGE_INVOICE_ACCRUAL` legs), and only against an issued invoice (a DRAFT accrual is netted on its leg instead). It caps itself at what the invoice has left (`remainingOrgInvoiceCreditPaise`, the same cumulative cap under a row lock) and restores any purchase-order draw. It does not change the invoice's status: the gateway refund of an invoice payment (`app/api/webhooks/utils.ts`) moves the invoice to `REFUNDED` once the cumulative credit notes cover its total.
 
 ### The section 34(2) cutoff
 
@@ -99,7 +99,7 @@ The refund cascade pins one clock (`cascadeNow`) across the credit-note mint and
 `gst-outward-register-export` (`jobs/compliance/gst-outward-register-export.ts`) runs from the Netlify ticker in hourly slices on the 2nd of each month (04:00 to 23:00 UTC), for the previous India calendar month, ahead of the 11th-of-the-month GSTR-1 deadline. Every slice repeats the whole export, so a later slice only refreshes the file. It does four things in order.
 
 1. **Heals.** Up to 25 `SUCCEEDED` payments in the period with no consumer invoice are minted, oldest first. Organisation-funded and zero-value payments are filtered out of the candidates so they cannot fill a slice. A non-zero count is warned about, because it means the checkout mint missed something.
-2. **Reads** every consumer invoice, issued organisation invoice, consumer credit note and issued organisation credit note in the period and shapes them into one register through the pure builder in `lib/compliance/gst-outward-register.ts`.
+2. **Reads** every consumer invoice, issued organisation invoice, consumer credit note and issued organisation credit note in the period, except commercial credit notes (they reverse no tax, so they are not GSTR-1 documents; their count is warned about), and shapes them into one register through the pure builder in `lib/compliance/gst-outward-register.ts`.
 3. **Uploads** the CSV to the private `org-invoices` bucket at `compliance/gst/<first day>_<last day>.csv`, overwriting the previous slice's file.
 4. **Stamps** `gstr1ExportedAt` on everything reported, only after the upload succeeded and guarded on the stamp being null, so a re-run never moves anyone's first-reported time.
 
