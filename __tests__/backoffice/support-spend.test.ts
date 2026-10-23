@@ -79,6 +79,7 @@ jest.mock("../../lib/prisma", () => ({
           .filter((row) => matchesOps(row, where))
           .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
     },
+    refund: { findMany: async () => [] },
     supportFinancialRecommendation: {
       findMany: async (args: {
         where: {

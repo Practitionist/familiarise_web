@@ -1,6 +1,6 @@
 # Payout System Architecture
 
-> **Moved (org/B2B side):** The organization-side documentation for payouts now lives in [`docs/enterprise/10-money-and-ledger/07-payout-pipeline.md`](../../enterprise/10-money-and-ledger/07-payout-pipeline.md) and [`06-earnings-lifecycle.md`](../../enterprise/10-money-and-ledger/06-earnings-lifecycle.md). This file keeps the consumer-marketplace (B2C) and gateway-generic details only.
+> **Moved (org/B2B side):** The organization-side documentation for payouts now lives in [`docs/enterprise/10-money-and-ledger/07-payout-pipeline.md`](../../enterprise/10-money-and-ledger/07-payout-pipeline.md) and [`02-earnings-lifecycle.md`](../../finance/40-payouts/02-earnings-lifecycle.md). This file keeps the consumer-marketplace (B2C) and gateway-generic details only.
 
 > System design and component overview with diagrams
 
@@ -118,7 +118,7 @@ graph LR
 | `getConsultantEarnings`     | Fetch earnings for dashboard                                                                                                                                                                                                  | API request                      |
 | `refundEarnings`            | Proportional or full reversal of earnings. Accepts `refundAmount`/`paymentAmount` for partial refunds. Tracks cumulative reversals via `refundedShareAmount`. Supports `forceRefund: true` for PAID earnings (lost disputes). | Webhook: refund, dispute verdict |
 
-Holds are written by `placeEarningsHolds()` and `releaseEarningsHolds()` in `lib/payments/payouts/earnings-holds.ts`, the only writer of the `HELD` status. A hold has a reason (`DISPUTE`, `MODERATION`, `OPERATOR` or `OVERAGE`), and releasing one reason never frees another. Dispute verdicts are settled by `settleDisputeVerdict()` in `app/api/webhooks/utils.ts`; see [earnings lifecycle](./02-earnings-lifecycle.md).
+Holds are written by `placeEarningsHolds()` and `releaseEarningsHolds()` in `lib/payments/payouts/earnings-holds.ts`, the only writer of the `HELD` status. A hold has a reason (`DISPUTE`, `MODERATION`, `OPERATOR`, `OVERAGE` or `SUPPORT_CASE`), and releasing one reason never frees another. Dispute verdicts are settled by `settleDisputeVerdict()` in `app/api/webhooks/utils.ts`; see [earnings lifecycle](./02-earnings-lifecycle.md).
 
 ---
 

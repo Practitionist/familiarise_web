@@ -244,6 +244,36 @@ function exceedsErrorBudget(
   return false;
 }
 
+// Previews keep a tenth of ordinary errors (the 2026-09-21 flood), but an
+// uncaught throw in a Next server wrapper — onRequestError, server component,
+// route handler, server action — is exactly what a preview exists to surface.
+const PREVIEW_ERROR_SAMPLE_RATE = 0.1;
+const NEXT_SERVER_MECHANISM_PREFIX = "auto.function.nextjs.";
+
+export function isUncaughtNextServerError(event: Sentry.Event): boolean {
+  return (event.exception?.values ?? []).some(
+    (v) =>
+      v.mechanism?.handled === false &&
+      v.mechanism.type.startsWith(NEXT_SERVER_MECHANISM_PREFIX),
+  );
+}
+
+/**
+ * Preview thinning lives here, not in `sampleRate`: the SDK samples before
+ * `beforeSend` and cannot see the mechanism, so a global rate would also drop
+ * nine in ten uncaught server errors.
+ */
+export function isThinnedOnPreview(
+  event: Sentry.Event,
+  random: number = Math.random(),
+): boolean {
+  return (
+    process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT === "preview" &&
+    !isUncaughtNextServerError(event) &&
+    random >= PREVIEW_ERROR_SAMPLE_RATE
+  );
+}
+
 /** The `beforeSend` budget stage, exported so a test can drive it directly. */
 export function applyErrorBudget<E extends Sentry.Event>(event: E): E | null {
   // An expected outcome at info level is an ANSWER, not a fault.
@@ -345,13 +375,6 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     // developer's .env DSN doesn't flood the shared prod project with dev noise.
     enabled: Boolean(dsn) && isNotDevelopmentEnvironment(),
     environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
-
-    // Previews keep visibility at a tenth of the volume; everything
-    // else reports every error (the throttle above bounds floods). Keyed on
-    // "preview" rather than "not production" so an unset environment (a bare
-    // job runner, a test) fails open instead of silently dropping 90%.
-    sampleRate:
-      process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT === "preview" ? 0.1 : 1,
 
     // #1086 — deploy previews used to report to a SEPARATE Sentry project, so
     // an error found on a preview was invisible in the one anybody watches and
@@ -464,9 +487,12 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
         event.level = "warning";
         event.tags = { ...event.tags, expected: "true" };
       }
-      // Drop expected-info, fingerprint the flood families,
-      // throttle per key, cap per process. Returning null drops before
-      // transport, so dropped events never consume quota.
+      // Thin previews (uncaught server errors exempt), then drop expected-info,
+      // fingerprint the flood families, throttle per key, cap per process.
+      // Returning null drops before transport, so dropped events never consume
+      // quota. Keyed on "preview", not "not production", so an unset
+      // environment (a bare job runner, a test) fails open.
+      if (isThinnedOnPreview(event)) return null;
       if (applyErrorBudget(event) === null) return null;
       // #1861 S4 — scrub AFTER the relabel/throttle above: this pass only
       // removes data, it never changes a drop/keep or level decision.

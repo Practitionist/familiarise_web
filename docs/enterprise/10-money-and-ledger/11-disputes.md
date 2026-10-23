@@ -8,7 +8,7 @@ last-reviewed: 2026-06-05
 
 # Disputes
 
-**What this covers:** the organization/B2B side of disputes (chargebacks) — how a lost dispute on an org-funded booking settles against the org, how disputed earnings are held, and the dispute state machine our code maintains. The consumer-marketplace (B2C) dispute UI and the gateway-generic flow stay documented in [`docs/payments/refunds-disputes/`](../../payments/refunds-disputes/README.md); this doc is the enterprise lens on the same handler.
+**What this covers:** the organization/B2B side of disputes (chargebacks) — how a lost dispute on an org-funded booking settles against the org, how disputed earnings are held, and the dispute state machine our code maintains. The consumer-marketplace (B2C) dispute UI and the gateway-generic flow stay documented in [`docs/finance/30-refunds-disputes/`](../../finance/30-refunds-disputes/README.md); this doc is the enterprise lens on the same handler.
 
 A dispute is the buyer's bank pulling money back without going through our refund engine, so its money-path mirror is a refund but the _trigger_ is external. The handler lives in `app/api/webhooks/utils.ts` (`handleDisputeCreated`, `handleDisputeUpdated`, `applyOrgChargeback`), guarded by the state machine in `lib/payments/dispute-status.ts`.
 
@@ -162,17 +162,17 @@ sequenceDiagram
 
 ## 6. Disputes and earnings holds
 
-An earning is `HELD` while it carries at least one active `EarningsHold` (`lib/payments/payouts/earnings-holds.ts`, the only writer of `HELD`). When `handleDisputeCreated` records a new dispute, `placeDisputeHolds()` places a `DISPUTE` hold, whose source is the dispute row, on that payment's unpaid `ConsultantEarnings` and `OrganizationEarnings`. Before it does, it cancels any `PENDING` or `APPROVED` payout that had already batched one of them and returns that payout's other earnings to `READY`, so a payout cannot leave while the chargeback is live. The first hold stores the row's prior status in `preHoldStatus`. The verdict then unwinds the hold through `settleDisputeVerdict()`: a `WON` or `WARNING_CLOSED` dispute releases only its own hold, a `LOST` or `CHARGE_REFUNDED` dispute runs `settleLostDispute` to reverse the lost fraction of each share, book any completed-payout clawbacks and release the hold, and a `CLOSED` dispute does one or the other according to `amount_deducted`. A release restores the earning's prior status only when no other hold remains, so a ban (`MODERATION`), an operator hold or an unpaid overage still freezes money after a dispute is won. The full set of earning states and the payout gates they govern live in [earnings lifecycle](06-earnings-lifecycle.md).
+An earning is `HELD` while it carries at least one active `EarningsHold` (`lib/payments/payouts/earnings-holds.ts`, the only writer of `HELD`). When `handleDisputeCreated` records a new dispute, `placeDisputeHolds()` places a `DISPUTE` hold, whose source is the dispute row, on that payment's unpaid `ConsultantEarnings` and `OrganizationEarnings`. Before it does, it cancels any `PENDING` or `APPROVED` payout that had already batched one of them and returns that payout's other earnings to `READY`, so a payout cannot leave while the chargeback is live. The first hold stores the row's prior status in `preHoldStatus`. The verdict then unwinds the hold through `settleDisputeVerdict()`: a `WON` or `WARNING_CLOSED` dispute releases only its own hold, a `LOST` or `CHARGE_REFUNDED` dispute runs `settleLostDispute` to reverse the lost fraction of each share, book any completed-payout clawbacks and release the hold, and a `CLOSED` dispute does one or the other according to `amount_deducted`. A release restores the earning's prior status only when no other hold remains, so a ban (`MODERATION`), an operator hold or an unpaid overage still freezes money after a dispute is won. The full set of earning states and the payout gates they govern live in [earnings lifecycle](../../finance/40-payouts/02-earnings-lifecycle.md).
 
 ---
 
 ### Related docs
 
 - [Refunds](10-refunds.md) — the money path a `CHARGE_REFUNDED`/accept outcome shares, plus the unified reversal engine and `CreditNote` triggers.
-- [Earnings lifecycle](06-earnings-lifecycle.md) — the `HELD` → `READY`/`REFUNDED` transitions a dispute drives.
+- [Earnings lifecycle](../../finance/40-payouts/02-earnings-lifecycle.md) — the `HELD` → `READY`/`REFUNDED` transitions a dispute drives.
 - [Payout pipeline](07-payout-pipeline.md) — why held earnings must not pay out and how `clawbackAmountPaise` is tracked.
-- [Payment webhooks](12-payment-webhooks.md) — the inbound `payment.dispute.*` events and the dispatch switch.
-- B2C / gateway-generic details: [`docs/payments/refunds-disputes/`](../../payments/refunds-disputes/README.md).
+- [Payment webhooks](../../finance/10-money-in/02-capture-confirmation-and-webhooks.md) — the inbound `payment.dispute.*` events and the dispatch switch.
+- B2C / gateway-generic details: [`docs/finance/30-refunds-disputes/`](../../finance/30-refunds-disputes/README.md).
 - Ground truth: `app/api/webhooks/utils.ts` (`settleLostDispute`, `applyOrgChargeback`), `lib/payments/operations/reversal-engine.ts`, `lib/payments/dispute-status.ts`, `app/api/webhooks/razorpay-dispatch.ts`, `scripts/disputes/*.ts`, `lib/support/sla-sweep.ts` (deadline alerts).
 
 ---

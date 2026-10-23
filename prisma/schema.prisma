@@ -3100,7 +3100,7 @@ enum GatewaySettlementLineStatus {
 // the one exception, a protective wallet-spend freeze on balance drift.
 // Findings are split against a checked-in baseline so only NEW drift fails
 // the run.
-// See `docs/enterprise/10-money-and-ledger/13-ledger-integrity.md`.
+// See `docs/finance/20-ledger/06-integrity-and-reconciliation.md`.
 model LedgerReconciliationReport {
   id            String   @id @default(uuid())
   runAt         DateTime @default(now())

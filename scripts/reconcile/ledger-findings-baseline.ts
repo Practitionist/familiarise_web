@@ -116,7 +116,7 @@ export const LEDGER_FINDINGS_BASELINE: LedgerBaselineEntry[] = [
     deltaPaise: 570_036,
     owner: "finance",
     reason:
-      "seeded demo balance drift on the IIT Madras demo org, not a live customer",
+      "2026-10-18 lazy member-overage carves on two wallet bookings credited the cache with no ledger line; correction journal pending",
     expires: "2026-11-21",
   },
   {

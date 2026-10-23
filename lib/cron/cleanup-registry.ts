@@ -1308,6 +1308,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           orgEscalationEmailsSent: r.orgEscalationEmailsSent,
           autoClosedCount: r.autoClosedCount,
           incidentsCascaded: r.incidentsCascaded,
+          incidentsHeldOpen: r.incidentsHeldOpen,
           evidenceCasesPurged: r.evidenceCasesPurged,
           evidenceFilesDeleted: r.evidenceFilesDeleted,
           chatAccessEnded: r.chatAccessEnded,

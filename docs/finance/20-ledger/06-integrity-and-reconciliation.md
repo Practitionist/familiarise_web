@@ -3,7 +3,7 @@ title: Ledger integrity & reconciliation
 band: 10-money-and-ledger
 audience: sde3
 status: live
-last-reviewed: 2026-10-20
+last-reviewed: 2026-10-23
 ---
 
 # Ledger integrity & reconciliation
@@ -151,7 +151,7 @@ The gate in one line: the report is ok when `unbaselinedCount` is zero **and** `
 ## 4. How it runs
 
 - **Library:** `runReconcileLedgers({ scope, organizationId?, triggeredById? })` → `ReconcileReport`. Scope is `"full"` or `"org:<id>"`; passing `organizationId` limits every per-row check to one org and **skips the four full-scope-only checks** listed in §1.
-- **Nightly run:** the Netlify five-minute ticker (`netlify/functions/cron-tick.mts`) calls the `reconcile-ledgers` twin once a day at 03:55 UTC (inside its 03:00 to 04:00 UTC window; one slot, because every run writes a report row). The twin calls `runReconcileLedgers({ scope: "full", onWalletDrift })`, which persists a `LedgerReconciliationReport`. `freezeDriftingWallets()` (`scripts/reconcile/ledger-drift-response.ts`) freezes the spend of every wallet with `WALLET_BALANCE_DRIFT` from the audit's wallet step, so a run cut off later has already frozen. `respondToLedgerDrift()` then records a `SystemEvent` and reports the findings to Sentry once per standing set; it runs only when the report is not ok, so a night whose findings are all baselined pages nobody. The route answers `200` (clean), `207` (discrepancies, page ops) or `500` (the audit or a freeze failed); there is no process exit code. The auditor in `scripts/reconcile/reconcile-ledgers.ts` itself only reads and reports.
+- **Nightly run:** the Netlify five-minute ticker (`netlify/functions/cron-tick.mts`) calls the `reconcile-ledgers` twin once a day at 03:55 UTC (inside its 03:00 to 04:00 UTC window; one slot, because every run writes a report row). The twin calls `runReconcileLedgers({ scope: "full", onWalletDrift })`, which persists a `LedgerReconciliationReport`. `freezeDriftingWallets()` (`scripts/reconcile/ledger-drift-response.ts`) freezes the spend of every wallet with `WALLET_BALANCE_DRIFT` from the audit's wallet step, so a run cut off later has already frozen. `respondToLedgerDrift()` then records a `SystemEvent` and reports the findings to Sentry once per standing set; it runs only when the report is not ok, so a night whose findings are all baselined pages nobody. The route answers `200` (clean), `207` (discrepancies, page ops) or `500` (the audit or a freeze failed); there is no process exit code. The auditor in `scripts/reconcile/reconcile-ledgers.ts` itself only reads and reports. The freeze runs from the `onWalletDrift` hook, right after the wallet step and before the findings baseline (§3) is evaluated, so a baselined `WALLET_BALANCE_DRIFT` still freezes spend and still pages Sentry once per run; the baseline only decides whether the run fails.
 - **On-demand door and HTTP twin:** `POST /api/admin/reconcile-ledgers` is an admin money door (ADMIN, step-up, reason, one `OpsActionLog` row; `startLedgerReconciliation()` in `lib/backoffice/ledger-run.ts` is the one helper behind it and the console's reconcile job), and `POST /api/cleanup/reconcile-ledgers` (with `Authorization: Bearer $CRON_SECRET`) is the twin the ticker calls and the way to run it by hand. Both run `runReconcileLedgers` synchronously in-process under the `reconcile-ledgers` cron lock, and a full-scope run that is already `RUNNING` answers 409. Both then freeze every drifted wallet through the same `freezeDriftedWallets()` (`lib/payments/wallet-freeze.ts`) that the nightly run uses, and report the count as `frozenWallets`. A full-scope run completes in a few seconds without chunking or background workers.
 - **Report storage:** every run writes a `LedgerReconciliationReport { scope, ok, durationMs, summary, findings, triggeredById }`. The history is the audit trail of integrity over time; the `summary` carries the count of findings, how many the baseline excused and why the baseline was rejected (§3).
 
@@ -159,23 +159,32 @@ The gate in one line: the report is ok when `unbaselinedCount` is zero **and** `
 
 ## 5. When a finding fires
 
-A finding is an **incident signal, never a thing to hand-patch.** The drift is a symptom; the fix is upstream (the writer that diverged), and the correction — if money is involved — is a **counter-transaction**, not a SQL `UPDATE` on a balance. See [runbooks](../50-operations/02-runbooks.md) for the per-finding triage procedure (which writer to inspect, how to post a correcting entry, when to page).
+A finding is an **incident signal, never a thing to hand-patch.** The drift is a symptom; the fix is upstream (the writer that diverged), and the correction — if money is involved — is a **counter-transaction**, not a SQL `UPDATE` on a balance. See [runbooks](../../enterprise/50-operations/02-runbooks.md) for the per-finding triage procedure (which writer to inspect, how to post a correcting entry, when to page).
+
+For `WALLET_BALANCE_DRIFT` the steps are:
+
+1. Find the root cause: which writer moved the cache without its journal line, or the journal without the cache.
+2. Decide which side is wrong, then post a balanced `LedgerTransaction` that corrects that side. This is an owner-applied SQL change run once, and it is a new journal entry, never an `UPDATE` of a balance or of a posted row (`ledger_entry_immutable` would refuse it). Re-deriving the cache by overwriting it is not a repair, and `adjustWallet()` cannot close the gap, because it moves the cache and the journal by the same amount.
+3. Unfreeze through the existing door, `POST /api/admin/billing-accounts/[billingAccountId]/unfreeze`, which re-reads that wallet and answers `409 WALLET_STILL_DRIFTED` while the two still disagree.
+
+**Worked example (the 2026-10-18 member-overage carve).** A member overage with `CHARGE_MEMBER` on a wallet-funded booking carves the overage base off the parent payment and back onto the organisation's wallet. On 2026-10-18 two such bookings on one organisation each carved a base of ₹2,850.18 (285,018 paise), about twenty seconds after their booking journals had debited WALLET at the full price. Before `journalWalletCarveCredit()` existed in `lib/payments/billing/overage-settlement.ts`, each carve credited the wallet cache and posted no ledger line, so the cache was right and the journal was short by 2 × 285,018 = ₹5,700.36 (570,036 paise). The nightly audit raised `WALLET_BALANCE_DRIFT`, and `freezeDriftingWallets()` froze the organisation's spend. The repair is one owner-applied correcting journal for the missing side, `Dr DISCOUNT / Cr WALLET` 570,036 under its own correction idempotency key (the same shape the function now posts per carve under `overage-carve-credit:<overageEventId>`), followed by the unfreeze door. The writer now posts the line in the carve's own transaction, so a new carve cannot drift.
 
 ---
 
 ## 6. Design decisions & trade-offs
 
 - **Never hand-patches a cache — but fails closed on wallet drift.** The auditor writes _only_ `LedgerReconciliationReport` and never touches an audited table. When any reconcile door (the nightly job, `POST /api/cleanup/reconcile-ledgers` or `POST /api/admin/reconcile-ledgers`) sees a `WALLET_BALANCE_DRIFT` finding, which means a wallet's cached balance no longer matches its journal, `freezeDriftedWallets()` freezes spend for that `BillingAccount`; the nightly job also pages P0. The freeze rides the append-only `SystemEvent` log (a `WALLET_FREEZE` / `WALLET_UNFREEZE` pair keyed on `correlationId`), fails closed so an unreadable log blocks the spend rather than leaking it, and gates only discretionary checkout spend — never a top-up credit. An admin lifts it with `POST /api/admin/billing-accounts/[billingAccountId]/unfreeze` once the drift is reconciled. The door re-reads that one wallet's drift first and refuses with 409 `WALLET_STILL_DRIFTED` while the cache and the journal still disagree.
+- **No check on the gateway side.** The auditor compares cached balances with the journal. It has no check on the `GATEWAY_CLEARING` residual or on unmatched settlement lines; those live only in the `reconcile-gateway-settlements` job (`jobs/reconcile/reconcile-gateway-settlements.ts`, `GatewaySettlementLine` rows), which compares the journal with Razorpay's settlement report.
 - **Counts and events reuse the `*Paise` fields.** Rather than a separate schema per check kind, count-based findings (`…ENGAGEMENTS_DRIFT`, `…SEAT_COUNT_DRIFT`, `OVERAGE_COUNT_DRIFT`) and link/state findings stuff counts into `expectedPaise`/`actualPaise`/`deltaPaise` and record the real unit in `details.unit`.
 - **A checked-in baseline of known findings (`scripts/reconcile/ledger-findings-baseline.ts`).** The nightly signal has to mean "new drift", not "the same seeded row again", or ops learns to ignore a red reconciler. The baseline records what is already known without hiding it: every finding still reaches the report, and only the findings the baseline does not excuse fail the run. Its three rules — fingerprint, expiry, fail-closed on a malformed entry — are in §3.
 
 ### Related docs
 
-- [Money model overview](01-money-model-overview.md) §4 — the reconciled-cache contract.
-- [Ledger & postings](03-ledger-and-postings.md) — the postings these checks re-sum.
-- [Payment legs](09-payment-legs.md) — the leg-sum invariant, enforced by the `payment_legs_sum_to_amount` trigger.
-- [Runbooks](../50-operations/02-runbooks.md) — per-finding incident response.
-- [Monitoring](../50-operations/03-monitoring.md) — alerting on report `ok:false`.
+- [Money model overview](01-double-entry-model.md) §4 — the reconciled-cache contract.
+- [Ledger & postings](../../enterprise/10-money-and-ledger/03-ledger-and-postings.md) — the postings these checks re-sum.
+- [Payment legs](03-payment-legs.md) — the leg-sum invariant, enforced by the `payment_legs_sum_to_amount` trigger.
+- [Runbooks](../../enterprise/50-operations/02-runbooks.md) — per-finding incident response.
+- [Monitoring](../../enterprise/50-operations/03-monitoring.md) — alerting on report `ok:false`.
 - Ground truth: `scripts/reconcile/reconcile-ledgers.ts`, `scripts/reconcile/ledger-findings-baseline.ts`, `LedgerReconciliationReport` in `prisma/schema.prisma`.
 
 ---
