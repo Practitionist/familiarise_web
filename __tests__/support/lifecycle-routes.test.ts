@@ -93,7 +93,10 @@ import { POST as postAppeal } from "../../app/api/support/appeals/route";
 
 const db = jest.mocked(prisma, { shallow: false });
 const signedIn = (role: string) => ({
-  session: { user: { id: role === "CONSULTEE" ? "customer" : "staff", role } },
+  session: {
+    user: { id: role === "CONSULTEE" ? "customer" : "staff", role },
+    session: { createdAt: new Date(0) },
+  },
 });
 const json = (url: string, method: string, body: unknown) =>
   new NextRequest(url, {
@@ -208,6 +211,8 @@ describe("PATCH /api/support/cases/[caseId]", () => {
     expect(res.status).toBe(200);
     expect(patchSupportCaseLifecycle).toHaveBeenCalledWith(
       expect.objectContaining({ legalHold: true, actorId: "staff" }),
+      expect.any(Date),
+      { actorRole: "ADMIN", freshSession: false },
     );
   });
 

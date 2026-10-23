@@ -10,7 +10,7 @@ last-reviewed: 2026-10-17
 # The Booking & Money Machinery — Visual Guide, Organizational Scoping & Worked Permutations
 
 > **The Core Architectural Spine in One Sentence**
-> There is **one checkout pipeline** (`handleCheckout()` in `lib/payments/checkout/orchestrate.ts`), **one payment confirmation writer** (`handlePaymentSuccess()` in `lib/payments/webhooks/handlers.ts`), and **one append-only double-entry journal** (`postLedgerTxn()` in `lib/payments/ledger/post.ts`); consumer (B2C) and enterprise (B2B) flows differ **only in which [`PaymentLeg`](../payments/04-b2c-b2b-funding-seam.md) rows fund the `Payment`** and **whether an organization claims a host share via [`RateCard`](../enterprise/10-money-and-ledger/05-booking-to-earnings.md)**.
+> There is **one checkout pipeline** (`handleCheckout()` in `lib/payments/checkout/orchestrate.ts`), **one payment confirmation writer** (`handlePaymentSuccess()` in `lib/payments/webhooks/handlers.ts`), and **one append-only double-entry journal** (`postLedgerTxn()` in `lib/payments/ledger/post.ts`); consumer (B2C) and enterprise (B2B) flows differ **only in which [`PaymentLeg`](../finance/50-b2b/01-funding-rails-and-permutations.md) rows fund the `Payment`** and **whether an organization claims a host share via [`RateCard`](../enterprise/10-money-and-ledger/05-booking-to-earnings.md)**.
 
 ---
 
