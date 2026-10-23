@@ -1,6 +1,7 @@
-import type { Channel } from "stream-chat";
+import type { Channel, ChannelState } from "stream-chat";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeOrgId } from "@/lib/api/scope/parse";
+import { isSupportStreamUser } from "@/lib/stream/support-user";
 
 export interface ChannelDisplayInfo {
   displayName: string;
@@ -9,7 +10,27 @@ export interface ChannelDisplayInfo {
   memberCount: number;
   statusText: string;
   fullGroupName?: string; // For tooltips
+  /** Familiarise Support is currently a member of this channel. */
+  hasSupport: boolean;
 }
+
+type ChannelMembers = ChannelState["members"];
+type ChannelMember = ChannelMembers[string];
+
+const isSupportMember = (member: ChannelMember | undefined): boolean =>
+  isSupportStreamUser(member?.user?.id ?? member?.user_id);
+
+/** Support presence is read from membership only, never from channel data. */
+export const membersIncludeSupport = (
+  members: ChannelMembers | undefined | null,
+): boolean => Object.values(members ?? {}).some(isSupportMember);
+
+export const channelHasSupportMember = (channel: Channel): boolean =>
+  membersIncludeSupport(channel.state?.members);
+
+/** Members other than Familiarise Support, who joins visibly but is never a party. */
+const partyMembers = (members: ChannelMembers | undefined): ChannelMember[] =>
+  Object.values(members ?? {}).filter((member) => !isSupportMember(member));
 
 /**
  * Is this a direct message that actually has someone on the other end?
@@ -51,7 +72,7 @@ export const viewerOwnsChannel = (
 
 export const isUsableDmChannel = (channel: Channel): boolean => {
   if (channel.type !== "messaging") return true;
-  return Object.keys(channel.state?.members ?? {}).length >= 2;
+  return partyMembers(channel.state?.members).length >= 2;
 };
 
 /**
@@ -63,6 +84,7 @@ export const getChannelDisplayInfo = (
 ): ChannelDisplayInfo => {
   const isTeamChannel = channel.type === "team";
   const isDirectMessage = channel.type === "messaging";
+  const hasSupport = channelHasSupportMember(channel);
 
   if (isTeamChannel) {
     // Team channel logic
@@ -75,12 +97,13 @@ export const getChannelDisplayInfo = (
       isGroupDM: false,
       memberCount,
       statusText: `${memberCount} ${memberCount === 1 ? "member" : "members"}`,
+      hasSupport,
     };
   }
 
   if (isDirectMessage && currentUserId) {
-    // Get all members except current user
-    const otherMembers = Object.values(channel.state.members || {})
+    // Every party except the viewer; support never turns a 1:1 into a group.
+    const otherMembers = partyMembers(channel.state.members)
       .filter((member) => member.user?.id !== currentUserId)
       .map((member) => member.user)
       .filter(Boolean);
@@ -115,6 +138,7 @@ export const getChannelDisplayInfo = (
         memberCount,
         statusText: `${memberCount} members`,
         fullGroupName,
+        hasSupport,
       };
     } else if (otherMembers.length === 1) {
       // 1-on-1 DM logic
@@ -126,6 +150,7 @@ export const getChannelDisplayInfo = (
         isGroupDM: false,
         memberCount: 1,
         statusText: otherMember?.online ? "Online" : "Offline",
+        hasSupport,
       };
     }
   }
@@ -151,6 +176,7 @@ export const getChannelDisplayInfo = (
     isGroupDM: false,
     memberCount: 0,
     statusText: isOrphanedDm ? "No other participants" : "No members",
+    hasSupport,
   };
 };
 

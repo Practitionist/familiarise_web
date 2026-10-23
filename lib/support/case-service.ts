@@ -38,6 +38,10 @@ import { assertMoneyDoorsOpen } from "@/lib/backoffice/maintenance-gate";
 import { recordOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import {
+  endCaseChatAccessTx,
+  scheduleChatAccessRelease,
+} from "./chat-access-end";
+import {
   assertCaseTransition,
   caseTransitionRefusal,
 } from "./case-transitions";
@@ -1752,6 +1756,13 @@ export async function executePatchLifecycleTx(
         note,
       }),
     });
+    const endedChat = await endCaseChatAccessTx(tx, {
+      caseId: input.caseId,
+      actorId: input.actorId,
+      reason: "CASE_RESOLVED",
+      now,
+    });
+    scheduleChatAccessRelease(input.caseId, endedChat);
   }
 
   if (input.status === "RESOLVED" && existing.status !== "RESOLVED")
