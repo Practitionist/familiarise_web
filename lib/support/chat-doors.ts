@@ -2,7 +2,8 @@
  * The audited doors that open, start and end case-linked booking chat access.
  * Each is a `withOpsAction` tx door with step-up: the grant row, its case
  * event, the OpsActionLog row (carrying the reason) and the OrgAuditLog rows
- * commit together. Stream membership and the channel lock run after commit.
+ * commit together. Stream membership and the intervention's channel lock run
+ * after commit; a READ never touches Stream.
  */
 
 import { z } from "zod";
@@ -193,8 +194,6 @@ export const openChatReadDoor = withOpsAction(
         },
         response: { grant: projectGrant(grant, actor.userId, now) },
         status: 201,
-        afterCommit: () =>
-          syncSupportBoundary(chat.channelType, chat.channelId),
       };
     },
   },
@@ -356,8 +355,6 @@ export const endChatReadDoor = withOpsAction(
         correlationId: `support-case:${caseId}`,
         after: { caseId, grantId: grant.id, endReason: "ENDED_BY_STAFF" },
         response: { grantId: grant.id },
-        afterCommit: () =>
-          syncSupportBoundary(grant.channelType, grant.channelId),
       };
     },
   },

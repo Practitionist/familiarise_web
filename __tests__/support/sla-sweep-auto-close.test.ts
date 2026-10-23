@@ -17,6 +17,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
   ),
 }));
 jest.mock("../../lib/support/problem-cascade", () => ({
+  HELD_OPEN_SCAN_FACTOR: 2,
   cascadeResolvedProblems: jest.fn(async () => ({
     cascaded: 0,
     heldOpen: [],
@@ -299,5 +300,59 @@ describe("a case holding payouts", () => {
       db.tx.supportFinancialRecommendation.findFirst,
     ).not.toHaveBeenCalled();
     expect(mockMoneyDoorsRefusal).not.toHaveBeenCalled();
+  });
+});
+
+describe("the auto-close scan", () => {
+  const resolvedScan = () =>
+    (db.supportCase.findMany.mock.calls as [{ where: { status?: unknown } }][])
+      .map(([args]) => args)
+      .find((args) => args.where.status === "RESOLVED");
+
+  it("over-scans oldest-resolved first so refused held cases cannot crowd out closable ones", async () => {
+    db.supportCase.findMany.mockImplementation(
+      async (args: { where: { status?: unknown } }) =>
+        args.where.status === "RESOLVED"
+          ? [{ id: "held" }, { id: "b" }, { id: "c" }]
+          : [],
+    );
+    db.tx.supportFinancialRecommendation.findFirst.mockImplementation(
+      async (args: { where: { caseId: string } }) =>
+        args.where.caseId === "held" ? { id: "rec-1" } : null,
+    );
+
+    const result = await runSupportSlaSweep({ now, limit: 2 });
+
+    expect(resolvedScan()).toMatchObject({
+      orderBy: { resolvedAt: "asc" },
+      take: 4,
+    });
+    expect(result.autoClosedCount).toBe(2);
+    expect(result.errors).toEqual([
+      "auto-close case held: left RESOLVED (RECOMMENDATION_OPEN)",
+    ]);
+    expect(
+      db.tx.supportCase.updateMany.mock.calls.map(
+        ([args]: [{ where: { id: string } }]) => args.where.id,
+      ),
+    ).toEqual(["b", "c"]);
+  });
+
+  it("stops once the run's limit of cases has closed", async () => {
+    db.supportCase.findMany.mockImplementation(
+      async (args: { where: { status?: unknown } }) =>
+        args.where.status === "RESOLVED"
+          ? [{ id: "a" }, { id: "b" }, { id: "c" }]
+          : [],
+    );
+
+    const result = await runSupportSlaSweep({ now, limit: 2 });
+
+    expect(result.autoClosedCount).toBe(2);
+    expect(
+      db.tx.supportCase.updateMany.mock.calls.map(
+        ([args]: [{ where: { id: string } }]) => args.where.id,
+      ),
+    ).toEqual(["a", "b"]);
   });
 });

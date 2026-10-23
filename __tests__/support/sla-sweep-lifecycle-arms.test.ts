@@ -10,6 +10,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
   ),
 }));
 jest.mock("../../lib/support/problem-cascade", () => ({
+  HELD_OPEN_SCAN_FACTOR: 2,
   cascadeResolvedProblems: (...args: unknown[]) => mockCascade(...args),
 }));
 jest.mock("../../lib/support/evidence-retention", () => ({

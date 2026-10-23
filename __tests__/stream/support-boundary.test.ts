@@ -44,10 +44,11 @@ beforeEach(() => {
   mockLive.current = null;
 });
 
-it("looks for any live grant, READ or INTERVENE, on the channel", async () => {
+it("looks only for a live intervention on the channel; a READ changes nothing", async () => {
   await syncSupportBoundary("messaging", "dm-a-b", NOW);
   expect(prisma.supportCaseChatAccess.findFirst).toHaveBeenCalledWith({
     where: {
+      kind: "INTERVENE",
       channelType: "messaging",
       channelId: "dm-a-b",
       endedAt: null,
@@ -57,7 +58,7 @@ it("looks for any live grant, READ or INTERVENE, on the channel", async () => {
   });
 });
 
-it("revokes member changes and owner truncation for user and channel_moderator while a grant is live", async () => {
+it("revokes member changes and owner truncation for user and channel_moderator while an intervention is live", async () => {
   mockLive.current = { id: "g1" };
   await expect(syncSupportBoundary("messaging", "dm-a-b", NOW)).resolves.toBe(
     "locked",
@@ -77,7 +78,7 @@ it("revokes member changes and owner truncation for user and channel_moderator w
   expect(mockChannel.watch).not.toHaveBeenCalled();
 });
 
-it("clears the modifiers with empty per-role lists once no grant is live", async () => {
+it("clears the modifiers with empty per-role lists once no intervention is live", async () => {
   await expect(syncSupportBoundary("team", "webinar-web-1", NOW)).resolves.toBe(
     "unlocked",
   );

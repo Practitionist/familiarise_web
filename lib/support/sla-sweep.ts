@@ -16,7 +16,10 @@ import {
 } from "@/lib/observability/report";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { slaStateOf } from "./sla";
-import { cascadeResolvedProblems } from "./problem-cascade";
+import {
+  cascadeResolvedProblems,
+  HELD_OPEN_SCAN_FACTOR,
+} from "./problem-cascade";
 import { purgeExpiredSupportEvidence } from "./evidence-retention";
 import { sweepSupportChatAccess } from "./chat-sweep";
 import { activeHolds, caseHoldEvents, releaseAllCaseHolds } from "./case-holds";
@@ -571,58 +574,62 @@ async function autoCloseResolvedRows(
       resolvedAt: { lte: autoCloseCutoff },
       deletedAt: null,
     },
+    orderBy: { resolvedAt: "asc" },
     select: { id: true },
-    take: limit,
+    take: limit * HELD_OPEN_SCAN_FACTOR,
   });
 
-  const caseResults = await runSequential(
-    staleResolvedCases ?? [],
-    async (c) => {
-      try {
-        const closed = await prisma.$transaction(
-          async (tx) => {
-            const refused = await autoCloseRefusalTx(tx, c.id, doors);
-            if (refused) return refused;
-            const res = await tx.supportCase.updateMany({
-              where: {
-                id: c.id,
-                status: "RESOLVED",
-                resolvedAt: { lte: autoCloseCutoff },
+  const closeOne = async (c: { id: string }): Promise<number> => {
+    try {
+      const closed = await prisma.$transaction(
+        async (tx) => {
+          const refused = await autoCloseRefusalTx(tx, c.id, doors);
+          if (refused) return refused;
+          const res = await tx.supportCase.updateMany({
+            where: {
+              id: c.id,
+              status: "RESOLVED",
+              resolvedAt: { lte: autoCloseCutoff },
+            },
+            data: { status: "CLOSED", closedAt: now },
+          });
+          if (res.count > 0) {
+            await tx.supportCaseEvent.create({
+              data: {
+                caseId: c.id,
+                kind: "AUTO_CLOSED",
+                fromValue: "RESOLVED",
+                toValue: "CLOSED",
+                createdAt: now,
               },
-              data: { status: "CLOSED", closedAt: now },
             });
-            if (res.count > 0) {
-              await tx.supportCaseEvent.create({
-                data: {
-                  caseId: c.id,
-                  kind: "AUTO_CLOSED",
-                  fromValue: "RESOLVED",
-                  toValue: "CLOSED",
-                  createdAt: now,
-                },
-              });
-              await releaseAutoClosedCaseTx(tx, c.id, now);
-            }
-            return res.count;
-          },
-          {
-            maxWait: ALLOCATION_TX_MAX_WAIT_MS,
-            timeout: ALLOCATION_TX_TIMEOUT_MS,
-          },
-        );
-        if (typeof closed === "number") return closed;
-        errors.push(`auto-close case ${c.id}: left RESOLVED (${closed})`);
-        return 0;
-      } catch (err) {
-        errors.push(
-          `auto-close case ${c.id}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        return 0;
-      }
-    },
-  );
+            await releaseAutoClosedCaseTx(tx, c.id, now);
+          }
+          return res.count;
+        },
+        {
+          maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+          timeout: ALLOCATION_TX_TIMEOUT_MS,
+        },
+      );
+      if (typeof closed === "number") return closed;
+      errors.push(`auto-close case ${c.id}: left RESOLVED (${closed})`);
+      return 0;
+    } catch (err) {
+      errors.push(
+        `auto-close case ${c.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 0;
+    }
+  };
 
-  return caseResults.reduce((sum, n) => sum + n, 0);
+  // Sequential, and stops at `limit` closes: refused held cases never crowd out closable ones.
+  let closedCount = 0;
+  for (const c of staleResolvedCases ?? []) {
+    if (closedCount >= limit) break;
+    closedCount += await closeOne(c);
+  }
+  return closedCount;
 }
 
 /** One page per run for disputes due within 12 h or already past due; new ids re-page, repeats stay quiet for 24 h. */

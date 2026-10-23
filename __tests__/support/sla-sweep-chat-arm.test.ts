@@ -237,7 +237,7 @@ it("collects failures into the shared errors without throwing", async () => {
 });
 
 describe("channel lock backstop", () => {
-  it("re-syncs each channel with a grant started or ended in the last six hours, once", async () => {
+  it("re-syncs each channel with an intervention started or ended in the last hour, once", async () => {
     mockScans.boundary = [
       { channelType: "messaging", channelId: "dm-a-b" },
       { channelType: "team", channelId: "webinar-web-1" },
@@ -260,9 +260,10 @@ describe("channel lock backstop", () => {
         { where: Row; take: number },
       ][]
     ).find(([args]) => scanKey(args.where) === "boundary");
-    const since = new Date(NOW.getTime() - 6 * 3_600_000);
+    const since = new Date(NOW.getTime() - 3_600_000);
     expect(scan?.[0]).toMatchObject({
       where: {
+        kind: "INTERVENE",
         OR: [{ createdAt: { gte: since } }, { endedAt: { gte: since } }],
       },
       take: 10,

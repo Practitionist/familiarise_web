@@ -62,7 +62,7 @@ interface ProblemCascadeResult extends StagedNotices {
 type DoorsGate = () => Promise<string | null>;
 
 /** Scan past `limit` so incidents held open do not starve the ones that can resolve. */
-const HELD_OPEN_SCAN_FACTOR = 2;
+export const HELD_OPEN_SCAN_FACTOR = 2;
 
 const RESOLVED_LABEL = supportTicketStatusLabel("RESOLVED");
 

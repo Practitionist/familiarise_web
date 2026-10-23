@@ -1,9 +1,10 @@
 /**
- * Locks a booking chat's membership and history while support can see it.
- * While any chat-access grant on the channel is live (READ or INTERVENE),
- * per-channel grant modifiers revoke member changes and owner truncation for
- * the `user` and `channel_moderator` roles; when the last one ends they are
- * cleared. Server client only, never `watch()`, never inside a transaction.
+ * Locks a booking chat's membership and history while Familiarise Support
+ * intervenes. While an INTERVENE grant on the channel is live, per-channel
+ * grant modifiers revoke member changes and owner truncation for the `user`
+ * and `channel_moderator` roles; when the last one ends they are cleared. A
+ * covert READ changes nothing in Stream, so a party can still truncate under it.
+ * Server client only, never `watch()`, never inside a transaction.
  */
 
 import type { ChannelConfigFields } from "stream-chat";
@@ -38,7 +39,7 @@ export const CLEARED_BOUNDARY_GRANTS: GrantModifiers = {
 export type BoundaryOutcome = "locked" | "unlocked" | "gone";
 
 /**
- * Brings the channel's grant modifiers in line with its live grants. The
+ * Brings the channel's grant modifiers in line with its live interventions. The
  * desired state is read from the database at call time, so a repeat or a
  * late retry converges; nothing else writes `config_overrides`.
  */
@@ -48,7 +49,13 @@ export async function syncSupportBoundary(
   now = new Date(),
 ): Promise<BoundaryOutcome> {
   const live = await prisma.supportCaseChatAccess.findFirst({
-    where: { channelType, channelId, endedAt: null, expiresAt: { gt: now } },
+    where: {
+      kind: "INTERVENE",
+      channelType,
+      channelId,
+      endedAt: null,
+      expiresAt: { gt: now },
+    },
     select: { id: true },
   });
   // `grants` is a documented override the SDK's config type omits.

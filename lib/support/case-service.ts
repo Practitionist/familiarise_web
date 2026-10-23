@@ -1762,8 +1762,7 @@ export async function executePatchLifecycleTx(
       reason: "CASE_RESOLVED",
       now,
     });
-    if (endedChat.length > 0)
-      scheduleChatAccessRelease(input.caseId, endedChat);
+    scheduleChatAccessRelease(input.caseId, endedChat);
   }
 
   if (input.status === "RESOLVED" && existing.status !== "RESOLVED")

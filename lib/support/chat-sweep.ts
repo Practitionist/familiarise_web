@@ -21,8 +21,8 @@ import { CHAT_REVIEWED_STATUS, stagePartyBells } from "./chat-notices";
 
 /** A join this young may still be running in the door's after-commit task. */
 const JOIN_RETRY_AFTER_MS = 2 * 60_000;
-/** Channels whose grants started or ended this recently are re-locked or unlocked every run. */
-const BOUNDARY_RECHECK_MS = 6 * 3_600_000;
+/** Channels whose interventions started or ended this recently are re-locked or unlocked every run. */
+const BOUNDARY_RECHECK_MS = 3_600_000;
 const CLOSED_STATUSES = ["RESOLVED", "CLOSED"] as const;
 const TX = {
   maxWait: ALLOCATION_TX_MAX_WAIT_MS,
@@ -116,7 +116,10 @@ async function syncRecentBoundaries(
 ) {
   const since = new Date(now.getTime() - BOUNDARY_RECHECK_MS);
   const recent = await prisma.supportCaseChatAccess.findMany({
-    where: { OR: [{ createdAt: { gte: since } }, { endedAt: { gte: since } }] },
+    where: {
+      kind: "INTERVENE",
+      OR: [{ createdAt: { gte: since } }, { endedAt: { gte: since } }],
+    },
     orderBy: { createdAt: "asc" },
     take: limit,
     select: { channelType: true, channelId: true },

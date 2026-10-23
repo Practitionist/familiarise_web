@@ -336,13 +336,10 @@ describe("OPEN_READ", () => {
     expect(probeSupportChannel).not.toHaveBeenCalled();
   });
 
-  it("locks the channel after commit", async () => {
+  it("changes nothing in Stream", async () => {
     await post(READ);
+    expect(mockAfter).toHaveLength(0);
     expect(syncSupportBoundary).not.toHaveBeenCalled();
-    expect(mockAfter).toHaveLength(1);
-    await mockAfter[0]();
-    expect(syncSupportBoundary).toHaveBeenCalledWith("team", "webinar-web-1");
-    expect(joinIntervention).not.toHaveBeenCalled();
   });
 
   it("validates group targets against the live participants", async () => {
@@ -493,7 +490,7 @@ describe("ending grants", () => {
     );
   });
 
-  it("ending a READ unlocks the channel after commit", async () => {
+  it("ending a READ changes nothing in Stream", async () => {
     mockState.grant = { ...live, kind: "READ", grantedById: "u-staff" };
     const res = await post({
       action: "END_READ",
@@ -501,10 +498,8 @@ describe("ending grants", () => {
       reason: "Done reviewing the chat",
     });
     expect(res.status).toBe(200);
+    expect(mockAfter).toHaveLength(0);
     expect(syncSupportBoundary).not.toHaveBeenCalled();
-    expect(mockAfter).toHaveLength(1);
-    await mockAfter[0]();
-    expect(syncSupportBoundary).toHaveBeenCalledWith("team", "webinar-web-1");
     expect(leaveIntervention).not.toHaveBeenCalled();
   });
 

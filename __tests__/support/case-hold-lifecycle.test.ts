@@ -244,7 +244,7 @@ it("ends live chat grants in the same transaction and leaves and unlocks the cha
   );
 });
 
-it("only unlocks the channel when only read grants end", async () => {
+it("schedules nothing in Stream when only read grants end", async () => {
   await executePatchLifecycleTx(
     fakeTx(null, [
       {
@@ -265,10 +265,7 @@ it("only unlocks the channel when only read grants end", async () => {
     new Date(),
     fresh,
   );
-  expect(mockScheduled).toHaveLength(1);
-  await mockScheduled[0]();
-  expect(mockLeave).not.toHaveBeenCalled();
-  expect(mockSync.mock.calls).toEqual([["team", "webinar-web-1"]]);
+  expect(mockScheduled).toHaveLength(0);
 });
 
 it("schedules nothing when no chat grant was live", async () => {

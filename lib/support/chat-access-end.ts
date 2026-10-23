@@ -92,16 +92,19 @@ export async function endCaseChatAccessTx(
 
 /**
  * Once the request settles, clears Familiarise Support from the case's ended
- * interventions and unlocks the ended grants' channels. Harmless if the
- * transaction rolled back: the leave acts only on committed ended-but-seated
- * grants, the unlock re-reads live grants, and the SLA sweep retries any miss.
+ * interventions and unlocks their channels; ended READs touch nothing. Harmless
+ * if the transaction rolled back: the leave acts only on committed
+ * ended-but-seated grants, the unlock re-reads live interventions, and the SLA
+ * sweep retries any miss.
  */
 export function scheduleChatAccessRelease(
   caseId: string,
   ended: readonly EndedChatGrant[],
 ): void {
+  const interventions = ended.filter((g) => g.kind === "INTERVENE");
+  if (interventions.length === 0) return;
   const channels = new Map(
-    ended.map((g) => [`${g.channelType}:${g.channelId}`, g] as const),
+    interventions.map((g) => [`${g.channelType}:${g.channelId}`, g] as const),
   );
   void scheduleAfter(async () => {
     const [{ leavePendingInterventions }, { syncSupportBoundary }] =
@@ -109,7 +112,7 @@ export function scheduleChatAccessRelease(
         import("@/lib/stream/support-intervention"),
         import("@/lib/stream/support-boundary"),
       ]);
-    if (ended.some((g) => g.needsLeave))
+    if (interventions.some((g) => g.needsLeave))
       await leavePendingInterventions(caseId);
     for (const g of channels.values())
       await syncSupportBoundary(g.channelType, g.channelId);
