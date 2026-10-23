@@ -8,6 +8,8 @@ last-reviewed: 2026-06-05
 
 # Live-payout go-live runbook
 
+> **Superseded.** The go-live procedure, with the corrected environment checks, the static-egress requirement and the rollback, is the [money go-live checklist](../../finance/70-operations/07-go-live-checklist.md). This file is pending removal.
+
 > **Status:** `ENABLE_LIVE_PAYOUTS` is **OFF**. Payouts are batched and
 > approved, but approved payouts stay `APPROVED` and are never claimed to
 > `PROCESSING`, so money does **not** leave the gateway. The plain-language

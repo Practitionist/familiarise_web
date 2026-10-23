@@ -207,6 +207,11 @@ export async function handleOrgPaymentSuccess(
       console.log(
         `[Webhook] credit_purchase confirmed=${result.confirmed} order=${walletEntryOrderId} org=${organizationId ?? "?"} balanceAfter=${result.balanceAfter ?? "?"}`,
       );
+      const settledPaise = result.receivableSettledPaise ?? 0;
+      const settledNote =
+        settledPaise > 0
+          ? `, ₹${(settledPaise / 100).toLocaleString("en-IN")} of it settled the org's open receivable`
+          : "";
       if (organizationId && result.confirmed) {
         await prisma.orgAuditLog
           .create({
@@ -215,11 +220,12 @@ export async function handleOrgPaymentSuccess(
               actorMembershipId: null,
               category: "WALLET",
               action: AUDIT_ACTIONS.WALLET.WALLET_TOPUP_CONFIRMED,
-              description: `Top-up confirmed: ₹${(paise / 100).toLocaleString("en-IN")}`,
+              description: `Top-up confirmed: ₹${(paise / 100).toLocaleString("en-IN")}${settledNote}`,
               details: {
                 walletEntryOrderId,
                 providerPaymentId: razorpayPaymentId,
                 amountPaise: paise,
+                receivableSettledPaise: settledPaise,
               },
             },
           })
@@ -270,6 +276,7 @@ export async function handleOrgPaymentSuccess(
                       amountPaise: paise,
                       currency,
                       newBalancePaise,
+                      receivableSettledPaise: settledPaise,
                       dashboardUrl,
                     },
                     EMAIL_BUDGET_MS.WEBHOOK,
@@ -727,7 +734,6 @@ export async function handleRefundCreated(
                   billingAccountId: ba.id,
                   amountPaise: amount,
                   reason: "REFUND",
-                  providerPaymentId,
                   notes: `Invoice ${invoice.invoiceNumber} refund (${refundId})`,
                 });
               }

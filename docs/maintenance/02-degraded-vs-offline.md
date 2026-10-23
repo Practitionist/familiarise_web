@@ -15,6 +15,8 @@
 
 DEGRADED also blocks the admin money-write surfaces: manual capture/refund/payout actions, wallet and earning repairs, financial freezes/releases, and support actions that move money or release payout holds. The current deny patterns and named support gates remain in lib/maintenance-edge.ts and the canonical support services. A maintenance bypass does not bypass those financial write guards.
 
+See [the money gate and recovery reference](../finance/70-operations/03-maintenance-gate-and-recovery.md) for the current route patterns and money-worker admission rules.
+
 ## Unreadable state
 
 A missing or malformed maintenance phase is unknown, rather than OFF. Failed refreshes can retain the last known page presentation, but carry `unreadable` so non-exempt writes fail closed. Cron guards refuse unknown state. A successful OFF read remains cacheable; the gate is not a cross-host instantaneous barrier. In-flight requests and jobs are not cancelled when phase changes. Wait for in-flight work to settle and inspect active execution leases before changing the schema.

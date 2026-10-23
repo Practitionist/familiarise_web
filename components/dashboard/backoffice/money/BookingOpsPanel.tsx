@@ -16,19 +16,26 @@ import { useBackofficeCapability } from "@/components/dashboard/backoffice/Backo
 import { BookingDocumentsOps } from "./BookingDocumentsOps";
 import { ClassSeriesDoors } from "./ClassSeriesDoors";
 import { DoorDialog, type Door } from "./DoorDialog";
+import { PlatformCancelDoor } from "./PlatformCancelDoor";
 import { SetOutcomeDialog } from "./SetOutcomeDialog";
 
 type Session = BookingOpsView["sessions"][number];
 
 // The set-outcome door overturns only a session the sweep already decided.
 const DECIDED = new Set(["COMPLETED", "UNVERIFIED", "VOIDED"]);
+// The reschedule door releases only a session that still holds a future time.
+const RESCHEDULABLE = new Set(["SCHEDULED", "RESCHEDULED"]);
 
 const when = (iso: string) => new Date(iso).toLocaleString();
 
+const RESCHEDULE_COPY =
+  "This only releases the time: the customer picks the new times, and both parties are notified. Nothing is refunded now, and a session within 24 hours cannot be moved.";
+
 /**
  * #1771 — a booking's Ops actions, by type. Every booking lists its sessions
- * with the set-outcome door and its money state; a class adds its series
- * doors; admin alone gets the refund link and the plan's 48-hour sweep.
+ * with the set-outcome door and its money state, and can be released for
+ * rescheduling or cancelled whole; a class adds its series doors; admin alone
+ * gets the refund link and the plan's 48-hour sweep.
  */
 export function BookingOpsPanel({
   appointmentId,
@@ -36,6 +43,7 @@ export function BookingOpsPanel({
   const { can, basePath } = useBackofficeCapability();
   const [target, setTarget] = useState<Session | null>(null);
   const [door, setDoor] = useState<Door | null>(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
   const ops = useQuery({
     queryKey: ["booking-ops", appointmentId],
     queryFn: async () => {
@@ -56,6 +64,16 @@ export function BookingOpsPanel({
     );
   }
   const now = Date.now();
+  const rescheduleUrl = `/api/staff/appointments/${encodeURIComponent(appointmentId)}/reschedule`;
+  const canReschedule = can("appointments.manage");
+  const isLive = (s: Session) =>
+    RESCHEDULABLE.has(s.completionStatus) &&
+    new Date(s.startsAt).getTime() > now;
+  const perSession = v.type === "SUBSCRIPTION" || v.type === "CLASS";
+  // A booking with no session yet may still be awaiting its times.
+  const canCancel =
+    can("appointments.cancelForPlatform") &&
+    (v.sessions.length === 0 || v.sessions.some(isLive));
 
   return (
     <section aria-label="Ops actions" className="space-y-4">
@@ -87,9 +105,53 @@ export function BookingOpsPanel({
                     Set outcome
                   </Button>
                 )}
+              {canReschedule && perSession && isLive(s) && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    setDoor({
+                      url: rescheduleUrl,
+                      title: `Release session #${s.ordinal} for rescheduling`,
+                      description: RESCHEDULE_COPY,
+                      confirm: "Release",
+                      body: { slotIds: [s.id] },
+                    })
+                  }
+                >
+                  Reschedule
+                </Button>
+              )}
             </li>
           ))}
         </ul>
+        <div className="flex flex-wrap gap-2">
+          {canReschedule && v.sessions.some(isLive) && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                setDoor({
+                  url: rescheduleUrl,
+                  title: "Release this booking for rescheduling",
+                  description: `Releases every live session. ${RESCHEDULE_COPY}`,
+                  confirm: "Release",
+                })
+              }
+            >
+              Reschedule booking
+            </Button>
+          )}
+          {canCancel && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setCancelOpen(true)}
+            >
+              Cancel booking
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="space-y-1 text-sm">
@@ -168,8 +230,14 @@ export function BookingOpsPanel({
       <DoorDialog
         key={door ? door.url : "none"}
         door={door}
-        invalidate={[["booking-ops"]]}
+        invalidate={[["booking-ops"], ["staff-appointment-timeline"]]}
         onClose={() => setDoor(null)}
+      />
+      <PlatformCancelDoor
+        appointmentId={appointmentId}
+        open={cancelOpen}
+        invalidate={[["booking-ops"], ["staff-appointment-timeline"]]}
+        onClose={() => setCancelOpen(false)}
       />
     </section>
   );

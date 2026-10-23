@@ -14,6 +14,8 @@ Use the ADMIN Maintenance page to end the window with a recovery audit reason (5
 
 Recovery does not start an unbounded parallel reconciliation run. Use the authenticated System Jobs console or bounded cleanup HTTP routes for payment/refund status, dispute, payout status and vendor storage checks. Inspect each result before requesting the next slice. The scheduler resumes normal cadence and processes outstanding obligations independently of the recovery response.
 
+Use [the money recovery order](../finance/70-operations/03-maintenance-gate-and-recovery.md#re-driving-money-after-maintenance-ends) for dependency ordering. A calendar-window job held during maintenance may wait until its next window; review any missed window and its core bounds before requesting an authorized catch-up. A query parameter alone does not make an unbounded core safe.
+
 Retain the statutory follow-ups returned by recovery: inspect the GST outward register before filing, run IRP registration within its statutory window, regenerate the quarter's TDS draft when appropriate, and inspect ledger audit findings before reopening payouts. Do not submit statutory filings from a smoke test.
 
 ## Deployment and failback
