@@ -45,9 +45,8 @@ export const ORG_ERROR_COPY: Record<string, string> = {
     "This user does not have a learner profile on Familiarise yet. They need to sign up or complete onboarding before they can be added to an organization as a Learner.",
   LEARNER_REQUIRES_CANSPONSOR:
     "Learner can only be assigned on sponsor-capable organizations. Enable sponsorship under Settings → Capabilities first.",
-  // Why: PO balance enforcement (see docs/enterprise/10-money-and-ledger/08-invoicing.md
-  // "PO balance enforcement" section). The server emits EXCEEDED; the
-  // INSUFFICIENT alias exists so route renames don't break the UI copy.
+  // Why: PO balance enforcement (docs/finance/50-b2b/04-invoices-purchase-orders-and-dunning.md).
+  // The server emits EXCEEDED; the INSUFFICIENT alias exists so route renames don't break the UI copy.
   PO_BALANCE_EXCEEDED:
     "This purchase order doesn't have enough remaining budget for the invoice. Reduce the invoice total or add a new PO.",
   PO_BALANCE_INSUFFICIENT:

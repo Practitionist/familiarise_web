@@ -85,7 +85,7 @@ The consumer vest, in one transaction, does the following.
 1. It finds the referrer's `PENDING` credit for this referral. If none exists, the referral becomes `VOID` with reason `MISSING_CREDIT`.
 2. It claims a slot on the referrer's code in one conditional update that checks the lifetime cap (25 vests), the yearly reward cap (₹10,000), and the weekly cap (5 vests). A refused slot becomes `VOID` for the lifetime or yearly cap, and a weekly refusal defers the referral to a later run.
 3. It claims the reward from the monthly budget by conditional update on the configuration `version`. If the budget cannot cover the reward, the whole row rolls back and waits for the next month.
-4. It moves the referral to `VESTED`, the credit to `VESTED` with an expiry of `creditExpiryDays` from now, and posts the ledger entry described in [03-credit-system.md](./03-credit-system.md).
+4. It moves the referral to `VESTED`, the credit to `VESTED` with an expiry of `creditExpiryDays` from now, and posts the ledger entry described in [03-credit-system.md](../finance/20-ledger/07-referral-credits.md).
 
 ### Expert referral vest
 

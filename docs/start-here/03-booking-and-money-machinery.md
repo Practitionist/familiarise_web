@@ -141,7 +141,7 @@ The organisational scoping reference lives in the domain docs, and the examples 
 
 ## 6. The Complete Money Machinery & Double-Entry Ledger
 
-Price derivation, the chart of accounts (thirteen account kinds), the four confirmation doors and the money state machines are in [02-money-system-hld.md](./02-money-system-hld.md) (sections 3, 5, 7 and 8). The twenty canonical double-entry permutations, each balanced at COMMIT by the deferred trigger `ledger_txn_balanced`, are in [ledger and postings](../enterprise/10-money-and-ledger/03-ledger-and-postings.md#7-the-twenty-ledger-permutations).
+Price derivation, the chart of accounts (thirteen account kinds), the four confirmation doors and the money state machines are in [02-money-system-hld.md](./02-money-system-hld.md) (sections 3, 5, 7 and 8). The twenty canonical double-entry permutations, each balanced at COMMIT by the deferred trigger `ledger_txn_balanced`, are in [ledger and postings](../finance/20-ledger/04-postings.md#7-the-twenty-ledger-permutations).
 
 ---
 
