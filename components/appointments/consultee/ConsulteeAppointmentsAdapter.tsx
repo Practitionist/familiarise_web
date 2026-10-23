@@ -44,6 +44,8 @@ import { useEventActions } from "@/components/appointments/consultee/useEventAct
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
 import type { ShownCancelQuote } from "@/lib/appointments/cancel-requote";
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
+import { operatorOpsHref } from "@/lib/backoffice/booking-href";
+import { OPS_HINT_LABEL } from "@/components/appointments/OperatorOpsHint";
 import {
   DM_ELIGIBLE_STATUSES,
   OPENABLE_EVENT_STATUSES,
@@ -355,6 +357,15 @@ export function useConsulteeAppointmentsAdapter(options?: {
 
   const isDev = process.env.NEXT_PUBLIC_ENABLE_DEV_TOOLS === "true";
 
+  const viewer = session?.user;
+  const isPartyTo = (vm: AppointmentVM): boolean =>
+    Boolean(
+      viewer &&
+      ((viewer.consulteeProfileId &&
+        viewer.consulteeProfileId === consulteeId) ||
+        [consulteeUserIdOf(vm), consultantUserIdOf(vm)].includes(viewer.id)),
+    );
+
   const primaryAction = (vm: AppointmentVM): PrimaryAction => {
     const joinable = getJoinableOccurrence(vm.raw.rawOccurrences ?? [], {
       joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
@@ -403,7 +414,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
       });
     }
     // #1005 — kind-gate: only offer actions the server will honour.
-    if (
+    const mayReschedule = Boolean(
       consulteeMayReschedule(vm.kind) &&
       vm.appointmentId &&
       // The reschedule page lives under this route's consultee; off that route
@@ -411,8 +422,17 @@ export function useConsulteeAppointmentsAdapter(options?: {
       consulteeId &&
       !inactive &&
       isApprovedStatus(vm.status) &&
-      occurrencesAllowReschedule(slots)
-    ) {
+      occurrencesAllowReschedule(slots),
+    );
+    const destructive = consulteeDestructiveAction(vm.kind);
+    const mayCancel =
+      !inactive &&
+      ((destructive === "cancel-booking" && Boolean(vm.appointmentId)) ||
+        (destructive === "cancel-trial" && Boolean(sourceId(vm))));
+    const opsHref = vm.appointmentId
+      ? operatorOpsHref(viewer, isPartyTo(vm), vm.appointmentId)
+      : null;
+    if (mayReschedule && !opsHref) {
       // A page, not a dialog: choosing a time is a full-width task, and a
       // URL means a half-finished choice survives a refresh. The returnTo
       // query rides along literally; only the base path prefetches.
@@ -428,8 +448,18 @@ export function useConsulteeAppointmentsAdapter(options?: {
         onClick: () => router.push(rescheduleHref),
       });
     }
-    const destructive = consulteeDestructiveAction(vm.kind);
-    if (!inactive && destructive === "cancel-booking" && vm.appointmentId) {
+    if (opsHref && (mayReschedule || mayCancel)) {
+      items.push({
+        key: "ops-hint",
+        label: OPS_HINT_LABEL,
+        href: opsHref,
+        onClick: () => router.push(opsHref),
+      });
+    } else if (
+      !inactive &&
+      destructive === "cancel-booking" &&
+      vm.appointmentId
+    ) {
       items.push({
         key: "cancel",
         label: isPendingPaymentStatus(vm.status)
