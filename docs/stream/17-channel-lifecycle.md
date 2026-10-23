@@ -167,8 +167,10 @@ after a scan or channel failure in that organisation's current pass. The retenti
 marker checks the error count from before that organisation's wind-down, so a
 successful empty purge cannot hide an earlier incomplete channel scan. An earlier
 organisation's failure does not prevent a later organisation from recording its
-own completed work; the overall invocation remains unsuccessful. Direct unexpected
-member-removal exceptions are collected and reported once per invocation.
+own completed work; the overall invocation remains unsuccessful. Unexpected
+member-removal, circuit-breaker and recording-delete errors share one invocation
+reporter, including failures caught by shared helpers. Its final flush sends one
+event with a bounded sample; other callers retain their existing reporting.
 
 The shared pager reads at most 30 channels per page and stops before requesting an
 offset above 1000, returning up to 1020 channels. A successfully frozen messaging

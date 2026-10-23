@@ -125,6 +125,7 @@ still reports failure. The pager's offset ceiling and the unbounded related
 surface/recording work remain capacity gates: a frozen messaging prefix can leave
 the filter, but an unchanged prefix does not guarantee tail progress. Do not add a
 ticker target or second automatic clock on the strength of these marker checks.
+Shared Stream/R2 helpers receive the invocation reporter so row failures produce one final event with a bounded sample. Other callers retain their existing reporting.
 See `docs/stream/17-channel-lifecycle.md#organisation-wind-down-completion`.
 
 ## Sources

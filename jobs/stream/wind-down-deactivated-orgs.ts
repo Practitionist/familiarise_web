@@ -73,7 +73,15 @@ export async function windDownDeactivatedOrgs(): Promise<WindDownDeactivatedOrgs
     "wind-down-deactivated-orgs",
     { failMode: "open" },
     async () => {
-      const failures = createRunFailureReporter("stream");
+      const runFailures = createRunFailureReporter("stream");
+      const failures: RunFailureReporter = {
+        add: (operation, error, context) =>
+          runFailures.add("wind-down-deactivated-orgs", error, {
+            ...context,
+            operation,
+          }),
+        flush: () => runFailures.flush(),
+      };
       try {
         return await windDownDeactivatedOrgsUnlocked(failures);
       } finally {
@@ -205,7 +213,7 @@ async function windDownDeactivatedOrgsUnlocked(
 
   for (const org of orgs) {
     try {
-      await windDownSingleOrg(chat, org, now, result);
+      await windDownSingleOrg(chat, org, now, result, failures);
     } catch (err) {
       result.errors.push(
         `org ${org.id}: ${err instanceof Error ? err.message : String(err)}`,
@@ -238,6 +246,7 @@ async function endOrgActiveVideoCalls(
   orgId: string,
   now: Date,
   result: WindDownDeactivatedOrgsResult,
+  failures: RunFailureReporter,
 ): Promise<void> {
   if (!prisma.meeting?.findMany) return;
   const activeCalls = await prisma.meeting.findMany({
@@ -250,6 +259,7 @@ async function endOrgActiveVideoCalls(
     endedReason: "org_deactivated",
     errorPrefix: `org ${orgId}`,
     useCircuitBreaker: true,
+    failures,
   });
   result.callsEnded += callsRes.callsEnded;
   result.errors.push(...callsRes.errors);
@@ -268,12 +278,16 @@ async function freezeSingleEventTarget(
   stampedWebinarIds: string[],
   stampedClassIds: string[],
   result: WindDownDeactivatedOrgsResult,
+  failures: RunFailureReporter,
 ): Promise<void> {
   try {
-    await withStreamCircuitBreaker(() =>
-      chat
-        .channel("team", item.channelId)
-        .updatePartial({ set: { frozen: true } }),
+    await withStreamCircuitBreaker(
+      () =>
+        chat
+          .channel("team", item.channelId)
+          .updatePartial({ set: { frozen: true } }),
+      undefined,
+      failures,
     );
     result.eventChannelsFrozen++;
     if (item.kind === "webinar") stampedWebinarIds.push(item.id);
@@ -297,6 +311,7 @@ async function freezeOrgEventChannels(
   classIds: string[],
   now: Date,
   result: WindDownDeactivatedOrgsResult,
+  failures: RunFailureReporter,
 ): Promise<void> {
   const eventTargets: EventFreezeTarget[] = [
     ...webinarIds.map((id) => ({
@@ -328,6 +343,7 @@ async function freezeOrgEventChannels(
           stampedWebinarIds,
           stampedClassIds,
           result,
+          failures,
         ),
       ),
     );
@@ -409,6 +425,7 @@ async function freezeOrgDmChannels(
   orgId: string,
   dmChannelIds: string[],
   result: WindDownDeactivatedOrgsResult,
+  failures: RunFailureReporter,
 ): Promise<void> {
   for (const [batchIdx, batch] of chunk(
     dmChannelIds,
@@ -418,10 +435,13 @@ async function freezeOrgDmChannels(
     await Promise.all(
       batch.map(async (channelId) => {
         try {
-          await withStreamCircuitBreaker(() =>
-            chat
-              .channel("messaging", channelId)
-              .updatePartial({ set: { frozen: true } }),
+          await withStreamCircuitBreaker(
+            () =>
+              chat
+                .channel("messaging", channelId)
+                .updatePartial({ set: { frozen: true } }),
+            undefined,
+            failures,
           );
           result.dmChannelsFrozen++;
         } catch (err) {
@@ -445,6 +465,7 @@ async function purgeSingleOrgRecording(
   },
   now: Date,
   result: WindDownDeactivatedOrgsResult,
+  failures: RunFailureReporter,
 ): Promise<void> {
   try {
     if (rec.previewClipStoragePath) {
@@ -457,7 +478,7 @@ async function purgeSingleOrgRecording(
       }
     }
     const del = rec.storagePath
-      ? await deleteRecordingObject(rec.storagePath)
+      ? await deleteRecordingObject(rec.storagePath, failures)
       : { success: true };
     if (!del.success) {
       result.errors.push(
@@ -492,6 +513,7 @@ async function purgeExpiredOrgRecordings(
   now: Date,
   result: WindDownDeactivatedOrgsResult,
   orgErrorsBefore: number,
+  failures: RunFailureReporter,
 ): Promise<void> {
   if (!prisma.recording?.findMany) return;
   const retentionDays =
@@ -516,7 +538,7 @@ async function purgeExpiredOrgRecordings(
   });
 
   for (const rec of expiredRecordings) {
-    await purgeSingleOrgRecording(org.id, rec, now, result);
+    await purgeSingleOrgRecording(org.id, rec, now, result, failures);
   }
 
   if (
@@ -542,6 +564,7 @@ async function windDownSingleOrg(
   org: DeactivatedOrgRow,
   now: Date,
   result: WindDownDeactivatedOrgsResult,
+  failures: RunFailureReporter,
 ): Promise<void> {
   const alreadyWoundDown = (org.auditLogs ?? []).some(
     (log) => log.action === STREAM_ORG_WOUND_DOWN_ACTION,
@@ -549,7 +572,7 @@ async function windDownSingleOrg(
   const errorsBefore = result.errors.length;
 
   if (!alreadyWoundDown) {
-    await endOrgActiveVideoCalls(org.id, now, result);
+    await endOrgActiveVideoCalls(org.id, now, result, failures);
 
     const surfaces = await loadOrgStreamSurfaces(org.id, {
       onlyUnfrozen: true,
@@ -561,6 +584,7 @@ async function windDownSingleOrg(
       surfaces.classIds,
       now,
       result,
+      failures,
     );
 
     const dmChannelIds = await collectAllOrgDmChannelIds(
@@ -568,8 +592,9 @@ async function windDownSingleOrg(
       org.id,
       surfaces.dmChannelIds,
       result,
+      failures,
     );
-    await freezeOrgDmChannels(chat, org.id, dmChannelIds, result);
+    await freezeOrgDmChannels(chat, org.id, dmChannelIds, result, failures);
 
     if (prisma.recording?.updateMany) {
       const unpublished = await prisma.recording.updateMany({
@@ -593,7 +618,7 @@ async function windDownSingleOrg(
     }
   }
 
-  await purgeExpiredOrgRecordings(org, now, result, errorsBefore);
+  await purgeExpiredOrgRecordings(org, now, result, errorsBefore, failures);
 }
 
 async function loadRejoinedMemberKeys(
@@ -622,6 +647,7 @@ async function drainSingleRemovedMember(
     const outcome = await revokeMemberStreamAccess({
       userId: row.userId,
       orgId: row.organizationId,
+      failureReporter: failures,
     });
     if (outcome.complete) {
       result.removedMembersDrained++;

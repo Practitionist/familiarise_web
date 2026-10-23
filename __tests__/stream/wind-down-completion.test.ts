@@ -28,11 +28,16 @@ jest.mock("../../lib/prisma", () => ({
     recording: { findMany: (...args: unknown[]) => mockRecordings(...args) },
   },
 }));
+jest.mock("../../lib/redis", () => ({
+  createCircuitBreaker: () => ({ run: (run: () => Promise<unknown>) => run() }),
+}));
 jest.mock("../../lib/stream-client", () => ({
   isStreamConfigured: () => true,
   isExpectedStreamError: (error: unknown) =>
     error instanceof Error && error.message === "channel missing",
-  withStreamCircuitBreaker: (run: () => Promise<unknown>) => run(),
+  withStreamCircuitBreaker: jest.requireActual<
+    typeof import("../../lib/stream-client")
+  >("../../lib/stream-client").withStreamCircuitBreaker,
   getStreamChatClient: () => ({
     channel: (_type: string, id: string) => ({
       updatePartial: async () => {
@@ -260,7 +265,7 @@ it("aggregates unexpected removed-member failures once per invocation", async ()
   expect(mockReportSentryError).toHaveBeenCalledWith(
     expect.any(Error),
     expect.objectContaining({
-      op: "wind-down-member-removal",
+      op: "wind-down-deactivated-orgs",
       extra: expect.objectContaining({ count: 3 }),
     }),
   );
@@ -273,4 +278,30 @@ it("aggregates unexpected removed-member failures once per invocation", async ()
     expect.any(Error),
     expect.objectContaining({ extra: expect.objectContaining({ count: 1 }) }),
   );
+});
+
+it("aggregates channel failures captured inside the shared circuit breaker", async () => {
+  selectFreshOrgs();
+  channels = Array.from({ length: 3 }, (_, i) => ({
+    id: `dm-${i}`,
+    type: "messaging",
+    frozen: false,
+  }));
+  for (const _channel of channels) {
+    mockFreeze.mockImplementationOnce(() => {
+      throw new Error("freeze unavailable");
+    });
+  }
+  const result = await windDownDeactivatedOrgs();
+  expect(result.success).toBe(false);
+  expect(result.errors).toHaveLength(3);
+  expect(mockReportSentryError).toHaveBeenCalledTimes(1);
+  expect(mockReportSentryError).toHaveBeenCalledWith(
+    expect.any(Error),
+    expect.objectContaining({
+      op: "wind-down-deactivated-orgs",
+      extra: expect.objectContaining({ count: 3 }),
+    }),
+  );
+  expect(mockAudit).not.toHaveBeenCalled();
 });

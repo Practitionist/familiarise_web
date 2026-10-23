@@ -339,6 +339,29 @@ describe("Stream security, consent gates, and organization boundaries", () => {
   });
 
   describe("Enterprise organization Stream revocation and wind-down", () => {
+    it("delegates a member-surface discovery failure to the invocation reporter", async () => {
+      const error = new Error("surface lookup failed");
+      mockPrisma.webinar.findMany.mockRejectedValueOnce(error);
+      const { revokeMemberStreamAccess } =
+        await import("../../lib/enterprise/member-removal");
+      const failureReporter = { add: jest.fn(), flush: jest.fn() };
+      const result = await revokeMemberStreamAccess({
+        orgId: "org-a",
+        userId: "user-a",
+        failureReporter,
+      });
+      expect(result.complete).toBe(false);
+      expect(result.failures).toEqual([
+        "loadOrgStreamSurfaces:surface lookup failed",
+      ]);
+      expect(failureReporter.add).toHaveBeenCalledWith(
+        "wind-down-member-removal",
+        error,
+        { userId: "user-a", orgId: "org-a" },
+      );
+      expect(failureReporter.flush).not.toHaveBeenCalled();
+    });
+
     it("revokes org-scoped channels on member removal without revoking global user token", async () => {
       mockPrisma.webinar.findMany.mockResolvedValueOnce([{ id: "web-org-1" }]);
 

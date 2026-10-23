@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import type { RunFailureReporter } from "@/lib/observability/run-failures";
 import type { ChannelFilters, StreamChat } from "stream-chat";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
@@ -702,6 +703,7 @@ async function endSingleStreamVideoCall(
     endedReason: string | null;
     errorPrefix: string;
     useCircuitBreaker?: boolean;
+    failures?: RunFailureReporter;
   },
   errors: string[],
 ): Promise<boolean> {
@@ -711,7 +713,7 @@ async function endSingleStreamVideoCall(
     const endCall = () =>
       video.call(STREAM_CALL_TYPE, toCallId(call.streamCallId)).end();
     await (options.useCircuitBreaker
-      ? withStreamCircuitBreaker(endCall)
+      ? withStreamCircuitBreaker(endCall, undefined, options.failures)
       : endCall());
     ended = true;
     counted = true;
@@ -746,6 +748,7 @@ export async function endActiveStreamVideoCalls(
     endedReason: string | null;
     errorPrefix: string;
     useCircuitBreaker?: boolean;
+    failures?: RunFailureReporter;
   },
 ): Promise<{ callsEnded: number; errors: string[] }> {
   let callsEnded = 0;
