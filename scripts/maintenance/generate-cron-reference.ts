@@ -166,7 +166,7 @@ export function registryJobs(source: string, root: string): RegistryJob[] {
 
 /** Fleet steps currently use literal schedule comparisons and tsx or cleanup-route commands. */
 export function workflowJobs(source: string, file: string): WorkflowJob[] {
-  return source.split(/(?=^ {6}- name: )/m).flatMap((block) => {
+  return source.split(/(?=^ {6}- name:)/m).flatMap((block) => {
     const id = block.match(/^ {8}id:\s*([a-z0-9-]+)\s*$/m)?.[1];
     if (!id) return [];
     const name = block.match(/^ {6}- name:([^\r\n]*)/m)?.[1]?.trim() || id;

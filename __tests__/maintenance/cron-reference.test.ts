@@ -89,6 +89,31 @@ it.each(["", " \t"])(
   },
 );
 
+it("keeps a later blank-name workflow step in its own block", () => {
+  const rows = workflowJobs(
+    `      - name: Cleanup auth tokens
+        id: cleanup-auth-tokens
+        run: curl https://site.test/api/cleanup/auth-tokens
+      - name:
+        id: cleanup-abandoned-payments
+        run: curl https://site.test/api/cleanup/abandoned-payments
+`,
+    "fleet.yml",
+  );
+  expect(rows.map(({ id, name, slug }) => ({ id, name, slug }))).toEqual([
+    {
+      id: "cleanup-auth-tokens",
+      name: "Cleanup auth tokens",
+      slug: "auth-tokens",
+    },
+    {
+      id: "cleanup-abandoned-payments",
+      name: "cleanup-abandoned-payments",
+      slug: "abandoned-payments",
+    },
+  ]);
+});
+
 it("documents every real builder and the four Actions-only registry gaps", () => {
   const jobs = registryJobs(registry, ROOT);
   const document = fs.readFileSync(
