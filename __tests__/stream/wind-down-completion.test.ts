@@ -305,3 +305,39 @@ it("aggregates channel failures captured inside the shared circuit breaker", asy
   );
   expect(mockAudit).not.toHaveBeenCalled();
 });
+
+it("preserves billing classification after earlier failures fill the bounded sample", async () => {
+  selectFreshOrgs();
+  channels = Array.from({ length: 12 }, (_, i) => ({
+    id: `dm-${i}`,
+    type: "messaging",
+    frozen: false,
+  }));
+  const billingError = Object.assign(new Error("billing refused"), {
+    code: 99,
+  });
+  for (let i = 0; i < channels.length; i++) {
+    const error =
+      i === 11
+        ? billingError
+        : new Error(
+            i === 0 ? "circuit breaker is OPEN" : "transport unavailable",
+          );
+    mockFreeze.mockImplementationOnce(() => {
+      throw error;
+    });
+  }
+  const result = await windDownDeactivatedOrgs();
+  expect(result.success).toBe(false);
+  expect(result.errors).toHaveLength(12);
+  expect(mockReportSentryError).toHaveBeenCalledTimes(1);
+  expect(mockReportSentryError).toHaveBeenCalledWith(
+    billingError,
+    expect.objectContaining({
+      level: "error",
+      tags: { reason: "stream.billing" },
+      extra: { count: 12, sample: expect.any(Array) },
+    }),
+  );
+  expect(mockReportSentryError.mock.calls[0][1].extra.sample).toHaveLength(10);
+});

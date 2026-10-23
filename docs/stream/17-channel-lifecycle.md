@@ -170,7 +170,7 @@ organisation's failure does not prevent a later organisation from recording its
 own completed work; the overall invocation remains unsuccessful. Unexpected
 member-removal, circuit-breaker and recording-delete errors share one invocation
 reporter, including failures caught by shared helpers. Its final flush sends one
-event with a bounded sample; other callers retain their existing reporting.
+event with a bounded sample and the highest observed severity. A billing refusal retains its classification even after that sample is full; other callers retain their existing reporting.
 
 The shared pager reads at most 30 channels per page and stops before requesting an
 offset above 1000, returning up to 1020 channels. A successfully frozen messaging

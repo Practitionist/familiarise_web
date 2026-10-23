@@ -1,10 +1,11 @@
 import "dotenv/config";
 
 import prisma from "../../lib/prisma";
+import type { RunFailureReporter } from "../../lib/observability/run-failures";
 import {
-  createRunFailureReporter,
-  type RunFailureReporter,
-} from "../../lib/observability/run-failures";
+  reportSentryError,
+  type ReportOpts,
+} from "../../lib/observability/report";
 import {
   getStreamChatClient,
   isExpectedStreamError,
@@ -73,15 +74,7 @@ export async function windDownDeactivatedOrgs(): Promise<WindDownDeactivatedOrgs
     "wind-down-deactivated-orgs",
     { failMode: "open" },
     async () => {
-      const runFailures = createRunFailureReporter("stream");
-      const failures: RunFailureReporter = {
-        add: (operation, error, context) =>
-          runFailures.add("wind-down-deactivated-orgs", error, {
-            ...context,
-            operation,
-          }),
-        flush: () => runFailures.flush(),
-      };
+      const failures = windDownFailureReporter();
       try {
         return await windDownDeactivatedOrgsUnlocked(failures);
       } finally {
@@ -89,6 +82,46 @@ export async function windDownDeactivatedOrgs(): Promise<WindDownDeactivatedOrgs
       }
     },
   );
+}
+
+function windDownFailureReporter(): RunFailureReporter {
+  let count = 0;
+  let first: unknown;
+  let billing = false;
+  let expected = true;
+  let level: NonNullable<ReportOpts["level"]> = "debug";
+  const levels = ["debug", "log", "info", "warning", "error", "fatal"];
+  const sample: Record<string, unknown>[] = [];
+  return {
+    add(operation, error, context, opts) {
+      count++;
+      if (count === 1 || (!billing && context?.reason === "stream.billing"))
+        first = error;
+      billing ||= context?.reason === "stream.billing";
+      expected &&= opts?.expected ?? false;
+      const nextLevel = opts?.level ?? "error";
+      if (levels.indexOf(nextLevel) > levels.indexOf(level)) level = nextLevel;
+      if (sample.length < 10) sample.push({ ...context, operation });
+    },
+    flush() {
+      if (!count) return;
+      reportSentryError(first, {
+        subsystem: "stream",
+        op: "wind-down-deactivated-orgs",
+        level,
+        expected,
+        ...(billing ? { tags: { reason: "stream.billing" } } : {}),
+        fingerprint: ["stream", "wind-down-deactivated-orgs"],
+        extra: { count, sample: [...sample] },
+      });
+      count = 0;
+      first = undefined;
+      billing = false;
+      expected = true;
+      level = "debug";
+      sample.length = 0;
+    },
+  };
 }
 
 const DEACTIVATED_ORG_SELECT = {
