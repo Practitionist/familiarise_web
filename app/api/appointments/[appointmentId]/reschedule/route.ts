@@ -15,6 +15,7 @@ import { liveParticipant } from "@/lib/booking/participants";
 import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import { NextRequest, NextResponse } from "next/server";
 import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
+import { platformRescheduleGrant } from "@/lib/booking/platform-reschedule";
 import type {
   Prisma,
   RescheduleInitiatorRole,
@@ -78,8 +79,9 @@ const MINIMUM_HOURS_BEFORE_RESCHEDULE = 24;
 const RESCHEDULE_REALLOCATION_BUFFER_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * Which side is asking. Null for a privileged ADMIN/STAFF bypass, which is
- * neither party and therefore never auto-confirms on someone else's behalf.
+ * Which side is asking. Null for a platform operator acting through the
+ * back-office door, who is neither party and therefore never auto-confirms on
+ * someone else's behalf.
  */
 function roleOf(
   isConsultee: boolean,
@@ -343,6 +345,21 @@ export async function POST(
           }
 
           const isPrivilegedUser = isPrivileged(session.user.role);
+
+          // A platform operator who is not a party reschedules only through the
+          // audited back-office door, which grants this request.
+          if (
+            isPrivilegedUser &&
+            !isParticipant &&
+            !platformRescheduleGrant(request)
+          ) {
+            throw Object.assign(
+              new Error(
+                "Reschedule this booking from the back office so the change is audited.",
+              ),
+              { httpStatus: 403, code: "PLATFORM_RESCHEDULE_DOOR_REQUIRED" },
+            );
+          }
 
           const isOrgAdminActor =
             !isParticipant && !isPrivilegedUser && fundingOrgActor !== null;

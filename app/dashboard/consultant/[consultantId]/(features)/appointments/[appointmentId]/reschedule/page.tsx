@@ -4,9 +4,15 @@ import { notFound } from "next/navigation";
 
 import { DashboardViewportFill } from "@/components/dashboard/DashboardViewportFill";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
-import { readAppointmentDetail } from "@/lib/data/appointment-detail";
+import { OperatorOpsHint } from "@/components/appointments/OperatorOpsHint";
+import {
+  canAccessAppointment,
+  readAppointmentDetail,
+} from "@/lib/data/appointment-detail";
 import { resolvePrimaryPlanOwnerIds } from "@/lib/booking/plan-owners";
+import { getSession } from "@/lib/auth-server";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import { operatorOpsHref } from "@/lib/backoffice/booking-href";
 import { buildRescheduleSubject } from "@/lib/scheduling/time-picker-subject";
 
 import { RescheduleClient } from "./RescheduleClient";
@@ -47,7 +53,7 @@ export default async function ConsultantReschedulePage({
   params,
 }: Readonly<PageProps>) {
   const { consultantId, appointmentId } = await params;
-  await requirePersonalProfileAccess("consultant", consultantId);
+  const access = await requirePersonalProfileAccess("consultant", consultantId);
 
   const detail = await loadDetail(appointmentId);
   if (!detail) notFound();
@@ -64,6 +70,13 @@ export default async function ConsultantReschedulePage({
   if (!resolved) notFound();
 
   const backHref = `/dashboard/consultant/${consultantId}/appointments`;
+  const opsHref = access.isInspecting
+    ? operatorOpsHref(
+        (await getSession())?.user,
+        canAccessAppointment(access.userId, detail),
+        appointmentId,
+      )
+    : null;
 
   return (
     <DashboardViewportFill className="gap-4">
@@ -79,14 +92,18 @@ export default async function ConsultantReschedulePage({
         />
       </div>
 
-      <RescheduleClient
-        consultantId={consultantId}
-        appointmentId={appointmentId}
-        title={resolved.title}
-        typeLabel={resolved.typeLabel}
-        subject={resolved.subject}
-        backHref={backHref}
-      />
+      {opsHref ? (
+        <OperatorOpsHint href={opsHref} />
+      ) : (
+        <RescheduleClient
+          consultantId={consultantId}
+          appointmentId={appointmentId}
+          title={resolved.title}
+          typeLabel={resolved.typeLabel}
+          subject={resolved.subject}
+          backHref={backHref}
+        />
+      )}
     </DashboardViewportFill>
   );
 }
