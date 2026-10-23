@@ -73,7 +73,13 @@ jest.mock("../../lib/prisma", () => {
       ),
     },
     payment: { findFirst: jest.fn(async () => mockStore.payment) },
-    refund: { findMany: jest.fn(async () => mockStore.nonRemedyRefunds) },
+    refund: {
+      findMany: jest.fn(async ({ where }: { where: Where }) =>
+        mockStore.nonRemedyRefunds.filter((r) =>
+          mockMatches(r, { paymentId: where.paymentId }),
+        ),
+      ),
+    },
     $transaction: jest.fn(),
   };
   db.$transaction.mockImplementation((callback: (tx: typeof db) => unknown) =>
@@ -181,6 +187,47 @@ describe("quoteCaseRefund committedPaise", () => {
     const result = await quote();
     expect(result.committedPaise).toBe(0);
     expect(result.refundablePaise).toBe(1_000_000);
+  });
+});
+
+describe("quoteCaseRefund edge cases", () => {
+  it("prices a zero-amount remedy at nothing", async () => {
+    mockStore.recommendations.push(
+      remedy({ id: "rec-2", approved: true, amountPaise: 0 }),
+    );
+    const result = await quote();
+    expect(result.committedPaise).toBe(0);
+    expect(result.refundablePaise).toBe(1_000_000);
+  });
+
+  it("does not count a non-remedy refund on another payment", async () => {
+    mockStore.nonRemedyRefunds = [
+      { paymentId: "pay-2", amountPaise: 400_000 },
+      { paymentId: "pay-1", amountPaise: 100_000 },
+    ];
+    expect((await quote()).committedPaise).toBe(100_000);
+    expect(db.refund.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ paymentId: { in: ["pay-1"] } }),
+      }),
+    );
+  });
+
+  it("quotes the same after the remedy is approved with a PENDING refund", async () => {
+    const before = await quote();
+    expect(before.refundablePaise).toBe(1_000_000);
+
+    mockStore.recommendations = [
+      remedy({ approved: true, refund: { status: "PENDING" } }),
+    ];
+    mockStore.payment.refunds = [{ amountPaise: 300_000, status: "PENDING" }];
+    const first = await quote();
+    const second = await quote();
+
+    // The remedy's own refund counts once, in the payment's balance.
+    expect(first.refundablePaise).toBe(700_000);
+    expect(first.committedPaise).toBe(0);
+    expect(second).toEqual(first);
   });
 });
 
