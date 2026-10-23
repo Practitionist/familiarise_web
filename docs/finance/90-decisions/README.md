@@ -60,4 +60,4 @@ The decisions above are enforced in `lib/payments/`, `prisma/sql/check-constrain
 
 1. **GitHub Actions as the money scheduler** (ADR 05). Replaced by the ticker (ADR 27); only the tombstone remains.
 2. **Describing Stripe, Cashfree, Tazapay, Xflow or a merchant-of-record gateway as live or planned.** Only the Razorpay pair has code. Delete any agent, skill or document that designs against another gateway.
-3. **A Redis lock for cron jobs.** The lease is Postgres (`SystemJobExecution`); ADR 13's summary line still mentions a Redis lock and is out of date on that point.
+3. **A Redis lock for cron jobs.** The lease is Postgres (`SystemJobExecution`).

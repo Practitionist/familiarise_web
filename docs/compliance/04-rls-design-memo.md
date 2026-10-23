@@ -111,17 +111,17 @@ once in SQL).
 
 ## Per-table policy sketch
 
-| Table | SELECT policy | WRITE policy |
-|---|---|---|
-| `organizations` | Members of the org OR owner of an OrgWorkspaceProfile linked to it | service_role only |
-| `Membership` | Same as organizations | service_role only |
-| `OrganizationInvoice` | Org member where role ≥ MANAGER OR BILLING_ADMIN | service_role only |
-| `WebhookEndpoint` | Org member where role ≥ MANAGER OR BILLING_ADMIN | service_role only |
-| `OutboundWebhookDelivery` | Same as endpoint | service_role only |
-| `ErasureRequest` | The requesting user OR platform ADMIN | service_role only |
-| `OrgDataExportJob` | Org member where role = OWNER OR BILLING_ADMIN | service_role only |
-| `users` | Self OR linked-membership operator | service_role only |
-| Financial tables (`Payment*`, `OrganizationPayout`, ledger entries) | service_role only (defense-in-depth, no client read) | service_role only |
+| Table                                                               | SELECT policy                                                      | WRITE policy      |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------ | ----------------- |
+| `organizations`                                                     | Members of the org OR owner of an OrgWorkspaceProfile linked to it | service_role only |
+| `Membership`                                                        | Same as organizations                                              | service_role only |
+| `OrganizationInvoice`                                               | Org member where role ≥ MANAGER OR BILLING_ADMIN                   | service_role only |
+| `WebhookEndpoint`                                                   | Org member where role ≥ MANAGER OR BILLING_ADMIN                   | service_role only |
+| `OutboundWebhookDelivery`                                           | Same as endpoint                                                   | service_role only |
+| `ErasureRequest`                                                    | The requesting user OR platform ADMIN                              | service_role only |
+| `OrgDataExportJob`                                                  | Org member where role = OWNER OR BILLING_ADMIN                     | service_role only |
+| `users`                                                             | Self OR linked-membership operator                                 | service_role only |
+| Financial tables (`Payment*`, `OrganizationPayout`, ledger entries) | service_role only (defense-in-depth, no client read)               | service_role only |
 
 Tables NOT to touch for v1: the legacy B2C tables
 (`Consultation`, `Subscription`, `Appointment`, `Recording`,

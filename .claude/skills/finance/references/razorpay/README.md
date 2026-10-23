@@ -30,7 +30,7 @@ Material on Razorpay **Subscriptions** (`/v1/plans`, `/v1/subscriptions`), recur
 
 ## Drift Check
 
-[`scripts/check-doc-drift.sh`](scripts/check-doc-drift.sh) greps `.claude/` and `docs/payments/` for known Razorpay anti-patterns (wrong signature payload order, `"instant"` in `speed_requested`, `pause_initiated_by` as a request param, `timingSafeEqual` without a length check, Stripe `4111`/`4000` test cards in Razorpay docs, or claims that Razorpay has no Disputes REST API). Run after editing any Razorpay doc or skill: <!-- drift-ok -->
+[`scripts/check-doc-drift.sh`](scripts/check-doc-drift.sh) greps `.claude/` and `docs/finance/` for known Razorpay anti-patterns (wrong signature payload order, `"instant"` in `speed_requested`, `pause_initiated_by` as a request param, `timingSafeEqual` without a length check, Stripe `4111`/`4000` test cards in Razorpay docs, or claims that Razorpay has no Disputes REST API). Run after editing any Razorpay doc or skill: <!-- drift-ok -->
 
 ```bash
 bash .claude/skills/finance/references/razorpay/scripts/check-doc-drift.sh

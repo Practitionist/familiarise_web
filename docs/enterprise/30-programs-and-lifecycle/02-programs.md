@@ -199,7 +199,7 @@ are not in the enum today). The subtype is declared by `type`, and the
 corresponding config row is one of two sibling tables. The pre-Arch-4
 `customConfig: Json` escape hatch was removed — bespoke splits live on a
 per-Program rate-card override (see
-`docs/enterprise/10-money-and-ledger/05-booking-to-earnings.md`) rather than as JSON blobs that the
+`docs/finance/50-b2b/03-rate-cards-and-overage.md`) rather than as JSON blobs that the
 typed config tables can't enforce. `configLockedAt` and `archivedAt` are the
 two #777/#779 lifecycle columns — see [Config lock & archive](#config-lock--archive-)
 and [Cycle engine (summary)](#cycle-engine-summary) below.

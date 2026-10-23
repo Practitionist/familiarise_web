@@ -210,7 +210,7 @@ journal, checked nightly by the `reconcile-ledgers` twin on the Netlify ticker
 writes `LedgerReconciliationReport` rows and freezes wallet spend on a
 `WALLET_BALANCE_DRIFT` finding. See ADR 01
 (`docs/enterprise/70-design-decisions/01-double-entry-over-three-logs.md`)
-and `docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md`.
+and `docs/finance/20-ledger/04-postings.md`.
 
 ### RateCard bumping
 `RateCard` has `effectiveFrom` / `effectiveTo`. **Rate cards are never
