@@ -276,7 +276,6 @@ export const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
   dunning: DAILY_2330,
   "wallet-low-balance": DAILY_2330,
   "reconcile-gateway-settlements": { startMinuteUtc: 390, windowMinutes: 360 },
-  "reconcile-ledgers": { startMinuteUtc: 180, windowMinutes: 60 },
   "tds-return-draft": {
     dayOfMonthUtc: 5,
     monthsUtc: [1, 4, 7, 10],
@@ -319,7 +318,7 @@ export function windowStartFor(name: Target, now: Date): Date | null {
 /** The targets due on this tick; exported so a test can pin the cadence. */
 export function dueTargets(now: Date): Target[] {
   const minuteOfDay = now.getUTCHours() * 60 + now.getUTCMinutes();
-  return TARGETS.filter((name) => {
+  const due = TARGETS.filter((name) => {
     if (name in TARGET_WINDOWS && windowStartFor(name, now) === null) {
       return false;
     }
@@ -328,6 +327,10 @@ export function dueTargets(now: Date): Target[] {
     const offset = TARGET_OFFSET_MINUTES[name] ?? 0;
     return (((minuteOfDay - offset) % every) + every) % every < 5;
   });
+  // The ledger report persists its cursor, so busy slots can yield without losing coverage.
+  return due.length > MAX_TARGETS_PER_TICK
+    ? due.filter((name) => name !== "reconcile-ledgers")
+    : due;
 }
 
 /** Well under the 26 s Next function ceiling and the 30 s scheduled-function cap. */

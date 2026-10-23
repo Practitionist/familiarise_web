@@ -442,7 +442,7 @@ Run \`npm run cron:reference\` to regenerate; \`npm run cron:reference:check\` f
 - **${jobs.length} registered cleanup jobs:** ${JOB_SCHEDULES.length} configured ticker targets and ${outsideTicker.length} registered jobs outside the ticker.
 - **${missing.length} operational Actions steps without a registered cleanup builder**, listed separately below. Monitor/security/CI workflows are outside this operational fleet inventory.
 - **Configured is not live-verified.** Every row describes repository configuration. This generation did not check deployment state, Actions enablement/budget, accepted Sentry check-ins or completed obligations. The fleet switch selects the active platform; a configured ticker target is not proof that it executed.
-- **${MAX_TARGETS_PER_TICK} targets per tick is a tested wave design bound, not a runtime dispatch cap.** The cadence/collision tests guard the planned roster. An HTTP abort does not cancel the worker, and a lease does not deduplicate sequential external effects.
+- **${MAX_TARGETS_PER_TICK} targets per tick is a tested wave design bound.** The resumable ledger target yields on crowded slots; other due work is not truncated. The cadence/collision tests guard the planned roster. An HTTP abort does not cancel the worker, and a lease does not deduplicate sequential external effects.
 
 ## Registered jobs
 
