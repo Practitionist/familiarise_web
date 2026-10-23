@@ -14,23 +14,21 @@ Scheduled HTTP jobs are registered in `lib/cron/cleanup-registry.ts` (`CLEANUP_J
 
 ## Shared schedule catalog
 
-`lib/cron/schedule.ts` owns target names, cadence, offsets, calendar windows, row limits and request timeouts. `JOB_SCHEDULES` exposes their effective values and `scheduleFor(name)` supports capability lookup. Runtime dispatch, health checks and generated operational tables must consume this catalog instead of copying maps or scraping the Netlify adapter. The catalog has no database, vendor client or environment reads. `npm run cron:reference` generates `docs/maintenance/04-cron-jobs-reference.md` from this catalog, executable registry AST properties, worker lease declarations and operational workflow steps. `npm run cron:reference:check` detects stale output; it does not verify deployed execution. Import schedule helpers directly from the catalog; the Netlify adapter contains platform dispatch and failure reporting.
+`lib/cron/schedule.ts` owns target names, cadence, offsets, calendar windows, row limits and request timeouts. `JOB_SCHEDULES` exposes their effective values and `scheduleFor(name)` supports lookup. Dispatchers and generated schedule metadata consume this catalog instead of copying maps or scraping the Netlify adapter. Completion SLOs remain separate from configured cadence. The catalog has no database, vendor client or environment reads. `npm run cron:reference` generates `docs/maintenance/04-cron-jobs-reference.md` from this catalog, executable registry AST properties, worker lease declarations and operational workflow steps. `npm run cron:reference:check` detects stale output; it does not verify deployed execution. Import schedule helpers directly from the catalog; the Netlify adapter contains platform dispatch and failure reporting.
 
 ## The Netlify scheduled ticker
 
-`netlify/functions/cron-tick.mts` runs every five minutes and POSTs latency-sensitive recovery sweeps to `/api/cleanup/<job>?limit=N` with `CRON_SECRET`. Sub-hourly recovery sweeps run **only** on the Netlify ticker (their duplicate GitHub Actions YAML twins were removed in `#1920` after handlers were updated to loop within a time budget).
+`netlify/functions/cron-tick.mts` runs every five minutes and POSTs latency-sensitive recovery sweeps to `/api/cleanup/<job>?limit=N` with `CRON_SECRET`. Each job has one automatic schedule; a shared lease does not justify adding an Actions fallback to a ticker-owned job.
 
 Money reconcilers, money batch jobs and the TDS draft export also run on the ticker: `reconcile-disputes` hourly, `reconcile-ledgers` daily at 03:55 UTC, and `tds-return-draft` on the 5th of Jan/Apr/Jul/Oct (windows in `TARGET_WINDOWS`). Each tick first reads the Upstash key `ops:active_cron_platform` (one GET) and skips every target when it names another host; an absent key or a Redis failure runs the tick.
 
-GitHub Actions is retained only for non-money batch crons, plus manual `workflow_dispatch` runs; GitHub Actions is currently budget-blocked, so those jobs are not running. When a job is already running, `withCronLock` returns `409`, which the ticker records as `lockHeld` rather than `failed`. Only a response outside `200`, `207`, and `409` counts as `failed`.
+GitHub Actions is retained only for remaining non-money batch crons, plus manual `workflow_dispatch` runs. Configured workflow ownership does not prove enablement, available budget or successful effects. When a job is already running, the cleanup route maps `CronLockHeldError` to `409`, which the ticker records as `lockHeld`. Maintenance holds are separate, and partial `207` outcomes follow the target-specific policy in `bucketFor()`.
 
-The ticker always returns HTTP `200` so Netlify does not retry the entire tick 3x on a single target failure; failures are logged on the structured `{"event":"cron-tick",...}` line.
-
-`netlify/functions/keep-warm.mts` (PR #1685) was retired and deleted in PR #1972 once `preloadEntriesOnStart: false` reduced Next.js cold starts to `0.97–1.90 s`.
+The ticker always returns HTTP `200` to avoid whole-fleet retry amplification; failures are logged on the structured `{"event":"cron-tick",...}` line. Verify accepted monitoring events and completed obligations rather than inferring health from the acknowledgment.
 
 ## `?limit=` semantics
 
-Every route the ticker invokes accepts an optional `?limit=` (via `parseLimitParam`), capping the batch a single tick processes (default 50, or 10 for `abandoned-payments`; max 500; `400 INVALID_LIMIT` on malformed input).
+The shared parser rejects malformed explicit limits and clamps valid values to 500. An absent limit leaves the default to the registry/core; inspect the generated inventory for each configured request bound and verify that the core enforces bounded work. Omitting a limit is not authorization for an unbounded fallback.
 
 ## Workflow concurrency groups
 

@@ -4,145 +4,107 @@ type: reference
 band: maintenance
 audience: sde2
 status: live
-last-reviewed: 2026-10-18
+last-reviewed: 2026-10-23
 ---
 
 # Cron, Sidecars and Reconciliation — Operational Reference
 
-This is the operational counterpart to [../start-here/04-platform-architecture.md](../start-here/04-platform-architecture.md), which explains _why_ the scheduling and enforcement machinery is shaped this way. This document covers the **mechanics**: the registry structure, the dispatch path, the response-code contract, lock modes and lease durations, phase staggering, the Postgres sidecars, and the reconciler taxonomy.
+This is the operational counterpart to [platform architecture](../start-here/04-platform-architecture.md). It covers dispatch, response codes, maintenance admission, leases, Postgres sidecars and reconciler boundaries.
 
-For the **job catalogue** — what each job is, what it mutates, and which workflow runs it — see [04-cron-jobs-reference.md](./04-cron-jobs-reference.md). The two pages deliberately do not repeat each other: this one describes the machinery every job passes through, that one describes the jobs themselves.
+The generated [configured cron jobs reference](./04-cron-jobs-reference.md) owns the inventory, executable entrypoints, declared leases, request bounds and configured schedules. Run `npm run cron:reference` after changing those sources and `npm run cron:reference:check` to detect stale output. Configuration does not establish deployed execution or completed business obligations.
 
 ## The dispatch path
 
-A scheduled job is defined exactly once, in `lib/cron/cleanup-registry.ts`. Each entry carries a `// @cleanup-twin <slug>` comment, which exists purely so tests can parse the registry statically. That comment is not read at runtime.
+Each key in `CLEANUP_JOB_BUILDERS` in `lib/cron/cleanup-registry.ts` lazily builds a cleanup handler for one canonical implementation. The inventory generator reads executable object keys through the TypeScript AST; marker comments are not its source of truth. The current roster has 67 registered jobs: 50 configured ticker targets and 17 registered jobs outside the ticker. Four operational Actions steps still lack a registered builder. These counts must be regenerated as independent worker migrations merge.
 
+```text
+netlify/functions/cron-tick.mts       five-minute authenticated dispatcher
+   ↓
+lib/cron/schedule.ts                 cadence, UTC windows and request bounds
+   ↓
+app/api/cleanup/[job]/route.ts        dynamic route; one registered builder
+   ↓
+lib/cron/cleanup-route.ts             bearer authentication and maintenance gate
+   ↓
+canonical core module               job-specific lease and bounded work
+
+Actions-owned jobs → existing CLI → the same canonical core where registered
+Admin run door    → explicit mapped canonical core
 ```
-core module (one implementation, in scripts/ or lib/)
-   ↑
-lib/cron/cleanup-registry.ts          57 slugs, lazy imports
-   ↑
-app/api/cleanup/[job]/route.ts        the only cleanup route file
-   ↑
-lib/cron/cleanup-route.ts             CRON_SECRET · ?limit= · maintenance gate
-   ↑
-withCronLock()                        SystemJobExecution lease
-   ↑
-   ├── netlify/functions/cron-tick.mts          every 5 min, the TARGETS array
-   └── .github/workflows/cron-*.yml             daily / weekly / statutory
-```
 
-Three things are banned by the repository's own rules, because in practice the copies drift:
-
-- A per-job `app/api/cleanup/<name>/route.ts` file. There is one dynamic route.
-- A parallel `jobs/<domain>/<job>.ts` wrapper when a `scripts/<domain>/<job>.ts` implementation already exists.
-- A per-job `GITHUB_OUTPUT` wrapper script.
+Do not add per-job cleanup route files, parallel implementations or new `GITHUB_OUTPUT` wrappers. Keep one automatic owner per job. A lease reduces overlap; it does not make sequential external effects safe to repeat.
 
 ### The maintenance gate
 
-Every dispatch calls `assertNotInMaintenance(job)` from `lib/maintenance-cron.ts` before the lock is taken. The phase lives in Upstash Redis and is read with a short success cache.
+The cleanup route calls `assertNotInMaintenance(job)` from `lib/maintenance-cron.ts` before invoking the core. The phase is read from Upstash Redis with a short cache.
 
-| Phase      | Effect on scheduled work                                                        |
-| ---------- | ------------------------------------------------------------------------------- |
-| `OFF`      | Everything runs                                                                 |
-| `DEGRADED` | Only the names in `FINANCIAL_JOB_NAMES` (`lib/cron/financial-jobs.ts`) are held |
-| `OFFLINE`  | Every job is held                                                               |
+| Phase      | Effect on scheduled work                                               |
+| ---------- | ---------------------------------------------------------------------- |
+| `OFF`      | Maintenance does not hold work                                         |
+| `DEGRADED` | Names in `FINANCIAL_JOB_NAMES` (`lib/cron/financial-jobs.ts`) are held |
+| `OFFLINE`  | All jobs passing through this gate are held                            |
 
-A held job raises `MaintenanceActiveError`, which the route turns into a `503` carrying the phase. The ticker recognises the phase in the body and records the target as _held_, not _failed_.
-
-The maintenance read fails **open** on a Redis error. That is deliberate — the site stays up when Redis is unreachable — but it does mean a Redis outage silently disables the maintenance gate as well.
+A hold raises `MaintenanceActiveError`; the route returns `503` with the phase, and the ticker records a hold. An unreadable Redis phase fails open. Neither a cached phase nor a later maintenance change cancels work already in flight.
 
 ## Response codes
 
-| Code  | Condition                                                                                                                                    | Operator action                                          |
-| ----- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `200` | Clean run                                                                                                                                    | None                                                     |
-| `207` | Succeeded, but `needsAttention` — a double-booking was detected, a row was escrowed, a cascade is still failing, a document has gone missing | **Look at it**                                           |
-| `400` | Malformed `?limit=` (empty, non-numeric, zero, negative, fractional)                                                                         | Fix the caller                                           |
-| `401` | Both `CRON_SECRET` and `VERCEL_CRON_SECRET` are absent, or the bearer token does not match the selected secret                               | Fix the secret                                           |
-| `404` | Slug is not in the registry                                                                                                                  | Fix the slug                                             |
-| `409` | `CronLockHeldError` — another copy holds the lease                                                                                           | None; expected under overlap                             |
-| `500` | `result.success === false`, or an uncaught throw                                                                                             | Investigate                                              |
-| `503` | Maintenance hold (body carries `phase`), or `CronLockUnavailableError` on a fail-closed job                                                  | Maintenance is active, or the lease table is unreachable |
+| Code  | Condition                                                 | Operator action                         |
+| ----- | --------------------------------------------------------- | --------------------------------------- |
+| `200` | The handler reports success                               | Check completion/effect evidence too    |
+| `207` | A job-specific needs-attention result                     | Inspect the result and target policy    |
+| `400` | Malformed `limit` or `windowStart`                        | Fix the caller                          |
+| `401` | No configured cron secret or bearer mismatch              | Fix authentication                      |
+| `404` | Cleanup slug is absent from the registry                  | Fix the slug                            |
+| `409` | `CronLockHeldError`: another invocation holds the lease   | Inspect persistent holds and progress   |
+| `500` | Reported failure or an uncaught error                     | Investigate                             |
+| `503` | Maintenance hold or a fail-closed lease acquisition error | Inspect the phase or lease availability |
 
-Two subtleties worth knowing before you alert on status codes:
-
-**`409` is not a failure.** It is the designed answer to overlap. The ticker records it as `lockHeld` and the tick still succeeds.
-
-**`207` is not a success either.** It means the job ran and found something. An alert rule that treats any 2xx as healthy will silently swallow every needs-human finding.
-
-`statusFor()` in `lib/cron/cleanup-route.ts` tests `success === false` **before** it tests for a flagged row. That ordering is deliberate and is documented in the function: the previous per-route ternaries asked the second question first, so a run that both failed and found a problem answered `207` — a 2xx that reads as healthy.
+`statusFor()` in `lib/cron/cleanup-route.ts` checks `success === false` before a needs-attention flag. The ticker treats overlap separately from a failed request and has target-specific handling for partial `207` outcomes. A `409`, maintenance hold, accepted request or generic `2xx` is not evidence that a business obligation completed.
 
 ## `?limit=` semantics
 
-`parseLimitParam()` in `lib/cron/cleanup-route.ts` reads an optional `?limit=`.
-
-- An absent key returns `undefined`, and the job applies its own default.
-- A present but malformed value throws `InvalidLimitError`, which the route turns into a `400`.
-- A valid value is clamped to a maximum of 500. It is clamped, not rejected.
-
-`parseLimitParamOrDefault()` exists so a per-row job can never be invoked unbounded by _any_ caller, not just the ticker. Several jobs also declare their own hard caps in the registry, independent of `?limit=` — for example the stale-slot release arm of `expire-stale-requests` releases at most 200 rows per run regardless of the query parameter.
+`parseLimitParam()` returns `undefined` when the parameter is absent, rejects a present non-positive or fractional value, and clamps a valid value to 500. `parseLimitParamOrDefault()` supplies a route default; each core still needs to enforce its own work bound. The generated inventory records configured request bounds, without asserting that every downstream operation obeys them. An omitted parameter must not be treated as authorization for an unbounded fallback.
 
 ## The Netlify ticker
 
-`netlify/functions/cron-tick.mts` runs on a `*/5 * * * *` schedule. It posts to `/api/cleanup/<slug>?limit=N` with `Authorization: Bearer <CRON_SECRET>` and an `AbortController` timeout per target.
+`netlify/functions/cron-tick.mts` retains the `*/5 * * * *` schedule. Once per tick it reads `ops:active_cron_platform` through Upstash REST and skips dispatch when another platform is selected. An absent key, missing credentials, unreadable response or timeout permits Netlify dispatch. This fail-open preference is not an exactly-once mechanism; verify standby ownership and in-flight work during failback.
 
-`dueTargets(now)` decides which targets are due:
+`lib/cron/schedule.ts` owns the target roster, cadence, offsets, UTC calendar windows, row limits and HTTP timeouts. `JOB_SCHEDULES` and `scheduleFor()` expose effective metadata; `dueTargets()`, `windowStartFor()` and `targetRequest()` provide pure scheduling helpers. The adapter supplies authentication and dispatches `/api/cleanup/<slug>` requests.
 
-```
+For targets with a configured cadence, the slot check is:
+
+```text
 ((minuteOfDay - offset) mod every + every) mod every < 5
 ```
 
-Two consequences follow from that formula. A tick that fires up to four minutes late still counts as its slot, and — critically — the per-target intervals and offsets spread work so that **no single five-minute tick fires more than `MAX_TARGETS_PER_TICK` targets**. Before phase staggering was introduced, nineteen targets fired simultaneously at the same four minutes past the hour, which saturated the single-connection Postgres pool that Netlify functions run with.
+Calendar windows are applied separately. The four-minute tolerance permits a slightly late tick to match its slot; it is not a replay mechanism for older missed windows. The current nine-target wave is a tested design bound, not a runtime dispatch cap. The 400-day cadence/collision test in `__tests__/maintenance/cron-tick-targets.test.ts` guards that roster.
 
-### The ticker targets
+The [scheduled money jobs guide](../finance/70-operations/01-scheduled-jobs.md) explains the money workflow boundaries. The generated inventory is the source for exact configured cadence and request limits. A ticker abort stops waiting for HTTP; it does not cancel a worker or provider effect.
 
-The targets, their cadence and phase, their `limit` and their timeouts are in `netlify/functions/cron-tick.mts` (`TARGETS`, `TARGET_EVERY_MINUTES`, `TARGET_OFFSET_MINUTES`, `TARGET_WINDOWS`, `TARGET_LIMITS`, `TARGET_TIMEOUTS_MS`). The money subset is rendered by schedule, with the DEGRADED hold, in [scheduled money jobs](../finance/70-operations/01-scheduled-jobs.md), generated from the same file. The stagger is pinned by `MAX_TARGETS_PER_TICK` and the cadence test (`__tests__/maintenance/cron-tick-targets.test.ts`).
+### Ticker acknowledgment and monitoring
 
-### Why the ticker always answers 200
+The ticker's `statusFor()` returns `200` even when targets fail, avoiding whole-fleet retry amplification through the scheduled adapter. Target failures are recorded in the structured tick result and reported through Sentry. The source declares a five-minute monitor, three-minute check-in margin and three-failure threshold; those settings are not proof that the monitor is enabled or accepted a check-in. A tick-level monitor also cannot establish freshness of every slower or calendar-gated target.
 
-`statusFor()` in the ticker is hard-coded to return 200. Netlify re-invokes a scheduled function that answers 5xx up to three times, seconds apart, and every retry re-fires every due target. This was observed in production: a single failing target made the whole ticker run at triple rate for weeks.
-
-Failure still reaches an operator through two channels: a structured `{"event":"cron-tick", ...}` log line, and one Sentry cron-monitor check-in per tick whose status follows whether any target failed. The monitor is configured with `checkin_margin: 3` and `failure_issue_threshold: 3`, which is calibrated for a five-minute tick — **it will not trip for a fifteen- or thirty-minute target**, because three consecutive misses fit inside that target's normal interval.
-
-The canary target is excluded from Sentry reporting by `reportableToSentry()`: a monitor must not report its own failure through the system it is monitoring. It alerts by email instead.
+The canary is excluded from its own Sentry failure reporting. Verify accepted monitoring events and an independent alert path, then check each required capability's completed obligations. A fresh shared heartbeat establishes liveness only.
 
 ## The lock
 
-`withCronLock()` in `lib/cron/with-cron-lock.ts` inserts a `SystemJobExecution` row and relies on a partial unique index:
+`withCronLock()` in `lib/cron/with-cron-lock.ts` uses `SystemJobExecution` and the partial unique index in `prisma/sql/check-constraints.sql`:
 
 ```sql
 CREATE UNIQUE INDEX "SystemJobExecution_running_jobName_key"
   ON "SystemJobExecution" ("jobName") WHERE "status" = 'RUNNING';
 ```
 
-Acquisition sweeps expired `RUNNING` rows, checks for a live one, then inserts. A unique-violation on the race between the check and the insert is collapsed into the same `CronLockHeldError`, so two replicas racing produce exactly one winner.
+Acquisition sweeps expired rows and inserts a `RUNNING` execution; a concurrent unique violation maps to `CronLockHeldError`. The core declares its job name, fail mode and optional TTL. Use the generated inventory for source-derived declarations and unresolved metadata, rather than copying lock counts or per-job lease durations here.
 
-| Mode     | Count   | Behaviour when the lease table is unreachable                                                                              |
-| -------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `closed` | 29 jobs | Refuses to run; raises `CronLockUnavailableError`, route answers `503`                                                     |
-| `open`   | 23 jobs | Runs unlocked with a warning; no execution trail row is written                                                            |
-| `none`   | 3 jobs  | Deliberately unlocked — see below                                                                                          |
-| bespoke  | 2 jobs  | `create-payout-batch` and `process-payouts` use a Redis lock, because they coordinate interactive admin-triggered runs too |
-
-The three unlocked jobs are `expire-onboarding-drafts` (which wraps its own inline `withCronLock` rather than locking inside a core module), `reconcile-sessions` and `sentry-ingest-canary`. The 29 and 23 above plus those three and the two bespoke Redis locks account for all 57 registry slugs.
-
-Both closed and open modes flip to **closed** when the error looks like connection or pool exhaustion (`isDbConnectionOrPoolError`). The reasoning is that the pool outage which breaks the lease is precisely the window in which two runners would both believe they held it.
-
-### Lease durations
-
-| Constant               | Value      | Applies to                      |
-| ---------------------- | ---------- | ------------------------------- |
-| `DEFAULT_TTL_MS`       | 15 minutes | Everything else                 |
-| `LONG_JOB_TTL_MS`      | 35 minutes | The payout and reconcile family |
-| `SYNC_LOCK_TTL`        | 40 minutes | `stream-sync`                   |
-| `TRANSFER_LOCK_TTL_MS` | 45 minutes | `transfer-recordings`           |
-
-A running job renews its lease every `ttl / 3`. A failed renewal logs a warning and increments a metric; it does **not** abort the job. The consequence to plan for: a hard-killed invocation leaks its lease until it expires, and the ticker records the resulting `409` as _held_, not _failed_. There is no per-run time budget on most jobs beyond the ticker's own per-target abort timeout.
+The requested `closed` policy refuses work when acquisition is unavailable; `open` permits an unlocked path. Verify the active implementation and actual acquisition result before relying on either declaration. Connection/pool exhaustion is treated as closed. Renewals occur approximately every third of the lease TTL. Renewal failure and lease expiry do not cancel existing work, so row-level claims, compare-and-set transitions and vendor idempotency remain necessary. Lease TTL, HTTP abort and worker execution deadline are different bounds.
 
 ## The Actions-scheduled jobs
 
-The remaining 29 registry slugs and the 13 jobs with no HTTP twin are catalogued, with their entrypoints, lock modes and what each mutates, in [04-cron-jobs-reference.md](./04-cron-jobs-reference.md). They are not repeated here.
+The generated inventory lists the 17 registered jobs outside the ticker and four operational Actions steps missing registry coverage, with their configured owners and entrypoints. Actions workflows remain the configured automatic owner for their remaining jobs; enablement, budget availability and successful effects require separate verification.
+
+Moving a job requires a bounded canonical core, restart-safe progress and a controlled deployed check that establishes cadence and backlog-drain capacity. Switch its automatic schedule as one reviewed handoff and preserve unmigrated workflow steps. Do not enable Actions as an additional automatic fallback for an already ticker-owned job.
 
 ## Sidecars
 
