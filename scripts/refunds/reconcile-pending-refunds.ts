@@ -595,7 +595,11 @@ async function reconcilePendingRefundsUnlocked(
     );
   }
 
-  await notifyFailedRefundsUnlocked(limit, pastDeadline);
+  try {
+    await notifyFailedRefundsUnlocked(limit, pastDeadline);
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error));
+  }
 
   return {
     success: errors.length === 0,

@@ -840,3 +840,45 @@ describe("reconcilePendingRefunds — placeholder superseded by a webhook row", 
     ).toBeLessThan(refundTable.deleteMany.mock.invocationCallOrder[0]);
   });
 });
+
+test("notice staging failure preserves completed polling counters and returns an unsuccessful summary", async () => {
+  refundTable.findMany
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([
+      {
+        id: "pending-before-notice",
+        refundId: "rfnd_still_pending",
+        status: "PENDING",
+        amountPaise: 1000,
+        createdAt: new Date(Date.now() - 2 * HOUR),
+        payment: { paymentGateway: "RAZORPAY" },
+      },
+    ])
+    .mockResolvedValueOnce([
+      {
+        id: "failed-notice",
+        paymentId: "pay_1",
+        amountPaise: 1000,
+        currency: "INR",
+        metadata: {},
+        failureReason: null,
+        failedAt: null,
+        payment: { userId: "user_1", organizationId: null },
+      },
+    ]);
+  mockGet.mockResolvedValueOnce({ status: "PENDING" });
+  jest
+    .mocked(stageRefundFailedEmail)
+    .mockRejectedValueOnce(new Error("notice staging unavailable"));
+  const result = await reconcilePendingRefunds();
+  expect(result).toMatchObject({
+    success: false,
+    totalProcessed: 1,
+    skippedCount: 1,
+  });
+  expect(result.errors).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("notice staging unavailable"),
+    ]),
+  );
+});
