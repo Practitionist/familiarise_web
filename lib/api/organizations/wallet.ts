@@ -30,6 +30,7 @@
 import type { WalletReason } from "@prisma/client";
 
 import prisma, { type Db, type Tx } from "@/lib/prisma";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 
@@ -506,18 +507,19 @@ export async function confirmTopUp(
 }
 
 /**
- * Key prefixes of the ORG_RECEIVABLE shortfalls a top-up settles, and of the top-ups that settled them.
+ * Key prefixes of the ORG_RECEIVABLE shortfalls a top-up settles, and of the top-ups and late overage recarves that settled them.
  * `clawback:` stays off: a payout clawback is recovered from the host's next payout, never a funder's top-up.
  */
 const TOPUP_SETTLED_RECEIVABLE_KEYS = [
   "overage-restore:",
+  "overage-recarve:",
   "topup-refund-shortfall:",
   "chargeback:",
   "topup:",
 ];
 
 /** The org's open shortfall receivable; invoice accruals stay with the invoices that collect them. */
-async function openShortfallReceivablePaise(
+export async function openShortfallReceivablePaise(
   tx: Tx,
   organizationId: string,
 ): Promise<number> {
@@ -533,6 +535,49 @@ async function openShortfallReceivablePaise(
     select: { direction: true, amountPaise: true },
   });
   return Math.max(0, -signedDeltaPaise(rows));
+}
+
+/** Member overage states that can still restore a base onto a wallet parent, or carve it back out. */
+const WALLET_RESTORABLE_OVERAGE_STATUSES = ["PENDING", "FAILED"] as const;
+
+/**
+ * Refuses moving an account off WALLET while the wallet still owes a shortfall
+ * or a member overage could still restore onto it: no top-up could settle either afterwards.
+ */
+export async function assertWalletFundingSwitchable(
+  tx: Tx,
+  billingAccountId: string,
+): Promise<void> {
+  // A no-op write row-locks the account, as confirmTopUp does, before the reads below.
+  const { ownerOrgId } = await tx.billingAccount.update({
+    where: { id: billingAccountId },
+    data: { walletBalance: { increment: 0 } },
+    select: { ownerOrgId: true },
+  });
+  if ((await openShortfallReceivablePaise(tx, ownerOrgId)) > 0) {
+    throw new OpsRefusal(
+      "WALLET_SHORTFALL_OPEN",
+      "Cannot switch funding source while the organization owes a wallet shortfall. Settle it with a top-up first.",
+    );
+  }
+  const unsettled = await tx.overageEvent.count({
+    where: {
+      overageBehavior: "CHARGE_MEMBER",
+      chargeStatus: { in: [...WALLET_RESTORABLE_OVERAGE_STATUSES] },
+      payment: {
+        parentPayment: {
+          billingAccountId,
+          legs: { some: { source: "WALLET" } },
+        },
+      },
+    },
+  });
+  if (unsettled > 0) {
+    throw new OpsRefusal(
+      "WALLET_OVERAGE_UNSETTLED",
+      `Cannot switch funding source while ${unsettled} member overage charge(s) on wallet-funded bookings are unpaid. Wait until they are paid or reversed.`,
+    );
+  }
 }
 
 /**

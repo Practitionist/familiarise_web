@@ -752,7 +752,7 @@ describe("free_ credits rail — the org clawback reads the APPLIED amount", () 
     );
     expect(clawbackPosts()).toHaveLength(1);
     expect(clawbackPosts()[0][1].idempotencyKey).toBe(
-      "clawback:refund-row-1:opayout-7",
+      "clawback:refund-row-1:opayout-7:oe-1",
     );
     // The ORG_PAYABLE debit matches the applied figure, and the txn still balances.
     const payable = lastPosting().find(
