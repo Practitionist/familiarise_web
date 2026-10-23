@@ -30,6 +30,7 @@ import {
   readRefundQuoteChanged,
   shownQuoteBody,
 } from "@/lib/appointments/cancel-requote";
+import { OperatorOpsHint } from "@/components/appointments/OperatorOpsHint";
 import { AllocateOrgBookingDialog } from "../AllocateOrgBookingDialog";
 
 export interface OrgActorDetailProps {
@@ -48,6 +49,8 @@ export interface OrgActorDetailProps {
   canReschedule: boolean;
   canAllocate?: boolean;
   isSubscription: boolean;
+  /** Set for a platform operator, who reschedules and cancels from the back office instead. */
+  opsHref?: string | null;
 }
 
 const fmt = (d: Date) =>
@@ -135,12 +138,13 @@ export function OrgActorDetail({
   canReschedule,
   canAllocate = false,
   isSubscription,
+  opsHref = null,
 }: Readonly<OrgActorDetailProps>) {
   const router = useRouter();
   const { toast } = useToast();
   const [cancelOpen, setCancelOpen] = useState(false);
   const showAllocate = Boolean(canAllocate);
-  const acting = canCancel || canReschedule || showAllocate;
+  const acting = ((canCancel || canReschedule) && !opsHref) || showAllocate;
   const status = meta.status ? appointmentStatusBadge(meta.status) : null;
 
   const queryClient = useQueryClient();
@@ -250,7 +254,7 @@ export function OrgActorDetail({
                 learnerName={meta.learnerName}
               />
             )}
-            {canReschedule && (
+            {canReschedule && !opsHref && (
               <ConfirmDialog
                 title="Ask to reschedule?"
                 description="The current time is released and the expert picks a new one."
@@ -260,7 +264,7 @@ export function OrgActorDetail({
                 trigger={<Button variant="outline">Reschedule</Button>}
               />
             )}
-            {canCancel && (
+            {canCancel && !opsHref && (
               <ConfirmDialog
                 open={cancelOpen}
                 onOpenChange={setCancelOpen}
@@ -276,6 +280,9 @@ export function OrgActorDetail({
               </ConfirmDialog>
             )}
           </div>
+        )}
+        {opsHref && (canCancel || canReschedule) && (
+          <OperatorOpsHint href={opsHref} />
         )}
         <p className="text-xs text-muted-foreground">
           Organization roles see when and with whom a session happens, never

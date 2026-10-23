@@ -8,18 +8,14 @@
  *
  * `recarveOverageBase` refuses to touch an issued document and answers
  * `"invoiced"`, so the base is still billed to the org on that invoice. The
- * capture is still honoured (the gateway took the money), so the org-relief
- * journal credits the full marginal — which used to leave the base collected
- * twice: once on the invoice the org pays, once as an ORG_PAYABLE credit the
- * org is paid in CASH out of the next payout batch.
+ * capture is still honoured (the gateway took the money) and credits the base to
+ * DISCOUNT, so the base would be collected twice: on the invoice and from the member.
  *
- * The correction under test: pull the base off the payout rail with an
- * append-only, ledger-keyed counter-transaction, hand it back on the invoice as
- * a CGST Sec 34 credit note, and record the whole thing durably INSIDE the
- * capture transaction instead of a `void`ed diagnostic a crash could eat.
+ * The correction under test: move the member's base onto the org's receivable
+ * with an append-only, ledger-keyed counter-transaction, hand it back on the
+ * invoice as a CGST Sec 34 credit note, and record it durably inside the capture tx.
  *
- * INVARIANT PINNED HERE: money already invoiced to the org must never be
- * credited to ORG_PAYABLE a second time.
+ * INVARIANT PINNED HERE: the org is never credited a payable for a member overage.
  */
 
 jest.mock("../../lib/prisma", () => {
@@ -177,12 +173,12 @@ beforeEach(() => {
 });
 
 describe("late capture after the parent was invoiced", () => {
-  it("does NOT credit the base to ORG_PAYABLE a second time", async () => {
+  it("moves the member's base onto the org's receivable", async () => {
     mockRecarve.mockResolvedValue("invoiced");
 
     await handleOverageMemberSuccess("order_abc", MARGINAL);
 
-    // The org-relief journal is unchanged: full marginal, under the key the
+    // The capture journal is unchanged, under the key the
     // OVERAGE_SETTLEMENT_MISMATCH reconcile invariant joins on.
     expect(mockPost).toHaveBeenNthCalledWith(1, tx, {
       idempotencyKey: "overage:side1",
@@ -195,14 +191,19 @@ describe("late capture after the parent was invoiced", () => {
           amountPaise: MARGINAL,
         },
         {
-          account: { kind: "ORG_PAYABLE", organizationId: "org1" },
+          account: { kind: "DISCOUNT" },
           direction: "CREDIT",
-          amountPaise: MARGINAL,
+          amountPaise: BASE,
+        },
+        {
+          account: { kind: "PLATFORM_FEE" },
+          direction: "CREDIT",
+          amountPaise: SURCHARGE,
         },
       ],
     });
 
-    // …and the base is pulled back off the payout rail by a second,
+    // …and the base moves onto the org's receivable by a second,
     // append-only counter-transaction keyed on the same side payment.
     expect(mockPost).toHaveBeenNthCalledWith(2, tx, {
       idempotencyKey: REVERSAL_KEY,
@@ -212,7 +213,7 @@ describe("late capture after the parent was invoiced", () => {
       description: expect.stringContaining("side1"),
       postings: [
         {
-          account: { kind: "ORG_PAYABLE", organizationId: "org1" },
+          account: { kind: "DISCOUNT" },
           direction: "DEBIT",
           amountPaise: BASE,
         },
@@ -224,9 +225,8 @@ describe("late capture after the parent was invoiced", () => {
       ],
     });
 
-    // THE INVARIANT: net ORG_PAYABLE relief is the surcharge only. Before the
-    // fix this was BASE + SURCHARGE — cash paid for a session already invoiced.
-    expect(netPosted("ORG_PAYABLE", "org1")).toBe(SURCHARGE);
+    expect(netPosted("ORG_PAYABLE", "org1")).toBe(0);
+    expect(netPosted("ORG_RECEIVABLE", "org1")).toBe(BASE);
     // The base is credited back on the invoice the org already received, as a
     // tax-inclusive Sec-34 amount (base grossed up at the invoice's own 18%).
     expect(mockMint).toHaveBeenCalledWith(tx, {
@@ -288,7 +288,7 @@ describe("late capture after the parent was invoiced", () => {
     expect(mockPost).toHaveBeenCalledTimes(4); // 2 per attempt, all re-posted
     expect(appliedKeys()).toEqual(firstKeys); // none of them applied twice
     expect(firstKeys).toEqual(["overage:side1", REVERSAL_KEY]);
-    expect(netPosted("ORG_PAYABLE", "org1")).toBe(SURCHARGE);
+    expect(netPosted("ORG_RECEIVABLE", "org1")).toBe(BASE);
     // The credit note is keyed on the same deterministic trigger, so the
     // canonical writer's own probe collapses the second attempt to a re-read.
     expect(mockMint).toHaveBeenCalledTimes(firstMintCount + 1);
@@ -364,12 +364,12 @@ describe("late capture after the parent was invoiced", () => {
       where: { id: "inv1", providerPaymentOrderId: { not: null } },
       data: { providerPaymentOrderId: null },
     });
-    expect(netPosted("ORG_PAYABLE", "org1")).toBe(2 * SURCHARGE);
+    expect(netPosted("ORG_RECEIVABLE", "org1")).toBe(2 * BASE);
   });
 });
 
 describe("unchanged paths", () => {
-  it("normal capture (PENDING→CHARGED) posts the marginal and nothing else", async () => {
+  it("normal capture (PENDING→CHARGED) posts the capture and nothing else", async () => {
     tx.payment.findUnique.mockResolvedValue({
       ...side,
       paymentStatus: "PENDING",
@@ -380,7 +380,7 @@ describe("unchanged paths", () => {
 
     expect(mockRecarve).not.toHaveBeenCalled();
     expect(appliedKeys()).toEqual(["overage:side1"]);
-    expect(netPosted("ORG_PAYABLE", "org1")).toBe(MARGINAL);
+    expect(netPosted("ORG_PAYABLE", "org1")).toBe(0);
     expect(mockMint).not.toHaveBeenCalled();
     expect(mockSystemError).not.toHaveBeenCalled();
   });
@@ -391,9 +391,8 @@ describe("unchanged paths", () => {
     await handleOverageMemberSuccess("order_abc", MARGINAL);
 
     expect(appliedKeys()).toEqual(["overage:side1"]);
-    expect(netPosted("ORG_PAYABLE", "org1")).toBe(MARGINAL);
+    expect(netPosted("ORG_PAYABLE", "org1")).toBe(0);
     expect(mockMint).not.toHaveBeenCalled();
-    expect(tx.overageEvent.findFirst).not.toHaveBeenCalled();
     expect(mockSystemError).not.toHaveBeenCalled();
   });
 

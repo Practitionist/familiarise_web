@@ -1,205 +1,146 @@
 ---
-title: Ledger integrity & reconciliation
-band: 10-money-and-ledger
-audience: sde3
+title: Ledger integrity and reconciliation
+type: reference
+audience: engineers and on-call operators who own the books
 status: live
 last-reviewed: 2026-10-23
 ---
 
-# Ledger integrity & reconciliation
+# Ledger integrity and reconciliation
 
-**What this covers:** the auditor that proves the money model holds — the invariants it checks, the one informational coverage metric, the checked-in baseline that separates known findings from new drift, how it runs (daily audit advanced by scheduled slices plus an on-demand admin door), what a finding means, and the single protective action a wallet-cache drift triggers. The auditor is read-only: it reports drift and never repairs it. This is the safety net that lets us trust derived balances and reconciled caches.
+The journal is the source of truth for money. A few numbers are cached beside it for speed, such as the wallet balance and the amount columns on earnings, and a few counters are denormalised, such as engagements used and active seat counts. A cache is only safe if something independently re-derives it and raises an alarm when it drifts. That something is the ledger auditor, `runReconcileLedgers` in `scripts/reconcile/reconcile-ledgers.ts`. It is read-only: it writes one `LedgerReconciliationReport` row per logical audit and never touches an audited table. Its single protective side effect is that a wallet whose cache disagrees with the journal has its discretionary spend frozen until a person repairs it.
 
-> **Why this exists.** The journal is the source of truth, but a few numbers are **cached** for the hot path (`walletBalance`) or **denormalized** for query speed (`engagementsUsed`, `activeSeatCount`, the `Earnings` amount columns). A cache is only safe if something independently re-derives it and screams on drift. That something is `scripts/reconcile/reconcile-ledgers.ts` — it never hand-patches an audited table, writing only `LedgerReconciliationReport`. Its one protective side effect is that every door that runs a reconcile (the scheduled slices, the `CRON_SECRET` twin and the admin door) **freezes the spend of each wallet with a `WALLET_BALANCE_DRIFT` finding** through `freezeDriftedWallets()`, and the scheduled audit also pages P0 (see the design notes below); it still never SQL-patches the drifted cache itself.
+This page has three jobs. It lists which invariants Postgres already enforces, so nobody writes a JavaScript sweep that re-checks them. It lists what the auditor checks instead. And it says what to do when a finding fires.
 
----
+## What Postgres already guarantees
 
-## 1. The checks
+The rule in `AGENTS.md` is that an invariant the database enforces at commit is not re-verified in application code. The auditor therefore does not scan for any of the following.
 
-The auditor emits the `Finding` kinds listed below via set-based PostgreSQL aggregations (`$queryRaw` / `groupBy`). Four checks run **full-scope only** (`REFUND_BOOKING_COHERENCE`, the consultant-payout journal check inside `COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN`, `REFERRAL_CREDIT_LIABILITY_DRIFT` and `UNAPPLIED_RECEIPTS_RESIDUE`); the rest accept an `organizationId` filter for incident triage. Checkout also relies on the deferred payment-leg trigger rather than re-reading its just-written legs for a warn-only check. Invariants that Postgres already enforces at COMMIT are **not** re-scanned here: a balanced journal (`ledger_txn_balanced`), the payment-leg sum (`payment_legs_sum_to_amount`), INR-only rows (the `*_currency_inr` CHECKs), invoice tax totals and safe money ranges all live in `prisma/sql/*.sql`.
+| Invariant                                                                               | Database enforcer (all in `prisma/sql/`)                                                                                      | What the application does not re-check                                                    |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Every journal has debits equal to credits                                               | `ledger_txn_balanced` constraint trigger (`ledger-triggers.sql`)                                                              | No "unbalanced journal" sweep                                                             |
+| A posted journal line or header is never edited                                         | `ledger_entry_immutable`, `ledger_transaction_immutable` (`ledger-triggers.sql`)                                              | No checksum of old entries                                                                |
+| A journal line is positive and every ledger account is in rupees                        | `ledger_entry_amount_positive`, `ledger_account_currency_inr` (`check-constraints.sql`)                                       | No currency sweep                                                                         |
+| Payment, refund, dispute, earning and payout rows are in rupees                         | the `*_currency_inr` CHECKs (`check-constraints.sql`)                                                                         | No currency sweep                                                                         |
+| A payment's funding legs sum to the payment amount, and reversal legs never exceed them | `payment_legs_sum_to_amount` (`payment-legs-triggers.sql`), with `payment_amount_vs_legs` and `payment_refunds_within_amount` | No warn-only funding-leg re-read after a booking write                                    |
+| A cached wallet balance is never negative                                               | `billing_account_wallet_nonnegative` (`check-constraints.sql`)                                                                | No negative-balance sweep (drift against the journal is still audited)                    |
+| A batched earning always points at a payout                                             | `consultant_earnings_batched_has_payout`, `org_earnings_batched_has_payout` (`check-constraints.sql`)                         | No orphaned-batch sweep                                                                   |
+| One host's live confirmed sessions never overlap                                        | `occurrence_no_confirmed_overlap` (`check-constraints.sql`)                                                                   | No double-booking sweep for that case                                                     |
+| An earnings hold names exactly one earning, and there is one active hold per owner      | `earnings_hold_one_earning`, `earnings_hold_active_consultant_key`, `earnings_hold_active_org_key`                            | No hold-uniqueness sweep                                                                  |
+| A consultant has one TDS catch-up payout per financial year                             | `consultant_payout_one_tds_catch_up_per_fy` (`check-constraints.sql`)                                                         | The loser of a race re-plans (see [TDS withholding](../40-payouts/06-tds-withholding.md)) |
+| A TDS record has exactly one deductee, on the right rail                                | `tds_record_deductee_xor`, `tds_record_payout_rail_matches` (`check-constraints.sql`)                                         | No TDS-shape sweep                                                                        |
 
-```mermaid
-flowchart TD
-  R["runReconcileLedgers({scope})"] --> A["WALLET_BALANCE_DRIFT"]
-  R --> E2["EARNINGS_LEDGER_DRIFT"]
-  R --> E["PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT"]
-  R --> CP["CREDIT_POOL_CONSUMED_DRIFT"]
-  R --> OC["OVERAGE_COUNT_DRIFT"]
-  R --> OI["OVERAGE_CHARGESTATUS_INTEGRITY"]
-  R --> F["ACTIVE_SEAT_COUNT_DRIFT"]
-  R --> G["ORG_PAYOUT_TOTAL_MISMATCH"]
-  R --> J["journal coverage:<br/>EARNINGS_WITHOUT_BOOKING_TXN<br/>REVERSED_EARNING_WITHOUT_REFUND_TXN<br/>COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN<br/>LEDGER_DUAL_WRITE_GAP<br/>SPLIT_SUM_MISMATCH"]
-  R --> T["tax and standing:<br/>ORG_INVOICE_GST_MISMATCH<br/>PENDING_TRUST_PARK_STALE<br/>CLAWBACK_RECEIVABLE_STALE"]
-  R --> X["full-scope only:<br/>REFUND_BOOKING_COHERENCE<br/>REFERRAL_CREDIT_LIABILITY_DRIFT<br/>UNAPPLIED_RECEIPTS_RESIDUE"]
-  A & E2 & E & CP & OC & OI & F & G & J & T & X --> Z["findings[]"]
-  Z --> BL["baseline split<br/>(scripts/reconcile/ledger-findings-baseline.ts)"]
-  BL --> RP["LedgerReconciliationReport<br/>{ ok, summary, findings }"]
-  BL --> OK{"any unbaselined finding?<br/>baseline sound?"}
-  OK -- no --> EX0["ok:true · 200 (clean)"]
-  OK -- yes --> EX2["ok:false · 207 (page ops)"]
-```
+Everything below is what Postgres cannot see: a cache against the journal, a counter against its rows, an external vendor against the books.
 
-| Finding `kind`                         | Scope                                                                           | Asserts                                                                                                                                                                                                                         | Drift means                                                                                                                                                                                                 |
-| -------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `WALLET_BALANCE_DRIFT`                 | per `BillingAccount`                                                            | `-balance(WALLET, org) == walletBalance` (WALLET is credit-normal, so owed = Σcredit−Σdebit)                                                                                                                                    | the cache diverged from the journal — a writer skipped the journal or a manual SQL edit slipped in                                                                                                          |
-| `EARNINGS_LEDGER_DRIFT`                | per payment **with** a `BOOKING` txn                                            | cached `ConsultantEarnings(platformFee+consultantShare) + OrganizationEarnings(orgShare)` == journal `PLATFORM_FEE+CONSULTANT_PAYABLE+ORG_PAYABLE` credits                                                                      | the earnings cache disagrees with the booking journal                                                                                                                                                       |
-| `PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT` | per **active** `ProgramAssignment` (`periodEnd >= now`)                         | `sum(UsageLedgerEntry.engagementsConsumed) == engagementsUsed`                                                                                                                                                                  | a partial-rollback bug, a missing ledger write, or manual SQL desynced the denormalized counter                                                                                                             |
-| `CREDIT_POOL_CONSUMED_DRIFT`           | per **active** CREDIT_POOL `ProgramAssignment`                                  | `sum(UsageLedgerEntry.priceAtBookingPaise) == consumedPaise` (refund rows post negative, so the sum nets)                                                                                                                       | the CREDIT_POOL money-meter write in `recordBookingUtilization`/`reverseBookingUtilization` desynced                                                                                                        |
-| `OVERAGE_COUNT_DRIFT`                  | per **active** `ProgramAssignment`                                              | `count(OverageEvent where chargeStatus ∉ {REVERSED,BLOCKED}) == overageCount`                                                                                                                                                   | the over-cap counter bump/decrement missed; a charged-then-refunded overage awaiting a credit note is the expected benign cause                                                                             |
-| `OVERAGE_CHARGESTATUS_INTEGRITY`       | per `OverageEvent` (link/state)                                                 | CHARGE_MEMBER pending/failed/charged ⇒ has a side-`Payment`; CHARGE_ORG accrued/charged ⇒ has an `InvoiceLineItem`; any `CHARGED` ⇒ `settledAt` set                                                                             | the `transitionOverage` state machine was bypassed or a write half-completed                                                                                                                                |
-| `ACTIVE_SEAT_COUNT_DRIFT`              | per `BillingSubscription`                                                       | `activeSeatCount == count(in-period LICENSED_SEAT ACTIVE assignments)`                                                                                                                                                          | the per-seat invoice line-item counter missed a write (or reflects historical drift before its writer existed)                                                                                              |
-| `ORG_PAYOUT_TOTAL_MISMATCH`            | per `OrganizationPayout` in `PENDING` / `APPROVED` / `PROCESSING` / `COMPLETED` | `sum(orgShare − refunded) of batched earnings == netPayoutPaise`                                                                                                                                                                | the batch claim updated earnings but the payout total diverged. Terminal-with-release statuses (`FAILED`, `REVERSED`, `CANCELLED`) are skipped because they detach their earnings back to `READY` by design |
-| `REFUND_BOOKING_COHERENCE`             | per `BookingUtilization` (**full scope only**)                                  | fully-refunded payment ⇒ utilization reversed; reversed utilization ⇒ a `SUCCEEDED` refund backs it                                                                                                                             | a cap leak (money back but the seat still consumed) or a seat released for free                                                                                                                             |
-| `LEDGER_DUAL_WRITE_GAP`                | per `OrganizationPayout` with `clawbackAmountPaise > 0`                         | a `clawback:*` `LedgerTransaction` exists against that payout                                                                                                                                                                   | the payout claims recovered cash the journal never saw                                                                                                                                                      |
-| `ORG_INVOICE_GST_MISMATCH`             | per issued `OrganizationInvoice`, one finding per invoice                       | output tax less credit notes == net `GST_PAYABLE` behind it: the billed bookings' journals (a paisa per booking), else its `invoice-issued:` and refund journals                                                                | one side taxed something the other did not, or a subscription or manual invoice issued without its `invoice-issued:` journal                                                                                |
-| `CLAWBACK_RECEIVABLE_STALE`            | one finding per run, listing every payee                                        | no clawback receivable is older than 90 days                                                                                                                                                                                    | the payee has had no payout large enough to net the clawback, so ops must recover it another way                                                                                                            |
-| `EARNINGS_WITHOUT_BOOKING_TXN`         | per earnings-bearing payment, filtered by organisation when requested           | every payment with earnings has a `BOOKING` journal transaction; each missing transaction is identified by `paymentId`                                                                                                          | an earnings row exists whose booking journal was never posted                                                                                                                                               |
-| `REVERSED_EARNING_WITHOUT_REFUND_TXN`  | per consultant earning with `refundedShareAmount > 0`                           | a `REFUND` journal transaction exists for that payment                                                                                                                                                                          | a reversal was recorded on the earning without its refund journal                                                                                                                                           |
-| `COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN`  | per completed `OrganizationPayout` and, full scope, `ConsultantPayout`          | a payout journal transaction exists for every completed payout                                                                                                                                                                  | a payout reached `COMPLETED` without posting its `ORG_PAYOUT` or `PAYOUT` journal                                                                                                                           |
-| `SPLIT_SUM_MISMATCH`                   | per payment                                                                     | Σ(platform fee + consultant shares + organisation shares) of a payment's earnings equals `Payment.originalAmount`                                                                                                               | a split leaked or minted paise                                                                                                                                                                              |
-| `OVERAGE_SETTLEMENT_MISMATCH`          | per `CHARGE_MEMBER` `OverageEvent`                                              | a `CHARGED` member overage has a `SUCCEEDED` side-payment of its `marginalPaise`, an `overage:<sidePaymentId>` journal and a `settledAt`; an uncollected one has no overage journal; a recarve reversal matches its credit note | a member overage was settled on one side only                                                                                                                                                               |
-| `PENDING_TRUST_PARK_STALE`             | one finding per sponsor with earnings parked over 24 hours                      | detect-only: age never releases a park                                                                                                                                                                                          | a sponsor's earnings are parked in `PENDING_TRUST` and need an admin verify or a paid invoice                                                                                                               |
-| `REFERRAL_CREDIT_LIABILITY_DRIFT`      | platform (full scope)                                                           | the `REFERRAL_CREDIT_LIABILITY` account equals the remaining value of vested credits that posted a vest journal                                                                                                                 | a referral credit was vested, redeemed or voided without its journal                                                                                                                                        |
-| `UNAPPLIED_RECEIPTS_RESIDUE`           | per parked capture (full scope)                                                 | a settled refund of a parked capture leaves `UNAPPLIED_RECEIPTS` at zero                                                                                                                                                        | a refund of a parked capture did not clear the parking account                                                                                                                                              |
+## What the auditor checks
 
-Clawback aging applies each `clawback-void:<originKey>` to that specific originating debt. A void remains effective when its originating payout is REVERSED; only actual payout collections can lapse with a failed or returned collecting payout. Voiding a recent origin cannot make an older unpaid debt appear newly aged.
+The auditor emits the finding kinds in `RECONCILE_FINDING_KINDS`. Comparisons use set-based SQL within persisted pages of at most 100 primary entities, retaining their complete related journal history. Each comparison uses a read-only Repeatable Read transaction and passes its transaction client through every helper. Pages do not form one global snapshot of the entire audit. A run for one organisation (`scope: "org:<id>"`) skips the four full-scope-only checks marked below.
 
-**Grouped by what each check protects:**
+| Finding kind                                                                           | Asserts                                                                                                                                                |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `WALLET_BALANCE_DRIFT`                                                                 | The cached `walletBalance` equals the owed balance of the `WALLET` account (credits less debits)                                                       |
+| `EARNINGS_LEDGER_DRIFT`                                                                | For a payment with a `BOOKING` journal, the cached earnings amounts equal the journal's `PLATFORM_FEE`, `CONSULTANT_PAYABLE` and `ORG_PAYABLE` credits |
+| `EARNINGS_WITHOUT_BOOKING_TXN`                                                         | Every payment that has earnings has a `BOOKING` journal                                                                                                |
+| `SPLIT_SUM_MISMATCH`                                                                   | A payment's platform fee plus consultant and organisation shares equal `Payment.originalAmount`                                                        |
+| `REVERSED_EARNING_WITHOUT_REFUND_TXN`                                                  | An earning with a refunded share has a `REFUND` journal for its payment                                                                                |
+| `COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN`                                                  | Every completed organisation payout has an `ORG_PAYOUT` journal; the consultant half is full-scope only                                                |
+| `LEDGER_DUAL_WRITE_GAP`                                                                | An organisation payout with a clawback amount has a `clawback:*` journal                                                                               |
+| `ORG_PAYOUT_TOTAL_MISMATCH`                                                            | For payouts in `PENDING`, `APPROVED`, `PROCESSING` or `COMPLETED`, the batched earnings' share less refunds equals `netPayoutPaise`                    |
+| `CLAWBACK_RECEIVABLE_STALE`                                                            | No clawback is still unrecovered after 90 days (one finding per run, listing every payee)                                                              |
+| `ORG_INVOICE_GST_MISMATCH`                                                             | An issued organisation invoice's output tax less credit notes equals the net `GST_PAYABLE` behind it                                                   |
+| `PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT`, `CREDIT_POOL_CONSUMED_DRIFT`                   | An active program assignment's counters equal the sum of its usage-ledger rows                                                                         |
+| `OVERAGE_COUNT_DRIFT`, `OVERAGE_CHARGESTATUS_INTEGRITY`, `OVERAGE_SETTLEMENT_MISMATCH` | Overage counters, states and settlement journals agree on both sides                                                                                   |
+| `ACTIVE_SEAT_COUNT_DRIFT`                                                              | A subscription's active seat counter equals its in-period active assignments                                                                           |
+| `PENDING_TRUST_PARK_STALE`                                                             | Detect-only: a sponsor with earnings parked in `PENDING_TRUST` for more than 24 hours; age never releases a park                                       |
+| `REFUND_BOOKING_COHERENCE` (full scope)                                                | A fully refunded payment has its utilisation reversed, and reversed utilisation is backed by a `SUCCEEDED` refund                                      |
+| `REFERRAL_CREDIT_LIABILITY_DRIFT` (full scope)                                         | The `REFERRAL_CREDIT_LIABILITY` account equals the remaining value of vested credits                                                                   |
+| `UNAPPLIED_RECEIPTS_RESIDUE` (full scope)                                              | A settled refund of a parked capture leaves `UNAPPLIED_RECEIPTS` at zero                                                                               |
+
+The consultant-payout journal check inside `COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN` is the fourth full-scope-only check. Each finding carries `expectedPaise`, `actualPaise`, `deltaPaise` and the entity ids it concerns. For count-based checks those three fields hold counts, and `details.unit` records the real unit.
 
 ```mermaid
 flowchart TD
-  CRON["hourly ticker slices (full scope)<br/>/api/cleanup/reconcile-ledgers"] --> SLICE["runReconcileLedgersSlice"]
-  SLICE --> RUN["shared lease and persisted comparisons"]
-  ADMIN["POST /api/admin/reconcile-ledgers<br/>(on demand; synchronous, full scope or one organisation)"] --> RUN
-  RUN --> G1
-  RUN --> G2
-  RUN --> G3
-  RUN --> G4
-  subgraph G1["① journal coherence"]
-    RBC["REFUND_BOOKING_COHERENCE"]
-    EWB["EARNINGS_WITHOUT_BOOKING_TXN"]
-    REF["REVERSED_EARNING_WITHOUT_REFUND_TXN"]
-    CPW["COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN"]
-    DWG["LEDGER_DUAL_WRITE_GAP"]
-    SSM["SPLIT_SUM_MISMATCH"]
-  end
-  subgraph G2["② money caches vs journal"]
-    WBD["WALLET_BALANCE_DRIFT"]
-    ELD["EARNINGS_LEDGER_DRIFT"]
-    OPT["ORG_PAYOUT_TOTAL_MISMATCH"]
-    RCL["REFERRAL_CREDIT_LIABILITY_DRIFT"]
-    URR["UNAPPLIED_RECEIPTS_RESIDUE"]
-  end
-  subgraph G3["③ usage / program counters"]
-    PAE["PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT"]
-    CPC["CREDIT_POOL_CONSUMED_DRIFT"]
-    OCD["OVERAGE_COUNT_DRIFT"]
-    OCI["OVERAGE_CHARGESTATUS_INTEGRITY"]
-    OSM["OVERAGE_SETTLEMENT_MISMATCH"]
-    ASC["ACTIVE_SEAT_COUNT_DRIFT"]
-  end
-  subgraph G4["④ tax and standing items"]
-    IGM["ORG_INVOICE_GST_MISMATCH"]
-    PTS["PENDING_TRUST_PARK_STALE"]
-    CRS["CLAWBACK_RECEIVABLE_STALE"]
-  end
-  G1 & G2 & G3 & G4 --> RPT["LedgerReconciliationReport<br/>{ ok, summary, findings[] }"]
-  RPT --> STATE{"report status"}
-  STATE -- RUNNING --> PARTIAL["200 · incomplete · ok:false"]
-  STATE -- FAILED --> FAIL["500 · checkpoint retained"]
-  STATE -- COMPLETED --> BL["split against the checked-in baseline"]
-  BL --> OK{"any unbaselined finding?<br/>baseline malformed?"}
-  OK -- no --> CLEAN["200 · ok:true"]
-  OK -- yes --> PAGE["207 · ok:false"]
-  PAGE --> MON["monitoring alert<br/>(50-operations/03-monitoring.md)"]
-  MON --> ONCALL["on-call → runbook<br/>(50-operations/02-runbooks.md):<br/>inspect the upstream writer,<br/>post a counter-txn — never SQL-patch"]
-  CLEAN --> AUDIT["history row = integrity proof over time"]
+  CRON["Ticker: POST /api/cleanup/reconcile-ledgers<br/>hourly :55 when capacity permits"] --> RUN["Create or resume persisted audit pages"]
+  ADMIN["Admin door: POST /api/admin/reconcile-ledgers<br/>step-up, reason, ops log"] --> RUN
+  RUN --> W["Wallet step first"]
+  W -->|"WALLET_BALANCE_DRIFT, cron run"| FRZ["onWalletDrift freeze<br/>WALLET_FREEZE event"]
+  REP -->|"admin run, after return"| AFRZ["freezeDriftedWallets<br/>WALLET_FREEZE event"]
+  RUN --> REST["All other checks"]
+  REST --> BL["Split against the checked-in baseline"]
+  BL --> REP["LedgerReconciliationReport row"]
+  REP --> OK{"Any unbaselined finding<br/>or baseline problem?"}
+  OK -- no --> G["200, ok"]
+  OK -- yes --> P["207, respondToLedgerDrift:<br/>SystemEvent and one Sentry report"]
 ```
 
-The grouping is conceptual, not a code boundary (checks advance through persisted pages); it's how to _triage_: a ① finding means a journal is missing or incoherent with its business rows (rare, high-severity — a writer that bypassed `postLedgerTxn`, since the balance of each transaction is already enforced by Postgres); ②–④ mean a _cache_ or counter drifted from a sound journal (fix the writer, re-derive the cache via a counter-transaction).
+## The baseline of known findings
 
-Each `Finding` is a compact row: `{ kind, organizationId?, billingAccountId?, billingSubscriptionId?, invoiceId?, paymentId?, payoutId?, programAssignmentId?, expectedPaise, actualPaise, deltaPaise, details? }`. For the count-based checks (`…ENGAGEMENTS_DRIFT`, `…SEAT_COUNT_DRIFT`, `OVERAGE_COUNT_DRIFT`) and the link/state ones the `*Paise` fields hold **counts / events**, not paise — `details.unit` records the real unit.
+A finding that is already known must not keep the completed logical audit red forever, because an auditor that is permanently red is an auditor nobody reads. The auditor splits its findings against a checked-in baseline, `scripts/reconcile/ledger-findings-baseline.ts`, and only the findings the baseline does not excuse fail the run.
 
----
+- The baseline never hides evidence. Every finding still lands in the persisted report and still counts in `summary.discrepanciesCount`.
+- An entry pins one finding by fingerprint: the kind, the delta and every entity id the finding carries. A new row, a changed amount or a finding that grew an identifier is never excused.
+- Every entry carries an owner, a reason and an expiry date. An expired entry excuses nothing.
+- A malformed entry is ignored and fails the run, recorded in `summary.baselineProblems`, so a broken baseline can never silently turn a run green.
 
-## 2. The coverage metric (informational, not a finding)
+The report is ok exactly when `summary.unbaselinedCount` is zero and `summary.baselineProblems` is empty. The summary also carries `baselinedCount` and `baselineExpiredCount`.
 
-`summary.earningsPaymentsWithoutBookingTxn` counts earnings-bearing payments that have **no** `BOOKING` journal transaction yet. It is reported for visibility but does **not** fail the run, because `EARNINGS_LEDGER_DRIFT` only checks payments that _do_ have a booking txn.
+## How a run happens
 
-Each missing journal also raises one `EARNINGS_WITHOUT_BOOKING_TXN` finding pinned to `paymentId`, with `details.unit = "transactions"` and expected/actual counts of 1/0. The summary counter is informational; these individual findings fail the completed audit unless explicitly baselined. Both reads share a read-only Repeatable Read snapshot, so a concurrent booking cannot create a mixed comparison. There is no count threshold or grace window.
+The ticker offers an hourly `:55` slice, yielding that slot to settlement and statutory jobs when dispatch is at its design bound. `runReconcileLedgersSlice` creates or resumes the full-scope audit; a completed daily audit is reused. The cleanup twin returns 200 with `summary.status: RUNNING` for continuation, 200 for a completed clean report, 207 for completed discrepancies, and 500 for a failed slice or freeze. An incomplete report has `ok: false`; that is not a completed corruption verdict.
 
----
+`summary.nextStep`, optional `cursor`, `calls`, `executing`, `interruptions`, counts and findings persist on the report. Successful comparisons advance the checkpoint. A caught failure marks it FAILED and retains the unfinished comparison; a hard interruption leaves executing state that a later owner can resume after lease recovery. Pending audits resume across UTC days, and historical cohorts are not hidden behind a recent-days cutoff. The same fail-closed Postgres lease excludes active admin and scheduled callers. A lease or request timeout does not prove an old process has stopped.
 
-## 3. The known-findings baseline
+The dedicated ADMIN door, `POST /api/admin/reconcile-ledgers`, requires step-up, a reason and an ops-log row. It currently runs `runReconcileLedgers` synchronously to completion using the same persisted pages, optionally scoped to an organisation. It resumes idle checkpoints and returns 409 for a held lease. A large admin audit can still outlive its HTTP runtime: bounded admin continuation is a remaining rollout requirement; do not infer safety from fast small fixtures. The scheduled cleanup door already advances bounded slices.
 
-A finding that is already known must not keep the daily audit red forever: an auditor that is permanently red is an auditor nobody reads. The auditor therefore splits its findings against a checked-in baseline — `scripts/reconcile/ledger-findings-baseline.ts` — and only the findings the baseline does not excuse fail the run.
+Each wallet page invokes the same freeze hook before its checkpoint advances, including the admin path. The scheduled wrapper aggregates wallet findings and uses a persisted logical-report key for fatal-alert deduplication. `respondToLedgerDrift` retains the standing-findings alert policy; do not capture once per row or once per page. Other job gates still determine admission during maintenance.
 
-**The baseline never hides evidence.** Every finding still lands in the persisted `LedgerReconciliationReport.findings` array and still counts in `summary.discrepanciesCount`. The baseline decides which findings fail the run; it never mutes, repairs or deletes one.
+A payment with earnings and no BOOKING journal raises one `EARNINGS_WITHOUT_BOOKING_TXN` finding pinned to that payment (`details.unit: transactions`, expected/actual 1/0). Aggregate coverage counts remain informational. The baseline is an exact, expiring exception list, not a count allowance for a moving set of missing payments.
 
-**An entry pins one finding by fingerprint.** Missing-booking-journal entries must include `paymentId`; aggregate count entries are rejected. Known fixture identities must be verified before adding individual entries. An entry names the finding `kind`, the `deltaPaise`, the entity ids the finding carries (`organizationId`, `billingAccountId`, `paymentId`, `payoutId`, `invoiceId`, `programAssignmentId`, `billingSubscriptionId`) and, for a finding that identifies itself only through its `details` (for example `details.bookingUtilizationId`), that one detail key with its value. A finding is excused only when the kind, the delta and **every** identifier agree, so a new row, a changed amount, or a finding that grew an identifier the entry never pinned is never excused. `occurrences` says how many findings of one fingerprint the entry excuses; a fingerprint that occurs more often than that leaves the surplus failing the run.
+## Wallet drift: freeze, repair, unfreeze
 
-**Every entry carries an owner, a reason and an expiry.** `owner` says who carries the cleanup, `reason` says in one line why the finding is knowingly carried, and `expires` is the ISO date after which the entry excuses nothing. An expired entry excuses nothing, so its finding fails the run again and an allowlist can never become permanent. The auditor counts expired entries in `summary.baselineExpiredCount`.
+`BillingAccount.walletBalance` is a reconciled cache of the organisation's WALLET journal. Every entry point freezes a drifting wallet immediately after its page, before checkpoint advancement, even when a finding is baselined. Freeze failures retain that page for retry. The freeze is an append-only `SystemEvent`, keyed `wallet-freeze:<billingAccountId>`, and the latest freeze/unfreeze event decides the state. An unreadable freeze log blocks discretionary spend; top-up credit and chargeback recovery remain separate flows.
 
-**A malformed baseline fails the run.** An entry that is missing its owner, reason or expiry, that carries an unparseable date, or that names a finding kind the auditor cannot raise is ignored as a baseline entry **and** fails the run: the problem is recorded in `summary.baselineProblems` and the report is not ok. A broken baseline can never silently green a run.
+A drift is an incident, not something to patch by hand. The repair has three steps.
 
-| Report field                   | Meaning                                                        |
-| ------------------------------ | -------------------------------------------------------------- |
-| `summary.discrepanciesCount`   | Every finding the run raised, baselined or not.                |
-| `summary.baselinedCount`       | How many of them the baseline excuses.                         |
-| `summary.unbaselinedCount`     | How many it does not — each one fails the run.                 |
-| `summary.baselineExpiredCount` | Baseline entries whose expiry has passed.                      |
-| `summary.baselineProblems`     | Why the baseline was rejected. A non-empty list fails the run. |
+1. **Find the cause.** Which writer moved the cache without its journal line, or the journal without the cache?
+2. **Post a balanced correcting journal.** It is a new `LedgerTransaction` that fixes the side that is wrong. It is never an `UPDATE` of a balance (`ledger_entry_immutable` would refuse it). `adjustWallet` cannot close the gap, because it moves the cache and the journal by the same amount.
+3. **Unfreeze through the door.** `POST /api/admin/billing-accounts/[billingAccountId]/unfreeze` (step-up, reason, ops log) re-reads that wallet and answers 409 `WALLET_STILL_DRIFTED` while the cache and the journal still disagree.
 
-The gate in one line: the report is ok when `unbaselinedCount` is zero **and** `baselineProblems` is empty.
+**Worked example: the 2026-10-18 member-overage carve.** A member overage with `CHARGE_MEMBER` on a wallet-funded booking carves the overage base off the parent payment and back onto the organisation's wallet. On 2026-10-18 two such bookings on one organisation each carved 285,018 paise (₹2,850.18). Each carve credited the wallet cache and posted no ledger line, because the carve journal `overage-carve-credit:<overageEventId>` did not exist yet. The cache was therefore right and the journal was short by 2 × 285,018 = 570,036 paise (₹5,700.36). The nightly audit raised `WALLET_BALANCE_DRIFT` and froze the organisation's spend. Both payments had since been fully refunded under the earlier refund journal, before it reversed `DISCOUNT`, and each refund journal left a 285,018-paise credit on `PLATFORM_FEE` and a 285,018-paise debit on `WALLET` (verified in the live ledger). The correction is therefore one balanced journal, `Dr PLATFORM_FEE 570,036` and `Cr WALLET 570,036`, under its own correction idempotency key, which brings every account of both payments to zero, followed by the unfreeze door. It differs from the live writer: today `journalWalletCarveCredit` in `lib/payments/billing/overage-settlement.ts` books each carve as `Dr DISCOUNT / Cr WALLET` in the carve's own transaction, so a new carve cannot drift.
 
----
+## Reconciliation across the vendor boundary
 
-## 4. How it runs
+The auditor compares caches with the journal. It does not check the `GATEWAY_CLEARING` residual or unmatched settlement lines. Those live in the `reconcile-gateway-settlements` job, which compares the journal with Razorpay's settlement report (see [gateway clearing and settlement](05-gateway-clearing-and-settlement.md)). Money reconcilers that talk to Razorpay or RazorpayX, such as `reconcile-payout-status` and `reconcile-disputes`, are described in [scheduled jobs](../70-operations/01-scheduled-jobs.md).
 
-- **Library:** `runReconcileLedgers({ scope, organizationId?, triggeredById? })` → `ReconcileReport`. Scope is `"full"` or `"org:<id>"`; passing `organizationId` limits every per-row check to one org and **skips the four full-scope-only checks** listed in §1.
-- **Scheduled slices:** the ticker offers an hourly `:55` slice, yielding that slot to gateway settlement and statutory jobs when dispatch is already at its target cap. `runReconcileLedgersSlice({ scope: "full", onWalletDrift })` creates or resumes one full-scope report. Pages contain at most 100 primary entities; their related journal history remains complete. Each non-wallet comparison uses its transaction client throughout a read-only Repeatable Read snapshot, with a 6-second SQL statement timeout, 8-second transaction timeout and 1-second connection wait. Wallet comparisons use the same bounds in their own snapshot. A slice stops starting pages after six seconds. This is a sequence of coherent comparisons at different times, **not one global snapshot of the entire audit**.
-- **Durable progress:** `summary.nextStep`, optional `cursor`, `calls`, `executing`, `interruptions`, counts and findings persist on the existing report. A completed page advances its keyset cursor; crashes retry the unfinished page. Caught failures mark the report `FAILED`; hard interruptions leave `executing:true`, and the next invocation counts the interruption before resuming. Unfinished audits continue across dates until every comparison finishes. Completed audits are reused for the remaining UTC day; the next day's slice starts a new audit. No age cutoff discards an unfinished historical tail. A comparison that exceeds its SQL/transaction bounds remains visibly failed at its checkpoint rather than being skipped.
-- **Protective action and result:** drifted wallets freeze immediately after their wallet page, before later comparisons. Freeze failure prevents that page from advancing; replay uses the existing idempotent freeze function. Baselined wallet findings still freeze spend and remain eligible for the wallet alert; the baseline decides only whether a completed audit fails. Scheduled slices aggregate wallet evidence before emitting a fatal alert, including when freezing fails. The persisted standing-finding key contains the logical report id, so pages, retries and later slices of that report share one seven-day alert window; the report retains every later finding. Partial reports stay `ok:false`, return HTTP 200 with `status: "RUNNING"`, and never claim full-scope completion or send the completed-audit drift response. Final reports return 200 (clean) or 207 (unbaselined findings). Exceptions return 500. The auditor never repairs a cache or journal.
-- **On-demand door:** `POST /api/admin/reconcile-ledgers` remains the authenticated, step-up-protected money door. Its `runReconcileLedgers()` API resumes an existing report under the same fail-closed `reconcile-ledgers` lease and continues to completion. Full and sliced callers cannot overlap. The CRON_SECRET HTTP twin advances one bounded slice; repeat it until `report.summary.status` is `COMPLETED`.
-- **Report storage:** every run writes a `LedgerReconciliationReport { scope, ok, durationMs, summary, findings, triggeredById }`. The history is the audit trail of integrity over time; the `summary` carries the count of findings, how many the baseline excused and why the baseline was rejected (§3).
+## Rules and their enforcers
 
----
+| Rule                                                              | Enforcer                                                                                                                          | Test                                                       | Repair                                           |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------ |
+| A known finding cannot keep the run red forever or hide a new one | Fingerprint, expiry and fail-on-malformed rules in `ledger-findings-baseline.ts`                                                  | `__tests__/payments/ledger-findings-baseline.test.ts`      | Fix the finding or renew the entry with a reason |
+| A drifted wallet cannot be spent                                  | `isWalletFrozen` in `lib/payments/wallet-freeze.ts`, read in the checkout transaction                                             | `__tests__/maintenance/ledger-drift-response.test.ts`      | Correcting journal, then the unfreeze door       |
+| An unfreeze cannot hide a live drift                              | The `WALLET_STILL_DRIFTED` re-check in the unfreeze route                                                                         | `__tests__/enterprise/wallet-doors.test.ts`                | Post the correcting journal first                |
+| Two audits do not overlap while the lease can be taken            | `withCronLock("reconcile-ledgers")`, a fail-closed Postgres lease shared by admin and scheduled callers; a held lease returns 409 | `__tests__/payments/admin-reconcile-ledgers-async.test.ts` | Wait for the running audit                       |
 
-## 5. When a finding fires
+## Where in code
 
-A finding is an **incident signal, never a thing to hand-patch.** The drift is a symptom; the fix is upstream (the writer that diverged), and the correction — if money is involved — is a **counter-transaction**, not a SQL `UPDATE` on a balance. See [runbooks](../../enterprise/50-operations/02-runbooks.md) for the per-finding triage procedure (which writer to inspect, how to post a correcting entry, when to page).
+- `scripts/reconcile/reconcile-ledgers.ts` — `runReconcileLedgers`, `RECONCILE_FINDING_KINDS`, `walletDriftFindings`.
+- `scripts/reconcile/ledger-findings-baseline.ts` — the baseline entries and `evaluateLedgerBaseline`.
+- `scripts/reconcile/ledger-drift-response.ts` — `respondToLedgerDrift`, `freezeDriftingWallets`.
+- `lib/payments/wallet-freeze.ts` — `isWalletFrozen`, `freezeWalletSpend`, `unfreezeWalletSpend`, `freezeDriftedWallets`.
+- `lib/backoffice/ledger-run.ts` — `startLedgerReconciliation`, the helper behind the admin door.
+- `LedgerReconciliationReport` in `prisma/schema.prisma`.
 
-For `WALLET_BALANCE_DRIFT` the steps are:
+## Related
 
-1. Find the root cause: which writer moved the cache without its journal line, or the journal without the cache.
-2. Decide which side is wrong, then post a balanced `LedgerTransaction` that corrects that side. This is an owner-applied SQL change run once, and it is a new journal entry, never an `UPDATE` of a balance or of a posted row (`ledger_entry_immutable` would refuse it). Re-deriving the cache by overwriting it is not a repair, and `adjustWallet()` cannot close the gap, because it moves the cache and the journal by the same amount.
-3. Unfreeze through the existing door, `POST /api/admin/billing-accounts/[billingAccountId]/unfreeze`, which re-reads that wallet and answers `409 WALLET_STILL_DRIFTED` while the two still disagree.
-
-**Worked example (the 2026-10-18 member-overage carve).** A member overage with `CHARGE_MEMBER` on a wallet-funded booking carves the overage base off the parent payment and back onto the organisation's wallet. On 2026-10-18 two such bookings on one organisation each carved a base of ₹2,850.18 (285,018 paise), about twenty seconds after their booking journals had debited WALLET at the full price. Before `journalWalletCarveCredit()` existed in `lib/payments/billing/overage-settlement.ts`, each carve credited the wallet cache and posted no ledger line, so the cache was right and the journal was short by 2 × 285,018 = ₹5,700.36 (570,036 paise). The nightly audit raised `WALLET_BALANCE_DRIFT`, and `freezeDriftingWallets()` froze the organisation's spend. The repair is one owner-applied correcting journal for the missing side, `Dr DISCOUNT / Cr WALLET` 570,036 under its own correction idempotency key (the same shape the function now posts per carve under `overage-carve-credit:<overageEventId>`), followed by the unfreeze door. The writer now posts the line in the carve's own transaction, so a new carve cannot drift.
-
----
-
-## 6. Design decisions & trade-offs
-
-- **Never hand-patches a cache — but fails closed on wallet drift.** The auditor writes _only_ `LedgerReconciliationReport` and never touches an audited table. When any reconcile door (the scheduled audit, `POST /api/cleanup/reconcile-ledgers` or `POST /api/admin/reconcile-ledgers`) sees a `WALLET_BALANCE_DRIFT` finding, which means a wallet's cached balance no longer matches its journal, `freezeDriftedWallets()` freezes spend for that `BillingAccount`; the scheduled audit also pages P0. The freeze rides the append-only `SystemEvent` log (a `WALLET_FREEZE` / `WALLET_UNFREEZE` pair keyed on `correlationId`), fails closed so an unreadable log blocks the spend rather than leaking it, and gates only discretionary checkout spend — never a top-up credit. An admin lifts it with `POST /api/admin/billing-accounts/[billingAccountId]/unfreeze` once the drift is reconciled. The door re-reads that one wallet's drift first and refuses with 409 `WALLET_STILL_DRIFTED` while the cache and the journal still disagree.
-- **No check on the gateway side.** Cached projections and business postings are compared with the journal here. `GATEWAY_CLEARING` residuals and unmatched `GatewaySettlementLine` rows belong to `reconcile-gateway-settlements`, which compares Razorpay settlement truth.
-- **Counts and events reuse the `*Paise` fields.** Rather than a separate schema per check kind, count-based findings (`…ENGAGEMENTS_DRIFT`, `…SEAT_COUNT_DRIFT`, `OVERAGE_COUNT_DRIFT`) and link/state findings stuff counts into `expectedPaise`/`actualPaise`/`deltaPaise` and record the real unit in `details.unit`.
-- **A checked-in baseline of known findings (`scripts/reconcile/ledger-findings-baseline.ts`).** The daily signal has to mean "new drift", not "the same seeded row again", or ops learns to ignore a red reconciler. The baseline records what is already known without hiding it: every finding still reaches the report, and only the findings the baseline does not excuse fail the run. Its three rules — fingerprint, expiry, fail-closed on a malformed entry — are in §3.
-
-### Related docs
-
-- [Money model overview](01-double-entry-model.md) §4 — the reconciled-cache contract.
-- [Ledger & postings](../../enterprise/10-money-and-ledger/03-ledger-and-postings.md) — the postings these checks re-sum.
-- [Payment legs](03-payment-legs.md) — the leg-sum invariant, enforced by the `payment_legs_sum_to_amount` trigger.
-- [Runbooks](../../enterprise/50-operations/02-runbooks.md) — per-finding incident response.
-- [Monitoring](../../enterprise/50-operations/03-monitoring.md) — alerting on report `ok:false`.
-- Ground truth: `scripts/reconcile/reconcile-ledgers.ts`, `scripts/reconcile/ledger-findings-baseline.ts`, `LedgerReconciliationReport` in `prisma/schema.prisma`.
-
----
+- [Double-entry model](01-double-entry-model.md)
+- [Payment legs](03-payment-legs.md)
+- [Gateway clearing and settlement](05-gateway-clearing-and-settlement.md)
+- [Ledger drift runbook](../70-operations/06-ledger-drift-runbook.md)
 
 ## Deprecated & Superseded Approaches
 
-1. **Unbounded single-request full audits:** all comparisons previously ran inside one HTTP request with no persisted progress. A timeout left a RUNNING report and the next daily request restarted the historical tail. Current bounded entity pages preserve completed work while continuing to use set-based aggregation inside each comparison.
-2. **Row-by-row cursor drivers and a Netlify background function:** the older implementation serialized individual entity reads and repeatedly called a runId-specific HTTP endpoint. Current pages aggregate related rows together and use the ordinary scheduled HTTP twin, with no vendor background-function driver or loop of remote calls.
-3. **Aggregate missing-journal baseline:** one entry excused a count of seven missing journals without identifying the payments. One repaired fixture and one newly broken payment could leave that count unchanged. Current findings pin paymentId, and baseline validation rejects entries without that identity; the old count entry was removed rather than assigning unverified identities.
-4. **Re-verifying Postgres guarantees:** journal balance, funding-leg sum, invoice totals and INR constraints are enforced by the SQL sidecars. The auditor does not sweep these invariants, and checkout no longer re-reads freshly written legs for a warn-only comparison. Pure leg-calculation helpers remain available for construction and tests.
+- **The old row-by-row cursor engine** (`advanceReconcileRun`, `ReconcileCursorState`) is removed. Current bounded pages retain set-based comparisons and persist progress on `LedgerReconciliationReport`; do not restore the old engine or remove the current checkpoint.
+- **A separate background driver** looped the cleanup route. Scheduled progress now belongs to bounded canonical slices; there is no background loop or parallel scheduler for this auditor.
+- **A baseline keyed to one entity id** excused a finding by kind and one id, so the same row with a changed amount stayed hidden. The current baseline pins kind, delta and every identifier.
+- **Application sweeps over database-enforced invariants** (`LEDGER_TXN_IMBALANCE`, `PAYMENT_LEG_SUM_MISMATCH`, `INVOICE_TOTAL_MISMATCH`, `LEDGER_ACCOUNT_NON_INR`) were removed. The triggers and CHECKs in `prisma/sql/` are the enforcers, and a second copy in JavaScript is only weaker.
+- **The trigger name `ledger_balance_check`** appears in older documents and comments. The trigger is `ledger_txn_balanced`.
