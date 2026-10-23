@@ -46,13 +46,16 @@ async function pendingRecipients(
 async function stageRecipient(
   tx: Tx,
   recipient: { id: string; email: string },
-  ref: string,
-  title: string,
-  reason: string,
-  dueDate: Date,
-  dashboardUrl: string,
-  officer: string | undefined,
+  digest: {
+    ref: string;
+    title: string;
+    reason: string;
+    dueDate: Date;
+    dashboardUrl: string;
+    officer: string | undefined;
+  },
 ) {
+  const { ref, title, reason, dueDate, dashboardUrl, officer } = digest;
   const current = await tx.user.findFirst({
     where: {
       id: recipient.id,
@@ -188,8 +191,12 @@ export async function runDataBreachDeadlineAlerts(
         candidates[0].detectedAt.getTime() +
           BREACH_REPORTING_DEADLINE_HOURS * 3_600_000,
       );
-      const title = `[DPDP] ${result.atRisk}${candidates.length > MAX_ROWS ? "+" : ""} breach(es) approaching 72h deadline${result.overdue ? ` — ${result.overdue} OVERDUE` : ""}`;
-      const reason = `${result.atRisk}${candidates.length > MAX_ROWS ? "+" : ""} unreported breach(es) approaching or past the configured 72-hour reporting deadline (${result.overdue} overdue).`;
+      const sampledCount = `${result.atRisk}${candidates.length > MAX_ROWS ? "+" : ""}`;
+      const overdueSuffix = result.overdue
+        ? ` — ${result.overdue} OVERDUE`
+        : "";
+      const title = `[DPDP] ${sampledCount} breach(es) approaching 72h deadline${overdueSuffix}`;
+      const reason = `${sampledCount} unreported breach(es) approaching or past the configured 72-hour reporting deadline (${result.overdue} overdue).`;
       const dashboardUrl = `${getAppUrl()}/dashboard/admin/compliance?tab=breaches`;
       console.warn("[DataBreach] deadline alert digest", {
         event: "dpdp.databreach.deadline",
@@ -202,16 +209,14 @@ export async function runDataBreachDeadlineAlerts(
         try {
           if (
             await prisma.$transaction((tx) =>
-              stageRecipient(
-                tx,
-                recipient,
+              stageRecipient(tx, recipient, {
                 ref,
                 title,
                 reason,
                 dueDate,
                 dashboardUrl,
                 officer,
-              ),
+              }),
             )
           )
             result.recipientsStaged++;
