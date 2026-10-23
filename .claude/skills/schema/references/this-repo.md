@@ -18,7 +18,7 @@ Three consequences follow, and they are the reason this file exists.
 
 The first is that **`npm run db:push` is a production operation**. One Postgres
 project serves both development and production, and every `fw-*` worktree's
-environment points at it. A push, a seed, a reset and the data scripts all write
+environment points at it. A push, a seed and the data scripts all write
 rows that production reads. Pushes happen once per merged pull request, run by
 the orchestrator, never for two schema-bearing pull requests at once, and never
 to make a local test pass.
@@ -41,12 +41,12 @@ every trigger, `CHECK` constraint and partial index in this database is applied
 separately and would otherwise be silently dropped by the next push. Those
 objects live in checked-in SQL and are applied and asserted by scripts.
 
-| File                                   | Contents                                                                                                                                                                       |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `prisma/sql/check-constraints.sql`     | Every `CHECK` constraint and partial index, including `occurrence_no_confirmed_overlap` and the money invariants. Its final section is the block staged for the pre-MVP reset. |
-| `prisma/sql/ledger-triggers.sql`       | The double-entry ledger constraint triggers.                                                                                                                                   |
-| `prisma/sql/payment-legs-triggers.sql` | The trigger asserting that payment legs sum to the payment amount.                                                                                                             |
-| `prisma/sql/known-drift.json`          | The reviewed allowlist of divergences the drift guard tolerates. Every entry carries an owner, a reason and an expiry.                                                         |
+| File                                   | Contents                                                                                                                                                                                                                                                                              |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prisma/sql/check-constraints.sql`     | Every `CHECK` constraint and partial index, including `occurrence_no_confirmed_overlap` and the money invariants. Its final section mixes applied statements with commented-out staged ones; a staged statement needs review and is never applied by `db push` or the sidecar replay. |
+| `prisma/sql/ledger-triggers.sql`       | The double-entry ledger constraint triggers.                                                                                                                                                                                                                                          |
+| `prisma/sql/payment-legs-triggers.sql` | The trigger asserting that payment legs sum to the payment amount.                                                                                                                                                                                                                    |
+| `prisma/sql/known-drift.json`          | The reviewed allowlist of divergences the drift guard tolerates. Every entry carries an owner, a reason and an expiry.                                                                                                                                                                |
 
 The push command chains all of this together, so the schema and the sidecars can
 no longer separate:
@@ -94,7 +94,7 @@ migration-adjacent script that assumes concurrency will not get it.
 
 ## Making a schema change today
 
-The procedure until the reset is short, and the ordering is what matters.
+The procedure until the cutover is short, and the ordering is what matters.
 
 Edit `prisma/schema.prisma`, keeping to the freeze: additive only, money columns
 as `BigInt` paise, and enums declared below the models that use them. Add any
@@ -104,15 +104,15 @@ populates the new shape from the first day, because new tables are written from 
 jest suites locally. Then let the orchestrator run `npm run db:push` once, at
 merge, and confirm `npm run db:assert-sidecars` passes afterwards.
 
-Do not write a data migration for pre-reset rows. Do not push from a worktree to
+Until the cutover, do not write a data migration for existing rows. Do not push from a worktree to
 prove a test passes. If a change genuinely requires a rename, a drop or a type
 change, say so and stop; that is a freeze-table decision.
 
 ## Live-database drift (2026-10-02)
 
-On 2026-10-02 the Subscriptions tab of the Requests inbox returned 500 on production and on previews, because the live enum `RescheduleRequestStatus` lacked the value `COUNTERED`, which has been in the schema since #1060. It was fixed with `ALTER TYPE "RescheduleRequestStatus" ADD VALUE IF NOT EXISTS 'COUNTERED' AFTER 'PENDING_REVIEW'`. The additive auth columns from #1878 were applied the same day: `twoFactor` `failedVerificationCount`, `lockedUntil` and `verified`, `ssoProvider` `createdAt`, `domainVerified` and `updatedAt`, and the unique index `twoFactor_userId_key`. The rest of the drift waits for the planned reset tracked in #1934, and `check-db-drift` has been non-required since `ed876981e`, so CI will not flag it.
+On 2026-10-02 the Subscriptions tab of the Requests inbox returned 500 on production and on previews, because the live enum `RescheduleRequestStatus` lacked the value `COUNTERED`, which has been in the schema since #1060. It was fixed with `ALTER TYPE "RescheduleRequestStatus" ADD VALUE IF NOT EXISTS 'COUNTERED' AFTER 'PENDING_REVIEW'`. The additive auth columns from #1878 were applied the same day: `twoFactor` `failedVerificationCount`, `lockedUntil` and `verified`, `ssoProvider` `createdAt`, `domainVerified` and `updatedAt`, and the unique index `twoFactor_userId_key`. The rest of the drift waits for the freeze-table push in the cutover plan, and `check-db-drift` has been non-required since `ed876981e`, so CI will not flag it.
 
-A read-only drift check with Prisma 7 is `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`, because `--from-url` no longer exists. That diff proposes dropping the hand-applied sidecar partial uniques `appointment_feedback_level_key` and `consultant_earnings_occurrence_key`, so never fix drift with a plain `db push`, and run `npm run db:sidecars` after any reset.
+A read-only drift check with Prisma 7 is `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`, because `--from-url` no longer exists. That diff proposes dropping the three hand-applied sidecar unique indexes `appointment_feedback_level_key`, `consultant_earnings_occurrence_key` and `organization_earnings_split_key`, so never fix drift with a plain `db push`, and run `npm run db:sidecars` after any push.
 
 To reproduce a `lib/data` reader locally and see the real Prisma error, run `NODE_OPTIONS="--conditions=react-server" npx tsx --env-file=.env --tsconfig tsconfig.json <script>`. Without `--env-file`, Prisma silently connects to localhost.
 
