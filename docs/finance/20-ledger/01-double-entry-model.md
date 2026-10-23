@@ -52,7 +52,7 @@ Razorpay settles in INR and no conversion happens before posting, so every posti
 
 ## 5. Idempotency per flow
 
-Each flow derives its key from a stable upstream id, so an at-least-once webhook or a retried sweep collapses to one posting: `booking:<paymentId>`, `refund:<refundId>`, `topup:<orderId>`, `payout:<payoutId>`. A booking and its refund are different events on the same payment, and per-flow keys let each post once. If two callers race, the loser's insert hits the unique index, aborts its transaction, and the retry finds the first posting. The full vocabulary of keys is in [postings](04-postings.md#1-the-journal-vocabulary).
+Each flow derives its key from a stable upstream id, so an at-least-once webhook or a retried sweep collapses to one posting: `booking:<paymentId>`, `refund:<refundId>`, `topup:<orderId>`, `topup-refund:<gatewayRefundId>`, `payout:<payoutId>`. A booking and its refund are different events on the same payment, and per-flow keys let each post once. If two callers race, the loser's insert hits the unique index, aborts its transaction, and the retry finds the first posting. The full vocabulary of keys is in [postings](04-postings.md#1-the-journal-vocabulary).
 
 ## Worked example
 
