@@ -8,7 +8,7 @@ last-reviewed: 2026-06-05
 
 # Scenarios & worked examples — every permutation
 
-**What this covers:** the full cross-product of the enterprise axes — **capability** (`canSponsor` × `canHost`), **funding source**, **program type**, **overage behaviour**, **payout recipient** — what each combination means, which are valid, and then **detailed end-to-end playthroughs** (a startup, Wipro, LearnPro, a consulting firm, IIT Madras, a solo consultant, and a product company on the credit-pool money-meter — §5.10a) showing every leg, posting, and settlement — followed by the **v2 lifecycle & money-safety scenarios** (§5.11–§5.16: cycle rollover, surcharge + circuit-breaker overage, dunning, wallet floor, contract supersession, SSO break-glass). This is the doc to read once you understand the parts ([organization-types](../00-foundations/02-organization-types.md)–[ledger-integrity](../10-money-and-ledger/13-ledger-integrity.md), plus [contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md)/[cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md)) and want to see them compose.
+**What this covers:** the full cross-product of the enterprise axes — **capability** (`canSponsor` × `canHost`), **funding source**, **program type**, **overage behaviour**, **payout recipient** — what each combination means, which are valid, and then **detailed end-to-end playthroughs** (a startup, Wipro, LearnPro, a consulting firm, IIT Madras, a solo consultant, and a product company on the credit-pool money-meter — §5.10a) showing every leg, posting, and settlement — followed by the **v2 lifecycle & money-safety scenarios** (§5.11–§5.16: cycle rollover, surcharge + circuit-breaker overage, dunning, wallet floor, contract supersession, SSO break-glass). This is the doc to read once you understand the parts ([organization-types](../00-foundations/02-organization-types.md)–[ledger-integrity](../../finance/20-ledger/06-integrity-and-reconciliation.md), plus [contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md)/[cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md)) and want to see them compose.
 
 > Every steady-state example uses the seed cohort (`prisma/seedFiles/14a-create-organizations.ts`) so the numbers are real and reproducible. The v2 scenarios (§5.11–§5.15) are **time-based** — they only fire when a cron advances state past a `periodEnd` / `dueDate`, which the static seed hasn't yet hit; each one says explicitly whether it's seed-grounded or a hypothetical with exact field values. Postings are transcribed from [ledger & postings §4](../10-money-and-ledger/03-ledger-and-postings.md); read that first if a `Dr/Cr` block is unfamiliar. ₹ amounts are paise in code (₹1 = 100 paise).
 
@@ -247,7 +247,7 @@ The cap-check + counter increment are atomic ([concurrency-and-idempotency](../3
 
 A webinar co-hosted by two experts at **different** HOST orgs (LearnPro + Acme). Each collaborator's `revenueShareBps` slices the consultant pool; each org accrues its own `OrganizationEarnings` (one row per `(paymentId, organizationId)`).
 
-> **Coverage gap (#773):** the per-collaborator HOST-org settlement writes the earnings rows, but the **balanced `BOOKING` journal txn is deferred** for multi-collaborator payments (single-consultant bookings post inline). Reconcile counts these as `earningsPaymentsWithoutBookingTxn` (informational, not a finding) until #773 lands the multi-leg posting. See [booking-to-earnings §3](../10-money-and-ledger/05-booking-to-earnings.md) and [ledger-integrity §2](../10-money-and-ledger/13-ledger-integrity.md).
+> **Coverage gap (#773):** the per-collaborator HOST-org settlement writes the earnings rows, but the **balanced `BOOKING` journal txn is deferred** for multi-collaborator payments (single-consultant bookings post inline). Reconcile counts these as `earningsPaymentsWithoutBookingTxn` (informational, not a finding) until #773 lands the multi-leg posting. See [booking-to-earnings §3](../10-money-and-ledger/05-booking-to-earnings.md) and [ledger-integrity §2](../../finance/20-ledger/06-integrity-and-reconciliation.md).
 
 ### 5.9 Arjun (solo consultant) — pure marketplace, the org-layer no-op
 
@@ -269,7 +269,7 @@ orgSharePaise        = 1000000 * 1000 / 10000 = 100000
 consultantSharePaise = 1000000 * 8000 / 10000 = 800000
 ```
 
-Integer division; any ±₹0.01 rounding remainder is absorbed in the platform line so the legs always sum to the gross. Splits are **basis points**, never floats ([money-model-overview](../10-money-and-ledger/01-money-model-overview.md)).
+Integer division; any ±₹0.01 rounding remainder is absorbed in the platform line so the legs always sum to the gross. Splits are **basis points**, never floats ([money-model-overview](../../finance/20-ledger/01-double-entry-model.md)).
 
 ### 5.10a Acmeware — SPONSOR · INVOICE · CREDIT_POOL · CHARGE_ORG (the money-meter, product-company shape)
 
@@ -469,6 +469,6 @@ Sign in as the non-operator seed users (`SEED_PASSWORD`, default: the seed defau
 - [ledger-and-postings](../10-money-and-ledger/03-ledger-and-postings.md) — every posting shown here, in full.
 - [booking-to-earnings](../10-money-and-ledger/05-booking-to-earnings.md) · [payout-pipeline](../10-money-and-ledger/07-payout-pipeline.md) · [invoicing](../10-money-and-ledger/08-invoicing.md) — the settlement paths.
 - [contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md) · [cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md) — the lifecycle state machines behind §5.11/§5.15/§5.16.
-- [ledger-integrity](../10-money-and-ledger/13-ledger-integrity.md) — the reconcile checks that prove each scenario ties out.
+- [ledger-integrity](../../finance/20-ledger/06-integrity-and-reconciliation.md) — the reconcile checks that prove each scenario ties out.
 - [harness-verdict](02-harness-verdict.md) — the scenario-by-scenario verdict table.
 - [mock-credentials](../../team/mock-credentials.md) — the seeded logins for walking these scenarios live.

@@ -45,7 +45,7 @@ server-side across the complete filtered result, independently of pagination.
 ## Engineering references
 
 - [Support architecture](../../support/10-production-architecture.md)
-- [Financial architecture](../05-high-level-design.md)
+- [Financial architecture](../00-overview/01-money-map.md)
 - [Organization refund accounting](../../enterprise/10-money-and-ledger/10-refunds.md)
 - [Organization payout pipeline](../../enterprise/10-money-and-ledger/07-payout-pipeline.md)
 
