@@ -10,7 +10,7 @@ last-reviewed: 2026-10-17
 # The Booking & Money Machinery — Visual Guide, Organizational Scoping & Worked Permutations
 
 > **The Core Architectural Spine in One Sentence**
-> There is **one checkout pipeline** (`handleCheckout()` in `lib/payments/checkout/orchestrate.ts`), **one payment confirmation writer** (`handlePaymentSuccess()` in `lib/payments/webhooks/handlers.ts`), and **one append-only double-entry journal** (`postLedgerTxn()` in `lib/payments/ledger/post.ts`); consumer (B2C) and enterprise (B2B) flows differ **only in which [`PaymentLeg`](../finance/50-b2b/01-funding-rails-and-permutations.md) rows fund the `Payment`** and **whether an organization claims a host share via [`RateCard`](../enterprise/10-money-and-ledger/05-booking-to-earnings.md)**.
+> There is **one checkout pipeline** (`handleCheckout()` in `lib/payments/checkout/orchestrate.ts`), **one payment confirmation writer** (`handlePaymentSuccess()` in `lib/payments/webhooks/handlers.ts`), and **one append-only double-entry journal** (`postLedgerTxn()` in `lib/payments/ledger/post.ts`); consumer (B2C) and enterprise (B2B) flows differ **only in which [`PaymentLeg`](../finance/20-ledger/03-payment-legs.md) rows fund the `Payment`** and **whether an organization claims a host share via [`RateCard`](../finance/50-b2b/03-rate-cards-and-overage.md)**.
 
 ---
 
@@ -34,7 +34,7 @@ All examples below use the canonical seed cohort from `prisma/seedFiles/1a-creat
 | Persona Category                        | Real Seeded People                                                                                                                                         | Role & Mechanics                                                                                                                                                                                                                                                                               |
 | :-------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Independent Marketplace Consultants** | **Grace Anderson** (`grace.anderson@outlook.com`), **Hannah Anderson** (`hannah.anderson@yahoo.com`), **James Anderson** (`james.anderson@protonmail.com`) | `UserRole.CONSULTANT`, `isIndependent = true` (zero `ACTIVE` `EXPERT` memberships at `canHost` orgs). Settled on the **20% Platform / 80% Consultant** marketplace split (`PLATFORM_FEE_PERCENTAGE = 20`).                                                                                     |
-| **Independent Marketplace Consultees**  | **Charlotte Brown** (`charlotte.brown@protonmail.com`), **Daniel Brown** (`daniel.brown@gmail.com`), **David Brown** (`david.brown@outlook.com`)           | `UserRole.CONSULTEE`, no org membership. Pay via `CARD` (Razorpay/Stripe), can apply promo `DiscountCode`s and personal `ReferralCredit`s.                                                                                                                                                     |
+| **Independent Marketplace Consultees**  | **Charlotte Brown** (`charlotte.brown@protonmail.com`), **Daniel Brown** (`daniel.brown@gmail.com`), **David Brown** (`david.brown@outlook.com`)           | `UserRole.CONSULTEE`, no org membership. Pay via `CARD` (Razorpay), can apply promo `DiscountCode`s and personal `ReferralCredit`s.                                                                                                                                                            |
 | **Platform Backoffice Admins**          | **Olivia Brown** (`olivia.brown@protonmail.com`), **Patrick Brown** (`patrick.brown@gmail.com`), **Priya Brown** (`priya.brown@outlook.com`)               | `UserRole.ADMIN`. Full access to `/dashboard/admin/money/*`. Can execute refunds, payouts, earnings holds/releases, ledger reconcilers, and read any organisation through a synthetic `__admin_stub_<userId>` `OWNER` membership on read-only gates (org writes answer 403 `ADMIN_READ_ONLY`). |
 | **Platform Backoffice Staff**           | **Maria Brown** (`maria.brown@gmail.com`), **Michael Brown** (`michael.brown@outlook.com`), **Natalie Brown** (`natalie.brown@yahoo.com`)                  | `UserRole.STAFF`. Own support tickets, user verification, moderation, and non-money class doors (`classSeries.support`); hold **read-only** visibility into all money tabs (`payments.read`, `refunds.read`, `payouts.read`, `disputes.read`).                                                 |
 
@@ -141,7 +141,7 @@ The organisational scoping reference lives in the domain docs, and the examples 
 
 ## 6. The Complete Money Machinery & Double-Entry Ledger
 
-Price derivation, the chart of accounts (thirteen account kinds), the four confirmation doors and the money state machines are in [02-money-system-hld.md](./02-money-system-hld.md) (sections 3, 5, 7 and 8). The twenty canonical double-entry permutations, each balanced at COMMIT by the deferred trigger `ledger_txn_balanced`, are in [ledger and postings](../enterprise/10-money-and-ledger/03-ledger-and-postings.md#7-the-twenty-ledger-permutations).
+Price derivation, the chart of accounts (thirteen account kinds), the four confirmation doors and the money state machines are in [02-money-system-hld.md](./02-money-system-hld.md) (sections 3, 5, 7 and 8). The twenty canonical double-entry permutations, each balanced at COMMIT by the deferred trigger `ledger_txn_balanced`, are in [ledger and postings](../finance/20-ledger/04-postings.md#7-the-twenty-ledger-permutations).
 
 ---
 
@@ -271,96 +271,9 @@ Because Andrew is salaried by **IIT Madras**, his 80% consultant share (`800,000
 
 ---
 
-### Permutation 5: `SPONSOR` + `INVOICE` + `LICENSED_SEAT` — Covered vs Overage + Surcharge + Circuit Breaker
+### Permutations 5 to 7: organisation-sponsored bookings
 
-- **Sponsor Org**: **Wipro Limited** (`wipro`, `canSponsor=true, canHost=false`, `FundingSource.INVOICE`, NET-60, PO ₹50,00,000).
-- **Program**: _"Wipro Engineer Leadership Program"_ (`LICENSED_SEAT`, 200 seats @ ₹25,000/yr, `coveredEngagementsPerCycle = 12`, `priceCapPerEngagementPaise = 1,000,000` [₹10,000], `overageBehavior = CHARGE_ORG`, plus `overageSurchargeBps = 1500` [15%] and `maxOveragePerCyclePaise = 2,000,000` [₹20,000]).
-- **Buyer**: **Olivia Anderson** (`olivia.anderson@gmail.com`, `LEARNER` at Wipro).
-- **Seller**: **Grace Anderson** (Independent Marketplace Consultant, 20% Platform / 80% Consultant).
-
-#### Sub-case 5A: Covered Booking (Olivia's 3rd session of 12, priced at ₹4,000 + ₹720 GST = ₹4,720)
-
-- Because Wipro is `INVOICE`-funded on a `LICENSED_SEAT` program and Olivia is within her 12-engagement cap (`engagementsUsed`: `3 → 4`), `skipPayment = true` (synthetic intent `org_invoice_...`), `Payment.status = SUCCEEDED` immediately:
-- **Under pure Seat Coverage (`PaymentLeg.source = LICENSE`, `amountPaise = 0`)**: When the seat subscription (`BillingSubscription`) already prepaid the seat, the per-booking leg is `LICENSE` (`₹0`) and no `BOOKING` journal posts at booking time (only `UsageLedgerEntry(engagementsConsumed = 1)`).
-- **Under Postpaid Accrual (`PaymentLeg.source = INVOICE_ACCRUAL`, `amountPaise = 472,000`)**: Accrues `Dr ORG_RECEIVABLE(wipro) 472,000` / `Cr PLATFORM_FEE 80,000` + `Cr CONSULTANT_PAYABLE(grace) 320,000` + `Cr GST_PAYABLE 72,000`.
-
-#### Sub-case 5B: Over-Cap Booking #13 with `priceCap` & 15% Surcharge (`CHARGE_ORG`)
-
-Olivia has used all 12 engagements (`engagementsUsed = 12`) and books a **13th session** priced at **₹12,000** (`1,200,000` paise) + 18% GST (**₹2,160** = `216,000` paise):
-
-1. **Overage Math (`computeOverageForBooking`)**:
-   - `basePaise` (capped by `priceCapPerEngagementPaise` ₹10,000) = **₹10,000.00** (`1,000,000` paise)
-   - `surchargePaise` (`floor(1,000,000 × 1500 / 10000)`) = **₹1,500.00** (`150,000` paise, 15% markup)
-   - `marginalPaise` (`basePaise + surchargePaise`) = **₹11,500.00** (`1,150,000` paise)
-2. **Circuit Breaker Check**: Cycle overage so far is `₹0 + ₹11,500 <= ₹20,000` (`maxOveragePerCyclePaise`) → **Passes!**
-3. **Leg Carve (`recordOverageAtCheckout`)**:
-   - Carves `basePaise` (`1,000,000`) out of the base `INVOICE_ACCRUAL` leg (`200,000` paise + `216,000` GST = `416,000` paise remains on `INVOICE_ACCRUAL`).
-   - Writes `PaymentLeg(source = OVERAGE_INVOICE_ACCRUAL, amountPaise = 1,150,000)`.
-   - Increments `Payment.amount` by `surchargePaise` (`150,000`) to `1,566,000` paise (**₹15,660.00**) so `PaymentLeg` sum == `Payment.amount`.
-   - Creates `OverageEvent(chargeStatus = PENDING, basePaise = 1,000,000, surchargePaise = 150,000, marginalPaise = 1,150,000)`.
-4. **Ledger Posting (`booking:<paymentId>`)**: The `surchargePaise` (`150,000`) is credited to `PLATFORM_FEE`:
-   - `Dr ORG_RECEIVABLE(wipro)` = `416,000` (`INVOICE_ACCRUAL`) + `1,150,000` (`OVERAGE_INVOICE_ACCRUAL`) = **`1,566,000`** (₹15,660.00)
-   - `Cr PLATFORM_FEE` = `240,000` (20% of ₹12,000) + `150,000` (15% overage surcharge) = **`390,000`** (₹3,900.00)
-   - `Cr CONSULTANT_PAYABLE(grace)` = **`960,000`** (80% of ₹12,000 = ₹9,600.00)
-   - `Cr GST_PAYABLE` = **`216,000`** (₹2,160.00)
-5. **Monthly Rollup & Settlement**:
-   - On the 1st of the month (`settle-invoice-accruals`), unbilled `INVOICE_ACCRUAL` and `OVERAGE_INVOICE_ACCRUAL` legs roll into `OrganizationInvoice` (`INV-WIP-2026-0002`, `status = ISSUED`, `dueDate = +60d`), flipping `OverageEvent` `PENDING → ACCRUED`.
-   - When Wipro pays the invoice via Razorpay (`notes.type = invoice_payment`), the webhook posts `invoicepaid:<invoiceId>` (`Dr CASH 1,566,000 / Cr ORG_RECEIVABLE(wipro) 1,566,000`) and flips `OverageEvent` `ACCRUED → CHARGED`.
-
-#### Sub-case 5C: Overage Booking #14 Trips the Circuit Breaker (`PROGRAM_CAP_EXHAUSTED`)
-
-If Olivia tries to book a 14th session (another ₹11,500 marginal), cumulative cycle overage would be `₹11,500 + ₹11,500 = ₹23,000 > ₹20,000` (`maxOveragePerCyclePaise`). `recordOverageAtCheckout` records `OverageEvent(BLOCKED)` and throws **`402 PROGRAM_CAP_EXHAUSTED`** — no booking is created and no money moves.
-
----
-
-### Permutation 6: `SPONSOR` + `INVOICE` + `CREDIT_POOL` — Straddling the Money Meter
-
-- **Sponsor Org**: **Acmeware** (`canSponsor=true, canHost=false`, `INVOICE`, `CREDIT_POOL` budget = **50,000 credits/mo = ₹50,000/mo** = `5,000,000` paise, `CHARGE_ORG`, `overageSurchargeBps = 1000` [10%], `maxOveragePerCyclePaise = ₹10,000`).
-- **Buyer**: Engineer **Dev** (`consumedPaise = 4,900,000` = **₹49,000** already spent this month; **₹1,000** of budget remaining).
-- **Booking**: Dev books a **₹5,000** (`500,000` paise) session with **Grace Anderson** (exempt/0% tax for simplicity of pool illustration, or tax added on top):
-  - `coveredPaise` = **₹1,000** (`100,000` paise remaining in pool)
-  - `basePaise` (over-budget pass-through) = `₹5,000 - ₹1,000` = **₹4,000** (`400,000` paise)
-  - `surchargePaise` (10% of `400,000`) = **₹400** (`40,000` paise)
-  - `marginalPaise` = `400,000 + 40,000` = **₹4,400** (`440,000` paise)
-  - **Legs Written**:
-    - `PaymentLeg(source = INVOICE_ACCRUAL, amountPaise = 100,000)` (the covered ₹1,000)
-    - `PaymentLeg(source = OVERAGE_INVOICE_ACCRUAL, amountPaise = 440,000)` (the ₹4,400 overage marginal)
-  - **Ledger Posting (`booking:<paymentId>`)**:
-    - `Dr ORG_RECEIVABLE(acmeware)` = `540,000` (₹5,400.00)
-    - `Cr PLATFORM_FEE` = `100,000` (20% of ₹5,000) + `40,000` (surcharge) = `140,000` (₹1,400.00)
-    - `Cr CONSULTANT_PAYABLE(grace)` = `400,000` (80% of ₹5,000 = ₹4,000.00)
-
----
-
-### Permutation 7: `HYBRID` + `WALLET` + `CREDIT_POOL` — Sponsor & Host on the Same Payment
-
-- **Org**: **IIT Madras** (`iit-madras`, `canSponsor=true, canHost=true`, `FundingSource.WALLET` with `walletBalance = ₹14,75,000`, `RateCard` = **10% Platform / 10% Org / 80% Expert**).
-- **Buyer**: Student **Rachel Anderson** (`rachel.anderson@hotmail.com`, `LEARNER` at IIT Madras).
-- **Seller**: Professor **Benjamin Anderson** (`benjamin.anderson@hotmail.com`, `EXPERT` at IIT Madras with `payoutRecipient = SELF`).
-- **Offering**: **₹5,000** (`500,000` paise) coaching session (with 18% GST = **₹900** [`90,000` paise], total `Payment.amount = 590,000` paise = **₹5,900**):
-
-#### Execution Flow
-
-1. **Top-Up (Prior Seed Event)**: Charlotte Anderson topped up 3 × ₹5,00,000 via Razorpay (`notes.type = credit_purchase`). Each webhook confirmed `WalletTopUp(CONFIRMED)`, incremented `BillingAccount.walletBalance += 50,000,000`, and posted `topup:<orderId>`:
-   - `Dr CASH 50,000,000` / `Cr WALLET(iit-madras) 50,000,000`
-2. **Checkout (Instant-Confirm `skipPayment = true`)**:
-   - `walletDebit()` executes atomic `UPDATE BillingAccount SET walletBalance = walletBalance - 590,000 WHERE id = ... AND walletBalance >= 590,000`.
-   - Writes `Payment(SUCCEEDED, amount = 590,000, originalAmount = 500,000, taxAmount = 90,000, paymentIntent = "org_wallet_...")` + `PaymentLeg(source = WALLET, amountPaise = 590,000)`.
-3. **Inline Settlement (`createEarningsFromPayment`)**:
-   - Sponsor side debits `WALLET(iit-madras)`.
-   - Host side credits `ORG_PAYABLE(iit-madras)` (10% of `500,000` = `50,000` paise = **₹500.00**) and `CONSULTANT_PAYABLE(benjamin)` (80% = `400,000` paise = **₹4,000.00**):
-
-| Ledger Account (`id`)                     |  Direction   |                   Amount (Paise) |    Amount (₹) | Explanation                                                                           |
-| :---------------------------------------- | :----------: | -------------------------------: | ------------: | :------------------------------------------------------------------------------------ |
-| `WALLET\|iit-madras\|\_\|INR`             |  **DEBIT**   |                        `590,000` |     ₹5,900.00 | Debited from IIT Madras's prepaid wallet                                              |
-| `PLATFORM_FEE\|_\|\_\|INR`                |  **CREDIT**  |                         `50,000` |       ₹500.00 | 10% (`1000` bps) Platform Fee                                                         |
-| `ORG_PAYABLE\|iit-madras\|\_\|INR`        |  **CREDIT**  |                         `50,000` |       ₹500.00 | 10% (`1000` bps) Host Org share earned back by IIT Madras                             |
-| `CONSULTANT_PAYABLE\|_\|benjamin_cp\|INR` |  **CREDIT**  |                        `400,000` |     ₹4,000.00 | 80% (`8000` bps) Expert share to Benjamin Anderson (`SELF`)                           |
-| `GST_PAYABLE\|_\|\_\|INR`                 |  **CREDIT**  |                         `90,000` |       ₹900.00 | 18% GST                                                                               |
-| **Total**                                 | **BALANCED** | **Dr `590,000` == Cr `590,000`** | **₹5,900.00** | Sponsor debit and Host credit never net inside one account; both trails stay explicit |
-
-> **What if Rachel booked Andrew Anderson (`payoutRecipient = ORGANIZATION`) instead of Benjamin?**
-> Then `CONSULTANT_PAYABLE` is `0`, and `ORG_PAYABLE(iit-madras)` receives **`450,000` paise (₹4,500.00 = 90%)**. IIT Madras spends ₹5,900 from its `WALLET` and earns back ₹4,500 in `ORG_PAYABLE`, so its net pre-tax platform cost for an internal faculty session is just the 10% `PLATFORM_FEE` (₹500).
+The sponsored-rail permutations (a licensed-seat programme on the `INVOICE` rail covered, over the cap with a surcharge and refused by the circuit breaker; a credit pool straddling its budget; and a hybrid organisation on the `WALLET` rail where sponsor and host share one payment) now live, with corrected arithmetic, in [the B2B worked examples](../finance/50-b2b/05-worked-examples.md). The rules behind them are in [rate cards and overage](../finance/50-b2b/03-rate-cards-and-overage.md) and [funding rails](../finance/50-b2b/01-funding-rails-and-permutations.md).
 
 ---
 
@@ -374,7 +287,7 @@ sequenceDiagram
   participant Cron as Weekly Payout Batch Job
   participant DB as Postgres (Serializable Tx)
   participant Admin as Admin / Org Approver
-  participant RX as RazorpayX / Stripe Connect
+  participant RX as RazorpayX
   participant WH as Webhook (payout.processed / reversed)
 
   Cron->>DB: Acquire Redis lock, create placeholder Payout(PENDING)

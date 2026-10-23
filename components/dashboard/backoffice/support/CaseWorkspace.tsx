@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
+import { bookingHref } from "@/lib/backoffice/booking-href";
 import { caseStatus, ticketPriority } from "@/lib/labels/backoffice-labels";
 import { paymentStatusBadge } from "@/lib/labels/session-labels";
 import { parseCaseKey } from "@/lib/support/case-key";
@@ -49,7 +50,8 @@ import type {
 } from "@/types/support-case";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
-import { bookingHref, CaseDetails } from "./CaseDetails";
+import { CaseDetails } from "./CaseDetails";
+import { SupportInChatPill } from "./CaseChatPanel";
 import { CaseConversation, type ComposerMode } from "./CaseConversation";
 import { useCaseMutations } from "./useCaseMutations";
 
@@ -485,6 +487,9 @@ export function CaseWorkspace({
           {sla && <StatusBadge {...sla} variant="dot" />}
           {data.person.callbackRequested && (
             <StatusBadge label="Callback" tone="critical" />
+          )}
+          {can("supportChat.read") && (
+            <SupportInChatPill caseId={data.caseId} />
           )}
           {data.ackDueAt &&
             !data.sla?.ackBreached &&

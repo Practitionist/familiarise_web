@@ -18,7 +18,43 @@ import {
 import {
   accumulateByDeductee,
   buildSourceRows,
+  loadPaymentCodesBySection,
 } from "../../jobs/compliance/tds-26q-draft-export";
+
+// The seeded TdsRate rows: 194O ends at the IT Act 2025 cutover with no code.
+const mockSeededRates = [
+  {
+    section: "194O",
+    paymentCode: null,
+    effectiveFrom: new Date("2024-10-01T00:00:00+05:30"),
+  },
+  {
+    section: "393-8(v)",
+    paymentCode: "1035",
+    effectiveFrom: new Date("2026-04-01T00:00:00+05:30"),
+  },
+];
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    tdsRate: {
+      findMany: async ({
+        where,
+      }: {
+        where: { section: { in: string[] }; effectiveFrom: { lt: Date } };
+      }) =>
+        mockSeededRates
+          .filter(
+            (r) =>
+              where.section.in.includes(r.section) &&
+              r.effectiveFrom < where.effectiveFrom.lt,
+          )
+          .sort(
+            (a, b) => b.effectiveFrom.getTime() - a.effectiveFrom.getTime(),
+          ),
+    },
+  },
+}));
 
 describe("indianFyQuarterOf", () => {
   it("maps calendar months to IST fiscal quarters with the Apr-start FY label", () => {
@@ -331,3 +367,40 @@ describe("buildTdsReturnDraft", () => {
   });
 });
 
+describe("loadPaymentCodesBySection", () => {
+  const draftFor = async (financialYear: string, quarter: number) => {
+    const byDeductee = accumulateByDeductee([
+      {
+        consultantProfileId: "c1",
+        organizationId: null,
+        tdsSection: "194O",
+        tdsRateBps: 10,
+        cumulativeAmountCredited: 1_000_000,
+        tdsDeducted: 1_000,
+        isReversal: false,
+        reportedInForm26Q: false,
+        payout: { id: "po_1", amount: 1_000_000, status: "COMPLETED" },
+        orgPayout: null,
+      },
+    ]);
+    const codes = await loadPaymentCodesBySection(
+      ["194O"],
+      financialYear,
+      quarter,
+    );
+    const rows = buildSourceRows(byDeductee, new Map(), new Map(), codes);
+    return buildTdsReturnDraft(rows, financialYear, quarter);
+  };
+
+  it("finds the 393-8(v) code for a 194O record after the cutover, and the 194O row before it", async () => {
+    const fy2627 = await draftFor("2026-27", 2);
+    expect(fy2627.deductees[0]).toMatchObject({
+      tdsSection: "194O",
+      paymentCode: "1035",
+    });
+    expect(fy2627.warnings.join(" ")).not.toMatch(/payment code/);
+
+    const fy2526 = await draftFor("2025-26", 4);
+    expect(fy2526.deductees[0]?.paymentCode).toBeNull();
+  });
+});

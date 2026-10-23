@@ -235,6 +235,10 @@ export const AUDIT_ACTIONS = {
     // wrote a row, reaching in and watching one wrote nothing. `details.played`
     // distinguishes metadata-only (STAFF) from playback (ADMIN).
     STREAM_RECORDING_ACCESSED: "STREAM_RECORDING_ACCESSED",
+    // Platform staff opened a sponsored or hosted booking chat on a support case; no content or case ref.
+    SUPPORT_CHAT_REVIEWED: "SUPPORT_CHAT_REVIEWED",
+    // Familiarise Support joined a sponsored or hosted booking chat on a support case.
+    SUPPORT_CHAT_INTERVENTION: "SUPPORT_CHAT_INTERVENTION",
     // Emitted from GET /api/organizations/[orgId]/stream/calls when a
     // MANAGER+ exports the call/recording metadata (compliance pull).
     STREAM_CALLS_EXPORTED: "STREAM_CALLS_EXPORTED",

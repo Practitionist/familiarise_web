@@ -911,8 +911,9 @@ async function stepClawbackGap(ctx: StepCtx): Promise<void> {
       },
       select: {
         payoutId: true,
+        // The ORG_PAYABLE credit is the same in the CASH and ORG_RECEIVABLE shapes.
         entries: {
-          where: { direction: "DEBIT", account: { kind: "CASH" } },
+          where: { direction: "CREDIT", account: { kind: "ORG_PAYABLE" } },
           select: { amountPaise: true },
         },
       },
@@ -1084,7 +1085,7 @@ function inspectOverageEventLedgerState(
       flag("CHARGED member overage without a SUCCEEDED side-payment.");
     } else if (!hasTxn) {
       flag(
-        "CHARGED member overage but no overage:<sidePaymentId> ledger txn — ORG_PAYABLE was never credited.",
+        "CHARGED member overage but no overage:<sidePaymentId> ledger txn — the capture was never journaled.",
       );
     } else if (ev.payment.amount !== ev.marginalPaise) {
       flag("Side-payment amount diverges from the event's marginalPaise.");

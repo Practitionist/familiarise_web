@@ -19,6 +19,8 @@ export interface OverageSweepResult {
   success: boolean;
   scanned: number;
   failed: number;
+  /** Rows whose claim threw; each rolled back and stays PENDING for the next run. */
+  errored: number;
 }
 
 // #476 — locked at the core so the GH Actions entry (jobs/**) and the
@@ -80,7 +82,7 @@ async function sweepAbandonedOverageChargesUnlocked(
   });
 
   if (abandoned.length === 0) {
-    return { success: true, scanned: 0, failed: 0 };
+    return { success: true, scanned: 0, failed: 0, errored: 0 };
   }
 
   // Per-event tx: the PENDING→FAILED claim (CAS — a side-charge that paid
@@ -91,18 +93,30 @@ async function sweepAbandonedOverageChargesUnlocked(
   let failed = 0;
   let invoicedSkips = 0;
   const pendingRecords: Promise<void>[] = [];
+  const receivables: string[] = [];
+  const errors: Array<{ overageEventId: string; error: string }> = [];
   for (const a of abandoned) {
-    const outcome = await prisma.$transaction(async (tx) => {
-      const moved = await transitionOverage(tx, { id: a.id }, "FAILED", {
-        chargeFailureReason: `Payment not started within ${ageDays} days`,
+    let outcome: Awaited<ReturnType<typeof restoreOverageBaseCarve>> | null;
+    try {
+      outcome = await prisma.$transaction(async (tx) => {
+        const moved = await transitionOverage(tx, { id: a.id }, "FAILED", {
+          chargeFailureReason: `Payment not started within ${ageDays} days`,
+        });
+        if (moved === 0) return null;
+        // FAILing the side-charge means the member never pays basePaise — give
+        // it back to the org's parent accrual so the next rollup bills it.
+        return restoreOverageBaseCarve(tx, { overageEventId: a.id });
       });
-      if (moved === 0) return null;
-      // FAILing the side-charge means the member never pays basePaise — give
-      // it back to the org's parent accrual so the next rollup bills it.
-      return restoreOverageBaseCarve(tx, { overageEventId: a.id });
-    });
+    } catch (err) {
+      errors.push({
+        overageEventId: a.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      continue;
+    }
     if (outcome === null) continue;
     failed += 1;
+    if (outcome === "receivable") receivables.push(a.id);
     if (outcome === "invoiced") {
       // Parent already rolled onto an issued invoice with the carved (smaller)
       // base — the org was under-billed for this session. Needs a manual
@@ -143,6 +157,15 @@ async function sweepAbandonedOverageChargesUnlocked(
   if (pendingRecords.length > 0) {
     await Promise.all(pendingRecords);
   }
+  if (receivables.length > 0 || errors.length > 0) {
+    await recordSystemErrorSafe({
+      organizationId: null,
+      category: "OVERAGE",
+      summary: `sweep-abandoned-overage-charges: ${receivables.length} abandoned overage(s) booked as ORG_RECEIVABLE (wallet short of the base), ${errors.length} row(s) failed and stay PENDING`,
+      err: new Error("OVERAGE_SWEEP_RUN_NEEDS_FINANCE"),
+      context: { receivableOverageEventIds: receivables, errors },
+    });
+  }
 
   console.log(
     `🧹 Failed ${failed} abandoned CHARGE_MEMBER overage charge(s) — circuit-breaker ceiling freed` +
@@ -150,7 +173,12 @@ async function sweepAbandonedOverageChargesUnlocked(
         ? ` (${invoicedSkips} need manual billing adjustment — parent already invoiced)`
         : ""),
   );
-  return { success: true, scanned: abandoned.length, failed };
+  return {
+    success: true,
+    scanned: abandoned.length,
+    failed,
+    errored: errors.length,
+  };
 }
 
 export async function disconnectDatabase(): Promise<void> {

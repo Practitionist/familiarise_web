@@ -66,10 +66,9 @@ reloads the form. Capability flips require the version token; other fields
 accept it optionally for back-compatibility. Status transitions do not need
 version columns because they CAS on the status column itself.
 
-**Layer 4 — Redis locks for cron mutual exclusion only.** Every cron job
-entry is wrapped in `withCronLock` (`lib/cron/with-cron-lock.ts`, issue
-#476), which takes a `cron:lock:<jobName>` lock via the existing
-`acquireLock`/`releaseLock` helpers. Redis is never load-bearing for data
+**Layer 4 — a Postgres lease for cron mutual exclusion only.** Every cron job
+entry is wrapped in `withCronLock` (`lib/cron/with-cron-lock.ts`), which takes a
+`SystemJobExecution` lease row. Redis is never load-bearing for data
 correctness — that is what layers 1–3 and the unique constraints are for —
 it only prevents the wasteful and noisy double-runs that schedule overlap,
 `workflow_dispatch` re-runs, and the GitHub-Actions-plus-HTTP double entry

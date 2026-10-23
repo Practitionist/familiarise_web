@@ -54,6 +54,7 @@ const THREAD_TOPIC: Record<SupportThreadCategory, CaseTopic> = {
   QUALITY_COMPLAINT: "session",
   SPONSORSHIP_BILLING: "payments",
   ORG_ADMIN_DISPUTE: "organisation",
+  SAFETY_CONCERN: "session",
   OTHER: "other",
 };
 

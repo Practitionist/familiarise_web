@@ -70,7 +70,7 @@ The four sections below expand each row; §5 lists the crons, and §6 is the eve
 
 ## 1. GST (output tax on bookings and invoices)
 
-Every booking credits `GST_PAYABLE` with `Payment.taxAmount` (see [ledger and postings](../10-money-and-ledger/03-ledger-and-postings.md) §4.2), and a refund reverses the prorated GST share (§4.7). `GST_PAYABLE` is a platform liability — tax we have collected and owe to the government until it is remitted.
+Every booking credits `GST_PAYABLE` with `Payment.taxAmount` (see [ledger and postings](../../finance/20-ledger/04-postings.md) §4.2), and a refund reverses the prorated GST share (§4.7). `GST_PAYABLE` is a platform liability — tax we have collected and owe to the government until it is remitted.
 
 On the invoice side, `OrganizationInvoice` carries `igstPaise`, `cgstPaise`, `sgstPaise`, and `placeOfSupply`, derived by `deriveGstBreakdown()` (`lib/compliance/gst.ts`) from the place-of-supply comparison: an intra-state supply splits into CGST plus SGST, while an inter-state supply is a single IGST line. The organization's GST identity lives on the `OrganizationTaxInfo` carve-out (`gstin`, `gstStateCode`, `gstRegStatus`, `hsnDefault`), which #768 moved off the `Organization` God-Model.
 
@@ -98,11 +98,11 @@ It is worth stating precisely what the law does and does not demand. Rule 46(b) 
 
 > 🟡 **Gap:** The `lib/compliance/irp.ts` header says e-invoicing is mandatory "AATO > ₹5 Cr (since 2017-18)" and uses `>` rather than `≥`. The ₹5 crore mandate is since 1 August 2023 (2017-18 is only the AATO look-back base year), and the thresholds are inclusive. Cosmetic comment fix. (No issue filed yet.)
 
-**Authoritative:** [docs/compliance/03-gst-overview.md](../../compliance/03-gst-overview.md).
+**Authoritative:** [docs/finance/60-tax/02-gst-invoices-and-credit-notes.md](../../finance/60-tax/02-gst-invoices-and-credit-notes.md).
 
 ## 2. TDS (tax withheld at payout)
 
-Both payout flows withhold TDS with the posting `Dr *_PAYABLE (net+TDS) / Cr CASH (net) / Cr TDS_PAYABLE (withheld)` — consultant ([§4.4](../10-money-and-ledger/03-ledger-and-postings.md)) and host-org ([§4.5](../10-money-and-ledger/03-ledger-and-postings.md)). `OrganizationPayout` and `ConsultantPayout` persist `tdsSectionApplied`, `tdsAmountPaise`, and rate snapshots, and `TDSRecord` rows back the quarterly return. Computation is the pure `computeTdsForPayout` (`lib/compliance/tds.ts`, `DEFAULT_SECTION = "194O"`), with the consultant path's legacy ₹50K cumulative gate behind the `TDS_ENGINE` env flag (default `LEGACY` until the CA confirms pure 194-O semantics in writing — one env flip at launch). A refund- or chargeback-driven reversal writes both a signed-negative `isReversal` `TDSRecord` (the YTD/dedup source) and a `TdsAdjustment` row (the filing artifact the Form 140/144 export will read) via the shared `recordTdsReversal` (`lib/payments/tax/tds-service.ts`, #813/#778 §D). The TDS admin surface is gated behind `ENABLE_TDS_ADMIN_VIEW`.
+Both payout flows withhold TDS with the posting `Dr *_PAYABLE (net+TDS) / Cr CASH (net) / Cr TDS_PAYABLE (withheld)` — consultant ([§4.4](../../finance/20-ledger/04-postings.md)) and host-org ([§4.5](../../finance/20-ledger/04-postings.md)). `OrganizationPayout` and `ConsultantPayout` persist `tdsSectionApplied`, `tdsAmountPaise`, and rate snapshots, and `TDSRecord` rows back the quarterly return. Computation is the pure `computeTdsForPayout` (`lib/compliance/tds.ts`, `DEFAULT_SECTION = "194O"`), with the consultant path's legacy ₹50K cumulative gate behind the `TDS_ENGINE` env flag (default `LEGACY` until the CA confirms pure 194-O semantics in writing — one env flip at launch). A refund- or chargeback-driven reversal writes both a signed-negative `isReversal` `TDSRecord` (the YTD/dedup source) and a `TdsAdjustment` row (the filing artifact the Form 140/144 export will read) via the shared `recordTdsReversal` (`lib/payments/tax/tds-service.ts`, #813/#778 §D). The TDS admin surface is gated behind `ENABLE_TDS_ADMIN_VIEW`.
 
 ### The current rule — Income-tax Act 2025
 
@@ -124,7 +124,7 @@ When a payout is refunded after TDS has been withheld and deposited, the excess 
 
 > 🟡 **Gap (narrowed):** `TdsAdjustment` is now written on every reversal alongside the negative `TDSRecord` (#778 §D), so the filing artifact exists at event time; its `reportedInForm26Q` flag is a legacy label (the concept maps to Form 140 for FY 2026-27+). What stays deferred is the FVU/quarterly-return export — where the §393-code translation and Form 140/144/131 naming belong (#778 §F). The `194J` rate is a flat 10% and does not model the technical-2% versus professional-10% split that §393 now exposes as distinct payment codes; this is a pre-existing withholding nuance, not a 2025-Act regression. (Tracked under #778; FVU export has no separate issue.)
 
-**Authoritative:** [docs/compliance/02-tds-overview.md](../../compliance/02-tds-overview.md), [docs/compliance/05-tds-quarterly-filings.md](../../compliance/05-tds-quarterly-filings.md), [docs/compliance/06-refund-and-chargeback-tax-adjustments.md](../../compliance/06-refund-and-chargeback-tax-adjustments.md).
+**Authoritative:** [docs/finance/60-tax/03-tds-rules-and-returns.md](../../finance/60-tax/03-tds-rules-and-returns.md), [docs/finance/60-tax/03-tds-rules-and-returns.md](../../finance/60-tax/03-tds-rules-and-returns.md), [docs/finance/60-tax/02-gst-invoices-and-credit-notes.md](../../finance/60-tax/02-gst-invoices-and-credit-notes.md).
 
 ## 3. MSME (15/45-day payment clearance)
 
@@ -140,11 +140,11 @@ The revised Udyam thresholds (S.O. 1364(E), effective 1 April 2025) are Micro �
 
 - **Source (primary):** MSMED Act 2006 §§15/16 https://samadhaan.msme.gov.in/WriteReadData/DocumentFile/MSMED2006act.pdf; §43B(h) → §37(2)(g) mapping https://taxguru.in/income-tax/section-37-income-tax-act-2025-earlier-section-43b-income-tax-act-1961.html; Udyam thresholds S.O. 1364(E), 21 March 2025.
 
-> 🟥 **Divergence:** `docs/compliance/04-msme-43b-h.md` states that §43B(h) "carries forward unchanged into the Income-tax Act, 2025 under equivalent clause numbering." The _mechanics_ are unaffected, but the **clause number changed**: §43B(h) → **§37(2)(g)** (§43B as a whole → §37), confirmed across three sources. The "equivalent clause numbering" phrasing should be replaced with the explicit §37(2)(g) mapping. Doc 03 also references consultant fields `ConsultantProfile.isMsme` / `msmeRegistrationNumber` / `msmeType` that do not exist in the schema — the real fields are `msmeStatus`, `udyamNumber`, and `writtenAgreementWithFamiliarise`.
+> 🟥 **Divergence:** `docs/finance/60-tax/04-msme-statutory-exports-and-calendar.md` states that §43B(h) "carries forward unchanged into the Income-tax Act, 2025 under equivalent clause numbering." The _mechanics_ are unaffected, but the **clause number changed**: §43B(h) → **§37(2)(g)** (§43B as a whole → §37), confirmed across three sources. The "equivalent clause numbering" phrasing should be replaced with the explicit §37(2)(g) mapping. Doc 03 also references consultant fields `ConsultantProfile.isMsme` / `msmeRegistrationNumber` / `msmeType` that do not exist in the schema — the real fields are `msmeStatus`, `udyamNumber`, and `writtenAgreementWithFamiliarise`.
 
 > 🟡 **Gap:** `computeMsmePaymentDeadline` keys the deadline off `invoiceDate`, but §15 keys off acceptance / deemed acceptance. For rendered consulting services these effectively coincide (service rendered ≈ accepted), so invoice date is a defensible conservative proxy, but it is a proxy. The §16 interest is documented nowhere and not computed; the cron only alerts. Every "43B(h)" label in code and alert copy should be updated to read "43B(h) / §37(2)(g) (Income-tax Act 2025)" before the first filing covering a payment on or after 1 April 2026. (No issue filed yet.)
 
-**Authoritative:** [docs/compliance/04-msme-43b-h.md](../../compliance/04-msme-43b-h.md).
+**Authoritative:** [docs/finance/60-tax/04-msme-statutory-exports-and-calendar.md](../../finance/60-tax/04-msme-statutory-exports-and-calendar.md).
 
 ## 4. DPDP 2023 (consent, erasure, retention, breach)
 
@@ -162,13 +162,13 @@ The Digital Personal Data Protection Act 2023, with the **DPDP Rules 2025** noti
 
 **Breach (Rule 7).** `databreach-deadline-alerts` tracks a 72-hour clock off `DataBreach` rows.
 
-> 🟡 **Gap (breach is two-stage; the schema now models both, the cron one).** Rule 7 requires intimation _without delay_ to both the Board and the affected principals (with five content elements) on becoming aware, _plus_ a detailed report to the Board within 72 hours. The 72-hour clock attaches only to the Board's _detailed_ report. Since #781 §D the `DataBreach` model carries the principal leg too — `principalsNotifiedAt`, `principalNotificationChannel`, and `principalNotificationNote` alongside the Board-leg `reportedAt` — so both duties are now provable from the row. What remains open is operational: the `databreach-deadline-alerts` cron still tracks only the Board clock, and its email cites only "Section 8(6), DPDP Act" where the source is Act §8(6) + Rules 2025 Rule 7. (Tracked in `docs/compliance/09-dpdp-and-privacy.md`; live-impl PR to fix the cron.)
+> 🟡 **Gap (breach is two-stage; the schema now models both, the cron one).** Rule 7 requires intimation _without delay_ to both the Board and the affected principals (with five content elements) on becoming aware, _plus_ a detailed report to the Board within 72 hours. The 72-hour clock attaches only to the Board's _detailed_ report. Since #781 §D the `DataBreach` model carries the principal leg too — `principalsNotifiedAt`, `principalNotificationChannel`, and `principalNotificationNote` alongside the Board-leg `reportedAt` — so both duties are now provable from the row. What remains open is operational: the `databreach-deadline-alerts` cron still tracks only the Board clock, and its email cites only "Section 8(6), DPDP Act" where the source is Act §8(6) + Rules 2025 Rule 7. (Tracked in `docs/compliance/02-dpdp-and-privacy.md`; live-impl PR to fix the cron.)
 
 > 🟡 **Gap (SDF is not a numeric threshold).** The `lib/compliance/dpdp.ts` comment treats "≥ 5M active users" as the Significant-Data-Fiduciary trigger. SDF has **no** numeric trigger in law — it is a Government designation under Act §10 weighing volume, sensitivity, and risk, and Familiarise is an implausible designee at any near-term scale. Keep the `isSignificantDataFiduciary` flag as cheap optionality but label the "5M" as a heuristic. (No issue filed yet.)
 
 > 🟡 **Gap (self-serve consumer rights).** Per-data-principal self-serve access (`/api/me/*`) and correction endpoints are missing, and there is no published grievance officer or intake for the 90-day Rule 14(3) ceiling — the one hard statutory clock. The org-scoped export and admin-driven erasure cover the operator and tenant paths today. (Tracked under #701.)
 
-**Authoritative:** [docs/compliance/09-dpdp-and-privacy.md](../../compliance/09-dpdp-and-privacy.md).
+**Authoritative:** [docs/compliance/02-dpdp-and-privacy.md](../../compliance/02-dpdp-and-privacy.md).
 
 ### Compliance-domain entity map
 
@@ -251,18 +251,18 @@ Audit-log retention (7 years for INVOICE/PAYOUT/WALLET/CONTRACT/CONSENT categori
 
 The remaining statutory surfaces touch enterprise more lightly; each has its own owning compliance doc.
 
-| Topic                                     | Enterprise hook                                                                      | Authoritative                                                                                                                                                                                      |
-| ----------------------------------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| RBI PA / payment architecture             | wallet is a closed-system prepaid liability, not custody; payouts via provider float | [docs/compliance/11-rbi-pa-and-payment-architecture.md](../../compliance/11-rbi-pa-and-payment-architecture.md)                                                                                    |
-| Cross-border (Sec 195 → §393(2), 15CA/CB) | `OrganizationPayout.form15caPartCRef` / `form15cbRef` (schema-final, stubbed)        | [docs/compliance/08-cross-border-flows.md](../../compliance/08-cross-border-flows.md)                                                                                                              |
-| Consumer protection / grievance           | refund SLA, grievance officer (48h ack / one-month redress)                          | [docs/compliance/10-consumer-protection-and-grievance.md](../../compliance/10-consumer-protection-and-grievance.md)                                                                                |
-| Compliance calendar and roadmap           | recurring filing cadence                                                             | [docs/compliance/14-india-compliance-calendar.md](../../compliance/14-india-compliance-calendar.md), [docs/compliance/15-implementation-roadmap.md](../../compliance/15-implementation-roadmap.md) |
+| Topic                                     | Enterprise hook                                                                      | Authoritative                                                                                                       |
+| ----------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| RBI PA / payment architecture             | wallet is a closed-system prepaid liability, not custody; payouts via provider float | [docs/compliance/00-overview.md](../../compliance/00-overview.md#rbi-payment-aggregator-posture)                    |
+| Cross-border (Sec 195 → §393(2), 15CA/CB) | `OrganizationPayout.form15caPartCRef` / `form15cbRef` (schema-final, stubbed)        | [docs/finance/60-tax/01-tax-explainer.md](../../finance/60-tax/01-tax-explainer.md)                                 |
+| Consumer protection / grievance           | refund SLA, grievance officer (48h ack / one-month redress)                          | [docs/compliance/03-consumer-protection-and-grievance.md](../../compliance/03-consumer-protection-and-grievance.md) |
+| Compliance calendar                       | DPDP and consumer-protection deadlines                                               | [docs/compliance/05-india-compliance-calendar.md](../../compliance/05-india-compliance-calendar.md)                 |
 
 ---
 
 ### Related docs
 
-- [Payout pipeline](../10-money-and-ledger/07-payout-pipeline.md) — TDS and MSME fields in the payout flow.
-- [Invoicing](../10-money-and-ledger/08-invoicing.md) — GST breakdown and IRN.
-- [Ledger and postings](../10-money-and-ledger/03-ledger-and-postings.md) — `GST_PAYABLE` / `TDS_PAYABLE` legs.
+- [Payout pipeline](../../finance/40-payouts/05-org-payouts-and-clawbacks.md) — TDS and MSME fields in the payout flow.
+- [Invoicing](../../finance/50-b2b/04-invoices-purchase-orders-and-dunning.md) — GST breakdown and IRN.
+- [Ledger and postings](../../finance/20-ledger/04-postings.md) — `GST_PAYABLE` / `TDS_PAYABLE` legs.
 - [`../compliance/00-overview.md`](../../compliance/00-overview.md) — the compliance index (authoritative).

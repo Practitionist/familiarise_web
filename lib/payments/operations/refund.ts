@@ -88,7 +88,7 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 // Late-bound cycle: reversal-engine imports applyRefundCascade from here.
-import { postPayoutClawback } from "./reversal-engine";
+import { clawBackCompletedOrgPayout } from "./reversal-engine";
 import { retireSupersededPlaceholderTx } from "./refund-placeholder";
 import {
   accumulatePaidConsultantClawback,
@@ -124,6 +124,10 @@ import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
 import { refundReversalBasis } from "@/lib/payments/ledger/refund-reversal-basis";
+import {
+  overageCaptureCredits,
+  reverseOverageCapture,
+} from "@/lib/payments/ledger/overage-capture-reversal";
 // Late-bound cycle: refund-owed reaches refundPayment through booking-refund.
 import { stampRefundOwed, type RefundOwedMarker } from "./refund-owed";
 
@@ -1513,52 +1517,22 @@ export async function applyRefundCascade(
 
     // Clawback: if this earnings row was already rolled into a payout
     // and that payout is COMPLETED (bank wire left), record the
-    // clawback on the payout itself. Manual recovery only in v1.
+    // clawback on the payout itself; the next payout nets it.
     if (
       orgEarn.orgPayoutId &&
       orgEarn.orgPayout?.status === "COMPLETED" &&
       orgApplied > 0
     ) {
-      await tx.organizationPayout.update({
-        where: { id: orgEarn.orgPayoutId },
-        data: {
-          clawbackAmountPaise: { increment: orgApplied },
-          // Only stamp on the FIRST clawback — preserves the
-          // earliest-clawback timestamp across multiple partial
-          // refunds against the same payout.
-          clawbackInitiatedAt: orgEarn.orgPayout.clawbackInitiatedAt
-            ? undefined
-            : new Date(),
-        },
-      });
-
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId: orgEarn.organizationId,
-          actorMembershipId: null,
-          category: "PAYOUT",
-          action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
-          description: `Refund clawback initiated: ${orgApplied} paise from payout ${orgEarn.orgPayoutId}`,
-          details: {
-            paymentId: payment.id,
-            refundId: input.refundId,
-            orgEarningsId: orgEarn.id,
-            orgPayoutId: orgEarn.orgPayoutId,
-            amountPaise: input.amountPaise,
-            clawbackAmountPaise: orgApplied,
-            initiatedByUserId: input.initiatedByUserId ?? null,
-          } as Prisma.InputJsonValue,
-        },
-      });
-
-      // #1582 C-P1-02c — the counter above and this posting are one write; a
-      // failed post rolls the tx back (parity with #1740 M5) rather than
-      // leaving a LEDGER_DUAL_WRITE_GAP for the reconciler to find.
-      await postPayoutClawback(tx, {
-        refundId: input.refundId,
-        payoutId: orgEarn.orgPayoutId,
-        amountPaise: orgApplied,
+      await clawBackCompletedOrgPayout(tx, {
+        orgPayout: { ...orgEarn.orgPayout, id: orgEarn.orgPayoutId },
         organizationId: orgEarn.organizationId,
+        orgEarningsId: orgEarn.id,
+        paymentId: payment.id,
+        refundId: input.refundId,
+        grossPaise: orgApplied,
+        amountPaise: input.amountPaise,
+        label: "Refund clawback initiated",
+        initiatedByUserId: input.initiatedByUserId ?? null,
       });
 
       clawbackInitiated = true;
@@ -1805,18 +1779,10 @@ export async function applyRefundCascade(
           isPastGstCreditNoteCutoff(cutoffSourceDate, cascadeNow))
           ? 0
           : gstShare;
-      // #775 — a CHARGE_MEMBER side-payment refund: the member's capture
-      // credited ORG_PAYABLE (overage:<paymentId> txn), so refunding it must
-      // pull that relief credit BACK from the org — not bill the platform.
-      // Without this branch the side-payment has no earnings, the whole
-      // fundingTotal lands in platformPlug, and the org keeps money that
-      // belongs to the member.
+      // A member overage side-payment refund reverses the accounts its capture credited.
       const overageCapture = payment.parentPaymentId
-        ? await tx.ledgerTransaction.findUnique({
-            where: { idempotencyKey: `overage:${payment.id}` },
-            select: { id: true },
-          })
-        : null;
+        ? await overageCaptureCredits(tx, payment.id)
+        : [];
       // #776 — PLATFORM_FEE is the residual: on a full refund it equals the
       // booking's fee exactly; on a partial refund it absorbs the ≤3-paise
       // floor remainder of the other shares (the platform absorbs rounding).
@@ -1826,16 +1792,16 @@ export async function applyRefundCascade(
       const platformPlug = fundingTotal - consRev - orgRev - gstRev;
       const debits: Posting[] = [];
       if (platformPlug > 0) {
-        if (overageCapture && orgId) {
-          // The org was credited net of GST; GST kept past the cutoff is the platform's to bear.
+        if (overageCapture.length > 0) {
+          // GST kept past the cutoff is the platform's to bear.
           const absorbedGst = Math.min(platformPlug, gstShare - gstRev);
-          if (platformPlug - absorbedGst > 0) {
-            debits.push({
-              account: { kind: "ORG_PAYABLE", organizationId: orgId },
-              direction: "DEBIT",
-              amountPaise: platformPlug - absorbedGst,
-            });
-          }
+          debits.push(
+            ...reverseOverageCapture(
+              overageCapture,
+              platformPlug - absorbedGst,
+              completesFullRefund,
+            ),
+          );
           if (absorbedGst > 0) {
             debits.push({
               account: { kind: "PLATFORM_FEE" },

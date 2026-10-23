@@ -1,165 +1,132 @@
 ---
 title: Chart of accounts
-band: 10-money-and-ledger
-audience: sde2
+type: reference
+audience: engineers and finance operators reading ledger balances
 status: live
-last-reviewed: 2026-06-05
+last-reviewed: 2026-10-23
 ---
 
 # Chart of accounts
 
-**What this covers:** the sixteen `LedgerAccountKind` buckets every posting touches, which side each is _normal_ on (so you can read a balance correctly), and how an account is scoped + addressed deterministically. This is the vocabulary the [postings doc](../../enterprise/10-money-and-ledger/03-ledger-and-postings.md) speaks.
+Sixteen `LedgerAccountKind` values are the buckets every posting touches. This page lists each one with its normal side, its scope, what it means and who writes to it, then explains how an account is addressed and how to read a balance. The postings that use these accounts are in [postings](04-postings.md).
 
-> **Reading a balance.** `ledgerBalancePaise()` returns the **signed** balance `Σ(DEBIT) − Σ(CREDIT)` in paise. For a **debit-normal** account that number is the balance as-is. For a **credit-normal** account (every liability and revenue), the meaningful figure — _the amount we owe / the revenue we booked_ — is the **negative** of it. That single sign flip is why callers must know an account's normal side.
+## 1. Reading a balance
 
----
+`ledgerBalancePaise` returns the signed balance `Σ DEBIT − Σ CREDIT` in paise. For a debit-normal account, which is every asset, expense and contra-revenue account, that figure is the balance as is. For a credit-normal account, which is every liability and revenue account, the meaningful figure is the negative of it: the amount owed, or the revenue booked. Callers must therefore know an account's normal side.
 
-## 1. The sixteen accounts
-
-```mermaid
-classDiagram
-  class Assets_DebitNormal {
-    CASH  — settled bank cash (RazorpayX payouts leave from here)
-    GATEWAY_CLEARING  — Razorpay PG money captured and not yet settled to CASH
-    GST_INPUT_CREDIT  — GST Razorpay charges on its fee, claimable as input credit
-    ORG_RECEIVABLE  — an INVOICE-funded org owes us (accrued at booking, cleared on payment)
-    CONSULTANT_RECEIVABLE  — a consultant owes us cash we already disbursed and cannot pull back (a lost dispute or chargeback on an already-PAID earning)
-  }
-  class Liabilities_CreditNormal {
-    WALLET  — prepaid balance we owe an org
-    CONSULTANT_PAYABLE  — owed to a consultant
-    ORG_PAYABLE  — owed to a host org
-    TDS_PAYABLE  — tax withheld, owed to the government
-    GST_PAYABLE  — tax collected, owed to the government
-    UNAPPLIED_RECEIPTS  — a capture staged for auto-refund, owed back to the payer
-    REFERRAL_CREDIT_LIABILITY  — vested, unredeemed referral credit owed as a future discount
-  }
-  class Revenue_CreditNormal {
-    PLATFORM_FEE  — platform's take
-  }
-  class ContraRevenue_DebitNormal {
-    PLATFORM_PROMO  — platform-funded grants / comps / referral credits
-    DISCOUNT  — discount given to the buyer
-  }
-  class Expense_DebitNormal {
-    GATEWAY_FEE  — the gateway's fee net of its GST
-  }
+```prisma
+enum LedgerAccountKind {
+  CASH // platform gateway/settlement cash
+  WALLET // an org's prepaid balance (a liability we owe the org)
+  PLATFORM_FEE // platform revenue
+  PLATFORM_PROMO // contra-revenue: platform-funded grants/comps + referral credits
+  REFERRAL_CREDIT_LIABILITY // vested, unredeemed referral credit owed as future discount
+  DISCOUNT // contra-revenue: discount given to the buyer (booking posting)
+  CONSULTANT_PAYABLE // owed to a consultant
+  ORG_PAYABLE // owed to a host org
+  ORG_RECEIVABLE // an INVOICE-funded org owes us (accrued, cleared on invoice payment)
+  CONSULTANT_RECEIVABLE // clawback owed BY a consultant (no inbound recovery path)
+  TDS_PAYABLE // TDS withheld, owed to the government
+  GST_PAYABLE // GST collected, owed to the government
+  UNAPPLIED_RECEIPTS // a capture staged for auto-refund, owed back to the payer
+  GATEWAY_CLEARING // PG captures the gateway holds for us until it settles them to CASH
+  GATEWAY_FEE // expense: the gateway's fee net of its GST
+  GST_INPUT_CREDIT // asset: GST charged on the gateway fee, claimable as input tax credit
+}
 ```
 
-| Kind                        | Class          | Normal side | Scope      | Means                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| --------------------------- | -------------- | ----------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `CASH`                      | asset          | DEBIT       | platform   | settled bank cash: a Razorpay settlement (`settlement:<setl_id>`), a bank-transfer invoice receipt (`invoicereceipt:<receiptId>`); RazorpayX payouts leave from here                                                                                                                                                                                                                                                                                                                                              |
-| `GATEWAY_CLEARING`          | asset          | DEBIT       | platform   | Razorpay PG money captured and not yet settled; every capture, top-up, card invoice payment, refund and chargeback moves it through `gatewayCashAccount()`                                                                                                                                                                                                                                                                                                                                                        |
-| `GATEWAY_FEE`               | expense        | DEBIT       | platform   | the gateway's fee net of GST, booked in its own `gatewayfee:<pay_id>` journal                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `GST_INPUT_CREDIT`          | asset          | DEBIT       | platform   | GST Razorpay charges on its fee, claimable against output GST                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `REFERRAL_CREDIT_LIABILITY` | liability      | CREDIT      | platform   | vested, unredeemed referral credit owed as a future discount                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `ORG_RECEIVABLE`            | asset          | DEBIT       | org        | an INVOICE-funded org owes us; accrued at booking, cleared on invoice payment                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `WALLET`                    | liability      | CREDIT      | org        | prepaid balance we owe the org (an IOU)                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `CONSULTANT_PAYABLE`        | liability      | CREDIT      | consultant | earnings owed to a consultant, not yet paid out                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `CONSULTANT_RECEIVABLE`     | asset          | DEBIT       | consultant | clawback owed BY a consultant after a lost dispute on an already-paid earning, posted `Dr CONSULTANT_RECEIVABLE / Cr CONSULTANT_PAYABLE`: it reclassifies the debit the chargeback reversal left on the payable and never touches revenue. B2C only (an org-funded chargeback is borne by the org). Tracked alongside `ConsultantPayout.clawbackAmountPaise` and recovered from the consultant's next payout (`Dr CONSULTANT_PAYABLE / Cr CONSULTANT_RECEIVABLE`, key `clawback-recovery:<payoutId>`). Net of TDS |
-| `ORG_PAYABLE`               | liability      | CREDIT      | org        | host-org share owed, not yet paid out                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `TDS_PAYABLE`               | liability      | CREDIT      | platform   | TDS withheld at payout, owed to the government                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `GST_PAYABLE`               | liability      | CREDIT      | platform   | GST collected on a booking, owed to the government                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `UNAPPLIED_RECEIPTS`        | liability      | CREDIT      | platform   | cash from a capture that funds no booking and is staged for auto-refund, posted `Dr GATEWAY_CLEARING / Cr UNAPPLIED_RECEIPTS` under `unapplied:<paymentId>` and cleared by the refund's `Dr UNAPPLIED_RECEIPTS / Cr GATEWAY_CLEARING`                                                                                                                                                                                                                                                                             |
-| `PLATFORM_FEE`              | revenue        | CREDIT      | platform   | the platform's recognized take                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `PLATFORM_PROMO`            | contra-revenue | DEBIT       | platform   | platform-funded credits/comps + referral credits the platform eats                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `DISCOUNT`                  | contra-revenue | DEBIT       | platform   | discount given to the buyer (reduces recognized revenue)                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+## 2. The sixteen accounts
 
-`LedgerAccountKind` and `LedgerDirection` (`DEBIT` / `CREDIT`) are enums in `prisma/schema.prisma`. The class list above mirrors all 16 `LedgerAccountKind` values in `prisma/schema.prisma` (`CASH`, `WALLET`, `PLATFORM_FEE`, `PLATFORM_PROMO`, `REFERRAL_CREDIT_LIABILITY`, `DISCOUNT`, `CONSULTANT_PAYABLE`, `ORG_PAYABLE`, `ORG_RECEIVABLE`, `CONSULTANT_RECEIVABLE`, `TDS_PAYABLE`, `GST_PAYABLE`, `UNAPPLIED_RECEIPTS`, `GATEWAY_CLEARING`, `GATEWAY_FEE`, `GST_INPUT_CREDIT`). The money flow diagram below shows the card path with the gateway-clearing account folded into `CASH` for readability; in the books a card capture sits in `GATEWAY_CLEARING` until the daily settlement journal moves the net to `CASH`.
+| Kind                        | Class          | Normal | Scope      | Means                                                                              | Written by                                                                                                                                                                                  |
+| --------------------------- | -------------- | ------ | ---------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GATEWAY_CLEARING`          | asset          | DEBIT  | platform   | Card money Razorpay holds for the platform and has not yet settled                 | Every capture, wallet top-up, card invoice payment, gateway refund and chargeback, through `gatewayCashAccount()`                                                                           |
+| `CASH`                      | asset          | DEBIT  | platform   | Settled bank cash                                                                  | The settlement job (`settlement:<id>`), bank-transfer invoice receipts, payouts (credit)                                                                                                    |
+| `GATEWAY_FEE`               | expense        | DEBIT  | platform   | The gateway's fee net of its GST                                                   | `postGatewayFee`, key `gatewayfee:<pay_id>`                                                                                                                                                 |
+| `GST_INPUT_CREDIT`          | asset          | DEBIT  | platform   | GST Razorpay charges on its fee, claimable as input credit                         | `postGatewayFee`                                                                                                                                                                            |
+| `ORG_RECEIVABLE`            | asset          | DEBIT  | org        | An organisation owes the platform: invoice-funded usage, or a host payout clawback | Booking (`INVOICE_ACCRUAL` legs), invoice issue, overage accrual, top-up refund shortfall, payout clawback (`clawback:`), invoice payment, top-up settlement and clawback recovery (credit) |
+| `CONSULTANT_RECEIVABLE`     | asset          | DEBIT  | consultant | Cash already paid out that a refund or lost dispute now takes back                 | Clawback of a paid earning, key `clawback:<driver>:<payoutId>`; recovered from the next payout                                                                                              |
+| `PLATFORM_PROMO`            | contra-revenue | DEBIT  | platform   | Platform-funded referral credit and operator wallet credits                        | Booking (the `REFERRAL_CREDIT` leg), referral moves, `adjustWallet`                                                                                                                         |
+| `DISCOUNT`                  | contra-revenue | DEBIT  | platform   | Discount the platform funded for the buyer                                         | Booking (the gap between list price plus tax and funding), overage carve moves, refund (credit)                                                                                             |
+| `WALLET`                    | liability      | CREDIT | org        | Prepaid balance the platform owes an organisation                                  | Top-up, wallet-funded booking (debit), refunds, `adjustWallet`, top-up refund                                                                                                               |
+| `CONSULTANT_PAYABLE`        | liability      | CREDIT | consultant | Earnings owed to a consultant and not yet paid                                     | Booking (credit), payout and refund (debit), clawback                                                                                                                                       |
+| `ORG_PAYABLE`               | liability      | CREDIT | org        | Host-organisation share owed                                                       | Booking (credit), organisation payout and refund (debit)                                                                                                                                    |
+| `TDS_PAYABLE`               | liability      | CREDIT | platform   | Tax withheld at payout and owed to the government                                  | Payout completion (credit) and its reversal                                                                                                                                                 |
+| `GST_PAYABLE`               | liability      | CREDIT | platform   | GST collected, owed to the government                                              | Booking and invoice issue (credit), refund (debit)                                                                                                                                          |
+| `UNAPPLIED_RECEIPTS`        | liability      | CREDIT | platform   | A capture that funds no booking, owed back to the payer                            | `postUnappliedReceipt` (credit), the refund that returns it (debit)                                                                                                                         |
+| `REFERRAL_CREDIT_LIABILITY` | liability      | CREDIT | platform   | Vested, unredeemed referral credit owed as a future discount                       | Referral vest, redemption, restore, breakage, ops issue and reverse                                                                                                                         |
+| `PLATFORM_FEE`              | revenue        | CREDIT | platform   | The platform's recognised take                                                     | Booking, invoice issue and overage surcharge (credit); refund plug (debit)                                                                                                                  |
 
-### Who owes whom — the account map as obligations
-
-The class list says _what side_ each account is normal on; this says _which direction the money obligation points_. Read an arrow as "owes / will pay": the platform's `CASH` sits in the middle, money comes in from buyers and goes out to sellers and the government.
+`CONSULTANT_RECEIVABLE` is described by its schema comment as having no inbound recovery path, but the code recovers it from the consultant's next payout (`Dr CONSULTANT_PAYABLE / Cr CONSULTANT_RECEIVABLE`, key `clawback-recovery:<payoutId>`, `recoverClawbackOnPayout`). See [organisation payouts and clawbacks](../40-payouts/05-org-payouts-and-clawbacks.md).
 
 ```mermaid
 flowchart LR
-  subgraph BUY["Buyers (money in)"]
-    ORGW["org WALLET<br/>(we owe the org — Cr)"]
-    ORGR["org ORG_RECEIVABLE<br/>(org owes us — Dr)"]
-    CONSR["consultant CONSULTANT_RECEIVABLE<br/>(consultant owes us — Dr)"]
-    CARDIN["learner card"]
+  subgraph IN["Money in"]
+    CARD["learner card"] --> GC["GATEWAY_CLEARING<br/>asset"]
+    ORGW["WALLET<br/>liability, org"]
+    ORGR["ORG_RECEIVABLE<br/>asset, org"]
   end
-  CASH(["CASH (platform)<br/>Dr-normal asset"])
-  subgraph EARN["What a booking recognizes"]
-    FEE["PLATFORM_FEE<br/>(revenue — Cr)"]
-    PROMO["PLATFORM_PROMO / DISCOUNT<br/>(contra-revenue — Dr)"]
+  GC -->|"settlement job"| CASH["CASH<br/>asset"]
+  subgraph REC["What a booking recognises"]
+    FEE["PLATFORM_FEE<br/>revenue"]
+    CONTRA["PLATFORM_PROMO and DISCOUNT<br/>contra-revenue"]
   end
-  subgraph SELL["Sellers + govt (money out)"]
-    CP["CONSULTANT_PAYABLE<br/>(we owe a consultant — Cr)"]
-    OP["ORG_PAYABLE<br/>(we owe a host org — Cr)"]
-    TDS["TDS_PAYABLE<br/>(owed to govt — Cr)"]
-    GST["GST_PAYABLE<br/>(owed to govt — Cr)"]
+  subgraph OUT["Owed out"]
+    CP["CONSULTANT_PAYABLE"]
+    OP["ORG_PAYABLE"]
+    GST["GST_PAYABLE"]
+    TDS["TDS_PAYABLE"]
   end
-
-  CARDIN -->|"top-up / booking"| CASH
-  ORGW -.->|"booking debits the IOU"| CASH
-  ORGR -->|"invoice paid clears it"| CASH
-  CASH -->|"booking books revenue"| FEE
-  PROMO -.->|"reduces recognized revenue"| FEE
+  GC --> FEE
+  ORGW --> FEE
+  ORGR --> FEE
+  CONTRA -.->|"reduce recognised revenue"| FEE
   CASH -->|"payout"| CP
   CASH -->|"payout"| OP
   CASH -->|"withheld at payout"| TDS
-  CASH -->|"collected at booking"| GST
 ```
 
-Every liability/revenue box is **credit-normal** (the meaningful figure is the _negative_ of the signed balance — what we owe / booked); the three asset boxes (`CASH`, `ORG_RECEIVABLE`, `CONSULTANT_RECEIVABLE`) and the two contra-revenue boxes (`PLATFORM_PROMO`, `DISCOUNT`) are **debit-normal**. That split is exactly the sign-flip rule in the callout above.
+The arrows show where obligation points, not individual postings. Each liability and revenue box is credit-normal, and each asset and contra-revenue box is debit-normal.
 
----
+## 3. Scope and addressing
 
-## 2. Scope: platform / org / consultant sub-ledgers
-
-An account is **scoped** by who it belongs to:
-
-- **Platform-wide** (both owners null): `CASH`, `GATEWAY_CLEARING`, `GATEWAY_FEE`, `GST_INPUT_CREDIT`, `PLATFORM_FEE`, `PLATFORM_PROMO`, `DISCOUNT`, `TDS_PAYABLE`, `GST_PAYABLE`, `UNAPPLIED_RECEIPTS`. One account per kind per currency.
-- **Org-scoped** (`organizationId` set): `WALLET`, `ORG_PAYABLE`, `ORG_RECEIVABLE`. One per org per kind.
-- **Consultant-scoped** (`consultantProfileId` set): `CONSULTANT_PAYABLE`, `CONSULTANT_RECEIVABLE`. One per consultant per kind.
-
-So "what do we owe **LearnPro Academy**?" is `-balance(ORG_PAYABLE, organizationId=learnpro-academy)`, and "what does **IIT Madras** hold in its wallet?" is `-balance(WALLET, organizationId=iit-madras)` — for the seeded ₹14,75,000 pool, that returns `1475000_00` paise until the first booking debits it. **Wipro**, being INVOICE-funded, has no `WALLET` account at all; its booking obligation lives on `ORG_RECEIVABLE|wipro|_|INR` (org owes us) rather than a wallet IOU. Similarly, when a lost dispute claws back an already-disbursed B2C consultant payout, the net receivable is tracked on `CONSULTANT_RECEIVABLE|_|<consultantProfileId>|INR`.
-
----
-
-## 3. Deterministic account ids
-
-Accounts aren't looked up by a generated UUID; their id **is** their scope, joined by `|`:
+An account belongs to the platform, an organisation or a consultant, and its id is its scope.
 
 ```
-<kind>|<organizationId | "_">|<consultantProfileId | "_">|<currency>
+<kind>|<organizationId or _>|<consultantProfileId or _>|<currency>
 ```
 
-Examples:
+- **Platform-wide** (both owners `_`): `CASH`, `GATEWAY_CLEARING`, `GATEWAY_FEE`, `GST_INPUT_CREDIT`, `PLATFORM_FEE`, `PLATFORM_PROMO`, `DISCOUNT`, `TDS_PAYABLE`, `GST_PAYABLE`, `UNAPPLIED_RECEIPTS`, `REFERRAL_CREDIT_LIABILITY`.
+- **Organisation-scoped**: `WALLET`, `ORG_PAYABLE`, `ORG_RECEIVABLE`.
+- **Consultant-scoped**: `CONSULTANT_PAYABLE`, `CONSULTANT_RECEIVABLE`.
 
-- `CASH|_|_|INR` — the platform cash account.
-- `WALLET|org_abc|_|INR` — org `org_abc`'s wallet.
-- `CONSULTANT_PAYABLE|_|cp_xyz|INR` — what we owe consultant `cp_xyz`.
-- `CONSULTANT_RECEIVABLE|_|cp_xyz|INR` — clawback owed to us by consultant `cp_xyz` (net of TDS).
+Examples: `CASH|_|_|INR`, `WALLET|<org id>|_|INR`, `CONSULTANT_PAYABLE|_|<consultantProfileId>|INR`. `ledgerAccountId` in `lib/payments/ledger/post.ts` builds the string, and `resolveAccountId` upserts on it, so two concurrent first postings to one scope converge on one row. A composite unique index on the owner columns, kind and currency exists too, but Postgres treats `NULL` owners as distinct in a unique index, so the literal `_` inside the primary key is the guard that actually dedupes. The `ledger_account_currency_inr` CHECK rejects any account whose currency is not INR.
 
-This is `ledgerAccountId(ref)` in `lib/payments/ledger/post.ts`. Two reasons it's deterministic rather than a UUID:
+The schema comment on `LedgerAccount.id` still says `membershipId`; the third segment is `consultantProfileId`.
 
-1. **Upsert-dedupe under concurrency.** `resolveAccountId()` does `upsert({ where: { id } })`, so two concurrent postings to the same scope converge on one row with no race.
-2. **It sidesteps the Postgres nullable-unique gotcha.** A `@@unique([organizationId, consultantProfileId, kind, currency])` index would _not_ dedupe rows where the owner columns are `NULL` (Postgres treats `NULL`s as distinct in unique indexes). Encoding the nulls as the literal `"_"` inside a single string primary key makes the dedupe exact. The composite unique still exists as a backstop, but the deterministic id is the working guard.
+## Worked example
 
----
+LearnPro Academy is a host organisation on the 10/10/80 default rate card (1,000 bps platform, 1,000 bps organisation, 8,000 bps consultant). A learner pays by card for Aarav Anderson's session, listed at ₹10,000 (1,000,000 paise), plus 18 % GST of ₹1,800 (180,000 paise): the card is charged ₹11,800 (1,180,000 paise). Aarav is paid by himself (`payoutRecipient = SELF`), so the split is the card's: 100,000 platform, 800,000 consultant, and the remainder 100,000 to the organisation. Once the capture is confirmed, the booking posts `booking:<paymentId>`:
 
-### Design decision: the id _is_ the scope
+| Account                            | Direction |     Paise |     Rupees |
+| ---------------------------------- | --------- | --------: | ---------: |
+| `GATEWAY_CLEARING`                 | DEBIT     | 1,180,000 | ₹11,800.00 |
+| `PLATFORM_FEE`                     | CREDIT    |   100,000 |  ₹1,000.00 |
+| `CONSULTANT_PAYABLE` (Aarav)       | CREDIT    |   800,000 |  ₹8,000.00 |
+| `ORG_PAYABLE` (`learnpro-academy`) | CREDIT    |   100,000 |  ₹1,000.00 |
+| `GST_PAYABLE`                      | CREDIT    |   180,000 |  ₹1,800.00 |
 
-The deterministic id (`<kind>|<org|_>|<consultant|_>|<currency>`) is a deliberate rejection of a generated UUID PK. Two forces drove it, both documented in `post.ts`:
+Debits 1,180,000 equal credits 1,180,000. Had Aarav been a salaried expert (`payoutRecipient = ORGANIZATION`), the organisation would take the consultant slice as well, `CONSULTANT_PAYABLE` would be absent, and `ORG_PAYABLE` would be 900,000. When the weekly organisation payout runs, `ORG_PAYABLE` is debited against `CASH` and `TDS_PAYABLE`; after Aarav's own payout and the organisation's, both payables return to zero and `PLATFORM_FEE` carries the recognised ₹1,000. Elsewhere, the wallet of IIT Madras is `WALLET|iit-madras|_|INR`, a credit-normal balance whose negative is the spending power the platform owes it, while Wipro, being invoice-funded, has no wallet at all and its obligation sits in `ORG_RECEIVABLE|wipro|_|INR`.
 
-- **Upsert-dedupe over a separate "find-or-create".** With a UUID PK, two concurrent first-postings to the same scope would each `findFirst` (miss) then `create` (one wins, one hits a unique violation or — worse, without the composite unique — duplicates the account). A scope-derived id makes `upsert({ where: { id } })` converge with no race.
-- **The Postgres nullable-unique gotcha.** A platform account has `organizationId = NULL` and `consultantProfileId = NULL`. A `@@unique([organizationId, consultantProfileId, kind, currency])` index does **not** dedupe two such rows, because Postgres treats each `NULL` as distinct. Encoding the nulls as the literal `"_"` inside the id string makes the dedupe exact. The composite unique stays as a backstop; the id is the working guard.
+## Where in code
 
-> **The id embeds currency for a reason — and that reason is #783.** Because `<currency>` is the last id segment, keying a posting by `displayCurrencyAtCheckout` instead of leaving it unset (→ `INR`) would mint a _different_ account (`WALLET|iit-madras|_|USD`) and silently split the org's wallet across two ids — breaking receivable/payable clearing. The ledger is INR-denominated (Razorpay settles INR; `amountPaise` is INR paise; no FX before posting), so every posting leaves `currency` unset. The `ledger_account_currency_inr` CHECK in `prisma/sql/check-constraints.sql` is the standing guard: Postgres rejects a non-INR `LedgerAccount` at write time. See [ledger & postings §5.5](../../enterprise/10-money-and-ledger/03-ledger-and-postings.md).
+- `prisma/schema.prisma`: `LedgerAccountKind`, `LedgerDirection`, `LedgerAccount`.
+- `lib/payments/ledger/post.ts`: `AccountRef`, `ledgerAccountId`, `ledgerBalancePaise`.
+- `lib/payments/ledger/gateway-account.ts`: `gatewayCashAccount`.
 
-## 4. How the accounts net out (sanity check)
+## Related
 
-After a booking fully settles and the consultant + org are paid, the platform's books should show: `CASH` holding the platform's net take + taxes-not-yet-remitted, `PLATFORM_FEE` revenue recognized (less `DISCOUNT`/`PLATFORM_PROMO` contra), the `*_PAYABLE` liabilities drawn back to zero as payouts clear, and `TDS_PAYABLE`/`GST_PAYABLE` carrying what's owed to the government until remitted. Because every transaction balanced on the way in, the whole set always ties to zero net equity movement except recognized revenue — which is the point of double entry.
+- [Double-entry model](01-double-entry-model.md), [postings](04-postings.md), [gateway clearing](05-gateway-clearing-and-settlement.md), [integrity and reconciliation](06-integrity-and-reconciliation.md).
 
-**Worked, with LearnPro's 10/10/80 card.** A ₹10,000 (1,000,000 paise) booking hosted by LearnPro, paid by a learner's card, intra-state GST 18% on the platform fee region: the booking posts `Dr GATEWAY_CLEARING 1,000,000` (the daily settlement journal later moves the net to `CASH`) against `Cr PLATFORM_FEE 100,000` (10%) + `Cr ORG_PAYABLE(learnpro) 800,000` (80%) + `Cr CONSULTANT_PAYABLE 0` (the expert settles to the org) + `Cr GST_PAYABLE` on the fee. When the weekly `ORG_PAYOUT` runs, `Dr ORG_PAYABLE(learnpro) 800,000` clears against `Cr CASH` (net) + `Cr TDS_PAYABLE` (194-O withholding). After both, `ORG_PAYABLE(learnpro)` is back to zero, `PLATFORM_FEE` carries the recognized ₹1,000, and `CASH` holds the platform's take plus the not-yet-remitted taxes — the books tie out because each leg balanced on the way in.
+## Deprecated & Superseded Approaches
 
----
-
-### Related docs
-
-- [Money model overview](01-double-entry-model.md) — why derived, why integer paise.
-- [Ledger & postings](../../enterprise/10-money-and-ledger/03-ledger-and-postings.md) — the exact legs each flow posts to these accounts.
-- [Ledger integrity](06-integrity-and-reconciliation.md) — the reconciler that re-sums these accounts.
-- Ground truth: `lib/payments/ledger/post.ts` (`ledgerAccountId`, `AccountRef`), `prisma/schema.prisma` (`LedgerAccountKind`, `LedgerDirection`, `LedgerAccount`).
+Older chart documents debited `CASH` for every card capture and top-up. Card money now sits in `GATEWAY_CLEARING` until a settlement journal moves its net to `CASH`, and RazorpayX payouts and bank-transfer receipts are the flows that still use `CASH` directly; delete any posting or doc that debits `CASH` on a capture. An earlier worked example showed LearnPro entries of 10, 10 and 80 that did not balance; the rate card is 1,000, 1,000 and 8,000 bps. A schema comment calls the third id segment `membershipId`, and a code comment on `CONSULTANT_RECEIVABLE` says it has no recovery path; both are stale.

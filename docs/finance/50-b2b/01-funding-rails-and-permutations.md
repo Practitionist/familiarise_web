@@ -1,189 +1,124 @@
-# B2C ↔ B2B Funding Seam
-
-> How org money flows through a consumer-facing checkout, how the three org linkage fields on `Payment` divide responsibility, and where the seam becomes visible in refunds and ledger attribution.
-
+---
+title: Funding rails and permutations
+type: explanation
+band: 50-b2b
+audience: sde3
+status: live
+last-reviewed: 2026-10-23
 ---
 
-## Three Org Linkage Fields on Payment
+# Funding rails and permutations
 
-Every `Payment` row can carry up to three org-scoped fields set at checkout time (`lib/payments/checkout/`):
+A consumer booking and an organisation-sponsored booking go through the same checkout, the same confirmation writer and the same ledger. They differ in one thing: which rail pays. This page explains the four rails, the fields on a `Payment` that record whose money moved, the gates checkout applies before an organisation may sponsor a booking, and how the engine treats every combination of rail, programme type and overage behaviour. The wallet, the overage engine, and the invoice machinery each have their own page; this one is the map between them. The booking-side view of the same rail is [org-funded checkout](../../booking/17-org-funded-checkout.md).
 
-| Field                    | Type      | On-delete | Purpose                                                                                                                                                                                                                                 |
-| ------------------------ | --------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `organizationId`         | `String?` | `SetNull` | Reporting tag. Answers "which org's member made this booking?" Used by analytics, audit feeds, and the `INVOICE_REFUNDED` audit row (Step 8 of refund cascade). Can be NULL even when org money moved — see §invisible path below.      |
-| `billingAccountId`       | `String?` | `SetNull` | Settlement pointer. Identifies whose `BillingAccount` is charged (wallet debit or invoice accrual). Non-null for `WALLET`/`INVOICE`/`LICENSE` checkouts. `BillingAccount.ownerOrgId` is the definitive wallet owner.                    |
-| `billableToOrgInvoiceId` | `String?` | `SetNull` | Billing rollup. Stamped by the monthly settle-accruals job (`jobs/billing/settle-invoice-accruals.ts`) when this payment's `INVOICE_ACCRUAL` leg is rolled into an `OrganizationInvoice`. `null` = still pending in the current period. |
+## The four rails
 
-Schema source: `prisma/schema.prisma:4136–4242` (`model Payment`).
+An organisation's rail is `BillingAccount.fundingSource` (enum `FundingSource`). Checkout reads it in `resolveOrgFunding` (`lib/payments/checkout/org-funding.ts`), defaulting to `PERSONAL` when the organisation has no billing account.
 
----
+| Rail       | Who pays, and when                                                                      | Gateway call                     | `Payment.paymentMethod` | Synthetic intent              | Funding leg          |
+| ---------- | --------------------------------------------------------------------------------------- | -------------------------------- | ----------------------- | ----------------------------- | -------------------- |
+| `PERSONAL` | The learner's own card at checkout; the organisation is a reporting tag only.           | Yes, the ordinary two-phase flow | `CARD`                  | `order_...` from Razorpay     | `CARD`               |
+| `WALLET`   | The organisation's prepaid wallet, debited in the checkout transaction.                 | No                               | `WALLET`                | `org_wallet_<time>_<random>`  | `WALLET`             |
+| `INVOICE`  | Nobody at checkout; the price accrues to the organisation's monthly invoice.            | No                               | `INVOICE`               | `org_invoice_<time>_<random>` | `INVOICE_ACCRUAL`    |
+| `LICENSE`  | A flat-fee licensed-seat contract already pays for the seat; the booking bills nothing. | No                               | `LICENSE`               | `org_license_<time>_<random>` | `LICENSE` of 0 paise |
 
-## fundingSource Gates at Checkout
+For the three sponsored rails the gateway is skipped entirely. The orchestrator (`lib/payments/checkout/orchestrate.ts`) mints the synthetic intent locally, and `commitCheckout` (`lib/payments/checkout/commit/index.ts`) sets `skipPayment`, which writes the appointment confirmed rather than tentative, writes the `Payment` row already `SUCCEEDED` with no expiry, and creates the earnings and the `booking:<paymentId>` journal in the same transaction (`recordSynchronousEarnings`). No webhook is needed to complete the booking. The `org_` prefix is also how refunds know the money is internal: `isInternalFundedIntent` (`lib/payments/funding-rail.ts`) sends such a payment through a purely in-ledger reversal instead of a gateway refund.
 
-`BillingAccount.fundingSource` (`prisma/schema.prisma:1100`, enum `FundingSource`) selects the money path:
-
-```
-PERSONAL  → org is tagged for reporting only; learner pays card.
-WALLET    → debit BillingAccount.walletBalance atomically (walletDebit helper).
-INVOICE   → accrue to the org's monthly invoice; no real-time charge.
-LICENSE   → absorbed by a LICENSED_SEAT program; amount billed = 0.
-```
-
-Resolution happens in `resolveOrgFunding()` (`lib/payments/checkout/org-funding.ts`):
-
-```typescript
-fundingSource = org.billingAccount?.fundingSource ?? "PERSONAL";
-```
-
-### skipPayment — the instant-confirm path
-
-For any non-PERSONAL org-funded checkout the gateway is bypassed entirely:
-
-```typescript
-// lib/payments/checkout/commit/index.ts
-const skipPayment =
-  isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment;
-// isOrgSponsoredPayment = isOrgWalletPayment || isOrgInvoicedPayment || isOrgLicensedPayment  (lib/payments/checkout/orchestrate.ts)
+```mermaid
+flowchart TD
+    A["POST /api/checkout with organizationId"] --> B{"Org ACTIVE or PENDING_VERIFICATION,<br/>canSponsor, caller an ACTIVE member,<br/>SESSION_BOOKING consent?"}
+    B -- no --> X["Refused: 403 typed code"]
+    B -- yes --> C{"BillingAccount.fundingSource"}
+    C -- PERSONAL --> P["Learner pays by card.<br/>Organisation is a tag."]
+    C -- WALLET --> W["Active ProgramAssignment covers this plan?<br/>Wallet not frozen, balance enough?"]
+    C -- INVOICE --> I["Verified domain?<br/>Exposure plus booking within credit limit?<br/>Active ProgramAssignment?"]
+    C -- LICENSE --> L["Active LICENSED_SEAT assignment?"]
+    W -- no --> X2["Refused: 402 or 409"]
+    I -- no --> X2
+    L -- no --> X2
+    W -- yes --> S["skipPayment: synthetic intent,<br/>Payment SUCCEEDED, journal in the same transaction"]
+    I -- yes --> S
+    L -- yes --> S
 ```
 
-A synthetic `paymentIntent` id (prefix `org_wallet_` / `org_license_` / `org_invoice_`) is minted locally; no Razorpay/Stripe call is made. The `Payment` row is created with `paymentStatus: SUCCEEDED` immediately (`writeCheckoutPayment()` in `lib/payments/checkout/commit/payment-row.ts`). Appointments are confirmed (non-tentative) in the same transaction — no webhook is required to complete the booking.
+## What a `Payment` records about the organisation
 
----
+Four nullable columns on `Payment` answer four different questions. They are set when the payment row is written (`writeCheckoutPayment`, `lib/payments/checkout/commit/payment-row.ts`).
 
-## PaymentLeg Sources and *_REVERSAL Siblings
+| Column                   | Question it answers                      | Notes                                                                                                                                                                                                |
+| ------------------------ | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `organizationId`         | Which organisation's member booked this? | A reporting tag, used by analytics, the audit feeds and ledger attribution. On `SetNull`. It can be empty even when organisation money moved (see below).                                            |
+| `billingAccountId`       | Whose `BillingAccount` is charged?       | Set for `WALLET`, `INVOICE` and `LICENSE`. `BillingAccount.ownerOrgId` is the definitive owner.                                                                                                      |
+| `hostOrganizationId`     | Which organisation earns the host share? | Resolved from the expert's `ACTIVE` `EXPERT` membership at a `canHost` organisation, preferring the organisation that owns the plan, else the oldest membership. Only when `ENABLE_HOST_ORGS` is on. |
+| `billableToOrgInvoiceId` | Which invoice billed this accrual?       | Stamped by the monthly rollup. Empty means still unbilled; the credit-limit check and the rollup both read it.                                                                                       |
 
-Each `Payment` carries zero or more `PaymentLeg` rows (append-only; `prisma/schema.prisma:4270–4290`):
+Buyer organisation and host organisation can differ: a Wipro learner booking an expert hosted at LearnPro Academy debits Wipro's rail and credits LearnPro's `ORG_PAYABLE`. They are two postings in the same balanced `booking:<paymentId>` journal and never net inside one account.
 
-| Source                             | Money event                                              | sourceRef                                 |
-| ---------------------------------- | -------------------------------------------------------- | ----------------------------------------- |
-| `CARD`                             | External gateway charge                                  | gateway payment id (`pay_xxx` / `ch_xxx`) |
-| `WALLET`                           | BillingAccount wallet debit                              | `ProgramAssignment.id`                    |
-| `INVOICE_ACCRUAL`                  | Rolled into month-end org invoice                        | `ProgramAssignment.id`                    |
-| `OVERAGE_INVOICE_ACCRUAL`          | Marginal cap-breach charge (CHARGE_ORG path)             | `ProgramAssignment.id`                    |
-| `LICENSE`                          | Absorbed by LICENSED_SEAT program; amountPaise = 0       | `ProgramAssignment.id`                    |
-| `REFERRAL_CREDIT`                  | Platform-issued personal credit                          | `ReferralCreditUsage.id`                  |
-| `INVOICE_ACCRUAL_REVERSAL`         | Refund counter-entry for unbilled accrual (#786/#781 §B) | same as original                          |
-| `OVERAGE_INVOICE_ACCRUAL_REVERSAL` | Refund counter-entry for overage accrual                 | same as original                          |
+**The invisible path.** `Payment.organizationId` can be empty on a wallet-funded booking if the client did not pass its organisation context. The wallet is still debited through `billingAccountId`. To keep refunds and the ledger attributed, `walletCredit` returns the `BillingAccount.ownerOrgId`, and the refund cascade uses `payment.organizationId ?? ownerOrgId` for both the audit row and the wallet ledger line. The owner of the wallet, not the tag on the payment, is the ground truth.
 
-Legs are **append-only** — a refund never mutates the original leg; it upserts a negative `*_REVERSAL` sibling (`lib/payments/operations/refund.ts:778`). The `@@unique([paymentId, source])` constraint means one reversal leg per source; subsequent partial refunds decrement the existing reversal leg via `update: { amountPaise: { decrement: reverse } }`.
+## The gates checkout applies
 
-Invariant: `sum(non-reversal, non-REFERRAL_CREDIT legs.amountPaise) == Payment.amount` when legs are present (LICENSE legs contribute 0). The referral credit sits outside the sum because `Payment.amount` is the post-credit gateway charge, so the credit has already been deducted from it and counting the leg as well would demand it twice (#1347). See [payment legs §3](../20-ledger/03-payment-legs.md#3-invariants).
+`resolveOrgFunding` runs before pricing or locking and fails closed at each gate, in this order:
 
-### Programme overage across the rails (#1458)
+1. The organisation exists and is `ACTIVE`, or `PENDING_VERIFICATION` (allowed only under the INVOICE credit limit below). Anything else answers 403 `ORG_NOT_OPERATIONAL`.
+2. `canSponsor` is true, else 403 `ORG_CANNOT_SPONSOR`.
+3. Overdue-invoice suspension, only when `ENABLE_DUNNING_SUSPEND` is on: any `OVERDUE` invoice with `dunningSuspendedAt` set blocks new sponsored bookings with 402 `BILLING_SUSPENDED_DUNNING` until it is paid.
+4. The caller holds an `ACTIVE` `Membership` at the organisation, else 403 `ORG_MEMBERSHIP_REQUIRED`.
+5. The member has a live `SESSION_BOOKING` consent artifact (`checkConsent`, DPDP), else 403 `CONSENT_REQUIRED`.
+6. Personal referral credits are stripped from the request on any non-`PERSONAL` rail, so organisation money and personal credits never stack.
+7. For `INVOICE` only: the organisation has a verified domain (`assertVerifiedDomainOrThrow`), and open exposure plus this booking stays within the effective credit limit. Exposure is unbilled accruals netted of their reversal legs plus issued and overdue invoices (`readInvoiceExposurePaise`). The effective limit is the explicit `BillingAccount.creditLimit`, and for an organisation not yet `ACTIVE` also the governance starter limit `getInvoiceCreditLimitPaise` (₹50,000 unless `MAX_INVOICE_BOOKING_PAISE` overrides it), whichever is lower. The same check is repeated inside the Serializable booking transaction so two concurrent bookings cannot both pass it: the loser is aborted and retried, then refused with 402 `ORG_CREDIT_LIMIT_REACHED`.
+8. For every non-`PERSONAL` rail: an `ACTIVE` `ProgramAssignment` for the member, on an `ACTIVE` programme that covers this appointment type, under an `ACTIVE` contract inside its effective window. A missing assignment answers 409 `PROGRAM_ASSIGNMENT_INACTIVE`. Checkout refuses; it never falls back to charging the learner's card.
+9. Inside the lock, the curated-panel allowlist and exclusive-engagement checks (`revalidateInsideLock`, `lib/payments/checkout/revalidate.ts`).
 
-A booking that breaches its programme's cap does not settle the same way on every rail, because the rails collect at different moments.
+Inside the transaction, for a wallet-funded booking, a frozen wallet refuses with `WalletFrozenError` and a short balance with `WALLET_INSUFFICIENT_FUNDS` (402), both described in [the wallet page](02-wallet-and-top-ups.md).
 
-On the **INVOICE** rail the org has not paid anything yet, so the marginal is carved out of the base `INVOICE_ACCRUAL` leg into an `OVERAGE_INVOICE_ACCRUAL` leg and billed at the month-end rollup. On the **WALLET** rail the debit taken when the booking committed is the whole nominal price, so the overage is collected the moment the booking commits: no `OVERAGE_INVOICE_ACCRUAL` leg is written, `Payment.amount` is left exactly at the wallet debit, and the `OverageEvent` is recorded as `CHARGED` and settled against the payment whose `WALLET` leg collected it. Writing a leg there would have broken the leg-sum invariant above and, worse, incrementing `Payment.amount` on top of it made a later cancellation refund the organisation more than its wallet was ever debited.
+## Legs per rail
 
-`CHARGE_MEMBER` is **not available on a WALLET-funded billing account**. Charging the member requires carving the over-cap portion back out of the parent payment, which on this rail would mean crediting the wallet mid-transaction — the credit-back that #715 has never built. The combination is refused when a programme is created or patched, and checkout keeps a fail-closed refusal (`OVERAGE_CHARGE_MEMBER_UNSUPPORTED`, HTTP 409) for any programme configured before that guard existed.
+`recordCheckoutUtilization` (`lib/payments/checkout/commit/org-utilization.ts`) writes one funding leg for a sponsored booking: `WALLET` for the amount, `LICENSE` for 0, or `INVOICE_ACCRUAL` for the amount, each with the programme assignment as `sourceRef`. Legs are append-only and unique per source (`@@unique([paymentId, source])`); a refund appends a negative `*_REVERSAL` sibling rather than editing the original. The database enforces that the non-reversal legs, excluding `REFERRAL_CREDIT` and `LICENSE`, sum to `Payment.amount` (`payment_legs_sum_to_amount`, a constraint trigger checked at commit; see [payment legs](../20-ledger/03-payment-legs.md)). Overage adds the `OVERAGE_INVOICE_ACCRUAL` leg and changes `Payment.amount` by exactly what it adds, which is how the sum stays true; see [rate cards and overage](03-rate-cards-and-overage.md).
 
-`PROGRAM_CAP_EXHAUSTED` is the contract for the per-cycle overage ceiling. The settlement code throws it as an HTTP 402 with a machine-readable code, the checkout transaction's catch rethrows it unchanged because that code is registered in `BUSINESS_ERROR_CODES`, and the route answers 402 with a toast telling the buyer that the organisation's programme budget for this cycle is used up. It is a modelled outcome, so Sentry records it as expected volume rather than a fault; the two overage funding refusals above are deliberately not modelled, because they mean a programme was configured in a shape no rail can collect on.
+## Every combination is accepted
 
----
+The engine accepts every pairing of rail, programme type and overage behaviour for sponsor and hybrid organisations. `overageConfigRefusals` (`lib/enterprise/reachable-paths.ts`) returns no refusals, so nothing is rejected at configuration time except a programme whose settings are internally inconsistent (`assertMergedOverageConfigValid` answers 400 `INVALID_OVERAGE_CONFIG`: overage settings on an unlimited seat cap, a surcharge under `BLOCK`, or a charging behaviour with no positive `maxOveragePerCyclePaise` ceiling). Acceptance at configuration time does not guarantee every booking: checkout can still refuse a member charge whose parent rail cannot carry it (`OVERAGE_CHARGE_MEMBER_UNSUPPORTED`, see [rate cards and overage](03-rate-cards-and-overage.md)). Instead of refusing configurations, `getPermutationGuidance` classifies the combination into a tier that the admin UI turns into a banner or a confirmation:
 
-## Refund Visibility Across the Seam
+| Tier          | Meaning                                                               | Examples (guidance code)                                                                                                                                                                                                                 |
+| ------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RECOMMENDED` | The standard path, no confirmation.                                   | `STANDARD_ENTERPRISE_PATH` is the default for everything not named below, for example `WALLET` with a credit pool, `INVOICE` with licensed seats, or `LICENSE` with licensed seats, each under `BLOCK` or an un-surcharged `CHARGE_ORG`. |
+| `ADVANCED`    | Works, with a trade-off the admin should read.                        | `SPLIT_TENDER_CHARGE_MEMBER` (the member pays the over-cap part by card, and earnings are held until it lands), `CHARGE_ORG_WITH_SURCHARGE`, `WALLET_LICENSED_SEAT`, `INVOICE_CREDIT_POOL`, `PERSONAL_PROGRAM_ALLOWANCE`.                |
+| `DISCOURAGED` | Supported but operationally awkward, so the UI asks for confirmation. | `WALLET_CHARGE_ORG_SURCHARGE` (a surcharge debited straight from a prepaid wallet), `LICENSE_CHARGE_ORG`, `PERSONAL_CHARGE_ORG`, `LICENSE_CREDIT_POOL`.                                                                                  |
 
-A refund on an org-funded booking writes up to three separate audit rows via `lib/payments/operations/refund.ts`:
+A new programme's default overage behaviour is `CHARGE_ORG` on an `INVOICE` rail, so over-cap bookings ride the invoice the organisation already pays, and `BLOCK` on every other rail (`defaultOverageBehaviorForFunding`). The capability matrix is `REACHABLE_ORG_FUNDING_PATHS` in the same file: a `SPONSOR` or `HYBRID` organisation can pair any rail with any programme type, a `HOST` organisation has no billing account, and a `HYBRID` organisation runs the sponsor and host flows independently on the same payment.
 
-### 1. WALLET_REFUND audit row (Step 4)
+## Refunds across the seam
 
-Written when a `WALLET` leg is reversed. `walletCredit` credits `BillingAccount.walletBalance` and the refund cascade writes an `OrgAuditLog` entry:
+A refund on an organisation-funded booking reverses the funding leg internally and leaves up to three audit rows on the organisation, written by the refund cascade (`applyRefundCascade`, `lib/payments/operations/refund.ts`):
 
-```typescript
-// refund.ts:731–748
-await tx.orgAuditLog.create({
-  organizationId: payment.organizationId ?? credit.ownerOrgId,
-  category: "WALLET",
-  action: AUDIT_ACTIONS.WALLET.WALLET_REFUND,
-  ...
-});
-```
+| Rail or situation                                                             | Money effect                                                                                          | Org audit row      |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------ |
+| `WALLET` leg reversed                                                         | `walletCredit` raises the cache and the journal credits `WALLET`                                      | `WALLET_REFUND`    |
+| Organisation earnings already paid out                                        | The payout is clawed back and netted against the host organisation's future payouts                   | `PAYOUT_CLAWBACK`  |
+| Invoice-funded or licence-funded refund with no wallet credit and no clawback | An `INVOICE_ACCRUAL` reversal leg nets the unbilled amount, or engagements are restored for a licence | `INVOICE_REFUNDED` |
 
-Attribution: `payment.organizationId` if set; otherwise falls back to `BillingAccount.ownerOrgId` (`walletCredit` returns `ownerOrgId` for exactly this fallback — `lib/api/organizations/wallet.ts:156–159`).
+The cascade steps, the credit note and the cancellation policy that governs the refund amount are in [refunds](../30-refunds-disputes/01-refunds.md). An organisation may publish its own cancellation ladder, and that ladder governs bookings the organisation funds; a booking a member pays personally keeps the platform ladder.
 
-### 2. INVOICE_REFUNDED audit row (Step 8)
+## Where in code
 
-Written when `payment.organizationId` is set and no clawback was written for the same org in Step 7:
+| Concern                                 | File                                                                                 |
+| --------------------------------------- | ------------------------------------------------------------------------------------ |
+| Gates and funding resolution            | `lib/payments/checkout/org-funding.ts`                                               |
+| Skip-gateway decision, synthetic intent | `lib/payments/checkout/orchestrate.ts`, `lib/payments/checkout/commit/index.ts`      |
+| Payment row, legs, utilisation          | `lib/payments/checkout/commit/payment-row.ts`, `.../org-utilization.ts`              |
+| Settlement and journal                  | `lib/payments/checkout/commit/ledger.ts`, `lib/payments/payouts/earnings-service.ts` |
+| Rail and permutation guidance           | `lib/enterprise/reachable-paths.ts`                                                  |
+| Rail detection for refunds              | `lib/payments/funding-rail.ts`                                                       |
 
-```typescript
-// refund.ts:1117–1134
-if (payment.organizationId && !clawbackInitiated) {
-  category: "INVOICE",
-  action: AUDIT_ACTIONS.INVOICE.INVOICE_REFUNDED,
-  ...
-}
-```
+## Related
 
-This is the fallback org-side audit record for PERSONAL, INVOICE, and LICENSE-funded refunds where there is no wallet credit or payout clawback.
+- [Wallet and top-ups](02-wallet-and-top-ups.md), [rate cards and overage](03-rate-cards-and-overage.md), [invoices and purchase orders](04-invoices-purchase-orders-and-dunning.md), and the [worked examples](05-worked-examples.md).
+- [Org-funded checkout](../../booking/17-org-funded-checkout.md) for allocation and the cancellation policy resolver.
 
-### 3. Clawback row (Step 7)
+## Deprecated & Superseded Approaches
 
-Written when the booking's `OrganizationEarnings` row was already paid out (payout `status = COMPLETED`) and is now reversed. The clawback stamps `OrganizationPayout.clawbackAmountPaise` and writes an `AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK` `OrgAuditLog` entry:
-
-```typescript
-// refund.ts:997–1013
-category: "PAYOUT",
-action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
-```
-
-Ledger attribution: the double-entry reversal (Step 9, `refund.ts:1137`; the WALLET-account attribution branch at `:1160`) uses `payment.organizationId ?? walletOwnerOrgId` — `walletOwnerOrgId` is populated from `walletCredit.ownerOrgId` captured in Step 4, so the journal never loses its org anchor even on the invisible path.
-
----
-
-## Wallet Lifecycle
-
-```
-initiateTopUp → WalletTopUp(PENDING, providerOrderId @unique)
-     ↓ client pays (Razorpay checkout)
-confirmTopUp  → WalletTopUp(CONFIRMED), walletBalance += amount
-              → double-entry: Dr CASH / Cr WALLET(org)   [lib/api/organizations/wallet.ts:132–153]
-
-checkout (WALLET-funded) → walletDebit → walletBalance -= booking amount  [lib/payments/checkout/commit/org-utilization.ts]
-
-refund        → walletCredit → walletBalance += refund amount
-              → WALLET_REFUND audit row
-```
-
-**WalletTopUp idempotency:** `providerOrderId` has a `@unique` constraint (`prisma/schema.prisma:1238`). A duplicate webhook delivery hits P2002 and is deduplicated — the wallet is never double-credited.
-
-**Double-entry for topup** (`lib/api/organizations/wallet.ts:132`):
-
-```
-Dr CASH(platform)   Cr WALLET(org)
-```
-
-Keyed by `topup:<providerOrderId ?? paymentId ?? billingAccountId:balance>`.
-
-**Booking debit** does not post a journal entry at debit time — the Dr WALLET posting comes from the settlement layer (`createEarningsFromPayment`) where the full fee/payable split is known (`lib/api/organizations/wallet.ts:87–91`).
-
----
-
-## The #835 Invisible Path — Payment.organizationId Can Be NULL
-
-An org-wallet-funded checkout normally sets `Payment.organizationId = org.id`. However, the checkout code traces the org from `validatedData.organizationId` — if that field is absent (e.g., a B2C booking where the learner is an org member but did not pass their org context), the wallet can be debited via `billingAccountId` without `organizationId` being set on the Payment.
-
-Consequence: `payment.organizationId` is NULL while the org's wallet balance decreased.
-
-**How refund.ts resolves it (the fix, `lib/api/organizations/wallet.ts:156–159`):**
-
-```typescript
-// walletCredit returns ownerOrgId from BillingAccount
-return { balanceAfter, ownerOrgId: acct.ownerOrgId };
-
-// refund.ts:724, 733
-walletOwnerOrgId = credit.ownerOrgId;
-organizationId: payment.organizationId ?? credit.ownerOrgId,
-```
-
-`BillingAccount.ownerOrgId` is the canonical ground-truth org for the wallet regardless of how the Payment row was tagged. All wallet-refund audit rows and Step 9 ledger postings use this fallback, so the double-entry journal is always org-attributed even when `payment.organizationId` is null.
-
----
-
-## Deeper References
-
-- Payout pipeline (org side): `docs/enterprise/10-money-and-ledger/07-payout-pipeline.md`
-- Refund cascade in full: `docs/payments/refunds-disputes/02-refund-flow.md` (and `lib/payments/operations/refund.ts`)
-- Enterprise money band / program entitlements: `docs/enterprise/10-money-and-ledger/`
-- Wallet top-up API: `lib/api/organizations/wallet.ts`
-- Checkout funding resolution: `resolveOrgFunding()` in `lib/payments/checkout/org-funding.ts`
-- The booking-side view of this rail: `docs/booking/17-org-funded-checkout.md`
+1. **Refusing combinations at the API.** Earlier designs hard-refused `CHARGE_MEMBER` on a wallet rail, wallet `CHARGE_ORG`, and licence overage. All are supported now, with guidance tiers instead of refusals; delete any code or document that treats them as unreachable.
+2. **A flat 20 % platform fee in the funding docs.** The platform take is read from the approved `PlatformFeeSchedule` (20 % only as the fallback when none exists), and a rate card sets the split for a host organisation; see rate cards and overage.
+3. **A gateway call for sponsored bookings, or a webhook to confirm them.** Sponsored rails confirm in the checkout transaction.
+4. **Posting `Dr CASH` for a card capture or top-up.** Card money is debited to `GATEWAY_CLEARING` until a settlement moves it.

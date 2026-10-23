@@ -116,12 +116,10 @@ jest.mock("../../lib/payments/operations/refund", () => ({
   },
 }));
 
+// The real clawback writers, so their posting is observable; only the dispatcher is mocked.
 jest.mock("../../lib/payments/operations/reversal-engine", () => ({
+  ...jest.requireActual("../../lib/payments/operations/reversal-engine"),
   applyReversal: (...a: unknown[]) => mockApplyReversal(...a),
-  // #1582 C-P1-02c — the real clawback journal, so the pin sees its posting.
-  postPayoutClawback: jest.requireActual(
-    "../../lib/payments/operations/reversal-engine",
-  ).postPayoutClawback,
 }));
 
 const mockRestoreUpTo = jest.fn(
@@ -159,6 +157,8 @@ jest.mock("../../lib/payments/payouts/earning-status", () => ({
 
 jest.mock("../../lib/payments/tax/tds-service", () => ({
   recordTdsReversal: (...a: unknown[]) => mockRecordTdsReversal(...a),
+  // No org TDS withheld in these fixtures, so the clawback is the whole share.
+  recordOrgTdsReversal: jest.fn().mockResolvedValue(null),
 }));
 
 // Captured, not executed: the balance assertion below re-derives what the
