@@ -66,7 +66,7 @@ COMMIT;
 
 ## Part 2: paying out real money (RazorpayX)
 
-Payouts stay frozen until `ENABLE_LIVE_PAYOUTS` is `"true"`. With it off, batches are still created and approved, but an approved consultant payout is held in `APPROVED` (`processApprovedPayouts` returns nothing) and an approved organisation payout is not claimed (`processOrgPayout` reports `submittedToGateway: false`), so no money leaves. The flag is read from `lib/feature-flags.ts` at build and boot, so changing it needs a redeploy. Flipping it makes the very next `process-payouts` run (hourly, see [scheduled money jobs](01-scheduled-jobs.md)) submit every `APPROVED` payout, which is real money on the first run; the checks below are hard gates.
+Payouts stay frozen until `ENABLE_LIVE_PAYOUTS` is `"true"`. With it off, batches are still created and approved, but an approved consultant payout is held in `APPROVED` (`processApprovedPayouts` returns nothing) and an approved organisation payout is not claimed (`processOrgPayout` reports `submittedToGateway: false`), so no money leaves. The consultant rail reads the flag from `lib/feature-flags.ts` at build and boot, and the organisation rail reads `process.env.ENABLE_LIVE_PAYOUTS` per call, so set it through a redeploy. Flipping it makes the very next `process-payouts` run (hourly, see [scheduled money jobs](01-scheduled-jobs.md)) submit `APPROVED` payouts up to its per-rail limit, which is real money on the first run; the checks below are hard gates.
 
 ```mermaid
 flowchart TD

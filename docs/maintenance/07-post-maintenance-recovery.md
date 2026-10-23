@@ -116,7 +116,7 @@ Two non-money jobs belong in this step as well; run them the same way:
 
 ## 8. Verify Cron Job Resume
 
-- [ ] Check that jobs resume on their next schedule. The Netlify ticker (`netlify/functions/cron-tick.mts`, every five minutes) is the scheduler for the money and recovery jobs; the schedule of each money job is in [scheduled money jobs](../finance/70-operations/01-scheduled-jobs.md), and a job held during DEGRADED simply runs again on its next slot.
+- [ ] Check that jobs resume on their next schedule. The Netlify ticker (`netlify/functions/cron-tick.mts`, every five minutes) is the scheduler for the money and recovery jobs; the schedule of each money job is in [scheduled money jobs](../finance/70-operations/01-scheduled-jobs.md), and a job held during DEGRADED runs again on its next slot. A windowed job (payout batching, invoices, tax exports, contracts, overage sweeps) whose last slot fell inside the maintenance window may not run again until its next daily, weekly or monthly window, so trigger each such job through its `CRON_SECRET`-gated `/api/cleanup/[job]` route or confirm its run in the ticker logs; `cron.stale: false` does not prove it ran.
 - [ ] Verify `/api/health` reports `cron.stale: false`.
 
 ## Recovery Troubleshooting
