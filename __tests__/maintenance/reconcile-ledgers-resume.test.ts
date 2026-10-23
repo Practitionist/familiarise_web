@@ -51,7 +51,7 @@ jest.mock("../../scripts/reconcile/reconcile-ledgers", () => {
   >("../../scripts/reconcile/reconcile-ledgers");
   return {
     ...actual,
-    runReconcileLedgersSlice: (...args: [Args]) => runReconcileLedgers(...args),
+    runReconcileLedgers: (...args: [Args]) => runReconcileLedgers(...args),
   };
 });
 

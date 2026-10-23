@@ -1,13 +1,10 @@
-/**
- * #1771 K-8 — the reconcile jobs the Reconcile tab can start, by the name each
- * one's cron lock and SystemJobExecution trail use.
- */
+/** Canonical names used by the reconcile console and execution trail. */
 export const RECONCILE_JOBS = {
   ledgers: {
     label: "Ledger reconciliation",
     lockName: "reconcile-ledgers",
     description:
-      "Re-checks every ledger balance against its journal; runs in the background.",
+      "Advances one ledger audit batch. Continue until the report is complete.",
   },
   refunds: {
     label: "Pending refunds",

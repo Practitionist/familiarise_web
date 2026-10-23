@@ -25,7 +25,7 @@ SELECT id, "runAt", scope, ok,
        summary->>'baselinedCount'   AS baselined,
        summary->'baselineProblems'  AS baseline_problems,
        jsonb_array_length(findings::jsonb) AS findings
-FROM "LedgerReconciliationReport"
+FROM ledger_reconciliation_reports
 ORDER BY "runAt" DESC
 LIMIT 5;
 ```
@@ -74,7 +74,7 @@ For every kind except the wallet, the order is the same. First stop the writer f
 
 ## Step 4: verify
 
-Start a fresh run: from the console's Reconcile section, or `POST /api/cleanup/reconcile-ledgers` with the bearer secret, or an organisation-scoped `POST /api/admin/reconcile-ledgers` with `{ organizationId, reason }` to re-check only the affected organisation (the full-scope-only checks are skipped in that mode). Confirm the new report has `ok = true`. A held execution lease answers 409; an idle RUNNING or FAILED checkpoint can resume. A cleanup slice may return RUNNING, so continue until COMPLETED before claiming a fresh verdict. The dedicated admin door still runs synchronously to completion and must not be used for a large HTTP audit until bounded admin continuation is implemented. If the finding persists, you corrected the wrong side or the writer is still diverging.
+Resume an unfinished audit from the console’s Continue audit action or the cleanup door. To verify a correction after completion, start a fresh authenticated run from the console or an organisation-scoped `POST /api/admin/reconcile-ledgers` with `{ organizationId, reason }` to re-check only the affected organisation (the full-scope-only checks are skipped in that mode). Confirm the new report has `ok = true`. A held execution lease answers 409; an idle RUNNING or FAILED checkpoint can resume. A cleanup slice may return RUNNING, so continue until COMPLETED before claiming a fresh verdict. Both admin doors advance one bounded slice; repeat to resume an unfinished audit. Use an authenticated admin door for a fresh re-check after completion; the scheduler reuses the current day’s completed audit. If the finding persists, you corrected the wrong side or the writer is still diverging.
 
 ## Updating the baseline
 
@@ -94,5 +94,5 @@ The checks the database already enforces are not repeated in the auditor (see [i
 
 1. **Hand-patching a cache or a journal row with `UPDATE`.** The immutability triggers refuse it for the journal, and overwriting a cache hides the writer bug. Post a counter-transaction.
 2. **Replaying a webhook to clear a wallet finding.** A wallet drift is a missing journal line, not a missed event.
-3. **An external background loop and an assumed fast full audit.** Scheduled progress now uses persisted bounded pages under the canonical lease. Large admin audits still need bounded continuation; small-fixture speed is not a runtime guarantee.
+3. **An external background loop and an assumed fast full audit.** Scheduled progress now uses persisted bounded pages under the canonical lease. Admin and scheduled calls now advance the same bounded core; they do not require an external background loop.
 4. **A baseline keyed to one entity id.** The current baseline pins kind, delta and every identifier, expires, and fails the run when malformed.

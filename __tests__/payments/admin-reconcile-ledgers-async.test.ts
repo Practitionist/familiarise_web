@@ -40,9 +40,15 @@ type RunArgs = {
 const runReconcileLedgers = jest.fn(
   async (
     _args: RunArgs,
-  ): Promise<{ id: string; ok: boolean; findings: Finding[] }> => ({
+  ): Promise<{
+    id: string;
+    ok: boolean;
+    summary: { status: "RUNNING" | "FAILED" | "COMPLETED" };
+    findings: Finding[];
+  }> => ({
     id: "rep_1",
     ok: true,
+    summary: { status: "COMPLETED" },
     findings: [],
   }),
 );
@@ -81,7 +87,7 @@ beforeEach(() => {
 });
 
 describe("POST /api/admin/reconcile-ledgers", () => {
-  it("runs a full-scope reconciliation in-process and answers 200 with the report", async () => {
+  it("advances a full-scope audit in-process and answers 200 with its report", async () => {
     const res = await POST(post({}), ROUTE);
     const body = await res.json();
 
@@ -89,6 +95,7 @@ describe("POST /api/admin/reconcile-ledgers", () => {
     expect(body.data).toEqual({
       id: "rep_1",
       ok: true,
+      summary: { status: "COMPLETED" },
       findings: [],
       frozenWallets: [],
     });
@@ -151,7 +158,7 @@ describe("POST /api/admin/reconcile-ledgers", () => {
     expect(runReconcileLedgers).not.toHaveBeenCalled();
   });
 
-  it("keeps an org-scoped run synchronous", async () => {
+  it("advances an org-scoped audit synchronously", async () => {
     const res = await POST(post({ organizationId: "org_1" }), ROUTE);
 
     expect(res.status).toBe(200);
@@ -163,4 +170,34 @@ describe("POST /api/admin/reconcile-ledgers", () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+});
+
+it("does not re-freeze a historical wallet finding when resuming after its page", async () => {
+  const drift: Finding = {
+    kind: "WALLET_BALANCE_DRIFT",
+    billingAccountId: "ba-old",
+    expectedPaise: 0,
+    actualPaise: 100,
+    deltaPaise: 100,
+  };
+  runReconcileLedgers.mockResolvedValueOnce({
+    id: "rep-old",
+    ok: false,
+    summary: { status: "RUNNING" },
+    findings: [drift],
+  });
+  const response = await POST(post({}), ROUTE);
+  expect(response.status).toBe(200);
+  expect(freezeDriftedWallets).not.toHaveBeenCalled();
+  expect((await response.json()).data.summary.status).toBe("RUNNING");
+});
+
+it("returns attention only for a completed discrepant report", async () => {
+  runReconcileLedgers.mockResolvedValueOnce({
+    id: "rep-dirty",
+    ok: false,
+    summary: { status: "COMPLETED" },
+    findings: [],
+  });
+  expect((await POST(post({}), ROUTE)).status).toBe(207);
 });

@@ -1,19 +1,4 @@
-/**
- * Read-only ledger auditor.
- *
- * Walks the double-entry journal + derived balances to flag drift across:
- *   1. LedgerTransaction/Entry       ← the authoritative double-entry journal
- *   2. BillingAccount.walletBalance  ← derived cache of the WALLET account
- *   3. ProgramAssignment             ← per-(member, cycle) meters & overage counts
- *   4. BillingSubscription           ← activeSeatCount cache
- *   5. ConsultantEarnings / OrganizationEarnings / Payouts ← settlement & split parity
- *
- * Checks that are 100% enforced by active Postgres CHECK constraints, exclusion
- * constraints, or DEFERRABLE constraint triggers (per-txn Dr=Cr balance,
- * PaymentLeg sum, assignment period overlap, INR-only accounts, invoice tax
- * totals, and safe money ranges) live in `prisma/sql/*.sql` and are not
- * re-scanned here.
- */
+/** Paged audit of journal-derived caches; Postgres-enforced invariants are not re-scanned. */
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { z } from "zod";
@@ -78,20 +63,7 @@ export const RECONCILE_FINDING_KINDS = [
 
 export type ReconcileFindingKind = (typeof RECONCILE_FINDING_KINDS)[number];
 
-export type Finding = {
-  kind: ReconcileFindingKind;
-  organizationId?: string;
-  billingAccountId?: string;
-  billingSubscriptionId?: string;
-  invoiceId?: string;
-  paymentId?: string;
-  payoutId?: string;
-  programAssignmentId?: string;
-  expectedPaise: number;
-  actualPaise: number;
-  deltaPaise: number;
-  details?: Record<string, unknown>;
-};
+export type Finding = z.infer<typeof findingSchema>;
 
 export type ReconcileRunStatus = "RUNNING" | "COMPLETED" | "FAILED";
 
@@ -526,8 +498,8 @@ async function stepOverageIntegrity(ctx: StepCtx): Promise<void> {
         chargeStatus: ev.chargeStatus,
         paymentId: ev.paymentId,
         invoiceLineItemId: ev.invoiceLineItemId,
-        settledAt: ev.settledAt,
-        note: "OverageEvent link/state invariant violated: CHARGE_MEMBER pending/failed/charged without a side-Payment, CHARGE_ORG accrued without an InvoiceLineItem, CHARGE_ORG charged with neither an InvoiceLineItem nor a booking Payment carrying the WALLET leg that collected it (#1458), or CHARGED without settledAt. Trace the transitionOverage() path that produced this state.",
+        settledAt: ev.settledAt?.toISOString() ?? null,
+        note: "OverageEvent link/state invariant violated: CHARGE_MEMBER pending/failed/charged without a side-Payment, CHARGE_ORG accrued without an InvoiceLineItem, CHARGE_ORG charged with neither an InvoiceLineItem nor a booking Payment carrying the WALLET leg that collected it, or CHARGED without settledAt. Trace the transitionOverage() path that produced this state.",
       },
     });
   }
@@ -1750,6 +1722,17 @@ const checkpointSchema = countsSchema.extend({
   executing: z.boolean().default(false),
   interruptions: z.number().int().nonnegative().default(0),
 });
+const jsonValueSchema: z.ZodType<Prisma.JsonValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(jsonValueSchema),
+    z.record(jsonValueSchema),
+  ]),
+);
+
 const findingSchema = z.object({
   kind: z.enum(RECONCILE_FINDING_KINDS),
   organizationId: z.string().optional(),
@@ -1762,12 +1745,11 @@ const findingSchema = z.object({
   expectedPaise: z.number(),
   actualPaise: z.number(),
   deltaPaise: z.number(),
-  details: z.record(z.unknown()).optional(),
+  details: z.record(jsonValueSchema).optional(),
 });
 
 async function runReconcileLedgersUnlocked(
   opts: ReconcileScope,
-  sliced = false,
 ): Promise<ReconcileReport> {
   const invocationStartedAt = Date.now();
   let row = await prisma.ledgerReconciliationReport.findFirst({
@@ -1780,17 +1762,14 @@ async function runReconcileLedgersUnlocked(
     !isReconcileRunInProgress(row) &&
     z.object({ status: z.literal("COMPLETED") }).safeParse(row.summary).success;
   const completedToday = !!(
+    !opts.triggeredById &&
     row &&
     prior?.success &&
     priorComplete &&
     row.runAt.toISOString().slice(0, 10) ===
       new Date().toISOString().slice(0, 10)
   );
-  if (
-    !row ||
-    !prior?.success ||
-    (priorComplete && (!sliced || !completedToday))
-  ) {
+  if (!row || !prior?.success || (priorComplete && !completedToday)) {
     // Old reports have no cursor and cannot safely be resumed.
     if (row && isReconcileRunInProgress(row)) {
       await prisma.ledgerReconciliationReport.update({
@@ -1832,7 +1811,7 @@ async function runReconcileLedgersUnlocked(
   };
   let nextStep = checkpoint.nextStep;
   let cursor = checkpoint.cursor;
-  const calls = checkpoint.calls + (sliced && completedToday ? 0 : 1);
+  const calls = checkpoint.calls + (completedToday ? 0 : 1);
   const interruptions =
     checkpoint.interruptions + (checkpoint.executing ? 1 : 0);
   let activeDurationMs = row.durationMs;
@@ -1846,7 +1825,7 @@ async function runReconcileLedgersUnlocked(
       findings: ctx.findings,
       entries: LEDGER_FINDINGS_BASELINE,
       knownKinds: RECONCILE_FINDING_KINDS,
-      now: ctx.now,
+      now: new Date(),
     });
     const summary = {
       ...ctx.counts,
@@ -1870,7 +1849,7 @@ async function runReconcileLedgersUnlocked(
         ok: status === "COMPLETED" && baseline.ok,
         durationMs: activeDurationMs,
         summary,
-        findings: ctx.findings as unknown as Prisma.InputJsonValue,
+        findings: ctx.findings,
       },
     });
     lastSavedAt = Date.now();
@@ -1884,8 +1863,7 @@ async function runReconcileLedgersUnlocked(
       findings: ctx.findings,
     };
   };
-  if ((completedToday && sliced) || nextStep === STEPS.length)
-    return save("COMPLETED");
+  if (completedToday || nextStep === STEPS.length) return save("COMPLETED");
   try {
     do {
       await save("RUNNING", true);
@@ -1936,10 +1914,10 @@ async function runReconcileLedgersUnlocked(
           priorStale.actualPaise += finding.actualPaise;
           priorStale.deltaPaise += finding.deltaPaise;
           const previousDetails = z
-            .object({ payees: z.number(), sample: z.array(z.unknown()) })
+            .object({ payees: z.number(), sample: z.array(jsonValueSchema) })
             .parse(priorStale.details);
           const pageDetails = z
-            .object({ payees: z.number(), sample: z.array(z.unknown()) })
+            .object({ payees: z.number(), sample: z.array(jsonValueSchema) })
             .parse(finding.details);
           priorStale.details = {
             ...priorStale.details,
@@ -1955,10 +1933,7 @@ async function runReconcileLedgersUnlocked(
       if (!cursor) nextStep++;
       if (nextStep === STEPS.length) return save("COMPLETED");
       await save("RUNNING");
-    } while (
-      !sliced ||
-      Date.now() - invocationStartedAt < SLICE_START_BUDGET_MS
-    );
+    } while (Date.now() - invocationStartedAt < SLICE_START_BUDGET_MS);
     return save("RUNNING");
   } catch (error) {
     try {
@@ -1977,7 +1952,7 @@ async function runReconcileLedgersUnlocked(
   }
 }
 
-/** Runs or resumes a full audit to completion, sharing the scheduled slice's lease and report. */
+/** Advances a bounded audit slice; authenticated manual runs can refresh a completed verdict. */
 export async function runReconcileLedgers(
   opts: ReconcileScope,
 ): Promise<ReconcileReport> {
@@ -1985,16 +1960,5 @@ export async function runReconcileLedgers(
     "reconcile-ledgers",
     { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
     () => runReconcileLedgersUnlocked(opts),
-  );
-}
-
-/** Advances the persisted full audit within one HTTP request; completed daily audits are reused. */
-export async function runReconcileLedgersSlice(
-  opts: ReconcileScope,
-): Promise<ReconcileReport> {
-  return withCronLock(
-    "reconcile-ledgers",
-    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
-    () => runReconcileLedgersUnlocked(opts, true),
   );
 }

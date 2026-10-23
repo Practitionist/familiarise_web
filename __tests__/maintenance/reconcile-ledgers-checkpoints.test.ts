@@ -103,10 +103,7 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-import {
-  runReconcileLedgers,
-  runReconcileLedgersSlice,
-} from "../../scripts/reconcile/reconcile-ledgers";
+import { runReconcileLedgers } from "../../scripts/reconcile/reconcile-ledgers";
 
 beforeEach(() => {
   jest.useFakeTimers();
@@ -136,14 +133,14 @@ test("resumes all missing-journal payment pages and only completes after every c
       .slice(0, 100)
       .map((paymentId) => ({ paymentId }));
   });
-  const first = await runReconcileLedgersSlice({ scope: "full" });
+  const first = await runReconcileLedgers({ scope: "full" });
   expect(first.summary).toMatchObject({
     status: "RUNNING",
     nextStep: 7,
     cursor: "payment-099",
   });
   expect(first.findings).toHaveLength(100);
-  const second = await runReconcileLedgersSlice({ scope: "full" });
+  const second = await runReconcileLedgers({ scope: "full" });
   expect(second.id).toBe(first.id);
   expect(second.summary).toMatchObject({ status: "RUNNING", nextStep: 8 });
   expect(second.summary.cursor).toBeUndefined();
@@ -161,6 +158,7 @@ test("resumes all missing-journal payment pages and only completes after every c
 });
 
 import { z } from "zod";
+import { LEDGER_FINDINGS_BASELINE } from "../../scripts/reconcile/ledger-findings-baseline";
 const querySchema = z.object({
   _sum: z.unknown().optional(),
   where: z
@@ -172,7 +170,7 @@ test("failed comparisons preserve their cursor and retry without duplicating com
   reads.programAssignment.findMany.mockRejectedValueOnce(
     new Error("interrupted comparison"),
   );
-  await expect(runReconcileLedgersSlice({ scope: "full" })).rejects.toThrow(
+  await expect(runReconcileLedgers({ scope: "full" })).rejects.toThrow(
     "interrupted comparison",
   );
   expect(stored?.summary).toMatchObject({
@@ -180,7 +178,7 @@ test("failed comparisons preserve their cursor and retry without duplicating com
     nextStep: 1,
     error: "interrupted comparison",
   });
-  const report = await runReconcileLedgersSlice({ scope: "full" });
+  const report = await runReconcileLedgers({ scope: "full" });
   expect(report.summary.status).toBe("COMPLETED");
   expect(db.ledgerReconciliationReport.create).toHaveBeenCalledTimes(1);
 });
@@ -220,14 +218,14 @@ test("overage integrity honors the bounded page size and continues its historica
         },
       }));
   });
-  const first = await runReconcileLedgersSlice({ scope: "full" });
+  const first = await runReconcileLedgers({ scope: "full" });
   expect(first.summary).toMatchObject({
     status: "RUNNING",
     nextStep: 2,
     cursor: "overage-099",
   });
   expect(first.findings).toHaveLength(100);
-  const second = await runReconcileLedgersSlice({ scope: "full" });
+  const second = await runReconcileLedgers({ scope: "full" });
   expect(second.findings).toHaveLength(105);
   expect(second.summary).toMatchObject({ status: "RUNNING", nextStep: 3 });
   const final = await runReconcileLedgers({ scope: "full" });
@@ -248,14 +246,14 @@ test("a failed wallet freeze retries the same page without duplicating drift evi
     .fn(async () => undefined)
     .mockRejectedValueOnce(new Error("freeze failed"));
   await expect(
-    runReconcileLedgersSlice({ scope: "full", onWalletDrift }),
+    runReconcileLedgers({ scope: "full", onWalletDrift }),
   ).rejects.toThrow("freeze failed");
   expect(stored?.summary).toMatchObject({
     status: "FAILED",
     nextStep: 0,
     accountsChecked: 0,
   });
-  const report = await runReconcileLedgersSlice({
+  const report = await runReconcileLedgers({
     scope: "full",
     onWalletDrift,
   });
@@ -319,7 +317,7 @@ test("wallet surcharge GST pages whole payments without splitting one payment's 
       : [];
   });
   reads.payment.findMany.mockResolvedValue([{ id: "pay-1", taxAmount: 1800 }]);
-  const report = await runReconcileLedgersSlice({ scope: "full" });
+  const report = await runReconcileLedgers({ scope: "full" });
   expect(report.summary.status).toBe("COMPLETED");
   expect(report.findings).toEqual([
     expect.objectContaining({
@@ -331,7 +329,7 @@ test("wallet surcharge GST pages whole payments without splitting one payment's 
   ]);
 });
 
-test("full and sliced entrypoints share one audit lease", async () => {
+test("manual and scheduled callers share one audit lease", async () => {
   let release: (() => void) | undefined;
   const paused = new Promise<void>((resolve) => {
     release = resolve;
@@ -340,7 +338,10 @@ test("full and sliced entrypoints share one audit lease", async () => {
     await paused;
     return [];
   });
-  const active = runReconcileLedgersSlice({ scope: "full" });
+  const active = runReconcileLedgers({
+    scope: "full",
+    triggeredById: "admin-1",
+  });
   await expect(runReconcileLedgers({ scope: "full" })).rejects.toThrow(
     "lock held",
   );
@@ -350,9 +351,9 @@ test("full and sliced entrypoints share one audit lease", async () => {
 });
 
 test("a completed daily slice does not restart the full audit", async () => {
-  const completed = await runReconcileLedgersSlice({ scope: "full" });
+  const completed = await runReconcileLedgers({ scope: "full" });
   const comparisons = db.$transaction.mock.calls.length;
-  const reused = await runReconcileLedgersSlice({ scope: "full" });
+  const reused = await runReconcileLedgers({ scope: "full" });
   expect(reused.id).toBe(completed.id);
   expect(reused.summary.status).toBe("COMPLETED");
   expect(db.$transaction).toHaveBeenCalledTimes(comparisons);
@@ -398,7 +399,7 @@ test("a concurrent booking cannot mix cached counters with a later usage snapsho
     };
     return run(frozenSnapshot);
   });
-  const report = await runReconcileLedgersSlice({ scope: "full" });
+  const report = await runReconcileLedgers({ scope: "full" });
   expect(liveCounter).toBe(1);
   expect(report.findings).toEqual([]);
   expect(db.$transaction).toHaveBeenCalledWith(
@@ -412,15 +413,88 @@ test("records an interrupted comparison and resumes its checkpoint after the cal
     jest.advanceTimersByTime(7_000);
     return [];
   });
-  const first = await runReconcileLedgersSlice({ scope: "full" });
+  const first = await runReconcileLedgers({ scope: "full" });
   expect(first.summary.status).toBe("RUNNING");
   stored = { ...first, summary: { ...first.summary, executing: true } };
   jest.setSystemTime(new Date("2026-10-23T12:00:00Z"));
-  const resumed = await runReconcileLedgersSlice({ scope: "full" });
+  const resumed = await runReconcileLedgers({ scope: "full" });
   expect(resumed.id).toBe(first.id);
   expect(resumed.summary).toMatchObject({
     status: "COMPLETED",
     interruptions: 1,
   });
   expect(db.ledgerReconciliationReport.create).toHaveBeenCalledTimes(1);
+});
+
+test("a manual org audit stops at the slice budget and resumes its checkpoint", async () => {
+  reads.billingAccount.findMany.mockImplementationOnce(async () => {
+    jest.advanceTimersByTime(7_000);
+    return [];
+  });
+  const first = await runReconcileLedgers({
+    scope: "org:org-1",
+    organizationId: "org-1",
+    triggeredById: "admin-1",
+  });
+  expect(first.summary).toMatchObject({ status: "RUNNING", nextStep: 1 });
+  const final = await runReconcileLedgers({
+    scope: "org:org-1",
+    organizationId: "org-1",
+    triggeredById: "admin-1",
+  });
+  expect(final.id).toBe(first.id);
+  expect(final.summary.status).toBe("COMPLETED");
+  expect(db.ledgerReconciliationReport.create).toHaveBeenCalledTimes(1);
+});
+
+test("an authenticated manual request starts a fresh audit after today's completed verdict", async () => {
+  await runReconcileLedgers({ scope: "full" });
+  await runReconcileLedgers({ scope: "full", triggeredById: "admin-1" });
+  expect(db.ledgerReconciliationReport.create).toHaveBeenCalledTimes(2);
+});
+
+test("an exception expiring during a multi-day audit cannot excuse its final verdict", async () => {
+  const previous = [...LEDGER_FINDINGS_BASELINE];
+  LEDGER_FINDINGS_BASELINE.splice(0, LEDGER_FINDINGS_BASELINE.length, {
+    kind: "WALLET_BALANCE_DRIFT",
+    organizationId: "org-1",
+    billingAccountId: "account-1",
+    deltaPaise: 100,
+    owner: "test-owner",
+    reason: "Temporary exception",
+    expires: "2026-10-22",
+  });
+  try {
+    reads.billingAccount.findMany.mockImplementationOnce(async () => {
+      jest.advanceTimersByTime(7_000);
+      return [
+        {
+          id: "account-1",
+          ownerOrgId: "org-1",
+          currency: "INR",
+          walletBalance: 100,
+        },
+      ];
+    });
+    const first = await runReconcileLedgers({ scope: "full" });
+    expect(first.summary).toMatchObject({
+      status: "RUNNING",
+      baselinedCount: 1,
+    });
+    jest.setSystemTime(new Date("2026-10-24T03:55:00Z"));
+    const final = await runReconcileLedgers({ scope: "full" });
+    expect(final.summary).toMatchObject({
+      status: "COMPLETED",
+      baselinedCount: 0,
+      unbaselinedCount: 1,
+      baselineExpiredCount: 1,
+    });
+    expect(final.ok).toBe(false);
+  } finally {
+    LEDGER_FINDINGS_BASELINE.splice(
+      0,
+      LEDGER_FINDINGS_BASELINE.length,
+      ...previous,
+    );
+  }
 });

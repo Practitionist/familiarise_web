@@ -813,11 +813,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "reconcile-ledgers": () =>
       cleanupRoute({
         job: "reconcile-ledgers",
-        run: async (req) => {
-          const { runReconcileLedgersSlice } =
+        run: async () => {
+          const { runReconcileLedgers } =
             await import("@/scripts/reconcile/reconcile-ledgers");
-          const triggeredById =
-            req.nextUrl.searchParams.get("triggeredById") ?? undefined;
           const { respondToLedgerDrift, reportWalletDriftFreeze } =
             await import("@/scripts/reconcile/ledger-drift-response");
           const { freezeDriftedWallets } =
@@ -828,9 +826,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           let walletReportId: string | undefined;
           let report: ReconcileReport;
           try {
-            report = await runReconcileLedgersSlice({
+            report = await runReconcileLedgers({
               scope: "full",
-              triggeredById,
               onWalletDrift: async (reportId, findings) => {
                 walletReportId = reportId;
                 walletFindings.push(...findings);

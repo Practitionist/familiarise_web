@@ -9,64 +9,70 @@ import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { ReasonDialog } from "./ReasonDialog";
 import { useOpsDoor } from "./ops-door";
 
-interface JobRow {
-  key: string;
-  label: string;
-  description: string;
-  last: {
-    status: string;
-    startedAt: string;
-    endedAt: string | null;
-    errorCount: number | null;
-  } | null;
-}
+import {
+  reconcileOverviewSchema,
+  reconcileFeedbackSchema,
+  type ReconcileOverview,
+  type ReconcileJobRow,
+  type ReconcileBatch,
+} from "@/schemas/backoffice/reconciliation";
 
 const QUERY_KEY = ["money-reconcile"] as const;
 
-async function fetchJobs(): Promise<{
-  jobs: JobRow[];
-  ledgerReport: { runAt: string; ok: boolean; scope: string } | null;
-}> {
+async function fetchJobs(): Promise<ReconcileOverview> {
   const res = await fetch("/api/admin/reconcile");
   if (!res.ok) throw new Error("Failed to load");
-  return res.json() as Promise<Awaited<ReturnType<typeof fetchJobs>>>;
+  return reconcileOverviewSchema.parse(await res.json());
 }
 
-function lastRun(job: JobRow): string {
+function ledgerVerdict(
+  report: NonNullable<ReconcileOverview["ledgerReport"]>,
+): string {
+  switch (report.status) {
+    case "RUNNING":
+      return "in progress; continue the audit";
+    case "FAILED":
+      return "failed to finish; retry to continue";
+    case "UNKNOWN":
+      return "completion status unavailable";
+    case "COMPLETED":
+      return report.ok ? "clean" : "found drift";
+  }
+}
+
+function lastRun(job: ReconcileJobRow): string {
   if (!job.last) return "Never run.";
   const when = new Date(job.last.startedAt).toLocaleString();
   const errors = job.last.errorCount ? `, ${job.last.errorCount} errors` : "";
   return `Last run ${when}: ${job.last.status.toLowerCase()}${errors}.`;
 }
 
-/**
- * #1771 K-8 — run a reconcile job now, from the console, under its own cron
- * lock; the line under each job is its latest run.
- */
-type Batch = { processed: number; limit: number; full: boolean };
-
 /** What the last console run of a job did, in the operator's words. */
-function batchLine(batch: Batch): string {
+function batchLine(batch: ReconcileBatch): string {
   return batch.full
     ? `This run processed a full batch of ${batch.limit} — more may remain. Run again to continue.`
-    : `This run processed ${batch.processed} — nothing more was waiting.`;
+    : `This run processed ${batch.processed}.`;
 }
 
 export function ReconcileTab() {
-  const [running, setRunning] = useState<JobRow | null>(null);
-  const [lastBatch, setLastBatch] = useState<Record<string, Batch>>({});
-  const { data } = useQuery({
+  const [running, setRunning] = useState<ReconcileJobRow | null>(null);
+  const [lastBatch, setLastBatch] = useState<Record<string, ReconcileBatch>>(
+    {},
+  );
+  const { data, error } = useQuery({
     queryKey: QUERY_KEY,
     queryFn: fetchJobs,
     staleTime: 15_000,
   });
   const door = useOpsDoor({
-    success: "Started",
+    success: "Batch finished",
     invalidate: [QUERY_KEY],
     onDone: (data) => {
-      const job = typeof data.job === "string" ? data.job : null;
-      const batch = data.batch as Batch | null | undefined;
-      if (job && batch) setLastBatch((all) => ({ ...all, [job]: batch }));
+      const feedback = reconcileFeedbackSchema.safeParse(data);
+      if (feedback.success && feedback.data.batch) {
+        const { job, batch } = feedback.data;
+        setLastBatch((all) => ({ ...all, [job]: batch }));
+      }
       setRunning(null);
     },
   });
@@ -79,6 +85,7 @@ export function ReconcileTab() {
       />
       <Card>
         <CardContent className="pt-6">
+          {error && <p role="alert">Could not load reconciliation status.</p>}
           <ul className="divide-y divide-border">
             {(data?.jobs ?? []).map((job) => (
               <li
@@ -96,7 +103,11 @@ export function ReconcileTab() {
                   )}
                 </div>
                 <Button variant="outline" onClick={() => setRunning(job)}>
-                  Run now
+                  {job.key === "ledgers" &&
+                  data?.ledgerReport &&
+                  ["RUNNING", "FAILED"].includes(data.ledgerReport.status)
+                    ? "Continue audit"
+                    : "Run now"}
                 </Button>
               </li>
             ))}
@@ -105,7 +116,7 @@ export function ReconcileTab() {
             <p className="mt-3 text-sm text-muted-foreground">
               Latest ledger report ({data.ledgerReport.scope}):{" "}
               {new Date(data.ledgerReport.runAt).toLocaleString()},{" "}
-              {data.ledgerReport.ok ? "clean" : "found drift"}.
+              {ledgerVerdict(data.ledgerReport)}.
             </p>
           )}
         </CardContent>
@@ -113,7 +124,7 @@ export function ReconcileTab() {
           open={running !== null}
           onOpenChange={(o) => !o && setRunning(null)}
           title={`Run ${running?.label ?? "job"} now`}
-          description="If it is already running, nothing starts twice."
+          description="Runs one batch. Repeat to continue unfinished work."
           confirmLabel="Run"
           pending={door.isPending}
           onConfirm={(reason) =>
