@@ -19,9 +19,13 @@ import { slaStateOf } from "./sla";
 import { cascadeResolvedProblems } from "./problem-cascade";
 import { purgeExpiredSupportEvidence } from "./evidence-retention";
 import { sweepSupportChatAccess } from "./chat-sweep";
-import { releaseAllCaseHolds } from "./case-holds";
+import { activeHolds, caseHoldEvents, releaseAllCaseHolds } from "./case-holds";
 import { endCaseChatAccessTx } from "./chat-access-end";
-import { recordLifecycleHoldReleaseTx } from "./case-service";
+import {
+  moneyDoorsRefusal,
+  openRecommendationTx,
+  recordLifecycleHoldReleaseTx,
+} from "./case-service";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -535,12 +539,30 @@ async function releaseAutoClosedCaseTx(tx: Tx, caseId: string, now: Date) {
   });
 }
 
+/**
+ * Why a case holding payouts may not auto-close yet: an undecided refund
+ * recommendation or closed money doors. The doors gate is read lazily.
+ */
+async function autoCloseRefusalTx(
+  tx: Tx,
+  caseId: string,
+  doors: () => Promise<string | null>,
+): Promise<string | null> {
+  const held = activeHolds(await caseHoldEvents(tx, [caseId]));
+  if (held.length === 0) return null;
+  if (await openRecommendationTx(tx, caseId)) return "RECOMMENDATION_OPEN";
+  return doors();
+}
+
 async function autoCloseResolvedRows(
   now: Date,
   limit: number,
   errors: string[],
 ): Promise<number> {
   const autoCloseCutoff = new Date(now.getTime() - AUTO_CLOSE_DAYS_MS);
+  let gate: Promise<string | null> | undefined;
+  const doors = () =>
+    (gate ??= moneyDoorsRefusal().then((refusal) => refusal?.code ?? null));
   const staleResolvedCases = await prisma.supportCase.findMany({
     where: {
       status: "RESOLVED",
@@ -555,8 +577,10 @@ async function autoCloseResolvedRows(
     staleResolvedCases ?? [],
     async (c) => {
       try {
-        return await prisma.$transaction(
+        const closed = await prisma.$transaction(
           async (tx) => {
+            const refused = await autoCloseRefusalTx(tx, c.id, doors);
+            if (refused) return refused;
             const res = await tx.supportCase.updateMany({
               where: {
                 id: c.id,
@@ -584,6 +608,9 @@ async function autoCloseResolvedRows(
             timeout: ALLOCATION_TX_TIMEOUT_MS,
           },
         );
+        if (typeof closed === "number") return closed;
+        errors.push(`auto-close case ${c.id}: left RESOLVED (${closed})`);
+        return 0;
       } catch (err) {
         errors.push(
           `auto-close case ${c.id}: ${err instanceof Error ? err.message : String(err)}`,

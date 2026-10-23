@@ -6,6 +6,11 @@ const mockReleaseEarnings = jest.fn(
   }),
 );
 const mockReportSentryError = jest.fn();
+const mockMoneyDoorsRefusal = jest.fn();
+jest.mock("../../lib/support/case-service", () => ({
+  ...jest.requireActual("../../lib/support/case-service"),
+  moneyDoorsRefusal: () => mockMoneyDoorsRefusal(),
+}));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: jest.fn(
     async (_job: string, _opts: unknown, fn: () => Promise<unknown>) => fn(),
@@ -66,6 +71,7 @@ jest.mock("../../lib/prisma", () => {
     supportCaseChatAccess: { findMany: jest.fn(), updateMany: jest.fn() },
     earningsHold: { findMany: jest.fn() },
     opsActionLog: { create: jest.fn() },
+    supportFinancialRecommendation: { findFirst: jest.fn() },
   };
   const db = {
     supportCase: { findMany: jest.fn() },
@@ -97,6 +103,7 @@ const db = prisma as unknown as {
     supportCaseChatAccess: { findMany: jest.Mock; updateMany: jest.Mock };
     earningsHold: { findMany: jest.Mock };
     opsActionLog: { create: jest.Mock };
+    supportFinancialRecommendation: { findFirst: jest.Mock };
   };
 };
 const now = new Date("2026-10-22T00:00:00Z");
@@ -126,6 +133,8 @@ beforeEach(() => {
   ]);
   db.tx.supportCaseChatAccess.updateMany.mockResolvedValue({ count: 1 });
   db.tx.opsActionLog.create.mockResolvedValue({ id: "log" });
+  db.tx.supportFinancialRecommendation.findFirst.mockResolvedValue(null);
+  mockMoneyDoorsRefusal.mockResolvedValue(null);
 });
 
 const eventsOfKind = (kind: string) =>
@@ -208,4 +217,86 @@ it("folds a failed release into the run's errors instead of a per-row Sentry cap
     "auto-close case b: log write failed",
   ]);
   expect(mockReportSentryError).toHaveBeenCalledTimes(1);
+});
+
+describe("a case holding payouts", () => {
+  it("auto-closes and releases when no recommendation is open and the money doors are open", async () => {
+    const result = await runSupportSlaSweep({ now, limit: 20 });
+
+    expect(result.autoClosedCount).toBe(1);
+    expect(result.errors).toEqual([]);
+    expect(db.tx.supportFinancialRecommendation.findFirst).toHaveBeenCalledWith(
+      {
+        where: { caseId: "case", decidedAt: null, voidedAt: null },
+        select: { id: true },
+      },
+    );
+    expect(mockMoneyDoorsRefusal).toHaveBeenCalledTimes(1);
+    expect(eventsOfKind("AUTO_CLOSED")).toHaveLength(1);
+    expect(mockReleaseEarnings).toHaveBeenCalled();
+  });
+
+  it("stays RESOLVED and writes nothing while a refund recommendation is undecided", async () => {
+    db.tx.supportFinancialRecommendation.findFirst.mockResolvedValue({
+      id: "rec-1",
+    });
+
+    const result = await runSupportSlaSweep({ now, limit: 20 });
+
+    expect(result.autoClosedCount).toBe(0);
+    expect(result.errors).toEqual([
+      "auto-close case case: left RESOLVED (RECOMMENDATION_OPEN)",
+    ]);
+    expect(db.tx.supportCase.updateMany).not.toHaveBeenCalled();
+    expect(db.tx.supportCaseEvent.create).not.toHaveBeenCalled();
+    expect(mockReleaseEarnings).not.toHaveBeenCalled();
+    expect(db.tx.opsActionLog.create).not.toHaveBeenCalled();
+    expect(db.tx.supportCaseChatAccess.updateMany).not.toHaveBeenCalled();
+    expect(mockMoneyDoorsRefusal).not.toHaveBeenCalled();
+  });
+
+  it("stays RESOLVED and writes nothing while the money doors are closed, reading the gate once per run", async () => {
+    db.supportCase.findMany.mockImplementation(
+      async (args: { where: { status?: unknown } }) =>
+        args.where.status === "RESOLVED" ? [{ id: "a" }, { id: "b" }] : [],
+    );
+    mockMoneyDoorsRefusal.mockResolvedValue({
+      ok: false,
+      status: 503,
+      code: "MAINTENANCE",
+      error: "Money actions are paused.",
+    });
+
+    const result = await runSupportSlaSweep({ now, limit: 20 });
+
+    expect(result.autoClosedCount).toBe(0);
+    expect(result.errors).toEqual([
+      "auto-close case a: left RESOLVED (MAINTENANCE)",
+      "auto-close case b: left RESOLVED (MAINTENANCE)",
+    ]);
+    expect(mockMoneyDoorsRefusal).toHaveBeenCalledTimes(1);
+    expect(db.tx.supportCase.updateMany).not.toHaveBeenCalled();
+    expect(db.tx.supportCaseEvent.create).not.toHaveBeenCalled();
+    expect(mockReleaseEarnings).not.toHaveBeenCalled();
+    expect(db.tx.supportCaseChatAccess.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not consult the gates for a case that holds nothing", async () => {
+    db.tx.supportCaseEvent.findMany.mockResolvedValue([]);
+    mockMoneyDoorsRefusal.mockResolvedValue({
+      ok: false,
+      status: 503,
+      code: "MAINTENANCE",
+      error: "Money actions are paused.",
+    });
+
+    const result = await runSupportSlaSweep({ now, limit: 20 });
+
+    expect(result.autoClosedCount).toBe(1);
+    expect(result.errors).toEqual([]);
+    expect(
+      db.tx.supportFinancialRecommendation.findFirst,
+    ).not.toHaveBeenCalled();
+    expect(mockMoneyDoorsRefusal).not.toHaveBeenCalled();
+  });
 });
