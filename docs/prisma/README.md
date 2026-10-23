@@ -1,23 +1,21 @@
 # Prisma and database schema documentation
 
 This directory holds everything about the database schema: the general reference
-for Prisma Migrate, the two runbooks that take this database from its current
-`db push` posture to versioned migrations, the record of the Prisma 6 to 7
-upgrade, and the model-by-model map of the schema itself.
+for Prisma Migrate, the plan that takes this database from its current `db push`
+posture to versioned migrations, and the model-by-model map of the schema itself.
 
 Start here rather than in an individual file, because which document applies
 depends on whether you are reasoning generally or working in this repository.
 
 The numeric prefixes are reading order, following the convention used elsewhere
-under `docs/`. They run from orientation through general reference to the two
-runbooks in the order those runbooks actually execute — the reset finalises the
-schema, and the cutover then puts it under versioned migrations — with the
-completed Prisma 7 upgrade last because it is history rather than instruction.
+under `docs/`. They run from orientation through general reference to the
+launch plan.
 
-| Document                 | What it is                                                                                                                                                                                                       | Read it when                                                                                 |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `00-schema-map.md`       | Twenty-four domain diagrams of the Prisma schema, plus the enum reference table.                                                                                                                                 | Orienting in an unfamiliar part of the schema, or tracing how two models relate.             |
-| `01-migrations-guide.md` | The general-purpose reference for Prisma Migrate — every command, safe and dangerous operations, expand and contract, drift, rollback, troubleshooting. Written against a fictional schema so it stays portable. | You need to know what a Prisma command does, or how a class of change is handled in general. |
+| Document                                    | What it is                                                                                                                                                                                                                                      | Read it when                                                                                                               |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `00-schema-map.md`                          | Twenty-four domain diagrams of the Prisma schema, plus the enum reference table.                                                                                                                                                                | Orienting in an unfamiliar part of the schema, or tracing how two models relate.                                           |
+| `01-migrations-guide.md`                    | The general-purpose reference for Prisma Migrate — every command, safe and dangerous operations, expand and contract, drift, rollback, troubleshooting. Written against a fictional schema so it stays portable.                                | You need to know what a Prisma command does, or how a class of change is handled in general.                               |
+| `02-schema-freeze-and-migration-cutover.md` | The pre-launch plan: freeze the schema shape, baseline the live database, fold the SQL sidecars into migrations, split dev from prod, the CI drift gate, post-launch expand and contract, and the table of freeze candidates the owner decides. | You are planning or running the cutover, deciding whether a column survives the freeze, or asking why `db push` is banned. |
 
 ## The one thing to know first
 
