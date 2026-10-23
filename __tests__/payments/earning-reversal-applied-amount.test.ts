@@ -75,6 +75,9 @@ const tx: Record<string, Record<string, jest.Mock>> = {
   orgAuditLog: { create: jest.fn() },
 };
 
+jest.mock("../../lib/payments/ledger/refund-reversal-basis", () =>
+  jest.requireActual("../fixtures/no-refund-reversal-basis"),
+);
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {

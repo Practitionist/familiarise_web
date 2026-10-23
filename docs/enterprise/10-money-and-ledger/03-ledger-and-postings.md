@@ -219,7 +219,7 @@ The wallet cache is reduced only by what it still holds (the `billing_account_wa
 
 ### 4.7 Booking refund — `REFUND` (`refund:<refundId>`)
 
-A booking is refunded (fully or partially). The original booking legs are reversed **proportionally**: the fee/payable/GST credits become debits, and the funding legs become credits. `PLATFORM_FEE` carries the balancing _plug_ so the set ties out.
+A booking is refunded (fully or partially). The original booking legs are reversed **proportionally**: the fee/payable/GST credits become debits, and the funding legs become credits. The `DISCOUNT` the payment's booking and carve journals debited comes back as a credit in the same proportion, and the refund that completes the payment (counting only refunds already cascaded) takes the exact remainder of the `DISCOUNT`, the shares and the GST, so a full refund (in one go or split) leaves every account of the payment at zero, except that a refund past the GST credit-note cutoff reverses no GST, so `GST_PAYABLE` keeps that part and the platform bears it. `PLATFORM_FEE` carries the balancing _plug_ so the set ties out; on a full refund it equals the booking's fee.
 
 ```
 Dr PLATFORM_FEE              platform plug (funding − consultant − org − GST share)
@@ -227,6 +227,7 @@ Dr CONSULTANT_PAYABLE(owner) refunded consultant share
 Dr ORG_PAYABLE(org)          refunded org share
 Dr GST_PAYABLE               refunded GST share
    Cr GATEWAY_CLEARING / WALLET / ORG_RECEIVABLE / PLATFORM_PROMO   the original funding legs, prorated
+   Cr DISCOUNT                  the booked DISCOUNT, prorated (remainder on the completing refund)
 ```
 
 Posted only when the debit side balances to the refunded funding total (a guard in `refund.ts`); a partial/edge case that wouldn't balance is skipped and logged rather than written half-formed. The whole reversal block is wrapped so a ledger imbalance can never block the customer refund (gateway money may already have moved) — the failure is logged + paged and the reconciler's `EARNINGS_LEDGER_DRIFT` and `REVERSED_EARNING_WITHOUT_REFUND_TXN` checks catch any divergence.
