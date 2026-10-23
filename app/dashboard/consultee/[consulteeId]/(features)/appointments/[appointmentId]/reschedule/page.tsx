@@ -7,9 +7,15 @@ import { CalendarX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DashboardViewportFill } from "@/components/dashboard/DashboardViewportFill";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
+import { OperatorOpsHint } from "@/components/appointments/OperatorOpsHint";
 import prisma from "@/lib/prisma";
-import { readAppointmentDetail } from "@/lib/data/appointment-detail";
+import {
+  canAccessAppointment,
+  readAppointmentDetail,
+} from "@/lib/data/appointment-detail";
+import { getSession } from "@/lib/auth-server";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import { operatorOpsHref } from "@/lib/backoffice/booking-href";
 import { safeReturnTo } from "@/lib/navigation/safe-path";
 import { buildRescheduleSubject } from "@/lib/scheduling/time-picker-subject";
 
@@ -94,7 +100,7 @@ export default async function RescheduleAppointmentPage({
   const { returnTo } = await searchParams;
   // Enforced here rather than in the layout: the layout is a client component,
   // so its check runs only after this server render has already streamed.
-  await requirePersonalProfileAccess("consultee", consulteeId);
+  const access = await requirePersonalProfileAccess("consultee", consulteeId);
 
   const [detail, profile] = await Promise.all([
     loadDetail(appointmentId),
@@ -121,9 +127,9 @@ export default async function RescheduleAppointmentPage({
             Trial sessions can&apos;t be rescheduled
           </h1>
           <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-            A trial is a one-off taster at the time your consultant offered.
-            If it no longer works, cancel it and request a new one, or message
-            your consultant.
+            A trial is a one-off taster at the time your consultant offered. If
+            it no longer works, cancel it and request a new one, or message your
+            consultant.
           </p>
           <Button variant="outline" size="sm" className="mt-4" asChild>
             <Link href={`/dashboard/consultee/${consulteeId}/appointments`}>
@@ -149,6 +155,13 @@ export default async function RescheduleAppointmentPage({
     returnTo,
     `/dashboard/consultee/${consulteeId}/appointments`,
   );
+  const opsHref = access.isInspecting
+    ? operatorOpsHref(
+        (await getSession())?.user,
+        canAccessAppointment(access.userId, detail),
+        appointmentId,
+      )
+    : null;
 
   return (
     <DashboardViewportFill className="gap-4">
@@ -166,13 +179,17 @@ export default async function RescheduleAppointmentPage({
         />
       </div>
 
-      <RescheduleClient
-        appointmentId={appointmentId}
-        title={resolved.title}
-        typeLabel={resolved.typeLabel}
-        subject={resolved.subject}
-        backHref={backHref}
-      />
+      {opsHref ? (
+        <OperatorOpsHint href={opsHref} />
+      ) : (
+        <RescheduleClient
+          appointmentId={appointmentId}
+          title={resolved.title}
+          typeLabel={resolved.typeLabel}
+          subject={resolved.subject}
+          backHref={backHref}
+        />
+      )}
     </DashboardViewportFill>
   );
 }

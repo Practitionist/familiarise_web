@@ -2,12 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import {
-  keepPreviousData,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   Search,
   RefreshCw,
@@ -25,7 +20,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -47,19 +41,9 @@ import {
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { BookingOpsPanel } from "@/components/dashboard/backoffice/money/BookingOpsPanel";
+import { DoorDialog } from "@/components/dashboard/backoffice/money/DoorDialog";
+import { PlatformCancelDoor } from "@/components/dashboard/backoffice/money/PlatformCancelDoor";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import { errorMessageFromBody } from "@/lib/fetch-helpers";
-import {
-  CancelRefundPreviewSchema,
-  type CancelRefundPreview,
-} from "@/schemas/appointments";
-import {
-  applyRefundRequote,
-  cancelPreviewQueryKey,
-  cancelPreviewUrl,
-  readRefundQuoteChanged,
-  shownQuoteBody,
-} from "@/lib/appointments/cancel-requote";
 import type {
   SubscriptionListItem,
   SubscriptionListResponse,
@@ -121,6 +105,7 @@ const formatDate = (dateString: string | null) => {
 };
 
 const EMPTY_STATS = { activeCount: 0, expiringCount: 0, expiredCount: 0 };
+const CANCEL_INVALIDATE = [["admin-subscriptions"], ["booking-ops"]];
 const LIMIT = 20;
 
 function UserLinkRow({
@@ -168,93 +153,7 @@ function SubscriptionDetailSheet({
   basePath: string;
   canMutate: boolean;
 }>) {
-  const queryClient = useQueryClient();
-  const [auditReason, setAuditReason] = useState("");
-  const [opsError, setOpsError] = useState<string | null>(null);
-  const [opsSuccess, setOpsSuccess] = useState<string | null>(null);
-
-  // The cancel quotes the refund before the click, and the click carries it back.
-  const previewUrl = subscription?.appointmentId
-    ? cancelPreviewUrl(encodeURIComponent(subscription.appointmentId))
-    : null;
-  const quote = useQuery<CancelRefundPreview>({
-    queryKey: cancelPreviewQueryKey(previewUrl ?? ""),
-    queryFn: async () => {
-      if (!previewUrl) throw new Error("No booking to quote");
-      const res = await fetch(previewUrl, {
-        signal: AbortSignal.timeout(8_000),
-      });
-      if (!res.ok) throw new Error("Could not estimate the refund");
-      const parsed = CancelRefundPreviewSchema.safeParse(await res.json());
-      if (!parsed.success) throw new Error("Could not estimate the refund");
-      return parsed.data;
-    },
-    enabled: open && canMutate && !!previewUrl,
-    staleTime: 0,
-    gcTime: 0,
-    retry: false,
-  });
-  const shownQuote =
-    quote.data && quote.data.paid !== false ? quote.data : undefined;
-
-  const mutateSubscription = useMutation({
-    mutationFn: async (payload: {
-      subscriptionId: string;
-      appointmentId?: string | null;
-      action: "CANCEL";
-      reason: string;
-    }) => {
-      const res = payload.appointmentId
-        ? await fetch(
-            `/api/appointments/${encodeURIComponent(payload.appointmentId)}/cancel`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                reason: "OTHER",
-                notes: payload.reason,
-                ...shownQuoteBody(shownQuote),
-              }),
-            },
-          )
-        : await fetch("/api/admin/subscriptions", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              subscriptionId: payload.subscriptionId,
-              action: payload.action,
-              reason: payload.reason,
-            }),
-          });
-      const json: unknown = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const requote =
-          res.status === 409 && previewUrl
-            ? readRefundQuoteChanged(json)
-            : null;
-        if (requote && previewUrl) {
-          applyRefundRequote(queryClient, previewUrl, requote);
-          throw new Error(
-            "The refund has changed. Check the new amount and confirm again.",
-          );
-        }
-        throw new Error(
-          errorMessageFromBody(json, "Failed to cancel subscription"),
-        );
-      }
-      return json;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-subscriptions"] });
-      setAuditReason("");
-      setOpsError(null);
-      setOpsSuccess("Subscription cancelled and refund pipeline triggered.");
-    },
-    onError: (err: Error) => {
-      setOpsSuccess(null);
-      setOpsError(err.message);
-    },
-  });
+  const [cancelOpen, setCancelOpen] = useState(false);
 
   if (!subscription) return null;
 
@@ -360,31 +259,6 @@ function SubscriptionDetailSheet({
                 <h4 className="text-sm font-semibold">
                   Cancel Subscription (Audited)
                 </h4>
-                <div className="space-y-1">
-                  <Label htmlFor="sub-ops-reason">Audit reason *</Label>
-                  <Input
-                    id="sub-ops-reason"
-                    value={auditReason}
-                    onChange={(e) => setAuditReason(e.target.value)}
-                    placeholder="Reason for subscription cancellation"
-                  />
-                </div>
-                {shownQuote && (
-                  <p className="text-xs text-muted-foreground">
-                    Cancelling now refunds{" "}
-                    <span className="font-medium text-foreground">
-                      {formatCurrencyAmount(
-                        shownQuote.estimatedRefundPaise,
-                        shownQuote.currency,
-                      )}
-                    </span>{" "}
-                    ({shownQuote.refundPct}%).
-                  </p>
-                )}
-                {opsError && <p className="text-xs text-red-600">{opsError}</p>}
-                {opsSuccess && (
-                  <p className="text-xs text-emerald-600">{opsSuccess}</p>
-                )}
                 <div className="flex items-center justify-between gap-2">
                   <Button size="sm" variant="outline" asChild>
                     <Link
@@ -396,33 +270,9 @@ function SubscriptionDetailSheet({
                   <Button
                     size="sm"
                     variant="destructive"
-                    disabled={mutateSubscription.isPending}
-                    onClick={() => {
-                      setOpsError(null);
-                      setOpsSuccess(null);
-                      if (auditReason.trim().length < 5) {
-                        setOpsError(
-                          "Audit reason must be at least 5 characters.",
-                        );
-                        return;
-                      }
-                      if (!subscription.subscriptionId) return;
-                      mutateSubscription.mutate({
-                        subscriptionId: subscription.subscriptionId,
-                        appointmentId: subscription.appointmentId,
-                        action: "CANCEL",
-                        reason: auditReason.trim(),
-                      });
-                    }}
+                    onClick={() => setCancelOpen(true)}
                   >
-                    {mutateSubscription.isPending ? (
-                      <>
-                        <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />{" "}
-                        Cancelling…
-                      </>
-                    ) : (
-                      "Cancel Subscription"
-                    )}
+                    Cancel Subscription
                   </Button>
                 </div>
               </div>
@@ -434,6 +284,36 @@ function SubscriptionDetailSheet({
             </div>
           )}
         </div>
+        {/* A booked subscription cancels through the platform cancel door,
+            which refunds it; one with no booking is only marked cancelled. */}
+        {subscription.appointmentId ? (
+          <PlatformCancelDoor
+            appointmentId={subscription.appointmentId}
+            open={cancelOpen}
+            invalidate={CANCEL_INVALIDATE}
+            onClose={() => setCancelOpen(false)}
+          />
+        ) : (
+          <DoorDialog
+            door={
+              cancelOpen && subscription.subscriptionId
+                ? {
+                    url: "/api/admin/subscriptions",
+                    title: "Cancel this subscription",
+                    description:
+                      "It has no booking yet, so it is only marked cancelled and nothing is refunded.",
+                    confirm: "Cancel subscription",
+                    body: {
+                      subscriptionId: subscription.subscriptionId,
+                      action: "CANCEL",
+                    },
+                  }
+                : null
+            }
+            invalidate={CANCEL_INVALIDATE}
+            onClose={() => setCancelOpen(false)}
+          />
+        )}
       </SheetContent>
     </Sheet>
   );
