@@ -355,6 +355,8 @@ test("a completed daily slice does not restart the full audit", async () => {
   const comparisons = db.$transaction.mock.calls.length;
   const reused = await runReconcileLedgers({ scope: "full" });
   expect(reused.id).toBe(completed.id);
+  expect(completed.reused).toBeUndefined();
+  expect(reused.reused).toBe(true);
   expect(reused.summary.status).toBe("COMPLETED");
   expect(db.$transaction).toHaveBeenCalledTimes(comparisons);
   expect(db.ledgerReconciliationReport.create).toHaveBeenCalledTimes(1);

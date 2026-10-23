@@ -96,7 +96,7 @@ The lock order is always event or expert first, consultee second, slot third, wh
 
 Inside `commitCheckout`, one Serializable transaction does the following in order: re-checks the invoice credit limit when the rail is `INVOICE`; asserts the buyer has no overlapping session (`assertConsulteeHasNoOverlappingSession`); creates the tentative appointment through the per-type handler; writes the `Payment` row (`writeCheckoutPayment`); writes the org funding leg and meters programme usage (`recordCheckoutUtilization`); writes the `CARD` leg, spends the discount use and re-reads referral credits (`settleCheckoutLegs`); and, on the rails that confirm immediately, creates earnings and the `booking:<paymentId>` journal (`recordSynchronousEarnings`). A credit shortfall discovered here aborts the checkout with a retryable 409 `CREDIT_SHORTFALL` so the buyer is re-priced rather than undercharged.
 
-`settleCheckoutLegs` only logs a leg-sum mismatch at checkout, because a surprise 500 on the hot path blocks real bookings. The database is the hard guard: the `payment_legs_sum_to_amount` constraint trigger refuses the commit ([payment legs](../20-ledger/03-payment-legs.md)).
+`settleCheckoutLegs` does not re-read the legs it writes. The database is the only guard: the `payment_legs_sum_to_amount` constraint trigger refuses the commit if the legs do not sum to `Payment.amount` ([payment legs](../20-ledger/03-payment-legs.md)).
 
 ## 4. Holds, open-order reuse and idempotency
 

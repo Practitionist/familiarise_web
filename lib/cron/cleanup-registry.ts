@@ -845,7 +845,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
                 frozenWallets,
               );
           }
-          if (report.summary.status !== "RUNNING" && !report.ok)
+          // A reused same-day verdict already raised its drift response.
+          if (
+            report.summary.status !== "RUNNING" &&
+            !report.ok &&
+            !report.reused
+          )
             await respondToLedgerDrift(report);
           return {
             success: true,

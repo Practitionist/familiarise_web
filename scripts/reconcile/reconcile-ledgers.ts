@@ -101,6 +101,8 @@ export type ReconcileReport = {
     interruptions?: number;
   };
   findings: Finding[];
+  /** Set when a scheduled run returned today's completed verdict instead of auditing again. */
+  reused?: boolean;
 };
 
 const CHUNK = 5_000;
@@ -1966,7 +1968,8 @@ async function runReconcileLedgersUnlocked(
       findings: ctx.findings,
     };
   };
-  if (completedToday || nextStep === STEPS.length) return save("COMPLETED");
+  if (completedToday) return { ...(await save("COMPLETED")), reused: true };
+  if (nextStep === STEPS.length) return save("COMPLETED");
   try {
     do {
       await save("RUNNING", true);
