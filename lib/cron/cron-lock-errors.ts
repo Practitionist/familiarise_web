@@ -21,7 +21,7 @@ export class CronLockHeldError extends Error {
 }
 
 /**
- * A fail-closed job refused to run because no real Redis lock is possible.
+ * A fail-closed job refused to run because no Postgres lease is possible.
  *
  * Deliberately NOT a subclass of CronLockHeldError: a job that cannot obtain a
  * lock has not been skipped by a healthy sibling, it has failed, and it must
@@ -31,7 +31,7 @@ export class CronLockUnavailableError extends Error {
   readonly code = "CRON_LOCK_UNAVAILABLE" as const;
   constructor(readonly jobName: string) {
     super(
-      `${jobName} is fail-closed and requires a real Redis lock, but Redis is not configured or unreachable`,
+      `${jobName} is fail-closed and requires a Postgres lease, but the lease table is unavailable`,
     );
     this.name = "CronLockUnavailableError";
   }

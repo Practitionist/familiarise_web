@@ -21,6 +21,7 @@
 import { StreamChat, UserResponse } from "stream-chat";
 import prisma from "../../lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { SUPPORT_STREAM_USER_ID } from "@/lib/stream/support-user";
 
 // Types
 interface FailedDeletionFromSDK {
@@ -64,7 +65,8 @@ export const DELETE_USERS_PACING_MS = 10_000;
 // User IDs that should never be deleted (from env or defaults)
 function getExcludedUserIds(): Set<string> {
   const envExcluded = process.env.STREAM_SYNC_EXCLUDED_USERS || "";
-  const excluded = new Set(["system"]);
+  // Familiarise Support is a Stream-only user with no DB row by design.
+  const excluded = new Set(["system", SUPPORT_STREAM_USER_ID]);
 
   if (envExcluded) {
     envExcluded.split(",").forEach((id) => {
