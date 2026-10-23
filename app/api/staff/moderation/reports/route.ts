@@ -80,6 +80,7 @@ const REPORT_INCLUDE = {
   _count: {
     select: { actions: true },
   },
+  supportCase: { select: { id: true, referenceNumber: true } },
   review: {
     select: {
       id: true,
@@ -238,6 +239,7 @@ export async function GET(req: NextRequest) {
       assignedToId: report.assignedToId,
       actionCount: report._count.actions,
       latestAction: report.actions[0] ?? null,
+      supportCase: report.supportCase ?? null,
       createdAt: report.createdAt,
       resolvedAt: report.resolvedAt,
     }));

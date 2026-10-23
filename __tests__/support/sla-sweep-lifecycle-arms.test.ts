@@ -1,6 +1,7 @@
 /** @jest-environment node */
 const mockCascade = jest.fn();
 const mockPurge = jest.fn();
+const mockChatSweep = jest.fn();
 const mockFlush = jest.fn(async (..._args: unknown[]) => undefined);
 const mockReportSentryError = jest.fn();
 jest.mock("../../lib/cron/with-cron-lock", () => ({
@@ -9,10 +10,14 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
   ),
 }));
 jest.mock("../../lib/support/problem-cascade", () => ({
+  HELD_OPEN_SCAN_FACTOR: 2,
   cascadeResolvedProblems: (...args: unknown[]) => mockCascade(...args),
 }));
 jest.mock("../../lib/support/evidence-retention", () => ({
   purgeExpiredSupportEvidence: (...args: unknown[]) => mockPurge(...args),
+}));
+jest.mock("../../lib/support/chat-sweep", () => ({
+  sweepSupportChatAccess: (...args: unknown[]) => mockChatSweep(...args),
 }));
 jest.mock("../../lib/novu/stage-bell", () => ({
   stageBell: jest.fn(async () => null),
@@ -60,6 +65,7 @@ import { runSupportSlaSweep } from "../../lib/support/sla-sweep";
 const now = new Date("2026-10-22T00:00:00Z");
 const bell = { transactionId: "case-status:a" };
 const email = { staged: { id: "e1" }, message: { to: "c@example.test" } };
+const chatBell = { transactionId: "chat-reviewed:g1:case" };
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -70,6 +76,12 @@ beforeEach(() => {
     emails: [email],
   });
   mockPurge.mockResolvedValue({ casesPurged: 2, filesDeleted: 3 });
+  mockChatSweep.mockImplementation(
+    async ({ stagedBells }: { stagedBells: unknown[] }) => {
+      stagedBells.push(chatBell);
+      return { ended: 2, joined: 1, left: 1, boundaries: 3, notices: 1 };
+    },
+  );
 });
 
 it("runs the cascade and purge arms with their own small bounds and reports their counts", async () => {
@@ -81,15 +93,23 @@ it("runs the cascade and purge arms with their own small bounds and reports thei
   expect(mockPurge).toHaveBeenCalledWith(
     expect.objectContaining({ limit: 5, now }),
   );
+  expect(mockChatSweep).toHaveBeenCalledWith(
+    expect.objectContaining({ limit: 10, now }),
+  );
   expect(result).toMatchObject({
     success: true,
     incidentsCascaded: 1,
     evidenceCasesPurged: 2,
     evidenceFilesDeleted: 3,
+    chatAccessEnded: 2,
+    chatInterventionsJoined: 1,
+    chatInterventionsLeft: 1,
+    chatBoundariesSynced: 3,
+    chatReviewNotices: 1,
   });
   expect(mockFlush).toHaveBeenCalledWith(
     {
-      bells: [bell],
+      bells: [bell, chatBell],
       emails: [{ rows: [email], emailType: "SUPPORT_TICKET_UPDATE" }],
     },
     "support.sla-sweep",
@@ -101,6 +121,7 @@ it("never asks an arm for more than the run's limit", async () => {
   await runSupportSlaSweep({ now, limit: 2 });
   expect(mockCascade.mock.calls[0][0].limit).toBe(2);
   expect(mockPurge.mock.calls[0][0].limit).toBe(2);
+  expect(mockChatSweep.mock.calls[0][0].limit).toBe(2);
 });
 
 it("folds arm failures into the run's errors and reports to Sentry once", async () => {
@@ -113,10 +134,14 @@ it("folds arm failures into the run's errors and reports to Sentry once", async 
     errors.push("evidence-purge case c: 1 file(s) not confirmed deleted");
     return { casesPurged: 0, filesDeleted: 0 };
   });
+  mockChatSweep.mockImplementation(async ({ errors }: { errors: string[] }) => {
+    errors.push("chat-access leave g1: stream 500");
+    return { ended: 0, joined: 0, left: 0, notices: 0 };
+  });
 
   const result = await runSupportSlaSweep({ now, limit: 20 });
 
   expect(result.success).toBe(false);
-  expect(result.errors).toHaveLength(3);
+  expect(result.errors).toHaveLength(4);
   expect(mockReportSentryError).toHaveBeenCalledTimes(1);
 });

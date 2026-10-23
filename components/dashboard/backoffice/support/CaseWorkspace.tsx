@@ -51,6 +51,7 @@ import type {
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 import { CaseDetails } from "./CaseDetails";
+import { SupportInChatPill } from "./CaseChatPanel";
 import { CaseConversation, type ComposerMode } from "./CaseConversation";
 import { useCaseMutations } from "./useCaseMutations";
 
@@ -486,6 +487,9 @@ export function CaseWorkspace({
           {sla && <StatusBadge {...sla} variant="dot" />}
           {data.person.callbackRequested && (
             <StatusBadge label="Callback" tone="critical" />
+          )}
+          {can("supportChat.read") && (
+            <SupportInChatPill caseId={data.caseId} />
           )}
           {data.ackDueAt &&
             !data.sla?.ackBreached &&

@@ -54,6 +54,7 @@ jest.mock("../../lib/prisma", () => ({
     supportCaseMessage: { findMany: jest.fn(async () => []) },
     supportCaseEvidenceRequest: { findMany: jest.fn(async () => []) },
     supportCaseAttachment: { findMany: jest.fn(async () => []) },
+    supportCaseChatAccess: { findMany: jest.fn(async () => []) },
     membership: {
       findMany: jest.fn(),
     },
@@ -326,6 +327,7 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
         supportEvidenceRequests: [],
         supportAttachments: [],
         supportRatings: [],
+        supportChatAccess: [],
         supportExportComplete: true,
       });
     });
