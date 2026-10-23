@@ -13,6 +13,8 @@
  * runs in its daily window from 03:00 UTC.
  */
 
+import { startDeadline } from "@/lib/cron/run-deadline";
+import { LEAST_RECENTLY_RECONCILED } from "@/lib/payments/payouts/reconcile-cursor";
 import prisma from "../../lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
@@ -41,6 +43,7 @@ export interface AbandonedOrgTopUpCleanupOptions {
   graceHours?: number;
   /** Oldest-first cap on the placeholders one run settles. */
   limit?: number;
+  startedAt?: number;
 }
 
 /**
@@ -92,6 +95,7 @@ async function settleOne(c: {
 async function cleanupAbandonedOrgTopUpsUnlocked(
   options: AbandonedOrgTopUpCleanupOptions = {},
 ): Promise<AbandonedOrgTopUpCleanupResult> {
+  const pastDeadline = startDeadline(options.startedAt);
   const graceHours = options.graceHours ?? DEFAULT_GRACE_HOURS;
   const cutoff = new Date(Date.now() - graceHours * 60 * 60 * 1000);
   const errors: string[] = [];
@@ -108,8 +112,8 @@ async function cleanupAbandonedOrgTopUpsUnlocked(
         // Only a minted order can be proven empty; the rest never leave the table.
         notes: { contains: "razorpay_order=order_" },
       },
-      orderBy: { createdAt: "asc" },
-      take: options.limit,
+      orderBy: [LEAST_RECENTLY_RECONCILED, { id: "asc" }],
+      take: options.limit ?? 25,
       select: {
         id: true,
         billingAccountId: true,
@@ -120,6 +124,7 @@ async function cleanupAbandonedOrgTopUpsUnlocked(
     });
 
     for (const c of candidates) {
+      if (pastDeadline()) break;
       try {
         const outcome = await settleOne(c);
         counts[outcome] += 1;
@@ -129,6 +134,14 @@ async function cleanupAbandonedOrgTopUpsUnlocked(
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         errors.push(`${c.providerOrderId}: ${message}`);
+      } finally {
+        try {
+          await prisma.$executeRaw`UPDATE "WalletTopUp" SET "lastReconciledAt" = now() WHERE id = ${c.id}`;
+        } catch (error) {
+          errors.push(
+            `Polling cursor WalletTopUp ${c.id}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
       }
     }
   } catch (error) {
