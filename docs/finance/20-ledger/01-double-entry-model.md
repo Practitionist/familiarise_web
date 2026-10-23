@@ -1,177 +1,92 @@
 ---
-title: Money model overview
-band: 10-money-and-ledger
-audience: sde2
+title: The double-entry model
+type: explanation
+audience: engineers who need the money model before reading any posting
 status: live
-last-reviewed: 2026-06-05
+last-reviewed: 2026-10-23
 ---
 
-# Money model overview
+# The double-entry model
 
-**What this covers:** the principles every money doc in this section (`06`–`14`) builds on — integer paise, the double-entry journal, derived balances, and what the **#772 cutover** changed. Read this first; the rest of the band is detail.
+Every movement of money on the platform is recorded as one balanced transaction in a single journal, and every balance is a sum over that journal. This page explains the model: what a transaction is, why amounts are integer paise, which numbers are caches rather than truth, and what the database refuses to store. The accounts themselves are in [chart of accounts](02-chart-of-accounts.md) and the exact lines each flow posts are in [postings](04-postings.md).
 
-> **One-sentence model.** Every cash event in the platform is recorded as **one balanced double-entry transaction** in a single journal (`LedgerTransaction` + `LedgerEntry`), and **every balance is derived by summing that journal** — nothing about "how much money is where" is stored as an authoritative number.
+## 1. Four rules that never bend
 
----
+1. **Money is integer paise.** There are no floats anywhere in a money path. ₹1 is 100 paise, so ₹1,180 is `118000`. Splits are basis points (bps, one hundredth of a percent, 10,000 bps = 100 %), and a split must sum to its whole as an integer equality: `platformBps + orgBps + consultantBps = 10000`. Every money column is `BigInt` in Postgres, and `lib/prisma.ts` converts each of them to a plain `number` at the client boundary, so application code and JSON never see a `bigint`. That is safe up to `Number.MAX_SAFE_INTEGER` paise, about ₹90 lakh crore. The one read shape the extension cannot convert is an aggregate (`_sum`, `groupBy`), so every aggregation goes through `sumPaise` (`lib/payments/utils/money.ts`), which throws if a total leaves the safe range, and proportional arithmetic goes through `prorate`, which multiplies in `BigInt` so the intermediate product cannot overflow. `scripts/ci/check-money-columns.ts` rejects a new `Int` money column, and `__tests__/lib/prisma-money-extension.test.ts` fails if a `BigInt` column is missing from the boundary map.
+2. **Every cash event is one balanced transaction.** A `LedgerTransaction` owns two or more `LedgerEntry` rows, each a positive `amountPaise` with a `direction` of `DEBIT` or `CREDIT`, and the debits equal the credits. `postLedgerTxn` (`lib/payments/ledger/post.ts`) refuses an unbalanced set before writing, and the deferred constraint trigger `ledger_txn_balanced` refuses it again at `COMMIT` (`prisma/sql/ledger-triggers.sql`). The trigger proves only balance. It does not prove that every business event was posted, or that a cache agrees with the journal; the reconciler covers those ([integrity and reconciliation](06-integrity-and-reconciliation.md)).
+3. **The journal is append-only.** `ledger_entry_immutable` and `ledger_transaction_immutable` are `BEFORE UPDATE OR DELETE` triggers that raise, and `ledger_entry_amount_positive` requires `amountPaise > 0`. A wrong posting is corrected by a counter-transaction, never an edit.
+4. **Balances are derived.** "How much do we owe this expert?" is `Σ debit − Σ credit` over that account's entries (`ledgerBalancePaise`), not a stored column. For a credit-normal account, which is every liability and revenue, the amount owed is the negative of that signed figure.
 
-## 1. Three rules that never bend
+## 2. The three things in the journal
 
-1. **Money is integer paise.** No floats, ever. ₹1 = 100 paise; `amountPaise: 50000` is ₹500. Floating-point rounding has no place in a ledger. Percentages and splits are **basis points** (`bps`, integer; 10000 = 100%), not floats — see [chart of accounts](02-chart-of-accounts.md) and [booking → earnings](../../enterprise/10-money-and-ledger/05-booking-to-earnings.md). Since #780, every money column is `BigInt` at the database (the old `Int` columns silently overflowed above ₹2.14 crore) and a plain `number` at the JS boundary: the client extension in `lib/prisma.ts` converts every BigInt field on read, so application code, JSON responses, and gateway payloads never see a `bigint`. The two guards that keep this true are the CI money-column check (`scripts/ci/check-money-columns.ts`, no new `Int` money columns) and the extension drift test (`__tests__/lib/prisma-money-extension.test.ts`, every BigInt column is in the boundary map). The one read shape the extension cannot cover is aggregation — `_sum`/`groupBy` results still surface `bigint` and must be wrapped in `sumPaise()` from `lib/payments/utils/money.ts`, which also asserts the value is inside `Number`'s safe-integer range. Since #781 §A, every money row's `currency` column is also the `Currency` enum rather than a free string: gateways still speak arbitrary ISO codes, so each row-write coerces through `toCurrencyEnum()` (`lib/payments/validation/currency-guards.ts`), which throws on a code we cannot book — webhook paths dead-letter that error rather than booking a mislabelled amount.
-2. **Every cash event is a balanced transaction.** A posting set is only valid when **Σ(DEBIT) == Σ(CREDIT)**. `postLedgerTxn()` rejects anything else with `LedgerImbalanceError` before a row is written. The database enforces the same invariant at COMMIT with the deferred constraint trigger `ledger_txn_balanced` (`prisma/sql/ledger-triggers.sql`), so no application sweep re-proves it.
-3. **Balances are derived, never stored.** "What do we owe this org / this consultant / the government?" is always a `SUM` over journal entries (`ledgerBalancePaise()`), not a column. The few balance-shaped columns that exist (`BillingAccount.walletBalance`) are **caches** the reconciler asserts against the journal — see §4.
+| Thing               | Role                                                                                                                                                  |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LedgerAccount`     | A bucket, scoped to the platform, an organisation or a consultant. Its id is its scope: `<kind>\|<org or _>\|<consultantProfileId or _>\|<currency>`. |
+| `LedgerTransaction` | One balanced event. `idempotencyKey` is unique and names the flow (`booking:<paymentId>`), and `kind` is the typed `LedgerTransactionKind` enum.      |
+| `LedgerEntry`       | One line: an account, a direction and a positive amount. `LedgerEntry.transactionId` is `onDelete: Restrict`.                                         |
 
----
-
-## 2. What #772 changed (read this if you've seen the old docs)
-
-Before the cutover the schema carried **three single-entry, signed-delta logs**:
-
-| Removed model                                | What it logged                                                                                 | Where it lives now                                                                          |
-| -------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `FundingLedgerEntry`                         | money allocations (top-up / booking debit / refund / grant) with a running `balanceAfterPaise` | the journal (`LedgerEntry` on the relevant accounts)                                        |
-| `WalletEntry`                                | per-row wallet history + gateway idempotency                                                   | `WalletTopUp` (lifecycle/idempotency) + `LedgerEntry` on the org `WALLET` account (history) |
-| `SettlementLedgerEntry` (+ `SettlementKind`) | external settlements (invoice issued/paid, payout sent, refund)                                | `LedgerTransaction.kind` + `OrgAuditLog`                                                    |
+Two ledgers exist, not one. The money journal above records cash. `UsageLedgerEntry` is a separate single-entry log that counts engagements a member has consumed against a programme cap; it answers a different question and has its own immutability trigger.
 
 ```mermaid
 flowchart LR
-  subgraph OLD["Before #772 — three single-entry logs"]
-    direction TB
-    F["FundingLedgerEntry<br/>signed deltaPaise + balanceAfter"]
-    W["WalletEntry<br/>signed delta + gateway ids"]
-    S["SettlementLedgerEntry<br/>signed amount + kind"]
-  end
-  subgraph NEW["After #772 — one double-entry journal"]
-    direction TB
-    T["LedgerTransaction<br/>idempotencyKey · kind"]
-    E["LedgerEntry<br/>DEBIT/CREDIT · amountPaise (always +)"]
-    T --- E
-  end
-  OLD -->|"collapsed into"| NEW
-  WT["WalletTopUp<br/>(top-up lifecycle + idempotency)"]
-  UL["UsageLedgerEntry<br/>(entitlement consumption — UNCHANGED)"]
-  W -.->|"lifecycle role →"| WT
+  E["cash event<br/>(capture, refund, payout, top-up)"] --> P["build postings<br/>account, direction, paise"]
+  P --> C{"every amount a<br/>positive integer?"}
+  C -- no --> X1["throw, nothing written"]
+  C -- yes --> D{"debits = credits?"}
+  D -- no --> X2["LedgerImbalanceError"]
+  D -- yes --> K{"idempotencyKey<br/>already posted?"}
+  K -- yes --> N["return created: false<br/>(no-op)"]
+  K -- no --> W["upsert accounts, insert<br/>transaction and entries"]
+  W --> T["COMMIT: ledger_txn_balanced<br/>re-checks the sum"]
 ```
 
-**Why one journal beats three logs.** The old logs each answered one question but couldn't cross-check each other without JSON joins and date heuristics. A double-entry journal makes the cross-check structural: because every transaction balances and every balance is a sum of the same rows, a single invariant (`Σdebit == Σcredit`) guarantees the books tie out. Reconciliation went from "compare three logs and hope" to "re-sum one journal."
+## 3. Derived, but with checked caches
 
-The difference is the _shape of the reconciliation question itself_, not just the table count:
+Always deriving would make the wallet overdraft guard impossible, because two bookings must not both spend the last rupee, and the cheapest correct primitive for that is a conditional `UPDATE … WHERE walletBalance >= amount`. So `BillingAccount.walletBalance` is a stored cache of the organisation's `WALLET` account. The journal is the truth, the cache is what the hot path reads and decrements, and the nightly reconciler compares them and raises `WALLET_BALANCE_DRIFT` on any difference. A difference is an incident, never something to patch by hand. The database adds a floor: `billing_account_wallet_nonnegative`.
 
-```mermaid
-flowchart TB
-  subgraph BEFORE["Before #772 — reconcile = cross-join three logs"]
-    direction LR
-    b1["FundingLedgerEntry<br/>balanceAfterPaise"]
-    b2["WalletEntry<br/>signed delta"]
-    b3["SettlementLedgerEntry<br/>signed amount"]
-    b1 -.->|"JSON join +<br/>date heuristic"| b2
-    b2 -.->|"JSON join +<br/>date heuristic"| b3
-    b3 -.->|"does any of this<br/>actually agree?"| bq["🔴 no structural guarantee"]
-  end
-  subgraph AFTER["After #772 — reconcile = re-sum one journal"]
-    direction LR
-    a1["LedgerEntry rows"] -->|"GROUP BY direction"| a2["Σdebit vs Σcredit<br/>per LedgerTransaction"]
-    a2 --> aq["✅ every transaction balances<br/>(ledger_txn_balanced trigger)"]
-  end
-  BEFORE ==>|"#772 cutover"| AFTER
-```
+The same contract holds wherever a column mirrors a journal figure. Earnings amounts are caches the reconciler checks against the booking journal (`EARNINGS_LEDGER_DRIFT`), and the programme counters `ProgramAssignment.engagementsUsed` and `consumedPaise` are re-derived from `UsageLedgerEntry` (`PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT`, `CREDIT_POOL_CONSUMED_DRIFT`). A per-account stored balance was rejected on purpose, because one row updated by every booking would force every concurrent confirmation platform-wide to queue behind the last one under Serializable isolation.
 
-The "no structural guarantee" box is not rhetorical: three independently-signed logs can each be internally consistent and still disagree with each other, and nothing in the schema forced them to agree. The double-entry rewrite makes "is this posting balanced" a _single per-transaction predicate_ that Postgres enforces at COMMIT (the `ledger_txn_balanced` trigger), so no nightly sweep has to re-prove it. The trigger proves only that each transaction balances. It does not prove that every business event was posted, or that cached balances agree with the business records; the nightly auditor covers those cases ([ledger integrity](06-integrity-and-reconciliation.md)).
+## 4. INR only
 
-### 🛠️ What this design survived
+Razorpay settles in INR and no conversion happens before posting, so every posting leaves `AccountRef.currency` unset, which means `INR`. The currency is the last segment of the account id, so keying an account by a display currency would silently mint a second account and split a balance. The `ledger_account_currency_inr` CHECK refuses a non-INR account. See [gateway and currency](../10-money-in/04-razorpay-gateway-and-currency.md).
 
-- **The cutover itself (`71923ae4` → `2911f450`, #772).** The journal foundation (`postLedgerTxn`, the three `Ledger*` tables, `ledgerBalancePaise`) landed in `71923ae4`; the very next commit `2911f450` re-pointed _every_ money writer — booking, top-up, invoice-paid, both payouts, refunds — at it in one move, deleting `FundingLedgerEntry` / `WalletEntry` / `SettlementLedgerEntry` / `SettlementKind`. The empirical gate that justified the deletion was the reconciler returning **`ok: true`, 0 findings, across a full DB reseed** (commit `db7d4649` shipped seeds + reconcile + jobs on the journal) — if the new journal and every reconciled cache hadn't agreed bit-for-bit with the seeded flows, that reseed would have failed and the old logs would have stayed.
+## 5. Idempotency per flow
 
-> **If you read `FundingLedgerEntry`, `WalletEntry`, `SettlementLedgerEntry`, or `SettlementKind` anywhere outside a historical note like this one — it's stale. File it.** The usage ledger (`UsageLedgerEntry`) is **not** one of the removed logs; it tracks _entitlement consumption_, not money — see [programs](../../enterprise/30-programs-and-lifecycle/02-programs.md).
+Each flow derives its key from a stable upstream id, so an at-least-once webhook or a retried sweep collapses to one posting: `booking:<paymentId>`, `refund:<refundId>`, `topup:<orderId>`, `topup-refund:<gatewayRefundId>`, `payout:<payoutId>`. A booking and its refund are different events on the same payment, and per-flow keys let each post once. If two callers race, the loser's insert hits the unique index, aborts its transaction, and the retry finds the first posting. The full vocabulary of keys is in [postings](04-postings.md#1-the-journal-vocabulary).
 
-So today there are **two** ledgers, not three:
+## Worked example
 
-- **The money journal** — `LedgerTransaction`/`LedgerEntry`, double-entry, this section's subject.
-- **The usage ledger** — `UsageLedgerEntry`, single-entry, counts engagements consumed against a program cap. Different question ("what did this member consume?"), different table.
+IIT Madras tops up its prepaid wallet with ₹5,00,000 by card. The capture posts one transaction, `topup:<razorpay order id>`:
 
----
+| Account                              | Direction |      Paise |       Rupees |
+| ------------------------------------ | --------- | ---------: | -----------: |
+| `GATEWAY_CLEARING`                   | DEBIT     | 50,000,000 | ₹5,00,000.00 |
+| `WALLET` (organisation `iit-madras`) | CREDIT    | 50,000,000 | ₹5,00,000.00 |
 
-## 3. The three moving parts of the journal
+Debits equal credits, so `ledger_txn_balanced` passes. `WALLET` is a liability: the platform now owes IIT Madras ₹5,00,000 of spending power, and `BillingAccount.walletBalance` rises by 50,000,000 in the same transaction. Later a ₹5,000 session with 18 % GST debits `WALLET` 590,000 and the cache falls by the same amount. If the two ever disagree, the reconciler reports `WALLET_BALANCE_DRIFT` and the wallet is frozen ([integrity and reconciliation](06-integrity-and-reconciliation.md)).
 
-Every money event in the system is represented by exactly three Prisma models working together; the table names each one, its role in the double-entry scheme, and where its full specification lives.
+## 6. Five different money flows
 
-| Thing               | Role                                                                                                                             | Detail                                                                              |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `LedgerAccount`     | a bucket money sits in (CASH, WALLET, …), scoped to platform / org / consultant                                                  | [chart of accounts](02-chart-of-accounts.md)                                        |
-| `LedgerTransaction` | one balanced cash event, `idempotencyKey @unique`, typed `kind` (`LedgerTransactionKind` enum since #778 §B — was a free string) | [ledger & postings](../../enterprise/10-money-and-ledger/03-ledger-and-postings.md) |
-| `LedgerEntry`       | one leg of a transaction: `direction` + positive `amountPaise BigInt`                                                            | [ledger & postings](../../enterprise/10-money-and-ledger/03-ledger-and-postings.md) |
+These are distinct and must not be conflated.
 
-The sign of money is carried by **direction**, never by a negative amount. Every `LedgerEntry.amountPaise` is a positive integer; whether it adds or subtracts from a balance depends on the entry's `direction` and the account's normal side (§ in [chart of accounts](02-chart-of-accounts.md)).
+- **Refund**: money back to the buyer for a booking. A `Refund` row plus the `refund:<refundId>` journal. See [refunds](../30-refunds-disputes/01-refunds.md).
+- **Payout**: money from the platform to a seller (a consultant or a host organisation), net of withholding. `ConsultantPayout` or `OrganizationPayout`, journals `payout:<id>` and `orgpayout:<id>`.
+- **Referral**: a platform-funded incentive, never a buyer payment. See [referral credits](07-referral-credits.md).
+- **Wallet credit**: an organisation's prepaid balance, owed back to the organisation, a liability on the `WALLET` account.
+- **Chargeback**: the bank pulling money back through the gateway, a `Dispute` and a `chargeback:<disputeId>` journal. See [chargebacks](../30-refunds-disputes/02-chargebacks.md).
 
----
+## Where in code
 
-## 4. "Derived, but cached" — the one nuance
+- `lib/payments/ledger/post.ts`: `postLedgerTxn`, `ledgerAccountId`, `ledgerBalancePaise`.
+- `prisma/sql/ledger-triggers.sql` and `prisma/sql/check-constraints.sql`: the database enforcers.
+- `lib/prisma.ts`, `lib/payments/utils/money.ts`: the paise boundary.
+- `scripts/reconcile/reconcile-ledgers.ts`: the reconciler.
 
-A pure double-entry system would compute every balance on read. We do that _almost_ everywhere. The single exception is the **wallet overdraft guard**: a booking must atomically check "does this org have enough wallet balance?" and decrement it, under concurrency, without two bookings both spending the last rupee. The cheapest correct primitive for that is a conditional SQL `UPDATE … WHERE walletBalance >= amount` — which needs a real column.
+## Related
 
-So `BillingAccount.walletBalance` exists as a **cache** of the org's `WALLET` account balance. The contract:
+- Decision records: [double entry over three logs](../../enterprise/70-design-decisions/01-double-entry-over-three-logs.md), [integer paise and basis points](../../enterprise/70-design-decisions/02-integer-paise-and-basis-points.md), [deterministic ledger account ids](../../enterprise/70-design-decisions/03-deterministic-ledger-account-ids.md).
+- [Chart of accounts](02-chart-of-accounts.md), [payment legs](03-payment-legs.md), [postings](04-postings.md).
 
-- The journal is the source of truth.
-- The cache is what the hot path reads/writes for the atomic guard.
-- The nightly reconciler asserts `-balance(WALLET) == walletBalance` (`WALLET_BALANCE_DRIFT`); any divergence is an incident, never something to hand-patch.
+## Deprecated & Superseded Approaches
 
-This "reconciled cache" pattern recurs: `ConsultantEarnings`/`OrganizationEarnings` amount columns are caches the reconciler checks against the booking journal (`EARNINGS_LEDGER_DRIFT`), and the **usage-side** denormalized counters — `ProgramAssignment.engagementsUsed` and the CREDIT_POOL money-meter `ProgramAssignment.consumedPaise` — are re-derived from `UsageLedgerEntry` (`PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT` / `CREDIT_POOL_CONSUMED_DRIFT`). Same contract every time: the append-only journal/ledger is truth, the column is a checked cache. See [ledger integrity](06-integrity-and-reconciliation.md).
-
----
-
-## 4a. Design decisions & trade-offs
-
-The three rules in §1 were choices with alternatives we rejected. Why these, what they cost:
-
-| Decision                                                                     | Rejected alternative                                         | Why we chose it / what it costs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ---------------------------------------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Integer paise, `BigInt` columns, `number` at the JS boundary (#780)**      | `Decimal`/`numeric` money columns; `bigint` end-to-end in JS | Integers can't silently round, sort and aggregate at full speed, and serialize across the JS/Prisma/Postgres boundary with no precision class to mishandle. `BigInt` columns kill the int4 ₹2.14cr overflow; converting to `number` once, inside the `lib/prisma.ts` extension, keeps the entire app `bigint`-free (safe up to ≈₹90 lakh crore, asserted by `sumPaise()`). The remaining cost is manual scaling (₹ → paise at every edge) and `sumPaise()` wrapping at aggregation sites, which the extension cannot reach. We pay it because a ledger that rounds is not a ledger. |
-| **Basis points (`bps`, 10000 = 100%)**                                       | float percents (`0.10`)                                      | A split must sum to _exactly_ the whole; `platformBps + orgBps + consultantBps === 10000` is an integer equality a float `0.1 + 0.1 + 0.8` can fail. #772 deleted the old `Float sharePercentage` columns for this reason — see [booking → earnings §2](../../enterprise/10-money-and-ledger/05-booking-to-earnings.md).                                                                                                                                                                                                                                                            |
-| **Derived balances + a few checked caches**                                  | a stored, authoritative `balance` column per account         | Always-derive is provably correct but can't back an atomic overdraft guard (§4). So balances derive, _except_ `walletBalance`, which is a cache the reconciler re-derives nightly. The cost is one reconciliation invariant per cache; the benefit is the hot path stays a single conditional `UPDATE`.                                                                                                                                                                                                                                                                             |
-| **Idempotency keyed per flow** (`topup:<orderId>`, `booking:<paymentId>`, …) | request-level dedup (one key per HTTP call)                  | A booking and its refund and its top-up are _different cash events on the same upstream id_; per-flow keys let each post exactly once even when they share a `paymentId`, and survive at-least-once webhooks + cron retries. A request-level key would conflate them. See [ledger & postings §2](../../enterprise/10-money-and-ledger/03-ledger-and-postings.md).                                                                                                                                                                                                                   |
-
-## 5. Where each money flow is documented
-
-Every cash event that touches the journal has a canonical `LedgerTransactionKind` and a dedicated doc; use this index to jump directly to the relevant deep-dive rather than scanning the full money-and-ledger band.
-
-| Flow                                      | Journal `kind`                    | Doc                                                                                                                                                 |
-| ----------------------------------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Wallet top-up (`Dr CASH / Cr WALLET`)     | `TOPUP`                           | [wallet & top-ups](../../enterprise/10-money-and-ledger/04-wallet-and-topups.md)                                                                    |
-| Booking (funding legs → fee/payable/GST)  | `BOOKING`                         | [booking → earnings](../../enterprise/10-money-and-ledger/05-booking-to-earnings.md)                                                                |
-| Payout to a consultant / host org         | `PAYOUT` / `ORG_PAYOUT`           | [payout pipeline](../../enterprise/10-money-and-ledger/07-payout-pipeline.md)                                                                       |
-| Invoice issued / paid                     | `INVOICE_ISSUED` / `INVOICE_PAID` | [invoicing](../../enterprise/10-money-and-ledger/08-invoicing.md)                                                                                   |
-| Program overage (member-pays side-charge) | `OVERAGE_MEMBER`                  | [booking → earnings](../../enterprise/10-money-and-ledger/05-booking-to-earnings.md)                                                                |
-| Refund / top-up refund                    | `REFUND` / `TOPUP_REFUND`         | [invoicing](../../enterprise/10-money-and-ledger/08-invoicing.md), [wallet & top-ups](../../enterprise/10-money-and-ledger/04-wallet-and-topups.md) |
-| How funding sources stack on one checkout | —                                 | [payment legs](03-payment-legs.md)                                                                                                                  |
-| Proving it all ties out                   | —                                 | [ledger integrity](06-integrity-and-reconciliation.md)                                                                                              |
-
----
-
-## 6. Money vocabulary — five distinct flows
-
-New devs routinely conflate these. They are different flows with different models — learn the distinction once:
-
-- **Refund** — money back to the _buyer_ (consultee). A booking is reversed; the buyer's card/wallet is credited. Model `Refund` (`lib/payments/operations/refund.ts`), status `PENDING → SUCCEEDED | FAILED | CANCELLED` (gateway-aligned — success is `SUCCEEDED`, matching Razorpay's `refund.processed`). Journal: `refund:<refundId>` reverses the booking legs ([§4.7](../../enterprise/10-money-and-ledger/03-ledger-and-postings.md)); a _top-up_ refund is `topup-refund:<paymentId>`.
-- **Reimbursement** — money from an _org to its own member_ who fronted org-sponsored spend. Model `OrganizationReimbursement` (`/api/organizations/[orgId]/reimbursements`). **Not** a refund — org → member, not platform → card.
-- **Payout** — money from the _platform to a seller_ (consultant or host org), net of commission + TDS. Models `ConsultantPayout` / `OrganizationPayout`; journal `payout:<id>` / `orgpayout:<id>` (Dr `*_PAYABLE` / Cr `CASH` + `TDS_PAYABLE`) — see [payout pipeline](../../enterprise/10-money-and-ledger/07-payout-pipeline.md).
-- **Referral** — a _platform-funded_ incentive, not a buyer payment. A shared link earns a `ReferralCredit`; consumed at checkout as `PaymentLeg.source = REFERRAL_CREDIT`, posting to `PLATFORM_PROMO` (the platform absorbs it) inside the booking txn.
-- **Credits** — two senses, don't confuse: (a) an **org's prepaid wallet balance** — the `WALLET` ledger account, cached on `BillingAccount.walletBalance`; (b) a **consultee's referral/promo credits** — `ReferralCredit`, consumed via the `REFERRAL_CREDIT` leg. The first is org money we owe back; the second is a platform-funded discount.
-
-> The old per-row `WalletEntry` with `reason = REFERRAL_BONUS` is gone (#772); referral credits now live as `ReferralCredit` and post to `PLATFORM_PROMO` when consumed.
-
-**Grounded in the seeded orgs**, the five flows are five different actors moving money:
-
-- **Refund** — a learner Wipro sponsored cancels; the booking reverses and the _funding source_ (here Wipro's `ORG_RECEIVABLE` accrual) is credited back, with a GST credit note ([invoicing §8](../../enterprise/10-money-and-ledger/08-invoicing.md)).
-- **Reimbursement** — an IIT Madras member paid out of pocket for sponsored coaching; IIT Madras pays _its own member_ back via `OrganizationReimbursement`. The platform is not in this loop.
-- **Payout** — **LearnPro Academy** hosts the expert, so the org-share leg accrues to LearnPro and a weekly `ORG_PAYOUT` pays it out net of TDS ([payout pipeline](../../enterprise/10-money-and-ledger/07-payout-pipeline.md)). **Arjun** (solo HOST) is the consultant-side mirror: his earnings pay out via `PAYOUT`.
-- **Referral** — a learner books with a `ReferralCredit`; the platform eats it (`PLATFORM_PROMO`), independent of who sponsored the seat.
-- **Credits** — IIT Madras's ₹14,75,000 prepaid pool is the `WALLET` sense (org money we owe back); a consultee's promo balance is the `ReferralCredit` sense (a platform-funded discount). Same English word, opposite direction of obligation.
-
----
-
-### Related docs
-
-- [Chart of accounts](02-chart-of-accounts.md) — the buckets and their normal sides.
-- [Ledger & postings](../../enterprise/10-money-and-ledger/03-ledger-and-postings.md) — `postLedgerTxn`, idempotency, every flow's legs.
-- [Wallet & top-ups](../../enterprise/10-money-and-ledger/04-wallet-and-topups.md) — the cache pattern in practice.
-- [Ledger integrity](06-integrity-and-reconciliation.md) — the reconciler that proves the model holds.
-- Ground truth: `lib/payments/ledger/post.ts`, `prisma/schema.prisma` (the `Ledger*` models), `scripts/reconcile/reconcile-ledgers.ts`.
+Before the journal collapse the schema kept three single-entry, signed-delta logs: `FundingLedgerEntry`, `WalletEntry` and `SettlementLedgerEntry` with a `SettlementKind` enum. They could each be internally consistent while disagreeing with each other, and nothing forced them to agree. They were replaced by the one double-entry journal, and a reseed that reconciled with zero findings was the gate for deleting them. Treat any reference to those four names outside this note as stale. A maintained `LedgerAccountBalance` snapshot, folded on every posting and reconciled as `LEDGER_BALANCE_SNAPSHOT_DRIFT`, was removed because nothing on a request path read it and it made `CASH`, `PLATFORM_FEE` and `GST_PAYABLE` hot rows; its Prisma model and the fold are gone. An `OrganizationReimbursement` model was once listed beside refunds and payouts; it does not exist.
