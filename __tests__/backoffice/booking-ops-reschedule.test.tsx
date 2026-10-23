@@ -166,4 +166,17 @@ describe("BookingOpsPanel reschedule door", () => {
     await screen.findByText("Sessions");
     expect(screen.queryByRole("button", { name: /Reschedule/ })).toBeNull();
   });
+
+  it("says the release leaves the customer to pick the new times", async () => {
+    serve(view());
+    renderPanel();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Reschedule booking" }),
+    );
+    const copy = await screen.findByText(/Releases every live session/);
+    expect(copy).toHaveTextContent(
+      "This only releases the time: the customer picks the new times",
+    );
+    expect(copy.textContent).not.toMatch(/expert places/i);
+  });
 });

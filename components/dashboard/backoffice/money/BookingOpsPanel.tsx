@@ -16,6 +16,7 @@ import { useBackofficeCapability } from "@/components/dashboard/backoffice/Backo
 import { BookingDocumentsOps } from "./BookingDocumentsOps";
 import { ClassSeriesDoors } from "./ClassSeriesDoors";
 import { DoorDialog, type Door } from "./DoorDialog";
+import { PlatformCancelDoor } from "./PlatformCancelDoor";
 import { SetOutcomeDialog } from "./SetOutcomeDialog";
 
 type Session = BookingOpsView["sessions"][number];
@@ -28,13 +29,13 @@ const RESCHEDULABLE = new Set(["SCHEDULED", "RESCHEDULED"]);
 const when = (iso: string) => new Date(iso).toLocaleString();
 
 const RESCHEDULE_COPY =
-  "The expert places new times and both parties are notified. Nothing is refunded now, and a session within 24 hours cannot be moved.";
+  "This only releases the time: the customer picks the new times, and both parties are notified. Nothing is refunded now, and a session within 24 hours cannot be moved.";
 
 /**
  * #1771 — a booking's Ops actions, by type. Every booking lists its sessions
  * with the set-outcome door and its money state, and can be released for
- * rescheduling; a class adds its series doors; admin alone gets the refund
- * link and the plan's 48-hour sweep.
+ * rescheduling or cancelled whole; a class adds its series doors; admin alone
+ * gets the refund link and the plan's 48-hour sweep.
  */
 export function BookingOpsPanel({
   appointmentId,
@@ -42,6 +43,7 @@ export function BookingOpsPanel({
   const { can, basePath } = useBackofficeCapability();
   const [target, setTarget] = useState<Session | null>(null);
   const [door, setDoor] = useState<Door | null>(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
   const ops = useQuery({
     queryKey: ["booking-ops", appointmentId],
     queryFn: async () => {
@@ -68,6 +70,10 @@ export function BookingOpsPanel({
     RESCHEDULABLE.has(s.completionStatus) &&
     new Date(s.startsAt).getTime() > now;
   const perSession = v.type === "SUBSCRIPTION" || v.type === "CLASS";
+  // A booking with no session yet may still be awaiting its times.
+  const canCancel =
+    can("appointments.cancelForPlatform") &&
+    (v.sessions.length === 0 || v.sessions.some(isLive));
 
   return (
     <section aria-label="Ops actions" className="space-y-4">
@@ -119,22 +125,33 @@ export function BookingOpsPanel({
             </li>
           ))}
         </ul>
-        {canReschedule && v.sessions.some(isLive) && (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() =>
-              setDoor({
-                url: rescheduleUrl,
-                title: "Release this booking for rescheduling",
-                description: `Releases every live session. ${RESCHEDULE_COPY}`,
-                confirm: "Release",
-              })
-            }
-          >
-            Reschedule booking
-          </Button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {canReschedule && v.sessions.some(isLive) && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                setDoor({
+                  url: rescheduleUrl,
+                  title: "Release this booking for rescheduling",
+                  description: `Releases every live session. ${RESCHEDULE_COPY}`,
+                  confirm: "Release",
+                })
+              }
+            >
+              Reschedule booking
+            </Button>
+          )}
+          {canCancel && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setCancelOpen(true)}
+            >
+              Cancel booking
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="space-y-1 text-sm">
@@ -215,6 +232,12 @@ export function BookingOpsPanel({
         door={door}
         invalidate={[["booking-ops"], ["staff-appointment-timeline"]]}
         onClose={() => setDoor(null)}
+      />
+      <PlatformCancelDoor
+        appointmentId={appointmentId}
+        open={cancelOpen}
+        invalidate={[["booking-ops"], ["staff-appointment-timeline"]]}
+        onClose={() => setCancelOpen(false)}
       />
     </section>
   );
