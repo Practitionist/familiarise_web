@@ -34,7 +34,7 @@ import {
 function loadWorker() {
   const file = path.join(
     __dirname,
-    "../../netlify/functions/recording-transfer.mts",
+    "../../netlify/functions/recording-transfer-background.mts",
   );
   const { outputText } = ts.transpileModule(fs.readFileSync(file, "utf8"), {
     compilerOptions: {
@@ -43,7 +43,7 @@ function loadWorker() {
     },
   });
   const exports: Partial<
-    typeof import("../../netlify/functions/recording-transfer.mjs")
+    typeof import("../../netlify/functions/recording-transfer-background.mjs")
   > = {};
   vm.runInNewContext(outputText, {
     module: { exports },
@@ -80,7 +80,7 @@ afterEach(() => {
 
 function request(secret = "worker-test-secret", method = "POST") {
   return new Request(
-    "https://site.test/.netlify/functions/recording-transfer",
+    "https://site.test/.netlify/functions/recording-transfer-background",
     {
       method,
       headers: { authorization: `Bearer ${secret}` },

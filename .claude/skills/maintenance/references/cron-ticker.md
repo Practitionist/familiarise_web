@@ -20,7 +20,7 @@ Money reconcilers, money batch jobs and the TDS draft export also run on the tic
 
 GitHub Actions is retained only for non-money batch crons, plus manual `workflow_dispatch` runs; GitHub Actions is currently budget-blocked, so those jobs are not running. When a job is already running, `withCronLock` returns `409`, which the ticker records as `lockHeld` rather than `failed`. Only a response outside `200`, `207`, and `409` counts as `failed`.
 
-The ticker always returns HTTP `200` so Netlify does not retry the entire tick 3x on a single target failure; failures are logged on the structured `{"event":"cron-tick",...}` line.
+The ticker returns HTTP `200` after reporting individual target failures on the structured `{"event":"cron-tick",...}` line. Do not infer a scheduled retry contract from the documented background-function retries; observe target completion independently.
 
 `netlify/functions/keep-warm.mts` (PR #1685) was retired and deleted in PR #1972 once `preloadEntriesOnStart: false` reduced Next.js cold starts to `0.97–1.90 s`.
 
@@ -38,6 +38,10 @@ Every scheduled GitHub Actions workflow declares `concurrency: { group: ${{ gith
 2. **Never create 3-layer wrappers**: Do not add parallel `app/api/cleanup/<job>/route.ts` + `jobs/<domain>/<job>.ts` + `scripts/<domain>/<job>.ts` files.
 3. **Single scheduler**: Put sub-hourly recovery sweeps in `netlify/functions/cron-tick.mts` (`TARGETS`), and daily/weekly/monthly jobs in a `TARGET_WINDOWS` slot or, if they cannot run bounded inside the ticker's timeout, in GitHub Actions — never both. Every tick must stay at or under `MAX_TARGETS_PER_TICK`.
 4. **Financial jobs**: If the job mutates money or payouts, include its slug in `FINANCIAL_JOB_NAMES` (`lib/cron/financial-jobs.ts`).
+
+## Recording background packaging
+
+The recording background entry is `netlify/functions/recording-transfer-background.mts`. Preserve the supported filename suffix as well as its background config when packaging with the CLI. A dependency-free CLI 26.0.2 branch probe completed after 75 seconds on this account; the temporary drafts were removed. This proves the isolated runtime path, while the application bundle and actual copy handoff still require verification. HTTP 202 is admission only. For unpublished alias logs, use the deployment branch and ID when function metadata omits its branch. See `docs/stream/recording-background-worker.md` and [Netlify background functions](https://docs.netlify.com/build/functions/background-functions/).
 
 ## Sources
 
