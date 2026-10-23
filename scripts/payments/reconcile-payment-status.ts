@@ -113,7 +113,7 @@ type GatewayLookup =
       amountPaise?: number;
     }
   | { kind: "unknown_id"; detail: string }
-  | { kind: "gateway_error"; detail: string; timedOut?: boolean };
+  | { kind: "gateway_error"; detail: string };
 
 export interface ReconcilePaymentStatusOptions {
   /** Maximum candidates examined per run across both cohorts; defaults to 50. */
@@ -211,7 +211,6 @@ async function getRazorpayPaymentStatus(
     return {
       kind: "gateway_error",
       detail: error instanceof Error ? error.message : String(error),
-      timedOut: error instanceof Error && error.name === "TimeoutError",
     };
   }
 }
@@ -369,8 +368,6 @@ async function reconcilePaymentStatusUnlocked(
       break;
     }
     totalProcessed++;
-    // A timed-out read is not a poll; the row keeps its place in the rotation.
-    let rotate = true;
     try {
       // #1861 P4b — every key is written each row ("none" when unknown), so a
       // captured error never carries a previous row's ids.
@@ -487,7 +484,6 @@ async function reconcilePaymentStatusUnlocked(
       }
 
       if (lookup.kind === "gateway_error") {
-        if (lookup.timedOut) rotate = false;
         console.log(`   Could not get status from gateway - skipping`);
         errors.push(
           `Payment ${payment.id}: Could not query gateway status (${lookup.detail})`,
@@ -647,9 +643,8 @@ async function reconcilePaymentStatusUnlocked(
       }
     } finally {
       try {
-        if (rotate) {
-          await prisma.$executeRaw`UPDATE "Payment" SET "lastReconciledAt" = now() WHERE id = ${payment.id}`;
-        }
+        // Attempted timeouts rotate too; an unstarted candidate never reaches this block.
+        await prisma.$executeRaw`UPDATE "Payment" SET "lastReconciledAt" = now() WHERE id = ${payment.id}`;
       } catch (error) {
         errors.push(
           `Polling cursor Payment ${payment.id}: ${error instanceof Error ? error.message : String(error)}`,

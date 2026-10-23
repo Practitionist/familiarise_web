@@ -6,6 +6,8 @@ State exactly which evidence exists: mocked behavior, disposable database behavi
 
 Use focused Jest tests with mocked vendor boundaries to exercise claims, retries, duplicate delivery, transaction rollback and failure after partial progress. Test invariants that matter to the active flow rather than mirroring implementation details. A regression should fail against the unsafe behavior; a temporary negative control is useful when validating a concurrency fix.
 
+Polling fairness needs repeated runs with a slow first candidate, not only fast failures. An attempted gateway timeout must rotate without marking provider reconciliation successful; a candidate skipped before its request starts must stay unstamped. Advance the test clock through the full execution budget and verify later candidates are reached on subsequent invocations.
+
 Use the guarded database tier for real PostgreSQL interleavings. It accepts only a disposable localhost `/ci` database with `CI=true`. A one-connection local pool can exercise transaction-client discipline; pass `tx` through every helper and refuse global Prisma reads inside the transaction. Deploy previews additionally verify host packaging, request limits, cold starts and runtime behavior. Never run `next dev`, an application build, or a shared-database write without the session's authorization.
 
 ## Shared data and read-only observations
