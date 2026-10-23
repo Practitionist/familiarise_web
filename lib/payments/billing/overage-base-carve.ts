@@ -541,8 +541,10 @@ async function recarveWalletBase(
 
   const { openShortfallReceivablePaise, walletCredit } =
     await import("@/lib/api/organizations/wallet");
-  const { ownerOrgId } = await tx.billingAccount.findUniqueOrThrow({
+  // A no-op write row-locks the account, as confirmTopUp does, so a racing top-up settles first or after.
+  const { ownerOrgId } = await tx.billingAccount.update({
     where: { id: parent.billingAccountId },
+    data: { walletBalance: { increment: 0 } },
     select: { ownerOrgId: true },
   });
   const receivableBackPaise = Math.min(

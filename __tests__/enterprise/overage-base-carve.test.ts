@@ -285,9 +285,8 @@ describe("recarveOverageBase", () => {
     t.ledgerTransaction = {
       findUnique: jest.fn().mockResolvedValue({ id: "booking-txn" }),
     };
-    t.billingAccount = {
-      findUniqueOrThrow: jest.fn().mockResolvedValue({ ownerOrgId: "org1" }),
-    };
+    const accountLock = jest.fn().mockResolvedValue({ ownerOrgId: "org1" });
+    t.billingAccount = { update: accountLock };
     mockOpenShortfall.mockResolvedValue(40);
     mockWalletCredit.mockResolvedValue({ ownerOrgId: "org1" });
     mockPostLedgerTxn.mockResolvedValue({ created: true });
@@ -304,6 +303,15 @@ describe("recarveOverageBase", () => {
       },
       data: { amountPaise: { decrement: 200 } },
     });
+    // The account row is locked before the open shortfall is read.
+    expect(accountLock).toHaveBeenCalledWith({
+      where: { id: "ba1" },
+      data: { walletBalance: { increment: 0 } },
+      select: { ownerOrgId: true },
+    });
+    expect(accountLock.mock.invocationCallOrder[0]).toBeLessThan(
+      mockOpenShortfall.mock.invocationCallOrder[0],
+    );
     expect(mockWalletCredit).toHaveBeenCalledWith(
       m.tx,
       expect.objectContaining({ billingAccountId: "ba1", amountPaise: 260 }),
