@@ -62,19 +62,19 @@ erDiagram
 
 ### Related tables
 
-| Table                            | Purpose                                                                                                 | Key uniques                                        |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `SupportCaseCounter`             | One row per IST year; `nextSeq` for references.                                                         | `year` primary key                                 |
-| `SupportCaseSubject`             | Typed links (APPOINTMENT, OCCURRENCE, PAYMENT, REFUND, INVOICE, ORGANIZATION, ACCOUNT).                 | `(caseId, subjectType, subjectId)`                 |
-| `SupportCaseMessage`             | The transcript: `seq`, sender (USER, BOT, AGENT, SYSTEM), body, `isInternal`, `clientTurnId`, metadata. | `(caseId, seq)`, `(caseId, clientTurnId)`          |
-| `SupportCaseEvent`               | Typed audit timeline (`SupportCaseEventKind`), with from/to values and a note.                          | none                                               |
-| `SupportCaseEvidenceRequest`     | A private question to one party, its deadline and answer.                                               | `(caseId, clientActionId)`                         |
-| `SupportCaseDecision`            | Outcome, explanation, private rationale, `appealUntil`, `supersedesDecisionId`.                         | `(caseId, clientActionId)`, `supersedesDecisionId` |
-| `SupportFinancialRecommendation` | Payment, amount in paise, reason, `releaseSeat`, review verdict, void stamps, `refundId`.               | `(caseId, clientActionId)`, `refundId`             |
-| `SupportCaseAttachment`          | Private file metadata; `storagePath`, `completedAt`, `deletedAt`.                                       | `storagePath`                                      |
-| `SupportCaseChatAccess`          | (Intervention branch.) Append-only log of staff chat grants.                                            | `opsActionId`                                      |
-| `SupportFlowOutcome`             | One row per terminal guided turn; counts, no message bodies.                                            | none                                               |
-| `EarningsHold`                   | Shared payout hold; support rows use `reason = SUPPORT_CASE`, `sourceRef = caseId`.                     | see sidecar                                        |
+| Table                            | Purpose                                                                                                                                                                       | Key uniques                                        |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `SupportCaseCounter`             | One row per IST year; `nextSeq` for references.                                                                                                                               | `year` primary key                                 |
+| `SupportCaseSubject`             | Typed links (APPOINTMENT, OCCURRENCE, PAYMENT, REFUND, INVOICE, ORGANIZATION, ACCOUNT).                                                                                       | `(caseId, subjectType, subjectId)`                 |
+| `SupportCaseMessage`             | The transcript: `seq`, sender (USER, BOT, AGENT, SYSTEM), body, `isInternal`, `clientTurnId`, metadata.                                                                       | `(caseId, seq)`, `(caseId, clientTurnId)`          |
+| `SupportCaseEvent`               | Typed audit timeline (`SupportCaseEventKind`), with from/to values and a note.                                                                                                | none                                               |
+| `SupportCaseEvidenceRequest`     | A private question to one party, its deadline and answer.                                                                                                                     | `(caseId, clientActionId)`                         |
+| `SupportCaseDecision`            | Outcome, explanation, private rationale, `appealUntil`, `supersedesDecisionId`.                                                                                               | `(caseId, clientActionId)`, `supersedesDecisionId` |
+| `SupportFinancialRecommendation` | Payment, amount in paise, reason, `releaseSeat` (marks the funded seat REFUNDED when the refund is sent; never cancels the booking), review verdict, void stamps, `refundId`. | `(caseId, clientActionId)`, `refundId`             |
+| `SupportCaseAttachment`          | Private file metadata; `storagePath`, `completedAt`, `deletedAt`.                                                                                                             | `storagePath`                                      |
+| `SupportCaseChatAccess`          | (Intervention branch.) Append-only log of staff chat grants.                                                                                                                  | `opsActionId`                                      |
+| `SupportFlowOutcome`             | One row per terminal guided turn; counts, no message bodies.                                                                                                                  | none                                               |
+| `EarningsHold`                   | Shared payout hold; support rows use `reason = SUPPORT_CASE`, `sourceRef = caseId`.                                                                                           | see sidecar                                        |
 
 Most foreign keys from evidence, decisions, recommendations, attachments and chat grants to their case are `onDelete: Restrict`, so a case with formal history cannot be hard-deleted; erasure scrubs instead ([privacy](08-privacy-and-retention.md#erasure)).
 

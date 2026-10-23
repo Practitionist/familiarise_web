@@ -42,7 +42,7 @@ These are short records of the owner decisions that shaped the support system: t
 - **Status:** Accepted, implemented.
 - **Context.** `SupportPaymentHold` duplicated `EarningsHold`, the single writer of the HELD earning status, with no ops log, no budget and no release. Payouts stayed stuck while dashboards showed the money as ready.
 - **Decision.** A support hold is `EarningsHold` rows with reason `SUPPORT_CASE` and the case id as source, placed and released through ops doors, and released automatically when the case resolves or closes, behind step-up and the maintenance gate.
-- **Consequences.** Payout batching ignores held earnings with no support-specific code. Releasing a support hold never releases a chargeback hold. A hold applied after resolution survives auto-close and must be released by hand.
+- **Consequences.** Payout batching ignores held earnings with no support-specific code. Releasing a support hold never releases a chargeback hold. A hold applied after resolution is released by the 28-day auto-close, as the system.
 - **See** [money remedies](05-money-remedies.md#payout-holds).
 
 ## SD-5: Decisions are terminal; corrections supersede; appeals are independent
@@ -58,7 +58,7 @@ These are short records of the owner decisions that shaped the support system: t
 - **Status:** Accepted, implemented.
 - **Context.** Implicit reopen on any reply produced surprise reopens and unhandled collisions with the open-case index.
 - **Decision.** A reply to a RESOLVED case is a follow-up. The requester or submitter may reopen an undecided case within 14 days with an explicit request. A matching intake on a RESOLVED case appends a follow-up. A new topic on a resolved human case starts a new case.
-- **Consequences.** Some customer-facing copy still promises reopen-on-reply and needs updating.
+- **Consequences.** Customer copy (the RESOLVED email and the resolve saved replies) says a reply won't reopen the request and points to "This didn't fix it" or an appeal.
 - **See** [lifecycle](02-case-lifecycle.md#resolve-reopen-and-close).
 
 ## SD-7: The channel never downgrades

@@ -143,7 +143,7 @@ A successful reopen moves the case to IN_PROGRESS if it has an assignee and OPEN
 
 **A matching intake on a RESOLVED case** appends the description as a follow-up and returns `reused: true, dedupeReason: "resolved_case"`. If the intake asks for a person and the case is undecided, it hands the case to a person instead.
 
-**Closing.** Staff may close a case from any active status. The sweep closes RESOLVED cases 28 days after `resolvedAt` and writes AUTO_CLOSED. Auto-close releases no payout holds and stages no notice; holds were already released when the case resolved, unless one was applied afterwards. A CLOSED case takes no public messages, and the open-scope lookup ignores it, so new intake creates a new case. Staff may reopen a CLOSED case only if it is undecided.
+**Closing.** Staff may close a case from any active status. The sweep closes RESOLVED cases 28 days after `resolvedAt` and writes AUTO_CLOSED. Auto-close stages no notice. In the same transaction it releases any payout holds the case still has (as the system, with one `support.case.release-holds` ops-log row whose actor role is SYSTEM) and ends live chat-access grants, like a staff close (`releaseAutoClosedCaseTx()` in `lib/support/sla-sweep.ts`). A CLOSED case takes no public messages, and the open-scope lookup ignores it, so new intake creates a new case. Staff may reopen a CLOSED case only if it is undecided.
 
 ## CSAT
 
@@ -170,7 +170,7 @@ Case actions, appeals, external-requester intake and attachments run Serializabl
 ## Deprecated & Superseded Approaches
 
 - **Separate tickets and appointment threads.** `SupportTicket`, `SupportResponse`, `AppointmentSupportThread` and `SupportMessage` were replaced by one `SupportCase` with its messages. Names survive in identifiers only: `createSupportTicket()`, the `support-ticket-update` Novu workflow, `SupportThreadCategory`, `supportKeys.threads`. They all act on `SupportCase`. `app/api/support/tickets/route.ts` remains as a staff-only outbound intake that creates a case; nothing in the UI calls it.
-- **Implicit reopen.** Any customer reply used to reopen a resolved case, including a decided one. Only an explicit reopen on an undecided case within 14 days does now. Two saved replies in `lib/support/saved-replies.ts` still tell customers that replying reopens the request; that copy is stale.
+- **Implicit reopen.** Any customer reply used to reopen a resolved case, including a decided one. Only an explicit reopen on an undecided case within 14 days does now. The saved replies and the RESOLVED status email now say a reply won't reopen the request and point to "This didn't fix it" within 14 days, or an appeal if the request was decided.
 - **Channel downgrade.** A resolved human case could drop back to SELF_SERVE with no audit row and leave the queues. The channel now only moves to HUMAN, with a CHANNEL_CHANGED event.
 - **Unhandled reopen collisions.** Reopening a closed case or switching intent used to hit `support_case_open_scope_key` as a 500. It is now 409 `OPEN_CASE_EXISTS` naming the open case.
 - **A universal 15-day clock with customer-wait extensions.** Replaced by fixed category deadlines captured at receipt; see [intake and flows](01-intake-and-flows.md#references-and-clocks).

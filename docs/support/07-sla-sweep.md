@@ -54,7 +54,7 @@ Candidates are open cases with an acknowledgement or resolution target breached 
 
 ### 2. Auto-close
 
-RESOLVED cases with `resolvedAt` at least 28 days old move to CLOSED with `closedAt = now`, each by its own compare-and-set, with an AUTO_CLOSED event and no actor (`autoCloseResolvedRows()`). No notice is sent, and no payout hold is released; holds were released when the case resolved. `closedAt` starts the 180-day purge clock, so an untouched resolved case is purged no earlier than 208 days after resolution.
+RESOLVED cases with `resolvedAt` at least 28 days old move to CLOSED with `closedAt = now`, each by its own compare-and-set, with an AUTO_CLOSED event and no actor (`autoCloseResolvedRows()`). In the same transaction, `releaseAutoClosedCaseTx()` releases any payout holds the case still has (HOLD_RELEASED events, one `support.case.release-holds` ops-log row with actor role SYSTEM) and ends live chat-access grants as `CASE_RESOLVED`; no step-up applies because no person acts. A hold can still exist here only if it was applied after the case resolved. No customer notice is sent. `closedAt` starts the 180-day purge clock, so an untouched resolved case is purged no earlier than 208 days after resolution.
 
 ### 3. Problem-to-incident cascade
 

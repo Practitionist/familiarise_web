@@ -51,7 +51,7 @@ Agents should read [`.claude/skills/support/SKILL.md`](../../.claude/skills/supp
 
 ## Status vocabulary
 
-Pages mark behaviour that is not on `dev` as **planned** with a priority from the support tracker (#2293): **P0** live breakage, a security hole or data loss now; **P1** a launch blocker; **P2** within about 30 days after launch (#2270); **P3** backlog; **P4** deferred by decision. Content from the `feat/support-chat-intervention` and `fix/platform-reschedule-door` branches is described as current because both merge before these docs.
+Pages mark behaviour that is not on `dev` as **planned** with a priority from the support tracker (#2293): **P0** live breakage, a security hole or data loss now; **P1** a launch blocker; **P2** within about 30 days after launch (#2270); **P3** backlog; **P4** deferred by decision. Content from the `feat/support-chat-intervention` branch is described as current because it merges before these docs; the platform reschedule door is on `dev`.
 
 ## Deprecated & Superseded Approaches
 

@@ -11,7 +11,7 @@ last-reviewed: 2026-10-23
 
 This document explains how Familiarise handles a customer who needs help, from the first "something went wrong" to a refund, a payout hold, a staff visit to a booking chat, or a decision that can be appealed. You should be able to read it in 20 to 30 minutes without the code open. Each rule names the thing that enforces it, and each flow has a worked example with real numbers.
 
-The source baseline is `dev` at commit `181f067ca`, reviewed on 23 October 2026. Two changes that merge before this document lands are described as current: case-linked chat access with visible "Familiarise Support" intervention, and the platform reschedule door. Anything not in that code is labelled **planned (P2)** or with its priority from the support roadmap. The module-level detail lives in [`docs/support/`](../support/README.md), and the patterns other subsystems can copy are in [the support platform blueprint](../blueprints/support-platform/README.md). Terms such as CAS, door, sweep and hold are defined in the [glossary](#17-glossary).
+The source baseline is `dev` at commit `1c166229d`, reviewed on 23 October 2026, which includes the platform reschedule door and the Ops-panel reschedule and cancel. One change that merges before this document lands is described as current: case-linked chat access with visible "Familiarise Support" intervention (branch `feat/support-chat-intervention`). Anything not in that code is labelled **planned (P2)** or with its priority from the support roadmap. The module-level detail lives in [`docs/support/`](../support/README.md), and the patterns other subsystems can copy are in [the support platform blueprint](../blueprints/support-platform/README.md). Terms such as CAS, door, sweep and hold are defined in the [glossary](#17-glossary).
 
 ## Contents
 
@@ -268,7 +268,7 @@ stateDiagram-v2
 
 The approval commits first and the money moves after the commit, through `refundBookingPayment()` in `lib/payments/operations/booking-refund.ts`. That is the same function a normal cancellation uses, so the refund goes down the same rail as the original payment (card gateway, organisation wallet or invoice, or platform credits), reverses the payment legs and the expert's earnings, reverses TDS, mints a GST credit note for the refunded part, and posts a reversing ledger entry. The refund is keyed `case-recommendation:<id>`, so a retry can never send it twice.
 
-The seat choice is narrower than its label. Leaving "Also cancel the service (release seat)" unticked, the default, keeps the buyer's participant seat live, which suits a goodwill or per-session refund. Ticking it marks the participant seat that payment funded as `REFUNDED`. It does **not** cancel the booking or its future sessions; cancelling a booking with its policy refund is done through the platform cancel door on the booking's Ops panel. On the platform-credits rail the seat is always marked `REFUNDED`, whatever the choice.
+The seat choice is narrow. Leaving "Also release the customer's seat" unticked, the default, refunds money only and keeps the buyer's participant seat live, which suits a goodwill or per-session refund. Ticking it marks the participant seat that payment funded as `REFUNDED` once the refund is sent: the customer loses access to the sessions, recordings and session documents, and a class or webinar seat can be booked by someone else. It does **not** cancel the booking or its future sessions; cancelling a booking with its policy refund is done with **Cancel booking** on the booking's Ops panel, through the platform cancel door. On the platform-credits rail the seat is always marked `REFUNDED` when the credits are restored, whatever the choice.
 
 ### 7.2 Who may move how much
 
@@ -352,7 +352,7 @@ flowchart LR
 | "Refund me" after a poor or short session                                 | Finance                         | Recommendation, preview, review within staff caps or by ADMIN, refund on the original rail with ledger reversal and a credit note, then a `REFUND_APPROVED` decision with its appeal date.                                                                                                                                                   | Live                                                                                    |
 | "I already disputed it with my bank."                                     | Finance (gateway disputes)      | A live chargeback blocks any support refund on that payment; the dispute flow handles the money. The sweep pages admins as dispute deadlines approach.                                                                                                                                                                                       | Live                                                                                    |
 | "The expert was abusive; don't pay them yet."                             | Payouts                         | A `SUPPORT_CASE` payout hold freezes unpaid earnings and cancels pending payouts. It releases when the case resolves or closes.                                                                                                                                                                                                              | Live                                                                                    |
-| "Move my session" or "cancel the booking" as staff                        | Booking                         | The booking's Ops panel offers platform cancel (policy refund, counted against staff caps) and platform reschedule (releases sessions for rebooking; nothing is refunded). The participant routes refuse an operator who uses them directly.                                                                                                 | Live                                                                                    |
+| "Move my session" or "cancel the booking" as staff                        | Booking                         | The booking's Ops panel offers platform cancel (policy refund, counted against staff caps) and platform reschedule (releases sessions for rebooking; nothing is refunded). Operators who are not parties see an Ops-panel hint instead of the participant buttons, and the participant routes refuse them.                                   | Live                                                                                    |
 | "Give me a make-up session" as a typed remedy                             | Booking                         | No typed remedy yet; staff use the Ops panel or the customer reschedules.                                                                                                                                                                                                                                                                    | Planned (P2): CaseAction registry with `SupportRemedy`                                  |
 | "He's asking me to pay outside the platform" or a threat                  | Stream chat, trust              | The safety-concern flow opens an URGENT case. Staff may read the booking chat under a 24-hour audited grant and may visibly enter it as Familiarise Support. A moderation report can be turned into a case; the report alone never unlocks the chat.                                                                                         | Live                                                                                    |
 | "The video platform was down and the class failed."                       | Infra, booking, finance         | Staff open one PROBLEM case and link each customer's INCIDENT; resolving the problem resolves the incidents in bounded batches with a notice and a CSAT prompt. Declared platform incidents are settled by booking's own incident sweep. Refunds stay per customer.                                                                          | Live; automatic `PlatformIncident` link and `ServiceDisruption` banner are planned (P2) |
@@ -444,7 +444,7 @@ One background job, `runSupportSlaSweep()`, does all of support's scheduled work
 ```mermaid
 flowchart TD
   T["Ticker every 30 min<br/>limit 20, cron lease"] --> A1["1. SLA warn and breach notices<br/>deduped per case and level"]
-  A1 --> A2["2. Auto-close RESOLVED after 28 days"]
+  A1 --> A2["2. Auto-close RESOLVED after 28 days<br/>releases holds, ends chat grants"]
   A2 --> A3["3. Problem cascade<br/>cap 10 incidents"]
   A3 --> A4["4. Evidence purge after 180 days<br/>cap 5 cases"]
   A4 --> A5["5. Chat-access backstop<br/>cap 10: expire, leave, rejoin, notice"]
@@ -453,6 +453,8 @@ flowchart TD
   A7 --> A8["8. Overdue evidence bells"]
   A8 --> F["Flush staged bells and emails<br/>one Sentry report if any arm failed"]
 ```
+
+The auto-close moves a case resolved 28 days ago to CLOSED and, in the same transaction, releases any payout hold it still has and ends its live chat grants. No person acts, so it releases as the system (an ops-log row with actor role `SYSTEM`) without step-up (`releaseAutoClosedCaseTx()`).
 
 The problem cascade resolves each incident in its own transaction. It copies the problem's closing note to the incident as a public reply, releases the incident's payout holds, ends its chat grants, and stages a "resolved" bell and email plus the CSAT prompt. An incident stays open, and is retried later, if a hold was placed after the problem resolved, if a refund recommendation is still undecided, or if money doors are closed.
 
@@ -481,7 +483,7 @@ sequenceDiagram
 
 ## 12. Privacy, retention and legal hold
 
-Support data is part of the DPDP export: a user's own cases (cases filed about them by an organisation appear as summaries), their messages without staff notes, evidence requests addressed to them, attachment metadata, ratings and, with the chat-intervention change, chat-access grants whose review notice has been released (`readSupportExport()`). On erasure, `scrubSupportPiiTx()` replaces the user's case text, messages and evidence answers with "[erased]", soft-deletes their attachments and deletes the files after commit. Decisions stay, because they are immutable records.
+Support data is part of the DPDP export: a user's own cases (cases filed about them by an organisation appear as summaries), their messages without staff notes, evidence requests addressed to them, attachment metadata, ratings and, with the chat-intervention change, staff chat-access grants on cases where the user is a party: only once that grant's "we reviewed messages" notice was released, never when any grant on the case was withheld, and never with the operator's identity or any chat content (`readSupportExport()`). On erasure, `scrubSupportPiiTx()` replaces the user's case text, messages and evidence answers with "[erased]", soft-deletes their attachments and deletes the files after commit. Decisions stay, because they are immutable records.
 
 Evidence does not live forever. **180 days** after a case closes, the sweep deletes its attachment files and scrubs its free text, one case per transaction, at most five cases per run (`purgeExpiredSupportEvidence()`). The clock runs from the latest close across the case and any appeal of its decisions. The case skeleton, the decisions, the refund recommendations and the money links are kept, and an `EVIDENCE_PURGED` event records how many files went.
 
@@ -631,7 +633,7 @@ On Wed 21 Oct 21:00 Daniel reports that an expert asked him to pay outside Famil
 
 ## Related issues
 
-Support roadmap #2270 and launch umbrella #2293. Merged: #2257, #2268, #2269, #2291, #2292, #2298, #2299, #2303, #2304, #2307, #2317 to #2320. Merging with this document: the chat-intervention change (#2290) and the platform reschedule door.
+Support roadmap #2270 and launch umbrella #2293. Merged: #2257, #2268, #2269, #2291, #2292, #2298, #2299, #2303, #2304, #2307, #2317 to #2320, and #2341 (platform reschedule door, Ops-panel reschedule and cancel, operator hint). Closed: #2301 (fixed in #2317). Merging with this document: the chat-intervention change (#2290).
 
 ## Deprecated & Superseded Approaches
 

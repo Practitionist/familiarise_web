@@ -72,6 +72,6 @@ Staff-status notices are the one exception to "staged in the transaction": the P
 ## Deprecated & Superseded Approaches
 
 - **Notices staged after commit and lost.** The old in-transaction problem cascade staged its notices after commit, so a crash between the two lost them. Cascade notices are now staged inside each incident's transaction.
-- **Copy that promises reopen on reply.** The RESOLVED status email (`supportNextStepText()` in `lib/email/senders/people.ts`) and two saved replies still tell customers that replying reopens the request. Replies no longer reopen ([case lifecycle](02-case-lifecycle.md#resolve-reopen-and-close)); that copy is stale.
+- **Copy that promised reopen on reply.** The RESOLVED status email (`supportNextStepText()` in `lib/email/senders/people.ts`) and the resolve saved replies used to tell customers that replying reopens the request. They now say a reply won't reopen it and point to "This didn't fix it" within 14 days, or an appeal ([case lifecycle](02-case-lifecycle.md#resolve-reopen-and-close)).
 - Workflow and email-type names keep the old word "ticket" (`support-ticket-update`, `SUPPORT_TICKET_RESPONSE`); they all describe `SupportCase` events.
 - **Organization dashboard links.** The doc comment on `supportRequestHref()` still says organization cases open in the organization dashboard; the code ignores the organization and always links to `/dashboard/support/<caseKey>`.

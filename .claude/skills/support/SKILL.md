@@ -55,10 +55,11 @@ Terse rules for agents. The human explanation is in `docs/support/` (start at `d
 ## Gotchas
 
 - `SupportTicket`, `supportTicketId`, `SupportThreadCategory`, `/support-threads`, `support-ticket-update` and the export key `supportTickets` all mean `SupportCase` now. `app/api/support/tickets/route.ts` is a staff-only outbound intake, not a legacy reader.
-- No caller passes actor `SYSTEM` to the transition table; the sweep's auto-close and the cascade write their own compare-and-set.
+- No caller passes actor `SYSTEM` to the transition table; the sweep's auto-close and the cascade write their own compare-and-set. Both still release holds and end chat grants in their transaction (auto-close via `releaseAutoClosedCaseTx()`, as the system with no step-up); keep that if you touch them.
 - The hold and void doors run at default isolation inside `withOpsAction`; `performCaseAction()` (decisions, evidence, recommendations, review) runs Serializable with `withSerializableRetry()`.
-- Auto-close releases no holds; `applyHoldTx()` has no case-status check.
+- `applyHoldTx()` has no case-status check; a hold applied after resolution is released by the auto-close.
 - `support-sla-sweep` is not in `/api/admin/system-jobs/run`; re-run via `POST /api/cleanup/support-sla-sweep` with `CRON_SECRET`.
 - The platform cancel door has no `secondApprover`; support refunds do.
-- Saved replies and the RESOLVED status email still say a reply reopens the case; code does not.
-- On the intervention branch, `familiarise-support` is not excluded from `scripts/stream/stream-sync.ts` in code; it relies on `STREAM_SYNC_EXCLUDED_USERS`.
+- `familiarise-support` is a Stream-only user (no `User` row); keep it in `getExcludedUserIds()` in `scripts/stream/stream-sync.ts`.
+- `releaseSeat` only marks the funded participant `REFUNDED` (no session, recording or document access; group seats resell). It never cancels the booking; that is the platform cancel door. The credits rail always releases the seat.
+- Customer copy must never promise that a reply reopens a case.

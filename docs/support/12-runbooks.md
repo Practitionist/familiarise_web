@@ -119,7 +119,7 @@ Sweep errors carry the prefixes `chat-access join`, `chat-access leave` and `cha
 1. Let the sweep retry: it retries joins every run after 2 minutes and leaves every run, 10 rows per step. A frozen channel keeps failing until it is unfrozen; a deleted channel ends the grant as `CHANNEL_GONE`.
 2. To stop a stuck join, end the intervention (`END_INTERVENTION`); the grant ends and no seat is taken.
 3. If Familiarise Support is a member with no seated grant (the add succeeded but the stamp did not, and the grant ended), remove the `familiarise-support` member from that channel in the Stream dashboard. No job reconciles this case.
-4. Check that `familiarise-support` is listed in the `STREAM_SYNC_EXCLUDED_USERS` setting; otherwise the daily Stream user sync can soft-delete it between interventions.
+4. If the support user itself is missing in Stream, the next join recreates it (`ensureSupportUser()`). The daily Stream user sync never deletes it: `familiarise-support` is in its default exclusion set (`getExcludedUserIds()` in `scripts/stream/stream-sync.ts`).
 
 **Verify.** The queries return no rows for the grant; the channel's members no longer include `familiarise-support` (or include it under exactly one live grant).
 
@@ -177,6 +177,6 @@ The support PRs left schema and sidecar changes for the owner to apply at the en
 5. **Verify the sidecar.** `npx tsx scripts/ci/check-db-sidecars.ts` with `DATABASE_URL` pointing at the target (it checks that every named sidecar object is in the live catalog), then rerun the drift check and expect no support statements.
 6. **Bucket check.** The private `support-attachments` bucket exists with the 20 MiB limit and the allowed types (`ensureSupportEvidenceBucket()` in `lib/support/case-attachments.ts` re-applies them).
 7. **Smoke on preview.** A Razorpay test-mode support refund at or below ₹5,000 as STAFF; one above ₹25,000 with a second admin; a payout hold that blocks a payout and releases at resolution; one sweep run returning 200.
-8. **Stream.** Re-upsert existing operator Stream users so none keeps the old global `admin` role, and add `familiarise-support` to `STREAM_SYNC_EXCLUDED_USERS`.
+8. **Stream.** Re-upsert existing operator Stream users so none keeps the old global `admin` role.
 
 Steps 7 and 8 are owner launch gates; the scorecard lives in #2293.
