@@ -44,9 +44,9 @@ import {
   assertBoundedRefund,
   assertNotOwnRemedy,
   committedSupportPaiseByPayment,
-  STAFF_REFUND_PER_PAYMENT_PAISE,
   SUPPORT_REFUND_SEND_GRACE_MS,
 } from "./money-policy";
+import { STAFF_REFUND_PER_PAYMENT_PAISE } from "./staff-refund-limits";
 import { deliveringPartiesByAppointment } from "./evidence-parties";
 import {
   activeHolds,

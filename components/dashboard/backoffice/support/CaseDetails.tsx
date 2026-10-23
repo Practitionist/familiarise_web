@@ -42,10 +42,6 @@ function Facts({ items }: Readonly<{ items: [string, ReactNode][] }>) {
   );
 }
 
-/** Where a booking opens in the console: the Appointments page, opened on it. */
-export const bookingHref = (basePath: string, appointmentId: string) =>
-  `${basePath}/appointments?open=${encodeURIComponent(appointmentId)}`;
-
 function bookingStatusLabel(booking: CaseBooking): string {
   if (!booking.status) return "—";
   if (booking.kind === "TRIAL") return trialStatusBadge(booking.status).label;

@@ -321,7 +321,8 @@ function RecommendForm({
             the customer loses access to the sessions and recordings, and a
             class or webinar seat can be booked by someone else. This does not
             cancel the booking or its sessions; use Cancel booking in the
-            booking&apos;s Ops panel for that.
+            booking&apos;s Ops panel for that. A booking paid entirely with
+            credits always releases the seat when its credits are restored.
           </p>
         </div>
       </div>
