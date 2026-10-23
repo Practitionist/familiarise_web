@@ -8,7 +8,7 @@ last-reviewed: 2026-10-20
 
 # Payment webhooks (inbound)
 
-**What this covers:** the **inbound** gateway webhooks (Razorpay & RazorpayX → Familiarise) that mutate money state — captures, checkout failures, refunds, payouts, reverse penny drop validations, and disputes — from signature verification through CAS-fenced execution to ledger postings and recovery sweeps. Outbound enterprise webhooks (Familiarise → tenant HRIS/ERP) are documented separately in [outbound webhooks](../40-compliance-and-data/04-outbound-webhooks.md).
+**What this covers:** the **inbound** gateway webhooks (Razorpay & RazorpayX → Familiarise) that mutate money state — captures, checkout failures, refunds, payouts, reverse penny drop validations, and disputes — from signature verification through CAS-fenced execution to ledger postings and recovery sweeps. Outbound enterprise webhooks (Familiarise → tenant HRIS/ERP) are documented separately in [outbound webhooks](../../enterprise/40-compliance-and-data/04-outbound-webhooks.md).
 
 ---
 

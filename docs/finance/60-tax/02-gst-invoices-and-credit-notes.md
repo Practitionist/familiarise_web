@@ -97,7 +97,7 @@ Both PDFs register Noto Sans Devanagari from `public/fonts/` and apply it to the
 
 The invoice number and a download link appear on the admin payment list and detail pages; on the consultee's own payments tab the row's "View receipt" link resolves to the invoice when one was issued (`receiptHref` in `lib/appointments/payment-display.ts`). A row without one means the payment was org-funded, which is the correct answer rather than a missing document.
 
-The supplier block comes from `getPlatformSupplier()`, whose fail-closed contract, hardcoded legal name and address, and the `pdfkit` font tracing that keeps the render from crashing are described in [required secrets](../enterprise/50-operations/07-required-secrets.md#the-supplier-identity-on-statutory-documents).
+The supplier block comes from `getPlatformSupplier()`, whose fail-closed contract, hardcoded legal name and address, and the `pdfkit` font tracing that keeps the render from crashing are described in [required secrets](../../enterprise/50-operations/07-required-secrets.md#the-supplier-identity-on-statutory-documents).
 
 ## The outward-supplies register
 
@@ -147,6 +147,6 @@ Rule 46 requires a B2C invoice of ₹50,000 or more to carry the recipient's nam
 
 ## Related
 
-- [B2C ↔ B2B funding seam](./04-b2c-b2b-funding-seam.md)
-- [Invoicing (B2B)](../enterprise/10-money-and-ledger/08-invoicing.md)
-- [Cron jobs reference](../maintenance/04-cron-jobs-reference.md)
+- [B2C ↔ B2B funding seam](../50-b2b/01-funding-rails-and-permutations.md)
+- [Invoicing (B2B)](../../enterprise/10-money-and-ledger/08-invoicing.md)
+- [Cron jobs reference](../../maintenance/04-cron-jobs-reference.md)

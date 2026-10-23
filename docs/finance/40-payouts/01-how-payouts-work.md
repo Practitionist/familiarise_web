@@ -1,6 +1,6 @@
 # How payouts work
 
-This page explains, in plain language, how money that a session earns reaches the expert or the host organisation. It is the starting point for anyone who needs the whole picture before reading the detailed pages, and every rule below was checked against the code on `dev` on 2026-10-20. The detailed mechanics live in [earnings lifecycle](./02-earnings-lifecycle.md), [payout processing](./03-payout-processing.md) and, for organisations, the [payout pipeline](../../enterprise/10-money-and-ledger/07-payout-pipeline.md).
+This page explains, in plain language, how money that a session earns reaches the expert or the host organisation. It is the starting point for anyone who needs the whole picture before reading the detailed pages, and every rule below was checked against the code on `dev` on 2026-10-20. The detailed mechanics live in [earnings lifecycle](../../payments/payouts/02-earnings-lifecycle.md), [payout processing](../../payments/payouts/03-payout-processing.md) and, for organisations, the [payout pipeline](../../enterprise/10-money-and-ledger/07-payout-pipeline.md).
 
 ## Expert earnings
 

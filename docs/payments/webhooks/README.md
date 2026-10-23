@@ -1,6 +1,6 @@
 # Webhook Architecture Overview
 
-> **Scope:** Gateway-wide inbound verification, deduplication, asynchronous execution under `PG_POOL_MAX=1`, stuck-event sweeping, and retention archival across all external webhook providers. Organization-specific double-entry ledger semantics live in [`docs/enterprise/10-money-and-ledger/12-payment-webhooks.md`](../../enterprise/10-money-and-ledger/12-payment-webhooks.md), Stream recording pipelines live in [`docs/stream/13-recording-webhooks.md`](../../stream/13-recording-webhooks.md), and tenant outbound webhooks live in [`docs/enterprise/40-compliance-and-data/04-outbound-webhooks.md`](../../enterprise/40-compliance-and-data/04-outbound-webhooks.md).
+> **Scope:** Gateway-wide inbound verification, deduplication, asynchronous execution under `PG_POOL_MAX=1`, stuck-event sweeping, and retention archival across all external webhook providers. Organization-specific double-entry ledger semantics live in [`docs/finance/10-money-in/02-capture-confirmation-and-webhooks.md`](../../finance/10-money-in/02-capture-confirmation-and-webhooks.md), Stream recording pipelines live in [`docs/stream/13-recording-webhooks.md`](../../stream/13-recording-webhooks.md), and tenant outbound webhooks live in [`docs/enterprise/40-compliance-and-data/04-outbound-webhooks.md`](../../enterprise/40-compliance-and-data/04-outbound-webhooks.md).
 
 ---
 
@@ -35,10 +35,10 @@ Every inbound webhook receiver runs on the Node.js App Router runtime (`export c
 
 ## 3. Documents in This Directory
 
-| #   | Document                                                               | Description                                                                                                                                             |
-| --- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 01  | [Monitoring & Operations](./01-monitoring.md)                          | Webhook observability, `WebhookEvent` state machine inspection, `DeferSignal` & `sweep-stuck-webhook-events` runbook, and weekly retention archival     |
-| 02  | [Razorpay & RazorpayX Webhook Schema](./02-razorpay-webhook-schema.md) | Complete Razorpay & RazorpayX schema reference, tamper-proof `eventId` derivation, PHP `notes: []` normalization, and multi-attempt checkout guarantees |
+| #   | Document                                                                                          | Description                                                                                                                                             |
+| --- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 01  | [Monitoring & Operations](../../finance/70-operations/04-webhook-recovery.md)                     | Webhook observability, `WebhookEvent` state machine inspection, `DeferSignal` & `sweep-stuck-webhook-events` runbook, and weekly retention archival     |
+| 02  | [Razorpay & RazorpayX Webhook Schema](../../finance/10-money-in/03-razorpay-webhook-reference.md) | Complete Razorpay & RazorpayX schema reference, tamper-proof `eventId` derivation, PHP `notes: []` normalization, and multi-attempt checkout guarantees |
 
 ---
 
