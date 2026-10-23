@@ -1,4 +1,4 @@
-# 10 — Consumer Protection, Grievance Redressal & Review Transparency
+# 03 — Consumer Protection, Grievance Redressal & Review Transparency
 
 > **Status:** Active across public statutory disclosures (`app/(pages)/constants.ts`, `app/(pages)/grievance/page.tsx`, `app/(pages)/reviews-policy/page.tsx`), unauthenticated/authenticated grievance intake (`app/api/contact/route.ts`), moderation statements of reasons (`lib/moderation/side-effects.ts`), priority report queuing (`app/api/staff/moderation/reports/route.ts`), multi-reporter aggregation (`app/api/report/route.ts`), and dispute evidence governance (`app/api/admin/disputes/**`).
 
