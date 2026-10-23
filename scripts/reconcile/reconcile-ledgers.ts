@@ -1084,7 +1084,7 @@ function inspectOverageEventLedgerState(
       flag("CHARGED member overage without a SUCCEEDED side-payment.");
     } else if (!hasTxn) {
       flag(
-        "CHARGED member overage but no overage:<sidePaymentId> ledger txn — ORG_PAYABLE was never credited.",
+        "CHARGED member overage but no overage:<sidePaymentId> ledger txn — the capture was never journaled.",
       );
     } else if (ev.payment.amount !== ev.marginalPaise) {
       flag("Side-payment amount diverges from the event's marginalPaise.");
