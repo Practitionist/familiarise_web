@@ -97,9 +97,11 @@ dialog under Operations → Appointments carries an "Ops actions" panel
 opens only the existing door routes. Every booking type lists its sessions
 with their outcome and the `session.set-outcome` door, and shows its money
 state; an admin also gets a link that opens the Refunds section's issue door
-pre-filled with the payment. Any operator holding `appointments.manage` can
-release the booking, or one session of a subscription or class, for
-rescheduling through `POST /api/staff/appointments/[id]/reschedule`, the only
+pre-filled with the payment. Any operator holding `appointments.manage` can,
+after step-up and only while booking doors are open (`assertBookingDoorsOpen`,
+closed in DEGRADED or OFFLINE maintenance), release the booking, or one session
+of a subscription or class, for rescheduling through
+`POST /api/staff/appointments/[id]/reschedule`, the only
 way a STAFF or ADMIN who is not a party moves a booking; the release only
 frees the time, and the customer picks the new times. An operator holding
 `appointments.cancelForPlatform` cancels the whole booking through

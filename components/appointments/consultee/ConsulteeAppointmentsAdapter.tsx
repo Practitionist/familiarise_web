@@ -448,7 +448,10 @@ export function useConsulteeAppointmentsAdapter(options?: {
         onClick: () => router.push(rescheduleHref),
       });
     }
-    if (opsHref && (mayReschedule || mayCancel)) {
+    if (
+      opsHref &&
+      (mayReschedule || (mayCancel && destructive !== "cancel-trial"))
+    ) {
       items.push({
         key: "ops-hint",
         label: OPS_HINT_LABEL,
