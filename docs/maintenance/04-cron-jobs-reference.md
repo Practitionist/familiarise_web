@@ -44,7 +44,7 @@ GitHub Actions retains the remaining non-money batch jobs; it is not a fallback 
 
 `scripts/reconcile/reconcile-ledgers.ts` uses set-based aggregations inside persisted pages of at most 100 primary entities, retaining complete related journal history. Each comparison reads one read-only Repeatable Read snapshot through its transaction client. The auditor writes `LedgerReconciliationReport` checkpoints and never repairs a cache or posted journal.
 
-`POST /api/admin/reconcile-ledgers` calls `runReconcileLedgers()` synchronously to resume and complete the audit. `POST /api/cleanup/reconcile-ledgers` calls `runReconcileLedgersSlice()` to advance one bounded slice: HTTP 200 with status RUNNING means more work remains, while final results return 200 when clean or 207 for discrepancies. Both share the fail-closed `reconcile-ledgers` lease, freeze drifted wallets immediately after their page, and preserve a failed comparison's checkpoint for retry. See [ledger integrity](../enterprise/10-money-and-ledger/13-ledger-integrity.md).
+`POST /api/admin/reconcile-ledgers` calls `runReconcileLedgers()` synchronously to resume and complete the audit. `POST /api/cleanup/reconcile-ledgers` calls `runReconcileLedgersSlice()` to advance one bounded slice: HTTP 200 with status RUNNING means more work remains, while final results return 200 when clean or 207 for discrepancies. Both share the fail-closed `reconcile-ledgers` lease, freeze drifted wallets immediately after their page, and preserve a failed comparison's checkpoint for retry. See [ledger integrity](../finance/20-ledger/06-integrity-and-reconciliation.md).
 
 ## Outbox-First Email & Notification Relays
 
