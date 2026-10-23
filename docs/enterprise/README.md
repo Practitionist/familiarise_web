@@ -10,7 +10,7 @@ last-reviewed: 2026-06-12
 
 The **enterprise layer** is a capability-driven B2B surface on top of the marketplace: organizations sponsor and/or host, fund sessions through wallets, invoices, or licenses, run programs with seat or credit caps, and settle money through a double-entry ledger. This folder is the engineer's map of that layer. The **banded folders** are written to be read **in order, as one continuous story**, with each band building on the last: `00-foundations/` → `10-money-and-ledger/` → `20-iam-and-security/` → `30-programs-and-lifecycle/` → `40-compliance-and-data/` → `50-operations/` → `60-scenarios-and-verdicts/`. One band sits outside the story line: `70-design-decisions/` collects the architecture decision records that explain _why_ the system is shaped the way it is. Audit findings and their status are tracked in GitHub issues, not in this folder.
 
-> **New here?** Read the [overview](00-foundations/01-overview.md) for the system shape. For the end-to-end booking, organizational scoping, and money narrative across B2C and B2B, read [03-booking-and-money-machinery](../start-here/03-booking-and-money-machinery.md) first — the cross-rail visual guide with the data model, sequence, state, permission, and 20 double-entry ledger permutation tables — then start at [money-model-overview](10-money-and-ledger/01-money-model-overview.md) and walk the `10-money-and-ledger/` band in order. If you want a curated path matched to your experience level, use the [reading paths](#reading-paths-by-level) below.
+> **New here?** Read the [overview](00-foundations/01-overview.md) for the system shape. For the end-to-end booking, organizational scoping, and money narrative across B2C and B2B, read [03-booking-and-money-machinery](../start-here/03-booking-and-money-machinery.md) first — the cross-rail visual guide with the data model, sequence, state, permission, and 20 double-entry ledger permutation tables — then start at [money-model-overview](../finance/20-ledger/01-double-entry-model.md) and walk the `10-money-and-ledger/` band in order. If you want a curated path matched to your experience level, use the [reading paths](#reading-paths-by-level) below.
 
 ---
 
@@ -44,7 +44,7 @@ This path gives you the system shape, the role model, and just enough of the mon
 1. [overview](00-foundations/01-overview.md) — read the "anatomy of one booking" sequence diagram twice; it is the spine every other doc hangs detail off.
 2. [organization-types](00-foundations/02-organization-types.md) — the two booleans (`canSponsor`/`canHost`) that define every org.
 3. [roles-and-permissions](00-foundations/04-roles-and-permissions.md) — the `MemberRole` ladder that gates every API route and dashboard page.
-4. [money-model-overview](10-money-and-ledger/01-money-model-overview.md) — the three money rules (integer paise, balanced transactions, derived balances). You do not need the rest of the band yet.
+4. [money-model-overview](../finance/20-ledger/01-double-entry-model.md) — the three money rules (integer paise, balanced transactions, derived balances). You do not need the rest of the band yet.
 5. [dashboard-pages](30-programs-and-lifecycle/04-dashboard-pages.md) — what each org dashboard page shows, per role.
 6. [api-reference](50-operations/01-api-reference.md) — keep this open as a reference while you work; do not read it cover to cover.
 
@@ -53,7 +53,7 @@ This path gives you the system shape, the role model, and just enough of the mon
 This path makes you productive inside any one band and safe at its boundaries with the others.
 
 1. Everything in the SDE1 path.
-2. All of [`10-money-and-ledger/`](10-money-and-ledger/01-money-model-overview.md) in order — the money story only makes sense read front to back.
+2. All of [`10-money-and-ledger/`](../finance/20-ledger/01-double-entry-model.md) in order — the money story only makes sense read front to back.
 3. All of [`20-iam-and-security/`](20-iam-and-security/01-sso-and-authentication.md) — SSO, JIT, rate limiting, headers.
 4. All of [`30-programs-and-lifecycle/`](30-programs-and-lifecycle/01-concurrency-and-idempotency.md) — programs are where the commercial terms live.
 5. [compliance map](40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md), [deletion-policy](40-compliance-and-data/02-deletion-policy.md), [data-export](40-compliance-and-data/03-data-export.md), and [outbound-webhooks](40-compliance-and-data/04-outbound-webhooks.md).
@@ -66,7 +66,7 @@ This path adds the _why_ behind the design and the integrity machinery you must 
 1. Everything in the SDE2 path.
 2. All of [`70-design-decisions/`](70-design-decisions/00-README.md) — the ADRs; read these before proposing structural changes.
 3. [cross-cutting-integrations](40-compliance-and-data/06-cross-cutting-integrations.md) — the wired/partial/skipped map of all eight subsystems.
-4. [ledger-integrity](10-money-and-ledger/13-ledger-integrity.md) — the resumable ledger auditor and the invariants your change must not break.
+4. [ledger-integrity](../finance/20-ledger/06-integrity-and-reconciliation.md) — the scheduled reconciler and the invariants your change must not break.
 5. [monitoring](50-operations/03-monitoring.md) and [system-events](50-operations/04-system-events.md) — how a change announces itself in production.
 
 ### SDE4 — architecture and regulatory sign-off
@@ -117,21 +117,21 @@ These six docs define the primitives every other band assumes: what an organizat
 
 This band tells the money story front to back: how value enters (wallet, invoice, card), how it splits into earnings, and how it leaves (payouts), all through one double-entry journal.
 
-| #   | Doc                                                                    | Focus                                                               |
-| --- | ---------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| 01  | [money-model-overview](10-money-and-ledger/01-money-model-overview.md) | integer paise, double-entry, derived balances                       |
-| 02  | [chart-of-accounts](10-money-and-ledger/02-chart-of-accounts.md)       | the 13 accounts, normal sides, deterministic ids                    |
-| 03  | [ledger-and-postings](10-money-and-ledger/03-ledger-and-postings.md)   | `postLedgerTxn`, the balance invariant, every flow's legs           |
-| 04  | [wallet-and-topups](10-money-and-ledger/04-wallet-and-topups.md)       | `WalletTopUp` lifecycle, wallet-as-cache                            |
-| 05  | [booking-to-earnings](10-money-and-ledger/05-booking-to-earnings.md)   | booking → earnings → bps split, rate cards                          |
-| 06  | [earnings-lifecycle](10-money-and-ledger/06-earnings-lifecycle.md)     | `EarningStatus` machine, holds, `PENDING_TRUST`, refund decrements  |
-| 07  | [payout-pipeline](10-money-and-ledger/07-payout-pipeline.md)           | earnings roll-up → payout, RazorpayX states, TDS/MSME, `ORG_PAYOUT` |
-| 08  | [invoicing](10-money-and-ledger/08-invoicing.md)                       | GST, IRN, PO match, `ORG_RECEIVABLE`, refunds                       |
-| 09  | [payment-legs](10-money-and-ledger/09-payment-legs.md)                 | stackable funding legs → ledger debits                              |
-| 10  | [refunds](10-money-and-ledger/10-refunds.md)                           | `applyRefundCascade`, gateway refund mechanics, credit notes        |
-| 11  | [disputes](10-money-and-ledger/11-disputes.md)                         | `DisputeStatus` machine, evidence/contest, lost-dispute reversal    |
-| 12  | [payment-webhooks](10-money-and-ledger/12-payment-webhooks.md)         | inbound gateway events, signature verify, idempotency               |
-| 13  | [ledger-integrity](10-money-and-ledger/13-ledger-integrity.md)         | the reconciler: set-based checks + report                           |
+| #   | Doc                                                                                | Focus                                                               |
+| --- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| 01  | [money-model-overview](../finance/20-ledger/01-double-entry-model.md)              | integer paise, double-entry, derived balances                       |
+| 02  | [chart-of-accounts](../finance/20-ledger/02-chart-of-accounts.md)                  | the 13 accounts, normal sides, deterministic ids                    |
+| 03  | [ledger-and-postings](10-money-and-ledger/03-ledger-and-postings.md)               | `postLedgerTxn`, the balance invariant, every flow's legs           |
+| 04  | [wallet-and-topups](10-money-and-ledger/04-wallet-and-topups.md)                   | `WalletTopUp` lifecycle, wallet-as-cache                            |
+| 05  | [booking-to-earnings](10-money-and-ledger/05-booking-to-earnings.md)               | booking → earnings → bps split, rate cards                          |
+| 06  | [earnings-lifecycle](../finance/40-payouts/02-earnings-lifecycle.md)               | `EarningStatus` machine, holds, `PENDING_TRUST`, refund decrements  |
+| 07  | [payout-pipeline](10-money-and-ledger/07-payout-pipeline.md)                       | earnings roll-up → payout, RazorpayX states, TDS/MSME, `ORG_PAYOUT` |
+| 08  | [invoicing](10-money-and-ledger/08-invoicing.md)                                   | GST, IRN, PO match, `ORG_RECEIVABLE`, refunds                       |
+| 09  | [payment-legs](../finance/20-ledger/03-payment-legs.md)                            | stackable funding legs → ledger debits                              |
+| 10  | [refunds](10-money-and-ledger/10-refunds.md)                                       | `applyRefundCascade`, gateway refund mechanics, credit notes        |
+| 11  | [disputes](10-money-and-ledger/11-disputes.md)                                     | `DisputeStatus` machine, evidence/contest, lost-dispute reversal    |
+| 12  | [payment-webhooks](../finance/10-money-in/02-capture-confirmation-and-webhooks.md) | inbound gateway events, signature verify, idempotency               |
+| 13  | [ledger-integrity](../finance/20-ledger/06-integrity-and-reconciliation.md)        | the reconciler: set-based checks + report                           |
 
 ### IAM / SSO / security — `20-iam-and-security/`
 

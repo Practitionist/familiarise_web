@@ -11,7 +11,7 @@ last-reviewed: 2026-10-17
 
 **What this covers:** the double-entry journal in detail — the `postLedgerTxn()` API, the balance invariant, idempotency, immutability, and the **exact legs every money flow posts**, transcribed from code. This is the reference the rest of the money band cites.
 
-> Replaces the old "three-ledger discipline" doc. The three single-entry logs it described (`FundingLedgerEntry` / `WalletEntry` / `SettlementLedgerEntry`) were collapsed into this one journal by **#772** — see [money model overview](01-money-model-overview.md) for the why.
+> Replaces the old "three-ledger discipline" doc. The three single-entry logs it described (`FundingLedgerEntry` / `WalletEntry` / `SettlementLedgerEntry`) were collapsed into this one journal by **#772** — see [money model overview](../../finance/20-ledger/01-double-entry-model.md) for the why.
 
 ---
 
@@ -48,7 +48,7 @@ erDiagram
   }
 ```
 
-- `LedgerAccount` — a bucket; id is its [deterministic scope string](02-chart-of-accounts.md).
+- `LedgerAccount` — a bucket; id is its [deterministic scope string](../../finance/20-ledger/02-chart-of-accounts.md).
 - `LedgerTransaction` — one balanced cash event. `idempotencyKey @unique` is the dedupe anchor; `kind` is a **typed `LedgerTransactionKind` enum** (#778 §B made it an enum — a free-string typo like `"BOOKNG"` used to silently break reconcile's `groupBy`; now it's a compile error); `paymentId`/`invoiceId`/`payoutId` are optional indexed soft-links for tracing.
 - `LedgerEntry` — one leg. `amountPaise` is a **positive** `BigInt`; the sign lives in `direction`.
 
@@ -75,7 +75,7 @@ What it guarantees (`lib/payments/ledger/post.ts`):
 4. **Composable in a `$transaction`.** Pass the tx client (`tx`) and the posting joins the caller's atomic unit — so the money leg and the business write (claim a top-up, mark a payout paid) commit together or not at all.
 5. **Accounts resolve on demand.** Each posting's `AccountRef` is upserted to its deterministic id, so callers never pre-create accounts.
 
-`ledgerBalancePaise(db, ref)` is the read side: it groups the account's entries by direction and returns `Number(Σdebit − Σcredit)` — the **signed** balance. Interpret the sign per the account's normal side ([chart of accounts](02-chart-of-accounts.md)).
+`ledgerBalancePaise(db, ref)` is the read side: it groups the account's entries by direction and returns `Number(Σdebit − Σcredit)` — the **signed** balance. Interpret the sign per the account's normal side ([chart of accounts](../../finance/20-ledger/02-chart-of-accounts.md)).
 
 ```mermaid
 flowchart TD
@@ -131,7 +131,7 @@ Dr GATEWAY_CLEARING      amount
 
 ### 4.2 Booking — `BOOKING` (`booking:<paymentId>`)
 
-The funding legs of the checkout become debits; the fee/payable/tax split becomes credits. The debit side is assembled from the payment's `PaymentLeg` rows ([payment legs](09-payment-legs.md)):
+The funding legs of the checkout become debits; the fee/payable/tax split becomes credits. The debit side is assembled from the payment's `PaymentLeg` rows ([payment legs](../../finance/20-ledger/03-payment-legs.md)):
 
 ```
 Dr GATEWAY_CLEARING           sum of CARD legs
@@ -219,7 +219,7 @@ The wallet cache is reduced only by what it still holds (the `billing_account_wa
 
 ### 4.7 Booking refund — `REFUND` (`refund:<refundId>`)
 
-A booking is refunded (fully or partially). The original booking legs are reversed **proportionally**: the fee/payable/GST credits become debits, and the funding legs become credits. `PLATFORM_FEE` carries the balancing _plug_ so the set ties out.
+A booking is refunded (fully or partially). The original booking legs are reversed **proportionally**: the fee/payable/GST credits become debits, and the funding legs become credits. The `DISCOUNT` the payment's booking and carve journals debited comes back as a credit in the same proportion, and the refund that completes the payment (counting only refunds already cascaded) takes the exact remainder of the `DISCOUNT`, the shares and the GST, so a full refund (in one go or split) leaves every account of the payment at zero, except that a refund past the GST credit-note cutoff reverses no GST, so `GST_PAYABLE` keeps that part and the platform bears it. `PLATFORM_FEE` carries the balancing _plug_ so the set ties out; on a full refund it equals the booking's fee.
 
 ```
 Dr PLATFORM_FEE              platform plug (funding − consultant − org − GST share)
@@ -227,6 +227,7 @@ Dr CONSULTANT_PAYABLE(owner) refunded consultant share
 Dr ORG_PAYABLE(org)          refunded org share
 Dr GST_PAYABLE               refunded GST share
    Cr GATEWAY_CLEARING / WALLET / ORG_RECEIVABLE / PLATFORM_PROMO   the original funding legs, prorated
+   Cr DISCOUNT                  the booked DISCOUNT, prorated (remainder on the completing refund)
 ```
 
 Posted only when the debit side balances to the refunded funding total (a guard in `refund.ts`); a partial/edge case that wouldn't balance is skipped and logged rather than written half-formed. The whole reversal block is wrapped so a ledger imbalance can never block the customer refund (gateway money may already have moved) — the failure is logged + paged and the reconciler's `EARNINGS_LEDGER_DRIFT` and `REVERSED_EARNING_WITHOUT_REFUND_TXN` checks catch any divergence.
@@ -269,7 +270,7 @@ The side-`Payment` carries a single `CARD` leg (`sourceRef` = gateway order id),
 
 ## 6. What NOT to do
 
-- **Don't read a balance from a column.** Sum the journal via `ledgerBalancePaise()` (the one cache, `walletBalance`, is the documented exception in [money model overview](01-money-model-overview.md) §4).
+- **Don't read a balance from a column.** Sum the journal via `ledgerBalancePaise()` (the one cache, `walletBalance`, is the documented exception in [money model overview](../../finance/20-ledger/01-double-entry-model.md) §4).
 - **Don't post an unbalanced set** "to fix later" — there is no later; it throws.
 - **Don't delete or update a `LedgerEntry`.** Post a counter-transaction.
 - **Don't invent a `kind`** outside the `LedgerTransactionKind` enum — adding a value is a schema change, paired with a structured `idempotencyKey` in the vocabulary table above (the enum makes a stray string a compile error, not a silent reconcile break).
@@ -579,8 +580,8 @@ journal is the only balance; there is no snapshot to drift.
 
 ### Related docs
 
-- [Money model overview](01-money-model-overview.md) · [Chart of accounts](02-chart-of-accounts.md) — the principles and buckets this doc applies.
+- [Money model overview](../../finance/20-ledger/01-double-entry-model.md) · [Chart of accounts](../../finance/20-ledger/02-chart-of-accounts.md) — the principles and buckets this doc applies.
 - [Wallet & top-ups](04-wallet-and-topups.md) · [Booking → earnings](05-booking-to-earnings.md) · [Payout pipeline](07-payout-pipeline.md) · [Invoicing](08-invoicing.md) — each flow in narrative.
-- [Payment legs](09-payment-legs.md) — how the booking debit side is assembled.
-- [Ledger integrity](13-ledger-integrity.md) — the reconciler.
+- [Payment legs](../../finance/20-ledger/03-payment-legs.md) — how the booking debit side is assembled.
+- [Ledger integrity](../../finance/20-ledger/06-integrity-and-reconciliation.md) — the reconciler.
 - Ground truth: `lib/payments/ledger/post.ts`; posting call sites in `earnings-service.ts`, `wallet.ts`, `org-payout-service.ts`, `payout-service.ts`, `refund.ts`, `app/api/webhooks/utils.ts`.

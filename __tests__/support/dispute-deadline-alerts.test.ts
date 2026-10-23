@@ -34,6 +34,7 @@ jest.mock("../../lib/observability/standing-finding", () => ({
 jest.mock("../../lib/support/problem-cascade", () => ({
   cascadeResolvedProblems: jest.fn(async () => ({
     cascaded: 0,
+    heldOpen: [],
     bells: [],
     emails: [],
   })),

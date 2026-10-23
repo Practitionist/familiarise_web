@@ -17,7 +17,7 @@ export async function settleCheckoutLegs(
   const { payment } = carried;
 
   // Enterprise: every successful Payment must have at least one
-  // PaymentLeg (`docs/enterprise/10-money-and-ledger/09-payment-legs.md`). For non-
+  // PaymentLeg (`docs/finance/20-ledger/03-payment-legs.md`). For non-
   // org-sponsored learner-pays-via-gateway flows that's the CARD
   // leg, written here so the invariant holds whether or not the
   // payment ever transitions to SUCCEEDED. We record the gateway

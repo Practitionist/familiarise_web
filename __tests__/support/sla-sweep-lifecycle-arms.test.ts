@@ -65,6 +65,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockCascade.mockResolvedValue({
     cascaded: 1,
+    heldOpen: [],
     bells: [bell],
     emails: [email],
   });
@@ -106,7 +107,7 @@ it("folds arm failures into the run's errors and reports to Sentry once", async 
   mockCascade.mockImplementation(async ({ errors }: { errors: string[] }) => {
     errors.push("problem-cascade incident a: boom");
     errors.push("problem-cascade incident b: boom");
-    return { cascaded: 0, bells: [], emails: [] };
+    return { cascaded: 0, heldOpen: [], bells: [], emails: [] };
   });
   mockPurge.mockImplementation(async ({ errors }: { errors: string[] }) => {
     errors.push("evidence-purge case c: 1 file(s) not confirmed deleted");

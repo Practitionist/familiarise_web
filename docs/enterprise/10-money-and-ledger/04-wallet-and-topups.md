@@ -142,7 +142,7 @@ If `rowsAffected === 0`, the balance was insufficient and it throws `WalletInsuf
 
 That refusal carries the stable code `WALLET_INSUFFICIENT_FUNDS` and `httpStatus` 402 (#1477), so checkout rethrows it unchanged, `POST /api/checkout` answers 402 with copy telling the buyer to ask their billing admin for a top-up, and Sentry records it as an expected outcome rather than a payment fault. It reports only the requested amount, never the available balance: the guard refuses without reading the row, and re-reading it would add a query inside the checkout transaction that `PG_POOL_MAX=1` would serialise behind everything else.
 
-> **Important:** `walletDebit` only moves the **cache**. It does **not** post a journal leg. The accounting leg `Dr WALLET` is posted later from the settlement layer (`createEarningsFromPayment`), where the full fee/payable/GST split is known — that single balanced `booking:<paymentId>` transaction is also the authoritative wallet-history record. See [Booking → earnings](05-booking-to-earnings.md) and [Payment legs](09-payment-legs.md).
+> **Important:** `walletDebit` only moves the **cache**. It does **not** post a journal leg. The accounting leg `Dr WALLET` is posted later from the settlement layer (`createEarningsFromPayment`), where the full fee/payable/GST split is known — that single balanced `booking:<paymentId>` transaction is also the authoritative wallet-history record. See [Booking → earnings](05-booking-to-earnings.md) and [Payment legs](../../finance/20-ledger/03-payment-legs.md).
 >
 > **The journal leg is asserted, not assumed.** After `createEarningsFromPayment` returns, `assertWalletDebitJournaled()` (`lib/api/organizations/wallet.ts`, called from `lib/payments/checkout/commit/ledger.ts`) looks for a `Dr WALLET` line in `booking:<paymentId>` and throws `WalletDebitUnjournaledError` (`WALLET_DEBIT_UNJOURNALED`) if there is none. The whole checkout transaction then rolls back, so the cache move never commits without its journal line. This is an application check on the one path that could otherwise drift the cache; it does not replace the nightly `WALLET_BALANCE_DRIFT` audit.
 
@@ -186,9 +186,9 @@ Every wallet movement is a journal posting:
 | Top-up refund (gateway-initiated) | `Dr WALLET / Cr GATEWAY_CLEARING` (`topup-refund:<gatewayRefundId>`)                                                                   | `walletBalance -= min(amount, balance)`          |
 | Operator correction               | `WALLET_ADJUSTMENT`, `walletadj:<billingAccountId>:<key>`: credit `Dr PLATFORM_PROMO / Cr WALLET`, debit `Dr WALLET / Cr PLATFORM_FEE` | `walletBalance ± amount` in the same transaction |
 
-The org's true balance is always `-ledgerBalancePaise({ kind: "WALLET", organizationId })` (WALLET is credit-normal, so the amount we owe is the negative of the signed balance). The reconcile cron's `WALLET_BALANCE_DRIFT` check asserts this equals the cache; any drift is an incident. See [Ledger integrity](13-ledger-integrity.md).
+The org's true balance is always `-ledgerBalancePaise({ kind: "WALLET", organizationId })` (WALLET is credit-normal, so the amount we owe is the negative of the signed balance). The reconcile cron's `WALLET_BALANCE_DRIFT` check asserts this equals the cache; any drift is an incident. See [Ledger integrity](../../finance/20-ledger/06-integrity-and-reconciliation.md).
 
-The operator correction is `adjustWallet()` (`lib/api/organizations/wallet.ts`), reached through `POST /api/admin/billing-accounts/[billingAccountId]/wallet-adjustment` (step-up, second-admin above ₹25,000). Because it moves the cache and the journal by the same signed amount, it cannot close a drift between them. Use it to give or take real value from an organisation, not to repair the cache. A drift is repaired by posting a balanced correcting journal for whichever side is wrong; see the repair steps in [Ledger integrity](13-ledger-integrity.md).
+The operator correction is `adjustWallet()` (`lib/api/organizations/wallet.ts`), reached through `POST /api/admin/billing-accounts/[billingAccountId]/wallet-adjustment` (step-up, second-admin above ₹25,000). Because it moves the cache and the journal by the same signed amount, it cannot close a drift between them. Use it to give or take real value from an organisation, not to repair the cache. A drift is repaired by posting a balanced correcting journal for whichever side is wrong; see the repair steps in [Ledger integrity](../../finance/20-ledger/06-integrity-and-reconciliation.md).
 
 ---
 
@@ -219,7 +219,7 @@ model BillingAccount {
 
 ## 8. Design decisions & trade-offs
 
-- **A `walletBalance` cache at all (vs always-derive).** The wallet is the _one_ place the money model keeps a balance-shaped column, and only because an overdraft guard must atomically test-and-decrement under concurrency — `UPDATE … WHERE walletBalance >= amount` needs a real column; you can't run that predicate against a derived `SUM`. The cost is a standing reconciliation invariant (`WALLET_BALANCE_DRIFT`); the benefit is the booking hot path stays a single conditional statement instead of a sum-then-check race. See [money model overview §4](01-money-model-overview.md).
+- **A `walletBalance` cache at all (vs always-derive).** The wallet is the _one_ place the money model keeps a balance-shaped column, and only because an overdraft guard must atomically test-and-decrement under concurrency — `UPDATE … WHERE walletBalance >= amount` needs a real column; you can't run that predicate against a derived `SUM`. The cost is a standing reconciliation invariant (`WALLET_BALANCE_DRIFT`); the benefit is the booking hot path stays a single conditional statement instead of a sum-then-check race. See [money model overview §4](../../finance/20-ledger/01-double-entry-model.md).
 - **`walletDebit` moves only the cache; the journal leg posts at settlement.** A booking's `Dr WALLET` leg is posted later inside the balanced `booking:<paymentId>` transaction, where the full fee/payable/GST split is known — not at debit time. This keeps "one cash event, one posting": the cache decrement reserves the funds atomically, the journal records the accounting once. The cost is that the cache and the journal leg are written at _different moments_ (reconciled nightly); the alternative — posting a half-known journal leg at debit time — would need a correction once the split resolved.
 - **Failed top-ups are deleted, not tombstoned.** `handleOrgPaymentFailure` deletes the `PENDING`/un-captured row so the UI immediately offers "retry" rather than showing a dead `FAILED` attempt. The `FAILED` enum value is kept for paths that _want_ the tombstone. Trade-off: a cleaner retry UX vs losing the failed-attempt history (acceptable — a never-captured top-up moved no money).
 - **Low-balance is an alert, not an auto-charge.** The mandate columns were deleted rather than kept as written-but-unread fields; the cron only detects the dip and notifies. A recurring-debit wallet would have to be designed afresh inside RBI's e-mandate rules.
@@ -233,10 +233,10 @@ model BillingAccount {
 
 ### Related docs
 
-- [Money model overview](01-money-model-overview.md) — double-entry principles, integer paise.
-- [Chart of accounts](02-chart-of-accounts.md) — `CASH`, `WALLET`, and the rest.
+- [Money model overview](../../finance/20-ledger/01-double-entry-model.md) — double-entry principles, integer paise.
+- [Chart of accounts](../../finance/20-ledger/02-chart-of-accounts.md) — `CASH`, `WALLET`, and the rest.
 - [Ledger & postings](03-ledger-and-postings.md) — `postLedgerTxn`, balanced postings, idempotency.
 - [Booking → earnings](05-booking-to-earnings.md) — where the `Dr WALLET` booking leg actually posts.
-- [Payment legs](09-payment-legs.md) — `WALLET` as one funding leg of a stacked checkout.
+- [Payment legs](../../finance/20-ledger/03-payment-legs.md) — `WALLET` as one funding leg of a stacked checkout.
 - [Concurrency & idempotency](../30-programs-and-lifecycle/01-concurrency-and-idempotency.md) — the atomic-debit guard pattern.
-- [Ledger integrity](13-ledger-integrity.md) — the `WALLET_BALANCE_DRIFT` reconcile check.
+- [Ledger integrity](../../finance/20-ledger/06-integrity-and-reconciliation.md) — the `WALLET_BALANCE_DRIFT` reconcile check.

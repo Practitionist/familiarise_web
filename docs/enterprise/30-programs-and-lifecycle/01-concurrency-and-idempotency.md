@@ -48,7 +48,7 @@ WHERE "id" = :billingAccountId
   AND "walletBalance" >= :amountPaise
 ```
 
-The `>= :amountPaise` predicate **is** the lock: Postgres takes a row-level write lock for the UPDATE, so two concurrent debits can't both satisfy it. Zero rows updated → `WalletInsufficientFundsError`. This moves only the **cache** ([money model §4](../10-money-and-ledger/01-money-model-overview.md)); the authoritative `Dr WALLET` leg posts later inside the `booking:<paymentId>` transaction, where the full split is known. Both run in the same Prisma transaction as the rest of checkout, so any downstream failure rolls back the decrement.
+The `>= :amountPaise` predicate **is** the lock: Postgres takes a row-level write lock for the UPDATE, so two concurrent debits can't both satisfy it. Zero rows updated → `WalletInsufficientFundsError`. This moves only the **cache** ([money model §4](../../finance/20-ledger/01-double-entry-model.md)); the authoritative `Dr WALLET` leg posts later inside the `booking:<paymentId>` transaction, where the full split is known. Both run in the same Prisma transaction as the rest of checkout, so any downstream failure rolls back the decrement.
 
 ## Program-assignment claim (upsert on composite unique)
 
@@ -56,7 +56,7 @@ The claim helper is `lib/api/organizations/program-helpers.ts#claimProgramAssign
 
 ## Booking utilization (counter + usage ledger in lock-step)
 
-`recordBookingUtilization` runs as one transaction. It first claims cap headroom with a guarded conditional UPDATE (`updateMany WHERE engagementsUsed <= cap - :n`, so the cap check and the increment can't race), then create `BookingUtilization` + its `UsageLedgerEntry` twin (`consumedPaise` is the CREDIT_POOL twin, metered against `creditBudgetPerCycle × 100`). When the guarded update matches zero rows the booking is over-cap: either checkout refuses (`BLOCK` → `ProgramAssignmentLimitError`) or the overage path bills it (`wasOverage = true`, persists an `OverageEvent`). The reconciler's `PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT` is the backstop ([ledger integrity](../10-money-and-ledger/13-ledger-integrity.md)).
+`recordBookingUtilization` runs as one transaction. It first claims cap headroom with a guarded conditional UPDATE (`updateMany WHERE engagementsUsed <= cap - :n`, so the cap check and the increment can't race), then create `BookingUtilization` + its `UsageLedgerEntry` twin (`consumedPaise` is the CREDIT_POOL twin, metered against `creditBudgetPerCycle × 100`). When the guarded update matches zero rows the booking is over-cap: either checkout refuses (`BLOCK` → `ProgramAssignmentLimitError`) or the overage path bills it (`wasOverage = true`, persists an `OverageEvent`). The reconciler's `PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT` is the backstop ([ledger integrity](../../finance/20-ledger/06-integrity-and-reconciliation.md)).
 
 **The race, drawn.** Picture the last covered seat on a Wipro learner's BLOCK assignment (`coveredEngagementsPerCycle - engagementsUsed == 1`) and two browser tabs hitting _Book_ in the same millisecond. Both transactions read the same stable config and the same `engagementsUsed`; the correctness hinges entirely on the conditional UPDATE, because Postgres takes a row-level write lock the instant the first `updateMany` touches the row. The second transaction blocks on that lock, and when it unblocks it re-evaluates `WHERE engagementsUsed <= cap - 1` against the _already-incremented_ value — which no longer matches — so it gets `count === 0` and throws. There is no read-then-write window to lose:
 
@@ -187,7 +187,7 @@ This is the same shape every lifecycle cron in the table above uses (`autoRenewe
 
 ## Payment legs
 
-`PaymentLeg.sourceRef` carries the per-source key: a `CARD` leg uses the gateway payment id, a `REFERRAL_CREDIT` leg uses `referralCreditUsageId`, and an `INVOICE_ACCRUAL` or `LICENSE` leg uses `programAssignmentId`. The `@@unique([paymentId, source])` constraint blocks any duplicate-source leg (see [payment legs](../10-money-and-ledger/09-payment-legs.md)).
+`PaymentLeg.sourceRef` carries the per-source key: a `CARD` leg uses the gateway payment id, a `REFERRAL_CREDIT` leg uses `referralCreditUsageId`, and an `INVOICE_ACCRUAL` or `LICENSE` leg uses `programAssignmentId`. The `@@unique([paymentId, source])` constraint blocks any duplicate-source leg (see [payment legs](../../finance/20-ledger/03-payment-legs.md)).
 
 ## Emails (Resend)
 
@@ -226,6 +226,6 @@ it("is idempotent on replay", async () => {
 - [Ledger & postings](../10-money-and-ledger/03-ledger-and-postings.md) — `postLedgerTxn` idempotency.
 - [Programs](02-programs.md) — the assignment-claim flow.
 - [Booking → earnings](../10-money-and-ledger/05-booking-to-earnings.md) — rate-card bump semantics.
-- [Ledger integrity](../10-money-and-ledger/13-ledger-integrity.md) — the drift checks that backstop these guards.
+- [Ledger integrity](../../finance/20-ledger/06-integrity-and-reconciliation.md) — the drift checks that backstop these guards.
 - [Cycle engine & rollover](08-cycle-engine-and-rollover.md) — the successor-mint + roll/close claim gates.
 - [Contract lifecycle](07-contract-lifecycle.md) — the auto-renew / expire claim gates.
