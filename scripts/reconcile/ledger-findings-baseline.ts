@@ -118,62 +118,23 @@ export type LedgerBaselineEvaluation = {
  * date in its `expires` field — after which the finding fails the run again.
  */
 export const LEDGER_FINDINGS_BASELINE: LedgerBaselineEntry[] = [
-  {
+  // QA fixtures written straight to the database with earnings and no booking journal.
+  ...[
+    "qa2188_pc1",
+    "qa2188_pc3",
+    "qa2188_pr1",
+    "qa2188_pr2",
+    "qa2188_pr3",
+    "qa2188_pt",
+    "qa2188_px",
+  ].map((paymentId): LedgerBaselineEntry => ({
     kind: "EARNINGS_WITHOUT_BOOKING_TXN",
-    paymentId: "qa2188_pc1",
+    paymentId,
     deltaPaise: -1,
     owner: "finance",
     reason: "QA fixture id written without a booking journal",
     expires: "2026-12-15",
-  },
-  {
-    kind: "EARNINGS_WITHOUT_BOOKING_TXN",
-    paymentId: "qa2188_pc3",
-    deltaPaise: -1,
-    owner: "finance",
-    reason: "QA fixture id written without a booking journal",
-    expires: "2026-12-15",
-  },
-  {
-    kind: "EARNINGS_WITHOUT_BOOKING_TXN",
-    paymentId: "qa2188_pr1",
-    deltaPaise: -1,
-    owner: "finance",
-    reason: "QA fixture id written without a booking journal",
-    expires: "2026-12-15",
-  },
-  {
-    kind: "EARNINGS_WITHOUT_BOOKING_TXN",
-    paymentId: "qa2188_pr2",
-    deltaPaise: -1,
-    owner: "finance",
-    reason: "QA fixture id written without a booking journal",
-    expires: "2026-12-15",
-  },
-  {
-    kind: "EARNINGS_WITHOUT_BOOKING_TXN",
-    paymentId: "qa2188_pr3",
-    deltaPaise: -1,
-    owner: "finance",
-    reason: "QA fixture id written without a booking journal",
-    expires: "2026-12-15",
-  },
-  {
-    kind: "EARNINGS_WITHOUT_BOOKING_TXN",
-    paymentId: "qa2188_pt",
-    deltaPaise: -1,
-    owner: "finance",
-    reason: "QA fixture id written without a booking journal",
-    expires: "2026-12-15",
-  },
-  {
-    kind: "EARNINGS_WITHOUT_BOOKING_TXN",
-    paymentId: "qa2188_px",
-    deltaPaise: -1,
-    owner: "finance",
-    reason: "QA fixture id written without a booking journal",
-    expires: "2026-12-15",
-  },
+  })),
   {
     kind: "REFUND_BOOKING_COHERENCE",
     paymentId: "7d747d97-efa6-4bef-9857-8453a5798330",
