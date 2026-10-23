@@ -243,7 +243,6 @@ describe("DPDP export of staff chat access", () => {
     await readSupportExport("u1");
     expect(findArgs().where).toEqual(
       expect.objectContaining({
-        supportCase: { deletedAt: null },
         OR: [
           { scopeUserIds: { has: "u1" } },
           { supportCase: { requesterUserId: "u1" } },
@@ -253,9 +252,20 @@ describe("DPDP export of staff chat access", () => {
     );
   });
 
-  it("never lists a grant whose review notice was withheld", async () => {
+  it("lists a grant only once its review notice was sent", async () => {
     await readSupportExport("u1");
-    expect(findArgs().where.withholdNotice).toBe(false);
+    expect(findArgs().where).toMatchObject({
+      reviewNoticeAt: { not: null },
+      withholdNotice: false,
+    });
+  });
+
+  it("never lists any grant on a case whose notice was withheld", async () => {
+    await readSupportExport("u1");
+    expect(findArgs().where.supportCase).toEqual({
+      deletedAt: null,
+      chatAccess: { none: { withholdNotice: true } },
+    });
   });
 
   it("pages grants and counts them in the completeness flag", async () => {

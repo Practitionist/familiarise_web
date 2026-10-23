@@ -122,10 +122,15 @@ export async function readSupportExport(userId: string) {
   const chatAccess = await readAllPages((cursor) =>
     prisma.supportCaseChatAccess.findMany({
       where: {
-        // The sweep stamps reviewNoticeAt on withheld grants too and never
-        // releases them, so a withheld grant stays out of the export.
+        // Only grants whose "we reviewed messages" notice went out. The sweep
+        // stamps reviewNoticeAt on withheld batches too, and one withheld grant
+        // withholds every grant on its case, so such cases never appear.
+        reviewNoticeAt: { not: null },
         withholdNotice: false,
-        supportCase: { deletedAt: null },
+        supportCase: {
+          deletedAt: null,
+          chatAccess: { none: { withholdNotice: true } },
+        },
         OR: [
           { scopeUserIds: { has: userId } },
           { supportCase: { requesterUserId: userId } },
