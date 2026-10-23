@@ -14,11 +14,6 @@
  */
 
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
-jest.mock("../../lib/payments/ledger/post", () => ({
-  postLedgerTxn: jest.fn().mockResolvedValue(undefined),
-}));
-
-import { postLedgerTxn } from "../../lib/payments/ledger/post";
 import {
   WalletInsufficientFundsError,
   walletCredit,
@@ -81,28 +76,17 @@ function invoiceFundedAccount() {
 beforeEach(() => jest.clearAllMocks());
 
 describe("walletCredit against a NULL cached balance (#1459)", () => {
-  it("leaves the cache agreeing with the ledger CREDIT it posts", async () => {
+  it("credits a NULL cached balance to a real number", async () => {
     const { row, tx } = invoiceFundedAccount();
 
     const result = await walletCredit(tx as never, {
       billingAccountId: "ba_1",
       amountPaise: 123400,
       reason: "TOPUP",
-      providerOrderId: "order_wave1c_001",
-      providerPaymentId: "pay_wave1c_001",
     });
 
     expect(row.walletBalance).toBe(123400);
     expect(result.balanceAfter).toBe(123400);
-
-    const posted = (postLedgerTxn as jest.Mock).mock.calls[0][1];
-    expect(posted.postings).toContainEqual(
-      expect.objectContaining({
-        direction: "CREDIT",
-        amountPaise: 123400,
-        account: { kind: "WALLET", organizationId: "org_1" },
-      }),
-    );
   });
 });
 

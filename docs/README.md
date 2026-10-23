@@ -85,50 +85,16 @@ Calendar display, synchronization, and UI components.
 
 ---
 
-### Payments
+### Finance
 
-Payment system, checkout flows, gateway integrations, payouts, refunds, and more. See [payments/README.md](./payments/README.md) for full index.
+The money subsystem: checkout and pricing, capture and webhooks, the double-entry ledger, refunds and chargebacks, payouts and TDS, organisation funding, tax, and operations. See [finance/README.md](./finance/README.md) for the full index and reading paths.
 
-- [01-architecture.md](./payments/01-architecture.md) - Payment architecture
-- [02-setup.md](./payments/02-setup.md) - Payment system setup
-- [03-status-enums-reference.md](./payments/03-status-enums-reference.md) - Status enums reference
-- [04-abandoned-solutions.md](./payments/04-abandoned-solutions.md) - Abandoned payment handling
-- [01-booking-system-hld.md](./start-here/01-booking-system-hld.md) - Booking system high-level design: pipeline, allocation, concurrency layers, state machines, cron architecture
-- [02-money-system-hld.md](./start-here/02-money-system-hld.md) - Money system high-level design: pricing, capture, legs, ledger, earnings, payouts, refunds and policy decisions
+- [02-money-system-hld.md](./start-here/02-money-system-hld.md) - Money system high-level design: the 20-30 minute explainer
 - [03-booking-and-money-machinery.md](./start-here/03-booking-and-money-machinery.md) - Worked guide with the seeded cast, entity model and worked numeric examples
-
-#### Checkout Flow
-
-- [checkout-flow/01-overview-and-consultation.md](./payments/checkout-flow/01-overview-and-consultation.md) - System overview, consultation & subscription
-- [checkout-flow/02-webinar-and-class.md](./payments/checkout-flow/02-webinar-and-class.md) - Webinar & class flows
-- [checkout-flow/03-payment-processing.md](./payments/checkout-flow/03-payment-processing.md) - Checkout API, gateway integration
-- [checkout-flow/04-edge-cases.md](./payments/checkout-flow/04-edge-cases.md) - Race conditions, timeouts, mock payments
-- [checkout-flow/05-status-flows.md](./payments/checkout-flow/05-status-flows.md) - Status lifecycle
-- [checkout-flow/06-known-issues.md](./payments/checkout-flow/06-known-issues.md) - Known issues and fixes
-
-#### Gateways
-
-- [gateways/razorpay/](./payments/gateways/razorpay/) - Razorpay setup, architecture, payout flow, KYC
-
-#### Approval Payments
-
-- [approval-payments/](./payments/approval-payments/) - Consultant-approves-first workflow (7 docs)
-
-#### Refunds & Disputes
-
-- [refunds-disputes/](./payments/refunds-disputes/) - Two-phase refund pattern, dispute lifecycle (6 docs)
-
-#### Cancellations & Rescheduling
-
-- [cancellations-rescheduling/](./payments/cancellations-rescheduling/) - Refund triggers, payment reuse on reschedule
-
-#### Payouts
-
-- [payouts/](./payments/payouts/) - Earnings lifecycle, batch processing, gateway disbursement (8 docs)
-
-#### Webhooks
-
-- [webhooks/](./payments/webhooks/) - Webhook monitoring, Razorpay schema
+- [01-booking-system-hld.md](./start-here/01-booking-system-hld.md) - Booking system high-level design: pipeline, allocation, concurrency layers, state machines, cron architecture
+- [finance/00-overview/01-money-map.md](./finance/00-overview/01-money-map.md) - Diagram-first system map
+- [finance/70-operations/05-money-runbooks.md](./finance/70-operations/05-money-runbooks.md) - Symptom-first money runbooks
+- [finance/90-decisions/README.md](./finance/90-decisions/README.md) - The money ADRs and the gateway decision
 
 ---
 
@@ -353,17 +319,6 @@ Generic software architecture patterns and learning material (not Familiarise-sp
 ---
 
 ## Business & Research
-
-### Finances
-
-CFO-level business documentation. See [finances/README.md](./finances/README.md) for full index.
-
-- [01-saas-metrics-monthly.md](./finances/01-saas-metrics-monthly.md) - SaaS metrics
-- [02-tax-compliance-india.md](./finances/02-tax-compliance-india.md) - Tax compliance
-- [03-tax-compliance-marketplace-obligations.md](./finances/03-tax-compliance-marketplace-obligations.md) - Marketplace obligations
-- [04-tax-essentials-simplified.md](./finances/04-tax-essentials-simplified.md) - Simplified tax guide
-
----
 
 ### Team
 
