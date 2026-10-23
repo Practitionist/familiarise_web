@@ -36,6 +36,12 @@ open on absent/unreadable `ops:active_cron_platform`, so it is not an exactly-on
 guarantee. Verify accepted Sentry check-ins and independent per-capability absence
 alerts; the shared heartbeat and HTTP200 alone do not prove complete health.
 
+For shared storage deletion, preserve `removeObjects()`'s receipt-or-`NoSuchKey`
+metadata contract. The installed SDK can return `exists().data=false` for an
+ambiguous HTTP 400; this deployment also uses 400 for a genuine missing key.
+HTTP status or that boolean alone is insufficient. Keep row/retry state when
+confirmation fails; see `docs/storage/management-strategy.md`.
+
 Maintenance bypass cookies remain short-lived HMAC-SHA256 tokens verified via Web
 Crypto. Follow the active maintenance implementation and recovery instructions;
 never infer that a cached phase quiesces work already in flight. See the linked

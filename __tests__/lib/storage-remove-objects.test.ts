@@ -6,9 +6,10 @@
 // for a non-empty request must not read as success while the object survives.
 const remove = jest.fn();
 const exists = jest.fn();
+const info = jest.fn();
 
 jest.mock("@supabase/supabase-js", () => ({
-  createClient: () => ({ storage: { from: () => ({ remove, exists }) } }),
+  createClient: () => ({ storage: { from: () => ({ remove, exists, info }) } }),
 }));
 
 import { deleteAsset } from "../../lib/supabase-storage-core";
@@ -16,24 +17,30 @@ import { deleteAsset } from "../../lib/supabase-storage-core";
 beforeEach(() => {
   remove.mockReset();
   exists.mockReset();
+  info.mockReset();
 });
 
 describe("deleteAsset", () => {
   it("succeeds when storage reports the object removed", async () => {
     remove.mockResolvedValue({ data: [{ name: "a/b.pdf" }], error: null });
     await expect(deleteAsset("documents", "a/b.pdf")).resolves.toBe(true);
-    expect(exists).not.toHaveBeenCalled();
+    expect(info).not.toHaveBeenCalled();
   });
 
   it("fails when nothing was removed and the object still exists", async () => {
     remove.mockResolvedValue({ data: [], error: null });
     exists.mockResolvedValue({ data: true, error: null });
+    info.mockResolvedValue({ data: { name: "a/b.pdf" }, error: null });
     await expect(deleteAsset("documents", "a/b.pdf")).resolves.toBe(false);
   });
 
   it("succeeds when nothing was removed because the object is already gone", async () => {
     remove.mockResolvedValue({ data: [], error: null });
     exists.mockResolvedValue({ data: false, error: { status: 404 } });
+    info.mockResolvedValue({
+      data: null,
+      error: { status: 400, code: "NoSuchKey" },
+    });
     await expect(deleteAsset("documents", "a/b.pdf")).resolves.toBe(true);
   });
 
@@ -43,6 +50,24 @@ describe("deleteAsset", () => {
 
     remove.mockResolvedValueOnce({ data: [], error: null });
     exists.mockRejectedValueOnce(new Error("network"));
+    info.mockRejectedValueOnce(new Error("network"));
+    await expect(deleteAsset("documents", "a/b.pdf")).resolves.toBe(false);
+  });
+
+  it.each([
+    { status: 400, code: "InvalidRequest" },
+    { status: 404, code: "NoSuchBucket" },
+  ])("keeps ambiguous storage observations retryable: %j", async (error) => {
+    remove.mockResolvedValue({ data: [], error: null });
+    exists.mockResolvedValue({ data: false, error });
+    info.mockResolvedValue({ data: null, error });
+    await expect(deleteAsset("documents", "a/b.pdf")).resolves.toBe(false);
+  });
+
+  it("fails closed when metadata returns neither an object nor an absence error", async () => {
+    remove.mockResolvedValue({ data: [], error: null });
+    exists.mockResolvedValue({ data: false, error: null });
+    info.mockResolvedValue({ data: null, error: null });
     await expect(deleteAsset("documents", "a/b.pdf")).resolves.toBe(false);
   });
 
@@ -59,7 +84,46 @@ describe("deleteAsset", () => {
       });
       expect(remove).not.toHaveBeenCalled();
     } finally {
-      process.env.SUPABASE_SERVICE_ROLE_KEY = key;
+      if (key === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+      else process.env.SUPABASE_SERVICE_ROLE_KEY = key;
     }
   });
+});
+
+describe("delete confirmation through the installed SDK", () => {
+  it.each([
+    { code: "NoSuchKey", confirmed: true },
+    { code: "InvalidRequest", confirmed: false },
+  ])(
+    "returns $confirmed for metadata code $code even with HTTP 400",
+    async ({ code, confirmed }) => {
+      const { createClient } = jest.requireActual<
+        typeof import("@supabase/supabase-js")
+      >("@supabase/supabase-js");
+      const fetchImpl = jest.fn(
+        async (_input: string | URL | Request, init?: RequestInit) =>
+          init?.method === "HEAD"
+            ? new Response(null, { status: 400 })
+            : Response.json(
+                { code, message: "Storage response" },
+                { status: 400 },
+              ),
+      );
+      fetchImpl.mockResolvedValueOnce(Response.json([]));
+      const client = createClient("https://storage.test", "storage-test-key", {
+        auth: { persistSession: false, autoRefreshToken: false },
+        global: { fetch: fetchImpl },
+      });
+      jest.resetModules();
+      jest.doMock("@supabase/supabase-js", () => ({
+        createClient: () => client,
+      }));
+      await jest.isolateModulesAsync(async () => {
+        const core = await import("../../lib/supabase-storage-core");
+        await expect(core.deleteAsset("documents", "a/b.pdf")).resolves.toBe(
+          confirmed,
+        );
+      });
+    },
+  );
 });
