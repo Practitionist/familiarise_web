@@ -133,7 +133,7 @@ fresh consent. The purposes list is a hard boundary.
   in writing.**
 - Must the notice be in all 22 Schedule VIII languages? Our `language` field is
   write-only, never read by a gate, and always `"en-IN"`.
-- Are we a facilitator (s.194-O) or principal (s.194-J)? The full 14-question research memo with code status is [18 — tax research memo](./18-tax-research-memo-oct-2026.md).
+- Are we a facilitator (s.194-O) or principal (s.194-J)? The tax rules the code encodes are in [TDS rules and returns](../finance/60-tax/03-tds-rules-and-returns.md).
 - Does the 30-day self-imposed erasure turnaround survive DPDP s.12's regime?
 - The ITC/CIT "unfair contract term" test (CPA s.2(46)) imports the EU
   unfairness test's _structure_ without its remedy architecture. Notice quality

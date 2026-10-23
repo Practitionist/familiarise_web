@@ -2926,7 +2926,7 @@ enum LedgerTransactionKind {
   ORG_PAYOUT
   REFUND
   OVERAGE_MEMBER
-  /// reserved — never posted; see docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md
+  /// reserved — never posted; see docs/finance/20-ledger/04-postings.md
   GRANT
   REFERRAL_CREDIT // vest, restore, reversal and breakage of referral promotional credit
   UNAPPLIED_RECEIPT // a parked capture's cash, or its release when an operator recovers the booking

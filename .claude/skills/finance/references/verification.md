@@ -40,4 +40,4 @@ Earlier guidance treated a deploy preview and test gateway keys as sufficient is
 
 ## Sources
 
-`AGENTS.md`, `__tests__/db/guard.ts`, `lib/prisma.ts`, `prisma/schema.prisma`, `prisma/sql/reconciliation-cursors.sql`, `docs/maintenance/10-cron-and-reconciliation-reference.md`, and the owning domain's fixtures and worker implementation.
+`AGENTS.md`, `__tests__/db/guard.ts`, `lib/prisma.ts`, `prisma/schema.prisma`, `prisma/sql/reconciliation-cursors.sql`, `docs/maintenance/10-cron-and-reconciliation-reference.md`, `docs/finance/70-operations/07-go-live-checklist.md`, and the owning domain’s fixtures and worker implementation.

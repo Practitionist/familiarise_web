@@ -105,4 +105,4 @@ Before opening live customer traffic, execute all 4 penny tests using real UPI/b
 - **Webhook Dispatch & Out-of-Order Deferral**: [`app/api/webhooks/razorpay-dispatch.ts`](../../../../../app/api/webhooks/razorpay-dispatch.ts) & [`app/api/webhooks/utils.ts`](../../../../../app/api/webhooks/utils.ts)
 - **RazorpayX Payouts & Redrive Safety**: [`lib/payments/payouts/razorpay-payouts.ts`](../../../../../lib/payments/payouts/razorpay-payouts.ts) & [`lib/payments/payouts/org-payout-service.ts`](../../../../../lib/payments/payouts/org-payout-service.ts)
 - **Reverse Penny Drop (`upi_intent`)**: [`lib/payments/payouts/reverse-penny-drop.ts`](../../../../../lib/payments/payouts/reverse-penny-drop.ts)
-- **Canonical Production Checklist**: [`docs/payments/gateways/razorpay/05-go-live-checklist.md`](../../../../../docs/payments/gateways/razorpay/05-go-live-checklist.md)
+- **Canonical Production Checklist**: [`docs/finance/70-operations/07-go-live-checklist.md`](../../../../../../docs/finance/70-operations/07-go-live-checklist.md)
