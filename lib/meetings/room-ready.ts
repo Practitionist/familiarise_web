@@ -1,4 +1,8 @@
 import type { AppointmentsType } from "@prisma/client";
+import {
+  TARGET_RESOLUTIONS,
+  type PlatformVideoConfig,
+} from "@/lib/stream/video-quality";
 
 export type AppointmentTypeInput = AppointmentsType | string | null | undefined;
 
@@ -26,15 +30,90 @@ export function isInCallChatAllowed(
   return appointmentType !== "TRIAL";
 }
 
-/** Builds per-call Stream settings_override for session duration limits and 1-to-Many backstage moderation. */
+/** Stream `limits` participant fields, as sent in `settings_override`. */
+export interface CallParticipantLimits {
+  max_participants: number;
+  max_participants_exclude_owner?: boolean;
+  max_participants_exclude_roles?: string[];
+}
+
+/** Hosts, presenters and a second device sit above the sold seats of a 1-to-Many room. */
+export const GROUP_CALL_HEADROOM = 5;
+
+/** Host, a reassigned host and one client, each on two devices: every Stream session counts. */
+export const PAIR_CALL_MAX_PARTICIPANTS = 6;
+
+/** Roles that never count toward a 1-to-Many room's cap. */
+const GROUP_CAP_EXEMPT_ROLES = ["co_presenter", "admin"];
+
+/**
+ * The participant cap a call is created with: sold capacity plus headroom for a 1-to-Many
+ * room (call owner and presenter roles excluded), a fixed small cap for a 1:1 room.
+ */
+export function resolveCallParticipantLimits(
+  appointmentType: AppointmentTypeInput,
+  capacity: number | null,
+): CallParticipantLimits | undefined {
+  if (!isOneToManyAppointmentType(appointmentType)) {
+    return { max_participants: PAIR_CALL_MAX_PARTICIPANTS };
+  }
+  if (capacity === null || !Number.isInteger(capacity) || capacity < 1) {
+    return undefined;
+  }
+  return {
+    max_participants: capacity + GROUP_CALL_HEADROOM,
+    max_participants_exclude_owner: true,
+    max_participants_exclude_roles: GROUP_CAP_EXEMPT_ROLES,
+  };
+}
+
+/** Reads the participant cap back from a Stream call so a mirror re-sends what the call already has. */
+export function participantLimitsFromStream(
+  limits:
+    | {
+        max_participants?: number;
+        max_participants_exclude_owner?: boolean;
+        max_participants_exclude_roles?: string[];
+      }
+    | null
+    | undefined,
+): CallParticipantLimits | undefined {
+  if (typeof limits?.max_participants !== "number") return undefined;
+  return {
+    max_participants: limits.max_participants,
+    ...(limits.max_participants_exclude_owner !== undefined
+      ? {
+          max_participants_exclude_owner: limits.max_participants_exclude_owner,
+        }
+      : {}),
+    ...(limits.max_participants_exclude_roles?.length
+      ? {
+          max_participants_exclude_roles: limits.max_participants_exclude_roles,
+        }
+      : {}),
+  };
+}
+
+/** Camera defaults for a 1:1 room, matching the `default` call type; Stream requires the whole video block. */
+const PAIR_CALL_VIDEO = {
+  enabled: true,
+  camera_default_on: true,
+  camera_facing: "front",
+  access_request_enabled: true,
+} as const;
+
+/**
+ * Builds per-call Stream settings_override: the staff-chosen video, screen-share and recording
+ * quality for every room, duration and participant limits, and 1-to-Many backstage moderation.
+ */
 export function buildCallSettingsOverride(
   appointmentType: AppointmentTypeInput,
   maxDurationSeconds: number | null,
-): Record<string, unknown> | undefined {
+  participantLimits: CallParticipantLimits | undefined,
+  videoConfig: PlatformVideoConfig,
+): Record<string, unknown> {
   const isOneToMany = isOneToManyAppointmentType(appointmentType);
-  if (!isOneToMany && maxDurationSeconds === null) {
-    return undefined;
-  }
+  const targetResolution = TARGET_RESOLUTIONS[videoConfig.callTargetResolution];
 
   return {
     ...(isOneToMany
@@ -51,22 +130,31 @@ export function buildCallSettingsOverride(
             opus_dtx_enabled: true,
             redundant_coding_enabled: true,
           },
-          video: {
-            enabled: true,
-            camera_default_on: false,
-            camera_facing: "front",
-            access_request_enabled: true,
-            target_resolution: {
-              width: 1280,
-              height: 720,
-              bitrate: 1500000,
-            },
+        }
+      : {}),
+    video: isOneToMany
+      ? {
+          enabled: true,
+          camera_default_on: false,
+          camera_facing: "front",
+          access_request_enabled: true,
+          target_resolution: targetResolution,
+        }
+      : { ...PAIR_CALL_VIDEO, target_resolution: targetResolution },
+    screensharing: {
+      target_resolution:
+        TARGET_RESOLUTIONS[videoConfig.screenshareTargetResolution],
+    },
+    recording: { mode: "available", quality: videoConfig.recordingQuality },
+    ...(maxDurationSeconds !== null || participantLimits
+      ? {
+          limits: {
+            ...(maxDurationSeconds !== null
+              ? { max_duration_seconds: maxDurationSeconds }
+              : {}),
+            ...participantLimits,
           },
         }
       : {}),
-    ...(maxDurationSeconds !== null
-      ? { limits: { max_duration_seconds: maxDurationSeconds } }
-      : {}),
   };
 }
-

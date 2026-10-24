@@ -67,8 +67,8 @@ export interface FixtureResult {
  * OrganizationEarnings + ledger rows. This fixture is the placeholder
  * for that extraction.
  *
- * Until then, tests that need this should seed via Supabase MCP
- * directly (see `docs/enterprise/50-operations/02-runbooks.md` "Running cron jobs
+ * Until then, tests that need this should seed via operator-run SQL
+ * (the Supabase MCP is read-only); see `docs/enterprise/50-operations/02-runbooks.md` "Running cron jobs
  * locally" → "Seeding test data" section) and call
  * `createEarningsFromPayment` themselves.
  */

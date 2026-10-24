@@ -78,6 +78,7 @@ jest.mock("../../lib/stream-client", () => ({
 jest.mock("../../lib/prisma", () => {
   const client: Record<string, unknown> = {
     consentArtifact: { findFirst: jest.fn() },
+    platformVideoConfig: { findUnique: jest.fn().mockResolvedValue(null) },
     meeting: {
       findUnique: (...a: unknown[]) => mockMeetingFindUnique(...a),
       updateMany: (...a: unknown[]) => mockMeetingUpdateMany(...a),
@@ -126,6 +127,12 @@ jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
 }));
 
+jest.mock("../../lib/rate-limit", () => ({
+  meetingControlLimiter: {},
+  meetingQaLimiter: {},
+  applyRateLimit: async () => null,
+}));
+
 import {
   getOccurrenceJoinState,
   getOccurrenceVMJoinState,
@@ -150,6 +157,9 @@ function makeLiveMeetingRow(opts?: {
   endedReason?: string | null;
   hostProfileId?: string;
   appointmentType?: "CONSULTATION" | "WEBINAR" | "CLASS";
+  extendedSeconds?: number;
+  completionStatus?: string;
+  outcome?: string | null;
 }) {
   const now = Date.now();
   const startsAt = new Date(now - 10 * MINUTE);
@@ -162,12 +172,15 @@ function makeLiveMeetingRow(opts?: {
     appointmentOccurrenceId: "slot-1",
     endedAt: opts?.endedAt ?? null,
     endedReason: opts?.endedReason ?? null,
+    extendedSeconds: opts?.extendedSeconds ?? 0,
+    extensionsUsed: opts?.extendedSeconds ? 1 : 0,
     occurrence: {
       id: "slot-1",
       startsAt,
       endsAt,
       isTentative: false,
-      completionStatus: "SCHEDULED",
+      completionStatus: opts?.completionStatus ?? "SCHEDULED",
+      outcome: opts?.outcome ?? null,
       deletedAt: null,
       consultantProfileId: hostProfileId,
       appointmentId: "appt-1",
@@ -238,7 +251,7 @@ beforeEach(() => {
   mockOccurrenceFindFirst.mockResolvedValue(null);
   mockCallGet.mockResolvedValue({
     call: {
-      settings: { limits: { max_duration_seconds: 6300 } },
+      settings: { limits: { max_duration_seconds: 4500 } },
       custom: {},
     },
   });
@@ -442,20 +455,33 @@ describe("POST /api/meetings/[meetingId]/join, /end, /live, /extend", () => {
     expect(participantRes.status).toBe(403);
   });
 
-  it("extends call duration by +15m once, refuses a second extension with 409 alreadyExtended, and returns 409 on conflict", async () => {
+  it("extends once through a Meeting CAS without moving endsAt, then answers 409 alreadyExtended or 409 on conflict", async () => {
     const okRes = await extendPOST(req, { params });
     expect(okRes.status).toBe(200);
-    const okBody = await okRes.json();
-    expect(okBody).toMatchObject({
+    expect(await okRes.json()).toMatchObject({
       extended: true,
       addedSeconds: 900,
-      maxDurationSeconds: 7200,
+      maxDurationSeconds: 5400,
       extensionsUsed: 1,
       hasConflictingNextBooking: false,
     });
+    expect(mockMeetingUpdateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: "ms-1",
+        endedAt: null,
+        extensionsUsed: { equals: 0, lt: 1 },
+      }),
+      data: {
+        extendedSeconds: { increment: 900 },
+        extensionsUsed: { increment: 1 },
+      },
+    });
+    expect(prisma.appointmentOccurrence.updateMany).not.toHaveBeenCalled();
     expect(mockCallUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
-        settings_override: { limits: { max_duration_seconds: 7200 } },
+        settings_override: expect.objectContaining({
+          limits: { max_duration_seconds: 5400 },
+        }),
         custom: expect.objectContaining({
           extendedSeconds: 900,
           extensionsUsed: 1,
@@ -463,60 +489,83 @@ describe("POST /api/meetings/[meetingId]/join, /end, /live, /extend", () => {
       }),
     );
 
+    mockMeetingFindUnique.mockResolvedValue(
+      makeLiveMeetingRow({ extendedSeconds: 900 }),
+    );
     mockCallGet.mockResolvedValueOnce({
       call: {
-        settings: { limits: { max_duration_seconds: 7200 } },
+        settings: { limits: { max_duration_seconds: 5400 } },
         custom: { extendedSeconds: 900, extensionsUsed: 1 },
       },
     });
     const secondRes = await extendPOST(req, { params });
     expect(secondRes.status).toBe(409);
-    const secondBody = await secondRes.json();
-    expect(secondBody.alreadyExtended).toBe(true);
+    expect((await secondRes.json()).alreadyExtended).toBe(true);
 
+    mockMeetingFindUnique.mockResolvedValue(makeLiveMeetingRow());
     mockOccurrenceFindFirst.mockResolvedValue({
       id: "next-slot",
       startsAt: new Date(Date.now() + 10 * MINUTE),
     });
     const conflictRes = await extendPOST(req, { params });
     expect(conflictRes.status).toBe(409);
-    const conflictBody = await conflictRes.json();
-    expect(conflictBody.hasConflictingNextBooking).toBe(true);
+    expect((await conflictRes.json()).hasConflictingNextBooking).toBe(true);
   });
 
-  it("answers 409 EXTEND_CONFLICT and never touches Stream when the DB refuses the overlap", async () => {
-    const updateMany = jest.mocked(prisma.appointmentOccurrence.updateMany);
-    updateMany.mockRejectedValueOnce({ meta: { code: "23P01" } });
+  it("refuses to extend a session the outcome sweep already classified", async () => {
+    mockMeetingFindUnique.mockResolvedValue(
+      makeLiveMeetingRow({ completionStatus: "COMPLETED", outcome: "HELD" }),
+    );
 
     const res = await extendPOST(req, { params });
 
     expect(res.status).toBe(409);
-    expect(await res.json()).toMatchObject({ code: "EXTEND_CONFLICT" });
+    expect(await res.json()).toMatchObject({ code: "SESSION_NOT_EXTENDABLE" });
+    expect(mockMeetingUpdateMany).not.toHaveBeenCalled();
     expect(mockCallUpdate).not.toHaveBeenCalled();
   });
 
-  it("reverts its own endsAt by CAS and reports once when the Stream extend fails", async () => {
-    const updateMany = jest.mocked(prisma.appointmentOccurrence.updateMany);
+  it("keeps the granted extension and answers 503 EXTEND_SYNC_PENDING when the Stream write fails", async () => {
     mockCallUpdate.mockRejectedValueOnce(new Error("stream write failed"));
 
     const res = await extendPOST(req, { params });
 
     expect(res.status).toBe(503);
-    const [[write], [revert]] = updateMany.mock.calls;
-    expect(revert.where).toEqual({
-      id: write.where?.id,
-      endsAt: write.data.endsAt,
-    });
+    expect(await res.json()).toMatchObject({ code: "EXTEND_SYNC_PENDING" });
+    expect(mockMeetingUpdateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.appointmentOccurrence.updateMany).not.toHaveBeenCalled();
     expect(jest.mocked(reportSentryError)).toHaveBeenCalledTimes(1);
   });
 
-  it("fails closed with 503 and does not call call.update when call.get fails on /extend", async () => {
+  it("answers 503 and does not call call.update when call.get fails on /extend", async () => {
     mockCallGet.mockRejectedValueOnce(new Error("stream read failed"));
 
     const res = await extendPOST(req, { params });
 
     expect(res.status).toBe(503);
     expect(mockCallUpdate).not.toHaveBeenCalled();
+  });
+
+  it("refuses /join for a room Stream sealed, and offers only the host a reopen", async () => {
+    mockMeetingFindUnique.mockResolvedValue(
+      makeLiveMeetingRow({ endedAt: new Date(), endedReason: "stream_ended" }),
+    );
+
+    const hostRes = await joinPOST(req, { params });
+    expect(hostRes.status).toBe(403);
+    expect(await hostRes.json()).toMatchObject({
+      code: "SESSION_ENDED",
+      canReopen: true,
+    });
+    expect(mockUpdateCallMembers).not.toHaveBeenCalled();
+
+    mockUserFindUnique.mockResolvedValue({ consultantProfileId: null });
+    const participantRes = await joinPOST(req, { params });
+    expect(participantRes.status).toBe(403);
+    expect(await participantRes.json()).toMatchObject({
+      code: "SESSION_ENDED",
+      canReopen: false,
+    });
   });
 });
 

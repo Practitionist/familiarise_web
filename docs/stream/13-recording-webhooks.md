@@ -337,24 +337,29 @@ sequenceDiagram
 | `call.ended`                      | The entire call has ended            | `handleCallEnded()`                |
 | `call.session_participant_joined` | A participant joined the call        | `handleSessionParticipantJoined()` |
 | `call.session_participant_left`   | A participant left the call          | `handleSessionParticipantLeft()`   |
+| `user.unread_message_reminder`    | A user has unread chat messages      | `handleUnreadMessageReminder()`    |
 
-`DESIRED_EVENT_TYPES` (`lib/stream/webhook-events.ts`) contains only the 8 handled Video events above. `call.session_started` is excluded from webhook subscriptions (`scripts/stream/ensure-webhook-subscription.ts` prunes extra events, empty-array wildcards `[]`, `"*"` wildcards on V2 hooks, and active legacy V1 `webhook_url` wildcards as drift) and acknowledged with `ignored: true` without writing a database receipt if delivered.
+`DESIRED_EVENT_TYPES` (`lib/stream/webhook-events.ts`) contains exactly the nine handled events above. The eight `call.*` events ride the `video` hook and `user.unread_message_reminder` rides a separate `chat` hook, because Stream scopes each V2 event hook to one product; both hooks deliver to the same route, which verifies every delivery with the same `X-Signature` HMAC. The reminder builds the chat unread digest described in [04. Chat Implementation](./04-chat-implementation.md#unread-message-digest). `call.session_started` is excluded from webhook subscriptions (`scripts/stream/ensure-webhook-subscription.ts` prunes extra events, empty-array wildcards `[]`, `"*"` wildcards on V2 hooks, and active legacy V1 `webhook_url` wildcards as drift) and acknowledged with `ignored: true` without writing a database receipt if delivered.
 
 ### End Events, Asymmetric Webhook Lookup & `endedAt` Convergence
 
 Synchronous route execution (`POST /api/meetings/[meetingId]/end`) and asynchronous Stream webhooks (`handleCallEnded`, `handleSessionEnded`, `handleSessionParticipantJoined`, `handleSessionParticipantLeft`, `handleRecordingReady`, `handleRecordingFailed`) coordinate across rotated call segments (`occurrence-<uuid>` -> `occurrence-<uuid>-r<base36>`) under five invariants ([ADR-02](./18-architecture-decision-records.md#adr-02-call-id-rotation-occurrence-id-rbase36--asymmetric-webhook-lookup-for-reopened-rooms), [ADR-03](./18-architecture-decision-records.md#adr-03-synchronous-cas-termination-stamp-recordmeetingendedsynchronously--monotonic-webhook-convergence-supersedesrecordedend)):
 
 1. **Asymmetric Lookup Between Artifacts/Presence and Termination Webhooks**:
-   - **`handleRecordingStarted`, `handleRecordingReady`, `handleRecordingFailed`, `handleSessionParticipantJoined`, `handleSessionParticipantLeft`**: First look up `where: { streamCallId }` and **fall back to `where: { appointmentOccurrenceId }`** extracted via `parseSlotIdFromCallId(call_cid)`. If a host ends and reopens a room while segment 1's composite MP4 is still transcoding or final participant-left durations are in flight, those artifacts and attendance records still bind cleanly to the occurrence's `Meeting` row.
+   - **`handleRecordingStarted`, `handleRecordingReady`, `handleRecordingFailed`, `handleSessionParticipantJoined`, `handleSessionParticipantLeft`**: First look up `where: { streamCallId }` and **fall back to `where: { appointmentOccurrenceId }`** extracted via `parseSlotIdFromCallId(call_cid)`. If a host ends and reopens a room while segment 1's composite MP4 is still transcoding or final participant-left durations are in flight, those artifacts and attendance records still bind cleanly to the occurrence's `Meeting` row. A participant event found only through the fallback belongs to a prior segment: its `MeetingPresence` row keeps the event's own call id in `streamCallId`, and it never reopens the current room, takes the current room's end as its `leftAt`, or clears the current attendance's `lastLeftAt`.
    - **`handleCallEnded` and `handleSessionEnded`**: Query **strictly `where: { streamCallId }`** without falling back to `appointmentOccurrenceId`. Delayed termination or 5-minute SFU inactivity webhooks emitted for closed segment 1 never match rotated segment 2 (`occurrence-<uuid>-r<base36>`), protecting live reopened rooms from premature shutdown.
-2. **Monotonic Latest Timestamp Wins (`supersedesRecordedEnd`)**: Termination writes proceed only when `incoming > existing.endedAt`. Replayed or out-of-order older webhooks never rewind `endedAt`.
-3. **Pre-Start Device Check vs Live Termination (`ended_early` vs `call_ended`)**: Ending before `startsAt` classifies the action as `"ended_early"` and rotates `streamCallId = "occurrence-<uuid>-r<base36>"` while leaving `completionStatus = "SCHEDULED"`; ending at or after `startsAt` stamps `endedReason = "call_ended"`, closes open `MeetingPresence` and `MeetingAttendance` rows via CAS, and penalizes under-delivered sessions as `CUT_SHORT` only when ended deliberately by a host (`endedByUserId` null or in `hostUserIds`).
+2. **Monotonic Latest Timestamp Wins, Deliberate Ends Never Overwritten**: Termination writes proceed only when `incoming > existing.endedAt` (`supersedesRecordedEnd`) **and** the recorded end does not hold against the incoming reason (`recordedEndHolds` in `lib/meetings/end-reasons.ts`: a deliberate end always holds, and a sealed end such as `stream_ended` holds unless the incoming reason is deliberate). `handleCallEnded`, `handleSessionEnded` and `recordMeetingEndedSynchronously` all apply both tests, so a replayed or late `call.ended` can neither rewind `endedAt` nor turn a `maintenance` or `org_deactivated` close into `call_ended`. `handleCallEnded` maps the webhook with `mapStreamCallEndedReason`: before the booked start gives `ended_early`; a user end, no Stream reason, `call_ended` or `end_call` gives `call_ended`; any other Stream reason gives `stream_ended`. The raw Stream reason is only logged. `handleSessionEnded` writes `session_timeout`.
+3. **Pre-Start Device Check vs Live Termination (`ended_early` vs `call_ended`)**: Ending before `startsAt` classifies the action as `"ended_early"` and rotates `streamCallId = "occurrence-<uuid>-r<base36>"` while leaving `completionStatus = "SCHEDULED"`; ending at or after `startsAt` stamps `endedReason = "call_ended"`, closes the segment's open `MeetingPresence` rows (as assumed, `closedByEnd = true`) and open `MeetingAttendance` rows in the same transaction as the CAS (the `ended_early` rotation closes the rotated-away segment the same way), and penalizes under-delivered sessions as `CUT_SHORT` only when ended deliberately by a host (`endedByUserId` null or in `hostUserIds`).
 4. **Webinar & Class End Backfill (`reconcileWebinarAttendance`)**: Both `handleSessionEnded` and `handleCallEnded` run best-effort `reconcileWebinarAttendance` on group sessions (`webinar` or `class`) so missed participant attendance rows are backfilled from Stream sessions even if individual participant events were dropped.
-5. **Participant Rejoin & Lock Ordering (`Meeting -> MeetingPresence -> MeetingAttendance`)**: `handleSessionParticipantJoined` and `handleSessionParticipantLeft` execute in strict `Meeting -> MeetingPresence -> MeetingAttendance` lock order (`createMany({ skipDuplicates: true })`). Out-of-order `left`-before-`joined` events clamp `firstJoinedAt` monotonically (`firstJoinedAt: { gt: joinedAt }`), late joins arriving after a deliberate end immediately close (`leftAt = effectiveEndedAt`), and non-deliberate ends clear `endedAt` via CAS on rejoin.
+5. **Participant Rejoin & Lock Ordering (`Meeting -> MeetingPresence -> MeetingAttendance`)**: `handleSessionParticipantJoined` and `handleSessionParticipantLeft` execute in strict `Meeting -> MeetingPresence -> MeetingAttendance` lock order (`createMany({ skipDuplicates: true })`). Out-of-order `left`-before-`joined` events clamp `firstJoinedAt` monotonically (`firstJoinedAt: { gt: joinedAt }`), late joins on the current segment arriving after a deliberate end immediately close (`leftAt = effectiveEndedAt`, `closedByEnd = true`), and non-deliberate ends clear `endedAt` via CAS on rejoin.
 
 ### Per-Attendee Attendance Capture
 
 The two `call.session_participant_*` handlers maintain device-session `MeetingPresence` intervals (`@@unique([meetingId, userSessionId])`) alongside an aggregated `MeetingAttendance` row keyed on `(meetingId, userId)` in strict `Meeting -> MeetingPresence -> MeetingAttendance` lock order. On first arrival, `MeetingAttendance.firstJoinedAt` is recorded and genuinely new device sessions (`skipDuplicates: true`) increment `joinCount`; out-of-order `left`-before-`joined` delivery clamps `firstJoinedAt` via conditional `updateMany` (`firstJoinedAt: { gt: joinedAt }`) while advancing `lastLeftAt` monotonically.
+
+Every `MeetingPresence` row records the call it belongs to (`streamCallId`), and `closedByEnd` says whether its `leftAt` is a leave Stream reported or an end stamp's assumption. Every end stamp closes rows through `closeSegmentPresences` (`lib/meetings/segment-presence.ts`), which touches only open rows of that segment's call id (plus legacy rows with a null call id) and sets `closedByEnd = true`. A reported leave always replaces an assumed close and clears the flag, even when it arrives after the end stamp with an earlier time; between two reported leaves the later one wins. A leave reported after the current room ended moves `MeetingAttendance.lastLeftAt` only up to `Meeting.endedAt`, unless the device joined after that end (a rejoin whose join webhook has not reopened the room yet).
+
+The outcome sweep, not these handlers, decides what the intervals mean. Before classifying, it reads Stream's participant sessions (`getCallParticipantSessionsFromStream` in `lib/stream/call-presence.ts`) for each segment with an assumed or open interval, and for the current segment whenever our rows may be missing someone (no rows, no participant count in the call report, or a larger count than ours), then corrects the rows from what Stream reports. An interval Stream cannot confirm stays open, which makes the verdict `INCONCLUSIVE` rather than a guess (ADR-06 in [18-architecture-decision-records.md](./18-architecture-decision-records.md#adr-06-stream-participant-sessions-are-the-attendance-witness)).
 
 ### Event Payload Structures
 
@@ -476,7 +481,7 @@ flowchart TD
 
 Stream retries a webhook, the stuck-event sweeper re-drives one for up to 168 hours, and the orphan reconciler re-lists calls daily, so every handler must be safe to run twice.
 
-1. **Event receipts.** `logWebhookEvent` dedupes deliveries on the event id before any handler runs.
+1. **Event receipts.** `recordStreamEventReceipt` (`lib/stream/webhook-receipt.ts`) writes the receipt with one `create` before any handler runs; the unique `WebhookEvent.eventId` index is the duplicate check, and only a duplicate tries to re-claim a stale in-progress lease.
 2. **One row per segment.** `handleRecordingReady` adopts an existing row for the same `(meetingId, streamRecordingId)` and promotes a placeholder only with a CAS on the pre-ready statuses; a concurrent create that loses the unique index adopts the winner.
 3. **Notices only for a live row.** `stageAndSendRecordingReadyNotifications` re-reads the row and announces nothing unless it is `READY`, `TRANSFERRING` or `AVAILABLE` with no `removedAt`, so a late ready for an `EXPIRED` or removed recording stays silent.
 4. **At-most-once notices.** The bell dedupes on the outbox `transactionId` (`recording.ready:<recordingId>`, and `recording.failed:<recordingId>` per recipient). The email dedupes on an `IdempotencyRecord` claim per recipient: scope `stream.recording-ready` with key `recording-ready:<recordingId>:<userId>`, and scope `stream.recording-failed` with key `recording-failed:<failedRowId>:<userId>`. `stageSpecOncePerRecipient` (`lib/email/senders/shared.ts`) renders outside the transaction, then inserts the claims with `skipDuplicates` and stages a `FailedEmail` row only for the claims it won, in the same transaction. A repeat delivery, or a concurrent one, therefore stages no second email. Claims live 30 days, past the sweeper's horizon. A staging failure leaves no claim, and the ready handler rethrows it so the retried event stages the notice.
@@ -812,7 +817,13 @@ failure surfaces the server's message in an error toast.
 
 #### POST /api/stream/webhooks
 
-Receives webhook events from Stream.
+Receives webhook events from Stream. The route verifies, writes the receipt, acknowledges and hands off to `after()`.
+
+**Stored payload:** `WebhookEvent.payload` holds the event parsed through its own Zod schema (`schemas/webhooks/stream.ts`), because Zod drops undeclared keys. Participant names, images and custom profile data never reach the table, while every id, timestamp, reason and URL the handlers read is kept, so `sweep-stuck-webhook-events` can re-drive any handler from the stored row. A payload that fails its schema falls back to the generic PII scrubber (`lib/logging/webhook-scrub.ts`); dispatch fails it permanently anyway. Adding a field a handler reads means adding it to the schema, which is also what keeps it in the stored row.
+
+**Error reporting:** an unconfigured signing secret, an invalid signature and a failing receipt write each send at most one Sentry event per window (`captureThrottled`), so a sustained outage costs one event, not one per delivery. The receipt failure still answers 503 every time so Stream redelivers.
+
+**Owned call types:** only `default` is accepted (`OWNED_CALL_TYPES`). Events for `livestream`, `audio_room` and `development` are acknowledged and marked processed without running a handler.
 
 **Headers:**
 
@@ -833,11 +844,11 @@ Receives webhook events from Stream.
 ### Recording Operations
 
 | Role           | Start | Stop | View Own | Metadata (any) | Play (any) | Delete |
-| -------------- | :---: | :--: | :------: | :------------: | :--------: | :----: |
-| **Consultant** |  Yes  | Yes  |   Yes    |       No       |     No     |   No   |
-| **Consultee**  |  No   |  No  |  Yes\*   |       No       |     No     |   No   |
-| **Staff**      |  No   |  No  |   Yes    |      Yes       |   **No**   |   No   |
-| **Admin**      |  No   |  No  |   Yes    |      Yes       |    Yes     |   No   |
+| -------------- | ----- | ---- | -------- | -------------- | ---------- | ------ |
+| **Consultant** | Yes   | Yes  | Yes      | No             | No         | No     |
+| **Consultee**  | No    | No   | Yes\*    | No             | No         | No     |
+| **Staff**      | No    | No   | Yes      | Yes            | **No**     | No     |
+| **Admin**      | No    | No   | Yes      | Yes            | Yes        | No     |
 
 \*Consultees can play recordings of 1:1, subscription and trial appointments they took part in, and of webinar and class sessions they hold a live seat or entitled payment for (see [Recording Visibility Rules](#recording-visibility-rules)). Entitlement nets refunds: a fully refunded buyer loses access, a partially refunded buyer keeps it.
 
@@ -962,7 +973,7 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 1. **Enable Recording** - Dashboard > Video > Settings > Enable Recording
 2. **Configure Webhooks** - Dashboard > Webhooks > Add Endpoint
    - URL: `https://your-domain.com/api/stream/webhooks`
-   - Events: `call.recording_*`, `call.session_ended`, `call.ended`
+   - Events: one `video` hook for the eight `call.*` events and one `chat` hook for `user.unread_message_reminder`; `scripts/stream/ensure-webhook-subscription.ts --apply` creates and reconciles both
    - Signing Secret: Copy to `STREAM_WEBHOOK_SECRET`
 
 ### The scheduled fleet behind recordings
@@ -981,7 +992,7 @@ Three scheduled jobs keep the recording pipeline honest under GitHub Actions, ac
 
 ### Subscription drift is checked, not assumed
 
-`scripts/stream/ensure-webhook-subscription.ts` compares the event types the live Stream webhook subscription covers against `HANDLED_EVENT_TYPES` (`lib/stream/webhook-dispatch.ts`). Run with no flags to diff, `--apply` to update app settings, or `--check` in CI (`.github/workflows/stream-webhook-drift.yml`).
+The ticker job `stream-control-plane-drift` (`lib/stream/control-plane-drift.ts`, daily at 01:15 UTC) compares the live hooks with `HANDLED_EVENT_TYPES` and the contract in `lib/stream/control-plane-contract.ts`: there must be one hook per product (`video` and `chat`, from `desiredEventTypesByProduct`), each enabled, pointing at `<NEXT_PUBLIC_APP_URL>/api/stream/webhooks`, and carrying exactly that product's handled events. A handled event that no hook can carry is reported as `webhook:unplaceable:<product>:<event>`. It is read-only and reports one Sentry message per run. `scripts/stream/ensure-webhook-subscription.ts` is the operator tool: no flags to diff, `--check` to exit 2 on drift, `--apply` to write, which also creates a missing product hook when `NEXT_PUBLIC_APP_URL` names the public https URL an existing hook already delivers to.
 
 ### Never import `@/lib/supabase` from a cron job
 
@@ -1018,6 +1029,8 @@ Three scheduled jobs keep the recording pipeline honest under GitHub Actions, ac
 
 ## Deprecated & Superseded Approaches
 
+- **Raw Stream payloads in `WebhookEvent.payload`, and a find-then-create receipt**: the full event, including participant names, was stored for 30 to 90 days, and every first delivery cost two round trips. Superseded by the schema-parsed payload and the single-`create` receipt above.
+- **`livestream` in `OWNED_CALL_TYPES`**: livestream is unused at launch, and an authentic event from a type this app does not run can collide with a real Meeting id. Removed; the drift detector guards that `user` holds no create-call on it.
 - **Shared `recordings/{id}/composite.mp4` R2 keys during transfer retries**: Using a single static object key across retry attempts allowed a stalled worker's late `deleteR2Object` cleanup on CAS loss to delete a newer winning attempt's published MP4. Superseded by attempt-scoped `recordings/{recordingId}/attempt-{attempt}.mp4` keys with asynchronous cleanup of prior `attempt-1..{attempt-1}.mp4` objects after `status = AVAILABLE` commits.
 - **Unconditional `Meeting.isRecording = true` writes on late `call.recording_started`**: Checking `meeting.endedAt` only at `findUnique` time allowed out-of-order `call.recording_started` webhooks to re-arm `isRecording = true` if `call.ended` raced in between. Superseded by CAS `updateMany({ where: { id, endedAt: null } })` with metadata-only fallback.
 - **Short 1-hour fixed presigned playback URLs & player state wipes on URL refresh**: Fixed 1-hour URLs expired mid-watch on 2+ hour sessions and prop refreshes reset `savedTimeRef.current = 0`. Superseded by duration-scaled `playbackUrlTtlSeconds` (`>= 4 hours`) and `[open, recordingId]`-scoped player state preservation in `RecordingPlayerModal`.

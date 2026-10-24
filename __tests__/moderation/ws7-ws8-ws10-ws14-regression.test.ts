@@ -124,10 +124,10 @@ import {
   REVIEW_REPORT_REASONS,
 } from "../../schemas/moderation";
 import { moderationStatementOfReasons } from "../../lib/moderation/side-effects";
+import { COMPANY_INFO } from "../../lib/company";
 import {
   ACK_PROMISE_COPY,
   ANTI_SCAM_NOTICE,
-  COMPANY_INFO,
   GRIEVANCE_OFFICER,
   INQUIRY_CATEGORIES,
   POLICY_DATES,
@@ -504,13 +504,15 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
   });
 
   test("Compliance constants publish Grievance Officer details and 24-hour acknowledgment without placeholders or invented values", () => {
-    const expectedMailbox =
-      process.env.CONTACT_INBOX_ADDRESS?.trim() || "support@practitionist.com";
     expect(ACK_PROMISE_COPY).toBe("within 24 hours");
     expect(COMPANY_INFO.name).toBe("Practitionist (OPC) Private Limited");
+    expect(COMPANY_INFO.cin).toBe("U62012HR2026OPC146217");
+    expect(COMPANY_INFO.registeredAddress).toContain("M3M Merlin");
+    expect(COMPANY_INFO.registeredAddress).toContain("122018");
     expect(COMPANY_INFO.jurisdiction).toBe("Haryana, India");
-    expect(COMPANY_INFO.email).toBe(expectedMailbox);
-    expect(GRIEVANCE_OFFICER.email).toBe(expectedMailbox);
+    // The public mailbox never follows the private contact-form delivery inbox.
+    expect(COMPANY_INFO.email).toBe("support@practitionist.com");
+    expect(GRIEVANCE_OFFICER.email).toBe(COMPANY_INFO.email);
     expect(ANTI_SCAM_NOTICE).toContain("never ask for your OTP");
     expect(INQUIRY_CATEGORIES.some((c) => c.value === "grievance")).toBe(true);
     const dumped = JSON.stringify({
@@ -521,9 +523,8 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     expect(dumped).not.toMatch(/\[[A-Z0-9_ ]+\]/);
     expect(dumped).not.toContain("+91-80-4710-8000");
     expect(dumped).not.toContain("Bengaluru");
-    expect(
-      expectedMailbox === "support@practitionist.com" ? dumped : "",
-    ).not.toContain("familiarisenow.com");
+    expect(dumped).not.toContain("familiarisenow.com");
+    expect(dumped).not.toContain("gmail.com");
   });
 
   test("POST /api/contact creates the canonical SupportCase in the same transaction as allocateTicketReference, held by the public-intake user, and stages the receipt email there", async () => {

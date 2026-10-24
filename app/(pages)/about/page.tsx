@@ -1,15 +1,16 @@
-"use client";
-
+import type { Metadata } from "next";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Users, Target, Award, BookOpen } from "lucide-react";
-import {
-  COMPANY_INFO,
-  PAGE_META,
-  ABOUT_DATA,
-  getMailtoLink,
-} from "../constants";
+import { COMPANY_INFO } from "@/lib/company";
+import { PAGE_META, ABOUT_DATA, getMailtoLink, getTelLink } from "../constants";
+
+export const metadata: Metadata = {
+  title: `${PAGE_META.about.title} | Live Classes, Webinars & 1-on-1 Sessions`,
+  description: PAGE_META.about.description,
+};
 
 export default function AboutPage() {
   return (
@@ -138,9 +139,26 @@ export default function AboutPage() {
             <CardContent className="space-y-3">
               <div>
                 <p className="text-sm font-semibold text-muted-foreground">
-                  Business Name
+                  Legal Name
                 </p>
                 <p>{COMPANY_INFO.name}</p>
+                <p className="text-sm text-muted-foreground">
+                  Familiarise is the platform operated by {COMPANY_INFO.name}.
+                </p>
+              </div>
+              <Separator />
+              <div>
+                <p className="text-sm font-semibold text-muted-foreground">
+                  Corporate Identity Number (CIN)
+                </p>
+                <p>{COMPANY_INFO.cin}</p>
+              </div>
+              <Separator />
+              <div>
+                <p className="text-sm font-semibold text-muted-foreground">
+                  Registered Office
+                </p>
+                <p>{COMPANY_INFO.registeredAddress}</p>
               </div>
               <Separator />
               <div>
@@ -156,6 +174,24 @@ export default function AboutPage() {
                   </a>
                 </p>
               </div>
+              {COMPANY_INFO.phone ? (
+                <>
+                  <Separator />
+                  <div>
+                    <p className="text-sm font-semibold text-muted-foreground">
+                      Phone
+                    </p>
+                    <p>
+                      <a
+                        href={getTelLink()}
+                        className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
+                      >
+                        {COMPANY_INFO.phone}
+                      </a>
+                    </p>
+                  </div>
+                </>
+              ) : null}
               <Separator />
               <div>
                 <p className="text-sm font-semibold text-muted-foreground">
@@ -163,12 +199,12 @@ export default function AboutPage() {
                 </p>
                 <p>
                   For any questions or support, please{" "}
-                  <a
+                  <Link
                     href="/contactus"
                     className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
                   >
                     contact us
-                  </a>
+                  </Link>
                 </p>
               </div>
             </CardContent>
