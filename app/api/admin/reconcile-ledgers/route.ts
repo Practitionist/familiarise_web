@@ -1,28 +1,8 @@
-/**
- * POST /api/admin/reconcile-ledgers
- * GET  /api/admin/reconcile-ledgers
- *
- * Platform-admin-only ledger auditor.
- *
- *  - `POST` with `{ organizationId, reason }` runs an org-scoped reconciliation
- *    synchronously and returns the resulting report.
- *  - `POST` with only `{ reason }` runs the full-scope reconciliation directly
- *    in-process under the `reconcile-ledgers` cron lock (#1943). A full-scope
- *    run already RUNNING and younger than the stale window, or holding the
- *    cron lock, answers 409.
- *  - `GET` lists the most recent reports (paginated), or one by `?id=`.
- *
- * Access: platform admins only via `requireBackofficeSurface("payouts.manage")`
- * (ADMIN-only — STAFF is deliberately excluded: the reports expose cross-org
- * ledger aggregates incl. per-org wallet balances, which the settlement
- * surfaces keep ADMIN-only). Does NOT
- * grant org admins the ability to run reconciliation on their own org —
- * intentionally, because the reconcile output exposes cross-org
- * aggregate shapes that we don't want leaking through an in-app UI.
- */
+/** ADMIN-only bounded audit slices and report history; every run requires step-up and an audit reason. */
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { statusFor } from "@/lib/cron/cleanup-route";
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
@@ -52,9 +32,14 @@ export const POST = withOpsAction(
         after: {
           reportId: report.id,
           ok: report.ok,
+          status: report.summary.status,
           frozenWallets: report.frozenWallets.length,
         },
         response: { data: report },
+        status: statusFor(
+          { success: report.summary.status !== "FAILED" },
+          report.summary.status === "COMPLETED" && !report.ok,
+        ),
       };
     },
   },

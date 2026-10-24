@@ -531,13 +531,20 @@ async function expireGroup(
 }
 
 /**
- * Delete an EXPIRED row's stored assets, then clear its pointers. On failure
- * the pointers stay, so the daily sweep retries the delete.
+ * Delete an EXPIRED row's stored assets, then clear its pointers. Stream's
+ * copy is deleted too; its id stays when that call cannot be confirmed so the
+ * daily sweep retries it. On R2 failure the pointers stay for the same reason.
  */
 export async function purgeExpiredRecordingAssets(row: {
   id: string;
   storagePath: string | null;
+  streamCallId: string | null;
+  streamRecordingId: string | null;
 }): Promise<{ success: boolean; error?: string }> {
+  // Dynamic import breaks the retention -> service -> decline -> retention cycle.
+  const { deleteStreamRecordingCopy } =
+    await import("@/lib/stream/recording-stream-delete");
+  const streamCopy = await deleteStreamRecordingCopy(row);
   const deleted = await deleteRecordingAssets(row);
   if (!deleted.success) return deleted;
   try {
@@ -548,7 +555,9 @@ export async function purgeExpiredRecordingAssets(row: {
         previewClipUrl: null,
         previewClipStoragePath: null,
         previewClipDuration: null,
+        previewTranscript: null,
         thumbnailUrl: null,
+        ...(streamCopy.success ? { streamRecordingId: null } : {}),
       },
     });
   } catch (error) {
@@ -558,10 +567,16 @@ export async function purgeExpiredRecordingAssets(row: {
       error: error instanceof Error ? error.message : "pointer clear failed",
     };
   }
+  if (!streamCopy.success) {
+    return {
+      success: false,
+      error: streamCopy.error ?? "Stream copy was not removed",
+    };
+  }
   return { success: true };
 }
 
-/** Delete stored assets of EXPIRED rows that still point at them, then clear the pointers. */
+/** Delete stored assets of EXPIRED rows that still point at them, including Stream's copy. */
 async function cleanExpiredAssets(
   limit: number,
   result: ExpireRecordingsResult,
@@ -574,9 +589,15 @@ async function cleanExpiredAssets(
         { storagePath: { not: null } },
         { previewClipStoragePath: { not: null } },
         { thumbnailUrl: { not: null } },
+        { streamRecordingId: { not: null } },
       ],
     },
-    select: { id: true, storagePath: true },
+    select: {
+      id: true,
+      storagePath: true,
+      streamCallId: true,
+      streamRecordingId: true,
+    },
     orderBy: { updatedAt: "asc" },
     take: limit,
   });

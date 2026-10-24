@@ -38,6 +38,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { SIDECAR_FILES } from "./sidecar-objects";
 
 const ROOT = path.join(__dirname, "..", "..");
 const SCHEMA = path.join(ROOT, "prisma", "schema.prisma");
@@ -55,9 +56,10 @@ export function sidecarOwnedUniqueIndexes(
 ): Set<string> {
   const names = new Set<string>();
   if (!fs.existsSync(dir)) return names;
-  for (const file of fs.readdirSync(dir)) {
-    if (!file.endsWith(".sql")) continue;
-    const sql = fs.readFileSync(path.join(dir, file), "utf8");
+  for (const file of SIDECAR_FILES) {
+    const filePath = path.join(dir, file);
+    if (!fs.existsSync(filePath)) continue;
+    const sql = fs.readFileSync(filePath, "utf8");
     for (const m of sql.matchAll(
       /CREATE\s+UNIQUE\s+INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?"([^"]+)"/gi,
     )) {

@@ -4,7 +4,7 @@ type: reference
 band: maintenance
 audience: sde2
 status: live
-last-reviewed: 2026-10-18
+last-reviewed: 2026-10-22
 ---
 
 # Cron, Sidecars and Reconciliation — Operational Reference
@@ -83,6 +83,18 @@ Two subtleties worth knowing before you alert on status codes:
 
 `parseLimitParamOrDefault()` exists so a per-row job can never be invoked unbounded by _any_ caller, not just the ticker. Several jobs also declare their own hard caps in the registry, independent of `?limit=` — for example the stale-slot release arm of `expire-stale-requests` releases at most 200 rows per run regardless of the query parameter.
 
+### Payment, refund and top-up polling
+
+Payment status, pending-refund and abandoned top-up polling order by nullable `lastReconciledAt` (never polled first), then ID. Every attempted lookup rotates the row, including unchanged provider state, transient failure and an attempted request that times out. The timestamp records an attempt, not verified provider progress; timeout errors remain run failures. Otherwise a slow first row can consume every run and starve later payments. The cursor write does not change `updatedAt`, so polling does not postpone business aging. A run interrupted before a row starts leaves that row ahead of attempted work on the next run. Payment lookups also require three seconds of remaining start budget; candidates skipped by that check remain unstamped.
+
+Defaults are 50 payment candidates, 10 pending refunds and 25 abandoned top-ups. Payment and refund cohorts share their respective limit across candidate queries. Jobs stop starting rows at their execution deadline; an in-flight database transaction or provider operation must still finish or hit its own timeout. Refund polling reserves time for stranded successful cascades and failed-refund notices instead of letting pending work consume the entire invocation. Failed notices are capped at 10 by default and stage their notification and email in the same transaction that claims `failedNotifiedAt`; post-commit delivery failure remains recoverable by the existing outboxes. The invoice-accrual rollup counts every examined organization against its limit, including skipped organizations, and rotates it with `Organization.lastAccrualRollupAt` even after a skip or failure. Existing accrual, deactivation and window predicates still select the billable cohort.
+
+The invoice selector reads at most `limit + 1` organization IDs with eligible accruals, avoiding an unbounded distinct-payment result. `remaining` is a lower bound from that peek, not a total backlog count. The bound is on organizations; a large organization’s invoice can still contain many accrual lines and needs its own capacity verification.
+
+The invoice cursor updates the physical `organizations` relation, preserving business `updatedAt`. Cursor failures are counted without aborting later organizations or discarding invoices already committed. Rollup and cursor errors are reported once per run with their organization and phase. A failed-refund notice-stage error makes the enclosing reconciliation result unsuccessful while preserving the polling counters; the standalone notification entry point still rejects the failure.
+
+Before deploying this code, an operator must apply the additive columns/indexes described by `prisma/schema.prisma` and `prisma/sql/reconciliation-cursors.sql`. The SQL artifact is for a controlled schema operation; this change does not run it automatically. No cursor backfill is necessary: existing NULL values receive priority.
+
 ## The Netlify ticker
 
 `netlify/functions/cron-tick.mts` runs on a `*/5 * * * *` schedule. It posts to `/api/cleanup/<slug>?limit=N` with `Authorization: Bearer <CRON_SECRET>` and an `AbortController` timeout per target.
@@ -146,7 +158,7 @@ The remaining 29 registry slugs and the 13 jobs with no HTTP twin are catalogued
 
 ## Sidecars
 
-The three SQL files under `prisma/sql/` are hand-written and idempotent. Each statement is preceded by a `DROP ... IF EXISTS`, statements are separated by a literal `-- SPLIT` marker, and each runs in its own short transaction with `lock_timeout = '3s'` so an unobtainable lock fails fast instead of blocking the table.
+The three sidecar files under `prisma/sql/` (`check-constraints.sql`, `ledger-triggers.sql`, `payment-legs-triggers.sql`, listed in `SIDECAR_FILES` in `scripts/db/sidecar-objects.ts`) are hand-written and idempotent. Each statement is preceded by a `DROP ... IF EXISTS`, statements are separated by a literal `-- SPLIT` marker, and each runs in its own short transaction with `lock_timeout = '3s'` so an unobtainable lock fails fast instead of blocking the table. `reconciliation-cursors.sql` in the same folder is not a sidecar: it is a one-off operator rollout of columns and indexes the schema already declares, so neither `db:sidecars` nor the sidecar checks read it.
 
 | File                        | `ADD CONSTRAINT` | Indexes | Triggers |
 | --------------------------- | ---------------- | ------- | -------- |
