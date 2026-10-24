@@ -108,7 +108,7 @@ function importedCores(initializer: ts.Expression, root: string): Core[] {
     )
       continue;
     const spec = text(value.arguments[0]);
-    const target = spec ? resolveModule(REGISTRY, spec, root) : undefined;
+    const target = resolveModule(REGISTRY, spec ?? "", root);
     if (
       !target ||
       /^(lib\/(cron|observability)\/|lib\/prisma\.ts$)/.test(target)
