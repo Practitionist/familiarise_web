@@ -131,6 +131,7 @@ Stream's server-side API bypasses its own permission system whenever a valid API
 - `actions/stream/chat/channel.action.ts` and `lib/stream/event-channel-service.ts` do **not** have `"use server"` directives and cannot be invoked as browser RPCs.
 - `actions/stream/chat/event-channel.action.ts` (`"use server"`) gates `addUserToEventChannel`, `removeUserFromEventChannel`, and `syncUserEventChannels` via `getSession()` + participant/host/admin checks.
 - `POST /api/stream/channels/open` enforces `requireApiAuth()`, `streamApiLimiter`, `canDirectMessage` / `isEventParticipant`, and `pairBookingContexts` (preventing cross-organization `organizationId` forgery).
+- A channel owner (`created_by`: the consultant of a DM, the host of an event channel) holds no truncate, delete, recreate, update or member-update grant on the `messaging` channel type (`MESSAGING_USER_REVOKED_GRANTS` in `lib/stream/control-plane-contract.ts`, written by `scripts/stream/ensure-messaging-grants.ts`). A browser console cannot change a Postgres-derived channel's membership or wipe its history, so every such change goes through a server action. Leaving keeps working because `remove-own-channel-membership` stays.
 
 ### Participant Sources
 
