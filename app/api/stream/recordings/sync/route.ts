@@ -74,6 +74,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       synced: recordings.length,
+      failed: (consultant?.failed ?? 0) + (consultee?.failed ?? 0),
       more: Boolean(
         nextCursors.consultantCursor || nextCursors.consulteeCursor,
       ),

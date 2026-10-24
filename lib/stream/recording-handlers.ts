@@ -7,6 +7,7 @@ import type { z } from "zod";
 import prisma from "@/lib/prisma";
 import { RecordingStatus, RecordingStorageType } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
+import { errorMessageOf } from "@/lib/observability/report";
 import { EMAIL_BUDGET_MS } from "@/lib/email";
 import { stageDocumentAndRecordingEmailOnce } from "@/lib/email/senders/booking";
 import { permanentFailure } from "@/lib/webhooks/event-log";
@@ -502,6 +503,12 @@ export async function stageAndSendRecordingReadyNotifications(
   ]);
 
   const staged = bellOutcome.status === "fulfilled" ? bellOutcome.value : [];
+  if (emailOutcome.status === "rejected") {
+    streamLogger.warn("Recording-ready emails not staged", {
+      recordingId,
+      error: errorMessageOf(emailOutcome.reason),
+    });
+  }
   const readyEmails =
     emailOutcome.status === "fulfilled" ? emailOutcome.value : [];
 
@@ -784,7 +791,14 @@ async function notifyRecordingFailedChunked(
       key: (userId) => `recording-failed:${recordingId}:${userId}`,
       ttlMs: NOTICE_CLAIM_TTL_MS,
     },
-  ).catch(() => []);
+  ).catch((error: unknown) => {
+    streamLogger.warn("Recording-failed emails not staged", {
+      streamCallId,
+      recordingId,
+      error: errorMessageOf(error),
+    });
+    return [];
+  });
 
   if (failureCount > 0) {
     streamLogger.warn(

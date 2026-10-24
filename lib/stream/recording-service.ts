@@ -105,6 +105,8 @@ export const SYNC_PAGE_SIZE = 25;
 export interface UserSyncResult {
   synced: number;
   recordings: RecordingRow[];
+  /** Sessions Stream did not answer for or that failed to persist; retry later. */
+  failed: number;
   nextCursor: string | null;
 }
 
@@ -562,12 +564,12 @@ export class RecordingService {
   /** One bounded page of a user sync: Stream calls run at most STREAM_CONCURRENCY_LIMIT wide. */
   private static async syncMeetingPage(
     page: SyncableSession[],
-  ): Promise<RecordingRow[]> {
-    const synced: RecordingRow[] = [];
-    await mapBounded(page, (session) =>
-      this.syncSessionRecordings(session, synced),
+  ): Promise<{ recordings: RecordingRow[]; failed: number }> {
+    const recordings: RecordingRow[] = [];
+    const outcomes = await mapBounded(page, (session) =>
+      this.syncSessionRecordings(session, recordings),
     );
-    return synced;
+    return { recordings, failed: outcomes.filter((o) => !o.ok).length };
   }
 
   /**
@@ -603,13 +605,14 @@ export class RecordingService {
       ...syncPageArgs(opts.cursor),
     });
     const { page, nextCursor } = splitSyncPage(rows);
-    const recordings = await this.syncMeetingPage(page);
+    const { recordings, failed } = await this.syncMeetingPage(page);
     streamLogger.info("Recording sync completed", {
       consultantProfileId,
       sessionCount: page.length,
       syncedCount: recordings.length,
+      failedCount: failed,
     });
-    return { synced: recordings.length, recordings, nextCursor };
+    return { synced: recordings.length, recordings, failed, nextCursor };
   }
 
   /**
@@ -656,12 +659,13 @@ export class RecordingService {
     const entitled = page.filter((meeting) =>
       meeting.occurrence.appointment.payment.some(isPaymentEntitled),
     );
-    const recordings = await this.syncMeetingPage(entitled);
+    const { recordings, failed } = await this.syncMeetingPage(entitled);
     streamLogger.info("Recording sync completed for consultee", {
       userId,
       sessionCount: entitled.length,
       syncedCount: recordings.length,
+      failedCount: failed,
     });
-    return { synced: recordings.length, recordings, nextCursor };
+    return { synced: recordings.length, recordings, failed, nextCursor };
   }
 }

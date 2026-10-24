@@ -79,6 +79,27 @@ describe("user recording sync bounds", () => {
     expect(list).toHaveBeenCalledTimes(SYNC_PAGE_SIZE);
     expect(peak).toBe(10);
     expect(result.nextCursor).toBe(`m-${SYNC_PAGE_SIZE - 1}`);
+    expect(result.failed).toBe(0);
     expect(mockStageReady).not.toHaveBeenCalled();
+  });
+
+  it("counts sessions Stream did not answer for instead of reporting them as empty", async () => {
+    (prisma.meeting.findMany as jest.Mock).mockResolvedValue([
+      meeting(0),
+      meeting(1),
+      meeting(2),
+    ]);
+    jest
+      .spyOn(RecordingService, "getCallRecordingsFromStream")
+      .mockImplementation(async (callId: string) =>
+        callId === "call-1"
+          ? { status: "unavailable", error: "503" }
+          : { status: "listed", recordings: [] },
+      );
+
+    const result = await RecordingService.syncRecordingsForConsultant("cp-1");
+
+    expect(result.failed).toBe(1);
+    expect(result.synced).toBe(0);
   });
 });
