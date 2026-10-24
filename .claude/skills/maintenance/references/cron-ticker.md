@@ -104,7 +104,7 @@ Never create 3-layer wrappers. A job has one implementation, registered in
 5. Test same-job overlap, cross-job races, sequential replay and missed schedules.
 6. Update the generated job reference and operational recovery instructions.
 7. Put a ticker job in `TARGETS` with an offset or a `TARGET_WINDOWS` slot so
-   that no tick fires more than `MAX_TARGETS_PER_TICK` (9) targets; the cadence
+   that no tick fires more than `MAX_TARGETS_PER_TICK` (10) targets; the cadence
    test pins it.
 8. If the job moves money or payouts, add its slug to `FINANCIAL_JOB_NAMES`
    (`lib/cron/financial-jobs.ts`). The maintenance gate then also stops it in
