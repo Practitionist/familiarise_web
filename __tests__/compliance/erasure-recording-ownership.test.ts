@@ -530,3 +530,37 @@ it("rechecks purchase protection in the claim after selection", async () => {
     }),
   );
 });
+
+it("re-drives a Stream copy left on an expired row with no storage pointers", async () => {
+  row.status = "EXPIRED";
+  row.recordingUrl = "";
+  row.streamCallId = "call-one";
+
+  expect((await scrubUser(prisma, "erased-user")).vendorFailures).toEqual([]);
+  expect(mockDeleteStreamCopy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      streamCallId: "call-one",
+      streamRecordingId: "immutable-source.mp4",
+    }),
+  );
+  expect(row).toMatchObject({ status: "EXPIRED", streamRecordingId: null });
+});
+
+it("claims the row before a failed Stream delete and keeps its pointers", async () => {
+  row.status = "AVAILABLE";
+  row.storagePath = "recordings/recording-one/attempt-1.mp4";
+  row.streamCallId = "call-one";
+  mockDeleteStreamCopy.mockResolvedValueOnce({ success: false });
+
+  expect((await scrubUser(prisma, "erased-user")).vendorFailures).toEqual([
+    expect.stringContaining("recording_storage:recording-one"),
+  ]);
+  expect(mockUpdateManyAndReturn.mock.invocationCallOrder[0]).toBeLessThan(
+    mockDeleteStreamCopy.mock.invocationCallOrder[0],
+  );
+  expect(row).toMatchObject({
+    status: "EXPIRED",
+    storagePath: "recordings/recording-one/attempt-1.mp4",
+    streamRecordingId: "immutable-source.mp4",
+  });
+});
