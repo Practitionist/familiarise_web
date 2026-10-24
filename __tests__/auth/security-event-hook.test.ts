@@ -35,6 +35,8 @@ jest.mock("../../lib/email/render", () => ({
 jest.mock("@sentry/nextjs", () => ({
   captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
+// reportSentryError and the shared loggers capture through @sentry/core; share the one mock.
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";

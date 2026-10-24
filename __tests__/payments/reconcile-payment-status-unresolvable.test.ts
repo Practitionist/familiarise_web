@@ -22,7 +22,10 @@ jest.mock("@sentry/nextjs", () => ({
     callback({ setTag: jest.fn(), setTags: jest.fn() }),
   ),
   getCurrentScope: jest.fn(() => ({ setTag: jest.fn(), setTags: jest.fn() })),
+  flush: jest.fn(async () => true),
 }));
+// reportSentryError and the shared loggers capture through @sentry/core; share the one mock.
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
