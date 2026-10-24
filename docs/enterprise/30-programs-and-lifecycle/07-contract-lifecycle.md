@@ -129,7 +129,7 @@ it's a forward-looking toggle that can't rewrite already-settled money, so an
 operator can flip it on a live contract at will. The `GET` route returns a
 `locked` boolean alongside the contract so the edit drawer disables the locked
 inputs without a second round-trip. The rationale mirrors the
-[RateCard bump](../10-money-and-ledger/05-booking-to-earnings.md) / program config-lock immutable
+[RateCard bump](../../finance/50-b2b/03-rate-cards-and-overage.md) / program config-lock immutable
 pattern: to change committed terms you **supersede**, you don't mutate.
 
 ## Supersession chain — amend / renew / replace
@@ -438,5 +438,5 @@ The three layers roll over on different clocks. A contract changes only by super
   a contract.
 - [Cycle engine & rollover](08-cycle-engine-and-rollover.md) — how the contract
   state clamps assignment roll-vs-close.
-- [Invoicing](../10-money-and-ledger/08-invoicing.md) — invoices that reference a contract and block
+- [Invoicing](../../finance/50-b2b/04-invoices-purchase-orders-and-dunning.md) — invoices that reference a contract and block
   its termination while outstanding.

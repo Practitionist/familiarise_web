@@ -18,6 +18,14 @@
  */
 
 import { PRE_MINT_INTENT_PREFIX } from "@/lib/payments/pre-mint-intent";
+import {
+  startDeadline,
+  SWEEP_START_DEADLINE_MS,
+} from "@/lib/cron/run-deadline";
+import {
+  compareLeastRecentlyReconciled,
+  LEAST_RECENTLY_RECONCILED,
+} from "@/lib/payments/payouts/reconcile-cursor";
 import prisma from "../../lib/prisma";
 import { PaymentStatus, PaymentGateway, Prisma } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
@@ -37,6 +45,9 @@ const MIN_AGE_MINUTES = 5;
 
 // Don't reconcile payments older than 7 days
 const MAX_AGE_DAYS = 7;
+
+// A gateway read is not started with less budget than this left; the row stays unstamped and first.
+const GATEWAY_READ_HEADROOM_MS = 3_000;
 
 // #1757 — a PENDING row this old whose id the gateway does not know is retired,
 // not re-reported every tick; younger ones may still be gateway lag.
@@ -105,9 +116,9 @@ type GatewayLookup =
   | { kind: "gateway_error"; detail: string };
 
 export interface ReconcilePaymentStatusOptions {
-  /** #1356 — caps the batch for the Netlify ticker; undefined keeps the
-   * unbounded GitHub Actions behaviour. */
+  /** Maximum candidates examined per run across both cohorts; defaults to 50. */
   limit?: number;
+  startedAt?: number;
 }
 
 /**
@@ -115,6 +126,7 @@ export interface ReconcilePaymentStatusOptions {
  */
 async function getRazorpayPaymentStatus(
   orderId: string,
+  deadlineAt: number,
 ): Promise<GatewayLookup> {
   const keyId = process.env.RAZORPAY_KEY_ID;
   // #677 PM-1 — prod env defines RAZORPAY_SECRET (the canonical name the
@@ -140,7 +152,7 @@ async function getRazorpayPaymentStatus(
         headers: {
           Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
         },
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())),
       },
     );
 
@@ -167,7 +179,7 @@ async function getRazorpayPaymentStatus(
           headers: {
             Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
           },
-          signal: AbortSignal.timeout(15_000),
+          signal: AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())),
         },
       );
 
@@ -264,6 +276,9 @@ export async function reconcilePaymentStatus(
 async function reconcilePaymentStatusUnlocked(
   opts: ReconcilePaymentStatusOptions = {},
 ): Promise<PaymentReconciliationResult> {
+  const startedAt = opts.startedAt ?? Date.now();
+  const pastDeadline = startDeadline(startedAt);
+  const limit = opts.limit ?? 50;
   const errors: string[] = [];
   let reconciledCount = 0;
   let succeededCount = 0;
@@ -295,8 +310,8 @@ async function reconcilePaymentStatusUnlocked(
       user: { select: { email: true, name: true } },
       appointment: { select: { id: true, appointmentType: true } },
     },
-    orderBy: { createdAt: "asc" },
-    take: opts.limit,
+    orderBy: [LEAST_RECENTLY_RECONCILED, { id: "asc" }],
+    take: limit,
   });
 
   // #1757 — the terminal cohort: PENDING rows older than the orphan age, which
@@ -311,8 +326,8 @@ async function reconcilePaymentStatusUnlocked(
       user: { select: { email: true, name: true } },
       appointment: { select: { id: true, appointmentType: true } },
     },
-    orderBy: { createdAt: "asc" },
-    take: opts.limit,
+    orderBy: [LEAST_RECENTLY_RECONCILED, { id: "asc" }],
+    take: limit,
   });
   const orphanCandidateIds = new Set(orphanCandidates.map((p) => p.id));
   const cohort = [
@@ -320,7 +335,10 @@ async function reconcilePaymentStatusUnlocked(
     ...orphanCandidates.filter(
       (p) => !stalePendingPayments.some((s) => s.id === p.id),
     ),
-  ];
+  ]
+    .sort(compareLeastRecentlyReconciled)
+    .slice(0, limit);
+  let totalProcessed = 0;
 
   const razorpayConfigured = !!(
     process.env.RAZORPAY_KEY_ID &&
@@ -336,275 +354,302 @@ async function reconcilePaymentStatusUnlocked(
     `Found ${stalePendingPayments.length} stale PENDING payments to reconcile, ${orphanCandidates.length} orphan candidate(s) past the orphan age`,
   );
 
+  const gatewayDeadlineAt = startedAt + SWEEP_START_DEADLINE_MS;
   for (const payment of cohort) {
-    // #1861 P4b — every key is written each row ("none" when unknown), so a
-    // captured error never carries a previous row's ids.
-    Sentry.getCurrentScope().setTags({
-      paymentId: payment.id,
-      appointmentId: payment.appointment?.id ?? "none",
-      gatewayOrderId: payment.paymentIntent ?? "none",
-    });
-    console.log(`\nReconciling payment ${payment.id}`);
-    console.log(`   Gateway: ${payment.paymentGateway}`);
-    console.log(`   Payment Intent: ${payment.paymentIntent}`);
-    console.log(`   User: ${payment.user?.name || "Unknown"}`);
-    console.log(`   Created: ${payment.createdAt.toISOString()}`);
-
-    // Skip if no payment intent
-    if (!payment.paymentIntent) {
-      console.log(`   Skipping - no payment intent`);
-      skippedCount++;
-      continue;
-    }
-
-    // Query gateway for actual status. Razorpay's `notes`/`amountPaise` ride
-    // along so a SUCCEEDED reconcile can drive the confirmation pipeline
-    // instead of writing the status (ADR 21).
-    let lookup: GatewayLookup;
-
-    if (payment.paymentGateway === PaymentGateway.RAZORPAY) {
-      if (!razorpayConfigured) {
-        console.log(`   Skipping - Razorpay credentials not configured`);
-        skippedCount++;
-        continue;
-      }
-      lookup = await getRazorpayPaymentStatus(payment.paymentIntent);
-    } else if (payment.paymentGateway !== PaymentGateway.STRIPE) {
-      // Permanent: neither this sweep nor the retire path can read this gateway.
-      const stamped = await prisma.payment.updateMany({
-        where: {
-          id: payment.id,
-          paymentStatus: PaymentStatus.PENDING,
-          ...notManualRecoveryWhere,
-        },
-        data: {
-          description: `${MANUAL_RECOVERY_PREFIX} unsupported gateway ${payment.paymentGateway}; its state cannot be read or cancelled.${payment.description ? ` Was: ${payment.description}` : ""}`,
-        },
-      });
-      if (stamped.count === 1) {
-        deadLetteredIds.push(payment.id);
-      } else {
-        skippedCount++;
-      }
-      continue;
-    } else if (payment.createdAt < orphanCutoff) {
-      lookup = {
-        kind: "unknown_id",
-        detail: `unsupported legacy gateway ${payment.paymentGateway}`,
-      };
-    } else {
-      console.log(
-        `   Skipping - unsupported gateway: ${payment.paymentGateway}`,
-      );
-      skippedCount++;
-      continue;
-    }
-
-    // #1708 — an id the gateway does not know is terminal for this row, not a
-    // run failure. #1757 — past the orphan age it is retired through the
-    // abandoned-payments unit (expire, credits, hold); younger rows are only
-    // reported, since the gateway may still be lagging.
-    if (lookup.kind === "unknown_id") {
-      if (payment.createdAt < orphanCutoff) {
-        try {
-          const { outcome, errors: retireErrors } =
-            await retireOrphanPendingPayment(payment.id);
-          errors.push(...retireErrors);
-          if (outcome === "retired") {
-            console.warn(
-              `   Gateway does not know ${payment.paymentIntent} (${lookup.detail}) - retired PENDING → EXPIRED`,
-            );
-            retiredCount++;
-            retired.push(payment.id);
-            await recordSystemEvent({
-              category: "PAYMENT",
-              severity: "WARN",
-              message: `PAYMENT_ORPHAN_RETIRED: ${payment.id} (${payment.paymentGateway} ${payment.paymentIntent}): ${lookup.detail}`,
-              context: {
-                paymentId: payment.id,
-                paymentGateway: payment.paymentGateway,
-                paymentIntent: payment.paymentIntent,
-                createdAt: payment.createdAt.toISOString(),
-              },
-            });
-          } else {
-            console.log(
-              `   Skipped: payment ${payment.id} already transitioned by another writer`,
-            );
-            skippedCount++;
-          }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.error(`   Retire failed for ${payment.id}: ${msg}`);
-          errors.push(`Payment ${payment.id}: ${msg}`);
-        }
-        continue;
-      }
-      console.warn(
-        `   Gateway does not know ${payment.paymentIntent} (${lookup.detail}) - reported, not retried as a failure`,
-      );
-      unresolvableCount++;
-      unresolvable.push(payment.id);
-      continue;
-    }
-
-    if (lookup.kind === "gateway_error") {
-      console.log(`   Could not get status from gateway - skipping`);
-      errors.push(
-        `Payment ${payment.id}: Could not query gateway status (${lookup.detail})`,
-      );
-      skippedCount++;
-      continue;
-    }
-
-    const gatewayStatus = lookup;
-
-    // An orphan candidate the gateway does know is outside the reconcile
-    // window above; it is left for that window's rules, not acted on here.
+    if (pastDeadline()) break;
+    const needsGatewayRead =
+      payment.paymentGateway === PaymentGateway.RAZORPAY &&
+      !!payment.paymentIntent &&
+      razorpayConfigured;
     if (
-      orphanCandidateIds.has(payment.id) &&
-      !stalePendingPayments.some((s) => s.id === payment.id)
+      needsGatewayRead &&
+      gatewayDeadlineAt - Date.now() < GATEWAY_READ_HEADROOM_MS
     ) {
-      console.log(
-        `   Gateway knows the id (${gatewayStatus.status}) - outside the reconcile window, skipping`,
-      );
-      skippedCount++;
-      continue;
+      break;
     }
+    totalProcessed++;
+    try {
+      // #1861 P4b — every key is written each row ("none" when unknown), so a
+      // captured error never carries a previous row's ids.
+      Sentry.getCurrentScope().setTags({
+        paymentId: payment.id,
+        appointmentId: payment.appointment?.id ?? "none",
+        gatewayOrderId: payment.paymentIntent ?? "none",
+      });
+      console.log(`\nReconciling payment ${payment.id}`);
+      console.log(`   Gateway: ${payment.paymentGateway}`);
+      console.log(`   Payment Intent: ${payment.paymentIntent}`);
+      console.log(`   User: ${payment.user?.name || "Unknown"}`);
+      console.log(`   Created: ${payment.createdAt.toISOString()}`);
 
-    console.log(`   Gateway status: ${gatewayStatus.status}`);
+      // Skip if no payment intent
+      if (!payment.paymentIntent) {
+        console.log(`   Skipping - no payment intent`);
+        skippedCount++;
+        continue;
+      }
 
-    // Map gateway status to our status
-    const mappedStatus = mapGatewayStatus(
-      payment.paymentGateway,
-      gatewayStatus.status,
-    );
+      // Query gateway for actual status. Razorpay's `notes`/`amountPaise` ride
+      // along so a SUCCEEDED reconcile can drive the confirmation pipeline
+      // instead of writing the status (ADR 21).
+      let lookup: GatewayLookup;
 
-    if (!mappedStatus) {
-      console.log(`   Unknown gateway status - skipping`);
-      skippedCount++;
-      continue;
-    }
-
-    // Update if status changed
-    if (mappedStatus !== payment.paymentStatus) {
-      // SUCCEEDED goes through routeCapturedPayment, never a raw status write,
-      // so confirmation, auto-refund guards, earnings and journaling all run.
-      if (mappedStatus === PaymentStatus.SUCCEEDED) {
-        const notes: Record<string, string> = {
-          ...gatewayStatus.notes,
-        };
-        if (payment.appointment?.id) {
-          if (!notes.userId && payment.userId) {
-            notes.userId = payment.userId;
-          }
-          if (!notes.appointmentType && payment.appointment.appointmentType) {
-            notes.appointmentType = payment.appointment.appointmentType;
-          }
-        }
-        const isStandaloneFlow =
-          notes.type === "credit_purchase" ||
-          notes.type === "invoice_payment" ||
-          notes.type === "overage_member" ||
-          notes.type === "recording_purchase";
-        if (
-          !isStandaloneFlow &&
-          !payment.appointment?.id &&
-          !notes.appointmentType
-        ) {
-          const msg = `Cannot reconcile booking payment ${payment.id} to SUCCEEDED without linked appointment or creation notes`;
-          console.error(`   ${msg}`);
-          const missingCtxCorrelationId = `reconcile-missing-context:${payment.id}`;
-          const alreadyReportedMissingCtx =
-            typeof prisma.systemEvent?.findFirst === "function"
-              ? await prisma.systemEvent
-                  .findFirst({
-                    where: {
-                      correlationId: missingCtxCorrelationId,
-                      createdAt: {
-                        gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
-                      },
-                    },
-                    select: { id: true },
-                  })
-                  .catch(() => null)
-              : null;
-          if (!alreadyReportedMissingCtx) {
-            await recordSystemEvent({
-              category: "PAYMENT",
-              severity: "ERROR",
-              message: `PAYMENT_RECONCILE_MISSING_BOOKING_CONTEXT: ${msg}`,
-              correlationId: missingCtxCorrelationId,
-              context: {
-                paymentId: payment.id,
-                paymentGateway: payment.paymentGateway,
-                paymentIntent: payment.paymentIntent,
-              },
-            });
-          }
-          errors.push(`Payment ${payment.id}: ${msg}`);
+      if (payment.paymentGateway === PaymentGateway.RAZORPAY) {
+        if (!razorpayConfigured) {
+          console.log(`   Skipping - Razorpay credentials not configured`);
+          skippedCount++;
           continue;
         }
-        try {
-          await routeCapturedPayment({
-            orderId: payment.paymentIntent,
-            notes,
-            amountPaise: gatewayStatus.amountPaise,
-            gatewayPaymentId: gatewayStatus.paymentId,
-          });
-          console.log(`   Confirmed via pipeline: ${payment.id}`);
-          reconciledCount++;
-          succeededCount++;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.error(`   Pipeline failed for ${payment.id}: ${msg}`);
-          errors.push(`Payment ${payment.id}: ${msg}`);
-        }
-        continue;
-      }
-
-      // #776 — guard on the status we read. A webhook can transition this
-      // payment (e.g. PENDING→SUCCEEDED) between the findMany and here; without
-      // the predicate the reconcile would clobber that real transition back to
-      // EXPIRED/FAILED. updateMany lets us add the guard; count===0 means another
-      // writer already moved it — skip rather than overwrite.
-      const claimed = await prisma.$transaction(async (tx) => {
-        const res = await tx.payment.updateMany({
-          where: { id: payment.id, paymentStatus: payment.paymentStatus },
+        lookup = await getRazorpayPaymentStatus(
+          payment.paymentIntent,
+          gatewayDeadlineAt,
+        );
+      } else if (payment.paymentGateway !== PaymentGateway.STRIPE) {
+        // Permanent: neither this sweep nor the retire path can read this gateway.
+        const stamped = await prisma.payment.updateMany({
+          where: {
+            id: payment.id,
+            paymentStatus: PaymentStatus.PENDING,
+            ...notManualRecoveryWhere,
+          },
           data: {
-            paymentStatus: mappedStatus,
+            description: `${MANUAL_RECOVERY_PREFIX} unsupported gateway ${payment.paymentGateway}; its state cannot be read or cancelled.${payment.description ? ` Was: ${payment.description}` : ""}`,
           },
         });
-        if (
-          res.count > 0 &&
-          (mappedStatus === PaymentStatus.FAILED ||
-            mappedStatus === PaymentStatus.EXPIRED)
-        ) {
-          await reverseCreditsForPayment(payment.id, tx);
+        if (stamped.count === 1) {
+          deadLetteredIds.push(payment.id);
+        } else {
+          skippedCount++;
         }
-        return res;
-      });
-
-      if (claimed.count === 0) {
+        continue;
+      } else if (payment.createdAt < orphanCutoff) {
+        lookup = {
+          kind: "unknown_id",
+          detail: `unsupported legacy gateway ${payment.paymentGateway}`,
+        };
+      } else {
         console.log(
-          `   Skipped: payment ${payment.id} already transitioned by another writer`,
+          `   Skipping - unsupported gateway: ${payment.paymentGateway}`,
         );
         skippedCount++;
         continue;
       }
 
-      console.log(
-        `   Updated status: ${payment.paymentStatus} → ${mappedStatus}`,
-      );
-      reconciledCount++;
-
-      if (mappedStatus === PaymentStatus.EXPIRED) {
-        expiredCount++;
-      } else if (mappedStatus === PaymentStatus.FAILED) {
-        failedCount++;
+      // #1708 — an id the gateway does not know is terminal for this row, not a
+      // run failure. #1757 — past the orphan age it is retired through the
+      // abandoned-payments unit (expire, credits, hold); younger rows are only
+      // reported, since the gateway may still be lagging.
+      if (lookup.kind === "unknown_id") {
+        if (payment.createdAt < orphanCutoff) {
+          try {
+            const { outcome, errors: retireErrors } =
+              await retireOrphanPendingPayment(payment.id);
+            errors.push(...retireErrors);
+            if (outcome === "retired") {
+              console.warn(
+                `   Gateway does not know ${payment.paymentIntent} (${lookup.detail}) - retired PENDING → EXPIRED`,
+              );
+              retiredCount++;
+              retired.push(payment.id);
+              await recordSystemEvent({
+                category: "PAYMENT",
+                severity: "WARN",
+                message: `PAYMENT_ORPHAN_RETIRED: ${payment.id} (${payment.paymentGateway} ${payment.paymentIntent}): ${lookup.detail}`,
+                context: {
+                  paymentId: payment.id,
+                  paymentGateway: payment.paymentGateway,
+                  paymentIntent: payment.paymentIntent,
+                  createdAt: payment.createdAt.toISOString(),
+                },
+              });
+            } else {
+              console.log(
+                `   Skipped: payment ${payment.id} already transitioned by another writer`,
+              );
+              skippedCount++;
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`   Retire failed for ${payment.id}: ${msg}`);
+            errors.push(`Payment ${payment.id}: ${msg}`);
+          }
+          continue;
+        }
+        console.warn(
+          `   Gateway does not know ${payment.paymentIntent} (${lookup.detail}) - reported, not retried as a failure`,
+        );
+        unresolvableCount++;
+        unresolvable.push(payment.id);
+        continue;
       }
-    } else {
-      console.log(`   Status unchanged (${mappedStatus})`);
+
+      if (lookup.kind === "gateway_error") {
+        console.log(`   Could not get status from gateway - skipping`);
+        errors.push(
+          `Payment ${payment.id}: Could not query gateway status (${lookup.detail})`,
+        );
+        skippedCount++;
+        continue;
+      }
+
+      const gatewayStatus = lookup;
+
+      // An orphan candidate the gateway does know is outside the reconcile
+      // window above; it is left for that window's rules, not acted on here.
+      if (
+        orphanCandidateIds.has(payment.id) &&
+        !stalePendingPayments.some((s) => s.id === payment.id)
+      ) {
+        console.log(
+          `   Gateway knows the id (${gatewayStatus.status}) - outside the reconcile window, skipping`,
+        );
+        skippedCount++;
+        continue;
+      }
+
+      console.log(`   Gateway status: ${gatewayStatus.status}`);
+
+      // Map gateway status to our status
+      const mappedStatus = mapGatewayStatus(
+        payment.paymentGateway,
+        gatewayStatus.status,
+      );
+
+      if (!mappedStatus) {
+        console.log(`   Unknown gateway status - skipping`);
+        skippedCount++;
+        continue;
+      }
+
+      // Update if status changed
+      if (mappedStatus !== payment.paymentStatus) {
+        // SUCCEEDED goes through routeCapturedPayment, never a raw status write,
+        // so confirmation, auto-refund guards, earnings and journaling all run.
+        if (mappedStatus === PaymentStatus.SUCCEEDED) {
+          const notes: Record<string, string> = {
+            ...gatewayStatus.notes,
+          };
+          if (payment.appointment?.id) {
+            if (!notes.userId && payment.userId) {
+              notes.userId = payment.userId;
+            }
+            if (!notes.appointmentType && payment.appointment.appointmentType) {
+              notes.appointmentType = payment.appointment.appointmentType;
+            }
+          }
+          const isStandaloneFlow =
+            notes.type === "credit_purchase" ||
+            notes.type === "invoice_payment" ||
+            notes.type === "overage_member" ||
+            notes.type === "recording_purchase";
+          if (
+            !isStandaloneFlow &&
+            !payment.appointment?.id &&
+            !notes.appointmentType
+          ) {
+            const msg = `Cannot reconcile booking payment ${payment.id} to SUCCEEDED without linked appointment or creation notes`;
+            console.error(`   ${msg}`);
+            const missingCtxCorrelationId = `reconcile-missing-context:${payment.id}`;
+            const alreadyReportedMissingCtx =
+              typeof prisma.systemEvent?.findFirst === "function"
+                ? await prisma.systemEvent
+                    .findFirst({
+                      where: {
+                        correlationId: missingCtxCorrelationId,
+                        createdAt: {
+                          gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
+                        },
+                      },
+                      select: { id: true },
+                    })
+                    .catch(() => null)
+                : null;
+            if (!alreadyReportedMissingCtx) {
+              await recordSystemEvent({
+                category: "PAYMENT",
+                severity: "ERROR",
+                message: `PAYMENT_RECONCILE_MISSING_BOOKING_CONTEXT: ${msg}`,
+                correlationId: missingCtxCorrelationId,
+                context: {
+                  paymentId: payment.id,
+                  paymentGateway: payment.paymentGateway,
+                  paymentIntent: payment.paymentIntent,
+                },
+              });
+            }
+            errors.push(`Payment ${payment.id}: ${msg}`);
+            continue;
+          }
+          try {
+            await routeCapturedPayment({
+              orderId: payment.paymentIntent,
+              notes,
+              amountPaise: gatewayStatus.amountPaise,
+              gatewayPaymentId: gatewayStatus.paymentId,
+            });
+            console.log(`   Confirmed via pipeline: ${payment.id}`);
+            reconciledCount++;
+            succeededCount++;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`   Pipeline failed for ${payment.id}: ${msg}`);
+            errors.push(`Payment ${payment.id}: ${msg}`);
+          }
+          continue;
+        }
+
+        // #776 — guard on the status we read. A webhook can transition this
+        // payment (e.g. PENDING→SUCCEEDED) between the findMany and here; without
+        // the predicate the reconcile would clobber that real transition back to
+        // EXPIRED/FAILED. updateMany lets us add the guard; count===0 means another
+        // writer already moved it — skip rather than overwrite.
+        const claimed = await prisma.$transaction(async (tx) => {
+          const res = await tx.payment.updateMany({
+            where: { id: payment.id, paymentStatus: payment.paymentStatus },
+            data: {
+              paymentStatus: mappedStatus,
+            },
+          });
+          if (
+            res.count > 0 &&
+            (mappedStatus === PaymentStatus.FAILED ||
+              mappedStatus === PaymentStatus.EXPIRED)
+          ) {
+            await reverseCreditsForPayment(payment.id, tx);
+          }
+          return res;
+        });
+
+        if (claimed.count === 0) {
+          console.log(
+            `   Skipped: payment ${payment.id} already transitioned by another writer`,
+          );
+          skippedCount++;
+          continue;
+        }
+
+        console.log(
+          `   Updated status: ${payment.paymentStatus} → ${mappedStatus}`,
+        );
+        reconciledCount++;
+
+        if (mappedStatus === PaymentStatus.EXPIRED) {
+          expiredCount++;
+        } else if (mappedStatus === PaymentStatus.FAILED) {
+          failedCount++;
+        }
+      } else {
+        console.log(`   Status unchanged (${mappedStatus})`);
+      }
+    } finally {
+      try {
+        // Attempted timeouts rotate too; an unstarted candidate never reaches this block.
+        await prisma.$executeRaw`UPDATE "Payment" SET "lastReconciledAt" = now() WHERE id = ${payment.id}`;
+      } catch (error) {
+        errors.push(
+          `Polling cursor Payment ${payment.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
   }
 
@@ -677,7 +722,7 @@ async function reconcilePaymentStatusUnlocked(
 
   return {
     success: errors.length === 0,
-    totalProcessed: cohort.length,
+    totalProcessed,
     reconciledCount,
     succeededCount,
     failedCount,

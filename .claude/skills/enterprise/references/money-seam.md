@@ -31,6 +31,8 @@ Every `(FundingSource × ProgramType × OverageBehavior × overageSurchargeBps)`
 
 `walletDebit()` performs an atomic test-and-decrement of `BillingAccount.walletBalance` in the same transaction the `WALLET` leg is written, so a booking cannot be confirmed against a balance that has already been spent by a concurrent checkout. `walletCredit()` is the refund-side mirror, crediting the cache and writing the corresponding `Cr WALLET(org)` ledger entry. A newly created `BillingAccount` seeds its wallet balance as `NULL` rather than zero, which is a deliberate signal distinguishing "this org has never had a wallet balance computed" from "this org's wallet balance is exactly zero" — code that reads the balance must treat a `NULL` as needing initialisation, not as a debit failure.
 
+Leaving `WALLET` funding is refused while the wallet holds a balance, owes a shortfall receivable only a top-up settles (`WALLET_SHORTFALL_OPEN`), or has a `PENDING` or `FAILED` member overage on a wallet-funded booking that could still restore onto it (`WALLET_OVERAGE_UNSETTLED`); both switch doors call `assertWalletFundingSwitchable` (`lib/api/organizations/wallet.ts`) inside the switch transaction.
+
 ## Invoice accrual, rollup, and dunning
 
 An INVOICE-rail booking (or a `LICENSE × CHARGE_ORG` overage) accrues an `INVOICE_ACCRUAL` / `OVERAGE_INVOICE_ACCRUAL` leg with no immediate cash movement. `rollupOrgInvoiceAccruals`, run monthly, sums every unbilled accrual leg for an organisation into one `OrganizationInvoice`, stamping `billableToOrgInvoiceId` on each `Payment` it consumed so a second rollup run does not re-bill the same charge. An invoice past its due date is marked `OVERDUE` by the dunning cron, which sends reminders on a fixed cadence; booking-suspension on terminal non-payment is gated behind `ENABLE_DUNNING_SUSPEND` (default off).
@@ -45,4 +47,4 @@ An organisation cannot fund bookings, or be billed for its members' overage, unt
 
 ## Sources
 
-`docs/payments/04-b2c-b2b-funding-seam.md`, `docs/enterprise/00-foundations/03-funding-and-programs.md`, `docs/enterprise/10-money-and-ledger/04-wallet-and-topups.md`, `docs/enterprise/10-money-and-ledger/05-booking-to-earnings.md`, `lib/enterprise/reachable-paths.ts`.
+`docs/finance/50-b2b/01-funding-rails-and-permutations.md`, `docs/enterprise/00-foundations/03-funding-and-programs.md`, `docs/finance/50-b2b/02-wallet-and-top-ups.md`, `docs/finance/50-b2b/03-rate-cards-and-overage.md`, `lib/enterprise/reachable-paths.ts`.

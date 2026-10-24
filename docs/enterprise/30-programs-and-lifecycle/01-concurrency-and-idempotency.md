@@ -48,7 +48,7 @@ WHERE "id" = :billingAccountId
   AND "walletBalance" >= :amountPaise
 ```
 
-The `>= :amountPaise` predicate **is** the lock: Postgres takes a row-level write lock for the UPDATE, so two concurrent debits can't both satisfy it. Zero rows updated → `WalletInsufficientFundsError`. This moves only the **cache** ([money model §4](../10-money-and-ledger/01-money-model-overview.md)); the authoritative `Dr WALLET` leg posts later inside the `booking:<paymentId>` transaction, where the full split is known. Both run in the same Prisma transaction as the rest of checkout, so any downstream failure rolls back the decrement.
+The `>= :amountPaise` predicate **is** the lock: Postgres takes a row-level write lock for the UPDATE, so two concurrent debits can't both satisfy it. Zero rows updated → `WalletInsufficientFundsError`. This moves only the **cache** ([money model §4](../../finance/20-ledger/01-double-entry-model.md)); the authoritative `Dr WALLET` leg posts later inside the `booking:<paymentId>` transaction, where the full split is known. Both run in the same Prisma transaction as the rest of checkout, so any downstream failure rolls back the decrement.
 
 ## Program-assignment claim (upsert on composite unique)
 
@@ -56,7 +56,7 @@ The claim helper is `lib/api/organizations/program-helpers.ts#claimProgramAssign
 
 ## Booking utilization (counter + usage ledger in lock-step)
 
-`recordBookingUtilization` runs as one transaction. It first claims cap headroom with a guarded conditional UPDATE (`updateMany WHERE engagementsUsed <= cap - :n`, so the cap check and the increment can't race), then create `BookingUtilization` + its `UsageLedgerEntry` twin (`consumedPaise` is the CREDIT_POOL twin, metered against `creditBudgetPerCycle × 100`). When the guarded update matches zero rows the booking is over-cap: either checkout refuses (`BLOCK` → `ProgramAssignmentLimitError`) or the overage path bills it (`wasOverage = true`, persists an `OverageEvent`). The reconciler's `PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT` is the backstop ([ledger integrity](../10-money-and-ledger/13-ledger-integrity.md)).
+`recordBookingUtilization` runs as one transaction. It first claims cap headroom with a guarded conditional UPDATE (`updateMany WHERE engagementsUsed <= cap - :n`, so the cap check and the increment can't race), then create `BookingUtilization` + its `UsageLedgerEntry` twin (`consumedPaise` is the CREDIT_POOL twin, metered against `creditBudgetPerCycle × 100`). When the guarded update matches zero rows the booking is over-cap: either checkout refuses (`BLOCK` → `ProgramAssignmentLimitError`) or the overage path bills it (`wasOverage = true`, persists an `OverageEvent`). The reconciler's `PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT` is the backstop ([ledger integrity](../../finance/20-ledger/06-integrity-and-reconciliation.md)).
 
 **The race, drawn.** Picture the last covered seat on a Wipro learner's BLOCK assignment (`coveredEngagementsPerCycle - engagementsUsed == 1`) and two browser tabs hitting _Book_ in the same millisecond. Both transactions read the same stable config and the same `engagementsUsed`; the correctness hinges entirely on the conditional UPDATE, because Postgres takes a row-level write lock the instant the first `updateMany` touches the row. The second transaction blocks on that lock, and when it unblocks it re-evaluates `WHERE engagementsUsed <= cap - 1` against the _already-incremented_ value — which no longer matches — so it gets `count === 0` and throws. There is no read-then-write window to lose:
 
@@ -83,11 +83,11 @@ Swap `BLOCK` for `CHARGE_ORG` (Wipro's actual seed config) and tab B doesn't 402
 
 ## Rate-card bump (two-step in one transaction)
 
-`bumpRateCard` closes the current card (`effectiveTo = at`) and inserts a new one (`effectiveFrom = at`) inside a single transaction. A degenerate same-instant race can overlap the two rows, but `findEffective` orders by `effectiveFrom DESC` so the winner's row wins every lookup, and the money impact is nil because earnings already carry their bps snapshots (see [booking → earnings](../10-money-and-ledger/05-booking-to-earnings.md)).
+`bumpRateCard` closes the current card (`effectiveTo = at`) and inserts a new one (`effectiveFrom = at`) inside a single transaction. A degenerate same-instant race can overlap the two rows, but `findEffective` orders by `effectiveFrom DESC` so the winner's row wins every lookup, and the money impact is nil because earnings already carry their bps snapshots (see [booking → earnings](../../finance/50-b2b/03-rate-cards-and-overage.md)).
 
 ## PO balance (atomic compare-and-swap)
 
-The purchase-order balance decrements via `updateMany WHERE status='ACTIVE' AND remainingAmountPaise >= amount` in one statement, so two POSTs racing for the last ₹1 cannot both win (see [invoicing §6](../10-money-and-ledger/08-invoicing.md)).
+The purchase-order balance decrements via `updateMany WHERE status='ACTIVE' AND remainingAmountPaise >= amount` in one statement, so two POSTs racing for the last ₹1 cannot both win (see [invoicing §6](../../finance/50-b2b/04-invoices-purchase-orders-and-dunning.md)).
 
 ## Domain-claim uniqueness
 
@@ -109,7 +109,7 @@ The governing rule is that every side-effect entry point derives its idempotency
 
 ## The money journal — `LedgerTransaction.idempotencyKey`
 
-Every cash event posts through `postLedgerTxn`, which is idempotent on a structured, unique key. A repeat call is a no-op that returns `{ created: false }`; a racing duplicate hits the `@unique` `P2002`, aborts its transaction, and the retry lands on the fast path (see [ledger & postings §2](../10-money-and-ledger/03-ledger-and-postings.md)). The keys each money flow derives are listed below.
+Every cash event posts through `postLedgerTxn`, which is idempotent on a structured, unique key. A repeat call is a no-op that returns `{ created: false }`; a racing duplicate hits the `@unique` `P2002`, aborts its transaction, and the retry lands on the fast path (see [ledger & postings §2](../../finance/20-ledger/04-postings.md)). The keys each money flow derives are listed below.
 
 | Flow              | Key                              |
 | ----------------- | -------------------------------- |
@@ -142,7 +142,7 @@ Payment-order and top-up flows key off the provider order id that the server its
 | Invoice payment              | `razorpay_order_id`                      | `P2002` on `OrganizationInvoice.providerPaymentOrderId`                         |
 | One-time / day-pass checkout | `razorpay_order_id`                      | same                                                                            |
 
-The server never accepts a client-supplied key — it reuses the `razorpay_order_id` it minted. Top-up confirmation is doubly idempotent: the `WalletTopUp` claim is `updateMany WHERE status='PENDING'` (exactly one delivery wins) **and** the `topup:` ledger key dedupes the posting ([wallet & top-ups](../10-money-and-ledger/04-wallet-and-topups.md)).
+The server never accepts a client-supplied key — it reuses the `razorpay_order_id` it minted. Top-up confirmation is doubly idempotent: the `WalletTopUp` claim is `updateMany WHERE status='PENDING'` (exactly one delivery wins) **and** the `topup:` ledger key dedupes the posting ([wallet & top-ups](../../finance/50-b2b/02-wallet-and-top-ups.md)).
 
 ## Invoices
 
@@ -187,7 +187,7 @@ This is the same shape every lifecycle cron in the table above uses (`autoRenewe
 
 ## Payment legs
 
-`PaymentLeg.sourceRef` carries the per-source key: a `CARD` leg uses the gateway payment id, a `REFERRAL_CREDIT` leg uses `referralCreditUsageId`, and an `INVOICE_ACCRUAL` or `LICENSE` leg uses `programAssignmentId`. The `@@unique([paymentId, source])` constraint blocks any duplicate-source leg (see [payment legs](../10-money-and-ledger/09-payment-legs.md)).
+`PaymentLeg.sourceRef` carries the per-source key: a `CARD` leg uses the gateway payment id, a `REFERRAL_CREDIT` leg uses `referralCreditUsageId`, and an `INVOICE_ACCRUAL` or `LICENSE` leg uses `programAssignmentId`. The `@@unique([paymentId, source])` constraint blocks any duplicate-source leg (see [payment legs](../../finance/20-ledger/03-payment-legs.md)).
 
 ## Emails (Resend)
 
@@ -222,10 +222,10 @@ it("is idempotent on replay", async () => {
 
 ### Related docs
 
-- [Wallet & top-ups](../10-money-and-ledger/04-wallet-and-topups.md) — the debit/credit + top-up idempotency specifics.
-- [Ledger & postings](../10-money-and-ledger/03-ledger-and-postings.md) — `postLedgerTxn` idempotency.
+- [Wallet & top-ups](../../finance/50-b2b/02-wallet-and-top-ups.md) — the debit/credit + top-up idempotency specifics.
+- [Ledger & postings](../../finance/20-ledger/04-postings.md) — `postLedgerTxn` idempotency.
 - [Programs](02-programs.md) — the assignment-claim flow.
-- [Booking → earnings](../10-money-and-ledger/05-booking-to-earnings.md) — rate-card bump semantics.
-- [Ledger integrity](../10-money-and-ledger/13-ledger-integrity.md) — the drift checks that backstop these guards.
+- [Booking → earnings](../../finance/50-b2b/03-rate-cards-and-overage.md) — rate-card bump semantics.
+- [Ledger integrity](../../finance/20-ledger/06-integrity-and-reconciliation.md) — the drift checks that backstop these guards.
 - [Cycle engine & rollover](08-cycle-engine-and-rollover.md) — the successor-mint + roll/close claim gates.
 - [Contract lifecycle](07-contract-lifecycle.md) — the auto-renew / expire claim gates.

@@ -183,7 +183,7 @@ function ReviewDialog({
         </AlertDialogHeader>
         {preview !== null && preview.committedPaise > 0 && (
           <p className="text-xs text-muted-foreground">
-            Other approved support refunds on this payment:{" "}
+            Already refunded or committed on this payment:{" "}
             {inr(preview.committedPaise)}.
           </p>
         )}
@@ -313,12 +313,16 @@ function RecommendForm({
         />
         <div>
           <label htmlFor={seatId} className="font-medium">
-            Also cancel the service (release seat)
+            Also release the customer&apos;s seat
           </label>
           <p id={`${seatId}-hint`} className="text-xs text-muted-foreground">
-            Leave unchecked to refund money only: the customer keeps their
-            booking. When checked, the remaining sessions are cancelled once the
-            refund is sent.
+            Leave unchecked to refund money only: the customer keeps their seat.
+            When checked, the seat is marked refunded once the refund is sent:
+            the customer loses access to the sessions and recordings, and a
+            class or webinar seat can be booked by someone else. This does not
+            cancel the booking or its sessions; use Cancel booking in the
+            booking&apos;s Ops panel for that. A booking paid entirely with
+            credits always releases the seat when its credits are restored.
           </p>
         </div>
       </div>
@@ -398,7 +402,7 @@ export function FinancialPanel({
               </p>
               <p>
                 {recommendationStatus(rec)}
-                {rec.releaseSeat ? " · Cancels the service" : ""}
+                {rec.releaseSeat ? " · Releases the seat" : ""}
               </p>
               {awaiting && (
                 <output className="block space-y-1 rounded border border-border p-2">

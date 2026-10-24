@@ -189,5 +189,5 @@ Phase 1 now writes the earnings rows and the `booking:<paymentId>` journal on ev
   pattern this relies on is Layer 2 there.
 - ADR 22 — queue posture. Explains why the sweeper cadence cannot be assumed
   tight enough to be the only recovery path.
-- `docs/enterprise/10-money-and-ledger/12-payment-webhooks.md` — the runtime
+- `docs/finance/10-money-in/02-capture-confirmation-and-webhooks.md` — the runtime
   detail of the webhook tier.

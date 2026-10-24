@@ -48,6 +48,44 @@ const entry = (
 });
 
 describe("evaluateLedgerBaseline", () => {
+  it("does not excuse a replacement missing journal with the same count", () => {
+    const finding: Finding = {
+      kind: "EARNINGS_WITHOUT_BOOKING_TXN",
+      paymentId: "replacement-payment",
+      expectedPaise: 1,
+      actualPaise: 0,
+      deltaPaise: -1,
+    };
+    const evaluation = evaluateLedgerBaseline({
+      findings: [finding],
+      entries: [
+        entry({
+          kind: finding.kind,
+          paymentId: "known-fixture",
+          organizationId: undefined,
+          billingAccountId: undefined,
+          deltaPaise: -1,
+        }),
+      ],
+      knownKinds: RECONCILE_FINDING_KINDS,
+      now: NOW,
+    });
+    expect(evaluation.ok).toBe(false);
+    expect(evaluation.unbaselinedCount).toBe(1);
+  });
+
+  it("rejects missing-journal baseline entries without a payment identity", () => {
+    const evaluation = evaluateLedgerBaseline({
+      findings: [],
+      entries: [entry({ kind: "EARNINGS_WITHOUT_BOOKING_TXN" })],
+      knownKinds: RECONCILE_FINDING_KINDS,
+      now: NOW,
+    });
+    expect(evaluation.ok).toBe(false);
+    expect(evaluation.problems).toEqual([
+      expect.stringContaining("must pin paymentId"),
+    ]);
+  });
   it("baselines a finding the entry pins and lets the run pass", () => {
     const evaluation = evaluateLedgerBaseline({
       findings: [walletDrift()],
@@ -285,10 +323,9 @@ describe("the checked-in baseline", () => {
   it("pins the seeded demo findings by fingerprint", () => {
     const seeded: Array<Partial<LedgerBaselineEntry> & { kind: string }> = [
       {
-        kind: "WALLET_BALANCE_DRIFT",
-        organizationId: "cmu15uwqp03rzc7yog53t9fnn",
-        billingAccountId: "969f23c5-7656-415d-b527-4030a4eff58e",
-        deltaPaise: 570_036,
+        kind: "EARNINGS_WITHOUT_BOOKING_TXN",
+        paymentId: "qa2188_pt",
+        deltaPaise: -1,
       },
       {
         kind: "REFUND_BOOKING_COHERENCE",

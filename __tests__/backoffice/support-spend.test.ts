@@ -22,6 +22,7 @@ const mockUsers = [
 ];
 const mockOpsRows: MockOpsRow[] = [];
 const mockRecommendations: {
+  id?: string;
   paymentId: string;
   amountPaise: number;
   approved: boolean | null;
@@ -78,15 +79,22 @@ jest.mock("../../lib/prisma", () => ({
           .filter((row) => matchesOps(row, where))
           .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
     },
+    refund: { findMany: async () => [] },
     supportFinancialRecommendation: {
       findMany: async (args: {
-        where: { paymentId: { in: string[] }; approved: boolean };
+        where: {
+          paymentId: { in: string[] };
+          approved: boolean;
+          id?: { not: string };
+        };
       }) => {
         mockRecFindMany(args);
+        const { paymentId, approved, id } = args.where;
         return mockRecommendations.filter(
           (r) =>
-            args.where.paymentId.in.includes(r.paymentId) &&
-            r.approved === args.where.approved,
+            paymentId.in.includes(r.paymentId) &&
+            r.approved === approved &&
+            (id === undefined || r.id !== id.not),
         );
       },
     },
@@ -99,9 +107,11 @@ import { readSupportSpend } from "../../lib/backoffice/support-spend";
 import {
   committedSupportPaiseByPayment,
   rollingRefundPaise,
+} from "../../lib/support/money-policy";
+import {
   STAFF_REFUND_PER_PAYMENT_PAISE,
   STAFF_REFUND_ROLLING_PAISE,
-} from "../../lib/support/money-policy";
+} from "../../lib/support/staff-refund-limits";
 
 // 07:30 IST on 22 Oct; the IST day began at 2026-10-21T18:30Z.
 const NOW = new Date("2026-10-22T02:00:00.000Z");
@@ -177,6 +187,45 @@ describe("committedSupportPaiseByPayment", () => {
     mockRecFindMany.mockClear();
     expect((await committedSupportPaiseByPayment(prisma, [])).size).toBe(0);
     expect(mockRecFindMany).not.toHaveBeenCalled();
+  });
+
+  it("leaves out only the excluded recommendation", async () => {
+    mockRecommendations.push(
+      { id: "rec-1", paymentId: "pay-1", amountPaise: 200_000, approved: true },
+      { id: "rec-2", paymentId: "pay-1", amountPaise: 100_000, approved: true },
+      { id: "rec-3", paymentId: "pay-1", amountPaise: 900_000, approved: null },
+      { id: "rec-4", paymentId: "pay-2", amountPaise: 50_000, approved: true },
+    );
+    mockRecFindMany.mockClear();
+    const committed = await committedSupportPaiseByPayment(
+      prisma,
+      ["pay-1", "pay-2"],
+      { excludeRecommendationId: "rec-1" },
+    );
+    expect(Object.fromEntries(committed)).toEqual({
+      "pay-1": 100_000,
+      "pay-2": 50_000,
+    });
+    expect(mockRecFindMany).toHaveBeenCalledWith({
+      where: {
+        paymentId: { in: ["pay-1", "pay-2"] },
+        approved: true,
+        id: { not: "rec-1" },
+      },
+      select: { paymentId: true, amountPaise: true },
+    });
+  });
+
+  it("adds no id filter without an exclusion", async () => {
+    mockRecFindMany.mockClear();
+    await committedSupportPaiseByPayment(prisma, ["pay-1"]);
+    await committedSupportPaiseByPayment(prisma, ["pay-1"], {});
+    for (const [args] of mockRecFindMany.mock.calls)
+      expect(args.where).toEqual({
+        paymentId: { in: ["pay-1"] },
+        approved: true,
+      });
+    expect(mockRecFindMany).toHaveBeenCalledTimes(2);
   });
 });
 

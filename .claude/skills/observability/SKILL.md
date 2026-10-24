@@ -81,7 +81,7 @@ The guardrails below keep real errors inside the allowance, and every one of the
 
 `sentry.shared.config.ts` applies its limits in the `beforeSend` budget stage. A per-key throttle lets the first event for each key through and then at most one per `INFRA_THROTTLE_MS` (one hour) per process, where the key is the exception type, the message with ids and numbers normalised away, and the top in-app frame. A per-process circuit breaker allows at most 10 events per rolling hour and logs a console warning when it opens; `fatal` events skip the breaker by owner decision, because a `WALLET_BALANCE_DRIFT` page must never lose to noise. The Upstash quota, cron lock (`cron-lock-unavailable`), Prisma pool exhaustion and `SystemEvent` write failures each get a fixed fingerprint family (`upstash-quota`, `prisma-pool-exhaustion`, `system-events-write-failed`), so one outage is one issue however many routes hit it. An `expected` event at level `info` is dropped, and `ignoreErrors` has a few extra entries. The throttle is in memory on purpose, because Redis is often the thing that is down.
 
-The `sampleRate` is `NEXT_PUBLIC_SENTRY_ENVIRONMENT === "preview" ? 0.1 : 1`, so previews sample errors at 10% and every other environment, including one where the variable is unset (a bare job runner or a test), samples at 100%. An earlier version keyed on "not production" and silently dropped 90% of errors wherever the variable was unset. The variable is read instead of `NODE_ENV` because `NODE_ENV` is `production` on previews too.
+Previews thin ordinary errors to 10% in `beforeSend` (`isThinnedOnPreview`), and every other environment, including one where `NEXT_PUBLIC_SENTRY_ENVIRONMENT` is unset (a bare job runner or a test), keeps 100%. The thinning is in `beforeSend` rather than `sampleRate` because the SDK samples before that hook and cannot see the mechanism: an uncaught throw in a Next server wrapper (`auto.function.nextjs.*` with `handled: false`: `onRequestError`, server components, route handlers, server actions) is exempt, since a preview exists to surface exactly those. A global `sampleRate: 0.1` dropped nine in ten of them, and an earlier version keyed on "not production" dropped 90% of errors wherever the variable was unset. The variable is read instead of `NODE_ENV` because `NODE_ENV` is `production` on previews too. `instrumentation.ts` exports its own `onRequestError`: it calls `Sentry.captureRequestError` and then hands a 2-second flush to Next's `after()`, because the SDK's own post-capture flush rides Vercel's or Cloudflare's `waitUntil` and does nothing on Netlify, where the function can freeze with the envelope in flight (the `network_error` client discards in the project stats are consistent with that failure). With no request scope it returns the flush so Next awaits it.
 
 Sweeps aggregate once per run in `settle-cancelled-sessions`, `retry-auto-refunds`, `expire-reschedule-proposals` and `reconcile-ledgers`; the freeze behaviour of the reconciler is unchanged, and drift still pages even if the first freeze throws. The cleanup-route catch-all is throttled per job. These guardrails sit next to the span and log scrubbing and the dead-letter alerting added in #1932 and the atomic cron lock added in #1935, and they do not replace either.
 
@@ -98,3 +98,24 @@ The high-priority alert workflow 3606037 now filters on `environment: production
 The owner still has to create an `org:read` Sentry token and set `SENTRY_STATS_TOKEN` on Netlify production, with the optional `SENTRY_QUOTA_PERIOD_START_DAY` and `SENTRY_ERROR_QUOTA`. In one to two months the owner plans to upgrade to the Team plan (US$26 a month billed annually, 50,000 errors, pay-as-you-go), and at that point the DSN key rate limit and the 10% preview sample should be revisited. Issue #1933 stays open until then.
 
 For the email map, the pre-launch delivery guard and ops alert routing, see [docs/email/README.md](../../../docs/email/README.md).
+
+## Operational job absence checks
+
+`GET /api/health/jobs` is a bearer-protected read-only capability freshness probe.
+It returns 503 for missing/overdue COMPLETED evidence or an unreadable history,
+using `endedAt` and actual core job names. Required capabilities/SLOs live in
+`lib/cron/operational-health.ts`; they are monitoring policy, not another schedule.
+The shared heartbeat, a RUNNING attempt, an accepted background dispatch, or an
+HTTP 200 from the public health route cannot replace this evidence. The recorder
+and probe must use the same environment label; untagged or preview rows do not
+establish production freshness. Verify tagged, truthful completion recording and
+active required workers before enabling the monitor.
+
+Configure the external monitor with CRON_SECRET in a protected Authorization
+header, never a URL parameter. Calendar-only/config-gated jobs and business
+backlog/vendor correctness need separate checks. Verify accepted telemetry and
+actual alert delivery after deployment; tests establish probe behavior, not that
+the vendor monitor is configured. Verify that worker maintenance refusals and
+held outcomes cannot record COMPLETED evidence before activation. The probe keeps
+reading during maintenance; suppress notifications externally without advancing
+successful-work freshness.

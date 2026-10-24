@@ -183,6 +183,7 @@ model User {
   supportRecommendations         SupportFinancialRecommendation[] @relation("SupportRecommendationAuthor")
   supportRecommendationDecisions SupportFinancialRecommendation[] @relation("SupportRecommendationDecider")
   supportAttachments             SupportCaseAttachment[]
+  supportChatAccessGranted       SupportCaseChatAccess[]          @relation("SupportChatAccessGrantor")
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -437,6 +438,10 @@ model SupportCase {
   decisions                  SupportCaseDecision[]            @relation("CaseDecisions")
   recommendations            SupportFinancialRecommendation[]
   attachments                SupportCaseAttachment[]
+  chatAccess                 SupportCaseChatAccess[]
+  /// The moderation report staff opened this case from; one case per report.
+  moderationReportId         String?                          @unique
+  moderationReport           ModerationReport?                @relation(fields: [moderationReportId], references: [id], onDelete: SetNull)
 
   subjects SupportCaseSubject[]
   messages SupportCaseMessage[]
@@ -579,7 +584,7 @@ model SupportFinancialRecommendation {
   decidedBy      User?       @relation("SupportRecommendationDecider", fields: [decidedById], references: [id], onDelete: Restrict)
   decisionReason String?     @db.Text
   approved       Boolean?
-  /// Cancels the remaining service on execution; false keeps the buyer's seat.
+  /// Marks the funded seat REFUNDED once the refund is sent (no session or recording access; group seats resell); never cancels the booking or its sessions.
   releaseSeat    Boolean     @default(false)
   /// An approval withdrawn because its refund never went live (null or FAILED).
   voidedAt       DateTime?   @db.Timestamptz
@@ -665,6 +670,68 @@ enum SupportCaseEventKind {
   CHANNEL_CHANGED
   LEGAL_HOLD_CHANGED
   EVIDENCE_PURGED
+  CHAT_ACCESS_GRANTED
+  CHAT_ACCESS_ENDED
+  CHAT_SUPPORT_MESSAGE
+  CHAT_REVIEW_NOTIFIED
+}
+
+/// A staff grant to one booking chat, linked to a case. READ opens the audited
+/// transcript viewer; INTERVENE also seats "Familiarise Support" in the channel.
+/// Append-only (sidecar trigger): rows only gain their end, Stream and notice stamps.
+/// Approver and tier columns for privileged-access tiers are deferred.
+model SupportCaseChatAccess {
+  id              String                      @id @default(uuid())
+  caseId          String
+  supportCase     SupportCase                 @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  kind            SupportChatAccessKind
+  basis           SupportChatAccessBasis
+  grantedById     String
+  grantedBy       User                        @relation("SupportChatAccessGrantor", fields: [grantedById], references: [id], onDelete: Restrict)
+  /// The OpsActionLog row that carries the operator's reason.
+  opsActionId     String                      @unique
+  channelType     String                      @db.VarChar(16)
+  channelId       String                      @db.VarChar(64)
+  /// Whose messages the grant covers: both members of a DM, or the reporter and target(s) in a group channel.
+  scopeUserIds    String[]
+  windowStart     DateTime                    @db.Timestamptz
+  /// Tenants that received an OrgAuditLog row for this grant.
+  organizationIds String[]
+  /// Skips the post-decision "we reviewed messages" notice when telling would create risk.
+  withholdNotice  Boolean                     @default(false)
+  expiresAt       DateTime                    @db.Timestamptz
+  endedAt         DateTime?                   @db.Timestamptz
+  endedById       String?
+  endReason       SupportChatAccessEndReason?
+  streamJoinedAt  DateTime?                   @db.Timestamptz
+  streamLeftAt    DateTime?                   @db.Timestamptz
+  /// Set once the post-decision notice for this grant was sent or withheld.
+  reviewNoticeAt  DateTime?                   @db.Timestamptz
+  createdAt       DateTime                    @default(now()) @db.Timestamptz
+
+  // Live-grant, sweep and one-live-per-channel indexes are partial; they live in prisma/sql.
+  @@index([caseId, createdAt])
+  @@index([grantedById, createdAt])
+}
+
+enum SupportChatAccessKind {
+  READ
+  INTERVENE
+}
+
+/// Why staff opened the chat. OPEN_CASE justifies a read only.
+enum SupportChatAccessBasis {
+  OPEN_CASE
+  EVIDENCE_OVERDUE
+  SAFETY
+  FRAUD_OR_SCAM
+}
+
+enum SupportChatAccessEndReason {
+  EXPIRED
+  CASE_RESOLVED
+  ENDED_BY_STAFF
+  CHANNEL_GONE
 }
 
 // #appt-support — per-appointment private CSAT (1-5), distinct from the public
@@ -785,6 +852,8 @@ enum SupportThreadCategory {
   QUALITY_COMPLAINT
   SPONSORSHIP_BILLING
   ORG_ADMIN_DISPUTE
+  // A threat, harassment, scam or other safety risk; unlocks a visible support intervention.
+  SAFETY_CONCERN
   OTHER
 }
 
@@ -1270,6 +1339,9 @@ model Organization {
   updatedAt           DateTime             @updatedAt
   supportFlowOutcomes SupportFlowOutcome[]
 
+  // Rotate examined accrual rollups without changing organization aging.
+  lastAccrualRollupAt DateTime? @db.Timestamptz
+
   @@index([status])
   @@index([canSponsor, canHost])
   @@index([kind])
@@ -1280,6 +1352,7 @@ model Organization {
   @@index([dataResidencyRegion])
   @@index([billingAccountId])
   @@map("organizations")
+  @@index([lastAccrualRollupAt, id])
 }
 
 model Invitation {
@@ -1700,8 +1773,12 @@ model WalletTopUp {
   // sweep-orphaned-topup-captures reconciler re-credits them.
   capturedAt  DateTime?
 
+  // Polling progress is separate from business modification and aging.
+  lastReconciledAt DateTime? @db.Timestamptz
+
   @@index([billingAccountId, createdAt])
   @@index([status, createdAt])
+  @@index([status, lastReconciledAt, id])
 }
 
 enum WalletTopUpStatus {
@@ -2918,7 +2995,7 @@ enum LedgerTransactionKind {
   ORG_PAYOUT
   REFUND
   OVERAGE_MEMBER
-  /// reserved — never posted; see docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md
+  /// reserved — never posted; see docs/finance/20-ledger/04-postings.md
   GRANT
   REFERRAL_CREDIT // vest, restore, reversal and breakage of referral promotional credit
   UNAPPLIED_RECEIPT // a parked capture's cash, or its release when an operator recovers the booking
@@ -3031,7 +3108,7 @@ enum GatewaySettlementLineStatus {
 // the one exception, a protective wallet-spend freeze on balance drift.
 // Findings are split against a checked-in baseline so only NEW drift fails
 // the run.
-// See `docs/enterprise/10-money-and-ledger/13-ledger-integrity.md`.
+// See `docs/finance/20-ledger/06-integrity-and-reconciliation.md`.
 model LedgerReconciliationReport {
   id            String   @id @default(uuid())
   runAt         DateTime @default(now())
@@ -5235,7 +5312,7 @@ model PlanMaterial {
   fileSize     Int
   mimeType     String
   fileUrl      String
-  storagePath  String
+  storagePath  String  @unique
   description  String? @db.Text
   order        Int     @default(0) // For ordering materials in display
 
@@ -5268,7 +5345,6 @@ model PlanMaterial {
   @@index([order])
   @@index([organizationId])
   @@index([organizationId, uploadedAt(sort: Desc)])
-  @@index([storagePath])
 }
 
 // Buyer-facing Q&A on an offering. Polymorphic across the four plan types the
@@ -5852,6 +5928,9 @@ model Payment {
 
   // Allow multiple users to pay for same appointment (webinars/classes)
   @@unique([userId, appointmentId])
+  // Polling progress is separate from business modification and aging.
+  lastReconciledAt DateTime? @db.Timestamptz
+
   @@index([expiresAt, paymentStatus])
   @@index([isMockPayment])
   @@index([paymentStatus])
@@ -5868,6 +5947,7 @@ model Payment {
   @@index([discountCodeId])
   @@index([billingAccountId])
   @@index([attributionReferralId])
+  @@index([paymentStatus, lastReconciledAt, id])
 }
 
 enum PaymentAttributionSource {
@@ -6002,6 +6082,9 @@ model Refund {
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
+  // Polling progress is separate from business modification and aging.
+  lastReconciledAt DateTime? @db.Timestamptz
+
   @@index([paymentId])
   @@index([status])
   @@index([refundId])
@@ -6010,6 +6093,7 @@ model Refund {
   @@index([status, failedNotifiedAt])
   // Finance date-range exports + reconcile-cron age scans.
   @@index([createdAt])
+  @@index([status, lastReconciledAt, id])
 }
 
 enum RefundStatus {
@@ -7193,6 +7277,9 @@ model ModerationReport {
   // identity Stream's server-side deleteMessage needs.
   streamMessageId  String?
   streamChannelCid String? // "messaging:<id>" — for the staff link back to the thread
+
+  // The support case staff opened from this report; chat access is granted on the case.
+  supportCase SupportCase?
 
   // Staff assignment
   assignedToId String?

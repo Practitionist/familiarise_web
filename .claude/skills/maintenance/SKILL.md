@@ -17,4 +17,26 @@ This is the index for operational and deployment plumbing that is not specific t
 
 ## Non-negotiables
 
-No generic outbox table exists in this repo; the domain rows already carry every pending obligation, and an idempotent sweep re-drives whatever a crashed `after()` callback missed. All scheduled jobs are registered in the consolidated 48-slug `lib/cron/cleanup-registry.ts` and exposed through the single dynamic HTTP twin `app/api/cleanup/[job]/route.ts` (gated by `CRON_SECRET` and wrapped in `withCronLock` with fail-closed semantics on money/mutation jobs). The five-minute Netlify scheduled function (`netlify/functions/cron-tick.mts`) dispatches due jobs in phase-staggered waves (`phase` / `maxDurationMs` in `lib/cron/cleanup-registry.ts`) so high-frequency sweeps never pile up on the single-connection pool (`PG_POOL_MAX=1`), gated by the `ops:active_cron_platform` fleet switch; GitHub Actions keeps only the jobs that cannot run bounded on the ticker. Maintenance bypass cookies (`maintenance_bypass`) in `lib/maintenance-edge.ts` must always use short-lived HMAC-SHA256 signed tokens (`<expiryTimestamp>.<hmac>`) verified via Web Crypto `crypto.subtle`, never the raw `MAINTENANCE_BYPASS_SECRET` (`#1487`). A deploy preview, not a local dev server, is the only place that reproduces the `PG_POOL_MAX=1` single-connection deadlock, because a local pool has more than one connection. Full detail and sources live in the references above.
+Use one registered implementation per job and keep the required Netlify standby.
+Scheduling metadata currently lives in `netlify/functions/cron-tick.mts`; do not
+claim the registry defines phase or timeout fields. Count executable builder keys,
+not documentation examples. Operational Actions jobs remain migration work until
+bounded replacements have actually run.
+
+Cron leases are Postgres-backed. Closed jobs never run when acquisition fails,
+including Prisma import failures. Completion is conditional on the same execution
+still being RUNNING; only successful owned completion advances freshness. Typed
+outcomes and `X-Job-Outcome` distinguish partial failure and intentional holds.
+Different jobs can still touch the same row: preserve CAS, transactional staging
+and vendor idempotency, and test cross-job races and sequential replay.
+
+The scheduled ticker has a 30-second budget, distinct from its HTTP workers.
+A timeout or expired lease does not cancel vendor effects. Fleet selection fails
+open on absent/unreadable `ops:active_cron_platform`, so it is not an exactly-once
+guarantee. Verify accepted Sentry check-ins and independent per-capability absence
+alerts; the shared heartbeat and HTTP200 alone do not prove complete health.
+
+Maintenance bypass cookies remain short-lived HMAC-SHA256 tokens verified via Web
+Crypto. Follow the active maintenance implementation and recovery instructions;
+never infer that a cached phase quiesces work already in flight. See the linked
+references for transaction-client, deployed-runtime and environment constraints.

@@ -138,6 +138,16 @@ The role is written at upsert time (`upsertUserToStream` /
 `upsertUsersToStream` in `actions/stream/chat/user.action.ts`), so a Stream user
 upserted while operators mapped to `admin` keeps that role until re-upserted.
 
+### The Familiarise Support service user
+
+`familiarise-support` (`lib/stream/support-user.ts`) is the one Stream user
+with no `User` row. It holds `user`, never logs in and never gets a token. A
+case-linked intervention adds it as a visible member of the booking chat with a
+`type: "system"` join message; staff post as it through
+`POST /api/support/cases/[caseId]/chat/messages`, and it leaves (with a system
+message) when the grant ends or the case resolves. The chat banner reads its
+membership, so there is no channel extra data to keep in sync.
+
 ### Rollout: downgrade existing operator roles
 
 **Owner end-phase step, run by hand once after deploy. It is not a script.** An

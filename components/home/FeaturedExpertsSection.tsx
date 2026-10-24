@@ -113,10 +113,10 @@ export function FeaturedExpertsSection({
             </Badge>
             <h2 className="text-fluid-4xl font-bold text-foreground mb-2 tracking-tight">
               Learn from{" "}
-              <span className="text-muted-foreground">industry leaders</span>
+              <span className="text-muted-foreground">verified experts</span>
             </h2>
             <p className="text-lg text-muted-foreground">
-              Handpicked professionals ready to guide your journey
+              Experts teaching live classes, webinars and one-on-one sessions
             </p>
           </div>
           <Link href="/explore/experts">

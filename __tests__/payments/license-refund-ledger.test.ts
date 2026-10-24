@@ -28,6 +28,9 @@ const mockReverseBookingUtilization = jest.fn();
 const mockRecordTdsReversal = jest.fn();
 const mockWalletCredit = jest.fn();
 
+jest.mock("../../lib/payments/ledger/refund-reversal-basis", () =>
+  jest.requireActual("../fixtures/no-refund-reversal-basis"),
+);
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: (...a: unknown[]) => mockPostLedgerTxn(...a),
 }));
@@ -171,6 +174,7 @@ function txStub() {
     orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
     paymentLeg: { upsert: jest.fn().mockResolvedValue({}) },
     ledgerTransaction: { findUnique: jest.fn().mockResolvedValue(null) },
+    ledgerEntry: { findMany: jest.fn().mockResolvedValue([]) },
     organization: { findUnique: jest.fn().mockResolvedValue(null) },
     recordingPurchase: {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -329,6 +333,13 @@ describe("bookings that genuinely have nothing to reverse", () => {
   });
 });
 
+/** An earlier refund whose cascade already ran. */
+const cascaded = {
+  status: "SUCCEEDED",
+  cascadedAt: new Date("2026-10-01T00:00:00Z"),
+  deletedAt: null,
+};
+
 describe("a replay sale's playback", () => {
   it("survives a partial refund and is revoked once the charge is fully refunded", async () => {
     const replay = { appointmentId: null, paymentIntent: "order_replay" };
@@ -347,7 +358,7 @@ describe("a replay sale's playback", () => {
 
     payment = paymentRow({
       ...replay,
-      refunds: [{ id: "rf-0", amountPaise: GROSS / 2, status: "SUCCEEDED" }],
+      refunds: [{ id: "rf-0", amountPaise: GROSS / 2, ...cascaded }],
     });
     const fullTx = txStub();
     await applyRefundCascade(fullTx as never, {
@@ -364,7 +375,7 @@ describe("a replay sale's playback", () => {
 });
 
 describe("a past-cutoff refund of a taxed member overage side-payment", () => {
-  it("takes back only the org's net credit; the platform bears the kept GST", async () => {
+  it("reverses the capture's own credits; the platform bears the kept GST", async () => {
     payment = paymentRow({
       amount: 29_500,
       originalAmount: 25_000,
@@ -377,7 +388,17 @@ describe("a past-cutoff refund of a taxed member overage side-payment", () => {
       bookingUtilization: null,
     });
     const tx = txStub();
-    tx.ledgerTransaction.findUnique.mockResolvedValue({ id: "overage-txn" });
+    const captured = (kind: string, paise: number) => ({
+      accountId: `${kind}|_|_|INR`,
+      direction: "CREDIT",
+      amountPaise: BigInt(paise),
+      account: { kind, organizationId: null },
+      transaction: { kind: "OVERAGE_MEMBER" },
+    });
+    tx.ledgerEntry.findMany.mockResolvedValue([
+      captured("DISCOUNT", 20_000),
+      captured("PLATFORM_FEE", 5_000),
+    ]);
 
     await applyRefundCascade(txDouble(tx), {
       paymentId: PAYMENT_ID,
@@ -388,11 +409,14 @@ describe("a past-cutoff refund of a taxed member overage side-payment", () => {
 
     const postings = emittedPostings();
     const debit = (kind: string) =>
-      postings.find((p) => p.direction === "DEBIT" && p.account.kind === kind)
-        ?.amountPaise;
-    expect(debit("ORG_PAYABLE")).toBe(25_000);
-    expect(debit("PLATFORM_FEE")).toBe(4_500);
-    expect(debit("GST_PAYABLE")).toBeUndefined();
+      sum(
+        postings.filter((p) => p.account.kind === kind),
+        "DEBIT",
+      );
+    expect(debit("DISCOUNT")).toBe(20_000);
+    expect(debit("PLATFORM_FEE")).toBe(5_000 + 4_500);
+    expect(debit("ORG_PAYABLE")).toBe(0);
+    expect(debit("GST_PAYABLE")).toBe(0);
     expect(sum(postings, "DEBIT")).toBe(sum(postings, "CREDIT"));
   });
 });
@@ -451,7 +475,7 @@ describe("charged batch overages on a partial refund then the remainder", () => 
     payment = paymentRow({
       ...walletParent,
       refunds: [
-        { id: "rf-0", amountPaise: GROSS / 4, status: "SUCCEEDED" },
+        { id: "rf-0", amountPaise: GROSS / 4, ...cascaded },
         { id: REFUND_ID, amountPaise: (GROSS * 3) / 4, status: "SUCCEEDED" },
       ],
     });

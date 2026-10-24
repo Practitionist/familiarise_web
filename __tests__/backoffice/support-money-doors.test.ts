@@ -124,6 +124,7 @@ jest.mock("../../lib/prisma", () => {
       }),
     },
     supportFinancialRecommendation: { findMany: async () => [] },
+    refund: { findMany: async () => [] },
     consultantEarnings: {
       findMany: async () => [
         { consultantSharePaise: 80_000, refundedShareAmount: 20_000 },

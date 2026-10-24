@@ -64,12 +64,12 @@ function paymentColumns(
     },
     {
       key: "committed",
-      header: "Support refunds, all operators (counted)",
+      header: "Refunded or committed on the payment, every door (counted)",
       cell: (p) => inr(p.supportCommittedPaise),
     },
     {
       key: "platform-cancel",
-      header: `Platform cancels by this operator (not counted toward the ${inr(caps.perPaymentPaise)} limit)`,
+      header: "Platform cancels by this operator",
       cell: (p) => inr(p.platformCancelPaise),
     },
     {
@@ -156,7 +156,7 @@ function OperatorCard({
           <Figure
             label="Platform-cancel refunds, last 30 days"
             value={inr(refunds.platformCancel30dPaise)}
-            hint={`Included in the refund totals and the daily limit; not counted toward the ${inr(caps.perPaymentPaise)} per-payment limit.${
+            hint={`Included in the refund totals, the daily limit and the ${inr(caps.perPaymentPaise)} per-payment limit.${
               refunds.platformCancelUnsplit30dPaise > 0
                 ? ` ${inr(refunds.platformCancelUnsplit30dPaise)} from older group cancels has no per-payment split.`
                 : ""

@@ -38,8 +38,13 @@ const mockRecordTdsReversal = jest.fn();
 const mockPaymentFindUnique = jest.fn();
 const mockFindDeduped = jest.fn(async (..._a: unknown[]) => null as unknown);
 
+jest.mock("../../lib/payments/ledger/refund-reversal-basis", () =>
+  jest.requireActual("../fixtures/no-refund-reversal-basis"),
+);
 jest.mock("../../lib/payments/tax/tds-service", () => ({
   recordTdsReversal: (...a: unknown[]) => mockRecordTdsReversal(...a),
+  // No org TDS withheld in these fixtures, so the clawback is the whole share.
+  recordOrgTdsReversal: jest.fn().mockResolvedValue(null),
 }));
 
 jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
@@ -90,13 +95,10 @@ jest.mock("../../lib/payments/operations/refund", () => ({
     }
   },
 }));
+// The real clawback writers, so their posting is observable; only the dispatcher is mocked.
 jest.mock("../../lib/payments/operations/reversal-engine", () => ({
+  ...jest.requireActual("../../lib/payments/operations/reversal-engine"),
   applyReversal: (...a: unknown[]) => mockApplyReversal(...a),
-  // The REAL clawback journal, so "posted nothing" is observable rather than
-  // assumed: `postLedgerTxn` is the boundary mock above.
-  postPayoutClawback: jest.requireActual(
-    "../../lib/payments/operations/reversal-engine",
-  ).postPayoutClawback,
 }));
 
 const tx: Record<string, Record<string, jest.Mock>> = {
@@ -750,7 +752,7 @@ describe("free_ credits rail — the org clawback reads the APPLIED amount", () 
     );
     expect(clawbackPosts()).toHaveLength(1);
     expect(clawbackPosts()[0][1].idempotencyKey).toBe(
-      "clawback:refund-row-1:opayout-7",
+      "clawback:refund-row-1:opayout-7:oe-1",
     );
     // The ORG_PAYABLE debit matches the applied figure, and the txn still balances.
     const payable = lastPosting().find(

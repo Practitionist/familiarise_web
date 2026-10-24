@@ -2,13 +2,10 @@ import { NextResponse } from "next/server";
 
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { ledgerSummarySchema } from "@/schemas/backoffice/reconciliation";
 import { RECONCILE_JOBS } from "@/lib/backoffice/reconcile-jobs";
 
-/**
- * #1771 K-8 — the Reconcile section's last-run line per job: the latest
- * SystemJobExecution for its lock name (the ledger run also has its report).
- * Gated like the section (admin), not by `payouts.read`, which staff hold.
- */
+/** ADMIN-only latest execution evidence and full-audit completion status. */
 export async function GET() {
   const auth = await requireBackofficeSurface("payouts.manage");
   if (auth.error) return auth.error;
@@ -26,10 +23,21 @@ export async function GET() {
     });
     jobs.push({ key, label: job.label, description: job.description, last });
   }
-  const ledgerReport = await prisma.ledgerReconciliationReport.findFirst({
+  const ledger = await prisma.ledgerReconciliationReport.findFirst({
+    where: { scope: "full" },
     orderBy: { runAt: "desc" },
-    select: { id: true, runAt: true, ok: true, scope: true },
+    select: { id: true, runAt: true, ok: true, scope: true, summary: true },
   });
+  const summary = ledgerSummarySchema.safeParse(ledger?.summary);
+  const ledgerReport = ledger
+    ? {
+        id: ledger.id,
+        runAt: ledger.runAt,
+        ok: ledger.ok,
+        scope: ledger.scope,
+        status: summary.success ? summary.data.status : "UNKNOWN",
+      }
+    : null;
   return NextResponse.json(
     { jobs, ledgerReport },
     { headers: { "Cache-Control": "no-store" } },

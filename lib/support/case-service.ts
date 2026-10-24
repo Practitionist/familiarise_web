@@ -27,7 +27,20 @@ import {
 import { REOPEN_WINDOW_MS, supportDeadline } from "./deadline-policy";
 import { stageExternalRequesterEmail } from "./external-requester";
 import { allocateTicketReference } from "./reference";
-import { releaseAllCaseHolds } from "./case-holds";
+import {
+  activeHolds,
+  caseHoldEvents,
+  releaseAllCaseHolds,
+  type ReleasedCaseHold,
+} from "./case-holds";
+import { REAUTH_REQUIRED } from "@/lib/auth/step-up";
+import { assertMoneyDoorsOpen } from "@/lib/backoffice/maintenance-gate";
+import { recordOpsAction } from "@/lib/backoffice/ops-action-log";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
+import {
+  endCaseChatAccessTx,
+  scheduleChatAccessRelease,
+} from "./chat-access-end";
 import {
   assertCaseTransition,
   caseTransitionRefusal,
@@ -1532,10 +1545,127 @@ async function hasConflictingAppealReviewerTx(
   );
 }
 
+/** The mover of a lifecycle change that may release payout holds: their role and step-up freshness. */
+export interface HoldReleaseGrant {
+  actorRole: string;
+  freshSession: boolean;
+}
+
+/** An undecided, unvoided refund recommendation on the case, if any. */
+export function openRecommendationTx(tx: Tx, caseId: string) {
+  return tx.supportFinancialRecommendation.findFirst({
+    where: { caseId, decidedAt: null, voidedAt: null },
+    select: { id: true },
+  });
+}
+
+/** The money doors' maintenance gate as a lifecycle refusal; null while open. */
+export async function moneyDoorsRefusal() {
+  try {
+    await assertMoneyDoorsOpen();
+    return null;
+  } catch (error) {
+    if (!(error instanceof OpsRefusal)) throw error;
+    return {
+      ok: false as const,
+      status: error.httpStatus,
+      code: error.code,
+      error: error.message,
+    };
+  }
+}
+
+/** One audit row for the payout holds a lifecycle move released. */
+export async function recordLifecycleHoldReleaseTx(
+  tx: Tx,
+  input: {
+    caseId: string;
+    actorId: string | null;
+    actorRole: string;
+    status: SupportCaseStatus;
+    reason: string;
+    released: ReleasedCaseHold[];
+  },
+) {
+  if (input.released.length === 0) return;
+  await recordOpsAction(tx, {
+    actorUserId: input.actorId,
+    actorRole: input.actorRole,
+    surface: "tickets.manage",
+    action: "support.case.release-holds",
+    targetKind: "SupportCase",
+    targetId: input.caseId,
+    reason: input.reason,
+    after: {
+      caseId: input.caseId,
+      status: input.status,
+      holds: input.released.map((hold) => ({ ...hold })),
+    },
+    correlationId: `support-case:${input.caseId}`,
+  });
+}
+
+/**
+ * Moving into RESOLVED or CLOSED releases the case's payout holds, and resolving
+ * a problem lets the cascade release its open incidents' holds, so either needs
+ * step-up and open money doors; the case's own holds also need no open recommendation.
+ */
+async function holdReleaseRefusalTx(
+  tx: Tx,
+  input: PatchSupportCaseInput,
+  existing: Pick<SupportCase, "id" | "status" | "caseKind">,
+  grant: HoldReleaseGrant | undefined,
+) {
+  if (
+    (input.status !== "RESOLVED" && input.status !== "CLOSED") ||
+    input.status === existing.status
+  )
+    return null;
+  const incidents =
+    existing.caseKind === "PROBLEM" && input.status === "RESOLVED"
+      ? await tx.supportCase.findMany({
+          where: {
+            problemCaseId: existing.id,
+            caseKind: "INCIDENT",
+            status: { notIn: ["RESOLVED", "CLOSED"] },
+            deletedAt: null,
+          },
+          select: { id: true },
+        })
+      : [];
+  const own = activeHolds(await caseHoldEvents(tx, [existing.id]));
+  const linked = incidents.length
+    ? activeHolds(
+        await caseHoldEvents(
+          tx,
+          incidents.map((incident) => incident.id),
+        ),
+      )
+    : [];
+  if (own.length === 0 && linked.length === 0) return null;
+  if (own.length > 0 && (await openRecommendationTx(tx, existing.id)))
+    return {
+      ok: false as const,
+      status: 409 as const,
+      code: "RECOMMENDATION_OPEN" as const,
+      error:
+        "This case has a refund recommendation awaiting review. Review or void it before releasing its payout holds.",
+    };
+  if (!grant?.freshSession)
+    return {
+      ok: false as const,
+      status: 403 as const,
+      code: REAUTH_REQUIRED,
+      error: "Confirm it's you to release this case's payout holds.",
+    };
+  return moneyDoorsRefusal();
+}
+
 export async function executePatchLifecycleTx(
   tx: Tx,
   input: PatchSupportCaseInput,
   now: Date,
+  grant?: HoldReleaseGrant,
 ) {
   const existing = await tx.supportCase.findUnique({
     where: { id: input.caseId },
@@ -1565,6 +1695,8 @@ export async function executePatchLifecycleTx(
   if (preconditionFailure) return preconditionFailure;
   const transitionFailure = await patchTransitionRefusalTx(tx, input, existing);
   if (transitionFailure) return transitionFailure;
+  const holdFailure = await holdReleaseRefusalTx(tx, input, existing, grant);
+  if (holdFailure) return holdFailure;
 
   const noteTrimmed = input.note?.trim() || null;
 
@@ -1610,12 +1742,28 @@ export async function executePatchLifecycleTx(
   if (
     (input.status === "RESOLVED" || input.status === "CLOSED") &&
     input.status !== existing.status
-  )
-    await releaseAllCaseHolds(tx, {
+  ) {
+    const note = `Released when the case was ${input.status.toLowerCase()}`;
+    await recordLifecycleHoldReleaseTx(tx, {
       caseId: input.caseId,
       actorId: input.actorId,
-      note: `Released when the case was ${input.status.toLowerCase()}`,
+      actorRole: grant?.actorRole ?? "UNKNOWN",
+      status: input.status,
+      reason: noteTrimmed ?? note,
+      released: await releaseAllCaseHolds(tx, {
+        caseId: input.caseId,
+        actorId: input.actorId,
+        note,
+      }),
     });
+    const endedChat = await endCaseChatAccessTx(tx, {
+      caseId: input.caseId,
+      actorId: input.actorId,
+      reason: "CASE_RESOLVED",
+      now,
+    });
+    scheduleChatAccessRelease(input.caseId, endedChat);
+  }
 
   if (input.status === "RESOLVED" && existing.status !== "RESOLVED")
     await stageCaseResolutionCsatPromptTx(tx, existing, now);
@@ -1659,12 +1807,13 @@ async function patchTransitionRefusalTx(
 export async function patchSupportCaseLifecycle(
   rawInput: PatchSupportCaseInput,
   now: Date = new Date(),
+  grant?: HoldReleaseGrant,
 ) {
   const input = PatchSupportCaseSchema.parse(rawInput);
 
   try {
     return await prisma.$transaction(
-      (tx) => executePatchLifecycleTx(tx, input, now),
+      (tx) => executePatchLifecycleTx(tx, input, now, grant),
       { maxWait: ALLOCATION_TX_MAX_WAIT_MS, timeout: ALLOCATION_TX_TIMEOUT_MS },
     );
   } catch (error) {
