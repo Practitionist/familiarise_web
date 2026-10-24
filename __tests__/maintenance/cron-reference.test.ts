@@ -114,7 +114,7 @@ it("keeps a later blank-name workflow step in its own block", () => {
   ]);
 });
 
-it("documents every real builder and the four Actions-only registry gaps", () => {
+it("documents every real builder and the current Actions-only registry gaps", () => {
   const jobs = registryJobs(registry, ROOT);
   const document = fs.readFileSync(
     path.join(ROOT, "docs/maintenance/04-cron-jobs-reference.md"),
@@ -128,17 +128,23 @@ it("documents every real builder and the four Actions-only registry gaps", () =>
     (hit) => hit[1],
   );
   expect(new Set(keys)).toEqual(new Set(jobs.map((job) => job.slug)));
-  expect(keys).toHaveLength(67);
+  expect(keys).toHaveLength(jobs.length);
+  const missingKeys = new Set(
+    Array.from(
+      document
+        .split("## Actions steps missing registry coverage")[1]
+        .split("## Changing a job")[0]
+        .matchAll(/^\| `([a-z0-9-]+)`/gm),
+      (hit) => hit[1],
+    ),
+  );
   for (const id of [
     "prune-system-events",
     "expire-event-channels",
     "databreach-deadline-alerts",
     "consent-retention-sweeper",
   ]) {
-    expect(jobs.some((job) => job.slug === id)).toBe(false);
-    expect(
-      document.split("## Actions steps missing registry coverage")[1],
-    ).toContain(`\`${id}\``);
+    expect(missingKeys.has(id)).toBe(!jobs.some((job) => job.slug === id));
   }
   expect(document).toContain("tested wave design bound");
   expect(document).toContain("resumable ledger target yields on crowded slots");
