@@ -28,7 +28,7 @@ function grantedUploadRoles(grants: Record<string, string[]>): string[] {
   return Object.entries(grants)
     .filter(([, actions]) => actions.includes(UPLOAD_ACTION))
     .map(([role]) => role)
-    .sort();
+    .sort((a, b) => a.localeCompare(b));
 }
 
 function withoutUploadGrant(
