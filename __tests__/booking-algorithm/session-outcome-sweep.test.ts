@@ -57,6 +57,7 @@ jest.mock("../../lib/prisma", () => {
 
 import {
   alertStaleNeedsHuman,
+  createStreamWitnessBudget,
   decideSlotOutcome,
   type OutcomeSlot,
 } from "../../lib/booking/session-outcome-sweep";
@@ -96,6 +97,7 @@ it.each([
     const d = await decideSlotOutcome(slot(hostLeaves), {
       now: at(120),
       outages: [],
+      witness: createStreamWitnessBudget(),
     });
     expect(d).toMatchObject({ kind: "written", to, moved: true });
     expect(transition).toHaveBeenCalledWith(
@@ -116,7 +118,11 @@ it.each([
 ])(
   "host leaves at %i → %i seat write: present learners move CONFIRMED → ATTENDED only on COMPLETED",
   async (hostLeaves, writes) => {
-    await decideSlotOutcome(slot(hostLeaves), { now: at(120), outages: [] });
+    await decideSlotOutcome(slot(hostLeaves), {
+      now: at(120),
+      outages: [],
+      witness: createStreamWitnessBudget(),
+    });
     expect(seatUpdate.mock.calls).toEqual(
       Array.from({ length: writes }, () => [
         {
@@ -150,7 +156,11 @@ it.each([
       subscriptionId: null,
       classId: "cls-1",
     } as OutcomeSlot["appointment"];
-    await decideSlotOutcome(group, { now: at(120), outages: [] });
+    await decideSlotOutcome(group, {
+      now: at(120),
+      outages: [],
+      witness: createStreamWitnessBudget(),
+    });
     // Only the absent seat, keyed like the 1:1 no-show bell.
     expect(stageBell.mock.calls.map((c) => c[1])).toEqual(
       Array.from({ length: bells }, () =>

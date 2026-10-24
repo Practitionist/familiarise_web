@@ -52,19 +52,18 @@ export function HeroSection({
 
           {/* Main headline */}
           <h1 className="text-fluid-5xl font-bold text-white mb-6 leading-tight tracking-tight">
-            Learn from the{" "}
+            Learn live from{" "}
             <span className="relative inline-block">
-              <span className="silver-text">best minds</span>
+              <span className="silver-text">verified experts</span>
             </span>
             <br />
-            <span className="text-zinc-400">in your industry</span>
+            <span className="text-zinc-400">in your field</span>
           </h1>
 
           {/* Subheadline */}
           <p className="text-lg md:text-xl text-zinc-400 mb-10 max-w-2xl mx-auto leading-relaxed">
-            Connect with world-class experts for personalized 1-on-1 sessions,
-            interactive classes, and live webinars. Your career transformation
-            starts here.
+            Join live classes and webinars, or book tutoring and 1-on-1 sessions
+            with verified experts. Book, pay and learn in one place.
           </p>
 
           {/* CTAs */}

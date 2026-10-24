@@ -94,18 +94,12 @@ beforeEach(() => {
 });
 
 describe("webhook call-type guard", () => {
-  it.each(["default", "livestream"])(
-    "processes a recording_ready on the app's owned %s call type",
-    async (ownedType) => {
-      await dispatch(
-        RECORDING_READY(`${ownedType}:slot-abc`),
-        `evt-${ownedType}`,
-      );
-      expect(mockHandleRecordingReady).toHaveBeenCalledTimes(1);
-    },
-  );
+  it("processes a recording_ready on the app's owned default call type", async () => {
+    await dispatch(RECORDING_READY("default:slot-abc"), "evt-default");
+    expect(mockHandleRecordingReady).toHaveBeenCalledTimes(1);
+  });
 
-  it.each(["development", "audio_room"])(
+  it.each(["livestream", "development", "audio_room"])(
     "refuses a recording_ready minted on the %s call type",
     async (foreignType) => {
       await dispatch(

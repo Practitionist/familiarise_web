@@ -13,6 +13,7 @@ import path from "node:path";
 import {
   droppedIndexName,
   normalise,
+  parseKnownDivergences,
   parseKnownDrift,
   planStatements,
   sidecarOwnedUniqueIndexes,
@@ -62,7 +63,10 @@ function main(): void {
   );
 
   const owned = sidecarOwnedIndexes();
-  const known = parseKnownDrift(path.join(SQL_DIR, "known-drift.json"));
+  const driftFile = path.join(SQL_DIR, "known-drift.json");
+  const removable = parseKnownDrift(driftFile);
+  const carried = parseKnownDivergences(driftFile);
+  const known = [...removable, ...carried];
   const today = utcDay(new Date().toISOString().slice(0, 10));
   const unexpected = planStatements(plan).filter((statement) => {
     const dropped = droppedIndexName(statement);
@@ -75,7 +79,15 @@ function main(): void {
   });
 
   if (unexpected.length === 0) {
-    console.log("check-db-live-drift: ok — live database matches the schema");
+    // A tolerated divergence is still a divergence. Say how many are being
+    // carried, and that they are NOT removable yet, so the file is the place
+    // someone looks rather than a silence.
+    console.log(
+      `check-db-live-drift: ok — live database matches the schema` +
+        (carried.length
+          ? ` (${carried.length} known divergence(s) carried and not removable yet)`
+          : ""),
+    );
     return;
   }
   for (const s of unexpected) {

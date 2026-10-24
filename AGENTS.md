@@ -33,6 +33,7 @@
    - One Postgres database serves dev and prod across worktrees. **Never** run `prisma db push` or `npm run db:*` autonomously.
    - Check live-DB drift read-only with `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`; a plain `db push` would drop the `prisma/sql` sidecar uniques.
    - Run `npx prisma generate` after editing `prisma/schema.prisma`. Any new `CHECK`, partial unique index, or trigger belongs in `prisma/sql/*.sql`.
+   - Never run database DDL or write SQL through an MCP server. The reviewed Supabase MCP entry is read-only and project-scoped; schema changes go through `prisma/schema.prisma`, the human-run `db:push` preflight, and `prisma/sql/*.sql` sidecars.
 4. **Locking (`Postgres` vs `Upstash Redis`)**:
    - Cron mutual exclusion (`withCronLock` in `lib/cron/with-cron-lock.ts`) is backed by Postgres (`SystemJobExecution` lease). Do not add Redis locks for cron jobs.
    - Upstash Redis (`lib/redis.ts`, `lib/rate-limit.ts`, `utils/appointmentlock.ts`) is used only for request rate limiting, maintenance-mode / `ops:active_cron_platform` edge state, and short-lived interactive checkout/payout mutexes.

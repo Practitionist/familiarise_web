@@ -199,6 +199,7 @@ export async function POST(req: NextRequest) {
     // match zero rows. The earlier read stays because it produces the specific
     // user-facing reason; this is the part that has to be true.
     const blockOnDecline = consentRegimeFor(appointment) === "OPT_OUT";
+    const startedAt = new Date();
     const updated = await prisma.meeting.updateMany({
       where: {
         id: meetingId,
@@ -213,7 +214,7 @@ export async function POST(req: NextRequest) {
       },
       data: {
         isRecording: true,
-        recordingStartedAt: new Date(),
+        recordingStartedAt: startedAt,
         recordingStartedBy: session.user.id,
       },
     });
@@ -234,9 +235,15 @@ export async function POST(req: NextRequest) {
     );
 
     if (!result.success) {
-      // Revert the DB state since Stream API failed
-      await prisma.meeting.update({
-        where: { id: meetingId },
+      // Revert only the claim this request wrote; a started webhook that
+      // advanced recordingStartedAt means Stream is recording after all.
+      await prisma.meeting.updateMany({
+        where: {
+          id: meetingId,
+          isRecording: true,
+          recordingStartedAt: startedAt,
+          recordingStartedBy: session.user.id,
+        },
         data: {
           isRecording: false,
           recordingStartedAt: null,

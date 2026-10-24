@@ -617,6 +617,8 @@ erDiagram
         boolean isRecording
         datetime endedAt
         string endedReason
+        int extendedSeconds
+        int extensionsUsed
     }
     Recording {
         string id
@@ -697,6 +699,12 @@ erDiagram
     PlatformPricingConfig {
         string id
         int minTrialPriceInPaise
+    }
+    PlatformVideoConfig {
+        string id
+        string callTargetResolution
+        string recordingQuality
+        string screenshareTargetResolution
     }
 
     ConsulteeProfile ||--o{ Consultation : "requests"
@@ -844,6 +852,8 @@ erDiagram
         datetime recordingStartedAt
         datetime endedAt
         string endedReason
+        int extendedSeconds
+        int extensionsUsed
     }
     Recording {
         string id

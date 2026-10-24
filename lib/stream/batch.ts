@@ -85,6 +85,23 @@ export async function forEachChunk<T>(
   }
 }
 
+/** Map `fn` over `items` with at most `width` calls in flight; results keep input order. */
+export async function mapBounded<T, R>(
+  items: T[],
+  fn: (item: T) => Promise<R>,
+  width: number = STREAM_CONCURRENCY_LIMIT,
+): Promise<R[]> {
+  const out: R[] = [];
+  await forEachChunk(
+    items,
+    async (batch) => {
+      out.push(...(await Promise.all(batch.map(fn))));
+    },
+    width,
+  );
+  return out;
+}
+
 /**
  * How many channels `queryChannels` actually returns, per call.
  *
