@@ -62,6 +62,32 @@ The tombstone row keeps no media: the object, preview folder (clip and thumbnail
 
 **The `Recording_storage_and_publish_check` constraint matches `prisma/sql/check-constraints.sql`.** An active `PLATFORM` row needs a `storagePath`, and an `EXPIRED` platform row may have a null `storagePath` once its object is gone. A `PUBLISHED` listing still requires the path, a positive price and the consent attestation.
 
+### Erasure during an in-flight transfer
+
+`scrubUser` first claims each eligible unsold 1:1 recording with one `updateManyAndReturn` that repeats the eligibility predicate, writes `EXPIRED` and returns the row's current R2 path, preview path and Stream ids. It then deletes Stream's copy and every stored asset (object, preview folder with the thumbnail, transcript) for exactly those identities, and throws on any failure so the pointers stay on the row for the retry. Only after both deletions succeed does it clear the pointers, the thumbnail, the transcript and `streamRecordingId` with a conditional update whose `WHERE` carries `EXPIRED` and the returned identities, keeping any earlier `removedAt`. Group recordings keep their existing unpublish policy, and recordings with purchases remain excluded.
+
+If a transfer publishes before this write, erasure deletes the returned current
+object. If erasure wins first, the transfer's `TRANSFERRING` publication CAS
+loses and the transfer attempts to remove its own unpublished key. After
+confirmed deletion, erasure clears pointers only while they still match the
+returned identities and the row remains `EXPIRED`. Vendor failure leaves those
+pointers on the expired row. If the expiry sweep clears the same pointers while
+erasure is deleting the assets, erasure accepts that already-cleared `EXPIRED`
+row (both storage pointers and `streamRecordingId` null); any pointer still set
+reports an unfinished cleanup.
+
+Another `scrubUser` call actively retries eligible expired rows that still
+hold an R2 path, a preview path or a `streamRecordingId`. Repeated vendor
+failure keeps the admin request `IN_PROGRESS` with HTTP 202; the request can complete after deletion is confirmed and the pointers
+are cleared. These retries preserve removal timestamps. The existing
+`expire-recordings` entry also selects expired rows with asset pointers
+independently of the normal retention deadline, providing a fallback when
+that entry runs. This change does not enable a scheduler.
+
+An unpublished attempt whose transfer cleanup fails has no recorded storage
+pointer. That separate orphan-cleanup gap remains open; the erasure claim and
+the expiry scan cannot recover a key that was never published.
+
 ## Webhook, R2 copy and playback
 
 The webhook only records that a file exists. The copy is a separate, retried job, and playback links are minted per request, never stored.
@@ -479,6 +505,7 @@ Recordings live in the private R2 bucket and are served by per-request presigned
 - **Per-plan storage tiers and the manual transfer route, and Supabase as a recording destination.** Replaced by automatic R2 transfer and one platform retention schedule (see [13](./13-recording-webhooks.md)).
 - **Plan-level and per-profile recording lists.** `/api/consultants/:id/recordings`, `/api/consultees/:id/recordings` and `/api/plans/{classes,webinars}/:id/recordings` each applied their own cross-run rule. They are deleted along with `lib/stream/session-recordings.ts` and `lib/stream/recording-attendee-scope.ts`.
 - **Recording objects surviving a hard delete.** The cascade removed rows but not R2 objects. Superseded by post-commit asset deletion.
+- **Erasure deleting a selected snapshot before expiring the row.** A concurrent transfer could publish a new pointer that erasure then cleared without deleting its object. Superseded by conditional expiration that returns the current pointers before vendor deletion.
 - **A 30-day limit on the expert-removal notice.** The notice used to turn into "Not recorded" 30 days after the delete, so a recorded session looked unrecorded. Superseded by the retention-date rule; delete any `TOMBSTONE_DAYS` constant.
 - **One library row per recording part, with the part's session label.** Superseded by one row per session that expands into its parts.
 - **`lib/stream/late-join-recordings.ts`.** A separate late-join helper. The late-join rule now lives in the `loadRecordingViews` loader and the slot core; delete any import of the old module.
