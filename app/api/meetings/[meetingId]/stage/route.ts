@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { liveParticipant } from "@/lib/booking/participants";
 import { guardMeetingRoute } from "@/lib/meetings/route-guard";
+import { meetingControlLimiter } from "@/lib/rate-limit";
 import { isOneToManyAppointmentType } from "@/lib/meetings/room-ready";
 import prisma from "@/lib/prisma";
 import {
@@ -37,7 +38,11 @@ export async function POST(
 ) {
   let meetingIdForLog: string | undefined;
   try {
-    const guard = await guardMeetingRoute(params, "admit to");
+    const guard = await guardMeetingRoute(
+      params,
+      "admit to",
+      meetingControlLimiter,
+    );
     if (!guard.ok) return guard.response;
     const { userId, meetingId, access } = guard;
     meetingIdForLog = meetingId;
@@ -145,9 +150,12 @@ export async function POST(
     });
   } catch (error) {
     if (error instanceof StreamUnavailableError) {
-      streamLogger.warn("Meeting stage update unavailable — Stream circuit open", {
-        meetingId: meetingIdForLog,
-      });
+      streamLogger.warn(
+        "Meeting stage update unavailable — Stream circuit open",
+        {
+          meetingId: meetingIdForLog,
+        },
+      );
       return NextResponse.json(
         { error: "Video is temporarily unavailable. Please try again." },
         { status: 503 },

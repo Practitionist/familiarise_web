@@ -66,6 +66,14 @@ export const reviewWriteLimiter = makeLimiter(20, "1 h", "rl:review-write");
 export const streamJoinLimiter = makeLimiter(20, "1 m", "rl:stream-join");
 /** 60 per minute — authenticated Stream reads/writes */
 export const streamApiLimiter = makeLimiter(60, "1 m", "rl:stream-api");
+/** 10 per minute per user — meeting room controls: end, extend, reopen, live, stage */
+export const meetingControlLimiter = makeLimiter(
+  10,
+  "1 m",
+  "rl:meeting-control",
+);
+/** 30 per minute per user — in-call Q&A and stage chat writes */
+export const meetingQaLimiter = makeLimiter(30, "1 m", "rl:meeting-qa");
 /** 3 per 5 minutes per user — POST /api/stream/recordings/sync */
 export const streamRecordingSyncLimiter = makeLimiter(
   3,

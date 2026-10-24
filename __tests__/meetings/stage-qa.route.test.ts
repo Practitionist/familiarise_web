@@ -2,6 +2,12 @@
  * @jest-environment node
  */
 
+jest.mock("../../lib/rate-limit", () => ({
+  meetingControlLimiter: {},
+  meetingQaLimiter: {},
+  applyRateLimit: async () => null,
+}));
+
 import { NextRequest } from "next/server";
 
 const mockGuardMeetingRoute = jest.fn();

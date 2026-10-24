@@ -43,12 +43,23 @@ jest.mock("../../lib/stream-client", () => ({
 }));
 
 jest.mock("../../lib/stream-logger", () => ({
-  streamLogger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+  streamLogger: {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn(),
+  },
 }));
 
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
   reportSentryMessage: jest.fn(),
+}));
+
+jest.mock("../../lib/rate-limit", () => ({
+  meetingControlLimiter: {},
+  meetingQaLimiter: {},
+  applyRateLimit: async () => null,
 }));
 
 import { NextRequest } from "next/server";
