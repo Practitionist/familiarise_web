@@ -83,16 +83,24 @@ export async function liveNonRemedyRefundPaiseByPayment(
 /**
  * Approved, unvoided support remedies plus other live refunds per payment: the
  * `priorPaise` the per-payment staff limit counts. A remedy's own refund counts once, as the remedy.
+ * `excludeRecommendationId` leaves out the remedy being priced.
  */
 export async function committedSupportPaiseByPayment(
   db: Pick<Tx, "supportFinancialRecommendation" | "refund">,
   paymentIds: string[],
+  { excludeRecommendationId }: { excludeRecommendationId?: string } = {},
 ): Promise<Map<string, number>> {
   const committed = await liveNonRemedyRefundPaiseByPayment(db, paymentIds);
   if (paymentIds.length === 0) return committed;
   // A void clears `approved`, so `approved: true` is exactly the live remedies.
   const rows = await db.supportFinancialRecommendation.findMany({
-    where: { paymentId: { in: paymentIds }, approved: true },
+    where: {
+      paymentId: { in: paymentIds },
+      approved: true,
+      ...(excludeRecommendationId
+        ? { id: { not: excludeRecommendationId } }
+        : {}),
+    },
     select: { paymentId: true, amountPaise: true },
   });
   for (const row of rows)

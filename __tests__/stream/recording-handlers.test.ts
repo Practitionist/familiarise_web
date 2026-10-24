@@ -64,6 +64,14 @@ jest.mock("../../lib/stream/recording-storage", () => ({
   deleteRecordingAssets: jest.fn().mockResolvedValue({ success: true }),
 }));
 
+const mockDeleteStreamRecordingCopy = jest.fn().mockResolvedValue({
+  success: true,
+});
+jest.mock("../../lib/stream/recording-stream-delete", () => ({
+  deleteStreamRecordingCopy: (...args: unknown[]) =>
+    mockDeleteStreamRecordingCopy(...args),
+}));
+
 import prisma from "../../lib/prisma";
 import { deleteRecordingAssets } from "../../lib/stream/recording-storage";
 import {
@@ -436,6 +444,8 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
         storagePath: "recordings/rec-copied/a.mp4",
         previewClipStoragePath: "rec-copied/clip.mp4",
         thumbnailUrl: "https://cdn.example/thumb.jpg",
+        streamCallId: "slot-5",
+        streamRecordingId: "rec-5.mp4",
       },
     ]);
 
@@ -459,6 +469,14 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
         storagePath: "recordings/rec-copied/a.mp4",
       }),
     );
+    expect(mockDeleteStreamRecordingCopy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "rec-copied",
+        storagePath: "recordings/rec-copied/a.mp4",
+        streamCallId: "slot-5",
+        streamRecordingId: "rec-5.mp4",
+      }),
+    );
     expect(
       mockRecordingUpdateManyAndReturn.mock.invocationCallOrder[0],
     ).toBeLessThan(mockDeleteRecordingAssets.mock.invocationCallOrder[0]);
@@ -469,7 +487,9 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
         previewClipUrl: null,
         previewClipStoragePath: null,
         previewClipDuration: null,
+        previewTranscript: null,
         thumbnailUrl: null,
+        streamRecordingId: null,
       },
     });
   });

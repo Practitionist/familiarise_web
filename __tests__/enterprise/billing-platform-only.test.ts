@@ -14,9 +14,12 @@ jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 const tx = {
   billingAccount: {
     findFirst: jest.fn(),
+    update: jest.fn(),
     updateMany: jest.fn(),
     findUniqueOrThrow: jest.fn(),
   },
+  ledgerEntry: { findMany: jest.fn() },
+  overageEvent: { count: jest.fn() },
   organizationInvoice: {
     count: jest.fn(),
     findFirst: jest.fn(),
@@ -84,6 +87,9 @@ const ACCOUNT = {
 beforeEach(() => {
   jest.clearAllMocks();
   tx.billingAccount.findFirst.mockResolvedValue(ACCOUNT);
+  tx.billingAccount.update.mockResolvedValue({ ownerOrgId: "org-1" });
+  tx.ledgerEntry.findMany.mockResolvedValue([]);
+  tx.overageEvent.count.mockResolvedValue(0);
   let written = {};
   tx.billingAccount.updateMany.mockImplementation(
     async ({ data }: { data: object }) => {
@@ -221,3 +227,39 @@ it.each([
     expect(tx.orgAuditLog.create).not.toHaveBeenCalled();
   },
 );
+
+describe.each([
+  [
+    "admin",
+    () =>
+      adminPatchAccount(
+        req({ fundingSource: "INVOICE", reason: "signed MSA with net-60" }),
+        orgParams,
+      ),
+  ],
+  ["tenant", () => patchAccount(req({ fundingSource: "PERSONAL" }), orgParams)],
+])("%s switch off an emptied WALLET", (_door, call) => {
+  it("refuses while a wallet shortfall receivable is open", async () => {
+    tx.ledgerEntry.findMany.mockResolvedValue([
+      { direction: "DEBIT", amountPaise: 2_000 },
+    ]);
+    const res = await call();
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("WALLET_SHORTFALL_OPEN");
+    expect(tx.billingAccount.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses while a member overage on a wallet-funded booking is unpaid", async () => {
+    tx.overageEvent.count.mockResolvedValue(1);
+    const res = await call();
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("WALLET_OVERAGE_UNSETTLED");
+    expect(tx.overageEvent.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        overageBehavior: "CHARGE_MEMBER",
+        chargeStatus: { in: ["PENDING", "FAILED"] },
+      }),
+    });
+    expect(tx.billingAccount.updateMany).not.toHaveBeenCalled();
+  });
+});

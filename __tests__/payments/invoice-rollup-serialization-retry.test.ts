@@ -19,15 +19,18 @@
 
 const mockTransaction = jest.fn();
 const mockOrgFindUnique = jest.fn();
-const mockPaymentFindMany = jest.fn();
+const mockOrgCandidates = jest.fn();
 const mockRecordSystemError = jest.fn();
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    $executeRaw: jest.fn().mockResolvedValue(1),
     $transaction: (...a: unknown[]) => mockTransaction(...a),
-    organization: { findUnique: (...a: unknown[]) => mockOrgFindUnique(...a) },
-    payment: { findMany: (...a: unknown[]) => mockPaymentFindMany(...a) },
+    organization: {
+      findUnique: (...a: unknown[]) => mockOrgFindUnique(...a),
+      findMany: (...a: unknown[]) => mockOrgCandidates(...a),
+    },
     $disconnect: jest.fn(),
   },
 }));
@@ -69,6 +72,7 @@ jest.mock("../../lib/novu", () => ({
 jest.mock("../../lib/url", () => ({ getAppUrl: () => "https://app.test" }));
 
 import { Prisma } from "@prisma/client";
+import prisma from "../../lib/prisma";
 import { rollupOrgInvoiceAccruals } from "@/lib/payments/billing/invoice-rollup";
 import { settleInvoiceAccruals } from "@/jobs/billing/settle-invoice-accruals";
 
@@ -164,9 +168,9 @@ describe("rollupOrgInvoiceAccruals — serialization retry", () => {
 
 describe("settleInvoiceAccruals — exhausted retries", () => {
   it("records a system error and still bills the next org", async () => {
-    mockPaymentFindMany.mockResolvedValue([
-      { organizationId: "org_contended" },
-      { organizationId: "org_ok" },
+    mockOrgCandidates.mockResolvedValue([
+      { id: "org_contended" },
+      { id: "org_ok" },
     ]);
     // withSerializableRetry burns its four attempts on the first org, then the
     // second org commits on its first try.
@@ -403,5 +407,111 @@ describe("rollupOrgInvoiceAccruals — PO coverage", () => {
     });
     expect(mockNotifyIssued).not.toHaveBeenCalled();
     expect(mockDispatchWebhook).not.toHaveBeenCalled();
+  });
+});
+
+test("bounded invoice rollup counts skipped organizations against the examination limit", async () => {
+  mockOrgCandidates.mockResolvedValue([
+    { id: "org_1" },
+    { id: "org_2" },
+    { id: "org_3" },
+  ]);
+  mockTransaction.mockResolvedValue({
+    result: { billedPaymentCount: 0, totalPaise: 0 },
+    notifyStaged: [],
+  });
+  const result = await settleInvoiceAccruals({ limit: 2 });
+  expect(result).toMatchObject({
+    orgsProcessed: 2,
+    invoicesCreated: 0,
+    remaining: 1,
+  });
+  expect(mockTransaction).toHaveBeenCalledTimes(2);
+  expect(mockOrgCandidates).toHaveBeenCalledWith(
+    expect.objectContaining({
+      take: 3,
+      where: expect.objectContaining({
+        status: { not: "DEACTIVATED" },
+        deletedAt: null,
+      }),
+    }),
+  );
+});
+
+test("skipped invoice cohorts rotate so later organizations are examined", async () => {
+  const orgs = Array.from({ length: 25 }, (_, i) => ({
+    id: `org_${String(i).padStart(2, "0")}`,
+    lastAccrualRollupAt: null as Date | null,
+  }));
+  mockOrgCandidates.mockImplementation(async ({ take }: { take: number }) =>
+    [...orgs]
+      .sort(
+        (a, b) =>
+          (a.lastAccrualRollupAt?.getTime() ?? 0) -
+            (b.lastAccrualRollupAt?.getTime() ?? 0) || (a.id < b.id ? -1 : 1),
+      )
+      .slice(0, take),
+  );
+  const stamp = prisma.$executeRaw as jest.Mock;
+  stamp.mockImplementation(async (_sql: TemplateStringsArray, id: string) => {
+    const org = orgs.find((o) => o.id === id);
+    if (org) org.lastAccrualRollupAt = new Date();
+    return 1;
+  });
+  mockTransaction.mockResolvedValue({
+    result: { billedPaymentCount: 0, totalPaise: 0 },
+    notifyStaged: [],
+  });
+  for (let i = 0; i < 3; i++) await settleInvoiceAccruals({ limit: 10 });
+  expect(new Set(stamp.mock.calls.map(([, id]) => id)).size).toBe(25);
+  expect(stamp).toHaveBeenCalledTimes(30);
+  stamp.mockResolvedValue(1);
+});
+
+test("a cursor failure is visible without discarding successful invoices or later organizations", async () => {
+  mockOrgCandidates.mockResolvedValue([{ id: "org_1" }, { id: "org_2" }]);
+  mockTransaction.mockResolvedValue(invoice("invoice-issued"));
+  const stamp = jest.mocked(prisma.$executeRaw);
+  stamp
+    .mockRejectedValueOnce(new Error("cursor unavailable"))
+    .mockResolvedValue(1);
+
+  const result = await settleInvoiceAccruals();
+  expect(result).toMatchObject({
+    orgsProcessed: 2,
+    invoicesCreated: 2,
+    failed: 1,
+  });
+  expect(mockRecordSystemError).toHaveBeenCalledTimes(1);
+  expect(mockRecordSystemError.mock.calls[0][0]).toMatchObject({
+    organizationId: "org_1",
+    context: {
+      failures: [{ organizationId: "org_1", phase: "cursor", code: null }],
+    },
+  });
+  expect(stamp.mock.calls[0][0]).toEqual(
+    expect.arrayContaining([expect.stringContaining('UPDATE "organizations"')]),
+  );
+});
+
+test("a multi-organization failure reports once and still invoices the next organization", async () => {
+  mockOrgCandidates.mockResolvedValue([
+    { id: "org_bad_1" },
+    { id: "org_bad_2" },
+    { id: "org_ok" },
+  ]);
+  mockTransaction
+    .mockRejectedValueOnce(new Error("first failure"))
+    .mockRejectedValueOnce(new Error("second failure"))
+    .mockResolvedValueOnce(invoice("invoice-ok"));
+  const result = await settleInvoiceAccruals();
+  expect(result).toMatchObject({
+    orgsProcessed: 3,
+    invoicesCreated: 1,
+    failed: 2,
+  });
+  expect(mockRecordSystemError).toHaveBeenCalledTimes(1);
+  expect(mockRecordSystemError.mock.calls[0][0]).toMatchObject({
+    context: { organizations: ["org_bad_1", "org_bad_2"] },
   });
 });

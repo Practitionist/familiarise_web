@@ -17,13 +17,17 @@ import { OpsRefusal } from "./ops-refusal-error";
 
 export { OpsRefusal };
 
-const body = (code: string, error: string, status: number) =>
-  NextResponse.json({ error, code }, { status });
+const body = (
+  code: string,
+  error: string,
+  status: number,
+  detail?: Record<string, unknown>,
+) => NextResponse.json({ ...detail, error, code }, { status });
 
 /** The typed answer for a modelled refusal, or null for a real fault. */
 export function refusalResponse(err: unknown): NextResponse | null {
   if (err instanceof OpsRefusal)
-    return body(err.code, err.message, err.httpStatus);
+    return body(err.code, err.message, err.httpStatus, err.detail);
   if (err instanceof BookingRuleError)
     return body(err.code, err.message, err.httpStatus);
   if (err instanceof RefundValidationError)

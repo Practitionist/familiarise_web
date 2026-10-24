@@ -11,6 +11,7 @@
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    $executeRaw: jest.fn().mockResolvedValue(1),
     walletTopUp: { findMany: jest.fn(), deleteMany: jest.fn() },
     billingAccount: { findUniqueOrThrow: jest.fn() },
   },
@@ -242,5 +243,38 @@ describe("org wallet journal atomicity", () => {
     });
     expect(stopped.stoppedOn).toMatchObject({ topUpId: "new" });
     expect(createRazorpayRefund).not.toHaveBeenCalled();
+  });
+});
+
+describe("bounded top-up recovery polling", () => {
+  it("rotates live provider orders instead of revisiting the first batch forever", async () => {
+    const rows = Array.from({ length: 25 }, (_, i) => ({
+      id: `topup_${String(i).padStart(2, "0")}`,
+      billingAccountId: "ba_1",
+      providerOrderId: `we_${i}`,
+      amountPaise: 1000,
+      notes: `razorpay_order=order_${i}`,
+      lastReconciledAt: null as Date | null,
+    }));
+    db.walletTopUp.findMany.mockImplementation(async (q: { take: number }) =>
+      [...rows]
+        .sort(
+          (a, b) =>
+            (a.lastReconciledAt?.getTime() ?? 0) -
+              (b.lastReconciledAt?.getTime() ?? 0) || (a.id < b.id ? -1 : 1),
+        )
+        .slice(0, q.take),
+    );
+    const stamp = prisma.$executeRaw as jest.Mock;
+    stamp.mockImplementation(async (_sql: TemplateStringsArray, id: string) => {
+      const row = rows.find((r) => r.id === id);
+      if (row) row.lastReconciledAt = new Date();
+      return 1;
+    });
+    holding.mockReset().mockResolvedValue({ kind: "live" });
+    for (let i = 0; i < 3; i++) await cleanupAbandonedOrgTopUps({ limit: 10 });
+    expect(new Set(holding.mock.calls.map(([id]) => id)).size).toBe(25);
+    expect(db.walletTopUp.deleteMany).not.toHaveBeenCalled();
+    stamp.mockResolvedValue(1);
   });
 });

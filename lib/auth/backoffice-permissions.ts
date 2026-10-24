@@ -41,6 +41,9 @@ export type BackofficeSurface =
   | "threads.manage"
   | "feedback.manage"
   | "moderation.manage"
+  // Case-linked booking chat access: the audited transcript read and the visible intervention.
+  | "supportChat.read"
+  | "supportChat.intervene"
   | "engineering.escalate"
   // Operations — booking-side triage and user verification.
   | "appointments.manage"
@@ -112,6 +115,10 @@ export const BACKOFFICE_PERMISSIONS: Record<
   "threads.manage": OPERATORS,
   "feedback.manage": OPERATORS,
   "moderation.manage": OPERATORS,
+  // Both need a HUMAN case with a linked booking, a reason and step-up; every read is logged.
+  "supportChat.read": OPERATORS,
+  // Seats a visible "Familiarise Support" member; never silent, removed at resolution.
+  "supportChat.intervene": OPERATORS,
   "engineering.escalate": ADMIN_ONLY,
 
   // Operations — staff triage bookings and clear the verification queue.
