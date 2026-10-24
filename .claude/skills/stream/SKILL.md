@@ -69,8 +69,8 @@ mcp__stream-io__app_get_rate_limits   {}
    - `TrialSession` bookings block all Stream Chat channels, 1:1 DMs, and in-call Q&A/chat (`isInCallChatAllowed("TRIAL") === false`).
 4. **Contextual Booking Receipt Cards (`booking-ctx-`)**:
    - `POST /api/stream/channels/open` with `contextAppointmentId` verifies the booking pair and posts an idempotent receipt message (`booking-ctx-${appointmentId}-${eventType}`) into the shared 1:1 DM thread.
-5. **Chat is intended to be text-only**:
-   - The `messaging` and `team` channel types are intended to run with `uploads: false` and no attachment-upload grant (`upload-file`, `upload-attachment`, `create-attachment`) for any role. `scripts/stream/ensure-chat-text-only.ts` is dry-run by default, backs up the pre-image and re-reads the type to verify; run it with `--apply` after any control-plane restore. Applying it to the shared Stream app is an operator step outside the code deploy. The community page that advertised uploads is deleted.
+5. **Chat is text-only**:
+   - The `messaging` and `team` channel types run with `uploads: false` and no attachment-upload grant (`upload-file`, `upload-attachment`, `create-attachment`) for any role. The setting was applied to the shared Stream app on 2026-10-24; a post-apply dry run and a client attachment probe confirmed it. `scripts/stream/ensure-chat-text-only.ts` is dry-run by default, backs up the pre-image and re-reads the type to verify; run it with `--apply` after any control-plane restore. The community page that advertised uploads is deleted.
 
 ---
 
