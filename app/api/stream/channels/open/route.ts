@@ -42,7 +42,7 @@ import * as Sentry from "@sentry/nextjs";
 
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
-import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import {
   CLASS_PREFIX,
   collabChannelId,
@@ -67,7 +67,7 @@ import {
 } from "@/lib/stream/event-channel-service";
 import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
-import { hasAnyOrgPermission } from "@/lib/auth/org-permissions";
+import { collabChannelAccess } from "@/lib/stream/channel-access";
 import { Refusal } from "@/lib/errors/refusal";
 import { BOOKING_CONTEXT_STREAM_USER } from "@/lib/stream/system-users";
 
@@ -103,8 +103,6 @@ function buildBookingContextMessageId(
   return `booking-ctx-${digest}`;
 }
 
-type CollabChannelAccess = "ok" | "forbidden" | "not_found" | "org_deactivated";
-
 const collabChannelRefusals = {
   orgDeactivated: new Refusal({
     code: "ORG_DEACTIVATED",
@@ -124,76 +122,6 @@ function refusalJson(refusal: Refusal): NextResponse {
     { error: refusal.userMessage, code: refusal.code },
     { status: refusal.httpStatus },
   );
-}
-
-async function isAuthorizedForCollabChannel(
-  userId: string,
-  userRole: string | undefined,
-  planType: "webinar" | "class",
-  planId: string,
-): Promise<CollabChannelAccess> {
-  const collaboratorWhere = {
-    status: "ACCEPTED" as const,
-    consultantProfile: { deletedAt: null },
-  };
-  const plan =
-    planType === "webinar"
-      ? await prisma.webinarPlan.findUnique({
-          where: { id: planId },
-          select: {
-            id: true,
-            organizationId: true,
-            organization: { select: { status: true } },
-            consultantProfile: { select: { userId: true } },
-            collaborators: {
-              where: collaboratorWhere,
-              select: { consultantProfile: { select: { userId: true } } },
-            },
-          },
-        })
-      : await prisma.classPlan.findUnique({
-          where: { id: planId },
-          select: {
-            id: true,
-            organizationId: true,
-            organization: { select: { status: true } },
-            consultantProfile: { select: { userId: true } },
-            collaborators: {
-              where: collaboratorWhere,
-              select: { consultantProfile: { select: { userId: true } } },
-            },
-          },
-        });
-
-  if (!plan) return "not_found";
-
-  if (userRole && isPrivileged(userRole)) return "ok";
-  // Checked before the host and collaborator arms: a wound-down org's chat stays closed to its own members.
-  if (plan.organization?.status === "DEACTIVATED") return "org_deactivated";
-  if (plan.consultantProfile?.userId === userId) return "ok";
-  if (plan.collaborators.some((c) => c.consultantProfile.userId === userId)) {
-    return "ok";
-  }
-
-  if (plan.organizationId && prisma.membership?.findFirst) {
-    const membership = await prisma.membership.findFirst({
-      where: {
-        organizationId: plan.organizationId,
-        userId,
-        status: "ACTIVE",
-        organization: { status: { not: "DEACTIVATED" } },
-      },
-      select: { role: true },
-    });
-    if (
-      membership &&
-      hasAnyOrgPermission(membership.role, ["messaging.read", "catalog.manage"])
-    ) {
-      return "ok";
-    }
-  }
-
-  return "forbidden";
 }
 
 async function postBookingContextCardIfAbsent(
@@ -342,12 +270,7 @@ async function handleCollabChannelOpen(
   const planType = body.webinarPlanId ? "webinar" : "class";
   const planId = (body.webinarPlanId ?? body.classPlanId)!;
 
-  const access = await isAuthorizedForCollabChannel(
-    userId,
-    userRole,
-    planType,
-    planId,
-  );
+  const access = await collabChannelAccess(userId, userRole, planType, planId);
   if (access === "not_found") {
     return NextResponse.json({ error: "Plan not found." }, { status: 404 });
   }

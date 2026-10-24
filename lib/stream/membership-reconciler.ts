@@ -1,6 +1,6 @@
 import type { Channel } from "stream-chat";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import { isPrivileged } from "@/lib/auth-helpers";
 import { readJobCheckpoint, withCronLock } from "@/lib/cron/with-cron-lock";
 import { startDeadline } from "@/lib/cron/run-deadline";
 import { reportSentryError } from "@/lib/observability/report";
@@ -13,17 +13,16 @@ import {
 import {
   CLASS_PREFIX,
   COLLAB_PREFIX,
-  isDMChannel,
   isManagedChannel,
   WEBINAR_PREFIX,
 } from "@/lib/stream-channel-ids";
-import { getDmChannelId } from "@/lib/stream-utils";
 import {
   forEachChunk,
   STREAM_BATCH_LIMIT,
   STREAM_QUERY_CHANNELS_LIMIT,
 } from "@/lib/stream/batch";
-import { isDmContextEligible } from "@/lib/stream/dm-eligibility";
+import { collabChannelAccess } from "@/lib/stream/channel-access";
+import { eventParticipantsAmong } from "@/lib/stream/event-channel-service";
 import { isSupportStreamUser } from "@/lib/stream/support-user";
 
 export const MEMBERSHIP_RECONCILE_JOB = "reconcile-stream-memberships";
@@ -34,8 +33,10 @@ export const DEFAULT_CHANNELS_PER_RUN = 50;
 export interface MembershipReconcileResult {
   success: boolean;
   channelsScanned: number;
-  /** Managed channels whose roster Postgres cannot derive (unknown row or id form). */
+  /** DMs, which only the synchronous path revokes, and channels another job owns. */
   channelsSkipped: number;
+  /** Channels left untouched because the removal would have taken more than half their people. */
+  channelsSkippedSuspicious: number;
   membersRemoved: number;
   failures: number;
   /** `created_at` of the last channel examined; null once the walk reached the newest channel. */
@@ -43,109 +44,64 @@ export interface MembershipReconcileResult {
   errors: string[];
 }
 
-const PRIVILEGED_ROLES = ["ADMIN", "STAFF"] as const;
-
-const acceptedCollaboratorSelect = {
-  where: {
-    status: "ACCEPTED" as const,
-    consultantProfile: { deletedAt: null },
-  },
-  select: { consultantProfile: { select: { userId: true } } },
-};
-
-const planRosterSelect = {
-  consultantProfile: { select: { userId: true, deletedAt: true } },
-  collaborators: acceptedCollaboratorSelect,
-};
-
-type PlanRoster = {
-  consultantProfile: { userId: string; deletedAt: Date | null } | null;
-  collaborators: { consultantProfile: { userId: string } }[];
-};
-
-function planMembers(plan: PlanRoster): string[] {
-  const host =
-    plan.consultantProfile && !plan.consultantProfile.deletedAt
-      ? [plan.consultantProfile.userId]
-      : [];
-  return [
-    ...host,
-    ...plan.collaborators.map((c) => c.consultantProfile.userId),
-  ];
-}
-
 /** Service identities Stream needs in a channel that Postgres never lists. */
 function isExemptStreamUser(userId: string): boolean {
   return isSupportStreamUser(userId) || userId.startsWith("system-");
 }
 
-async function eventRoster(
-  type: "webinar" | "class",
-  eventId: string,
-): Promise<Set<string> | null> {
-  const appointmentSelect = {
-    select: {
-      participants: { where: liveParticipant(), select: { userId: true } },
-    },
-  };
-  const row =
-    type === "webinar"
-      ? await prisma.webinar.findUnique({
-          where: { id: eventId },
-          select: {
-            webinarPlan: { select: planRosterSelect },
-            appointment: appointmentSelect,
-          },
-        })
-      : await prisma.class.findUnique({
-          where: { id: eventId },
-          select: {
-            classPlan: { select: planRosterSelect },
-            appointment: appointmentSelect,
-          },
-        });
-  if (!row) return null;
-  const plan = "webinarPlan" in row ? row.webinarPlan : row.classPlan;
-  return new Set([
-    ...planMembers(plan),
-    ...(row.appointment?.participants.map((p) => p.userId) ?? []),
-  ]);
-}
+/**
+ * The members the channel's own access predicate no longer admits, or null to
+ * leave the channel alone. DMs are skipped: their revocation is the synchronous
+ * cancellation path's, and whether a finished relationship keeps its thread is policy.
+ */
+async function ineligibleMembers(
+  channelId: string,
+  humans: string[],
+): Promise<string[] | null> {
+  const roles = new Map(
+    (
+      await prisma.user.findMany({
+        where: { id: { in: humans } },
+        select: { id: true, role: true },
+      })
+    ).map((u) => [u.id, u.role]),
+  );
 
-async function collabRoster(channelId: string): Promise<Set<string> | null> {
+  const event = channelId.startsWith(WEBINAR_PREFIX)
+    ? { type: "webinar" as const, id: channelId.slice(WEBINAR_PREFIX.length) }
+    : channelId.startsWith(CLASS_PREFIX)
+      ? { type: "class" as const, id: channelId.slice(CLASS_PREFIX.length) }
+      : null;
+  if (event) {
+    const admitted = await eventParticipantsAmong(event.type, event.id, humans);
+    // Staff join derived channels only through the audited add, which this honours.
+    return humans.filter(
+      (id) => !admitted.has(id) && !isPrivileged(roles.get(id)),
+    );
+  }
+
+  if (!channelId.startsWith(COLLAB_PREFIX)) return null;
   const rest = channelId.slice(COLLAB_PREFIX.length);
-  const type = rest.startsWith("webinar-")
+  const planType = rest.startsWith("webinar-")
     ? "webinar"
     : rest.startsWith("class-")
       ? "class"
       : null;
-  if (!type) return null;
-  const planId = rest.slice(type.length + 1);
-  const plan =
-    type === "webinar"
-      ? await prisma.webinarPlan.findUnique({
-          where: { id: planId },
-          select: planRosterSelect,
-        })
-      : await prisma.classPlan.findUnique({
-          where: { id: planId },
-          select: planRosterSelect,
-        });
-  return plan ? new Set(planMembers(plan)) : null;
-}
-
-/** A DM keeps both members while the pair shares a booking in the channel's scope, and neither otherwise. */
-async function dmRoster(
-  channel: Channel,
-  humans: string[],
-): Promise<Set<string> | null> {
-  if (humans.length !== 2 || !channel.id) return null;
-  const [a, b] = humans;
-  const rawOrg = channel.data?.organization_id;
-  const orgId = typeof rawOrg === "string" && rawOrg ? rawOrg : null;
-  // An id this pair and scope would not mint is a legacy form: left alone, never guessed at.
-  if (getDmChannelId(a, b, orgId) !== channel.id) return null;
-  return (await isDmContextEligible(a, b, orgId)) ? new Set(humans) : new Set();
+  if (!planType) return null;
+  const planId = rest.slice(planType.length + 1);
+  const ineligible: string[] = [];
+  for (const id of humans) {
+    const access = await collabChannelAccess(
+      id,
+      roles.get(id),
+      planType,
+      planId,
+    );
+    // A missing plan or a wound-down org belongs to the lifecycle jobs, not here.
+    if (access === "not_found" || access === "org_deactivated") return null;
+    if (access === "forbidden") ineligible.push(id);
+  }
+  return ineligible;
 }
 
 async function channelMemberIds(channel: Channel): Promise<string[]> {
@@ -172,43 +128,32 @@ async function channelMemberIds(channel: Channel): Promise<string[]> {
   }
 }
 
-async function rosterFor(
-  channel: Channel,
-  humans: string[],
-): Promise<Set<string> | null> {
-  const id = channel.id ?? "";
-  if (id.startsWith(WEBINAR_PREFIX)) {
-    return eventRoster("webinar", id.slice(WEBINAR_PREFIX.length));
-  }
-  if (id.startsWith(CLASS_PREFIX)) {
-    return eventRoster("class", id.slice(CLASS_PREFIX.length));
-  }
-  if (id.startsWith(COLLAB_PREFIX)) return collabRoster(id);
-  if (isDMChannel(id)) return dmRoster(channel, humans);
-  return null;
-}
-
 async function reconcileChannel(
   channel: Channel,
   result: MembershipReconcileResult,
-  failureSample: string[],
+  sample: string[],
 ): Promise<void> {
+  const channelId = channel.id ?? "";
   const humans = (await channelMemberIds(channel)).filter(
     (id) => !isExemptStreamUser(id),
   );
-  const roster = await rosterFor(channel, humans);
-  if (!roster) {
+  const ineligible =
+    humans.length === 0 ? [] : await ineligibleMembers(channelId, humans);
+  if (ineligible === null) {
     result.channelsSkipped++;
     return;
   }
-  const candidates = humans.filter((id) => !roster.has(id));
-  if (candidates.length === 0) return;
-  const staff = await prisma.user.findMany({
-    where: { id: { in: candidates }, role: { in: [...PRIVILEGED_ROLES] } },
-    select: { id: true },
-  });
-  const staffIds = new Set(staff.map((u) => u.id));
-  const ineligible = candidates.filter((id) => !staffIds.has(id));
+  if (ineligible.length === 0) return;
+  // Brake: a verdict that empties most of a channel is more likely a bad read than a real revocation.
+  if (ineligible.length * 2 > humans.length) {
+    result.channelsSkippedSuspicious++;
+    if (sample.length < 10) {
+      sample.push(
+        `${channelId}: suspicious, ${ineligible.length} of ${humans.length} ineligible`,
+      );
+    }
+    return;
+  }
   await forEachChunk(ineligible, async (batch) => {
     try {
       await withStreamCircuitBreaker(() => channel.removeMembers(batch));
@@ -216,9 +161,9 @@ async function reconcileChannel(
     } catch (error) {
       if (isExpectedStreamError(error)) return;
       result.failures += batch.length;
-      if (failureSample.length < 10) {
-        failureSample.push(
-          `${channel.id}: ${error instanceof Error ? error.message : String(error)}`,
+      if (sample.length < 10) {
+        sample.push(
+          `${channelId}: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     }
@@ -249,6 +194,7 @@ async function reconcileUnlocked(opts: {
     success: true,
     channelsScanned: 0,
     channelsSkipped: 0,
+    channelsSkippedSuspicious: 0,
     membersRemoved: 0,
     failures: 0,
     checkpoint: null,
@@ -314,11 +260,15 @@ async function reconcileUnlocked(opts: {
   result.checkpoint = reachedEnd ? null : after;
   result.errors = failureSample;
   result.success = result.failures === 0;
-  // One event per run: removals mean an inline revocation was missed, failures need a retry.
-  if (result.membersRemoved > 0 || result.failures > 0) {
+  // One event per run: removals mean an inline revocation was missed, a brake or failure needs a look.
+  if (
+    result.membersRemoved > 0 ||
+    result.failures > 0 ||
+    result.channelsSkippedSuspicious > 0
+  ) {
     reportSentryError(
       new Error(
-        `Stream membership reconcile removed ${result.membersRemoved} member(s), ${result.failures} failure(s)`,
+        `Stream membership reconcile removed ${result.membersRemoved} member(s), braked ${result.channelsSkippedSuspicious} channel(s), ${result.failures} failure(s)`,
       ),
       {
         subsystem: "stream",
@@ -328,6 +278,7 @@ async function reconcileUnlocked(opts: {
         extra: {
           channelsScanned: result.channelsScanned,
           membersRemoved: result.membersRemoved,
+          channelsSkippedSuspicious: result.channelsSkippedSuspicious,
           failures: result.failures,
           sample: failureSample,
         },

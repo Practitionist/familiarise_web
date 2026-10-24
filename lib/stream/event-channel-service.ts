@@ -602,95 +602,106 @@ export async function isEventParticipant(
   eventId: string,
   userId: string,
 ): Promise<boolean> {
-  const collaboratorFilter = {
-    collaborators: {
-      some: {
-        consultantProfile: { userId, deletedAt: null },
-        status: "ACCEPTED" as const,
+  return (await eventParticipantsAmong(eventType, eventId, [userId])).has(
+    userId,
+  );
+}
+
+const retentionOrgSelect = {
+  select: { chatRetentionDays: true, streamRecordingRetentionDays: true },
+};
+
+/**
+ * The subset of `userIds` with access to an openable, in-retention event's
+ * channel: the host (profile not deleted), an ACCEPTED collaborator, or a live
+ * seat on a live appointment. `isEventParticipant` is this for one user.
+ */
+export async function eventParticipantsAmong(
+  eventType: "webinar" | "class",
+  eventId: string,
+  userIds: string[],
+): Promise<Set<string>> {
+  const ids = Array.from(new Set(userIds));
+  const admitted = new Set<string>();
+  if (ids.length === 0) return admitted;
+
+  const planSelect = {
+    select: {
+      organization: retentionOrgSelect,
+      consultantProfile: { select: { userId: true, deletedAt: true } },
+      collaborators: {
+        where: {
+          status: "ACCEPTED" as const,
+          consultantProfile: { userId: { in: ids }, deletedAt: null },
+        },
+        select: { consultantProfile: { select: { userId: true } } },
       },
     },
-  };
-  const appointmentFilter = {
-    deletedAt: null,
-    occurrences: { some: { deletedAt: null } },
-    participants: { some: liveParticipant(userId) },
   };
   const appointmentSelect = {
-    organization: {
-      select: {
-        chatRetentionDays: true,
-        streamRecordingRetentionDays: true,
+    select: {
+      deletedAt: true,
+      organization: retentionOrgSelect,
+      occurrences: {
+        orderBy: { endsAt: "desc" as const },
+        take: 1,
+        select: { endsAt: true },
       },
-    },
-    occurrences: {
-      orderBy: { endsAt: "desc" as const },
-      take: 1,
-      select: { endsAt: true },
-    },
-  };
-  const planOrgSelect = {
-    organization: {
-      select: {
-        chatRetentionDays: true,
-        streamRecordingRetentionDays: true,
+      _count: {
+        select: { occurrences: { where: { deletedAt: null } } },
+      },
+      participants: {
+        where: { ...liveParticipant(), userId: { in: ids } },
+        select: { userId: true },
       },
     },
   };
+  const where = { id: eventId, status: { in: [...OPENABLE_EVENT_STATUSES] } };
 
-  if (eventType === "webinar") {
-    const hit = await prisma.webinar.findFirst({
-      where: {
-        id: eventId,
-        status: { in: [...OPENABLE_EVENT_STATUSES] },
-        OR: [
-          { appointment: appointmentFilter },
-          { webinarPlan: { consultantProfile: { userId, deletedAt: null } } },
-          { webinarPlan: collaboratorFilter },
-        ],
-      },
-      select: {
-        id: true,
-        webinarPlan: { select: planOrgSelect },
-        appointment: { select: appointmentSelect },
-      },
-    });
-    if (!hit) return false;
-    return !isPastRetention(
-      hit.appointment?.occurrences[0]?.endsAt ?? null,
-      resolveEventRetentionDays(
-        hit.webinarPlan?.organization,
-        hit.appointment?.organization,
-      ),
-    );
+  const hit =
+    eventType === "webinar"
+      ? await prisma.webinar.findFirst({
+          where,
+          select: { webinarPlan: planSelect, appointment: appointmentSelect },
+        })
+      : await prisma.class.findFirst({
+          where,
+          select: {
+            schedulingPeriodEndsAt: true,
+            classPlan: planSelect,
+            appointment: appointmentSelect,
+          },
+        });
+  if (!hit) return admitted;
+
+  const plan = "webinarPlan" in hit ? hit.webinarPlan : hit.classPlan;
+  const appointment = hit.appointment;
+  const fallbackEndsAt =
+    "schedulingPeriodEndsAt" in hit ? hit.schedulingPeriodEndsAt : null;
+  if (
+    isPastRetention(
+      appointment?.occurrences[0]?.endsAt ?? fallbackEndsAt ?? null,
+      resolveEventRetentionDays(plan?.organization, appointment?.organization),
+    )
+  ) {
+    return admitted;
   }
 
-  const hit = await prisma.class.findFirst({
-    where: {
-      id: eventId,
-      status: { in: [...OPENABLE_EVENT_STATUSES] },
-      OR: [
-        { appointment: appointmentFilter },
-        { classPlan: { consultantProfile: { userId, deletedAt: null } } },
-        { classPlan: collaboratorFilter },
-      ],
-    },
-    select: {
-      id: true,
-      schedulingPeriodEndsAt: true,
-      classPlan: { select: planOrgSelect },
-      appointment: { select: appointmentSelect },
-    },
-  });
-  if (!hit) return false;
-  return !isPastRetention(
-    hit.appointment?.occurrences[0]?.endsAt ??
-      hit.schedulingPeriodEndsAt ??
-      null,
-    resolveEventRetentionDays(
-      hit.classPlan?.organization,
-      hit.appointment?.organization,
-    ),
-  );
+  const host = plan?.consultantProfile;
+  if (host && !host.deletedAt && ids.includes(host.userId)) {
+    admitted.add(host.userId);
+  }
+  for (const c of plan?.collaborators ?? []) {
+    admitted.add(c.consultantProfile.userId);
+  }
+  if (
+    appointment &&
+    appointment.deletedAt === null &&
+    appointment._count.occurrences > 0
+  ) {
+    for (const p of appointment.participants) admitted.add(p.userId);
+  }
+  return admitted;
 }
 
 export async function queryOrgTaggedChannels(

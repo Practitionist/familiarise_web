@@ -1185,6 +1185,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         summarize: (r) => ({
           channelsScanned: r.channelsScanned,
           channelsSkipped: r.channelsSkipped,
+          channelsSkippedSuspicious: r.channelsSkippedSuspicious,
           membersRemoved: r.membersRemoved,
           failures: r.failures,
           checkpoint: r.checkpoint,
