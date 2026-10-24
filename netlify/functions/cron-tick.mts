@@ -459,8 +459,10 @@ export function dueTargets(now: Date): Target[] {
     const offset = TARGET_OFFSET_MINUTES[name] ?? 0;
     return (((minuteOfDay - offset) % every) + every) % every < 5;
   });
-  // The ledger report persists its cursor, so a busy slot can yield without losing coverage.
-  return due.length > MAX_TARGETS_PER_TICK
+  // The ledger report persists its cursor, so it yields whenever the tick is at
+  // the cap; statutory and settlement jobs keep their slots, and the ledger
+  // runs on the ticks that have spare capacity.
+  return due.length >= MAX_TARGETS_PER_TICK
     ? due.filter((name) => name !== "reconcile-ledgers")
     : due;
 }
