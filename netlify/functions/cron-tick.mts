@@ -87,6 +87,8 @@ const TARGETS = [
   "vest-referral-credits",
   // Support SLA warn/breach outbox alerts, 28-day RESOLVED auto-close, and T-72h/T-24h dispute alerts.
   "support-sla-sweep",
+  // Retention tombstones and the grace-window purge; hourly, bounded by `limit`.
+  "purge-deleted-documents",
   // Disburses APPROVED consultant and org payouts hourly; still gated on ENABLE_LIVE_PAYOUTS.
   "process-payouts",
   // Polls Razorpay for open disputes whose webhook was missed; hourly at :00.
@@ -170,6 +172,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   // Gateway polls per PENDING row plus a Serializable cascade per stranded row.
   "reconcile-refunds": 10,
   "support-sla-sweep": 20,
+  // One object delete per row; 100 rows stays inside the 20 s target and runs hourly.
+  "purge-deleted-documents": 100,
   // Units per rail: a gateway call per disbursement, a transaction per minted payout.
   "process-payouts": 5,
   // Per payout model: up to two RazorpayX calls each.
@@ -244,9 +248,10 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-orphaned-payments": 30,
   "process-data-exports": 10,
   "retry-moderation-enforcement": 30,
-  // 30, not 15: only the :05/:35 ticks have room under the 8-target cap, and a vest waits hours anyway.
+  // 30, not 15: only the :05/:35 ticks have room under the tick cap, and a vest waits hours anyway.
   "vest-referral-credits": 30,
   "support-sla-sweep": 30,
+  "purge-deleted-documents": 60,
   "process-payouts": 60,
   "handle-stuck-payouts": 120,
   "reconcile-payout-status": 120,
@@ -312,6 +317,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "retry-moderation-enforcement": 25,
   "vest-referral-credits": 5,
   "support-sla-sweep": 10,
+  "purge-deleted-documents": 35,
   "process-payouts": 0,
   "reconcile-disputes": 0,
   "create-payout-batch": 5,
@@ -344,7 +350,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
 };
 
 /** The most targets one tick may fire; pinned by the cadence test. */
-export const MAX_TARGETS_PER_TICK = 9;
+export const MAX_TARGETS_PER_TICK = 10;
 
 /**
  * A UTC calendar window. Inside it the target fires on its every/offset slots;
@@ -453,8 +459,10 @@ export function dueTargets(now: Date): Target[] {
     const offset = TARGET_OFFSET_MINUTES[name] ?? 0;
     return (((minuteOfDay - offset) % every) + every) % every < 5;
   });
-  // The ledger report persists its cursor, so a busy slot can yield without losing coverage.
-  return due.length > MAX_TARGETS_PER_TICK
+  // The ledger report persists its cursor, so it yields whenever the tick is at
+  // the cap; statutory and settlement jobs keep their slots, and the ledger
+  // runs on the ticks that have spare capacity.
+  return due.length >= MAX_TARGETS_PER_TICK
     ? due.filter((name) => name !== "reconcile-ledgers")
     : due;
 }
@@ -486,6 +494,8 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "alert-orphaned-payments": 20_000,
   "reconcile-orphaned-payments": 20_000,
   "process-data-exports": 20_000,
+  // One storage delete per row, up to 100 rows, so it needs more than the default.
+  "purge-deleted-documents": 20_000,
   "retry-moderation-enforcement": 20_000,
   "process-payouts": 24_000,
   "handle-stuck-payouts": 24_000,

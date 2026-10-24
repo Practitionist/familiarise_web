@@ -5,6 +5,7 @@ import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { recordOpsAction } from "@/lib/backoffice/ops-action-log";
 import { fileApiError } from "@/lib/documents/api-error";
+import { lockAppointment } from "@/lib/documents/upload-pipeline";
 
 const RemovalSchema = z.discriminatedUnion("action", [
   z.object({
@@ -47,6 +48,7 @@ export async function POST(
 
   if (parsed.data.action === "decline") {
     const declined = await prisma.$transaction(async (tx) => {
+      await lockAppointment(tx, appointmentId);
       const { count } = await tx.appointmentDocument.updateMany({
         where: {
           id: rootId,
@@ -70,6 +72,7 @@ export async function POST(
 
   const reason = parsed.data.reason;
   const removed = await prisma.$transaction(async (tx) => {
+    await lockAppointment(tx, appointmentId);
     const { count } = await tx.appointmentDocument.updateMany({
       where: {
         appointmentId,
