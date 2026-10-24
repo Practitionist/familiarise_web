@@ -14,6 +14,7 @@ import prisma from "@/lib/prisma";
 import { isDeliberateEnd } from "@/lib/appointments/occurrences";
 import {
   mapStreamCallEndedReason,
+  recordedEndHolds,
   type MeetingEndReason,
 } from "@/lib/meetings/end-reasons";
 import { parseSlotIdFromCallId, toCallId } from "@/lib/stream/call-cid";
@@ -265,7 +266,7 @@ export async function handleSessionEnded(
     const endedAt = new Date(created_at);
 
     if (
-      isDeliberateEnd(meeting) ||
+      recordedEndHolds(meeting, "session_timeout") ||
       !supersedesRecordedEnd(meeting.endedAt, endedAt)
     ) {
       await runBestEffortGroupReconciliation(
@@ -353,9 +354,16 @@ export async function handleCallEnded(
     }
 
     const endedAt = new Date(created_at);
+    const slotStartsAt = meeting.occurrence.startsAt;
+    const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
+    const endedReason = mapStreamCallEndedReason({
+      endedBeforeStart,
+      endedByUserId,
+      streamReason: event.reason,
+    });
 
     if (
-      isDeliberateEnd(meeting) ||
+      recordedEndHolds(meeting, endedReason) ||
       !supersedesRecordedEnd(meeting.endedAt, endedAt)
     ) {
       await runBestEffortGroupReconciliation(
@@ -369,14 +377,6 @@ export async function handleCallEnded(
       });
       return;
     }
-
-    const slotStartsAt = meeting.occurrence.startsAt;
-    const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
-    const endedReason = mapStreamCallEndedReason({
-      endedBeforeStart,
-      endedByUserId,
-      streamReason: event.reason,
-    });
 
     if (!(await stampEnd(meeting, endedAt, endedReason))) return;
 
@@ -437,16 +437,16 @@ export async function recordMeetingEndedSynchronously(
     kind: "already_ended" as const,
     streamCallId: meeting.streamCallId,
   };
+  const slotStartsAt = meeting.occurrence.startsAt;
+  const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
+  const endedReason = endedBeforeStart ? "ended_early" : "call_ended";
+
   if (
-    isDeliberateEnd(meeting) ||
+    recordedEndHolds(meeting, endedReason) ||
     !supersedesRecordedEnd(meeting.endedAt, endedAt)
   ) {
     return alreadyEnded;
   }
-
-  const slotStartsAt = meeting.occurrence.startsAt;
-  const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
-  const endedReason = endedBeforeStart ? "ended_early" : "call_ended";
 
   if (endedBeforeStart) {
     const nextStreamCallId = `occurrence-${meeting.occurrence.id}-r${endedAt.getTime().toString(36)}`;

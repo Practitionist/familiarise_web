@@ -1409,6 +1409,7 @@ CREATE TRIGGER support_chat_access_append_only
 
 -- SPLIT
 -- Meeting.endedReason holds only MEETING_END_REASONS (lib/meetings/end-reasons.ts); NOT VALID skips the scan, so VALIDATE separately.
+-- Before VALIDATE, confirm SELECT DISTINCT "endedReason" FROM "Meeting" returns only these values or NULL.
 ALTER TABLE "Meeting"
   DROP CONSTRAINT IF EXISTS "meeting_ended_reason_known",
   ADD CONSTRAINT "meeting_ended_reason_known"

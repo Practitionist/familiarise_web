@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { liveParticipant } from "@/lib/booking/participants";
 import { guardMeetingRoute } from "@/lib/meetings/route-guard";
-import { meetingControlLimiter } from "@/lib/rate-limit";
+import { meetingStageLimiter } from "@/lib/rate-limit";
 import { isOneToManyAppointmentType } from "@/lib/meetings/room-ready";
 import prisma from "@/lib/prisma";
 import {
@@ -41,7 +41,7 @@ export async function POST(
     const guard = await guardMeetingRoute(
       params,
       "admit to",
-      meetingControlLimiter,
+      meetingStageLimiter,
     );
     if (!guard.ok) return guard.response;
     const { userId, meetingId, access } = guard;

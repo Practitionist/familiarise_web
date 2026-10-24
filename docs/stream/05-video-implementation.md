@@ -134,7 +134,7 @@ sequenceDiagram
    - If `recordMeetingEndedSynchronously` rejects after `call.end()`, the route captures the exception via `reportSentryError` and returns HTTP `500` rather than silently succeeding with HTTP `200`.
 4. **Result Shape & Rate Limit**:
    - `recordMeetingEndedSynchronously` returns `{ kind: "not_found" | "already_ended" | "recorded" }`. The route answers `404 MEETING_NOT_FOUND` for `not_found`; for the other two it answers `200 { ended: true, callId }`, where `callId` is the id that now represents the room (the rotated id after a pre-start `ended_early`).
-   - It refuses to overwrite a deliberate end already on the row (`isDeliberateEnd`), so `already_ended` is returned when a drain or org wind-down got there first. The route runs behind `meetingControlLimiter` (10 per minute per user, shared with extend, reopen, live and stage).
+   - It refuses to overwrite a deliberate end already on the row (`recordedEndHolds`), so `already_ended` is returned when a drain or org wind-down got there first. The route runs behind `meetingControlLimiter` (10 per minute per user, shared with extend, reopen and live; stage has its own 60 per minute `meetingStageLimiter`).
 
 ---
 
@@ -258,7 +258,7 @@ Live interaction inside `MeetingRoom.tsx` combines ephemeral WebRTC media events
 
 How each column is enforced:
 
-- **deliberate**: `isDeliberateEnd` (`lib/appointments/occurrences.ts`) reads this column. `recordMeetingEndedSynchronously`, `handleCallEnded` and `handleSessionEnded` all refuse to overwrite a deliberate end, so a late `call.ended` can no longer turn `maintenance` or `org_deactivated` into `call_ended`.
+- **deliberate**: `isDeliberateEnd` (`lib/appointments/occurrences.ts`) reads this column. `recordMeetingEndedSynchronously`, `handleCallEnded` and `handleSessionEnded` all refuse to overwrite a deliberate end, so a late `call.ended` can no longer turn `maintenance` or `org_deactivated` into `call_ended`. The same writers also keep a sealed end (deliberate no, rejoinable no, such as `stream_ended`) unless the newcomer is deliberate, so a later `call.session_ended` cannot turn `stream_ended` into a rejoinable `session_timeout`; the check is `recordedEndHolds` in `lib/meetings/end-reasons.ts`.
 - **rejoinable** (`endBlocksRejoin`): the access gate answers `SESSION_ENDED` to every role for an ended meeting whose reason is not rejoinable, and the provisioner will not create a room for it.
 - **hostReopenable** (`endAllowsHostReopen`): the gate offers `canReopen` to a host only when the reason allows it, the occurrence is live, and now is within the room end plus 30 minutes. The reopen route applies the same test. Together with the previous rule, there is no state where participants may join but the room is neither live nor reopenable.
 - **money**: the outcome classifier (`classifySessionOutcome` in `lib/booking/session-outcome.ts`) treats `host_end` as a deliberate host end and `outage` as a maintenance outage.

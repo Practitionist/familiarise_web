@@ -4,6 +4,7 @@
 
 jest.mock("../../lib/rate-limit", () => ({
   meetingControlLimiter: {},
+  meetingStageLimiter: {},
   meetingQaLimiter: {},
   applyRateLimit: async () => null,
 }));

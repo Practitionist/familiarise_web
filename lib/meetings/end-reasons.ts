@@ -85,6 +85,17 @@ export function endAllowsHostReopen(meeting?: EndedMeeting): boolean {
   return endReasonPolicy(meeting.endedReason).hostReopenable;
 }
 
+/** True when a recorded end must survive a later `incoming` end: a deliberate end always, a sealed end unless the newcomer is deliberate. */
+export function recordedEndHolds(
+  meeting: EndedMeeting | undefined,
+  incoming: MeetingEndReason,
+): boolean {
+  if (!meeting?.endedAt) return false;
+  const recorded = endReasonPolicy(meeting.endedReason);
+  if (recorded.deliberate) return true;
+  return !recorded.rejoinable && !END_REASON_POLICY[incoming].deliberate;
+}
+
 /** Stream's own words for a person ending the call; anything else Stream sends is `stream_ended`. */
 const STREAM_PERSON_END_REASONS = new Set(["call_ended", "end_call"]);
 

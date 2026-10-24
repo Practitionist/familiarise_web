@@ -370,16 +370,15 @@ export async function provisionAppointmentMeeting(
   const resolvedAppointmentId = authorized.slot.appointmentId;
 
   try {
-    await withStreamCircuitBreaker(async () => {
-      await upsertUsersToStream([authorUserId], {
-        serverTrusted: STREAM_SERVER_TRUSTED,
-      });
-
-      assertValidGetOrCreateCall(payload);
-      await getStreamVideoClient()
-        .video.call(STREAM_CALL_TYPE, streamCallId)
-        .getOrCreate(payload);
+    await upsertUsersToStream([authorUserId], {
+      serverTrusted: STREAM_SERVER_TRUSTED,
     });
+    assertValidGetOrCreateCall(payload);
+    await withStreamCircuitBreaker(() =>
+      getStreamVideoClient()
+        .video.call(STREAM_CALL_TYPE, streamCallId)
+        .getOrCreate(payload),
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

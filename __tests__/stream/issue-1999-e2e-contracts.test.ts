@@ -58,6 +58,7 @@ jest.mock("../../lib/observability/report", () => ({
 
 jest.mock("../../lib/rate-limit", () => ({
   meetingControlLimiter: {},
+  meetingStageLimiter: {},
   meetingQaLimiter: {},
   applyRateLimit: async () => null,
 }));

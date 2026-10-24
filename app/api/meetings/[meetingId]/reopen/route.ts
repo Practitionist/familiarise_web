@@ -309,15 +309,15 @@ export async function POST(
     });
 
     const nextCallId = `occurrence-${meeting.occurrence.id}-r${Date.now().toString(36)}`;
-    await withStreamCircuitBreaker(async () => {
-      await upsertUsersToStream([authorUserId], {
-        serverTrusted: STREAM_SERVER_TRUSTED,
-      });
-      assertValidGetOrCreateCall(payload);
-      await getStreamVideoClient()
-        .video.call(STREAM_CALL_TYPE, nextCallId)
-        .getOrCreate(payload);
+    await upsertUsersToStream([authorUserId], {
+      serverTrusted: STREAM_SERVER_TRUSTED,
     });
+    assertValidGetOrCreateCall(payload);
+    await withStreamCircuitBreaker(() =>
+      getStreamVideoClient()
+        .video.call(STREAM_CALL_TYPE, nextCallId)
+        .getOrCreate(payload),
+    );
 
     const updated = await prisma.meeting.updateMany({
       where: {

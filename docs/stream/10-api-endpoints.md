@@ -151,9 +151,9 @@ Ends a Stream call for everyone (host-only). Calls `call.end()` on Stream inside
 
 - **Pre-Start Device Check (`endedAt < startsAt`)**: Classifies as `"ended_early"`, keeps `AppointmentOccurrence` scheduled (`SCHEDULED`), and immediately rotates `Meeting.streamCallId` to a fresh `occurrence-<uuid>-r<base36>` id. `ended_early` is rejoinable, so the next join makes the provisioner build a clean room and clear the end stamp.
 - **Live Session Termination (`endedAt >= startsAt`)**: Stamps `endedAt = now`, `endedReason = "call_ended"`, and `isRecording = false`, closes open `MeetingPresence` intervals (`leftAt = endedAt`) and `MeetingAttendance` (`lastLeftAt = endedAt`), and prevents unauthorized rejoin.
-- **Deliberate-End Guard**: `recordMeetingEndedSynchronously` returns `{ kind: "not_found" | "already_ended" | "recorded" }` and never overwrites a deliberate end (`isDeliberateEnd`, driven by `END_REASON_POLICY`). `already_ended` still answers `200`.
+- **Deliberate-End Guard**: `recordMeetingEndedSynchronously` returns `{ kind: "not_found" | "already_ended" | "recorded" }` and never overwrites a deliberate end (`recordedEndHolds`, driven by `END_REASON_POLICY`). `already_ended` still answers `200`.
 - **Error Propagation**: Returns HTTP `404` with `code: "MEETING_NOT_FOUND"` when no `Meeting` matched the call, HTTP `503` if Stream's circuit breaker is open, and HTTP `500` (never a false `200 OK`) if database state persistence throws an unexpected error.
-- **Rate Limit**: `meetingControlLimiter` (10 per minute per user, shared with `extend`, `reopen`, `live` and `stage`) is applied by `guardMeetingRoute` after authentication and answers `429` with `code: "RATE_LIMITED"`. `applyRateLimit` fails open when Redis errors.
+- **Rate Limit**: `meetingControlLimiter` (10 per minute per user, shared with `extend`, `reopen` and `live`; `stage` uses its own 60 per minute `meetingStageLimiter`) is applied by `guardMeetingRoute` after authentication and answers `429` with `code: "RATE_LIMITED"`. `applyRateLimit` fails open when Redis errors.
 
 **Location:** `/app/api/meetings/[meetingId]/end/route.ts`
 
