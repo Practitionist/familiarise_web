@@ -4,7 +4,7 @@
 - **Date**: 2026-10-12
 - **Related**: [Session documents architecture](../documents/README.md), [Recordings lifecycle and access](../stream/19-recordings-lifecycle-and-access.md), [Recording storage, retention and visibility](2026-10-09-recording-storage-retention-visibility.md) (partly superseded by ADR-11 and ADR-17 below)
 
-This record holds nineteen decisions about the files attached to a booking: how a review thread behaves, when uploads close, how long files live, how they are opened, which pages own which actions, which recordings a learner of a multi-batch plan may watch, and how a removed recording is recorded. Each decision has its own Status, Context, Decision, Alternatives and Consequences. The 2026-10-09 record stays authoritative for where recordings are stored (pulled into R2), the consent-based discard of declined 1:1 recordings and the platform retention schedule; its visibility rules for webinar and class recordings are superseded by ADR-11, and its treatment of cancelled bookings is refined by ADR-17.
+This record holds twenty decisions about the files attached to a booking: how a review thread behaves, when uploads close, how long files live, how they are opened, which pages own which actions, which recordings a learner of a multi-batch plan may watch, how a removed recording is recorded, and how retries, refunds, erasure and storage provisioning stay truthful. Each decision has its own Status, Context, Decision, Alternatives and Consequences. The 2026-10-09 record stays authoritative for where recordings are stored (pulled into R2), the consent-based discard of declined 1:1 recordings and the platform retention schedule; its visibility rules for webinar and class recordings are superseded by ADR-11, and its treatment of cancelled bookings is refined by ADR-17.
 
 ## Decisions
 
@@ -300,6 +300,28 @@ This record holds nineteen decisions about the files attached to a booking: how 
   - The slot states `declined`, `removed` and `expired` are real, and catch-up applies only when the viewer's own session has nothing to play.
   - A removed part of a multi-part session shows as a "Removed by … on <date>" row, and the other parts keep their k-of-n numbers.
   - The delete route answers 200 once the tombstone is written; clean-up is left to the expiry sweep, and a missing object counts as already deleted. The `Recording_storage_and_publish_check` constraint allows an `EXPIRED` platform row with a null `storagePath`.
+
+### ADR-20. A retry is a replay, and erasure never claims more than it did
+
+- **Status:** Accepted.
+- **Context:** The launch audit found failure paths that looked successful: a commit retried after a lost response created a second row and orphaned the first object; a purge that hit its batch cap reported success while rows remained; an erasure marked a recording `EXPIRED` after deleting only the R2 object, leaving Stream's copy and the thumbnail alive; and an unlisted bucket was created public with a MIME allowlist no caller had chosen.
+- **Decision:**
+  - **Commit replay.** The document and material commits look up a row with the same storage path inside the existing `FOR UPDATE` transaction and return it with 200; only a first write answers 201. A failed commit deletes the uploaded object only when no row references it. A review replay returns the existing reply and target before the writable and status checks, so a retry after the window closed is still a success. `PlanMaterial.storagePath` is unique.
+  - **Read-time retention.** `keptUntil` is checked when a file or workspace is read, not only by the sweep. An expired thread answers not found and the workspace omits it, so a delayed purge cannot expose a file past its retention date.
+  - **Truthful erasure.** The scrub deletes the R2 object, the preview folder (clip and thumbnail) and Stream's copy, and only then marks the row `EXPIRED` with a null thumbnail and transcript. If the vendor delete cannot be confirmed, the row keeps its identifiers and the erasure request reports a failure instead of claiming completion. Purge and erasure loops are bounded; the result carries `remaining`.
+  - **One storage policy.** `lib/storage/bucket-policies.ts` lists every bucket with its visibility, size and MIME policy. A bucket that is not listed is refused rather than created public, and the `documents` policy is derived from `lib/documents/file-policy.ts`.
+  - **Recording refunds and deletes.** A 1:1 learner whose only succeeded payment is fully refunded loses replay access; a partial refund keeps it. Deleting a recording also deletes Stream's copy, and the row's media pointers are cleared.
+  - **Chat is text-only.** The `messaging` and `team` channel types have `uploads: false` and no `upload-file` grant (`scripts/stream/ensure-chat-text-only.ts`); the placeholder community page is gone.
+- **Alternatives considered:**
+  - Treat a duplicate commit as a conflict: pushes recovery onto the user for a response the server lost.
+  - Trust the sweep alone for retention: a stopped or delayed job silently extends every file's life.
+  - Mark `EXPIRED` after the first delete: reports success while a playable vendor copy survives.
+  - Keep the public-by-default bucket fallback: one forgotten option leaks every object in a new bucket.
+- **Consequences:**
+  - A commit retry is safe from any client, including one that never saw the first response.
+  - An erasure that cannot reach Stream stays retryable and is reported honestly; it is not silently downgraded to an R2-only delete.
+  - The purge runs hourly on the ticker with `limit=200` instead of the budget-blocked daily Actions step.
+  - A new bucket requires a policy entry; there is no implicit public bucket.
 
 ## References
 

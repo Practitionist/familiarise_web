@@ -101,5 +101,10 @@ obvious from the compliance side alone. `/finance` and `/enterprise` own it.
 - Statutory retention (tax, accounting) **overrides** erasure. That is not a
   failure to comply; it is the reason the retention engine records a basis
   instead of deleting.
+- Vendor-side copies are part of erasure. `scrubUser` deletes the R2 object,
+  the preview folder (clip and thumbnail), the transcript and Stream's copy of
+  the user's 1:1 recordings; the row is marked `EXPIRED` only after the vendor
+  confirms. A failed vendor delete fails the erasure and stays retryable —
+  never downgrade it to a database-only delete.
 
 For how the breach and MSME alert emails are routed and guarded, see [docs/email/README.md](../../../docs/email/README.md).
