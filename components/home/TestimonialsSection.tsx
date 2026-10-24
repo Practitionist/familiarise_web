@@ -91,13 +91,13 @@ export function TestimonialsSection({
             variant="secondary"
             className="mb-4 bg-zinc-800 text-zinc-300 hover:bg-zinc-800 border-zinc-700"
           >
-            Testimonials
+            Reviews
           </Badge>
           <h2 className="text-fluid-4xl font-bold text-white mb-4 tracking-tight">
-            Loved by <span className="text-zinc-400">professionals</span>
+            What <span className="text-zinc-400">learners say</span>
           </h2>
           <p className="text-lg text-zinc-400 max-w-2xl mx-auto">
-            See what our community has to say about their experience
+            Reviews from learners who attended a session on Familiarise
           </p>
         </motion.div>
       </div>

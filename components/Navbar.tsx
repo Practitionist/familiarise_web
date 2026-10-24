@@ -11,7 +11,6 @@ import {
   ArrowRightLeft,
   UserCheck,
   Building2,
-  FileText,
   HelpCircle,
   Info,
   Mail,
@@ -236,8 +235,6 @@ const ENTERPRISE_COLUMNS: NavColumn[] = [
   },
 ];
 
-// Community and Blog previously rendered a "Soon" pill while linking to live
-// pages — the pill told users not to bother clicking something that worked.
 const RESOURCE_COLUMNS: NavColumn[] = [
   {
     heading: "Resources",
@@ -249,21 +246,9 @@ const RESOURCE_COLUMNS: NavColumn[] = [
         icon: HelpCircle,
       },
       {
-        label: "Community",
-        href: "/explore/community",
-        description: "Connect with peers and mentors",
-        icon: Users,
-      },
-      {
-        label: "Blog",
-        href: "/blog",
-        description: "Insights, tips, and career advice",
-        icon: FileText,
-      },
-      {
         label: "About",
         href: "/about",
-        description: "Our mission and story",
+        description: "Our company and what we do",
         icon: Info,
       },
       {
