@@ -51,8 +51,9 @@ callback gets `statusFor` and the inferred outcome. A lease-held 409 is an
 attempted run, never fresh successful work.
 
 `reconcile-ledgers` runs as an hourly `:55` bounded slice whose cursor persists on
-its report, so a tick that would exceed `MAX_TARGETS_PER_TICK` drops it first
-without losing coverage. It answers 200 with summary status RUNNING while work
+its report. When the due cohort reaches `MAX_TARGETS_PER_TICK`, the ledger
+yields before dispatch so statutory and settlement slots keep priority; later
+admitted slices resume the report. It answers 200 with summary status RUNNING while work
 remains and 207 once a completed audit has discrepancies; it is listed in
 `PARTIAL_FAILURE_TARGETS`, so that 207 counts as failed.
 
