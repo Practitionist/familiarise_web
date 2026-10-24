@@ -40,3 +40,12 @@ Maintenance bypass cookies remain short-lived HMAC-SHA256 tokens verified via We
 Crypto. Follow the active maintenance implementation and recovery instructions;
 never infer that a cached phase quiesces work already in flight. See the linked
 references for transaction-client, deployed-runtime and environment constraints.
+
+## Direct upload commit retries
+
+For plan-material commit changes in `app/api/plans/shared/materials-handler.ts`,
+check session, current plan-management access and payload/file policy before
+replaying by plan type, plan ID and storage path. Replay committed rows before
+storage probes; keep first-attach verification outside the transaction and the
+locked replay check inside it. Run
+`npx jest __tests__/documents/plan-material-commit-replay.test.ts --runInBand`.
