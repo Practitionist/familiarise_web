@@ -41,15 +41,15 @@ export interface StreamCallEndedEvent {
   call?: {
     id: string;
     type: string;
-    created_by_user_id?: string;
-    ended_by_user_id?: string;
+    created_by_user_id?: string | null;
+    ended_by_user_id?: string | null;
   };
   user?: {
     id: string;
     [key: string]: unknown;
-  };
-  reason?: string;
-  ended_by_user_id?: string;
+  } | null;
+  reason?: string | null;
+  ended_by_user_id?: string | null;
 }
 
 export interface StreamSessionParticipantJoinedEvent {
