@@ -230,15 +230,15 @@ Serverless invocations run with a strict 1-connection pool (`PG_POOL_MAX=1`). Ev
 
 All periodic background jobs acquire an exclusive PostgreSQL lease via `withCronLock` (`SystemJobExecution` table) rather than Redis locks:
 
-| Background Job                      | Schedule / Trigger        | Responsibility & Invariant                                                                                                                      |
-| ----------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`reconcile-orphaned-sessions`**   | Intra-day cleanup sweep   | Stamps `Meeting` rows whose end webhook dropped and closes that segment's open `MeetingPresence` intervals (`leftAt = endedAt`, `closedByEnd`). |
-| **`transfer-recordings`**           | Every 6 hours (`:33` UTC) | Reclaims `TRANSFERRING` claims older than 15m, copies `READY` recordings from Stream CDN to Cloudflare R2 (10 MB parts), and marks `AVAILABLE`. |
-| **`reconcile-orphaned-recordings`** | Daily 03:00 UTC batch     | Polls Stream `listRecordings` for recent sessions (2h–14d) to back-fill any missed `call.recording_ready` webhooks.                             |
-| **`expire-recordings`**             | Daily 03:00 UTC batch     | Enforces retention rules (1:1/sub +90d, webinar/class +365d, org override), deleting R2 objects while sparing purchased/listed replays.         |
-| **`expire-event-channels`**         | Daily 03:00 UTC batch     | Freezes event channels 7 days post-end and deletes dormant channels 90 days post-end in 100-item chunks (`RATE_LIMIT_DELAY_MS = 10_000`).       |
-| **`stream-sync`**                   | Daily 03:00 UTC batch     | Reaps orphaned/soft-deleted Stream principals past the 30-day grace window and validates channel rosters.                                       |
-| **`wind-down-deactivated-orgs`**    | Event + periodic sweep    | Ends open Stream video calls and freezes channels tagged with `custom.organization_id` when an enterprise tenant is deactivated.                |
+| Background Job                      | Schedule / Trigger                                                                          | Responsibility & Invariant                                                                                                                      |
+| ----------------------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`reconcile-orphaned-sessions`**   | Intra-day cleanup sweep                                                                     | Stamps `Meeting` rows whose end webhook dropped and closes that segment's open `MeetingPresence` intervals (`leftAt = endedAt`, `closedByEnd`). |
+| **`transfer-recordings`**           | Every 6 hours (`:33` UTC)                                                                   | Reclaims `TRANSFERRING` claims older than 15m, copies `READY` recordings from Stream CDN to Cloudflare R2 (10 MB parts), and marks `AVAILABLE`. |
+| **`reconcile-orphaned-recordings`** | Daily 03:00 UTC batch                                                                       | Polls Stream `listRecordings` for recent sessions (2h–14d) to back-fill any missed `call.recording_ready` webhooks.                             |
+| **`expire-recordings`**             | Daily 03:00 UTC batch                                                                       | Enforces retention rules (1:1/sub +90d, webinar/class +365d, org override), deleting R2 objects while sparing purchased/listed replays.         |
+| **`expire-event-channels`**         | Daily 03:00 UTC batch (Actions only, and no `cleanup-registry` entry, so not running today) | Freezes event channels 7 days post-end and deletes dormant channels 90 days post-end in 100-item chunks (`RATE_LIMIT_DELAY_MS = 10_000`).       |
+| **`stream-sync`**                   | Daily 03:00 UTC batch                                                                       | Reaps orphaned/soft-deleted Stream principals past the 30-day grace window and validates channel rosters.                                       |
+| **`wind-down-deactivated-orgs`**    | Event + periodic sweep                                                                      | Ends open Stream video calls and freezes channels tagged with `custom.organization_id` when an enterprise tenant is deactivated.                |
 
 ---
 

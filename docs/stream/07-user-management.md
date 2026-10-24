@@ -619,9 +619,11 @@ You can manually trigger the sync job:
 **Via GitHub Actions UI:**
 
 1. Navigate to Actions tab
-2. Select "Sync Stale Stream Users" workflow
-3. Click "Run workflow"
+2. Select the "Cron — Daily Fleet" workflow (`cron-daily.yml`)
+3. Click "Run workflow" and enter the job slug `stream-sync`
 4. Select branch and confirm
+
+Or run it from the staff Jobs page, which posts `stream-sync` to `/api/admin/system-jobs/run`.
 
 **Via API Endpoint:**
 See [API Endpoints - Manual Sync](./10-api-endpoints.md#post-apistreamsyncmanual)
