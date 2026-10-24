@@ -26,13 +26,78 @@ export function isInCallChatAllowed(
   return appointmentType !== "TRIAL";
 }
 
-/** Builds per-call Stream settings_override for session duration limits and 1-to-Many backstage moderation. */
+/** Stream `limits` participant fields, as sent in `settings_override`. */
+export interface CallParticipantLimits {
+  max_participants: number;
+  max_participants_exclude_owner?: boolean;
+  max_participants_exclude_roles?: string[];
+}
+
+/** Hosts, presenters and a second device sit above the sold seats of a 1-to-Many room. */
+export const GROUP_CALL_HEADROOM = 5;
+
+/** Host, a reassigned host and one client, each on two devices: every Stream session counts. */
+export const PAIR_CALL_MAX_PARTICIPANTS = 6;
+
+/** Roles that never count toward a 1-to-Many room's cap. */
+const GROUP_CAP_EXEMPT_ROLES = ["co_presenter", "admin"];
+
+/**
+ * The participant cap a call is created with: sold capacity plus headroom for a 1-to-Many
+ * room (call owner and presenter roles excluded), a fixed small cap for a 1:1 room.
+ */
+export function resolveCallParticipantLimits(
+  appointmentType: AppointmentTypeInput,
+  capacity: number | null,
+): CallParticipantLimits | undefined {
+  if (!isOneToManyAppointmentType(appointmentType)) {
+    return { max_participants: PAIR_CALL_MAX_PARTICIPANTS };
+  }
+  if (capacity === null || !Number.isInteger(capacity) || capacity < 1) {
+    return undefined;
+  }
+  return {
+    max_participants: capacity + GROUP_CALL_HEADROOM,
+    max_participants_exclude_owner: true,
+    max_participants_exclude_roles: GROUP_CAP_EXEMPT_ROLES,
+  };
+}
+
+/** Reads the participant cap back from a Stream call so a mirror re-sends what the call already has. */
+export function participantLimitsFromStream(
+  limits:
+    | {
+        max_participants?: number;
+        max_participants_exclude_owner?: boolean;
+        max_participants_exclude_roles?: string[];
+      }
+    | null
+    | undefined,
+): CallParticipantLimits | undefined {
+  if (typeof limits?.max_participants !== "number") return undefined;
+  return {
+    max_participants: limits.max_participants,
+    ...(limits.max_participants_exclude_owner !== undefined
+      ? {
+          max_participants_exclude_owner: limits.max_participants_exclude_owner,
+        }
+      : {}),
+    ...(limits.max_participants_exclude_roles?.length
+      ? {
+          max_participants_exclude_roles: limits.max_participants_exclude_roles,
+        }
+      : {}),
+  };
+}
+
+/** Builds per-call Stream settings_override for duration and participant limits and 1-to-Many backstage moderation. */
 export function buildCallSettingsOverride(
   appointmentType: AppointmentTypeInput,
   maxDurationSeconds: number | null,
+  participantLimits?: CallParticipantLimits,
 ): Record<string, unknown> | undefined {
   const isOneToMany = isOneToManyAppointmentType(appointmentType);
-  if (!isOneToMany && maxDurationSeconds === null) {
+  if (!isOneToMany && maxDurationSeconds === null && !participantLimits) {
     return undefined;
   }
 
@@ -64,9 +129,15 @@ export function buildCallSettingsOverride(
           },
         }
       : {}),
-    ...(maxDurationSeconds !== null
-      ? { limits: { max_duration_seconds: maxDurationSeconds } }
+    ...(maxDurationSeconds !== null || participantLimits
+      ? {
+          limits: {
+            ...(maxDurationSeconds !== null
+              ? { max_duration_seconds: maxDurationSeconds }
+              : {}),
+            ...participantLimits,
+          },
+        }
       : {}),
   };
 }
-
