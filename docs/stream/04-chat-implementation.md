@@ -594,6 +594,14 @@ export function useUserChannels(userId: string) {
 }
 ```
 
+### Client behaviour the sidebar, badge and messages rely on
+
+The channel list does not assume the first page is everything. When a `message.new` or `notification.message_new` event names a channel the sidebar does not hold, and the first page has already loaded, `ChatSidebar` watches that channel and inserts it at the top, provided it matches the current org scope (and, for a direct message, `isUsableDmChannel`). Inserts are deduplicated by cid, so a burst of events costs one `watch`. Pages appended by "Load more" go through `appendUniqueChannels` (`components/chat/utils/channelList.ts`) so a channel that moved between pages is never shown twice.
+
+The personal navigation badge (`hooks/useChatUnreadCount.ts`) starts from Stream's own `total_unread_count`, read from `client.user` and refreshed by every `message.new` and `notification.*` event that carries it, so it counts channels the sidebar has not loaded. That total is global and includes org-tagged channels, which belong to the org dashboard's own entry, so their unread is subtracted. The subtraction is local while loaded channels explain the whole total. When unread exists beyond them, one `getUnreadCount` call (at most every 30 seconds) lists unread per channel, and one `queryChannels` per 30 newly seen cids classifies them as personal or org; classifications are cached for the life of the mount.
+
+`components/chat/CustomMessage.tsx` shows the delivery state of the viewer's own messages. A message the SDK holds with `status === "failed"` renders "Not sent" with a Retry button that calls the message context's `handleRetry` (stream-chat-react's `retrySendMessage`, which resends the same message id), and one with `status === "sending"` renders "Sending…". Without this a failed send looked identical to a delivered one.
+
 ---
 
 ## Best Practices
