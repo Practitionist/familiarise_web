@@ -57,6 +57,7 @@ import {
   SUPPORT_STREAM_USER_NAME,
 } from "@/lib/stream/support-user";
 import { SystemMessage } from "./SystemMessage";
+import { isBookingContextAuthor } from "@/lib/stream/system-users";
 
 export const CustomMessage = () => {
   const pathname = usePathname();
@@ -156,11 +157,14 @@ export const CustomMessage = () => {
   const bookingHelpHref = bookingRef
     ? `${requestsBase}/${caseKeyOf(bookingRef)}`
     : null;
-  const isBookingContext = Boolean(
-    bookingAppointmentId ||
-    msgRecord.kind === "booking_context" ||
-    customRecord?.kind === "booking_context",
-  );
+  // Custom fields are user-writable, so only the server-only booking author earns the card.
+  const isBookingContext =
+    isBookingContextAuthor(message.user?.id) &&
+    Boolean(
+      bookingAppointmentId ||
+      msgRecord.kind === "booking_context" ||
+      customRecord?.kind === "booking_context",
+    );
   const bookingType = (
     readMessageString("booking_type") ?? "CONSULTATION"
   ).toUpperCase();

@@ -218,8 +218,8 @@ function earlyVerdict(
   input: SessionOutcomeInput,
 ): SessionOutcomeVerdict | null {
   if (!input.meeting) return verdict("OFFLINE");
-  // An open interval is either a live overrun (the sweep defers those) or a lost
-  // leave; neither can be judged, so it never moves money.
+  // An open interval is a live overrun (the sweep defers those) or a leave neither
+  // a webhook nor Stream's participant sessions confirmed; it never moves money.
   if (input.intervals.some((i) => i.leftAt === null)) {
     return verdict("INCONCLUSIVE");
   }

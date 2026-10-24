@@ -26,15 +26,17 @@ import { personalHref } from "@/lib/novu/resolve-href";
 import {
   getCallParticipantSessionsFromStream,
   getCallPresenceEvidence,
+  type CallPresenceEvidence,
+  type StreamParticipantSessionInterval,
 } from "@/lib/stream/call-presence";
 import { getAppUrl } from "@/lib/url";
 import { REJOIN_GRACE_MS } from "@/lib/appointments/occurrences";
 import { resolveRoomEndsAt } from "@/lib/meetings/duration-cap";
-import type { MeetingEndReason } from "@/lib/meetings/end-reasons";
 import { isPastNoShowHandoff } from "./attendance";
 import {
   classifySessionOutcome,
   type OutageWindow,
+  type PresenceInterval,
   type SessionOutcomeVerdict,
 } from "./session-outcome";
 import { SESSION_HOSTS_SELECT, sessionHostUserIds } from "./session-hosts";
@@ -46,11 +48,19 @@ import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { onClassSessionVoided } from "./class-sessions";
 
-/** Ends after which Stream must have sent participant events (#1543 watchdog). */
-const FEED_EXPECTED_REASONS = new Set<string>([
-  "call_ended",
-  "session_timeout",
-] satisfies MeetingEndReason[]);
+/** Stream reads one sweep run may spend on attendance evidence; a slot past the budget waits for the next run. */
+const STREAM_WITNESS_READS_PER_RUN = 100;
+
+/** Shared by every slot one run decides. */
+export interface StreamWitnessBudget {
+  remaining: number;
+  /** Reads for an unresolved interval that Stream could not answer; the run reports them once. */
+  failures: number;
+}
+
+export function createStreamWitnessBudget(): StreamWitnessBudget {
+  return { remaining: STREAM_WITNESS_READS_PER_RUN, failures: 0 };
+}
 
 export const OUTCOME_SLOT_SELECT = {
   id: true,
@@ -59,13 +69,24 @@ export const OUTCOME_SLOT_SELECT = {
   endsAt: true,
   meeting: {
     select: {
+      id: true,
       streamCallId: true,
       endedAt: true,
       endedReason: true,
       extendedSeconds: true,
     },
   },
-  presences: { select: { userId: true, joinedAt: true, leftAt: true } },
+  presences: {
+    select: {
+      id: true,
+      userId: true,
+      userSessionId: true,
+      streamCallId: true,
+      joinedAt: true,
+      leftAt: true,
+      closedByEnd: true,
+    },
+  },
   appointment: {
     select: {
       organizationId: true,
@@ -87,10 +108,14 @@ export interface OutcomeContext {
   outages: OutageWindow[];
   /** Called once per session Stream saw people in while we recorded nobody. */
   onFeedGap?: () => void;
+  witness: StreamWitnessBudget;
 }
 
 export type SlotDecision =
-  | { kind: "deferred"; reason: "live-overrun" | "no-show-detector" }
+  | {
+      kind: "deferred";
+      reason: "live-overrun" | "no-show-detector" | "stream-budget";
+    }
   | {
       kind: "written";
       to: OccurrenceCompletionStatus;
@@ -142,102 +167,165 @@ export async function readOutageWindows(
   ];
 }
 
-async function capOpenSlotPresences(
-  slot: OutcomeSlot,
-): Promise<OutcomeSlot["presences"]> {
-  const { meeting } = slot;
-  if (!slot.presences.some((p) => p.leftAt === null)) {
-    return slot.presences;
-  }
-  const capAt = meeting?.endedAt ?? slot.endsAt;
-  await prisma.meetingPresence?.updateMany?.({
-    where: { appointmentOccurrenceId: slot.id, leftAt: null },
-    data: { leftAt: capAt },
-  });
-  return slot.presences.map((p) =>
-    p.leftAt === null ? { ...p, leftAt: capAt } : p,
-  );
+type OutcomeMeeting = NonNullable<OutcomeSlot["meeting"]>;
+
+interface StreamEvidence {
+  report: CallPresenceEvidence | null;
+  /** Participant sessions per call id Stream answered for. */
+  sessions: Map<string, StreamParticipantSessionInterval[]>;
 }
 
-async function backfillMissingPresencesFromStream(
+const EXHAUSTED = Symbol("stream-budget");
+
+async function spendWitnessRead<T>(
+  budget: StreamWitnessBudget,
+  read: () => Promise<T>,
+): Promise<T | typeof EXHAUSTED> {
+  if (budget.remaining <= 0) return EXHAUSTED;
+  budget.remaining--;
+  return read();
+}
+
+/** Assumed closes and open rows wait on Stream; a leave Stream reported is final. */
+const isUnresolved = (p: OutcomeSlot["presences"][number]) =>
+  p.leftAt === null || p.closedByEnd;
+
+/**
+ * Reads Stream's report and the participant sessions of every segment with an
+ * unresolved interval, plus the current segment whenever our rows may be missing
+ * someone (no rows, no report count, or Stream saw more people). Runs before the
+ * outcome transaction, so a lost join alone never decides a void.
+ */
+async function readStreamEvidence(
   slot: OutcomeSlot,
+  meeting: OutcomeMeeting,
+  budget: StreamWitnessBudget,
+): Promise<StreamEvidence | typeof EXHAUSTED> {
+  const report = await spendWitnessRead(budget, () =>
+    getCallPresenceEvidence(meeting.streamCallId),
+  );
+  if (report === EXHAUSTED) return EXHAUSTED;
+
+  const unresolvedCallIds = new Set(
+    slot.presences
+      .filter(isUnresolved)
+      .map((p) => p.streamCallId ?? meeting.streamCallId),
+  );
+  const seenUsers = new Set(slot.presences.map((p) => p.userId));
+  const callIds = new Set(unresolvedCallIds);
+  if (
+    slot.presences.length === 0 ||
+    report === null ||
+    report.unique > seenUsers.size
+  ) {
+    callIds.add(meeting.streamCallId);
+  }
+
+  const sessions = new Map<string, StreamParticipantSessionInterval[]>();
+  for (const callId of callIds) {
+    const read = await spendWitnessRead(budget, () =>
+      getCallParticipantSessionsFromStream(
+        callId,
+        callId === meeting.streamCallId ? report?.sessionId : null,
+      ),
+    );
+    if (read === EXHAUSTED) return EXHAUSTED;
+    if (read) sessions.set(callId, read);
+    else if (unresolvedCallIds.has(callId)) budget.failures++;
+  }
+  return { report, sessions };
+}
+
+interface ResolvedPresence {
+  /** What the classifier reads; an unresolved interval stays open (leftAt null). */
+  intervals: PresenceInterval[];
+  /** Assumed closes Stream answered with a reported leave. */
+  leaves: { id: string; leftAt: Date }[];
+  /** Device stays Stream saw that we hold no row for. */
+  missing: (StreamParticipantSessionInterval & { streamCallId: string })[];
+}
+
+/** Pure: replaces each unresolved interval with Stream's leave, or leaves it open. */
+function resolvePresencesFromStream(
   presences: OutcomeSlot["presences"],
-  report: Awaited<ReturnType<typeof getCallPresenceEvidence>>,
-): Promise<OutcomeSlot["presences"]> {
-  const { meeting } = slot;
-  const seen = new Set(presences.map((p) => p.userId));
-  if (!meeting || !report || report.unique <= seen.size) {
-    return presences;
+  currentCallId: string,
+  sessions: ReadonlyMap<string, readonly StreamParticipantSessionInterval[]>,
+): ResolvedPresence {
+  const leaves: ResolvedPresence["leaves"] = [];
+  const intervals: PresenceInterval[] = presences.map((p) => {
+    if (!isUnresolved(p)) {
+      return { userId: p.userId, joinedAt: p.joinedAt, leftAt: p.leftAt };
+    }
+    const witnessed = sessions
+      .get(p.streamCallId ?? currentCallId)
+      ?.find((s) => s.userSessionId === p.userSessionId);
+    if (witnessed?.leftAt) leaves.push({ id: p.id, leftAt: witnessed.leftAt });
+    return {
+      userId: p.userId,
+      joinedAt: p.joinedAt,
+      leftAt: witnessed?.leftAt ?? null,
+    };
+  });
+
+  const known = new Set(presences.map((p) => p.userSessionId));
+  const missing: ResolvedPresence["missing"] = [];
+  for (const [streamCallId, rows] of sessions) {
+    for (const row of rows) {
+      if (known.has(row.userSessionId)) continue;
+      known.add(row.userSessionId);
+      missing.push({ ...row, streamCallId });
+      intervals.push({
+        userId: row.userId,
+        joinedAt: row.joinedAt,
+        leftAt: row.leftAt,
+      });
+    }
   }
+  return { intervals, leaves, missing };
+}
 
-  const backfilled =
-    report.intervals ??
-    (await getCallParticipantSessionsFromStream?.(
-      meeting.streamCallId,
-      report.sessionId,
-    )) ??
-    [];
-  if (backfilled.length === 0) {
-    return presences;
+/**
+ * Persists what Stream answered, outside the outcome transaction: reported leaves
+ * replace assumed closes (CAS on the assumption), closed missing stays are
+ * inserted, and a still-open row is capped at the room end, marked as assumed.
+ */
+async function persistStreamResolution(
+  slot: OutcomeSlot,
+  meeting: OutcomeMeeting,
+  resolved: ResolvedPresence,
+): Promise<void> {
+  for (const leave of resolved.leaves) {
+    await prisma.meetingPresence.updateMany({
+      where: { id: leave.id, OR: [{ leftAt: null }, { closedByEnd: true }] },
+      data: { leftAt: leave.leftAt, closedByEnd: false },
+    });
   }
-
-  const seenSessionIds = new Set<string>();
-  const resolved = backfilled
-    .filter((b) => {
-      if (seenSessionIds.has(b.userSessionId)) return false;
-      seenSessionIds.add(b.userSessionId);
-      return true;
-    })
-    .map((b) => ({
-      userId: b.userId,
-      userSessionId: b.userSessionId,
-      joinedAt: b.joinedAt,
-      leftAt: b.leftAt,
-    }));
-
-  const closedRows = resolved.filter((r) => r.leftAt !== null);
-  const meetingRow =
-    closedRows.length > 0
-      ? await prisma.meeting?.findUnique?.({
-          where: { streamCallId: meeting.streamCallId },
-          select: { id: true },
-        })
-      : null;
-  if (meetingRow?.id) {
-    await prisma.meetingPresence?.createMany?.({
-      data: closedRows.map((r) => ({
-        meetingId: meetingRow.id,
+  const closedMissing = resolved.missing.filter((m) => m.leftAt !== null);
+  if (closedMissing.length > 0) {
+    await prisma.meetingPresence.createMany({
+      data: closedMissing.map((m) => ({
+        meetingId: meeting.id,
         appointmentOccurrenceId: slot.id,
-        userId: r.userId,
-        userSessionId: r.userSessionId,
-        joinedAt: r.joinedAt,
-        leftAt: r.leftAt,
+        userId: m.userId,
+        userSessionId: m.userSessionId,
+        streamCallId: m.streamCallId,
+        joinedAt: m.joinedAt,
+        leftAt: m.leftAt,
       })),
       skipDuplicates: true,
     });
   }
-
-  const additionalPresences = resolved
-    .filter(
-      (r) =>
-        !presences.some(
-          (p) =>
-            p.userId === r.userId &&
-            p.joinedAt.getTime() === r.joinedAt.getTime(),
-        ),
-    )
-    .map((r) => ({
-      userId: r.userId,
-      joinedAt: r.joinedAt,
-      leftAt: r.leftAt,
-    }));
-
-  return [...presences, ...additionalPresences];
+  if (slot.presences.some((p) => p.leftAt === null)) {
+    await prisma.meetingPresence.updateMany({
+      where: { appointmentOccurrenceId: slot.id, leftAt: null },
+      data: { leftAt: meeting.endedAt ?? slot.endsAt, closedByEnd: true },
+    });
+  }
 }
 
 async function writeSlotOutcomeTransaction(
   slot: OutcomeSlot,
-  presences: OutcomeSlot["presences"],
+  presences: readonly PresenceInterval[],
   to: OccurrenceCompletionStatus,
   verdict: SessionOutcomeVerdict,
   now: Date,
@@ -422,19 +510,29 @@ export async function decideSlotOutcome(
     return { kind: "deferred", reason: "live-overrun" };
   }
 
-  let presences = await capOpenSlotPresences(slot);
-
-  const feedGap =
-    !!meeting?.endedAt &&
-    FEED_EXPECTED_REASONS.has(meeting.endedReason ?? "") &&
-    presences.length === 0;
-  const report =
-    meeting && (presences.length > 0 || feedGap)
-      ? await getCallPresenceEvidence(meeting.streamCallId)
-      : null;
-  if (feedGap && (report?.unique ?? 0) > 0) ctx.onFeedGap?.();
-
-  presences = await backfillMissingPresencesFromStream(slot, presences, report);
+  let presences: PresenceInterval[] = slot.presences;
+  let report: CallPresenceEvidence | null = null;
+  if (meeting) {
+    const evidence = await readStreamEvidence(slot, meeting, ctx.witness);
+    if (evidence === EXHAUSTED) {
+      return { kind: "deferred", reason: "stream-budget" };
+    }
+    report = evidence.report;
+    const resolved = resolvePresencesFromStream(
+      slot.presences,
+      meeting.streamCallId,
+      evidence.sessions,
+    );
+    await persistStreamResolution(slot, meeting, resolved);
+    presences = resolved.intervals;
+    // Stream saw people while our webhook rows recorded nobody.
+    if (
+      slot.presences.length === 0 &&
+      ((report?.unique ?? 0) > 0 || presences.length > 0)
+    ) {
+      ctx.onFeedGap?.();
+    }
+  }
 
   const verdict = classifySessionOutcome({
     startsAt: slot.startsAt,
@@ -501,10 +599,15 @@ function resolveNoShowPlan(
   );
 }
 
+/** The slot fields a no-show bell reads; `presences` is who was in the call. */
+type BellSlot = Pick<OutcomeSlot, "id" | "appointmentId" | "startsAt"> & {
+  presences: readonly { userId: string }[];
+};
+
 async function buildSeatNoShowBell(
   tx: Tx,
   args: {
-    slot: OutcomeSlot;
+    slot: BellSlot;
     seat: { userId: string; user: { consulteeProfileId: string | null } };
     shape: "one-to-one" | "group";
     planTitle: string;
@@ -543,7 +646,7 @@ async function buildSeatNoShowBell(
  */
 async function stageNoShowBells(
   tx: Tx,
-  slot: OutcomeSlot,
+  slot: BellSlot,
   shape: "one-to-one" | "group",
 ): Promise<{
   bells: StagedTrigger[];

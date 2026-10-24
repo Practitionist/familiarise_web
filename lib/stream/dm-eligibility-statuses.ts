@@ -50,6 +50,13 @@ export function dmEligibleStatusFilter(): { in: AppointmentStatus[] } {
   return { in: [...DM_ELIGIBLE_STATUSES] };
 }
 
+/** A trial appointment never grants a DM, whatever status its booking row carries. */
+export function excludeTrialBooking() {
+  return {
+    NOT: { appointment: { is: { appointmentType: "TRIAL" as const } } },
+  };
+}
+
 /**
  * The event (webinar/class) states whose shared team channel can still be
  * opened. Lives here rather than in the two routes that need it — the search
