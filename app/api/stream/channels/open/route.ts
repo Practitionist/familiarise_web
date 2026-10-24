@@ -68,6 +68,8 @@ import {
 import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { hasAnyOrgPermission } from "@/lib/auth/org-permissions";
+import { Refusal } from "@/lib/errors/refusal";
+import { BOOKING_CONTEXT_STREAM_USER } from "@/lib/stream/system-users";
 
 const bodySchema = z.discriminatedUnion("kind", [
   z.object({
@@ -101,12 +103,35 @@ function buildBookingContextMessageId(
   return `booking-ctx-${digest}`;
 }
 
+type CollabChannelAccess = "ok" | "forbidden" | "not_found" | "org_deactivated";
+
+const collabChannelRefusals = {
+  orgDeactivated: new Refusal({
+    code: "ORG_DEACTIVATED",
+    httpStatus: 403,
+    userMessage:
+      "This organization has been deactivated, so its collaborator chat is closed.",
+  }),
+  frozen: new Refusal({
+    code: "CHANNEL_FROZEN",
+    httpStatus: 423,
+    userMessage: "This collaborator chat is read-only and cannot be reopened.",
+  }),
+};
+
+function refusalJson(refusal: Refusal): NextResponse {
+  return NextResponse.json(
+    { error: refusal.userMessage, code: refusal.code },
+    { status: refusal.httpStatus },
+  );
+}
+
 async function isAuthorizedForCollabChannel(
   userId: string,
   userRole: string | undefined,
   planType: "webinar" | "class",
   planId: string,
-): Promise<boolean | null> {
+): Promise<CollabChannelAccess> {
   const collaboratorWhere = {
     status: "ACCEPTED" as const,
     consultantProfile: { deletedAt: null },
@@ -118,6 +143,7 @@ async function isAuthorizedForCollabChannel(
           select: {
             id: true,
             organizationId: true,
+            organization: { select: { status: true } },
             consultantProfile: { select: { userId: true } },
             collaborators: {
               where: collaboratorWhere,
@@ -130,6 +156,7 @@ async function isAuthorizedForCollabChannel(
           select: {
             id: true,
             organizationId: true,
+            organization: { select: { status: true } },
             consultantProfile: { select: { userId: true } },
             collaborators: {
               where: collaboratorWhere,
@@ -138,13 +165,15 @@ async function isAuthorizedForCollabChannel(
           },
         });
 
-  if (!plan) return null;
+  if (!plan) return "not_found";
 
-  if (plan.consultantProfile?.userId === userId) return true;
+  if (userRole && isPrivileged(userRole)) return "ok";
+  // Checked before the host and collaborator arms: a wound-down org's chat stays closed to its own members.
+  if (plan.organization?.status === "DEACTIVATED") return "org_deactivated";
+  if (plan.consultantProfile?.userId === userId) return "ok";
   if (plan.collaborators.some((c) => c.consultantProfile.userId === userId)) {
-    return true;
+    return "ok";
   }
-  if (userRole && isPrivileged(userRole)) return true;
 
   if (plan.organizationId && prisma.membership?.findFirst) {
     const membership = await prisma.membership.findFirst({
@@ -160,11 +189,11 @@ async function isAuthorizedForCollabChannel(
       membership &&
       hasAnyOrgPermission(membership.role, ["messaging.read", "catalog.manage"])
     ) {
-      return true;
+      return "ok";
     }
   }
 
-  return false;
+  return "forbidden";
 }
 
 async function postBookingContextCardIfAbsent(
@@ -268,9 +297,11 @@ async function postBookingContextCardIfAbsent(
     const channel = client.channel("messaging", channelId);
     const messageId = buildBookingContextMessageId(channelId, appt.id);
     const slotStart = appt.occurrences?.[0]?.startsAt ?? null;
+    // Posted as the server-only booking user, so the card cannot be forged from a client.
+    await client.upsertUser({ ...BOOKING_CONTEXT_STREAM_USER, role: "user" });
     const messagePayload: Record<string, unknown> = {
       id: messageId,
-      user_id: userId,
+      user_id: BOOKING_CONTEXT_STREAM_USER.id,
       text: `Booking context: ${title}`,
       booking_appointment_id: appt.id,
       booking_type: appt.appointmentType,
@@ -311,16 +342,19 @@ async function handleCollabChannelOpen(
   const planType = body.webinarPlanId ? "webinar" : "class";
   const planId = (body.webinarPlanId ?? body.classPlanId)!;
 
-  const authorized = await isAuthorizedForCollabChannel(
+  const access = await isAuthorizedForCollabChannel(
     userId,
     userRole,
     planType,
     planId,
   );
-  if (authorized === null) {
+  if (access === "not_found") {
     return NextResponse.json({ error: "Plan not found." }, { status: 404 });
   }
-  if (!authorized) {
+  if (access === "org_deactivated") {
+    return refusalJson(collabChannelRefusals.orgDeactivated);
+  }
+  if (access === "forbidden") {
     return NextResponse.json(
       { error: "You do not have access to this collaborator channel." },
       { status: 403 },
@@ -333,6 +367,10 @@ async function handleCollabChannelOpen(
       { error: "Collaborator channel not available" },
       { status: 404 },
     );
+  }
+  // A wind-down or moderation freeze is never lifted by opening the channel.
+  if (reconciled.frozen) {
+    return refusalJson(collabChannelRefusals.frozen);
   }
 
   const channelId = collabChannelId(planType, planId);
@@ -435,6 +473,12 @@ async function handleEventChannelOpen(
   }
 
   const admission = await addUserToEventChannel(eventType, eventId, userId);
+  if (admission.reason === "member_not_added") {
+    return NextResponse.json(
+      { error: "Chat could not be opened right now. Please try again." },
+      { status: 503 },
+    );
+  }
   if (!admission.success) {
     return NextResponse.json(
       {

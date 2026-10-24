@@ -25,6 +25,7 @@ import { bookingOrgId, isChannelAlreadyExistsError } from "@/lib/stream-utils";
 import {
   addRemainingMembers,
   createMemberChunk,
+  forEachChunk,
   queryChannelsPaged,
 } from "@/lib/stream/batch";
 import {
@@ -195,6 +196,9 @@ async function tryAddToExistingChannel(
   }
 }
 
+/** Why a join did not land: Stream refused the account, or the user is still not a member. */
+export type EventChannelJoinFailure = "account_refused" | "member_not_added";
+
 export async function addUserToEventChannel(
   eventType: EventType,
   eventId: string,
@@ -203,6 +207,7 @@ export async function addUserToEventChannel(
   success: boolean;
   channelId: string;
   created?: boolean;
+  reason?: EventChannelJoinFailure;
 }> {
   eventTypeSchema.parse(eventType);
   eventIdSchema.parse(eventId);
@@ -220,7 +225,7 @@ export async function addUserToEventChannel(
   const client = getStreamChatClient();
 
   if (!(await syncUserOrSkipOnConsent(userId, channelId))) {
-    return { success: false, channelId };
+    return { success: false, channelId, reason: "account_refused" };
   }
 
   const collaboratorChannelRole = await resolveEventCollaboratorChannelRole(
@@ -299,7 +304,7 @@ export async function addUserToEventChannel(
         await channel.addMembers(memberSpec);
       } catch (adoptError) {
         adoptRetryFailed = true;
-        streamLogger.warn("Post-adoption addMembers retry failed (non-fatal)", {
+        streamLogger.warn("Post-adoption addMembers retry failed", {
           channelId,
           userId,
           error: adoptError,
@@ -333,9 +338,10 @@ export async function addUserToEventChannel(
     }
 
     markChannelExists(channelType, channelId);
-    if (!adoptRetryFailed) {
-      markMembership(channelId, userId, true);
+    if (adoptRetryFailed) {
+      return { success: false, channelId, reason: "member_not_added" };
     }
+    markMembership(channelId, userId, true);
 
     streamLogger.info("Created channel and added user", {
       channelId,
@@ -363,41 +369,48 @@ export async function removeUserFromEventChannel(
   eventId: string,
   userId: string,
 ): Promise<{ success: boolean }> {
+  userIdSchema.parse(userId);
+  const { failedUserIds } = await removeUsersFromEventChannel(
+    eventType,
+    eventId,
+    [userId],
+  );
+  return { success: failedUserIds.length === 0 };
+}
+
+/** Removes the users 100 at a time; a missing channel counts as removed. */
+export async function removeUsersFromEventChannel(
+  eventType: EventType,
+  eventId: string,
+  userIds: string[],
+): Promise<{ failedUserIds: string[] }> {
   eventTypeSchema.parse(eventType);
   eventIdSchema.parse(eventId);
-  userIdSchema.parse(userId);
 
   const channelId = getChannelId(eventType, eventId);
   const channelType = getChannelType(eventType);
-  const client = getStreamChatClient();
+  const failedUserIds: string[] = [];
+  if (userIds.length === 0) return { failedUserIds };
 
-  try {
-    const channel = client.channel(channelType, channelId);
-    await channel.removeMembers([userId]);
-    markMembership(channelId, userId, false);
-    streamLogger.info("Removed user from event channel", {
-      channelId,
-      userId,
-    });
-    return { success: true };
-  } catch (error) {
-    markMembership(channelId, userId, false);
-    if (isExpectedStreamError(error)) {
-      streamLogger.debug("No event channel to remove the user from", {
-        eventType,
-        eventId,
-        userId,
-      });
-      return { success: true };
+  await forEachChunk(userIds, async (batch) => {
+    try {
+      await getStreamChatClient()
+        .channel(channelType, channelId)
+        .removeMembers(batch);
+    } catch (error) {
+      if (!isExpectedStreamError(error)) {
+        failedUserIds.push(...batch);
+        streamLogger.warn("Failed to remove users from event channel", {
+          channelId,
+          count: batch.length,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    } finally {
+      for (const id of batch) markMembership(channelId, id, false);
     }
-    streamLogger.warn("Failed to remove user from event channel", {
-      eventType,
-      eventId,
-      userId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return { success: false };
-  }
+  });
+  return { failedUserIds };
 }
 
 const groupEventPlanInclude = {
@@ -631,7 +644,7 @@ export async function isEventParticipant(
         status: { in: [...OPENABLE_EVENT_STATUSES] },
         OR: [
           { appointment: appointmentFilter },
-          { webinarPlan: { consultantProfile: { userId } } },
+          { webinarPlan: { consultantProfile: { userId, deletedAt: null } } },
           { webinarPlan: collaboratorFilter },
         ],
       },
@@ -657,7 +670,7 @@ export async function isEventParticipant(
       status: { in: [...OPENABLE_EVENT_STATUSES] },
       OR: [
         { appointment: appointmentFilter },
-        { classPlan: { consultantProfile: { userId } } },
+        { classPlan: { consultantProfile: { userId, deletedAt: null } } },
         { classPlan: collaboratorFilter },
       ],
     },

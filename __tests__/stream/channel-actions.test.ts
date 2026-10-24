@@ -468,6 +468,22 @@ describe("Channel Actions", () => {
       );
     });
 
+    it("refuses a non-staff manual add to a Postgres-derived channel", async () => {
+      mockGetSession.mockResolvedValueOnce({
+        user: { id: "host-user", role: "CONSULTANT" },
+      });
+      const { addMemberToChannel } =
+        await import("../../actions/stream/chat/member.action");
+
+      const result = await addMemberToChannel("webinar-123", "stranger");
+
+      expect(result).toMatchObject({
+        success: false,
+        refusal: { code: "DERIVED_CHANNEL_MEMBERSHIP" },
+      });
+      expect(mockChannel.addMembers).not.toHaveBeenCalled();
+    });
+
     it("should infer team type for other channels", async () => {
       const { addMemberToChannel } =
         await import("../../actions/stream/chat/member.action");

@@ -76,16 +76,10 @@ export function isLegacyEventChannel(channelId: string | undefined): boolean {
 }
 
 /**
- * Prefixes managed by syncUserEventChannels for reconciliation.
- *
- * Adding a prefix here makes the reconciler REMOVE the user from any channel
- * carrying it that is absent from `expectedChannelIds`. So a prefix only
- * belongs here once `getDmPairsForUser` / `getWebinarIdsForUser` /
- * `getClassIdsForUser` are guaranteed to produce every legitimate id under it —
- * otherwise the sweep deletes live conversations, which is #1134 P0-7 all over
- * again. `dmo-`/`dmh-` are safe here because `getDmPairsForUser` derives its
- * ids through the same `getDmChannelId` helper that mints them, over the same
- * `DM_ELIGIBLE_STATUSES` set the eligibility gate uses.
+ * Prefixes whose membership Postgres derives. The user sync and the daily
+ * membership reconciler remove members Postgres no longer justifies from these
+ * channels, and manual adds to them are refused, so a prefix belongs here only
+ * once every legitimate id under it is derivable from Postgres.
  */
 export const MANAGED_CHANNEL_PREFIXES = [
   WEBINAR_PREFIX,
@@ -95,6 +89,14 @@ export const MANAGED_CHANNEL_PREFIXES = [
   DM_ORG_PREFIX,
   DM_HASHED_PREFIX,
 ] as const;
+
+/** True for a channel whose membership Postgres derives; only eligibility may add to or keep it. */
+export function isManagedChannel(channelId: string | undefined): boolean {
+  if (!channelId) return false;
+  return MANAGED_CHANNEL_PREFIXES.some((prefix) =>
+    channelId.startsWith(prefix),
+  );
+}
 
 /** Build the collaborator channel ID for a webinar or class plan */
 export function collabChannelId(

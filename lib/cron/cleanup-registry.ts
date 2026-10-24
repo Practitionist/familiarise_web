@@ -1162,11 +1162,35 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           recovered: r.recovered,
           collaboratorRecovered: r.collaboratorRecovered,
           erasureRevocationsRecovered: r.erasureRevocationsRecovered,
+          accessRevocationsRecovered: r.accessRevocationsRecovered,
           stillFailing: r.stillFailing,
           gaveUp: r.gaveUp,
         }),
         status: (r) => (r.stillFailing > 0 || r.gaveUp > 0 ? 207 : 200),
         failureMessage: "Failed to retry moderation enforcement",
+      }),
+
+    // @cleanup-twin reconcile-stream-memberships
+    "reconcile-stream-memberships": () =>
+      cleanupRoute({
+        job: "reconcile-stream-memberships",
+        run: async (req, { startedAt }) => {
+          const { reconcileStreamMemberships, DEFAULT_CHANNELS_PER_RUN } =
+            await import("@/lib/stream/membership-reconciler");
+          return reconcileStreamMemberships({
+            limit: parseLimitParamOrDefault(req, DEFAULT_CHANNELS_PER_RUN),
+            startedAt,
+          });
+        },
+        summarize: (r) => ({
+          channelsScanned: r.channelsScanned,
+          channelsSkipped: r.channelsSkipped,
+          membersRemoved: r.membersRemoved,
+          failures: r.failures,
+          checkpoint: r.checkpoint,
+        }),
+        status: (r) => (r.failures > 0 ? 207 : 200),
+        failureMessage: "Failed to reconcile Stream channel memberships",
       }),
 
     // @cleanup-twin sentry-ingest-canary
