@@ -118,20 +118,26 @@ function sameMembers(a: readonly string[], b: readonly string[]): boolean {
  * nothing at all. The recordings bucket sat at 500MB that way while the code
  * around it was changed to expect more (#1314).
  *
- * Best-effort on purpose: a bucket whose settings cannot be widened is still a
- * usable bucket, and failing the caller here would turn a config nicety into an
- * outage. Notably the Supabase FREE plan clamps every object to 50MB no matter
- * what the bucket says, so this call can legitimately succeed and change
- * nothing.
+ * A visibility mismatch is security-relevant: if the bucket cannot be read or
+ * its visibility cannot be changed, provisioning fails rather than letting a
+ * private bucket stay public. Size and MIME limits remain best-effort: the
+ * Supabase FREE plan clamps every object to 50MB whatever the bucket says, so a
+ * bucket that cannot be widened is still usable.
  */
 async function reconcileBucketOptions(
   bucketName: string,
   options?: BucketOptions,
-): Promise<void> {
-  if (!options || !supabaseAdmin) return;
+): Promise<boolean> {
+  if (!options || !supabaseAdmin) return true;
 
-  const { data: bucket } = await supabaseAdmin.storage.getBucket(bucketName);
-  if (!bucket) return;
+  const { data: bucket, error: readError } =
+    await supabaseAdmin.storage.getBucket(bucketName);
+  if (readError || !bucket) {
+    console.error(
+      `Could not read bucket ${bucketName} settings: ${readError?.message ?? "bucket missing"}`,
+    );
+    return false;
+  }
 
   const wantsSize =
     options.fileSizeLimit !== undefined &&
@@ -149,7 +155,7 @@ async function reconcileBucketOptions(
   const wantsMime =
     options.allowedMimeTypes !== undefined &&
     !sameMembers(options.allowedMimeTypes, bucket.allowed_mime_types ?? []);
-  if (!wantsSize && !wantsPublic && !wantsMime) return;
+  if (!wantsSize && !wantsPublic && !wantsMime) return true;
 
   // `public` is required by updateBucket, so carry the bucket's own value
   // through rather than flipping visibility as a side effect of a size change.
@@ -164,12 +170,19 @@ async function reconcileBucketOptions(
   });
 
   if (error) {
+    if (wantsPublic) {
+      console.error(
+        `Could not change bucket ${bucketName} visibility: ${error.message}`,
+      );
+      return false;
+    }
     console.warn(
       `Could not update bucket ${bucketName} settings: ${error.message}`,
     );
-    return;
+    return true;
   }
   console.log(`Updated bucket ${bucketName} settings to match caller options`);
+  return true;
 }
 
 /**
@@ -194,7 +207,9 @@ export const ensureBucketExists = async (
   // passing options to a bucket already seen without them would otherwise be
   // silently ignored for the rest of the process.
   if (knownBuckets.has(bucketName)) {
-    if (options) await reconcileBucketOptions(bucketName, policy);
+    if (options && !(await reconcileBucketOptions(bucketName, policy))) {
+      return false;
+    }
     return true;
   }
   try {
@@ -206,7 +221,7 @@ export const ensureBucketExists = async (
 
     // If no error, bucket exists
     if (!listError) {
-      await reconcileBucketOptions(bucketName, policy);
+      if (!(await reconcileBucketOptions(bucketName, policy))) return false;
       knownBuckets.add(bucketName);
       return true;
     }

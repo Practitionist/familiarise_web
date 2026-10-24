@@ -61,12 +61,13 @@ export async function POST(request: Request, { params }: RouteContext) {
     }
 
     const input = await parseJsonBody(request, DocumentCommitSchema);
-    const { document, party } = await commitDocumentUpload({
+    const { document, party, replayed } = await commitDocumentUpload({
       appointmentId,
       userId: auth.session.user.id,
       input,
     });
-    await notifyDocumentAdded(party, document);
+    // A replay is the same document, not a second upload: no second notice.
+    if (!replayed) await notifyDocumentAdded(party, document);
 
     return NextResponse.json(
       {
@@ -76,7 +77,7 @@ export async function POST(request: Request, { params }: RouteContext) {
           versionNo: document.versionNo,
         },
       },
-      { status: 201, headers: NO_STORE },
+      { status: replayed ? 200 : 201, headers: NO_STORE },
     );
   });
 }

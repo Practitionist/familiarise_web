@@ -311,7 +311,7 @@ This record holds twenty decisions about the files attached to a booking: how a 
   - **Truthful erasure.** The scrub deletes the R2 object, the preview folder (clip and thumbnail) and Stream's copy, and only then marks the row `EXPIRED` with a null thumbnail and transcript. If the vendor delete cannot be confirmed, the row keeps its identifiers and the erasure request reports a failure instead of claiming completion. Purge and erasure loops are bounded; the result carries `remaining`.
   - **One storage policy.** `lib/storage/bucket-policies.ts` lists every bucket with its visibility, size and MIME policy. A bucket that is not listed is refused rather than created public, and the `documents` policy is derived from `lib/documents/file-policy.ts`.
   - **Recording refunds and deletes.** A 1:1 learner whose only succeeded payment is fully refunded loses replay access; a partial refund keeps it. Deleting a recording also deletes Stream's copy, and the row's media pointers are cleared.
-  - **Chat is text-only.** The `messaging` and `team` channel types have `uploads: false` and no `upload-file` grant (`scripts/stream/ensure-chat-text-only.ts`); the placeholder community page is gone.
+  - **Chat is intended to be text-only.** `scripts/stream/ensure-chat-text-only.ts` sets `uploads: false` and strips every attachment-upload grant (`upload-file`, `upload-attachment`, `create-attachment`) from every role. Applying it to the shared Stream app is the remaining operator step; the placeholder community page is gone.
 - **Alternatives considered:**
   - Treat a duplicate commit as a conflict: pushes recovery onto the user for a response the server lost.
   - Trust the sweep alone for retention: a stopped or delayed job silently extends every file's life.

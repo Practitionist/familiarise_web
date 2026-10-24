@@ -72,12 +72,20 @@ function retentionCandidateWhere(cutoff: Date): Prisma.AppointmentWhereInput {
 /** Arm 1: tombstone every live document of bookings whose retention date has passed. */
 async function tombstoneExpiredBookings(
   now: Date,
+  options: PurgeOptions,
 ): Promise<{ tombstoned: number; failed: number }> {
   const cutoff = new Date(now.getTime() - DOCUMENT_RETENTION_DAYS * DAY_MS);
+  // The caller's limit budgets rows to purge; each due booking here costs a
+  // lock and a write, so cap this arm at the same number. Counting only due
+  // bookings keeps a run with few expiries from spending its whole budget on
+  // cheap candidate scans.
+  const maxBookings = options.limit ?? Number.POSITIVE_INFINITY;
+  let attempted = 0;
   let tombstoned = 0;
   let failed = 0;
   let afterId: string | undefined;
   for (let batch = 0; batch < MAX_BATCHES_PER_RUN; batch += 1) {
+    if (attempted >= maxBookings) break;
     const rows = await prisma.appointment.findMany({
       where: {
         ...retentionCandidateWhere(cutoff),
@@ -91,8 +99,10 @@ async function tombstoneExpiredBookings(
     afterId = rows.at(-1)!.id;
 
     for (const row of rows) {
+      if (attempted >= maxBookings) break;
       const booking = toDocumentBooking(row, now);
       if (!booking?.keptUntil || booking.keptUntil > now) continue;
+      attempted += 1;
       // Re-read under the booking lock: a reschedule or a subscription
       // extension between the candidate scan and the write moves `keptUntil`
       // into the future, and the tombstone must not outrun it. One contended
@@ -235,7 +245,7 @@ async function purgeDeletedDocumentsUnlocked(
   options: PurgeOptions,
 ): Promise<PurgeDeletedDocumentsResult> {
   const { tombstoned, failed: failedTombstones } =
-    await tombstoneExpiredBookings(now);
+    await tombstoneExpiredBookings(now, options);
   const graceCutoff = new Date(
     now.getTime() - DOCUMENT_DELETE_GRACE_DAYS * DAY_MS,
   );

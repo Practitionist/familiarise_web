@@ -69,8 +69,8 @@ mcp__stream-io__app_get_rate_limits   {}
    - `TrialSession` bookings block all Stream Chat channels, 1:1 DMs, and in-call Q&A/chat (`isInCallChatAllowed("TRIAL") === false`).
 4. **Contextual Booking Receipt Cards (`booking-ctx-`)**:
    - `POST /api/stream/channels/open` with `contextAppointmentId` verifies the booking pair and posts an idempotent receipt message (`booking-ctx-${appointmentId}-${eventType}`) into the shared 1:1 DM thread.
-5. **Chat is text-only**:
-   - The `messaging` and `team` channel types are configured with `uploads: false` and no `upload-file` grant for any role. `scripts/stream/ensure-chat-text-only.ts` is dry-run by default, backs up the pre-image and re-reads the type to verify; run it with `--apply` after any control-plane restore. The community page that advertised uploads is deleted.
+5. **Chat is intended to be text-only**:
+   - The `messaging` and `team` channel types are intended to run with `uploads: false` and no attachment-upload grant (`upload-file`, `upload-attachment`, `create-attachment`) for any role. `scripts/stream/ensure-chat-text-only.ts` is dry-run by default, backs up the pre-image and re-reads the type to verify; run it with `--apply` after any control-plane restore. Applying it to the shared Stream app is an operator step outside the code deploy. The community page that advertised uploads is deleted.
 
 ---
 
@@ -114,4 +114,4 @@ mcp__stream-io__app_get_rate_limits   {}
 - **Dual red hangup buttons & unbounded lobby auto-retries**: Superseded by unified `<CallExitButton />` (`ADR-05`) and clock-skew-safe `<MeetingLobbyGateCard />` retry backoff (`MAX_AUTO_RETRIES = 3`, `5_000ms`).
 - **Legacy per-booking `consultation-*`/`subscription-*` channels**: Superseded by canonical human-pair DM channels (`dm-` / `dmo-`) with `booking-ctx-` receipt cards.
 - **R2-only recording deletes**: Marked a recording `EXPIRED` while Stream's copy stayed playable for up to 14 days and the thumbnail stayed public. Superseded by `recording-stream-delete.ts` plus a purge that clears the thumbnail and transcript.
-- **Chat file and image uploads**: The channel types allowed `upload-file`, but there was no storage or moderation story and the community page advertising it did not exist. Superseded by `uploads: false`, stripped grants and the deleted page.
+- **Chat file and image uploads**: The channel types allowed `upload-file`, but there was no storage or moderation story and the community page advertising it did not exist. Superseded by `uploads: false`, every attachment-upload grant stripped by the script, and the deleted page.

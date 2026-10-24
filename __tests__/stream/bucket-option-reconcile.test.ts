@@ -147,4 +147,22 @@ describe("ensureBucketExists option reconciliation", () => {
       ensureBucketExists(BUCKET, { fileSizeLimit: 5368709120 }),
     ).resolves.toBe(true);
   });
+
+  it("fails provisioning when the bucket's visibility cannot be read", async () => {
+    getBucket.mockResolvedValue({
+      data: null,
+      error: { message: "forbidden" },
+    });
+    await expect(ensureBucketExists(BUCKET)).resolves.toBe(false);
+  });
+
+  it("fails provisioning when a visibility change cannot be applied", async () => {
+    getBucket.mockResolvedValue(bucket({ public: true }));
+    updateBucket.mockResolvedValueOnce({
+      error: { message: "forbidden" },
+    });
+    await expect(ensureBucketExists(BUCKET, { public: false })).resolves.toBe(
+      false,
+    );
+  });
 });

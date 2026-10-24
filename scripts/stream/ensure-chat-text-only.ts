@@ -1,6 +1,6 @@
 /**
  * Make chat text-only: disable attachments on the `messaging` and `team`
- * channel types and strip `upload-file` from every role's grants.
+ * channel types and strip every attachment-upload grant from every role.
  *
  *   npx tsx scripts/stream/ensure-chat-text-only.ts
  *   npx tsx scripts/stream/ensure-chat-text-only.ts --apply
@@ -13,7 +13,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { getStreamChatClient, isStreamConfigured } from "@/lib/stream-client";
 
 const CHANNEL_TYPES = ["messaging", "team"] as const;
-const UPLOAD_ACTION = "upload-file";
+const ATTACHMENT_ACTIONS = new Set([
+  "upload-file",
+  "upload-attachment",
+  "create-attachment",
+]);
 const BACKUP_DIR = ".stream-backups";
 
 type Options = {
@@ -26,7 +30,9 @@ function parseArgs(argv: string[]): Options {
 
 function grantedUploadRoles(grants: Record<string, string[]>): string[] {
   return Object.entries(grants)
-    .filter(([, actions]) => actions.includes(UPLOAD_ACTION))
+    .filter(([, actions]) =>
+      actions.some((action) => ATTACHMENT_ACTIONS.has(action)),
+    )
     .map(([role]) => role)
     .sort((a, b) => a.localeCompare(b));
 }
@@ -37,7 +43,7 @@ function withoutUploadGrant(
   return Object.fromEntries(
     Object.entries(grants).map(([role, actions]) => [
       role,
-      actions.filter((action) => action !== UPLOAD_ACTION),
+      actions.filter((action) => !ATTACHMENT_ACTIONS.has(action)),
     ]),
   );
 }
@@ -57,7 +63,7 @@ async function ensureChannelType(
   console.log(`\n${name}:`);
   console.log(`  uploads            = ${before.uploads} -> false`);
   console.log(
-    `  roles with ${UPLOAD_ACTION} = ${uploadRoles.join(", ") || "(none)"} -> (none)`,
+    `  roles with an attachment grant = ${uploadRoles.join(", ") || "(none)"} -> (none)`,
   );
   if (!opts.apply) {
     console.log("  (dry run — re-run with --apply to write this to Stream)");

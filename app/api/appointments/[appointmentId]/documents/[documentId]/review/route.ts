@@ -72,9 +72,23 @@ export async function POST(request: Request, { params }: RouteContext) {
     const preflight = await resolveDocumentParty(prisma, appointmentId, userId);
     if (!preflight) throw new FileRouteError("NOT_FOUND");
     if (preflight.role !== "expert") throw new FileRouteError("FORBIDDEN");
-    const stored = body.reply
-      ? await verifyPartyUpload(preflight, body.reply)
+    // A committed reply replays without re-verifying storage: the object may
+    // have been swept, and the transaction below owns the authoritative lookup.
+    const committedReply = body.reply
+      ? await prisma.appointmentDocument.findFirst({
+          where: {
+            appointmentId,
+            storagePath: body.reply.storagePath,
+            deletedAt: null,
+            uploadedByRole: "CONSULTANT",
+          },
+          select: { id: true },
+        })
       : null;
+    const stored =
+      body.reply && !committedReply
+        ? await verifyPartyUpload(preflight, body.reply)
+        : null;
 
     let outcome;
     try {
@@ -125,6 +139,13 @@ export async function POST(request: Request, { params }: RouteContext) {
               nextStatus: target.reviewStatus,
               reply: replayedReply,
             };
+          }
+
+          // The pre-read skipped verification because a row existed. If that
+          // row vanished before the lock, refuse rather than write a reply
+          // whose object was never checked.
+          if (body.reply && !stored) {
+            throw new FileRouteError("STORAGE_MISSING");
           }
 
           const party = await requireWritableParty(tx, appointmentId, userId);

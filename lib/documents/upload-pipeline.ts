@@ -211,7 +211,11 @@ export async function commitDocumentUpload(args: {
   appointmentId: string;
   userId: string;
   input: DocumentCommitInput;
-}): Promise<{ document: AppointmentDocument; party: DocumentParty }> {
+}): Promise<{
+  document: AppointmentDocument;
+  party: DocumentParty;
+  replayed: boolean;
+}> {
   const { appointmentId, userId, input } = args;
   const parentDocumentId = input.parentDocumentId ?? null;
 
@@ -222,6 +226,17 @@ export async function commitDocumentUpload(args: {
   }
 
   try {
+    // A retry whose row already exists replays before storage verification:
+    // the object may have been swept, and the committed row is still the answer.
+    const committed = await findCommittedUpload(
+      prisma,
+      appointmentId,
+      input.storagePath,
+    );
+    if (committed) {
+      return { document: committed, party: preflight, replayed: true };
+    }
+
     const stored = await verifyPartyUpload(preflight, input);
     return await withVersionConflictRetry(() =>
       prisma.$transaction(async (tx) => {
@@ -234,7 +249,7 @@ export async function commitDocumentUpload(args: {
         if (replayed) {
           const party = await resolveDocumentParty(tx, appointmentId, userId);
           if (!party) throw new FileRouteError("NOT_FOUND");
-          return { document: replayed, party };
+          return { document: replayed, party, replayed: true };
         }
         const party = await requireWritableParty(tx, appointmentId, userId);
         const slot = await resolveDocumentThreadSlot(tx, {
@@ -255,7 +270,7 @@ export async function commitDocumentUpload(args: {
             versionNo: slot.versionNo,
           }),
         });
-        return { document, party };
+        return { document, party, replayed: false };
       }),
     );
   } catch (error) {

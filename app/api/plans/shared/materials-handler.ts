@@ -502,8 +502,7 @@ async function discardUnreferencedMaterial(
       where: { storagePath },
     });
     if (referenced > 0) return false;
-    await deletePlanMaterial(storagePath).catch(() => false);
-    return true;
+    return await deletePlanMaterial(storagePath).catch(() => false);
   } catch {
     // Best-effort: the orphan sweep owns anything left here.
     return false;
