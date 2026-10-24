@@ -219,9 +219,7 @@ export function cleanupRoute<T extends object>(opts: {
       Sentry.logger.info(`cron:${job} started`);
 
       const result = await run(req, { startedAt });
-      const summary: Record<string, unknown> = summarize
-        ? summarize(result)
-        : (result as Record<string, unknown>);
+      const summary: Record<string, unknown> = summarize?.(result) ?? result;
 
       console.log(`${job} completed:`, summary);
       Sentry.logger.info(`cron:${job} finished`, summary);
@@ -284,6 +282,7 @@ export function cleanupRoute<T extends object>(opts: {
           body: { error: error.message, code: "MAINTENANCE_STATE_UNREADABLE" },
           status: 503,
           ok: false,
+          outcome: "failure",
         };
       }
       if (error instanceof MaintenanceActiveError) {

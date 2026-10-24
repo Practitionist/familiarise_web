@@ -26,6 +26,10 @@ const MAX_DRAIN_BATCH = 200;
 const VENDOR_TIMEOUT_MS = 3_000;
 const WORK_BUDGET_MS = 12_000;
 
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function maintenanceStreamClient() {
   const config = z
     .object({ apiKey: z.string().min(1), secret: z.string().min(1) })
@@ -108,7 +112,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
         result.recordingsStopped++;
       } catch (err) {
         result.errors.push(
-          `Stop recording ${session.streamCallId}: ${err instanceof Error ? err.message : String(err)}`,
+          `Stop recording ${session.streamCallId}: ${messageOf(err)}`,
         );
         continue;
       }
@@ -119,9 +123,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
       await call.end();
       endConfirmed = true;
     } catch (err) {
-      result.errors.push(
-        `End call ${session.streamCallId}: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      result.errors.push(`End call ${session.streamCallId}: ${messageOf(err)}`);
     }
 
     if (!endConfirmed) {
@@ -150,7 +152,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
       result.drained++;
     } catch (err) {
       result.errors.push(
-        `Record drained session ${session.id}: ${err instanceof Error ? err.message : String(err)}`,
+        `Record drained session ${session.id}: ${messageOf(err)}`,
       );
     }
   }
@@ -183,9 +185,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
         },
       );
     } catch (err) {
-      result.errors.push(
-        `Notification: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      result.errors.push(`Notification: ${messageOf(err)}`);
     }
   }
 
@@ -357,9 +357,7 @@ async function syncMaintenanceChannels(
         `${remaining} channel operation(s) remain; retry ${frozen ? "activation" : "recovery"}.`,
       );
   } catch (error) {
-    errors.push(
-      `${frozen ? "Freeze" : "Unfreeze"} chat: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    errors.push(`${frozen ? "Freeze" : "Unfreeze"} chat: ${messageOf(error)}`);
   }
   return { processed, remaining, errors };
 }

@@ -11,7 +11,11 @@ import { z } from "zod";
 
 import { createIncident, resolveIncident } from "@/lib/betterstack";
 import { requireAdminAuth } from "@/lib/auth-helpers";
-import { getMaintenanceState, setMaintenanceState } from "@/lib/maintenance";
+import {
+  getMaintenanceState,
+  setMaintenanceState,
+  type MaintenanceState,
+} from "@/lib/maintenance";
 import { signMaintenanceBypassCookie } from "@/lib/maintenance-edge";
 import prisma from "@/lib/prisma";
 import {
@@ -98,6 +102,37 @@ export async function GET() {
   });
 }
 
+async function retryMaintenanceActivation(
+  currentState: MaintenanceState,
+  targetPhase: z.infer<typeof postSchema>["phase"],
+  reason: string,
+  userId: string,
+) {
+  if (currentState.phase !== targetPhase)
+    return NextResponse.json(
+      { error: "Use PATCH to change the active phase" },
+      { status: 409 },
+    );
+  await setMaintenanceState(targetPhase, {
+    reason: currentState.reason ?? reason,
+    auditReason: reason,
+    estimatedEnd: currentState.estimatedEnd ?? undefined,
+    bypassSecret: currentState.bypassSecret ?? undefined,
+    betterstackIncidentId: currentState.betterstackIncidentId,
+    startedBy: userId,
+  });
+  if (targetPhase === "OFFLINE") {
+    const incomplete = await activateOffline();
+    if (incomplete) return incomplete;
+  }
+  return NextResponse.json({
+    ...currentState,
+    bypassCookieToken: currentState.bypassSecret
+      ? await signMaintenanceBypassCookie(currentState.bypassSecret)
+      : null,
+  });
+}
+
 /**
  * POST /api/admin/maintenance
  * Start maintenance mode.
@@ -156,29 +191,12 @@ async function startMaintenance(request: NextRequest) {
   const targetPhase = phase;
   const currentState = await getMaintenanceState();
   if (currentState.phase !== "OFF") {
-    if (currentState.phase !== targetPhase)
-      return NextResponse.json(
-        { error: "Use PATCH to change the active phase" },
-        { status: 409 },
-      );
-    await setMaintenanceState(targetPhase, {
-      reason: currentState.reason ?? reason,
-      auditReason: reason,
-      estimatedEnd: currentState.estimatedEnd ?? undefined,
-      bypassSecret: currentState.bypassSecret ?? undefined,
-      betterstackIncidentId: currentState.betterstackIncidentId,
-      startedBy: auth.userId,
-    });
-    if (targetPhase === "OFFLINE") {
-      const incomplete = await activateOffline();
-      if (incomplete) return incomplete;
-    }
-    return NextResponse.json({
-      ...currentState,
-      bypassCookieToken: currentState.bypassSecret
-        ? await signMaintenanceBypassCookie(currentState.bypassSecret)
-        : null,
-    });
+    return retryMaintenanceActivation(
+      currentState,
+      targetPhase,
+      reason,
+      auth.userId,
+    );
   }
   const bypassSecret = crypto.randomUUID();
   const bypassCookieToken = await signMaintenanceBypassCookie(bypassSecret);
@@ -205,6 +223,37 @@ async function startMaintenance(request: NextRequest) {
     bypassCookieToken,
     betterstackIncidentId,
   });
+}
+
+async function recoverOfflineMaintenance(currentState: MaintenanceState) {
+  if (!currentState.offlineActivatedAt)
+    return NextResponse.json(
+      {
+        error:
+          "Finish Retry Offline Setup before recovery so uncertain vendor operations are acknowledged.",
+      },
+      { status: 503 },
+    );
+  const recovery = await runPostRecovery();
+  const chat = await unfreezeChannelsAfterMaintenance();
+  if (
+    recovery.errors.length ||
+    !recovery.database ||
+    !recovery.redis ||
+    chat.errors.length ||
+    chat.remaining
+  )
+    return NextResponse.json(
+      {
+        error: "Recovery incomplete; OFFLINE remains active",
+        recovery,
+        chat,
+      },
+      { status: 503 },
+    );
+  if (currentState.betterstackIncidentId)
+    await resolveIncident(currentState.betterstackIncidentId);
+  return null;
 }
 
 /**
@@ -269,32 +318,8 @@ async function updateMaintenance(request: NextRequest) {
     currentPhase === MaintenancePhase.OFFLINE &&
     targetPhase !== MaintenancePhase.OFFLINE
   ) {
-    if (!currentState.offlineActivatedAt)
-      return NextResponse.json(
-        {
-          error:
-            "Finish Retry Offline Setup before recovery so uncertain vendor operations are acknowledged.",
-        },
-        { status: 503 },
-      );
-    const recovery = await runPostRecovery();
-    const chat = await unfreezeChannelsAfterMaintenance();
-    if (
-      recovery.errors.length ||
-      !recovery.database ||
-      !recovery.redis ||
-      chat.errors.length ||
-      chat.remaining
-    )
-      return NextResponse.json(
-        {
-          error: "Recovery incomplete; OFFLINE remains active",
-          recovery,
-          chat,
-        },
-        { status: 503 },
-      );
-    if (betterstackIncidentId) await resolveIncident(betterstackIncidentId);
+    const incomplete = await recoverOfflineMaintenance(currentState);
+    if (incomplete) return incomplete;
     betterstackIncidentId = null;
   }
 
