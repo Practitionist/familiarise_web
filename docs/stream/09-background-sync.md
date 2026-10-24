@@ -641,16 +641,17 @@ async function deleteUsersWithRetry(
 
 ## Background Sync Flow
 
-The following flowchart illustrates the complete background sync process.
+The following flowchart illustrates the complete background sync process. Today only the operator-triggered entry runs it, because the scheduled entry is not firing.
 
 ```mermaid
 flowchart TD
-    Start([GitHub Actions Trigger · Daily 03:00 UTC batch]) --> CheckEnv{Environment · Variables Set?}
+    Sched(["Scheduled · Daily 03:00 UTC Actions batch · not firing while Actions is budget-blocked"]) --> CheckEnv{Environment · Variables Set?}
+    Operator(["Operator-triggered · staff Jobs page or /api/admin/system-jobs/run"]) --> CheckEnv
 
     CheckEnv -->|No| ErrorExit1[Exit with Error Code 1]
     CheckEnv -->|Yes| InitClient["Initialize Stream Client · timeout: 30s"]
 
-    InitClient --> InitVars["Initialize Variables · - totalProcessed = 0 · - totalStale = 0 · - totalDeleted = 0 · - failedDeletions = ["]]
+    InitClient --> InitVars["Initialize Variables · - totalProcessed = 0 · - totalStale = 0 · - totalDeleted = 0 · - failedDeletions = empty list"]
 
     InitVars --> StartLoop{More Stream · Users?}
 
@@ -665,7 +666,7 @@ flowchart TD
     ExtractIDs --> QueryPrisma["Query Prisma for Active Users · WHERE id IN ..."]
 
     QueryPrisma --> CreateSet[Create Set of Active User IDs]
-    CreateSet --> InitStale[Initialize staleUsersInPage = []]
+    CreateSet --> InitStale["Initialize staleUsersInPage as an empty list"]
 
     InitStale --> LoopUsers[For Each Stream User ID]
 

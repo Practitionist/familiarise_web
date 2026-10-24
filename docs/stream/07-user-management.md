@@ -377,12 +377,14 @@ The step, its environment and its secrets are defined in `.github/workflows/cron
 
 The `performStreamUserSync` function implements the core synchronization logic.
 
-**Location:** `/jobs/stream-sync.ts` (lines 42-175)
+**Location:** `performStreamUserSync` in `/scripts/stream/stream-sync.ts`, which the `/jobs/stream/stream-sync.ts` wrapper calls
 
 **Function Signature:**
 
 ```typescript
-export async function performStreamUserSync(): Promise<SyncSummary>;
+export async function performStreamUserSync(
+  options?: SyncOptions,
+): Promise<SyncSummary>;
 ```
 
 **Returns:**
