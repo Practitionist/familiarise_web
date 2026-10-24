@@ -1,6 +1,6 @@
 # 18. Architecture Decision Records (ADRs)
 
-> Authoritative architecture decision records governing Stream Video call lifecycle isolation, call-ID rotation, synchronous CAS state convergence, dual-synced extensions, and meeting exit controls.
+> Authoritative architecture decision records governing Stream Video call lifecycle isolation, call-ID rotation, synchronous CAS state convergence, the immutable booked end with extension state on `Meeting`, and meeting exit controls.
 
 ## Table of Contents
 
@@ -8,7 +8,7 @@
 - [ADR-01: Strict Per-Occurrence Stream Call Isolation (`1 Occurrence = 1 Active Call ID`) vs Permanent Link Reuse](#adr-01-strict-per-occurrence-stream-call-isolation-1-occurrence--1-active-call-id-vs-permanent-link-reuse)
 - [ADR-02: Call-ID Rotation (`occurrence-<id>-r<base36>`) + Asymmetric Webhook Lookup for Reopened Rooms](#adr-02-call-id-rotation-occurrence-id-rbase36--asymmetric-webhook-lookup-for-reopened-rooms)
 - [ADR-03: Synchronous CAS Termination Stamp (`recordMeetingEndedSynchronously`) + Monotonic Webhook Convergence (`supersedesRecordedEnd`)](#adr-03-synchronous-cas-termination-stamp-recordmeetingendedsynchronously--monotonic-webhook-convergence-supersedesrecordedend)
-- [ADR-04: Dual-Synced Extension State (Postgres `AppointmentOccurrence.endsAt` + Stream `custom.sessionEndsAt`)](#adr-04-dual-synced-extension-state-postgres-appointmentoccurrenceendsat--stream-customsessionendsat)
+- [ADR-04: Immutable Booked End; Extension State on `Meeting`](#adr-04-immutable-booked-end-extension-state-on-meeting)
 - [ADR-05: Single Exit Control (`CallExitButton`) over Dual Hangup Buttons](#adr-05-single-exit-control-callexitbutton-over-dual-hangup-buttons)
 - [Deprecated & Superseded Approaches](#deprecated--superseded-approaches)
 
@@ -18,13 +18,13 @@
 
 Stream Video SFU and PostgreSQL (`PG_POOL_MAX=1`) enforce distinct operational constraints across real-time media sessions and durable relational billing records:
 
-| ADR        | Core Architectural Decision                                             | Primary Enforcing Modules                                                                                   | Invariant Protected                                                                                            |
-| ---------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| **ADR-01** | `1 AppointmentOccurrence = 1 active Stream Call ID`                     | `actions/stream/meetings/meeting.action.ts`, `lib/stream/call-cid.ts`, `lib/meetings/access.ts`             | Prevents cross-session attendance contamination, recording mix-ups, and stale room admission across series     |
-| **ADR-02** | Rotate `streamCallId` (`occurrence-<id>-r<base36>`) + asymmetric lookup | `app/api/meetings/[meetingId]/{end,reopen}/route.ts`, `lib/stream/{session-handlers,recording-handlers}.ts` | Bypasses Stream's permanent `ended_at` seal without losing prior recording egress or dying from late webhooks  |
-| **ADR-03** | Synchronous CAS end stamp + monotonic `supersedesRecordedEnd`           | `app/api/meetings/[meetingId]/end/route.ts`, `lib/stream/session-handlers.ts`                               | Eliminates webhook lag on dashboard cards while preventing out-of-order webhooks from rewinding terminal state |
-| **ADR-04** | Dual-synced `+15m` extension (`endsAt` + `custom.sessionEndsAt`)        | `app/api/meetings/[meetingId]/extend/route.ts`, `app/meetings/[id]/components/OverrunBanner.tsx`            | Keeps Stream SFU hard cutoff, client countdown banners, and Postgres schedule conflict horizon identical       |
-| **ADR-05** | Unified `<CallExitButton />` (participant leave vs host 2-way popover)  | `app/meetings/[id]/components/EndCallButton.tsx`, `app/meetings/[id]/components/MeetingRoom.tsx`            | Prevents accidental room termination when a host leaves early while keeping room closure one deliberate choice |
+| ADR        | Core Architectural Decision                                              | Primary Enforcing Modules                                                                                                        | Invariant Protected                                                                                                               |
+| ---------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| **ADR-01** | `1 AppointmentOccurrence = 1 active Stream Call ID`                      | `actions/stream/meetings/meeting.action.ts`, `lib/stream/call-cid.ts`, `lib/meetings/access.ts`                                  | Prevents cross-session attendance contamination, recording mix-ups, and stale room admission across series                        |
+| **ADR-02** | Rotate `streamCallId` (`occurrence-<id>-r<base36>`) + asymmetric lookup  | `app/api/meetings/[meetingId]/{end,reopen}/route.ts`, `lib/stream/{session-handlers,recording-handlers}.ts`                      | Bypasses Stream's permanent `ended_at` seal without losing prior recording egress or dying from late webhooks                     |
+| **ADR-03** | Synchronous CAS end stamp + monotonic `supersedesRecordedEnd`            | `app/api/meetings/[meetingId]/end/route.ts`, `lib/stream/session-handlers.ts`                                                    | Eliminates webhook lag on dashboard cards while preventing out-of-order webhooks from rewinding terminal state                    |
+| **ADR-04** | Immutable booked `endsAt`; `+15m` extension on `Meeting.extendedSeconds` | `app/api/meetings/[meetingId]/extend/route.ts`, `lib/meetings/duration-cap.ts`, `app/meetings/[id]/components/OverrunBanner.tsx` | Keeps the sold end intact for outcome and money, while the Stream cap, banner and conflict horizon derive from one Postgres value |
+| **ADR-05** | Unified `<CallExitButton />` (participant leave vs host 2-way popover)   | `app/meetings/[id]/components/EndCallButton.tsx`, `app/meetings/[id]/components/MeetingRoom.tsx`                                 | Prevents accidental room termination when a host leaves early while keeping room closure one deliberate choice                    |
 
 ---
 
@@ -85,11 +85,11 @@ If reopening simply overwrote `Meeting.streamCallId = "occurrence-<uuid>-r<base3
 Combine **atomic call-ID rotation (`occurrence-<uuid>-r<base36>`)** with **strictly asymmetric webhook resolution** based on event domain semantics:
 
 1. **Rotation Formula & CAS Transition**:
-   - On pre-start early end (`endedAt < startsAt` -> `"ended_early"`) or explicit host reopen (`POST /api/meetings/[meetingId]/reopen` within `[startsAt - 15m, effectiveEndsAt + 30m]`), the server mints:
+   - On pre-start early end (`endedAt < startsAt` -> `"ended_early"`) or explicit host reopen (`POST /api/meetings/[meetingId]/reopen` within `[startsAt - 15m, roomEndsAt + 30m]`, where the room end is the booked end plus any extension), the server mints:
      ```text
      nextCallId = `occurrence-${occurrenceId}-r${Date.now().toString(36)}`
      ```
-   - Updates `Meeting` atomically via compare-and-set (`updateMany` predicated on expected prior state), clearing `endedAt = null`, `endedReason = null`, and `isRecording = false`, and immediately provisions the fresh Stream call on `default` with `settings_override` and host/participant member grants.
+   - Reopen builds the fresh call with the same payload the provisioner uses (`buildRoomCallPlan` in `lib/meetings/call-provisioning.ts`: `settings_override`, members, custom fields and the cap from the room end) and creates it on Stream first with `getOrCreate` on the new id. Only then does it update `Meeting` atomically via compare-and-set (`updateMany` predicated on the expected `streamCallId` and `endedAt`), clearing `endedAt = null`, `endedReason = null`, and `isRecording = false`. A Stream failure therefore rotates nothing, and a lost CAS leaves the fresh call unused and answers `reopened: false` with the current id.
 2. **Asymmetric Webhook Lookup Matrix**:
 
 | Webhook Event Family                                               | Lookup Strategy                                                                               | Architectural Rationale                                                                                                               |
@@ -112,8 +112,8 @@ sequenceDiagram
     API->>DB: CAS stamp endedAt, endedReason = "call_ended"
 
     Host->>API: POST /api/meetings/occurrence-id/reopen
-    API->>DB: CAS rotate streamCallId = "occurrence-id-r1", endedAt = null
     API->>Stream2: call.getOrCreate(settings_override)
+    API->>DB: CAS rotate streamCallId = "occurrence-id-r1", endedAt = null
 
     Stream1--)WH: Delayed call.ended (cid = "default:occurrence-id")
     WH->>DB: Strict lookup where streamCallId = "occurrence-id" -> Miss (Segment 2 safe)
@@ -142,7 +142,7 @@ Implement **Synchronous CAS Dual-Write + Monotonic Webhook Convergence** in `lib
    - Invokes `getStreamVideoClient().video.call("default", resolvedCallId).end()` inside `withStreamCircuitBreaker` (outside any DB transaction per `PG_POOL_MAX=1`).
    - Immediately executes `recordMeetingEndedSynchronously(resolvedCallId, now)`:
      - Evaluates pre-start vs live termination:
-       - If `endedAt < startsAt` (**Pre-Start Device Check**): stamps `endedReason = "ended_early"` and immediately rotates `streamCallId = occurrence-<id>-r<base36>` while keeping the occurrence upcoming (`SCHEDULED`) so real session entry opens a clean room.
+       - If `endedAt < startsAt` (**Pre-Start Device Check**): stamps `endedReason = "ended_early"` and immediately rotates `streamCallId = occurrence-<id>-r<base36>` while keeping the occurrence upcoming (`SCHEDULED`). `ended_early` is rejoinable, so real session entry makes the provisioner build a clean room and clear the end stamp.
        - If `endedAt >= startsAt` (**Live Session Termination**): stamps `endedReason = "call_ended"`, closes all open `MeetingPresence` intervals (`leftAt = endedAt`) and `MeetingAttendance` (`lastLeftAt = endedAt`) inside a single CAS transaction predicated on `where: { id: meeting.id, endedAt: meeting.endedAt }`.
      - If the synchronous DB update throws an unexpected exception, the route reports to Sentry and returns **HTTP `500`** (`"Could not end this meeting. Please try again."`) rather than returning a false HTTP `200`.
 2. **Monotonic Webhook Convergence (`supersedesRecordedEnd`)**:
@@ -155,7 +155,8 @@ Implement **Synchronous CAS Dual-Write + Monotonic Webhook Convergence** in `lib
        return !recorded || incoming.getTime() > recorded.getTime();
      }
      ```
-   - `handleSessionEnded` additionally refuses to overwrite `isDeliberateEnd(meeting)` (`"call_ended"` or `"maintenance"`), ensuring a subsequent SFU inactivity timeout event can never downgrade a host's deliberate room closure into a reopenable timeout.
+   - All three end writers (`recordMeetingEndedSynchronously`, `handleCallEnded`, `handleSessionEnded`) also refuse to overwrite a deliberate end. `isDeliberateEnd` (`lib/appointments/occurrences.ts`) reads the `deliberate` column of the end-reason table (`END_REASON_POLICY` in `lib/meetings/end-reasons.ts`, tabulated in `05-video-implementation.md`). A later `call.ended` can therefore no longer turn a `maintenance` or `org_deactivated` close into `call_ended`, and an SFU inactivity timeout can never downgrade a deliberate closure into a rejoinable one.
+   - The end route returns `callId`, the id that now represents the room (the rotated id after a pre-start `ended_early`), and `404 MEETING_NOT_FOUND` when no `Meeting` matched; `recordMeetingEndedSynchronously` returns `{ kind: "not_found" | "already_ended" | "recorded" }`.
 
 ### Consequences
 
@@ -164,30 +165,32 @@ Implement **Synchronous CAS Dual-Write + Monotonic Webhook Convergence** in `lib
 
 ---
 
-## ADR-04: Dual-Synced Extension State (Postgres `AppointmentOccurrence.endsAt` + Stream `custom.sessionEndsAt`)
+## ADR-04: Immutable Booked End; Extension State on `Meeting`
 
 ### Context & Problem Statement
 
-Every call starts with an SFU duration cap of `max_duration_seconds = clamp(bookedDuration + 15m early + 30m grace, 45m, 12h)` (`lib/meetings/duration-cap.ts`). When a session approaches scheduled `endsAt`, hosts may grant one free `+15m` (`900s`) extension via `<OverrunBanner />` (`POST /api/meetings/[meetingId]/extend`).
+Every call starts with an SFU duration cap of `max_duration_seconds = clamp(bookedDuration + 15m early + 30m grace, 45m, 12h)` (`resolveMaxCallDurationSeconds` in `lib/meetings/duration-cap.ts`). Near the end of a session the host may grant one free 15-minute extension (`POST /api/meetings/[meetingId]/extend`, offered by `<OverrunBanner />` from five minutes before the booked end).
 
-If extension state is stored only on Stream (`call.settings.limits.max_duration_seconds` + `call.custom.extendedSeconds`), Postgres schedule queries (`hasExtensionScheduleConflict`, `resolveMeetingAccess`, `reconcile-orphaned-sessions`) remain blind to the extended end time. Conversely, if `POST /api/meetings/[meetingId]/extend` updates Stream (`call.update(...)`) on attempt 1, succeeds at Stream, and hits a transient database failure before updating `AppointmentOccurrence.endsAt`, a retry on attempt 2 would see `extensionsUsed >= 1` on Stream and abort with HTTP `409` without ever persisting the extended `endsAt` to Postgres! Furthermore, if client UI (`resolveCapEndsAtMs` in `OverrunBanner.tsx`) adds `+30m` grace on top of an already-extended `endsAt` **and** adds `extendedSeconds` a second time, the countdown timer displays `+30m` phantom overrun time beyond the SFU hard wall.
+The booked end, `AppointmentOccurrence.endsAt`, is read by several parts of the system as a statement of what was sold: the outcome classifier (`classifySessionOutcome`), the outcome sweep's selection, reminders, earnings, and recording retention. The room end is a different fact: how long the video room may stay open. The extension must therefore be recorded somewhere that does not change the sold end, and it must survive a reopen of the room.
 
 ### Decision
 
-Enforce **Dual-Synced Idempotent Extension Persistence** across Stream and PostgreSQL with single-source cap arithmetic:
+Keep the booked end immutable and store the extension on the `Meeting` row.
 
-1. **Schedule Conflict Check Across Host, Co-Hosts & Active Seat Holders**:
-   - Before extending, `hasExtensionScheduleConflict` checks `[slotStartsAt, max(slotEndsAt, now) + 15m]` across the host profile, all hosted/co-hosted plans (`buildOccupiedAppointmentFilter`, `buildCohostCommitmentFilter`), all `ACCEPTED` presenter collaborators (`assertConsultantAvailableForWindows`), and all active participants (`HELD`, `CONFIRMED`, `ATTENDED`).
-2. **Stream Update + Idempotent Postgres CAS Recovery**:
-   - Calls `call.update({ settings_override, custom: { ...existingCustom, extendedSeconds, extensionsUsed, sessionEndsAt } })`.
-   - Always executes idempotent CAS persistence on `AppointmentOccurrence.endsAt` (`where: { id: occurrence.id, endsAt: slotEndsAt }`, advancing to `extendedEndsAt = slotEndsAt + 15m`) **before** returning `409 alreadyExtended` if `occurrence.endsAt` has not yet advanced to `custom.sessionEndsAt`. Thus, retrying after a partial failure cleanly heals Postgres `endsAt`.
-3. **Zero Double-Counting Cap Math (`resolveCapEndsAtMs`)**:
-   - When `endsAt` in Postgres/props already reflects the `+15m` extension (`endsAt == sessionEndsAt`), `resolveCapEndsAtMs` derives the SFU hard cutoff from the authoritative Stream `session.timer_ends_at` or `baseEndsAt + CALL_DURATION_GRACE_MS + extendedSeconds * 1000` without adding `extendedSeconds` on top of an already-extended `endsAt`.
+1. **Where the extension lives.** `Meeting.extendedSeconds` (seconds granted, default 0) and `Meeting.extensionsUsed` (count, default 0) hold the extension. The room end is `endsAt + extendedSeconds`, computed by `resolveRoomEndsAt`. `MEETING_EXTENSION_SECONDS` is 900 and `MAX_MEETING_EXTENSIONS` is 1.
+2. **Who reads which end.** Everything that means "when the room closes" reads the room end: the Stream cap and call `custom` written by the provisioner, by reopen (both through `buildRoomCallPlan` in `lib/meetings/call-provisioning.ts`) and by the extend mirror; the join window and `canReopen` window in `lib/meetings/access.ts`; the reopen route's window; the outcome sweep's live-overrun deferral (`decideSlotOutcome`); the orphan reconciler (`lib/meetings/reconcile-orphaned-sessions.ts`); and the extend conflict check. Everything that means "what was booked" keeps `endsAt`.
+3. **One CAS claims the extension.** The extend route (host only, `meetingControlLimiter`) first refuses with `409 SESSION_NOT_EXTENDABLE` when the meeting has ended, the occurrence is deleted, is not `SCHEDULED`, or already has an outcome. It then runs the schedule-conflict check over `[startsAt, max(roomEnd, now) + 15m]` for the host, co-host commitments, presenter collaborators, and active participants. It claims the extension with one `prisma.meeting.updateMany` whose `WHERE` requires `endedAt: null`, `extensionsUsed` still equal to the value read and below the maximum, and the occurrence still `SCHEDULED`, without an outcome, and not deleted. The `data` increments both columns.
+4. **Stream is a derived mirror.** Only after the claim, and outside any transaction, `mirrorExtensionToStream` reads the call and writes `max_duration_seconds = max(existing, derived room cap)` plus `custom = { ...existing, sessionEndsAt, sessionBaseEndsAt, extendedSeconds, extensionsUsed }`. Every value is computed from Postgres and never added to what Stream holds, so repeating the mirror cannot add time twice.
+5. **Retry converges.** If Stream fails, the route answers `503 EXTEND_SYNC_PENDING`: the extension is kept in Postgres and the host retries. A retry finds `extensionsUsed` at the maximum, re-mirrors, and answers `200` if Stream was behind or `409 alreadyExtended` if it was already in sync.
+
+Example. Hannah (consultant) has a 10:00–11:00 IST session with Priya. The booked end stays 11:00 IST. At 10:56 IST Hannah extends: `extendedSeconds` becomes 900, the room end becomes 11:15 IST and the Stream cap grows by 15 minutes. If Hannah leaves at 11:00 IST, the classifier still compares the delivered time with the 11:00 IST booked end, so the session is not marked as cut short.
 
 ### Consequences
 
-- Partial network failures between Stream and Postgres self-heal idempotently on retry.
-- In-room `<OverrunBanner />` phases (`hidden` -> `ending-soon` at `T-5m` -> `overrun-grace` at `T+0` -> `cap-imminent` at `Cap-2m`) match Stream's SFU cutoff to the second.
+- "Extend, then leave on time" no longer loses the 15 minutes, because the classifier never sees a moved end.
+- The extension budget lives on `Meeting`, so reopening a room (a new Stream call) cannot reset it.
+- Residual risk. The database overlap guard `occurrence_no_confirmed_overlap` sees only booked ends and never extensions. The extension is protected only by the application conflict check at the moment the host extends.
+- Lead-time finding. Checkout and request-for-approval enforce a 15-minute lead time and the :00/:30 grid (`slotStartRefusal` in `lib/payments/utils/slot-validation.ts`, `MINIMUM_BOOKING_LEAD_TIME_MS`), and the extend button appears only from five minutes before the booked end. A client-picked booking made after an extension therefore cannot start inside it when the booked end is on the grid. Server-picked allocations (`ScheduleValidationService.validateSlotsInFuture` uses a 5-second buffer), reschedules, and host-created webinar or class times do not apply that lead time, so one of them could place a session at the booked end while a 15-minute extension is live. That case remains application-enforced only.
 
 ---
 
@@ -210,7 +213,7 @@ Standardize all meeting rooms on a single primary red exit control (`CallExitBut
 ### Consequences
 
 - Eliminates accidental host session terminations while keeping deliberate room closure two clicks away.
-- Combined with `ADR-02` (`Reopen Session Room`), even an intentional premature room closure can be recovered cleanly within `endsAt + 30m`.
+- Combined with `ADR-02` (`Reopen Session Room`), even an intentional premature room closure can be recovered cleanly within the room end plus 30 minutes.
 
 ---
 
@@ -218,5 +221,6 @@ Standardize all meeting rooms on a single primary red exit control (`CallExitBut
 
 - **Permanent Per-Appointment / Per-Consultant Stream Call IDs**: Superseded by strict `1 AppointmentOccurrence = 1 active Stream Call ID` isolation (`occurrence-<uuid>`) so recurring `SUBSCRIPTION` and `CLASS` sessions never bleed attendance, duration caps, or recording state across occurrences.
 - **Uniform `where: { streamCallId }` Webhook Lookup Across All Events**: Superseded by asymmetric webhook lookup (`ADR-02`) so recordings and presence from pre-reopen segments attach via `parseOccurrenceIdFromCallId`, while late `call.ended` / `call.session_ended` webhooks strictly check `where: { streamCallId }`.
+- **Dual-Synced Extension (`endsAt` Advanced in Postgres plus Stream `custom`)**: Superseded by ADR-04. Advancing `AppointmentOccurrence.endsAt` moved the column the classifier reads as the booked end, so "extend, then leave on time" lost 15 minutes. The extension counter lived in Stream `custom`, which a reopen reset, and a failed revert let a retry add time. Delete any code that writes `AppointmentOccurrence.endsAt` from the extend path or reads the extension count from Stream.
 - **Fire-and-Forget End Endpoint Swallowing DB Errors as HTTP 200**: Superseded by `recordMeetingEndedSynchronously` CAS dual-write that rotates pre-start `"ended_early"` rooms and returns HTTP `500` on database failure.
 - **Dual Red Hangup Buttons in `MeetingRoom.tsx`**: Superseded by the single Zoom/Meet-style `<CallExitButton />` with role-aware direct leave vs host two-action popover and `< 10m` remaining caution banner.
