@@ -84,8 +84,7 @@ async function archiveWebhookEventsUnlocked(
         }
         deleted = (await remove(rows.map((row) => row.id))).count;
       }
-      if (outOfTime()) hasMore = true;
-      else if (await remains()) hasMore = true;
+      if (outOfTime() || (await remains())) hasMore = true;
     } catch (error) {
       hasMore = true;
       const msg = `Failed to archive ${label}: ${formatArchiveError(error)}`;

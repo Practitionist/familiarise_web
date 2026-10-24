@@ -41,9 +41,8 @@ Crypto. Follow the active maintenance implementation and recovery instructions;
 never infer that a cached phase quiesces work already in flight. See the linked
 references for transaction-client, deployed-runtime and environment constraints.
 
-Auth tokens/invitations, webhook archive, onboarding drafts and audit retention have bounded canonical defaults and a shared 16-second admission budget per invocation. Every destructive write repeats current age/status eligibility. Read `docs/maintenance/housekeeping-bounds.md` for per-phase versus global limits, continuation and the existing bounded audit CLI. Preserve category retention and expiry policy; a work bound is not permission to shorten retention. Failures or time-budget holds retain `hasMore`; a failed oldest page needs repair rather than silent skipping.
+Auth tokens/invitations, webhook archive, onboarding drafts and audit retention have bounded canonical defaults and a shared 16-second admission budget per invocation. Every destructive write repeats current age/status eligibility. Read `docs/maintenance/housekeeping-bounds.md` for per-phase versus global limits, continuation and the existing bounded audit CLI. Keep deadline checks before continuation probes and process organisation transactions sequentially so the next admission check includes prior commit time. Preserve category retention and expiry policy; a work bound is not permission to shorten retention. Failures or time-budget holds retain `hasMore`; a failed oldest page needs repair rather than silent skipping.
 
 ## Deprecated & Superseded Approaches
 
 Older guidance copied registry counts and claimed every job had a twin, money used an unbounded Actions backstop, or only a deploy preview could reproduce pool starvation. Use the current registry/inventory, bounded cores and separate disposable-database versus deployed-runtime evidence instead.
-

@@ -79,8 +79,7 @@ async function cleanupAuthTokensUnlocked(
         }
         deleted = (await remove(rows.map((row) => row.id))).count;
       }
-      if (outOfTime()) hasMore = true;
-      else if (await remains()) hasMore = true;
+      if (outOfTime() || (await remains())) hasMore = true;
     } catch (error) {
       hasMore = true;
       errors.push(`${label} cleanup: ${messageOf(error)}`);
@@ -203,12 +202,12 @@ async function expireStaleInvitations(
         errors.push(`invitation ${invite.id}: ${messageOf(err)}`);
       }
     }
-    if (outOfTime()) hasMore = true;
-    else if (
-      await prisma.invitation.findFirst({
+    if (
+      outOfTime() ||
+      (await prisma.invitation.findFirst({
         where: { status: "PENDING", expiresAt: { lt: now } },
         select: { id: true },
-      })
+      }))
     )
       hasMore = true;
   } catch (err) {

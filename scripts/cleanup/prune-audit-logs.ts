@@ -35,6 +35,10 @@ export interface AuditPruneResult {
   hasMore: boolean;
 }
 
+function formatPruneError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 const auditLimit = z.number().int().min(1).max(500).default(100);
 const START_BUDGET_MS = 16_000;
 
@@ -146,20 +150,18 @@ async function pruneAuditLogsUnlocked(
       } catch (error) {
         result.success = false;
         result.hasMore = true;
-        result.errors.push(
-          `org=${organizationId}: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        result.errors.push(`org=${organizationId}: ${formatPruneError(error)}`);
       }
     }
-    if (outOfTime()) result.hasMore = true;
-    else if (
-      await prisma.orgAuditLog.findFirst({ where, select: { id: true } })
+    if (
+      outOfTime() ||
+      (await prisma.orgAuditLog.findFirst({ where, select: { id: true } }))
     )
       result.hasMore = true;
   } catch (error) {
     result.success = false;
     result.hasMore = true;
-    result.errors.push(error instanceof Error ? error.message : String(error));
+    result.errors.push(formatPruneError(error));
   }
   return result;
 }

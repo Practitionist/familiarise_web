@@ -19,7 +19,7 @@ Invitation expiry retains its PENDING/expiry conditional update and atomic INVIT
 
 ## Continuation and evidence
 
-After a phase, a bounded existence read checks remaining eligible work. `hasMore` is also true when an error or deadline prevents checking or processing later work. It is continuation evidence, not an exact backlog count or a snapshot guarantee against later arrivals. Results preserve already committed counters when a later read fails. Auth/archive phases and audit organisations isolate failures and continue while the shared budget remains.
+After a phase, a bounded existence read checks remaining eligible work only while the shared admission budget remains. Deadline checks short-circuit that read and retain `hasMore`; they never launch a probe after the deadline. Organisation transactions run sequentially so each admission check observes the time spent by earlier commits. `hasMore` is also true when an error or deadline prevents checking or processing later work. It is continuation evidence, not an exact backlog count or a snapshot guarantee against later arrivals. Results preserve already committed counters when a later read fails. Auth/archive phases and audit organisations isolate failures and continue while the shared budget remains.
 
 The existing `jobs/cleanup/prune-audit-logs.ts` Actions entrypoint calls the same core for at most 40 slices of 500, sharing one 16-second start budget and stopping on failure or zero deleted rows. Its structured log retains `hasMore`; it never announces an unbounded drain. Removed unused GITHUB_OUTPUT formatting after checking the workflow consumes only the step outcome. No new wrapper or scheduling owner is introduced.
 
