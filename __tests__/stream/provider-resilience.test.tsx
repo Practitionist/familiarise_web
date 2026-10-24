@@ -175,6 +175,26 @@ describe("a successful connect after a failure", () => {
   });
 });
 
+describe("a consent refusal on a chat-only mount", () => {
+  it("keeps the consent failure after the run settles", async () => {
+    const { upsertUserToStream } = jest.requireMock<{
+      upsertUserToStream: jest.Mock;
+    }>("../../actions/stream/chat/user.action");
+    const refusal = Object.assign(new Error("consent required"), {
+      name: "ConsentRequiredError",
+    });
+    upsertUserToStream.mockRejectedValueOnce(refusal);
+    mockUserData.current = { userDetails: { ...USER, id: "u-consent" } };
+
+    render(<Provider userId="u-consent" enableChat enableVideo={false} />);
+    await advance(10);
+    await advance(5_000);
+
+    expect(getStreamConnectionSnapshot().failure?.kind).toBe("consent");
+    expect(mockChat.connectUser).not.toHaveBeenCalled();
+  });
+});
+
 describe("a dropped chat socket", () => {
   async function connected() {
     succeedChatConnect();

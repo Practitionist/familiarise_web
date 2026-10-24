@@ -661,13 +661,8 @@ const StreamProviderImpl = ({
             await upsertUserToStream(user.id);
             streamLogger.debug("User upserted to Stream", { userId: user.id });
           } catch (upsertError) {
-            if (isConsentUpsertError(upsertError)) {
-              const consentFailure = classifyConnectFailure(upsertError);
-              setError(consentFailure.description);
-              setFailure(consentFailure);
-              setChatConnected(false);
-              return null;
-            }
+            // Rejects so connectServices records the consent failure instead of clearing it.
+            if (isConsentUpsertError(upsertError)) throw upsertError;
             streamLogger.warn("User upsert failed, continuing", {
               userId: user.id,
               error: upsertError,

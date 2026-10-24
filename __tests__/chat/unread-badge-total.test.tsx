@@ -113,6 +113,44 @@ describe("useChatUnreadCount", () => {
     expect(mockClient.getUnreadCount).not.toHaveBeenCalled();
   });
 
+  it("keeps a fresher event total over a reconcile snapshot taken before it", async () => {
+    mockClient.user = { total_unread_count: 7 };
+    mockClient.getUnreadCount.mockResolvedValue({
+      total_unread_count: 7,
+      channels: [
+        { channel_id: "messaging:a", unread_count: 4, last_read: "" },
+        { channel_id: "messaging:org", unread_count: 3, last_read: "" },
+      ],
+    });
+    let classify: (found: FakeChannel[]) => void = () => undefined;
+    mockClient.queryChannels.mockReturnValue(
+      new Promise<FakeChannel[]>((resolve) => {
+        classify = resolve;
+      }),
+    );
+
+    const { result } = renderHook(() => useChatUnreadCount());
+    await flush();
+
+    act(() => {
+      handlers.forEach((h) =>
+        h({ type: "notification.message_new", total_unread_count: 10 }),
+      );
+    });
+    await flush();
+    expect(result.current).toBe(10);
+
+    await act(async () => {
+      classify([
+        channel("messaging:a", 4),
+        channel("messaging:org", 3, { organization_id: "o1" }),
+      ]);
+      await jest.advanceTimersByTimeAsync(0);
+    });
+
+    expect(result.current).toBe(7);
+  });
+
   it("excludes a loaded org channel locally", async () => {
     mockClient.activeChannels = {
       "messaging:a": channel("messaging:a", 2),

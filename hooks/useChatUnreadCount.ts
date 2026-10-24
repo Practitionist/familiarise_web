@@ -60,6 +60,8 @@ export function useChatUnreadCount(): number {
     let cancelled = false;
     // Freshest total seen on an event; `client.user` is the fallback.
     let eventTotal: number | undefined;
+    // Bumped on every event total, so a reconcile can tell its snapshot went stale.
+    let eventSeq = 0;
     // cid -> true when the channel is org-tagged (resolved via queryChannels).
     const orgByCid = new Map<string, boolean>();
     // Org-tagged unread the last server reconcile found outside loaded channels.
@@ -95,6 +97,7 @@ export function useChatUnreadCount(): number {
     let lastReconcileAt = 0;
     const reconcileViaServer = async () => {
       try {
+        const seqAtSnapshot = eventSeq;
         const counts = await client.getUnreadCount();
         const loaded = loadedChannels(client);
         const unknown = counts.channels
@@ -129,6 +132,11 @@ export function useChatUnreadCount(): number {
           }
         }
         unloadedOrg = nextUnloadedOrg;
+        const total = serverTotal();
+        if (eventSeq !== seqAtSnapshot && total !== undefined) {
+          setUnreadCount(Math.max(0, total - loadedUnread().org));
+          return;
+        }
         setUnreadCount(Math.max(0, counts.total_unread_count - orgUnread));
       } catch (error) {
         // A failed recount leaves the previous number in place — a stale badge
@@ -183,6 +191,7 @@ export function useChatUnreadCount(): number {
       }
       if (typeof event.total_unread_count === "number") {
         eventTotal = event.total_unread_count;
+        eventSeq++;
       }
       scheduleRefresh();
     });

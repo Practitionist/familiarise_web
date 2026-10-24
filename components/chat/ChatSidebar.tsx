@@ -705,6 +705,7 @@ export const ChatSidebar = () => {
   // down/re-attaches the listener or refires queryChannels.
   useEffect(() => {
     if (!client) return;
+    let disposed = false;
 
     // Watches a channel the sidebar does not hold yet and puts it first.
     const addChannelToLists = async (
@@ -719,7 +720,14 @@ export const ChatSidebar = () => {
       if (pendingCidsRef.current.has(newChannel.cid)) return;
       pendingCidsRef.current.add(newChannel.cid);
       try {
-        await newChannel.watch().catch(() => undefined);
+        await newChannel.watch();
+        // The client or org scope may have changed while watch() was pending.
+        if (
+          disposed ||
+          !doesChannelMatchScope(eventChannel, scopeRef.current)
+        ) {
+          return;
+        }
         if (channelType === "team") {
           setTeamChannels((prev) => insertChannelAtTop(prev, newChannel));
         } else if (
@@ -728,6 +736,8 @@ export const ChatSidebar = () => {
         ) {
           setDirectMessages((prev) => insertChannelAtTop(prev, newChannel));
         }
+      } catch {
+        // A failed watch leaves the channel unlisted so the next event retries it.
       } finally {
         pendingCidsRef.current.delete(newChannel.cid);
       }
@@ -809,6 +819,7 @@ export const ChatSidebar = () => {
     client.on(handleEvent);
 
     return () => {
+      disposed = true;
       client.off(handleEvent);
     };
   }, [client, handleChannelDeleted, handleUserRemovedFromChannel]);

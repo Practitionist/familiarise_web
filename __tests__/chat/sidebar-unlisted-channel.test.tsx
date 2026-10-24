@@ -46,8 +46,9 @@ jest.mock("stream-chat-react", () => ({
 jest.mock("../../components/chat/ChatPaneContext", () => ({
   useChatPane: () => ({ openConversation: jest.fn() }),
 }));
+let mockScope: { kind: string; orgId?: string } = { kind: "personal" };
 jest.mock("../../hooks/useOrgScope", () => ({
-  useOrgScope: () => ({ scope: { kind: "personal" } }),
+  useOrgScope: () => ({ scope: mockScope }),
 }));
 jest.mock("../../lib/auth-client", () => ({
   useSession: () => ({ data: { user: { role: "CONSULTEE" } } }),
@@ -76,6 +77,7 @@ import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { appendUniqueChannels } from "@/components/chat/utils/channelList";
 
 beforeEach(() => {
+  mockScope = { kind: "personal" };
   registry.clear();
   handlers.clear();
   mockClient.queryChannels.mockReset();
@@ -116,6 +118,55 @@ describe("ChatSidebar", () => {
       expect(rowTitles(container)).toEqual(["Channel t9", "Loaded channel"]),
     );
     expect(registry.get("team:t9")?.watch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not list a channel whose watch fails, and retries it on the next event", async () => {
+    const { container } = render(<ChatSidebar />);
+    await waitFor(() =>
+      expect(rowTitles(container)).toEqual(["Loaded channel"]),
+    );
+    const t9 = mockClient.channel("team", "t9");
+    t9.watch.mockImplementationOnce(() => Promise.reject(new Error("boom")));
+
+    await emit(unlistedEvent);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(rowTitles(container)).toEqual(["Loaded channel"]);
+
+    await emit(unlistedEvent);
+    await waitFor(() =>
+      expect(rowTitles(container)).toEqual(["Channel t9", "Loaded channel"]),
+    );
+    expect(t9.watch).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops a pending channel when the org scope changes before watch() resolves", async () => {
+    const { container, rerender } = render(<ChatSidebar />);
+    await waitFor(() =>
+      expect(rowTitles(container)).toEqual(["Loaded channel"]),
+    );
+    let finishWatch: () => void = () => undefined;
+    const t9 = mockClient.channel("team", "t9");
+    t9.watch.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishWatch = resolve;
+        }),
+    );
+
+    await emit(unlistedEvent);
+    mockScope = { kind: "org", orgId: "org_2" };
+    rerender(<ChatSidebar />);
+    await act(async () => {
+      finishWatch();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(rowTitles(container)).not.toContain("Channel t9"),
+    );
+    expect(t9.watch).toHaveBeenCalledTimes(1);
   });
 });
 
