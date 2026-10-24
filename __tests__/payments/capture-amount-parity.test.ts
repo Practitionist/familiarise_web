@@ -33,6 +33,8 @@ jest.mock("@sentry/nextjs", () => ({
   captureException: (...a: unknown[]) => captureException(...a),
   captureMessage: (...a: unknown[]) => captureMessage(...a),
 }));
+// reportSentryError and the shared loggers capture through @sentry/core; share the one mock.
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 
 const withSerializableRetry = jest.fn(async (fn: () => unknown) => fn());
 jest.mock("../../lib/db/serializable-retry", () => ({

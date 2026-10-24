@@ -74,10 +74,9 @@ A warm incremental `tsc` can also hide type errors here: clear the
 
 The only workflow that runs unconditionally on every pull request is
 `.github/workflows/ci.yaml` (`pull_request` against `dev`, `staging`, `prod`).
-Three others carry a `pull_request` trigger but are conditional and never gate a
-booking change: `stream-webhook-drift.yml` fires only on a `paths:` filter over
-three `lib/stream/` files, `claude-code-review.yml` only on a `labeled` event,
-and `claude.yml` only when a comment or review body contains `@claude`.
+Two others carry a `pull_request` trigger but are conditional and never gate a
+booking change: `claude-code-review.yml` fires only on a `labeled` event, and
+`claude.yml` only when a comment or review body contains `@claude`.
 
 CI's `test-and-build` job is the gate: it passes only when the `typecheck`
 job (`npm audit`, `prisma generate`, `npx tsc --noEmit`, and the money-column,

@@ -20,9 +20,35 @@ jest.mock("../../lib/stream-logger", () => ({
   streamLogger: { error: jest.fn(), info: jest.fn(), warn: jest.fn() },
 }));
 
-import { deleteRecordingAssets } from "../../lib/stream/recording-storage";
+import {
+  deleteRecordingAssets,
+  deleteRecordingObject,
+} from "../../lib/stream/recording-storage";
+import { streamLogger } from "../../lib/stream-logger";
+import type { RunFailureReporter } from "../../lib/observability/run-failures";
 
 beforeEach(() => jest.clearAllMocks());
+
+it.each(["result", "throw"])(
+  "delegates an R2 %s failure to the invocation reporter",
+  async (mode) => {
+    const error = new Error("R2 unavailable");
+    if (mode === "throw") deleteR2Object.mockRejectedValueOnce(error);
+    else
+      deleteR2Object.mockResolvedValueOnce({
+        success: false,
+        error: error.message,
+      });
+    const reporter: RunFailureReporter = { add: jest.fn(), flush: jest.fn() };
+    await expect(deleteRecordingObject("object-a", reporter)).resolves.toEqual({
+      success: false,
+      error: error.message,
+    });
+    expect(reporter.add).toHaveBeenCalledTimes(1);
+    expect(reporter.flush).not.toHaveBeenCalled();
+    expect(streamLogger.error).not.toHaveBeenCalled();
+  },
+);
 
 describe("deleteRecordingAssets", () => {
   it("deletes the R2 copy and the preview folder from the previews bucket", async () => {

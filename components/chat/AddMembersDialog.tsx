@@ -187,7 +187,10 @@ export const AddMembersDialog = ({
       console.error("Error adding members:", error);
       toast({
         title: "Error",
-        description: "Failed to add some members",
+        description:
+          error instanceof Error && error.message
+            ? error.message
+            : "Failed to add some members",
         variant: "destructive",
       });
     } finally {

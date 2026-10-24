@@ -647,7 +647,8 @@ describe("ensure-call-type-grants", () => {
       expect(applied()[role]).not.toContain("start-recording-any-team");
     }
     expect(applied().call_member).toContain("join-call");
-    expect(applied().call_member).toContain("join-ended-call");
+    // A sealed room stays sealed at Stream; reopening rotates the call id.
+    expect(applied().call_member).not.toContain("join-ended-call");
     expect(applied().call_member).toContain("update-call-permissions");
   });
 });

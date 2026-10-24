@@ -63,8 +63,10 @@ import {
 } from "@/lib/booking/entitlement";
 import {
   alertStaleNeedsHuman,
+  createStreamWitnessBudget,
   decideSlotOutcome,
   OUTCOME_SLOT_SELECT,
+  type StreamWitnessBudget,
   readOutageWindows,
   type OutcomeSlot,
   type SlotDecision,
@@ -1001,13 +1003,14 @@ async function settleCycleBells(wrappers: Set<string>): Promise<void> {
 /** Decides one session and records what the bite's tail must settle. */
 async function decideOneSlot(
   slot: OutcomeSlot,
-  ctx: Omit<Parameters<typeof decideSlotOutcome>[1], "onFeedGap">,
+  ctx: Omit<Parameters<typeof decideSlotOutcome>[1], "onFeedGap" | "witness">,
   run: SlotRun,
   settle: { wrappers: Set<string>; decidedHosts: Set<string> },
 ): Promise<void> {
   const decision = await decideSlotOutcome(slot, {
     ...ctx,
     onFeedGap: () => run.feedGaps++,
+    witness: run.witness,
   });
   if (tallyDecision(run.tally, decision) && slot.appointment.subscriptionId) {
     settle.wrappers.add(slot.appointmentId);
@@ -1023,6 +1026,8 @@ async function decideOneSlot(
 interface SlotRun {
   tally: SlotTally;
   feedGaps: number;
+  /** Bounds the Stream attendance reads across every bite of the run. */
+  witness: StreamWitnessBudget;
   menteeFailures: RunFailureReporter;
 }
 
@@ -1204,6 +1209,7 @@ async function autoCompleteAppointmentsUnlocked(
   const slotRun: SlotRun = {
     tally: { completed: 0, unverified: 0, voided: 0, deferred: 0 },
     feedGaps: 0,
+    witness: createStreamWitnessBudget(),
     menteeFailures: createRunFailureReporter("bookings"),
   };
   const parents = PARENT_PASSES.map((pass) => ({
@@ -1237,6 +1243,15 @@ async function autoCompleteAppointmentsUnlocked(
         op: "auto-complete-appointments",
         level: "warning",
         extra: { sessions: slotRun.feedGaps },
+      });
+    }
+    // Each failed read left an interval open, so its session parked UNVERIFIED.
+    if (slotRun.witness.failures > 0) {
+      reportSentryMessage("attendance witness unavailable", {
+        subsystem: "stream",
+        op: "auto-complete-appointments",
+        level: "warning",
+        extra: { reads: slotRun.witness.failures },
       });
     }
     slotRun.menteeFailures.flush();
