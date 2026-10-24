@@ -169,7 +169,13 @@ describe("DPDP erasure Stream principal leg", () => {
         previewClipStoragePath: null,
       },
     ]);
-    const mockRecordingUpdate = jest.fn(async () => ({}));
+    const mockRecordingClaim = jest.fn(async () => [
+      {
+        id: "rec-1on1",
+        storagePath: null,
+        previewClipStoragePath: null,
+      },
+    ]);
     const mockRecordingUpdateMany = jest.fn(async () => ({ count: 1 }));
     const mockRecordingConsentUpdateMany = jest.fn(async () => ({ count: 1 }));
 
@@ -177,7 +183,7 @@ describe("DPDP erasure Stream principal leg", () => {
       ...db,
       recording: {
         findMany: mockRecordingFindMany,
-        update: mockRecordingUpdate,
+        updateManyAndReturn: mockRecordingClaim,
         updateMany: mockRecordingUpdateMany,
       },
       recordingConsent: {
@@ -188,11 +194,35 @@ describe("DPDP erasure Stream principal leg", () => {
     await scrubUser(dbWithRecordings as never, "u-erased-1");
 
     expect(mockRecordingFindMany).toHaveBeenCalled();
-    expect(mockRecordingUpdate).toHaveBeenCalledWith({
-      where: { id: "rec-1on1" },
+    expect(mockRecordingClaim).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: "rec-1on1",
+        OR: [
+          { status: { notIn: ["EXPIRED", "FAILED"] } },
+          {
+            status: "EXPIRED",
+            OR: [
+              { storagePath: { not: null } },
+              { previewClipStoragePath: { not: null } },
+            ],
+          },
+        ],
+        purchases: { none: {} },
+      }),
       data: {
         status: "EXPIRED",
         recordingUrl: "",
+      },
+      select: { id: true, storagePath: true, previewClipStoragePath: true },
+    });
+    expect(mockRecordingUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "rec-1on1",
+        status: "EXPIRED",
+        storagePath: null,
+        previewClipStoragePath: null,
+      },
+      data: {
         storagePath: null,
         previewClipUrl: null,
         previewClipStoragePath: null,

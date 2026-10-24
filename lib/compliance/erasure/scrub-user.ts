@@ -55,6 +55,7 @@
  */
 
 import { createHash } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import type { Db } from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
@@ -242,12 +243,17 @@ export async function eraseStreamPrincipalFootprint(
 
 async function purgeSingleUserRecordingOnErasure(
   db: Db,
-  rec: {
-    id: string;
-    storagePath: string | null;
-    previewClipStoragePath: string | null;
-  },
+  recordingId: string,
+  eligible: Prisma.RecordingWhereInput,
 ): Promise<void> {
+  // Stop transfer publication and capture the assets from the same row version.
+  const [rec] = await db.recording.updateManyAndReturn({
+    where: { ...eligible, id: recordingId },
+    data: { status: "EXPIRED", recordingUrl: "" },
+    select: { id: true, storagePath: true, previewClipStoragePath: true },
+  });
+  if (!rec) return;
+
   const { deleteRecordingObject } =
     await import("@/lib/stream/recording-storage");
   const { removeObjects } = await import("@/lib/supabase-storage-core");
@@ -269,23 +275,32 @@ async function purgeSingleUserRecordingOnErasure(
     }
   }
 
-  const expiredData = {
-    status: "EXPIRED" as const,
-    recordingUrl: "",
-    storagePath: null,
-    previewClipUrl: null,
-    previewClipStoragePath: null,
-  };
-  if (db.recording.update) {
-    await db.recording.update({
+  const cleared = await db.recording.updateMany({
+    where: {
+      id: rec.id,
+      status: "EXPIRED",
+      storagePath: rec.storagePath,
+      previewClipStoragePath: rec.previewClipStoragePath,
+    },
+    data: {
+      storagePath: null,
+      previewClipUrl: null,
+      previewClipStoragePath: null,
+    },
+  });
+  if (cleared.count === 0) {
+    const current = await db.recording.findUnique({
       where: { id: rec.id },
-      data: expiredData,
+      select: { status: true, storagePath: true, previewClipStoragePath: true },
     });
-  } else if (db.recording.updateMany) {
-    await db.recording.updateMany({
-      where: { id: rec.id },
-      data: expiredData,
-    });
+    if (
+      current?.status === "EXPIRED" &&
+      current.storagePath === null &&
+      current.previewClipStoragePath === null
+    ) {
+      return;
+    }
+    throw new Error("Recording asset pointers changed during erasure");
   }
 }
 
@@ -338,82 +353,85 @@ async function cleanupUserRecordingsOnErasure(
   now: Date,
 ): Promise<string[]> {
   const failures: string[] = [];
+  const errors: unknown[] = [];
   try {
     if (db.recording?.findMany) {
-      const oneToOneRecordings = await db.recording.findMany({
-        where: {
-          status: { notIn: ["EXPIRED", "FAILED"] },
-          purchases: { none: {} },
-          meeting: {
-            occurrence: {
-              appointment: {
-                appointmentType: {
-                  in: ["CONSULTATION", "SUBSCRIPTION", "TRIAL"],
-                },
-                OR: [
-                  { participants: { some: liveParticipant(userId) } },
-                  {
-                    consultation: {
-                      OR: [
-                        { requestedBy: { userId } },
-                        {
-                          consultationPlan: {
-                            consultantProfile: { userId },
-                          },
-                        },
-                      ],
-                    },
-                  },
-                  {
-                    subscription: {
-                      OR: [
-                        { requestedBy: { userId } },
-                        {
-                          subscriptionPlan: {
-                            consultantProfile: { userId },
-                          },
-                        },
-                      ],
-                    },
-                  },
-                  {
-                    trial: {
-                      OR: [
-                        { consulteeProfile: { userId } },
-                        { consultantProfile: { userId } },
-                        {
-                          subscriptionPlan: {
-                            consultantProfile: { userId },
-                          },
-                        },
-                      ],
-                    },
-                  },
-                ],
+      const eligible: Prisma.RecordingWhereInput = {
+        OR: [
+          { status: { notIn: ["EXPIRED", "FAILED"] } },
+          {
+            status: "EXPIRED",
+            OR: [
+              { storagePath: { not: null } },
+              { previewClipStoragePath: { not: null } },
+            ],
+          },
+        ],
+        purchases: { none: {} },
+        meeting: {
+          occurrence: {
+            appointment: {
+              appointmentType: {
+                in: ["CONSULTATION", "SUBSCRIPTION", "TRIAL"],
               },
+              OR: [
+                { participants: { some: liveParticipant(userId) } },
+                {
+                  consultation: {
+                    OR: [
+                      { requestedBy: { userId } },
+                      {
+                        consultationPlan: {
+                          consultantProfile: { userId },
+                        },
+                      },
+                    ],
+                  },
+                },
+                {
+                  subscription: {
+                    OR: [
+                      { requestedBy: { userId } },
+                      {
+                        subscriptionPlan: {
+                          consultantProfile: { userId },
+                        },
+                      },
+                    ],
+                  },
+                },
+                {
+                  trial: {
+                    OR: [
+                      { consulteeProfile: { userId } },
+                      { consultantProfile: { userId } },
+                      {
+                        subscriptionPlan: {
+                          consultantProfile: { userId },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
             },
           },
         },
-        select: {
-          id: true,
-          storagePath: true,
-          previewClipStoragePath: true,
-        },
+      };
+      const oneToOneRecordings = await db.recording.findMany({
+        where: eligible,
+        select: { id: true },
       });
 
       if (Array.isArray(oneToOneRecordings)) {
         for (const rec of oneToOneRecordings) {
           try {
-            await purgeSingleUserRecordingOnErasure(db, rec);
+            await purgeSingleUserRecordingOnErasure(db, rec.id, eligible);
           } catch (error_) {
             failures.push(
               `recording_storage:${rec.id}: deletion not confirmed — re-run required`,
             );
-            reportSentryError(error_, {
-              subsystem: "compliance",
-              op: "scrubUser.purgeSingleUserRecordingOnErasure",
-              extra: { userId, recordingId: rec.id },
-            });
+            errors.push(error_);
           }
         }
       }
@@ -424,10 +442,13 @@ async function cleanupUserRecordingsOnErasure(
     failures.push(
       "recording_cleanup: could not complete recording erasure — re-run required",
     );
-    reportSentryError(error_, {
+    errors.push(error_);
+  }
+  if (errors.length > 0) {
+    reportSentryError(errors[0], {
       subsystem: "compliance",
       op: "scrubUser.cleanupUserRecordingsOnErasure",
-      extra: { userId },
+      extra: { userId, failures: failures.slice(0, 20), failed: errors.length },
     });
   }
   return failures;
