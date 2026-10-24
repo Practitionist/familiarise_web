@@ -169,7 +169,11 @@ function buildThread(
       if (!removal && status !== "WAITING_FOR_EXPERT") {
         actions.push("request_removal");
       }
-    } else if (ctx.writable && OPEN_STATUSES.has(status)) {
+    } else if (
+      ctx.writable &&
+      OPEN_STATUSES.has(status) &&
+      !latestLearner?.isStorageMissing
+    ) {
       actions.push("review");
     }
   } else if (!isLearner && ctx.writable) {
@@ -201,7 +205,9 @@ function buildThread(
     },
     allowedActions: actions,
     reviewTargetId:
-      kind === "submission" && latestLearner ? latestLearner.id : null,
+      kind === "submission" && latestLearner && !latestLearner.isStorageMissing
+        ? latestLearner.id
+        : null,
     latestVersionNo: latest.versionNo,
     updatedAt: latest.uploadedAt.toISOString(),
     versions: versions.map((v) => {

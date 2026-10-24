@@ -244,18 +244,19 @@ fleet paused:
 3. `gh secret set CRON_SECRET` in GitHub Actions.
 4. `gh workflow enable cron-daily.yml cron-weekly.yml`.
 
-Skipping step 1, or setting GitHub before the redeploy, opens a 401 window on all seven steps
+Skipping step 1, or setting GitHub before the redeploy, opens a 401 window on all six steps
 for the length of the deploy.
 
 Do not set it with `netlify env:set` and expect to read it back: the CLI masks it and the list
 endpoint nulls the top-level `value`. All three Netlify contexts currently hold one identical
 value (verified by hash), so the #1634 single-context failure mode is not present.
 
-Those seven steps — `auth-tokens`, `purge-deleted-documents`, `expire-stale-collaborator-invites`,
+Those six steps — `auth-tokens`, `expire-stale-collaborator-invites`,
 `purge-unverified-users`, `archive-webhook-events`, `expire-onboarding-drafts` and
 `expire-referral-credits` — are on no Netlify ticker target list, so Actions is their only
 scheduler. They still do not run while org-level Actions usage is blocked; the secret was the
-second blocker, not the only one.
+second blocker, not the only one. `purge-deleted-documents` moved to the ticker (hourly at
+`:35`) so retention no longer depends on the blocked Actions fleet.
 
 **3. Take the GST zero-rating evidence gap to a CA.** Buyer-country detection
 now defaults to `IN` unless a country was explicitly asserted, so the error

@@ -66,6 +66,17 @@ export async function authorizeAppointmentDocument(
 
   const viewerIsUploader =
     (document.uploadedByRole === "CONSULTANT") === (party.role === "expert");
+  // The purge is the cleanup, not the guarantee: a row that outlived its
+  // retention date because a sweep was late, stuck or disabled is unreadable.
+  const keptUntil = party.booking.keptUntil;
+  if (keptUntil !== null && keptUntil.getTime() <= Date.now()) {
+    return {
+      ok: false,
+      code: "NOT_FOUND",
+      viewerIsUploader,
+      appointmentId: document.appointmentId,
+    };
+  }
   if (document.isStorageMissing) {
     return {
       ok: false,

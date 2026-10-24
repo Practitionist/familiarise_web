@@ -45,9 +45,9 @@ The removal notice is sent after the row has expired, on a best-effort basis: it
 
 When a session has several parts and one is removed, that part shows as its own "Part 2 of 2 · Removed by the expert on 11 Oct 2026" row in its slot, and the remaining parts keep their k-of-n numbers.
 
-The tombstone row keeps no media: the object, preview clip and thumbnail are deleted by the same flow that wrote it (or retried by `expire-recordings`).
+The tombstone row keeps no media: the object, preview folder (clip and thumbnail), transcript and Stream's copy are deleted by the same flow that wrote it (or retried by `expire-recordings`).
 
-**Delete answers 200 once the tombstone is written.** `DELETE /api/stream/recordings/:id` returns 200 after the conditional `EXPIRED` write. The removal notice, the asset purge and the pointer clear that follow are best-effort, and anything left over is finished by the expiry sweep. A storage object that is already missing counts as deleted, so a retry never fails on it. The manage sheet re-reads the list after any failure.
+**Delete answers 200 once the tombstone is written.** `DELETE /api/stream/recordings/:id` returns 200 after the conditional `EXPIRED` write. It also deletes Stream's copy for that segment; a failure there is logged and leaves `streamRecordingId` in place so the row can be retried. The removal notice, the asset purge and the pointer clear that follow are best-effort, and anything left over is finished by the expiry sweep. A storage object that is already missing counts as deleted, so a retry never fails on it. The manage sheet re-reads the list after any failure.
 
 **The `Recording_storage_and_publish_check` constraint matches `prisma/sql/check-constraints.sql`.** An active `PLATFORM` row needs a `storagePath`, and an `EXPIRED` platform row may have a null `storagePath` once its object is gone. A `PUBLISHED` listing still requires the path, a positive price and the consent attestation.
 
@@ -240,6 +240,8 @@ sequenceDiagram
 | Class                                 | Enrolled members of the batch; catch-up from another batch for sessions their batch lacks; late-join rules apply. |
 
 The owner and accepted co-presenters always have access, a platform `ADMIN` has full access (audited), `STAFF` and organisation roles see metadata only, and buyers of a published replay may play it. Clients never receive a raw storage URL in a payload.
+
+**A full refund revokes a 1:1 replay.** `PaymentStatus` has no `REFUNDED` value, so a fully refunded payment still reads `SUCCEEDED`. `loadRecordingViews` nets the refunds (`isPaymentEntitled`) and passes `paymentRevoked` to `recordingViewerOf`: a 1:1 learner whose only succeeded payment for the booking is fully refunded is no longer a viewer, so neither the list nor playback signs a link. A partial refund keeps access, and a free 1:1 booking with no payment row keeps it. A replay the learner bought separately is unaffected. Group seats follow the seat/payment rule.
 
 ## The Recording details page
 
@@ -435,7 +437,7 @@ A host can publish a recording as a replay, but purchase is not open yet. The pu
 
 ## Storage
 
-Recordings live in the private R2 bucket and are served by per-request presigned links of 4 to 24 hours by recording length, so long sessions never expire mid-watch. Documents and plan materials live in the private Supabase `documents` bucket. The reasoning for the split (object size, egress cost, per-plan upload caps, one signing helper per store) is in [documents/README](../documents/README.md#storage-supabase-for-documents-r2-for-recordings) and [storage management](../storage/management-strategy.md).
+Recordings live in the private R2 bucket and are served by per-request presigned links of 4 to 24 hours by recording length, so long sessions never expire mid-watch. Preview clips and thumbnails live in the public `recordings-previews` bucket under one policy (`lib/storage/bucket-policies.ts`): 50 MB, MP4/WebM and image types. Documents and plan materials live in the private Supabase `documents` bucket, whose type list comes from `lib/documents/file-policy.ts`. The reasoning for the split (object size, egress cost, per-plan upload caps, one signing helper per store) is in [documents/README](../documents/README.md#storage-supabase-for-documents-r2-for-recordings) and [storage management](../storage/management-strategy.md).
 
 ## References
 
@@ -461,3 +463,5 @@ Recordings live in the private R2 bucket and are served by per-request presigned
 - **`RecordingTable` and per-row `catchUpFrom`, `notice` and `sessionLabel` fields.** The Library's flat session table and its text fields. Superseded by `RecordingTimeline` and the `LibraryRecording` state fields.
 - **Catch-up dated by the source batch's start.** Superseded by the source session's own recording date.
 - **A trial kept as long as its converted subscription.** Superseded by the 1:1 rule: 90 days after the session.
+- **Deleting only the R2 object and the preview clip.** The row was marked `EXPIRED` while Stream's copy stayed playable for up to 14 days and the thumbnail stayed public. Superseded by `lib/stream/recording-stream-delete.ts` and a purge that clears the thumbnail and transcript; the row keeps its Stream ids until the vendor confirms.
+- **A full refund leaving 1:1 replay access on.** Entitlement was matched by profile id alone. Superseded by `paymentRevoked`; a partially refunded booking keeps access.

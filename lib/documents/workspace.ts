@@ -56,10 +56,14 @@ export async function readDocumentWorkspace(
     orderBy: { versionNo: "asc" },
   });
   const readOnlyReason = documentWriteRefusal(booking);
-  const threads = buildThreadViews(rows, {
-    viewerRole: party.role,
-    writable: readOnlyReason === null,
-  });
+  const expired =
+    booking.keptUntil !== null && booking.keptUntil.getTime() <= Date.now();
+  const threads = expired
+    ? []
+    : buildThreadViews(rows, {
+        viewerRole: party.role,
+        writable: readOnlyReason === null,
+      });
 
   return {
     booking: {

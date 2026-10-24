@@ -27,7 +27,7 @@ import {
 } from "@/lib/stream/recording-operator-access";
 import { hasAnyOrgPermission } from "@/lib/auth/org-permissions";
 
-import { getSession } from "@/lib/auth-server";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { notifyAttendeesOfRemovedRecording } from "@/lib/stream/recording-removal-notice";
 import {
   resolveRecordingWriteAccess,
@@ -136,14 +136,14 @@ async function resolvePlaybackGrant(
 
 export async function GET(_req: NextRequest, { params }: RouteParams) {
   return answerFileRoute(async () => {
-    const session = await getSession();
-    if (!session?.user) return fileApiError("UNAUTHORIZED");
+    const auth = await requireApiAuth();
+    if (auth.error) return auth.error;
 
     const { recordingId } = await params;
     const recording = await RecordingService.getRecordingById(recordingId);
     if (!recording) return fileApiError("NOT_FOUND");
 
-    const grant = await resolvePlaybackGrant(session.user, recording);
+    const grant = await resolvePlaybackGrant(auth.session.user, recording);
     if (grant.kind === "refused") return fileApiError(grant.code);
 
     const viaOperatorGrant =
@@ -156,8 +156,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 
     if (viaOperatorGrant) {
       await auditOperatorRecordingAccess({
-        actorUserId: session.user.id,
-        actorRole: String(session.user.role),
+        actorUserId: auth.session.user.id,
+        actorRole: String(auth.session.user.role),
         surface: "GET /api/stream/recordings/[recordingId]",
         // Only a response that carries a playback URL counts as played.
         played:
@@ -264,15 +264,15 @@ function writeTarget(
 
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
   return answerFileRoute(async () => {
-    const session = await getSession();
-    if (!session?.user) return fileApiError("UNAUTHORIZED");
+    const auth = await requireApiAuth();
+    if (auth.error) return auth.error;
 
     const { recordingId } = await params;
     const recording = await RecordingService.getRecordingById(recordingId);
     if (!recording) return fileApiError("NOT_FOUND");
 
     const access = await resolveRecordingWriteAccess(
-      session.user,
+      auth.session.user,
       writeTarget(recording),
     );
     if (!access.allowed) return fileApiError("FORBIDDEN");
@@ -281,8 +281,8 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 
     if (access.via === "operator") {
       await auditOperatorRecordingAccess({
-        actorUserId: session.user.id,
-        actorRole: String(session.user.role),
+        actorUserId: auth.session.user.id,
+        actorRole: String(auth.session.user.role),
         surface: "PATCH /api/stream/recordings/[recordingId]",
         played: false,
         recordingId: recording.id,
@@ -307,15 +307,15 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 
 export async function DELETE(_req: NextRequest, { params }: RouteParams) {
   return answerFileRoute(async () => {
-    const session = await getSession();
-    if (!session?.user) return fileApiError("UNAUTHORIZED");
+    const auth = await requireApiAuth();
+    if (auth.error) return auth.error;
 
     const { recordingId } = await params;
     const recording = await RecordingService.getRecordingById(recordingId);
     if (!recording) return fileApiError("NOT_FOUND");
 
     const access = await resolveRecordingWriteAccess(
-      session.user,
+      auth.session.user,
       writeTarget(recording),
     );
     if (!access.allowed) return fileApiError("FORBIDDEN");
@@ -336,8 +336,8 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
 
     if (access.via === "operator") {
       await auditOperatorRecordingAccess({
-        actorUserId: session.user.id,
-        actorRole: String(session.user.role),
+        actorUserId: auth.session.user.id,
+        actorRole: String(auth.session.user.role),
         surface: "DELETE /api/stream/recordings/[recordingId]",
         played: false,
         recordingId: recording.id,
@@ -373,14 +373,19 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
         removedAt: new Date(),
         removalReason: REMOVAL_REASON[access.via],
       },
-      select: { id: true, storagePath: true },
+      select: {
+        id: true,
+        storagePath: true,
+        streamCallId: true,
+        streamRecordingId: true,
+      },
     });
     if (!expired) return fileApiError("RECORDING_CHANGED");
     // The row is already removed, so a failed notice must not fail the delete.
     await notifyAttendeesOfRemovedRecording({
       appointmentId: recording.meeting.occurrence.appointmentId,
       recordingTitle: recording.title,
-      removedBy: removerName(access, session.user.name),
+      removedBy: removerName(access, auth.session.user.name),
     }).catch((error: unknown) => {
       streamLogger.warn("Recording removal notice not sent", {
         recordingId,
