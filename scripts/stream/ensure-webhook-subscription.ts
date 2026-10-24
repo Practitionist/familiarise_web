@@ -1,5 +1,6 @@
 /**
- * #1134 — subscribe the Stream webhook to every event handled by the dispatcher.
+ * Reconcile the Stream webhook hook (enabled, URL, event list) with the control-plane contract.
+ * `--check` exits 2 on drift without writing.
  *
  *   npx tsx scripts/stream/ensure-webhook-subscription.ts
  *   npx tsx scripts/stream/ensure-webhook-subscription.ts --check
@@ -14,71 +15,29 @@ import {
   isStreamConfigured,
 } from "../../lib/stream-client";
 import { compareStringsByCodeUnit } from "../../lib/stream/config-fingerprint";
-import { DESIRED_EVENT_TYPES } from "../../lib/stream/webhook-events";
-
-const SORTED_DESIRED_EVENT_TYPES = Array.from(
-  new Set(DESIRED_EVENT_TYPES),
-).sort(compareStringsByCodeUnit);
+import {
+  SORTED_DESIRED_EVENT_TYPES,
+  evaluateHookDrift,
+  expectedWebhookUrl,
+  hookAccepts,
+  productFor,
+  type HookDriftReport,
+} from "../../lib/stream/control-plane-contract";
 
 type IdentifiedHook = EventHook & { id: string };
-
-const CHAT_EVENT_PREFIXES = ["user.", "message.", "channel.", "member."];
-
-function productFor(eventType: string): "chat" | "video" {
-  return CHAT_EVENT_PREFIXES.some((p) => eventType.startsWith(p))
-    ? "chat"
-    : "video";
-}
-
-function hookProduct(hook: EventHook): string | undefined {
-  return "product" in hook && typeof hook.product === "string"
-    ? hook.product
-    : undefined;
-}
-
-function hookAccepts(hook: EventHook, eventType: string): boolean {
-  const product = hookProduct(hook);
-  if (!product || product === "all") return true;
-  return product === productFor(eventType);
-}
 
 export type EnsureMode = "dry-run" | "check" | "apply";
 export const DRIFT_EXIT_CODE = 2;
 
 function annotate(message: string): void {
-  console.error(
-    process.env.GITHUB_ACTIONS ? `::error::${message}` : `ERROR: ${message}`,
-  );
-}
-
-export interface HookDriftReport {
-  product: string;
-  receivesAll: boolean;
-  missing: string[];
-  extra: string[];
-  hasDrift: boolean;
-}
-
-export function evaluateHookDrift(
-  hook: IdentifiedHook,
-  eligible: readonly string[],
-): HookDriftReport {
-  const rawTypes = hook.event_types ?? [];
-  const current = new Set(rawTypes);
-  const receivesAll = rawTypes.length === 0 || current.has("*");
-  const eligibleSet = new Set(eligible);
-  const missing = receivesAll ? [] : eligible.filter((t) => !current.has(t));
-  const extra = [...current].filter((t) => t !== "*" && !eligibleSet.has(t));
-  const product = hookProduct(hook) ?? "unscoped";
-  const hasDrift =
-    eligible.length > 0 &&
-    (receivesAll || missing.length > 0 || extra.length > 0);
-  return { product, receivesAll, missing, extra, hasDrift };
+  console.error(`ERROR: ${message}`);
 }
 
 function formatDriftReasons(drift: HookDriftReport): string {
   const reasons: string[] = [];
   if (drift.receivesAll) reasons.push("wildcard subscription active");
+  if (drift.disabled) reasons.push("hook disabled");
+  if (drift.urlMismatch) reasons.push("webhook_url differs from the contract");
   if (drift.missing.length > 0) {
     reasons.push(`missing [${drift.missing.join(", ")}]`);
   }
@@ -96,6 +55,8 @@ function logHookDriftDetails(
   if (drift.receivesAll) {
     console.log(`  WILDCARD detected (unfiltered delivery across all events)`);
   }
+  if (drift.disabled) console.log(`  DISABLED (deliveries are not sent)`);
+  if (drift.urlMismatch) console.log(`  URL differs from the contract`);
   if (drift.missing.length > 0) {
     console.log(`  MISSING (${drift.missing.length}):`);
     for (const t of drift.missing) console.log(`    + ${t}`);
@@ -176,6 +137,8 @@ export async function ensureWebhookSubscription(
     return 1;
   }
 
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  const expectedUrl = appUrl ? expectedWebhookUrl(appUrl) : undefined;
   let changed = 0;
   const reconciled = new Map<string, string[]>();
   const unplaceable = new Set(SORTED_DESIRED_EVENT_TYPES);
@@ -187,7 +150,7 @@ export async function ensureWebhookSubscription(
     for (const t of eligible) unplaceable.delete(t);
     if (eligible.length === 0) continue;
 
-    const drift = evaluateHookDrift(hook, eligible);
+    const drift = evaluateHookDrift(hook, eligible, expectedUrl);
     const currentSize = hook.event_types?.length ?? 0;
 
     console.log(
@@ -235,7 +198,13 @@ export async function ensureWebhookSubscription(
   if (apply && (reconciled.size > 0 || legacyWildcard)) {
     const nextHooks = allHooks.map((h) => {
       const next = h.id ? reconciled.get(h.id) : undefined;
-      return next ? { ...h, event_types: next } : h;
+      if (!next) return h;
+      return {
+        ...h,
+        event_types: next,
+        enabled: true,
+        ...(expectedUrl ? { webhook_url: expectedUrl } : {}),
+      };
     });
     await client.updateAppSettings({
       event_hooks: nextHooks,

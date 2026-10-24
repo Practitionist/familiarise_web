@@ -1294,6 +1294,25 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to settle invoice accruals",
       }),
 
+    // @cleanup-twin stream-control-plane-drift
+    "stream-control-plane-drift": () =>
+      cleanupRoute({
+        job: "stream-control-plane-drift",
+        run: async () => {
+          const { detectStreamControlPlaneDrift } =
+            await import("@/lib/stream/control-plane-drift");
+          return detectStreamControlPlaneDrift();
+        },
+        summarize: (r) => ({
+          drifted: r.drifted,
+          findings: r.findings.length,
+          unverified: r.unverified.length,
+        }),
+        // Drift is already reported once to Sentry by the detector; 207 only marks the run.
+        status: (r) => statusFor(r, r.drifted),
+        failureMessage: "Failed to check the Stream control plane for drift",
+      }),
+
     // @cleanup-twin stream-sync
     "stream-sync": () =>
       cleanupRoute({

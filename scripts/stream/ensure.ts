@@ -18,29 +18,14 @@ import {
   CO_PRESENTER_CALL_ROLE,
   STREAM_CALL_TYPE,
 } from "@/lib/stream/call-cid";
+import {
+  CO_PRESENTER_GRANTS,
+  TARGET_INACTIVITY_TIMEOUT_SECONDS,
+  matchesCoPresenterGrants,
+} from "@/lib/stream/control-plane-contract";
 import { ensureAppSettings } from "./ensure-app-settings";
 import { ensureCallTypeGrants } from "./ensure-call-type-grants";
 import { hardenUnusedCallTypes } from "./harden-unused-call-types";
-
-export const TARGET_INACTIVITY_TIMEOUT_SECONDS = 300;
-
-/** Publish plus mute, pin and backstage; never end-call, permission changes or billable starts. */
-export const CO_PRESENTER_GRANTS = [
-  "create-call-reaction",
-  "join-backstage",
-  "join-call",
-  "join-ended-call",
-  "list-recordings",
-  "list-transcriptions",
-  "mute-users",
-  "pin-call-track",
-  "read-call",
-  "screenshare",
-  "send-audio",
-  "send-closed-captions",
-  "send-event",
-  "send-video",
-];
 
 export interface EnsureOptions {
   apply: boolean;
@@ -117,14 +102,6 @@ export async function ensureDefaultCallTypeSettings(opts: {
     `\n✅ session.inactivity_timeout_seconds = ${TARGET_INACTIVITY_TIMEOUT_SECONDS}, verified on '${STREAM_CALL_TYPE}'.`,
   );
   return 0;
-}
-
-function matchesCoPresenterGrants(grants: string[] | undefined): boolean {
-  const held = new Set(grants ?? []);
-  return (
-    held.size === CO_PRESENTER_GRANTS.length &&
-    CO_PRESENTER_GRANTS.every((perm) => held.has(perm))
-  );
 }
 
 export async function ensureCoPresenterRole(opts: {

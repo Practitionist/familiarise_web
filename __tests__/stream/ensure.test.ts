@@ -33,9 +33,11 @@ jest.mock("../../lib/stream-client", () => ({
 
 import {
   CO_PRESENTER_GRANTS,
+  TARGET_INACTIVITY_TIMEOUT_SECONDS,
+} from "../../lib/stream/control-plane-contract";
+import {
   ensureDefaultCallTypeSettings,
   ensureStreamConfig,
-  TARGET_INACTIVITY_TIMEOUT_SECONDS,
 } from "../../scripts/stream/ensure";
 
 beforeEach(() => {
