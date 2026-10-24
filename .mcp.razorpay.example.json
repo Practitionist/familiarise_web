@@ -6,8 +6,8 @@
         "-y",
         "mcp-remote@0.15.2",
         "https://mcp.razorpay.com/mcp",
-        "--header",
-        "Authorization: Basic <RZP_MCP_SERVER_BASIC_AUTH_TOKEN>"
+        "--header-file",
+        ".mcp.razorpay.headers"
       ]
     }
   }

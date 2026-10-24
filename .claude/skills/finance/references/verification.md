@@ -21,7 +21,11 @@ Safe observations include scoped SELECTs through the read-only Supabase MCP (not
 The shared `.mcp.json.example` does not include Razorpay. To use the remote,
 copy `.mcp.razorpay.example.json` to the gitignored `.mcp.razorpay.json` and
 start the session with `claude --mcp-config .mcp.razorpay.json` (or merge the
-`rzp-mcp-server` block into `.mcp.json`). The remote exposes order, capture and
+`rzp-mcp-server` block into `.mcp.json`). The credential lives in the gitignored
+`.mcp.razorpay.headers` (one `Authorization: Basic <token>` line, `chmod 600`),
+which `mcp-remote --header-file` reads so the token never appears in the process
+list. The relative path resolves against the session's working directory, so start
+the session from the repository root. The remote exposes order, capture and
 refund tools and has no read-only mode; use a test-mode key and never production
 credentials.
 

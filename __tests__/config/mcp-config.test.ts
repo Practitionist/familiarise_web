@@ -201,14 +201,16 @@ describe(".mcp.razorpay.example.json", () => {
     expect(Object.keys(RAZORPAY.mcpServers)).toEqual(["rzp-mcp-server"]);
   });
 
-  it("is pinned and targets Razorpay over HTTPS with a placeholder header", () => {
+  it("is pinned and reads its credential from an untracked header file", () => {
     const razorpay = stdio(RAZORPAY, "rzp-mcp-server");
     expect(packageSpecs(razorpay.args)).toContain("mcp-remote@0.15.2");
     expect(razorpay.args).toContain("https://mcp.razorpay.com/mcp");
 
-    const headers = valuesAfter(razorpay.args, "--header");
-    expect(headers).toHaveLength(1);
-    expect(headers[0]).toMatch(/^Authorization: Basic <[A-Z0-9_]+>$/);
+    expect(razorpay.args).not.toContain("--header");
+    expect(JSON.stringify(razorpay.args)).not.toMatch(/Authorization/i);
+    expect(valuesAfter(razorpay.args, "--header-file")).toEqual([
+      ".mcp.razorpay.headers",
+    ]);
   });
 
   it("contains no live secrets", () => {
@@ -219,11 +221,12 @@ describe(".mcp.razorpay.example.json", () => {
 });
 
 describe(".gitignore", () => {
-  it("ignores the working Razorpay sidecar", () => {
+  it("ignores the working Razorpay sidecar and its header file", () => {
     const lines = readFileSync(join(ROOT, ".gitignore"), "utf8")
       .split(/\r?\n/)
       .map((line) => line.trim());
     expect(lines).toContain(".mcp.razorpay.json");
+    expect(lines).toContain(".mcp.razorpay.headers");
   });
 });
 

@@ -5,6 +5,7 @@
 !.mcp.json.example
 # Opt-in Razorpay sidecar; the tracked file is .mcp.razorpay.example.json
 .mcp.razorpay.json
+.mcp.razorpay.headers
 mcp_config.json*
 !mcp_config.json.example
 .agents/mcp_config.json*
