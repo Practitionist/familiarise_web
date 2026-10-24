@@ -1,6 +1,6 @@
 /** @jest-environment node */
 import { Prisma } from "@prisma/client";
-import type { RefundOwedOutcome } from "@/lib/payments/operations/refund-owed";
+import type { RefundOwedOutcome } from "../../lib/payments/operations/refund-owed";
 
 const mockDrive = jest.fn<Promise<RefundOwedOutcome>, unknown[]>(async () => ({
   kind: "settled",
@@ -27,10 +27,10 @@ const row = (id: string) => ({
   },
 });
 
-jest.mock("@/lib/cron/with-cron-lock", () => ({
+jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_name: string, _opts: unknown, fn: () => unknown) => fn(),
 }));
-jest.mock("@/lib/prisma", () => {
+jest.mock("../../lib/prisma", () => {
   const db = {
     consultation: { findMany: jest.fn(async () => []) },
     subscription: {
@@ -112,42 +112,42 @@ jest.mock("@/lib/prisma", () => {
   };
   return { __esModule: true, default: db };
 });
-jest.mock("@/lib/payments/operations/refund-owed", () => ({
-  ...jest.requireActual<typeof import("@/lib/payments/operations/refund-owed")>(
-    "@/lib/payments/operations/refund-owed",
-  ),
+jest.mock("../../lib/payments/operations/refund-owed", () => ({
+  ...jest.requireActual<
+    typeof import("../../lib/payments/operations/refund-owed")
+  >("../../lib/payments/operations/refund-owed"),
   driveRefundOwed: (...args: unknown[]) => mockDrive(...args),
 }));
-jest.mock("@/lib/payments/operations/refund", () => ({}));
-jest.mock("@/lib/payments/operations/booking-refund", () => ({
+jest.mock("../../lib/payments/operations/refund", () => ({}));
+jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: jest.fn(),
 }));
-jest.mock("@/lib/booking/expiry-notices", () => ({
+jest.mock("../../lib/booking/expiry-notices", () => ({
   notifyConsulteeRequestExpired: jest.fn(),
 }));
-jest.mock("@/lib/booking/backup-interest", () => ({
+jest.mock("../../lib/booking/backup-interest", () => ({
   expireBackupInterest: jest.fn(async () => ({ count: 0 })),
 }));
-jest.mock("@/lib/novu/service", () => ({
+jest.mock("../../lib/novu/service", () => ({
   notifyUnscheduledSubscriptionNudge: jest.fn(),
 }));
-jest.mock("@/lib/novu/outbox", () => ({ deriveTransactionId: jest.fn() }));
-jest.mock("@/lib/novu/stage-bell", () => ({
+jest.mock("../../lib/novu/outbox", () => ({ deriveTransactionId: jest.fn() }));
+jest.mock("../../lib/novu/stage-bell", () => ({
   stageBell: (...args: unknown[]) => mockBell(...args),
 }));
-jest.mock("@/lib/novu/stage-then-attempt", () => ({
+jest.mock("../../lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: (...args: unknown[]) => mockFlush(...args),
 }));
-jest.mock("@/lib/email", () => ({ EMAIL_BUDGET_MS: { JOB: 1 } }));
-jest.mock("@/lib/email/senders/booking", () => ({
+jest.mock("../../lib/email", () => ({ EMAIL_BUDGET_MS: { JOB: 1 } }));
+jest.mock("../../lib/email/senders/booking", () => ({
   stageAppointmentCancelledEmail: jest.fn(async () => []),
 }));
 
-import prisma from "@/lib/prisma";
+import prisma from "../../lib/prisma";
 import {
   expireStaleRequests,
   expireUnallocatedPaidSubscriptionForOne,
-} from "@/scripts/appointments/expire-stale-requests";
+} from "../../scripts/appointments/expire-stale-requests";
 
 beforeEach(() => {
   jest.clearAllMocks();
