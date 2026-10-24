@@ -10,13 +10,9 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import type { AppResponseFields } from "@stream-io/node-sdk";
 import { getStreamVideoClient, isStreamConfigured } from "@/lib/stream-client";
 import { canonical, diffFingerprints } from "@/lib/stream/config-fingerprint";
+import { TARGET_APP_SETTINGS as TARGET } from "@/lib/stream/control-plane-contract";
 
 const BACKUP_DIR = ".stream-backups";
-
-const TARGET = {
-  guestUserCreationDisabled: true,
-  enableHookPayloadCompression: false,
-} as const;
 
 interface Options {
   apply: boolean;

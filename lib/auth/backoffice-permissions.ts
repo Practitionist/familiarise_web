@@ -93,6 +93,8 @@ export type BackofficeSurface =
   | "analytics.read"
   | "systemJobs.manage"
   | "maintenance.manage"
+  // Call, screen-share and recording quality: a cost lever staff and admin both own.
+  | "videoConfig.manage"
   // Erasure requests, data breaches and failed emails.
   | "compliance.manage"
   // The newsletter mass send, split from triaging the list.
@@ -187,6 +189,7 @@ export const BACKOFFICE_PERMISSIONS: Record<
   "analytics.read": OPERATORS,
   "systemJobs.manage": ADMIN_ONLY,
   "maintenance.manage": ADMIN_ONLY,
+  "videoConfig.manage": OPERATORS,
   // #1527 Q5 — personal-data obligations (DPDP erasure, breach notices) and
   // the failed-email retry queue are admin's; staff read none of it.
   "compliance.manage": ADMIN_ONLY,

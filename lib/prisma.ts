@@ -1,4 +1,4 @@
-import * as Sentry from "@sentry/nextjs";
+import * as Sentry from "@sentry/core";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { z } from "zod";

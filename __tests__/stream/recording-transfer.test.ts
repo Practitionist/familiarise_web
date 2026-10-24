@@ -2,16 +2,13 @@
  * @jest-environment node
  */
 
-/**
- * A verified copy flips the row to AVAILABLE; any failure deletes the object
- * and returns the row to READY with the attempt counted, never FAILED.
- */
+/** A verified copy publishes AVAILABLE; failures release only the matching claim. */
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     recording: {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      findUnique: jest.fn(),
+      updateManyAndReturn: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
     },
     $disconnect: jest.fn(),
@@ -56,7 +53,7 @@ const recording = (
   prisma as unknown as {
     recording: {
       updateMany: jest.Mock;
-      findUnique: jest.Mock;
+      updateManyAndReturn: jest.Mock;
       findMany: jest.Mock;
     };
   }
@@ -83,7 +80,16 @@ function streamResponse(contentLength: string | null) {
 beforeEach(() => {
   jest.clearAllMocks();
   recording.updateMany.mockResolvedValue({ count: 1 });
-  recording.findUnique.mockResolvedValue({ recordingUrl: STREAM_URL });
+  recording.updateManyAndReturn.mockImplementation(
+    async ({ where }: { where: { id: string } }) => [
+      {
+        id: where.id,
+        recordingUrl: STREAM_URL,
+        transferAttempts: 1,
+        updatedAt: new Date("2026-10-22T10:00:00.000Z"),
+      },
+    ],
+  );
   recording.findMany.mockResolvedValue([]);
   (streamMultipartToR2 as jest.Mock).mockResolvedValue({
     key: "k",
@@ -108,8 +114,13 @@ describe("transferRecording", () => {
     await expect(transferRecording("rec-1")).resolves.toEqual({
       status: "copied",
     });
-    const completion = dataOf(1);
-    expect(completion.where).toEqual({ id: "rec-1", status: "TRANSFERRING" });
+    const completion = dataOf(0);
+    expect(completion.where).toMatchObject({
+      id: "rec-1",
+      status: "TRANSFERRING",
+      transferAttempts: 1,
+      updatedAt: new Date("2026-10-22T10:00:00.000Z"),
+    });
     expect(completion.data).toMatchObject({
       status: "AVAILABLE",
       storageType: "PLATFORM",
@@ -141,11 +152,15 @@ describe("transferRecording", () => {
 
     expect(outcome.status).toBe("failed");
     expect(deleteR2Object).toHaveBeenCalledTimes(1);
-    const failure = dataOf(1);
-    expect(failure.where).toEqual({ id: "rec-1", status: "TRANSFERRING" });
+    const failure = dataOf(0);
+    expect(failure.where).toMatchObject({
+      id: "rec-1",
+      status: "TRANSFERRING",
+      transferAttempts: 1,
+    });
     expect(failure.data).toMatchObject({
       status: "READY",
-      transferAttempts: { increment: 1 },
+      lastTransferError: expect.any(String),
     });
     expect(String(failure.data.lastTransferError)).toMatch(/Size mismatch/);
   });
@@ -164,7 +179,7 @@ describe("transferRecording", () => {
   });
 
   it("skips a row it cannot claim", async () => {
-    recording.updateMany.mockResolvedValueOnce({ count: 0 });
+    recording.updateManyAndReturn.mockResolvedValueOnce([]);
     await expect(transferRecording("rec-1")).resolves.toEqual({
       status: "skipped",
     });
@@ -172,77 +187,268 @@ describe("transferRecording", () => {
   });
 });
 
-describe("transferRecordings", () => {
-  type CandidateQuery = {
-    where: { id?: unknown; OR?: unknown };
-    take: number;
-    orderBy?: unknown;
-  };
-  const candidateQueries = () =>
-    recording.findMany.mock.calls
-      .map((c) => c[0] as CandidateQuery)
-      .filter((q) => q.orderBy !== undefined);
+describe("recording claim ownership", () => {
+  it.each([
+    {
+      failure: "unsuccessful delete result",
+      arrange: () =>
+        jest.mocked(deleteR2Object).mockResolvedValueOnce({
+          success: false,
+          error: "R2 DELETE failed (503 Service Unavailable)",
+        }),
+    },
+    {
+      failure: "delete rejection",
+      arrange: () =>
+        jest
+          .mocked(deleteR2Object)
+          .mockRejectedValueOnce(new Error("delete reset")),
+    },
+  ])(
+    "fails lost-publication cleanup on $failure without releasing the row",
+    async ({ arrange }) => {
+      jest.mocked(headR2Object).mockResolvedValueOnce({ contentLength: 100 });
+      recording.updateMany.mockResolvedValueOnce({ count: 0 });
+      arrange();
 
-  it("keeps fetching keyset pages until the backlog is empty, never retrying a row", async () => {
-    const tX = new Date("2026-10-10T00:00:00.000Z");
-    const tY = new Date("2026-10-11T00:00:00.000Z");
-    recording.updateMany.mockResolvedValue({ count: 0 });
+      await expect(
+        transferRecording("lost-publication"),
+      ).resolves.toMatchObject({
+        status: "failed",
+        error: expect.stringContaining(
+          "Unpublished recording attempt cleanup failed",
+        ),
+      });
+      expect(deleteR2Object).toHaveBeenCalledWith(
+        expect.objectContaining({
+          key: "recordings/lost-publication/attempt-1.mp4",
+        }),
+      );
+      expect(recording.updateMany).toHaveBeenCalledTimes(1);
+      expect(dataOf(0).data).toMatchObject({ status: "AVAILABLE" });
+    },
+  );
+
+  it.each([{ success: true }, { success: true, notFound: true }])(
+    "skips lost-publication cleanup only after a confirmed delete: %j",
+    async (deleted) => {
+      jest.mocked(headR2Object).mockResolvedValueOnce({ contentLength: 100 });
+      recording.updateMany.mockResolvedValueOnce({ count: 0 });
+      jest.mocked(deleteR2Object).mockResolvedValueOnce(deleted);
+
+      await expect(transferRecording("lost-publication")).resolves.toEqual({
+        status: "skipped",
+      });
+      expect(recording.updateMany).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("fails the lost-publication run when deletion of its object is unconfirmed", async () => {
     recording.findMany
-      .mockResolvedValueOnce([{ id: "x", streamUrlExpiresAt: tX }])
-      .mockResolvedValueOnce([{ id: "y", streamUrlExpiresAt: tY }]);
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: "lost-publication" }])
+      .mockResolvedValueOnce([]);
+    jest.mocked(headR2Object).mockResolvedValueOnce({ contentLength: 100 });
+    recording.updateMany.mockResolvedValueOnce({ count: 0 });
+    jest.mocked(deleteR2Object).mockResolvedValueOnce({
+      success: false,
+      error: "R2 DELETE failed (503 Service Unavailable)",
+    });
 
-    await transferRecordings();
-
-    const queries = candidateQueries();
-    expect(queries).toHaveLength(3);
-    // The filter stays constant-size: no growing id list.
-    for (const q of queries) expect(q.where.id).toBeUndefined();
-    expect(queries[0].where.OR).toBeUndefined();
-    expect(queries[1].where.OR).toEqual([
-      { streamUrlExpiresAt: { gt: tX } },
-      { streamUrlExpiresAt: tX, id: { gt: "x" } },
-    ]);
-    expect(queries[2].where.OR).toEqual([
-      { streamUrlExpiresAt: { gt: tY } },
-      { streamUrlExpiresAt: tY, id: { gt: "y" } },
-    ]);
+    await expect(transferRecordings()).resolves.toMatchObject({
+      success: false,
+      processed: 1,
+      failed: 1,
+      succeeded: 0,
+      errors: [
+        expect.stringContaining("Unpublished recording attempt cleanup failed"),
+      ],
+    });
+    expect(recording.updateMany).toHaveBeenCalledTimes(1);
   });
 
-  it("logs how many stale claims the run reclaimed", async () => {
-    recording.updateMany.mockResolvedValueOnce({ count: 3 });
-
-    const result = await transferRecordings();
-
-    expect(result.reclaimedStale).toBe(3);
-  });
-
-  it("stops at an explicit row limit", async () => {
-    recording.updateMany.mockResolvedValue({ count: 0 });
-    recording.findMany.mockResolvedValueOnce([
-      { id: "x", streamUrlExpiresAt: new Date("2026-10-10T00:00:00.000Z") },
-    ]);
-
-    await transferRecordings({ limit: 1 });
-
-    const queries = candidateQueries();
-    expect(queries).toHaveLength(1);
-    expect(queries[0].take).toBe(1);
-  });
-
-  it("reports exhausted rows to Sentry once per run and stamps them", async () => {
-    recording.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
-      { id: "a", lastTransferError: "x" },
-      { id: "b", lastTransferError: "y" },
-    ]);
-
-    const result = await transferRecordings();
-
-    expect(result.exhaustedReported).toBe(2);
-    expect(reportSentryMessage).toHaveBeenCalledTimes(1);
-    const stamp = recording.updateMany.mock.calls.at(-1)?.[0] as {
-      where: { id: { in: string[] } };
+  it("cannot publish or delete a newer worker's object after its claim was reclaimed", async () => {
+    let finishOld: (value: {
+      key: string;
+      size: number;
+      parts: number;
+    }) => void = () => {
+      throw new Error("Old upload did not start");
     };
-    expect(stamp.where.id.in).toEqual(["a", "b"]);
+    const oldUpload = new Promise<{ key: string; size: number; parts: number }>(
+      (resolve) => {
+        finishOld = resolve;
+      },
+    );
+    recording.updateManyAndReturn
+      .mockResolvedValueOnce([
+        {
+          id: "rec-race",
+          recordingUrl: STREAM_URL,
+          transferAttempts: 1,
+          updatedAt: new Date("2026-10-22T10:00:00Z"),
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "rec-race",
+          recordingUrl: STREAM_URL,
+          transferAttempts: 2,
+          updatedAt: new Date("2026-10-22T10:20:00Z"),
+        },
+      ]);
+    (streamMultipartToR2 as jest.Mock).mockReturnValueOnce(oldUpload);
+    (headR2Object as jest.Mock).mockResolvedValue({ contentLength: 100 });
+    const oldRun = transferRecording("rec-race");
+    await new Promise(setImmediate);
+    expect(streamMultipartToR2).toHaveBeenCalledTimes(1);
+    recording.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+    await expect(transferRecording("rec-race")).resolves.toEqual({
+      status: "copied",
+    });
+    finishOld({ key: "k", size: 100, parts: 1 });
+    await expect(oldRun).resolves.toEqual({ status: "skipped" });
+    expect(dataOf(0).where).toMatchObject({
+      transferAttempts: 2,
+      updatedAt: new Date("2026-10-22T10:20:00Z"),
+    });
+    expect(dataOf(1).where).toMatchObject({
+      transferAttempts: 1,
+      updatedAt: new Date("2026-10-22T10:00:00Z"),
+    });
+    expect(deleteR2Object).not.toHaveBeenCalledWith(
+      expect.objectContaining({ key: "recordings/rec-race/attempt-2.mp4" }),
+    );
+  });
+
+  it("does not copy a successfully published recording on sequential replay", async () => {
+    (headR2Object as jest.Mock).mockResolvedValue({ contentLength: 100 });
+    recording.updateManyAndReturn
+      .mockResolvedValueOnce([
+        {
+          id: "replay",
+          recordingUrl: STREAM_URL,
+          transferAttempts: 1,
+          updatedAt: new Date("2026-10-22T10:00:00Z"),
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    await expect(transferRecording("replay")).resolves.toEqual({
+      status: "copied",
+    });
+    await expect(transferRecording("replay")).resolves.toEqual({
+      status: "skipped",
+    });
+    expect(streamMultipartToR2).toHaveBeenCalledTimes(1);
+  });
+
+  it("cannot publish after the recording is removed while a copy is in flight", async () => {
+    (headR2Object as jest.Mock).mockResolvedValue({ contentLength: 100 });
+    recording.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(transferRecording("expired-during-copy")).resolves.toEqual({
+      status: "skipped",
+    });
+    expect(dataOf(0).where).toMatchObject({
+      id: "expired-during-copy",
+      status: "TRANSFERRING",
+      transferAttempts: 1,
+    });
+    expect(deleteR2Object).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: "recordings/expired-during-copy/attempt-1.mp4",
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(recording.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts the attempt atomically when claiming, including a later crashed copy", async () => {
+    recording.updateManyAndReturn.mockResolvedValueOnce([]);
+    await transferRecording("claimed-by-another-worker");
+    expect(recording.updateManyAndReturn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: "READY",
+          streamUrlExpiresAt: { gt: expect.any(Date) },
+        }),
+        data: { status: "TRANSFERRING", transferAttempts: { increment: 1 } },
+      }),
+    );
+    expect(streamMultipartToR2).not.toHaveBeenCalled();
+  });
+});
+
+describe("transferRecordings", () => {
+  it("drains 25 obligations across 25 one-copy invocations", async () => {
+    (headR2Object as jest.Mock).mockResolvedValue({ contentLength: 100 });
+    for (let index = 0; index < 25; index++) {
+      recording.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: `recording-${index}` }])
+        .mockResolvedValueOnce([]);
+      const result = await transferRecordings();
+      expect(result).toMatchObject({
+        success: true,
+        processed: 1,
+        succeeded: 1,
+      });
+    }
+    expect(streamMultipartToR2).toHaveBeenCalledTimes(25);
+    expect(
+      recording.updateManyAndReturn.mock.calls.map(([arg]) => arg.where.id),
+    ).toEqual(Array.from({ length: 25 }, (_, index) => `recording-${index}`));
+    const queries = recording.findMany.mock.calls.filter(
+      (_, index) => index % 3 === 1,
+    );
+    for (const [query] of queries) {
+      expect(query.take).toBe(1);
+      expect(query.where.OR).toContainEqual({ transferAttempts: 0 });
+      expect(query.where.streamUrlExpiresAt.gt).toBeInstanceOf(Date);
+    }
+  });
+
+  it("bounds stale reclamation and checks the stale predicate again before releasing claims", async () => {
+    const claimedAt = new Date("2026-10-22T09:00:00.000Z");
+    recording.findMany.mockResolvedValueOnce([
+      { id: "a", updatedAt: claimedAt },
+    ]);
+    recording.updateMany.mockResolvedValueOnce({ count: 1 });
+    const result = await transferRecordings();
+    expect(result.reclaimedStale).toBe(1);
+    expect(recording.findMany.mock.calls[0][0]).toMatchObject({ take: 1 });
+    expect(dataOf(0).where).toMatchObject({
+      id: "a",
+      status: "TRANSFERRING",
+      updatedAt: claimedAt,
+    });
+    expect(dataOf(0).data.updatedAt).toEqual(claimedAt);
+  });
+
+  it("records a retryable copy failure as an unsuccessful execution", async () => {
+    recording.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: "x" }]);
+    (streamMultipartToR2 as jest.Mock).mockRejectedValueOnce(
+      new Error("reset"),
+    );
+    const result = await transferRecordings();
+    expect(result).toMatchObject({ success: false, processed: 1, failed: 1 });
+  });
+
+  it("reports exhausted rows once per run and stamps them", async () => {
+    recording.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { id: "a", lastTransferError: "x" },
+        { id: "b", lastTransferError: "y" },
+      ]);
+    const result = await transferRecordings();
+    expect(result).toMatchObject({ success: false, exhaustedReported: 2 });
+    expect(reportSentryMessage).toHaveBeenCalledTimes(1);
+    expect(dataOf(0).where).toMatchObject({ id: { in: ["a", "b"] } });
   });
 });
 
@@ -255,6 +461,7 @@ describe("transfer-recordings job", () => {
     try {
       process.exitCode = undefined;
       recording.findMany
+        .mockResolvedValueOnce([])
         .mockResolvedValueOnce([{ id: "c" }])
         .mockResolvedValueOnce([]);
       global.fetch = jest
@@ -264,6 +471,7 @@ describe("transfer-recordings job", () => {
       expect(process.exitCode).toBeUndefined();
 
       recording.findMany
+        .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([{ id: "a", lastTransferError: "x" }]);
       await job();
@@ -291,10 +499,14 @@ it("validates Stream recording URLs against the SSRF host allowlist", () => {
 
 it("uses attempt-scoped R2 keys (attempt-N.mp4), cleans up prior attempts on success, and spaces 12 retry attempts with exponential backoff", async () => {
   (headR2Object as jest.Mock).mockResolvedValue({ contentLength: 100 });
-  recording.findUnique.mockResolvedValueOnce({
-    recordingUrl: STREAM_URL,
-    transferAttempts: 2,
-  });
+  recording.updateManyAndReturn.mockResolvedValueOnce([
+    {
+      id: "rec-det",
+      recordingUrl: STREAM_URL,
+      transferAttempts: 3,
+      updatedAt: new Date("2026-10-22T10:00:00.000Z"),
+    },
+  ]);
 
   await transferRecording("rec-det");
 
@@ -303,15 +515,21 @@ it("uses attempt-scoped R2 keys (attempt-N.mp4), cleans up prior attempts on suc
       key: "recordings/rec-det/attempt-3.mp4",
     }),
   );
-  expect(deleteR2Object).toHaveBeenCalledWith({
-    key: "recordings/rec-det/attempt-1.mp4",
-  });
-  expect(deleteR2Object).toHaveBeenCalledWith({
-    key: "recordings/rec-det/attempt-2.mp4",
-  });
-  expect(deleteR2Object).not.toHaveBeenCalledWith({
-    key: "recordings/rec-det/attempt-3.mp4",
-  });
+  expect(deleteR2Object).toHaveBeenCalledWith(
+    expect.objectContaining({
+      key: "recordings/rec-det/attempt-1.mp4",
+    }),
+  );
+  expect(deleteR2Object).toHaveBeenCalledWith(
+    expect.objectContaining({
+      key: "recordings/rec-det/attempt-2.mp4",
+    }),
+  );
+  expect(deleteR2Object).not.toHaveBeenCalledWith(
+    expect.objectContaining({
+      key: "recordings/rec-det/attempt-3.mp4",
+    }),
+  );
   expect(MAX_TRANSFER_ATTEMPTS).toBe(12);
   expect(transferRetryBackoffMs(0)).toBe(0);
   expect(transferRetryBackoffMs(1)).toBe(15 * 60 * 1000);

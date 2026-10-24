@@ -2,13 +2,18 @@
 
 > **Required reading:** [`_shared/shared-setup.md`](./_shared/shared-setup.md) section 7. Output: `{AUDIT_DIR}/06-report.md`. This lane deletes and restores; run it after lanes 01 to 05 and read every earlier Fixtures section first.
 
+> **Read-only MCP:** every direct SQL delete, update or restore in this lane is
+> operator-run. Prepare the SQL, record it in the report, and wait for an
+> operator; the agent reads through the MCP and performs UI/API/Storage cleanup
+> itself.
+
 ## Purpose
 
 Leave the shared database exactly as found, prove it with a sweep across every text column, and check whether the failures the run provoked reached Sentry. A silent 500 that never reaches Sentry is a finding in its own right.
 
 ## Personas and accounts
 
-An admin session for the Supabase MCP is not needed; the lane works through the Supabase MCP, the Storage API (with the service-role key) and the Sentry CLI or MCP. Staff and admin cookie jars are only needed for the final two-factor verification.
+An admin session for the Supabase MCP is not needed; the lane reads through the read-only Supabase MCP, and every direct SQL write is operator-run. The Storage API (with the service-role key) and the Sentry CLI or MCP handle the rest. Staff and admin cookie jars are only needed for the final two-factor verification.
 
 ## Preconditions
 
@@ -20,13 +25,13 @@ An admin session for the Supabase MCP is not needed; the lane works through the 
 | ID | Actor | Steps | Expected | Tag |
 | --- | --- | --- | --- | --- |
 | SFR-06-01 | Agent | Count the rows to be removed before deleting (tickets, responses, messages, threads, flow outcomes, outbox rows, attachments, reviews, feedback, reports, actions). | Counts match the lane reports; any surprise is investigated before deleting. | [SUBSYSTEM] |
-| SFR-06-02 | Agent | Delete support fixtures in dependency order in one statement batch: `SupportResponse`, `SupportTicketAttachment`, `SupportMessage`, `AppointmentSupportThread`, `SupportFlowOutcome` (no tag: match by the run users and the run time window), `NotificationOutbox` (by `entityRef`, and by recipient, time and payload text for rows with a null `entityRef`, such as platform-escalation `refund-requested` rows), `SupportTicket`. | Each statement returns the expected row count; no foreign-key error remains. | [SUBSYSTEM] |
-| SFR-06-03 | Agent | Delete review, moderation and feedback fixtures: `ModerationAction`, `ModerationReport`, `ConsultantReview` (revisions go with it), `AppointmentFeedback`, `PlatformFeedback`. | Immutability triggers allow the parent delete; counts match. | [SUBSYSTEM] |
-| SFR-06-04 | Agent | Restore every touched `ConsultantProfile` score row by explicit update to the recorded values, including `ratingAggregatedAt`, then re-read. | The row equals the baseline from lane 01 and lane 04. A value that cannot be restored (for example a lost original) is listed under residue. | [SUBSYSTEM] |
-| SFR-06-05 | Agent | Restore the flipped dispute and every `excludedFromAggregateAt` flag and organisation id edit. | The dispute row equals the baseline; excluded-row counts equal the lane 01 counts; `AppointmentFeedback` rows with an organisation id equal the baseline count. | [SUBSYSTEM] |
-| SFR-06-06 | Agent | Revert two-factor enrolment with the SQL in the shared setup section 5. Operators cannot self-disable by design (the API disable returns 403 `TWO_FACTOR_REQUIRED`), so SQL is the only route. | Zero `"twoFactor"` rows for the operators and `twoFactorEnabled` false; the secrets file and jars are deleted. | [SUBSYSTEM] |
+| SFR-06-02 | Operator | Delete support fixtures in dependency order in one statement batch: `SupportResponse`, `SupportTicketAttachment`, `SupportMessage`, `AppointmentSupportThread`, `SupportFlowOutcome` (no tag: match by the run users and the run time window), `NotificationOutbox` (by `entityRef`, and by recipient, time and payload text for rows with a null `entityRef`, such as platform-escalation `refund-requested` rows), `SupportTicket`. | Each statement returns the expected row count; no foreign-key error remains. | [SUBSYSTEM] |
+| SFR-06-03 | Operator | Delete review, moderation and feedback fixtures: `ModerationAction`, `ModerationReport`, `ConsultantReview` (revisions go with it), `AppointmentFeedback`, `PlatformFeedback`. | Immutability triggers allow the parent delete; counts match. | [SUBSYSTEM] |
+| SFR-06-04 | Operator | Restore every touched `ConsultantProfile` score row by explicit update to the recorded values, including `ratingAggregatedAt`, then re-read. | The row equals the baseline from lane 01 and lane 04. A value that cannot be restored (for example a lost original) is listed under residue. | [SUBSYSTEM] |
+| SFR-06-05 | Operator | Restore the flipped dispute and every `excludedFromAggregateAt` flag and organisation id edit. | The dispute row equals the baseline; excluded-row counts equal the lane 01 counts; `AppointmentFeedback` rows with an organisation id equal the baseline count. | [SUBSYSTEM] |
+| SFR-06-06 | Operator | Revert two-factor enrolment with the SQL in the shared setup section 5. Operators cannot self-disable by design (the API disable returns 403 `TWO_FACTOR_REQUIRED`), so SQL is the only route. | Zero `"twoFactor"` rows for the operators and `twoFactorEnabled` false; the secrets file and jars are deleted. | [SUBSYSTEM] |
 | SFR-06-07 | Agent | Remove uploaded support attachments through the Storage API with the service-role key, by the object paths recorded in the lane reports (including objects whose database row was already deleted), and list the bucket by prefix to confirm none remains for the run. Never delete with SQL on the storage tables. | No object created since the run started remains in the support bucket. | [SUBSYSTEM] |
-| SFR-06-08 | Agent | Sweep `"FailedEmail"` for rows referencing the run (recipient, subject, body) and delete them. | A queued retry would re-send mail, so the table must hold no run row. | [SUBSYSTEM] |
+| SFR-06-08 | Operator | Sweep `"FailedEmail"` for rows referencing the run (recipient, subject, body) and delete them. | A queued retry would re-send mail, so the table must hold no run row. | [SUBSYSTEM] |
 | SFR-06-09 | Agent | Global sweep: for every base table in the public schema, find text, varchar, json, jsonb and array columns and count rows that contain `{RUN_TAG}`. | The generated query returns zero rows in every table. | [SUBSYSTEM] |
 | SFR-06-10 | Agent | Record residue: vendor in-app notifications, consumed ticket references (read the counter row), sign-in sessions, the public-cache lag. | Residue list is written; the counter value is recorded. | [SUBSYSTEM] |
 | SFR-06-11 | Agent | Sentry: list issues active in the last 24 hours for the project and look for the routes the run exercised. | Any new issue from support, review, moderation or dispute routes is reported with its first-seen time; none is expected apart from known background issues. | [SUBSYSTEM] |

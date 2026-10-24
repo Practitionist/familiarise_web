@@ -41,8 +41,8 @@ export function BecomeExpertSection() {
             <span className="text-muted-foreground">Familiarise</span>
           </h2>
           <p className="text-lg text-muted-foreground mb-8 max-w-2xl mx-auto">
-            Join our network of professionals. Share your knowledge, build your
-            personal brand, and earn while helping others grow.
+            Teach live classes, run webinars and offer one-on-one sessions. Set
+            your own rates and schedule, and earn while helping others learn.
           </p>
 
           {/* Expert benefits */}

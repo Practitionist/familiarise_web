@@ -1,16 +1,17 @@
-"use client";
-
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { FileText } from "lucide-react";
 import { MESSAGE_REVIEW_ARTICLE_HREF } from "@/lib/compliance/purpose-codes";
-import {
-  COMPANY_INFO,
-  PAGE_META,
-  POLICY_DATES,
-  getMailtoLink,
-} from "../constants";
+import { CompanyDetails } from "../CompanyDetails";
+import { COMPANY_INFO } from "@/lib/company";
+import { PAGE_META, POLICY_DATES, getMailtoLink } from "../constants";
+
+export const metadata: Metadata = {
+  title: `${PAGE_META.terms.title} | Familiarise`,
+  description: PAGE_META.terms.description,
+};
 
 export default function TermsPage() {
   return (
@@ -764,19 +765,7 @@ export default function TermsPage() {
                 If you have any questions about these Terms & Conditions, please
                 contact us:
               </p>
-              <div className="bg-muted p-4 rounded-lg mt-4">
-                <p>
-                  <strong>Company Name:</strong> {COMPANY_INFO.name}
-                </p>
-                <p>
-                  <strong>Email:</strong>{" "}
-                  <a
-                    href={getMailtoLink()}
-                    className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
-                  >
-                    {COMPANY_INFO.email}
-                  </a>
-                </p>
+              <CompanyDetails>
                 <p>
                   <strong>Contact Form:</strong>{" "}
                   <a
@@ -786,7 +775,7 @@ export default function TermsPage() {
                     Contact Us
                   </a>
                 </p>
-              </div>
+              </CompanyDetails>
 
               <Separator className="my-6" />
 

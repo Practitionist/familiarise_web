@@ -13,6 +13,7 @@
  */
 
 import { buildCallSettingsOverride } from "@/lib/meetings/room-ready";
+import { DEFAULT_VIDEO_CONFIG } from "@/lib/stream/video-quality";
 import { assertValidGetOrCreateCall } from "@/lib/stream/video-contracts";
 import {
   assertCollaboratorsAvailable,
@@ -33,7 +34,12 @@ import prisma from "@/lib/prisma";
 describe("Issue #2010 Part 1 — Webinar & Class Stream Video Settings Contract", () => {
   it("produces complete VideoSettingsRequest and AudioSettingsRequest for WEBINAR and CLASS that pass assertValidGetOrCreateCall", () => {
     for (const appointmentType of ["WEBINAR", "CLASS"] as const) {
-      const settingsOverride = buildCallSettingsOverride(appointmentType, 3600);
+      const settingsOverride = buildCallSettingsOverride(
+        appointmentType,
+        3600,
+        undefined,
+        DEFAULT_VIDEO_CONFIG,
+      );
       expect(settingsOverride).toBeDefined();
       expect(() =>
         assertValidGetOrCreateCall({

@@ -198,6 +198,7 @@ describe("Stream Client Module", () => {
       expect(mockStreamClientConstructor).toHaveBeenCalledWith(
         mockApiKey,
         mockApiSecret,
+        { timeout: 15_000 },
       );
     });
   });
