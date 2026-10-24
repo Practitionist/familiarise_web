@@ -86,6 +86,11 @@ import {
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
 import { recordExpertStrike } from "@/lib/booking/expert-reliability";
+import {
+  revokeEndedBookingChatAccess,
+  revokeEndedEventChatAccess,
+} from "@/lib/stream/access-revocation";
+import { bookingOrgId } from "@/lib/stream-utils";
 
 /** Audit attribution shared by every CAS this cancel drives (#1322 A12). */
 type CancelAuditMeta = {
@@ -1149,6 +1154,21 @@ export async function POST(
         session.user.id,
         { ledgers: seriesLedgers ?? undefined },
       );
+    }
+
+    // Chat access ends with the booking, synchronously; a Stream failure queues a retry.
+    if (eventKind && eventId && attendees) {
+      await revokeEndedEventChatAccess(eventKind, eventId, attendees.all);
+    } else if (consulteeUserId && consultantUserId) {
+      await revokeEndedBookingChatAccess({
+        userIds: [consulteeUserId],
+        dmCounterpartUserIds: [consultantUserId],
+        dmOrganizationId: bookingOrgId({
+          consultationPlan: appointment.consultation?.consultationPlan,
+          subscriptionPlan: appointment.subscription?.subscriptionPlan,
+          appointment,
+        }),
+      });
     }
 
     // Notification metadata (for fire-and-forget notifications after transaction)

@@ -1408,6 +1408,19 @@ CREATE TRIGGER support_chat_access_append_only
   FOR EACH ROW EXECUTE FUNCTION assert_support_chat_access_append_only();
 
 -- SPLIT
+-- An erasure retry reads its user from the request; every other revocation kind names the user itself.
+ALTER TABLE "StreamRevocationRetry" DROP CONSTRAINT IF EXISTS "stream_revocation_retry_owner";
+-- SPLIT
+ALTER TABLE "StreamRevocationRetry" ADD CONSTRAINT "stream_revocation_retry_owner"
+  CHECK (("kind" = 'ERASURE_REVOKE') = ("erasureRequestId" IS NOT NULL)
+    AND ("erasureRequestId" IS NOT NULL OR "userId" IS NOT NULL)
+    AND ("kind" = 'DM_REMOVE') = ("counterpartUserId" IS NOT NULL));
+-- SPLIT
+-- One open retry per revocation target; a settled row frees the key for the next revocation.
+CREATE UNIQUE INDEX IF NOT EXISTS "stream_revocation_retry_open_key"
+  ON "StreamRevocationRetry" ("kind", "planId", "userId")
+  WHERE "erasureRequestId" IS NULL AND "status" <> 'SUCCEEDED';
+-- SPLIT
 -- Meeting.endedReason holds only MEETING_END_REASONS (lib/meetings/end-reasons.ts); NOT VALID skips the scan, so VALIDATE separately.
 -- Before VALIDATE, confirm SELECT DISTINCT "endedReason" FROM "Meeting" returns only these values or NULL.
 ALTER TABLE "Meeting"
