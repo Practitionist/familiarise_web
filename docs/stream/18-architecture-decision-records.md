@@ -1,6 +1,6 @@
 # 18. Architecture Decision Records (ADRs)
 
-> Authoritative architecture decision records governing Stream Video call lifecycle isolation, call-ID rotation, synchronous CAS state convergence, the immutable booked end with extension state on `Meeting`, and meeting exit controls.
+> Authoritative architecture decision records governing Stream Video call lifecycle isolation, call-ID rotation, synchronous CAS state convergence, the immutable booked end with extension state on `Meeting`, meeting exit controls, and the attendance witness behind session outcomes.
 
 ## Table of Contents
 
@@ -10,6 +10,7 @@
 - [ADR-03: Synchronous CAS Termination Stamp (`recordMeetingEndedSynchronously`) + Monotonic Webhook Convergence (`supersedesRecordedEnd`)](#adr-03-synchronous-cas-termination-stamp-recordmeetingendedsynchronously--monotonic-webhook-convergence-supersedesrecordedend)
 - [ADR-04: Immutable Booked End; Extension State on `Meeting`](#adr-04-immutable-booked-end-extension-state-on-meeting)
 - [ADR-05: Single Exit Control (`CallExitButton`) over Dual Hangup Buttons](#adr-05-single-exit-control-callexitbutton-over-dual-hangup-buttons)
+- [ADR-06: Stream Participant Sessions Are the Attendance Witness](#adr-06-stream-participant-sessions-are-the-attendance-witness)
 - [Deprecated & Superseded Approaches](#deprecated--superseded-approaches)
 
 ---
@@ -25,6 +26,7 @@ Stream Video SFU and PostgreSQL (`PG_POOL_MAX=1`) enforce distinct operational c
 | **ADR-03** | Synchronous CAS end stamp + monotonic `supersedesRecordedEnd`            | `app/api/meetings/[meetingId]/end/route.ts`, `lib/stream/session-handlers.ts`                                                    | Eliminates webhook lag on dashboard cards while preventing out-of-order webhooks from rewinding terminal state                    |
 | **ADR-04** | Immutable booked `endsAt`; `+15m` extension on `Meeting.extendedSeconds` | `app/api/meetings/[meetingId]/extend/route.ts`, `lib/meetings/duration-cap.ts`, `app/meetings/[id]/components/OverrunBanner.tsx` | Keeps the sold end intact for outcome and money, while the Stream cap, banner and conflict horizon derive from one Postgres value |
 | **ADR-05** | Unified `<CallExitButton />` (participant leave vs host 2-way popover)   | `app/meetings/[id]/components/EndCallButton.tsx`, `app/meetings/[id]/components/MeetingRoom.tsx`                                 | Prevents accidental room termination when a host leaves early while keeping room closure one deliberate choice                    |
+| **ADR-06** | Stream participant sessions resolve every assumed or missing interval    | `lib/booking/session-outcome-sweep.ts`, `lib/stream/{call-presence,session-handlers}.ts`, `lib/meetings/segment-presence.ts`     | A lost webhook can neither stretch a host's presence into a `HELD` verdict nor turn a delivered session into `NOBODY_JOINED`      |
 
 ---
 
@@ -217,6 +219,39 @@ Standardize all meeting rooms on a single primary red exit control (`CallExitBut
 
 ---
 
+## ADR-06: Stream Participant Sessions Are the Attendance Witness
+
+### Context & Problem Statement
+
+The outcome classifier (`classifySessionOutcome` in `lib/booking/session-outcome.ts`) decides refunds and voids from `MeetingPresence` intervals, one row per device stay. Those rows come from the `call.session_participant_joined` and `call.session_participant_left` webhooks, and any single delivery can be lost. Three failures followed from treating our rows as the whole truth:
+
+1. Every end stamp closed all open rows at the room end. A host whose leave webhook was lost therefore looked present until the end, which could turn `CUT_SHORT` or `HOST_ABSENT` into `HELD` and suppress a refund. The classifier's own rule that an open interval is `INCONCLUSIVE` could never fire, because no interval was ever open by the time it ran.
+2. Rows carried no call id. After a reopen or a pre-start rotation, a late join from the old call was written against the current segment, could reopen it, and was closed at the later segment's end.
+3. With zero rows (a total webhook outage), the sweep never asked Stream and wrote `NOBODY_JOINED`.
+
+Stream keeps its own per-device record of each call session (`queryCallParticipantSessions`), independent of our webhook pipeline, and that record outlives the call report's participant summary.
+
+### Decision
+
+Treat Stream's participant sessions as the attendance witness, and keep our rows honest about which closes are evidence.
+
+1. **Evidence versus assumption.** `MeetingPresence.closedByEnd` is true while `leftAt` is a room end stamp rather than a leave Stream reported. Every end stamp (`stampEnd`, the pre-start `ended_early` rotation, the orphan reconciler, and a join that arrives after the room ended) closes rows through `closeSegmentPresences` (`lib/meetings/segment-presence.ts`) with `closedByEnd = true`. A reported leave always replaces an assumed close and clears the flag, whatever the order of arrival.
+2. **Segments.** `MeetingPresence.streamCallId` names the call each row belongs to. A participant event that matches the current call id is the current segment; one that only matches through the occurrence id is a prior segment, recorded under its own call id, and never reopens or takes the end of the current room. An end stamp closes only its own segment's rows plus legacy rows with a null call id.
+3. **Resolution before classification.** `decideSlotOutcome` (`lib/booking/session-outcome-sweep.ts`) reads the call report and, for every segment with an open or assumed interval, Stream's participant sessions (`getCallParticipantSessionsFromStream` in `lib/stream/call-presence.ts`). It also reads the current segment whenever our rows may be missing someone: when we hold no rows, when the call report has no participant count, or when Stream saw more people than we did. A matching device session with a leave replaces the assumed close (a CAS on `closedByEnd = true OR leftAt IS NULL`); a device stay we never recorded is added. All of this runs before, and outside, the outcome transaction.
+4. **No fabricated presence.** When Stream is unreachable or has no record, the interval stays open and the classifier returns `INCONCLUSIVE`, which parks the session `UNVERIFIED` for ops. With zero rows and no Stream record the verdict remains `NOBODY_JOINED`, also `UNVERIFIED`. A webhook outage alone therefore never voids a delivered session.
+5. **Bounded reads, one report.** One run of `auto-complete-appointments` may spend `STREAM_WITNESS_READS_PER_RUN` (100) Stream reads. A slot that needs a read after the budget is spent is deferred to the next run with nothing written. Reads that could not resolve an interval are counted and reported as one `attendance witness unavailable` Sentry message per run.
+
+Example. Hannah hosts a 10:00–11:00 IST subscription session with Priya. Hannah's laptop drops at 10:20 IST and the leave webhook is lost; Priya waits until 11:00 IST and Stream ends the idle session at 11:01 IST. The end stamp closes Hannah's row at 11:01 IST with `closedByEnd = true`. At the sweep, Stream's participant sessions show Hannah's device leaving at 10:20 IST, so the row is corrected and the session is `CUT_SHORT` with 40 lost minutes, which returns the session to Priya's allowance. Had Stream been unreachable, the session would have parked `UNVERIFIED` for ops instead of being paid out as `HELD`.
+
+### Consequences
+
+- A lost leave or join no longer moves money in either direction; it either resolves from Stream or waits for a person.
+- A Stream outage during the sweep parks sessions with a lost leave as `UNVERIFIED`, so ops review more sessions during an outage instead of the platform guessing.
+- `MeetingPresence` rows written before this change carry `closedByEnd = false` and a null call id, so they keep the earlier behaviour.
+- The participant-sessions read covers the latest Stream session of each call id. A call that Stream split into two sessions (an idle timeout followed by a rejoin on the same id) resolves only the latest one; an assumed close from the earlier session stays open and parks the outcome for ops.
+
+---
+
 ## Deprecated & Superseded Approaches
 
 - **Permanent Per-Appointment / Per-Consultant Stream Call IDs**: Superseded by strict `1 AppointmentOccurrence = 1 active Stream Call ID` isolation (`occurrence-<uuid>`) so recurring `SUBSCRIPTION` and `CLASS` sessions never bleed attendance, duration caps, or recording state across occurrences.
@@ -224,3 +259,4 @@ Standardize all meeting rooms on a single primary red exit control (`CallExitBut
 - **Dual-Synced Extension (`endsAt` Advanced in Postgres plus Stream `custom`)**: Superseded by ADR-04. Advancing `AppointmentOccurrence.endsAt` moved the column the classifier reads as the booked end, so "extend, then leave on time" lost 15 minutes. The extension counter lived in Stream `custom`, which a reopen reset, and a failed revert let a retry add time. Delete any code that writes `AppointmentOccurrence.endsAt` from the extend path or reads the extension count from Stream.
 - **Fire-and-Forget End Endpoint Swallowing DB Errors as HTTP 200**: Superseded by `recordMeetingEndedSynchronously` CAS dual-write that rotates pre-start `"ended_early"` rooms and returns HTTP `500` on database failure.
 - **Dual Red Hangup Buttons in `MeetingRoom.tsx`**: Superseded by the single Zoom/Meet-style `<CallExitButton />` with role-aware direct leave vs host two-action popover and `< 10m` remaining caution banner.
+- **End Stamps Closing Every Open Presence Row as Fact**: Superseded by ADR-06. `stampEnd` and the outcome sweep's `capOpenSlotPresences` closed every open row at the room end before classification, so a lost leave read as presence until the end. Delete any code that closes `MeetingPresence` at an end stamp without `closedByEnd = true`, or that classifies an assumed close without first asking Stream.
