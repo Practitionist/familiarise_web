@@ -908,6 +908,7 @@ async function stageUnallocatedRefunds(
   return markers;
 }
 
+// Raw SQL uses physical names: Subscription.status maps to requestStatus.
 /** Bounded recovery of proven expiry obligations, with no liability age cutoff. */
 async function stageLegacyUnallocatedRefunds(
   limit: number,
@@ -922,7 +923,7 @@ async function stageLegacyUnallocatedRefunds(
         SELECT p.id FROM "Payment" p
         JOIN "Appointment" a ON a.id = p."appointmentId"
         JOIN "Subscription" s ON s.id = a."subscriptionId"
-        WHERE s.status = 'EXPIRED'
+        WHERE s."requestStatus" = 'EXPIRED'
           ${subscriptionId ? Prisma.sql`AND s.id = ${subscriptionId}` : Prisma.empty}
           AND ${unstampedUnallocatedRefundPredicate()}
           AND EXISTS (
@@ -953,7 +954,7 @@ async function unallocatedMarkersRemain(
     SELECT p.id FROM "Payment" p
     JOIN "Appointment" a ON a.id = p."appointmentId"
     JOIN "Subscription" s ON s.id = a."subscriptionId"
-    WHERE s.status = 'EXPIRED' AND p."paymentStatus" = 'SUCCEEDED'
+    WHERE s."requestStatus" = 'EXPIRED' AND p."paymentStatus" = 'SUCCEEDED'
       ${subscriptionId ? Prisma.sql`AND s.id = ${subscriptionId}` : Prisma.empty}
       AND p."deletedAt" IS NULL AND p."refundOwedKey" IS NOT NULL
       AND EXISTS (

@@ -58,24 +58,93 @@ import { expireStaleRequests } from "../../scripts/appointments/expire-stale-req
 import { refundableBalancePaise } from "../../lib/payments/refundable-balance";
 import { refundableBalancePaiseSql } from "../../lib/payments/refundable-balance-sql";
 
+function physicalName(modelName: string, fieldName?: string): string {
+  const model = Prisma.dmmf.datamodel.models.find(
+    (item) => item.name === modelName,
+  );
+  if (!model) throw new Error(`Missing fixture model ${modelName}`);
+  if (fieldName === undefined) return `"${model.dbName ?? model.name}"`;
+  const field = model.fields.find((item) => item.name === fieldName);
+  if (!field)
+    throw new Error(`Missing fixture field ${modelName}.${fieldName}`);
+  return `"${field.dbName ?? field.name}"`;
+}
+
 beforeAll(async () => {
   assertDisposableDatabase();
   mockClient = new Client({ connectionString: process.env.DATABASE_URL });
   await mockClient.connect();
-  // Session-local tables shadow the application tables; the disposable database
-  // does not need a generated Prisma client or the full application schema.
-  await mockClient.query(`
-    CREATE TEMP TABLE "Subscription" (id text PRIMARY KEY, status text);
-    CREATE TEMP TABLE "Appointment" (id text PRIMARY KEY, "subscriptionId" text);
-    CREATE TEMP TABLE "BookingStatusHistory" ("entityId" text, entity text, reason text, "toStatus" text, "createdAt" timestamptz);
-    CREATE TEMP TABLE "Payment" (
-      id text PRIMARY KEY, amount bigint, "paymentIntent" text, "paymentStatus" text DEFAULT 'SUCCEEDED',
-      "appointmentId" text, "deletedAt" timestamptz, "createdAt" timestamptz DEFAULT now(), "updatedAt" timestamptz DEFAULT now(),
-      "refundOwedKey" text UNIQUE, "refundOwedPaise" bigint, "refundOwedReason" text, "refundOwedAt" timestamptz, "refundOwedAttempts" int DEFAULT 0
-    );
-    CREATE TEMP TABLE "Refund" ("paymentId" text, "dedupeKey" text, "amountPaise" bigint, status text);
-    CREATE TEMP TABLE "Dispute" ("paymentId" text, "amountPaise" bigint, status text);
-  `);
+  // Derive physical identifiers from Prisma's schema metadata. A fixture using
+  // logical field names would hide raw SQL mistakes on @map/@@map fields.
+  const fixtures: { model: string; columns: [string, string][] }[] = [
+    {
+      model: "Subscription",
+      columns: [
+        ["id", "text PRIMARY KEY"],
+        ["status", "text"],
+      ],
+    },
+    {
+      model: "Appointment",
+      columns: [
+        ["id", "text PRIMARY KEY"],
+        ["subscriptionId", "text"],
+      ],
+    },
+    {
+      model: "BookingStatusHistory",
+      columns: [
+        ["entityId", "text"],
+        ["entity", "text"],
+        ["reason", "text"],
+        ["toStatus", "text"],
+        ["createdAt", "timestamptz"],
+      ],
+    },
+    {
+      model: "Payment",
+      columns: [
+        ["id", "text PRIMARY KEY"],
+        ["amount", "bigint"],
+        ["paymentIntent", "text"],
+        ["paymentStatus", "text DEFAULT 'SUCCEEDED'"],
+        ["appointmentId", "text"],
+        ["deletedAt", "timestamptz"],
+        ["createdAt", "timestamptz DEFAULT now()"],
+        ["updatedAt", "timestamptz DEFAULT now()"],
+        ["refundOwedKey", "text UNIQUE"],
+        ["refundOwedPaise", "bigint"],
+        ["refundOwedReason", "text"],
+        ["refundOwedAt", "timestamptz"],
+        ["refundOwedAttempts", "int DEFAULT 0"],
+      ],
+    },
+    {
+      model: "Refund",
+      columns: [
+        ["paymentId", "text"],
+        ["dedupeKey", "text"],
+        ["amountPaise", "bigint"],
+        ["status", "text"],
+      ],
+    },
+    {
+      model: "Dispute",
+      columns: [
+        ["paymentId", "text"],
+        ["amountPaise", "bigint"],
+        ["status", "text"],
+      ],
+    },
+  ];
+  await mockClient.query(
+    fixtures
+      .map(
+        ({ model, columns }) =>
+          `CREATE TEMP TABLE ${physicalName(model)} (${columns.map(([field, ddl]) => `${physicalName(model, field)} ${ddl}`).join(", ")})`,
+      )
+      .join(";"),
+  );
 });
 afterAll(async () => {
   await mockClient?.end();
@@ -187,7 +256,7 @@ it("does not multiply duplicate history or backfill an active/unproven booking",
     ["a"],
   );
   await mockClient.query(
-    'UPDATE "Subscription" SET status = $1 WHERE id = $2',
+    `UPDATE ${physicalName("Subscription")} SET ${physicalName("Subscription", "status")} = $1 WHERE id = $2`,
     ["PENDING", "b"],
   );
   await mockClient.query(

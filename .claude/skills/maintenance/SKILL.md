@@ -50,3 +50,8 @@ errors or deadline truncation. Exhausting only the remaining invocation allowanc
 is a deferral, not an envelope error; stop the ordered page for the next run. Its shared 16-second admission budget covers
 only this family; earlier expiry arms and nudge fairness remain separate work.
 Do not describe the entire worker as deadline-bounded or its backlog as drained.
+
+Raw SQL must follow Prisma's physical `@map`/`@@map` identifiers; the subscription
+status column is `requestStatus`. Derive disposable SQL fixture identifiers from
+the generated schema metadata, and verify query planning read-only before making
+production capacity claims.
