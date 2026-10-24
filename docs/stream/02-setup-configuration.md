@@ -137,11 +137,11 @@ BETTER_AUTH_URL=""
 
 ## Production Operator Cutover & Verification Runbook
 
-Stream application settings, call-type permission grants, webhook subscriptions, and external storage are managed via idempotent scripts under `scripts/stream/` rather than manual dashboard edits. Pre-image backups are written automatically to `.stream-backups/` (and `os.tmpdir()` for call-type settings drift) before any write.
+Stream application settings, call-type permission grants, chat channel-type uploads, webhook subscriptions, and external storage are managed via idempotent scripts under `scripts/stream/` rather than manual dashboard edits. Pre-image backups are written automatically to `.stream-backups/` (and `os.tmpdir()` for call-type settings drift) before any write.
 
 ### 1. App Settings, Call-Type Hardening & Webhook Subscription (`scripts/stream/ensure.ts`)
 
-Run the unified provisioning orchestrator to inspect and apply all Stream control-plane invariants in one pass:
+Run the unified provisioning orchestrator to inspect and apply the Stream control-plane invariants it owns in one pass:
 
 ```bash
 # Step 1a: Dry run (inspects live Stream state and prints pending diffs without mutating)
@@ -189,6 +189,8 @@ It checks, and never writes:
 - `guest_user_creation_disabled: true`. `enable_hook_payload_compression` is write-only on Stream and is reported as unverified.
 
 On drift the run sends one Sentry message listing finding keys (for example `webhook:<hookId>:disabled` or `call_type:livestream:grant:user:create-call`), never URLs or secrets, and answers 207. Fix drift by running the ensure scripts above; the detector stays quiet again on the next run.
+
+Chat text-only is a separate script: run `npx tsx scripts/stream/ensure-chat-text-only.ts --apply` after any control-plane restore (see the channel-type section below).
 
 ### 2. Cloudflare R2 Recording Storage
 
@@ -279,14 +281,15 @@ Stream provides default channel types. For Familiarise, configure:
 
 #### messaging (1-on-1 Chats)
 
-| Setting           | Value       | Purpose             |
-| ----------------- | ----------- | ------------------- |
-| Type Name         | `messaging` | Built-in type       |
-| Max Members       | 10          | Small group chats   |
-| Read Events       | ✅ Enabled  | Show read receipts  |
-| Reactions         | ✅ Enabled  | Message reactions   |
-| Replies           | ✅ Enabled  | Threaded replies    |
-| Typing Indicators | ✅ Enabled  | "User is typing..." |
+| Setting           | Value       | Purpose                          |
+| ----------------- | ----------- | -------------------------------- |
+| Type Name         | `messaging` | Built-in type                    |
+| Max Members       | 10          | Small group chats                |
+| Read Events       | ✅ Enabled  | Show read receipts               |
+| Reactions         | ✅ Enabled  | Message reactions                |
+| Replies           | ✅ Enabled  | Threaded replies                 |
+| Typing Indicators | ✅ Enabled  | "User is typing..."              |
+| File Uploads      | ❌ Disabled | Text-only chat (script-enforced) |
 
 **Use Cases:**
 
@@ -296,20 +299,23 @@ Stream provides default channel types. For Familiarise, configure:
 
 #### team (Group Channels)
 
-| Setting            | Value      | Purpose          |
-| ------------------ | ---------- | ---------------- |
-| Type Name          | `team`     | Built-in type    |
-| Max Members        | Unlimited  | Large events     |
-| Read Events        | ✅ Enabled | Track attendance |
-| Reactions          | ✅ Enabled | Engagement       |
-| Replies            | ✅ Enabled | Discussions      |
-| Push Notifications | ✅ Enabled | Event updates    |
+| Setting            | Value       | Purpose                          |
+| ------------------ | ----------- | -------------------------------- |
+| Type Name          | `team`      | Built-in type                    |
+| Max Members        | Unlimited   | Large events                     |
+| Read Events        | ✅ Enabled  | Track attendance                 |
+| Reactions          | ✅ Enabled  | Engagement                       |
+| Replies            | ✅ Enabled  | Discussions                      |
+| Push Notifications | ✅ Enabled  | Event updates                    |
+| File Uploads       | ❌ Disabled | Text-only chat (script-enforced) |
 
 **Use Cases:**
 
 - Webinars (broadcast + Q&A)
 - Online classes (instructor + students)
 - Group events
+
+Chat is text-only: `scripts/stream/ensure-chat-text-only.ts` pins `uploads: false` on both channel types and strips `upload-file`, `upload-attachment`, and `create-attachment` from every role. It is dry-run by default; run it with `--apply` after any control-plane restore. In the app, the composer overrides `AttachmentSelector` to remove the remaining paperclip, and appointment-linked chats show a Documents hint.
 
 ### 2. Set Up Roles & Permissions
 
@@ -329,22 +335,22 @@ Every account, platform `ADMIN` and `STAFF` included, receives the standard Stre
 
 Operators (`ADMIN`, `STAFF`) hold no extra Stream permission in the browser. Their moderation and support powers (report actions, bans, message removal) run in server routes that use the API-secret clients in `lib/stream-client.ts`, which bypass Stream's permission checks and are audited on our side. See `docs/stream/07-user-management.md` for the rollout step that downgrades operators who still hold `admin`.
 
-### 3. Enable Chat Features
+### 3. Configure Chat Features
 
 **Navigation:** Dashboard → Chat → Settings
 
-Enable these features:
+Configure these features:
 
-| Feature            | Status    | Purpose                      |
-| ------------------ | --------- | ---------------------------- |
-| Message Search     | ✅ Enable | Search chat history          |
-| Push Notifications | ✅ Enable | Mobile/browser notifications |
-| Typing Indicators  | ✅ Enable | Real-time typing status      |
-| Read Receipts      | ✅ Enable | Message read status          |
-| Reactions          | ✅ Enable | Emoji reactions              |
-| Threads            | ✅ Enable | Reply threading              |
-| URL Enrichment     | ✅ Enable | Link previews                |
-| File Uploads       | ✅ Enable | Image/document sharing       |
+| Feature            | Status      | Purpose                          |
+| ------------------ | ----------- | -------------------------------- |
+| Message Search     | ✅ Enable   | Search chat history              |
+| Push Notifications | ✅ Enable   | Mobile/browser notifications     |
+| Typing Indicators  | ✅ Enable   | Real-time typing status          |
+| Read Receipts      | ✅ Enable   | Message read status              |
+| Reactions          | ✅ Enable   | Emoji reactions                  |
+| Threads            | ✅ Enable   | Reply threading                  |
+| URL Enrichment     | ✅ Enable   | Link previews                    |
+| File Uploads       | ❌ Disabled | Text-only chat (script-enforced) |
 
 ### 4. Configure Video Settings
 
@@ -1100,6 +1106,7 @@ railway variables set STREAM_API_SECRET=xxx
 - **`NEXTAUTH_SECRET` / `NEXTAUTH_URL`**: Replaced by `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL`.
 - **`.github/workflows/stream-webhook-drift.yml`**: it compared only the event list, never the hook's enabled flag or URL, and ran on budget-blocked GitHub Actions. Superseded by the ticker job `stream-control-plane-drift`, which covers the whole contract.
 - **Manual dashboard clicks for call-type grants and app settings**: Superseded by `scripts/stream/ensure.ts` (`ensure-app-settings.ts` and `harden-unused-call-types.ts` write pre-image backups to `.stream-backups/`, while `ensure-call-type-grants.ts` writes a drift snapshot to `os.tmpdir()` when settings drift is detected and verifies post-write state).
+- **Dashboard-toggled chat file uploads**: Superseded by `scripts/stream/ensure-chat-text-only.ts`, which pins `uploads: false` and strips every attachment-upload grant on `messaging` and `team` (with `.stream-backups/channel-type-<name>-<timestamp>.json` pre-images); re-run it with `--apply` after any control-plane restore.
 
 ---
 
