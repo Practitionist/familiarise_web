@@ -301,10 +301,13 @@ export function cleanupRoute<T extends object>(opts: {
       Sentry.logger.info(`cron:${job} started`);
 
       const result = await run(req, { startedAt });
-      const summary: Record<string, unknown> = summarize?.(result) ?? result;
+      const summary = summarize?.(result) ?? result;
 
       console.log(`${job} completed:`, summary);
-      Sentry.logger.info(`cron:${job} finished`, summary);
+      Sentry.logger.info(
+        `cron:${job} finished`,
+        Object.fromEntries(Object.entries(summary)),
+      );
 
       // An explicit per-job mapping is authoritative, so the outcome header follows its status.
       const responseStatus = status ? status(result) : statusFor(result);
