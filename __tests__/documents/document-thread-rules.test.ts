@@ -2,8 +2,12 @@
  * @jest-environment node
  */
 
+import { Prisma } from "@prisma/client";
 import { documentDates } from "@/lib/documents/document-dates";
-import { resolveDocumentThreadSlot } from "@/lib/documents/document-review";
+import {
+  resolveDocumentThreadSlot,
+  withVersionConflictRetry,
+} from "@/lib/documents/document-review";
 import { buildThreadViews, type ThreadRow } from "@/lib/documents/thread-view";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -28,6 +32,51 @@ function row(partial: Partial<ThreadRow> & { id: string }): ThreadRow {
     ...partial,
   };
 }
+
+describe("version conflict retry", () => {
+  const p2002 = (meta: Record<string, unknown>) =>
+    new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+      code: "P2002",
+      clientVersion: "test",
+      meta,
+    });
+
+  it("retries an adapter-shaped thread version race", async () => {
+    const adapter = p2002({
+      driverAdapterError: {
+        cause: {
+          originalCode: "23505",
+          constraint: { fields: ['"versionNo"'] },
+        },
+      },
+    });
+    const work = jest
+      .fn()
+      .mockRejectedValueOnce(adapter)
+      .mockResolvedValue("ok");
+
+    await expect(withVersionConflictRetry(work)).resolves.toBe("ok");
+    expect(work).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a storage-path conflict in either error shape", async () => {
+    const adapter = p2002({
+      driverAdapterError: {
+        cause: {
+          originalCode: "23505",
+          constraint: { fields: ['"storagePath"'] },
+        },
+      },
+    });
+    const classic = p2002({ target: ["storagePath"] });
+
+    for (const error of [adapter, classic]) {
+      const work = jest.fn().mockRejectedValue(error);
+      await expect(withVersionConflictRetry(work)).rejects.toBe(error);
+      expect(work).toHaveBeenCalledTimes(1);
+    }
+  });
+});
 
 describe("upload window and retention dates", () => {
   it("stays open while sessions remain, then closes 30 days and keeps 90 days after the last one", () => {
