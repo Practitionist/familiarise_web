@@ -1,6 +1,6 @@
 # 18. Architecture Decision Records (ADRs)
 
-> Authoritative architecture decision records governing Stream Video call lifecycle isolation, call-ID rotation, synchronous CAS state convergence, the immutable booked end with extension state on `Meeting`, meeting exit controls, and the attendance witness behind session outcomes.
+> Authoritative architecture decision records governing Stream Video call lifecycle isolation, call-ID rotation, synchronous CAS state convergence, the immutable booked end with extension state on `Meeting`, meeting exit controls, the attendance witness behind session outcomes, the launch participant cap, and staff-editable video quality.
 
 ## Table of Contents
 
@@ -11,6 +11,8 @@
 - [ADR-04: Immutable Booked End; Extension State on `Meeting`](#adr-04-immutable-booked-end-extension-state-on-meeting)
 - [ADR-05: Single Exit Control (`CallExitButton`) over Dual Hangup Buttons](#adr-05-single-exit-control-callexitbutton-over-dual-hangup-buttons)
 - [ADR-06: Stream Participant Sessions Are the Attendance Witness](#adr-06-stream-participant-sessions-are-the-attendance-witness)
+- [ADR-07: Interactive WebRTC with a 200-participant cap, not HLS, at launch](#adr-07-interactive-webrtc-with-a-200-participant-cap-not-hls-at-launch)
+- [ADR-08: Staff-editable platform video quality, 720p default](#adr-08-staff-editable-platform-video-quality-720p-default)
 - [Deprecated & Superseded Approaches](#deprecated--superseded-approaches)
 
 ---
@@ -27,6 +29,8 @@ Stream Video SFU and PostgreSQL (`PG_POOL_MAX=1`) enforce distinct operational c
 | **ADR-04** | Immutable booked `endsAt`; `+15m` extension on `Meeting.extendedSeconds` | `app/api/meetings/[meetingId]/extend/route.ts`, `lib/meetings/duration-cap.ts`, `app/meetings/[id]/components/OverrunBanner.tsx` | Keeps the sold end intact for outcome and money, while the Stream cap, banner and conflict horizon derive from one Postgres value |
 | **ADR-05** | Unified `<CallExitButton />` (participant leave vs host 2-way popover)   | `app/meetings/[id]/components/EndCallButton.tsx`, `app/meetings/[id]/components/MeetingRoom.tsx`                                 | Prevents accidental room termination when a host leaves early while keeping room closure one deliberate choice                    |
 | **ADR-06** | Stream participant sessions resolve every assumed or missing interval    | `lib/booking/session-outcome-sweep.ts`, `lib/stream/{call-presence,session-handlers}.ts`, `lib/meetings/segment-presence.ts`     | A lost webhook can neither stretch a host's presence into a `HELD` verdict nor turn a delivered session into `NOBODY_JOINED`      |
+| **ADR-07** | Interactive WebRTC with a 200-participant cap, no HLS at launch          | `lib/events/capacity.ts`, `schemas/plans.ts`, `lib/meetings/room-ready.ts`, `lib/meetings/call-provisioning.ts`                  | Keeps every attendee able to ask a question or be brought on stage, and bounds the per-room cost and SFU load                     |
+| **ADR-08** | Staff-editable `PlatformVideoConfig`, 720p default                       | `lib/stream/{video-quality,video-config}.ts`, `lib/meetings/room-ready.ts`, `app/api/admin/video-config/route.ts`                | Keeps video and recording quality a priced, audited staff decision instead of a constant in code or an environment variable       |
 
 ---
 
@@ -250,6 +254,50 @@ Example. Hannah hosts a 10:00–11:00 IST subscription session with Priya. Hanna
 - `MeetingPresence` rows written before this change carry `closedByEnd = false` and a null call id, so they keep the earlier behaviour.
 - The participant-sessions read covers the latest Stream session of each call id. A call that Stream split into two sessions (an idle timeout followed by a rejoin on the same id) resolves only the latest one; an assumed close from the earlier session stays open and parks the outcome for ops.
 
+## ADR-07: Interactive WebRTC with a 200-participant cap, not HLS, at launch
+
+### Context & Problem Statement
+
+Webinars and classes are the only rooms with more than a handful of people. They rely on live interaction: attendees raise a hand, the host brings them on stage, and the Q&A drawer and reactions have to feel immediate. The product therefore needs a ceiling on how many people a room can hold, and a decision about whether very large audiences are served by something other than interactive WebRTC.
+
+### Decision
+
+Webinars and classes are capped at 200 participants at launch (`MAX_GROUP_SESSION_PARTICIPANTS` in `lib/events/capacity.ts`). The cap is enforced in three places:
+
+- **At authoring.** Every plan and per-instance capacity goes through `maxParticipantsSchema` in `schemas/plans.ts` (the plan editor, the crud-with-plan routes, the legacy plan routes and the organisation catalog route), and the editor input carries the same maximum.
+- **At purchase.** Checkout already refuses a sale past the effective capacity through the Serializable seat count, so the cap needs no new checkout logic.
+- **At the room.** Each 1-to-Many call is created with Stream `limits.max_participants` equal to the effective capacity plus a headroom of 5, with the call owner and the `co_presenter` and `admin` roles excluded from the count (`resolveCallParticipantLimits`). This is the last line of defence if a room is ever joined outside the seat count.
+
+We stay on interactive WebRTC and do not add HLS. Stream delivers WebRTC through an SFU with adaptive simulcast (Dynascale), which the video SDK already uses, so a 200-person room is a supported shape and not a special mode. HLS would add 10 to 30 seconds of latency, which breaks Q&A and stage requests, and Stream bills it as a separate per-viewer add-on (see `14-pricing-and-cost-model.md`).
+
+### Consequences
+
+- The worst-case cost of one session is bounded: 200 attendees for 90 minutes is 18,000 participant minutes.
+- A host who needs more than 200 seats cannot sell them until the cap is lifted. The cap can be raised by changing one constant after the load test tracked in the Stream productionization umbrella confirms the SFU, the stage-request flow and the client render path at the new size.
+- Stream documents the `limits` fields but not their exact counting rules, so the headroom is deliberately generous and the authoritative sell-out stays the Postgres seat count. A client that hits the room limit sees the SFU error `CALL_PARTICIPANT_LIMIT_REACHED`; no server route observes it, because the join route admits users by membership and never joins the SFU.
+- No stored row is above the cap: the seed data never creates a plan or instance above 100 seats. Rows created through a path that bypassed these schemas (direct database writes) would still need a manual review; nothing is backfilled.
+
+---
+
+## ADR-08: Staff-editable platform video quality, 720p default
+
+### Context & Problem Statement
+
+Video and recording quality are the two largest per-minute levers on the Stream bill, and they change with the plan we are on and with what customers ask for. Until now 1-to-Many rooms hard-coded 720p in `buildCallSettingsOverride`, 1:1 rooms inherited whatever the `default` call type held, and recording quality lived only on the call type. Changing any of them meant a code change or a Stream dashboard edit with no record of who did it or why.
+
+### Decision
+
+Quality is one `PlatformVideoConfig` row, edited by staff and admin on the Video quality page through `PATCH /api/admin/video-config` (surface `videoConfig.manage`, mandatory reason, one `OpsActionLog` row). It follows the single-row precedent of `PlatformPricingConfig` and `ReferralProgramConfig`: an `id = "singleton"` row, no backfill, and a missing row reads as the defaults (720p calls, 720p recordings, 1080p screen share). There is no environment variable and no cache; the reader is one primary-key lookup per room creation.
+
+The values are strings guarded by a CHECK, and `lib/stream/video-quality.ts` is the single place that lists them, maps them to Stream's `target_resolution` and `recording.quality`, and holds the cost hints. The shared builder applies them to every call it creates or updates, 1:1 and 1-to-Many alike. Stream supports `recording.quality` in a per-call `settings_override` (`RecordSettingsRequest`, which requires `mode`), so recording quality travels with the call and no call-type change is needed.
+
+### Consequences
+
+- 4K is not offered, and recording stops at 1080p in the UI although Stream accepts up to 1440p.
+- A change reaches calls created, reopened or extended after it; rooms already running keep their quality.
+- A 1:1 room now sends a full video block copied from the `default` call type, so changing the call type's camera defaults no longer affects 1:1 rooms.
+- The `PlatformVideoConfig` table and its CHECK must exist before this code runs; the repository never applies them (see the schema skill).
+
 ---
 
 ## Deprecated & Superseded Approaches
@@ -260,3 +308,4 @@ Example. Hannah hosts a 10:00–11:00 IST subscription session with Priya. Hanna
 - **Fire-and-Forget End Endpoint Swallowing DB Errors as HTTP 200**: Superseded by `recordMeetingEndedSynchronously` CAS dual-write that rotates pre-start `"ended_early"` rooms and returns HTTP `500` on database failure.
 - **Dual Red Hangup Buttons in `MeetingRoom.tsx`**: Superseded by the single Zoom/Meet-style `<CallExitButton />` with role-aware direct leave vs host two-action popover and `< 10m` remaining caution banner.
 - **End Stamps Closing Every Open Presence Row as Fact**: Superseded by ADR-06. `stampEnd` and the outcome sweep's `capOpenSlotPresences` closed every open row at the room end before classification, so a lost leave read as presence until the end. Delete any code that closes `MeetingPresence` at an end stamp without `closedByEnd = true`, or that classifies an assumed close without first asking Stream.
+- **Hard-coded 720p in the 1-to-Many builder and quality left on the call type**: Superseded by `PlatformVideoConfig` (ADR-08). Delete any literal `target_resolution` in `lib/meetings/**` and any environment variable that tunes video quality.

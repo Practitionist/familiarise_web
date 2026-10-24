@@ -25,31 +25,31 @@ netlify env:list --json
 
 The numbered files (`00` through `19`) follow strict contiguous numbering and are meant to be read in sequence by engineers onboarding onto the real-time subsystem. The unnumbered documents serve as targeted subsystem runbooks and visual maps.
 
-| Document                                                                         | What it covers                                                                                                                    |
-| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| [00-pricing-overview.md](./00-pricing-overview.md)                               | Stream billing meters and which product surface increments each meter.                                                            |
-| [01-architecture.md](./01-architecture.md)                                       | End-to-end HLD & LLD: App Router, Stream SFU/Chat, Postgres models & CAS invariants, R2 storage, and crons                        |
-| [02-setup-configuration.md](./02-setup-configuration.md)                         | Environment variables, control-plane bootstrap, and the hardened `default` call type (`call_member`).                             |
-| [03-provider-authentication.md](./03-provider-authentication.md)                 | Client connection store, SDK-free shell provider split, and session hydration gating.                                             |
-| [04-chat-implementation.md](./04-chat-implementation.md)                         | Channel shapes, human-pair DM derivation (`dm-`/`dmo-`), and contextual booking receipt cards.                                    |
-| [05-video-implementation.md](./05-video-implementation.md)                       | Session window, end + reopen, `+15m` extensions, end reasons, exit UX, lobby gate, Q&A.                                           |
-| [06-channel-management.md](./06-channel-management.md)                           | 4-part DM eligibility gates, event channel rosters, and collaborator synchronization.                                             |
-| [07-user-management.md](./07-user-management.md)                                 | Upserting principals into Stream, PII stripping, least-privilege role mapping, and DPDP erasure.                                  |
-| [08-token-management.md](./08-token-management.md)                               | Minting, caching, `iat`/`exp` revocation cutoffs, and moderation enforcement.                                                     |
-| [09-background-sync.md](./09-background-sync.md)                                 | Scheduled user synchronization, stale principal cleanup, and orphaned session/recording sweeps.                                   |
-| [10-api-endpoints.md](./10-api-endpoints.md)                                     | Meeting lifecycle routes (`join`, `end`, `reopen`, `live`, `extend`, `qa`) & Stream REST reference.                               |
-| [11-hooks-utilities.md](./11-hooks-utilities.md)                                 | Client hooks (`useGetCallById` self-heal & lobby gate) and call-ID / timezone utility contracts.                                  |
-| [12-error-handling.md](./12-error-handling.md)                                   | Server circuit breaker (`withStreamCircuitBreaker`), failure modes, and UI error boundaries.                                      |
-| [13-recording-webhooks.md](./13-recording-webhooks.md)                           | Recording lifecycle, asymmetric webhook resolution, R2 multipart transfer, and retention rules.                                   |
-| [14-pricing-and-cost-model.md](./14-pricing-and-cost-model.md)                   | Detailed unit economics and cost projections across session types.                                                                |
-| [15-enterprise-and-maker-account.md](./15-enterprise-and-maker-account.md)       | Plan tiers, enterprise org wind-down, and Maker account capabilities.                                                             |
-| [16-product-concepts-and-addons.md](./16-product-concepts-and-addons.md)         | Stream product concepts, SFU capabilities, and paid add-on boundaries.                                                            |
-| [17-channel-lifecycle.md](./17-channel-lifecycle.md)                             | Chat channel provisioning, post-session freeze windows, and automated deletion.                                                   |
-| [18-architecture-decision-records.md](./18-architecture-decision-records.md)     | Authoritative ADRs (`ADR-01`..`ADR-06`): call isolation, ID rotation, CAS termination, extensions, UX and the attendance witness. |
-| [19-recordings-lifecycle-and-access.md](./19-recordings-lifecycle-and-access.md) | Recording lifecycle, retention, and own-batch plus catch-up access across runs and batches.                                       |
-| [troubleshooting.md](./troubleshooting.md)                                       | Production diagnostic runbook for symptoms, root causes, and live MCP checks.                                                     |
-| [recordings-marketplace.md](./recordings-marketplace.md)                         | Replay marketplace storefront, entitlements, and 60s preview clips.                                                               |
-| [stream-ecosystem.mmd](./stream-ecosystem.mmd)                                   | Full Mermaid ecosystem diagram across business entities, Stream, Postgres, and Cloudflare R2.                                     |
+| Document                                                                         | What it covers                                                                                                                                                        |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [00-pricing-overview.md](./00-pricing-overview.md)                               | Stream billing meters and which product surface increments each meter.                                                                                                |
+| [01-architecture.md](./01-architecture.md)                                       | End-to-end HLD & LLD: App Router, Stream SFU/Chat, Postgres models & CAS invariants, R2 storage, and crons                                                            |
+| [02-setup-configuration.md](./02-setup-configuration.md)                         | Environment variables, control-plane bootstrap, and the hardened `default` call type (`call_member`).                                                                 |
+| [03-provider-authentication.md](./03-provider-authentication.md)                 | Client connection store, SDK-free shell provider split, and session hydration gating.                                                                                 |
+| [04-chat-implementation.md](./04-chat-implementation.md)                         | Channel shapes, human-pair DM derivation (`dm-`/`dmo-`), and contextual booking receipt cards.                                                                        |
+| [05-video-implementation.md](./05-video-implementation.md)                       | Session window, end + reopen, `+15m` extensions, end reasons, exit UX, lobby gate, Q&A.                                                                               |
+| [06-channel-management.md](./06-channel-management.md)                           | 4-part DM eligibility gates, event channel rosters, and collaborator synchronization.                                                                                 |
+| [07-user-management.md](./07-user-management.md)                                 | Upserting principals into Stream, PII stripping, least-privilege role mapping, and DPDP erasure.                                                                      |
+| [08-token-management.md](./08-token-management.md)                               | Minting, caching, `iat`/`exp` revocation cutoffs, and moderation enforcement.                                                                                         |
+| [09-background-sync.md](./09-background-sync.md)                                 | Scheduled user synchronization, stale principal cleanup, and orphaned session/recording sweeps.                                                                       |
+| [10-api-endpoints.md](./10-api-endpoints.md)                                     | Meeting lifecycle routes (`join`, `end`, `reopen`, `live`, `extend`, `qa`) & Stream REST reference.                                                                   |
+| [11-hooks-utilities.md](./11-hooks-utilities.md)                                 | Client hooks (`useGetCallById` self-heal & lobby gate) and call-ID / timezone utility contracts.                                                                      |
+| [12-error-handling.md](./12-error-handling.md)                                   | Server circuit breaker (`withStreamCircuitBreaker`), failure modes, and UI error boundaries.                                                                          |
+| [13-recording-webhooks.md](./13-recording-webhooks.md)                           | Recording lifecycle, asymmetric webhook resolution, R2 multipart transfer, and retention rules.                                                                       |
+| [14-pricing-and-cost-model.md](./14-pricing-and-cost-model.md)                   | Detailed unit economics and cost projections across session types.                                                                                                    |
+| [15-enterprise-and-maker-account.md](./15-enterprise-and-maker-account.md)       | Plan tiers, enterprise org wind-down, and Maker account capabilities.                                                                                                 |
+| [16-product-concepts-and-addons.md](./16-product-concepts-and-addons.md)         | Stream product concepts, SFU capabilities, and paid add-on boundaries.                                                                                                |
+| [17-channel-lifecycle.md](./17-channel-lifecycle.md)                             | Chat channel provisioning, post-session freeze windows, and automated deletion.                                                                                       |
+| [18-architecture-decision-records.md](./18-architecture-decision-records.md)     | Authoritative ADRs (`ADR-01`..`ADR-08`): call isolation, ID rotation, CAS termination, extensions, UX, the attendance witness, the participant cap and video quality. |
+| [19-recordings-lifecycle-and-access.md](./19-recordings-lifecycle-and-access.md) | Recording lifecycle, retention, and own-batch plus catch-up access across runs and batches.                                                                           |
+| [troubleshooting.md](./troubleshooting.md)                                       | Production diagnostic runbook for symptoms, root causes, and live MCP checks.                                                                                         |
+| [recordings-marketplace.md](./recordings-marketplace.md)                         | Replay marketplace storefront, entitlements, and 60s preview clips.                                                                                                   |
+| [stream-ecosystem.mmd](./stream-ecosystem.mmd)                                   | Full Mermaid ecosystem diagram across business entities, Stream, Postgres, and Cloudflare R2.                                                                         |
 
 ## Core Architectural Rules
 
@@ -65,7 +65,7 @@ Each invariant below is strictly enforced across `lib/stream/`, `lib/meetings/`,
 ## Related
 
 - [Session documents and recordings ADR](../decisions/2026-10-12-session-documents-and-recordings.md) and [session documents architecture](../documents/README.md)
-- [18. Architecture Decision Records (`ADR-01` through `ADR-06`)](./18-architecture-decision-records.md)
+- [18. Architecture Decision Records (`ADR-01` through `ADR-08`)](./18-architecture-decision-records.md)
 - `.claude/skills/stream/SKILL.md` — Operational engineering skill synchronized with the live codebase.
 
 ## Deprecated & Superseded Approaches
