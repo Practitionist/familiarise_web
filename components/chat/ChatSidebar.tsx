@@ -32,6 +32,7 @@ import {
   getChannelDisplayInfo,
   isUsableDmChannel,
 } from "./utils/channelUtils";
+import { appendUniqueChannels, insertChannelAtTop } from "./utils/channelList";
 import { useChatPane } from "./ChatPaneContext";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import { scopeOrgId } from "@/lib/api/scope/parse";
@@ -348,6 +349,15 @@ export const ChatSidebar = () => {
   const deepLinkedChannelCidRef = useRef<string | null>(null);
   const [teamChannels, setTeamChannels] = useState<Channel[]>([]);
   const [directMessages, setDirectMessages] = useState<Channel[]>([]);
+  // The listener below reads the lists through refs so it can tell a message
+  // for a channel outside the loaded page without re-attaching per update.
+  const listedCidsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    listedCidsRef.current = new Set(
+      [...teamChannels, ...directMessages].map((ch) => ch.cid),
+    );
+  }, [teamChannels, directMessages]);
+  const pendingCidsRef = useRef<Set<string>>(new Set());
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
   // #248: mirror activeChannelId into a ref so handleChannelDeleted can read the
   // current selection WITHOUT depending on the state. Without this, every
@@ -545,13 +555,12 @@ export const ChatSidebar = () => {
         fetchedCountRef.current[type] += response.length;
 
         if (type === "team") {
-          setTeamChannels((prev) => [...prev, ...response]);
+          setTeamChannels((prev) => appendUniqueChannels(prev, response));
           setHasMoreTeamChannels(response.length === options.limit);
         } else {
-          setDirectMessages((prev) => [
-            ...prev,
-            ...response.filter(isUsableDmChannel),
-          ]);
+          setDirectMessages((prev) =>
+            appendUniqueChannels(prev, response.filter(isUsableDmChannel)),
+          );
           // Raw length again — see fetchChannels.
           setHasMoreDMChannels(response.length === options.limit);
         }
@@ -696,43 +705,69 @@ export const ChatSidebar = () => {
   // down/re-attaches the listener or refires queryChannels.
   useEffect(() => {
     if (!client) return;
+    let disposed = false;
 
-    const handleAddedToChannel = async (event: Event) => {
-      if (!event.channel) return;
-      const channelType = event.channel.type;
-      const channelId = event.channel.id;
-      const currentScope = scopeRef.current;
-      if (!doesChannelMatchScope(event.channel, currentScope)) {
+    // Watches a channel the sidebar does not hold yet and puts it first.
+    const addChannelToLists = async (
+      eventChannel: NonNullable<Event["channel"]>,
+    ) => {
+      const channelType = eventChannel.type;
+      const channelId = eventChannel.id;
+      if (!doesChannelMatchScope(eventChannel, scopeRef.current)) {
         return;
       }
       const newChannel = client.channel(channelType, channelId);
-      await newChannel.watch().catch(() => undefined);
-      if (channelType === "team") {
-        setTeamChannels((prev) =>
-          prev.some((ch) => ch.cid === newChannel.cid)
-            ? prev
-            : [newChannel, ...prev],
-        );
-      } else if (channelType === "messaging" && isUsableDmChannel(newChannel)) {
-        setDirectMessages((prev) =>
-          prev.some((ch) => ch.cid === newChannel.cid)
-            ? prev
-            : [newChannel, ...prev],
-        );
+      if (pendingCidsRef.current.has(newChannel.cid)) return;
+      pendingCidsRef.current.add(newChannel.cid);
+      try {
+        await newChannel.watch();
+        // The client or org scope may have changed while watch() was pending.
+        if (
+          disposed ||
+          !doesChannelMatchScope(eventChannel, scopeRef.current)
+        ) {
+          return;
+        }
+        if (channelType === "team") {
+          setTeamChannels((prev) => insertChannelAtTop(prev, newChannel));
+        } else if (
+          channelType === "messaging" &&
+          isUsableDmChannel(newChannel)
+        ) {
+          setDirectMessages((prev) => insertChannelAtTop(prev, newChannel));
+        }
+      } catch {
+        // A failed watch leaves the channel unlisted so the next event retries it.
+      } finally {
+        pendingCidsRef.current.delete(newChannel.cid);
       }
+    };
+
+    const handleAddedToChannel = (event: Event) => {
+      if (event.channel) void addChannelToLists(event.channel);
     };
 
     const handleChannelActivity = (event: Event) => {
       if (!event.channel) return;
       const targetCid =
         event.channel.cid || `${event.channel.type}:${event.channel.id}`;
+      const isNewMessage =
+        event.type === "message.new" ||
+        event.type === "notification.message_new";
+      // A message in a channel outside the loaded page: fetch and list it,
+      // but only once the first page has landed (it replaces the lists).
+      if (
+        isNewMessage &&
+        fetchedKeyRef.current !== null &&
+        !listedCidsRef.current.has(targetCid)
+      ) {
+        void addChannelToLists(event.channel);
+        return;
+      }
       const updatedChannel = client.channel(
         event.channel.type,
         event.channel.id,
       );
-      const isNewMessage =
-        event.type === "message.new" ||
-        event.type === "notification.message_new";
       const updateList = (prev: Channel[]) =>
         sortUpdatedChannels(
           prev.map((ch) => (ch.cid === targetCid ? updatedChannel : ch)),
@@ -754,7 +789,7 @@ export const ChatSidebar = () => {
         event.channel &&
         event.user?.id === client.userID
       ) {
-        void handleAddedToChannel(event);
+        handleAddedToChannel(event);
         return;
       }
       if (
@@ -784,6 +819,7 @@ export const ChatSidebar = () => {
     client.on(handleEvent);
 
     return () => {
+      disposed = true;
       client.off(handleEvent);
     };
   }, [client, handleChannelDeleted, handleUserRemovedFromChannel]);

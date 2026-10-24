@@ -134,6 +134,18 @@ mcp__streamio__app_get_rate_limits   {}
 
 ---
 
+## 7. Chat Client Resilience (`providers/StreamProviderImpl.tsx`, `components/chat/`)
+
+1. **A Dropped Socket Is a Grace Window**:
+   - `connection.changed` offline sets `chatReconnecting` (15 s, `DISCONNECT_GRACE_MS`) while `chatConnected` stays truthful; the app-level reconnect starts at 8 s. `components/chat/ChatSurface.tsx` (the one gate for the three Messages pages) keeps `<ChatLayout />` mounted while `chatConnected || chatReconnecting` and shows a banner, so drafts, scroll and the active channel survive a blip.
+   - A retryable failure on an already-connected chat client is held back until `MAX_CONNECT_ATTEMPTS`; a success (retry loop or the SDK's own `online` event) clears a retryable `failure`. Do not reorder consumers to hide a stale failure.
+2. **One Connect In Flight**:
+   - `joinInFlight` shares the chat and video connect per user, only the newest `connectServices` generation commits, `mergeSettledClients` never downgrades a registered client to `null`, and `retryConnection` clears the retry timer and ignores calls while a run is active.
+3. **Profile Fetch Retries**: `useUserData` makes 4 attempts with `withJitter` backoff (`lib/stream/backoff.ts`), then returns a `profileLoadFailure` with Retry; a 401 is neither retried nor reported.
+4. **Sidebar, Badge, Send Status**: an unlisted channel's `message.new` is watched and inserted at the top (dedupe by cid, load-more via `appendUniqueChannels`); the nav badge is `total_unread_count` minus org-tagged unread (one throttled `getUnreadCount` plus cached cid classification); `CustomMessage` renders `failed` and `sending` with `handleRetry`.
+
+---
+
 ## Deprecated & Superseded Approaches
 
 - **Hard-coded 720p in the 1:N builder, or quality left to the call type**: Superseded by `PlatformVideoConfig` (`ADR-08`); delete any literal `target_resolution` in `lib/meetings/**`.
@@ -148,4 +160,5 @@ mcp__streamio__app_get_rate_limits   {}
 - **A single "Meeting Error" screen for every join failure, and `useMeetingRecording` flipping to `recordingEnabled: false` on any non-404 error**: Superseded by classified `JoinFailureCard` faces and last-known-value retention with backoff.
 - **R2-only recording deletes**: Marked a recording `EXPIRED` while Stream's copy stayed playable for up to 14 days and the thumbnail stayed public. Superseded by `recording-stream-delete.ts` plus a purge that clears the thumbnail and transcript.
 - **Chat file and image uploads**: The channel types allowed `upload-file`, but there was no storage or moderation story and the community page advertising it did not exist. Superseded by `uploads: false`, every attachment-upload grant stripped by the script, and the deleted page.
+- **Instant skeleton on a socket blip, a badge summed over the loaded page, and a `null` client committed by an overlapping connect**: Superseded by the reconnect grace window, `total_unread_count` minus org-tagged unread, and single-flight connects with a generation token.
 - **Client-cooperative revocation (sync gates), unfreeze-on-open, caller-authored booking cards, DM Clear chat**: Superseded by synchronous revocation plus the retry queue and daily reconciler, get-or-create collaborator channels, `system-booking-context` authorship, and hiding truncate on managed channels.

@@ -296,14 +296,21 @@ const getRetryDelay = (attempt: number) => {
   return Math.min(1000 * Math.pow(2, attempt), 30000);
 };
 
-// Delay progression:
-// Attempt 1: 1000ms  (1s)
-// Attempt 2: 2000ms  (2s)
-// Attempt 3: 4000ms  (4s)
-// Attempt 4: 8000ms  (8s)
-// Attempt 5: 16000ms (16s)
+// Delay progression (upper bound; the real delay is jittered into [base/2, base]):
+// Attempt 1: 2000ms  (2s)
+// Attempt 2: 4000ms  (4s)
+// Attempt 3: 8000ms  (8s)
+// Attempt 4: 16000ms (16s)
 // Maximum: 30000ms   (30s)
 ```
+
+The delay is passed through `withJitter` (`lib/stream/backoff.ts`) so clients that failed together, for example after a Stream incident, do not retry in lockstep. The jitter only shortens a delay, so the upper bound above still holds, and the video wait bound in `useGetCallById` (which the `client-wait-timeout` test derives from this ladder) stays valid.
+
+### What the user sees during a blip
+
+A dropped chat socket is not an error. The SDK reconnects by itself, so the provider only sets `chatReconnecting` and the Messages surface keeps its layout with a "Reconnecting…" banner for up to 15 seconds. The app-level reconnect starts after 8 seconds, and if it fails with a retryable error the failure is held back until the five attempts are used up. Only a non-retryable failure, a refusal, or an exhausted budget shows "Chat unavailable". A later success, whether from the retry loop or from the SDK's own `connection.changed` event, clears a retryable failure.
+
+The profile fetch that precedes the connect has its own budget of four attempts. When it is spent the user sees "Couldn't load your profile" with a Retry button, instead of a skeleton that never resolves.
 
 ### Implementation
 
