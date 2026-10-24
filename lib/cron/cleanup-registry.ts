@@ -58,6 +58,8 @@ const MAX_STUCK_PAYOUT_POLLS = 5;
 const MAX_PAYOUT_STATUS_POLLS = 8;
 /** Consumer invoices the GST register healer may mint per run; one transaction each. */
 const MAX_GST_HEALER_MINTS = 25;
+/** Document rows a single purge run may process; each costs one storage delete. */
+const MAX_DOCUMENT_PURGE_ROWS = 200;
 
 /**
  * Registry of `/api/cleanup/[job]` HTTP twins.
@@ -757,16 +759,20 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "purge-deleted-documents": () =>
       cleanupRoute({
         job: "purge-deleted-documents",
-        run: async () => {
+        run: async (req) => {
           const { purgeDeletedDocuments } =
             await import("@/lib/documents/document-purge");
-          return purgeDeletedDocuments();
+          return purgeDeletedDocuments(new Date(), {
+            limit: parseLimitParamOrDefault(req, MAX_DOCUMENT_PURGE_ROWS),
+          });
         },
         summarize: (r) => ({
           tombstoned: r.tombstoned,
+          failedTombstones: r.failedTombstones,
           purged: r.purged,
           failedStorage: r.failedStorage,
           failedRows: r.failedRows,
+          remaining: r.remaining,
           byReason: r.byReason,
         }),
         status: (r) => statusFor(r),

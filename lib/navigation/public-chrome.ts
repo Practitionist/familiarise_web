@@ -33,7 +33,6 @@ export const TRANSPARENT_HERO_ROUTES = [
   "/",
   "/explore/experts",
   "/explore/programs",
-  "/explore/community",
   "/explore/enterprise/organisations",
   // The four persona pages open on the same full-bleed dark hero.
   "/use-cases/college-students",
