@@ -73,6 +73,7 @@ function submitted(): {
   id: string;
   event_types?: string[];
   webhook_url?: string;
+  product?: string;
 }[] {
   const call = mockUpdateAppSettings.mock.calls.at(-1);
   if (!call) throw new Error("updateAppSettings was never called");
@@ -105,23 +106,38 @@ describe("ensure-webhook-subscription", () => {
     }
   });
 
-  it("never creates a hook against a loopback origin", async () => {
+  describe("hook creation guard", () => {
     const original = process.env.NEXT_PUBLIC_APP_URL;
-    process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3000";
-    try {
-      mockGetAppSettings.mockResolvedValue(appWith([liveWebhook]));
-      await ensureWebhookSubscription("apply");
-      const calls = mockUpdateAppSettings.mock.calls;
-      const hooks = calls.length ? (calls.at(-1)?.[0].event_hooks ?? []) : [];
-      expect(
-        hooks.some((h: { webhook_url?: string }) =>
-          h.webhook_url?.includes("localhost"),
-        ),
-      ).toBe(false);
-    } finally {
+    const videoOnly = { ...liveWebhook, product: "video" };
+    afterEach(() => {
       if (original === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
       else process.env.NEXT_PUBLIC_APP_URL = original;
-    }
+    });
+
+    it.each([
+      ["a loopback origin", "http://localhost:3000"],
+      ["a preview origin", "https://deploy-preview-1--familiarise.netlify.app"],
+    ])("never creates the chat hook at %s", async (_label, origin) => {
+      process.env.NEXT_PUBLIC_APP_URL = origin;
+      mockGetAppSettings.mockResolvedValue(appWith([videoOnly]));
+
+      const code = await ensureWebhookSubscription("apply");
+
+      expect(code).toBe(DRIFT_EXIT_CODE);
+      const urls = submitted().map((h) => h.webhook_url);
+      expect(urls).toEqual([liveWebhook.webhook_url]);
+    });
+
+    it("creates the chat hook at the URL the live hook already delivers to", async () => {
+      process.env.NEXT_PUBLIC_APP_URL = "https://familiarisenow.com";
+      mockGetAppSettings.mockResolvedValue(appWith([videoOnly]));
+
+      const code = await ensureWebhookSubscription("apply");
+
+      expect(code).toBe(0);
+      const chat = submitted().find((h) => h.product === "chat");
+      expect(chat?.webhook_url).toBe(liveWebhook.webhook_url);
+    });
   });
 
   describe("URL rewrite guard", () => {

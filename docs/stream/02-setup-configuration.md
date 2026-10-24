@@ -159,7 +159,7 @@ NEXT_PUBLIC_APP_URL=https://familiarisenow.com npx tsx scripts/stream/ensure-web
 npx tsx scripts/stream/ensure-webhook-subscription.ts --apply --rewrite-url
 ```
 
-`--apply` reconciles each hook's event list and enabled flag, and creates the `chat` hook if it is missing, using `NEXT_PUBLIC_APP_URL`. It leaves an existing hook's URL alone. One Stream app serves every environment, so a run from a laptop or a preview with its own `NEXT_PUBLIC_APP_URL` would otherwise redirect production webhooks. An existing URL is rewritten only when `--rewrite-url` is passed as well.
+`--apply` reconciles each hook's event list and enabled flag, and creates the `chat` hook if it is missing, using `NEXT_PUBLIC_APP_URL` only when that URL is public https and already used by an existing hook, so a preview origin can never receive a new hook. It leaves an existing hook's URL alone. One Stream app serves every environment, so a run from a laptop or a preview with its own `NEXT_PUBLIC_APP_URL` would otherwise redirect production webhooks. An existing URL is rewritten only when `--rewrite-url` is passed as well.
 
 Apply the chat hook and the reminder settings only after the build that handles `user.unread_message_reminder` is live in production. An earlier delivery is harmless, because the route acknowledges an unhandled type with `handled: false`, but those reminders are lost.
 

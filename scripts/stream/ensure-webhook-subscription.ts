@@ -1,7 +1,8 @@
 /**
  * Reconcile the Stream webhook hooks (one per product: enabled, URL, event list) with the
  * control-plane contract. `--apply` creates a missing product hook only when
- * `NEXT_PUBLIC_APP_URL` names its URL. `--check` exits 2 on drift without writing.
+ * `NEXT_PUBLIC_APP_URL` names the URL an existing hook already delivers to (the shared
+ * app's production endpoint). `--check` exits 2 on drift without writing.
  *
  *   npx tsx scripts/stream/ensure-webhook-subscription.ts
  *   npx tsx scripts/stream/ensure-webhook-subscription.ts --check
@@ -105,7 +106,7 @@ function reportUnplaceableEvents(
       }
     }
     console.error(
-      `  Re-run with NEXT_PUBLIC_APP_URL=<origin> and --apply to create the '${product}' hook at <origin>/api/stream/webhooks.`,
+      `  Re-run --apply with NEXT_PUBLIC_APP_URL set to the production origin an existing hook delivers to, to create the '${product}' hook there.`,
     );
   }
 }
@@ -228,17 +229,17 @@ export async function ensureWebhookSubscription(
   }
 
   const created: EventHook[] = [];
-  if (apply && expectedUrl && !isPublicWebhookUrl(expectedUrl)) {
+  // The Stream app is shared by every environment, so a new hook may only reuse a URL a live hook already uses.
+  const creationUrlVerified =
+    expectedUrl !== undefined &&
+    isPublicWebhookUrl(expectedUrl) &&
+    hooks.some((h) => h.webhook_url === expectedUrl);
+  if (apply && expectedUrl && unplaceable.size > 0 && !creationUrlVerified) {
     console.error(
-      `  Refusing to create a hook at ${expectedUrl}: it is not a public https origin.`,
+      `  Refusing to create a hook at ${expectedUrl}: it is not a public https URL an existing hook already delivers to.`,
     );
   }
-  if (
-    apply &&
-    expectedUrl &&
-    isPublicWebhookUrl(expectedUrl) &&
-    unplaceable.size > 0
-  ) {
+  if (apply && expectedUrl && creationUrlVerified && unplaceable.size > 0) {
     const byProduct = desiredEventTypesByProduct();
     for (const product of ["chat", "video"] as const) {
       const types = byProduct[product].filter((t) => unplaceable.has(t));
