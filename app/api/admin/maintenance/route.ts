@@ -285,7 +285,6 @@ async function updateMaintenance(request: NextRequest) {
     );
   }
   const { phase, reason, estimatedEnd } = parsed.data;
-  const estimatedEndDate = estimatedEnd ? new Date(estimatedEnd) : undefined;
 
   const currentState = await getMaintenanceState();
   if (currentState.phase === "OFF") {
@@ -300,9 +299,9 @@ async function updateMaintenance(request: NextRequest) {
   const currentPhase = currentState.phase;
   const targetPhase = phase ?? currentPhase;
   const nextEstimatedEnd =
-    estimatedEndDate === undefined
+    estimatedEnd === undefined
       ? (currentState.estimatedEnd ?? undefined)
-      : estimatedEndDate?.toISOString();
+      : new Date(estimatedEnd).toISOString();
 
   let betterstackIncidentId = currentState.betterstackIncidentId;
   if (
