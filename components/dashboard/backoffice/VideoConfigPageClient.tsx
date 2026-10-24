@@ -99,7 +99,9 @@ export default function VideoConfigPageClient() {
   }, [query.data]);
 
   const save = useMutation({
-    mutationFn: async (payload: PlatformVideoConfig & { reason: string }) => {
+    mutationFn: async (
+      payload: Partial<PlatformVideoConfig> & { reason: string },
+    ) => {
       const res = await fetch("/api/admin/video-config", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -123,13 +125,8 @@ export default function VideoConfigPageClient() {
   });
 
   const current = query.data;
-  const dirty =
-    !!current &&
-    !!draft &&
-    (draft.callTargetResolution !== current.callTargetResolution ||
-      draft.recordingQuality !== current.recordingQuality ||
-      draft.screenshareTargetResolution !==
-        current.screenshareTargetResolution);
+  const patch = current && draft ? changedFields(draft, current) : {};
+  const dirty = Object.keys(patch).length > 0;
 
   return (
     <>
@@ -205,7 +202,7 @@ export default function VideoConfigPageClient() {
                   onClick={() => {
                     setMessage(null);
                     setError(null);
-                    save.mutate({ ...draft, reason: reason.trim() });
+                    save.mutate({ ...patch, reason: reason.trim() });
                   }}
                 >
                   Save
@@ -217,4 +214,24 @@ export default function VideoConfigPageClient() {
       </DashboardContent>
     </>
   );
+}
+
+// Only edited fields go out, so a stale draft cannot revert another editor's change.
+function changedFields(
+  draft: PlatformVideoConfig,
+  current: PlatformVideoConfig,
+): Partial<PlatformVideoConfig> {
+  const patch: Partial<PlatformVideoConfig> = {};
+  if (draft.callTargetResolution !== current.callTargetResolution) {
+    patch.callTargetResolution = draft.callTargetResolution;
+  }
+  if (draft.recordingQuality !== current.recordingQuality) {
+    patch.recordingQuality = draft.recordingQuality;
+  }
+  if (
+    draft.screenshareTargetResolution !== current.screenshareTargetResolution
+  ) {
+    patch.screenshareTargetResolution = draft.screenshareTargetResolution;
+  }
+  return patch;
 }
