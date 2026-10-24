@@ -66,6 +66,7 @@ import {
   type CollaborationRef,
 } from "@/lib/collaborators/standing";
 import { reportSentryError } from "@/lib/observability/report";
+import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
@@ -473,7 +474,15 @@ async function cleanupUserRecordingsOnErasure(
     reportSentryError(errors[0], {
       subsystem: "compliance",
       op: "scrubUser.cleanupUserRecordingsOnErasure",
-      extra: { userId, failures: failures.slice(0, 20), failed: errors.length },
+      extra: {
+        userId,
+        failures: failures.slice(0, 20),
+        causes: errors.slice(0, 20).map((e) => {
+          const message = e instanceof Error ? e.message : String(e);
+          return scrubStringValue(message).slice(0, 300);
+        }),
+        failed: errors.length,
+      },
     });
   }
   return failures;
