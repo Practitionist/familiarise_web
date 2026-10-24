@@ -9,20 +9,31 @@ A recording is a `Recording` row hanging off a `Meeting`, which hangs off one `A
 ```mermaid
 stateDiagram-v2
     [*] --> RECORDING: Start Recording
-    RECORDING --> PROCESSING: Stop Recording
-    PROCESSING --> READY: Processing Complete
-    PROCESSING --> FAILED: Processing Error
+    RECORDING --> PROCESSING: call.recording_stopped
+    PROCESSING --> READY: call.recording_ready
+    PROCESSING --> FAILED: call.recording_failed
 
-    READY --> TRANSFERRING: Transfer Initiated
-    TRANSFERRING --> AVAILABLE: Transfer Success
-    TRANSFERRING --> READY: Transfer Error (revert + record attempt)
-    TRANSFERRING --> READY: Transfer Cancelled
+    READY --> TRANSFERRING: transfer claim (CAS READY)
+    TRANSFERRING --> AVAILABLE: size-verified R2 copy (CAS TRANSFERRING)
+    TRANSFERRING --> READY: transfer error or cancel
 
-    READY --> EXPIRED: Stream URL lapsed before the R2 copy (14 days)
-    AVAILABLE --> EXPIRED: Platform retention deadline (expire-recordings)
-    EXPIRED --> [*]: Stored assets deleted
-    FAILED --> [*]: Error State
+    READY --> EXPIRED: Stream confirms its copy is gone (COPY_LAPSED)
+    AVAILABLE --> AVAILABLE: Stream copy deleted a day after the copy
+    AVAILABLE --> EXPIRED: retention deadline (RETENTION)
+    EXPIRED --> [*]: stored assets deleted
+    FAILED --> [*]
 ```
+
+Each transition has one enforcer, and every write is a conditional `updateMany` on the prior status.
+
+| Transition                                        | Enforcer                                                                                                    |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `PROCESSING` or placeholder to `READY`            | `handleRecordingReady` in `lib/stream/recording-handlers.ts`, CAS on the pre-ready statuses                 |
+| `READY` to `TRANSFERRING` to `AVAILABLE`          | `lib/stream/recording-transfer-service.ts`; `transferredAt` is written only after a HEAD size check matches |
+| `READY` to `EXPIRED` (`COPY_LAPSED`)              | `expireLapsedCopies` in `lib/stream/recording-retention.ts`                                                 |
+| Stream copy deleted on `AVAILABLE`                | `deleteTransferredStreamCopies` in the same file, which clears `recordingUrl`                               |
+| `AVAILABLE` or `READY` to `EXPIRED` (`RETENTION`) | `expireGroup` in the same file, CAS on `retainableWhere`                                                    |
+| Any live status to `EXPIRED` by a person          | `DELETE /api/stream/recordings/:id`, the decline discard and erasure                                        |
 
 A failed copy never lands in `FAILED`; every transfer failure returns the row to `READY` so the next run retries it. `FAILED` is reached only through `call.recording_failed`.
 
@@ -96,9 +107,20 @@ One platform schedule applies, evaluated by the daily `expire-recordings` job (`
 
 - An organisation can shorten retention for org-scoped recordings (`Organization.streamRecordingRetentionDays`); the effective deadline is the earlier of the two, and sold replays are exempt.
 - Expiry deletes the R2 object, the preview clip and the thumbnail, marks the row `EXPIRED`, and (org-scoped) writes an audit row.
-- A `READY` row whose Stream link lapsed without a copy is also expired; its holders get `410`.
+- **A lapsed copy expires only on Stream's word.** A `READY` row whose Stream link lapsed before the R2 copy is re-listed from Stream, up to 200 rows a run and at most 10 calls at a time (`mapBounded` in `lib/stream/batch.ts`). A listing that still holds the file refreshes the link; a 404 for the call, or a listing without the file, expires the row as `COPY_LAPSED`, and its holders get `410`. A failed read (a 429, an outage or an open circuit breaker) leaves the row `READY` for the next run and counts as a failure. A row recorded more than 15 days ago is past Stream's 14-day retention, so it expires without asking. For example, if Stream answers 429 for three of 40 lapsed rows, those three stay `READY`, the run reports `failed: 3`, and the next day's run asks again.
+- **One report per run.** `RecordingService.getCallRecordingsFromStream` returns a `listed`, `call-not-found` or `unavailable` result and never reports to Sentry itself. `expire-recordings` collects every failed row and sends one warning at the end of the run, so a Stream outage costs one Sentry event a day rather than one per row.
 - **Cancelled bookings.** A cancelled, rejected or expired booking keeps its recordings watchable by the parties until their retention date, exactly like its documents. Released or refunded seats lose access, because playback checks the seat on every request. Recording surfaces show "Available until <date>", "Kept while the booking is active" or "Never expires" (`retentionText` in `lib/stream/recording-copy.ts`). A trial is a single 1:1 session, so it is kept 90 days after the session whatever it later converted into.
 - **Hard delete.** Only untouched offerings can be hard-deleted. The database cascade removes the `Meeting` and `Recording` rows, so `lib/booking/offering-delete.ts` selects each recording's `storagePath` with `tx` before the guarded delete and, after the transaction commits, calls `deleteRecordingAssets` best effort, reporting failures once per request. No sweeper is added.
+
+### Deleting Stream's copy after the R2 copy
+
+Stream keeps its own copy of every recording for 14 days. Once our R2 copy is verified there is no reason to leave a second, vendor-held copy of a personal recording, so the daily `expire-recordings` run deletes it (`deleteTransferredStreamCopies` in `lib/stream/recording-retention.ts`).
+
+- **Which rows.** An `AVAILABLE` `PLATFORM` row with a `storagePath`, a `streamRecordingId`, a non-empty `recordingUrl`, and a `transferredAt` at least 24 hours old and less than 15 days old. Up to 50 rows a run, at most 10 Stream calls at a time.
+- **Why the R2 copy is trustworthy.** The transfer writes `transferredAt` only after `HeadObject` returns a size equal to the bytes streamed, so a row in this arm has a verified object.
+- **Why 24 hours.** For one day after the copy, Stream's copy remains a second source if the R2 object turns out to be bad, and the daily cadence means the delete actually lands between 24 and 48 hours after the copy. Stream would otherwise hold the copy for about 12 more days.
+- **How it is marked.** `deleteStreamRecordingCopy` (`lib/stream/recording-stream-delete.ts`) treats a call Stream does not know, or a filename its listing lacks, as already gone. On success the run clears `recordingUrl` with a CAS on the row's status and its previous URL. Playback of an `AVAILABLE` row reads only `storagePath`, so the cleared URL changes nothing a viewer sees, and the next run no longer selects the row. A failed delete keeps the URL, counts as a failure, and is retried the next day.
+- **Older rows.** A row transferred more than 15 days ago is past Stream's own retention and is not selected, so the arm never spends calls on copies Stream already removed.
 
 ## Plans, runs, batches and sessions
 
@@ -437,7 +459,7 @@ A host can publish a recording as a replay, but purchase is not open yet. The pu
 
 ## Storage
 
-Recordings live in the private R2 bucket and are served by per-request presigned links of 4 to 24 hours by recording length, so long sessions never expire mid-watch. Preview clips and thumbnails live in the public `recordings-previews` bucket under one policy (`lib/storage/bucket-policies.ts`): 50 MB, MP4/WebM and image types. Documents and plan materials live in the private Supabase `documents` bucket, whose type list comes from `lib/documents/file-policy.ts`. The reasoning for the split (object size, egress cost, per-plan upload caps, one signing helper per store) is in [documents/README](../documents/README.md#storage-supabase-for-documents-r2-for-recordings) and [storage management](../storage/management-strategy.md).
+Recordings live in the private R2 bucket and are served by per-request presigned links of 4 to 24 hours by recording length, so long sessions never expire mid-watch. The `familiarise-recordings` bucket aborts incomplete multipart uploads after 7 days, so the billed partial parts a killed copy leaves behind are bounded. Preview clips and thumbnails live in the public `recordings-previews` bucket under one policy (`lib/storage/bucket-policies.ts`): 50 MB, MP4/WebM and image types. Documents and plan materials live in the private Supabase `documents` bucket, whose type list comes from `lib/documents/file-policy.ts`. The reasoning for the split (object size, egress cost, per-plan upload caps, one signing helper per store) is in [documents/README](../documents/README.md#storage-supabase-for-documents-r2-for-recordings) and [storage management](../storage/management-strategy.md).
 
 ## References
 
@@ -464,4 +486,6 @@ Recordings live in the private R2 bucket and are served by per-request presigned
 - **Catch-up dated by the source batch's start.** Superseded by the source session's own recording date.
 - **A trial kept as long as its converted subscription.** Superseded by the 1:1 rule: 90 days after the session.
 - **Deleting only the R2 object and the preview clip.** The row was marked `EXPIRED` while Stream's copy stayed playable for up to 14 days and the thumbnail stayed public. Superseded by `lib/stream/recording-stream-delete.ts` and a purge that clears the thumbnail and transcript; the row keeps its Stream ids until the vendor confirms.
-- **A full refund leaving 1:1 replay access on.** Entitlement was matched by profile id alone. Superseded by `paymentRevoked`; a partially refunded booking keeps access.
+- **A full refund leaving 1:1 replay access on.** Entitlement was matched by profile id alone. Superseded by `paymentRevoked`; a partially refunded booking keeps access. The recordings list (`lib/api/scope/list-recordings.ts`) applies the same `isFullyRefundedPurchase` predicate and returns no thumbnail or preview clip for such a booking.
+- **Expiring every lapsed `READY` row.** One blanket `updateMany` expired a row even when its Stream lookup had failed, and 200 lookups ran at once, which is what produced the 429s. Superseded by bounded lookups and expiry on a confirmed absence only.
+- **Leaving Stream's copy until its own 14-day expiry.** Superseded by the Stream-copy arm above.

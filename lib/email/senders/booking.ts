@@ -48,8 +48,10 @@ import {
   money,
   prepareSpecEmails,
   stageSpecGuarded,
+  stageSpecOncePerRecipient,
   whenText,
   type PreparedRecipientEmails,
+  type RecipientClaim,
   type RecipientEmailSpec,
 } from "./shared";
 
@@ -901,3 +903,12 @@ export const stageDocumentAndRecordingEmail =
   defineLifecycleStager<DocumentAndRecordingEmailArgs>(
     buildDocumentAndRecordingEmail,
   );
+
+/** Stages the notice at most once per recipient under `claim`. */
+export function stageDocumentAndRecordingEmailOnce(
+  args: DocumentAndRecordingEmailArgs,
+  claim: RecipientClaim,
+): Promise<StagedRecipientEmail[]> {
+  const { userIds, spec } = buildDocumentAndRecordingEmail(args);
+  return stageSpecOncePerRecipient(spec, userIds, claim);
+}

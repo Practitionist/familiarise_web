@@ -42,7 +42,7 @@ import * as Sentry from "@sentry/nextjs";
 
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
-import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import {
   CLASS_PREFIX,
   collabChannelId,
@@ -67,7 +67,9 @@ import {
 } from "@/lib/stream/event-channel-service";
 import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
-import { hasAnyOrgPermission } from "@/lib/auth/org-permissions";
+import { collabChannelAccess } from "@/lib/stream/channel-access";
+import { Refusal } from "@/lib/errors/refusal";
+import { BOOKING_CONTEXT_STREAM_USER } from "@/lib/stream/system-users";
 
 const bodySchema = z.discriminatedUnion("kind", [
   z.object({
@@ -101,70 +103,25 @@ function buildBookingContextMessageId(
   return `booking-ctx-${digest}`;
 }
 
-async function isAuthorizedForCollabChannel(
-  userId: string,
-  userRole: string | undefined,
-  planType: "webinar" | "class",
-  planId: string,
-): Promise<boolean | null> {
-  const collaboratorWhere = {
-    status: "ACCEPTED" as const,
-    consultantProfile: { deletedAt: null },
-  };
-  const plan =
-    planType === "webinar"
-      ? await prisma.webinarPlan.findUnique({
-          where: { id: planId },
-          select: {
-            id: true,
-            organizationId: true,
-            consultantProfile: { select: { userId: true } },
-            collaborators: {
-              where: collaboratorWhere,
-              select: { consultantProfile: { select: { userId: true } } },
-            },
-          },
-        })
-      : await prisma.classPlan.findUnique({
-          where: { id: planId },
-          select: {
-            id: true,
-            organizationId: true,
-            consultantProfile: { select: { userId: true } },
-            collaborators: {
-              where: collaboratorWhere,
-              select: { consultantProfile: { select: { userId: true } } },
-            },
-          },
-        });
+const collabChannelRefusals = {
+  orgDeactivated: new Refusal({
+    code: "ORG_DEACTIVATED",
+    httpStatus: 403,
+    userMessage:
+      "This organization has been deactivated, so its collaborator chat is closed.",
+  }),
+  frozen: new Refusal({
+    code: "CHANNEL_FROZEN",
+    httpStatus: 423,
+    userMessage: "This collaborator chat is read-only and cannot be reopened.",
+  }),
+};
 
-  if (!plan) return null;
-
-  if (plan.consultantProfile?.userId === userId) return true;
-  if (plan.collaborators.some((c) => c.consultantProfile.userId === userId)) {
-    return true;
-  }
-  if (userRole && isPrivileged(userRole)) return true;
-
-  if (plan.organizationId && prisma.membership?.findFirst) {
-    const membership = await prisma.membership.findFirst({
-      where: {
-        organizationId: plan.organizationId,
-        userId,
-        status: "ACTIVE",
-        organization: { status: { not: "DEACTIVATED" } },
-      },
-      select: { role: true },
-    });
-    if (
-      membership &&
-      hasAnyOrgPermission(membership.role, ["messaging.read", "catalog.manage"])
-    ) {
-      return true;
-    }
-  }
-
-  return false;
+function refusalJson(refusal: Refusal): NextResponse {
+  return NextResponse.json(
+    { error: refusal.userMessage, code: refusal.code },
+    { status: refusal.httpStatus },
+  );
 }
 
 async function postBookingContextCardIfAbsent(
@@ -268,9 +225,11 @@ async function postBookingContextCardIfAbsent(
     const channel = client.channel("messaging", channelId);
     const messageId = buildBookingContextMessageId(channelId, appt.id);
     const slotStart = appt.occurrences?.[0]?.startsAt ?? null;
+    // Posted as the server-only booking user, so the card cannot be forged from a client.
+    await client.upsertUser({ ...BOOKING_CONTEXT_STREAM_USER, role: "user" });
     const messagePayload: Record<string, unknown> = {
       id: messageId,
-      user_id: userId,
+      user_id: BOOKING_CONTEXT_STREAM_USER.id,
       text: `Booking context: ${title}`,
       booking_appointment_id: appt.id,
       booking_type: appt.appointmentType,
@@ -311,16 +270,14 @@ async function handleCollabChannelOpen(
   const planType = body.webinarPlanId ? "webinar" : "class";
   const planId = (body.webinarPlanId ?? body.classPlanId)!;
 
-  const authorized = await isAuthorizedForCollabChannel(
-    userId,
-    userRole,
-    planType,
-    planId,
-  );
-  if (authorized === null) {
+  const access = await collabChannelAccess(userId, userRole, planType, planId);
+  if (access === "not_found") {
     return NextResponse.json({ error: "Plan not found." }, { status: 404 });
   }
-  if (!authorized) {
+  if (access === "org_deactivated") {
+    return refusalJson(collabChannelRefusals.orgDeactivated);
+  }
+  if (access === "forbidden") {
     return NextResponse.json(
       { error: "You do not have access to this collaborator channel." },
       { status: 403 },
@@ -333,6 +290,10 @@ async function handleCollabChannelOpen(
       { error: "Collaborator channel not available" },
       { status: 404 },
     );
+  }
+  // A wind-down or moderation freeze is never lifted by opening the channel.
+  if (reconciled.frozen) {
+    return refusalJson(collabChannelRefusals.frozen);
   }
 
   const channelId = collabChannelId(planType, planId);
@@ -435,6 +396,12 @@ async function handleEventChannelOpen(
   }
 
   const admission = await addUserToEventChannel(eventType, eventId, userId);
+  if (admission.reason === "member_not_added") {
+    return NextResponse.json(
+      { error: "Chat could not be opened right now. Please try again." },
+      { status: 503 },
+    );
+  }
   if (!admission.success) {
     return NextResponse.json(
       {

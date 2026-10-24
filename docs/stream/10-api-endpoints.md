@@ -133,7 +133,7 @@ Admits an entitled participant to an existing Stream call and upserts the caller
 
 **Location:** `/app/api/meetings/[meetingId]/join/route.ts`
 
-**Authentication:** Required (Better Auth session + DPDP `STREAM_DATA_PROCESSING` consent + active booking entitlement within `[startsAt - 15m, effectiveEndsAt + 30m]`)
+**Authentication:** Required (Better Auth session + DPDP `STREAM_DATA_PROCESSING` consent + active booking entitlement within `[startsAt - 15m, roomEndsAt + 30m]`, where the room end is the booked end plus any granted extension)
 
 **Response (Success - 200):**
 
@@ -149,15 +149,17 @@ Admits an entitled participant to an existing Stream call and upserts the caller
 
 Ends a Stream call for everyone (host-only). Calls `call.end()` on Stream inside `withStreamCircuitBreaker` and synchronously invokes `recordMeetingEndedSynchronously` (`lib/stream/session-handlers.ts`) using CAS (`where: { id: meeting.id, endedAt: meeting.endedAt }`):
 
-- **Pre-Start Device Check (`endedAt < startsAt`)**: Classifies as `"ended_early"`, keeps `AppointmentOccurrence` scheduled (`SCHEDULED`), and immediately rotates `Meeting.streamCallId` to a fresh `occurrence-<uuid>-r<base36>` segment (`endedAt = null`, `endedReason = null`) so upcoming joins open a clean room.
-- **Live Session Termination (`endedAt >= startsAt`)**: Stamps `endedAt = now`, `endedReason = "call_ended"`, and `isRecording = false`, closes open `MeetingPresence` intervals (`leftAt = endedAt`) and `MeetingAttendance` (`lastLeftAt = endedAt`), and prevents unauthorized rejoin.
-- **Error Propagation**: Returns HTTP `503` if Stream's circuit breaker is open, and returns HTTP `500` (never a false `200 OK`) if database state persistence throws an unexpected error.
+- **Pre-Start Device Check (`endedAt < startsAt`)**: Classifies as `"ended_early"`, keeps `AppointmentOccurrence` scheduled (`SCHEDULED`), and immediately rotates `Meeting.streamCallId` to a fresh `occurrence-<uuid>-r<base36>` id, closing the old segment's open presence and attendance rows. `ended_early` is rejoinable, so the next join makes the provisioner build a clean room and clear the end stamp.
+- **Live Session Termination (`endedAt >= startsAt`)**: Stamps `endedAt = now`, `endedReason = "call_ended"`, and `isRecording = false`, closes the segment's open `MeetingPresence` intervals (`leftAt = endedAt`, `closedByEnd = true`) and `MeetingAttendance` (`lastLeftAt = endedAt`), and prevents unauthorized rejoin.
+- **Deliberate-End Guard**: `recordMeetingEndedSynchronously` returns `{ kind: "not_found" | "already_ended" | "recorded" }` and never overwrites a deliberate end (`recordedEndHolds`, driven by `END_REASON_POLICY`). `already_ended` still answers `200`.
+- **Error Propagation**: Returns HTTP `404` with `code: "MEETING_NOT_FOUND"` when no `Meeting` matched the call, HTTP `503` if Stream's circuit breaker is open, and HTTP `500` (never a false `200 OK`) if database state persistence throws an unexpected error.
+- **Rate Limit**: `meetingControlLimiter` (10 per minute per user, shared with `extend`, `reopen` and `live`; `stage` uses its own 60 per minute `meetingStageLimiter`) is applied by `guardMeetingRoute` after authentication and answers `429` with `code: "RATE_LIMITED"`. `applyRateLimit` fails open when Redis errors.
 
 **Location:** `/app/api/meetings/[meetingId]/end/route.ts`
 
 **Authentication:** Required (Host only — plan owner, assigned occurrence consultant, or accepted co-presenter)
 
-**Response (Success - 200):**
+**Response (Success - 200):** `callId` is the id that now represents the room, which is the rotated id after a pre-start `ended_early`.
 
 ```json
 {
@@ -168,7 +170,12 @@ Ends a Stream call for everyone (host-only). Calls `call.end()` on Stream inside
 
 ### POST /api/meetings/[meetingId]/reopen
 
-Safety-valve endpoint allowing a session host or co-presenter to reopen a deliberately ended room while the occurrence remains within `[startsAt - 15m, effectiveEndsAt + 30m]`. Because `call.end()` irreversibly seals the closed Stream `cid`, `/reopen` verifies host/co-presenter authority (`isAuthorizedReopenHost`), DPDP consent, active non-dead occurrence/booking status, rotates `Meeting.streamCallId = "occurrence-<uuid>-r<base36>"` via CAS (`where: { id: meeting.id, endedAt: { not: null } }`), clears `endedAt` / `endedReason` / `isRecording`, and provisions the new Stream call immediately.
+Safety-valve endpoint allowing a session host or co-presenter to reopen a deliberately ended room while the occurrence remains within `[startsAt - 15m, roomEndsAt + 30m]` (booked end plus any extension). Because `call.end()` irreversibly seals the closed Stream `cid`, `/reopen` verifies host/co-presenter authority (`isAuthorizedReopenHost`), DPDP consent, active non-dead occurrence/booking status, and a host-reopenable end reason (`endAllowsHostReopen`). It then builds the call with the provisioner's own payload (`buildRoomCallPlan`), creates the new Stream call first with `getOrCreate` on `occurrence-<uuid>-r<base36>`, and only then rotates `Meeting.streamCallId` via CAS (`where: { id, streamCallId: <read>, endedAt: <read> }`), clearing `endedAt` / `endedReason` / `isRecording`. The extension budget survives because it lives on `Meeting`.
+
+- **Stream Failure**: Nothing is rotated. An open circuit answers HTTP `503`; any other failure answers `500`.
+- **Lost CAS**: Answers `200` with `reopened: false` and the current `streamCallId`; the fresh Stream call stays unused.
+- **Not Ended or Not Reopenable**: A meeting that is not ended answers `200` with `reopened: false`; an ended meeting whose reason is not host-reopenable, or an inactive slot, answers `409`; a closed grace window answers `409`.
+- **Rate Limit**: `meetingControlLimiter` (10 per minute per user), applied directly after authentication.
 
 **Location:** `/app/api/meetings/[meetingId]/reopen/route.ts`
 
@@ -202,7 +209,10 @@ Transitions a 1-to-Many backstage session (`WEBINAR` or `CLASS`) to live via `ca
 
 ### POST /api/meetings/[meetingId]/extend
 
-Extends the active call's `settings_override.limits.max_duration_seconds` by `+15 minutes` (`900s`) free of charge once per session when neither the consultant, co-presenters, nor active participants hold a conflicting confirmed booking starting within `[slotStartsAt, max(slotEndsAt, now) + 15m]`. Updates Stream `settings_override` + `custom.sessionEndsAt` / `custom.extendedSeconds = 900` / `custom.extensionsUsed = 1`, and atomically advances `AppointmentOccurrence.endsAt` via CAS (`where: { id: occurrence.id, endsAt: slotEndsAt }`) — running idempotent DB CAS recovery even when retrying an `alreadyExtended` call whose prior DB commit failed.
+Grants the host one free `+15 minutes` (`900s`) room extension per `Meeting` when neither the consultant, co-presenters, presenter collaborators, nor active participants hold a conflicting confirmed booking within `[startsAt, max(roomEndsAt, now) + 15m]`. The booked `AppointmentOccurrence.endsAt` never moves. One CAS `prisma.meeting.updateMany` increments `Meeting.extendedSeconds` and `Meeting.extensionsUsed` (its `WHERE` requires `endedAt: null`, `extensionsUsed` equal to the value read and below `MAX_MEETING_EXTENSIONS`, and the occurrence still `SCHEDULED`, without an outcome, and not deleted). Only then, outside any transaction, the route mirrors the extension to Stream: `max_duration_seconds = max(existing, derived room cap)` and `custom = { ...existing, sessionEndsAt, sessionBaseEndsAt, extendedSeconds, extensionsUsed }`. Every Stream value is derived from Postgres, so a retry converges instead of adding time.
+
+- **Rate Limit**: `meetingControlLimiter` (10 per minute per user).
+- **Retry**: When `extensionsUsed` is already at the maximum, the route re-mirrors to Stream. It answers `200` if Stream was behind and `409` with `alreadyExtended: true` if it was already in sync.
 
 **Location:** `/app/api/meetings/[meetingId]/extend/route.ts`
 
@@ -221,7 +231,15 @@ Extends the active call's `settings_override.limits.max_duration_seconds` by `+1
 }
 ```
 
-**Response (Conflict - 409):** Returned when the free `+15m` extension has already been used (`alreadyExtended: true`, returning healed `endsAt`), or when another session overlaps (`hasConflictingNextBooking: true`).
+`endsAt` in the response is the room end. The residual risk is that `occurrence_no_confirmed_overlap` sees only booked ends, so the extension is protected only by this route's conflict check.
+
+**Response (Conflict - 409):** Returned in three cases.
+
+- `code: "SESSION_NOT_EXTENDABLE"` when the meeting has ended, or the occurrence is deleted, not `SCHEDULED`, or already has an outcome.
+- `alreadyExtended: true` (with the room-end `endsAt`) when the free `+15m` extension has already been used.
+- `hasConflictingNextBooking: true` when another session overlaps the extension.
+
+**Response (Service Unavailable - 503):** `code: "EXTEND_SYNC_PENDING"` when Stream could not take the mirror. The extension is saved in Postgres and a retry converges. An open circuit answers a plain `503`.
 
 ### GET & POST /api/meetings/[meetingId]/qa
 

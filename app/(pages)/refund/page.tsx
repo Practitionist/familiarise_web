@@ -1,15 +1,16 @@
-"use client";
-
+import type { Metadata } from "next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { RefreshCw } from "lucide-react";
 import Link from "next/link";
-import {
-  COMPANY_INFO,
-  PAGE_META,
-  POLICY_DATES,
-  getMailtoLink,
-} from "../constants";
+import { CompanyDetails } from "../CompanyDetails";
+import { COMPANY_INFO } from "@/lib/company";
+import { PAGE_META, POLICY_DATES, getMailtoLink } from "../constants";
+
+export const metadata: Metadata = {
+  title: `${PAGE_META.refund.title} | Familiarise`,
+  description: PAGE_META.refund.description,
+};
 
 export default function RefundPolicyPage() {
   return (
@@ -306,13 +307,9 @@ export default function RefundPolicyPage() {
                   </p>
                   <ul>
                     <li>
-                      {/* #1833 review: tie the "full refund" promise to
-                          Section 6's fee deduction so the amount isn't
-                          ambiguous (CodeRabbit). */}
                       One-on-one consultation: a host no-show or a session cut
                       short by the host is cancelled with a full, automatic
-                      refund — the same non-refundable-fee deduction in Section
-                      6 applies here as it does to every refund on this page.
+                      refund of the amount you paid (see Section 6).
                     </li>
                     <li>
                       Live classes and webinars: a voided session is offered as
@@ -393,8 +390,6 @@ export default function RefundPolicyPage() {
                   Dissatisfaction with service after consuming majority of
                   purchased sessions
                 </li>
-                <li>Platform commission fees (non-refundable)</li>
-                <li>Payment gateway charges (non-refundable)</li>
               </ul>
 
               <Separator className="my-6" />
@@ -494,27 +489,27 @@ export default function RefundPolicyPage() {
               </h2>
               <ul>
                 <li>
-                  The platform service fee is <strong>non-refundable</strong> in
-                  all cases
+                  The platform fee is paid out of the expert's share of the
+                  booking and is never added to your price
                 </li>
                 <li>
-                  Payment gateway charges (Razorpay fees) are{" "}
-                  <strong>non-refundable</strong>
+                  Familiarise does not deduct the platform fee or the payment
+                  gateway's charges from your refund
                 </li>
                 <li>
-                  Only the consultant's service fee portion is eligible for
-                  refunds
+                  Your refund is the percentage of the amount you paid, GST
+                  included, that the cancellation terms of your booking allow
                 </li>
                 <li>
-                  The displayed refund amount will be the amount you receive
-                  after deducting non-refundable fees
+                  The refund amount is shown before you confirm a cancellation,
+                  and it is the amount you receive
                 </li>
               </ul>
               <div className="bg-muted p-4 rounded-lg mt-4">
                 <p className="text-sm">
-                  <strong>Example:</strong> If you paid ₹1,000 for a
-                  consultation (₹850 consultant fee + ₹150 platform/gateway
-                  fees), a full refund would return ₹850, not ₹1,000.
+                  <strong>Example:</strong> If you paid ₹1,180 for a
+                  consultation (₹1,000 plus 18% GST), a 100% refund returns
+                  ₹1,180 and a 50% refund returns ₹590.
                 </p>
               </div>
 
@@ -548,7 +543,6 @@ export default function RefundPolicyPage() {
                   Number of sessions attended vs. total sessions purchased
                 </li>
                 <li>Cancellation timing relative to the service date</li>
-                <li>Administration fees for processing (where applicable)</li>
               </ul>
 
               <Separator className="my-6" />
@@ -778,19 +772,7 @@ export default function RefundPolicyPage() {
                 need assistance with a cancellation or refund request, please
                 contact us:
               </p>
-              <div className="bg-muted p-4 rounded-lg mt-4">
-                <p>
-                  <strong>Company Name:</strong> {COMPANY_INFO.name}
-                </p>
-                <p>
-                  <strong>Email:</strong>{" "}
-                  <a
-                    href={getMailtoLink()}
-                    className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
-                  >
-                    {COMPANY_INFO.email}
-                  </a>
-                </p>
+              <CompanyDetails>
                 <p>
                   <strong>Support:</strong>{" "}
                   <Link
@@ -804,7 +786,7 @@ export default function RefundPolicyPage() {
                   <strong>Response Time:</strong> We aim to respond to all
                   inquiries within 24-48 hours
                 </p>
-              </div>
+              </CompanyDetails>
 
               <Separator className="my-6" />
 
