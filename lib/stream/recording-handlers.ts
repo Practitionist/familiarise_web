@@ -8,7 +8,8 @@ import prisma from "@/lib/prisma";
 import { RecordingStatus, RecordingStorageType } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
 import { EMAIL_BUDGET_MS } from "@/lib/email";
-import { stageDocumentAndRecordingEmail } from "@/lib/email/senders/booking";
+import { stageDocumentAndRecordingEmailOnce } from "@/lib/email/senders/booking";
+import { permanentFailure } from "@/lib/webhooks/event-log";
 import { type StagedTrigger } from "@/lib/novu";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import {
@@ -141,6 +142,52 @@ async function findMeetingForRecordingFailed(streamCallId: string) {
   });
 }
 
+async function findMeetingForRecordingStarted(streamCallId: string) {
+  const direct = await prisma.meeting.findUnique({ where: { streamCallId } });
+  if (direct) return direct;
+  const slotId = parseSlotIdFromCallId(streamCallId);
+  if (!slotId) return null;
+  return prisma.meeting.findUnique({
+    where: { appointmentOccurrenceId: slotId },
+  });
+}
+
+/** A Stream timestamp, or now when it does not parse. */
+function eventTime(value: string): Date {
+  const at = new Date(value);
+  return Number.isNaN(at.getTime()) ? new Date() : at;
+}
+
+/**
+ * Clear the REC flag only for the meeting's current call and a segment that
+ * began no later than `at`, so a late event for an earlier segment or a
+ * rotated call never clears a live one.
+ */
+function clearRecordingFlag(
+  meetingId: string,
+  streamCallId: string,
+  at: Date,
+): Promise<{ count: number }> {
+  return prisma.meeting.updateMany({
+    where: {
+      id: meetingId,
+      streamCallId,
+      OR: [{ recordingStartedAt: null }, { recordingStartedAt: { lte: at } }],
+    },
+    data: { isRecording: false },
+  });
+}
+
+/** Statuses a ready notice may describe; a removed or expired row is never announced. */
+const NOTIFIABLE_STATUSES: RecordingStatus[] = [
+  RecordingStatus.READY,
+  RecordingStatus.TRANSFERRING,
+  RecordingStatus.AVAILABLE,
+];
+
+/** Claims outlive the webhook sweeper's 168-hour retry horizon. */
+const NOTICE_CLAIM_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
 // Types for Stream webhook payloads
 export interface StreamRecordingStartedEvent {
   call_cid: string;
@@ -180,9 +227,7 @@ export async function handleRecordingStarted(
   });
 
   try {
-    const meeting = await prisma.meeting.findUnique({
-      where: { streamCallId },
-    });
+    const meeting = await findMeetingForRecordingStarted(streamCallId);
 
     if (!meeting) {
       streamLogger.warn(
@@ -194,7 +239,16 @@ export async function handleRecordingStarted(
       return;
     }
 
-    const startedAt = new Date(created_at);
+    if (meeting.streamCallId !== streamCallId) {
+      streamLogger.info("Recording started on a superseded call; flag kept", {
+        sessionId: meeting.id,
+        streamCallId,
+        currentStreamCallId: meeting.streamCallId,
+      });
+      return;
+    }
+
+    const startedAt = eventTime(created_at);
     const shouldAdvanceStartedAt =
       !meeting.recordingStartedAt || startedAt > meeting.recordingStartedAt;
     const metadataUpdate = {
@@ -206,7 +260,7 @@ export async function handleRecordingStarted(
 
     // Guard isRecording=true via CAS on endedAt=null so out-of-order starts never re-arm ended meetings.
     const activated = await prisma.meeting.updateMany({
-      where: { id: meeting.id, endedAt: null },
+      where: { id: meeting.id, streamCallId, endedAt: null },
       data: {
         isRecording: true,
         ...metadataUpdate,
@@ -260,12 +314,21 @@ export async function handleRecordingStopped(
       return;
     }
 
-    await prisma.meeting.update({
-      where: { id: meeting.id },
-      data: {
-        isRecording: false,
-      },
-    });
+    const cleared = await clearRecordingFlag(
+      meeting.id,
+      streamCallId,
+      eventTime(event.created_at),
+    );
+    if (cleared.count === 0) {
+      streamLogger.info(
+        "Stale recording stop ignored; a later segment is live",
+        {
+          sessionId: meeting.id,
+          streamCallId,
+        },
+      );
+      return;
+    }
 
     await prisma.recording.updateMany({
       where: {
@@ -380,10 +443,22 @@ function resolveRecordingNotificationMeta(
   };
 }
 
+/**
+ * Announce a live recording. A removed or expired row is never announced, and
+ * the bell (`transactionId`) and email (per-recipient claim) are each
+ * at-most-once, so a repeated ready event or a reconciler pass stays silent.
+ */
 export async function stageAndSendRecordingReadyNotifications(
   appointment: RecordingNotificationAppointment | null | undefined,
   recordingId: string,
 ): Promise<void> {
+  const row = await prisma.recording.findUnique({
+    where: { id: recordingId },
+    select: { status: true, removedAt: true },
+  });
+  if (!row || row.removedAt || !NOTIFIABLE_STATUSES.includes(row.status)) {
+    return;
+  }
   const userIds = await getEventAttendeeIds(appointment);
   if (userIds.length === 0) return;
 
@@ -394,29 +469,36 @@ export async function stageAndSendRecordingReadyNotifications(
     "recordings",
   );
 
-  const [bellOutcome, emailOutcome] = await Promise.allSettled([
-    Promise.resolve(
-      notifyRecordingAvailable(
-        userIds,
-        {
-          ...notificationScope(appointment?.organizationId),
-          appointmentType,
-          consultantName,
-          dashboardUrl,
-        },
-        `recording.ready:${recordingId}`,
-        { deferAttempt: true, entityRef: `recording:${recordingId}` },
-      ),
+  // Sequential: the email claim runs in a transaction, which holds the only
+  // pooled connection under PG_POOL_MAX=1.
+  const [bellOutcome] = await Promise.allSettled([
+    notifyRecordingAvailable(
+      userIds,
+      {
+        ...notificationScope(appointment?.organizationId),
+        appointmentType,
+        consultantName,
+        dashboardUrl,
+      },
+      `recording.ready:${recordingId}`,
+      { deferAttempt: true, entityRef: `recording:${recordingId}` },
     ),
-    Promise.resolve(
-      stageDocumentAndRecordingEmail(prisma, {
+  ]);
+  const [emailOutcome] = await Promise.allSettled([
+    stageDocumentAndRecordingEmailOnce(
+      {
         entityId: recordingId,
         userIds,
         kind: "RECORDING_READY",
         appointmentType,
         dashboardUrl,
-      }),
-    ).catch(() => []),
+      },
+      {
+        scope: "stream.recording-ready",
+        key: (userId) => `recording-ready:${recordingId}:${userId}`,
+        ttlMs: NOTICE_CLAIM_TTL_MS,
+      },
+    ),
   ]);
 
   const staged = bellOutcome.status === "fulfilled" ? bellOutcome.value : [];
@@ -437,9 +519,9 @@ export async function stageAndSendRecordingReadyNotifications(
     "recording.ready",
   );
 
-  if (bellOutcome.status === "rejected") {
-    throw bellOutcome.reason;
-  }
+  // A rejection leaves no claim behind, so the retried event stages it again.
+  if (bellOutcome.status === "rejected") throw bellOutcome.reason;
+  if (emailOutcome.status === "rejected") throw emailOutcome.reason;
 }
 
 export type ReadyRecordingParams = {
@@ -585,8 +667,11 @@ export async function handleRecordingReady(
       streamLogger.warn("Meeting session not found for recording ready event", {
         streamCallId,
       });
+      // The orphan reconciler re-lists the call if its meeting appears later.
       throw new Error(
-        `Meeting session not found for recording ready event (${streamCallId})`,
+        permanentFailure(
+          `recording_ready for unknown meeting (${streamCallId})`,
+        ),
       );
     }
 
@@ -606,12 +691,7 @@ export async function handleRecordingReady(
         sessionId: session_id,
         filename,
       });
-      if (meeting.isRecording) {
-        await prisma.meeting.update({
-          where: { id: meeting.id },
-          data: { isRecording: false },
-        });
-      }
+      await clearRecordingFlag(meeting.id, streamCallId, endDate);
       return;
     }
 
@@ -629,10 +709,7 @@ export async function handleRecordingReady(
     });
 
     if (meeting.isRecording) {
-      await prisma.meeting.update({
-        where: { id: meeting.id },
-        data: { isRecording: false },
-      });
+      await clearRecordingFlag(meeting.id, streamCallId, endDate);
     }
 
     const recordingId = recording.id;
@@ -658,19 +735,13 @@ const RECORDING_FAILED_NOTIFY_CONCURRENCY = 5;
 async function notifyRecordingFailedChunked(
   userIds: string[],
   streamCallId: string,
+  recordingId: string,
   organizationId: string | null | undefined,
 ): Promise<void> {
   if (userIds.length === 0) return;
   const dashboardUrl = notificationHref(organizationId, "recordings");
   const stagedBells: Array<StagedTrigger | undefined> = [];
   let failureCount = 0;
-
-  const failedEmailsPromise = stageDocumentAndRecordingEmail(prisma, {
-    entityId: streamCallId,
-    userIds,
-    kind: "RECORDING_FAILED",
-    dashboardUrl,
-  }).catch(() => []);
 
   for (
     let i = 0;
@@ -686,6 +757,7 @@ async function notifyRecordingFailedChunked(
             streamCallId,
             dashboardUrl,
           },
+          `recording.failed:${recordingId}`,
           { deferAttempt: true },
         ),
       ),
@@ -699,7 +771,20 @@ async function notifyRecordingFailedChunked(
     }
   }
 
-  const failedEmails = await failedEmailsPromise;
+  // After the bells: the claim transaction holds the only pooled connection.
+  const failedEmails = await stageDocumentAndRecordingEmailOnce(
+    {
+      entityId: streamCallId,
+      userIds,
+      kind: "RECORDING_FAILED",
+      dashboardUrl,
+    },
+    {
+      scope: "stream.recording-failed",
+      key: (userId) => `recording-failed:${recordingId}:${userId}`,
+      ttlMs: NOTICE_CLAIM_TTL_MS,
+    },
+  ).catch(() => []);
 
   if (failureCount > 0) {
     streamLogger.warn(
@@ -755,23 +840,23 @@ export async function handleRecordingFailed(
       return;
     }
 
-    await prisma.meeting.update({
-      where: { id: meeting.id },
-      data: {
-        isRecording: false,
-      },
-    });
+    await clearRecordingFlag(
+      meeting.id,
+      streamCallId,
+      eventTime(event.created_at),
+    );
 
-    const alreadyRecorded = await prisma.recording.findFirst({
-      where: {
-        meetingId: meeting.id,
-        streamCallId,
-        status: RecordingStatus.FAILED,
-      },
-      select: { id: true },
-    });
-    if (!alreadyRecorded) {
-      await prisma.recording.create({
+    const failedRow =
+      (await prisma.recording.findFirst({
+        where: {
+          meetingId: meeting.id,
+          streamCallId,
+          status: RecordingStatus.FAILED,
+        },
+        select: { id: true },
+      })) ??
+      (await prisma.recording.create({
+        select: { id: true },
         data: {
           title: "Recording Failed",
           recordingUrl: "",
@@ -783,8 +868,7 @@ export async function handleRecordingFailed(
           organizationId:
             meeting.occurrence.appointment?.organizationId ?? null,
         },
-      });
-    }
+      }));
 
     const appointment = meeting.occurrence.appointment;
     const userIds = await getEventAttendeeIds(appointment);
@@ -792,6 +876,7 @@ export async function handleRecordingFailed(
     await notifyRecordingFailedChunked(
       userIds,
       streamCallId,
+      failedRow.id,
       appointment?.organizationId,
     );
 

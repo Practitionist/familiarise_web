@@ -45,6 +45,7 @@ jest.mock("../../lib/prisma", () => {
       ...txMock,
       recording: {
         findFirst: jest.fn(),
+        findUnique: jest.fn(),
         create: jest.fn(),
         updateMany: jest.fn(),
         updateManyAndReturn: jest.fn(),
@@ -825,6 +826,7 @@ describe("Stream Webhook Megafix Regression Suite", () => {
     it("advances recordingStartedAt monotonically on handleRecordingStarted and transitions RECORDING -> PROCESSING on stop", async () => {
       (prisma.meeting.findUnique as jest.Mock).mockResolvedValue({
         id: "mtg-rec",
+        streamCallId: "call-rec",
         recordingStartedAt: new Date("2026-10-10T10:10:00Z"),
         recordingStartedBy: "host-1",
       });
@@ -841,7 +843,7 @@ describe("Stream Webhook Megafix Regression Suite", () => {
         created_at: "2026-10-10T10:05:00Z",
       });
       expect(prisma.meeting.updateMany).toHaveBeenLastCalledWith({
-        where: { id: "mtg-rec", endedAt: null },
+        where: { id: "mtg-rec", streamCallId: "call-rec", endedAt: null },
         data: { isRecording: true },
       });
 
@@ -852,7 +854,7 @@ describe("Stream Webhook Megafix Regression Suite", () => {
         created_at: "2026-10-10T10:15:00Z",
       });
       expect(prisma.meeting.updateMany).toHaveBeenLastCalledWith({
-        where: { id: "mtg-rec", endedAt: null },
+        where: { id: "mtg-rec", streamCallId: "call-rec", endedAt: null },
         data: {
           isRecording: true,
           recordingStartedAt: new Date("2026-10-10T10:15:00Z"),

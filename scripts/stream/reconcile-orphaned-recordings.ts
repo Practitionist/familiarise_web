@@ -86,6 +86,7 @@ async function runRecoveryPass(
       outcome = await RecordingService.syncSessionRecordings(
         session as SyncableSession,
         recovered,
+        { notify: true },
       );
     } catch (error) {
       result.success = false;
