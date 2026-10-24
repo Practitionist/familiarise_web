@@ -1226,13 +1226,60 @@ export async function expireUnallocatedPaidSubscriptionForOne(
   );
 }
 
-/**
- * #1775 C-3 — a paid plan (PENDING, SUCCEEDED payment captured more than 48 h
- * ago) with no live session and no live proposal expires with reason
- * UNALLOCATED_48H and is refunded in full through the front door. Failure
- * matrix: allocation first → the cohort CAS matches 0 rows; sweep first → the
- * allocation's PENDING→APPROVED CAS rolls back (409 to the consultant).
- */
+async function stageFreshUnallocatedRefunds(
+  limits: StaleRequestRunLimits,
+  cohort: ReturnType<typeof unallocatedCohort>,
+  pastDeadline: () => boolean,
+) {
+  const stale = await prisma.subscription.findMany({
+    where: { status: AppointmentStatus.PENDING, ...cohort },
+    select: UNALLOCATED_SELECT,
+    orderBy: [{ requestedAt: "asc" }, { id: "asc" }],
+    take: limits.maxRequests + 1,
+  });
+  const markers: RefundOwedMarker[] = [];
+  const errors: string[] = [];
+  const out = {
+    expired: 0,
+    markers,
+    errors,
+    hasMore: stale.length > limits.maxRequests,
+  };
+  let remainingPayments = limits.maxRequests;
+  for (const subscription of stale.slice(0, limits.maxRequests)) {
+    if (pastDeadline() || remainingPayments === 0) {
+      out.hasMore = true;
+      break;
+    }
+    try {
+      const stamped = await expireOneUnallocated(
+        subscription,
+        cohort,
+        limits.maxRequests,
+        pastDeadline,
+        remainingPayments,
+      );
+      if (stamped !== null) {
+        out.expired += 1;
+        remainingPayments -= stamped.length;
+        out.markers.push(...stamped);
+      }
+    } catch (error) {
+      out.hasMore = true;
+      if (
+        error instanceof UnallocatedPaymentCapacityError &&
+        error.kind === "allowance"
+      )
+        break;
+      out.errors.push(
+        `Failed to expire unallocated subscription ${subscription.id}: ${error}`,
+      );
+    }
+  }
+  return out;
+}
+
+/** Legacy and fresh staging share admission with sequential refund delivery. */
 async function expireUnallocatedPaidSubscriptions(
   limits: StaleRequestRunLimits,
 ) {
@@ -1259,44 +1306,15 @@ async function expireUnallocatedPaidSubscriptions(
     if (pastDeadline()) {
       out.hasMore = true;
     } else {
-      const stale = await prisma.subscription.findMany({
-        where: { status: AppointmentStatus.PENDING, ...cohort },
-        select: UNALLOCATED_SELECT,
-        orderBy: [{ requestedAt: "asc" }, { id: "asc" }],
-        take: limits.maxRequests + 1,
-      });
-      out.hasMore ||= stale.length > limits.maxRequests;
-      let remainingPayments = limits.maxRequests;
-      for (const subscription of stale.slice(0, limits.maxRequests)) {
-        if (pastDeadline() || remainingPayments === 0) {
-          out.hasMore = true;
-          break;
-        }
-        try {
-          const stamped = await expireOneUnallocated(
-            subscription,
-            cohort,
-            limits.maxRequests,
-            pastDeadline,
-            remainingPayments,
-          );
-          if (stamped !== null) {
-            out.expired += 1;
-            remainingPayments -= stamped.length;
-            markers.push(...stamped);
-          }
-        } catch (error) {
-          out.hasMore = true;
-          if (
-            error instanceof UnallocatedPaymentCapacityError &&
-            error.kind === "allowance"
-          )
-            break;
-          out.errors.push(
-            `Failed to expire unallocated subscription ${subscription.id}: ${error}`,
-          );
-        }
-      }
+      const fresh = await stageFreshUnallocatedRefunds(
+        limits,
+        cohort,
+        pastDeadline,
+      );
+      out.expired += fresh.expired;
+      out.hasMore ||= fresh.hasMore;
+      out.errors.push(...fresh.errors);
+      markers.push(...fresh.markers);
     }
   } catch (error) {
     out.errors.push(`Failed to stage unallocated refunds: ${error}`);
