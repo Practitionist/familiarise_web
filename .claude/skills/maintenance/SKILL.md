@@ -21,7 +21,7 @@ Use one registered implementation per job and keep the required Netlify standby.
 `lib/cron/schedule.ts` owns configured cadence, windows and HTTP request bounds;
 the registry does not define phase or timeout fields. Regenerate the AST-derived
 inventory with `npm run cron:reference` and verify `npm run cron:reference:check`.
-The catalog has no worker, database or environment imports. Its nine-target figure
+The catalog has no worker, database or environment imports. Its ten-target figure
 is a tested design bound, not a runtime dispatch cap. Configured Actions ownership
 remains migration work until bounded replacements have actually run.
 
@@ -46,3 +46,5 @@ references for transaction-client, deployed-runtime and environment constraints.
 ## Worktree verification
 
 The Jest configuration keeps an explicit `@/` source mapping while retaining Next.js’s default mocks and transforms. Run targeted suites through the repository config. A CLI `--moduleNameMapper` replaces the entire map and can discard `server-only`, asset and Redis-edge mocks; do not use it as a shortcut for alias resolution.
+
+When merging a worker migration, port its roster, limit, timeout and ledger-yield changes into the shared catalog; do not restore the adapter’s former inline schedule. Check generated output against the same inputs before and after generator refactors. Keep blank workflow names within their own source block and preserve escaped Markdown pipes. See `references/cron-ticker.md` for the current document-purge schedule and mocked verification boundary.

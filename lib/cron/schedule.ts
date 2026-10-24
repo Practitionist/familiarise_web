@@ -32,6 +32,7 @@ export const TARGETS = [
   "retry-moderation-enforcement",
   "vest-referral-credits",
   "support-sla-sweep",
+  "purge-deleted-documents",
   "process-payouts",
   "reconcile-disputes",
   "create-payout-batch",
@@ -81,6 +82,7 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "reconcile-orphaned-payments": 10,
   "reconcile-refunds": 10,
   "support-sla-sweep": 20,
+  "purge-deleted-documents": 100,
   "process-payouts": 5,
   "handle-stuck-payouts": 5,
   "reconcile-payout-status": 8,
@@ -140,6 +142,7 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "retry-moderation-enforcement": 30,
   "vest-referral-credits": 30,
   "support-sla-sweep": 30,
+  "purge-deleted-documents": 60,
   "process-payouts": 60,
   "handle-stuck-payouts": 120,
   "reconcile-payout-status": 120,
@@ -166,7 +169,7 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
 
 /**
  * Deterministic phase offsets (in minutes, modulo each target's interval).
- * Interval targets already fill every tick to 8 or 9, so each addition is
+ * Interval targets fill busy ticks, so each addition is
  * placed on a minute whose worst-case tick (month start, Monday, quarter start)
  * still has room; the cadence test pins {@link MAX_TARGETS_PER_TICK}.
  */
@@ -199,6 +202,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "retry-moderation-enforcement": 25,
   "vest-referral-credits": 5,
   "support-sla-sweep": 10,
+  "purge-deleted-documents": 35,
   "process-payouts": 0,
   "reconcile-disputes": 0,
   "create-payout-batch": 5,
@@ -224,7 +228,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
 };
 
 /** Regression ceiling for due work, enforced by the calendar test. */
-export const MAX_TARGETS_PER_TICK = 9;
+export const MAX_TARGETS_PER_TICK = 10;
 
 /**
  * A UTC calendar window. Inside it the target fires on its every/offset slots;
@@ -327,8 +331,8 @@ export function dueTargets(now: Date): Target[] {
     const offset = TARGET_OFFSET_MINUTES[name] ?? 0;
     return (((minuteOfDay - offset) % every) + every) % every < 5;
   });
-  // The ledger report persists its cursor, so busy slots can yield without losing coverage.
-  return due.length > MAX_TARGETS_PER_TICK
+  // The ledger report persists its cursor and yields at the cap; other jobs keep their slots.
+  return due.length >= MAX_TARGETS_PER_TICK
     ? due.filter((name) => name !== "reconcile-ledgers")
     : due;
 }
@@ -355,6 +359,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "alert-orphaned-payments": 20_000,
   "reconcile-orphaned-payments": 20_000,
   "process-data-exports": 20_000,
+  "purge-deleted-documents": 20_000,
   "retry-moderation-enforcement": 20_000,
   "process-payouts": 24_000,
   "handle-stuck-payouts": 24_000,
@@ -396,8 +401,9 @@ export function targetRequest(
   ]
     .filter((q): q is string => q !== null)
     .join("&");
+  const querySuffix = query ? "?" + query : "";
   return {
-    url: `${baseUrl}/api/cleanup/${name}${query ? `?${query}` : ""}`,
+    url: `${baseUrl}/api/cleanup/${name}${querySuffix}`,
     timeoutMs: TARGET_TIMEOUTS_MS[name] ?? PER_TARGET_TIMEOUT_MS,
   };
 }

@@ -21,6 +21,8 @@ on a production schedule.
 
 `lib/cron/schedule.ts` owns target names, cadence, offsets, calendar windows, row limits and request timeouts. `JOB_SCHEDULES` exposes their effective values and `scheduleFor(name)` supports lookup. Dispatchers and generated schedule metadata consume this catalog instead of copying maps or scraping the Netlify adapter. Completion SLOs remain separate from configured cadence. The catalog has no database, vendor client or environment reads. `npm run cron:reference` generates `docs/maintenance/04-cron-jobs-reference.md` from this catalog, executable registry AST properties, worker lease declarations and operational workflow steps. `npm run cron:reference:check` detects stale output; it does not verify deployed execution. Import schedule helpers directly from the catalog; the Netlify adapter contains platform dispatch and failure reporting.
 
+Document retention (`purge-deleted-documents`) runs hourly at `:35`, with a 100-row request limit and 20-second HTTP timeout. Keep these values in the shared catalog when merging worker changes. The ten-target bound and ledger yielding must match the current cadence/collision test.
+
 ## Lease, replay and failure
 
 `withCronLock` uses a Postgres `SystemJobExecution` lease and its partial unique
@@ -53,7 +55,7 @@ callback gets `statusFor` and the inferred outcome. A lease-held 409 is an
 attempted run, never fresh successful work.
 
 `reconcile-ledgers` runs as an hourly `:55` bounded slice whose cursor persists on
-its report, so a tick that would exceed `MAX_TARGETS_PER_TICK` drops it first
+its report, so a tick that reaches `MAX_TARGETS_PER_TICK` drops it first
 without losing coverage. It answers 200 with summary status RUNNING while work
 remains and 207 once a completed audit has discrepancies; it is listed in
 `PARTIAL_FAILURE_TARGETS`, so that 207 counts as failed.
@@ -108,8 +110,8 @@ Never create 3-layer wrappers. A job has one implementation, registered in
 5. Test same-job overlap, cross-job races, sequential replay and missed schedules.
 6. Update the generated job reference and operational recovery instructions.
 7. Put a ticker job in `lib/cron/schedule.ts` (`TARGETS` with an offset or a `TARGET_WINDOWS` slot) so
-   the cadence/collision tests preserve the nine-target design bound.
-   Only the resumable ledger target yields when this bound would be exceeded;
+   the cadence/collision tests preserve the ten-target design bound.
+   Only the resumable ledger target yields when the due roster reaches this bound;
    the dispatcher does not truncate other due work.
 8. If the job moves money or payouts, add its slug to `FINANCIAL_JOB_NAMES`
    (`lib/cron/financial-jobs.ts`). The maintenance gate then also stops it in
@@ -118,6 +120,10 @@ Never create 3-layer wrappers. A job has one implementation, registered in
 Some existing jobs intentionally take no row limit. That is not evidence that
 an unbounded implementation fits a function envelope; inspect its actual work.
 Calendar-window schedules also require explicit missed-window recovery.
+
+## Source-only verification
+
+Generator changes must preserve output for unchanged executable inputs, including blank workflow-name fallback, Markdown pipe escaping and unresolved lease labels. Run `cron:reference:check` and the inventory/catalog/ticker Jest suites through the repository configuration. These checks parse source and mock runtime dependencies; they require no live database or vendor calls. The canonical `node_modules` symlink supplies tools in worktrees, but generated Prisma types must match the worktree schema for checks that include workers. Use an isolated matching client for focused typechecks rather than replacing the shared generated client.
 
 ## Deprecated & Superseded Approaches
 

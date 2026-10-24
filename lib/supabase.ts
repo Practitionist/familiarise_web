@@ -2,6 +2,8 @@ import "server-only";
 import * as Sentry from "@sentry/nextjs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { bucketPolicyFor } from "@/lib/storage/bucket-policies";
+
 // Storage wire types derived from the supabase-js client surface (do NOT
 // reintroduce `@supabase/storage-js`: supabase-js does not re-export
 // FileObject/SearchOptions, and the direct dep only risks version skew).
@@ -591,12 +593,10 @@ const uploadToSupabase = async (
   bucketName: string = "documents",
 ): Promise<{ url: string | null; error: string | null }> => {
   try {
-    // Ensure bucket exists — documents bucket is private
-    const isPrivateBucket = bucketName === "documents";
-    const bucketReady = await ensureBucketExists(
-      bucketName,
-      isPrivateBucket ? { public: false } : undefined,
-    );
+    // Ensure bucket exists — its policy (visibility, MIME, size) lives in
+    // `lib/storage/bucket-policies.ts`, not at this call site.
+    const isPrivateBucket = bucketPolicyFor(bucketName)?.public === false;
+    const bucketReady = await ensureBucketExists(bucketName);
     if (!bucketReady) {
       return {
         url: null,

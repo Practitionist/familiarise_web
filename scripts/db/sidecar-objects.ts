@@ -119,15 +119,19 @@ export function parseSidecarSql(sql: string, source: string): SidecarObject[] {
   return out;
 }
 
-/** Every declared object across every .sql file in a sidecar directory. */
+/** The files `db:sidecars` replays; other prisma/sql files are one-off rollouts of schema-declared objects. */
+export const SIDECAR_FILES = [
+  "check-constraints.sql",
+  "ledger-triggers.sql",
+  "payment-legs-triggers.sql",
+] as const;
+
+/** Every declared object across the sidecar files in `dir`. */
 export function parseSidecarDirectory(dir: string): SidecarObject[] {
-  return fs
-    .readdirSync(dir)
-    .filter((f) => f.endsWith(".sql"))
-    .sort()
-    .flatMap((file) =>
+  return SIDECAR_FILES.filter((f) => fs.existsSync(path.join(dir, f))).flatMap(
+    (file) =>
       parseSidecarSql(fs.readFileSync(path.join(dir, file), "utf8"), file),
-    );
+  );
 }
 
 export interface SidecarObjects {

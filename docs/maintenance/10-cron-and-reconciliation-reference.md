@@ -4,18 +4,18 @@ type: reference
 band: maintenance
 audience: sde2
 status: live
-last-reviewed: 2026-10-23
+last-reviewed: 2026-10-24
 ---
 
 # Cron, Sidecars and Reconciliation — Operational Reference
 
 This is the operational counterpart to [platform architecture](../start-here/04-platform-architecture.md). It covers dispatch, response codes, maintenance admission, leases, Postgres sidecars and reconciler boundaries.
 
-The generated [configured cron jobs reference](./04-cron-jobs-reference.md) owns the inventory, executable entrypoints, declared leases, request bounds and configured schedules. Run `npm run cron:reference` after changing those sources and `npm run cron:reference:check` to detect stale output. Configuration does not establish deployed execution or completed business obligations.
+The generated [configured cron jobs reference](./04-cron-jobs-reference.md) owns the inventory, executable entrypoints, declared leases, request bounds and configured schedules. Run `npm run cron:reference` after changing those sources and `npm run cron:reference:check` to detect stale output. Configuration does not establish deployed execution or completed business obligations. The generator traverses local imports for at most two levels, parses fleet steps from source and labels unresolved lease metadata explicitly. For generator refactors, verify unchanged output against the same registry/catalog inputs, then run the normal Jest configuration with mocked dependencies; do not import workers or connect to shared services to validate documentation.
 
 ## The dispatch path
 
-Each key in `CLEANUP_JOB_BUILDERS` in `lib/cron/cleanup-registry.ts` lazily builds a cleanup handler for one canonical implementation. The inventory generator reads executable object keys through the TypeScript AST; marker comments are not its source of truth. The current roster has 67 registered jobs: 50 configured ticker targets and 17 registered jobs outside the ticker. Four operational Actions steps still lack a registered builder. These counts must be regenerated as independent worker migrations merge.
+Each key in `CLEANUP_JOB_BUILDERS` in `lib/cron/cleanup-registry.ts` lazily builds a cleanup handler for one canonical implementation. The inventory generator reads executable object keys through the TypeScript AST; marker comments are not its source of truth. The current roster has 67 registered jobs: 51 configured ticker targets and 16 registered jobs outside the ticker. Four operational Actions steps still lack a registered builder. These counts must be regenerated as independent worker migrations merge.
 
 ```text
 netlify/functions/cron-tick.mts       five-minute authenticated dispatcher
@@ -65,11 +65,23 @@ A hold raises `MaintenanceActiveError`; the route returns `503` with the phase, 
 
 `parseLimitParam()` returns `undefined` when the parameter is absent, rejects a present non-positive or fractional value, and clamps a valid value to 500. `parseLimitParamOrDefault()` supplies a route default; each core still needs to enforce its own work bound. The generated inventory records configured request bounds, without asserting that every downstream operation obeys them. An omitted parameter must not be treated as authorization for an unbounded fallback.
 
+### Payment, refund and top-up polling
+
+Payment status, pending-refund and abandoned top-up polling order by nullable `lastReconciledAt` (never polled first), then ID. Every attempted lookup rotates the row, including unchanged provider state, transient failure and an attempted request that times out. The timestamp records an attempt, not verified provider progress; timeout errors remain run failures. Otherwise a slow first row can consume every run and starve later payments. The cursor write does not change `updatedAt`, so polling does not postpone business aging. A run interrupted before a row starts leaves that row ahead of attempted work on the next run. Payment lookups also require three seconds of remaining start budget; candidates skipped by that check remain unstamped.
+
+Defaults are 50 payment candidates, 10 pending refunds and 25 abandoned top-ups. Payment and refund cohorts share their respective limit across candidate queries. Jobs stop starting rows at their execution deadline; an in-flight database transaction or provider operation must still finish or hit its own timeout. Refund polling reserves time for stranded successful cascades and failed-refund notices instead of letting pending work consume the entire invocation. Failed notices are capped at 10 by default and stage their notification and email in the same transaction that claims `failedNotifiedAt`; post-commit delivery failure remains recoverable by the existing outboxes. The invoice-accrual rollup counts every examined organization against its limit, including skipped organizations, and rotates it with `Organization.lastAccrualRollupAt` even after a skip or failure. Existing accrual, deactivation and window predicates still select the billable cohort.
+
+The invoice selector reads at most `limit + 1` organization IDs with eligible accruals, avoiding an unbounded distinct-payment result. `remaining` is a lower bound from that peek, not a total backlog count. The bound is on organizations; a large organization’s invoice can still contain many accrual lines and needs its own capacity verification.
+
+The invoice cursor updates the physical `organizations` relation, preserving business `updatedAt`. Cursor failures are counted without aborting later organizations or discarding invoices already committed. Rollup and cursor errors are reported once per run with their organization and phase. A failed-refund notice-stage error makes the enclosing reconciliation result unsuccessful while preserving the polling counters; the standalone notification entry point still rejects the failure.
+
+Before deploying this code, an operator must apply the additive columns/indexes described by `prisma/schema.prisma` and `prisma/sql/reconciliation-cursors.sql`. The SQL artifact is for a controlled schema operation; this change does not run it automatically. No cursor backfill is necessary: existing NULL values receive priority.
+
 ## The Netlify ticker
 
 `netlify/functions/cron-tick.mts` retains the `*/5 * * * *` schedule. Once per tick it reads `ops:active_cron_platform` through Upstash REST and skips dispatch when another platform is selected. An absent key, missing credentials, unreadable response or timeout permits Netlify dispatch. This fail-open preference is not an exactly-once mechanism; verify standby ownership and in-flight work during failback.
 
-`lib/cron/schedule.ts` owns the target roster, cadence, offsets, UTC calendar windows, row limits and HTTP timeouts. `JOB_SCHEDULES` and `scheduleFor()` expose effective metadata; `dueTargets()`, `windowStartFor()` and `targetRequest()` provide pure scheduling helpers. The adapter supplies authentication and dispatches `/api/cleanup/<slug>` requests.
+`lib/cron/schedule.ts` owns the target roster, cadence, offsets, UTC calendar windows, row limits and HTTP timeouts. `JOB_SCHEDULES` and `scheduleFor()` expose effective metadata; `dueTargets()`, `windowStartFor()` and `targetRequest()` provide pure scheduling helpers. The adapter supplies authentication and dispatches `/api/cleanup/<slug>` requests. Document retention runs hourly at `:35`, requesting at most 100 rows with a 20-second HTTP timeout. The resumable ledger target yields when the due roster reaches the ten-target bound; statutory and settlement work keeps its slots.
 
 For targets with a configured cadence, the slot check is:
 
@@ -77,7 +89,7 @@ For targets with a configured cadence, the slot check is:
 ((minuteOfDay - offset) mod every + every) mod every < 5
 ```
 
-Calendar windows are applied separately. The four-minute tolerance permits a slightly late tick to match its slot; it is not a replay mechanism for older missed windows. The current nine-target wave is a tested design bound, not a runtime dispatch cap. The 400-day cadence/collision test in `__tests__/maintenance/cron-tick-targets.test.ts` guards that roster.
+Calendar windows are applied separately. The four-minute tolerance permits a slightly late tick to match its slot; it is not a replay mechanism for older missed windows. The current ten-target wave is a tested design bound, not a runtime dispatch cap. The 400-day cadence/collision test in `__tests__/maintenance/cron-tick-targets.test.ts` guards that roster.
 
 The [scheduled money jobs guide](../finance/70-operations/01-scheduled-jobs.md) explains the money workflow boundaries. The generated inventory is the source for exact configured cadence and request limits. A ticker abort stops waiting for HTTP; it does not cancel a worker or provider effect.
 
@@ -102,13 +114,13 @@ The requested `closed` policy refuses work when acquisition is unavailable; `ope
 
 ## The Actions-scheduled jobs
 
-The generated inventory lists the 17 registered jobs outside the ticker and four operational Actions steps missing registry coverage, with their configured owners and entrypoints. Actions workflows remain the configured automatic owner for their remaining jobs; enablement, budget availability and successful effects require separate verification.
+The generated inventory lists the 16 registered jobs outside the ticker and four operational Actions steps missing registry coverage, with their configured owners and entrypoints. Actions workflows remain the configured automatic owner for their remaining jobs; enablement, budget availability and successful effects require separate verification.
 
 Moving a job requires a bounded canonical core, restart-safe progress and a controlled deployed check that establishes cadence and backlog-drain capacity. Switch its automatic schedule as one reviewed handoff and preserve unmigrated workflow steps. Do not enable Actions as an additional automatic fallback for an already ticker-owned job.
 
 ## Sidecars
 
-The three SQL files under `prisma/sql/` are hand-written and idempotent. Each statement is preceded by a `DROP ... IF EXISTS`, statements are separated by a literal `-- SPLIT` marker, and each runs in its own short transaction with `lock_timeout = '3s'` so an unobtainable lock fails fast instead of blocking the table.
+The three sidecar files under `prisma/sql/` (`check-constraints.sql`, `ledger-triggers.sql`, `payment-legs-triggers.sql`, listed in `SIDECAR_FILES` in `scripts/db/sidecar-objects.ts`) are hand-written and idempotent. Each statement is preceded by a `DROP ... IF EXISTS`, statements are separated by a literal `-- SPLIT` marker, and each runs in its own short transaction with `lock_timeout = '3s'` so an unobtainable lock fails fast instead of blocking the table. `reconciliation-cursors.sql` in the same folder is not a sidecar: it is a one-off operator rollout of columns and indexes the schema already declares, so neither `db:sidecars` nor the sidecar checks read it.
 
 | File                        | `ADD CONSTRAINT` | Indexes | Triggers |
 | --------------------------- | ---------------- | ------- | -------- |

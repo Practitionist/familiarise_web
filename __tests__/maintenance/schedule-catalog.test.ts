@@ -27,6 +27,34 @@ describe("shared capability schedule catalog", () => {
     }
   });
 
+  it("preserves the hourly document purge request bounds and phase", () => {
+    expect(scheduleFor("purge-deleted-documents")).toMatchObject({
+      everyMinutes: 60,
+      offsetMinutes: 35,
+      limit: 100,
+      timeoutMs: 20_000,
+      window: null,
+    });
+    const day = Date.UTC(2026, 9, 24);
+    const dueMinutes = Array.from(
+      { length: 288 },
+      (_, tick) => tick * 5,
+    ).filter((minute) =>
+      dueTargets(new Date(day + minute * 60_000)).includes(
+        "purge-deleted-documents",
+      ),
+    );
+    expect(dueMinutes).toEqual(
+      Array.from({ length: 24 }, (_, hour) => hour * 60 + 35),
+    );
+    expect(
+      targetRequest("https://site.test", "purge-deleted-documents"),
+    ).toEqual({
+      url: "https://site.test/api/cleanup/purge-deleted-documents?limit=100",
+      timeoutMs: 20_000,
+    });
+  });
+
   it("keeps calendar-gated jobs out of off-window dispatch", () => {
     const outside = new Date("2026-10-22T22:55:00.000Z");
     const inside = new Date("2026-10-22T06:55:00.000Z");

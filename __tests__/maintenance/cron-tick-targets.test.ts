@@ -236,7 +236,7 @@ describe("cron-tick dueTargets cadence", () => {
   });
 
   it("never fires more than MAX_TARGETS_PER_TICK on any tick of 400 days, windows included", () => {
-    expect(MAX_TARGETS_PER_TICK).toBe(9);
+    expect(MAX_TARGETS_PER_TICK).toBe(10);
     // 400 days from 2026-11-01 cover every month start, every weekday and every quarter start.
     const start = Date.UTC(2026, 10, 1);
     let min = Infinity;

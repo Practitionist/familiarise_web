@@ -95,6 +95,35 @@ function resolveModule(
   );
 }
 
+function importedCores(initializer: ts.Expression, root: string): Core[] {
+  const cores: Core[] = [];
+  for (const node of descendants(initializer)) {
+    if (!ts.isVariableDeclaration(node) || !node.initializer) continue;
+    const value = ts.isAwaitExpression(node.initializer)
+      ? node.initializer.expression
+      : node.initializer;
+    if (
+      !ts.isCallExpression(value) ||
+      value.expression.kind !== ts.SyntaxKind.ImportKeyword
+    )
+      continue;
+    const spec = text(value.arguments[0]);
+    const target = spec ? resolveModule(REGISTRY, spec, root) : undefined;
+    if (
+      !target ||
+      /^(lib\/(cron|observability)\/|lib\/prisma\.ts$)/.test(target)
+    )
+      continue;
+    const calls = ts.isObjectBindingPattern(node.name)
+      ? node.name.elements
+          .map((binding) => text(binding.propertyName ?? binding.name))
+          .filter((name): name is string => !!name)
+      : [text(node.name)].filter((name): name is string => !!name);
+    cores.push({ file: target, calls });
+  }
+  return cores;
+}
+
 /** Builder keys are executable AST properties; marker comments never become inventory rows. */
 export function registryJobs(source: string, root: string): RegistryJob[] {
   const file = tree(source, REGISTRY);
@@ -129,36 +158,11 @@ export function registryJobs(source: string, root: string): RegistryJob[] {
       throw new Error(
         `Missing literal builder key/job at ${member.getStart(file)}`,
       );
-    const cores: Core[] = [];
-    for (const node of descendants(member.initializer)) {
-      if (!ts.isVariableDeclaration(node) || !node.initializer) continue;
-      const value = ts.isAwaitExpression(node.initializer)
-        ? node.initializer.expression
-        : node.initializer;
-      if (
-        !ts.isCallExpression(value) ||
-        value.expression.kind !== ts.SyntaxKind.ImportKeyword
-      )
-        continue;
-      const spec = text(value.arguments[0]);
-      const target = spec ? resolveModule(REGISTRY, spec, root) : undefined;
-      if (
-        !target ||
-        /^(lib\/(cron|observability)\/|lib\/prisma\.ts$)/.test(target)
-      )
-        continue;
-      const calls = ts.isObjectBindingPattern(node.name)
-        ? node.name.elements
-            .map((binding) => text(binding.propertyName ?? binding.name))
-            .filter((name): name is string => !!name)
-        : [text(node.name)].filter((name): name is string => !!name);
-      cores.push({ file: target, calls });
-    }
     return {
       slug,
       job,
       line: file.getLineAndCharacterOfPosition(member.getStart(file)).line + 1,
-      cores,
+      cores: importedCores(member.initializer, root),
       node: member.initializer,
     };
   });
@@ -167,13 +171,14 @@ export function registryJobs(source: string, root: string): RegistryJob[] {
 /** Fleet steps currently use literal schedule comparisons and tsx or cleanup-route commands. */
 export function workflowJobs(source: string, file: string): WorkflowJob[] {
   return source.split(/(?=^ {6}- name:)/m).flatMap((block) => {
-    const id = block.match(/^ {8}id:\s*([a-z0-9-]+)\s*$/m)?.[1];
+    const id = /^ {8}id:\s*([a-z0-9-]+)\s*$/m.exec(block)?.[1];
     if (!id) return [];
-    const name = block.match(/^ {6}- name:([^\r\n]*)/m)?.[1]?.trim() || id;
-    const core = block.match(
-      /(?:node_modules\/\.bin\/tsx|npx(?: --no-install)? tsx)\s+((?:jobs|scripts)\/[^\s"']+\.ts)/,
-    )?.[1];
-    const slug = block.match(/\/api\/cleanup\/([a-z0-9-]+)/)?.[1];
+    const name = /^ {6}- name:([^\r\n]*)/m.exec(block)?.[1]?.trim() || id;
+    const core =
+      /(?:node_modules\/\.bin\/tsx|npx(?: --no-install)? tsx)\s+((?:jobs|scripts)\/[^\s"']+\.ts)/.exec(
+        block,
+      )?.[1];
+    const slug = /\/api\/cleanup\/([a-z0-9-]+)/.exec(block)?.[1];
     if (!core && !slug)
       throw new Error(`Unsupported operational step ${file}:${id}`);
     const crons = [
@@ -192,7 +197,7 @@ export function workflowJobs(source: string, file: string): WorkflowJob[] {
         core,
         slug,
         crons,
-        timeout: block.match(/^ {8}timeout-minutes:\s*(\d+)\s*$/m)?.[1],
+        timeout: /^ {8}timeout-minutes:\s*(\d+)\s*$/m.exec(block)?.[1],
       },
     ];
   });
@@ -243,14 +248,15 @@ function leaseCalls(
     const milliseconds = configuredTtl
       ? numeric(configuredTtl, constants)
       : undefined;
+    let ttlLabel = ttl?.getText() ?? "default TTL unresolved";
+    if (milliseconds !== undefined) {
+      ttlLabel = `${milliseconds / 60000} min${ttl ? "" : " (default)"}`;
+    }
     return [
       {
         name,
         mode: text(property(opts, "failMode")) ?? "unresolved",
-        ttl:
-          milliseconds === undefined
-            ? (ttl?.getText() ?? "default TTL unresolved")
-            : `${milliseconds / 60000} min${ttl ? "" : " (default)"}`,
+        ttl: ttlLabel,
         file,
       },
     ];
@@ -265,18 +271,59 @@ function humanize(name: string): string {
 }
 
 function code(value: string): string {
-  return `\`${value.replace(/\|/g, "\\|")}\``;
+  const escaped = value.replace(/\|/g, String.raw`\|`);
+  return `\`${escaped}\``;
 }
 function link(file: string, line?: number): string {
-  return `[${file}${line ? `:${line}` : ""}](../../${file}${line ? `#L${line}` : ""})`;
+  const label = line ? `${file}:${line}` : file;
+  const anchor = line ? `#L${line}` : "";
+  return `[${label}](../../${file}${anchor})`;
 }
 function cell(value: string): string {
-  return value.replace(/\n/g, " ").replace(/(?<!\\)\|/g, "\\|");
+  return value.replace(/\n/g, " ").replace(/(?<!\\)\|/g, String.raw`\|`);
 }
 function table(headers: string[], rows: string[][]): string {
   return [headers, headers.map(() => "---"), ...rows]
     .map((row) => `| ${row.map(cell).join(" | ")} |`)
     .join("\n");
+}
+
+function matched(step: WorkflowJob, job: RegistryJob) {
+  return (
+    step.slug === job.slug ||
+    step.id === job.slug ||
+    step.id === job.job ||
+    !!(step.core && job.cores.some((core) => core.file === step.core))
+  );
+}
+function leaseLabel(found: Lease[]): string {
+  return found.length
+    ? found
+        .map((lease) => `${code(lease.name)}; ${lease.mode}; ${lease.ttl}`)
+        .join("<br>")
+    : "No matching lease statically resolved; inspect core";
+}
+function cronLabel(step: WorkflowJob): string {
+  return `${link(step.file)} (${code(step.id)}): ${step.crons.length ? step.crons.map(code).join(", ") + " UTC" : "manual / condition requires inspection"}`;
+}
+
+function importedWorkerFiles(
+  parsed: ts.SourceFile,
+  file: string,
+  root: string,
+): string[] {
+  return parsed.statements.flatMap((statement) => {
+    if (!ts.isImportDeclaration(statement)) return [];
+    const spec = text(statement.moduleSpecifier);
+    const target = spec ? resolveModule(file, spec, root) : undefined;
+    if (
+      !target ||
+      !/^(scripts|jobs|lib)\//.test(target) ||
+      /^lib\/(prisma|cron|observability|redis)/.test(target)
+    )
+      return [];
+    return [target];
+  });
 }
 
 export async function generateCronReference(root = ROOT): Promise<string> {
@@ -327,23 +374,12 @@ export async function generateCronReference(root = ROOT): Promise<string> {
           localConstants.set(declaration.name.text, declaration.initializer);
       const declared = leaseCalls(parsed, file, localConstants);
       const matching = declared.filter((lease) => lease.name === name);
-      const local = matching.length
-        ? matching
-        : declared.length === 1
-          ? declared
-          : [];
+      let local = matching;
+      if (!local.length && declared.length === 1) local = declared;
       found.push(...local);
       if (local.length) return;
-      for (const statement of parsed.statements) {
-        if (!ts.isImportDeclaration(statement)) continue;
-        const spec = text(statement.moduleSpecifier);
-        const target = spec ? resolveModule(file, spec, root) : undefined;
-        if (
-          target &&
-          /^(scripts|jobs|lib)\//.test(target) &&
-          !/^lib\/(prisma|cron|observability|redis)/.test(target)
-        )
-          walk(target, depth + 1);
+      for (const target of importedWorkerFiles(parsed, file, root)) {
+        walk(target, depth + 1);
       }
     }
     files.forEach((file) => walk(file, 0));
@@ -353,33 +389,19 @@ export async function generateCronReference(root = ROOT): Promise<string> {
       ).values(),
     ];
   }
-  function matched(step: WorkflowJob, job: RegistryJob) {
-    return (
-      step.slug === job.slug ||
-      step.id === job.slug ||
-      step.id === job.job ||
-      !!(step.core && job.cores.some((core) => core.file === step.core))
-    );
-  }
-  function leaseLabel(found: Lease[]): string {
-    return found.length
-      ? found
-          .map((lease) => `${code(lease.name)}; ${lease.mode}; ${lease.ttl}`)
-          .join("<br>")
-      : "No matching lease statically resolved; inspect core";
-  }
-  function cronLabel(step: WorkflowJob): string {
-    return `${link(step.file)} (${code(step.id)}): ${step.crons.length ? step.crons.map(code).join(", ") + " UTC" : "manual / condition requires inspection"}`;
-  }
   function scheduleLabel(job: RegistryJob): string {
     const schedule = JOB_SCHEDULES.find((item) => item.name === job.slug);
     const owners = workflows
       .filter((step) => matched(step, job))
       .map(cronLabel);
-    if (schedule)
+    if (schedule) {
+      const window = schedule.window
+        ? "<br>UTC window " + code(JSON.stringify(schedule.window))
+        : "";
       owners.unshift(
-        `Ticker: every ${schedule.everyMinutes} min; offset ${schedule.offsetMinutes} min${schedule.window ? `<br>UTC window ${code(JSON.stringify(schedule.window))}` : ""}`,
+        `Ticker: every ${schedule.everyMinutes} min; offset ${schedule.offsetMinutes} min${window}`,
       );
+    }
     if (MANUAL_ONLY[job.slug]) owners.push(`Manual: ${MANUAL_ONLY[job.slug]}`);
     return owners.join("<br>") || "No configured owner found";
   }
@@ -409,7 +431,7 @@ export async function generateCronReference(root = ROOT): Promise<string> {
         ? "Blocked OFFLINE and DEGRADED"
         : "Blocked OFFLINE",
       schedule
-        ? `limit ${schedule.limit === null ? "not sent" : schedule.limit}; HTTP abort ${schedule.timeoutMs} ms`
+        ? `limit ${schedule.limit ?? "not sent"}; HTTP abort ${schedule.timeoutMs} ms`
         : workflowBounds.join("; ") || "Core bounds not statically resolved",
     ];
   });
