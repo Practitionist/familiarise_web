@@ -102,7 +102,8 @@ function checkPublishGates(
     !isDurablyOurs({
       status: loaded.recordingStatus,
       storageType: loaded.storageType,
-    })
+    }) ||
+    !loaded.storagePath
   ) {
     throw new FileRouteError("STORAGE_POLICY");
   }
@@ -157,8 +158,17 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     let updated;
     try {
-      updated = await prisma.recording.update({
-        where: { id: loaded.recordingId },
+      // Retention and removal must win if they change the validated copy first.
+      [updated] = await prisma.recording.updateManyAndReturn({
+        where: {
+          id: loaded.recordingId,
+          status: "AVAILABLE",
+          storageType: "PLATFORM",
+          storagePath: loaded.storagePath,
+          listingStatus: loaded.listingStatus,
+          previewClipUrl: loaded.previewClipUrl,
+          previewTranscript: loaded.previewTranscript,
+        },
         data: {
           listingStatus: "PUBLISHED",
           listingTitle,
@@ -189,6 +199,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }
       throw updateError;
     }
+
+    if (!updated) return fileApiError("RECORDING_CHANGED");
 
     revalidatePath("/explore/recordings");
     if (updated.slug) revalidatePath(`/explore/recordings/${updated.slug}`);

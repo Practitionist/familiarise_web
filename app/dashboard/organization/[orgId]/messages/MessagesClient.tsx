@@ -1,10 +1,6 @@
 "use client";
 
-import { ChatLayout } from "@/components/chat/ChatLayout";
-import { ChatSkeletonPanes } from "@/components/dashboard/DashboardSkeletons";
-import { StreamChatScope } from "@/components/stream/StreamChatScope";
-import { ChatUnavailable } from "@/components/chat/ChatUnavailable";
-import { useStreamConnection } from "@/providers/StreamProvider";
+import { ChatSurface } from "@/components/chat/ChatSurface";
 
 /**
  * Org-scoped chat.
@@ -23,19 +19,5 @@ import { useStreamConnection } from "@/providers/StreamProvider";
  * the participants.
  */
 export function MessagesClient() {
-  const { chatConnected, failure, retryConnection } = useStreamConnection();
-
-  if (failure) {
-    return <ChatUnavailable failure={failure} onRetry={retryConnection} />;
-  }
-
-  if (!chatConnected) {
-    return <ChatSkeletonPanes />;
-  }
-
-  return (
-    <StreamChatScope>
-      <ChatLayout />
-    </StreamChatScope>
-  );
+  return <ChatSurface />;
 }

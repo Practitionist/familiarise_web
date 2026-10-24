@@ -38,6 +38,13 @@ updates:
     milestone: 1
 
     groups:
+      error-monitoring:
+        patterns:
+          - "@sentry/*"
+        update-types:
+          - "minor"
+          - "patch"
+
       # CRITICAL - Highest Priority
       core-framework:
         patterns:

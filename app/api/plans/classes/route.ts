@@ -19,6 +19,7 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { maxParticipantsSchema } from "@/schemas/plans";
 
 export async function GET(request: NextRequest) {
   try {
@@ -167,6 +168,14 @@ export async function POST(request: NextRequest) {
     ) {
       return NextResponse.json(
         { error: "Invalid numeric values" },
+        { status: 400 },
+      );
+    }
+
+    const capacity = maxParticipantsSchema.safeParse(maxParticipants);
+    if (!capacity.success) {
+      return NextResponse.json(
+        { error: capacity.error.issues[0]?.message ?? "Invalid capacity" },
         { status: 400 },
       );
     }

@@ -25,6 +25,9 @@ import {
   type SeatBearingAppointment,
 } from "@/lib/payments/utils/participants";
 
+/** Launch ceiling for a webinar or class; Stream rooms are interactive WebRTC. */
+export const MAX_GROUP_SESSION_PARTICIPANTS = 200;
+
 export type CapacityInstance = { maxParticipants?: number | null };
 export type CapacityPlan = { maxParticipants: number };
 

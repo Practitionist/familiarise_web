@@ -1,5 +1,4 @@
-"use client";
-
+import type { Metadata } from "next";
 import { Suspense } from "react";
 import {
   Card,
@@ -9,18 +8,23 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Mail, Phone, Clock, MessageSquare } from "lucide-react";
+import { Building2, Mail, Phone, Clock, MessageSquare } from "lucide-react";
 import { ContactForm } from "./ContactForm";
+import { COMPANY_INFO } from "@/lib/company";
 import {
   ACK_PROMISE_COPY,
   ANTI_SCAM_NOTICE,
-  COMPANY_INFO,
   PAGE_META,
   BUSINESS_HOURS,
   SUPPORT_LINKS,
   getMailtoLink,
   getTelLink,
 } from "../constants";
+
+export const metadata: Metadata = {
+  title: `${PAGE_META.contact.title} | Familiarise`,
+  description: PAGE_META.contact.description,
+};
 
 export default function ContactUsPage() {
   return (
@@ -50,6 +54,27 @@ export default function ContactUsPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
+                {/* Legal entity */}
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+                    <Building2 className="h-5 w-5 text-foreground" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold mb-1">Registered Office</h3>
+                    <p className="text-sm text-muted-foreground">
+                      <span className="font-medium text-foreground">
+                        {COMPANY_INFO.name}
+                      </span>
+                      <br />
+                      {COMPANY_INFO.registeredAddress}
+                      <br />
+                      CIN: {COMPANY_INFO.cin}
+                    </p>
+                  </div>
+                </div>
+
+                <Separator />
+
                 {/* Email */}
                 <div className="flex items-start gap-4">
                   <div className="flex-shrink-0 w-10 h-10 rounded-full bg-muted flex items-center justify-center">
@@ -58,21 +83,12 @@ export default function ContactUsPage() {
                   <div>
                     <h3 className="font-semibold mb-1">Email</h3>
                     <p className="text-sm text-muted-foreground">
-                      General Inquiries:{" "}
+                      Support and general inquiries:{" "}
                       <a
                         href={getMailtoLink()}
                         className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
                       >
                         {COMPANY_INFO.email}
-                      </a>
-                    </p>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      Support:{" "}
-                      <a
-                        href={getMailtoLink(COMPANY_INFO.supportEmail)}
-                        className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
-                      >
-                        {COMPANY_INFO.supportEmail}
                       </a>
                     </p>
                   </div>
