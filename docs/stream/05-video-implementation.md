@@ -1,6 +1,6 @@
 # 05. Video Implementation & Session Lifecycle Algorithms
 
-> Authoritative specification of Stream Video room provisioning, the unified `[startsAt - 15m, roomEndsAt + 30m]` envelope, timezone-safe civil day arithmetic, synchronous CAS termination & pre-start rotation, host room reopen with asymmetric webhook routing, the immutable booked end with `+15m` extension state on `Meeting`, the end-reason decision table, exit UX, lobby gate retries, and hybrid Q&A / emoji reactions.
+> Authoritative specification of Stream Video room provisioning, the unified `[startsAt - 15m, roomEndsAt + 30m]` envelope, timezone-safe civil day arithmetic, synchronous CAS termination & pre-start rotation, host room reopen with asymmetric webhook routing, the immutable booked end with `+15m` extension state on `Meeting`, the end-reason decision table, exit UX, lobby gate retries, the join-failure and lobby-ended faces, room client robustness (mobile layout, screen share, host mute-all, recording control), and hybrid Q&A / emoji reactions.
 
 ## Table of Contents
 
@@ -11,6 +11,7 @@
 - [Algorithm 4: `+15m` Room Extension on `Meeting` & Derived Cap Math](#algorithm-4-15m-room-extension-on-meeting--derived-cap-math)
 - [Algorithm 5: Unified Call Exit UX (`CallExitButton`) & Lobby Gate Backoff (`MeetingLobbyGateCard`)](#algorithm-5-unified-call-exit-ux-callexitbutton--lobby-gate-backoff-meetinglobbygatecard)
 - [Algorithm 6: Hybrid In-Room Chat, Persistent Q&A, Stage Spotlight & Reactions](#algorithm-6-hybrid-in-room-chat-persistent-qa-stage-spotlight--reactions)
+- [Algorithm 7: Join Failures, Lobby Ended State & Room Client Robustness](#algorithm-7-join-failures-lobby-ended-state--room-client-robustness)
 - [End Reasons: The Decision Table](#end-reasons-the-decision-table)
 - [Deprecated & Superseded Approaches](#deprecated--superseded-approaches)
 
@@ -214,11 +215,12 @@ When `POST /api/meetings/[meetingId]/join` denies entry with HTTP `403`, `Meetin
 
 - **`TOO_EARLY` Auto-Entry with Clock-Skew Protection**:
   - Displays scheduled start time formatted in the viewer's timezone (`formatScheduledAt(startsAt, session.user.timezone)`) and a live `MM:SS` countdown to `openAtMs = startsAt - 15m`.
-  - Guards against client/server clock skew (e.g., browser clock ahead of server clock by 2–8s causing `now >= openAtMs` while server still returns `TOO_EARLY`) via a module-level retry map (`autoRetryAttemptsByWindow`) capped at **`MAX_AUTO_RETRIES = 3`** with linear backoff **`AUTO_RETRY_BACKOFF_MS = 5_000`**:
+  - Guards against client/server clock skew (e.g., browser clock ahead of server clock by 2–8s causing `now >= openAtMs` while server still returns `TOO_EARLY`) via a per-mount attempt counter held in component state and listed in the effect's dependencies, capped at **`MAX_AUTO_RETRIES = 3`** with linear backoff **`AUTO_RETRY_BACKOFF_MS = 5_000`**:
     ```typescript
-    const retryAtMs = openAtMs + priorAttempts * AUTO_RETRY_BACKOFF_MS;
+    const retryAtMs = openAtMs + autoRetries * AUTO_RETRY_BACKOFF_MS;
     ```
-  - After 3 attempts (`T+0s`, `T+5s`, `T+10s`), automatic polling halts cleanly while preserving manual **Check Again** click access.
+    Each retry increments the counter, which changes the dependency list and re-arms the timer. Without that dependency the effect ran once, because a refusal that repeats the same `access.code` and `openAtMs` changes nothing the effect watches.
+  - The card shows the countdown until the room is due to open, then "Checking again (n of 3)" while the retries run. After 3 attempts (`T+0s`, `T+5s`, `T+10s`), automatic polling halts and the card says "Still not open. Use Check Again", keeping the manual **Check Again** button.
 - **`SESSION_ENDED` with Host Reopen Safety Valve**: Renders **Reopen Session Room** whenever `access.canReopen === true`.
 - **`CONSENT_REQUIRED` / Default Denial**: Surfaces DPDP data-processing consent or security access guidance.
 
@@ -236,6 +238,40 @@ Live interaction inside `MeetingRoom.tsx` combines ephemeral WebRTC media events
    - Clicking **Show on screen** (`action: "pin"`, restricted strictly to `access.role === "host"`) writes `custom.activeStageBanner` onto the Stream call document (preserving existing `custom.organizationId` / `custom.extendedSeconds`) **and** emits `familiarise.qa.pin` over WebSockets so both live and late-joining attendees see the lower-third `<StagePinnedBannerOverlay />`.
 3. **Ephemeral Emoji Reactions (`ReactionsButton`)**:
    - Rendered natively via Stream Video SDK's `<ReactionsButton />` in the bottom control bar, backed by `create-call-reaction` role grants on `call_member` and `co_presenter`.
+
+---
+
+## Algorithm 7: Join Failures, Lobby Ended State & Room Client Robustness
+
+### 1. Join Failure Faces (`join-failure.ts`, `JoinFailureCard.tsx`)
+
+A typed server refusal (401, 403 or 404 from the join route) is a verdict and renders the gate card from Algorithm 5. Every other way a join can fail is a failure, and `useGetCallById` returns it as `failure` with a `kind` from `classifyJoinFailure`:
+
+| Kind                   | Triggers                                                                                                                                                                                                                                                                                                                                         | Face                                                                                                                                                           | Retry                                                                                                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider_unavailable` | Join route status 429, 502, 503 or 504 (the route answers 503 for an open circuit and for a Stream 5xx or 429); a browser network failure (`Failed to fetch`, `Load failed`, `NetworkError`), matched by message so a programming `TypeError` stays `unknown`; the 45 s client-wait timeout; an SFU join error that is not the participant limit | "Video provider unavailable": "Our video provider is having trouble. Your session is protected — if it can't start, you'll be offered a reschedule or refund." | Automatic, up to `MAX_PROVIDER_AUTO_RETRIES = 4`, delay `min(2 s * 2^n, 30 s)` scaled by 50–100% jitter, plus the Retry button, which restarts the budget |
+| `room_full`            | SFU error code `CALL_PARTICIPANT_LIMIT_REACHED` (301) on a join error, or a message naming the participant limit                                                                                                                                                                                                                                 | "This session is full. If you're already in it on another device, close that tab and try again."                                                               | Retry button only                                                                                                                                         |
+| `unknown`              | Anything else, including a server 500 and a 409 `ROOM_NOT_PROVISIONED`                                                                                                                                                                                                                                                                           | "Couldn't join the session" with the error text for support                                                                                                    | Retry button only                                                                                                                                         |
+
+The failure card stays mounted while a retry runs, so a retry shows "Trying again…" instead of flashing the skeleton. A provider outage is logged as a warning rather than an error, so the automatic retries do not spend Sentry quota. Stream's coordinator path for a full call has no documented error shape; the message match in `classifyJoinFailure` is a defensive mapping, and the SFU code is the verified one.
+
+The lobby (`MeetingSetup`) classifies a failed `call.join()` with the same function and shows the card inline in place of the Join button, with Retry joining again.
+
+### 2. Lobby Ended State (`LobbyEndedPanel.tsx`)
+
+`MeetingSetup` reads `useCallEndedAt()`. When the call ends while someone waits in the lobby, the Join button is replaced by the ended panel and the page runs the join flow once for that call id (`onCallEnded`, which is `retryJoin`). The join route is the policy oracle: for a room whose end blocks a rejoin (`endBlocksRejoin`) it answers `SESSION_ENDED`, and the gate card offers the host **Reopen Session Room** when `endAllowsHostReopen`. If the route still admits the same ended call, the panel stays and offers **Check again** (a manual repeat of the join flow) and, for the host, **Reopen Session Room** (`POST /api/meetings/[meetingId]/reopen`, shared with the gate card through `useReopenRoom`). The automatic check runs once per call id, so a room the server still admits cannot loop.
+
+### 3. Mobile Layout & Screen Share
+
+The room, lobby, gate and status screens use `dvh` units rather than `vh`, and the control bar and top overlays pad with `env(safe-area-inset-*)` because the root layout sets `viewportFit: "cover"`. `ScreenShareControl` renders the SDK's screen-share button only when `navigator.mediaDevices.getDisplayMedia` exists, which iOS Safari lacks. It is a feature check, never a user-agent check.
+
+### 4. Host Mute-All (`MuteAllButton.tsx`)
+
+Hosts holding the `mute-users` capability (`useHasPermissions(OwnCapability.MUTE_USERS)`) see **Mute everyone** in the control bar. It asks for confirmation, calls `call.muteAllUsers("audio")`, and reports the result in a toast. On the `default` call type the call creator (the plan owner, `created_by_id = hostUserIds[0]`) holds the `-owner` variants of `mute-users`, `kick-user` and `block-user` through the `call_member` role, and the `co_presenter` role holds `mute-users` but not `kick-user` or `block-user`. The SDK participants list therefore renders Mute, Kick and Block for the creator, Mute only for an accepted presenter collaborator, and nothing for a second host who is neither the creator nor a `co_presenter`; the button hides itself for that last case. There is no waiting room: backstage-until-live covers admission for webinars and classes.
+
+### 5. Recording Control Resilience
+
+`useMeetingRecording` keeps the last known meeting and flag through a 5xx, a 429, a timeout or a network error and retries with `min(1 s * 2^n, 30 s)` backoff until it succeeds or the room unmounts. A 404 or an auth refusal is a verdict and clears the flag. In `RecordingControls`, a start or stop that succeeds leaves the button loading until Stream's recording event arrives; the `RECORDING_ACK_TIMEOUT_MS = 15 s` wait starts only once the POST is accepted, and after it the control re-reads the call state and releases the button. A failed re-read keeps the button pending and re-reads again, so the control never shows a cached state as confirmed.
 
 ---
 
@@ -279,7 +315,9 @@ Two fallbacks cover legacy and unexpected rows. An ended row with a NULL reason 
 - **Extending by Moving `AppointmentOccurrence.endsAt`**: Superseded by `Meeting.extendedSeconds` (ADR-04), because moving the booked end lost the 15 minutes at classification and a Stream-held counter was reset by reopen. Delete any extend-path write to `endsAt`.
 - **Freeform `endedReason` Strings and Per-Site Deliberate Sets**: Superseded by `END_REASON_POLICY` and the `meeting_ended_reason_known` CHECK; raw Stream reasons are no longer persisted.
 - **Reopen That Rotated the Row Before Creating the Call**: Superseded by Stream-first reopen, so a Stream failure leaves the ended row untouched.
-- **Unbounded `TOO_EARLY` Retry Loops on Client Clock Skew**: Superseded by `autoRetryAttemptsByWindow` (`MAX_AUTO_RETRIES = 3`, `5_000ms` linear backoff) in `MeetingLobbyGateCard.tsx`.
+- **Unbounded `TOO_EARLY` Retry Loops on Client Clock Skew**: Superseded by a bounded per-mount attempt counter (`MAX_AUTO_RETRIES = 3`, `5_000ms` linear backoff) in `MeetingLobbyGateCard.tsx`. The earlier module-level `autoRetryAttemptsByWindow` map was removed along with the single-fire effect.
+- **One "Meeting Error" Screen for Every Join Failure**: Superseded by the classified `JoinFailureCard` faces, so a Stream outage no longer ends on a dead end with only Go Back.
+- **Recording Flag Reset to False on Any Non-404 Failure**: Superseded by last-known-value retention with backoff in `useMeetingRecording`.
 
 ---
 
