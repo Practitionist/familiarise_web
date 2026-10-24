@@ -88,6 +88,7 @@ jest.mock("../../lib/prisma", () => {
     extensionsUsed?: { increment: number };
   };
   const client: Record<string, unknown> = {
+    platformVideoConfig: { findUnique: async () => null },
     meeting: {
       findUnique: async () => ({
         ...mockStore.meeting,

@@ -1,4 +1,8 @@
 import type { AppointmentsType } from "@prisma/client";
+import {
+  TARGET_RESOLUTIONS,
+  type PlatformVideoConfig,
+} from "@/lib/stream/video-quality";
 
 export type AppointmentTypeInput = AppointmentsType | string | null | undefined;
 
@@ -90,16 +94,26 @@ export function participantLimitsFromStream(
   };
 }
 
-/** Builds per-call Stream settings_override for duration and participant limits and 1-to-Many backstage moderation. */
+/** Camera defaults for a 1:1 room, matching the `default` call type; Stream requires the whole video block. */
+const PAIR_CALL_VIDEO = {
+  enabled: true,
+  camera_default_on: true,
+  camera_facing: "front",
+  access_request_enabled: true,
+} as const;
+
+/**
+ * Builds per-call Stream settings_override: the staff-chosen video, screen-share and recording
+ * quality for every room, duration and participant limits, and 1-to-Many backstage moderation.
+ */
 export function buildCallSettingsOverride(
   appointmentType: AppointmentTypeInput,
   maxDurationSeconds: number | null,
-  participantLimits?: CallParticipantLimits,
-): Record<string, unknown> | undefined {
+  participantLimits: CallParticipantLimits | undefined,
+  videoConfig: PlatformVideoConfig,
+): Record<string, unknown> {
   const isOneToMany = isOneToManyAppointmentType(appointmentType);
-  if (!isOneToMany && maxDurationSeconds === null && !participantLimits) {
-    return undefined;
-  }
+  const targetResolution = TARGET_RESOLUTIONS[videoConfig.callTargetResolution];
 
   return {
     ...(isOneToMany
@@ -116,19 +130,22 @@ export function buildCallSettingsOverride(
             opus_dtx_enabled: true,
             redundant_coding_enabled: true,
           },
-          video: {
-            enabled: true,
-            camera_default_on: false,
-            camera_facing: "front",
-            access_request_enabled: true,
-            target_resolution: {
-              width: 1280,
-              height: 720,
-              bitrate: 1500000,
-            },
-          },
         }
       : {}),
+    video: isOneToMany
+      ? {
+          enabled: true,
+          camera_default_on: false,
+          camera_facing: "front",
+          access_request_enabled: true,
+          target_resolution: targetResolution,
+        }
+      : { ...PAIR_CALL_VIDEO, target_resolution: targetResolution },
+    screensharing: {
+      target_resolution:
+        TARGET_RESOLUTIONS[videoConfig.screenshareTargetResolution],
+    },
+    recording: { mode: "available", quality: videoConfig.recordingQuality },
     ...(maxDurationSeconds !== null || participantLimits
       ? {
           limits: {

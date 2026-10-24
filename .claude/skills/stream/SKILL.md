@@ -116,6 +116,9 @@ mcp__streamio__app_get_rate_limits   {}
    - Participant webhooks execute in strict `Meeting -> MeetingPresence -> MeetingAttendance` lock order (`createMany({ skipDuplicates: true })`), clamping out-of-order `firstJoinedAt` monotonically (`firstJoinedAt: { gt: joinedAt }`). A reported leave always replaces an end stamp's assumed close (`closedByEnd`), and a leave reported after the current room ended moves `MeetingAttendance.lastLeftAt` only up to `Meeting.endedAt`. Webinar/class end handlers run best-effort `reconcileWebinarAttendance` so missed presence rows are backfilled before settlement.
    - **Stream participant sessions are the attendance witness (`ADR-06`)**: never treat an end stamp's close as evidence. `decideSlotOutcome` (`lib/booking/session-outcome-sweep.ts`) reads `getCallParticipantSessionsFromStream` for every segment with an assumed or open interval (and for the current segment when there are no rows, no report count, or a larger report count) before the outcome transaction, corrects rows by `userSessionId`, and leaves an unconfirmed interval open so the classifier returns `INCONCLUSIVE`. `null` from that helper means "no evidence", never "nobody came". A run spends at most `STREAM_WITNESS_READS_PER_RUN` (100) reads, defers the rest, and reports failed reads as one Sentry message.
    - Supports persistent questions (`qa_<uuid>`), upvoting, host answers, lower-third stage banners (`custom.activeStageBanner`), and `<ReactionsButton />`.
+7. **Staff-Editable Video Quality (`PlatformVideoConfig` — `ADR-07`)**:
+   - Call, screen-share and recording quality come from the `id = "singleton"` row via `getPlatformVideoConfig(db)` (defaults 720p / 1080p / 720p when absent, no cache, no env var) and are applied only by `buildCallSettingsOverride` for 1:1 and 1:N rooms at provisioning, reopen, extension and presenter-role sync. Never hard-code a `target_resolution` elsewhere; the keys, Stream mapping and cost hints live in `lib/stream/video-quality.ts` and the `platform_video_config_values` CHECK must match them.
+   - Staff and admin edit it at `PATCH /api/admin/video-config` (`videoConfig.manage`, reason required, `OpsActionLog` row). A per-call `recording` override must carry `mode` ("available"); a 1:1 `video` override must be the complete block.
 
 ---
 
@@ -130,6 +133,7 @@ mcp__streamio__app_get_rate_limits   {}
 
 ## Deprecated & Superseded Approaches
 
+- **Hard-coded 720p in the 1:N builder, or quality left to the call type**: Superseded by `PlatformVideoConfig` (`ADR-07`); delete any literal `target_resolution` in `lib/meetings/**`.
 - **Browser-side call creation (`call.getOrCreate`) and direct `call.endCall()`**: Superseded by server-only `provisionAppointmentMeeting`, `POST /api/meetings/[meetingId]/join`, and `POST /api/meetings/[meetingId]/end` (`end-call` and `join-call` are stripped from default roles).
 - **Webhook-only `Meeting.endedAt` writes or HTTP `200` on failed synchronous end**: Superseded by synchronous CAS dual-write (`recordMeetingEndedSynchronously`) returning HTTP `500` on failure and converging monotonically (`supersedesRecordedEnd`) with incoming webhooks.
 - **Extending by writing `AppointmentOccurrence.endsAt`, or keeping the extension counter in Stream `custom`**: Superseded by `Meeting.extendedSeconds` / `extensionsUsed` (`ADR-04`); the moved end lost 15 minutes at classification and reopen reset the counter.

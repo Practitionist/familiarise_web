@@ -21,6 +21,7 @@ import {
   resolveCallParticipantLimits,
 } from "@/lib/meetings/room-ready";
 import { effectiveMaxParticipants } from "@/lib/events/capacity";
+import { getPlatformVideoConfig } from "@/lib/stream/video-config";
 
 /** Callers here are already entitled via readSlotForCaller, so syncing the session's other members is allowed. */
 export const STREAM_SERVER_TRUSTED = Symbol.for(
@@ -594,7 +595,10 @@ export async function buildRoomCallPlan(
   extension: RoomExtension,
 ) {
   const occurrenceId = authorized.slot.id;
-  const profile = await resolveSessionCallProfile(occurrenceId);
+  const [profile, videoConfig] = await Promise.all([
+    resolveSessionCallProfile(occurrenceId),
+    getPlatformVideoConfig(),
+  ]);
   const startsAt = profile?.startsAt ?? authorized.slot.startsAt;
   const authorUserId = profile?.hostUserIds[0] ?? authorized.userId;
   if (!profile?.hostUserIds.length) {
@@ -618,12 +622,13 @@ export async function buildRoomCallPlan(
       appointmentType,
       resolveEventCapacity(authorized.appointment),
     ),
+    videoConfig,
   );
   const payload = {
     data: {
       created_by_id: authorUserId,
       starts_at: startsAt,
-      ...(settingsOverride ? { settings_override: settingsOverride } : {}),
+      settings_override: settingsOverride,
       custom: buildCallCustom({
         occurrenceId,
         appointmentId: authorized.slot.appointmentId,

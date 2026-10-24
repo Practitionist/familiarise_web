@@ -78,6 +78,7 @@ jest.mock("../../lib/stream-client", () => ({
 jest.mock("../../lib/prisma", () => {
   const client: Record<string, unknown> = {
     consentArtifact: { findFirst: jest.fn() },
+    platformVideoConfig: { findUnique: jest.fn().mockResolvedValue(null) },
     meeting: {
       findUnique: (...a: unknown[]) => mockMeetingFindUnique(...a),
       updateMany: (...a: unknown[]) => mockMeetingUpdateMany(...a),
@@ -478,7 +479,9 @@ describe("POST /api/meetings/[meetingId]/join, /end, /live, /extend", () => {
     expect(prisma.appointmentOccurrence.updateMany).not.toHaveBeenCalled();
     expect(mockCallUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
-        settings_override: { limits: { max_duration_seconds: 5400 } },
+        settings_override: expect.objectContaining({
+          limits: { max_duration_seconds: 5400 },
+        }),
         custom: expect.objectContaining({
           extendedSeconds: 900,
           extensionsUsed: 1,

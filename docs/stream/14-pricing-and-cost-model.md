@@ -268,7 +268,7 @@ After $100 credit: HD combined = $270 − $100 = **$170/month** (₹15,419/month
 
 ### 3.4 Where the recorded file lives
 
-The platform records HD (720p, composite, spotlight layout), so the HD rate in 3.2 is the one that applies. Stream holds each file for 14 days; the `transfer-recordings` job then copies it to Cloudflare R2, which costs $0.015 per GB-month with free egress ([R2 pricing](https://developers.cloudflare.com/r2/pricing/)). Recording capture, not storage, is the dominant cost, and the platform retention schedule (90 days for 1:1, 365 days for group sessions) bounds the stored volume. Cloudflare Stream was rejected as the host because its storage costs roughly 20 times R2; it stays a candidate only for a paid adaptive-bitrate replay library.
+The platform records HD (720p, composite, spotlight layout) unless staff raise it to Full HD on the Video quality page (section 8.5), so the HD rate in 3.2 is the one that applies by default. Stream holds each file for 14 days; the `transfer-recordings` job then copies it to Cloudflare R2, which costs $0.015 per GB-month with free egress ([R2 pricing](https://developers.cloudflare.com/r2/pricing/)). Recording capture, not storage, is the dominant cost, and the platform retention schedule (90 days for 1:1, 365 days for group sessions) bounds the stored volume. Cloudflare Stream was rejected as the host because its storage costs roughly 20 times R2; it stays a candidate only for a paid adaptive-bitrate replay library.
 
 ---
 
@@ -407,6 +407,10 @@ Must be explicitly applied for in the Stream dashboard. Availability is limited 
 ### 8.4 The 200-participant cap
 
 Webinars and classes are capped at 200 participants at launch ([ADR-07](./18-architecture-decision-records.md#adr-07-interactive-webrtc-with-a-200-participant-cap-not-hls-at-launch)), enforced when a plan is authored, when a seat is sold and by Stream `limits.max_participants` on the call. The cap exists so that the largest room Familiarise can sell has a known cost. At the HD rate used in 8.2 ($1.50 per 1,000 participant minutes), a full 200-attendee webinar of 90 minutes is 18,000 participant minutes, about $27 (roughly ₹2,450), and a full 200-student class of 60 minutes is 12,000 participant minutes, about $18 (roughly ₹1,630). Live Streaming with HLS (section 2.3) would cost more per viewer-minute and add 10 to 30 seconds of delay, which is why audiences above the cap are not routed to it. The cap can be lifted after a load test.
+
+### 8.5 What 1080p costs
+
+Staff can raise call video, screen share and recording quality on the back-office Video quality page; the defaults are the cheapest sensible choice (720p calls, 720p recordings, 1080p screen share). Two charges move when quality rises. Received video is billed per participant-minute at the received resolution, so 1080p is $3.00 per 1,000 participant minutes against $1.50 at 720p. Recording is billed per call minute, so Full HD is $12 per 1,000 call-minutes against $6 for HD. A 60-minute consultation with two participants is 120 participant minutes, so it costs about $0.36 in received video at 1080p against $0.18 at 720p, and 60 call minutes cost about $0.72 to record at Full HD against $0.36 at HD; a month of 500 such sessions adds about $90 of video and $180 of recording. Screen share is encoded once and counts as received video, so its 1080p default costs far less than raising every camera. Stream recording tops out at 1440p and the page does not offer 4K.
 
 ---
 

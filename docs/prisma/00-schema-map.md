@@ -700,6 +700,12 @@ erDiagram
         string id
         int minTrialPriceInPaise
     }
+    PlatformVideoConfig {
+        string id
+        string callTargetResolution
+        string recordingQuality
+        string screenshareTargetResolution
+    }
 
     ConsulteeProfile ||--o{ Consultation : "requests"
     ConsultationPlan ||--o{ Consultation : "booked under"
