@@ -1,9 +1,10 @@
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
-import { bookingOrgId } from "@/lib/stream-utils";
+import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import {
   DM_ELIGIBLE_STATUSES,
   dmEligibleStatusFilter,
+  excludeTrialBooking,
   OPENABLE_EVENT_STATUSES,
 } from "@/lib/stream/dm-eligibility-statuses";
 
@@ -106,6 +107,7 @@ function fetchDirectBookings(directions: Direction[]) {
     prisma.consultation.findMany({
       where: {
         status: dmEligibleStatusFilter(),
+        ...excludeTrialBooking(),
         OR: directions.map((d) => ({
           consultationPlan: { consultantProfileId: d.consultantProfileId },
           requestedById: d.requestedById,
@@ -119,6 +121,7 @@ function fetchDirectBookings(directions: Direction[]) {
     prisma.subscription.findMany({
       where: {
         status: dmEligibleStatusFilter(),
+        ...excludeTrialBooking(),
         OR: directions.map((d) => ({
           subscriptionPlan: { consultantProfileId: d.consultantProfileId },
           requestedById: d.requestedById,
@@ -235,6 +238,40 @@ export async function pairBookingContexts(
   }
 
   return { personalAllowed, organizations: Array.from(organizations) };
+}
+
+/**
+ * Whether the pair still shares a booking in the DM's own scope: a personal
+ * `dm-`/`dmh-` thread needs a personal booking, an org `dmo-` thread a booking in that org.
+ */
+export async function isDmContextEligible(
+  userIdA: string,
+  userIdB: string,
+  organizationId: string | null,
+): Promise<boolean> {
+  const contexts = await pairBookingContexts(userIdA, userIdB);
+  return organizationId
+    ? contexts.organizations.includes(organizationId)
+    : contexts.personalAllowed;
+}
+
+/** The same check for a DM known only by its id: some scope the pair still shares must mint it. */
+export async function isDmChannelIdEligible(
+  userIdA: string,
+  userIdB: string,
+  channelId: string,
+): Promise<boolean> {
+  if (!userIdA || !userIdB || userIdA === userIdB) return false;
+  const contexts = await pairBookingContexts(userIdA, userIdB);
+  if (
+    contexts.personalAllowed &&
+    getDmChannelId(userIdA, userIdB) === channelId
+  ) {
+    return true;
+  }
+  return contexts.organizations.some(
+    (orgId) => getDmChannelId(userIdA, userIdB, orgId) === channelId,
+  );
 }
 
 export type ContextAppointmentCollaboratorRow = {
@@ -492,6 +529,7 @@ async function hasConsultationLink(
   const found = await prisma.consultation.findFirst({
     where: {
       status: dmEligibleStatusFilter(),
+      ...excludeTrialBooking(),
       OR: directions.map((d) => ({
         consultationPlan: { consultantProfileId: d.consultantProfileId },
         requestedById: d.requestedById,
@@ -513,6 +551,7 @@ async function hasSubscriptionLink(
   const found = await prisma.subscription.findFirst({
     where: {
       status: dmEligibleStatusFilter(),
+      ...excludeTrialBooking(),
       OR: directions.map((d) => ({
         subscriptionPlan: { consultantProfileId: d.consultantProfileId },
         requestedById: d.requestedById,

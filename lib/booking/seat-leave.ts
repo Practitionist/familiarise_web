@@ -33,6 +33,7 @@ import {
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
 import { refundRemovedAttendeeSeat } from "@/lib/payments/operations/event-refunds";
+import { revokeEndedEventChatAccess } from "@/lib/stream/access-revocation";
 import { BookingRuleError } from "./booking-rule-error";
 import {
   occurrenceRefundsPaise,
@@ -394,5 +395,6 @@ export async function leaveEventSeat(args: {
       : { amountPaise: released.plan.amountPaise }),
     dedupeKey: `${args.exit ? "seat-exit" : "seat-leave"}:${released.seat.id}`,
   });
+  await revokeEndedEventChatAccess(args.kind, args.eventId, [args.userId]);
   return { refund };
 }

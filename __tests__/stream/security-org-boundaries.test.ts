@@ -10,6 +10,7 @@ const mockUpsertUsers = jest.fn();
 const mockQueryChannels = jest.fn();
 const mockDeleteChannels = jest.fn();
 const mockChannelRemoveMembers = jest.fn();
+const mockUpdateCallMembers = jest.fn().mockResolvedValue({});
 
 const mockPrisma = {
   user: {
@@ -49,6 +50,9 @@ const mockPrisma = {
     findMany: jest.fn(),
     updateMany: jest.fn(),
   },
+  appointmentOccurrence: {
+    findMany: jest.fn(),
+  },
   recording: {
     findMany: jest.fn(),
   },
@@ -85,6 +89,14 @@ jest.mock("../../lib/stream-client", () => ({
   withStreamCircuitBreaker: <T>(fn: () => Promise<T>) => fn(),
   StreamUnavailableError: class StreamUnavailableError extends Error {},
   isExpectedStreamError: () => false,
+  getStreamVideoClient: () => ({
+    video: {
+      call: () => ({
+        updateCallMembers: (...args: unknown[]) =>
+          mockUpdateCallMembers(...args),
+      }),
+    },
+  }),
   getStreamChatClient: () => ({
     upsertUser: (...args: unknown[]) => mockUpsertUser(...args),
     upsertUsers: (...args: unknown[]) => mockUpsertUsers(...args),
@@ -131,6 +143,7 @@ describe("Stream security, consent gates, and organization boundaries", () => {
     mockPrisma.subscription.findMany.mockResolvedValue([]);
     mockPrisma.appointment.findMany.mockResolvedValue([]);
     mockPrisma.meeting.findMany.mockResolvedValue([]);
+    mockPrisma.appointmentOccurrence.findMany.mockResolvedValue([]);
     mockPrisma.recording.findMany.mockResolvedValue([]);
     mockPrisma.membership.findMany.mockResolvedValue([]);
     mockPrisma.organization.findMany.mockResolvedValue([]);
@@ -339,7 +352,7 @@ describe("Stream security, consent gates, and organization boundaries", () => {
   });
 
   describe("Enterprise organization Stream revocation and wind-down", () => {
-    it("revokes org-scoped channels on member removal without revoking global user token", async () => {
+    it("revokes org-scoped channels and the member's Stream tokens on removal", async () => {
       mockPrisma.webinar.findMany.mockResolvedValueOnce([{ id: "web-org-1" }]);
 
       const { revokeMemberStreamAccess } =
@@ -350,10 +363,31 @@ describe("Stream security, consent gates, and organization boundaries", () => {
         userId: "u1",
       });
       expect(res.complete).toBe(true);
-      expect(res.tokenRevoked).toBe(false);
+      expect(res.tokenRevoked).toBe(true);
       expect(res.channelsRemoved).toBe(1);
       expect(mockChannelRemoveMembers).toHaveBeenCalledWith(["u1"]);
-      expect(mockRevokeUserToken).not.toHaveBeenCalled();
+      expect(mockRevokeUserToken).toHaveBeenCalledWith("u1", expect.any(Date));
+    });
+
+    it("reports removal incomplete when the member sits in more open org calls than one pass covers", async () => {
+      const page = (offset: number) =>
+        Array.from({ length: 50 }, (_, i) => ({
+          id: `occ-${String(offset + i).padStart(4, "0")}`,
+          meeting: { streamCallId: `occurrence-${offset + i}` },
+        }));
+      mockPrisma.appointmentOccurrence.findMany
+        .mockResolvedValueOnce(page(0))
+        .mockResolvedValueOnce(page(50));
+
+      const { revokeMemberStreamAccess } =
+        await import("../../lib/enterprise/member-removal");
+      const res = await revokeMemberStreamAccess({
+        orgId: "org123456789",
+        userId: "u1",
+      });
+
+      expect(mockUpdateCallMembers).toHaveBeenCalledTimes(100);
+      expect(res.complete).toBe(false);
     });
 
     it("winds down deactivated organizations and freezes event channels without revoking member global tokens", async () => {

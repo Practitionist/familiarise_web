@@ -61,6 +61,10 @@ jest.mock("../../lib/collaborators/service", () => ({
   revokeCollaboratorAccess: jest.fn(async () => ({ success: true })),
 }));
 
+jest.mock("../../lib/stream/access-revocation", () => ({
+  redriveAccessRevocation: jest.fn(async () => null),
+}));
+
 jest.mock("../../lib/moderation/side-effects", () => ({
   __esModule: true,
   applyStreamEnforcement: jest.fn(async () => undefined),
@@ -281,6 +285,7 @@ describe("retryModerationEnforcement", () => {
     outboxFindMany.mockResolvedValue([
       {
         id: "retry-1",
+        kind: "ERASURE_REVOKE",
         erasureRequestId: "er-1",
         planType: "CLASS",
         planId: "cp-9",
@@ -307,6 +312,40 @@ describe("retryModerationEnforcement", () => {
     });
     expect(result.erasureRevocationsRecovered).toBe(1);
     expect(result.success).toBe(true);
+  });
+
+  it("re-drives a queued cancellation revocation by kind, capped by attempts", async () => {
+    const { redriveAccessRevocation } = jest.requireMock(
+      "../../lib/stream/access-revocation",
+    ) as { redriveAccessRevocation: jest.Mock };
+    findMany.mockResolvedValue([]);
+    outboxFindMany.mockResolvedValueOnce([
+      {
+        id: "retry-dm",
+        kind: "DM_REMOVE",
+        erasureRequestId: null,
+        erasureRequest: null,
+        userId: "client-1",
+        counterpartUserId: "host-1",
+        planType: null,
+        planId: "dm-client-1-host-1",
+        attempts: 0,
+        createdAt: new Date(),
+      },
+    ]);
+
+    const result = await retryModerationEnforcement();
+
+    expect(outboxFindMany.mock.calls[0][0].where.attempts).toEqual({ lt: 6 });
+    expect(redriveAccessRevocation).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "DM_REMOVE", userId: "client-1" }),
+    );
+    expect(outboxUpdate).toHaveBeenCalledWith({
+      where: { id: "retry-dm" },
+      data: { status: "SUCCEEDED", attempts: 1, completedAt: expect.any(Date) },
+    });
+    expect(result.accessRevocationsRecovered).toBe(1);
+    expect(erasureRequestUpdateMany).not.toHaveBeenCalled();
   });
 
   it("drains VendorErasureRetry rows and finalizes IN_PROGRESS ErasureRequest when all outbox legs succeed", async () => {
@@ -354,6 +393,9 @@ describe("retryModerationEnforcement", () => {
     findMany.mockResolvedValue([]);
     const capped = {
       id: "retry-1",
+      kind: "ERASURE_REVOKE",
+      userId: null,
+      counterpartUserId: null,
       erasureRequestId: "er-1",
       planType: "CLASS",
       planId: "cp-9",
@@ -407,6 +449,9 @@ describe("retryModerationEnforcement", () => {
     outboxFindMany.mockResolvedValue([
       {
         id: "retry-ok",
+        kind: "ERASURE_REVOKE",
+        userId: null,
+        counterpartUserId: null,
         erasureRequestId: "er-1",
         planType: "CLASS",
         planId: "cp-1",

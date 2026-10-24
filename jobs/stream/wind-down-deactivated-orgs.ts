@@ -601,13 +601,15 @@ async function loadRejoinedMemberKeys(
 }
 
 async function drainSingleRemovedMember(
-  row: { userId: string; organizationId: string },
+  row: { userId: string; organizationId: string; updatedAt: Date },
   result: WindDownDeactivatedOrgsResult,
 ): Promise<void> {
   try {
+    // Cut at the removal, so a re-run never revokes a token minted after it.
     const outcome = await revokeMemberStreamAccess({
       userId: row.userId,
       orgId: row.organizationId,
+      revokeTokensIssuedBefore: row.updatedAt,
     });
     if (outcome.complete) {
       result.removedMembersDrained++;
@@ -640,7 +642,7 @@ async function drainPendingMemberRemovals(
       status: "REMOVED",
       updatedAt: { gte: windowFrom },
     },
-    select: { userId: true, organizationId: true },
+    select: { userId: true, organizationId: true, updatedAt: true },
     take: MAX_REMOVED_MEMBERS_PER_RUN,
     orderBy: { updatedAt: "desc" },
   });
@@ -648,10 +650,11 @@ async function drainPendingMemberRemovals(
 
   const uniqueByKey = new Map<
     string,
-    { userId: string; organizationId: string }
+    { userId: string; organizationId: string; updatedAt: Date }
   >();
   for (const row of removedRows) {
-    uniqueByKey.set(`${row.userId}:${row.organizationId}`, row);
+    const key = `${row.userId}:${row.organizationId}`;
+    if (!uniqueByKey.has(key)) uniqueByKey.set(key, row);
   }
   const uniquePairs = Array.from(uniqueByKey.values());
   const rejoinedKeys = await loadRejoinedMemberKeys(uniquePairs);
