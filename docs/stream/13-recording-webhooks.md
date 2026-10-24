@@ -345,7 +345,7 @@ sequenceDiagram
 Synchronous route execution (`POST /api/meetings/[meetingId]/end`) and asynchronous Stream webhooks (`handleCallEnded`, `handleSessionEnded`, `handleSessionParticipantJoined`, `handleSessionParticipantLeft`, `handleRecordingReady`, `handleRecordingFailed`) coordinate across rotated call segments (`occurrence-<uuid>` -> `occurrence-<uuid>-r<base36>`) under five invariants ([ADR-02](./18-architecture-decision-records.md#adr-02-call-id-rotation-occurrence-id-rbase36--asymmetric-webhook-lookup-for-reopened-rooms), [ADR-03](./18-architecture-decision-records.md#adr-03-synchronous-cas-termination-stamp-recordmeetingendedsynchronously--monotonic-webhook-convergence-supersedesrecordedend)):
 
 1. **Asymmetric Lookup Between Artifacts/Presence and Termination Webhooks**:
-   - **`handleRecordingReady`, `handleRecordingFailed`, `handleSessionParticipantJoined`, `handleSessionParticipantLeft`**: First look up `where: { streamCallId }` and **fall back to `where: { appointmentOccurrenceId }`** extracted via `parseSlotIdFromCallId(call_cid)`. If a host ends and reopens a room while segment 1's composite MP4 is still transcoding or final participant-left durations are in flight, those artifacts and attendance records still bind cleanly to the occurrence's `Meeting` row.
+   - **`handleRecordingStarted`, `handleRecordingReady`, `handleRecordingFailed`, `handleSessionParticipantJoined`, `handleSessionParticipantLeft`**: First look up `where: { streamCallId }` and **fall back to `where: { appointmentOccurrenceId }`** extracted via `parseSlotIdFromCallId(call_cid)`. If a host ends and reopens a room while segment 1's composite MP4 is still transcoding or final participant-left durations are in flight, those artifacts and attendance records still bind cleanly to the occurrence's `Meeting` row.
    - **`handleCallEnded` and `handleSessionEnded`**: Query **strictly `where: { streamCallId }`** without falling back to `appointmentOccurrenceId`. Delayed termination or 5-minute SFU inactivity webhooks emitted for closed segment 1 never match rotated segment 2 (`occurrence-<uuid>-r<base36>`), protecting live reopened rooms from premature shutdown.
 2. **Monotonic Latest Timestamp Wins (`supersedesRecordedEnd`)**: Termination writes proceed only when `incoming > existing.endedAt`. Replayed or out-of-order older webhooks never rewind `endedAt`.
 3. **Pre-Start Device Check vs Live Termination (`ended_early` vs `call_ended`)**: Ending before `startsAt` classifies the action as `"ended_early"` and rotates `streamCallId = "occurrence-<uuid>-r<base36>"` while leaving `completionStatus = "SCHEDULED"`; ending at or after `startsAt` stamps `endedReason = "call_ended"`, closes open `MeetingPresence` and `MeetingAttendance` rows via CAS, and penalizes under-delivered sessions as `CUT_SHORT` only when ended deliberately by a host (`endedByUserId` null or in `hostUserIds`).
@@ -372,7 +372,11 @@ interface StreamRecordingStartedEvent {
 }
 ```
 
-Every start in this app goes through the server SDK (`POST /api/stream/recordings/start`). `handleRecordingStarted` stamps `isRecording = true` and advances `recordingStartedAt = new Date(created_at)` only when unset or newer (`!meeting.recordingStartedAt || startedAt > meeting.recordingStartedAt`) while preserving `recordingStartedBy` if already recorded by the API route. On stop (`call.recording_stopped`), `handleRecordingStopped` sets `Meeting.isRecording = false` and transitions any `RECORDING` row to `PROCESSING` via compare-and-set (`updateMany`). When `call.recording_ready` arrives, `handleRecordingReady` promotes placeholders from `RECORDING`, `PROCESSING`, or `FAILED` (never `EXPIRED`) to `READY` via compare-and-set; `handleRecordingFailed` batches failure notifications (`CONCURRENCY = 5`) across attendees.
+Every start in this app goes through the server SDK (`POST /api/stream/recordings/start`). `handleRecordingStarted` resolves the meeting directly or through the occurrence fallback, and arms `isRecording` only when the event's call id is the meeting's current one: a late start for a superseded call is logged and leaves the flag alone. It advances `recordingStartedAt` to the event's `created_at` only when that is newer, and keeps a `recordingStartedBy` the route already wrote.
+
+#### Which event may clear the REC flag
+
+A call can carry several recording segments (a host stops and restarts), and a reopen rotates the call id. A delayed event for segment 1, or for the old call, must not clear the flag of a live segment 2. `clearRecordingFlag` in `lib/stream/recording-handlers.ts` therefore clears `isRecording` with one conditional `updateMany`: the row's `streamCallId` must equal the event's call id, and `recordingStartedAt` must be null or no later than the event's time (`created_at` for a stop or a failure, `call_recording.end_time` for a ready). For example, if segment 1 stops at 10:30 and segment 2 starts at 10:40, a stop for segment 1 that arrives at 10:45 matches no row, so the flag stays on and the `RECORDING` rows are not moved to `PROCESSING`.
 
 #### call.recording_stopped
 
@@ -453,46 +457,30 @@ flowchart TD
     D -->|call_ended| J[handleCallEnded]
     D -->|Other| K[Log & Return OK]
 
-    E --> L{Meeting exists?}
-    L -->|No| M[Log warning, return]
-    L -->|Yes| N[Update isRecording=true]
+    E --> L{Meeting found, call current?}
+    L -->|No| M[Log, flag untouched]
+    L -->|Yes| N[CAS isRecording=true]
 
-    G --> O{Recording exists?}
-    O -->|Yes| P[Skip - Idempotent]
-    O -->|No| Q[Create Recording record]
-    Q --> R[Set 14-day expiry]
+    G --> O{Meeting found?}
+    O -->|No| P[Dead-letter: permanent]
+    O -->|Yes| Q[Adopt or create the READY row]
+    Q --> R[Notify if the row is live, once per recipient]
     R --> S[Return OK]
 
-    H --> T[Create FAILED record]
-    T --> U[Log error]
+    H --> T[Reuse or create the FAILED row]
+    T --> U[Notify once per recipient]
     U --> S
 ```
 
 ### Idempotency Handling
 
-Webhooks may be delivered multiple times. The handler uses multiple idempotency strategies:
+Stream retries a webhook, the stuck-event sweeper re-drives one for up to 168 hours, and the orphan reconciler re-lists calls daily, so every handler must be safe to run twice.
 
-1. **Event ID tracking** - Log webhook events with unique IDs
-2. **Recording existence check** - Skip if recording already exists for filename
-3. **Safe status updates** - Status updates are idempotent
-
-```typescript
-// Check if recording already exists (idempotency)
-const existingRecording = await prisma.recording.findFirst({
-  where: {
-    meetingId: meeting.id,
-    streamRecordingId: filename, // Unique per recording
-  },
-});
-
-if (existingRecording) {
-  streamLogger.info("Recording already exists, skipping creation", {
-    recordingId: existingRecording.id,
-    streamRecordingId: filename,
-  });
-  return; // Safe to return early
-}
-```
+1. **Event receipts.** `logWebhookEvent` dedupes deliveries on the event id before any handler runs.
+2. **One row per segment.** `handleRecordingReady` adopts an existing row for the same `(meetingId, streamRecordingId)` and promotes a placeholder only with a CAS on the pre-ready statuses; a concurrent create that loses the unique index adopts the winner.
+3. **Notices only for a live row.** `stageAndSendRecordingReadyNotifications` re-reads the row and announces nothing unless it is `READY`, `TRANSFERRING` or `AVAILABLE` with no `removedAt`, so a late ready for an `EXPIRED` or removed recording stays silent.
+4. **At-most-once notices.** The bell dedupes on the outbox `transactionId` (`recording.ready:<recordingId>`, and `recording.failed:<recordingId>` per recipient). The email dedupes on an `IdempotencyRecord` claim per recipient: scope `stream.recording-ready` with key `recording-ready:<recordingId>:<userId>`, and scope `stream.recording-failed` with key `recording-failed:<failedRowId>:<userId>`. `stageSpecOncePerRecipient` (`lib/email/senders/shared.ts`) renders outside the transaction, then inserts the claims with `skipDuplicates` and stages a `FailedEmail` row only for the claims it won, in the same transaction. A repeat delivery, or a concurrent one, therefore stages no second email. Claims live 30 days, past the sweeper's horizon. A staging failure leaves no claim, and the ready handler rethrows it so the retried event stages the notice.
+5. **A ready for an unknown meeting dead-letters.** The handler throws `permanent: recording_ready for unknown meeting (<callId>)`, which the sweeper treats as terminal (`TERMINAL_ERROR_PREFIXES` in `lib/webhooks/event-log.ts`). If the meeting appears later, the orphan reconciler re-lists the call and creates the row.
 
 ---
 
@@ -562,7 +550,9 @@ CAS-expire any row instead of creating a playable one
 
 `lib/stream/recording-retention.ts` holds the retention schedule and daily `expire-recordings` sweep:
 
-- **Pre-expiry Stream refresh (`expireLapsedCopies`):** Before expiring `READY` rows on `STREAM_S3` whose `streamUrlExpiresAt < now`, bounded batches (`findMany({ take: 200 })`) recorded within the last 15 days query `RecordingService.getCallRecordingsFromStream`. When `row.streamRecordingId` is present, matching strictly checks `r.filename === row.streamRecordingId` (falling back to a single-item result only when `row.streamRecordingId` is null). Live upstream URLs refresh `recordingUrl` and extend `streamUrlExpiresAt` so `transfer-recordings` can finish copying them.
+- **Pre-expiry Stream refresh (`expireLapsedCopies`):** `READY` `STREAM_S3` rows whose `streamUrlExpiresAt` has passed and that were recorded within 15 days are re-listed, 200 a run and 10 at a time. `getCallRecordingsFromStream` answers `listed`, `call-not-found` (a 404 or code 16) or `unavailable` (any other failure, including a 429 and an open breaker). A listing that holds the row's filename refreshes `recordingUrl` and `streamUrlExpiresAt`; `call-not-found` or a listing without the filename expires the row as `COPY_LAPSED`; `unavailable` leaves it `READY` and counts as a failure. Rows recorded more than 15 days ago, and rows with no call id, expire without a lookup.
+- **Stream-copy deletion (`deleteTransferredStreamCopies`):** an `AVAILABLE` row whose size-verified R2 copy is at least a day old has Stream's copy deleted through `deleteStreamRecordingCopy`, which treats an unknown call as already gone. Success clears `recordingUrl`, which marks the row done. See [19](./19-recordings-lifecycle-and-access.md#deleting-streams-copy-after-the-r2-copy).
+- **One Sentry report per run.** Lookups and vendor deletes return their failures instead of reporting them; the run sends one `expire-recordings` warning listing up to 100 failed rows.
 - **Retention schedule:** 1:1 consultations retain for 90 days after session end, subscriptions/trials for 90 days after subscription end, webinars for 365 days, and classes for 365 days after the final occurrence. Published replays and recordings with `PENDING` or `SUCCEEDED` purchases are exempt. Organization caps (`streamRecordingRetentionDays`) shorten org-scoped retention only. Expiry deletes R2 + preview objects and records a `STREAM_RECORDING_DELETED` audit event.
 
 ---
@@ -601,6 +591,9 @@ Start recording for a video call.
 - `403` - Not a consultant / Not session owner / Recording not enabled
 - `400` - Already recording
 - `404` - Meeting session not found
+- `502` - Stream did not start the recording
+
+The route claims the meeting with a CAS on `isRecording: false` and writes `recordingStartedAt` and `recordingStartedBy`. If Stream then refuses, the revert is a CAS on exactly those values, so a `call.recording_started` that already advanced `recordingStartedAt` (Stream started after all) keeps the flag on.
 
 ---
 
@@ -627,6 +620,8 @@ Stop recording for a video call.
   "message": "Recording stopped"
 }
 ```
+
+The stop claim is a CAS on `isRecording: true` plus the `streamCallId` and `recordingStartedAt` the route read. If Stream refuses the stop, the flag is restored only for that same segment and only while the meeting has not ended, so a failed stop never re-arms a newer segment or an ended call.
 
 ---
 
@@ -688,9 +683,15 @@ Every media URL is withheld from the metadata-only response, not only `playbackU
 
 #### POST /api/stream/recordings/sync
 
-Sync recordings from Stream API for the current user.
+Mirrors the caller's recordings from Stream into the database. It never sends a notification: rows created here are announced by the orphan reconciler or not at all.
 
 **Authorization:** Authenticated user (Consultant or Consultee)
+
+**Request (optional body):**
+
+```json
+{ "consultantCursor": "clmeeting...", "consulteeCursor": "clmeeting..." }
+```
 
 **Response:**
 
@@ -698,11 +699,16 @@ Sync recordings from Stream API for the current user.
 {
   "success": true,
   "synced": 3,
+  "more": true,
+  "consultantCursor": "clmeeting...",
+  "consulteeCursor": null,
   "recordings": [ ... ]
 }
 ```
 
-**Rate limit:** three calls per five minutes per user, via `streamRecordingSyncLimiter`. One POST here walks every session the caller owns or is enrolled in and issues a `listRecordings` request to Stream for each of them, so a single authenticated account could otherwise force an unbounded and billable fan-out. The edge `stream: api` rule already matched this path, but it is keyed by IP at sixty per minute, which neither identifies the caller nor reflects what the endpoint costs to serve. The user-keyed limiter is sized on what the feature is for: somebody presses "Sync" because a replay is missing, and the answer does not change on the second press.
+**Bounds.** Each identity reads meetings created in the last 30 days, newest first, 25 per call, and asks Stream about them at most 10 at a time. A non-null cursor means more meetings remain; sending it back continues from there. A consultee's meeting is synced only while one of their succeeded payments for it is not fully refunded.
+
+**Rate limit:** three calls per five minutes per user, via `streamRecordingSyncLimiter`. One POST issues up to 25 `listRecordings` requests per identity, so the user-keyed limiter, not the IP-keyed edge rule, is what bounds the billable fan-out.
 
 ---
 
@@ -963,11 +969,15 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 
 Three scheduled jobs keep the recording pipeline honest under GitHub Actions, acquiring the Postgres cron lock (`withCronLock`) and recording `SystemJobExecution` runs:
 
-| Workflow                                 | Schedule (UTC)         | What it does                                                                                                                  |
-| ---------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `cron-intra-day.yml#transfer-recordings` | Every six hours at :33 | Copies `READY` recordings into R2 before Stream's 14-day copy lapses, reporting exhausted transfer attempts once per run.     |
-| `cron-daily.yml#expire-recordings`       | Daily at 03:00         | Expires lapsed Stream copies and recordings past retention, deletes R2 and preview objects, and writes org audit rows.        |
-| `reconcile-orphaned-recordings.yml`      | Daily at 05:00         | Recovers recordings whose `call.recording_ready` webhook never arrived by polling Stream for sessions 2 hours to 14 days old. |
+| Workflow                                 | Schedule (UTC)         | What it does                                                                                                                                                      |
+| ---------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cron-intra-day.yml#transfer-recordings` | Every six hours at :33 | Copies `READY` recordings into R2 before Stream's 14-day copy lapses, reporting exhausted transfer attempts once per run.                                         |
+| `cron-daily.yml#expire-recordings`       | Daily at 03:00         | Expires lapsed Stream copies and recordings past retention, deletes R2 and preview objects, writes org audit rows, and deletes Stream's copy of transferred rows. |
+| `reconcile-orphaned-recordings.yml`      | Daily at 05:00         | Recovers recordings whose `call.recording_ready` webhook never arrived by polling Stream for sessions 2 hours to 14 days old.                                     |
+
+### The video client's timeout
+
+`getStreamVideoClient` (`lib/stream-client.ts`) sets a 15-second request timeout. The node SDK's default is 3 seconds, which aborted recording start and stop, call creation and call end under ordinary Stream latency. Fifteen seconds stays well inside the roughly 26-second function ceiling measured on Netlify, leaving room for the route's own database work.
 
 ### Subscription drift is checked, not assumed
 
@@ -1015,3 +1025,8 @@ Three scheduled jobs keep the recording pipeline honest under GitHub Actions, ac
 - **Ready-time `after()` transfer kicks**: `call.recording_ready` now only persists the `READY` row; `transfer-recordings` handles streaming multipart copies asynchronously with CAS retries.
 - **Webhook-only `Meeting.endedAt` writes on host end**: `POST /api/meetings/[meetingId]/end` now calls `recordMeetingEndedSynchronously` (`lib/stream/session-handlers.ts`) synchronously so dashboard cards reflect ended status immediately, while `handleCallEnded` / `handleSessionEnded` reconcile monotonically (`endedAt > existing.endedAt`).
 - **Unscoped `isPrivileged` operator playback access**: Replaced by `lib/stream/recording-operator-access.ts` (`recordings.read` for `STAFF` metadata-only vs `recordings.play` for `ADMIN` with mandatory `OrgAuditLog` + `SystemEvent` trails).
+- **Notices re-sent on every ready delivery and every user sync**: The bell deduped on its outbox `transactionId`, but the email had no key, so a duplicate `call.recording_ready` or a press of "Sync" re-sent it, and a late ready for an `EXPIRED` row still announced it. Superseded by the live-row check and per-recipient `IdempotencyRecord` claims; the user sync sends nothing.
+- **Unconditional REC-flag clears**: `handleRecordingStopped`, `handleRecordingReady` and `handleRecordingFailed` cleared `isRecording` with a plain update, so a late event for an earlier segment or a rotated call cleared a live segment's flag. Superseded by `clearRecordingFlag`. The start and stop routes' unconditional reverts were replaced by CAS reverts on their own writes.
+- **`getCallRecordingsFromStream` returning `null` for every error**: A 404 for a call Stream no longer holds read the same as an outage, and each failure reported to Sentry. Superseded by the `listed` / `call-not-found` / `unavailable` result.
+- **An unbounded user sync**: `syncRecordingsForConsultant` and `syncRecordingsForConsultee` read every meeting the user ever had and listed each one sequentially. Superseded by the 30-day, 25-meeting page.
+- **Retrying a ready event for an unknown meeting for 168 hours**: Superseded by the `permanent:` dead-letter.
