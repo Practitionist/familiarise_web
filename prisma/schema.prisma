@@ -5608,8 +5608,12 @@ model MeetingPresence {
   /// Stream user id, which equals User.id; stored plain like MeetingAttendance.userId.
   userId                  String
   userSessionId           String
+  /// The Stream call (room segment) this device stay belongs to; null on rows written before segments were recorded.
+  streamCallId            String?
   joinedAt                DateTime              @db.Timestamptz
   leftAt                  DateTime?             @db.Timestamptz
+  /// True while leftAt is a room end stamp rather than a leave Stream reported; the outcome sweep resolves it from Stream.
+  closedByEnd             Boolean               @default(false)
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz

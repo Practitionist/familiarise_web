@@ -8,6 +8,7 @@ import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { resolveRoomEndsAt } from "@/lib/meetings/duration-cap";
 import type { MeetingEndReason } from "@/lib/meetings/end-reasons";
+import { closeSegmentPresences } from "@/lib/meetings/segment-presence";
 
 export interface ReconciliationResult {
   processed: number;
@@ -139,9 +140,10 @@ async function reconcileSingleOrphanedSession(
       });
 
       if (updated.count !== 0) {
-        await db.meetingPresence.updateMany({
-          where: { meetingId: session.id, leftAt: null },
-          data: { leftAt: endedAt },
+        await closeSegmentPresences(db, {
+          meetingId: session.id,
+          streamCallId: session.streamCallId,
+          endedAt,
         });
       }
     };
