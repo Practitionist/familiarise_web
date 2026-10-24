@@ -9,6 +9,7 @@ import {
   type Prisma,
 } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
+import type { RunFailureReporter } from "@/lib/observability/run-failures";
 import {
   createR2PresignedGetUrl,
   deleteR2Object,
@@ -112,24 +113,32 @@ export function getBestRecordingUrl(recording: {
 /** Delete ONLY the R2 object — callers own the row's status change. */
 export async function deleteRecordingObject(
   storagePath: string,
+  failures?: RunFailureReporter,
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const result = await deleteR2Object({ key: storagePath });
     if (!result.success) {
-      streamLogger.error(
-        "Failed to delete recording object from R2",
-        new Error(result.error ?? "R2 delete failed"),
-        { path: storagePath },
-      );
+      const error = new Error(result.error ?? "R2 delete failed");
+      if (failures)
+        failures.add("wind-down-recording-delete", error, {
+          path: storagePath,
+        });
+      else
+        streamLogger.error("Failed to delete recording object from R2", error, {
+          path: storagePath,
+        });
       return { success: false, error: result.error };
     }
     return { success: true };
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to delete from R2";
-    streamLogger.error("Failed to delete recording object from R2", error, {
-      path: storagePath,
-    });
+    if (failures)
+      failures.add("wind-down-recording-delete", error, { path: storagePath });
+    else
+      streamLogger.error("Failed to delete recording object from R2", error, {
+        path: storagePath,
+      });
     return { success: false, error: message };
   }
 }

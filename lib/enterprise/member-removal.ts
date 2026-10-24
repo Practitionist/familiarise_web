@@ -34,10 +34,18 @@ import { sendCollaboratorWithdrawnEmail } from "@/lib/email/senders/collaborator
 import { scheduleAfter } from "@/lib/api/after-safe";
 import {
   getStreamChatClient,
+  getStreamVideoClient,
   isExpectedStreamError,
   isStreamConfigured,
 } from "@/lib/stream-client";
+import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import { MAX_CALL_DURATION_MS } from "@/lib/meetings/duration-cap";
+import {
+  enqueueCollaboratorRevocationRetry,
+  enqueueOrgMemberRevocationRetry,
+} from "@/lib/stream/access-revocation";
 import { streamLogger } from "@/lib/stream-logger";
+import type { RunFailureReporter } from "@/lib/observability/run-failures";
 import { markMembership } from "@/lib/stream-cache";
 import { CLASS_PREFIX, WEBINAR_PREFIX } from "@/lib/stream-channel-ids";
 import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
@@ -698,9 +706,76 @@ async function removeMemberFromTargetChannels(
   return channelsRemoved;
 }
 
+/** Drops the removed member from the org's live and upcoming calls; `/join` re-adds anyone Postgres still admits. */
+async function removeMemberFromOrgCalls(
+  orgId: string,
+  userId: string,
+  failures: string[],
+): Promise<void> {
+  try {
+    const video = getStreamVideoClient().video;
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_ORG_CALL_PAGES; page++) {
+      const occurrences = await prisma.appointmentOccurrence.findMany({
+        where: {
+          deletedAt: null,
+          endsAt: { gt: new Date(Date.now() - MAX_CALL_DURATION_MS) },
+          meeting: { is: { endedAt: null } },
+          appointment: {
+            deletedAt: null,
+            participants: { some: { userId } },
+            OR: [
+              { organizationId: orgId },
+              { webinar: { webinarPlan: { organizationId: orgId } } },
+              { class: { classPlan: { organizationId: orgId } } },
+              { consultation: { consultationPlan: { organizationId: orgId } } },
+              { subscription: { subscriptionPlan: { organizationId: orgId } } },
+            ],
+          },
+        },
+        select: { id: true, meeting: { select: { streamCallId: true } } },
+        orderBy: { id: "asc" },
+        take: MAX_ORG_CALLS_PER_REVOCATION,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      });
+      for (const { meeting } of occurrences) {
+        if (!meeting) continue;
+        try {
+          await video
+            .call(STREAM_CALL_TYPE, toCallId(meeting.streamCallId))
+            .updateCallMembers({ remove_members: [userId] });
+        } catch (err) {
+          if (isExpectedStreamError(err)) continue;
+          failures.push(
+            `removeCallMember:${meeting.streamCallId}:${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      if (occurrences.length < MAX_ORG_CALLS_PER_REVOCATION) return;
+      cursor = occurrences.at(-1)?.id;
+    }
+    // More open org calls than one pass covers: report incomplete so the retry sweep re-drives it.
+    failures.push(`removeCallMember:truncated:${userId}`);
+  } catch (err) {
+    failures.push(
+      `loadOrgCalls:${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/** Pages of open org calls one revocation pass walks before reporting incomplete. */
+const MAX_ORG_CALL_PAGES = 2;
+const MAX_ORG_CALLS_PER_REVOCATION = 50;
+
+/**
+ * Removes the member from the org's channels and calls and revokes their Stream
+ * tokens issued before the removal; their own session re-mints on its next request.
+ */
 export async function revokeMemberStreamAccess(input: {
   userId: string;
   orgId: string;
+  failureReporter?: RunFailureReporter;
+  revokeTokensIssuedBefore?: Date;
 }): Promise<RevokeMemberStreamResult> {
   const { userId, orgId } = input;
   if (!isStreamConfigured()) {
@@ -714,7 +789,18 @@ export async function revokeMemberStreamAccess(input: {
 
   const chat = getStreamChatClient();
   const failures: string[] = [];
-  const tokenRevoked = false;
+  let tokenRevoked = false;
+  try {
+    await chat.revokeUserToken(
+      userId,
+      input.revokeTokensIssuedBefore ?? new Date(),
+    );
+    tokenRevoked = true;
+  } catch (err) {
+    failures.push(
+      `revokeUserToken:${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 
   let surfaces: OrgStreamSurfaces;
   try {
@@ -722,11 +808,18 @@ export async function revokeMemberStreamAccess(input: {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     failures.push(`loadOrgStreamSurfaces:${msg}`);
-    streamLogger.error(
-      "Failed to load org Stream surfaces for member removal",
-      err,
-      { userId, orgId },
-    );
+    if (input.failureReporter) {
+      input.failureReporter.add("wind-down-member-removal", err, {
+        userId,
+        orgId,
+      });
+    } else {
+      streamLogger.error(
+        "Failed to load org Stream surfaces for member removal",
+        err,
+        { userId, orgId },
+      );
+    }
     return {
       channelsRemoved: 0,
       tokenRevoked,
@@ -754,6 +847,7 @@ export async function revokeMemberStreamAccess(input: {
     targets,
     failures,
   );
+  await removeMemberFromOrgCalls(orgId, userId, failures);
 
   return {
     channelsRemoved,
@@ -806,6 +900,7 @@ async function revokeRemovedMemberStream(
       orgId,
     });
     if (!revocation.complete) {
+      await enqueueOrgMemberRevocationRetry(orgId, removedUserId);
       Sentry.captureException(
         new Error(
           `Partial Stream revocation on org member removal: ${revocation.failures.join("; ")}`,
@@ -864,7 +959,18 @@ export async function removeMember(
   if (result.removedUserId) {
     const removedUserId = result.removedUserId;
     for (const c of result.revokedCollaborations) {
-      await revokeCollaboratorAccess(c.planType, c.planId, removedUserId);
+      const { success } = await revokeCollaboratorAccess(
+        c.planType,
+        c.planId,
+        removedUserId,
+      );
+      if (!success) {
+        await enqueueCollaboratorRevocationRetry(
+          c.planType,
+          c.planId,
+          removedUserId,
+        );
+      }
     }
     await dispatchRevokedCollaborationNotices(result.revokedCollaborations);
     await revokeRemovedMemberStream(input.orgId, removedUserId);

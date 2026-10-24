@@ -157,3 +157,16 @@ export function classifyConnectFailure(error: unknown): ConnectFailure {
   }
   return { ...RETRYABLE_CONNECT_FAILURE, code, detail: message };
 }
+
+/** The profile fetch that gates the connect ran out of retries. */
+export function profileLoadFailure(detail: string): ConnectFailure {
+  return {
+    kind: "retryable",
+    code: null,
+    detail,
+    title: "Couldn't load your profile",
+    description:
+      "We couldn't load your account details to start messaging. Check your connection and try again.",
+    action: "retry",
+  };
+}

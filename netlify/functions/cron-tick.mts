@@ -83,6 +83,8 @@ const TARGETS = [
   "process-data-exports",
   // Drains StreamRevocationRetry and the VendorErasureRetry outbox (DPDP erasure); every 30 minutes.
   "retry-moderation-enforcement",
+  // Removes members Postgres no longer justifies from managed chat channels; hourly slices in a daily window.
+  "reconcile-stream-memberships",
   // Vests or voids QUALIFYING referrals once the session is delivered and its refund window has passed.
   "vest-referral-credits",
   // Support SLA warn/breach outbox alerts, 28-day RESOLVED auto-close, and T-72h/T-24h dispute alerts.
@@ -112,6 +114,8 @@ const TARGETS = [
   "reconcile-gateway-settlements",
   "reconcile-ledgers",
   "tds-return-draft",
+  // Read-only Stream control-plane drift check; one daily slot.
+  "stream-control-plane-drift",
 ] as const;
 
 type Target = (typeof TARGETS)[number];
@@ -205,6 +209,10 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "reconcile-ledgers": null,
   // One read of the closed quarter and one upload; the route takes no limit.
   "tds-return-draft": null,
+  // A Postgres read and at most one Stream removal per channel, inside the drain deadline.
+  "reconcile-stream-memberships": 50,
+  // A fixed handful of Stream reads; the route takes no limit.
+  "stream-control-plane-drift": null,
 };
 
 /**
@@ -274,6 +282,8 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-disputes": 60,
   "reconcile-ledgers": 60,
   "tds-return-draft": 60,
+  "reconcile-stream-memberships": 60,
+  "stream-control-plane-drift": 60,
 };
 
 /**
@@ -347,6 +357,10 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   // Ledger slices use spare :55 capacity; statutory exports and gateway settlement keep priority.
   "reconcile-ledgers": 55,
   "tds-return-draft": 55,
+  // 00:20, 01:20 and 02:20 inside its daily window: minutes with room on every tick.
+  "reconcile-stream-memberships": 20,
+  // One slot at 01:15 UTC (06:45 IST), a minute with room under the per-tick cap.
+  "stream-control-plane-drift": 15,
 };
 
 /** The most targets one tick may fire; pinned by the cadence test. */
@@ -414,6 +428,9 @@ const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
     startMinuteUtc: 60,
     windowMinutes: 120,
   },
+  // Three hourly slices that resume from the trail's checkpoint.
+  "reconcile-stream-memberships": { startMinuteUtc: 0, windowMinutes: 180 },
+  "stream-control-plane-drift": { startMinuteUtc: 75, windowMinutes: 60 },
 };
 
 /**
@@ -518,6 +535,8 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "reconcile-disputes": 20_000,
   "reconcile-ledgers": 20_000,
   "tds-return-draft": 20_000,
+  // The run stops starting channels at its 16 s drain deadline.
+  "reconcile-stream-memberships": 24_000,
 };
 
 /**

@@ -1168,11 +1168,36 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           recovered: r.recovered,
           collaboratorRecovered: r.collaboratorRecovered,
           erasureRevocationsRecovered: r.erasureRevocationsRecovered,
+          accessRevocationsRecovered: r.accessRevocationsRecovered,
           stillFailing: r.stillFailing,
           gaveUp: r.gaveUp,
         }),
         status: (r) => (r.stillFailing > 0 || r.gaveUp > 0 ? 207 : 200),
         failureMessage: "Failed to retry moderation enforcement",
+      }),
+
+    // @cleanup-twin reconcile-stream-memberships
+    "reconcile-stream-memberships": () =>
+      cleanupRoute({
+        job: "reconcile-stream-memberships",
+        run: async (req, { startedAt }) => {
+          const { reconcileStreamMemberships, DEFAULT_CHANNELS_PER_RUN } =
+            await import("@/lib/stream/membership-reconciler");
+          return reconcileStreamMemberships({
+            limit: parseLimitParamOrDefault(req, DEFAULT_CHANNELS_PER_RUN),
+            startedAt,
+          });
+        },
+        summarize: (r) => ({
+          channelsScanned: r.channelsScanned,
+          channelsSkipped: r.channelsSkipped,
+          channelsSkippedSuspicious: r.channelsSkippedSuspicious,
+          membersRemoved: r.membersRemoved,
+          failures: r.failures,
+          checkpoint: r.checkpoint,
+        }),
+        status: (r) => (r.failures > 0 ? 207 : 200),
+        failureMessage: "Failed to reconcile Stream channel memberships",
       }),
 
     // @cleanup-twin sentry-ingest-canary
@@ -1298,6 +1323,25 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         }),
         status: (r) => statusFor({}, r.failed > 0),
         failureMessage: "Failed to settle invoice accruals",
+      }),
+
+    // @cleanup-twin stream-control-plane-drift
+    "stream-control-plane-drift": () =>
+      cleanupRoute({
+        job: "stream-control-plane-drift",
+        run: async () => {
+          const { detectStreamControlPlaneDrift } =
+            await import("@/lib/stream/control-plane-drift");
+          return detectStreamControlPlaneDrift();
+        },
+        summarize: (r) => ({
+          drifted: r.drifted,
+          findings: r.findings.length,
+          unverified: r.unverified.length,
+        }),
+        // Drift is already reported once to Sentry by the detector; 207 only marks the run.
+        status: (r) => statusFor(r, r.drifted),
+        failureMessage: "Failed to check the Stream control plane for drift",
       }),
 
     // @cleanup-twin stream-sync
@@ -1497,10 +1541,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "transfer-recordings",
         run: async (req) => {
+          parseLimitParam(req);
           const { transferRecordings } =
             await import("@/lib/stream/recording-transfer-service");
-          const r = await transferRecordings({ limit: parseLimitParam(req) });
-          return { success: r.failed === 0, ...r };
+          return transferRecordings();
         },
         summarize: (r) => ({
           processed: r.processed,
@@ -1508,7 +1552,6 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           failed: r.failed,
           exhaustedReported: r.exhaustedReported,
         }),
-        status: () => 200,
         failureMessage: "Recording copy sweep failed",
       }),
 

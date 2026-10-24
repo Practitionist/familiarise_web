@@ -186,10 +186,11 @@ export async function POST(req: NextRequest) {
     streamLogger.error(
       "Neither STREAM_WEBHOOK_SECRET nor STREAM_API_SECRET is configured — Stream webhooks cannot be verified",
     );
-    Sentry.captureException(new Error("Stream webhook secret not configured"), {
-      tags: { subsystem: "stream" },
-      level: "fatal",
-    });
+    captureThrottled(
+      "stream:webhook-secret-missing",
+      new Error("Stream webhook secret not configured"),
+      { subsystem: "stream", level: "fatal", op: "webhook.secret" },
+    );
     return NextResponse.json(
       { error: "Webhook secret not configured" },
       { status: 500 },
@@ -258,12 +259,11 @@ export async function POST(req: NextRequest) {
         `Failed to persist Stream event ${eventId} before ack`,
         persistError,
       );
-      Sentry.captureException(
-        persistError instanceof Error
-          ? persistError
-          : new Error(String(persistError)),
-        { tags: { subsystem: "stream" }, level: "error" },
-      );
+      captureThrottled("stream:webhook-receipt", persistError, {
+        subsystem: "stream",
+        level: "error",
+        op: "webhook.receipt",
+      });
       return NextResponse.json(
         { error: "Could not record event" },
         { status: 503 },

@@ -8,10 +8,6 @@ import {
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
-import {
-  initialSyncCompletedUsers,
-  clearSyncCacheForUser,
-} from "@/lib/stream-cache";
 import { upsertUserToStream } from "./user.action";
 import {
   collabChannelId,
@@ -20,6 +16,7 @@ import {
 import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import {
   dmEligibleStatusFilter,
+  excludeTrialBooking,
   OPENABLE_EVENT_STATUSES,
 } from "@/lib/stream/dm-eligibility-statuses";
 import { queryChannelsPaged } from "@/lib/stream/batch";
@@ -223,7 +220,6 @@ async function ensureStreamUserUpserted(userId: string): Promise<boolean> {
       streamLogger.info("Skipping channel sync — Stream refused the account", {
         userId,
       });
-      initialSyncCompletedUsers.add(userId);
       return false;
     }
     return true;
@@ -233,7 +229,6 @@ async function ensureStreamUserUpserted(userId: string): Promise<boolean> {
         userId,
         purposeCode: err.purposeCode,
       });
-      initialSyncCompletedUsers.add(userId);
       return false;
     }
     throw err;
@@ -472,10 +467,12 @@ async function removeStaleManagedChannels(
   return { staleRemovedCount, staleFailCount, degraded };
 }
 
-export async function syncUserEventChannels(
-  userId: string,
-  force = false,
-): Promise<{
+/**
+ * Tidies the caller's own channel list against Postgres. Not an enforcement
+ * path: revocation is synchronous on the mutating action, backed by the retry
+ * sweep and the daily membership reconciler.
+ */
+export async function syncUserEventChannels(userId: string): Promise<{
   success: boolean;
   skipped?: boolean;
   error?: string;
@@ -509,18 +506,7 @@ export async function syncUserEventChannels(
     throw new Error("Forbidden: cannot sync channels for another user");
   }
 
-  if (force) {
-    clearSyncCacheForUser(userId);
-  }
-
-  if (initialSyncCompletedUsers.has(userId)) {
-    streamLogger.debug("Sync already completed for user this session", {
-      userId,
-    });
-    return { success: true, skipped: true };
-  }
-
-  streamLogger.info("Starting channel sync for user", { userId, force });
+  streamLogger.info("Starting channel sync for user", { userId });
   const startTime = Date.now();
 
   try {
@@ -625,12 +611,9 @@ export async function syncUserEventChannels(
     });
 
     if (degraded) {
-      streamLogger.warn(
-        "Channel sync degraded — not marking the user synced, so the next load retries",
-        { userId },
-      );
-    } else {
-      initialSyncCompletedUsers.add(userId);
+      streamLogger.warn("Channel sync degraded — the next load retries", {
+        userId,
+      });
     }
 
     return {
@@ -660,6 +643,7 @@ async function collectConsultantDmPairs(
       where: {
         consultationPlan: { consultantProfileId },
         status: dmEligibleStatusFilter(),
+        ...excludeTrialBooking(),
       },
       include: {
         requestedBy: { include: { user: { select: { id: true } } } },
@@ -671,6 +655,7 @@ async function collectConsultantDmPairs(
       where: {
         subscriptionPlan: { consultantProfileId },
         status: dmEligibleStatusFilter(),
+        ...excludeTrialBooking(),
       },
       include: {
         requestedBy: { include: { user: { select: { id: true } } } },
@@ -702,6 +687,7 @@ async function collectConsulteeDmPairs(
       where: {
         requestedById: consulteeProfileId,
         status: dmEligibleStatusFilter(),
+        ...excludeTrialBooking(),
       },
       include: {
         consultationPlan: {
@@ -718,6 +704,7 @@ async function collectConsulteeDmPairs(
       where: {
         requestedById: consulteeProfileId,
         status: dmEligibleStatusFilter(),
+        ...excludeTrialBooking(),
       },
       include: {
         subscriptionPlan: {

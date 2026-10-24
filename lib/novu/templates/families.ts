@@ -121,6 +121,7 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
   "appointment-reminder": "appointment",
   "appointment-completed": "appointment",
   "new-booking-request": "appointment",
+  "chat-unread-digest": "appointment",
 
   "recording-available": "session-media",
   "recording-failed": "session-media",

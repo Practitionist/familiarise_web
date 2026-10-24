@@ -6,6 +6,7 @@ import {
   mirrorChatMessageToStreamChannel,
 } from "@/lib/meetings/mirror-room-chat";
 import { guardMeetingRoute } from "@/lib/meetings/route-guard";
+import { meetingQaLimiter } from "@/lib/rate-limit";
 import { isInCallChatAllowed } from "@/lib/meetings/room-ready";
 import {
   ALLOWED_CHAT_EMOJIS,
@@ -658,7 +659,7 @@ export async function POST(
 ) {
   let meetingIdForLog: string | undefined;
   try {
-    const guard = await guardMeetingRoute(params, "admit to");
+    const guard = await guardMeetingRoute(params, "admit to", meetingQaLimiter);
     if (!guard.ok) return guard.response;
     const { userId, meetingId, access } = guard;
     meetingIdForLog = meetingId;
