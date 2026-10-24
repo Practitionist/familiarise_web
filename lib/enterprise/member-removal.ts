@@ -45,6 +45,7 @@ import {
   enqueueOrgMemberRevocationRetry,
 } from "@/lib/stream/access-revocation";
 import { streamLogger } from "@/lib/stream-logger";
+import type { RunFailureReporter } from "@/lib/observability/run-failures";
 import { markMembership } from "@/lib/stream-cache";
 import { CLASS_PREFIX, WEBINAR_PREFIX } from "@/lib/stream-channel-ids";
 import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
@@ -773,6 +774,7 @@ const MAX_ORG_CALLS_PER_REVOCATION = 50;
 export async function revokeMemberStreamAccess(input: {
   userId: string;
   orgId: string;
+  failureReporter?: RunFailureReporter;
   revokeTokensIssuedBefore?: Date;
 }): Promise<RevokeMemberStreamResult> {
   const { userId, orgId } = input;
@@ -806,11 +808,18 @@ export async function revokeMemberStreamAccess(input: {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     failures.push(`loadOrgStreamSurfaces:${msg}`);
-    streamLogger.error(
-      "Failed to load org Stream surfaces for member removal",
-      err,
-      { userId, orgId },
-    );
+    if (input.failureReporter) {
+      input.failureReporter.add("wind-down-member-removal", err, {
+        userId,
+        orgId,
+      });
+    } else {
+      streamLogger.error(
+        "Failed to load org Stream surfaces for member removal",
+        err,
+        { userId, orgId },
+      );
+    }
     return {
       channelsRemoved: 0,
       tokenRevoked,

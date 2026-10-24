@@ -131,6 +131,19 @@ heartbeats described as proof of complete fleet health are superseded. Recovery
 is not guaranteed by a parallel Actions workflow or by making every HTTP result 200. Keep the required Netlify standby; platform moves change adapters, not
 transaction or replay guarantees.
 
+## Stream organisation wind-down
+
+`wind-down-deactivated-orgs` must not record either organisation completion marker
+after a truncated/failed tagged-channel scan or channel failure in that pass. Its
+retention marker uses the organisation's pre-wind-down error count, not a fresh
+post-error baseline. Other organisations can finish independently while the run
+still reports failure. The pager's offset ceiling and the unbounded related
+surface/recording work remain capacity gates: a frozen messaging prefix can leave
+the filter, but an unchanged prefix does not guarantee tail progress. Do not add a
+ticker target or second automatic clock on the strength of these marker checks.
+Shared Stream/R2 helpers receive the invocation reporter so row failures produce one final event with a bounded sample, highest severity and a retained billing classification. Other callers retain their existing reporting.
+See `docs/stream/17-channel-lifecycle.md#organisation-wind-down-completion`.
+
 ## Sources
 
 - [Netlify function limits](https://docs.netlify.com/build/functions/configuration/)

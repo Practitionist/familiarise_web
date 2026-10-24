@@ -8,6 +8,7 @@ import { StreamChat } from "stream-chat";
 import { StreamClient } from "@stream-io/node-sdk";
 import { Refusal } from "@/lib/errors/refusal";
 import { createCircuitBreaker } from "@/lib/redis";
+import type { RunFailureReporter } from "@/lib/observability/run-failures";
 
 // Environment validation
 const STREAM_API_KEY = process.env.NEXT_PUBLIC_STREAM_API_KEY;
@@ -249,23 +250,29 @@ export function getStreamCircuitStatus() {
   return streamCircuitBreaker.status();
 }
 
-/**
- * #473 — wrap a hot-path Stream network call in Stream's circuit breaker so a
- * Stream outage fast-fails (sub-ms) instead of every dashboard load eating the
- * full 30s client timeout and cascading.
- *
- * Closed-breaker behaviour is identical to calling `operation` directly, except
- * an expected "channel not found" miss (#899) is classified via `shouldTrip` so
- * it neither counts toward the breaker nor reaches Sentry — it rejects with the
- * original error for the caller's create/fallback branch. Other real Stream
- * errors reject with the original error and are captured. Only when the breaker
- * is already OPEN does withCircuitBreaker reject with its generic "circuit
- * breaker is OPEN" Error — we intercept that to run the caller's `fallback`
- * (graceful degradation) or throw the typed StreamUnavailableError.
- */
+function reportStreamFailure(
+  error: unknown,
+  failures: RunFailureReporter | undefined,
+  options: { level?: "warning" | "error"; reason?: "stream.billing" } = {},
+) {
+  const context = options.reason ? { reason: options.reason } : {};
+  if (failures) {
+    failures.add("stream-circuit-breaker", error, context, {
+      level: options.level,
+    });
+    return;
+  }
+  Sentry.captureException(error, {
+    tags: { subsystem: "stream", ...context },
+    ...(options.level ? { level: options.level } : {}),
+  });
+}
+
+/** Expected misses do not trip the breaker; sweep callers supply an invocation reporter. */
 export async function withStreamCircuitBreaker<T>(
   operation: () => Promise<T>,
   fallback?: () => T,
+  failures?: RunFailureReporter,
 ): Promise<T> {
   try {
     // #899 — expected "channel not found" misses must not trip the breaker;
@@ -288,18 +295,15 @@ export async function withStreamCircuitBreaker<T>(
     ) {
       if (fallback) return fallback();
       const unavailable = new StreamUnavailableError();
-      Sentry.captureException(unavailable, {
-        tags: { subsystem: "stream" },
-        level: "warning",
-      });
+      reportStreamFailure(unavailable, failures, { level: "warning" });
       throw unavailable;
     }
     // A billing refusal is the one class here that needs a HUMAN, not a retry.
     // It is reported before the generic branch and with its own tag, so it does
     // not read as one more Stream error in a flap.
     if (isStreamBillingError(error)) {
-      Sentry.captureException(error, {
-        tags: { subsystem: "stream", reason: "stream.billing" },
+      reportStreamFailure(error, failures, {
+        reason: "stream.billing",
         level: "error",
       });
       throw error;
@@ -310,7 +314,7 @@ export async function withStreamCircuitBreaker<T>(
     // alerted on by Stream itself — also not an error page. Only genuine
     // Stream errors are captured.
     if (!(isExpectedStreamError(error) || isRateLimitError(error))) {
-      Sentry.captureException(error, { tags: { subsystem: "stream" } });
+      reportStreamFailure(error, failures);
     }
     throw error;
   }
