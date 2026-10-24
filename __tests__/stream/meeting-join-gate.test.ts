@@ -178,6 +178,42 @@ describe("POST /api/meetings/[meetingId]/join", () => {
     expect(mockUpdateCallMembers).toHaveBeenCalledTimes(1);
   });
 
+  it("falls back to the membership write when the member read fails", async () => {
+    mockResolveMeetingAccess.mockResolvedValue({
+      hasAccess: true,
+      role: "participant",
+      reason: "granted",
+      streamCallId: "slot-abc",
+      appointment: { appointmentType: "WEBINAR" },
+    });
+    mockQueryMembers.mockRejectedValue(new Error("stream down"));
+
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateCallMembers).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes when an existing member holds a different role", async () => {
+    mockResolveMeetingAccess.mockResolvedValue({
+      hasAccess: true,
+      role: "host",
+      coPresenter: true,
+      reason: "granted",
+      streamCallId: "slot-abc",
+      appointment: { appointmentType: "WEBINAR" },
+    });
+    mockQueryMembers.mockResolvedValue({
+      members: [{ user_id: "user_1", role: "call_member" }],
+    });
+
+    await POST(req, { params });
+
+    expect(mockUpdateCallMembers).toHaveBeenCalledWith({
+      update_members: [{ user_id: "user_1", role: "co_presenter" }],
+    });
+  });
+
   it("refuses a Meeting row whose Stream call is missing with a typed 409", async () => {
     mockUpdateCallMembers.mockRejectedValue(
       Object.assign(new Error("Can't find call"), { status: 404, code: 16 }),
