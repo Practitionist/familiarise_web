@@ -104,6 +104,7 @@ type Row = {
   recordingUrl: string;
   streamRecordingId: string;
   transferAttempts: number;
+  updatedAt: Date;
   purchased: boolean;
 };
 
@@ -130,11 +131,37 @@ function applyData(data: Prisma.RecordingUpdateManyMutationInput) {
     data.previewClipStoragePath === null
   )
     row.previewClipStoragePath = data.previewClipStoragePath;
+  if (typeof data.transferAttempts === "number") {
+    row.transferAttempts = data.transferAttempts;
+  } else if (data.transferAttempts) {
+    if (typeof data.transferAttempts.set === "number")
+      row.transferAttempts = data.transferAttempts.set;
+    if (typeof data.transferAttempts.increment === "number")
+      row.transferAttempts += data.transferAttempts.increment;
+  }
+  const updatedAt = data.updatedAt;
+  if (updatedAt instanceof Date) row.updatedAt = updatedAt;
+  else if (typeof updatedAt === "string") row.updatedAt = new Date(updatedAt);
+  else if (updatedAt?.set instanceof Date) row.updatedAt = updatedAt.set;
+  else if (typeof updatedAt?.set === "string")
+    row.updatedAt = new Date(updatedAt.set);
+  else
+    row.updatedAt = new Date(Math.max(Date.now(), row.updatedAt.getTime() + 1));
 }
 
 function matches(where: Prisma.RecordingWhereInput = {}) {
   if (Array.isArray(where.OR) && !where.OR.some(matches)) return false;
   if (typeof where.id === "string" && where.id !== row.id) return false;
+  if (
+    typeof where.transferAttempts === "number" &&
+    where.transferAttempts !== row.transferAttempts
+  )
+    return false;
+  if (
+    where.updatedAt instanceof Date &&
+    where.updatedAt.getTime() !== row.updatedAt.getTime()
+  )
+    return false;
   if (typeof where.status === "string" && where.status !== row.status)
     return false;
   if (
@@ -186,6 +213,7 @@ beforeEach(() => {
     recordingUrl: "https://video.cloudfront.net/immutable-source.mp4",
     streamRecordingId: "immutable-source.mp4",
     transferAttempts: 0,
+    updatedAt: new Date("2026-10-01T00:00:00.000Z"),
     purchased: false,
   };
   objects = new Set();
@@ -272,27 +300,38 @@ it("deletes the published attempt when transfer wins after erasure selection", a
     await resumeSelection.promise;
   };
   const erasure = scrubUser(prisma, "erased-user");
-  await selected.promise;
-  resume.resolve();
-  expect(await copy).toEqual({ status: "copied" });
-  const publishedPath = row.storagePath;
-  expect(publishedPath).toBe("recordings/recording-one/attempt-1.mp4");
-  resumeSelection.resolve();
-  expect((await erasure).vendorFailures).toEqual([]);
-  expect(deleteR2Object).toHaveBeenCalledWith({ key: publishedPath });
-  expect(objects.size).toBe(0);
-  expect(row).toMatchObject({ status: "EXPIRED", storagePath: null });
+  try {
+    await selected.promise;
+    resume.resolve();
+    expect(await copy).toEqual({ status: "copied" });
+    const publishedPath = row.storagePath;
+    expect(publishedPath).toBe("recordings/recording-one/attempt-1.mp4");
+    resumeSelection.resolve();
+    expect((await erasure).vendorFailures).toEqual([]);
+    expect(deleteR2Object).toHaveBeenCalledWith({ key: publishedPath });
+    expect(objects.size).toBe(0);
+    expect(row).toMatchObject({ status: "EXPIRED", storagePath: null });
+  } finally {
+    resume.resolve();
+    resumeSelection.resolve();
+    await Promise.allSettled([copy, erasure]);
+  }
 });
 
 it("prevents publication when erasure expires a copy still waiting at HEAD", async () => {
   const { copy, resume } = await pauseCopyAtHead();
-  expect((await scrubUser(prisma, "erased-user")).vendorFailures).toEqual([]);
-  expect(row.status).toBe("EXPIRED");
-  resume.resolve();
-  expect(await copy).toEqual({ status: "skipped" });
-  expect(objects.size).toBe(0);
-  expect(row.storagePath).toBeNull();
-  expect(row.streamRecordingId).toBe("immutable-source.mp4");
+  try {
+    expect((await scrubUser(prisma, "erased-user")).vendorFailures).toEqual([]);
+    expect(row.status).toBe("EXPIRED");
+    resume.resolve();
+    expect(await copy).toEqual({ status: "skipped" });
+    expect(objects.size).toBe(0);
+    expect(row.storagePath).toBeNull();
+    expect(row.streamRecordingId).toBe("immutable-source.mp4");
+  } finally {
+    resume.resolve();
+    await Promise.allSettled([copy]);
+  }
 });
 
 it("leaves failed erasure pointers for the real expiry entry to retry", async () => {
@@ -402,15 +441,20 @@ it("accepts expiry clearing the same pointers while erasure waits for deletion",
   });
 
   const erasure = scrubUser(prisma, "erased-user");
-  await deleting.promise;
-  expect(await expireRecordings({ limit: 1 })).toMatchObject({
-    success: true,
-    cleaned: 1,
-  });
-  resumeDelete.resolve();
-  expect((await erasure).vendorFailures).toEqual([]);
-  expect(row).toMatchObject({ status: "EXPIRED", storagePath: null });
-  expect(objects.size).toBe(0);
+  try {
+    await deleting.promise;
+    expect(await expireRecordings({ limit: 1 })).toMatchObject({
+      success: true,
+      cleaned: 1,
+    });
+    resumeDelete.resolve();
+    expect((await erasure).vendorFailures).toEqual([]);
+    expect(row).toMatchObject({ status: "EXPIRED", storagePath: null });
+    expect(objects.size).toBe(0);
+  } finally {
+    resumeDelete.resolve();
+    await Promise.allSettled([erasure]);
+  }
 });
 
 it("does not clear a pointer that changes while vendor deletion is pending", async () => {
