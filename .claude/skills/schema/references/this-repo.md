@@ -21,7 +21,7 @@ project serves both development and production, and every `fw-*` worktree's
 environment points at it. A push, a seed and the data scripts all write
 rows that production reads. Pushes happen once per merged pull request, run by
 the orchestrator, never for two schema-bearing pull requests at once, and never
-to make a local test pass.
+to make a local test pass. Nothing here runs through an MCP server: the Supabase MCP is read-only and project-scoped, so DDL reaches the database only through the human-run push above.
 
 The second is that **`db push` drops whatever the schema file does not mention**.
 It has already removed capture tables that were created to survive it. Anything

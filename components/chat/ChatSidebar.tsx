@@ -13,6 +13,7 @@ import {
 } from "react";
 import type { Channel, Event } from "stream-chat";
 import { useChatContext } from "stream-chat-react";
+import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
 import { ChannelSearch } from "./ChannelSearch";
 import { CreateChannelDialog } from "./CreateChannelDialog";
 import { InitializeUserChannelsButton } from "./InitializeUserChannelsButton";
@@ -260,10 +261,8 @@ function parseDeepLinkChannelTarget(rawChannelId: string): {
     const channelType = prefix === "messaging" ? "messaging" : "team";
     return { channelType, channelId: rawChannelId.slice(colonIdx + 1) };
   }
-  const isDmPrefix =
-    rawChannelId.startsWith("dm-") || rawChannelId.startsWith("dmo-");
   return {
-    channelType: isDmPrefix ? "messaging" : "team",
+    channelType: getChannelTypeFromId(rawChannelId),
     channelId: rawChannelId,
   };
 }

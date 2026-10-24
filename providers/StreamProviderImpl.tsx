@@ -195,22 +195,13 @@ import {
 import "stream-chat-react/dist/css/index.css";
 import "@stream-io/video-react-sdk/dist/css/styles.css";
 
-// Client-side only: tracks which users have completed initial sync within this
-// browser tab's module lifecycle. Separate from the server-side Set in stream-cache.ts.
+// Users whose channel sync was kicked in this page load. The sync only tidies the
+// viewer's own list; revocation is enforced server-side, so nothing here gates it.
 const clientSyncCompletedUsers = new Set<string>();
 
-/**
- * Undo the "sync kicked" marks so a later render can retry.
- *
- * Safe to clear the in-memory marker here despite it meaning "kicked, possibly
- * in flight" — this runs only once the promise has settled, so there is nothing
- * left in flight to double up on.
- */
-function markSyncIncomplete(userId: string, syncKey: string) {
+/** Lets a later connect re-run the sync; called once the previous one settled. */
+function markSyncIncomplete(userId: string) {
   clientSyncCompletedUsers.delete(userId);
-  if (typeof sessionStorage !== "undefined") {
-    sessionStorage.removeItem(syncKey);
-  }
 }
 
 const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
@@ -434,6 +425,29 @@ const StreamProviderImpl = ({
     [userId, isTokenValid],
   );
 
+  // An SDK asks its provider again only to replace a token Stream refused (expired
+  // or revoked), so every call after the first skips the cache and mints afresh.
+  const sdkTokenProvider = useCallback(
+    (type: "chat" | "video") => {
+      let served = false;
+      return () => {
+        if (served) {
+          const cache = tokenCacheRef.current;
+          if (type === "chat") {
+            delete cache.chatToken;
+            delete cache.chatExpiresAt;
+          } else {
+            delete cache.videoToken;
+            delete cache.videoExpiresAt;
+          }
+        }
+        served = true;
+        return getCachedToken(type);
+      };
+    },
+    [getCachedToken],
+  );
+
   // Prefetch both tokens at mount — BEFORE userDetails resolve. Token minting
   // needs only `userId`, but connectUser used to wait for useUserData first and
   // only THEN paid a server-action round trip for the token: two serial waits
@@ -466,13 +480,7 @@ const StreamProviderImpl = ({
   }, []);
 
   const kickChannelSync = useCallback((targetUserId: string): void => {
-    const syncKey = `stream_sync_${targetUserId}`;
-    const alreadySynced =
-      clientSyncCompletedUsers.has(targetUserId) ||
-      (typeof sessionStorage !== "undefined" &&
-        sessionStorage.getItem(syncKey) === "1");
-
-    if (alreadySynced) {
+    if (clientSyncCompletedUsers.has(targetUserId)) {
       streamLogger.debug("Skipping channel sync (already completed)", {
         userId: targetUserId,
       });
@@ -486,22 +494,19 @@ const StreamProviderImpl = ({
     void syncUserEventChannels(targetUserId)
       .then((result) => {
         if (!result?.success) {
-          markSyncIncomplete(targetUserId, syncKey);
+          markSyncIncomplete(targetUserId);
           streamLogger.warn("Channel sync reported failure", {
             userId: targetUserId,
             error: result?.error,
           });
           return;
         }
-        if (typeof sessionStorage !== "undefined") {
-          sessionStorage.setItem(syncKey, "1");
-        }
         streamLogger.info("Initial channel sync completed", {
           userId: targetUserId,
         });
       })
       .catch((syncError) => {
-        markSyncIncomplete(targetUserId, syncKey);
+        markSyncIncomplete(targetUserId);
         streamLogger.warn("Channel sync failed", {
           userId: targetUserId,
           error: syncError,
@@ -619,7 +624,7 @@ const StreamProviderImpl = ({
           image: userDetails.image ?? undefined,
           role: streamRole,
         },
-        () => getCachedToken("chat"),
+        sdkTokenProvider("chat"),
       );
 
       setGlobalChatClient(client);
@@ -643,7 +648,7 @@ const StreamProviderImpl = ({
   }, [
     enableChat,
     userDetails,
-    getCachedToken,
+    sdkTokenProvider,
     kickChannelSync,
     adoptOrReopenChatSingleton,
   ]);
@@ -706,7 +711,7 @@ const StreamProviderImpl = ({
             name: userDetails.name ?? userDetails.id,
             image: userDetails.image ?? undefined,
           },
-          () => getCachedToken("video"),
+          sdkTokenProvider("video"),
         );
       } catch (error) {
         // Release the coordinator so nothing keeps the failed client alive;
@@ -731,7 +736,7 @@ const StreamProviderImpl = ({
       setVideoConnected(false);
       throw error;
     }
-  }, [enableVideo, userDetails, getCachedToken]);
+  }, [enableVideo, userDetails, sdkTokenProvider]);
 
   // Stable connectServices function using ref pattern for retry logic
   const connectServices = useCallback(async () => {
@@ -983,7 +988,7 @@ const StreamProviderImpl = ({
       setConnected: setChatConnected,
       onBeforeReconnect: () => {
         if (userDetails?.id) {
-          markSyncIncomplete(userDetails.id, `stream_sync_${userDetails.id}`);
+          markSyncIncomplete(userDetails.id);
         }
       },
     });

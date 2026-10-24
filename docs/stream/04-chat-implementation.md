@@ -725,7 +725,7 @@ additionalData: {
 
 ## Unread Message Digest
 
-Chat is pull-only: Stream push providers are disabled, so nobody learns of a new message until they open the dashboard. The one push the app sends is a durable unread digest, delivered as an email and an in-app bell, and built on Stream's [unread reminders](https://getstream.io/chat/docs/node/unread-reminders/) ([ADR-06](./18-architecture-decision-records.md#adr-06-unread-digest-via-stream-unread-reminders)).
+Chat is pull-only: Stream push providers are disabled, so nobody learns of a new message until they open the dashboard. The one push the app sends is a durable unread digest, delivered as an email and an in-app bell, and built on Stream's [unread reminders](https://getstream.io/chat/docs/node/unread-reminders/) ([ADR-09](./18-architecture-decision-records.md#adr-09-unread-digest-via-stream-unread-reminders)).
 
 ### How a digest is produced
 
