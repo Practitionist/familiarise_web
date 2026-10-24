@@ -1406,3 +1406,20 @@ DROP TRIGGER IF EXISTS support_chat_access_append_only ON "SupportCaseChatAccess
 CREATE TRIGGER support_chat_access_append_only
   BEFORE UPDATE OR DELETE ON "SupportCaseChatAccess"
   FOR EACH ROW EXECUTE FUNCTION assert_support_chat_access_append_only();
+
+-- SPLIT
+-- Meeting.endedReason holds only MEETING_END_REASONS (lib/meetings/end-reasons.ts); NOT VALID skips the scan, so VALIDATE separately.
+-- Before VALIDATE, confirm SELECT DISTINCT "endedReason" FROM "Meeting" returns only these values or NULL.
+ALTER TABLE "Meeting"
+  DROP CONSTRAINT IF EXISTS "meeting_ended_reason_known",
+  ADD CONSTRAINT "meeting_ended_reason_known"
+    CHECK (
+      "endedReason" IS NULL
+      OR "endedReason" IN (
+        'call_ended', 'maintenance', 'org_deactivated', 'org_deleted',
+        'session_timeout', 'ended_early', 'stream_ended',
+        'reconciled', 'reconciled_no_end', 'stream_not_found', 'stream_not_configured'
+      )
+    ) NOT VALID;
+-- SPLIT
+ALTER TABLE "Meeting" VALIDATE CONSTRAINT "meeting_ended_reason_known";

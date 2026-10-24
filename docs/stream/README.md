@@ -32,7 +32,7 @@ The numbered files (`00` through `19`) follow strict contiguous numbering and ar
 | [02-setup-configuration.md](./02-setup-configuration.md)                         | Environment variables, control-plane bootstrap, and the hardened `default` call type (`call_member`).      |
 | [03-provider-authentication.md](./03-provider-authentication.md)                 | Client connection store, SDK-free shell provider split, and session hydration gating.                      |
 | [04-chat-implementation.md](./04-chat-implementation.md)                         | Channel shapes, human-pair DM derivation (`dm-`/`dmo-`), and contextual booking receipt cards.             |
-| [05-video-implementation.md](./05-video-implementation.md)                       | Session window math, synchronous end + reopen rotation, `+15m` extensions, exit UX, lobby gate, and Q&A.   |
+| [05-video-implementation.md](./05-video-implementation.md)                       | Session window, end + reopen, `+15m` extensions, end reasons, exit UX, lobby gate, Q&A.                    |
 | [06-channel-management.md](./06-channel-management.md)                           | 4-part DM eligibility gates, event channel rosters, and collaborator synchronization.                      |
 | [07-user-management.md](./07-user-management.md)                                 | Upserting principals into Stream, PII stripping, least-privilege role mapping, and DPDP erasure.           |
 | [08-token-management.md](./08-token-management.md)                               | Minting, caching, `iat`/`exp` revocation cutoffs, and moderation enforcement.                              |
@@ -59,7 +59,7 @@ Each invariant below is strictly enforced across `lib/stream/`, `lib/meetings/`,
 2. **Never Derive Identifiers with `localeCompare`**: Always use UTF-16 code-unit ordering (`a < b ? [a, b] : [b, a]`) via `lib/stream-channel-ids.ts` and `lib/stream-utils.ts`, capped at 64 characters.
 3. **Tokens Require Both `iat` and `exp`**: Stream invalidates tokens lacking `iat` whenever `revoke_tokens_issued_before` is set on a user.
 4. **Never Invoke External Stream RPCs Inside `prisma.$transaction` (`PG_POOL_MAX=1`)**: Execute all Stream SDK network calls outside transactions via `withStreamCircuitBreaker`, and persist Postgres transitions atomically via conditional `updateMany` compare-and-set (CAS) predicates.
-5. **Asymmetric Webhook Lookup & Monotonic Convergence (`ADR-02` & `ADR-03`)**: `call.ended` and `call.session_ended` webhooks match strictly on `where: { streamCallId }` and advance monotonically (`supersedesRecordedEnd`), while `recording_ready`, `recording_failed`, and `participant_*` webhooks fall back to `appointmentOccurrenceId` so pre-reopen artifacts and attendance intervals are never lost.
+5. **Asymmetric Webhook Lookup & Monotonic Convergence (`ADR-02` & `ADR-03`)**: `call.ended` and `call.session_ended` webhooks match strictly on `where: { streamCallId }` and advance monotonically (`supersedesRecordedEnd`) and never overwrite a deliberate end, nor a sealed end with a non-deliberate one (`recordedEndHolds`), while `recording_ready`, `recording_failed`, and `participant_*` webhooks fall back to `appointmentOccurrenceId` so pre-reopen artifacts and attendance intervals are never lost.
 6. **Shared Stream Application Across Environments (`app_id: 1366319`)**: Keep `STREAM_MCP_READ_ONLY="true"` in `.mcp.json`.
 
 ## Related

@@ -140,6 +140,8 @@ erDiagram
         int scheduledMaxDurationS
         datetime endedAt
         string endedReason
+        int extendedSeconds
+        int extensionsUsed
         boolean isRecording
         datetime recordingStartedAt
         string recordingStartedBy
@@ -181,14 +183,14 @@ erDiagram
 
 ### Core Schema Tables, Unique Indices & Invariants
 
-| Model                       | Key Unique Constraints & Indices                                                  | Critical Runtime Invariants                                                                                                                                             |
-| --------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`Meeting`**               | `streamCallId @unique`, `appointmentOccurrenceId @unique`                         | Stores bare `streamCallId` (`occurrence-<uuid>` or `occurrence-<uuid>-r<base36>`), never prefixed with `default:`. `endedAt` advances monotonically via CAS.            |
-| **`AppointmentOccurrence`** | Indexed on `(appointmentId, startsAt)`, `(consultantProfileId, startsAt, endsAt)` | `endsAt` reflects both scheduled slot end and any persisted `+15m` host extension. Excluded when `deletedAt != null` or `completionStatus in [CANCELLED, RESCHEDULED]`. |
-| **`MeetingPresence`**       | `@@unique([meetingId, userSessionId])`, indexed on `appointmentOccurrenceId`      | Keyed by `user_session_id                                                                                                                                               |     | "${sessionId}:${userId}"` so duplicate webhook deliveries (`skipDuplicates: true`) never inflate session counts or move `leftAt` back. |
-| **`MeetingAttendance`**     | `@@unique([meetingId, userId])`, indexed on `appointmentOccurrenceId`             | `firstJoinedAt` is write-once immutable; `joinCount` increments only when a genuinely new `MeetingPresence` session interval is inserted (`newSessions > 0`).           |
-| **`Recording`**             | Indexed on `(meetingId, streamRecordingId)`, `(status, streamUrlExpiresAt)`       | `READY` rows live on `STREAM_S3` (`streamUrlExpiresAt = end + 14d`) until `transfer-recordings` copies MP4 to R2 (`status = AVAILABLE`, `storageType = PLATFORM`).      |
-| **`WebhookEvent`**          | `payloadHash @unique` (`sha256(rawBody)`)                                         | Written prior to dispatch; stale `PROCESSING` claims older than 5 minutes (`STALE_PROCESSING_MS = 300_000`) are safely reclaimed on retry.                              |
+| Model                       | Key Unique Constraints & Indices                                                  | Critical Runtime Invariants                                                                                                                                                                                                       |
+| --------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`Meeting`**               | `streamCallId @unique`, `appointmentOccurrenceId @unique`                         | Stores bare `streamCallId` (`occurrence-<uuid>` or `occurrence-<uuid>-r<base36>`), never prefixed with `default:`. `endedAt` advances monotonically via CAS.                                                                      |
+| **`AppointmentOccurrence`** | Indexed on `(appointmentId, startsAt)`, `(consultantProfileId, startsAt, endsAt)` | `endsAt` is the immutable booked end; the host extension lives in `Meeting.extendedSeconds`, and the room end is `endsAt + extendedSeconds`. Excluded when `deletedAt != null` or `completionStatus in [CANCELLED, RESCHEDULED]`. |
+| **`MeetingPresence`**       | `@@unique([meetingId, userSessionId])`, indexed on `appointmentOccurrenceId`      | Keyed by `user_session_id                                                                                                                                                                                                         |     | "${sessionId}:${userId}"` so duplicate webhook deliveries (`skipDuplicates: true`) never inflate session counts or move `leftAt` back. |
+| **`MeetingAttendance`**     | `@@unique([meetingId, userId])`, indexed on `appointmentOccurrenceId`             | `firstJoinedAt` is write-once immutable; `joinCount` increments only when a genuinely new `MeetingPresence` session interval is inserted (`newSessions > 0`).                                                                     |
+| **`Recording`**             | Indexed on `(meetingId, streamRecordingId)`, `(status, streamUrlExpiresAt)`       | `READY` rows live on `STREAM_S3` (`streamUrlExpiresAt = end + 14d`) until `transfer-recordings` copies MP4 to R2 (`status = AVAILABLE`, `storageType = PLATFORM`).                                                                |
+| **`WebhookEvent`**          | `payloadHash @unique` (`sha256(rawBody)`)                                         | Written prior to dispatch; stale `PROCESSING` claims older than 5 minutes (`STALE_PROCESSING_MS = 300_000`) are safely reclaimed on retry.                                                                                        |
 
 ---
 
@@ -216,8 +218,8 @@ Serverless invocations run with a strict 1-connection pool (`PG_POOL_MAX=1`). Ev
    - Inside `prisma.$transaction(async (tx) => ...)`, every read or write passes `tx`, never the global `prisma` client.
 2. **Optimistic Compare-and-Set (`updateMany`) on Every Lifecycle Edge**:
    - **Room Termination (`stampEnd`)**: `tx.meeting.updateMany({ where: { id: meeting.id, endedAt: meeting.endedAt }, data: { endedAt, endedReason, isRecording: false } })`. If `count === 0`, a racing webhook or route already transitioned `endedAt` and the caller aborts cleanly.
-   - **Room Reopen (`POST /api/meetings/[id]/reopen`)**: `prisma.meeting.updateMany({ where: { id: meeting.id, endedAt: { not: null } }, data: { streamCallId: nextCallId, endedAt: null, endedReason: null, isRecording: false } })`. Two concurrent clicks never double-rotate `streamCallId`.
-   - **Duration Extension (`POST /api/meetings/[id]/extend`)**: `prisma.appointmentOccurrence.updateMany({ where: { id: occurrence.id, endsAt: slotEndsAt }, data: { endsAt: extendedEndsAt } })`.
+   - **Room Reopen (`POST /api/meetings/[id]/reopen`)**: the fresh Stream call is created first; then `prisma.meeting.updateMany({ where: { id: meeting.id, streamCallId: meeting.streamCallId, endedAt: meeting.endedAt }, data: { streamCallId: nextCallId, endedAt: null, endedReason: null, isRecording: false } })`. Two concurrent clicks never double-rotate `streamCallId`, and a lost CAS leaves the new call unused.
+   - **Duration Extension (`POST /api/meetings/[id]/extend`)**: `prisma.meeting.updateMany({ where: { id, endedAt: null, extensionsUsed: { equals: <read>, lt: MAX_MEETING_EXTENSIONS }, occurrence: { completionStatus: "SCHEDULED", outcome: null, deletedAt: null } }, data: { extendedSeconds: { increment: 900 }, extensionsUsed: { increment: 1 } } })`. The booked `AppointmentOccurrence.endsAt` is never written; Stream is mirrored afterwards from Postgres values.
    - **Recording Transfer (`transfer-recordings`)**: Claims work via `updateMany({ where: { id, status: "READY" }, data: { status: "TRANSFERRING" } })` and finalizes via `where: { id, status: "TRANSFERRING" }`.
 
 ---

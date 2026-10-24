@@ -16,6 +16,8 @@
 
 import type { OccurrenceOutcome } from "@prisma/client";
 
+import { endReasonPolicy } from "@/lib/meetings/end-reasons";
+
 export const VOID_LOSS_MINUTES = 15;
 export const OVERRUN_CREDIT_MINUTES = 30;
 export const EARLY_START_BUFFER_MINUTES = 15;
@@ -271,7 +273,8 @@ export function classifySessionOutcome(
   const endedAt = input.meeting?.endedAt?.getTime() ?? null;
   const endedByUserId = input.meeting?.endedByUserId ?? null;
   const isDeliberateHostEnd =
-    input.meeting?.endedReason === "call_ended" &&
+    !!input.meeting?.endedReason &&
+    endReasonPolicy(input.meeting.endedReason).money === "host_end" &&
     (endedByUserId === null || hosts.has(endedByUserId));
   const sides: Sides = {
     host: mergeSide(
@@ -332,7 +335,7 @@ export function classifySessionOutcome(
     : verdict("CUT_SHORT", delivered, lost);
 }
 
-/** Maintenance windows, plus a drain that ended this call (endedReason = maintenance). */
+/** Maintenance windows, plus a drain that ended this call (an `outage` end reason). */
 function outageSegments(input: SessionOutcomeInput): Segment[] {
   const open = Number.MAX_SAFE_INTEGER;
   const segments = input.maintenanceWindows.map((w) => ({
@@ -340,7 +343,11 @@ function outageSegments(input: SessionOutcomeInput): Segment[] {
     end: w.endsAt?.getTime() ?? open,
   }));
   const { meeting } = input;
-  if (meeting?.endedReason === "maintenance" && meeting.endedAt) {
+  if (
+    meeting?.endedReason &&
+    endReasonPolicy(meeting.endedReason).money === "outage" &&
+    meeting.endedAt
+  ) {
     segments.push({
       start: meeting.endedAt.getTime() - RECONNECT_GRACE_MINUTES * MIN_MS,
       end: open,
