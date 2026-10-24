@@ -1,10 +1,6 @@
 "use client";
 
-import { ChatLayout } from "@/components/chat/ChatLayout";
-import { ChatUnavailable } from "@/components/chat/ChatUnavailable";
-import { ChatSkeletonPanes } from "@/components/dashboard/DashboardSkeletons";
-import { useStreamConnection } from "@/providers/StreamProvider";
-import { StreamChatScope } from "@/components/stream/StreamChatScope";
+import { ChatSurface } from "@/components/chat/ChatSurface";
 
 /**
  * Full-bleed chat surface: cancels PageScaffold padding and fills the
@@ -14,24 +10,9 @@ import { StreamChatScope } from "@/components/stream/StreamChatScope";
  * to feed a `userId`/`userRole` pair this component immediately discarded.
  */
 export function MessagesTab() {
-  // Connection state from the lazy Stream provider: render the chat UI only
-  // once the chat client is live; surface failures instead of a blank box.
-  const { chatConnected, failure, retryConnection } = useStreamConnection();
-
   return (
     <div className="-m-4 h-dashboard-fill overflow-hidden border-border bg-card sm:-m-6 lg:-m-8">
-      {failure ? (
-        <ChatUnavailable failure={failure} onRetry={retryConnection} />
-      ) : chatConnected ? (
-        <StreamChatScope>
-          <ChatLayout />
-        </StreamChatScope>
-      ) : (
-        // The chat skeleton, so connecting looks like the surface that is
-        // about to arrive rather than a bare centred spinner. Three of these
-        // spinners existed, all slightly different.
-        <ChatSkeletonPanes />
-      )}
+      <ChatSurface />
     </div>
   );
 }

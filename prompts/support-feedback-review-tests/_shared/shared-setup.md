@@ -37,7 +37,8 @@ The first request to each route on a preview may cold-boot for 30 to 60 seconds.
 8. If you approach a session limit, write the report with the finished cases and mark the rest NOT RUN.
 9. Keep the final chat message to the orchestrator under 250 words: counts, the FAIL list and the report path.
 10. A case whose expected text describes a capability the product does not have yet (an expert dashboard, a merge prompt, a notification) is a requirement. Record it as FAIL with the observation "absent", never as BLOCKED, and say so in the detail.
-11. Operators cannot disable their own two-factor authentication, by design: it is mandatory for staff and admin accounts. Every revert of an enrolment is SQL, run in lane 06.
+11. Operators cannot disable their own two-factor authentication, by design: it is mandatory for staff and admin accounts. Every revert of an enrolment is operator-run SQL in lane 06.
+12. The Supabase MCP is read-only. Direct SQL writes, including cleanup and score/dispute restores, are operator-run: prepare the SQL, record it in the report, and wait for an operator. Writes made through the product UI or API are still fixtures and remain your responsibility.
 
 ---
 

@@ -21,7 +21,7 @@ project serves both development and production, and every `fw-*` worktree's
 environment points at it. A push, a seed and the data scripts all write
 rows that production reads. Pushes happen once per merged pull request, run by
 the orchestrator, never for two schema-bearing pull requests at once, and never
-to make a local test pass.
+to make a local test pass. Nothing here runs through an MCP server: the Supabase MCP is read-only and project-scoped, so DDL reaches the database only through the human-run push above.
 
 The second is that **`db push` drops whatever the schema file does not mention**.
 It has already removed capture tables that were created to survive it. Anything
@@ -115,6 +115,54 @@ On 2026-10-02 the Subscriptions tab of the Requests inbox returned 500 on produc
 A read-only drift check with Prisma 7 is `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`, because `--from-url` no longer exists. That diff proposes dropping the three hand-applied sidecar unique indexes `appointment_feedback_level_key`, `consultant_earnings_occurrence_key` and `organization_earnings_split_key`, so never fix drift with a plain `db push`, and run `npm run db:sidecars` after any push.
 
 To reproduce a `lib/data` reader locally and see the real Prisma error, run `NODE_OPTIONS="--conditions=react-server" npx tsx --env-file=.env --tsconfig tsconfig.json <script>`. Without `--env-file`, Prisma silently connects to localhost.
+
+## The deploy preview runs the branch's code (2026-10-22)
+
+The Netlify deploy preview for a pull request serves that branch's code from the
+shared Postgres, so a branch's schema is not a proposal for the database — it is
+a claim about what the database already contains. A column the branch declares
+and the database lacks is a 500 on every read of that model, and the preview
+BUILD still passes, because the build only runs `prisma generate`.
+
+This has now happened three times: the #1997 columns (#2027), the
+`RescheduleRequestStatus.COUNTERED` enum value (2026-10-02), and
+`ConsultationPlan.sortOrder` (#2229, Sentry `FAMILIARISE_WEB-7A`).
+
+So the rule from `docs/prisma/README.md` — _push before, or together with, the
+deploy that reads the column_ — has a precedent rather than a procedure: the
+2026-10-02 enum value and the #1878 columns were applied directly with
+`ALTER TYPE … ADD VALUE` and `ALTER TABLE … ADD COLUMN` rather than through a
+push. An additive change is safe to apply before the deploy that reads it,
+because the running code ignores a column it does not know about.
+
+`scripts/ci/check-db-schema-required.ts` enforces it on pull requests, from
+`.github/workflows/schema-required.yml` — a workflow of its own, because
+`ci.yaml` is disabled while the Actions minutes are exhausted and a gate in a
+disabled workflow never appears. It diffs the branch's MERGE BASE schema
+against the branch's own schema — schema to schema, so a branch behind its base
+is not judged on objects it never touched — and then asks the live catalog
+whether each of those objects is there. Only objects whose absence makes a
+query fail are checked: a column, a table, an enum type, an enum value. A
+recreated enum is checked label by label, because the plan that replaces an
+enum carries no `ADD VALUE` of its own.
+
+Two things it deliberately does NOT do. It does not read the other direction of
+the drift (the database carrying objects the schema does not want): that is the
+reconcile push's business, and reading it is what made the earlier
+`check-db-drift.ts` block every schema-bearing pull request until it was
+removed from PR CI. And it does not run on pushes, because a push to `dev`
+legitimately leads the live database until the orchestrator pushes the merge;
+`db-live-drift.yml` covers the merged state.
+
+The live drift carried today is in `prisma/sql/known-drift.json`, in two
+lists. `destructiveStatementsAllowed` is what a push MAY run, and
+`knownDivergences` is what the daily drift check tolerates but a push must NOT
+remove yet — tolerating a divergence and permitting its removal are not the
+same decision. The legacy support-ticket tables are in the second list: NOT
+dead, because `origin/prod` does not carry #2257 yet and still queries them,
+so they are re-created empty as a stop-gap and the reconcile push waits for
+`dev` to be promoted to `prod`. The pre-#2041 recording-storage columns and the
+six orphan indexes ARE dead, and a push may remove them.
 
 ## The cutover to versioned migrations
 

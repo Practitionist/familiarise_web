@@ -20,8 +20,9 @@ Comprehensive guide to error detection, handling, and recovery in Stream Chat an
 2. [StreamErrorBoundary Component](#streamerrorboundary-component)
 3. [Connection Retry Logic](#connection-retry-logic)
 4. [Error Categories](#error-categories)
-5. [Error Recovery Patterns](#error-recovery-patterns)
-6. [Implementation Examples](#implementation-examples)
+5. [Join Failure States in the Meeting Room](#join-failure-states-in-the-meeting-room)
+6. [Error Recovery Patterns](#error-recovery-patterns)
+7. [Implementation Examples](#implementation-examples)
 
 ---
 
@@ -48,6 +49,7 @@ The Stream integration uses a multi-layered error handling approach:
 3. **Inform Users**: Clear, actionable error messages
 4. **Log Everything**: Comprehensive error tracking for debugging
 5. **Recover Automatically**: When safe and possible
+6. **Report Outages Once**: Server paths that fail on every delivery (the webhook route's missing secret, bad signature and failing receipt write) go through `captureThrottled`, so one outage costs at most one Sentry event per server instance per window against the shared 5,000/month quota. The throttle lives in process memory, so several warm instances can each report once.
 
 ---
 
@@ -294,14 +296,21 @@ const getRetryDelay = (attempt: number) => {
   return Math.min(1000 * Math.pow(2, attempt), 30000);
 };
 
-// Delay progression:
-// Attempt 1: 1000ms  (1s)
-// Attempt 2: 2000ms  (2s)
-// Attempt 3: 4000ms  (4s)
-// Attempt 4: 8000ms  (8s)
-// Attempt 5: 16000ms (16s)
+// Delay progression (upper bound; the real delay is jittered into [base/2, base]):
+// Attempt 1: 2000ms  (2s)
+// Attempt 2: 4000ms  (4s)
+// Attempt 3: 8000ms  (8s)
+// Attempt 4: 16000ms (16s)
 // Maximum: 30000ms   (30s)
 ```
+
+The delay is passed through `withJitter` (`lib/stream/backoff.ts`) so clients that failed together, for example after a Stream incident, do not retry in lockstep. The jitter only shortens a delay, so the upper bound above still holds, and the video wait bound in `useGetCallById` (which the `client-wait-timeout` test derives from this ladder) stays valid.
+
+### What the user sees during a blip
+
+A dropped chat socket is not an error. The SDK reconnects by itself, so the provider only sets `chatReconnecting` and the Messages surface keeps its layout with a "Reconnecting…" banner for up to 15 seconds. The app-level reconnect starts after 8 seconds, and if it fails with a retryable error the failure is held back until the five attempts are used up. Only a non-retryable failure, a refusal, or an exhausted budget shows "Chat unavailable". A later success, whether from the retry loop or from the SDK's own `connection.changed` event, clears a retryable failure.
+
+The profile fetch that precedes the connect has its own budget of four attempts. When it is spent the user sees "Couldn't load your profile" with a Retry button, instead of a skeleton that never resolves.
 
 ### Implementation
 
@@ -597,6 +606,22 @@ await client.connectUser(
   () => getCachedToken("chat"), // Function, not value
 );
 ```
+
+---
+
+## Join Failure States in the Meeting Room
+
+A person joining a session never lands on a generic error. The join flow splits outcomes into a typed refusal (the gate card) and a failure (a classified card with a Retry button). `classifyJoinFailure` in `app/meetings/[id]/join-failure.ts` assigns the failure kind, and `JoinFailureCard` renders it on the meeting page and, inline, in the lobby after a failed `call.join()`.
+
+| Situation                                                                                   | Kind                   | What the person sees                                                                                                             | Recovery                                                                    |
+| ------------------------------------------------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Join route 403 or 404 with a code (`TOO_EARLY`, `SESSION_ENDED`, consent)                   | Typed refusal          | The gate card, or the consent prompt                                                                                             | Check Again, host reopen, or grant consent                                  |
+| Circuit open, Stream 5xx or 429, gateway 502 or 504, network drop, 45 s client-wait timeout | `provider_unavailable` | "Our video provider is having trouble. Your session is protected — if it can't start, you'll be offered a reschedule or refund." | Automatic retries (four, capped backoff with jitter), then the Retry button |
+| SFU participant limit reached (code 301) or a message naming the limit                      | `room_full`            | "This session is full. If you're already in it on another device, close that tab and try again."                                 | Retry button                                                                |
+| Server 500, 409 `ROOM_NOT_PROVISIONED`, any unrecognised error                              | `unknown`              | "Couldn't join the session" with the error text                                                                                  | Retry button                                                                |
+| The call ends while waiting in the lobby                                                    | Ended panel            | "This room has closed", with Check again and, for the host, Reopen Session Room                                                  | The join route applies the end-reason policy on the check                   |
+
+Provider outages are logged as warnings so the automatic retries stay out of Sentry. The join route returns 503 for an open circuit and for a Stream 5xx or 429, and 500 only for faults that are not the provider's.
 
 ---
 

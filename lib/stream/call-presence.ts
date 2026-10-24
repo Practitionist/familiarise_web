@@ -41,8 +41,6 @@ export interface CallPresenceEvidence {
   maxConcurrent: number | null;
   /** Stream session ID when available from the call report. */
   sessionId?: string | null;
-  /** Optional participant intervals returned by Stream. */
-  intervals?: StreamParticipantSessionInterval[];
 }
 
 /**
@@ -141,27 +139,24 @@ async function fetchParticipantSessionPages(
 }
 
 /**
- * Fetch per-participant session intervals from Stream when webhook deliveries
- * missed a participant that `getCallReport` saw.
+ * Stream's own per-device record of a call's latest session: the attendance
+ * witness for lost participant webhooks. It outlives the call report's
+ * participant summary. `null` means Stream could not say (unreachable, or no
+ * session), never "nobody attended"; an empty array is a session with no one in it.
  */
 export async function getCallParticipantSessionsFromStream(
   streamCallId: string,
   sessionId?: string | null,
-): Promise<StreamParticipantSessionInterval[]> {
+): Promise<StreamParticipantSessionInterval[] | null> {
   try {
     const client = getStreamVideoClient();
     const call = client.video.call(STREAM_CALL_TYPE, toCallId(streamCallId));
     let resolvedSessionId = sessionId ?? null;
     if (!resolvedSessionId) {
       const report = await withStreamCircuitBreaker(() => call.getCallReport());
-      resolvedSessionId = report.session_id ?? report.session?.id ?? null;
+      resolvedSessionId = report.session_id || report.session?.id || null;
     }
-    if (
-      !resolvedSessionId ||
-      typeof call.queryCallParticipantSessions !== "function"
-    ) {
-      return [];
-    }
+    if (!resolvedSessionId) return null;
 
     return await fetchParticipantSessionPages(call, resolvedSessionId);
   } catch (error) {
@@ -169,6 +164,6 @@ export async function getCallParticipantSessionsFromStream(
       streamCallId,
       error: error instanceof Error ? error.message : String(error),
     });
-    return [];
+    return null;
   }
 }

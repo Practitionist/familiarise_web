@@ -3,8 +3,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 /** Meeting lobby / room chrome (setup preview + sidebar). */
 export function MeetingRoomSkeleton() {
   return (
-    <main className="relative min-h-screen bg-gradient-to-br from-zinc-900 via-zinc-950 to-black">
-      <div className="mx-auto grid h-screen max-w-7xl gap-6 p-4 lg:grid-cols-[minmax(0,1fr)_22rem] lg:p-8">
+    <main className="relative min-h-dvh bg-gradient-to-br from-zinc-900 via-zinc-950 to-black">
+      <div className="mx-auto grid h-dvh max-w-7xl gap-6 p-4 lg:grid-cols-[minmax(0,1fr)_22rem] lg:p-8">
         <div className="flex min-h-0 flex-col gap-4">
           <Skeleton className="aspect-video w-full rounded-2xl bg-zinc-800" />
           <div className="flex items-center justify-center gap-3">
