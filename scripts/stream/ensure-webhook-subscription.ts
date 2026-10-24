@@ -56,7 +56,11 @@ function logHookDriftDetails(
     console.log(`  WILDCARD detected (unfiltered delivery across all events)`);
   }
   if (drift.disabled) console.log(`  DISABLED (deliveries are not sent)`);
-  if (drift.urlMismatch) console.log(`  URL differs from the contract`);
+  if (drift.urlMismatch) {
+    console.log(
+      `  URL differs from the contract; --apply keeps it unless --rewrite-url is also passed`,
+    );
+  }
   if (drift.missing.length > 0) {
     console.log(`  MISSING (${drift.missing.length}):`);
     for (const t of drift.missing) console.log(`    + ${t}`);
@@ -112,6 +116,7 @@ function parseCliMode(argv: string[]): EnsureMode {
 
 export async function ensureWebhookSubscription(
   mode: EnsureMode,
+  rewriteUrl = false,
 ): Promise<number> {
   const apply = mode === "apply";
   if (!isStreamConfigured()) {
@@ -203,7 +208,8 @@ export async function ensureWebhookSubscription(
         ...h,
         event_types: next,
         enabled: true,
-        ...(expectedUrl ? { webhook_url: expectedUrl } : {}),
+        // The app is shared by every environment, so a URL rewrite needs its own explicit flag.
+        ...(rewriteUrl && expectedUrl ? { webhook_url: expectedUrl } : {}),
       };
     });
     await client.updateAppSettings({
@@ -226,7 +232,7 @@ export async function ensureWebhookSubscription(
 
 if (require.main === module) {
   const mode = parseCliMode(process.argv);
-  ensureWebhookSubscription(mode)
+  ensureWebhookSubscription(mode, process.argv.includes("--rewrite-url"))
     .then((code) => {
       process.exitCode = code;
     })

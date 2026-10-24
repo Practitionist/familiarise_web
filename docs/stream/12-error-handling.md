@@ -48,7 +48,7 @@ The Stream integration uses a multi-layered error handling approach:
 3. **Inform Users**: Clear, actionable error messages
 4. **Log Everything**: Comprehensive error tracking for debugging
 5. **Recover Automatically**: When safe and possible
-6. **Report Outages Once**: Server paths that fail on every delivery (the webhook route's missing secret, bad signature and failing receipt write) go through `captureThrottled`, so one outage costs one Sentry event per window against the shared 5,000/month quota.
+6. **Report Outages Once**: Server paths that fail on every delivery (the webhook route's missing secret, bad signature and failing receipt write) go through `captureThrottled`, so one outage costs at most one Sentry event per server instance per window against the shared 5,000/month quota. The throttle lives in process memory, so several warm instances can each report once.
 
 ---
 

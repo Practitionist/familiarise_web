@@ -154,7 +154,11 @@ npx tsx scripts/stream/ensure.ts --apply --routes-are-deployed
 # Step 1c: Verify and reconcile the webhook hook (enabled, URL, event list)
 npx tsx scripts/stream/ensure-webhook-subscription.ts --check
 npx tsx scripts/stream/ensure-webhook-subscription.ts --apply
+# Only from the production environment, and only when the hook really points at the wrong origin:
+npx tsx scripts/stream/ensure-webhook-subscription.ts --apply --rewrite-url
 ```
+
+`--apply` reconciles the event list and the enabled flag but leaves the hook's URL alone. One Stream app serves every environment, so a run from a laptop or a preview with its own `NEXT_PUBLIC_APP_URL` would otherwise redirect production webhooks. The URL is rewritten only when `--rewrite-url` is passed as well.
 
 The intended state lives in one module, `lib/stream/control-plane-contract.ts`. The ensure scripts write it and the daily drift detector (below) reads it, so the two cannot disagree about what "correct" means.
 
