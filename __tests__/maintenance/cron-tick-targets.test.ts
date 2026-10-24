@@ -237,7 +237,7 @@ describe("cron-tick dueTargets cadence", () => {
 
   it("never fires more than MAX_TARGETS_PER_TICK on any tick of 400 days, windows included", () => {
     const { MAX_TARGETS_PER_TICK } = loadTicker();
-    expect(MAX_TARGETS_PER_TICK).toBe(9);
+    expect(MAX_TARGETS_PER_TICK).toBe(10);
     // 400 days from 2026-11-01 cover every month start, every weekday and every quarter start.
     const start = Date.UTC(2026, 10, 1);
     let min = Infinity;
@@ -459,7 +459,7 @@ describe("cron-tick calendar windows", () => {
     });
   });
 
-  it("runs the dispute poll every hour at :00 and the ledger audit once a day at 03:55", () => {
+  it("runs hourly ledger slices where statutory and settlement jobs leave capacity", () => {
     const fires = (name: Parameters<typeof windowStartFor>[0]) =>
       Array.from({ length: 24 * 12 }, (_, i) => utc(4, 0, i * 5)).filter((t) =>
         dueTargets(t).includes(name),
@@ -467,9 +467,14 @@ describe("cron-tick calendar windows", () => {
     const disputes = fires("reconcile-disputes");
     expect(disputes).toHaveLength(24);
     expect(disputes.every((t) => t.getUTCMinutes() === 0)).toBe(true);
-    expect(fires("reconcile-ledgers").map((t) => t.toISOString())).toEqual([
-      "2026-11-04T03:55:00.000Z",
-    ]);
+    const ledgers = fires("reconcile-ledgers");
+    expect(ledgers.length).toBeGreaterThan(12);
+    expect(ledgers.every((t) => t.getUTCMinutes() === 55)).toBe(true);
+    expect(ledgers.some((t) => t.getUTCHours() === 23)).toBe(true);
+    expect(dueTargets(utc(4, 6, 55))).toContain(
+      "reconcile-gateway-settlements",
+    );
+    expect(dueTargets(utc(4, 6, 55))).not.toContain("reconcile-ledgers");
   });
 
   it("runs the TDS draft only on the 5th of January, April, July and October", () => {

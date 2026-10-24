@@ -311,9 +311,11 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
     return {
       success: result.success,
       tombstoned: result.tombstoned,
+      failedTombstones: result.failedTombstones,
       purged: result.purged,
       cleanedCount: result.purged,
-      errorCount: result.failedStorage + result.failedRows,
+      errorCount:
+        result.failedTombstones + result.failedStorage + result.failedRows,
     };
   },
   "reconcile-document-storage": async () => {

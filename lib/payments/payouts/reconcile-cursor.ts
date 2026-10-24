@@ -17,6 +17,18 @@ export const LEAST_RECENTLY_RECONCILED = {
   lastReconciledAt: { sort: "asc", nulls: "first" },
 } as const;
 
+/** In-memory twin of `LEAST_RECENTLY_RECONCILED` + `id asc`; ids compare by code unit, never by locale. */
+export function compareLeastRecentlyReconciled(
+  a: { id: string; lastReconciledAt: Date | null },
+  b: { id: string; lastReconciledAt: Date | null },
+): number {
+  const byPoll =
+    (a.lastReconciledAt?.getTime() ?? 0) - (b.lastReconciledAt?.getTime() ?? 0);
+  if (byPoll !== 0) return byPoll;
+  if (a.id === b.id) return 0;
+  return a.id < b.id ? -1 : 1;
+}
+
 export async function stampConsultantPayoutsReconciled(
   ids: string[],
 ): Promise<void> {

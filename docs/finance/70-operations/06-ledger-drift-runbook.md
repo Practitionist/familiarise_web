@@ -9,21 +9,23 @@ last-reviewed: 2026-10-23
 
 # Ledger drift runbook
 
-Use this page when the nightly ledger audit answers 207, Sentry or a `SystemEvent` reports a ledger finding, an operator-started reconcile returns `ok: false`, or an organisation's wallet spend is frozen. The auditor, `reconcile-ledgers` (`scripts/reconcile/reconcile-ledgers.ts`), never corrects a balance: it proves that the cached numbers (a wallet balance, an earnings total, a usage counter) still agree with the journal and writes a `LedgerReconciliationReport`. Its one protective side effect is that a run finding wallet drift, nightly or operator-started, freezes spend on each drifted wallet (`freezeDriftedWallets`). What each check asserts is in [integrity and reconciliation](../20-ledger/06-integrity-and-reconciliation.md). This page is the procedure to follow when a check fires.
+Use this page when the completed ledger audit answers 207, Sentry or a `SystemEvent` reports a ledger finding, an operator-started reconcile returns `ok: false`, or an organisation's wallet spend is frozen. The auditor, `reconcile-ledgers` (`scripts/reconcile/reconcile-ledgers.ts`), never corrects a balance: it proves that the cached numbers (a wallet balance, an earnings total, a usage counter) still agree with the journal and writes a `LedgerReconciliationReport`. Its one protective side effect is that a run finding wallet drift, scheduled or operator-started, freezes spend on each drifted wallet (`freezeDriftedWallets`). What each check asserts is in [integrity and reconciliation](../20-ledger/06-integrity-and-reconciliation.md). This page is the procedure to follow when a check fires.
 
 The rule that governs every step: **a finding is an incident signal, never a thing to patch.** The journal is append-only (`ledger_entry_immutable` and `ledger_transaction_immutable` refuse an `UPDATE` or `DELETE` of a posted row), and a balanced transaction is already guaranteed at commit by `ledger_txn_balanced`, so the auditor never re-checks balance. Drift means a writer moved a cache without its journal line, or a journal line without its cache. The fix is to find that writer, then post one balanced correcting `LedgerTransaction` for the side that is wrong. Overwriting a cache to match the journal is not a repair.
 
 ## Step 1: confirm what fired
 
-Read the newest failing report. From the console use Reconcile, then the ledger run; over HTTP an admin session can call `GET /api/admin/reconcile-ledgers?onlyDirty=true`, which lists only reports with `ok = false`. From SQL:
+Read the newest report and its `summary.status` first. RUNNING means incomplete, with `ok: false` until completion; FAILED retains its checkpoint for the scheduled retry; an authenticated admin run restarts it as a fresh audit. Only a completed report provides a final clean/discrepant verdict. From the console use Reconcile, then the ledger run; over HTTP an admin session can call `GET /api/admin/reconcile-ledgers?onlyDirty=true`, which lists only reports with `ok = false`. From SQL:
 
 ```sql
 SELECT id, "runAt", scope, ok,
+       summary->>'status' AS status,
+       summary->>'nextStep' AS next_step,
        summary->>'unbaselinedCount' AS unbaselined,
        summary->>'baselinedCount'   AS baselined,
        summary->'baselineProblems'  AS baseline_problems,
        jsonb_array_length(findings::jsonb) AS findings
-FROM "LedgerReconciliationReport"
+FROM ledger_reconciliation_reports
 ORDER BY "runAt" DESC
 LIMIT 5;
 ```
@@ -62,7 +64,7 @@ For every kind except the wallet, the order is the same. First stop the writer f
 
 ### Wallet balance drift
 
-`WALLET_BALANCE_DRIFT` means `BillingAccount.walletBalance`, the cache, differs from the signed balance of the organisation's `WALLET` ledger account. The auditor freezes that organisation's discretionary wallet spend (`freezeDriftedWallets`, `lib/payments/wallet-freeze.ts`) before it evaluates the baseline, and the nightly run also pages. The freeze lives in the append-only `SystemEvent` log as a `WALLET_FREEZE` and `WALLET_UNFREEZE` pair keyed on `wallet-freeze:<billingAccountId>`. It fails closed if the log cannot be read. It blocks checkout spend only, never a top-up credit and never the recovery of a lost chargeback.
+`WALLET_BALANCE_DRIFT` means `BillingAccount.walletBalance`, the cache, differs from the signed balance of the organisation's `WALLET` ledger account. The auditor freezes that organisation's discretionary wallet spend (`freezeDriftedWallets`, `lib/payments/wallet-freeze.ts`) before it evaluates the baseline, and the completed logical audit also pages. The freeze lives in the append-only `SystemEvent` log as a `WALLET_FREEZE` and `WALLET_UNFREEZE` pair keyed on `wallet-freeze:<billingAccountId>`. It fails closed if the log cannot be read. It blocks checkout spend only, never a top-up credit and never the recovery of a lost chargeback.
 
 1. **Find the root cause.** Which writer moved the cache without its journal line, or the journal without the cache. Do not replay a webhook for this finding.
 2. **Decide which side is wrong.** Then post one balanced correcting journal for that side. `adjustWallet` (the wallet-adjustment door) cannot close a cache-versus-journal gap, because it moves the cache and the journal by the same amount.
@@ -72,11 +74,11 @@ For every kind except the wallet, the order is the same. First stop the writer f
 
 ## Step 4: verify
 
-Start a fresh run: from the console's Reconcile section, or `POST /api/cleanup/reconcile-ledgers` with the bearer secret, or an organisation-scoped `POST /api/admin/reconcile-ledgers` with `{ organizationId, reason }` to re-check only the affected organisation (the full-scope-only checks are skipped in that mode). Confirm the new report has `ok = true`. A full-scope run that is already `RUNNING` answers 409. If the finding persists, you corrected the wrong side or the writer is still diverging.
+Resume an unfinished audit from the console’s Continue audit action or the cleanup door. To verify a correction after completion, start a fresh authenticated run from the console or an organisation-scoped `POST /api/admin/reconcile-ledgers` with `{ organizationId, reason }` to re-check only the affected organisation (the full-scope-only checks are skipped in that mode). Confirm the new report has `ok = true`. A held execution lease answers 409; an idle RUNNING checkpoint resumes, and an admin run on a FAILED one starts a fresh audit. A cleanup slice may return RUNNING, so continue until COMPLETED before claiming a fresh verdict. Both admin doors advance one bounded slice; repeat to resume an unfinished audit. Use an authenticated admin door for a fresh re-check after completion; the scheduler reuses the current day’s completed audit. If the finding persists, you corrected the wrong side or the writer is still diverging.
 
 ## Updating the baseline
 
-The baseline, `scripts/reconcile/ledger-findings-baseline.ts`, exists so that a known finding does not keep the nightly run red forever. Add an entry only for a finding that is knowingly carried: name the kind, the delta, every identifier the finding carries, an owner, a one-line reason and an expiry date. An entry excuses exactly that finding and stops excusing it after its expiry. This is a reviewed code change; never loosen an entry to silence a new finding.
+The baseline, `scripts/reconcile/ledger-findings-baseline.ts`, exists so that a known finding does not keep the completed logical audit red forever. Add an entry only for a finding that is knowingly carried: name the kind, the delta, every identifier the finding carries, an owner, a one-line reason and an expiry date. An entry excuses exactly that finding and stops excusing it after its expiry. This is a reviewed code change; never loosen an entry to silence a new finding.
 
 ## Prevention
 
@@ -86,11 +88,11 @@ The checks the database already enforces are not repeated in the auditor (see [i
 
 - [Admin money doors](02-admin-money-doors.md) for the unfreeze and wallet-adjustment doors.
 - [Wallet and top-ups](../50-b2b/02-wallet-and-top-ups.md) for the debit guard that refuses a debit with no journal line.
-- [Scheduled money jobs](01-scheduled-jobs.md) for when the nightly audit runs.
+- [Scheduled money jobs](01-scheduled-jobs.md) for the offered slice cadence and capacity policy.
 
 ## Deprecated & Superseded Approaches
 
 1. **Hand-patching a cache or a journal row with `UPDATE`.** The immutability triggers refuse it for the journal, and overwriting a cache hides the writer bug. Post a counter-transaction.
 2. **Replaying a webhook to clear a wallet finding.** A wallet drift is a missing journal line, not a missed event.
-3. **A Netlify background function that looped the audit.** The set-based auditor finishes a full run in one request, so `POST /api/admin/reconcile-ledgers` runs it in-process under the `reconcile-ledgers` lease and no background driver exists.
+3. **An external background loop and an assumed fast full audit.** Scheduled progress now uses persisted bounded pages under the canonical lease. Admin and scheduled calls now advance the same bounded core; they do not require an external background loop.
 4. **A baseline keyed to one entity id.** The current baseline pins kind, delta and every identifier, expires, and fails the run when malformed.
