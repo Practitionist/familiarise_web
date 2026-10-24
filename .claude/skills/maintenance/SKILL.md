@@ -40,3 +40,13 @@ Maintenance bypass cookies remain short-lived HMAC-SHA256 tokens verified via We
 Crypto. Follow the active maintenance implementation and recovery instructions;
 never infer that a cached phase quiesces work already in flight. See the linked
 references for transaction-client, deployed-runtime and environment constraints.
+
+The 48-hour paid-unallocated arm of `expire-stale-requests` commits EXPIRED,
+history, `sub-unalloc:<paymentId>` full-refund markers and its bell together.
+Its legacy recovery filters eligible payments before LIMIT with no liability
+lookback. Keep existing markers/attempts, hold an oversized payment envelope
+without partially expiring its liabilities, and preserve visible backlog on
+errors or deadline truncation. Exhausting only the remaining invocation allowance
+is a deferral, not an envelope error; stop the ordered page for the next run. Its shared 16-second admission budget covers
+only this family; earlier expiry arms and nudge fairness remain separate work.
+Do not describe the entire worker as deadline-bounded or its backlog as drained.

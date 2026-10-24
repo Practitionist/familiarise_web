@@ -1,21 +1,4 @@
-/**
- * Stale PENDING Request Expiration - Core Logic
- *
- * Auto-expires consultations and subscriptions stuck in PENDING state for too long.
- * This happens when:
- * - Consultant never responded to a request
- * - Consultee abandoned the request
- * - System error prevented status update
- *
- * This module exports the core expiration function.
- * It is imported by:
- * - jobs/expire-stale-requests.ts (GitHub Actions)
- * - app/api/cleanup/expire-stale-requests/route.ts (API endpoint)
- *
- * Schedule: Hourly (booking-journey audit B1 — a PENDING consultation holds
- * a tentative slot, so the old daily cadence plus a 30-day threshold let a
- * single account pin a consultant's calendar for a month).
- */
+/** Stale-request expiry core, shared by the cleanup registry and admin recovery door. */
 
 import prisma from "../../lib/prisma";
 import {
@@ -25,6 +8,17 @@ import {
   Prisma,
 } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { startDeadline } from "@/lib/cron/run-deadline";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { refundableBalancePaiseSql } from "@/lib/payments/refundable-balance-sql";
+import {
+  driveRefundOwed,
+  markerFromRow,
+  MAX_REFUND_OWED_ATTEMPTS,
+  REFUND_OWED_SELECT,
+  stampRefundsOwed,
+  type RefundOwedMarker,
+} from "@/lib/payments/operations/refund-owed";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import {
   RESCHEDULE_OPEN_STATUSES,
@@ -98,22 +92,8 @@ const MAX_REQUESTS_PER_RUN = 500;
 const MAX_SLOT_RELEASES_PER_RUN = 2000;
 
 /**
- * #1583 P1 — the per-run bite, overridable per invocation.
- *
- * The constants above bound a GitHub Actions run. They do NOT bound the Netlify
- * ticker, which drives the same core from a 20 s abort: this sweep has seven
- * cohort arms, so "500 per arm" is 3,500 rows and up to seven sequential
- * transaction streams against a budget that also has to cover a gateway refund
- * per expired payment. At production volume that is a 10–20 minute job inside
- * a 20-second window, i.e. the ticker aborted it on every tick and no cohort
- * ever finished.
- *
- * Every arm here is oldest-first with a per-run cap and NO persisted cursor,
- * and every arm's write removes the row from its cohort (EXPIRED, CANCELLED, or
- * a soft-cancel tombstone), so a smaller cap is a BUDGET and not a drop: the
- * next run collects the next-oldest rows and the backlog drains. That property
- * is the whole reason a cap is safe here and would not be on a job that read a
- * window and then had to remember where it stopped.
+ * Per-arm caps bound request reads. Only the paid-unallocated family also
+ * bounds payment staging and shares an admission deadline across its phases.
  */
 export interface StaleRequestRunLimits {
   /** Rows one cohort arm may read and transition this run. */
@@ -232,6 +212,9 @@ export interface ExpireStaleRequestsResult {
   refundsIssued: number;
   refundFailures: number;
   errors: string[];
+  /** Remaining or held work in the 48-hour paid-unallocated family. */
+  unallocatedHasMore: boolean;
+  unallocatedRefundsDeferred: number;
   timestamp: string;
 }
 
@@ -879,65 +862,142 @@ async function stageUnallocatedRefundBell(
 
 const unallocatedRefundKey = (paymentId: string) => `sub-unalloc:${paymentId}`;
 
-/** Plans expired UNALLOCATED_48H in the last 14 days (the retry cohort). */
-async function recentlyUnallocatedSubscriptionIds(
-  limits: StaleRequestRunLimits,
-): Promise<string[]> {
-  const rows = await prisma.bookingStatusHistory.findMany({
-    where: {
-      entity: "SUBSCRIPTION",
-      reason: "UNALLOCATED_48H",
-      toStatus: AppointmentStatus.EXPIRED,
-      createdAt: { gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000) },
-    },
-    select: { entityId: true },
-    take: limits.maxRequests,
-  });
-  return rows?.map((r) => r.entityId) ?? [];
+const UNALLOCATED_REFUND_REASON =
+  "subscription not scheduled within 48 h — automatic full refund";
+
+const unallocatedMarker = (paymentId: string): RefundOwedMarker => ({
+  paymentId,
+  amountPaise: null,
+  key: unallocatedRefundKey(paymentId),
+  reason: UNALLOCATED_REFUND_REASON,
+});
+
+// Payment status remains SUCCEEDED after refund. Exclude settled obligations
+// before the page cap, including zero-paise credit restorations under another key.
+function unstampedUnallocatedRefundPredicate(): Prisma.Sql {
+  return Prisma.sql`
+    p."paymentStatus" = 'SUCCEEDED' AND p."deletedAt" IS NULL
+    AND p."refundOwedKey" IS NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM "Refund" spent
+      WHERE spent."dedupeKey" = 'sub-unalloc:' || p.id
+        AND spent.status IN ('SUCCEEDED', 'PENDING')
+    )
+    AND (
+      (left(p."paymentIntent", 5) = 'free_' AND NOT EXISTS (
+        SELECT 1 FROM "Refund" returned
+        WHERE returned."paymentId" = p.id
+          AND returned.status IN ('SUCCEEDED', 'PENDING')
+      ))
+      OR (left(p."paymentIntent", 5) <> 'free_'
+        AND ${refundableBalancePaiseSql(Prisma.sql`p.id`, Prisma.sql`p.amount`)} > 0)
+    )`;
 }
 
-/**
- * #1775 C-3 — the full refund of each expired plan's SUCCEEDED payment,
- * keyed `sub-unalloc:<paymentId>`: a key already spent is skipped, so a retry
- * never refunds twice. Failures are counted, never thrown.
- */
-async function refundUnallocatedPlans(subscriptionIds: string[]) {
-  const out = { issued: 0, failures: 0, failureMsgs: [] as string[] };
-  if (subscriptionIds.length === 0) return out;
-  const payments = await prisma.payment.findMany({
-    where: {
-      appointment: { subscriptionId: { in: subscriptionIds } },
-      paymentStatus: PaymentStatus.SUCCEEDED,
-      deletedAt: null,
-    },
-    select: { id: true },
+async function stageUnallocatedRefunds(
+  tx: Tx,
+  paymentIds: readonly string[],
+): Promise<RefundOwedMarker[]> {
+  const markers = paymentIds.map(unallocatedMarker);
+  const stamped = await stampRefundsOwed(tx, markers);
+  if (stamped !== markers.length) {
+    throw new Error(
+      "Unallocated refund marker changed; expiry was rolled back",
+    );
+  }
+  return markers;
+}
+
+/** Bounded recovery of proven expiry obligations, with no liability age cutoff. */
+async function stageLegacyUnallocatedRefunds(
+  limit: number,
+  pastDeadline: () => boolean,
+  subscriptionId?: string,
+) {
+  return withSerializableRetry(async () => {
+    if (pastDeadline()) return { markers: [], hasMore: true };
+    return prisma.$transaction(
+      async (tx) => {
+        const rows = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+        SELECT p.id FROM "Payment" p
+        JOIN "Appointment" a ON a.id = p."appointmentId"
+        JOIN "Subscription" s ON s.id = a."subscriptionId"
+        WHERE s.status = 'EXPIRED'
+          ${subscriptionId ? Prisma.sql`AND s.id = ${subscriptionId}` : Prisma.empty}
+          AND ${unstampedUnallocatedRefundPredicate()}
+          AND EXISTS (
+            SELECT 1 FROM "BookingStatusHistory" h
+            WHERE h."entityId" = s.id AND h.entity = 'SUBSCRIPTION'
+              AND h.reason = 'UNALLOCATED_48H' AND h."toStatus" = 'EXPIRED'
+          )
+        ORDER BY p."createdAt" ASC, p.id ASC
+        LIMIT ${limit + 1}
+      `);
+        return {
+          markers: await stageUnallocatedRefunds(
+            tx,
+            rows.slice(0, limit).map((row) => row.id),
+          ),
+          hasMore: rows.length > limit,
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   });
-  const spent = new Set(
-    (
-      await prisma.refund.findMany({
-        where: {
-          dedupeKey: { in: payments.map((p) => unallocatedRefundKey(p.id)) },
-          status: { notIn: ["FAILED", "CANCELLED"] },
-        },
-        select: { dedupeKey: true },
-      })
-    ).map((r) => r.dedupeKey),
-  );
-  for (const payment of payments) {
-    const dedupeKey = unallocatedRefundKey(payment.id);
-    if (spent.has(dedupeKey)) continue;
-    try {
-      await refundBookingPayment({
-        paymentId: payment.id,
-        reason:
-          "subscription not scheduled within 48 h — automatic full refund",
-        initiatedByUserId: null,
-        dedupeKey,
-      });
+}
+
+async function unallocatedMarkersRemain(
+  subscriptionId?: string,
+): Promise<boolean> {
+  const rows = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+    SELECT p.id FROM "Payment" p
+    JOIN "Appointment" a ON a.id = p."appointmentId"
+    JOIN "Subscription" s ON s.id = a."subscriptionId"
+    WHERE s.status = 'EXPIRED' AND p."paymentStatus" = 'SUCCEEDED'
+      ${subscriptionId ? Prisma.sql`AND s.id = ${subscriptionId}` : Prisma.empty}
+      AND p."deletedAt" IS NULL AND p."refundOwedKey" IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM "BookingStatusHistory" h
+        WHERE h."entityId" = s.id AND h.entity = 'SUBSCRIPTION'
+          AND h.reason = 'UNALLOCATED_48H' AND h."toStatus" = 'EXPIRED'
+      )
+    LIMIT ${1}
+  `);
+  return rows.length > 0;
+}
+
+async function driveUnallocatedRefunds(
+  markers: readonly RefundOwedMarker[],
+  limit: number,
+  pastDeadline: () => boolean,
+) {
+  const out = {
+    issued: 0,
+    failures: 0,
+    failureMsgs: [] as string[],
+    deferred: 0,
+  };
+  let driven = 0;
+  for (const marker of markers) {
+    if (driven >= limit || pastDeadline()) {
+      out.deferred += 1;
+      continue;
+    }
+    driven += 1;
+    const outcome = await driveRefundOwed(marker);
+    if (outcome.kind === "refunded") {
       out.issued += 1;
-    } catch (err) {
+      if (outcome.refund.status === "PENDING") out.deferred += 1;
+    } else if (outcome.kind === "failed") {
       out.failures += 1;
-      out.failureMsgs.push(`Refund failed for payment ${payment.id}: ${err}`);
+      out.failureMsgs.push(
+        `Refund failed for payment ${marker.paymentId}: ${outcome.error}`,
+      );
+    } else if (
+      outcome.kind === "blocked" ||
+      (outcome.kind === "replayed" && outcome.refund.status === "PENDING")
+    ) {
+      out.deferred += 1;
     }
   }
   return out;
@@ -971,25 +1031,75 @@ const UNALLOCATED_SELECT = {
   },
 } satisfies Prisma.SubscriptionSelect;
 
-/** The CAS and its bell for one plan; false when the plan left the cohort. */
+class UnallocatedPaymentCapacityError extends Error {
+  constructor(
+    readonly kind: "envelope" | "allowance",
+    subscriptionId: string,
+    limit: number,
+  ) {
+    super(
+      kind === "envelope"
+        ? `Unallocated subscription ${subscriptionId} exceeds the payment envelope (${limit}); expiry held`
+        : `Unallocated subscription ${subscriptionId} needs a fresh payment allowance`,
+    );
+  }
+}
+
+/** The CAS, refund markers and bell commit together; null when the cohort CAS loses. */
 async function expireOneUnallocated(
   subscription: Prisma.SubscriptionGetPayload<{
     select: typeof UNALLOCATED_SELECT;
   }>,
   cohort: ReturnType<typeof unallocatedCohort>,
-): Promise<boolean> {
+  paymentLimit: number,
+  pastDeadline: () => boolean,
+  remainingPaymentAllowance = paymentLimit,
+): Promise<RefundOwedMarker[] | null> {
   try {
-    const staged = await prisma.$transaction(async (tx) => {
-      await transitionSubscriptionRequest(tx, {
-        where: { id: subscription.id, ...cohort },
-        to: AppointmentStatus.EXPIRED,
-        fromIn: [AppointmentStatus.PENDING],
-        actorUserId: null,
-        reason: "UNALLOCATED_48H",
-      });
-      // #1775 C-6 — the bell rides the CAS: a lost race stages nothing.
-      return stageUnallocatedRefundBell(tx, subscription);
+    const staged = await withSerializableRetry(async () => {
+      if (pastDeadline()) return null;
+      return prisma.$transaction(
+        async (tx) => {
+          await transitionSubscriptionRequest(tx, {
+            where: { id: subscription.id, ...cohort },
+            to: AppointmentStatus.EXPIRED,
+            fromIn: [AppointmentStatus.PENDING],
+            actorUserId: null,
+            reason: "UNALLOCATED_48H",
+          });
+          const due = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+        SELECT p.id FROM "Payment" p
+        JOIN "Appointment" a ON a.id = p."appointmentId"
+        WHERE a."subscriptionId" = ${subscription.id}
+          AND ${unstampedUnallocatedRefundPredicate()}
+        ORDER BY p."createdAt" ASC, p.id ASC
+        LIMIT ${paymentLimit + 1}
+      `);
+          if (due.length > paymentLimit) {
+            throw new UnallocatedPaymentCapacityError(
+              "envelope",
+              subscription.id,
+              paymentLimit,
+            );
+          }
+          if (due.length > remainingPaymentAllowance) {
+            throw new UnallocatedPaymentCapacityError(
+              "allowance",
+              subscription.id,
+              remainingPaymentAllowance,
+            );
+          }
+          const markers = await stageUnallocatedRefunds(
+            tx,
+            due.map((row) => row.id),
+          );
+          const notice = await stageUnallocatedRefundBell(tx, subscription);
+          return { ...notice, markers };
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
     });
+    if (!staged) return null;
     const emailRows = staged?.emailArgs
       ? await stageAppointmentCancelledEmail(prisma, staged.emailArgs).catch(
           (err) => {
@@ -1013,10 +1123,10 @@ async function expireOneUnallocated(
       },
       "expire-stale-requests.unallocated",
     );
-    return true;
+    return staged.markers;
   } catch (error) {
     if (!(error instanceof IllegalTransitionError)) throw error;
-    return false;
+    return null;
   }
 }
 
@@ -1032,11 +1142,13 @@ export async function expireUnallocatedPaidSubscriptionForOne(
   issued: number;
   failures: number;
   errors: string[];
+  hasMore: boolean;
 }> {
   return withCronLock(
     "expire-stale-requests",
     { failMode: "closed" },
     async () => {
+      const pastDeadline = startDeadline();
       const cohort = unallocatedCohort();
       const row = await prisma.subscription.findFirst({
         where: {
@@ -1046,27 +1158,68 @@ export async function expireUnallocatedPaidSubscriptionForOne(
         },
         select: UNALLOCATED_SELECT,
       });
-      const expired = row ? await expireOneUnallocated(row, cohort) : false;
-      const history = expired
-        ? null
-        : await prisma.bookingStatusHistory.findFirst({
+      const markers = row
+        ? await expireOneUnallocated(
+            row,
+            cohort,
+            DEFAULT_RUN_LIMITS.maxRequests,
+            pastDeadline,
+          )
+        : null;
+      const legacy = await stageLegacyUnallocatedRefunds(
+        DEFAULT_RUN_LIMITS.maxRequests,
+        pastDeadline,
+        subscriptionId,
+      );
+      const persisted = pastDeadline()
+        ? []
+        : await prisma.payment.findMany({
             where: {
-              entity: "SUBSCRIPTION",
-              entityId: subscriptionId,
-              reason: "UNALLOCATED_48H",
-              toStatus: AppointmentStatus.EXPIRED,
+              appointment: {
+                subscriptionId,
+                subscription: { status: AppointmentStatus.EXPIRED },
+                statusHistory: {
+                  some: {
+                    entity: "SUBSCRIPTION",
+                    entityId: subscriptionId,
+                    reason: "UNALLOCATED_48H",
+                    toStatus: AppointmentStatus.EXPIRED,
+                  },
+                },
+              },
+              paymentStatus: PaymentStatus.SUCCEEDED,
+              deletedAt: null,
+              refundOwedKey: { startsWith: "sub-unalloc:" },
+              refundOwedAttempts: { lt: MAX_REFUND_OWED_ATTEMPTS },
             },
-            select: { id: true },
+            orderBy: [{ refundOwedAt: "asc" }, { id: "asc" }],
+            take: DEFAULT_RUN_LIMITS.maxRequests + 1,
+            select: REFUND_OWED_SELECT,
           });
-      if (!expired && !history) {
-        return { expired: false, issued: 0, failures: 0, errors: [] };
-      }
-      const refunds = await refundUnallocatedPlans([subscriptionId]);
+      const persistedMarkers = persisted
+        .slice(0, DEFAULT_RUN_LIMITS.maxRequests)
+        .flatMap((payment) =>
+          payment.refundOwedKey === unallocatedRefundKey(payment.id)
+            ? (markerFromRow(payment) ?? [])
+            : [],
+        );
+      const refunds = await driveUnallocatedRefunds(
+        persistedMarkers,
+        DEFAULT_RUN_LIMITS.maxRequests,
+        pastDeadline,
+      );
       return {
-        expired,
+        expired: markers !== null,
         issued: refunds.issued,
         failures: refunds.failures,
         errors: refunds.failureMsgs,
+        hasMore:
+          legacy.hasMore ||
+          refunds.deferred > 0 ||
+          refunds.failures > 0 ||
+          persisted.length > DEFAULT_RUN_LIMITS.maxRequests ||
+          pastDeadline() ||
+          (await unallocatedMarkersRemain(subscriptionId)),
       };
     },
   );
@@ -1081,49 +1234,93 @@ export async function expireUnallocatedPaidSubscriptionForOne(
  */
 async function expireUnallocatedPaidSubscriptions(
   limits: StaleRequestRunLimits,
-): Promise<{
-  expired: number;
-  issued: number;
-  failures: number;
-  errors: string[];
-}> {
-  const errors: string[] = [];
+) {
+  const out = {
+    expired: 0,
+    issued: 0,
+    failures: 0,
+    errors: [] as string[],
+    hasMore: false,
+    deferred: 0,
+  };
+  // Shared by legacy staging, fresh expiries and inline drives; this is an
+  // admission deadline for this family, not cancellation of work in flight.
+  const pastDeadline = startDeadline();
   const cohort = unallocatedCohort();
+  const markers: RefundOwedMarker[] = [];
   try {
-    const stale = await prisma.subscription.findMany({
-      where: { status: AppointmentStatus.PENDING, ...cohort },
-      select: UNALLOCATED_SELECT,
-      orderBy: { requestedAt: "asc" },
-      take: limits.maxRequests,
-    });
-    warnIfCapped("subscription", stale.length, limits);
-
-    const expiredIds: string[] = [];
-    for (const subscription of stale) {
-      if (await expireOneUnallocated(subscription, cohort)) {
-        expiredIds.push(subscription.id);
+    const legacy = await stageLegacyUnallocatedRefunds(
+      limits.maxRequests,
+      pastDeadline,
+    );
+    markers.push(...legacy.markers);
+    out.hasMore = legacy.hasMore;
+    if (pastDeadline()) {
+      out.hasMore = true;
+    } else {
+      const stale = await prisma.subscription.findMany({
+        where: { status: AppointmentStatus.PENDING, ...cohort },
+        select: UNALLOCATED_SELECT,
+        orderBy: [{ requestedAt: "asc" }, { id: "asc" }],
+        take: limits.maxRequests + 1,
+      });
+      out.hasMore ||= stale.length > limits.maxRequests;
+      let remainingPayments = limits.maxRequests;
+      for (const subscription of stale.slice(0, limits.maxRequests)) {
+        if (pastDeadline() || remainingPayments === 0) {
+          out.hasMore = true;
+          break;
+        }
+        try {
+          const stamped = await expireOneUnallocated(
+            subscription,
+            cohort,
+            limits.maxRequests,
+            pastDeadline,
+            remainingPayments,
+          );
+          if (stamped !== null) {
+            out.expired += 1;
+            remainingPayments -= stamped.length;
+            markers.push(...stamped);
+          }
+        } catch (error) {
+          out.hasMore = true;
+          if (
+            error instanceof UnallocatedPaymentCapacityError &&
+            error.kind === "allowance"
+          )
+            break;
+          out.errors.push(
+            `Failed to expire unallocated subscription ${subscription.id}: ${error}`,
+          );
+        }
       }
     }
-
-    // Keyed per payment, and retried from the history for a refund that
-    // failed after an earlier run's CAS (the row is EXPIRED by then).
-    const retry = await recentlyUnallocatedSubscriptionIds(limits);
-    const refunds = await refundUnallocatedPlans([
-      ...new Set([...expiredIds, ...retry]),
-    ]);
-    errors.push(...refunds.failureMsgs);
-    return {
-      expired: expiredIds.length,
-      issued: refunds.issued,
-      failures: refunds.failures,
-      errors,
-    };
   } catch (error) {
-    const msg = `Failed to expire unallocated paid subscriptions: ${error}`;
-    console.error(`❌ ${msg}`);
-    errors.push(msg);
-    return { expired: 0, issued: 0, failures: 0, errors };
+    out.errors.push(`Failed to stage unallocated refunds: ${error}`);
+    out.hasMore = true;
   }
+  const refunds = await driveUnallocatedRefunds(
+    markers,
+    limits.maxRequests,
+    pastDeadline,
+  );
+  out.issued = refunds.issued;
+  out.failures = refunds.failures;
+  out.deferred = refunds.deferred;
+  out.errors.push(...refunds.failureMsgs);
+  out.hasMore ||=
+    refunds.deferred > 0 || refunds.failures > 0 || pastDeadline();
+  if (!out.hasMore) {
+    try {
+      out.hasMore = await unallocatedMarkersRemain();
+    } catch (error) {
+      out.errors.push(`Failed to check unallocated refund backlog: ${error}`);
+      out.hasMore = true;
+    }
+  }
+  return out;
 }
 
 /**
@@ -1526,7 +1723,13 @@ export async function expireStaleRequests(opts?: {
   limits?: Partial<StaleRequestRunLimits>;
 }): Promise<ExpireStaleRequestsResult> {
   const limits: StaleRequestRunLimits = {
-    maxRequests: opts?.limits?.maxRequests ?? DEFAULT_RUN_LIMITS.maxRequests,
+    maxRequests: Math.min(
+      MAX_REQUESTS_PER_RUN,
+      Math.max(
+        1,
+        Math.floor(opts?.limits?.maxRequests ?? DEFAULT_RUN_LIMITS.maxRequests),
+      ),
+    ),
     maxSlotReleases:
       opts?.limits?.maxSlotReleases ?? DEFAULT_RUN_LIMITS.maxSlotReleases,
   };
@@ -1653,6 +1856,8 @@ async function expireStaleRequestsUnlocked(
       approvedUnallocated.failures +
       paidUnallocated.failures,
     errors: allErrors,
+    unallocatedHasMore: paidUnallocated.hasMore,
+    unallocatedRefundsDeferred: paidUnallocated.deferred,
     timestamp: new Date().toISOString(),
   };
 }
