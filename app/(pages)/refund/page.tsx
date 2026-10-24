@@ -1,15 +1,16 @@
-"use client";
-
+import type { Metadata } from "next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { RefreshCw } from "lucide-react";
 import Link from "next/link";
-import {
-  COMPANY_INFO,
-  PAGE_META,
-  POLICY_DATES,
-  getMailtoLink,
-} from "../constants";
+import { CompanyDetails } from "../CompanyDetails";
+import { COMPANY_INFO } from "@/lib/company";
+import { PAGE_META, POLICY_DATES, getMailtoLink } from "../constants";
+
+export const metadata: Metadata = {
+  title: `${PAGE_META.refund.title} | Familiarise`,
+  description: PAGE_META.refund.description,
+};
 
 export default function RefundPolicyPage() {
   return (
@@ -778,19 +779,7 @@ export default function RefundPolicyPage() {
                 need assistance with a cancellation or refund request, please
                 contact us:
               </p>
-              <div className="bg-muted p-4 rounded-lg mt-4">
-                <p>
-                  <strong>Company Name:</strong> {COMPANY_INFO.name}
-                </p>
-                <p>
-                  <strong>Email:</strong>{" "}
-                  <a
-                    href={getMailtoLink()}
-                    className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
-                  >
-                    {COMPANY_INFO.email}
-                  </a>
-                </p>
+              <CompanyDetails>
                 <p>
                   <strong>Support:</strong>{" "}
                   <Link
@@ -804,7 +793,7 @@ export default function RefundPolicyPage() {
                   <strong>Response Time:</strong> We aim to respond to all
                   inquiries within 24-48 hours
                 </p>
-              </div>
+              </CompanyDetails>
 
               <Separator className="my-6" />
 
