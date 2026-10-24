@@ -96,7 +96,6 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
         label: "Organisations",
         href: "/explore/enterprise/organisations",
       },
-      { label: "Community", href: "/explore/community" },
     ],
   },
   {

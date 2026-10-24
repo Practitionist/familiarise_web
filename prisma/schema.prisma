@@ -5312,7 +5312,7 @@ model PlanMaterial {
   fileSize     Int
   mimeType     String
   fileUrl      String
-  storagePath  String
+  storagePath  String  @unique
   description  String? @db.Text
   order        Int     @default(0) // For ordering materials in display
 
@@ -5345,7 +5345,6 @@ model PlanMaterial {
   @@index([order])
   @@index([organizationId])
   @@index([organizationId, uploadedAt(sort: Desc)])
-  @@index([storagePath])
 }
 
 // Buyer-facing Q&A on an offering. Polymorphic across the four plan types the

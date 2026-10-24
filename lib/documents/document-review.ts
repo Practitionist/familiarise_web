@@ -1,4 +1,5 @@
 import { DocumentReviewStatus } from "@prisma/client";
+import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import type { PrismaLike } from "@/lib/prisma";
 
 /**
@@ -30,6 +31,32 @@ export function isReviewTransitionAllowed(
   return REVIEW_TRANSITIONS[from].includes(to);
 }
 
+/**
+ * A replay is idempotent, so the only unique violation worth retrying is a
+ * lost race on `(thread, versionNo)`. Retrying `P2002` blindly turned a
+ * replayed storage path into a delete of the object the first request
+ * committed.
+ */
+const STORAGE_PATH_CONFLICTS = [
+  "storagePath",
+  "storagepath",
+  "active_storagepath_key",
+] as const;
+
+function isThreadVersionConflict(error: unknown): boolean {
+  // A storage-path conflict is a replayed upload, never a version race; the
+  // old target-only check could not see Prisma 7's adapter-shaped error.
+  if (
+    STORAGE_PATH_CONFLICTS.some((field) => isUniqueViolationOn(error, field))
+  ) {
+    return false;
+  }
+  return (
+    isUniqueViolationOn(error, "versionNo") ||
+    isUniqueViolationOn(error, "appointment_doc_thread_version_unique")
+  );
+}
+
 export async function withVersionConflictRetry<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
@@ -38,12 +65,7 @@ export async function withVersionConflictRetry<T>(
     try {
       return await fn();
     } catch (error) {
-      if (
-        attempt < 2 &&
-        typeof error === "object" &&
-        error !== null &&
-        (error as { code?: string }).code === "P2002"
-      ) {
+      if (attempt < 2 && isThreadVersionConflict(error)) {
         attempt += 1;
         continue;
       }

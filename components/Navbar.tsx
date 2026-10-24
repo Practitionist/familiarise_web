@@ -249,12 +249,6 @@ const RESOURCE_COLUMNS: NavColumn[] = [
         icon: HelpCircle,
       },
       {
-        label: "Community",
-        href: "/explore/community",
-        description: "Connect with peers and mentors",
-        icon: Users,
-      },
-      {
         label: "Blog",
         href: "/blog",
         description: "Insights, tips, and career advice",
