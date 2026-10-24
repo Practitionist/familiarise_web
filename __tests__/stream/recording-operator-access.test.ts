@@ -35,6 +35,11 @@ jest.mock("../../lib/auth-server", () => ({
   getSession: jest.fn(),
 }));
 
+jest.mock("../../lib/auth-helpers", () => ({
+  __esModule: true,
+  requireApiAuth: async () => ({ session: await getSession() }),
+}));
+
 jest.mock("../../lib/stream/recording-service", () => ({
   __esModule: true,
   RecordingService: { getRecordingById: jest.fn() },
