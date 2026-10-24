@@ -30,6 +30,10 @@ describe("classifyJoinFailure", () => {
     expect(classifyJoinFailure(new TypeError("Failed to fetch"))).toBe(
       "provider_unavailable",
     );
+    // The video SDK's own HTTP client words an offline request with a space.
+    expect(classifyJoinFailure(new Error("Network Error"))).toBe(
+      "provider_unavailable",
+    );
     expect(classifyJoinFailure(new VideoClientTimeoutError())).toBe(
       "provider_unavailable",
     );
