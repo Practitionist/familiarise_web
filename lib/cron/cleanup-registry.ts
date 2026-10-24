@@ -766,6 +766,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         },
         summarize: (r) => ({
           tombstoned: r.tombstoned,
+          failedTombstones: r.failedTombstones,
           purged: r.purged,
           failedStorage: r.failedStorage,
           failedRows: r.failedRows,

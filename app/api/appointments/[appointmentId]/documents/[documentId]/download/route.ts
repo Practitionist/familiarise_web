@@ -12,7 +12,15 @@ export async function GET(
 ) {
   return answerFileRoute(async () => {
     const auth = await requireApiAuth();
-    if (auth.error) return auth.error;
+    if (auth.error) {
+      const code =
+        auth.error.status === 401
+          ? "UNAUTHORIZED"
+          : auth.error.status === 403 || auth.error.status === 428
+            ? "FORBIDDEN"
+            : "SERVER_ERROR";
+      return fileApiError(code, { headers: auth.error.headers });
+    }
     const { appointmentId, documentId } = await params;
     const access = await authorizeAppointmentDocument(
       auth.session.user.id,

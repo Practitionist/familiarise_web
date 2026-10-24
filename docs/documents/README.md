@@ -157,7 +157,7 @@ A reviewed document cannot be deleted by the learner, because the expert's revie
 
 ## Retention and the purge
 
-Documents are tombstoned 90 days after the booking ends and purged 7 days after that, by **one** job registered in `lib/cron/cleanup-registry.ts` (`@cleanup-twin purge-deleted-documents`, reachable at `/api/cleanup/purge-deleted-documents` and from `/api/admin/system-jobs/run`). The job runs hourly on the Netlify ticker with `limit=200`; the daily GitHub Actions step was removed because the Actions fleet is budget-blocked and a retention job that never runs is not a retention policy. There is no wrapper under `jobs/`.
+Documents are tombstoned 90 days after the booking ends and purged 7 days after that, by **one** job registered in `lib/cron/cleanup-registry.ts` (`@cleanup-twin purge-deleted-documents`, reachable at `/api/cleanup/purge-deleted-documents` and from `/api/admin/system-jobs/run`). The job runs hourly on the Netlify ticker with `limit=100` (the route accepts up to 200 for a manual drain); the daily GitHub Actions step was removed because the Actions fleet is budget-blocked and a retention job that never runs is not a retention policy. There is no wrapper under `jobs/`.
 
 | Booking                        | Kept until                                                                                      |
 | ------------------------------ | ----------------------------------------------------------------------------------------------- |
@@ -169,7 +169,7 @@ The date is computed and returned as `keptUntil`. The UI shows "Kept until <date
 
 ```mermaid
 flowchart TD
-  A[Netlify ticker hourly: POST /api/cleanup/purge-deleted-documents?limit=200] --> B[withCronLock purge-deleted-documents]
+  A[Netlify ticker hourly: POST /api/cleanup/purge-deleted-documents?limit=100] --> B[withCronLock purge-deleted-documents]
   B --> C[Arm 1: bookings past keptUntil with live documents]
   C --> D[updateMany thread rows where deletedAt is null: set deletedAt, removalReason RETENTION_EXPIRY]
   D --> E[Arm 2: tombstones older than the grace window]

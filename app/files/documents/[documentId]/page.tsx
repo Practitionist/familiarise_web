@@ -20,7 +20,13 @@ export default async function DocumentViewerPage({
   const callbackPath = getDocumentViewerUrl(documentId);
   const auth = await requireApiSession();
   if (auth.error) {
-    return <FileViewerError code="UNAUTHORIZED" callbackPath={callbackPath} />;
+    const code =
+      auth.error.status === 403
+        ? "FORBIDDEN"
+        : auth.error.status >= 500
+          ? "SERVER_ERROR"
+          : "UNAUTHORIZED";
+    return <FileViewerError code={code} callbackPath={callbackPath} />;
   }
   const access = await authorizeAppointmentDocument(
     auth.session.user.id,

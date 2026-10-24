@@ -172,8 +172,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   // Gateway polls per PENDING row plus a Serializable cascade per stranded row.
   "reconcile-refunds": 10,
   "support-sla-sweep": 20,
-  // One object delete per row; the route caps the purge at 200 and runs hourly.
-  "purge-deleted-documents": 200,
+  // One object delete per row; 100 rows stays inside the 20 s target and runs hourly.
+  "purge-deleted-documents": 100,
   // Units per rail: a gateway call per disbursement, a transaction per minted payout.
   "process-payouts": 5,
   // Per payout model: up to two RazorpayX calls each.
@@ -494,7 +494,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "alert-orphaned-payments": 20_000,
   "reconcile-orphaned-payments": 20_000,
   "process-data-exports": 20_000,
-  // One storage delete per row, up to 200 rows, so it needs more than the default.
+  // One storage delete per row, up to 100 rows, so it needs more than the default.
   "purge-deleted-documents": 20_000,
   "retry-moderation-enforcement": 20_000,
   "process-payouts": 24_000,

@@ -934,7 +934,8 @@ function unusedRelations(
     .filter(([kind]) => !kinds.has(kind))
     .map(([, relation]) => [relation]);
   if (!kinds.has("WEBINAR") && !kinds.has("CLASS")) {
-    paths.push(["participants"], ["payment"]);
+    // A 1:1 has no seat, but its refund revocation still reads the payment rows.
+    paths.push(["participants"]);
   }
   if (!canHost) {
     // Co-hosts and replay buyers only matter on the host side.

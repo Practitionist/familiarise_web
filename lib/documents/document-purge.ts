@@ -32,6 +32,7 @@ type ReasonKey = DocumentRemovalReason | "UNRECORDED";
 export interface PurgeDeletedDocumentsResult {
   success: boolean;
   tombstoned: number;
+  failedTombstones: number;
   purged: number;
   failedStorage: number;
   failedRows: number;
@@ -69,9 +70,12 @@ function retentionCandidateWhere(cutoff: Date): Prisma.AppointmentWhereInput {
 }
 
 /** Arm 1: tombstone every live document of bookings whose retention date has passed. */
-async function tombstoneExpiredBookings(now: Date): Promise<number> {
+async function tombstoneExpiredBookings(
+  now: Date,
+): Promise<{ tombstoned: number; failed: number }> {
   const cutoff = new Date(now.getTime() - DOCUMENT_RETENTION_DAYS * DAY_MS);
   let tombstoned = 0;
+  let failed = 0;
   let afterId: string | undefined;
   for (let batch = 0; batch < MAX_BATCHES_PER_RUN; batch += 1) {
     const rows = await prisma.appointment.findMany({
@@ -91,25 +95,32 @@ async function tombstoneExpiredBookings(now: Date): Promise<number> {
       if (!booking?.keptUntil || booking.keptUntil > now) continue;
       // Re-read under the booking lock: a reschedule or a subscription
       // extension between the candidate scan and the write moves `keptUntil`
-      // into the future, and the tombstone must not outrun it.
-      const count = await prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT 1 FROM "Appointment" WHERE id = ${row.id} FOR UPDATE`;
-        const fresh = await tx.appointment.findUnique({
-          where: { id: row.id },
-          select: documentBookingSelect,
+      // into the future, and the tombstone must not outrun it. One contended
+      // booking must not stop the others or the purge that follows.
+      try {
+        const count = await prisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT 1 FROM "Appointment" WHERE id = ${row.id} FOR UPDATE`;
+          const fresh = await tx.appointment.findUnique({
+            where: { id: row.id },
+            select: documentBookingSelect,
+          });
+          const freshBooking = fresh ? toDocumentBooking(fresh, now) : null;
+          if (!freshBooking?.keptUntil || freshBooking.keptUntil > now)
+            return 0;
+          const result = await tx.appointmentDocument.updateMany({
+            where: { appointmentId: row.id, deletedAt: null },
+            data: { deletedAt: now, removalReason: "RETENTION_EXPIRY" },
+          });
+          return result.count;
         });
-        const freshBooking = fresh ? toDocumentBooking(fresh, now) : null;
-        if (!freshBooking?.keptUntil || freshBooking.keptUntil > now) return 0;
-        const result = await tx.appointmentDocument.updateMany({
-          where: { appointmentId: row.id, deletedAt: null },
-          data: { deletedAt: now, removalReason: "RETENTION_EXPIRY" },
-        });
-        return result.count;
-      });
-      tombstoned += count;
+        tombstoned += count;
+      } catch (error) {
+        failed += 1;
+        console.error(`[purge-deleted-documents] tombstone ${row.id}:`, error);
+      }
     }
   }
-  return tombstoned;
+  return { tombstoned, failed };
 }
 
 interface PurgeCounts {
@@ -223,7 +234,8 @@ async function purgeDeletedDocumentsUnlocked(
   now: Date,
   options: PurgeOptions,
 ): Promise<PurgeDeletedDocumentsResult> {
-  const tombstoned = await tombstoneExpiredBookings(now);
+  const { tombstoned, failed: failedTombstones } =
+    await tombstoneExpiredBookings(now);
   const graceCutoff = new Date(
     now.getTime() - DOCUMENT_DELETE_GRACE_DAYS * DAY_MS,
   );
@@ -233,7 +245,7 @@ async function purgeDeletedDocumentsUnlocked(
     options,
   );
 
-  const failed = counts.failedStorage + counts.failedRows;
+  const failed = failedTombstones + counts.failedStorage + counts.failedRows;
   // A capped run is expected to leave rows; only an uncapped run that still
   // has work after its ceiling is a backlog worth a page.
   const backlog = counts.remaining > 0 && options.limit === undefined;
@@ -242,11 +254,11 @@ async function purgeDeletedDocumentsUnlocked(
       subsystem: "documents",
       op: "purge-deleted-documents",
       level: "warning",
-      extra: { tombstoned, ...counts },
+      extra: { tombstoned, failedTombstones, ...counts },
       fingerprint: ["purge-deleted-documents", "failures"],
     });
   }
-  return { success: failed === 0, tombstoned, ...counts };
+  return { success: failed === 0, tombstoned, failedTombstones, ...counts };
 }
 
 /** Hourly: retention tombstones, then the grace-window purge. */

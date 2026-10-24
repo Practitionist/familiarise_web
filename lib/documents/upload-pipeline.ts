@@ -259,11 +259,17 @@ export async function commitDocumentUpload(args: {
       }),
     );
   } catch (error) {
-    await discardRefusedUpload({
-      appointmentId,
-      userId,
-      storagePath: input.storagePath,
-    });
+    // A storage timeout does not prove the object is bad; keep it so the
+    // client can retry the commit without uploading again.
+    const storageUnavailable =
+      error instanceof FileRouteError && error.code === "STORAGE_UNAVAILABLE";
+    if (!storageUnavailable) {
+      await discardRefusedUpload({
+        appointmentId,
+        userId,
+        storagePath: input.storagePath,
+      });
+    }
     if (error instanceof ThreadSlotError) {
       throw new FileRouteError(error.code);
     }

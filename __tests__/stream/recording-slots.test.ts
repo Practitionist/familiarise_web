@@ -314,6 +314,42 @@ describe("the batched loader and library pages", () => {
     expect(loaded.get("b2")!.view.expertName).toBe("Ananya Anderson");
   });
 
+  it("keeps the payment relation on a 1:1-only page and revokes a fully refunded learner", async () => {
+    const row = {
+      ...oneToOneBooking("b1"),
+      participants: [],
+      payment: [
+        {
+          amount: 50_000,
+          refunds: [{ amountPaise: 50_000, status: "SUCCEEDED" }],
+        },
+      ],
+      occurrences: [session(1, 5, [{ id: "rec" }])],
+    };
+    (prisma.appointment.findMany as jest.Mock)
+      .mockResolvedValueOnce([{ appointmentType: "CONSULTATION" }])
+      // Honour the select like Prisma: a dropped relation comes back undefined,
+      // so the refund check fails if the loader stops asking for payments.
+      .mockImplementationOnce(
+        async (args: { select: Record<string, unknown> }) => [
+          Object.fromEntries(
+            Object.entries(args.select).map(([key]) => [
+              key,
+              (row as Record<string, unknown>)[key],
+            ]),
+          ),
+        ],
+      );
+
+    const loaded = await loadRecordingViews(["b1"], "learner", NOW);
+
+    const { select } = (prisma.appointment.findMany as jest.Mock).mock
+      .calls[1][0];
+    expect(select).toHaveProperty("payment");
+    expect(select).not.toHaveProperty("participants");
+    expect(loaded.size).toBe(0);
+  });
+
   it("counts and pages only the bookings that render a row", () => {
     const empty = view([session(1, -1)]);
     const recorded = view([session(1, 5, [{ id: "rec" }])]);

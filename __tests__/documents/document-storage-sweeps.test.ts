@@ -200,6 +200,31 @@ describe("purge-deleted-documents", () => {
     expect(result.tombstoned).toBe(2);
   });
 
+  it("continues with the remaining bookings when one tombstone transaction fails", async () => {
+    (prisma.appointmentDocument.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.appointment.findMany as jest.Mock)
+      .mockResolvedValueOnce([booking(91), booking(92)])
+      .mockResolvedValueOnce([]);
+    (prisma.appointment.findUnique as jest.Mock).mockImplementation(
+      async ({ where }: { where: { id: string } }) =>
+        where.id === "apt-91" ? booking(91) : booking(92),
+    );
+    (prisma.$transaction as jest.Mock).mockRejectedValueOnce(
+      new Error("deadlock"),
+    );
+    (prisma.appointmentDocument.updateMany as jest.Mock).mockResolvedValue({
+      count: 1,
+    });
+
+    const result = await purgeDeletedDocuments(now);
+
+    expect(result.failedTombstones).toBe(1);
+    expect(result.tombstoned).toBe(1);
+    expect(result.success).toBe(false);
+    expect(prisma.appointmentDocument.updateMany).toHaveBeenCalledTimes(1);
+    expect(reportSentryMessage).toHaveBeenCalledTimes(1);
+  });
+
   it("purges versions before roots, retries surviving bytes and reports once", async () => {
     (prisma.appointmentDocument.findMany as jest.Mock)
       .mockResolvedValueOnce([

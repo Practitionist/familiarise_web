@@ -320,7 +320,7 @@ This record holds twenty decisions about the files attached to a booking: how a 
 - **Consequences:**
   - A commit retry is safe from any client, including one that never saw the first response.
   - An erasure that cannot reach Stream stays retryable and is reported honestly; it is not silently downgraded to an R2-only delete.
-  - The purge runs hourly on the ticker with `limit=200` instead of the budget-blocked daily Actions step.
+  - The purge runs hourly on the ticker with `limit=100` instead of the budget-blocked daily Actions step; 100 sequential object deletes stay inside the 20 s target, and the route still accepts up to 200 for a manual drain.
   - A new bucket requires a policy entry; there is no implicit public bucket.
 
 ## References
