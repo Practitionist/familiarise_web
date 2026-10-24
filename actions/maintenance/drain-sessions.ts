@@ -24,9 +24,11 @@ import { getEventChannelIdsForAppointment } from "@/lib/stream/appointment-chann
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { notifyMaintenanceStarted } from "@/lib/novu/service";
+import type { MeetingEndReason } from "@/lib/meetings/end-reasons";
 
 const LIVE_SESSION_WINDOW_MS = 6 * 60 * 60 * 1000;
 const MAX_DRAIN_BATCH = 200;
+const DRAIN_END_REASON: MeetingEndReason = "maintenance";
 
 const CONSULTANT_USER_SELECT = {
   select: {
@@ -173,7 +175,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
       await prisma.$transaction(async (tx) => {
         await tx.meeting.update({
           where: { id: session.id },
-          data: { endedAt, endedReason: "maintenance" },
+          data: { endedAt, endedReason: DRAIN_END_REASON },
         });
         await transitionOccurrenceCompletion(tx, {
           where: { id: session.appointmentOccurrenceId },
@@ -324,7 +326,7 @@ async function deriveChannelsToUnfreeze(): Promise<string[]> {
 
   const drained = await prisma.meeting.findMany({
     where: {
-      endedReason: "maintenance",
+      endedReason: DRAIN_END_REASON,
       endedAt: { gte: since },
     },
     orderBy: { endedAt: "desc" },

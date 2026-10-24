@@ -1749,5 +1749,5 @@ If you're still experiencing issues:
 
 ## Deprecated & Superseded Approaches
 
-- **Diagnosing Live Calls or Channels from Local Seed State Alone**: Superseded by read-only Stream MCP verification (`mcp__stream-io__video_query_calls`, `mcp__stream-io__video_get_call_type`, `mcp__stream-io__chat_query_channels`).
+- **Diagnosing Live Calls or Channels from Local Seed State Alone**: Superseded by read-only Stream MCP verification (`mcp__streamio__video_query_calls`, `mcp__streamio__video_get_call_type`, `mcp__streamio__chat_query_channels`).
 - **Manual Stream Dashboard Permission Clicking**: Superseded by idempotent declarative enforcement (`npx tsx scripts/stream/ensure.ts --apply --routes-are-deployed`).

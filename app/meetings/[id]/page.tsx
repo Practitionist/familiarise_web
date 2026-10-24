@@ -12,6 +12,7 @@ import {
 import { MeetingRoomSkeleton } from "./MeetingRoomSkeleton";
 import { useGetCallById } from "./hooks/useGetCallById";
 import Alert from "./components/Alert";
+import { JoinFailureCard } from "./components/JoinFailureCard";
 import { MeetingLobbyGateCard } from "./components/MeetingLobbyGateCard";
 import MeetingSetup from "./components/MeetingSetup";
 import MeetingRoom from "./components/MeetingRoom";
@@ -27,10 +28,10 @@ const MeetingPage = () => {
   const {
     call,
     isCallLoading,
-    error,
+    failure,
+    autoRetryCount,
     access,
     consentRequired,
-    roomNotProvisioned,
     rejoin,
     retryJoin,
   } = useGetCallById(id as string);
@@ -96,8 +97,23 @@ const MeetingPage = () => {
     };
   }, [call]);
 
-  // Loading states — keep gate card mounted during retryJoin so Check Again never flashes blank
-  if (isSessionPending || (isCallLoading && !access)) {
+  if (isSessionPending) return <MeetingRoomSkeleton />;
+
+  // The failure card stays mounted while a retry runs, so a retry never flashes the skeleton.
+  if (failure && session?.user) {
+    return (
+      <JoinFailureCard
+        kind={failure.kind}
+        detail={failure.message}
+        isRetrying={isCallLoading}
+        autoRetryCount={autoRetryCount}
+        onRetry={retryJoin}
+      />
+    );
+  }
+
+  // Keep the gate card mounted during retryJoin so Check Again never flashes blank
+  if (isCallLoading && !access) {
     return <MeetingRoomSkeleton />;
   }
 
@@ -109,7 +125,7 @@ const MeetingPage = () => {
   // Inline 1-click DPDP consent prompt when STREAM_DATA_PROCESSING consent is missing
   if (access && !access.hasAccess && consentRequired) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-muted p-4">
+      <div className="flex flex-col items-center justify-center min-h-dvh bg-muted p-4">
         <div
           data-testid="stream-consent-prompt"
           className="w-full max-w-md bg-card p-8 rounded-2xl shadow-xl border border-border text-center"
@@ -167,16 +183,6 @@ const MeetingPage = () => {
     );
   }
 
-  if (error) {
-    return (
-      <Alert
-        title="Meeting Error"
-        description={`Failed to load meeting: ${error.message}`}
-        onRetry={roomNotProvisioned ? retryJoin : undefined}
-      />
-    );
-  }
-
   if (!call) {
     return (
       <Alert
@@ -187,7 +193,7 @@ const MeetingPage = () => {
   }
 
   return (
-    <main className="h-screen w-full">
+    <main className="h-dvh w-full">
       <StreamCall call={call}>
         <StreamTheme>
           {!isSetupComplete ? (
@@ -195,6 +201,7 @@ const MeetingPage = () => {
               setIsSetupComplete={setIsSetupComplete}
               meetingId={call.id}
               role={access?.role ?? null}
+              onCallEnded={retryJoin}
             />
           ) : (
             <MeetingRoom onRejoin={rejoin} role={access?.role ?? null} />

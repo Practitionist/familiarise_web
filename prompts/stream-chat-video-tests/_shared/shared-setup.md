@@ -62,9 +62,9 @@
 1. **Deterministic Suffix for Ephemeral Entities:**
    - Any ephemeral user, consultation, webinar, class, occurrence, or meeting created for destructive/impossible cases must use ID/slug prefix `qa-scv-<YYYYMMDD>-<caseId>-*`.
 2. **Isolated Constraint Testing (`BEGIN ... ROLLBACK`):**
-   - When verifying database check/exclusion constraints (`occurrence_no_confirmed_overlap`, `occurrence_confirmed_requires_consultant_chk`), execute the invalid `INSERT`/`UPDATE` inside an explicit `BEGIN; ... ROLLBACK;` block or catch the exact Postgres `SQLSTATE` (`23P01` / `23514`) without polluting persistent seed rows.
+   - When verifying database check/exclusion constraints (`occurrence_no_confirmed_overlap`, `occurrence_confirmed_requires_consultant_chk`), hand the invalid `INSERT`/`UPDATE` to an operator to run inside an explicit `BEGIN; ... ROLLBACK;` block or catch the exact Postgres `SQLSTATE` (`23P01` / `23514`) without polluting persistent seed rows.
 3. **Mandatory Post-Case Cleanup:**
-   - Delete ephemeral rows in strict reverse foreign-key order:
+   - The operator deletes ephemeral rows in strict reverse foreign-key order:
      `"Recording"` -> `"Meeting"` -> `"AppointmentParticipant"` -> `"AppointmentOccurrence"` -> `"Appointment"` -> offering plan -> `"organizations"` (where `slug LIKE 'qa-scv-%'`).
 
 ---

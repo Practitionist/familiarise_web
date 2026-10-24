@@ -13,6 +13,8 @@ jest.mock("@sentry/nextjs", () => ({
   captureException: jest.fn(),
   captureMessage: jest.fn(),
 }));
+// reportSentryError and the shared loggers capture through @sentry/core; share the one mock.
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 
 import * as Sentry from "@sentry/nextjs";
 import { apiError } from "../../lib/errors/api-error";
@@ -92,9 +94,9 @@ describe("userMessageFrom", () => {
   });
 
   it("marks only refusals as expected", () => {
-    expect(isExpectedRefusal(new Refusal({ code: "X", userMessage: "x" }))).toBe(
-      true,
-    );
+    expect(
+      isExpectedRefusal(new Refusal({ code: "X", userMessage: "x" })),
+    ).toBe(true);
     expect(
       isExpectedRefusal(new ApiResponseError("nope", { status: 409 })),
     ).toBe(true);

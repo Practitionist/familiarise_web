@@ -87,9 +87,11 @@ describe("reconcileOrphanedSessions", () => {
       where: {
         meetingId: "meeting-orphan-1",
         leftAt: null,
+        OR: [{ streamCallId: "occurrence-slot-1" }, { streamCallId: null }],
       },
       data: {
         leftAt: streamEndedAt,
+        closedByEnd: true,
       },
     });
     expect(result.reconciled).toBe(1);

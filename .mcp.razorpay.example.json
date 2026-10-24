@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "rzp-mcp-server": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote@0.15.2",
+        "https://mcp.razorpay.com/mcp",
+        "--header-file",
+        ".mcp.razorpay.headers"
+      ]
+    }
+  }
+}

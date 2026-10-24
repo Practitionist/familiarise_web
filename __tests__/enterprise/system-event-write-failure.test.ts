@@ -30,6 +30,8 @@ jest.mock("@sentry/nextjs", () => ({
     }),
   ),
 }));
+// reportSentryError and the shared loggers capture through @sentry/core; share the one mock.
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 
 jest.mock("../../lib/prisma", () => {
   const client = { systemEvent: { create: jest.fn() } };

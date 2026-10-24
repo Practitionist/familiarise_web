@@ -14,7 +14,20 @@ Use the guarded database tier for real PostgreSQL interleavings. It accepts only
 
 The Supabase project is shared across dev, production and worktrees. Environment labels and Razorpay test credentials do not isolate its tables. Do not assume every existing row is a fixture because some IDs or emails look like QA data. Record the queried environment, provider merchant/mode, cutoff and identifiers needed to reproduce an observation; avoid printing credentials or personal payloads.
 
-Safe observations include scoped SELECTs, database constraint/index catalogs and provider GETs. A provider object read under test credentials proves only what that configured merchant can see. A missing or inconsistent object is not proof that another merchant has no liability. Jobs that write an execution lease, reconciliation report, marker, outbox or freeze are mutations even when called auditors; do not invoke them against shared data as a read-only probe.
+Safe observations include scoped SELECTs through the read-only Supabase MCP (nothing is mutated through MCP), database constraint/index catalogs and provider GETs. A provider object read under test credentials proves only what that configured merchant can see. A missing or inconsistent object is not proof that another merchant has no liability. Jobs that write an execution lease, reconciliation report, marker, outbox or freeze are mutations even when called auditors; do not invoke them against shared data as a read-only probe.
+
+## Razorpay MCP is opt-in and write-capable
+
+The shared `.mcp.json.example` does not include Razorpay. To use the remote,
+copy `.mcp.razorpay.example.json` to the gitignored `.mcp.razorpay.json` and
+start the session with `claude --mcp-config .mcp.razorpay.json` (or merge the
+`rzp-mcp-server` block into `.mcp.json`). The credential lives in the gitignored
+`.mcp.razorpay.headers` (one `Authorization: Basic <token>` line, `chmod 600`),
+which `mcp-remote --header-file` reads so the token never appears in the process
+list. The relative path resolves against the session's working directory, so start
+the session from the repository root. The remote exposes order, capture and
+refund tools and has no read-only mode; use a test-mode key and never production
+credentials.
 
 ## SQL and deployment gates
 
