@@ -3,6 +3,8 @@ import { addUserToEventChannel } from "@/lib/stream/event-channel-service";
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
 import { streamLogger } from "@/lib/stream-logger";
 import { bookingOrgId } from "@/lib/stream-utils";
+import { addSeatHoldersToOpenCalls } from "@/lib/meetings/seat-call-members";
+import { reportSentryError } from "@/lib/observability/report";
 
 export interface EnsureChannelsResult {
   /** True when every buyer's channel exists and the appointment is stamped. */
@@ -25,6 +27,7 @@ function resolveBuyerIds(
 }
 
 async function ensureChannelsForBuyers(args: {
+  appointmentId: string;
   eventType: string;
   consultantUserId: string;
   dmOrgId: string | null;
@@ -35,6 +38,7 @@ async function ensureChannelsForBuyers(args: {
   classId?: string;
 }): Promise<"unmatched" | "incomplete" | "ensured"> {
   const {
+    appointmentId,
     eventType,
     consultantUserId,
     dmOrgId,
@@ -58,6 +62,7 @@ async function ensureChannelsForBuyers(args: {
     return "unmatched";
   }
 
+  const syncedBuyerIds: string[] = [];
   let incomplete = false;
   for (const userId of buyerIds) {
     if (eventChannelSpec) {
@@ -66,11 +71,23 @@ async function ensureChannelsForBuyers(args: {
         eventChannelSpec.id,
         userId,
       );
+      if (joined.success) syncedBuyerIds.push(userId);
       // A refused account is a deliberate skip; a missing member is retried by the sweep.
       if (joined.reason === "member_not_added") incomplete = true;
     }
     if (consultantUserId !== userId) {
       await createDirectMessageChannel(consultantUserId, userId, dmOrgId);
+    }
+  }
+  if (eventChannelSpec && syncedBuyerIds.length > 0) {
+    try {
+      await addSeatHoldersToOpenCalls(appointmentId, syncedBuyerIds);
+    } catch (error) {
+      reportSentryError(error, {
+        subsystem: "stream",
+        op: "ensureChannels.seatCallMembers",
+        extra: { appointmentId },
+      });
     }
   }
   return incomplete ? "incomplete" : "ensured";
@@ -190,6 +207,7 @@ export async function ensureChannelsForAppointment(
   });
 
   const matched = await ensureChannelsForBuyers({
+    appointmentId,
     eventType,
     consultantUserId,
     dmOrgId,

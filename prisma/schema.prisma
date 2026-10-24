@@ -5608,8 +5608,12 @@ model MeetingPresence {
   /// Stream user id, which equals User.id; stored plain like MeetingAttendance.userId.
   userId                  String
   userSessionId           String
+  /// The Stream call (room segment) this device stay belongs to; null on rows written before segments were recorded.
+  streamCallId            String?
   joinedAt                DateTime              @db.Timestamptz
   leftAt                  DateTime?             @db.Timestamptz
+  /// True while leftAt is a room end stamp rather than a leave Stream reported; the outcome sweep resolves it from Stream.
+  closedByEnd             Boolean               @default(false)
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -7015,6 +7019,18 @@ model PlatformPricingConfig {
   minTrialPriceInPaise BigInt   @default(0)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
+}
+
+// Staff-editable video quality applied to every call at creation. Values are
+// lib/stream/video-quality.ts keys; a missing row reads as that module's defaults.
+model PlatformVideoConfig {
+  id                          String   @id @default("singleton")
+  callTargetResolution        String   @default("720p")
+  recordingQuality            String   @default("720p")
+  screenshareTargetResolution String   @default("1080p")
+  updatedById                 String?
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
 }
 
 enum ReferralStatus {

@@ -36,6 +36,12 @@ frozen: additive changes only, with renames, drops and type changes deferred to
 launch cutover. Both rules are stated at the top of `prisma/schema.prisma` and
 enforced in review.
 
+No schema change goes through an MCP server. The Supabase MCP entry in
+`.mcp.json.example` is read-only and project-scoped, so it can inspect the live
+schema, but it cannot run direct DDL or DML. Read-only is defense-in-depth, not
+a hard boundary; the human-run `db:push` preflight and sidecar sequence remain
+the only schema write path.
+
 The same database also serves every Netlify **deploy preview**, and that is the
 constraint that catches people out: a preview runs the _branch's_ code against
 the _live_ database, so a branch whose schema declares a column the database

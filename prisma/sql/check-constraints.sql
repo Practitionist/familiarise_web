@@ -966,6 +966,17 @@ ALTER TABLE "ReferralProgramConfig" ADD CONSTRAINT "referral_program_config_rang
   );
 
 -- SPLIT
+-- Allowed keys mirror lib/stream/video-quality.ts.
+ALTER TABLE "PlatformVideoConfig" DROP CONSTRAINT IF EXISTS "platform_video_config_values";
+-- SPLIT
+ALTER TABLE "PlatformVideoConfig" ADD CONSTRAINT "platform_video_config_values"
+  CHECK (
+    "callTargetResolution" IN ('480p', '720p', '1080p')
+    AND "recordingQuality" IN ('720p', '1080p')
+    AND "screenshareTargetResolution" IN ('720p', '1080p')
+  );
+
+-- SPLIT
 ALTER TABLE "Payment" DROP CONSTRAINT IF EXISTS "payment_platform_fee_bps_range";
 -- SPLIT
 ALTER TABLE "Payment" ADD CONSTRAINT "payment_platform_fee_bps_range"

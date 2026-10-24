@@ -22,6 +22,7 @@ let sessionUser: Record<string, unknown> | null = null;
 let callingState = "left";
 let endedAt: Date | undefined;
 let isCallLive = true;
+let canMuteUsers = false;
 let callSettings: Record<string, unknown> | undefined;
 const custom: Record<string, unknown> = {
   hostUserIds: ["owner", "co-host"],
@@ -65,6 +66,7 @@ jest.mock("@stream-io/video-react-sdk", () => {
       UNKNOWN: "unknown",
     },
     OwnCapability: {
+      MUTE_USERS: "mute-users",
       SEND_AUDIO: "send-audio",
       SEND_VIDEO: "send-video",
     },
@@ -81,6 +83,7 @@ jest.mock("@stream-io/video-react-sdk", () => {
       useIsCallLive: () => isCallLive,
       useCallSettings: () => callSettings,
       useOwnCapabilities: () => [],
+      useHasPermissions: () => canMuteUsers,
     }),
     SpeakerLayout: stub("speaker-layout"),
     PaginatedGridLayout: stub("grid-layout"),
@@ -111,6 +114,7 @@ beforeEach(() => {
   call.setIncomingVideoEnabled.mockReset();
   call.setPreferredIncomingVideoResolution.mockReset();
   isCallLive = true;
+  canMuteUsers = false;
   callSettings = undefined;
   custom.appointmentType = "WEBINAR";
   global.fetch = jest.fn(() =>
@@ -174,6 +178,29 @@ describe("the room after the call is ended by someone else", () => {
       width: 1280,
       height: 720,
     });
+  });
+
+  it("shows the mute-everyone control to a host who holds the capability only", async () => {
+    sessionUser = { id: "owner", role: "CONSULTANT" };
+    callingState = "joined";
+    endedAt = undefined;
+
+    await render();
+    expect(host.querySelector('[data-testid="mute-all-button"]')).toBeNull();
+
+    act(() => root.unmount());
+    root = createRoot(host);
+    canMuteUsers = true;
+    await render();
+    expect(
+      host.querySelector('[data-testid="mute-all-button"]'),
+    ).not.toBeNull();
+
+    act(() => root.unmount());
+    root = createRoot(host);
+    sessionUser = { id: "guest", role: "CONSULTEE" };
+    await render();
+    expect(host.querySelector('[data-testid="mute-all-button"]')).toBeNull();
   });
 
   it("applies the 480p incoming video cap on mount for 1:1 consultations", async () => {

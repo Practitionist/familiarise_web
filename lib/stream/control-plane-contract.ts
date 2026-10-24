@@ -19,12 +19,51 @@ export const TARGET_APP_SETTINGS = {
 } as const;
 
 // ---------------------------------------------------------------------------
+// Chat unread reminders
+// ---------------------------------------------------------------------------
+
+/**
+ * Stream emits `user.unread_message_reminder` only for a channel type with
+ * `reminders` and `read_events` on; the interval equals the digest window.
+ */
+export const TARGET_CHAT_REMINDERS = {
+  channelType: "messaging",
+  remindersIntervalSeconds: 1800,
+} as const;
+
+export interface ChannelConfigLike {
+  reminders?: boolean;
+  read_events?: boolean;
+}
+
+/** Finding keys for the reminder settings; empty when they match the contract. */
+export function chatReminderFindings(app: {
+  reminders_interval?: number;
+  channel_configs?: Record<string, ChannelConfigLike>;
+}): string[] {
+  const type = TARGET_CHAT_REMINDERS.channelType;
+  const config = app.channel_configs?.[type];
+  const findings: string[] = [];
+  if (config?.reminders !== true)
+    findings.push(`channel_type:${type}:reminders`);
+  if (config?.read_events !== true) {
+    findings.push(`channel_type:${type}:read_events`);
+  }
+  if (
+    app.reminders_interval !== TARGET_CHAT_REMINDERS.remindersIntervalSeconds
+  ) {
+    findings.push("app:reminders_interval");
+  }
+  return findings;
+}
+
+// ---------------------------------------------------------------------------
 // Webhook hook
 // ---------------------------------------------------------------------------
 
 export const STREAM_WEBHOOK_PATH = "/api/stream/webhooks";
 
-/** The single hook delivers to the production origin; `appUrl` is `NEXT_PUBLIC_APP_URL`. */
+/** Every hook delivers to the production origin; `appUrl` is `NEXT_PUBLIC_APP_URL`. */
 export function expectedWebhookUrl(appUrl: string): string {
   return `${appUrl.replace(/\/+$/, "")}${STREAM_WEBHOOK_PATH}`;
 }
@@ -48,6 +87,17 @@ export function productFor(eventType: string): "chat" | "video" {
   return CHAT_EVENT_PREFIXES.some((p) => eventType.startsWith(p))
     ? "chat"
     : "video";
+}
+
+/** One webhook hook per product, each carrying exactly that product's handled events. */
+export function desiredEventTypesByProduct(): Record<
+  "chat" | "video",
+  typeof SORTED_DESIRED_EVENT_TYPES
+> {
+  return {
+    chat: SORTED_DESIRED_EVENT_TYPES.filter((t) => productFor(t) === "chat"),
+    video: SORTED_DESIRED_EVENT_TYPES.filter((t) => productFor(t) === "video"),
+  };
 }
 
 export function hookProduct(hook: HookLike): string | undefined {

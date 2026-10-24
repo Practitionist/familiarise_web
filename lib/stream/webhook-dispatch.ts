@@ -26,6 +26,7 @@ import {
   StreamSessionParticipantJoinedEvent,
   StreamSessionParticipantLeftEvent,
 } from "@/lib/stream/session-handlers";
+import { handleUnreadMessageReminder } from "@/lib/stream/chat/unread-digest";
 import {
   type WebhookClaim,
   logWebhookEvent,
@@ -154,6 +155,10 @@ const EVENT_HANDLERS = {
   "call.session_participant_left": entry(
     STREAM_EVENT_SCHEMAS["call.session_participant_left"],
     (e) => handleSessionParticipantLeft(e as StreamSessionParticipantLeftEvent),
+  ),
+  "user.unread_message_reminder": entry(
+    STREAM_EVENT_SCHEMAS["user.unread_message_reminder"],
+    handleUnreadMessageReminder,
   ),
 } satisfies Record<
   HandledEventType,

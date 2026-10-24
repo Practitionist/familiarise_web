@@ -22,6 +22,7 @@ export const NOVU_WORKFLOWS = {
   APPOINTMENT_RESCHEDULED: "appointment-rescheduled",
   APPOINTMENT_REMINDER: "appointment-reminder",
   APPOINTMENT_COMPLETED: "appointment-completed",
+  CHAT_UNREAD_DIGEST: "chat-unread-digest",
 
   // Payment events
   PAYMENT_LINK: "payment-link",
@@ -190,6 +191,13 @@ export type AppointmentPartiallyScheduledInput = AppointmentPayloadInput & {
   placedSessions: number;
   requiredSessions: number;
   unplacedSessions: number;
+};
+
+/** `summary` names counterparts and sessions only; it never carries message text. */
+export type ChatUnreadDigestPayload = NotificationScope & {
+  summary: string;
+  threadCount: number;
+  dashboardUrl: string;
 };
 
 export type AppointmentCancelledPayload = AppointmentPayload & {

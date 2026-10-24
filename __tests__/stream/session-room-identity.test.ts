@@ -72,6 +72,7 @@ jest.mock("../../lib/prisma", () => ({
     appointmentOccurrence: { findUnique: jest.fn(), findMany: jest.fn() },
     appointmentParticipant: { findMany: jest.fn() },
     appointment: { findUnique: jest.fn() },
+    platformVideoConfig: { findUnique: jest.fn().mockResolvedValue(null) },
     meeting: {
       findUnique: jest.fn(),
       create: jest.fn(),
@@ -555,10 +556,15 @@ describe("the call describes the session it belongs to", () => {
     // it fails on the key set.
     const settingsOverride = mockCallPayloads[0].data?.settings_override as
       Record<string, unknown> | undefined;
-    expect(Object.keys(settingsOverride ?? {})).toEqual(["limits"]);
+    expect(Object.keys(settingsOverride ?? {}).sort()).toEqual([
+      "limits",
+      "recording",
+      "screensharing",
+      "video",
+    ]);
     expect(
       Object.keys((settingsOverride?.limits as Record<string, unknown>) ?? {}),
-    ).toEqual(["max_duration_seconds"]);
+    ).toEqual(["max_duration_seconds", "max_participants"]);
 
     // Adding a field at the top level still fails here. `created_by_id` joined
     // this set in #1270 — a server-side getOrCreate carries no user context, so
@@ -611,7 +617,10 @@ describe("the call describes the session it belongs to", () => {
     // hours in. With no resolved run there is no safe number, and omitting the
     // field is exactly the behaviour before the backstop existed: the call type
     // carries no limit of its own.
-    expect(mockCallPayloads[0].data?.settings_override).toBeUndefined();
+    expect(
+      (mockCallPayloads[0].data?.settings_override as Record<string, unknown>)
+        .limits,
+    ).toEqual({ max_participants: 6 });
   });
 
   it("creates nothing at all when the slot resolves to no appointment", async () => {

@@ -73,6 +73,7 @@ function submitted(): {
   id: string;
   event_types?: string[];
   webhook_url?: string;
+  product?: string;
 }[] {
   const call = mockUpdateAppSettings.mock.calls.at(-1);
   if (!call) throw new Error("updateAppSettings was never called");
@@ -103,6 +104,40 @@ describe("ensure-webhook-subscription", () => {
     for (const t of HANDLED_EVENT_TYPES) {
       expect(hook?.event_types).toContain(t);
     }
+  });
+
+  describe("hook creation guard", () => {
+    const original = process.env.NEXT_PUBLIC_APP_URL;
+    const videoOnly = { ...liveWebhook, product: "video" };
+    afterEach(() => {
+      if (original === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+      else process.env.NEXT_PUBLIC_APP_URL = original;
+    });
+
+    it.each([
+      ["a loopback origin", "http://localhost:3000"],
+      ["a preview origin", "https://deploy-preview-1--familiarise.netlify.app"],
+    ])("never creates the chat hook at %s", async (_label, origin) => {
+      process.env.NEXT_PUBLIC_APP_URL = origin;
+      mockGetAppSettings.mockResolvedValue(appWith([videoOnly]));
+
+      const code = await ensureWebhookSubscription("apply");
+
+      expect(code).toBe(DRIFT_EXIT_CODE);
+      const urls = submitted().map((h) => h.webhook_url);
+      expect(urls).toEqual([liveWebhook.webhook_url]);
+    });
+
+    it("creates the chat hook at the URL the live hook already delivers to", async () => {
+      process.env.NEXT_PUBLIC_APP_URL = "https://familiarisenow.com";
+      mockGetAppSettings.mockResolvedValue(appWith([videoOnly]));
+
+      const code = await ensureWebhookSubscription("apply");
+
+      expect(code).toBe(0);
+      const chat = submitted().find((h) => h.product === "chat");
+      expect(chat?.webhook_url).toBe(liveWebhook.webhook_url);
+    });
   });
 
   describe("URL rewrite guard", () => {
@@ -177,7 +212,7 @@ describe("ensure-webhook-subscription", () => {
     }
   });
 
-  it("replaces a wildcard subscription with the explicit 8 handled events", async () => {
+  it("replaces a wildcard subscription with the explicit handled events", async () => {
     mockGetAppSettings.mockResolvedValue(
       appWith([{ ...liveWebhook, event_types: ["*"] }]),
     );
@@ -215,7 +250,7 @@ describe("ensure-webhook-subscription — check mode exit codes", () => {
     expect(mockUpdateAppSettings).not.toHaveBeenCalled();
   });
 
-  it("passes when the live hook matches the exact 8 handled events and flags extra events as drift", async () => {
+  it("passes when the live hook matches the exact handled events and flags extra events as drift", async () => {
     mockGetAppSettings.mockResolvedValue(
       appWith([
         {

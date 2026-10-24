@@ -151,14 +151,17 @@ npx tsx scripts/stream/ensure.ts
 npx tsx scripts/stream/ensure.ts --apply --routes-are-deployed
 # (Also accepts --confirm-join-route-deployed on ensure.ts / ensure-call-type-grants.ts)
 
-# Step 1c: Verify and reconcile the webhook hook (enabled, URL, event list)
+# Step 1c: Verify and reconcile the webhook hooks (one per product: enabled, URL, event list).
+# With NEXT_PUBLIC_APP_URL set, --apply also creates a missing product hook (the `chat` hook).
 npx tsx scripts/stream/ensure-webhook-subscription.ts --check
-npx tsx scripts/stream/ensure-webhook-subscription.ts --apply
-# Only from the production environment, and only when the hook really points at the wrong origin:
+NEXT_PUBLIC_APP_URL=https://familiarisenow.com npx tsx scripts/stream/ensure-webhook-subscription.ts --apply
+# Only from the production environment, and only when an existing hook really points at the wrong origin:
 npx tsx scripts/stream/ensure-webhook-subscription.ts --apply --rewrite-url
 ```
 
-`--apply` reconciles the event list and the enabled flag but leaves the hook's URL alone. One Stream app serves every environment, so a run from a laptop or a preview with its own `NEXT_PUBLIC_APP_URL` would otherwise redirect production webhooks. The URL is rewritten only when `--rewrite-url` is passed as well.
+`--apply` reconciles each hook's event list and enabled flag, and creates the `chat` hook if it is missing, using `NEXT_PUBLIC_APP_URL` only when that URL is public https and already used by an existing hook, so a preview origin can never receive a new hook. It leaves an existing hook's URL alone. One Stream app serves every environment, so a run from a laptop or a preview with its own `NEXT_PUBLIC_APP_URL` would otherwise redirect production webhooks. An existing URL is rewritten only when `--rewrite-url` is passed as well.
+
+Apply the chat hook and the reminder settings only after the build that handles `user.unread_message_reminder` is live in production. An earlier delivery is harmless, because the route acknowledges an unhandled type with `handled: false`, but those reminders are lost.
 
 The intended state lives in one module, `lib/stream/control-plane-contract.ts`. The ensure scripts write it and the daily drift detector (below) reads it, so the two cannot disagree about what "correct" means.
 
@@ -169,7 +172,8 @@ What the orchestrator enforces:
 - **Least-Privilege Call Admission on `default`**: Revokes `create-call`, `join-call`, `join-ended-call`, and `update-call-permissions` from `user` and `guest`, and revokes `create-call` and `end-call` from `user`, `guest`, and `call_member`. Only `call_member` and `co_presenter` (both assigned server-side after `resolveMeetingAccess`) and `admin` can join an active room. The `call_member` role holds only the `-owner` variants of `update-call-permissions`, `mute-users` and `pin-call-track`. Both `user` and `call_member` also hold only `remove-call-member-owner` and `update-call-member-owner`: every member add, update and removal runs server-side as admin (`app/api/meetings/[meetingId]/join/route.ts`, `lib/collaborators/service.ts`), and no client code calls `updateCallMembers`, so the unscoped variants grant nothing the app uses. Neither `call_member` nor `co_presenter` holds `join-ended-call`. A room Stream has ended is therefore sealed at Stream as well as at `/join`: no client can rejoin it with a token it already holds, and reopening always rotates to a fresh call id. The custom `co_presenter` role adds `mute-users`, `pin-call-track` and `join-backstage` for accepted presenter collaborators.
 - **Unused Call-Type Reach Lockdown**: Strips `REACH_PERMISSIONS` (`create-call`, `join-call`, `join-backstage`, `join-ended-call` and `-any-team` variants) from `livestream`, `audio_room`, and `development` across all end-user roles (`user`, `guest`, `anonymous`, `speaker`, `host`, `call_member`).
 - **Empty Room Auto-Close**: Enforces `session.inactivity_timeout_seconds = 300` (5 minutes) on the `default` call type.
-- **Chat Channel Ownership (`ensure-messaging-grants.ts`)**: Removes `truncate-channel-owner`, `delete-channel-owner`, `update-channel-members-owner`, `recreate-channel-owner` and `update-channel-owner` from the `user` role of the `messaging` chat channel type, so a channel owner cannot mutate membership or history from the client and every such change goes through a server action. Stream replaces grants per role, so the script derives the new `user` list from the live one, writes only that role and keeps every other grant. Run it alone with `npx tsx scripts/stream/ensure-messaging-grants.ts --apply` (a dry run without `--apply`); `ensure.ts` runs it as its last step.
+- **Chat Channel Ownership (`ensure-messaging-grants.ts`)**: Removes `truncate-channel-owner`, `delete-channel-owner`, `update-channel-members-owner`, `recreate-channel-owner` and `update-channel-owner` from the `user` role of the `messaging` chat channel type, so a channel owner cannot mutate membership or history from the client and every such change goes through a server action. Stream replaces grants per role, so the script derives the new `user` list from the live one, writes only that role and keeps every other grant. Run it alone with `npx tsx scripts/stream/ensure-messaging-grants.ts --apply` (a dry run without `--apply`); `ensure.ts` runs it as step 6.
+- **Chat Unread Reminders (`ensureChatReminders`, step 7)**: Turns on `reminders` and `read_events` on the `messaging` channel type and sets the app's `reminders_interval` to 1800 seconds (`TARGET_CHAT_REMINDERS`), so Stream emits `user.unread_message_reminder` for the chat unread digest. Thirty minutes matches the digest window, gives a correspondent time to read a message in the app before an email goes out, and keeps a busy thread to at most two digests an hour.
 
 ### 1a. Daily Control-Plane Drift Detector (`stream-control-plane-drift`)
 
@@ -177,7 +181,8 @@ Because the Stream app is configured outside this repository, narrowing a grant 
 
 It checks, and never writes:
 
-- the webhook hook: enabled, `webhook_url` equal to `<NEXT_PUBLIC_APP_URL>/api/stream/webhooks`, the exact event list, no wildcard, and no active legacy V1 wildcard;
+- the webhook hooks: one `video` hook and one `chat` hook, each enabled, with `webhook_url` equal to `<NEXT_PUBLIC_APP_URL>/api/stream/webhooks`, that product's exact event list and no wildcard, plus no active legacy V1 wildcard;
+- the chat unread reminders: `reminders` and `read_events` on the `messaging` channel type and `reminders_interval` of 1800 seconds (`channel_type:messaging:reminders`, `channel_type:messaging:read_events`, `app:reminders_interval`);
 - the `default` call type: the least-privilege grants above, the owner-scoped member grants, the `co_presenter` role and its exact grant set, and the 300 second inactivity timeout;
 - the `messaging` channel type: no owner-scoped truncate, delete, recreate, update or member-update grant on `user` (finding keys look like `channel_type:messaging:grant:user:update-channel-members-owner`);
 - `livestream`, `audio_room` and `development`: no reach or billable permission on any end-user role, so `user` holds neither `create-call` nor `join-call`;

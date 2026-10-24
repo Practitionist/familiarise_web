@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   CalendarClock,
   CheckCircle2,
@@ -12,6 +11,7 @@ import {
 import { CONSULTEE_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
 import { useSession } from "@/lib/auth-client";
 import type { MeetingAccessResult } from "../hooks/useGetCallById";
+import { useReopenRoom } from "../hooks/useReopenRoom";
 import { formatScheduledAt } from "../session-info";
 
 interface MeetingLobbyGateCardProps {
@@ -32,87 +32,57 @@ function formatOpenCountdown(msUntilOpen: number): string {
   return `${mins}m ${String(secs).padStart(2, "0")}s`;
 }
 
+const MAX_AUTO_RETRIES = 3;
+const AUTO_RETRY_BACKOFF_MS = 5_000;
+
 /**
  * Renders state-aware lobby screens when `/api/meetings/[id]/join` refuses entry:
  * - `TOO_EARLY`: Calm pre-session waiting card with schedule in viewer timezone & auto-entry when buffer opens.
  * - `SESSION_ENDED`: Clean session-concluded card with Host "Reopen Session Room" safety valve inside window.
  * - Default: Security Access Denied shield for unauthorized callers.
  */
-const MAX_AUTO_RETRIES = 3;
-const AUTO_RETRY_BACKOFF_MS = 5_000;
-const autoRetryAttemptsByWindow = new Map<string, number>();
-
 export function MeetingLobbyGateCard({
   meetingId,
   access,
   onRetryJoin,
 }: Readonly<MeetingLobbyGateCardProps>) {
-  const router = useRouter();
   const { data: session } = useSession();
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const [isReopening, setIsReopening] = useState(false);
-  const [reopenError, setReopenError] = useState<string | null>(null);
+  const [autoRetries, setAutoRetries] = useState(0);
+  const { reopenRoom, isReopening, reopenError } = useReopenRoom(meetingId);
 
   const startsAt = access.startsAt ? new Date(access.startsAt) : null;
   const openAtMs = startsAt
     ? startsAt.getTime() - CONSULTEE_JOIN_WINDOW_MS
     : null;
 
+  // Each retry bumps `autoRetries`, which re-arms the timer until the budget is spent.
   useEffect(() => {
     if (access.code !== "TOO_EARLY" || openAtMs === null) return;
-    const windowKey = `${meetingId}:${openAtMs}`;
-    const priorAttempts = autoRetryAttemptsByWindow.get(windowKey) ?? 0;
-    if (priorAttempts >= MAX_AUTO_RETRIES) return;
+    if (autoRetries >= MAX_AUTO_RETRIES) return;
 
-    const retryAtMs = openAtMs + priorAttempts * AUTO_RETRY_BACKOFF_MS;
+    const retryAtMs = openAtMs + autoRetries * AUTO_RETRY_BACKOFF_MS;
     const id = window.setInterval(() => {
       const current = Date.now();
       setNowMs(current);
       if (current >= retryAtMs) {
         window.clearInterval(id);
-        autoRetryAttemptsByWindow.set(windowKey, priorAttempts + 1);
+        setAutoRetries((attempts) => attempts + 1);
         onRetryJoin();
       }
     }, 1000);
     return () => window.clearInterval(id);
-  }, [access.code, meetingId, openAtMs, onRetryJoin]);
+  }, [access.code, openAtMs, autoRetries, onRetryJoin]);
 
   const scheduledLabel = formatScheduledAt(
     startsAt,
     session?.user?.timezone ?? null,
   );
 
-  const handleReopenRoom = async () => {
-    setReopenError(null);
-    setIsReopening(true);
-    try {
-      const res = await fetch(
-        `/api/meetings/${encodeURIComponent(meetingId)}/reopen`,
-        { method: "POST" },
-      );
-      const data = (await res.json().catch(() => ({}))) as {
-        reopened?: boolean;
-        streamCallId?: string;
-        error?: string;
-      };
-      if (!res.ok || !data.streamCallId) {
-        setReopenError(
-          data.error ?? "Could not reopen session room. Please try again.",
-        );
-        setIsReopening(false);
-        return;
-      }
-      router.replace(`/meetings/${encodeURIComponent(data.streamCallId)}`);
-    } catch {
-      setReopenError("Network error while reopening session room.");
-      setIsReopening(false);
-    }
-  };
-
   if (access.code === "TOO_EARLY") {
     const msUntilOpen = openAtMs !== null ? openAtMs - nowMs : null;
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-muted p-4">
+      <div className="flex flex-col items-center justify-center min-h-dvh bg-muted p-4">
         <div className="w-full max-w-md bg-card p-8 rounded-2xl shadow-xl border border-border text-center">
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
             <CalendarClock className="w-8 h-8 text-amber-600 dark:text-amber-400" />
@@ -126,6 +96,16 @@ export function MeetingLobbyGateCard({
             </p>
           )}
           <p className="text-muted-foreground mb-4">{access.message}</p>
+          {msUntilOpen !== null && msUntilOpen <= 0 && (
+            <p
+              data-testid="early-lobby-rechecking"
+              className="mb-5 inline-flex items-center rounded-lg bg-muted px-3 py-1.5 text-xs font-semibold text-foreground"
+            >
+              {autoRetries >= MAX_AUTO_RETRIES
+                ? "Still not open. Use Check Again."
+                : `Checking again (${autoRetries + 1} of ${MAX_AUTO_RETRIES})…`}
+            </p>
+          )}
           {msUntilOpen !== null && msUntilOpen > 0 && (
             <p
               data-testid="early-lobby-countdown"
@@ -157,7 +137,7 @@ export function MeetingLobbyGateCard({
 
   if (access.code === "SESSION_ENDED") {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-muted p-4">
+      <div className="flex flex-col items-center justify-center min-h-dvh bg-muted p-4">
         <div className="w-full max-w-md bg-card p-8 rounded-2xl shadow-xl border border-border text-center">
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
             <CheckCircle2 className="w-8 h-8 text-zinc-600 dark:text-zinc-300" />
@@ -179,7 +159,7 @@ export function MeetingLobbyGateCard({
                 type="button"
                 disabled={isReopening}
                 data-testid="reopen-ended-session-button"
-                onClick={() => void handleReopenRoom()}
+                onClick={() => void reopenRoom()}
                 className="inline-flex items-center justify-center gap-2 px-6 py-2.5 bg-foreground text-background rounded-lg font-medium hover:bg-foreground/90 transition-colors disabled:opacity-60"
               >
                 <RotateCcw className="h-4 w-4" />
@@ -200,7 +180,7 @@ export function MeetingLobbyGateCard({
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-muted p-4">
+    <div className="flex flex-col items-center justify-center min-h-dvh bg-muted p-4">
       <div className="w-full max-w-md bg-card p-8 rounded-2xl shadow-xl border border-border text-center">
         <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-100 flex items-center justify-center">
           <ShieldAlert className="w-8 h-8 text-red-600" />
