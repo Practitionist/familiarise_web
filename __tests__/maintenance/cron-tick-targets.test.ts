@@ -282,6 +282,29 @@ describe("cron-tick dueTargets cadence", () => {
     expect(firing("detect-consultant-no-shows")).toEqual([20, 50]);
   });
 
+  it("fires the Stream control-plane drift check once a day at 01:15 UTC, without a limit", () => {
+    const name = "stream-control-plane-drift";
+    const firing = Array.from({ length: 24 * 12 }, (_, i) => i * 5).filter(
+      (minuteOfDay) =>
+        dueTargets(
+          new Date(
+            Date.UTC(
+              2026,
+              8,
+              17,
+              Math.floor(minuteOfDay / 60),
+              minuteOfDay % 60,
+            ),
+          ),
+        ).includes(name),
+    );
+
+    expect(firing).toEqual([75]);
+    expect(targetRequest("https://site.test", name).url).toMatch(
+      /\/api\/cleanup\/stream-control-plane-drift$/,
+    );
+  });
+
   it("fires the Sentry ingest canary every 6 hours at :50, not every tick", () => {
     const name = "sentry-ingest-canary";
     const ticks = Array.from({ length: 24 * 12 }, (_, i) => i * 5).filter(

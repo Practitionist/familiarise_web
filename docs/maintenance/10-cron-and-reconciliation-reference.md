@@ -15,7 +15,7 @@ The generated [configured cron jobs reference](./04-cron-jobs-reference.md) owns
 
 ## The dispatch path
 
-Each key in `CLEANUP_JOB_BUILDERS` in `lib/cron/cleanup-registry.ts` lazily builds a cleanup handler for one canonical implementation. The inventory generator reads executable object keys through the TypeScript AST; marker comments are not its source of truth. The current roster has 67 registered jobs: 51 configured ticker targets and 16 registered jobs outside the ticker. Four operational Actions steps still lack a registered builder. These counts must be regenerated as independent worker migrations merge.
+Each key in `CLEANUP_JOB_BUILDERS` in `lib/cron/cleanup-registry.ts` lazily builds a cleanup handler for one canonical implementation. The inventory generator reads executable object keys through the TypeScript AST; marker comments are not its source of truth. The generated inventory reports the current roster of registered jobs, ticker targets and registered jobs outside the ticker, with a separate table for operational Actions steps lacking a registered builder. Regenerate it as worker migrations merge.
 
 ```text
 netlify/functions/cron-tick.mts       five-minute authenticated dispatcher
@@ -114,7 +114,7 @@ The requested `closed` policy refuses work when acquisition is unavailable; `ope
 
 ## The Actions-scheduled jobs
 
-The generated inventory lists the 16 registered jobs outside the ticker and four operational Actions steps missing registry coverage, with their configured owners and entrypoints. Actions workflows remain the configured automatic owner for their remaining jobs; enablement, budget availability and successful effects require separate verification.
+The generated inventory lists registered jobs outside the ticker and operational Actions steps missing registry coverage, with their configured owners and entrypoints. Actions workflows remain the configured automatic owner for their remaining jobs; enablement, budget availability and successful effects require separate verification.
 
 Moving a job requires a bounded canonical core, restart-safe progress and a controlled deployed check that establishes cadence and backlog-drain capacity. Switch its automatic schedule as one reviewed handoff and preserve unmigrated workflow steps. Do not enable Actions as an additional automatic fallback for an already ticker-owned job.
 
@@ -199,17 +199,16 @@ A sweep that finds something it cannot safely repair records a finding and stops
 
 ## Workflow inventory
 
-Seven workflows declare a `cron:` schedule.
+Six workflows declare a `cron:` schedule.
 
-| Workflow                   | Schedules (UTC)                                              | Purpose                                                          |
-| -------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------- |
-| `cron-intra-day.yml`       | `:25,:55` hourly; `:17` hourly; `:52 */4`; `:33 */6`         | Recovery and sync jobs                                           |
-| `cron-daily.yml`           | `03:00`; `23:30`                                             | Daily maintenance and billing batches                            |
-| `cron-weekly.yml`          | Sun `00:25`; Mon `20:00`; Mon `21:00`; monthly and quarterly | Weekly, statutory and payout batch                               |
-| `cron-heartbeat.yml`       | `04:40`                                                      | Dead-man's switch for the Actions fleet                          |
-| `db-live-drift.yml`        | `07:03`                                                      | Read-only schema drift against the live database                 |
-| `stream-webhook-drift.yml` | `05:15`                                                      | Detects drift between the Stream subscription and the dispatcher |
-| `security-audit.yml`       | Mon `07:00`                                                  | Supply-chain audit, including between PRs                        |
+| Workflow             | Schedules (UTC)                                              | Purpose                                          |
+| -------------------- | ------------------------------------------------------------ | ------------------------------------------------ |
+| `cron-intra-day.yml` | `:25,:55` hourly; `:17` hourly; `:52 */4`; `:33 */6`         | Recovery and sync jobs                           |
+| `cron-daily.yml`     | `03:00`; `23:30`                                             | Daily maintenance and billing batches            |
+| `cron-weekly.yml`    | Sun `00:25`; Mon `20:00`; Mon `21:00`; monthly and quarterly | Weekly, statutory and payout batch               |
+| `cron-heartbeat.yml` | `04:40`                                                      | Dead-man's switch for the Actions fleet          |
+| `db-live-drift.yml`  | `07:03`                                                      | Read-only schema drift against the live database |
+| `security-audit.yml` | Mon `07:00`                                                  | Supply-chain audit, including between PRs        |
 
 Every step in the three cron fleet workflows sets `continue-on-error: true`, and a final step fans out over every step outcome and calls `scripts/ci/notify-ops-failure.sh`. Each of those three declares a concurrency group with `cancel-in-progress: false`, so an overlapping run queues rather than cancelling one mid-flight. The two workflows that deliberately do the opposite are `ci.yaml` and `knip.yml`: both are pull-request triggered rather than scheduled, so superseding a stale run is the behaviour you want there.
 

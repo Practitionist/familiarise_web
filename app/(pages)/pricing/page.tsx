@@ -1,13 +1,6 @@
-"use client";
-
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
+import type { Metadata } from "next";
+import Link from "next/link";
+import { Calendar, IndianRupee, Repeat, Users, Video } from "lucide-react";
 import {
   Accordion,
   AccordionContent,
@@ -16,9 +9,75 @@ import {
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import Link from "next/link";
-import { DollarSign, Users, Video, Calendar, Repeat } from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import {
+  PAYOUT_CONSTANTS,
+  TAX_CONSTANTS,
+} from "@/lib/payments/payouts/constants";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { PAGE_META, PRICING_DATA } from "../constants";
+
+export const metadata: Metadata = {
+  title: `${PAGE_META.pricing.title} | Familiarise`,
+  description: PAGE_META.pricing.description,
+};
+
+const EXAMPLE_LIST_PRICE_PAISE = 100_000;
+const exampleGstPaise = Math.round(
+  (EXAMPLE_LIST_PRICE_PAISE * TAX_CONSTANTS.GST_RATE) / 100,
+);
+const exampleFeePaise = Math.round(
+  (EXAMPLE_LIST_PRICE_PAISE * PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE) / 100,
+);
+
+function inr(paise: number): string {
+  return formatCurrencyAmount(paise, "INR");
+}
+
+const SERVICES = [
+  {
+    icon: Users,
+    title: "Tutoring & One-on-One Sessions",
+    badge: "Per Session",
+    description:
+      "Personal sessions with an expert on a subject or skill, tailored to your goals.",
+    pricing:
+      "Set by each expert per session, and shown in INR on their profile and booking page.",
+  },
+  {
+    icon: Calendar,
+    title: "Live Classes",
+    badge: "Per Course",
+    description:
+      "Group classes taught live by an instructor across scheduled sessions, with course materials and, where the expert offers one, a certificate.",
+    pricing:
+      "Set by the expert for the whole class and shown before you enroll. Payment for the class is taken at enrollment.",
+  },
+  {
+    icon: Video,
+    title: "Webinars & Workshops",
+    badge: "Per Event",
+    description:
+      "Live educational events and workshops on a specific topic, with Q&A.",
+    pricing: "Set by the event host and shown before you register.",
+  },
+  {
+    icon: Repeat,
+    title: "Subscription Plans",
+    badge: "Recurring",
+    description:
+      "Ongoing programs with regular live sessions over a set period.",
+    pricing:
+      "Set by the expert based on how often you meet and for how long, and shown before you subscribe.",
+  },
+] as const;
 
 export default function PricingPage() {
   return (
@@ -39,7 +98,7 @@ export default function PricingPage() {
           <Card className="shadow-elevation-1">
             <CardHeader>
               <div className="flex items-center gap-2">
-                <DollarSign className="h-6 w-6 text-foreground" />
+                <IndianRupee className="h-6 w-6 text-foreground" />
                 <CardTitle className="text-fluid-2xl">
                   How Our Pricing Works
                 </CardTitle>
@@ -47,156 +106,145 @@ export default function PricingPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-muted-foreground">
-                At Familiarise, we believe in empowering consultants to set
-                their own prices based on their expertise, experience, and the
-                value they provide. Our platform operates on a
-                <strong> dynamic pricing model</strong> where:
+                Familiarise is a marketplace for live learning. Each expert sets
+                the price of what they teach, so there is no single price list.
+                What stays the same for everyone is how the price is built up:
               </p>
               <div className="bg-muted p-4 rounded-lg space-y-2">
-                {PRICING_DATA.howItWorks.map((item, index) => (
-                  <p key={index} className="flex items-start gap-2">
+                {PRICING_DATA.howItWorks.map((item) => (
+                  <p key={item} className="flex items-start gap-2">
                     <span className="text-green-600 mt-1">✓</span>
-                    <span>
-                      <strong>{item.split(" ").slice(0, 3).join(" ")}</strong>{" "}
-                      {item.split(" ").slice(3).join(" ")}
-                    </span>
+                    <span>{item}</span>
                   </p>
                 ))}
               </div>
             </CardContent>
           </Card>
 
-          {/* Platform Commission */}
+          {/* Worked example */}
           <Card className="shadow-elevation-1">
             <CardHeader>
               <CardTitle className="text-fluid-2xl">
-                Platform Commission
+                Example: a session listed at {inr(EXAMPLE_LIST_PRICE_PAISE)}
               </CardTitle>
               <CardDescription>
-                Our commission structure enables us to maintain and improve the
-                platform
+                An illustration of how the numbers work. It is not a price list;
+                actual prices are set by each expert.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <h3 className="font-semibold mb-2">
+                  What you pay (buyer in India)
+                </h3>
+                <dl className="space-y-1 text-sm">
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-muted-foreground">
+                      Price listed by the expert
+                    </dt>
+                    <dd>{inr(EXAMPLE_LIST_PRICE_PAISE)}</dd>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-muted-foreground">
+                      GST at {TAX_CONSTANTS.GST_RATE}%
+                    </dt>
+                    <dd>{inr(exampleGstPaise)}</dd>
+                  </div>
+                  <Separator />
+                  <div className="flex justify-between gap-4 font-semibold">
+                    <dt>Total at checkout</dt>
+                    <dd>{inr(EXAMPLE_LIST_PRICE_PAISE + exampleGstPaise)}</dd>
+                  </div>
+                </dl>
+              </div>
+              <div>
+                <h3 className="font-semibold mb-2">
+                  What the expert receives (on a marketplace booking)
+                </h3>
+                <dl className="space-y-1 text-sm">
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-muted-foreground">
+                      Platform fee ({PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE}%
+                      of the listed price)
+                    </dt>
+                    <dd>{inr(exampleFeePaise)}</dd>
+                  </div>
+                  <Separator />
+                  <div className="flex justify-between gap-4 font-semibold">
+                    <dt>Expert&apos;s share</dt>
+                    <dd>{inr(EXAMPLE_LIST_PRICE_PAISE - exampleFeePaise)}</dd>
+                  </div>
+                </dl>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Any discount or promotion is applied to the listed price before
+                GST is calculated. The platform fee is paid out of the
+                expert&apos;s share and is never added to your total. Tax
+                deducted at source, where the law requires it, is a separate
+                statutory deduction from the expert&apos;s payout. Buyers
+                outside India see the tax that applies to them at checkout.
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* Platform Fee */}
+          <Card className="shadow-elevation-1">
+            <CardHeader>
+              <CardTitle className="text-fluid-2xl">Platform Fee</CardTitle>
+              <CardDescription>
+                What Familiarise charges, and who pays it
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-muted-foreground">
-                Familiarise charges a small platform fee on each transaction.
-                This fee helps us:
+                Familiarise charges experts a platform fee of currently{" "}
+                <strong>{PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE}%</strong> of
+                the listed price on each booking made through the marketplace.
+                Learners do not pay it separately; it is already part of the
+                listed price. The fee helps us:
               </p>
               <ul className="list-disc list-inside space-y-2 text-muted-foreground ml-4">
-                {PRICING_DATA.commissionBenefits.map((benefit, index) => (
-                  <li key={index}>{benefit}</li>
+                {PRICING_DATA.commissionBenefits.map((benefit) => (
+                  <li key={benefit}>{benefit}</li>
                 ))}
               </ul>
-              <div className="bg-muted border border-border p-4 rounded-lg mt-4">
-                <p className="text-sm">
-                  <strong>Note:</strong> The commission is automatically
-                  included in the prices shown to students. Consultants receive
-                  their earnings after the platform fee is deducted.
-                </p>
-              </div>
             </CardContent>
           </Card>
 
           {/* Service Categories */}
           <Card className="shadow-elevation-1">
             <CardHeader>
-              <CardTitle className="text-fluid-2xl">Service Categories</CardTitle>
+              <CardTitle className="text-fluid-2xl">
+                Service Categories
+              </CardTitle>
               <CardDescription>
-                Explore the different types of services available on our
-                platform
+                The kinds of learning you can book on Familiarise
               </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid gap-6">
-                {/* Consultations */}
-                <div className="flex gap-4 p-4 border border-border rounded-lg">
-                  <div className="flex-shrink-0">
-                    <Users className="h-8 w-8 text-foreground" />
+                {SERVICES.map((service) => (
+                  <div
+                    key={service.title}
+                    className="flex gap-4 p-4 border border-border rounded-lg"
+                  >
+                    <div className="flex-shrink-0">
+                      <service.icon className="h-8 w-8 text-foreground" />
+                    </div>
+                    <div className="flex-grow">
+                      <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
+                        {service.title}
+                        <Badge variant="secondary">{service.badge}</Badge>
+                      </h3>
+                      <p className="text-sm text-muted-foreground mb-3">
+                        {service.description}
+                      </p>
+                      <p className="text-sm">
+                        <strong>Pricing:</strong> {service.pricing}
+                      </p>
+                    </div>
                   </div>
-                  <div className="flex-grow">
-                    <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
-                      One-on-One Consultations
-                      <Badge variant="secondary">Per Session</Badge>
-                    </h3>
-                    <p className="text-sm text-muted-foreground mb-3">
-                      Personalized expert guidance sessions tailored to your
-                      specific needs. Duration typically ranges from 30 minutes
-                      to 2 hours.
-                    </p>
-                    <p className="text-sm">
-                      <strong>Pricing:</strong> Varies by consultant expertise
-                      and session duration. Consultants set their own rates.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Classes */}
-                <div className="flex gap-4 p-4 border border-border rounded-lg">
-                  <div className="flex-shrink-0">
-                    <Calendar className="h-8 w-8 text-foreground" />
-                  </div>
-                  <div className="flex-grow">
-                    <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
-                      Live Interactive Classes
-                      <Badge variant="secondary">Course-based</Badge>
-                    </h3>
-                    <p className="text-sm text-muted-foreground mb-3">
-                      Group learning sessions with scheduled appointments.
-                      Includes multiple sessions over weeks or months, course
-                      materials, and certificates.
-                    </p>
-                    <p className="text-sm">
-                      <strong>Pricing:</strong> Varies by course duration,
-                      number of sessions, and consultant expertise. Full course
-                      payment required at enrollment.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Webinars */}
-                <div className="flex gap-4 p-4 border border-border rounded-lg">
-                  <div className="flex-shrink-0">
-                    <Video className="h-8 w-8 text-foreground" />
-                  </div>
-                  <div className="flex-grow">
-                    <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
-                      Webinars & Workshops
-                      <Badge variant="secondary">Event-based</Badge>
-                    </h3>
-                    <p className="text-sm text-muted-foreground mb-3">
-                      Large-scale educational events and workshops on specific
-                      topics. Typically 1-3 hours long with Q&A sessions.
-                    </p>
-                    <p className="text-sm">
-                      <strong>Pricing:</strong> Generally more affordable than
-                      1-on-1 sessions due to group participation. Set by event
-                      organizer.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Subscriptions */}
-                <div className="flex gap-4 p-4 border border-border rounded-lg">
-                  <div className="flex-shrink-0">
-                    <Repeat className="h-8 w-8 text-foreground" />
-                  </div>
-                  <div className="flex-grow">
-                    <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
-                      Subscription Plans
-                      <Badge variant="secondary">Recurring</Badge>
-                    </h3>
-                    <p className="text-sm text-muted-foreground mb-3">
-                      Ongoing learning programs with recurring sessions.
-                      Includes regular meetings, continuous support, and
-                      progressive curriculum.
-                    </p>
-                    <p className="text-sm">
-                      <strong>Pricing:</strong> Monthly or course-based
-                      subscriptions. Varies by frequency of sessions and
-                      duration of commitment.
-                    </p>
-                  </div>
-                </div>
+                ))}
               </div>
             </CardContent>
           </Card>
@@ -227,18 +275,15 @@ export default function PricingPage() {
               <div>
                 <h3 className="font-semibold mb-2">Currency</h3>
                 <p className="text-muted-foreground">
-                  All prices are displayed in{" "}
-                  <strong>INR (Indian Rupees)</strong> unless otherwise
-                  specified.
+                  All prices are in <strong>INR (Indian Rupees)</strong>.
                 </p>
               </div>
               <Separator />
               <div>
                 <h3 className="font-semibold mb-2">Security</h3>
                 <p className="text-muted-foreground">
-                  All payments are processed securely through Razorpay with
-                  industry-standard encryption. Your payment information is
-                  never stored on our servers.
+                  Payments are processed securely by Razorpay. Your card details
+                  are entered with Razorpay and are not stored on our servers.
                 </p>
               </div>
             </CardContent>
@@ -254,7 +299,7 @@ export default function PricingPage() {
             <CardContent>
               <Accordion type="single" collapsible className="w-full">
                 {PRICING_DATA.faqs.map((faq, index) => (
-                  <AccordionItem key={index} value={`item-${index + 1}`}>
+                  <AccordionItem key={faq.question} value={`item-${index + 1}`}>
                     <AccordionTrigger>{faq.question}</AccordionTrigger>
                     <AccordionContent>
                       {faq.answer}
@@ -285,9 +330,8 @@ export default function PricingPage() {
                 Ready to Start Learning?
               </h3>
               <p className="text-muted-foreground mb-6 max-w-2xl mx-auto">
-                Browse our consultants, explore their expertise, and find the
-                perfect match for your learning goals. Transparent pricing,
-                secure payments, quality education.
+                Browse our experts and programs, compare what they offer, and
+                see the exact price before you book.
               </p>
               <div className="flex gap-4 justify-center flex-wrap">
                 <Link href="/explore/experts">

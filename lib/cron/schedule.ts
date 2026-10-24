@@ -30,6 +30,7 @@ export const TARGETS = [
   "reconcile-payout-status",
   "process-data-exports",
   "retry-moderation-enforcement",
+  "reconcile-stream-memberships",
   "vest-referral-credits",
   "support-sla-sweep",
   "purge-deleted-documents",
@@ -53,6 +54,7 @@ export const TARGETS = [
   "reconcile-gateway-settlements",
   "reconcile-ledgers",
   "tds-return-draft",
+  "stream-control-plane-drift",
 ] as const;
 
 export type Target = (typeof TARGETS)[number];
@@ -105,6 +107,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "reconcile-disputes": 10,
   "reconcile-ledgers": null,
   "tds-return-draft": null,
+  "reconcile-stream-memberships": 50,
+  "stream-control-plane-drift": null,
 };
 
 /**
@@ -165,6 +169,8 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-disputes": 60,
   "reconcile-ledgers": 60,
   "tds-return-draft": 60,
+  "reconcile-stream-memberships": 60,
+  "stream-control-plane-drift": 60,
 };
 
 /**
@@ -225,6 +231,8 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-gateway-settlements": 55,
   "reconcile-ledgers": 55,
   "tds-return-draft": 55,
+  "reconcile-stream-memberships": 20,
+  "stream-control-plane-drift": 15,
 };
 
 /** Regression ceiling for due work, enforced by the calendar test. */
@@ -286,6 +294,8 @@ export const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
     startMinuteUtc: 60,
     windowMinutes: 120,
   },
+  "reconcile-stream-memberships": { startMinuteUtc: 0, windowMinutes: 180 },
+  "stream-control-plane-drift": { startMinuteUtc: 75, windowMinutes: 60 },
 };
 
 /**
@@ -382,6 +392,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "reconcile-disputes": 20_000,
   "reconcile-ledgers": 20_000,
   "tds-return-draft": 20_000,
+  "reconcile-stream-memberships": 24_000,
 };
 
 /**

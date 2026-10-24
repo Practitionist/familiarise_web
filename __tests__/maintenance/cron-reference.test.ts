@@ -150,7 +150,7 @@ it("documents every real builder and the current Actions-only registry gaps", ()
   expect(document).toContain("resumable ledger target yields on crowded slots");
   expect(document).toContain("Configured is not live-verified");
   expect(document).toContain("`send-appointment-reminders`; open;");
-  expect(document).toContain("`transfer-recordings`; open; 45 min");
+  expect(document).toContain("`transfer-recordings`; closed; 15 min");
 });
 
 it("keeps the generated artifact synchronized with executable sources", () => {

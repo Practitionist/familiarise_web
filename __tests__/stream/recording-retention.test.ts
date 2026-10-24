@@ -34,6 +34,10 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 jest.mock("../../lib/observability/report", () => ({
   reportSentryMessage: jest.fn(),
 }));
+const mockDeleteCopy = jest.fn();
+jest.mock("../../lib/stream/recording-stream-delete", () => ({
+  deleteStreamRecordingCopy: (...args: unknown[]) => mockDeleteCopy(...args),
+}));
 
 import { deleteRecordingAssets } from "../../lib/stream/recording-storage";
 import { RecordingService } from "../../lib/stream/recording-service";
@@ -184,6 +188,14 @@ describe("recordingRetentionDeadline", () => {
 });
 
 describe("expireRecordings", () => {
+  beforeEach(() => {
+    jest.restoreAllMocks();
+    mockRecording.findMany.mockReset().mockResolvedValue([]);
+    mockRecording.updateMany.mockReset().mockResolvedValue({ count: 0 });
+    mockDeleteCopy.mockReset().mockResolvedValue({ success: true });
+    (reportSentryMessage as jest.Mock).mockClear();
+  });
+
   it("filters exemptions in the query, audits only CAS-expired ids and requeues a failed asset delete", async () => {
     const orgRow = (id: string) => ({
       id,
@@ -344,66 +356,177 @@ describe("expireRecordings", () => {
     expect(scanCapWarnings).toHaveLength(1);
   });
 
-  it("refreshes recordingUrl and streamUrlExpiresAt from Stream within 15 days instead of expiring a live recording, without cross-selecting mismatched filenames", async () => {
-    const futureEnd = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+  const lapsedRow = (id: string, filename = `${id}.mp4`) => ({
+    id,
+    streamCallId: `call-${id}`,
+    streamRecordingId: filename,
+  });
+  const listed = (filename: string) => ({
+    status: "listed" as const,
+    recordings: [
+      {
+        filename,
+        url: `https://us-east.stream-io-cdn.com/${filename}`,
+        start_time: new Date(Date.now() - 3 * 3600_000),
+        end_time: new Date(Date.now() - 2 * 3600_000),
+        session_id: "sess",
+      },
+    ],
+  });
+  /** The lapsed-expiry write: the one updateMany that sets COPY_LAPSED. */
+  const lapsedWrite = () =>
+    mockRecording.updateMany.mock.calls
+      .map(([args]) => args)
+      .find((args) => args.data.removalReason === "COPY_LAPSED");
+
+  it("refreshes a listed copy, and expires one whose filename Stream no longer lists", async () => {
     jest
       .spyOn(RecordingService, "getCallRecordingsFromStream")
-      .mockResolvedValueOnce([
-        {
-          filename: "rec-live.mp4",
-          url: "https://us-east.stream-io-cdn.com/rec-live-refreshed.mp4",
-          start_time: new Date(futureEnd.getTime() - 3600_000),
-          end_time: futureEnd,
-          session_id: "sess-live",
-        },
-      ])
-      .mockResolvedValueOnce([
-        {
-          filename: "different-segment.mp4",
-          url: "https://us-east.stream-io-cdn.com/different-segment.mp4",
-          start_time: new Date(futureEnd.getTime() - 3600_000),
-          end_time: futureEnd,
-          session_id: "sess-live",
-        },
-      ]);
+      .mockResolvedValueOnce(listed("live.mp4"))
+      .mockResolvedValueOnce(listed("different-segment.mp4"));
+    mockRecording.findMany.mockResolvedValueOnce([
+      lapsedRow("live", "live.mp4"),
+      lapsedRow("gone", "missing.mp4"),
+    ]);
 
-    mockRecording.updateMany.mockResolvedValue({ count: 0 });
-    mockRecording.findMany
-      .mockResolvedValueOnce([
-        {
-          id: "rec-rescue-1",
-          streamCallId: "call-rescue-1",
-          streamRecordingId: "rec-live.mp4",
-        },
-        {
-          id: "rec-mismatched-id",
-          streamCallId: "call-rescue-2",
-          streamRecordingId: "missing-segment.mp4",
-        },
-      ])
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([]);
-
-    const result = await expireRecordings();
+    await expireRecordings();
 
     expect(mockRecording.findMany.mock.calls[0][0].take).toBe(200);
-    expect(result.lapsed).toBe(0);
     expect(mockRecording.updateMany).toHaveBeenCalledWith({
-      where: {
-        id: "rec-rescue-1",
-        status: "READY",
-        storageType: "STREAM_S3",
-      },
+      where: { id: "live", status: "READY", storageType: "STREAM_S3" },
       data: expect.objectContaining({
-        recordingUrl:
-          "https://us-east.stream-io-cdn.com/rec-live-refreshed.mp4",
+        recordingUrl: "https://us-east.stream-io-cdn.com/live.mp4",
         streamUrlExpiresAt: expect.any(Date),
       }),
     });
-    expect(mockRecording.updateMany).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ id: "rec-mismatched-id" }),
-      }),
+    expect(lapsedWrite().where.OR).toContainEqual({ id: { in: ["gone"] } });
+  });
+
+  it("keeps a row READY when its listing fails, counts it, and reports once per run", async () => {
+    jest
+      .spyOn(RecordingService, "getCallRecordingsFromStream")
+      .mockResolvedValue({ status: "unavailable", error: "HTTP 429" });
+    mockRecording.findMany.mockResolvedValueOnce([
+      lapsedRow("a"),
+      lapsedRow("b"),
+      lapsedRow("c"),
+    ]);
+
+    const result = await expireRecordings();
+
+    // Only the age and no-call-id arms remain: no failed row is named.
+    expect(lapsedWrite().where.OR).toEqual([
+      { recordedAt: { lt: expect.any(Date) } },
+      { streamCallId: null },
+    ]);
+    expect(result).toMatchObject({ failed: 3, success: false });
+    const failureReports = (reportSentryMessage as jest.Mock).mock.calls.filter(
+      ([, ctx]) =>
+        (ctx as { fingerprint: string[] }).fingerprint.includes("failures"),
     );
+    expect(failureReports).toHaveLength(1);
+    expect(failureReports[0][1].extra.recordingIds).toEqual(["a", "b", "c"]);
+  });
+
+  it("expires a lapsed row when Stream no longer knows the call (404)", async () => {
+    jest
+      .spyOn(RecordingService, "getCallRecordingsFromStream")
+      .mockResolvedValue({ status: "call-not-found" });
+    mockRecording.findMany.mockResolvedValueOnce([lapsedRow("unknown-call")]);
+
+    const result = await expireRecordings();
+
+    expect(lapsedWrite().where.OR).toContainEqual({
+      id: { in: ["unknown-call"] },
+    });
+    expect(result.failed).toBe(0);
+  });
+
+  it("asks Stream at most ten calls at a time", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    jest
+      .spyOn(RecordingService, "getCallRecordingsFromStream")
+      .mockImplementation(async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        inFlight -= 1;
+        return { status: "call-not-found" };
+      });
+    mockRecording.findMany.mockResolvedValueOnce(
+      Array.from({ length: 25 }, (_, i) => lapsedRow(`r${i}`)),
+    );
+
+    await expireRecordings();
+
+    expect(peak).toBe(10);
+  });
+
+  it("deletes Stream's copy only for a size-verified R2 copy at least a day old, and marks it once", async () => {
+    const transferred = {
+      id: "t1",
+      streamCallId: "call-t1",
+      streamRecordingId: "t1.mp4",
+      recordingUrl: "https://us-east.stream-io-cdn.com/t1.mp4",
+    };
+    mockRecording.findMany.mockImplementation(
+      async (args: { where: { status?: string } }) =>
+        args.where.status === "AVAILABLE" ? [transferred] : [],
+    );
+    mockRecording.updateMany.mockResolvedValue({ count: 1 });
+
+    const first = await expireRecordings();
+
+    const armWhere = mockRecording.findMany.mock.calls.find(
+      ([args]) => args.where.status === "AVAILABLE",
+    )[0].where;
+    expect(armWhere).toMatchObject({
+      storageType: "PLATFORM",
+      storagePath: { not: null },
+      streamRecordingId: { not: null },
+      recordingUrl: { not: "" },
+    });
+    const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    expect(armWhere.transferredAt.lte.getTime()).toBeLessThanOrEqual(dayAgo);
+    expect(mockDeleteCopy).toHaveBeenCalledWith(transferred);
+    expect(mockRecording.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "t1",
+        status: "AVAILABLE",
+        recordingUrl: transferred.recordingUrl,
+      },
+      data: { recordingUrl: "" },
+    });
+    expect(first.streamCopiesDeleted).toBe(1);
+
+    // A second run whose CAS finds the URL already cleared counts nothing.
+    mockRecording.updateMany.mockResolvedValue({ count: 0 });
+    const second = await expireRecordings();
+    expect(second.streamCopiesDeleted).toBe(0);
+  });
+
+  it("keeps the Stream pointer and counts a failure when the vendor delete is unconfirmed", async () => {
+    mockRecording.findMany.mockImplementation(
+      async (args: { where: { status?: string } }) =>
+        args.where.status === "AVAILABLE"
+          ? [
+              {
+                id: "t2",
+                streamCallId: "call-t2",
+                streamRecordingId: "t2.mp4",
+                recordingUrl: "u",
+              },
+            ]
+          : [],
+    );
+    mockDeleteCopy.mockResolvedValue({ success: false, error: "HTTP 503" });
+
+    const result = await expireRecordings();
+
+    expect(mockRecording.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { recordingUrl: "" } }),
+    );
+    expect(result).toMatchObject({ streamCopiesDeleted: 0, failed: 1 });
   });
 });

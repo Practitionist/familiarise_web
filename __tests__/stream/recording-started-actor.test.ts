@@ -43,6 +43,7 @@ describe("handleRecordingStarted — actor and claim time", () => {
 
     mockFindUnique.mockResolvedValue({
       id: "session-1",
+      streamCallId: "call-1",
       recordingStartedBy: "owner-user-id",
       recordingStartedAt: new Date("2026-09-12T22:06:00.000Z"),
     });
@@ -56,7 +57,11 @@ describe("handleRecordingStarted — actor and claim time", () => {
 
     expect(mockUpdateMany).toHaveBeenCalledTimes(1);
     const { where, data } = mockUpdateMany.mock.calls[0][0];
-    expect(where).toEqual({ id: "session-1", endedAt: null });
+    expect(where).toEqual({
+      id: "session-1",
+      streamCallId: "call-1",
+      endedAt: null,
+    });
     expect(data).toEqual({
       isRecording: true,
       recordingStartedAt: new Date("2026-09-12T22:06:28.522Z"),
@@ -70,6 +75,7 @@ describe("handleRecordingStarted — actor and claim time", () => {
 
     mockFindUnique.mockResolvedValue({
       id: "session-1",
+      streamCallId: "call-1",
       recordingStartedBy: "owner-user-id",
       recordingStartedAt: new Date("2026-09-12T22:06:00.000Z"),
     });

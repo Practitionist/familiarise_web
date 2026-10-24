@@ -504,8 +504,9 @@ sequenceDiagram
 1. Go to Chats
 2. Select a conversation with a consultee
 3. Send a text message
-4. Send a file attachment
-5. Check that messages appear in real-time on both sides
+4. Confirm the composer has no attachment/paperclip button, and a dropped or pasted file is rejected
+5. Open a chat tied to an appointment and confirm the composer shows "Share files under Documents for this session", linking to that appointment's Documents tab
+6. Check that messages appear in real-time on both sides
 
 ### Collaborations
 
@@ -799,7 +800,7 @@ graph LR
 
 - 1:1 direct messaging
 - Group channels for webinars/classes
-- File sharing (images, documents)
+- Text-only chat — no composer attachment selector; dropped, pasted, and API uploads are rejected
 - Message history (searchable)
 - Typing indicators
 - Read receipts
@@ -811,8 +812,9 @@ graph LR
 2. Go to Messages/Chats
 3. Find the conversation channel
 4. Send a text message — it should appear instantly on both sides
-5. Send a file attachment
-6. Search for a past message
+5. Confirm the composer has no attachment/paperclip button, and a dropped or pasted file is rejected
+6. Open the appointment-linked chat and confirm the Documents hint links to that appointment's Documents tab
+7. Search for a past message
 
 ---
 
@@ -1244,7 +1246,7 @@ Use these checklists to systematically test every feature. Check off each item a
 - [ ] Use screen sharing in a call
 - [ ] Use in-call chat
 - [ ] Send a message via Chat
-- [ ] Send a file in Chat
+- [ ] Confirm the composer has no attachment button and rejects dropped or pasted files
 - [ ] Leave a review after session
 - [ ] Upload a document for review
 - [ ] Subscribe to a subscription plan
