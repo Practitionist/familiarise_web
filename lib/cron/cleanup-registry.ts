@@ -8,6 +8,10 @@ import {
 } from "@/lib/cron/cleanup-route";
 import { reportSentryError } from "@/lib/observability/report";
 import type { FrozenWallet } from "@/lib/payments/wallet-freeze";
+import type {
+  Finding,
+  ReconcileReport,
+} from "@/scripts/reconcile/reconcile-ledgers";
 
 export type CleanupRouteHandlers = {
   GET: (req: NextRequest) => Promise<NextResponse>;
@@ -54,6 +58,8 @@ const MAX_STUCK_PAYOUT_POLLS = 5;
 const MAX_PAYOUT_STATUS_POLLS = 8;
 /** Consumer invoices the GST register healer may mint per run; one transaction each. */
 const MAX_GST_HEALER_MINTS = 25;
+/** Document rows a single purge run may process; each costs one storage delete. */
+const MAX_DOCUMENT_PURGE_ROWS = 200;
 
 /**
  * Registry of `/api/cleanup/[job]` HTTP twins.
@@ -751,16 +757,20 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "purge-deleted-documents": () =>
       cleanupRoute({
         job: "purge-deleted-documents",
-        run: async () => {
+        run: async (req) => {
           const { purgeDeletedDocuments } =
             await import("@/lib/documents/document-purge");
-          return purgeDeletedDocuments();
+          return purgeDeletedDocuments(new Date(), {
+            limit: parseLimitParamOrDefault(req, MAX_DOCUMENT_PURGE_ROWS),
+          });
         },
         summarize: (r) => ({
           tombstoned: r.tombstoned,
+          failedTombstones: r.failedTombstones,
           purged: r.purged,
           failedStorage: r.failedStorage,
           failedRows: r.failedRows,
+          remaining: r.remaining,
           byReason: r.byReason,
         }),
         status: (r) => statusFor(r),
@@ -809,34 +819,53 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "reconcile-ledgers": () =>
       cleanupRoute({
         job: "reconcile-ledgers",
-        run: async (req) => {
+        run: async () => {
           const { runReconcileLedgers } =
             await import("@/scripts/reconcile/reconcile-ledgers");
-          const triggeredById =
-            req.nextUrl.searchParams.get("triggeredById") ?? undefined;
-          const { respondToLedgerDrift, freezeDriftingWallets } =
+          const { respondToLedgerDrift, reportWalletDriftFreeze } =
             await import("@/scripts/reconcile/ledger-drift-response");
-          // Freeze from the wallet step so a run cut off later has already frozen; a freeze failure fails the route once the audit completes.
-          let freezeError: unknown = null;
-          let frozenWallets: FrozenWallet[] = [];
-          const report = await runReconcileLedgers({
-            scope: "full",
-            triggeredById,
-            onWalletDrift: async (reportId, findings) => {
-              try {
-                frozenWallets = await freezeDriftingWallets(reportId, findings);
-              } catch (err) {
-                freezeError = err;
-              }
-            },
-          });
-          if (!report.ok) await respondToLedgerDrift(report);
-          if (freezeError) throw freezeError;
+          const { freezeDriftedWallets } =
+            await import("@/lib/payments/wallet-freeze");
+          // Freeze each page immediately; the report identity deduplicates its fatal alert.
+          const frozenWallets: FrozenWallet[] = [];
+          const walletFindings: Finding[] = [];
+          let walletReportId: string | undefined;
+          let report: ReconcileReport;
+          try {
+            report = await runReconcileLedgers({
+              scope: "full",
+              onWalletDrift: async (reportId, findings) => {
+                walletReportId = reportId;
+                walletFindings.push(...findings);
+                await freezeDriftedWallets(
+                  { id: reportId, findings },
+                  frozenWallets,
+                );
+              },
+            });
+          } finally {
+            if (walletReportId)
+              await reportWalletDriftFreeze(
+                walletReportId,
+                walletFindings,
+                frozenWallets,
+              );
+          }
+          // A reused same-day verdict already raised its drift response.
+          if (
+            report.summary.status !== "RUNNING" &&
+            !report.ok &&
+            !report.reused
+          )
+            await respondToLedgerDrift(report);
           return {
             success: true,
             runId: report.id,
             scope: report.scope,
-            status: "OK" as const,
+            status:
+              report.summary.status === "RUNNING"
+                ? ("RUNNING" as const)
+                : ("OK" as const),
             report,
             frozenWallets,
           };
@@ -852,7 +881,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           unbaselinedCount: r.report.summary?.unbaselinedCount ?? 0,
           frozenWallets: r.frozenWallets.length,
         }),
-        status: (r) => statusFor(r, !r.report.ok),
+        status: (r) => statusFor(r, r.status !== "RUNNING" && !r.report.ok),
         failureMessage: "Failed to run ledger reconciliation",
       }),
 
@@ -1139,11 +1168,36 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           recovered: r.recovered,
           collaboratorRecovered: r.collaboratorRecovered,
           erasureRevocationsRecovered: r.erasureRevocationsRecovered,
+          accessRevocationsRecovered: r.accessRevocationsRecovered,
           stillFailing: r.stillFailing,
           gaveUp: r.gaveUp,
         }),
         status: (r) => (r.stillFailing > 0 || r.gaveUp > 0 ? 207 : 200),
         failureMessage: "Failed to retry moderation enforcement",
+      }),
+
+    // @cleanup-twin reconcile-stream-memberships
+    "reconcile-stream-memberships": () =>
+      cleanupRoute({
+        job: "reconcile-stream-memberships",
+        run: async (req, { startedAt }) => {
+          const { reconcileStreamMemberships, DEFAULT_CHANNELS_PER_RUN } =
+            await import("@/lib/stream/membership-reconciler");
+          return reconcileStreamMemberships({
+            limit: parseLimitParamOrDefault(req, DEFAULT_CHANNELS_PER_RUN),
+            startedAt,
+          });
+        },
+        summarize: (r) => ({
+          channelsScanned: r.channelsScanned,
+          channelsSkipped: r.channelsSkipped,
+          channelsSkippedSuspicious: r.channelsSkippedSuspicious,
+          membersRemoved: r.membersRemoved,
+          failures: r.failures,
+          checkpoint: r.checkpoint,
+        }),
+        status: (r) => (r.failures > 0 ? 207 : 200),
+        failureMessage: "Failed to reconcile Stream channel memberships",
       }),
 
     // @cleanup-twin sentry-ingest-canary
@@ -1271,6 +1325,25 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to settle invoice accruals",
       }),
 
+    // @cleanup-twin stream-control-plane-drift
+    "stream-control-plane-drift": () =>
+      cleanupRoute({
+        job: "stream-control-plane-drift",
+        run: async () => {
+          const { detectStreamControlPlaneDrift } =
+            await import("@/lib/stream/control-plane-drift");
+          return detectStreamControlPlaneDrift();
+        },
+        summarize: (r) => ({
+          drifted: r.drifted,
+          findings: r.findings.length,
+          unverified: r.unverified.length,
+        }),
+        // Drift is already reported once to Sentry by the detector; 207 only marks the run.
+        status: (r) => statusFor(r, r.drifted),
+        failureMessage: "Failed to check the Stream control plane for drift",
+      }),
+
     // @cleanup-twin stream-sync
     "stream-sync": () =>
       cleanupRoute({
@@ -1311,6 +1384,11 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           incidentsHeldOpen: r.incidentsHeldOpen,
           evidenceCasesPurged: r.evidenceCasesPurged,
           evidenceFilesDeleted: r.evidenceFilesDeleted,
+          chatAccessEnded: r.chatAccessEnded,
+          chatInterventionsJoined: r.chatInterventionsJoined,
+          chatInterventionsLeft: r.chatInterventionsLeft,
+          chatBoundariesSynced: r.chatBoundariesSynced,
+          chatReviewNotices: r.chatReviewNotices,
           disputeNoticesStaged: r.disputeNoticesStaged,
           errors: r.errors.length,
         }),

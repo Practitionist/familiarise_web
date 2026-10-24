@@ -40,8 +40,8 @@ function blockLoopSoon(ms: number): void {
 }
 
 describe("measureEventLoopStall", () => {
-  it("reads ~0 on a loop that is running", async () => {
-    expect(await measureEventLoopStall()).toBeLessThan(50);
+  it("reports the delta between its start and end clock readings", async () => {
+    expect(await measureEventLoopStall(scriptedClock([100, 101]))).toBe(1);
   });
 
   it("reports a synchronous block that lands on its yield", async () => {

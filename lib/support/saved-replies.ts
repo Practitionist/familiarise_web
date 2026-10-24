@@ -32,12 +32,12 @@ const GENERAL: SavedReply[] = [
   {
     id: "general-resolved",
     title: "Confirm resolved",
-    body: "This should now be sorted. If anything still looks wrong, reply here and the conversation will reopen.",
+    body: "This should now be sorted. If anything still looks wrong, choose \"This didn't fix it\" on your request within 14 days. A reply here won't reopen it.",
   },
   {
     id: "macro-resolve-closing",
     title: "Issue resolved — closing note",
-    body: "This has now been sorted on our side. If anything still looks off, reply here anytime and the request will reopen automatically.",
+    body: "This has now been sorted on our side. If anything still looks off, choose \"This didn't fix it\" on your request within 14 days. A reply here won't reopen it.",
     thenStatus: "RESOLVED",
   },
   {

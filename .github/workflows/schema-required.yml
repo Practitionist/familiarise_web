@@ -1,0 +1,90 @@
+# The live database must already contain everything a pull request's schema
+# change adds.
+#
+# One Postgres project serves development, production AND every Netlify deploy
+# preview, so a preview runs the branch's code against the live database. A
+# column the branch's schema declares and the database lacks is a 500 on every
+# read of that model — and the preview build still passes, because the build
+# only runs `prisma generate`.
+#
+# Its own workflow rather than a job in ci.yaml: ci.yaml is disabled while the
+# Actions minutes are exhausted, and a gate in a disabled workflow is not a
+# gate — it never appears, so a required check would read as success.
+#
+# While the organisation's Actions budget is exhausted this workflow still
+# appears and still reports FAILURE, because a budget-blocked job is a failed
+# job rather than a skipped one. It starts running when the budget resets.
+#
+# The workflow-level `paths` filter is what keeps it cheap — only a pull
+# request that touches the schema pays for it. The comparison itself is
+# schema-to-schema, so a pull request that adds no schema object never reads
+# the database at all.
+
+name: Live schema requirement
+
+permissions:
+  contents: read
+
+# A newer push supersedes the run before it.
+concurrency:
+  group: schema-required-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "prisma/schema.prisma"
+      - "scripts/ci/check-db-schema-required.ts"
+
+jobs:
+  schema-required:
+    name: Live schema requirement check
+    # Only a branch inside this repository may run this job: it holds the live
+    # database's credentials, and a fork's pull request would otherwise run
+    # untrusted code against the shared production database.
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    # The live database's credentials and nothing else. NOT secrets.ENV_FILE:
+    # that is the whole production .env, and a pull-request job has no business
+    # holding every API key. db-live-drift.yml reads the two URLs directly.
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      # A git ref name may contain shell metacharacters, and GitHub expands an
+      # expression into the script text before the shell parses it. Handing the
+      # ref over through the environment keeps it out of the script text.
+      BASE_REF: ${{ github.base_ref }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The pull request's HEAD, not the merge commit. The check compares
+          # this branch's schema against the MERGE BASE of the branch and its
+          # base, and the merge commit's base ancestor is the base tip itself —
+          # which would fold the base branch's newer changes into the diff and
+          # judge this branch on objects it never touched.
+          ref: ${{ github.event.pull_request.head.sha }}
+          # The merge base has to be computable, so the history has to be there.
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Fetch the base branch
+        run: git fetch --no-tags origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+
+      - name: Live schema requirement check (read-only)
+        run: node_modules/.bin/tsx scripts/ci/check-db-schema-required.ts --base "origin/$BASE_REF"

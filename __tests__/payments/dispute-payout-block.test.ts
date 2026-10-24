@@ -8,9 +8,9 @@
  * (consultant rail) / in-tx reject before the claim (org rail), with the
  * residual window backstopped by the LOST-handler clawback.
  *
- * Also pins the payment-legs sum trigger's sidecar wiring — the DB enforces
- * what checkPaymentLegsSumToAmount asserts in TS, and the CI sidecar checker
- * auto-discovers the file.
+ * Also pins the payment-legs sum trigger's sidecar wiring: the database is
+ * the only enforcer of the funding-sum identity, and the CI sidecar checker
+ * reads the file.
  */
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -198,8 +198,7 @@ describe("payment-legs sum trigger — sidecar wiring (source contract)", () => 
     expect(sql).toMatch(/CREATE CONSTRAINT TRIGGER payment_legs_sum_to_amount/);
     expect(sql).toMatch(/DEFERRABLE INITIALLY DEFERRED/);
     expect(sql).toMatch(/AFTER INSERT OR UPDATE OR DELETE ON "PaymentLeg"/);
-    // Funding-sum semantics mirror checkPaymentLegsSumToAmount: non-reversal
-    // legs only.
+    // The funding sum covers non-reversal legs only.
     expect(sql).toMatch(/'_REVERSAL'/);
     // Reversal pair semantics: negative + capped by the sibling sum.
     expect(sql).toMatch(/amountPaise" >= 0/);
@@ -217,10 +216,9 @@ describe("payment-legs sum trigger — sidecar wiring (source contract)", () => 
     );
     expect(pkg.scripts["db:sidecars"]).toBeDefined();
 
-    // The CI sidecar checker (scripts/ci/check-db-sidecars.ts) auto-discovers
-    // every prisma/sql/*.sql and parses trigger declarations into expected
-    // live-catalog objects (line 57). The contract is canonical formatting —
-    // verify ours matches the exact shape that regex is built for.
+    // The CI sidecar checker parses trigger declarations from every
+    // SIDECAR_FILES entry into expected live-catalog objects; verify ours
+    // matches the exact shape that regex is built for.
     const checker = readFileSync(
       // #1319 — the parser moved to the shared module both entry points use.
       path.join(process.cwd(), "scripts", "db", "sidecar-objects.ts"),

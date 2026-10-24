@@ -24,6 +24,7 @@ import {
   FlagIcon,
   CalendarIcon,
   LifeBuoyIcon,
+  ShieldCheckIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -51,6 +52,12 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  isSupportStreamUser,
+  SUPPORT_STREAM_USER_NAME,
+} from "@/lib/stream/support-user";
+import { SystemMessage } from "./SystemMessage";
+import { isBookingContextAuthor } from "@/lib/stream/system-users";
 
 export const CustomMessage = () => {
   const pathname = usePathname();
@@ -59,6 +66,8 @@ export const CustomMessage = () => {
   const messageComposer = useMessageComposerController();
   const { toast } = useToast();
   const isMyMessage = message.user?.id === client.userID;
+  // Keyed on the author id only: a custom message field is user-writable.
+  const isSupportMessage = isSupportStreamUser(message.user?.id);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showMoreOptions, setShowMoreOptions] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -148,11 +157,14 @@ export const CustomMessage = () => {
   const bookingHelpHref = bookingRef
     ? `${requestsBase}/${caseKeyOf(bookingRef)}`
     : null;
-  const isBookingContext = Boolean(
-    bookingAppointmentId ||
-    msgRecord.kind === "booking_context" ||
-    customRecord?.kind === "booking_context",
-  );
+  // Custom fields are user-writable, so only the server-only booking author earns the card.
+  const isBookingContext =
+    isBookingContextAuthor(message.user?.id) &&
+    Boolean(
+      bookingAppointmentId ||
+      msgRecord.kind === "booking_context" ||
+      customRecord?.kind === "booking_context",
+    );
   const bookingType = (
     readMessageString("booking_type") ?? "CONSULTATION"
   ).toUpperCase();
@@ -167,14 +179,12 @@ export const CustomMessage = () => {
       ? format(bookingStartsAtDate, "PPp")
       : null;
 
+  if (message.type === "system" && !isDeleted) {
+    return <SystemMessage message={message} />;
+  }
+
   // Avoid rendering empty messages
-  if (
-    !hasText &&
-    !hasAttachments &&
-    !isBookingContext &&
-    message.type !== "system" &&
-    !isDeleted
-  ) {
+  if (!hasText && !hasAttachments && !isBookingContext && !isDeleted) {
     return null;
   }
 
@@ -345,49 +355,55 @@ export const CustomMessage = () => {
         onClick={handleReplyClick}
         aria-label="Reply to message"
         title="Reply"
-        className="p-1.5 transition-colors hover:bg-muted"
+        className={cn(
+          "p-1.5 transition-colors hover:bg-muted",
+          isSupportMessage && "rounded-r-lg",
+        )}
       >
         <ReplyIcon className="h-4 w-4 text-muted-foreground" />
       </button>
 
-      {/* More Options (Edit, Delete for own; Report for others) */}
-      <DropdownMenu open={showMoreOptions} onOpenChange={setShowMoreOptions}>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            aria-label="More message options"
-            title="More options"
-            className="rounded-r-lg p-1.5 transition-colors hover:bg-muted"
-          >
-            <MoreHorizontalIcon className="h-4 w-4 text-muted-foreground" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-[140px]">
-          {isMyMessage ? (
-            <>
-              <DropdownMenuItem onSelect={handleEditClick}>
-                <EditIcon className="mr-2 h-4 w-4" />
-                Edit
-              </DropdownMenuItem>
+      {/* More Options (Edit, Delete for own; Report for others). Support
+          messages get none: they are staff posts, not a party's. */}
+      {!isSupportMessage && (
+        <DropdownMenu open={showMoreOptions} onOpenChange={setShowMoreOptions}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="More message options"
+              title="More options"
+              className="rounded-r-lg p-1.5 transition-colors hover:bg-muted"
+            >
+              <MoreHorizontalIcon className="h-4 w-4 text-muted-foreground" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[140px]">
+            {isMyMessage ? (
+              <>
+                <DropdownMenuItem onSelect={handleEditClick}>
+                  <EditIcon className="mr-2 h-4 w-4" />
+                  Edit
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={handleDeleteClick}
+                  className="text-destructive focus:text-destructive"
+                >
+                  <Trash2Icon className="mr-2 h-4 w-4" />
+                  Delete
+                </DropdownMenuItem>
+              </>
+            ) : (
               <DropdownMenuItem
-                onSelect={handleDeleteClick}
+                onSelect={() => handleReportMessage()}
                 className="text-destructive focus:text-destructive"
               >
-                <Trash2Icon className="mr-2 h-4 w-4" />
-                Delete
+                <FlagIcon className="mr-2 h-4 w-4" />
+                Report Message
               </DropdownMenuItem>
-            </>
-          ) : (
-            <DropdownMenuItem
-              onSelect={() => handleReportMessage()}
-              className="text-destructive focus:text-destructive"
-            >
-              <FlagIcon className="mr-2 h-4 w-4" />
-              Report Message
-            </DropdownMenuItem>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   );
 
@@ -400,9 +416,16 @@ export const CustomMessage = () => {
         <Avatar className="mr-2 w-8 h-8 flex-shrink-0">
           <AvatarImage src={message.user?.image} />
           <AvatarFallback>
-            {message.user?.name?.charAt(0) ??
+            {isSupportMessage ? (
+              <ShieldCheckIcon
+                className="h-4 w-4 text-info"
+                aria-hidden="true"
+              />
+            ) : (
+              (message.user?.name?.charAt(0) ??
               message.user?.id?.charAt(0) ??
-              "?"}
+              "?")
+            )}
           </AvatarFallback>
         </Avatar>
       )}
@@ -438,7 +461,13 @@ export const CustomMessage = () => {
 
         {/* Message Bubble */}
         <div
-          className={`${isMyMessage ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"} rounded-lg px-3 py-2`}
+          className={cn(
+            "rounded-lg px-3 py-2",
+            isMyMessage
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted text-foreground",
+            isSupportMessage && "ring-1 ring-info/30",
+          )}
         >
           {/* Quoted/Replied Message (WhatsApp/Telegram style) */}
           {hasQuotedMessage && message.quoted_message && (
@@ -465,10 +494,20 @@ export const CustomMessage = () => {
           )}
 
           {/* User Name for other users' messages */}
-          {!isMyMessage && !hasQuotedMessage && (
-            <div className="font-semibold text-sm mb-1">
-              {message.user?.name ?? message.user?.id}
+          {isSupportMessage ? (
+            <div className="mb-1">
+              <span className="inline-flex items-center gap-1 rounded bg-info/10 px-1.5 py-0.5 text-xs font-semibold text-info">
+                <ShieldCheckIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                {SUPPORT_STREAM_USER_NAME}
+              </span>
             </div>
+          ) : (
+            !isMyMessage &&
+            !hasQuotedMessage && (
+              <div className="font-semibold text-sm mb-1">
+                {message.user?.name ?? message.user?.id}
+              </div>
+            )
           )}
 
           {/* Booking Context Card */}

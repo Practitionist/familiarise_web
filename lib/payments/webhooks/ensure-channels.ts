@@ -33,7 +33,7 @@ async function ensureChannelsForBuyers(args: {
   subscriptionId?: string;
   webinarId?: string;
   classId?: string;
-}): Promise<boolean> {
+}): Promise<"unmatched" | "incomplete" | "ensured"> {
   const {
     eventType,
     consultantUserId,
@@ -55,22 +55,25 @@ async function ensureChannelsForBuyers(args: {
         : null;
 
   if (!isOneToOne && !eventChannelSpec) {
-    return false;
+    return "unmatched";
   }
 
+  let incomplete = false;
   for (const userId of buyerIds) {
     if (eventChannelSpec) {
-      await addUserToEventChannel(
+      const joined = await addUserToEventChannel(
         eventChannelSpec.kind,
         eventChannelSpec.id,
         userId,
       );
+      // A refused account is a deliberate skip; a missing member is retried by the sweep.
+      if (joined.reason === "member_not_added") incomplete = true;
     }
     if (consultantUserId !== userId) {
       await createDirectMessageChannel(consultantUserId, userId, dmOrgId);
     }
   }
-  return true;
+  return incomplete ? "incomplete" : "ensured";
 }
 
 /**
@@ -196,8 +199,11 @@ export async function ensureChannelsForAppointment(
     webinarId: appointment.webinar?.id,
     classId: appointment.class?.id,
   });
-  if (!matched) {
+  if (matched === "unmatched") {
     return { ensured: false, reason: "no_channel_branch_for_appointment" };
+  }
+  if (matched === "incomplete") {
+    return { ensured: false, reason: "event_channel_member_not_added" };
   }
 
   // A stamp means ensured or intentionally skipped, so the sweep never revisits the row.

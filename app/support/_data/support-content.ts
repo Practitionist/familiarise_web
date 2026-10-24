@@ -134,7 +134,8 @@ export const supportCategories: SupportCategory[] = [
       },
       {
         title: "Refunds",
-        description: "Timelines, statuses, appeals, and non-refundable fees.",
+        description:
+          "Timelines, statuses, appeals, and how refund amounts work.",
       },
       {
         title: "Credits & invoices",
@@ -603,7 +604,7 @@ export const supportArticles: SupportArticle[] = [
     category: "payments",
     title: "How and when do refunds arrive?",
     excerpt:
-      "7–14 day timeline, status meanings, appeals, and which fees are non-refundable.",
+      "7–14 day timeline, status meanings, appeals, and how the refund amount is set.",
     updated: "September 2026",
     contactCategory: "billing",
     related: ["booking/cancel-and-no-show", "payments/gst-invoices"],
@@ -611,7 +612,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Timeline and destination",
         paragraphs: [
-          "Refunds go only to the original payment method (UPI refunds return to the same UPI ID, card refunds to the same card). After approval, allow a review window plus bank processing — typically 7–14 days end to end. The platform fee and gateway fee are non-refundable; for example, a ₹1,000 booking may refund ₹850 after fees.",
+          "Refunds go only to the original payment method (UPI refunds return to the same UPI ID, card refunds to the same card). After approval, allow a review window plus bank processing — typically 7–14 days end to end. The refund is the percentage of the amount you paid (GST included) that your booking's cancellation terms allow, shown in the cancel dialog before you confirm; Familiarise does not deduct the platform fee or the payment gateway's charges from it. For example, if you paid ₹1,180 (₹1,000 plus 18% GST) and the terms give 50%, you receive ₹590.",
         ],
       },
       {

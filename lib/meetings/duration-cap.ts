@@ -37,3 +37,54 @@ export function resolveMaxCallDurationSeconds(
   );
   return Math.ceil(clamped / 1000);
 }
+
+/** One free host extension adds this much room time; Meeting.extensionsUsed never exceeds the max. */
+export const MEETING_EXTENSION_SECONDS = 15 * 60;
+export const MAX_MEETING_EXTENSIONS = 1;
+
+/** The room end: the immutable booked end plus the Meeting's granted extension (never NaN). */
+export function resolveRoomEndsAt(
+  bookedEndsAt: Date | string,
+  extendedSeconds: number,
+): Date {
+  const extraMs = Number.isFinite(extendedSeconds)
+    ? Math.max(0, extendedSeconds) * 1000
+    : 0;
+  return new Date(new Date(bookedEndsAt).getTime() + extraMs);
+}
+
+/** The Stream cap for a room, derived from Postgres so repeating a mirror never adds time twice. */
+export function resolveRoomCapSeconds(
+  startsAt: Date,
+  bookedEndsAt: Date,
+  extendedSeconds: number,
+): number {
+  return (
+    resolveMaxCallDurationSeconds(
+      { endsAt: resolveRoomEndsAt(bookedEndsAt, extendedSeconds) },
+      startsAt,
+    ) ?? Math.ceil(CORRUPT_SLOT_FALLBACK_MS / 1000)
+  );
+}
+
+/** The call `custom` fields the in-room clock and overrun banner read. */
+export function roomTimeCustom(args: {
+  bookedEndsAt: Date;
+  extendedSeconds: number;
+  extensionsUsed: number;
+}): {
+  sessionEndsAt: string;
+  sessionBaseEndsAt: string;
+  extendedSeconds: number;
+  extensionsUsed: number;
+} {
+  return {
+    sessionEndsAt: resolveRoomEndsAt(
+      args.bookedEndsAt,
+      args.extendedSeconds,
+    ).toISOString(),
+    sessionBaseEndsAt: args.bookedEndsAt.toISOString(),
+    extendedSeconds: args.extendedSeconds,
+    extensionsUsed: args.extensionsUsed,
+  };
+}

@@ -20,8 +20,9 @@ Comprehensive guide to error detection, handling, and recovery in Stream Chat an
 2. [StreamErrorBoundary Component](#streamerrorboundary-component)
 3. [Connection Retry Logic](#connection-retry-logic)
 4. [Error Categories](#error-categories)
-5. [Error Recovery Patterns](#error-recovery-patterns)
-6. [Implementation Examples](#implementation-examples)
+5. [Join Failure States in the Meeting Room](#join-failure-states-in-the-meeting-room)
+6. [Error Recovery Patterns](#error-recovery-patterns)
+7. [Implementation Examples](#implementation-examples)
 
 ---
 
@@ -48,6 +49,7 @@ The Stream integration uses a multi-layered error handling approach:
 3. **Inform Users**: Clear, actionable error messages
 4. **Log Everything**: Comprehensive error tracking for debugging
 5. **Recover Automatically**: When safe and possible
+6. **Report Outages Once**: Server paths that fail on every delivery (the webhook route's missing secret, bad signature and failing receipt write) go through `captureThrottled`, so one outage costs at most one Sentry event per server instance per window against the shared 5,000/month quota. The throttle lives in process memory, so several warm instances can each report once.
 
 ---
 
@@ -597,6 +599,22 @@ await client.connectUser(
   () => getCachedToken("chat"), // Function, not value
 );
 ```
+
+---
+
+## Join Failure States in the Meeting Room
+
+A person joining a session never lands on a generic error. The join flow splits outcomes into a typed refusal (the gate card) and a failure (a classified card with a Retry button). `classifyJoinFailure` in `app/meetings/[id]/join-failure.ts` assigns the failure kind, and `JoinFailureCard` renders it on the meeting page and, inline, in the lobby after a failed `call.join()`.
+
+| Situation                                                                                   | Kind                   | What the person sees                                                                                                             | Recovery                                                                    |
+| ------------------------------------------------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Join route 403 or 404 with a code (`TOO_EARLY`, `SESSION_ENDED`, consent)                   | Typed refusal          | The gate card, or the consent prompt                                                                                             | Check Again, host reopen, or grant consent                                  |
+| Circuit open, Stream 5xx or 429, gateway 502 or 504, network drop, 45 s client-wait timeout | `provider_unavailable` | "Our video provider is having trouble. Your session is protected — if it can't start, you'll be offered a reschedule or refund." | Automatic retries (four, capped backoff with jitter), then the Retry button |
+| SFU participant limit reached (code 301) or a message naming the limit                      | `room_full`            | "This session is full. If you're already in it on another device, close that tab and try again."                                 | Retry button                                                                |
+| Server 500, 409 `ROOM_NOT_PROVISIONED`, any unrecognised error                              | `unknown`              | "Couldn't join the session" with the error text                                                                                  | Retry button                                                                |
+| The call ends while waiting in the lobby                                                    | Ended panel            | "This room has closed", with Check again and, for the host, Reopen Session Room                                                  | The join route applies the end-reason policy on the check                   |
+
+Provider outages are logged as warnings so the automatic retries stay out of Sentry. The join route returns 503 for an open circuit and for a Stream 5xx or 429, and 500 only for faults that are not the provider's.
 
 ---
 

@@ -6,6 +6,14 @@ import { Call, useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { provisionAppointmentMeeting } from "@/actions/stream/meetings/meeting.action";
 import { streamLogger } from "@/lib/stream-logger";
 import { leaveCallAndReleaseMedia } from "@/lib/stream/media-teardown";
+import {
+  JoinHttpError,
+  MAX_PROVIDER_AUTO_RETRIES,
+  VideoClientTimeoutError,
+  providerRetryDelayMs,
+  toJoinFailure,
+  type JoinFailure,
+} from "../join-failure";
 
 export interface MeetingAccessResult {
   hasAccess: boolean;
@@ -92,10 +100,10 @@ function resolveUnprovisionedSlotId(
 export const useGetCallById = (callId: string) => {
   const [call, setCall] = useState<Call | null>(null);
   const [isCallLoading, setIsCallLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
+  const [failure, setFailure] = useState<JoinFailure | null>(null);
+  const [autoRetryCount, setAutoRetryCount] = useState(0);
   const [access, setAccess] = useState<MeetingAccessResult | null>(null);
   const [consentRequired, setConsentRequired] = useState(false);
-  const [roomNotProvisioned, setRoomNotProvisioned] = useState(false);
   const [rejoinKey, setRejoinKey] = useState(0);
   const [retryKey, setRetryKey] = useState(0);
   const client = useStreamVideoClient();
@@ -119,10 +127,32 @@ export const useGetCallById = (callId: string) => {
     setRejoinKey((key) => key + 1);
   }, []);
 
-  const retryJoin = useCallback(() => {
+  const runAgain = useCallback(() => {
     setConsentRequired(false);
     setRetryKey((key) => key + 1);
   }, []);
+
+  /** A person's retry restarts the automatic budget for the provider-unavailable state. */
+  const retryJoin = useCallback(() => {
+    setAutoRetryCount(0);
+    runAgain();
+  }, [runAgain]);
+
+  // The failure card stays mounted while a retry runs, so this waits for the run to settle.
+  useEffect(() => {
+    if (
+      failure?.kind !== "provider_unavailable" ||
+      isCallLoading ||
+      autoRetryCount >= MAX_PROVIDER_AUTO_RETRIES
+    ) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      setAutoRetryCount((count) => count + 1);
+      runAgain();
+    }, providerRetryDelayMs(autoRetryCount));
+    return () => clearTimeout(timer);
+  }, [failure, isCallLoading, autoRetryCount, runAgain]);
 
   /**
    * The client may never arrive — Stream unconfigured, a token fetch that keeps
@@ -137,21 +167,19 @@ export const useGetCallById = (callId: string) => {
   useEffect(() => {
     if (client || !callId) return;
 
+    // A retry with no client re-arms the wait instead of doing nothing.
+    setIsCallLoading(true);
     const timer = setTimeout(() => {
-      setError(
-        new Error(
-          "Could not connect to the video service. Check your connection and try again.",
-        ),
-      );
+      setFailure(toJoinFailure(new VideoClientTimeoutError()));
       setIsCallLoading(false);
     }, CLIENT_WAIT_TIMEOUT_MS);
 
     return () => clearTimeout(timer);
-  }, [client, callId]);
+  }, [client, callId, retryKey]);
 
   useEffect(() => {
     if (!callId) {
-      setError(new Error("Call ID is required"));
+      setFailure(toJoinFailure(new Error("Call ID is required")));
       setIsCallLoading(false);
       return;
     }
@@ -186,9 +214,7 @@ export const useGetCallById = (callId: string) => {
 
     const run = async () => {
       setIsCallLoading(true);
-      setError(null);
       setConsentRequired(false);
-      setRoomNotProvisioned(false);
 
       const isRejoin = rejoinKey > 0;
 
@@ -296,16 +322,15 @@ export const useGetCallById = (callId: string) => {
               canReopen:
                 typeof body?.canReopen === "boolean" ? body.canReopen : false,
             });
+            setFailure(null);
             setCall(null);
             previousCall.current = null;
             return;
           }
 
-          setRoomNotProvisioned(body?.code === "ROOM_NOT_PROVISIONED");
-          // A failure, not a verdict. Surfacing it as an error gets the retry
-          // affordance instead of a dead-end "access denied" screen. The catch
-          // below clears `previousCall`, so it is not repeated here.
-          throw new Error(message);
+          // A failure, not a verdict: it gets a retry face instead of a dead-end
+          // "access denied". The catch below clears `previousCall`.
+          throw new JoinHttpError(message, response.status);
         }
 
         const data = (await response.json()) as {
@@ -334,6 +359,8 @@ export const useGetCallById = (callId: string) => {
 
         if (cancelled) return;
 
+        setFailure(null);
+        setAutoRetryCount(0);
         setAccess({
           hasAccess: true,
           role: data.role,
@@ -344,8 +371,17 @@ export const useGetCallById = (callId: string) => {
         adopted = true;
       } catch (err) {
         if (cancelled) return;
-        streamLogger.error("Failed to resolve meeting call", err, { callId });
-        setError(err instanceof Error ? err : new Error("Failed to get call"));
+        const joinFailure = toJoinFailure(err);
+        // A provider outage retries itself; only unexpected failures reach Sentry.
+        if (joinFailure.kind === "provider_unavailable") {
+          streamLogger.warn("Meeting join hit a provider outage", {
+            callId,
+            reason: joinFailure.message,
+          });
+        } else {
+          streamLogger.error("Failed to resolve meeting call", err, { callId });
+        }
+        setFailure(joinFailure);
         setCall(null);
         previousCall.current = null;
       } finally {
@@ -369,10 +405,10 @@ export const useGetCallById = (callId: string) => {
   return {
     call,
     isCallLoading,
-    error,
+    failure,
+    autoRetryCount,
     access,
     consentRequired,
-    roomNotProvisioned,
     rejoin,
     retryJoin,
   };

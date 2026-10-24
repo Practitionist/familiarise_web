@@ -138,6 +138,24 @@ The role is written at upsert time (`upsertUserToStream` /
 `upsertUsersToStream` in `actions/stream/chat/user.action.ts`), so a Stream user
 upserted while operators mapped to `admin` keeps that role until re-upserted.
 
+### The Familiarise Support service user
+
+`familiarise-support` (`lib/stream/support-user.ts`) is the one Stream user
+with no `User` row. It holds `user`, never logs in and never gets a token. A
+case-linked intervention adds it as a visible member of the booking chat with a
+`type: "system"` join message; staff post as it through
+`POST /api/support/cases/[caseId]/chat/messages`, and it leaves (with a system
+message) when the grant ends or the case resolves. The chat banner reads its
+membership, so there is no channel extra data to keep in sync.
+
+### Server-only system users
+
+`system-booking-context` (`BOOKING_CONTEXT_STREAM_USER` in `lib/stream/system-users.ts`) is a second Stream user with no `User` row. It holds `user` and never gets a token, so only the server can author its messages. `POST /api/stream/channels/open` posts the booking-context receipt card as this user, and `components/chat/CustomMessage.tsx` renders the card layout only for that author (`isBookingContextAuthor`). The `system-` prefix is load-bearing: the `stream-sync` user deletion and the daily membership reconciler (`lib/stream/membership-reconciler.ts`) both leave `system-` users and the Familiarise Support user alone.
+
+### Revoking a removed member's access
+
+When an organization removes a member, `revokeMemberStreamAccess` (`lib/enterprise/member-removal.ts`) calls `revokeUserToken` with a cutoff, so every Stream token issued before the removal stops working. The wind-down drain (`jobs/stream/wind-down-deactivated-orgs.ts`) passes the membership's `updatedAt` as the cutoff, so a re-run never revokes a token minted after the member rejoined. The result's `tokenRevoked` flag now reflects whether the call succeeded, and an incomplete revocation queues an `ORG_REVOKE` row for the `retry-moderation-enforcement` sweep. The member's own browser recovers by itself: the SDK asks its token provider again only to replace a token Stream refused, and `sdkTokenProvider` in `providers/StreamProviderImpl.tsx` skips the token cache on every such re-request after the first, so a user Postgres still admits gets a fresh token and a removed user does not.
+
 ### Rollout: downgrade existing operator roles
 
 **Owner end-phase step, run by hand once after deploy. It is not a script.** An
@@ -696,4 +714,5 @@ See [API Endpoints - Manual Sync](./10-api-endpoints.md#post-apistreamsyncmanual
 
 - **Global `admin` Role Mapping**: Every account once mapped to Stream `admin`, later only `ADMIN`/`STAFF` did, alongside an operator bypass for minting tokens for other users. Superseded by mapping every account to `user` and self-only minting, because both paths gave operators silent, unaudited browser reads of any chat.
 - **Uncensored Email PII in Stream User Metadata**: Superseded by `stripStreamUserEmails` and DPDP `STREAM_DATA_PROCESSING` filtering (`droppedIds`) prior to `upsertUsers`.
+- **Token Revocation Reported but Never Performed**: `revokeMemberStreamAccess` once returned `tokenRevoked: false` without revoking anything, so a removed member's token lived until it expired. It now revokes tokens issued before the removal.
 - **Ad-Hoc Account Scrubbing**: Superseded by `eraseStreamPrincipalFootprint` (`lib/compliance/erasure/scrub-user.ts`) with retry persistence (`StreamRevocationRetry`).

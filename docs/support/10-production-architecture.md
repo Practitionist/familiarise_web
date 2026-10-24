@@ -36,7 +36,10 @@ The case links the service investigation to its payment and refund.
 Platform mediation is explicit: a participant selects Get help, staff request
 neutral evidence from the other relevant party, then record a decision. Ordinary
 chat remains participant messaging, with abuse reports routed to moderation.
-Staff do not automatically join private chats or monitor disagreements. Evidence
+Staff do not automatically join private chats or monitor disagreements: they
+read a booking chat only through a reasoned, case-linked and audited grant on
+an escalated case, and join it only visibly as "Familiarise Support"
+(`lib/support/chat-access.ts`, `lib/stream/support-intervention.ts`). Evidence
 recipients see the prompt, their response and the permitted decision outcome;
 they do not receive the complainant’s private correspondence or full explanation.
 

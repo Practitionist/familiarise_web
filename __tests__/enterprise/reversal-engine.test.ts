@@ -8,7 +8,10 @@
  * tested in its own suite.
  */
 
-import { applyReversal } from "@/lib/payments/operations/reversal-engine";
+import {
+  applyReversal,
+  clawBackCompletedOrgPayout,
+} from "@/lib/payments/operations/reversal-engine";
 import { applyRefundCascade } from "../../lib/payments/operations/refund";
 
 jest.mock("../../lib/payments/operations/refund", () => ({
@@ -84,6 +87,7 @@ describe("applyReversal — PAYOUT_CLAWBACK", () => {
           kind: "PAYOUT_CLAWBACK",
           orgPayoutId: "payout-1",
           organizationId: "org-1",
+          orgEarningsId: "oe-1",
         },
         amountPaise: 50_000,
         reason: "dispute lost",
@@ -110,6 +114,7 @@ describe("applyReversal — PAYOUT_CLAWBACK", () => {
         kind: "PAYOUT_CLAWBACK",
         orgPayoutId: "payout-1",
         organizationId: "org-1",
+        orgEarningsId: "oe-1",
       },
       amountPaise: 100_000,
       reason: "dispute lost",
@@ -119,7 +124,7 @@ describe("applyReversal — PAYOUT_CLAWBACK", () => {
     expect(mockPostLedgerTxn).toHaveBeenCalledWith(
       tx,
       expect.objectContaining({
-        idempotencyKey: "clawback:dispute:d-1:payout-1",
+        idempotencyKey: "clawback:dispute:d-1:payout-1:oe-1",
         postings: [
           {
             account: { kind: "ORG_RECEIVABLE", organizationId: "org-1" },
@@ -175,6 +180,7 @@ describe("applyReversal — PAYOUT_CLAWBACK", () => {
         kind: "PAYOUT_CLAWBACK",
         orgPayoutId: "payout-1",
         organizationId: "org-1",
+        orgEarningsId: "oe-1",
       },
       amountPaise: 100_000,
       reason: "dispute lost",
@@ -203,5 +209,48 @@ describe("applyReversal — PAYOUT_CLAWBACK", () => {
     expect(journal.postings.map((p) => p.amountPaise)).toEqual([
       99_900, 99_900,
     ]);
+  });
+
+  it("journals every share one refund claws back from the same payout", async () => {
+    // Two co-host shares of 50,000 sit on payout-1; one refund reverses both.
+    const keys = new Set<string>();
+    let journaledPaise = 0;
+    mockPostLedgerTxn.mockImplementation(
+      async (
+        _tx: unknown,
+        txn: { idempotencyKey: string; postings: { amountPaise: number }[] },
+      ) => {
+        if (keys.has(txn.idempotencyKey)) return { created: false };
+        keys.add(txn.idempotencyKey);
+        journaledPaise += txn.postings[0].amountPaise;
+        return { created: true };
+      },
+    );
+    const tx = {
+      organizationPayout: { update: jest.fn().mockResolvedValue({}) },
+      orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
+      tDSRecord: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+    for (const orgEarningsId of ["oe-a", "oe-b"]) {
+      await clawBackCompletedOrgPayout(tx as never, {
+        orgPayout: {
+          id: "payout-1",
+          netPayoutPaise: 100_000,
+          clawbackInitiatedAt: null,
+        },
+        organizationId: "org-1",
+        orgEarningsId,
+        paymentId: "pay-1",
+        refundId: "refund-1",
+        grossPaise: 50_000,
+        amountPaise: 100_000,
+        label: "Refund clawback initiated",
+        initiatedByUserId: null,
+      });
+    }
+    // The counter rose by both shares, so the receivable must hold both too.
+    expect(tx.organizationPayout.update).toHaveBeenCalledTimes(2);
+    expect(journaledPaise).toBe(100_000);
+    mockPostLedgerTxn.mockReset();
   });
 });

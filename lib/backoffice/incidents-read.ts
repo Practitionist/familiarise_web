@@ -9,12 +9,13 @@ import {
   DEAD_LETTER_PREFIX,
   MAX_REMEDY_ATTEMPTS,
 } from "@/lib/booking/incident-keys";
+import type { MeetingEndReason } from "@/lib/meetings/end-reasons";
 
 const HOUR_MS = 3_600_000;
 const SUGGESTION_DAYS = 7;
 const SIGNAL_ROWS_CAP = 5_000;
 /** Ends a call can have without anything having gone wrong. */
-const EXPECTED_END_REASONS = [
+const EXPECTED_END_REASONS: MeetingEndReason[] = [
   "call_ended",
   "session_timeout",
   "ended_early",

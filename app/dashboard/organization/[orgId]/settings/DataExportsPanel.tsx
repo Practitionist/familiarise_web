@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * /dashboard/organization/[orgId]/integrations/data-exports
+ * /dashboard/organization/[orgId]/settings/data-exports
  *
  * DPDP §11 right-to-access surface. Bundles come in two kinds (#1527
  * decision 4): people (`dataExports.people`, OWNER + MAINTAINER) and finance
@@ -16,6 +16,7 @@
  */
 
 import { useState } from "react";
+import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import type { OrgDataExportKind } from "@prisma/client";
@@ -198,15 +199,13 @@ export function DataExportsPanel({ orgId }: { orgId: string }) {
             <CardDescription>
               One request per bundle per 24 hours. Bundles are emailed when
               ready and expire 7 days after generation. See{" "}
-              <a
-                href="/docs/enterprise/40-compliance-and-data/03-data-export"
+              <Link
+                href="/support/getting-started/age-consent-delete-data"
                 className="underline"
-                target="_blank"
-                rel="noreferrer"
               >
-                Data export docs
-              </a>{" "}
-              for the bundle schema.
+                data export and deletion help
+              </Link>{" "}
+              for how to request or erase your data.
             </CardDescription>
           </CardHeader>
           <CardContent>

@@ -45,12 +45,10 @@ const LOCK_EXEMPT: Record<string, string> = {
   // Ticker-only probe: one Sentry event per run and no DB writes; a double run
   // costs one extra event and the email alert is deduped in Redis.
   "cron-tick:sentry-ingest-canary": "deliberately unlocked — vendor probe",
-  // #1270 — a drift DETECTOR, not a job. It runs the operator script in
-  // `--check` mode, which makes no Stream write and no database write; the
-  // whole run is one `getAppSettings` read. Two concurrent reads cost one
-  // extra API call, so a lock would buy nothing and would give a read-only
-  // guard a hard dependency on Redis.
-  "stream-webhook-drift.yml": "deliberately unlocked — read-only drift check",
+  // Read-only drift detector: it only reads Stream app settings, and a lock
+  // would give a guard a hard dependency on Redis for no benefit.
+  "cron-tick:stream-control-plane-drift":
+    "deliberately unlocked — read-only drift check",
   // #1885 — Weekly supply-chain vulnerability scan (`npm audit --omit=dev`);
   // read-only lockfile audit with no database or external state mutation.
   "security-audit.yml": "deliberately unlocked — read-only npm audit check",
@@ -433,6 +431,9 @@ describe("cleanup twins and the DEGRADED money gate (#1599)", () => {
   ];
   /** Money-adjacent twins that deliberately keep running in DEGRADED. */
   const NOT_FINANCIAL: Record<string, string> = {
+    // Read-only audits and protective spend freezes must continue during maintenance.
+    "reconcile-ledgers":
+      "detects drift and blocks discretionary wallet spending",
     // Re-drives a booking confirmation from an already-settled capture and
     // moves no money; #1686 keeps it on every ticker slot for the buyer.
     "reconcile-orphaned-confirmations": "booking re-drive from settled money",

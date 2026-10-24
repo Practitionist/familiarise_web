@@ -31,7 +31,7 @@ import {
 } from "@/lib/payments/ledger/post";
 import { prorate, sumPaise } from "@/lib/payments/utils/money";
 
-/** The org clawback journal `clawback:<driver>:<payoutId>` written by the reversal engine. */
+/** The org clawback journal `clawback:<driver>:<payoutId>[:<orgEarningsId>]` written by the reversal engine. */
 export const ORG_CLAWBACK_KEY_PREFIX = "clawback:";
 export const CLAWBACK_RECOVERY_KEY_PREFIX = "clawback-recovery:";
 export const CLAWBACK_RECOVERY_RELEASE_KEY_PREFIX =
