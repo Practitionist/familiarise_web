@@ -1541,10 +1541,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "transfer-recordings",
         run: async (req) => {
+          parseLimitParam(req);
           const { transferRecordings } =
             await import("@/lib/stream/recording-transfer-service");
-          const r = await transferRecordings({ limit: parseLimitParam(req) });
-          return { success: r.failed === 0, ...r };
+          return transferRecordings();
         },
         summarize: (r) => ({
           processed: r.processed,
@@ -1552,7 +1552,6 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           failed: r.failed,
           exhaustedReported: r.exhaustedReported,
         }),
-        status: () => 200,
         failureMessage: "Recording copy sweep failed",
       }),
 
