@@ -801,14 +801,20 @@ export async function handleSessionParticipantLeft(
           newSessions > 0 ? { joinCount: { increment: newSessions } } : {},
       });
 
-      await tx.meetingAttendance.updateMany({
-        where: {
-          meetingId,
-          userId,
-          OR: [{ lastLeftAt: null }, { lastLeftAt: { lt: attendanceLeftAt } }],
-        },
-        data: { lastLeftAt: attendanceLeftAt },
-      });
+      // A prior segment's late leave never marks a user back in the current room as left.
+      if (isCurrentSegment) {
+        await tx.meetingAttendance.updateMany({
+          where: {
+            meetingId,
+            userId,
+            OR: [
+              { lastLeftAt: null },
+              { lastLeftAt: { lt: attendanceLeftAt } },
+            ],
+          },
+          data: { lastLeftAt: attendanceLeftAt },
+        });
+      }
 
       if ((event.duration_seconds ?? 0) > 0) {
         await tx.meetingAttendance.updateMany?.({

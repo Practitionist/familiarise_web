@@ -216,3 +216,35 @@ it("(e) a leave reported after the room ended is clamped to the end", async () =
     expect.objectContaining({ data: { lastLeftAt: at(60) } }),
   );
 });
+
+it("(f) an exhausted Stream budget defers without any write", async () => {
+  const d = await decide(lostHostLeave(), { remaining: 0, failures: 0 });
+  expect(d).toEqual({ kind: "deferred", reason: "stream-budget" });
+  expect(report).not.toHaveBeenCalled();
+  expect(sessions).not.toHaveBeenCalled();
+  expect(db.meetingPresence.updateMany).not.toHaveBeenCalled();
+  expect(db.meetingPresence.createMany).not.toHaveBeenCalled();
+  expect(transition).not.toHaveBeenCalled();
+});
+
+it("(g) a prior segment's late leave never stamps the current room's attendance as left", async () => {
+  db.meeting.findUnique
+    .mockResolvedValueOnce(null) // not the current call id
+    .mockResolvedValueOnce({
+      id: "m-1",
+      endedAt: null,
+      endedReason: null,
+      appointmentOccurrenceId: "occ-1",
+    });
+  await handleSessionParticipantLeft({
+    call_cid: "default:occurrence-occ-1",
+    type: "call.session_participant_left",
+    created_at: at(30).toISOString(),
+    session_id: "s-old",
+    duration_seconds: 30 * 60,
+    participant: { user: { id: "learner" }, user_session_id: "dev-old" },
+  });
+  expect(db.meetingAttendance.updateMany).not.toHaveBeenCalledWith(
+    expect.objectContaining({ data: { lastLeftAt: expect.any(Date) } }),
+  );
+});
