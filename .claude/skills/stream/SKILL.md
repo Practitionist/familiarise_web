@@ -23,20 +23,20 @@ mcp__stream-io__app_get_rate_limits   {}
 
 ## 2. Architecture Map (`Where Things Live`)
 
-| Subsystem / Concern                    | Primary Files                                                                                                                                                                                                                        |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Server Clients, Tokens & Breaker**   | `lib/stream-client.ts`, `lib/stream/token-ttl.ts`, `lib/stream/initial-tokens.ts`, `lib/stream/seed-token-cache.ts`, `actions/stream/chat/stream.action.ts`                                                                          |
-| **Client Connection Store (SSR-Safe)** | `providers/StreamProvider.tsx` (SDK-free shell), `providers/StreamProviderImpl.tsx` (lazy SDK chunk, gates prefetch on `!isSessionPending && !!sessionUserId`), `lib/stream/connection-store.ts`, `lib/stream/disconnect.ts`         |
-| **Channel IDs, Batch & Call CID**      | `lib/stream-channel-ids.ts`, `lib/stream-utils.ts`, `lib/stream/batch.ts` (`queryChannelsPaged` 30-cap, `createMemberChunk` 100-cap), `lib/stream/call-cid.ts` (`STREAM_CALL_TYPE = "default"`, `parseSlotIdFromCallId`)             |
-| **Chat & Event Channel Services**      | `actions/stream/chat/channel.action.ts`, `lib/stream/event-channel-service.ts`, `actions/stream/chat/event-channel.action.ts`, `actions/stream/chat/user.action.ts`, `app/api/stream/channels/open/route.ts`                         |
-| **4-Part DM Eligibility & Org Scope**  | `lib/stream/dm-eligibility.ts` (`canDirectMessage`, `pairBookingContexts`), `lib/stream/dm-eligibility-statuses.ts` (`DM_ELIGIBLE_STATUSES`, `OPENABLE_EVENT_STATUSES`), `lib/stream/org-channel-filter.ts`                          |
-| **Unified Session Envelope & Access**  | `actions/stream/meetings/meeting.action.ts`, `lib/meetings/{access,route-guard,duration-cap,room-ready,stage-qa}.ts` (`CONSULTEE_JOIN_WINDOW_MS = 15m`, `CONSULTANT_JOIN_WINDOW_MS = 15m`, `REJOIN_GRACE_MS = 30m`)                  |
-| **Meetings API Routes**                | `app/api/meetings/[meetingId]/{join,end,reopen,live,extend,qa,recording-consent,stage}/route.ts`                                                                                                                                     |
-| **Meeting Room UI & Stage Moderation** | `app/meetings/[id]/components/{MeetingRoom,MeetingSetup,MeetingLobbyGateCard,StageControls,StageQaDrawer,StagePinnedBannerOverlay,OverrunBanner,RecordingControls,EndCallButton,CallEnded}.tsx`, `app/meetings/[id]/session-info.ts` |
-| **Webhooks & Attendance Settlement**   | `app/api/stream/webhooks/route.ts`, `lib/stream/{webhook-signature,webhook-receipt,webhook-dispatch,session-handlers,recording-handlers,call-presence}.ts`, `lib/booking/{session-outcome,session-outcome-sweep}.ts`                 |
-| **Recordings & R2 Multipart Storage**  | `lib/storage/r2-client.ts`, `lib/stream/{recording-storage,recording-transfer-service,recording-service,recording-consent,recording-retention}.ts`, `app/api/stream/recordings/[recordingId]/{route,publish,preview}/route.ts`       |
-| **DPDP Privacy & Control-Plane Crons** | `lib/compliance/erasure/scrub-user.ts`, `scripts/stream/{ensure,ensure-webhook-subscription,stream-sync}.ts`, `jobs/stream/{expire-event-channels,transfer-recordings,expire-recordings,wind-down-deactivated-orgs}.ts`              |
-| **Architecture Docs & ADRs**           | `docs/stream/README.md`, `docs/stream/01-architecture.md`, `docs/stream/05-video-implementation.md`, `docs/stream/18-architecture-decision-records.md` (`ADR-01`..`ADR-05`)                                                          |
+| Subsystem / Concern                    | Primary Files                                                                                                                                                                                                                                                                                   |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Server Clients, Tokens & Breaker**   | `lib/stream-client.ts`, `lib/stream/token-ttl.ts`, `lib/stream/initial-tokens.ts`, `lib/stream/seed-token-cache.ts`, `actions/stream/chat/stream.action.ts`                                                                                                                                     |
+| **Client Connection Store (SSR-Safe)** | `providers/StreamProvider.tsx` (SDK-free shell), `providers/StreamProviderImpl.tsx` (lazy SDK chunk, gates prefetch on `!isSessionPending && !!sessionUserId`), `lib/stream/connection-store.ts`, `lib/stream/disconnect.ts`                                                                    |
+| **Channel IDs, Batch & Call CID**      | `lib/stream-channel-ids.ts`, `lib/stream-utils.ts`, `lib/stream/batch.ts` (`queryChannelsPaged` 30-cap, `createMemberChunk` 100-cap), `lib/stream/call-cid.ts` (`STREAM_CALL_TYPE = "default"`, `parseSlotIdFromCallId`)                                                                        |
+| **Chat & Event Channel Services**      | `actions/stream/chat/channel.action.ts`, `lib/stream/event-channel-service.ts`, `actions/stream/chat/event-channel.action.ts`, `actions/stream/chat/user.action.ts`, `app/api/stream/channels/open/route.ts`                                                                                    |
+| **4-Part DM Eligibility & Org Scope**  | `lib/stream/dm-eligibility.ts` (`canDirectMessage`, `pairBookingContexts`), `lib/stream/dm-eligibility-statuses.ts` (`DM_ELIGIBLE_STATUSES`, `OPENABLE_EVENT_STATUSES`), `lib/stream/org-channel-filter.ts`                                                                                     |
+| **Unified Session Envelope & Access**  | `actions/stream/meetings/meeting.action.ts`, `lib/meetings/{access,route-guard,duration-cap,room-ready,stage-qa}.ts` (`CONSULTEE_JOIN_WINDOW_MS = 15m`, `CONSULTANT_JOIN_WINDOW_MS = 15m`, `REJOIN_GRACE_MS = 30m`)                                                                             |
+| **Meetings API Routes**                | `app/api/meetings/[meetingId]/{join,end,reopen,live,extend,qa,recording-consent,stage}/route.ts`                                                                                                                                                                                                |
+| **Meeting Room UI & Stage Moderation** | `app/meetings/[id]/components/{MeetingRoom,MeetingSetup,MeetingLobbyGateCard,StageControls,StageQaDrawer,StagePinnedBannerOverlay,OverrunBanner,RecordingControls,EndCallButton,CallEnded}.tsx`, `app/meetings/[id]/session-info.ts`                                                            |
+| **Webhooks & Attendance Settlement**   | `app/api/stream/webhooks/route.ts`, `lib/stream/{webhook-signature,webhook-receipt,webhook-dispatch,session-handlers,recording-handlers,call-presence}.ts`, `lib/booking/{session-outcome,session-outcome-sweep}.ts`                                                                            |
+| **Recordings & R2 Multipart Storage**  | `lib/storage/r2-client.ts`, `lib/stream/{recording-storage,recording-transfer-service,recording-service,recording-consent,recording-retention}.ts`, `app/api/stream/recordings/[recordingId]/{route,publish,preview}/route.ts`                                                                  |
+| **DPDP Privacy & Control-Plane Crons** | `lib/compliance/erasure/scrub-user.ts`, `scripts/stream/{ensure,ensure-webhook-subscription,stream-sync}.ts`, `jobs/stream/{expire-event-channels,transfer-recordings,expire-recordings,wind-down-deactivated-orgs}.ts`, `lib/stream/{access-revocation,membership-reconciler,system-users}.ts` |
+| **Architecture Docs & ADRs**           | `docs/stream/README.md`, `docs/stream/01-architecture.md`, `docs/stream/05-video-implementation.md`, `docs/stream/18-architecture-decision-records.md` (`ADR-01`..`ADR-05`)                                                                                                                     |
 
 ---
 
@@ -57,7 +57,7 @@ mcp__stream-io__app_get_rate_limits   {}
 
 ---
 
-## 4. 4-Part DM & Trial Policy + Contextual Booking Receipt Cards
+## 4. 4-Part DM & Trial Policy, Receipt Cards, Managed Channels & Revocation
 
 1. **One Human Pair = One Canonical DM Channel**:
    - **B2C Personal Scope**: `dm-<a>-<b>` (or `dmh-<sha256>` if $> 64$ chars).
@@ -65,10 +65,23 @@ mcp__stream-io__app_get_rate_limits   {}
    - Consultee-to-consultee peer DMs are prohibited (`canDirectMessage` in `lib/stream/dm-eligibility.ts`).
 2. **Paid / Confirmed Gate (`DM_ELIGIBLE_STATUSES = ["APPROVED", "SCHEDULED", "COMPLETED"]`)**:
    - Confirmed webinar/class enrollments (`OPENABLE_EVENT_STATUSES`) provision both the group `team` channel (`webinar-<id>` / `class-<id>`) and a 1:1 personal DM with the host, preserving `ACCEPTED` collaborators in `syncUserEventChannels`.
-3. **Free Trials (`TRIAL`) Block All Chat Surfaces**:
-   - `TrialSession` bookings block all Stream Chat channels, 1:1 DMs, and in-call Q&A/chat (`isInCallChatAllowed("TRIAL") === false`).
+3. **A Free Trial (`TRIAL`) Never Grants Chat**:
+   - No provisioning: `ensureChannelsForAppointment` (`lib/payments/webhooks/ensure-channels.ts`, not `handlers.ts`) stamps and returns `skipped: "trial_chat_blocked"`.
+   - No DM: `canDirectMessage` / `pairBookingContexts` exclude consultations and subscriptions whose appointment is a `TRIAL` (`excludeTrialBooking`).
+   - No in-call chat or Q&A: `isInCallChatAllowed("TRIAL") === false` (`app/meetings/[id]/components/MeetingRoom.tsx`, the Q&A route 403). Do not cite `enableChat={false}`; that is the whole meetings layout.
 4. **Contextual Booking Receipt Cards (`booking-ctx-`)**:
-   - `POST /api/stream/channels/open` with `contextAppointmentId` verifies the booking pair and posts an idempotent receipt message (`booking-ctx-${appointmentId}-${eventType}`) into the shared 1:1 DM thread.
+   - `POST /api/stream/channels/open` with `contextAppointmentId` verifies the booking pair and posts an idempotent receipt message (`booking-ctx-${appointmentId}-${eventType}`) into the shared 1:1 DM thread, authored by the server-only user `system-booking-context` (`lib/stream/system-users.ts`). `components/chat/CustomMessage.tsx` renders the card only for that author; never trust custom fields.
+5. **Managed Channels & Derived Membership**:
+   - `MANAGED_CHANNEL_PREFIXES` (`lib/stream-channel-ids.ts`) = `webinar-`, `class-`, `collab-`, `dm-`, `dmo-`, `dmh-`. Legacy `consultation-`/`subscription-` and `webinar_`/`class_` are NOT managed. `isManagedChannel` is the predicate.
+   - `addMemberToChannel` refuses non-staff adds to a managed channel (`DERIVED_CHANNEL_MEMBERSHIP`), audits staff adds via `recordOpsAction`, and keeps DMs closed. The info dialog hides Add Members and Clear chat on managed channels (truncate wipes every member's thread).
+   - `createCollaboratorChannel` is get-or-create only and returns `frozen`; never unfreeze it. The open route answers `423 CHANNEL_FROZEN` and `403 ORG_DEACTIVATED` (checked before host/collaborator arms; staff exempt).
+6. **Revocation Is Server-Side, Not Client-Cooperative**:
+   - After the mutating action commits, call `lib/stream/access-revocation.ts`: `revokeEndedEventChatAccess` / `revokeEndedBookingChatAccess` (cancel route, `leaveEventSeat`); DM removal only when `isDmContextEligible` is false; at most `SYNC_DM_PAIR_LIMIT` pairs inline, rest queued.
+   - A Stream failure enqueues a `StreamRevocationRetry` row (`kind`: `ERASURE_REVOKE` default, `COLLAB_REVOKE`, `EVENT_CHANNEL_REMOVE`, `DM_REMOVE`, `ORG_REVOKE`; `planId` = the kind's target). The DB enforces `stream_revocation_retry_owner` (CHECK) and `stream_revocation_retry_open_key` (one open row per target) in `prisma/sql/check-constraints.sql`. `retry-moderation-enforcement` (30 min) drains via `redriveAccessRevocation`, which treats Postgres re-grants as settled.
+   - `revokeMemberStreamAccess` (`lib/enterprise/member-removal.ts`) revokes tokens issued before the removal, drops the member from org calls, queues `ORG_REVOKE`. `sdkTokenProvider` (`providers/StreamProviderImpl.tsx`) skips the token cache on every SDK re-request after the first.
+   - `syncUserEventChannels` only tidies the viewer's own list. The `initialSyncCompletedUsers` set, the `stream_sync_<id>` flag and its `force` parameter are gone; do not reintroduce a suppression gate.
+   - `reconcile-stream-memberships` (`lib/stream/membership-reconciler.ts`) is the daily audit: ticker only (hourly `:20` in a 00:00-03:00 UTC window, 50 channels), `created_at` keyset resumed via `withCronLock`'s persisted `checkpoint` (`readJobCheckpoint`), never offsets. It never removes the Support user, `system-` users or ADMIN/STAFF. Not in any GitHub Actions workflow.
+7. **Event Join Failures**: `addUserToEventChannel` returns `success: false` with `reason: "member_not_added"` or `"account_refused"`; `member_not_added` leaves `chatChannelEnsuredAt` unstamped so the sweep retries. `isEventParticipant` host arms require the host profile's `deletedAt` to be null.
 
 ---
 
@@ -98,7 +111,7 @@ mcp__stream-io__app_get_rate_limits   {}
 ## 6. Recordings Architecture, DPDP Privacy & Rate-Limit Ceilings
 
 - **Cloudflare R2 Multipart Storage**: `READY` recordings live on `STREAM_S3` (`streamUrlExpiresAt = end + 14d`) until `transfer-recordings` (every 6h) streams SigV4 multipart parts to R2 (`status = AVAILABLE`, `storageType = PLATFORM`) under CAS `TRANSFERRING` claims and SSRF allowlisting (`isAllowedStreamRecordingUrl`). Retention is enforced by daily `expire-recordings` (1:1/sub +90d, webinar/class +365d).
-- **DPDP Consent & Right to Erasure (`principal:<userId>`)**: Enforced across `upsertUsersToStream`, `assertCanMintToken`, `resolveMeetingAccess`, and `/reopen`; `scrubUser` invokes `eraseStreamPrincipalFootprint` with durable retry queue (`StreamRevocationRetry`), and `wind-down-deactivated-orgs` terminates active video calls and freezes channels on tenant deactivation.
+- **DPDP Consent & Right to Erasure (`principal:<userId>`)**: Enforced across `upsertUsersToStream`, `assertCanMintToken`, `resolveMeetingAccess`, and `/reopen`; `scrubUser` invokes `eraseStreamPrincipalFootprint` with durable retry queue (`StreamRevocationRetry`, kind `ERASURE_REVOKE`), and `wind-down-deactivated-orgs` terminates active video calls and freezes channels on tenant deactivation.
 - **Rate Limits & Pinned SDKs**: Chunk user upserts / roster adds at `100` (`RATE_LIMIT_DELAY_MS = 10_000`), page channel queries at `30` (`queryChannelsPaged`), and keep `stream-chat` on `9.x` (`9.53.0`). Verify control-plane state with `npm exec -- tsx scripts/stream/ensure.ts` and `npm exec -- tsx scripts/stream/ensure-webhook-subscription.ts --apply`.
 
 ---
@@ -109,4 +122,5 @@ mcp__stream-io__app_get_rate_limits   {}
 - **Webhook-only `Meeting.endedAt` writes or HTTP `200` on failed synchronous end**: Superseded by synchronous CAS dual-write (`recordMeetingEndedSynchronously`) returning HTTP `500` on failure and converging monotonically (`supersedesRecordedEnd`) with incoming webhooks.
 - **Uniform `where: { streamCallId }` lookup on all webhooks**: Superseded by asymmetric webhook resolution (`ADR-02`) preserving pre-reopen recordings/presence via `parseSlotIdFromCallId` while shielding reopened rooms from late `call.ended` webhooks.
 - **Dual red hangup buttons & unbounded lobby auto-retries**: Superseded by unified `<CallExitButton />` (`ADR-05`) and clock-skew-safe `<MeetingLobbyGateCard />` retry backoff (`MAX_AUTO_RETRIES = 3`, `5_000ms`).
-- **Legacy per-booking `consultation-*`/`subscription-*` channels**: Superseded by canonical human-pair DM channels (`dm-` / `dmo-`) with `booking-ctx-` receipt cards.
+- **Legacy per-booking `consultation-*`/`subscription-*` channels**: Superseded by canonical human-pair DM channels (`dm-` / `dmo-`) with `booking-ctx-` receipt cards; the prefixes are no longer managed.
+- **Client-cooperative revocation (sync gates), unfreeze-on-open, caller-authored booking cards, DM Clear chat**: Superseded by synchronous revocation plus the retry queue and daily reconciler, get-or-create collaborator channels, `system-booking-context` authorship, and hiding truncate on managed channels.
