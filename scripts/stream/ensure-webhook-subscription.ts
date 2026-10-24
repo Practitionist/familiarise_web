@@ -110,6 +110,21 @@ function reportUnplaceableEvents(
   }
 }
 
+/** A hook is only ever created against a public https origin, never a laptop or loopback URL. */
+export function isPublicWebhookUrl(url: string): boolean {
+  try {
+    const { protocol, hostname } = new URL(url);
+    return (
+      protocol === "https:" &&
+      hostname !== "localhost" &&
+      !hostname.startsWith("127.") &&
+      hostname !== "[::1]"
+    );
+  } catch {
+    return false;
+  }
+}
+
 function newProductHook(
   product: "chat" | "video",
   eventTypes: string[],
@@ -213,7 +228,17 @@ export async function ensureWebhookSubscription(
   }
 
   const created: EventHook[] = [];
-  if (apply && expectedUrl && unplaceable.size > 0) {
+  if (apply && expectedUrl && !isPublicWebhookUrl(expectedUrl)) {
+    console.error(
+      `  Refusing to create a hook at ${expectedUrl}: it is not a public https origin.`,
+    );
+  }
+  if (
+    apply &&
+    expectedUrl &&
+    isPublicWebhookUrl(expectedUrl) &&
+    unplaceable.size > 0
+  ) {
     const byProduct = desiredEventTypesByProduct();
     for (const product of ["chat", "video"] as const) {
       const types = byProduct[product].filter((t) => unplaceable.has(t));

@@ -105,6 +105,25 @@ describe("ensure-webhook-subscription", () => {
     }
   });
 
+  it("never creates a hook against a loopback origin", async () => {
+    const original = process.env.NEXT_PUBLIC_APP_URL;
+    process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3000";
+    try {
+      mockGetAppSettings.mockResolvedValue(appWith([liveWebhook]));
+      await ensureWebhookSubscription("apply");
+      const calls = mockUpdateAppSettings.mock.calls;
+      const hooks = calls.length ? (calls.at(-1)?.[0].event_hooks ?? []) : [];
+      expect(
+        hooks.some((h: { webhook_url?: string }) =>
+          h.webhook_url?.includes("localhost"),
+        ),
+      ).toBe(false);
+    } finally {
+      if (original === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+      else process.env.NEXT_PUBLIC_APP_URL = original;
+    }
+  });
+
   describe("URL rewrite guard", () => {
     const original = process.env.NEXT_PUBLIC_APP_URL;
     afterEach(() => {
