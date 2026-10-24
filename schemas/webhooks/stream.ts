@@ -93,6 +93,35 @@ const streamSessionParticipantLeftSchema = streamCallBaseEventSchema.extend({
   participant: streamParticipantSchema,
 });
 
+// Message `text` is deliberately undeclared, so no message content is ever parsed or stored.
+const streamReminderMessageSchema = z.object({
+  type: z.string(),
+  user: z.object({ id: z.string() }).optional(),
+});
+
+const streamReminderChannelSchema = z.object({
+  channel: z.object({
+    id: z.string().min(1),
+    type: z.string().min(1),
+    cid: z.string().min(1),
+    members: z.array(z.object({ user_id: z.string().min(1) })),
+  }),
+  /** The channel's last five messages, newest first. */
+  messages: z.array(streamReminderMessageSchema).default([]),
+});
+
+export const streamUnreadMessageReminderSchema = z.object({
+  type: z.literal("user.unread_message_reminder"),
+  created_at: z.string(),
+  user: z.object({ id: z.string().min(1) }),
+  /** Keyed by channel cid; Stream sends at most ten. */
+  channels: z.record(z.string(), streamReminderChannelSchema),
+});
+
+export type StreamUnreadMessageReminderEvent = z.infer<
+  typeof streamUnreadMessageReminderSchema
+>;
+
 /** One schema per handled event type; `satisfies` makes a missing row a compile error. */
 export const STREAM_EVENT_SCHEMAS = {
   "call.recording_started": streamRecordingStartedSchema,
@@ -103,4 +132,5 @@ export const STREAM_EVENT_SCHEMAS = {
   "call.ended": streamCallEndedSchema,
   "call.session_participant_joined": streamSessionParticipantJoinedSchema,
   "call.session_participant_left": streamSessionParticipantLeftSchema,
+  "user.unread_message_reminder": streamUnreadMessageReminderSchema,
 } satisfies Record<HandledEventType, z.ZodTypeAny>;

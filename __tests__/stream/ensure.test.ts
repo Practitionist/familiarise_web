@@ -8,6 +8,9 @@ const mockHardenUnusedCallTypes = jest.fn();
 const mockEnsureMessagingGrants = jest.fn();
 const mockGetCallType = jest.fn();
 const mockUpdateCallType = jest.fn();
+const mockGetAppSettings = jest.fn();
+const mockUpdateChannelType = jest.fn();
+const mockUpdateAppSettings = jest.fn();
 
 jest.mock("../../scripts/stream/ensure-app-settings", () => ({
   ensureAppSettings: (...a: unknown[]) => mockEnsureAppSettings(...a),
@@ -27,6 +30,11 @@ jest.mock("../../scripts/stream/harden-unused-call-types", () => ({
 
 jest.mock("../../lib/stream-client", () => ({
   isStreamConfigured: jest.fn(() => true),
+  getStreamChatClient: jest.fn(() => ({
+    getAppSettings: (...a: unknown[]) => mockGetAppSettings(...a),
+    updateChannelType: (...a: unknown[]) => mockUpdateChannelType(...a),
+    updateAppSettings: (...a: unknown[]) => mockUpdateAppSettings(...a),
+  })),
   getStreamVideoClient: jest.fn(() => ({
     listRoles: async () => ({ roles: [{ name: "co_presenter" }] }),
     video: {
@@ -69,6 +77,15 @@ beforeEach(() => {
       },
     });
   mockUpdateCallType.mockResolvedValue({});
+  const reminders = (on: boolean, interval: number) => ({
+    app: {
+      reminders_interval: interval,
+      channel_configs: { messaging: { reminders: on, read_events: true } },
+    },
+  });
+  mockGetAppSettings
+    .mockResolvedValueOnce(reminders(false, 300))
+    .mockResolvedValue(reminders(true, 1800));
 });
 
 describe("scripts/stream/ensure", () => {
@@ -96,6 +113,13 @@ describe("scripts/stream/ensure", () => {
       }),
     );
     expect(mockUpdateCallType).toHaveBeenCalledTimes(1);
+    expect(mockUpdateChannelType).toHaveBeenCalledWith("messaging", {
+      reminders: true,
+      read_events: true,
+    });
+    expect(mockUpdateAppSettings).toHaveBeenCalledWith({
+      reminders_interval: 1800,
+    });
   });
 
   it("is a no-op when session.inactivity_timeout_seconds is already 300", async () => {

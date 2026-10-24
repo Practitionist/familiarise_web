@@ -13,6 +13,7 @@
 - [ADR-06: Stream Participant Sessions Are the Attendance Witness](#adr-06-stream-participant-sessions-are-the-attendance-witness)
 - [ADR-07: Interactive WebRTC with a 200-participant cap, not HLS, at launch](#adr-07-interactive-webrtc-with-a-200-participant-cap-not-hls-at-launch)
 - [ADR-08: Staff-editable platform video quality, 720p default](#adr-08-staff-editable-platform-video-quality-720p-default)
+- [ADR-09: Unread Digest via Stream Unread Reminders](#adr-09-unread-digest-via-stream-unread-reminders)
 - [Deprecated & Superseded Approaches](#deprecated--superseded-approaches)
 
 ---
@@ -31,6 +32,7 @@ Stream Video SFU and PostgreSQL (`PG_POOL_MAX=1`) enforce distinct operational c
 | **ADR-06** | Stream participant sessions resolve every assumed or missing interval    | `lib/booking/session-outcome-sweep.ts`, `lib/stream/{call-presence,session-handlers}.ts`, `lib/meetings/segment-presence.ts`     | A lost webhook can neither stretch a host's presence into a `HELD` verdict nor turn a delivered session into `NOBODY_JOINED`      |
 | **ADR-07** | Interactive WebRTC with a 200-participant cap, no HLS at launch          | `lib/events/capacity.ts`, `schemas/plans.ts`, `lib/meetings/room-ready.ts`, `lib/meetings/call-provisioning.ts`                  | Keeps every attendee able to ask a question or be brought on stage, and bounds the per-room cost and SFU load                     |
 | **ADR-08** | Staff-editable `PlatformVideoConfig`, 720p default                       | `lib/stream/{video-quality,video-config}.ts`, `lib/meetings/room-ready.ts`, `app/api/admin/video-config/route.ts`                | Keeps video and recording quality a priced, audited staff decision instead of a constant in code or an environment variable       |
+| **ADR-09** | Chat unread digest from Stream's `user.unread_message_reminder`          | `lib/stream/chat/unread-digest.ts`, `lib/stream/control-plane-contract.ts`                                                       | One durable email and bell per user per 30-minute window, never quoting message text                                              |
 
 ---
 
@@ -300,12 +302,38 @@ The values are strings guarded by a CHECK, and `lib/stream/video-quality.ts` is 
 
 ---
 
+## ADR-09: Unread Digest via Stream Unread Reminders
+
+### Context & Problem Statement
+
+Chat is a booking-scoped, text-only thread and is pull-only: every Stream push provider is disabled and the only event hook carried video events. A consultee's question before a session went unseen until the consultant happened to open the dashboard. The owner chose one durable unread digest, an email plus an in-app bell, deduplicated per user per window and respecting opt-out, rather than a full messenger.
+
+### Decision
+
+The digest is driven by Stream's built-in [unread reminders](https://getstream.io/chat/docs/node/unread-reminders/) rather than by a polling job:
+
+- The contract (`TARGET_CHAT_REMINDERS`) turns on `reminders` and `read_events` for the `messaging` channel type and sets `reminders_interval` to 1800 seconds. Stream then emits `user.unread_message_reminder` for channels with ten or fewer members, which covers every DM, and the event already names the user, the channels and their members, so the handler makes no Stream API call.
+- A second V2 event hook with `product: "chat"` delivers that one event to the existing `/api/stream/webhooks` route, which verifies chat and video deliveries with the same `X-Signature` HMAC and keeps the durable receipt-then-process pattern. The drift detector requires one hook per product.
+- `handleUnreadMessageReminder` (`lib/stream/chat/unread-digest.ts`) maps the Stream id to our user, skips the support user, unknown ids, banned and erased users, and stages one bell and one email in a transaction guarded by an `IdempotencyRecord` claim on `(stream.chat-digest, <windowStart>, <userId>)`. The opt-out switch is the `appointments` category, and the bell reuses the `appointment` Novu family, so no Novu workflow is added.
+- Message text is never read: the Zod schema does not declare it, so it is neither parsed nor stored, and the digest names only counterparts, counts and session dates.
+
+The fallback, a ticker job calling `unread_counts_batch` for users with recent bookings, was not needed: the live app already exposes `reminders` on the `messaging` channel type and a `reminders_interval` setting (300 seconds by default), no plan restriction is documented below the ten-member limit, and the event carries everything the digest needs.
+
+### Consequences
+
+- The unread count is derived from the last five messages (new messages since the recipient's own latest one), because the event carries no unread count; the digest shows "5+" when all five are new.
+- A user who wants appointment notices but no chat digest cannot separate the two until a dedicated preference column exists.
+- Turning the feature on is an owner action: `npx tsx scripts/stream/ensure.ts --apply --routes-are-deployed` for the reminder settings and `NEXT_PUBLIC_APP_URL=https://familiarisenow.com npx tsx scripts/stream/ensure-webhook-subscription.ts --apply` for the chat hook, after the handler is deployed.
+
+---
+
 ## Deprecated & Superseded Approaches
 
 - **Permanent Per-Appointment / Per-Consultant Stream Call IDs**: Superseded by strict `1 AppointmentOccurrence = 1 active Stream Call ID` isolation (`occurrence-<uuid>`) so recurring `SUBSCRIPTION` and `CLASS` sessions never bleed attendance, duration caps, or recording state across occurrences.
 - **Uniform `where: { streamCallId }` Webhook Lookup Across All Events**: Superseded by asymmetric webhook lookup (`ADR-02`) so recordings and presence from pre-reopen segments attach via `parseOccurrenceIdFromCallId`, while late `call.ended` / `call.session_ended` webhooks strictly check `where: { streamCallId }`.
 - **Dual-Synced Extension (`endsAt` Advanced in Postgres plus Stream `custom`)**: Superseded by ADR-04. Advancing `AppointmentOccurrence.endsAt` moved the column the classifier reads as the booked end, so "extend, then leave on time" lost 15 minutes. The extension counter lived in Stream `custom`, which a reopen reset, and a failed revert let a retry add time. Delete any code that writes `AppointmentOccurrence.endsAt` from the extend path or reads the extension count from Stream.
 - **Fire-and-Forget End Endpoint Swallowing DB Errors as HTTP 200**: Superseded by `recordMeetingEndedSynchronously` CAS dual-write that rotates pre-start `"ended_early"` rooms and returns HTTP `500` on database failure.
+- **Pull-Only Chat With No Unread Notification**: Superseded by the unread digest (`ADR-09`), one email and bell per user per 30-minute window from Stream's unread reminders.
 - **Dual Red Hangup Buttons in `MeetingRoom.tsx`**: Superseded by the single Zoom/Meet-style `<CallExitButton />` with role-aware direct leave vs host two-action popover and `< 10m` remaining caution banner.
 - **End Stamps Closing Every Open Presence Row as Fact**: Superseded by ADR-06. `stampEnd` and the outcome sweep's `capOpenSlotPresences` closed every open row at the room end before classification, so a lost leave read as presence until the end. Delete any code that closes `MeetingPresence` at an end stamp without `closedByEnd = true`, or that classifies an assumed close without first asking Stream.
 - **Hard-coded 720p in the 1-to-Many builder and quality left on the call type**: Superseded by `PlatformVideoConfig` (ADR-08). Delete any literal `target_resolution` in `lib/meetings/**` and any environment variable that tunes video quality.

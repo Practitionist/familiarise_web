@@ -337,8 +337,9 @@ sequenceDiagram
 | `call.ended`                      | The entire call has ended            | `handleCallEnded()`                |
 | `call.session_participant_joined` | A participant joined the call        | `handleSessionParticipantJoined()` |
 | `call.session_participant_left`   | A participant left the call          | `handleSessionParticipantLeft()`   |
+| `user.unread_message_reminder`    | A user has unread chat messages      | `handleUnreadMessageReminder()`    |
 
-`DESIRED_EVENT_TYPES` (`lib/stream/webhook-events.ts`) contains only the 8 handled Video events above. `call.session_started` is excluded from webhook subscriptions (`scripts/stream/ensure-webhook-subscription.ts` prunes extra events, empty-array wildcards `[]`, `"*"` wildcards on V2 hooks, and active legacy V1 `webhook_url` wildcards as drift) and acknowledged with `ignored: true` without writing a database receipt if delivered.
+`DESIRED_EVENT_TYPES` (`lib/stream/webhook-events.ts`) contains exactly the nine handled events above. The eight `call.*` events ride the `video` hook and `user.unread_message_reminder` rides a separate `chat` hook, because Stream scopes each V2 event hook to one product; both hooks deliver to the same route, which verifies every delivery with the same `X-Signature` HMAC. The reminder builds the chat unread digest described in [04. Chat Implementation](./04-chat-implementation.md#unread-message-digest). `call.session_started` is excluded from webhook subscriptions (`scripts/stream/ensure-webhook-subscription.ts` prunes extra events, empty-array wildcards `[]`, `"*"` wildcards on V2 hooks, and active legacy V1 `webhook_url` wildcards as drift) and acknowledged with `ignored: true` without writing a database receipt if delivered.
 
 ### End Events, Asymmetric Webhook Lookup & `endedAt` Convergence
 
@@ -966,7 +967,7 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 1. **Enable Recording** - Dashboard > Video > Settings > Enable Recording
 2. **Configure Webhooks** - Dashboard > Webhooks > Add Endpoint
    - URL: `https://your-domain.com/api/stream/webhooks`
-   - Events: `call.recording_*`, `call.session_ended`, `call.ended`
+   - Events: one `video` hook for the eight `call.*` events and one `chat` hook for `user.unread_message_reminder`; `scripts/stream/ensure-webhook-subscription.ts --apply` creates and reconciles both
    - Signing Secret: Copy to `STREAM_WEBHOOK_SECRET`
 
 ### The scheduled fleet behind recordings
@@ -981,7 +982,7 @@ Three scheduled jobs keep the recording pipeline honest under GitHub Actions, ac
 
 ### Subscription drift is checked, not assumed
 
-The ticker job `stream-control-plane-drift` (`lib/stream/control-plane-drift.ts`, daily at 01:15 UTC) compares the live hook with `HANDLED_EVENT_TYPES` and the contract in `lib/stream/control-plane-contract.ts`: the hook must be enabled, point at `<NEXT_PUBLIC_APP_URL>/api/stream/webhooks`, and carry exactly the handled events. It is read-only and reports one Sentry message per run. `scripts/stream/ensure-webhook-subscription.ts` is the operator tool: no flags to diff, `--check` to exit 2 on drift, `--apply` to write.
+The ticker job `stream-control-plane-drift` (`lib/stream/control-plane-drift.ts`, daily at 01:15 UTC) compares the live hooks with `HANDLED_EVENT_TYPES` and the contract in `lib/stream/control-plane-contract.ts`: there must be one hook per product (`video` and `chat`, from `desiredEventTypesByProduct`), each enabled, pointing at `<NEXT_PUBLIC_APP_URL>/api/stream/webhooks`, and carrying exactly that product's handled events. A handled event that no hook can carry is reported as `webhook:unplaceable:<product>:<event>`. It is read-only and reports one Sentry message per run. `scripts/stream/ensure-webhook-subscription.ts` is the operator tool: no flags to diff, `--check` to exit 2 on drift, `--apply` to write, which also creates a missing product hook when `NEXT_PUBLIC_APP_URL` names the public https URL an existing hook already delivers to.
 
 ### Never import `@/lib/supabase` from a cron job
 
