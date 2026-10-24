@@ -299,7 +299,6 @@ async function updateMaintenance(request: NextRequest) {
 
   const currentPhase = currentState.phase;
   const targetPhase = phase ?? currentPhase;
-  const nextReason = reason ?? currentState.reason ?? undefined;
   const nextEstimatedEnd =
     estimatedEndDate === undefined
       ? (currentState.estimatedEnd ?? undefined)
@@ -312,7 +311,7 @@ async function updateMaintenance(request: NextRequest) {
   ) {
     betterstackIncidentId = await createIncident(
       "Platform Maintenance",
-      nextReason || "Scheduled platform maintenance in progress",
+      reason,
     );
   } else if (
     currentPhase === MaintenancePhase.OFFLINE &&
@@ -324,7 +323,7 @@ async function updateMaintenance(request: NextRequest) {
   }
 
   await setMaintenanceState(targetPhase, {
-    reason: nextReason,
+    reason,
     estimatedEnd: nextEstimatedEnd,
     bypassSecret: currentState.bypassSecret ?? undefined,
     betterstackIncidentId,
