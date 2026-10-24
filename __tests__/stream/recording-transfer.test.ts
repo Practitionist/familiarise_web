@@ -2,10 +2,7 @@
  * @jest-environment node
  */
 
-/**
- * A verified copy flips the row to AVAILABLE; any failure deletes the object
- * and returns the row to READY with the attempt counted, never FAILED.
- */
+/** A verified copy publishes AVAILABLE; failures release only the matching claim. */
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -191,6 +188,85 @@ describe("transferRecording", () => {
 });
 
 describe("recording claim ownership", () => {
+  it.each([
+    {
+      failure: "unsuccessful delete result",
+      arrange: () =>
+        jest.mocked(deleteR2Object).mockResolvedValueOnce({
+          success: false,
+          error: "R2 DELETE failed (503 Service Unavailable)",
+        }),
+    },
+    {
+      failure: "delete rejection",
+      arrange: () =>
+        jest
+          .mocked(deleteR2Object)
+          .mockRejectedValueOnce(new Error("delete reset")),
+    },
+  ])(
+    "fails lost-publication cleanup on $failure without releasing the row",
+    async ({ arrange }) => {
+      jest.mocked(headR2Object).mockResolvedValueOnce({ contentLength: 100 });
+      recording.updateMany.mockResolvedValueOnce({ count: 0 });
+      arrange();
+
+      await expect(
+        transferRecording("lost-publication"),
+      ).resolves.toMatchObject({
+        status: "failed",
+        error: expect.stringContaining(
+          "Unpublished recording attempt cleanup failed",
+        ),
+      });
+      expect(deleteR2Object).toHaveBeenCalledWith(
+        expect.objectContaining({
+          key: "recordings/lost-publication/attempt-1.mp4",
+        }),
+      );
+      expect(recording.updateMany).toHaveBeenCalledTimes(1);
+      expect(dataOf(0).data).toMatchObject({ status: "AVAILABLE" });
+    },
+  );
+
+  it.each([{ success: true }, { success: true, notFound: true }])(
+    "skips lost-publication cleanup only after a confirmed delete: %j",
+    async (deleted) => {
+      jest.mocked(headR2Object).mockResolvedValueOnce({ contentLength: 100 });
+      recording.updateMany.mockResolvedValueOnce({ count: 0 });
+      jest.mocked(deleteR2Object).mockResolvedValueOnce(deleted);
+
+      await expect(transferRecording("lost-publication")).resolves.toEqual({
+        status: "skipped",
+      });
+      expect(recording.updateMany).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("fails the lost-publication run when deletion of its object is unconfirmed", async () => {
+    recording.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: "lost-publication" }])
+      .mockResolvedValueOnce([]);
+    jest.mocked(headR2Object).mockResolvedValueOnce({ contentLength: 100 });
+    recording.updateMany.mockResolvedValueOnce({ count: 0 });
+    jest.mocked(deleteR2Object).mockResolvedValueOnce({
+      success: false,
+      error: "R2 DELETE failed (503 Service Unavailable)",
+    });
+
+    await expect(transferRecordings()).resolves.toMatchObject({
+      success: false,
+      processed: 1,
+      failed: 1,
+      succeeded: 0,
+      errors: [
+        expect.stringContaining("Unpublished recording attempt cleanup failed"),
+      ],
+    });
+    expect(recording.updateMany).toHaveBeenCalledTimes(1);
+  });
+
   it("cannot publish or delete a newer worker's object after its claim was reclaimed", async () => {
     let finishOld: (value: {
       key: string;

@@ -320,10 +320,20 @@ export async function transferRecording(
       },
     });
     if (completed.count === 0) {
-      await deleteR2Object({
+      const deleted = await deleteR2Object({
         key: storagePath,
         signal: AbortSignal.timeout(15_000),
-      }).catch(() => undefined);
+      }).catch((error: unknown) => ({
+        success: false,
+        error:
+          error instanceof Error ? error.message : "Unknown R2 cleanup error",
+      }));
+      if (!deleted.success) {
+        return {
+          status: "failed",
+          error: `Unpublished recording attempt cleanup failed: ${deleted.error ?? "R2 delete failed"}`,
+        };
+      }
       return { status: "skipped" };
     }
     await cleanupPriorTransferAttempts(recordingId, claim.transferAttempts);
@@ -331,7 +341,7 @@ export async function transferRecording(
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown transfer error";
-    streamLogger.warn("Recording copy failed; row stays READY", {
+    streamLogger.warn("Recording copy failed", {
       recordingId,
       error: message,
     });
