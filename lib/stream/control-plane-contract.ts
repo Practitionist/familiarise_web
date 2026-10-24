@@ -227,6 +227,12 @@ export const OWNER_ONLY_MEMBER_PERMISSIONS = [
   "update-call-member",
 ];
 
+/**
+ * A sealed room stays sealed at Stream: reopening rotates to a fresh call id, so no
+ * member ever needs to join a call Stream has ended.
+ */
+export const JOIN_ENDED_CALL = "join-ended-call";
+
 export function isRevokedClientPermission(perm: string): boolean {
   return matchesPermissionWithScope(
     perm,
@@ -271,7 +277,10 @@ export function intendedDefaultCallTypeGrants(
     if (held) grants[role] = ownerScoped(held);
   }
 
-  const memberGrants = grants[CALL_MEMBER_ROLE] ?? [];
+  const memberGrants = (grants[CALL_MEMBER_ROLE] ?? []).filter(
+    (g) => !matchesPermissionWithScope(g, [JOIN_ENDED_CALL]),
+  );
+  grants[CALL_MEMBER_ROLE] = memberGrants;
   if (!memberGrants.includes(JOIN_CALL)) {
     grants[CALL_MEMBER_ROLE] = [...memberGrants, JOIN_CALL];
   }
@@ -289,7 +298,6 @@ export const CO_PRESENTER_GRANTS = [
   "create-call-reaction",
   "join-backstage",
   "join-call",
-  "join-ended-call",
   "list-recordings",
   "list-transcriptions",
   "mute-users",
