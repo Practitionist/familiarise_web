@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 
 import prisma from "@/lib/prisma";
-import { getSession } from "@/lib/auth-server";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { applyRateLimit, documentUploadUrlLimiter } from "@/lib/rate-limit";
 import {
   generateStorageFileName,
@@ -27,11 +27,11 @@ type RouteContext = { params: Promise<{ appointmentId: string }> };
 /** Mints a single-use upload URL after the same checks the commit repeats under the booking lock. */
 export async function POST(request: Request, { params }: RouteContext) {
   return answerFileRoute(async () => {
-    const session = await getSession();
-    if (!session?.user?.id) return fileApiError("UNAUTHORIZED");
+    const auth = await requireApiAuth();
+    if (auth.error) return auth.error;
     const limited = await applyRateLimit(
       documentUploadUrlLimiter,
-      session.user.id,
+      auth.session.user.id,
     );
     if (limited) return limited;
 
@@ -42,7 +42,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     const party = await requireWritableParty(
       prisma,
       appointmentId,
-      session.user.id,
+      auth.session.user.id,
     );
     const parentDocumentId = body.parentDocumentId ?? null;
     if (party.role === "expert" && parentDocumentId) {
