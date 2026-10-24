@@ -13,7 +13,6 @@ import {
   ToggleAudioPublishingButton,
   ToggleVideoPublishingButton,
   ReactionsButton,
-  ScreenShareButton,
 } from "@stream-io/video-react-sdk";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
@@ -36,7 +35,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import CallExitButton from "./EndCallButton";
 import CallEnded from "./CallEnded";
+import { MuteAllButton } from "./MuteAllButton";
 import RecordingControls from "./RecordingControls";
+import { ScreenShareControl } from "./ScreenShareControl";
 import { StageControls } from "./StageControls";
 import { StagePinnedBannerOverlay } from "./StagePinnedBannerOverlay";
 import { StageChatDrawer } from "./StageChatDrawer";
@@ -308,7 +309,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
     <StreamVideoErrorBoundary>
       <section
         data-in-call-chat-blocked={inCallChatAllowed ? "false" : "true"}
-        className="relative h-screen w-full overflow-hidden bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950"
+        className="relative h-dvh w-full overflow-hidden bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950"
       >
         <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wMiI+PGNpcmNsZSBjeD0iMzAiIGN5PSIzMCIgcj0iMiIvPjwvZz48L2c+PC9zdmc+')] opacity-50" />
 
@@ -472,7 +473,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
         </div>
 
         <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-50">
-          <div className="flex items-center justify-center px-4 py-4">
+          <div className="flex items-center justify-center px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]">
             <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-2 px-4 py-3 bg-zinc-900/90 backdrop-blur-xl rounded-2xl border border-zinc-800 shadow-2xl max-w-[calc(100vw-2rem)]">
               <SpeakingWhileMutedNotification>
                 <ToggleAudioPublishingButton />
@@ -482,7 +483,9 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
 
               <ReactionsButton />
 
-              <ScreenShareButton />
+              <ScreenShareControl />
+
+              {isHost && <MuteAllButton />}
 
               {isHost && recordingEnabled && meetingId && (
                 <RecordingControls
@@ -641,7 +644,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
           </div>
         </div>
 
-        <div className="pointer-events-none fixed inset-x-4 top-4 z-20 flex items-start justify-between gap-3">
+        <div className="pointer-events-none fixed inset-x-4 top-[max(1rem,env(safe-area-inset-top))] z-20 flex items-start justify-between gap-3">
           <div className="pointer-events-auto flex min-w-0 items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/80 px-3 py-2 backdrop-blur-sm">
             <div className="min-w-0">
               <p className="truncate text-sm font-medium text-white">
@@ -672,7 +675,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
           </div>
         </div>
 
-        <div className="pointer-events-none fixed inset-x-4 top-20 z-20 flex flex-col items-center gap-2">
+        <div className="pointer-events-none fixed inset-x-4 top-[calc(5rem+env(safe-area-inset-top))] z-20 flex flex-col items-center gap-2">
           <StageControls
             appointmentType={info.appointmentType}
             isHost={isHost}

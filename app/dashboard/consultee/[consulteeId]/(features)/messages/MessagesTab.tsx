@@ -1,32 +1,15 @@
 "use client";
 
-import { ChatLayout } from "@/components/chat/ChatLayout";
-import { ChatUnavailable } from "@/components/chat/ChatUnavailable";
-import { ChatSkeletonPanes } from "@/components/dashboard/DashboardSkeletons";
-import { useStreamConnection } from "@/providers/StreamProvider";
-import { StreamChatScope } from "@/components/stream/StreamChatScope";
+import { ChatSurface } from "@/components/chat/ChatSurface";
 
 /**
  * Full-bleed chat surface: cancels PageScaffold padding and fills the
  * content column under the context bar (and above the mobile tab bar).
  */
 export default function MessagesTab() {
-  // Connection state from the Stream provider: render the chat UI only once
-  // the chat client is live; surface failures instead of a blank box (same
-  // contract as the consultant Chats tab).
-  const { chatConnected, failure, retryConnection } = useStreamConnection();
-
   return (
     <div className="-m-4 h-dashboard-fill overflow-hidden border-border bg-card sm:-m-6 lg:-m-8">
-      {failure ? (
-        <ChatUnavailable failure={failure} onRetry={retryConnection} />
-      ) : chatConnected ? (
-        <StreamChatScope>
-          <ChatLayout />
-        </StreamChatScope>
-      ) : (
-        <ChatSkeletonPanes />
-      )}
+      <ChatSurface />
     </div>
   );
 }

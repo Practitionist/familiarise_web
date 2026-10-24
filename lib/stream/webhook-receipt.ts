@@ -1,5 +1,7 @@
 import prisma from "@/lib/prisma";
-import { logWebhookEvent, type WebhookClaim } from "@/lib/webhooks/event-log";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
+import { scrubStreamEventForStorage } from "@/lib/stream/webhook-payload-scrub";
+import { toInputJson, type WebhookClaim } from "@/lib/webhooks/event-log";
 
 export const STALE_PROCESSING_THRESHOLD_MS = 5 * 60 * 1000;
 export const MAX_STALE_RECLAIM_RETRIES = 5;
@@ -80,8 +82,10 @@ export async function reclaimStaleProcessingWebhookEvent(
 }
 
 /**
- * Records a verified Stream webhook delivery before HTTP acknowledgement and
- * returns whether the delivery is newly claimed (`isNew`) along with its claim fence.
+ * Records a verified Stream webhook delivery before HTTP acknowledgement with one
+ * `create`: the unique `eventId` index is the duplicate check, so a P2002 is a
+ * duplicate (`isNew: false`) and only then is a stale in-progress row reclaimed.
+ * The stored payload keeps only the fields the handlers and the sweeper read.
  */
 export async function recordStreamEventReceipt(
   eventId: string,
@@ -89,22 +93,28 @@ export async function recordStreamEventReceipt(
   event: unknown,
   signature: string | undefined,
 ): Promise<{ isNew: boolean; claim: WebhookClaim }> {
-  const logged = await logWebhookEvent(
-    "stream",
-    eventId,
-    eventType,
-    event,
-    signature,
-  );
-  if (!logged.isNew) {
-    try {
-      const reclaimed = await reclaimStaleProcessingWebhookEvent(eventId);
-      if (reclaimed.reclaimed) {
-        return { isNew: true, claim: reclaimed.claim };
-      }
-    } catch {
-      // Ignore if prisma is not available in unit test mocks of logWebhookEvent
-    }
+  try {
+    await prisma.webhookEvent.create({
+      data: {
+        provider: "stream",
+        eventId,
+        eventType,
+        payload: toInputJson(scrubStreamEventForStorage(eventType, event)),
+        signature,
+        processed: false,
+      },
+    });
+    return { isNew: true, claim: { claimedAt: null } };
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
   }
-  return { isNew: logged.isNew, claim: logged.claim ?? { claimedAt: null } };
+  try {
+    const reclaimed = await reclaimStaleProcessingWebhookEvent(eventId);
+    if (reclaimed.reclaimed) {
+      return { isNew: true, claim: reclaimed.claim };
+    }
+  } catch {
+    // A failed reclaim leaves the row to the sweeper; the delivery is still a duplicate.
+  }
+  return { isNew: false, claim: { claimedAt: null } };
 }

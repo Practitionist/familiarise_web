@@ -65,7 +65,6 @@ describe("Event Channel Actions", () => {
     jest.clearAllMocks();
     mockStreamClient.channel.mockReturnValue(mockChannel);
     mockStreamClient.queryChannels.mockResolvedValue([]);
-    mockCache.initialSyncCompletedUsers.clear();
     mockGetSession.mockResolvedValue({
       user: { id: "staff-user", role: "ADMIN" },
     });
@@ -288,14 +287,16 @@ describe("Event Channel Actions", () => {
       const { addUserToEventChannel } =
         await import("../../actions/stream/chat/event-channel.action");
 
-      // Still resolves — a failed join must not fail the caller; the next
-      // sync reconciles.
+      // Resolves with a failure so the caller does not record the join.
       const result = await addUserToEventChannel(
         "webinar",
         "web-race-2",
         "unlucky-user",
       );
-      expect(result.success).toBe(true);
+      expect(result).toMatchObject({
+        success: false,
+        reason: "member_not_added",
+      });
 
       // But nothing may cache "is member": a cached true would suppress every
       // future add attempt until the TTL lapses.
@@ -547,19 +548,6 @@ describe("Event Channel Actions", () => {
   });
 
   describe("syncUserEventChannels", () => {
-    it("should skip when user already synced", async () => {
-      mockCache.initialSyncCompletedUsers.add("user-already-synced");
-
-      const { syncUserEventChannels } =
-        await import("../../actions/stream/chat/event-channel.action");
-
-      const result = await syncUserEventChannels("user-already-synced");
-
-      expect(result.success).toBe(true);
-      expect(result.skipped).toBe(true);
-      expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
-    });
-
     it("rejects syncing another user's channels as a non-privileged caller", async () => {
       mockGetSession.mockResolvedValue({
         user: { id: "attacker", role: "USER" },
@@ -638,9 +626,6 @@ describe("Event Channel Actions", () => {
 
       expect(result.success).toBe(true);
       expect(result.channelsSynced).toBe(0);
-      expect(mockCache.initialSyncCompletedUsers.has("user-no-events")).toBe(
-        true,
-      );
     });
 
     it("should sync user to all their event channels", async () => {
@@ -678,9 +663,6 @@ describe("Event Channel Actions", () => {
       expect(result.success).toBe(true);
       expect(result.channelsSynced).toBe(4); // 2 webinars + 1 class + 1 DM pair
       expect(result.durationMs).toBeDefined();
-      expect(mockCache.initialSyncCompletedUsers.has("consultant-user")).toBe(
-        true,
-      );
     });
 
     // Was "should handle partial failures gracefully", asserting the add

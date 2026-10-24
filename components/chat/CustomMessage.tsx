@@ -57,10 +57,11 @@ import {
   SUPPORT_STREAM_USER_NAME,
 } from "@/lib/stream/support-user";
 import { SystemMessage } from "./SystemMessage";
+import { isBookingContextAuthor } from "@/lib/stream/system-users";
 
 export const CustomMessage = () => {
   const pathname = usePathname();
-  const { message } = useMessageContext();
+  const { message, handleRetry } = useMessageContext();
   const { client, channel } = useChatContext();
   const messageComposer = useMessageComposerController();
   const { toast } = useToast();
@@ -156,11 +157,14 @@ export const CustomMessage = () => {
   const bookingHelpHref = bookingRef
     ? `${requestsBase}/${caseKeyOf(bookingRef)}`
     : null;
-  const isBookingContext = Boolean(
-    bookingAppointmentId ||
-    msgRecord.kind === "booking_context" ||
-    customRecord?.kind === "booking_context",
-  );
+  // Custom fields are user-writable, so only the server-only booking author earns the card.
+  const isBookingContext =
+    isBookingContextAuthor(message.user?.id) &&
+    Boolean(
+      bookingAppointmentId ||
+      msgRecord.kind === "booking_context" ||
+      customRecord?.kind === "booking_context",
+    );
   const bookingType = (
     readMessageString("booking_type") ?? "CONSULTATION"
   ).toUpperCase();
@@ -655,6 +659,29 @@ export const CustomMessage = () => {
           >
             {message.created_at && format(new Date(message.created_at), "p")}
           </div>
+
+          {/* The SDK keeps a failed send in the list with status "failed";
+              without this it reads exactly like a delivered message. */}
+          {isMyMessage && message.status === "sending" && (
+            <div className="mt-0.5 text-right text-xs text-primary-foreground/80">
+              Sending…
+            </div>
+          )}
+          {isMyMessage && message.status === "failed" && (
+            <div
+              role="alert"
+              className="mt-0.5 flex items-center justify-end gap-2 text-xs font-semibold text-primary-foreground"
+            >
+              <span>Not sent</span>
+              <button
+                type="button"
+                className="font-medium underline underline-offset-2"
+                onClick={() => void handleRetry(message)}
+              >
+                Retry
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

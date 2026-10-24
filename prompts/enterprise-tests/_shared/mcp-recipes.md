@@ -7,9 +7,14 @@
 
 **Supabase project ID:** `pzmbxqdgibfkhjwzeprf`
 
+> **Read-only:** the Supabase MCP is configured with `--read-only` and
+> `--project-ref`, so every write recipe below must be run by an operator in the
+> Supabase SQL editor (or an approved psql session), not by the agent. `SELECT`
+> assertions still run through `mcp__supabase__execute_sql`.
+
 ---
 
-## §1 — Supabase MCP idioms
+## §1 — Supabase MCP idioms (reads via MCP; writes are operator-run)
 
 ### SELECT-assert
 ```ts
@@ -29,11 +34,9 @@ BetterAuth `@@map`, but `"BillingAccount"` and `"OrganizationInvoice"`
 are mixed-case Prisma defaults). When in doubt, check `shared-setup.md`
 §6.
 
-### INSERT-seed (fresh test org)
-```ts
-mcp__supabase__execute_sql({
-  project_id: "pzmbxqdgibfkhjwzeprf",
-  query: `
+### INSERT-seed (fresh test org — operator-run)
+```sql
+-- operator-run in the Supabase SQL editor; project pzmbxqdgibfkhjwzeprf
     INSERT INTO "organizations"
       (id, slug, name, status, "canSponsor", "canHost", "rootId", "createdAt", "updatedAt")
     VALUES (
@@ -46,17 +49,13 @@ mcp__supabase__execute_sql({
       now(), now()
     )
     RETURNING id, slug;
-  `
-})
-// Then UPDATE rootId = id (single statement; see shared-setup §3 WITH/UPDATE form)
+-- Then UPDATE rootId = id (single statement; see shared-setup §3 WITH/UPDATE form)
 ```
 
-### DELETE-cleanup
-```ts
-mcp__supabase__execute_sql({
-  project_id: "pzmbxqdgibfkhjwzeprf",
-  query: `DELETE FROM "organizations" WHERE slug LIKE 'test-2026-%' AND "createdAt" < NOW() - INTERVAL '2 hours';`
-})
+### DELETE-cleanup (operator-run)
+```sql
+-- operator-run in the Supabase SQL editor; project pzmbxqdgibfkhjwzeprf
+DELETE FROM "organizations" WHERE slug LIKE 'test-2026-%' AND "createdAt" < NOW() - INTERVAL '2 hours';
 ```
 
 Cleanup runs at the **end of the case** that spawned the row, not
@@ -320,6 +319,6 @@ ORDER BY "createdAt" DESC LIMIT 1;
 
 - **Don't `npm run dev`.** Ask the user to start it.
 - **Don't `npm run build` / `tsc --noEmit` / `lint`** unless the user explicitly asks.
-- **Don't seed via `npm run db:seed`** mid-case — the seed cohort already exists; fresh orgs go through Supabase MCP INSERT.
+- **Don't seed via `npm run db:seed`** mid-case — the seed cohort already exists; fresh orgs are an operator-run INSERT; the MCP is read-only.
 - **Don't write to `_prisma_migrations` manually.** Schema sync happens via `prisma migrate deploy` outside test runs.
 - **Don't call BetterAuth's `/api/auth/sign-in/email` via curl.** It needs the full browser cookie / CSRF dance; log in via Chrome MCP, then read the session cookie via `list_network_requests` if you need it.

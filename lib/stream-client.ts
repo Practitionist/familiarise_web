@@ -74,7 +74,12 @@ export function getStreamVideoClient(): StreamClient {
   validateStreamConfig();
 
   if (!videoClientInstance) {
-    videoClientInstance = new StreamClient(STREAM_API_KEY!, STREAM_API_SECRET!);
+    // The SDK default is 3 s; 15 s leaves headroom under the ~26 s function ceiling.
+    videoClientInstance = new StreamClient(
+      STREAM_API_KEY!,
+      STREAM_API_SECRET!,
+      { timeout: 15_000 },
+    );
   }
 
   return videoClientInstance;

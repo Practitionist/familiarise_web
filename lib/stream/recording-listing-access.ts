@@ -1,4 +1,8 @@
-import type { Prisma, OrgPlanVisibility } from "@prisma/client";
+import type {
+  Prisma,
+  OrgPlanVisibility,
+  RecordingListingStatus,
+} from "@prisma/client";
 
 /**
  * Shared traversal for the #366 marketplace routes: Recording → Meeting
@@ -75,7 +79,8 @@ export type OwnedRecordingLoad =
       recordingId: string;
       recordingStatus: string;
       storageType: string;
-      listingStatus: string;
+      storagePath: string | null;
+      listingStatus: RecordingListingStatus;
       // number via the #780 money extension map.
       listPricePaise: number | null;
       // #1244 review — the publish gate needs to know whether a preview clip
@@ -139,6 +144,7 @@ export async function loadOwnedListingRecording(
       id: true,
       status: true,
       storageType: true,
+      storagePath: true,
       listingStatus: true,
       listPricePaise: true,
       previewClipUrl: true,
@@ -171,6 +177,7 @@ export async function loadOwnedListingRecording(
     recordingId: recording.id,
     recordingStatus: recording.status,
     storageType: recording.storageType,
+    storagePath: recording.storagePath,
     listingStatus: recording.listingStatus,
     listPricePaise: recording.listPricePaise,
     previewClipUrl: recording.previewClipUrl,

@@ -3,6 +3,8 @@ import { addUserToEventChannel } from "@/lib/stream/event-channel-service";
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
 import { streamLogger } from "@/lib/stream-logger";
 import { bookingOrgId } from "@/lib/stream-utils";
+import { addSeatHoldersToOpenCalls } from "@/lib/meetings/seat-call-members";
+import { reportSentryError } from "@/lib/observability/report";
 
 export interface EnsureChannelsResult {
   /** True when every buyer's channel exists and the appointment is stamped. */
@@ -25,6 +27,7 @@ function resolveBuyerIds(
 }
 
 async function ensureChannelsForBuyers(args: {
+  appointmentId: string;
   eventType: string;
   consultantUserId: string;
   dmOrgId: string | null;
@@ -33,8 +36,9 @@ async function ensureChannelsForBuyers(args: {
   subscriptionId?: string;
   webinarId?: string;
   classId?: string;
-}): Promise<boolean> {
+}): Promise<"unmatched" | "incomplete" | "ensured"> {
   const {
+    appointmentId,
     eventType,
     consultantUserId,
     dmOrgId,
@@ -55,22 +59,38 @@ async function ensureChannelsForBuyers(args: {
         : null;
 
   if (!isOneToOne && !eventChannelSpec) {
-    return false;
+    return "unmatched";
   }
 
+  const syncedBuyerIds: string[] = [];
+  let incomplete = false;
   for (const userId of buyerIds) {
     if (eventChannelSpec) {
-      await addUserToEventChannel(
+      const joined = await addUserToEventChannel(
         eventChannelSpec.kind,
         eventChannelSpec.id,
         userId,
       );
+      if (joined.success) syncedBuyerIds.push(userId);
+      // A refused account is a deliberate skip; a missing member is retried by the sweep.
+      if (joined.reason === "member_not_added") incomplete = true;
     }
     if (consultantUserId !== userId) {
       await createDirectMessageChannel(consultantUserId, userId, dmOrgId);
     }
   }
-  return true;
+  if (eventChannelSpec && syncedBuyerIds.length > 0) {
+    try {
+      await addSeatHoldersToOpenCalls(appointmentId, syncedBuyerIds);
+    } catch (error) {
+      reportSentryError(error, {
+        subsystem: "stream",
+        op: "ensureChannels.seatCallMembers",
+        extra: { appointmentId },
+      });
+    }
+  }
+  return incomplete ? "incomplete" : "ensured";
 }
 
 /**
@@ -187,6 +207,7 @@ export async function ensureChannelsForAppointment(
   });
 
   const matched = await ensureChannelsForBuyers({
+    appointmentId,
     eventType,
     consultantUserId,
     dmOrgId,
@@ -196,8 +217,11 @@ export async function ensureChannelsForAppointment(
     webinarId: appointment.webinar?.id,
     classId: appointment.class?.id,
   });
-  if (!matched) {
+  if (matched === "unmatched") {
     return { ensured: false, reason: "no_channel_branch_for_appointment" };
+  }
+  if (matched === "incomplete") {
+    return { ensured: false, reason: "event_channel_member_not_added" };
   }
 
   // A stamp means ensured or intentionally skipped, so the sweep never revisits the row.

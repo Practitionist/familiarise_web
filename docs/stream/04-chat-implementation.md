@@ -11,6 +11,7 @@
 - [Channel Creation Flow](#channel-creation-flow)
 - [Code Examples](#code-examples)
 - [Best Practices](#best-practices)
+- [Unread Message Digest](#unread-message-digest)
 
 ---
 
@@ -594,6 +595,14 @@ export function useUserChannels(userId: string) {
 }
 ```
 
+### Client behaviour the sidebar, badge and messages rely on
+
+The channel list does not assume the first page is everything. When a `message.new` or `notification.message_new` event names a channel the sidebar does not hold, and the first page has already loaded, `ChatSidebar` watches that channel and inserts it at the top, provided it matches the current org scope (and, for a direct message, `isUsableDmChannel`). Inserts are deduplicated by cid, so a burst of events costs one `watch`. Pages appended by "Load more" go through `appendUniqueChannels` (`components/chat/utils/channelList.ts`) so a channel that moved between pages is never shown twice.
+
+The personal navigation badge (`hooks/useChatUnreadCount.ts`) starts from Stream's own `total_unread_count`, read from `client.user` and refreshed by every `message.new` and `notification.*` event that carries it, so it counts channels the sidebar has not loaded. That total is global and includes org-tagged channels, which belong to the org dashboard's own entry, so their unread is subtracted. The subtraction is local while loaded channels explain the whole total. When unread exists beyond them, one `getUnreadCount` call (at most every 30 seconds) lists unread per channel, and one `queryChannels` per 30 newly seen cids classifies them as personal or org; classifications are cached for the life of the mount.
+
+`components/chat/CustomMessage.tsx` shows the delivery state of the viewer's own messages. A message the SDK holds with `status === "failed"` renders "Not sent" with a Retry button that calls the message context's `handleRetry` (stream-chat-react's `retrySendMessage`, which resends the same message id), and one with `status === "sending"` renders "Sending…". Without this a failed send looked identical to a delivered one.
+
 ---
 
 ## Best Practices
@@ -721,6 +730,33 @@ additionalData: {
 ```
 
 ---
+
+## Unread Message Digest
+
+Chat is pull-only: Stream push providers are disabled, so nobody learns of a new message until they open the dashboard. The one push the app sends is a durable unread digest, delivered as an email and an in-app bell, and built on Stream's [unread reminders](https://getstream.io/chat/docs/node/unread-reminders/) ([ADR-09](./18-architecture-decision-records.md#adr-09-unread-digest-via-stream-unread-reminders)).
+
+### How a digest is produced
+
+1. The `messaging` channel type has `reminders: true` and `read_events: true`, and the app's `reminders_interval` is 1800 seconds. Both live in `TARGET_CHAT_REMINDERS` in `lib/stream/control-plane-contract.ts`.
+2. When a member of a channel with ten or fewer members has left a regular or system message unread for longer than the interval, Stream sends `user.unread_message_reminder` to the `chat` webhook hook at `/api/stream/webhooks`. The event names the user and carries up to ten channels, each with its member list and its last five messages.
+3. The route verifies the signature, writes the `WebhookEvent` receipt, acknowledges, and dispatches to `handleUnreadMessageReminder` in `lib/stream/chat/unread-digest.ts`.
+4. The handler stages one bell (`CHAT_UNREAD_DIGEST`, in the `appointment` Novu family) and one email (`CHAT_UNREAD_DIGEST`) inside a single transaction, then flushes them after the response. The outbox relays deliver anything the inline attempt misses.
+
+### Who receives it
+
+- Stream user ids are our user ids. The handler skips `familiarise-support`, any id with no user row (which covers every synthetic user), and any user who is banned or erased.
+- Only `messaging` channels count, and the support user is never listed as a counterpart. A counterpart who has been erased is dropped, and a channel left with no live counterpart, or whose new messages are all system messages, produces no line.
+- The digest honours the `appointments` preference category, because chat is booking-scoped. The bell also honours `inAppEnabled`, workspace routing and quiet hours (`stageBell` with `deferrable: true`). The email honours `emailEnabled`, `allNotifications`, suppressions and the pre-launch delivery guard, because it is staged through `deliver()`'s outbox. Email has no quiet-hours concept in this repo, so the digest email is not deferred.
+
+### What it says
+
+Each line reads, for example, "You have 2 new messages from Asha about your session on 12 Nov 2026." and links to `/dashboard/go/auto/messages?channelId=<id>`, or to the organisation's messages page when the pair's session is org-hosted. The count is the number of regular messages from others that are newer than the recipient's own latest message among Stream's last five; when all five qualify the line says "5+". The session date is the pair's next live occurrence, or their latest past one.
+
+The digest never quotes message content. `streamUnreadMessageReminderSchema` (`schemas/webhooks/stream.ts`) does not declare a message's `text`, so the text is neither parsed nor stored in `WebhookEvent.payload`.
+
+### Exactly one digest per user per window
+
+The window is the 30-minute slot that contains the event's `created_at`, so a retry or a sweeper re-drive computes the same window. The transaction first inserts an `IdempotencyRecord` with scope `stream.chat-digest`, key `<windowStart>` and the user's id; its `(scope, key, userId)` unique turns a second delivery into a rolled-back no-op. The bell's `NotificationOutbox.transactionId` derives from the dedupe key `chat-digest:<userId>:<windowStart>`, and the email's `entityRef` is the same key. The claim expires after 24 hours and is pruned by `cleanup-auth-tokens`.
 
 ## Deprecated & Superseded Approaches
 

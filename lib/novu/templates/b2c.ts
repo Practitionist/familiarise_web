@@ -170,6 +170,18 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    workflowId: W.CHAT_UNREAD_DIGEST,
+    name: "Unread chat messages",
+    description:
+      "One digest per user per 30-minute window from Stream's unread reminder. Never quotes message text.",
+    category: "appointments",
+    inApp: {
+      subject: "Unread messages",
+      body: "{{payload.summary}}",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
     workflowId: W.NEW_BOOKING_REQUEST,
     name: "New booking request",
     description:

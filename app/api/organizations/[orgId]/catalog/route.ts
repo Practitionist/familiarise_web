@@ -20,7 +20,11 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { planLevelSchema, planPositioningShape } from "@/schemas/plans";
+import {
+  maxParticipantsSchema,
+  planLevelSchema,
+  planPositioningShape,
+} from "@/schemas/plans";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 
 const PlanKindSchema = z.enum(["WEBINAR", "CLASS"]);
@@ -41,7 +45,7 @@ const BaseCreateSchema = z.object({
   // can deliver is not bookable, so the endpoint requires it.
   consultantProfileId: z.string().min(1),
   visibility: VisibilitySchema.default("ORG_AND_PUBLIC"),
-  maxParticipants: z.number().int().positive().optional(),
+  maxParticipants: maxParticipantsSchema.optional(),
   language: z.string().default("English"),
   level: planLevelSchema,
   certificateProvided: z.boolean().default(false),

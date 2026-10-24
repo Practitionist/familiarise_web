@@ -69,6 +69,10 @@ stops waiting for targets by 24 seconds, and reserves bounded telemetry waiting
 through 27 seconds. Worker-side deadlines must stop new work independently; a
 fetch abort only makes that target's outcome ambiguous.
 
+The ticker returns HTTP `200` after reporting individual target failures on the
+structured `{"event":"cron-tick",...}` line. Do not infer a scheduled retry contract
+from the documented background-function retries; observe target completion independently.
+
 Each tick reads `ops:active_cron_platform` once. Missing/unreadable state fails
 open as required by AGENTS.md. The switch cannot stop already-running work or
 prove exclusive delivery across hosts during a dependency failure.
@@ -113,6 +117,12 @@ Never create 3-layer wrappers. A job has one implementation, registered in
 Some existing jobs intentionally take no row limit. That is not evidence that
 an unbounded implementation fits a function envelope; inspect its actual work.
 Calendar-window schedules also require explicit missed-window recovery.
+
+## Recording background packaging
+
+The recording background entry is `netlify/functions/recording-transfer-background.mts`. Preserve the supported filename suffix as well as its background config when packaging with the CLI. A dependency-free CLI 26.0.2 branch probe completed after 75 seconds on this account; the temporary drafts were removed. This proves the isolated runtime path, while the application bundle and actual copy handoff still require verification. HTTP 202 is admission only. For unpublished alias logs, use the deployment branch and ID when function metadata omits its branch. See `docs/stream/recording-background-worker.md` and [Netlify background functions](https://docs.netlify.com/build/functions/background-functions/).
+
+The native entry and shared cleanup factory need the explicit `next/server.js` package subpath. A network-denied compiled-module check catches the extensionless ESM import failure that CommonJS Jest loading misses. The worktree's default NFT archive can retain the external dependency symlink without its target; inspect dependency contents before treating a local archive as deployable. Keep the required canonical worktree dependency symlink.
 
 ## Deprecated & Superseded Approaches
 

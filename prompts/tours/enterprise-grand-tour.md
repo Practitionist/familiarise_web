@@ -9,6 +9,9 @@
 > for the Supabase + Chrome DevTools idioms, and
 > [`prompts/enterprise-tests/_shared/case-template.md`](../enterprise-tests/_shared/case-template.md)
 > for the fix-and-retest gate.
+>
+> **MCP write rule:** the Supabase MCP is read-only. Direct writes in this tour
+> are operator-run; prepare the SQL and pause for the operator.
 
 ---
 
@@ -41,25 +44,25 @@ guard paths; it is NOT trying to enumerate every error code.
 
 **Permitted tools.**
 
-| Tool                                                                                                       | Use                                                          |
-| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `mcp__chrome-devtools__navigate_page`                                                                      | Open a URL                                                   |
-| `mcp__chrome-devtools__take_snapshot`                                                                      | Get the accessibility tree of the current page               |
-| `mcp__chrome-devtools__click`                                                                              | Click a labeled element                                      |
-| `mcp__chrome-devtools__fill`                                                                               | Type into a single input                                     |
-| `mcp__chrome-devtools__fill_form`                                                                          | Fill multiple inputs at once                                 |
-| `mcp__chrome-devtools__select_option` (where supported) or `mcp__chrome-devtools__click` on combobox items | Pick a dropdown value                                        |
-| `mcp__chrome-devtools__wait_for`                                                                           | Wait for a piece of text or element to appear                |
-| `mcp__chrome-devtools__upload_file`                                                                        | Pick a file in a `<input type=file>`                         |
-| `mcp__chrome-devtools__handle_dialog`                                                                      | Accept / dismiss confirm + alert dialogs                     |
-| `mcp__chrome-devtools__list_network_requests`                                                              | Inspect what the page fired                                  |
-| `mcp__chrome-devtools__get_network_request`                                                                | Get headers + body of a specific request                     |
-| `mcp__chrome-devtools__list_console_messages`                                                              | Inspect what the page logged                                 |
-| `mcp__chrome-devtools__take_screenshot`                                                                    | Visual checkpoint                                            |
-| `mcp__chrome-devtools__new_page` / `select_page` / `list_pages`                                            | Multi-tab journeys (e.g. invitation accept)                  |
-| `mcp__supabase__execute_sql`                                                                               | All DB reads, scoped writes (project `pzmbxqdgibfkhjwzeprf`) |
-| `mcp__supabase__list_tables`                                                                               | Schema discovery (rare; only if a column name surprises us)  |
-| `mcp__supabase__get_logs`                                                                                  | Inspect Supabase logs when a query unexpectedly errors       |
+| Tool                                                                                                       | Use                                                                                    |
+| ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `mcp__chrome-devtools__navigate_page`                                                                      | Open a URL                                                                             |
+| `mcp__chrome-devtools__take_snapshot`                                                                      | Get the accessibility tree of the current page                                         |
+| `mcp__chrome-devtools__click`                                                                              | Click a labeled element                                                                |
+| `mcp__chrome-devtools__fill`                                                                               | Type into a single input                                                               |
+| `mcp__chrome-devtools__fill_form`                                                                          | Fill multiple inputs at once                                                           |
+| `mcp__chrome-devtools__select_option` (where supported) or `mcp__chrome-devtools__click` on combobox items | Pick a dropdown value                                                                  |
+| `mcp__chrome-devtools__wait_for`                                                                           | Wait for a piece of text or element to appear                                          |
+| `mcp__chrome-devtools__upload_file`                                                                        | Pick a file in a `<input type=file>`                                                   |
+| `mcp__chrome-devtools__handle_dialog`                                                                      | Accept / dismiss confirm + alert dialogs                                               |
+| `mcp__chrome-devtools__list_network_requests`                                                              | Inspect what the page fired                                                            |
+| `mcp__chrome-devtools__get_network_request`                                                                | Get headers + body of a specific request                                               |
+| `mcp__chrome-devtools__list_console_messages`                                                              | Inspect what the page logged                                                           |
+| `mcp__chrome-devtools__take_screenshot`                                                                    | Visual checkpoint                                                                      |
+| `mcp__chrome-devtools__new_page` / `select_page` / `list_pages`                                            | Multi-tab journeys (e.g. invitation accept)                                            |
+| `mcp__supabase__execute_sql`                                                                               | Read-only queries (project `pzmbxqdgibfkhjwzeprf`); direct SQL writes are operator-run |
+| `mcp__supabase__list_tables`                                                                               | Schema discovery (rare; only if a column name surprises us)                            |
+| `mcp__supabase__get_logs`                                                                                  | Inspect Supabase logs when a query unexpectedly errors                                 |
 
 **Prohibited tools.**
 

@@ -6,6 +6,9 @@ import {
 } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { resolveRoomEndsAt } from "@/lib/meetings/duration-cap";
+import type { MeetingEndReason } from "@/lib/meetings/end-reasons";
+import { closeSegmentPresences } from "@/lib/meetings/segment-presence";
 
 export interface ReconciliationResult {
   processed: number;
@@ -26,10 +29,14 @@ export async function reconcileOrphanedSessions(): Promise<ReconciliationResult>
 interface OrphanedSessionRow {
   id: string;
   streamCallId: string;
+  extendedSeconds: number;
   occurrence: {
     endsAt: Date | string;
   };
 }
+
+const roomEndOf = (session: OrphanedSessionRow) =>
+  resolveRoomEndsAt(session.occurrence.endsAt, session.extendedSeconds);
 
 function isStreamCallNotFoundError(err: unknown): boolean {
   if (typeof err === "object" && err !== null) {
@@ -51,8 +58,8 @@ function isStreamCallNotFoundError(err: unknown): boolean {
 async function resolveOrphanedSessionEnd(
   session: OrphanedSessionRow,
   result: ReconciliationResult,
-): Promise<{ endedAt: Date; endedReason: string } | null> {
-  const fallbackEndedAt = new Date(session.occurrence.endsAt);
+): Promise<{ endedAt: Date; endedReason: MeetingEndReason } | null> {
+  const fallbackEndedAt = roomEndOf(session);
   if (!isStreamConfigured()) {
     result.streamNotFound++;
     return { endedAt: fallbackEndedAt, endedReason: "stream_not_configured" };
@@ -113,7 +120,10 @@ async function resolveOrphanedSessionEnd(
 async function reconcileSingleOrphanedSession(
   session: OrphanedSessionRow,
   result: ReconciliationResult,
+  oneHourAgo: Date,
 ): Promise<void> {
+  // The query filters on the booked end; an extended room is not orphaned until its room end passes.
+  if (roomEndOf(session) >= oneHourAgo) return;
   result.processed++;
 
   try {
@@ -130,9 +140,10 @@ async function reconcileSingleOrphanedSession(
       });
 
       if (updated.count !== 0) {
-        await db.meetingPresence.updateMany({
-          where: { meetingId: session.id, leftAt: null },
-          data: { leftAt: endedAt },
+        await closeSegmentPresences(db, {
+          meetingId: session.id,
+          streamCallId: session.streamCallId,
+          endedAt,
         });
       }
     };
@@ -204,7 +215,9 @@ async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult
 
     await orphanedSessions.reduce<Promise<void>>(
       (chain, session) =>
-        chain.then(() => reconcileSingleOrphanedSession(session, result)),
+        chain.then(() =>
+          reconcileSingleOrphanedSession(session, result, oneHourAgo),
+        ),
       Promise.resolve(),
     );
 
