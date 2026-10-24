@@ -10,6 +10,7 @@ const mockFindUnique = jest.fn();
 const mockRemoveObjects = jest.fn();
 const mockListPreviews = jest.fn();
 const mockErasureRequestUpdate = jest.fn();
+const mockDeleteStreamCopy = jest.fn();
 let mockRequestStatus: ErasureStatus;
 
 jest.mock("../../lib/prisma", () => ({
@@ -77,6 +78,10 @@ jest.mock("../../lib/storage/r2-client", () => ({
   streamMultipartToR2: jest.fn(),
   headR2Object: jest.fn(),
 }));
+jest.mock("../../lib/stream/recording-stream-delete", () => ({
+  deleteStreamRecordingCopy: (...args: unknown[]) =>
+    mockDeleteStreamCopy(...args),
+}));
 jest.mock("../../lib/supabase-storage-core", () => ({
   removeObjects: (...args: unknown[]) => mockRemoveObjects(...args),
   adminStorage: () => ({
@@ -102,7 +107,8 @@ type Row = {
   storagePath: string | null;
   previewClipStoragePath: string | null;
   recordingUrl: string;
-  streamRecordingId: string;
+  streamCallId: string | null;
+  streamRecordingId: string | null;
   transferAttempts: number;
   updatedAt: Date;
   purchased: boolean;
@@ -131,6 +137,11 @@ function applyData(data: Prisma.RecordingUpdateManyMutationInput) {
     data.previewClipStoragePath === null
   )
     row.previewClipStoragePath = data.previewClipStoragePath;
+  if (
+    typeof data.streamRecordingId === "string" ||
+    data.streamRecordingId === null
+  )
+    row.streamRecordingId = data.streamRecordingId;
   if (typeof data.transferAttempts === "number") {
     row.transferAttempts = data.transferAttempts;
   } else if (data.transferAttempts) {
@@ -200,6 +211,18 @@ function matches(where: Prisma.RecordingWhereInput = {}) {
     where.previewClipStoragePath !== row.previewClipStoragePath
   )
     return false;
+  if (
+    typeof where.streamRecordingId === "object" &&
+    where.streamRecordingId?.not === null &&
+    row.streamRecordingId === null
+  )
+    return false;
+  if (
+    (typeof where.streamRecordingId === "string" ||
+      where.streamRecordingId === null) &&
+    where.streamRecordingId !== row.streamRecordingId
+  )
+    return false;
   return true;
 }
 
@@ -211,6 +234,7 @@ beforeEach(() => {
     storagePath: null,
     previewClipStoragePath: null,
     recordingUrl: "https://video.cloudfront.net/immutable-source.mp4",
+    streamCallId: null,
     streamRecordingId: "immutable-source.mp4",
     transferAttempts: 0,
     updatedAt: new Date("2026-10-01T00:00:00.000Z"),
@@ -268,6 +292,7 @@ beforeEach(() => {
   });
   jest.mocked(headR2Object).mockResolvedValue({ contentLength: 4 });
   mockRemoveObjects.mockResolvedValue(true);
+  mockDeleteStreamCopy.mockResolvedValue({ success: true });
   mockListPreviews.mockResolvedValue({ data: [], error: null });
   jest.spyOn(global, "fetch").mockResolvedValue(
     new Response("copy", {
@@ -327,7 +352,7 @@ it("prevents publication when erasure expires a copy still waiting at HEAD", asy
     expect(await copy).toEqual({ status: "skipped" });
     expect(objects.size).toBe(0);
     expect(row.storagePath).toBeNull();
-    expect(row.streamRecordingId).toBe("immutable-source.mp4");
+    expect(row.streamRecordingId).toBeNull();
   } finally {
     resume.resolve();
     await Promise.allSettled([copy]);
@@ -355,7 +380,7 @@ it("leaves failed erasure pointers for the real expiry entry to retry", async ()
   expect(deleteR2Object).toHaveBeenCalledTimes(2);
   expect(objects.size).toBe(0);
   expect(row.storagePath).toBeNull();
-  expect(row.streamRecordingId).toBe("immutable-source.mp4");
+  expect(row.streamRecordingId).toBeNull();
 });
 
 it("keeps the admin request open until a failed expired asset is deleted on retry", async () => {
@@ -411,6 +436,10 @@ it("retains both claimed pointers when preview deletion fails", async () => {
   row.storagePath = "recordings/recording-one/attempt-1.mp4";
   row.previewClipStoragePath = "recording-one/preview.mp4";
   objects.add(row.storagePath);
+  mockListPreviews.mockResolvedValueOnce({
+    data: [{ name: "preview.mp4" }],
+    error: null,
+  });
   mockRemoveObjects.mockResolvedValueOnce(false);
 
   expect((await scrubUser(prisma, "erased-user")).vendorFailures).toHaveLength(

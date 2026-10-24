@@ -21,6 +21,12 @@ jest.mock("../../lib/novu/client", () => ({
 jest.mock("../../lib/novu/subscriber", () => ({
   deleteSubscriber: jest.fn(async () => true),
 }));
+jest.mock("../../lib/stream/recording-storage", () => ({
+  deleteRecordingAssets: jest.fn(async () => ({ success: true })),
+}));
+jest.mock("../../lib/stream/recording-stream-delete", () => ({
+  deleteStreamRecordingCopy: jest.fn(async () => ({ success: true })),
+}));
 
 const mockRevokeUserToken = jest.fn(async () => ({}));
 const mockDeleteUsers = jest.fn(async () => ({}));
@@ -162,18 +168,15 @@ describe("DPDP erasure Stream principal leg", () => {
   });
 
   it("purges 1:1 recordings, unpublishes host group recordings, and withdraws RecordingConsent on scrubUser", async () => {
-    const mockRecordingFindMany = jest.fn(async () => [
-      {
-        id: "rec-1on1",
-        storagePath: null,
-        previewClipStoragePath: null,
-      },
-    ]);
+    const mockRecordingFindMany = jest.fn(async () => [{ id: "rec-1on1" }]);
     const mockRecordingClaim = jest.fn(async () => [
       {
         id: "rec-1on1",
         storagePath: null,
         previewClipStoragePath: null,
+        streamCallId: null,
+        streamRecordingId: null,
+        removedAt: null,
       },
     ]);
     const mockRecordingUpdateMany = jest.fn(async () => ({ count: 1 }));
@@ -204,6 +207,7 @@ describe("DPDP erasure Stream principal leg", () => {
             OR: [
               { storagePath: { not: null } },
               { previewClipStoragePath: { not: null } },
+              { streamRecordingId: { not: null } },
             ],
           },
         ],
@@ -213,7 +217,14 @@ describe("DPDP erasure Stream principal leg", () => {
         status: "EXPIRED",
         recordingUrl: "",
       },
-      select: { id: true, storagePath: true, previewClipStoragePath: true },
+      select: {
+        id: true,
+        storagePath: true,
+        previewClipStoragePath: true,
+        streamCallId: true,
+        streamRecordingId: true,
+        removedAt: true,
+      },
     });
     expect(mockRecordingUpdateMany).toHaveBeenCalledWith({
       where: {
@@ -221,11 +232,17 @@ describe("DPDP erasure Stream principal leg", () => {
         status: "EXPIRED",
         storagePath: null,
         previewClipStoragePath: null,
+        streamRecordingId: null,
       },
       data: {
         storagePath: null,
         previewClipUrl: null,
         previewClipStoragePath: null,
+        previewClipDuration: null,
+        previewTranscript: null,
+        thumbnailUrl: null,
+        streamRecordingId: null,
+        removedAt: expect.any(Date),
       },
     });
     expect(mockRecordingUpdateMany).toHaveBeenCalledWith(

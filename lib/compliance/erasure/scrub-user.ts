@@ -210,8 +210,6 @@ export async function offboardNotificationVendor(
 }
 
 export const STREAM_PRINCIPAL_PLAN_ID_PREFIX = "principal:";
-const RECORDING_PREVIEWS_BUCKET = "recordings-previews";
-
 export function principalStreamPlanId(userId: string): string {
   return `${STREAM_PRINCIPAL_PLAN_ID_PREFIX}${userId}`;
 }
@@ -241,38 +239,52 @@ export async function eraseStreamPrincipalFootprint(
   }
 }
 
+async function deleteStreamRecordingCopy(rec: {
+  streamCallId: string | null;
+  streamRecordingId: string | null;
+}): Promise<boolean> {
+  const { deleteStreamRecordingCopy: remove } =
+    await import("@/lib/stream/recording-stream-delete");
+  const result = await remove(rec);
+  return result.success;
+}
+
 async function purgeSingleUserRecordingOnErasure(
   db: Db,
   recordingId: string,
   eligible: Prisma.RecordingWhereInput,
+  now: Date,
 ): Promise<void> {
   // Stop transfer publication and capture the assets from the same row version.
   const [rec] = await db.recording.updateManyAndReturn({
     where: { ...eligible, id: recordingId },
     data: { status: "EXPIRED", recordingUrl: "" },
-    select: { id: true, storagePath: true, previewClipStoragePath: true },
+    select: {
+      id: true,
+      storagePath: true,
+      previewClipStoragePath: true,
+      streamCallId: true,
+      streamRecordingId: true,
+      removedAt: true,
+    },
   });
   if (!rec) return;
 
-  const { deleteRecordingObject } =
+  const { deleteRecordingAssets } =
     await import("@/lib/stream/recording-storage");
-  const { removeObjects } = await import("@/lib/supabase-storage-core");
-  if (rec.storagePath) {
-    const deleted = await deleteRecordingObject(rec.storagePath);
-    if (!deleted.success) {
-      throw new Error(
-        deleted.error ?? "Failed to delete recording object from storage",
-      );
-    }
+  const streamCopyGone = await deleteStreamRecordingCopy(rec);
+  const assets = await deleteRecordingAssets({
+    id: rec.id,
+    storagePath: rec.storagePath,
+  });
+  // Any vendor failure throws with the pointers still on the row for the retry.
+  if (!assets.success) {
+    throw new Error(
+      assets.error ?? "Failed to delete recording object from storage",
+    );
   }
-  if (rec.previewClipStoragePath) {
-    if (
-      !(await removeObjects(RECORDING_PREVIEWS_BUCKET, [
-        rec.previewClipStoragePath,
-      ]))
-    ) {
-      throw new Error("Recording preview clip was not removed from storage");
-    }
+  if (!streamCopyGone) {
+    throw new Error("Stream copy of the recording was not confirmed deleted");
   }
 
   const cleared = await db.recording.updateMany({
@@ -281,22 +293,34 @@ async function purgeSingleUserRecordingOnErasure(
       status: "EXPIRED",
       storagePath: rec.storagePath,
       previewClipStoragePath: rec.previewClipStoragePath,
+      streamRecordingId: rec.streamRecordingId,
     },
     data: {
       storagePath: null,
       previewClipUrl: null,
       previewClipStoragePath: null,
+      previewClipDuration: null,
+      previewTranscript: null,
+      thumbnailUrl: null,
+      streamRecordingId: null,
+      removedAt: rec.removedAt ?? now,
     },
   });
   if (cleared.count === 0) {
     const current = await db.recording.findUnique({
       where: { id: rec.id },
-      select: { status: true, storagePath: true, previewClipStoragePath: true },
+      select: {
+        status: true,
+        storagePath: true,
+        previewClipStoragePath: true,
+        streamRecordingId: true,
+      },
     });
     if (
       current?.status === "EXPIRED" &&
       current.storagePath === null &&
-      current.previewClipStoragePath === null
+      current.previewClipStoragePath === null &&
+      current.streamRecordingId === null
     ) {
       return;
     }
@@ -364,6 +388,7 @@ async function cleanupUserRecordingsOnErasure(
             OR: [
               { storagePath: { not: null } },
               { previewClipStoragePath: { not: null } },
+              { streamRecordingId: { not: null } },
             ],
           },
         ],
@@ -426,7 +451,7 @@ async function cleanupUserRecordingsOnErasure(
       if (Array.isArray(oneToOneRecordings)) {
         for (const rec of oneToOneRecordings) {
           try {
-            await purgeSingleUserRecordingOnErasure(db, rec.id, eligible);
+            await purgeSingleUserRecordingOnErasure(db, rec.id, eligible, now);
           } catch (error_) {
             failures.push(
               `recording_storage:${rec.id}: deletion not confirmed — re-run required`,

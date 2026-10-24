@@ -56,20 +56,29 @@ jest.mock("../../lib/supabase-storage-core", () => ({
 }));
 
 const rows = (paths: string[]) => paths.map((storagePath) => ({ storagePath }));
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
-    appointment: { findMany: jest.fn(async () => []) },
+jest.mock("../../lib/prisma", () => {
+  const client = {
+    $executeRaw: jest.fn(async () => 1),
+    $transaction: jest.fn(),
+    appointment: {
+      findMany: jest.fn(async () => []),
+      findUnique: jest.fn(async () => null),
+    },
     appointmentDocument: {
       findMany: jest.fn(async () => []),
+      count: jest.fn(async () => 0),
       updateMany: jest.fn(async () => ({ count: 0 })),
       deleteMany: jest.fn(async () => ({ count: 1 })),
     },
     planMaterial: { findMany: jest.fn() },
     profileVerificationDocument: { findMany: jest.fn() },
     supportCaseAttachment: { findMany: jest.fn(async () => []) },
-  },
-}));
+  };
+  client.$transaction.mockImplementation(
+    async (fn: (tx: typeof client) => Promise<unknown>) => fn(client),
+  );
+  return { __esModule: true, default: client };
+});
 
 import prisma from "../../lib/prisma";
 import { reportSentryMessage } from "../../lib/observability/report";
@@ -173,6 +182,10 @@ describe("purge-deleted-documents", () => {
     (prisma.appointment.findMany as jest.Mock)
       .mockResolvedValueOnce([booking(91), booking(89)])
       .mockResolvedValueOnce([]);
+    (prisma.appointment.findUnique as jest.Mock).mockImplementation(
+      async ({ where }: { where: { id: string } }) =>
+        where.id === "apt-91" ? booking(91) : null,
+    );
     (prisma.appointmentDocument.updateMany as jest.Mock).mockResolvedValue({
       count: 2,
     });
@@ -185,6 +198,50 @@ describe("purge-deleted-documents", () => {
       data: { deletedAt: now, removalReason: "RETENTION_EXPIRY" },
     });
     expect(result.tombstoned).toBe(2);
+  });
+
+  it("continues with the remaining bookings when one tombstone transaction fails", async () => {
+    (prisma.appointmentDocument.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.appointment.findMany as jest.Mock)
+      .mockResolvedValueOnce([booking(91), booking(92)])
+      .mockResolvedValueOnce([]);
+    (prisma.appointment.findUnique as jest.Mock).mockImplementation(
+      async ({ where }: { where: { id: string } }) =>
+        where.id === "apt-91" ? booking(91) : booking(92),
+    );
+    (prisma.$transaction as jest.Mock).mockRejectedValueOnce(
+      new Error("deadlock"),
+    );
+    (prisma.appointmentDocument.updateMany as jest.Mock).mockResolvedValue({
+      count: 1,
+    });
+
+    const result = await purgeDeletedDocuments(now);
+
+    expect(result.failedTombstones).toBe(1);
+    expect(result.tombstoned).toBe(1);
+    expect(result.success).toBe(false);
+    expect(prisma.appointmentDocument.updateMany).toHaveBeenCalledTimes(1);
+    expect(reportSentryMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds the tombstone pass by the run limit", async () => {
+    (prisma.appointmentDocument.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.appointment.findMany as jest.Mock)
+      .mockResolvedValueOnce([booking(91), booking(92)])
+      .mockResolvedValueOnce([]);
+    (prisma.appointment.findUnique as jest.Mock).mockImplementation(
+      async ({ where }: { where: { id: string } }) =>
+        where.id === "apt-91" ? booking(91) : booking(92),
+    );
+    (prisma.appointmentDocument.updateMany as jest.Mock).mockResolvedValue({
+      count: 1,
+    });
+
+    const result = await purgeDeletedDocuments(now, { limit: 1 });
+
+    expect(result.tombstoned).toBe(1);
+    expect(prisma.appointmentDocument.updateMany).toHaveBeenCalledTimes(1);
   });
 
   it("purges versions before roots, retries surviving bytes and reports once", async () => {
@@ -212,7 +269,10 @@ describe("purge-deleted-documents", () => {
 
     const where = (prisma.appointmentDocument.findMany as jest.Mock).mock
       .calls[0][0].where;
-    expect(where.AND).toContainEqual({
+    const nested = (where.AND as Array<{ AND?: unknown[] }>).find((part) =>
+      Array.isArray(part.AND),
+    );
+    expect(nested?.AND).toContainEqual({
       OR: [{ rootDocumentId: { not: null } }, { threadVersions: { none: {} } }],
     });
     expect(result).toMatchObject({
