@@ -223,6 +223,17 @@ describe("recording publication ownership", () => {
     expect(mockRecordingUpdateManyAndReturn).not.toHaveBeenCalled();
   });
 
+  it.each([0, -1, 99])(
+    "refuses a %i paise list price before any publication write",
+    async (listPricePaise) => {
+      const response = await publish({ listPricePaise });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ code: "INVALID_INPUT" });
+      expect(mockRecordingUpdateManyAndReturn).not.toHaveBeenCalled();
+      expect(mockRecordingUpdate).not.toHaveBeenCalled();
+    },
+  );
+
   it("requires the durable object pointer before attempting to publish", async () => {
     mockRow.storagePath = null;
     const response = await publish();
