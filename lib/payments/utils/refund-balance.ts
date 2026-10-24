@@ -20,7 +20,8 @@ export function refundedPaise(refunds: RefundLike[]): number {
   return refunds
     .filter(
       (r) =>
-        r.status === RefundStatus.SUCCEEDED || r.status === RefundStatus.PENDING,
+        r.status === RefundStatus.SUCCEEDED ||
+        r.status === RefundStatus.PENDING,
     )
     .reduce((acc, r) => acc + r.amountPaise, 0);
 }
@@ -36,4 +37,20 @@ export function isPaymentEntitled(payment: {
   refunds: RefundLike[];
 }): boolean {
   return refundedPaise(payment.refunds) < payment.amount;
+}
+
+/**
+ * True when the buyer was refunded out of a purchase: some payment carried
+ * money and none of them is still entitled. A free booking (no payment, or
+ * only zero-amount rows) was never bought, so it is never revoked.
+ */
+export function isFullyRefundedPurchase(
+  payments: readonly { amount: number; refunds: RefundLike[] }[],
+): boolean {
+  return (
+    payments.some((payment) => payment.amount > 0) &&
+    payments.every(
+      (payment) => payment.amount === 0 || !isPaymentEntitled(payment),
+    )
+  );
 }
