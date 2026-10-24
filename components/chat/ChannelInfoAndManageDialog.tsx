@@ -49,9 +49,14 @@ import {
   viewerOwnsChannel,
 } from "./utils/channelUtils";
 import { AddMembersDialog } from "./AddMembersDialog";
-import { isEventChannel, isManagedChannel } from "@/lib/stream-channel-ids";
+import {
+  isEventChannel,
+  isManagedChannel,
+  parseEventChannelId,
+} from "@/lib/stream-channel-ids";
 import { isSupportStreamUser } from "@/lib/stream/support-user";
 import { addMemberToChannel } from "@/actions/stream/chat/member.action";
+import { removeUserFromEventChannel } from "@/actions/stream/chat/event-channel.action";
 
 interface ChannelMember {
   id: string;
@@ -230,9 +235,18 @@ export const ChannelInfoAndManageDialog = ({
       return;
     }
 
+    const eventChannel = parseEventChannelId(channel.id);
+    if (!eventChannel) return;
+
     setIsLoading(true);
     try {
-      await channel.removeMembers([memberId]);
+      // Stream denies channel owners removeMembers; the server action authorises the host.
+      const result = await removeUserFromEventChannel(
+        eventChannel.eventType,
+        eventChannel.eventId,
+        memberId,
+      );
+      if (!result.success) throw new Error("Member removal was refused");
       toast({
         title: "Success",
         description: "Member removed successfully",

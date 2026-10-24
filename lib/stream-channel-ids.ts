@@ -114,6 +114,22 @@ export function isEventChannel(channelId: string | undefined): boolean {
   );
 }
 
+/** Splits a `webinar-`/`class-` channel id into its event type and plan id; null for any other id. */
+export function parseEventChannelId(
+  channelId: string | undefined,
+): { eventType: "webinar" | "class"; eventId: string } | null {
+  if (!channelId) return null;
+  for (const [prefix, eventType] of [
+    [WEBINAR_PREFIX, "webinar"],
+    [CLASS_PREFIX, "class"],
+  ] as const) {
+    if (channelId.startsWith(prefix) && channelId.length > prefix.length) {
+      return { eventType, eventId: channelId.slice(prefix.length) };
+    }
+  }
+  return null;
+}
+
 /** Check if channel is a direct message, in any of its three id forms */
 export function isDMChannel(channelId: string | undefined): boolean {
   if (!channelId) return false;
