@@ -1420,3 +1420,19 @@ ALTER TABLE "StreamRevocationRetry" ADD CONSTRAINT "stream_revocation_retry_owne
 CREATE UNIQUE INDEX IF NOT EXISTS "stream_revocation_retry_open_key"
   ON "StreamRevocationRetry" ("kind", "planId", "userId")
   WHERE "erasureRequestId" IS NULL AND "status" <> 'SUCCEEDED';
+-- SPLIT
+-- Meeting.endedReason holds only MEETING_END_REASONS (lib/meetings/end-reasons.ts); NOT VALID skips the scan, so VALIDATE separately.
+-- Before VALIDATE, confirm SELECT DISTINCT "endedReason" FROM "Meeting" returns only these values or NULL.
+ALTER TABLE "Meeting"
+  DROP CONSTRAINT IF EXISTS "meeting_ended_reason_known",
+  ADD CONSTRAINT "meeting_ended_reason_known"
+    CHECK (
+      "endedReason" IS NULL
+      OR "endedReason" IN (
+        'call_ended', 'maintenance', 'org_deactivated', 'org_deleted',
+        'session_timeout', 'ended_early', 'stream_ended',
+        'reconciled', 'reconciled_no_end', 'stream_not_found', 'stream_not_configured'
+      )
+    ) NOT VALID;
+-- SPLIT
+ALTER TABLE "Meeting" VALIDATE CONSTRAINT "meeting_ended_reason_known";

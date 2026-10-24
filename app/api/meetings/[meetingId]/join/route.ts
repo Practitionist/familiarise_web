@@ -47,9 +47,8 @@ export async function POST(
     const role = access.coPresenter ? CO_PRESENTER_CALL_ROLE : CALL_MEMBER_ROLE;
     const resolvedCallId = toCallId(access.streamCallId ?? meetingId);
 
+    await upsertUsersToStream([userId]);
     const admitted = await withStreamCircuitBreaker(async () => {
-      await upsertUsersToStream([userId]);
-
       const call = getStreamVideoClient().video.call(
         STREAM_CALL_TYPE,
         resolvedCallId,

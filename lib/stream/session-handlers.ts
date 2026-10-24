@@ -12,6 +12,11 @@
 
 import prisma from "@/lib/prisma";
 import { isDeliberateEnd } from "@/lib/appointments/occurrences";
+import {
+  mapStreamCallEndedReason,
+  recordedEndHolds,
+  type MeetingEndReason,
+} from "@/lib/meetings/end-reasons";
 import { parseSlotIdFromCallId, toCallId } from "@/lib/stream/call-cid";
 import { getCallParticipantSessionsFromStream } from "@/lib/stream/call-presence";
 import { streamLogger } from "@/lib/stream-logger";
@@ -79,23 +84,6 @@ export function extractEndedByUserId(
     event.ended_by_user_id ??
     null
   );
-}
-
-function resolveCallEndedReason(
-  endedBeforeStart: boolean,
-  endedByUserId: string | null,
-  reason?: string,
-): string {
-  if (endedBeforeStart) return "ended_early";
-  if (
-    reason &&
-    reason !== "call_ended" &&
-    reason !== "end_call" &&
-    !endedByUserId
-  ) {
-    return reason;
-  }
-  return "call_ended";
 }
 
 const MEETING_END_INCLUDE = {
@@ -278,7 +266,7 @@ export async function handleSessionEnded(
     const endedAt = new Date(created_at);
 
     if (
-      isDeliberateEnd(meeting) ||
+      recordedEndHolds(meeting, "session_timeout") ||
       !supersedesRecordedEnd(meeting.endedAt, endedAt)
     ) {
       await runBestEffortGroupReconciliation(
@@ -366,8 +354,18 @@ export async function handleCallEnded(
     }
 
     const endedAt = new Date(created_at);
+    const slotStartsAt = meeting.occurrence.startsAt;
+    const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
+    const endedReason = mapStreamCallEndedReason({
+      endedBeforeStart,
+      endedByUserId,
+      streamReason: event.reason,
+    });
 
-    if (!supersedesRecordedEnd(meeting.endedAt, endedAt)) {
+    if (
+      recordedEndHolds(meeting, endedReason) ||
+      !supersedesRecordedEnd(meeting.endedAt, endedAt)
+    ) {
       await runBestEffortGroupReconciliation(
         meeting,
         meeting.endedAt ?? endedAt,
@@ -379,14 +377,6 @@ export async function handleCallEnded(
       });
       return;
     }
-
-    const slotStartsAt = meeting.occurrence.startsAt;
-    const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
-    const endedReason = resolveCallEndedReason(
-      endedBeforeStart,
-      endedByUserId,
-      event.reason,
-    );
 
     if (!(await stampEnd(meeting, endedAt, endedReason))) return;
 
@@ -409,6 +399,7 @@ export async function handleCallEnded(
       streamCallId,
       endedAt: created_at,
       endedReason,
+      streamReason: event.reason ?? null,
       hasEndedByUser,
     });
   } catch (error) {
@@ -419,30 +410,43 @@ export async function handleCallEnded(
   }
 }
 
+type SynchronousEndResult =
+  | { kind: "not_found" }
+  | { kind: "already_ended"; streamCallId: string }
+  | {
+      kind: "recorded";
+      endedReason: "ended_early" | "call_ended";
+      streamCallId: string;
+    };
+
 /**
- * Synchronously stamps `Meeting.endedAt` and `endedReason` on host-initiated
- * termination before navigating back to the dashboard, eliminating webhook lag.
+ * Stamps `Meeting.endedAt` and `endedReason` on a host's end before the webhook
+ * lands; `streamCallId` is the id that now represents the room.
  */
 export async function recordMeetingEndedSynchronously(
   streamCallId: string,
   endedAt: Date = new Date(),
-): Promise<{
-  endedReason: "ended_early" | "call_ended";
-  nextStreamCallId: string;
-} | null> {
+): Promise<SynchronousEndResult> {
   const meeting = await prisma.meeting.findUnique({
     where: { streamCallId },
     include: { occurrence: true },
   });
-  if (!meeting) return null;
+  if (!meeting) return { kind: "not_found" };
 
-  if (!supersedesRecordedEnd(meeting.endedAt, endedAt)) {
-    return null;
-  }
-
+  const alreadyEnded = {
+    kind: "already_ended" as const,
+    streamCallId: meeting.streamCallId,
+  };
   const slotStartsAt = meeting.occurrence.startsAt;
   const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
   const endedReason = endedBeforeStart ? "ended_early" : "call_ended";
+
+  if (
+    recordedEndHolds(meeting, endedReason) ||
+    !supersedesRecordedEnd(meeting.endedAt, endedAt)
+  ) {
+    return alreadyEnded;
+  }
 
   if (endedBeforeStart) {
     const nextStreamCallId = `occurrence-${meeting.occurrence.id}-r${endedAt.getTime().toString(36)}`;
@@ -455,12 +459,12 @@ export async function recordMeetingEndedSynchronously(
         isRecording: false,
       },
     });
-    if (updated.count === 0) return null;
-    return { endedReason, nextStreamCallId };
+    if (updated.count === 0) return alreadyEnded;
+    return { kind: "recorded", endedReason, streamCallId: nextStreamCallId };
   }
 
-  if (!(await stampEnd(meeting, endedAt, endedReason))) return null;
-  return { endedReason, nextStreamCallId: meeting.streamCallId };
+  if (!(await stampEnd(meeting, endedAt, endedReason))) return alreadyEnded;
+  return { kind: "recorded", endedReason, streamCallId: meeting.streamCallId };
 }
 
 /**
@@ -502,7 +506,7 @@ function presenceKey(
 function stampEnd(
   meeting: { id: string; endedAt: Date | null },
   endedAt: Date,
-  endedReason: string,
+  endedReason: MeetingEndReason,
 ): Promise<boolean> {
   return prisma.$transaction(async (tx) => {
     const { count } = await tx.meeting.updateMany({

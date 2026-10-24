@@ -347,7 +347,7 @@ Synchronous route execution (`POST /api/meetings/[meetingId]/end`) and asynchron
 1. **Asymmetric Lookup Between Artifacts/Presence and Termination Webhooks**:
    - **`handleRecordingReady`, `handleRecordingFailed`, `handleSessionParticipantJoined`, `handleSessionParticipantLeft`**: First look up `where: { streamCallId }` and **fall back to `where: { appointmentOccurrenceId }`** extracted via `parseSlotIdFromCallId(call_cid)`. If a host ends and reopens a room while segment 1's composite MP4 is still transcoding or final participant-left durations are in flight, those artifacts and attendance records still bind cleanly to the occurrence's `Meeting` row.
    - **`handleCallEnded` and `handleSessionEnded`**: Query **strictly `where: { streamCallId }`** without falling back to `appointmentOccurrenceId`. Delayed termination or 5-minute SFU inactivity webhooks emitted for closed segment 1 never match rotated segment 2 (`occurrence-<uuid>-r<base36>`), protecting live reopened rooms from premature shutdown.
-2. **Monotonic Latest Timestamp Wins (`supersedesRecordedEnd`)**: Termination writes proceed only when `incoming > existing.endedAt`. Replayed or out-of-order older webhooks never rewind `endedAt`.
+2. **Monotonic Latest Timestamp Wins, Deliberate Ends Never Overwritten**: Termination writes proceed only when `incoming > existing.endedAt` (`supersedesRecordedEnd`) **and** the recorded end does not hold against the incoming reason (`recordedEndHolds` in `lib/meetings/end-reasons.ts`: a deliberate end always holds, and a sealed end such as `stream_ended` holds unless the incoming reason is deliberate). `handleCallEnded`, `handleSessionEnded` and `recordMeetingEndedSynchronously` all apply both tests, so a replayed or late `call.ended` can neither rewind `endedAt` nor turn a `maintenance` or `org_deactivated` close into `call_ended`. `handleCallEnded` maps the webhook with `mapStreamCallEndedReason`: before the booked start gives `ended_early`; a user end, no Stream reason, `call_ended` or `end_call` gives `call_ended`; any other Stream reason gives `stream_ended`. The raw Stream reason is only logged. `handleSessionEnded` writes `session_timeout`.
 3. **Pre-Start Device Check vs Live Termination (`ended_early` vs `call_ended`)**: Ending before `startsAt` classifies the action as `"ended_early"` and rotates `streamCallId = "occurrence-<uuid>-r<base36>"` while leaving `completionStatus = "SCHEDULED"`; ending at or after `startsAt` stamps `endedReason = "call_ended"`, closes open `MeetingPresence` and `MeetingAttendance` rows via CAS, and penalizes under-delivered sessions as `CUT_SHORT` only when ended deliberately by a host (`endedByUserId` null or in `hostUserIds`).
 4. **Webinar & Class End Backfill (`reconcileWebinarAttendance`)**: Both `handleSessionEnded` and `handleCallEnded` run best-effort `reconcileWebinarAttendance` on group sessions (`webinar` or `class`) so missed participant attendance rows are backfilled from Stream sessions even if individual participant events were dropped.
 5. **Participant Rejoin & Lock Ordering (`Meeting -> MeetingPresence -> MeetingAttendance`)**: `handleSessionParticipantJoined` and `handleSessionParticipantLeft` execute in strict `Meeting -> MeetingPresence -> MeetingAttendance` lock order (`createMany({ skipDuplicates: true })`). Out-of-order `left`-before-`joined` events clamp `firstJoinedAt` monotonically (`firstJoinedAt: { gt: joinedAt }`), late joins arriving after a deliberate end immediately close (`leftAt = effectiveEndedAt`), and non-deliberate ends clear `endedAt` via CAS on rejoin.
@@ -472,7 +472,7 @@ flowchart TD
 
 Webhooks may be delivered multiple times. The handler uses multiple idempotency strategies:
 
-1. **Event ID tracking** - Log webhook events with unique IDs
+1. **Event ID tracking** - `recordStreamEventReceipt` (`lib/stream/webhook-receipt.ts`) writes the receipt with a single `create`; the unique `WebhookEvent.eventId` index is the duplicate check, and a unique violation (classic `P2002` or the Prisma 7 adapter's `23505`) means "already received". Only a duplicate then tries to re-claim a stale in-progress lease
 2. **Recording existence check** - Skip if recording already exists for filename
 3. **Safe status updates** - Status updates are idempotent
 
@@ -806,7 +806,13 @@ failure surfaces the server's message in an error toast.
 
 #### POST /api/stream/webhooks
 
-Receives webhook events from Stream.
+Receives webhook events from Stream. The route verifies, writes the receipt, acknowledges and hands off to `after()`.
+
+**Stored payload:** `WebhookEvent.payload` holds the event parsed through its own Zod schema (`schemas/webhooks/stream.ts`), because Zod drops undeclared keys. Participant names, images and custom profile data never reach the table, while every id, timestamp, reason and URL the handlers read is kept, so `sweep-stuck-webhook-events` can re-drive any handler from the stored row. A payload that fails its schema falls back to the generic PII scrubber (`lib/logging/webhook-scrub.ts`); dispatch fails it permanently anyway. Adding a field a handler reads means adding it to the schema, which is also what keeps it in the stored row.
+
+**Error reporting:** an unconfigured signing secret, an invalid signature and a failing receipt write each send at most one Sentry event per window (`captureThrottled`), so a sustained outage costs one event, not one per delivery. The receipt failure still answers 503 every time so Stream redelivers.
+
+**Owned call types:** only `default` is accepted (`OWNED_CALL_TYPES`). Events for `livestream`, `audio_room` and `development` are acknowledged and marked processed without running a handler.
 
 **Headers:**
 
@@ -971,7 +977,7 @@ Three scheduled jobs keep the recording pipeline honest under GitHub Actions, ac
 
 ### Subscription drift is checked, not assumed
 
-`scripts/stream/ensure-webhook-subscription.ts` compares the event types the live Stream webhook subscription covers against `HANDLED_EVENT_TYPES` (`lib/stream/webhook-dispatch.ts`). Run with no flags to diff, `--apply` to update app settings, or `--check` in CI (`.github/workflows/stream-webhook-drift.yml`).
+The ticker job `stream-control-plane-drift` (`lib/stream/control-plane-drift.ts`, daily at 01:15 UTC) compares the live hook with `HANDLED_EVENT_TYPES` and the contract in `lib/stream/control-plane-contract.ts`: the hook must be enabled, point at `<NEXT_PUBLIC_APP_URL>/api/stream/webhooks`, and carry exactly the handled events. It is read-only and reports one Sentry message per run. `scripts/stream/ensure-webhook-subscription.ts` is the operator tool: no flags to diff, `--check` to exit 2 on drift, `--apply` to write.
 
 ### Never import `@/lib/supabase` from a cron job
 
@@ -1008,6 +1014,8 @@ Three scheduled jobs keep the recording pipeline honest under GitHub Actions, ac
 
 ## Deprecated & Superseded Approaches
 
+- **Raw Stream payloads in `WebhookEvent.payload`, and a find-then-create receipt**: the full event, including participant names, was stored for 30 to 90 days, and every first delivery cost two round trips. Superseded by the schema-parsed payload and the single-`create` receipt above.
+- **`livestream` in `OWNED_CALL_TYPES`**: livestream is unused at launch, and an authentic event from a type this app does not run can collide with a real Meeting id. Removed; the drift detector guards that `user` holds no create-call on it.
 - **Shared `recordings/{id}/composite.mp4` R2 keys during transfer retries**: Using a single static object key across retry attempts allowed a stalled worker's late `deleteR2Object` cleanup on CAS loss to delete a newer winning attempt's published MP4. Superseded by attempt-scoped `recordings/{recordingId}/attempt-{attempt}.mp4` keys with asynchronous cleanup of prior `attempt-1..{attempt-1}.mp4` objects after `status = AVAILABLE` commits.
 - **Unconditional `Meeting.isRecording = true` writes on late `call.recording_started`**: Checking `meeting.endedAt` only at `findUnique` time allowed out-of-order `call.recording_started` webhooks to re-arm `isRecording = true` if `call.ended` raced in between. Superseded by CAS `updateMany({ where: { id, endedAt: null } })` with metadata-only fallback.
 - **Short 1-hour fixed presigned playback URLs & player state wipes on URL refresh**: Fixed 1-hour URLs expired mid-watch on 2+ hour sessions and prop refreshes reset `savedTimeRef.current = 0`. Superseded by duration-scaled `playbackUrlTtlSeconds` (`>= 4 hours`) and `[open, recordingId]`-scoped player state preservation in `RecordingPlayerModal`.

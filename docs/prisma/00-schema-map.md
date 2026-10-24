@@ -617,6 +617,8 @@ erDiagram
         boolean isRecording
         datetime endedAt
         string endedReason
+        int extendedSeconds
+        int extensionsUsed
     }
     Recording {
         string id
@@ -844,6 +846,8 @@ erDiagram
         datetime recordingStartedAt
         datetime endedAt
         string endedReason
+        int extendedSeconds
+        int extensionsUsed
     }
     Recording {
         string id

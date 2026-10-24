@@ -3,10 +3,14 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { guardMeetingRoute } from "@/lib/meetings/route-guard";
 import {
-  MAX_CALL_DURATION_MS,
-  resolveMaxCallDurationSeconds,
+  MAX_MEETING_EXTENSIONS,
+  MEETING_EXTENSION_SECONDS,
+  resolveRoomCapSeconds,
+  resolveRoomEndsAt,
+  roomTimeCustom,
 } from "@/lib/meetings/duration-cap";
 import { buildCallSettingsOverride } from "@/lib/meetings/room-ready";
+import { meetingControlLimiter } from "@/lib/rate-limit";
 import {
   getStreamVideoClient,
   StreamUnavailableError,
@@ -15,7 +19,6 @@ import {
 import { streamLogger } from "@/lib/stream-logger";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { reportSentryError } from "@/lib/observability/report";
-import { isExclusionViolation } from "@/lib/db/pg-errors";
 import {
   buildCohostCommitmentFilter,
   buildOccupiedAppointmentFilter,
@@ -24,18 +27,6 @@ import {
   assertConsultantAvailableForWindows,
   ConsultantScheduleConflictError,
 } from "@/lib/collaborators/availability";
-
-const EXTENSION_SECONDS = 15 * 60;
-const EXTENSION_MS = EXTENSION_SECONDS * 1000;
-const MAX_CALL_DURATION_SECONDS = Math.floor(MAX_CALL_DURATION_MS / 1000);
-
-function resolveExtensionsUsed(
-  rawExtensionsUsed: unknown,
-  prevExtended: number,
-): number {
-  if (typeof rawExtensionsUsed === "number") return rawExtensionsUsed;
-  return prevExtended >= EXTENSION_SECONDS ? 1 : 0;
-}
 
 /**
  * Builds the Prisma `OR` clause matching any live occurrence that blocks a
@@ -145,6 +136,7 @@ function resolveAppointmentType(
   return null;
 }
 
+/** Checked against the room end; the overlap EXCLUDE index sees only booked ends, never extensions. */
 async function hasExtensionScheduleConflict(
   occurrence: {
     id: string;
@@ -216,205 +208,117 @@ async function hasExtensionScheduleConflict(
   return false;
 }
 
-type StreamExtensionPlan = {
-  alreadyExtended: boolean;
-  updatedCapSeconds: number;
-  extensionsUsed: number;
-  targetEndsAt: Date;
-  apply: () => Promise<void>;
-};
+/** Fields a room can only be extended through: unended, unclassified, still scheduled. */
+function extendableWhere(meetingId: string, extensionsUsed: number) {
+  return {
+    id: meetingId,
+    endedAt: null,
+    extensionsUsed: { equals: extensionsUsed, lt: MAX_MEETING_EXTENSIONS },
+    occurrence: {
+      completionStatus: "SCHEDULED" as const,
+      outcome: null,
+      deletedAt: null,
+    },
+  };
+}
 
-/** Reads the call and plans the +15 m extension; `apply` performs the Stream write. */
-async function planStreamCallExtension(
-  resolvedCallId: string,
-  baseCapSeconds: number,
-  appointmentType: string | null,
-  slotEndsAt: Date,
-): Promise<StreamExtensionPlan> {
+/**
+ * Brings the Stream call up to the Postgres extension; every value is derived, so a retry
+ * converges instead of adding time. Returns whether Stream was behind.
+ */
+async function mirrorExtensionToStream(args: {
+  streamCallId: string;
+  appointmentType: string | null;
+  startsAt: Date;
+  bookedEndsAt: Date;
+  extendedSeconds: number;
+  extensionsUsed: number;
+}): Promise<{ wrote: boolean; capSeconds: number }> {
   return withStreamCircuitBreaker(async () => {
     const call = getStreamVideoClient().video.call(
       STREAM_CALL_TYPE,
-      resolvedCallId,
+      toCallId(args.streamCallId),
     );
-    let currentState: Awaited<ReturnType<typeof call.get>>;
+    let current: Awaited<ReturnType<typeof call.get>>;
     try {
-      currentState = await call.get();
+      current = await call.get();
     } catch (err) {
       throw err instanceof StreamUnavailableError
         ? err
         : new StreamUnavailableError();
     }
+    if (!current?.call) throw new StreamUnavailableError();
 
-    if (!currentState?.call) {
-      throw new StreamUnavailableError();
-    }
-
-    let currentCapSeconds = baseCapSeconds;
-    const existingCap =
-      currentState.call.settings?.limits?.max_duration_seconds;
-    if (typeof existingCap === "number" && existingCap > 0) {
-      currentCapSeconds = Math.max(currentCapSeconds, existingCap);
-    }
-
-    const existingCustom: Record<string, unknown> =
-      typeof currentState.call.custom === "object" &&
-      currentState.call.custom !== null
-        ? (currentState.call.custom as Record<string, unknown>)
-        : {};
-
-    const rawBaseEndsAt =
-      typeof existingCustom.sessionBaseEndsAt === "string"
-        ? new Date(existingCustom.sessionBaseEndsAt)
-        : slotEndsAt;
-    const baseEndsAt = Number.isNaN(rawBaseEndsAt.getTime())
-      ? slotEndsAt
-      : rawBaseEndsAt;
-    const targetEndsAt = new Date(baseEndsAt.getTime() + EXTENSION_MS);
-
-    const prevExtended =
-      typeof existingCustom.extendedSeconds === "number"
-        ? existingCustom.extendedSeconds
-        : 0;
-    const extensionsUsed = resolveExtensionsUsed(
-      existingCustom.extensionsUsed,
-      prevExtended,
+    const existingCap = current.call.settings?.limits?.max_duration_seconds;
+    const derivedCap = resolveRoomCapSeconds(
+      args.startsAt,
+      args.bookedEndsAt,
+      args.extendedSeconds,
     );
+    const capSeconds =
+      typeof existingCap === "number" && existingCap > derivedCap
+        ? existingCap
+        : derivedCap;
+    const existingCustom: Record<string, unknown> = current.call.custom ?? {};
+    const timeCustom = roomTimeCustom(args);
+    const inSync =
+      existingCap === capSeconds &&
+      existingCustom.extensionsUsed === timeCustom.extensionsUsed &&
+      existingCustom.extendedSeconds === timeCustom.extendedSeconds;
+    if (inSync) return { wrote: false, capSeconds };
 
-    if (extensionsUsed >= 1) {
-      return {
-        alreadyExtended: true,
-        updatedCapSeconds: currentCapSeconds,
-        extensionsUsed,
-        targetEndsAt,
-        apply: async () => {},
-      };
-    }
-
-    const updatedCapSeconds = Math.min(
-      currentCapSeconds + EXTENSION_SECONDS,
-      MAX_CALL_DURATION_SECONDS,
-    );
-    const nextExtensionsUsed = extensionsUsed + 1;
-    const settingsOverride = buildCallSettingsOverride(
-      appointmentType,
-      updatedCapSeconds,
-    ) ?? {
-      limits: { max_duration_seconds: updatedCapSeconds },
-    };
-
-    return {
-      alreadyExtended: false,
-      updatedCapSeconds,
-      extensionsUsed: nextExtensionsUsed,
-      targetEndsAt,
-      apply: async () => {
-        await withStreamCircuitBreaker(() =>
-          call.update({
-            settings_override: settingsOverride,
-            custom: {
-              ...existingCustom,
-              extendedSeconds: prevExtended + EXTENSION_SECONDS,
-              extensionsUsed: nextExtensionsUsed,
-              sessionBaseEndsAt: baseEndsAt.toISOString(),
-              sessionEndsAt: targetEndsAt.toISOString(),
-            },
-          }),
-        );
-      },
-    };
+    await call.update({
+      settings_override: buildCallSettingsOverride(
+        args.appointmentType,
+        capSeconds,
+      ) ?? { limits: { max_duration_seconds: capSeconds } },
+      custom: { ...existingCustom, ...timeCustom },
+    });
+    return { wrote: true, capSeconds };
   });
 }
 
-/**
- * Writes `endsAt` first so the exclusion constraint can refuse a clash before
- * Stream grants the time; a Stream failure reverts only our own write by CAS.
- */
-async function commitExtension(
-  occurrence: { id: string; endsAt: Date },
-  plan: StreamExtensionPlan,
-  meetingId: string,
-): Promise<
-  { ok: true; persistedEndsAt: Date } | { ok: false; response: NextResponse }
-> {
-  const { targetEndsAt } = plan;
-  let wroteEndsAt = false;
-  if (occurrence.endsAt.getTime() < targetEndsAt.getTime()) {
-    try {
-      const updated = await prisma.$transaction((tx) =>
-        tx.appointmentOccurrence.updateMany({
-          where: { id: occurrence.id, endsAt: { lt: targetEndsAt } },
-          data: { endsAt: targetEndsAt },
-        }),
-      );
-      wroteEndsAt = updated.count > 0;
-    } catch (err) {
-      if (!isExclusionViolation(err)) throw err;
-      return {
-        ok: false,
-        response: NextResponse.json(
-          {
-            extended: false,
-            hasConflictingNextBooking: true,
-            code: "EXTEND_CONFLICT",
-            error:
-              "Cannot extend because another confirmed session starts within 15 minutes.",
-          },
-          { status: 409 },
-        ),
-      };
-    }
-  }
-
-  if (!plan.alreadyExtended) {
-    try {
-      await plan.apply();
-    } catch (streamErr) {
-      const { reverted, revertError } = wroteEndsAt
-        ? await revertEndsAt(occurrence, targetEndsAt)
-        : { reverted: false, revertError: undefined };
-      reportSentryError(streamErr, {
-        subsystem: "stream",
-        op: "meetings.extend.stream-failed",
-        extra: { meetingId, wroteEndsAt, reverted, revertError },
-      });
-      return {
-        ok: false,
-        response: NextResponse.json(
-          { error: "Video is temporarily unavailable. Please try again." },
-          { status: 503 },
-        ),
-      };
-    }
-  }
-
+function extendedBody(args: {
+  capSeconds: number;
+  extensionsUsed: number;
+  roomEndsAt: Date;
+}) {
   return {
-    ok: true,
-    persistedEndsAt: wroteEndsAt ? targetEndsAt : occurrence.endsAt,
+    extended: true,
+    addedSeconds: MEETING_EXTENSION_SECONDS,
+    maxDurationSeconds: args.capSeconds,
+    extensionsUsed: args.extensionsUsed,
+    endsAt: args.roomEndsAt.toISOString(),
+    hasConflictingNextBooking: false,
   };
 }
 
-/** CAS on our own value, so a concurrent `endsAt` change is never clobbered. */
-async function revertEndsAt(
-  occurrence: { id: string; endsAt: Date },
-  targetEndsAt: Date,
-): Promise<{ reverted: boolean; revertError?: string }> {
-  try {
-    const res = await prisma.appointmentOccurrence.updateMany({
-      where: { id: occurrence.id, endsAt: targetEndsAt },
-      data: { endsAt: occurrence.endsAt },
-    });
-    return { reverted: res.count > 0 };
-  } catch (err) {
-    return {
-      reverted: false,
-      revertError: err instanceof Error ? err.message : String(err),
-    };
-  }
-}
+const alreadyExtendedResponse = (roomEndsAt: Date) =>
+  NextResponse.json(
+    {
+      extended: false,
+      alreadyExtended: true,
+      endsAt: roomEndsAt.toISOString(),
+      hasConflictingNextBooking: false,
+      error: "Free +15m extension has already been used for this session.",
+    },
+    { status: 409 },
+  );
+
+const notExtendableResponse = () =>
+  NextResponse.json(
+    {
+      extended: false,
+      code: "SESSION_NOT_EXTENDABLE",
+      error: "This session has ended and can no longer be extended.",
+    },
+    { status: 409 },
+  );
 
 /**
  * POST /api/meetings/[meetingId]/extend
- * Grants a free 15-minute duration cap extension for the host when no conflicting booking starts within 15 minutes.
+ * Grants the host one free 15-minute room extension when nothing is booked into it. The booked
+ * `endsAt` never moves; the extension lives on `Meeting` and Stream mirrors it.
  */
 export async function POST(
   _req: NextRequest,
@@ -422,7 +326,11 @@ export async function POST(
 ) {
   let meetingIdForLog: string | undefined;
   try {
-    const guard = await guardMeetingRoute(params, "admit to");
+    const guard = await guardMeetingRoute(
+      params,
+      "admit to",
+      meetingControlLimiter,
+    );
     if (!guard.ok) return guard.response;
     const { userId, meetingId, access } = guard;
     meetingIdForLog = meetingId;
@@ -446,12 +354,19 @@ export async function POST(
       where: { id: access.meetingId },
       select: {
         id: true,
+        streamCallId: true,
+        endedAt: true,
+        extendedSeconds: true,
+        extensionsUsed: true,
         occurrence: {
           select: {
             id: true,
             appointmentId: true,
             startsAt: true,
             endsAt: true,
+            completionStatus: true,
+            outcome: true,
+            deletedAt: true,
             consultantProfileId: true,
             appointment: {
               select: {
@@ -492,7 +407,47 @@ export async function POST(
     }
 
     const { occurrence } = meetingRow;
+    if (
+      meetingRow.endedAt ||
+      occurrence.deletedAt ||
+      occurrence.completionStatus !== "SCHEDULED" ||
+      occurrence.outcome !== null
+    ) {
+      return notExtendableResponse();
+    }
+
     const appt = access.appointment;
+    const appointmentType = resolveAppointmentType(appt);
+    const startsAt = new Date(occurrence.startsAt);
+    const bookedEndsAt = new Date(occurrence.endsAt);
+    const mirrorArgs = {
+      streamCallId: meetingRow.streamCallId,
+      appointmentType,
+      startsAt,
+      bookedEndsAt,
+    };
+
+    if (meetingRow.extensionsUsed >= MAX_MEETING_EXTENSIONS) {
+      // A retry after a failed Stream write lands here and finishes the mirror.
+      const mirrored = await mirrorExtensionToStream({
+        ...mirrorArgs,
+        extendedSeconds: meetingRow.extendedSeconds,
+        extensionsUsed: meetingRow.extensionsUsed,
+      });
+      const roomEndsAt = resolveRoomEndsAt(
+        bookedEndsAt,
+        meetingRow.extendedSeconds,
+      );
+      if (!mirrored.wrote) return alreadyExtendedResponse(roomEndsAt);
+      return NextResponse.json(
+        extendedBody({
+          capSeconds: mirrored.capSeconds,
+          extensionsUsed: meetingRow.extensionsUsed,
+          roomEndsAt,
+        }),
+      );
+    }
+
     const consultantProfileId = resolveHostProfileId(
       occurrence.consultantProfileId,
       appt,
@@ -508,17 +463,20 @@ export async function POST(
             (id): id is string => typeof id === "string" && id.length > 0,
           );
 
-    const slotEndsAt = new Date(occurrence.endsAt);
-    const slotStartsAt = new Date(occurrence.startsAt);
+    const currentRoomEndsAt = resolveRoomEndsAt(
+      bookedEndsAt,
+      meetingRow.extendedSeconds,
+    );
     const conflictHorizon = new Date(
-      Math.max(slotEndsAt.getTime(), Date.now()) + EXTENSION_MS,
+      Math.max(currentRoomEndsAt.getTime(), Date.now()) +
+        MEETING_EXTENSION_SECONDS * 1000,
     );
 
     const conflicted = await hasExtensionScheduleConflict(
       occurrence,
       consultantProfileId,
       participantUserIds,
-      slotStartsAt,
+      startsAt,
       conflictHorizon,
     );
     if (conflicted) {
@@ -533,55 +491,65 @@ export async function POST(
       );
     }
 
-    const baseCapSeconds =
-      resolveMaxCallDurationSeconds({ endsAt: slotEndsAt }, slotStartsAt) ??
-      3600;
-    const resolvedCallId = toCallId(access.streamCallId);
-    const extendResult = await planStreamCallExtension(
-      resolvedCallId,
-      baseCapSeconds,
-      resolveAppointmentType(appt),
-      slotEndsAt,
-    );
+    const claimed = await prisma.meeting.updateMany({
+      where: extendableWhere(meetingRow.id, meetingRow.extensionsUsed),
+      data: {
+        extendedSeconds: { increment: MEETING_EXTENSION_SECONDS },
+        extensionsUsed: { increment: 1 },
+      },
+    });
+    if (claimed.count === 0) {
+      const latest = await prisma.meeting.findUnique({
+        where: { id: meetingRow.id },
+        select: { extensionsUsed: true, extendedSeconds: true },
+      });
+      return latest && latest.extensionsUsed >= MAX_MEETING_EXTENSIONS
+        ? alreadyExtendedResponse(
+            resolveRoomEndsAt(bookedEndsAt, latest.extendedSeconds),
+          )
+        : notExtendableResponse();
+    }
 
-    const committed = await commitExtension(
-      occurrence,
-      extendResult,
-      meetingId,
-    );
-    if (!committed.ok) return committed.response;
-    const { persistedEndsAt } = committed;
+    const extendedSeconds =
+      meetingRow.extendedSeconds + MEETING_EXTENSION_SECONDS;
+    const extensionsUsed = meetingRow.extensionsUsed + 1;
+    const roomEndsAt = resolveRoomEndsAt(bookedEndsAt, extendedSeconds);
 
-    if (extendResult.alreadyExtended) {
+    let capSeconds: number;
+    try {
+      ({ capSeconds } = await mirrorExtensionToStream({
+        ...mirrorArgs,
+        extendedSeconds,
+        extensionsUsed,
+      }));
+    } catch (streamErr) {
+      reportSentryError(streamErr, {
+        subsystem: "stream",
+        op: "meetings.extend.stream-failed",
+        extra: { meetingId },
+      });
       return NextResponse.json(
         {
-          extended: false,
-          alreadyExtended: true,
-          endsAt: persistedEndsAt.toISOString(),
-          hasConflictingNextBooking: false,
-          error: "Free +15m extension has already been used for this session.",
+          code: "EXTEND_SYNC_PENDING",
+          error:
+            "The extra 15 minutes are saved, but the video room has not picked them up yet. Please try again.",
         },
-        { status: 409 },
+        { status: 503 },
       );
     }
 
     streamLogger.info("Meeting duration extended by host", {
       userId,
-      meetingId: resolvedCallId,
-      addedSeconds: EXTENSION_SECONDS,
-      maxDurationSeconds: extendResult.updatedCapSeconds,
-      extensionsUsed: extendResult.extensionsUsed,
-      extendedEndsAt: persistedEndsAt.toISOString(),
+      meetingId: meetingRow.id,
+      addedSeconds: MEETING_EXTENSION_SECONDS,
+      maxDurationSeconds: capSeconds,
+      extensionsUsed,
+      roomEndsAt: roomEndsAt.toISOString(),
     });
 
-    return NextResponse.json({
-      extended: true,
-      addedSeconds: EXTENSION_SECONDS,
-      maxDurationSeconds: extendResult.updatedCapSeconds,
-      extensionsUsed: extendResult.extensionsUsed,
-      endsAt: persistedEndsAt.toISOString(),
-      hasConflictingNextBooking: false,
-    });
+    return NextResponse.json(
+      extendedBody({ capSeconds, extensionsUsed, roomEndsAt }),
+    );
   } catch (error) {
     if (error instanceof StreamUnavailableError) {
       streamLogger.warn("Meeting extend unavailable — Stream circuit open", {

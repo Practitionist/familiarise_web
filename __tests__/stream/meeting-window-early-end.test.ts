@@ -137,6 +137,57 @@ describe("the last end wins (#1607)", () => {
     expect(db.meeting.updateMany).not.toHaveBeenCalled();
   });
 
+  it("never lets a later call.ended overwrite a deliberate end", async () => {
+    for (const reason of ["call_ended", "maintenance", "org_deactivated"]) {
+      db.meeting.updateMany.mockClear();
+      db.meeting.findUnique.mockResolvedValue(
+        session(new Date("2026-09-13T10:30:00.000Z"), reason),
+      );
+
+      await handleCallEnded({
+        call_cid: "default:slot_1",
+        type: "call.ended",
+        created_at: "2026-09-13T10:30:01.000Z",
+        reason: "session_inactivity_timeout",
+      });
+
+      expect(db.meeting.updateMany).not.toHaveBeenCalled();
+    }
+  });
+
+  it("keeps a Stream-sealed end when a later session_ended arrives", async () => {
+    db.meeting.findUnique.mockResolvedValue(
+      session(new Date("2026-09-13T10:30:00.000Z"), "stream_ended"),
+    );
+
+    await handleSessionEnded({
+      call_cid: "default:slot_1",
+      type: "call.session_ended",
+      created_at: "2026-09-13T10:31:00.000Z",
+    });
+
+    expect(db.meeting.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("lets a later Stream-sealed end overwrite a timeout", async () => {
+    const read = new Date("2026-09-13T10:30:00.000Z");
+    db.meeting.findUnique.mockResolvedValue(session(read, "session_timeout"));
+
+    await handleCallEnded({
+      call_cid: "default:slot_1",
+      type: "call.ended",
+      created_at: "2026-09-13T10:31:00.000Z",
+      reason: "session_inactivity_timeout",
+    });
+
+    expect(db.meeting.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "ms_1", endedAt: read },
+        data: expect.objectContaining({ endedReason: "stream_ended" }),
+      }),
+    );
+  });
+
   it("ignores an older end once a later one is recorded", async () => {
     db.meeting.findUnique.mockResolvedValue(
       session(new Date("2026-09-13T11:02:00.000Z"), "call_ended"),

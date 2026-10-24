@@ -36,6 +36,7 @@ import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { OPENABLE_EVENT_STATUSES } from "@/lib/stream/dm-eligibility-statuses";
 import { ConsentRequiredError } from "@/lib/compliance/dpdp";
 import { isUpsertRefusal } from "@/lib/stream/connect-failure";
+import type { MeetingEndReason } from "@/lib/meetings/end-reasons";
 
 export const STREAM_SERVER_TRUSTED = Symbol.for(
   "familiarise.stream.serverTrusted",
@@ -723,7 +724,7 @@ async function endSingleStreamVideoCall(
   call: { id: string; streamCallId: string },
   options: {
     now: Date;
-    endedReason: string | null;
+    endedReason: MeetingEndReason;
     errorPrefix: string;
     useCircuitBreaker?: boolean;
   },
@@ -767,7 +768,7 @@ export async function endActiveStreamVideoCalls(
   calls: { id: string; streamCallId: string }[],
   options: {
     now: Date;
-    endedReason: string | null;
+    endedReason: MeetingEndReason;
     errorPrefix: string;
     useCircuitBreaker?: boolean;
   },
