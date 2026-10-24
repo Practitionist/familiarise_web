@@ -180,14 +180,29 @@ export async function POST(
       );
     }
 
-    reportSentryError(error, {
-      subsystem: "stream",
-      op: "meetings.join",
-    });
-    streamLogger.error("Failed to admit to meeting", error);
+    // A Stream 5xx or rate limit is the provider's outage; the client retries it.
+    const upstream = streamHttpStatus(error);
+    const providerOutage =
+      upstream !== null && (upstream >= 500 || upstream === 429);
+
+    // The client retries an outage, so only a non-outage fault reaches Sentry.
+    if (providerOutage) {
+      streamLogger.warn("Meeting join hit a Stream outage", {
+        meetingId: meetingIdForLog,
+        upstream,
+      });
+    } else {
+      reportSentryError(error, {
+        subsystem: "stream",
+        op: "meetings.join",
+      });
+      streamLogger.error("Failed to admit to meeting", error);
+    }
     return NextResponse.json(
-      { error: "Could not join this meeting. Please try again." },
-      { status: 500 },
+      providerOutage
+        ? { error: "Video is temporarily unavailable. Please try again." }
+        : { error: "Could not join this meeting. Please try again." },
+      { status: providerOutage ? 503 : 500 },
     );
   }
 }

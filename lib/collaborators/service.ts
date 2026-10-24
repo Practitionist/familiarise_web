@@ -15,6 +15,7 @@ import {
 } from "@/lib/stream-client";
 import { CALL_MEMBER_ROLE, STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
 import { MAX_CALL_DURATION_MS } from "@/lib/meetings/duration-cap";
+import { enqueueCollaboratorRevocationRetry } from "@/lib/stream/access-revocation";
 import type { RevenueSplit } from "@/types/collaborators";
 import {
   WEBINAR_COLLABORATOR_ROLES,
@@ -960,6 +961,13 @@ export async function removeCollaborator(
         notify: false,
       })
     ).success;
+    if (!accessRevoked) {
+      await enqueueCollaboratorRevocationRetry(
+        planType,
+        planId,
+        profile.userId,
+      );
+    }
   }
 
   if (!withdrawn && profile?.userId) {

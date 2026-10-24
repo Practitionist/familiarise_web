@@ -153,8 +153,10 @@ erDiagram
         string appointmentOccurrenceId FK
         string userId FK
         string userSessionId
+        string streamCallId
         datetime joinedAt
         datetime leftAt
+        boolean closedByEnd
     }
 
     MeetingAttendance {
@@ -183,14 +185,14 @@ erDiagram
 
 ### Core Schema Tables, Unique Indices & Invariants
 
-| Model                       | Key Unique Constraints & Indices                                                  | Critical Runtime Invariants                                                                                                                                                                                                       |
-| --------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`Meeting`**               | `streamCallId @unique`, `appointmentOccurrenceId @unique`                         | Stores bare `streamCallId` (`occurrence-<uuid>` or `occurrence-<uuid>-r<base36>`), never prefixed with `default:`. `endedAt` advances monotonically via CAS.                                                                      |
-| **`AppointmentOccurrence`** | Indexed on `(appointmentId, startsAt)`, `(consultantProfileId, startsAt, endsAt)` | `endsAt` is the immutable booked end; the host extension lives in `Meeting.extendedSeconds`, and the room end is `endsAt + extendedSeconds`. Excluded when `deletedAt != null` or `completionStatus in [CANCELLED, RESCHEDULED]`. |
-| **`MeetingPresence`**       | `@@unique([meetingId, userSessionId])`, indexed on `appointmentOccurrenceId`      | Keyed by `user_session_id                                                                                                                                                                                                         |     | "${sessionId}:${userId}"` so duplicate webhook deliveries (`skipDuplicates: true`) never inflate session counts or move `leftAt` back. |
-| **`MeetingAttendance`**     | `@@unique([meetingId, userId])`, indexed on `appointmentOccurrenceId`             | `firstJoinedAt` is write-once immutable; `joinCount` increments only when a genuinely new `MeetingPresence` session interval is inserted (`newSessions > 0`).                                                                     |
-| **`Recording`**             | Indexed on `(meetingId, streamRecordingId)`, `(status, streamUrlExpiresAt)`       | `READY` rows live on `STREAM_S3` (`streamUrlExpiresAt = end + 14d`) until `transfer-recordings` copies MP4 to R2 (`status = AVAILABLE`, `storageType = PLATFORM`).                                                                |
-| **`WebhookEvent`**          | `payloadHash @unique` (`sha256(rawBody)`)                                         | Written prior to dispatch; stale `PROCESSING` claims older than 5 minutes (`STALE_PROCESSING_MS = 300_000`) are safely reclaimed on retry.                                                                                        |
+| Model                       | Key Unique Constraints & Indices                                                  | Critical Runtime Invariants                                                                                                                                                                                                                                        |
+| --------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **`Meeting`**               | `streamCallId @unique`, `appointmentOccurrenceId @unique`                         | Stores bare `streamCallId` (`occurrence-<uuid>` or `occurrence-<uuid>-r<base36>`), never prefixed with `default:`. `endedAt` advances monotonically via CAS.                                                                                                       |
+| **`AppointmentOccurrence`** | Indexed on `(appointmentId, startsAt)`, `(consultantProfileId, startsAt, endsAt)` | `endsAt` is the immutable booked end; the host extension lives in `Meeting.extendedSeconds`, and the room end is `endsAt + extendedSeconds`. Excluded when `deletedAt != null` or `completionStatus in [CANCELLED, RESCHEDULED]`.                                  |
+| **`MeetingPresence`**       | `@@unique([meetingId, userSessionId])`, indexed on `appointmentOccurrenceId`      | Keyed by Stream's `user_session_id` (or `sessionId:userId` when absent), so duplicate deliveries never inflate session counts. `streamCallId` names the room segment; `closedByEnd` marks an end stamp's assumed `leftAt`, which a reported leave always replaces. |
+| **`MeetingAttendance`**     | `@@unique([meetingId, userId])`, indexed on `appointmentOccurrenceId`             | `firstJoinedAt` is write-once immutable; `joinCount` increments only when a genuinely new `MeetingPresence` session interval is inserted (`newSessions > 0`).                                                                                                      |
+| **`Recording`**             | Indexed on `(meetingId, streamRecordingId)`, `(status, streamUrlExpiresAt)`       | `READY` rows live on `STREAM_S3` (`streamUrlExpiresAt = end + 14d`) until `transfer-recordings` copies MP4 to R2 (`status = AVAILABLE`, `storageType = PLATFORM`).                                                                                                 |
+| **`WebhookEvent`**          | `payloadHash @unique` (`sha256(rawBody)`)                                         | Written prior to dispatch; stale `PROCESSING` claims older than 5 minutes (`STALE_PROCESSING_MS = 300_000`) are safely reclaimed on retry.                                                                                                                         |
 
 ---
 
@@ -230,7 +232,7 @@ All periodic background jobs acquire an exclusive PostgreSQL lease via `withCron
 
 | Background Job                      | Schedule / Trigger        | Responsibility & Invariant                                                                                                                      |
 | ----------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`reconcile-orphaned-sessions`**   | Intra-day cleanup sweep   | Closes open `MeetingPresence` intervals (`leftAt = endedAt`) and reconciles `Meeting` rows whose webhook delivery dropped.                      |
+| **`reconcile-orphaned-sessions`**   | Intra-day cleanup sweep   | Stamps `Meeting` rows whose end webhook dropped and closes that segment's open `MeetingPresence` intervals (`leftAt = endedAt`, `closedByEnd`). |
 | **`transfer-recordings`**           | Every 6 hours (`:33` UTC) | Reclaims `TRANSFERRING` claims older than 15m, copies `READY` recordings from Stream CDN to Cloudflare R2 (10 MB parts), and marks `AVAILABLE`. |
 | **`reconcile-orphaned-recordings`** | Daily (`05:00` UTC)       | Polls Stream `listRecordings` for recent sessions (2h–14d) to back-fill any missed `call.recording_ready` webhooks.                             |
 | **`expire-recordings`**             | Daily (`03:00` UTC)       | Enforces retention rules (1:1/sub +90d, webinar/class +365d, org override), deleting R2 objects while sparing purchased/listed replays.         |

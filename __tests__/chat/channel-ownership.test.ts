@@ -48,3 +48,22 @@ describe("viewerOwnsChannel", () => {
     expect(viewerOwnsChannel("user-1", "user-2")).toBe(false);
   });
 });
+
+import { parseEventChannelId } from "../../lib/stream-channel-ids";
+
+describe("parseEventChannelId", () => {
+  it("splits webinar and class ids and rejects every other shape", () => {
+    expect(parseEventChannelId("webinar-abc")).toEqual({
+      eventType: "webinar",
+      eventId: "abc",
+    });
+    expect(parseEventChannelId("class-x-1")).toEqual({
+      eventType: "class",
+      eventId: "x-1",
+    });
+    expect(parseEventChannelId("collab-webinar-abc")).toBeNull();
+    expect(parseEventChannelId("dm-a-b")).toBeNull();
+    expect(parseEventChannelId("webinar-")).toBeNull();
+    expect(parseEventChannelId(undefined)).toBeNull();
+  });
+});

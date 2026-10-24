@@ -1,8 +1,9 @@
 # 17. Channel Lifecycle
 
 > How chat channels come into existence, how duplicate-create races resolve,
-> how they age out (freeze, then delete), and the contract that keeps the
-> dashboard sync from resurrecting the dead.
+> how they age out (freeze, then delete), how access is revoked when an
+> entitlement ends, and the contract that keeps the dashboard sync from
+> resurrecting the dead.
 
 ## Table of Contents
 
@@ -12,6 +13,8 @@
 - [How a channel comes into existence](#how-a-channel-comes-into-existence)
 - [The duplicate-create race](#the-duplicate-create-race)
 - [Aging: freeze, then delete](#aging-freeze-then-delete)
+- [Revoking access when an entitlement ends](#revoking-access-when-an-entitlement-ends)
+- [The daily membership reconciler](#the-daily-membership-reconciler)
 - [The sync expected-set contract](#the-sync-expected-set-contract)
 - [Stream's per-request & rate-limit ceilings](#streams-per-request--rate-limit-ceilings)
 - [Security surface rules](#security-surface-rules)
@@ -36,7 +39,7 @@ one direction only — Postgres decides, Stream obeys.
 
 ## Channel ID taxonomy & 4-Part DM / Trial policy
 
-Every channel ID is derived deterministically from domain entities (`lib/stream-channel-ids.ts`, `lib/stream-utils.ts`) using UTF-16 code-unit ordering (`a < b ? [a, b] : [b, a]`, never `localeCompare`) and capped at Stream's 64-character ceiling. `MANAGED_CHANNEL_PREFIXES` defines the prefixes reconciled by `syncUserEventChannels` (`webinar-`, `class-`, `dm-`, `dmo-`, `dmh-`, and legacy `consultation-`/`subscription-`); `collab-` and support channels are never swept by user sync.
+Every channel ID is derived deterministically from domain entities (`lib/stream-channel-ids.ts`, `lib/stream-utils.ts`) using UTF-16 code-unit ordering (`a < b ? [a, b] : [b, a]`, never `localeCompare`) and capped at Stream's 64-character ceiling. `MANAGED_CHANNEL_PREFIXES` lists the prefixes whose membership Postgres derives: `webinar-`, `class-`, `collab-`, `dm-`, `dmo-` and `dmh-`. Three mechanisms act on that list. `syncUserEventChannels` tidies the viewer's own stale memberships, the daily membership reconciler (`lib/stream/membership-reconciler.ts`) removes anyone Postgres no longer justifies, and `addMemberToChannel` refuses manual adds. `isManagedChannel` in `lib/stream-channel-ids.ts` is the predicate. The legacy `consultation-` and `subscription-` prefixes are **not** managed, and neither are support channels or the legacy underscore event ids (`webinar_`, `class_`), because Postgres cannot derive their rosters.
 
 Channel provisioning and eligibility follow a strict **4-Part DM & Trial Policy** (`lib/stream/dm-eligibility.ts`, `lib/stream/dm-eligibility-statuses.ts`):
 
@@ -50,8 +53,10 @@ Channel provisioning and eligibility follow a strict **4-Part DM & Trial Policy*
 3. **Webinars & Classes provision both the group event channel and a 1:1 personal DM**:
    - Confirmed enrollment (`OPENABLE_EVENT_STATUSES = ["SCHEDULED", "IN_PROGRESS", "COMPLETED"]`) provisions both the shared `team` channel (`webinar-${id}` / `class-${id}`) **and** a 1:1 DM (`dm-` / `dmo-`) between the hosting consultant and each confirmed enrollee (`hasWebinarLink`, `hasClassLink`).
    - `ACCEPTED` `PlanCollaborator` co-hosts (`consultantProfile.deletedAt: null`) are included in the group channel roster (`lib/stream/event-channel-service.ts`) and in `syncUserEventChannels`'s expected-set so co-hosts are never evicted during reconciliation.
-4. **Free Trials (`TRIAL`) block all chat surfaces**:
-   - `TrialSession` bookings have all Stream Chat channels, 1:1 DMs, and in-call meeting chat blocked (`skipped: "trial_chat_blocked"` in `lib/payments/webhooks/handlers.ts` and `enableChat={false}` in `MeetingRoom.tsx`).
+4. **A free trial never grants chat**. Three separate checks enforce it:
+   - **No provisioning.** `ensureChannelsForAppointment` (`lib/payments/webhooks/ensure-channels.ts`) stamps `chatChannelEnsuredAt` on a `TRIAL` appointment so the sweep never revisits it, creates nothing, and returns `skipped: "trial_chat_blocked"`.
+   - **No DM eligibility.** `canDirectMessage` and `pairBookingContexts` exclude any consultation or subscription whose appointment is a `TRIAL` (`excludeTrialBooking` in `lib/stream/dm-eligibility-statuses.ts`), whatever status the booking row carries. A relationship that consists only of a trial therefore never opens a DM, and a trial never keeps an existing DM alive.
+   - **No in-call chat.** `isInCallChatAllowed("TRIAL")` is false (`lib/meetings/room-ready.ts`). `app/meetings/[id]/components/MeetingRoom.tsx` hides the chat and Q&A tabs, and the stage Q&A route (`app/api/meetings/[meetingId]/qa/route.ts`) answers 403 with `trial_chat_disabled`.
 
 ## Contextual booking receipt cards
 
@@ -59,6 +64,7 @@ Because all consultations, subscriptions, webinars, and classes between a given 
 
 - The route verifies that `contextAppointmentId` is non-deleted, in an eligible status, and links `(userId, counterpartyUserId)` (either directly on a consultation/subscription or as host + live participant on a webinar/class).
 - It then sends an idempotent message into the shared DM with deterministic ID (`id: booking-ctx-${appointmentId}-${eventType}` / `buildBookingContextMessageId(channelId, appointmentId)`) and custom `booking_context` fields (`booking_appointment_id`, `booking_type`, `booking_title`, `booking_starts_at`).
+- The route posts the card as the server-only Stream user `system-booking-context` (`BOOKING_CONTEXT_STREAM_USER` in `lib/stream/system-users.ts`), never as the caller. No token is ever minted for that user, so no browser can author a card, and `components/chat/CustomMessage.tsx` renders the receipt layout only when the message author is that user (`isBookingContextAuthor`). The `system-` prefix also keeps `stream-sync` and the membership reconciler from touching it.
 - Re-opening the same appointment's chat hits Stream's duplicate-message-ID check and is ignored cleanly without posting duplicate receipt cards.
 
 ## How a channel comes into existence
@@ -78,9 +84,17 @@ There are three server-side creation paths:
    filters out unconsented users (`droppedIds` from `upsertUsersToStream`), and
    creates atomically with `createMemberChunk` + `addRemainingMembers`.
 3. **Collaborator reconcile** — `createCollaboratorChannel` in
-   `channel.action.ts`. Idempotent create (`collab-{webinar|class}-{planId}`)
+   `channel.action.ts`. Get-or-create only (`collab-{webinar|class}-{planId}`)
    with 100-member chunking (`createMemberChunk` + `addRemainingMembers`) plus
-   a full member diff against the `ACCEPTED` collaborator list.
+   a full member diff against the `ACCEPTED` collaborator list. It never
+   unfreezes an existing channel and returns `frozen` so the caller can see the
+   state. `POST /api/stream/channels/open` refuses a frozen collaborator
+   channel with `423 CHANNEL_FROZEN`, and refuses any non-staff caller when the
+   owning organization is `DEACTIVATED` with `403 ORG_DEACTIVATED`. The
+   deactivation check runs before the host and collaborator checks, so a
+   wound-down organization's own members cannot reopen its chat. Both
+   refusals carry `{ error, code }`, which the chat UI shows as a toast. Staff
+   (`ADMIN`/`STAFF`) are exempt from the deactivation check.
 
 Creation is server-side by necessity, not preference: the Node SDK holds the
 API secret, and every create call must carry `created_by_id` set to a real
@@ -113,8 +127,14 @@ What adoption guarantees:
 What adoption does **not** guarantee is the joining user's membership if the
 winner's roster snapshot predated them. Therefore, the lazy paths
 (`addUserToEventChannel`, `addUserToDmChannel`) retry `addMembers([userId])`
-once after adopting. That retry is best-effort: if it fails, `adoptRetryFailed`
-keeps the membership cache unwritten so the next sync or open call retries.
+once after adopting. If that retry fails, `addUserToEventChannel` returns
+`success: false` with `reason: "member_not_added"` and leaves the membership
+cache unwritten. A Stream or consent refusal of the account returns
+`reason: "account_refused"` instead. The open route answers `503` for
+`member_not_added`, and `ensureChannelsForAppointment` returns
+`event_channel_member_not_added` without stamping `chatChannelEnsuredAt`, so
+the `reconcile-orphaned-confirmations` sweep retries the appointment. A refused account is a deliberate
+skip and does not hold the stamp back.
 
 ## Aging: freeze, then delete
 
@@ -153,16 +173,44 @@ A webinar or class may span multiple appointments across cohorts but owns
 **one** event channel, so its age is computed from the **latest** slot `endsAt`
 across all non-deleted occurrences.
 
+## Revoking access when an entitlement ends
+
+Postgres decides who may be in a channel, and Stream obeys. Revocation is therefore **synchronous on the action that ends the entitlement**, backed by a durable retry and a daily audit. It no longer depends on the affected user's browser doing anything.
+
+1. **Inline removal.** After its transaction commits, the action calls `lib/stream/access-revocation.ts`:
+   - The appointment cancel route (`app/api/appointments/[appointmentId]/cancel/route.ts`) calls `revokeEndedEventChatAccess` when a whole webinar or class is cancelled. It removes the live attendees from the `webinar-` or `class-` channel, then drops each attendee from the host and accepted-presenter DM only when `isDmContextEligible` says the pair no longer shares a booking in that DM's scope (personal for `dm-`/`dmh-`, the organization for `dmo-`).
+   - For a one-to-one consultation or subscription it calls `revokeEndedBookingChatAccess`, and the consultee leaves the DM only if the pair is no longer eligible. A second booking between the same pair keeps the thread open.
+   - `leaveEventSeat` (`lib/booking/seat-leave.ts`) does the same for one seat, covering both a self-leave and an organiser removal.
+   - At most `SYNC_DM_PAIR_LIMIT` (10) DM pairs are checked inside the request. The rest are queued rather than slowing the cancel.
+2. **Durable retry.** When Stream refuses or errors, the action enqueues a `StreamRevocationRetry` row through `enqueueStreamRevocationRetries`, and never throws, because the booking change has already committed. The table's `kind` column (`StreamRevocationKind`) is `ERASURE_REVOKE` (the default, used by the DPDP erasure scrub), `COLLAB_REVOKE`, `EVENT_CHANNEL_REMOVE`, `DM_REMOVE` or `ORG_REVOKE`. `planId` holds each kind's target: the plan for the two collaborator kinds, the webinar or class for `EVENT_CHANNEL_REMOVE`, the DM channel id for `DM_REMOVE` and the organization for `ORG_REVOKE`. `userId` names the person losing access, and `counterpartUserId` is set only for `DM_REMOVE`. The database enforces the shape with the CHECK `stream_revocation_retry_owner` and allows one open row per target through the partial unique index `stream_revocation_retry_open_key` (both in `prisma/sql/check-constraints.sql`). Enqueueing against an open row re-arms it (status `PENDING`, attempts reset) so a row that hit its attempt cap cannot swallow a new revocation.
+3. **The retry sweep.** `retry-moderation-enforcement` (`scripts/cleanup/retry-moderation-enforcement.ts`, every 30 minutes on the ticker) drains rows whose attempts are below the cap. For the four new kinds it calls `redriveAccessRevocation`, which treats a target that Postgres has since re-granted as settled: a re-accepted collaborator, a re-enrolled seat, a DM pair that is eligible again, or a member who rejoined the organization. Otherwise it redoes the removal.
+4. **Collaborator removal.** `removeCollaborator` (`lib/collaborators/service.ts`) and the org member removal queue `COLLAB_REVOKE` when `revokeCollaboratorAccess` reports the revocation incomplete.
+5. **Org member removal.** `revokeMemberStreamAccess` (`lib/enterprise/member-removal.ts`) revokes the member's Stream tokens issued before the removal (`revokeUserToken` with a cutoff), removes them from the member lists of the organization's live and upcoming calls, and removes them from the organization's channels. `tokenRevoked` is now reported truthfully, and an incomplete result queues `ORG_REVOKE`. The wind-down drain (`jobs/stream/wind-down-deactivated-orgs.ts`) passes the membership's `updatedAt` as the cutoff, so a re-run never revokes a token the member legitimately minted after rejoining. The call-member removal is safe against a rejoin because the meeting join route re-adds anyone Postgres still admits.
+6. **The client re-mints.** `providers/StreamProviderImpl.tsx` wraps each SDK's token provider in `sdkTokenProvider`. The first call serves the cache, and every later call clears the cached token and mints a fresh one, because the SDK only asks again to replace a token Stream refused as expired or revoked. A revoked member then reconnects only if the server still mints them a token.
+
+**Worked example (illustrative).** Hannah hosts a class and Priya holds a seat. The host cancels the whole class on Mon 2026-10-26 at 10:00 IST. The cancel route commits, and `revokeEndedEventChatAccess` removes Priya from `class-<id>`. Priya also has a second paid consultation with Hannah in the personal scope, so `isDmContextEligible` returns true and she stays in the DM. If Stream returns a 5xx on the channel removal, the route still answers success and a `StreamRevocationRetry` row of kind `EVENT_CHANNEL_REMOVE` (target `class-<id>`, user Priya) waits for the next 30-minute sweep.
+
+## The daily membership reconciler
+
+`reconcile-stream-memberships` (`lib/stream/membership-reconciler.ts`) is the audit that catches whatever the inline path and the retry queue missed, including channels changed outside this application. It is registered once in `lib/cron/cleanup-registry.ts` as an `/api/cleanup/[job]` twin and runs from the ticker, not from any GitHub Actions workflow. The ticker (`netlify/functions/cron-tick.mts`) fires it hourly at `:20` inside a 00:00 to 03:00 UTC window (so 00:20, 01:20 and 02:20 UTC, which is 05:50, 06:50 and 07:50 IST), with a bite of 50 channels, a 24-second timeout and a 16-second drain deadline.
+
+- **Walk.** It lists Stream channels of type `messaging` and `team` by a `created_at` keyset (`created_at > checkpoint`, never an offset), and resumes from the checkpoint the previous run left in its `SystemJobExecution` result. `withCronLock` persists a returned `checkpoint` string and `readJobCheckpoint` reads it back, and a run that reaches the newest channel returns `null` so the next window starts over. Channel members are paged with a `user_id` cursor.
+- **Compare.** For each channel with a managed prefix it asks the same access predicate the open path uses, so the two can never disagree. Event channels use `eventParticipantsAmong` in `lib/stream/event-channel-service.ts`, the batched form of `isEventParticipant` (which is that function called for one user): the host while the host profile is not deleted, `ACCEPTED` collaborators and live seats, on an openable event inside retention. `collab-` channels use `collabChannelAccess` in `lib/stream/channel-access.ts`, the same function `POST /api/stream/channels/open` calls, which also admits staff and active org members holding `messaging.read` or `catalog.manage`. A missing plan, a DEACTIVATED org, or an event that is missing, not openable (for example `CANCELLED`) or past retention is left to the lifecycle jobs, so the host of a cancelled event is never removed here.
+- **DMs are skipped.** The reconciler never touches `dm-`, `dmo-` or `dmh-` channels, and skips them before any read, so they do not count against the 50-channel bite. DM revocation belongs to the synchronous cancellation path and its retry queue, and whether a finished relationship keeps its thread is a product-policy question.
+- **Brake.** If the predicate would remove more than half of a channel's human members, the channel is left alone and counted in `channelsSkippedSuspicious`, because a verdict that empties most of a channel is more likely a bad read than a real revocation.
+- **Never removes** the Familiarise Support user or any `system-` user, and on event channels never an `ADMIN`/`STAFF` user, who join derived channels only through the audited staff add.
+- **Reporting.** It sends one Sentry event per run, and only when it removed someone (a missed inline revocation), braked a channel or failed. The route answers 207 when any removal failed.
+
 ## The sync expected-set contract
 
-`syncUserEventChannels` in `actions/stream/chat/event-channel.action.ts` is the
-reconciliation loop: Postgres defines which channels the user _should_ belong to,
-and the sync revokes any managed Stream channel membership absent from that set.
+`syncUserEventChannels` in `actions/stream/chat/event-channel.action.ts` tidies the signed-in viewer's own channel list: Postgres defines which channels the user _should_ belong to, and the sync removes any managed Stream channel membership absent from that set. It is **not** the enforcement path. The server-side suppression gates it once had (the `initialSyncCompletedUsers` set and the browser `stream_sync_<id>` flag) are gone, and so is its `force` parameter, because enforcement is the synchronous revocation, the retry sweep and the reconciler described above.
+
 It builds the expected-set from:
 
 1. **Webinars (`getWebinarIdsForUser`)**: Active webinars (`OPENABLE_EVENT_STATUSES`) not past retention where the user is the host (`webinarPlan.consultantProfile.userId`), an `ACCEPTED` `PlanCollaborator`, or a live `AppointmentParticipant`.
 2. **Classes (`getClassIdsForUser`)**: Active classes (`OPENABLE_EVENT_STATUSES`) not past retention where the user is the host (`classPlan.consultantProfile.userId`), an `ACCEPTED` `PlanCollaborator`, or a live `AppointmentParticipant`.
-3. **Direct Messages (`getDmPairsForUser`)**: Canonical `dm-` / `dmo-` channel IDs for every consultant ↔ consultee pair linked by a consultation or subscription in `DM_ELIGIBLE_STATUSES` (`APPROVED`, `SCHEDULED`, `COMPLETED`) or a webinar/class in `OPENABLE_EVENT_STATUSES` (`SCHEDULED`, `IN_PROGRESS`, `COMPLETED`).
+3. **Direct Messages (`getDmPairsForUser`)**: Canonical `dm-` / `dmo-` channel IDs for every consultant ↔ consultee pair linked by a consultation or subscription in `DM_ELIGIBLE_STATUSES` (`APPROVED`, `SCHEDULED`, `COMPLETED`) or a webinar/class in `OPENABLE_EVENT_STATUSES` (`SCHEDULED`, `IN_PROGRESS`, `COMPLETED`). It applies the same trial exclusion as `canDirectMessage`, so a trial never keeps a DM in the expected set. The sync never creates a DM; it only keeps or removes them.
+4. **Collaborator channels (`collab-`)**: The `collab-{webinar|class}-{planId}` channel of every plan the user hosts or holds an `ACCEPTED` collaboration on, plus the presenter DM pairs those collaborations imply.
 
 Excluding events where `isPastRetention` is true prevents resurrection: Postgres
 rows outlive their Stream channels, so if a finished event remained in the
@@ -204,6 +252,8 @@ must appear in neither the cron's freeze queue nor the sync's expected-set.**
   database session (`getSession()`), reject banned users, and enforce
   self/host/privileged authorization before delegating to
   `lib/stream/event-channel-service.ts`.
+- **`actions/stream/chat/member.action.ts` (`addMemberToChannel`) refuses adds to managed channels.**
+  A non-staff caller adding to any managed (Postgres-derived) channel receives the typed refusal `DERIVED_CHANNEL_MEMBERSHIP` (403) as a value. A staff add is allowed and audited through `recordOpsAction` (`stream.channel.member.add`). DMs stay closed to everyone. The channel info dialog (`components/chat/ChannelInfoAndManageDialog.tsx`) hides **Add Members** and **Clear chat** on managed channels, because truncate wipes the thread for every member; before this, the consultant in a DM could wipe both sides.
 - **`actions/stream/chat/user.action.ts` enforces actor checks and PII stripping.**
   Browser-initiated calls require an authenticated session (`requireAuthenticatedStreamActor`),
   filter out users without `STREAM_DATA_PROCESSING` consent (`droppedIds`), and
@@ -216,14 +266,20 @@ must appear in neither the cron's freeze queue nor the sync's expected-set.**
 | `__tests__/stream/channel-actions.test.ts`       | Explicit-path adoption: losing `create()` still returns the id, `channelData` is null, `assignRoles` and `markChannelExists` still run; non-duplicate failures rethrow; 100-member `createMemberChunk` + `addRemainingMembers` on event and collaborator channels; `droppedIds` consent filtering. |
 | `__tests__/stream/event-channel-actions.test.ts` | Lazy-path adoption plus one-shot post-adoption `addMembers` retry; session gate (another user as non-privileged → Forbidden, banned user → account suspended); `ACCEPTED` collaborator retention in `syncUserEventChannels`; 30-row `queryChannelsPaged` paging and `created_at` sort.             |
 | `__tests__/stream/batch.test.ts`                 | `queryChannelsPaged` 30-row cap, offset advancement, and `truncated` flag at offset 1000; `createMemberChunk` / `addRemainingMembers` chunking.                                                                                                                                                    |
+| `__tests__/stream/access-revocation.test.ts`     | Inline revocation on cancel and seat leave, the `SYNC_DM_PAIR_LIMIT` overflow, queued retries per kind, and re-grant detection in `redriveAccessRevocation`.                                                                                                                                       |
+| `__tests__/stream/collab-channel-open.test.ts`   | The open route refuses a frozen collaborator channel (`CHANNEL_FROZEN`) and a deactivated organization (`ORG_DEACTIVATED`).                                                                                                                                                                        |
 | `__tests__/fixtures/stream-mocks.ts`             | Shared mocks including `assignRoles` for channel-scoped moderator grants.                                                                                                                                                                                                                          |
 
 ---
 
 ## Deprecated & Superseded Approaches
 
-- **Per-Booking `consultation-*` and `subscription-*` Channels**: Retired in favor of one canonical 1:1 DM channel per `(consultant, consultee, orgScope)` pair (`dm-<a>-<b>` / `dmo-<orgHash>-<pairHash>`), with per-booking context injected via idempotent `booking-ctx-` receipt cards on `POST /api/stream/channels/open`. Legacy `consultation-` and `subscription-` prefixes remain in `MANAGED_CHANNEL_PREFIXES` solely so `syncUserEventChannels` can clean up historic memberships.
-- **Trial Session (`TRIAL`) Chat Channels & DMs**: Retired (`skipped: "trial_chat_blocked"`). Free trials no longer provision or unlock 1:1 DMs or in-call chat.
+- **Per-Booking `consultation-*` and `subscription-*` Channels**: Retired in favor of one canonical 1:1 DM channel per `(consultant, consultee, orgScope)` pair (`dm-<a>-<b>` / `dmo-<orgHash>-<pairHash>`), with per-booking context injected via idempotent `booking-ctx-` receipt cards on `POST /api/stream/channels/open`. The legacy `consultation-` and `subscription-` prefixes are no longer in `MANAGED_CHANNEL_PREFIXES`; nothing sweeps them.
+- **Client-Cooperative Revocation via the Sync Gates**: Revocation once depended on the affected user's browser running `syncUserEventChannels`, behind a server `initialSyncCompletedUsers` set, a `stream_sync_<id>` session flag and a `force` parameter. Replaced by synchronous revocation on the mutating action, the `StreamRevocationRetry` queue and the daily membership reconciler. Delete any residue of those gates.
+- **Unfreeze-on-Open for Collaborator Channels**: `createCollaboratorChannel` used to set `frozen: false` on every open, which undid wind-down and moderation freezes. It is now get-or-create only, and the open route refuses a frozen channel.
+- **Caller-Authored Booking Cards**: Cards were posted as the opening user and recognised by their custom fields, which any member could forge. They are now posted as `system-booking-context` and rendered only for that author.
+- **DM "Clear chat" for the Consultant**: Truncate on a 1:1 DM wiped the thread for both sides. It is no longer offered on any managed channel.
+- **Trial Session (`TRIAL`) Chat Channels & DMs**: Retired (`skipped: "trial_chat_blocked"` in `lib/payments/webhooks/ensure-channels.ts`). Free trials no longer provision channels or unlock DMs, and the DM gate excludes trial-backed bookings.
 - **Unpaid (`APPROVED_PENDING_PAYMENT`) DM Provisioning**: Removed from `DM_ELIGIBLE_STATUSES` so chat opens strictly after payment confirmation (`APPROVED`, `SCHEDULED`, `COMPLETED`).
 - **Unpaginated `queryChannels({ limit: 100 })` Sweeps**: Replaced by `queryChannelsPaged` (`lib/stream/batch.ts`) paging at Stream's 30-channel hard limit sorted by `created_at` ascending.
 - **Monolithic `"use server"` Channel Modules**: `lib/stream/event-channel-service.ts` was extracted from `actions/stream/chat/event-channel.action.ts` so server-side callers (`POST /api/stream/channels/open`, webhooks, cron jobs) can invoke event-channel primitives without going through browser-facing `"use server"` wrappers.

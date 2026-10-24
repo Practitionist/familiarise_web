@@ -346,6 +346,17 @@ describe("POST /api/meetings/[meetingId]/join", () => {
     expect(body.reason).toBeUndefined();
   });
 
+  it("keeps a Stream 5xx out of Sentry, because the client retries it", async () => {
+    mockUpdateCallMembers.mockRejectedValue(
+      Object.assign(new Error("upstream"), { status: 502 }),
+    );
+
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(503);
+    expect(reportSentryError).not.toHaveBeenCalled();
+  });
+
   it("still reports a genuine fault as 500", async () => {
     mockUpdateCallMembers.mockRejectedValue(new Error("boom"));
 

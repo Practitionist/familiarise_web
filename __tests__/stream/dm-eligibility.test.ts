@@ -131,6 +131,53 @@ describe("DM eligibility rules and channel provisioning", () => {
     });
   });
 
+  it("never lets a trial-backed booking grant a DM", async () => {
+    const { canDirectMessage } =
+      await import("../../lib/stream/dm-eligibility");
+    // The store holds only a trial-backed booking for the pair.
+    mockConsultationFindFirst.mockImplementation(
+      async ({ where }: { where: { NOT?: unknown } }) =>
+        JSON.stringify(where.NOT ?? null).includes('"TRIAL"')
+          ? null
+          : { id: "consultation-from-trial" },
+    );
+
+    await expect(
+      canDirectMessage("consultant-u1", "consultee-u2"),
+    ).resolves.toBe(false);
+  });
+
+  it("leaves an event booking unstamped when the buyer never became a member", async () => {
+    const { ensureChannelsForAppointment } =
+      await import("../../lib/payments/webhooks/ensure-channels");
+    mockAddUserToEventChannel.mockResolvedValueOnce({
+      success: false,
+      reason: "member_not_added",
+    });
+    mockAppointmentFindUnique.mockResolvedValueOnce({
+      id: "appt-web-2",
+      appointmentType: "WEBINAR",
+      organizationId: null,
+      payment: [{ userId: "buyer-1" }],
+      consultation: null,
+      subscription: null,
+      webinar: {
+        id: "web-2",
+        webinarPlan: {
+          organizationId: null,
+          consultantProfile: { userId: "consultant-1" },
+        },
+      },
+      class: null,
+      trial: null,
+    });
+
+    const res = await ensureChannelsForAppointment("appt-web-2");
+
+    expect(res.ensured).toBe(false);
+    expect(mockAppointmentUpdateMany).not.toHaveBeenCalled();
+  });
+
   it("blocks trial chat in ensureChannelsForAppointment while stamping chatChannelEnsuredAt", async () => {
     const { ensureChannelsForAppointment } =
       await import("../../lib/payments/webhooks/ensure-channels");
