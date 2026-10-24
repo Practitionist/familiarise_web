@@ -1,6 +1,7 @@
 /**
- * Reconcile the Stream webhook hook (enabled, URL, event list) with the control-plane contract.
- * `--check` exits 2 on drift without writing.
+ * Reconcile the Stream webhook hooks (one per product: enabled, URL, event list) with the
+ * control-plane contract. `--apply` creates a missing product hook only when
+ * `NEXT_PUBLIC_APP_URL` names its URL. `--check` exits 2 on drift without writing.
  *
  *   npx tsx scripts/stream/ensure-webhook-subscription.ts
  *   npx tsx scripts/stream/ensure-webhook-subscription.ts --check
@@ -8,7 +9,7 @@
  */
 import "dotenv/config";
 
-import type { EventHook } from "stream-chat";
+import { Product, type EventHook } from "stream-chat";
 
 import {
   getStreamChatClient,
@@ -17,6 +18,7 @@ import {
 import { compareStringsByCodeUnit } from "../../lib/stream/config-fingerprint";
 import {
   SORTED_DESIRED_EVENT_TYPES,
+  desiredEventTypesByProduct,
   evaluateHookDrift,
   expectedWebhookUrl,
   hookAccepts,
@@ -103,9 +105,23 @@ function reportUnplaceableEvents(
       }
     }
     console.error(
-      `  Create a '${product}' webhook in the Stream dashboard pointing at <origin>/api/stream/webhooks.`,
+      `  Re-run with NEXT_PUBLIC_APP_URL=<origin> and --apply to create the '${product}' hook at <origin>/api/stream/webhooks.`,
     );
   }
+}
+
+function newProductHook(
+  product: "chat" | "video",
+  eventTypes: string[],
+  webhookUrl: string,
+): EventHook {
+  return {
+    hook_type: "webhook",
+    enabled: true,
+    product: product === "chat" ? Product.Chat : Product.Video,
+    webhook_url: webhookUrl,
+    event_types: eventTypes,
+  };
 }
 
 function parseCliMode(argv: string[]): EnsureMode {
@@ -196,11 +212,25 @@ export async function ensureWebhookSubscription(
     changed++;
   }
 
+  const created: EventHook[] = [];
+  if (apply && expectedUrl && unplaceable.size > 0) {
+    const byProduct = desiredEventTypesByProduct();
+    for (const product of ["chat", "video"] as const) {
+      const types = byProduct[product].filter((t) => unplaceable.has(t));
+      if (types.length === 0) continue;
+      created.push(newProductHook(product, types, expectedUrl));
+      for (const t of types) unplaceable.delete(t);
+      console.log(
+        `\n→ will create a '${product}' hook for ${types.join(", ")}`,
+      );
+    }
+  }
+
   if (unplaceable.size > 0) {
     reportUnplaceableEvents(unplaceable, mode);
   }
 
-  if (apply && (reconciled.size > 0 || legacyWildcard)) {
+  if (apply && (reconciled.size > 0 || legacyWildcard || created.length > 0)) {
     const nextHooks = allHooks.map((h) => {
       const next = h.id ? reconciled.get(h.id) : undefined;
       if (!next) return h;
@@ -213,11 +243,11 @@ export async function ensureWebhookSubscription(
       };
     });
     await client.updateAppSettings({
-      event_hooks: nextHooks,
+      event_hooks: [...nextHooks, ...created],
       ...(legacyWildcard ? { webhook_url: "" } : {}),
     });
     console.log(
-      `\n✅ applied — ${reconciled.size} hook(s) updated, ${allHooks.length} preserved`,
+      `\n✅ applied — ${reconciled.size} hook(s) updated, ${created.length} created, ${allHooks.length} preserved`,
     );
   }
 

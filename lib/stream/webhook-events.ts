@@ -31,6 +31,8 @@ export const HANDLED_EVENT_TYPES = [
   // receive; and Stream considers `message.flagged` obsolete under v2
   // moderation, which uses `review_queue_item.*` instead. Subscribing to a
   // deprecated event to feed a path that already works was the wrong trade.
+  // Chat unread digest; delivered by the `chat` hook, not the `video` one.
+  "user.unread_message_reminder",
 ] as const;
 
 export type HandledEventType = (typeof HANDLED_EVENT_TYPES)[number];

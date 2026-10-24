@@ -177,7 +177,7 @@ describe("ensure-webhook-subscription", () => {
     }
   });
 
-  it("replaces a wildcard subscription with the explicit 8 handled events", async () => {
+  it("replaces a wildcard subscription with the explicit handled events", async () => {
     mockGetAppSettings.mockResolvedValue(
       appWith([{ ...liveWebhook, event_types: ["*"] }]),
     );
@@ -215,7 +215,7 @@ describe("ensure-webhook-subscription — check mode exit codes", () => {
     expect(mockUpdateAppSettings).not.toHaveBeenCalled();
   });
 
-  it("passes when the live hook matches the exact 8 handled events and flags extra events as drift", async () => {
+  it("passes when the live hook matches the exact handled events and flags extra events as drift", async () => {
     mockGetAppSettings.mockResolvedValue(
       appWith([
         {

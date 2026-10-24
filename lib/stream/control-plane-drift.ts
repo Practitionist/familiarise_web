@@ -12,6 +12,7 @@ import {
   TARGET_APP_SETTINGS,
   TARGET_INACTIVITY_TIMEOUT_SECONDS,
   UNUSED_CALL_TYPES,
+  chatReminderFindings,
   evaluateHookDrift,
   expectedWebhookUrl,
   grantDifferences,
@@ -22,6 +23,7 @@ import {
   MESSAGING_CHANNEL_TYPE,
   matchesCoPresenterGrants,
   productFor,
+  type ChannelConfigLike,
   type HookLike,
 } from "@/lib/stream/control-plane-contract";
 import {
@@ -44,6 +46,8 @@ export interface ControlPlaneReader {
       event_hooks?: HookLike[];
       webhook_url?: string;
       webhook_events?: string[];
+      reminders_interval?: number;
+      channel_configs?: Record<string, ChannelConfigLike>;
     };
   }>;
   listRoles(): Promise<{ roles: { name: string }[] }>;
@@ -149,6 +153,7 @@ export async function detectStreamControlPlaneDrift(
     TARGET_APP_SETTINGS.guestUserCreationDisabled
       ? []
       : ["app:guest_user_creation_disabled"]),
+    ...chatReminderFindings(app),
     ...defaultCallTypeFindings(defaultType, new Set(roles.map((r) => r.name))),
     ...grantDifferences(
       messagingGrants,

@@ -12,13 +12,13 @@ jest.mock("../../lib/stream-client", () => ({
   getStreamVideoClient: jest.fn(),
 }));
 
-import { DESIRED_EVENT_TYPES } from "../../lib/stream/webhook-events";
 import {
   detectStreamControlPlaneDrift,
   type ControlPlaneReader,
 } from "../../lib/stream/control-plane-drift";
 import {
   CO_PRESENTER_GRANTS,
+  desiredEventTypesByProduct,
   expectedWebhookUrl,
 } from "../../lib/stream/control-plane-contract";
 
@@ -27,14 +27,15 @@ const APP_URL = "https://familiarisenow.com";
 type Grants = Record<string, string[]>;
 
 function compliantState() {
-  const hook = {
-    id: "hook_1",
+  const byProduct = desiredEventTypesByProduct();
+  const hookFor = (id: string, product: "chat" | "video") => ({
+    id,
     hook_type: "webhook",
     enabled: true,
-    product: "video",
+    product,
     webhook_url: expectedWebhookUrl(APP_URL),
-    event_types: [...DESIRED_EVENT_TYPES],
-  };
+    event_types: [...byProduct[product]],
+  });
   const unused: Grants = {
     user: ["read-call", "send-audio"],
     guest: ["read-call"],
@@ -42,7 +43,12 @@ function compliantState() {
     admin: ["create-call", "join-call", "start-recording"],
   };
   return {
-    app: { guest_user_creation_disabled: true, event_hooks: [hook] },
+    app: {
+      guest_user_creation_disabled: true,
+      event_hooks: [hookFor("hook_1", "video"), hookFor("hook_chat", "chat")],
+      reminders_interval: 1800,
+      channel_configs: { messaging: { reminders: true, read_events: true } },
+    },
     roles: [{ name: "co_presenter" }],
     messaging: {
       user: ["read-channel", "remove-own-channel-membership-owner"],
@@ -122,6 +128,23 @@ describe("detectStreamControlPlaneDrift", () => {
     expect(
       (await detect(state)).findings.some((f) => f.includes(":missing:")),
     ).toBe(true);
+  });
+
+  it("requires a chat hook for the unread reminder and reminders on messaging", async () => {
+    expect(desiredEventTypesByProduct().chat).toEqual([
+      "user.unread_message_reminder",
+    ]);
+    const state = compliantState();
+    state.app.event_hooks = state.app.event_hooks.slice(0, 1);
+    state.app.reminders_interval = 300;
+    state.app.channel_configs.messaging.reminders = false;
+    expect((await detect(state)).findings).toEqual(
+      expect.arrayContaining([
+        "webhook:unplaceable:chat:user.unread_message_reminder",
+        "channel_type:messaging:reminders",
+        "app:reminders_interval",
+      ]),
+    );
   });
 
   it("flags create-call granted to the user role on livestream", async () => {
