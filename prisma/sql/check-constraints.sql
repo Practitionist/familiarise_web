@@ -966,6 +966,17 @@ ALTER TABLE "ReferralProgramConfig" ADD CONSTRAINT "referral_program_config_rang
   );
 
 -- SPLIT
+-- Allowed keys mirror lib/stream/video-quality.ts.
+ALTER TABLE "PlatformVideoConfig" DROP CONSTRAINT IF EXISTS "platform_video_config_values";
+-- SPLIT
+ALTER TABLE "PlatformVideoConfig" ADD CONSTRAINT "platform_video_config_values"
+  CHECK (
+    "callTargetResolution" IN ('480p', '720p', '1080p')
+    AND "recordingQuality" IN ('720p', '1080p')
+    AND "screenshareTargetResolution" IN ('720p', '1080p')
+  );
+
+-- SPLIT
 ALTER TABLE "Payment" DROP CONSTRAINT IF EXISTS "payment_platform_fee_bps_range";
 -- SPLIT
 ALTER TABLE "Payment" ADD CONSTRAINT "payment_platform_fee_bps_range"
@@ -1406,3 +1417,33 @@ DROP TRIGGER IF EXISTS support_chat_access_append_only ON "SupportCaseChatAccess
 CREATE TRIGGER support_chat_access_append_only
   BEFORE UPDATE OR DELETE ON "SupportCaseChatAccess"
   FOR EACH ROW EXECUTE FUNCTION assert_support_chat_access_append_only();
+
+-- SPLIT
+-- An erasure retry reads its user from the request; every other revocation kind names the user itself.
+ALTER TABLE "StreamRevocationRetry" DROP CONSTRAINT IF EXISTS "stream_revocation_retry_owner";
+-- SPLIT
+ALTER TABLE "StreamRevocationRetry" ADD CONSTRAINT "stream_revocation_retry_owner"
+  CHECK (("kind" = 'ERASURE_REVOKE') = ("erasureRequestId" IS NOT NULL)
+    AND ("erasureRequestId" IS NOT NULL OR "userId" IS NOT NULL)
+    AND ("kind" = 'DM_REMOVE') = ("counterpartUserId" IS NOT NULL));
+-- SPLIT
+-- One open retry per revocation target; a settled row frees the key for the next revocation.
+CREATE UNIQUE INDEX IF NOT EXISTS "stream_revocation_retry_open_key"
+  ON "StreamRevocationRetry" ("kind", "planId", "userId")
+  WHERE "erasureRequestId" IS NULL AND "status" <> 'SUCCEEDED';
+-- SPLIT
+-- Meeting.endedReason holds only MEETING_END_REASONS (lib/meetings/end-reasons.ts); NOT VALID skips the scan, so VALIDATE separately.
+-- Before VALIDATE, confirm SELECT DISTINCT "endedReason" FROM "Meeting" returns only these values or NULL.
+ALTER TABLE "Meeting"
+  DROP CONSTRAINT IF EXISTS "meeting_ended_reason_known",
+  ADD CONSTRAINT "meeting_ended_reason_known"
+    CHECK (
+      "endedReason" IS NULL
+      OR "endedReason" IN (
+        'call_ended', 'maintenance', 'org_deactivated', 'org_deleted',
+        'session_timeout', 'ended_early', 'stream_ended',
+        'reconciled', 'reconciled_no_end', 'stream_not_found', 'stream_not_configured'
+      )
+    ) NOT VALID;
+-- SPLIT
+ALTER TABLE "Meeting" VALIDATE CONSTRAINT "meeting_ended_reason_known";

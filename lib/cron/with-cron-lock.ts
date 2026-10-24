@@ -1,4 +1,5 @@
-import * as Sentry from "@sentry/nextjs";
+import * as Sentry from "@sentry/core";
+import { z } from "zod";
 import {
   CronLockHeldError,
   CronLockUnavailableError,
@@ -73,6 +74,32 @@ async function touchRedisHeartbeat(): Promise<void> {
   }
 }
 
+const checkpointSchema = z.object({ checkpoint: z.string().nullable() });
+
+/** A job that pages across runs returns `checkpoint`; the trail keeps it for the next run. */
+function checkpointOf(result: unknown): { checkpoint: string | null } | null {
+  const parsed = checkpointSchema.safeParse(result);
+  return parsed.success ? { checkpoint: parsed.data.checkpoint } : null;
+}
+
+/** The checkpoint the job's latest finished run left, or null to start from the beginning. */
+export async function readJobCheckpoint(
+  jobName: string,
+): Promise<string | null> {
+  const delegate = await getExecutionDelegate();
+  const rows = await delegate.findMany({
+    where: { jobName, status: { in: ["COMPLETED", "FAILED"] } },
+    orderBy: { startedAt: "desc" },
+    take: 5,
+    select: { result: true },
+  });
+  for (const row of rows) {
+    const found = checkpointOf(row.result);
+    if (found) return found.checkpoint;
+  }
+  return null;
+}
+
 async function recordJobFinish(
   jobName: string,
   delegate: SystemJobExecutionDelegate,
@@ -80,6 +107,7 @@ async function recordJobFinish(
   acquiredAtMs: number,
   outcome: JobOutcome,
   error?: unknown,
+  checkpoint?: { checkpoint: string | null } | null,
 ): Promise<void> {
   if (!executionId) return;
   try {
@@ -99,6 +127,7 @@ async function recordJobFinish(
             process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT ??
             process.env.SENTRY_ENVIRONMENT ??
             "unknown",
+          ...(checkpoint ?? {}),
         },
         endedAt: now,
         durationMs: Math.max(0, now.getTime() - acquiredAtMs),
@@ -204,6 +233,7 @@ export async function withCronLock<T>(
       outcome === "failure" || outcome === "partial_failure"
         ? new Error(`Job returned ${outcome}`)
         : undefined,
+      checkpointOf(result),
     );
     return result;
   } catch (err) {
@@ -245,11 +275,11 @@ function startLeaseRenewal(
             `[${jobName}] cron lock renewal failed — ownership lost`,
           );
           try {
-            Sentry.logger?.warn("cron lock renewal failed — ownership lost", {
+            Sentry.logger.warn("cron lock renewal failed — ownership lost", {
               jobName,
               executionId,
             });
-            Sentry.metrics?.count("cron.lock_ownership_lost", 1, {
+            Sentry.metrics.count("cron.lock_ownership_lost", 1, {
               attributes: { job_name: jobName },
             });
           } catch {

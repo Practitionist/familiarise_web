@@ -1,8 +1,11 @@
 import "dotenv/config";
 
-import * as Sentry from "@sentry/nextjs";
-
 import prisma from "../../lib/prisma";
+import type { RunFailureReporter } from "../../lib/observability/run-failures";
+import {
+  reportSentryError,
+  type ReportOpts,
+} from "../../lib/observability/report";
 import {
   getStreamChatClient,
   isExpectedStreamError,
@@ -67,9 +70,58 @@ type DeactivatedOrgRow = {
 };
 
 export async function windDownDeactivatedOrgs(): Promise<WindDownDeactivatedOrgsResult> {
-  return withCronLock("wind-down-deactivated-orgs", { failMode: "open" }, () =>
-    windDownDeactivatedOrgsUnlocked(),
+  return withCronLock(
+    "wind-down-deactivated-orgs",
+    { failMode: "open" },
+    async () => {
+      const failures = windDownFailureReporter();
+      try {
+        return await windDownDeactivatedOrgsUnlocked(failures);
+      } finally {
+        failures.flush();
+      }
+    },
   );
+}
+
+function windDownFailureReporter(): RunFailureReporter {
+  let count = 0;
+  let first: unknown;
+  let billing = false;
+  let expected = true;
+  let level: NonNullable<ReportOpts["level"]> = "debug";
+  const levels = ["debug", "log", "info", "warning", "error", "fatal"];
+  const sample: Record<string, unknown>[] = [];
+  return {
+    add(operation, error, context, opts) {
+      count++;
+      if (count === 1 || (!billing && context?.reason === "stream.billing"))
+        first = error;
+      billing ||= context?.reason === "stream.billing";
+      expected &&= opts?.expected ?? false;
+      const nextLevel = opts?.level ?? "error";
+      if (levels.indexOf(nextLevel) > levels.indexOf(level)) level = nextLevel;
+      if (sample.length < 10) sample.push({ ...context, operation });
+    },
+    flush() {
+      if (!count) return;
+      reportSentryError(first, {
+        subsystem: "stream",
+        op: "wind-down-deactivated-orgs",
+        level,
+        expected,
+        ...(billing ? { tags: { reason: "stream.billing" } } : {}),
+        fingerprint: ["stream", "wind-down-deactivated-orgs"],
+        extra: { count, sample: [...sample] },
+      });
+      count = 0;
+      first = undefined;
+      billing = false;
+      expected = true;
+      level = "debug";
+      sample.length = 0;
+    },
+  };
 }
 
 const DEACTIVATED_ORG_SELECT = {
@@ -164,7 +216,9 @@ async function loadCandidateDeactivatedOrgs(
   return [...freshOrgs, ...retentionReadyOrgs];
 }
 
-async function windDownDeactivatedOrgsUnlocked(): Promise<WindDownDeactivatedOrgsResult> {
+async function windDownDeactivatedOrgsUnlocked(
+  failures: RunFailureReporter,
+): Promise<WindDownDeactivatedOrgsResult> {
   const result: WindDownDeactivatedOrgsResult = {
     orgsScanned: 0,
     callsEnded: 0,
@@ -192,7 +246,7 @@ async function windDownDeactivatedOrgsUnlocked(): Promise<WindDownDeactivatedOrg
 
   for (const org of orgs) {
     try {
-      await windDownSingleOrg(chat, org, now, result);
+      await windDownSingleOrg(chat, org, now, result, failures);
     } catch (err) {
       result.errors.push(
         `org ${org.id}: ${err instanceof Error ? err.message : String(err)}`,
@@ -200,7 +254,7 @@ async function windDownDeactivatedOrgsUnlocked(): Promise<WindDownDeactivatedOrg
     }
   }
 
-  await drainPendingMemberRemovals(now, result);
+  await drainPendingMemberRemovals(now, result, failures);
 
   if (result.errors.length > 0) {
     result.success = false;
@@ -225,6 +279,7 @@ async function endOrgActiveVideoCalls(
   orgId: string,
   now: Date,
   result: WindDownDeactivatedOrgsResult,
+  failures: RunFailureReporter,
 ): Promise<void> {
   if (!prisma.meeting?.findMany) return;
   const activeCalls = await prisma.meeting.findMany({
@@ -237,6 +292,7 @@ async function endOrgActiveVideoCalls(
     endedReason: "org_deactivated",
     errorPrefix: `org ${orgId}`,
     useCircuitBreaker: true,
+    failures,
   });
   result.callsEnded += callsRes.callsEnded;
   result.errors.push(...callsRes.errors);
@@ -255,12 +311,16 @@ async function freezeSingleEventTarget(
   stampedWebinarIds: string[],
   stampedClassIds: string[],
   result: WindDownDeactivatedOrgsResult,
+  failures: RunFailureReporter,
 ): Promise<void> {
   try {
-    await withStreamCircuitBreaker(() =>
-      chat
-        .channel("team", item.channelId)
-        .updatePartial({ set: { frozen: true } }),
+    await withStreamCircuitBreaker(
+      () =>
+        chat
+          .channel("team", item.channelId)
+          .updatePartial({ set: { frozen: true } }),
+      undefined,
+      failures,
     );
     result.eventChannelsFrozen++;
     if (item.kind === "webinar") stampedWebinarIds.push(item.id);
@@ -284,6 +344,7 @@ async function freezeOrgEventChannels(
   classIds: string[],
   now: Date,
   result: WindDownDeactivatedOrgsResult,
+  failures: RunFailureReporter,
 ): Promise<void> {
   const eventTargets: EventFreezeTarget[] = [
     ...webinarIds.map((id) => ({
@@ -315,6 +376,7 @@ async function freezeOrgEventChannels(
           stampedWebinarIds,
           stampedClassIds,
           result,
+          failures,
         ),
       ),
     );
@@ -371,22 +433,22 @@ async function collectAllOrgDmChannelIds(
   }
 
   try {
-    const { channels: taggedChannels } = await queryOrgTaggedChannels(
-      chat,
-      orgId,
-      { frozen: false },
-    );
+    const { channels: taggedChannels, truncated } =
+      await queryOrgTaggedChannels(chat, orgId, { frozen: false });
+    if (truncated) {
+      result.errors.push(
+        `org ${orgId} queryChannelsPaged: truncated after ${taggedChannels.length} channels; wind-down remains incomplete`,
+      );
+    }
     for (const ch of taggedChannels) {
       if (ch.id && ch.type === "messaging") {
         dmChannelIds.add(ch.id);
       }
     }
   } catch (err) {
-    if (!isExpectedStreamError(err)) {
-      result.errors.push(
-        `org ${orgId} queryChannelsPaged: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    result.errors.push(
+      `org ${orgId} queryChannelsPaged: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
   return Array.from(dmChannelIds);
 }
@@ -396,6 +458,7 @@ async function freezeOrgDmChannels(
   orgId: string,
   dmChannelIds: string[],
   result: WindDownDeactivatedOrgsResult,
+  failures: RunFailureReporter,
 ): Promise<void> {
   for (const [batchIdx, batch] of chunk(
     dmChannelIds,
@@ -405,10 +468,13 @@ async function freezeOrgDmChannels(
     await Promise.all(
       batch.map(async (channelId) => {
         try {
-          await withStreamCircuitBreaker(() =>
-            chat
-              .channel("messaging", channelId)
-              .updatePartial({ set: { frozen: true } }),
+          await withStreamCircuitBreaker(
+            () =>
+              chat
+                .channel("messaging", channelId)
+                .updatePartial({ set: { frozen: true } }),
+            undefined,
+            failures,
           );
           result.dmChannelsFrozen++;
         } catch (err) {
@@ -432,6 +498,7 @@ async function purgeSingleOrgRecording(
   },
   now: Date,
   result: WindDownDeactivatedOrgsResult,
+  failures: RunFailureReporter,
 ): Promise<void> {
   try {
     if (rec.previewClipStoragePath) {
@@ -444,7 +511,7 @@ async function purgeSingleOrgRecording(
       }
     }
     const del = rec.storagePath
-      ? await deleteRecordingObject(rec.storagePath)
+      ? await deleteRecordingObject(rec.storagePath, failures)
       : { success: true };
     if (!del.success) {
       result.errors.push(
@@ -478,13 +545,14 @@ async function purgeExpiredOrgRecordings(
   org: DeactivatedOrgRow,
   now: Date,
   result: WindDownDeactivatedOrgsResult,
+  orgErrorsBefore: number,
+  failures: RunFailureReporter,
 ): Promise<void> {
   if (!prisma.recording?.findMany) return;
   const retentionDays =
     org.streamRecordingRetentionDays ?? DEFAULT_RETENTION_DAYS;
   const deactivatedAnchor = resolveDeactivatedAnchor(org);
   const retentionCutoff = new Date(now.getTime() - retentionDays * DAY_MS);
-  const purgeErrorsBefore = result.errors.length;
 
   const expiredRecordings = await prisma.recording.findMany({
     where: {
@@ -503,12 +571,12 @@ async function purgeExpiredOrgRecordings(
   });
 
   for (const rec of expiredRecordings) {
-    await purgeSingleOrgRecording(org.id, rec, now, result);
+    await purgeSingleOrgRecording(org.id, rec, now, result, failures);
   }
 
   if (
     deactivatedAnchor <= retentionCutoff &&
-    result.errors.length === purgeErrorsBefore &&
+    result.errors.length === orgErrorsBefore &&
     prisma.orgAuditLog?.create
   ) {
     await prisma.orgAuditLog.create({
@@ -529,6 +597,7 @@ async function windDownSingleOrg(
   org: DeactivatedOrgRow,
   now: Date,
   result: WindDownDeactivatedOrgsResult,
+  failures: RunFailureReporter,
 ): Promise<void> {
   const alreadyWoundDown = (org.auditLogs ?? []).some(
     (log) => log.action === STREAM_ORG_WOUND_DOWN_ACTION,
@@ -536,7 +605,7 @@ async function windDownSingleOrg(
   const errorsBefore = result.errors.length;
 
   if (!alreadyWoundDown) {
-    await endOrgActiveVideoCalls(org.id, now, result);
+    await endOrgActiveVideoCalls(org.id, now, result, failures);
 
     const surfaces = await loadOrgStreamSurfaces(org.id, {
       onlyUnfrozen: true,
@@ -548,6 +617,7 @@ async function windDownSingleOrg(
       surfaces.classIds,
       now,
       result,
+      failures,
     );
 
     const dmChannelIds = await collectAllOrgDmChannelIds(
@@ -556,7 +626,7 @@ async function windDownSingleOrg(
       surfaces.dmChannelIds,
       result,
     );
-    await freezeOrgDmChannels(chat, org.id, dmChannelIds, result);
+    await freezeOrgDmChannels(chat, org.id, dmChannelIds, result, failures);
 
     if (prisma.recording?.updateMany) {
       const unpublished = await prisma.recording.updateMany({
@@ -580,7 +650,7 @@ async function windDownSingleOrg(
     }
   }
 
-  await purgeExpiredOrgRecordings(org, now, result);
+  await purgeExpiredOrgRecordings(org, now, result, errorsBefore, failures);
 }
 
 async function loadRejoinedMemberKeys(
@@ -601,13 +671,17 @@ async function loadRejoinedMemberKeys(
 }
 
 async function drainSingleRemovedMember(
-  row: { userId: string; organizationId: string },
+  row: { userId: string; organizationId: string; updatedAt: Date },
   result: WindDownDeactivatedOrgsResult,
+  failures: RunFailureReporter,
 ): Promise<void> {
   try {
+    // Cut at the removal, so a re-run never revokes a token minted after it.
     const outcome = await revokeMemberStreamAccess({
       userId: row.userId,
       orgId: row.organizationId,
+      failureReporter: failures,
+      revokeTokensIssuedBefore: row.updatedAt,
     });
     if (outcome.complete) {
       result.removedMembersDrained++;
@@ -620,16 +694,17 @@ async function drainSingleRemovedMember(
     result.errors.push(
       `removed member ${row.userId}@${row.organizationId}: ${err instanceof Error ? err.message : String(err)}`,
     );
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "stream", op: "wind-down-deactivated-orgs" } },
-    );
+    failures.add("wind-down-member-removal", err, {
+      userId: row.userId,
+      organizationId: row.organizationId,
+    });
   }
 }
 
 async function drainPendingMemberRemovals(
   now: Date,
   result: WindDownDeactivatedOrgsResult,
+  failures: RunFailureReporter,
 ): Promise<void> {
   if (!prisma.membership?.findMany) return;
   const windowFrom = new Date(
@@ -640,7 +715,7 @@ async function drainPendingMemberRemovals(
       status: "REMOVED",
       updatedAt: { gte: windowFrom },
     },
-    select: { userId: true, organizationId: true },
+    select: { userId: true, organizationId: true, updatedAt: true },
     take: MAX_REMOVED_MEMBERS_PER_RUN,
     orderBy: { updatedAt: "desc" },
   });
@@ -648,17 +723,18 @@ async function drainPendingMemberRemovals(
 
   const uniqueByKey = new Map<
     string,
-    { userId: string; organizationId: string }
+    { userId: string; organizationId: string; updatedAt: Date }
   >();
   for (const row of removedRows) {
-    uniqueByKey.set(`${row.userId}:${row.organizationId}`, row);
+    const key = `${row.userId}:${row.organizationId}`;
+    if (!uniqueByKey.has(key)) uniqueByKey.set(key, row);
   }
   const uniquePairs = Array.from(uniqueByKey.values());
   const rejoinedKeys = await loadRejoinedMemberKeys(uniquePairs);
 
   for (const row of uniquePairs) {
     if (rejoinedKeys.has(`${row.userId}:${row.organizationId}`)) continue;
-    await drainSingleRemovedMember(row, result);
+    await drainSingleRemovedMember(row, result, failures);
   }
 }
 

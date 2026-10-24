@@ -27,7 +27,8 @@
  */
 
 import fs from "node:fs";
-import * as Sentry from "@sentry/nextjs";
+// Core exposes these generic APIs as real named exports to native ESM workers.
+import * as Sentry from "@sentry/core";
 import { initSentry } from "@/sentry.shared.config";
 import { reportSentryError } from "@/lib/observability/report";
 // Leaf module on purpose: importing this from with-cron-lock would drag
