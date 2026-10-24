@@ -2,7 +2,7 @@
  * Upstash Redis client, per-service circuit breaker, and distributed lock helpers.
  */
 
-import * as Sentry from "@sentry/nextjs";
+import * as Sentry from "@sentry/core";
 import { Redis } from "@upstash/redis";
 import crypto from "crypto";
 import { getMockRedis, MockRedis } from "./redis-mock";

@@ -1,4 +1,4 @@
-import * as Sentry from "@sentry/nextjs";
+import * as Sentry from "@sentry/core";
 import {
   CronLockHeldError,
   CronLockUnavailableError,
@@ -245,11 +245,11 @@ function startLeaseRenewal(
             `[${jobName}] cron lock renewal failed — ownership lost`,
           );
           try {
-            Sentry.logger?.warn("cron lock renewal failed — ownership lost", {
+            Sentry.logger.warn("cron lock renewal failed — ownership lost", {
               jobName,
               executionId,
             });
-            Sentry.metrics?.count("cron.lock_ownership_lost", 1, {
+            Sentry.metrics.count("cron.lock_ownership_lost", 1, {
               attributes: { job_name: jobName },
             });
           } catch {

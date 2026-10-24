@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 // Native Node ESM workers require the explicit package file extension.
 import { NextResponse, type NextRequest } from "next/server.js";
-import * as Sentry from "@sentry/nextjs";
+import * as Sentry from "@sentry/core";
 import { z } from "zod";
 import { jobOutcome, type JobOutcome } from "@/lib/cron/job-outcome";
 import {
@@ -316,7 +316,7 @@ export function cleanupRoute<T extends object>(opts: {
     const canary = ingestCanaryEnabled(job);
     const outcome = await executeCleanupJob(req);
     if (canary || !outcome.ok) {
-      await Sentry.flush?.(2_000);
+      await Sentry.flush(2_000);
     }
     return NextResponse.json(outcome.body, {
       status: outcome.status,
