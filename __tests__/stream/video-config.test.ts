@@ -59,6 +59,13 @@ beforeEach(() => {
 });
 
 describe("getPlatformVideoConfig", () => {
+  it("falls back to the defaults when the config cannot be read", async () => {
+    mockFindUnique.mockRejectedValueOnce(new Error("relation does not exist"));
+    await expect(getPlatformVideoConfig()).resolves.toEqual(
+      DEFAULT_VIDEO_CONFIG,
+    );
+  });
+
   it("reads the defaults when no row exists", async () => {
     await expect(getPlatformVideoConfig()).resolves.toEqual(
       DEFAULT_VIDEO_CONFIG,
