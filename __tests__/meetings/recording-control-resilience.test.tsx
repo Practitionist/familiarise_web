@@ -167,4 +167,69 @@ describe("RecordingControls loading fallback", () => {
       (screen.getByTitle("Stop Recording") as HTMLButtonElement).disabled,
     ).toBe(false);
   });
+
+  it("starts the acknowledgement wait only after the POST is accepted", async () => {
+    let accept: (v: unknown) => void = () => {};
+    fetchMock.mockImplementation(
+      () => new Promise((resolve) => (accept = resolve)),
+    );
+    render(
+      <RecordingControls
+        meetingId="m1"
+        recordingEnabled
+        showOnlyButton
+        isHost
+      />,
+    );
+    const button = screen.getByTitle("Start Recording") as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(RECORDING_ACK_TIMEOUT_MS + 100);
+    });
+    expect(call.get).not.toHaveBeenCalled();
+    expect(button.disabled).toBe(true);
+
+    await act(async () => {
+      accept({ ok: true, status: 200, json: () => Promise.resolve({}) });
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(RECORDING_ACK_TIMEOUT_MS + 100);
+    });
+    expect(call.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the button pending and re-reads when the call refresh fails", async () => {
+    fetchMock.mockImplementation(() => reply(200));
+    call.get.mockImplementationOnce(() => Promise.reject(new Error("down")));
+    render(
+      <RecordingControls
+        meetingId="m1"
+        recordingEnabled
+        showOnlyButton
+        isHost
+      />,
+    );
+    const button = screen.getByTitle("Start Recording") as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    call.state.recording = true;
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(RECORDING_ACK_TIMEOUT_MS + 100);
+    });
+    expect(call.get).toHaveBeenCalledTimes(1);
+    expect(button.disabled).toBe(true);
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(RECORDING_ACK_TIMEOUT_MS + 100);
+    });
+    expect(call.get).toHaveBeenCalledTimes(2);
+    expect(
+      (screen.getByTitle("Stop Recording") as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
 });

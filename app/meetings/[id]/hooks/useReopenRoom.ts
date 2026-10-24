@@ -34,6 +34,14 @@ export function useReopenRoom(meetingId: string) {
         setIsReopening(false);
         return;
       }
+      // The same call id means the room is not sealed yet; replacing to the current path would not remount.
+      if (data.streamCallId === meetingId) {
+        setReopenError(
+          "The room is not marked as closed yet. Try again in a moment.",
+        );
+        setIsReopening(false);
+        return;
+      }
       router.replace(`/meetings/${encodeURIComponent(data.streamCallId)}`);
     } catch {
       setReopenError("Network error while reopening session room.");

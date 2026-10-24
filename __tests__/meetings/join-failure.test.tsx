@@ -41,6 +41,14 @@ describe("classifyJoinFailure", () => {
     ).toBe("provider_unavailable");
   });
 
+  it("leaves a programming TypeError as unknown, not an outage", () => {
+    expect(
+      classifyJoinFailure(
+        new TypeError("Cannot read properties of null (reading 'callId')"),
+      ),
+    ).toBe("unknown");
+  });
+
   it("maps the SFU participant-limit code, and the coordinator's wording, to a full room", () => {
     expect(
       classifyJoinFailure(

@@ -156,11 +156,19 @@ export async function POST(
     const providerOutage =
       upstream !== null && (upstream >= 500 || upstream === 429);
 
-    reportSentryError(error, {
-      subsystem: "stream",
-      op: "meetings.join",
-    });
-    streamLogger.error("Failed to admit to meeting", error);
+    // The client retries an outage, so only a non-outage fault reaches Sentry.
+    if (providerOutage) {
+      streamLogger.warn("Meeting join hit a Stream outage", {
+        meetingId: meetingIdForLog,
+        upstream,
+      });
+    } else {
+      reportSentryError(error, {
+        subsystem: "stream",
+        op: "meetings.join",
+      });
+      streamLogger.error("Failed to admit to meeting", error);
+    }
     return NextResponse.json(
       providerOutage
         ? { error: "Video is temporarily unavailable. Please try again." }

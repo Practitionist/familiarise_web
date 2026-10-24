@@ -64,8 +64,6 @@ export function classifyJoinFailure(error: unknown): JoinFailureKind {
   if (ROOM_FULL_MESSAGE_PATTERN.test(message)) return "room_full";
 
   if (error instanceof VideoClientTimeoutError) return "provider_unavailable";
-  // `fetch` rejects with a TypeError when the network is down.
-  if (error instanceof TypeError) return "provider_unavailable";
   const status = statusErrorSchema.safeParse(error);
   if (status.success) {
     return isTransientStatus(status.data.status)
