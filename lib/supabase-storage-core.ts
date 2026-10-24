@@ -7,6 +7,8 @@
  */
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
+import { bucketPolicyFor } from "@/lib/storage/bucket-policies";
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -93,7 +95,7 @@ export function generateStorageFileName(mimeType: string): string {
 
 export interface BucketOptions {
   public?: boolean;
-  allowedMimeTypes?: string[];
+  allowedMimeTypes?: readonly string[];
   fileSizeLimit?: number;
 }
 
@@ -157,7 +159,7 @@ async function reconcileBucketOptions(
       ? { fileSizeLimit: options.fileSizeLimit }
       : {}),
     ...(options.allowedMimeTypes
-      ? { allowedMimeTypes: options.allowedMimeTypes }
+      ? { allowedMimeTypes: [...options.allowedMimeTypes] }
       : {}),
   });
 
@@ -172,18 +174,27 @@ async function reconcileBucketOptions(
 
 /**
  * Ensure a storage bucket exists, create it if it doesn't.
- * Pass options to customize bucket settings per use case.
- * Memoized per process: a bucket confirmed once is never re-probed.
+ * Existence is memoized per process; a later call that passes options
+ * reconciles the settings of a bucket already confirmed.
  */
 export const ensureBucketExists = async (
   bucketName: string,
   options?: BucketOptions,
 ): Promise<boolean> => {
+  // A bucket with no policy is not provisioned: the old fallback created it
+  // public with a document allowlist that no caller had chosen.
+  const policy = bucketPolicyFor(bucketName, options);
+  if (!policy) {
+    console.error(
+      `No storage policy for bucket "${bucketName}" — refusing to provision it.`,
+    );
+    return false;
+  }
   // Memoization skips the existence probe, not the settings. A later caller
   // passing options to a bucket already seen without them would otherwise be
   // silently ignored for the rest of the process.
   if (knownBuckets.has(bucketName)) {
-    if (options) await reconcileBucketOptions(bucketName, options);
+    if (options) await reconcileBucketOptions(bucketName, policy);
     return true;
   }
   try {
@@ -195,7 +206,7 @@ export const ensureBucketExists = async (
 
     // If no error, bucket exists
     if (!listError) {
-      await reconcileBucketOptions(bucketName, options);
+      await reconcileBucketOptions(bucketName, policy);
       knownBuckets.add(bucketName);
       return true;
     }
@@ -209,17 +220,11 @@ export const ensureBucketExists = async (
 
       const { data: _createData, error: createError } =
         await storage.createBucket(bucketName, {
-          public: options?.public ?? true,
-          allowedMimeTypes: options?.allowedMimeTypes ?? [
-            "application/pdf",
-            "application/msword",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "image/jpeg",
-            "image/png",
-            "image/gif",
-            "text/plain",
-          ],
-          fileSizeLimit: options?.fileSizeLimit ?? 10485760, // 10MB
+          public: policy.public,
+          fileSizeLimit: policy.fileSizeLimit,
+          ...(policy.allowedMimeTypes
+            ? { allowedMimeTypes: [...policy.allowedMimeTypes] }
+            : {}),
         });
 
       if (createError) {
