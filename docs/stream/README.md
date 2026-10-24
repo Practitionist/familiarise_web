@@ -60,12 +60,12 @@ Each invariant below is strictly enforced across `lib/stream/`, `lib/meetings/`,
 3. **Tokens Require Both `iat` and `exp`**: Stream invalidates tokens lacking `iat` whenever `revoke_tokens_issued_before` is set on a user.
 4. **Never Invoke External Stream RPCs Inside `prisma.$transaction` (`PG_POOL_MAX=1`)**: Execute all Stream SDK network calls outside transactions via `withStreamCircuitBreaker`, and persist Postgres transitions atomically via conditional `updateMany` compare-and-set (CAS) predicates.
 5. **Asymmetric Webhook Lookup & Monotonic Convergence (`ADR-02` & `ADR-03`)**: `call.ended` and `call.session_ended` webhooks match strictly on `where: { streamCallId }` and advance monotonically (`supersedesRecordedEnd`), while `recording_ready`, `recording_failed`, and `participant_*` webhooks fall back to `appointmentOccurrenceId` so pre-reopen artifacts and attendance intervals are never lost.
-6. **Shared Stream Application Across Environments (`app_id: 1366319`)**: Keep `STREAM_MCP_READ_ONLY="true"` in `.mcp.json`.
+6. **Separate Stream Applications by Environment (`ADR-06`)**: Production uses the production app (`app_id: 1366319`). Local development and deploy previews use the Familiarise-dev app, and a boot guard refuses the production key outside production. Keep `STREAM_MCP_READ_ONLY="true"` in `.mcp.json` whenever it points at the production app.
 
 ## Related
 
 - [Session documents and recordings ADR](../decisions/2026-10-12-session-documents-and-recordings.md) and [session documents architecture](../documents/README.md)
-- [18. Architecture Decision Records (`ADR-01` through `ADR-05`)](./18-architecture-decision-records.md)
+- [18. Architecture Decision Records (`ADR-01` through `ADR-06`)](./18-architecture-decision-records.md)
 - `.claude/skills/stream/SKILL.md` — Operational engineering skill synchronized with the live codebase.
 
 ## Deprecated & Superseded Approaches
