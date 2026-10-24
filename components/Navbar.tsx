@@ -11,7 +11,6 @@ import {
   ArrowRightLeft,
   UserCheck,
   Building2,
-  FileText,
   HelpCircle,
   Info,
   Mail,
@@ -162,12 +161,15 @@ const EXPLORE_COLUMNS: NavColumn[] = [
 const EXPLORE_CATEGORIES: NavCategoryChip[] = [
   { label: "Technology", href: "/explore/experts?domain=Technology" },
   { label: "Business", href: "/explore/experts?domain=Business" },
-  { label: "Creative Arts", href: "/explore/experts?domain=Creative Arts" },
+  {
+    label: "Creative Arts",
+    href: `/explore/experts?domain=${encodeURIComponent("Creative Arts")}`,
+  },
   { label: "Education", href: "/explore/experts?domain=Education" },
   { label: "Health", href: "/explore/experts?domain=Health" },
   {
     label: "Personal Dev",
-    href: "/explore/experts?domain=Personal Development",
+    href: `/explore/experts?domain=${encodeURIComponent("Personal Development")}`,
   },
 ];
 
@@ -236,8 +238,6 @@ const ENTERPRISE_COLUMNS: NavColumn[] = [
   },
 ];
 
-// Community and Blog previously rendered a "Soon" pill while linking to live
-// pages — the pill told users not to bother clicking something that worked.
 const RESOURCE_COLUMNS: NavColumn[] = [
   {
     heading: "Resources",
@@ -249,15 +249,9 @@ const RESOURCE_COLUMNS: NavColumn[] = [
         icon: HelpCircle,
       },
       {
-        label: "Blog",
-        href: "/blog",
-        description: "Insights, tips, and career advice",
-        icon: FileText,
-      },
-      {
         label: "About",
         href: "/about",
-        description: "Our mission and story",
+        description: "Our company and what we do",
         icon: Info,
       },
       {

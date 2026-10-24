@@ -599,6 +599,7 @@ Speed improvement: ~50% faster
 interface StreamConnectionState {
   chatConnected: boolean; // Chat WebSocket active
   videoConnected: boolean; // Video client initialized
+  chatReconnecting: boolean; // Chat socket dropped, still inside its 15 s grace window
   isConnecting: boolean; // Connection in progress
   error: string | null; // Raw SDK message — debug dialog only
   failure: ConnectFailure | null; // Classified: kind, title, description, action
@@ -637,6 +638,18 @@ export const useStreamConnection = () => {
   return context;
 };
 ```
+
+### Recovery, grace window and single-flight connects
+
+Four rules keep a flaky network or an overlapping render from tearing the chat surface down. They live in `providers/StreamProviderImpl.tsx`.
+
+A successful connect clears the failure. When a `connectServices` run settles with no rejected client, the provider resets the attempt counter and calls `setFailure(null)` and `setError(null)`, so a failure left by an earlier attempt cannot hide a live socket. A consent refusal from `upsertUserToStream` makes `connectChat` reject rather than resolve `null`, so a chat-only mount (`enableVideo={false}`) still ends the run with the `consent` failure instead of clearing it. When the SDK reconnects on its own and emits `connection.changed` with `online: true`, a `retryable` failure is cleared the same way; an account or consent failure is left alone because a socket event cannot resolve it. A retryable failure on a chat client that had already connected is treated as a reconnect and is not shown until the five-attempt budget is spent, so a blip never swaps the layout for "Chat unavailable".
+
+A dropped socket is a grace window, not an immediate disconnect. On `connection.changed` with `online: false` the provider sets `chatConnected` to `false` (it stays truthful) and `chatReconnecting` to `true`. After `RECONNECT_GRACE_MS` (8 s) it starts its own reconnect, and after `DISCONNECT_GRACE_MS` (15 s) it clears `chatReconnecting`. Surfaces render the chat layout while `chatConnected || chatReconnecting`, show a small non-blocking "Reconnecting…" banner while only the second holds, and fall back to the skeleton only after the window closes (`components/chat/ChatSurface.tsx`, shared by the consultant, consultee and organisation Messages pages). The layout therefore keeps the draft, scroll position and active channel across a Wi-Fi blip.
+
+Overlapping connects share one attempt. `connectChat` and `connectVideo` go through `joinInFlight`, which hands a second caller for the same user the first caller's promise instead of a second `connectUser` or a `null` client. Every `connectServices` run takes a generation number and only the newest commits; `mergeSettledClients` additionally never replaces a client that is still the registered singleton with `null`. `retryConnection` clears the pending retry timer and does nothing while a run is in flight, and a video client that finished connecting after the user changed is disconnected rather than registered.
+
+The profile fetch that gates the connect retries too. `hooks/useUserData.ts` makes up to four attempts with capped (8 s) equal-jitter backoff (`lib/stream/backoff.ts`). When the budget runs out it reports once to Sentry and returns a typed `failure` (`profileLoadFailure`, kind `retryable`, action Retry); the provider publishes it, and `retryConnection` restarts the fetch while there is no profile. A 401 is the signed-out case and is neither retried nor reported. The token-mint callback in `getCachedToken` writes into the cache only while the cache still belongs to the requesting user.
 
 ### State Transition Diagram
 

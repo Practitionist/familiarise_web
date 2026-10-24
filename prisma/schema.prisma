@@ -5491,7 +5491,11 @@ model Meeting {
 
   // Session lifecycle
   endedAt     DateTime? // When session actually ended
-  endedReason String? // "call_ended", "session_timeout", "error"
+  endedReason String? // One of MEETING_END_REASONS (lib/meetings/end-reasons.ts); sidecar CHECK meeting_ended_reason_known
+
+  // Room time: the booked end is AppointmentOccurrence.endsAt; the room closes at endsAt + extendedSeconds
+  extendedSeconds Int @default(0)
+  extensionsUsed  Int @default(0)
 
   /// Set after a maintenance channel freeze succeeds; cleared after unfreeze succeeds.
   maintenanceChannelFrozenAt    DateTime?          @db.Timestamptz
@@ -5614,8 +5618,12 @@ model MeetingPresence {
   /// Stream user id, which equals User.id; stored plain like MeetingAttendance.userId.
   userId                  String
   userSessionId           String
+  /// The Stream call (room segment) this device stay belongs to; null on rows written before segments were recorded.
+  streamCallId            String?
   joinedAt                DateTime              @db.Timestamptz
   leftAt                  DateTime?             @db.Timestamptz
+  /// True while leftAt is a room end stamp rather than a leave Stream reported; the outcome sweep resolves it from Stream.
+  closedByEnd             Boolean               @default(false)
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -7023,6 +7031,18 @@ model PlatformPricingConfig {
   updatedAt            DateTime @updatedAt
 }
 
+// Staff-editable video quality applied to every call at creation. Values are
+// lib/stream/video-quality.ts keys; a missing row reads as that module's defaults.
+model PlatformVideoConfig {
+  id                          String   @id @default("singleton")
+  callTargetResolution        String   @default("720p")
+  recordingQuality            String   @default("720p")
+  screenshareTargetResolution String   @default("1080p")
+  updatedById                 String?
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+}
+
 enum ReferralStatus {
   SIGNED_UP
   QUALIFIED
@@ -7986,24 +8006,39 @@ model ErasureRequest {
   @@index([userId])
 }
 
-/// #1593 — an outbox row per (plan, erasure) whose Stream revocation failed inside
-/// the scrub; the retry sweep drains it, like FailedEmail / OutboundWebhookDelivery.
+/// A Stream access revocation that failed inline; the moderation retry sweep re-drives it by kind.
+/// `planId` is the kind's target: the plan for ERASURE_REVOKE and COLLAB_REVOKE, the webinar or
+/// class for EVENT_CHANNEL_REMOVE, the DM channel id for DM_REMOVE and the organization for ORG_REVOKE.
 model StreamRevocationRetry {
-  id               String           @id @default(cuid())
-  erasureRequest   ErasureRequest   @relation(fields: [erasureRequestId], references: [id], onDelete: Cascade)
-  erasureRequestId String
-  planType         CollaboratorType
-  planId           String
-  status           RetryStatus      @default(PENDING)
-  attempts         Int              @default(0)
-  nextRetryAt      DateTime?        @db.Timestamptz
-  lastError        String?          @db.Text
-  completedAt      DateTime?        @db.Timestamptz
-  createdAt        DateTime         @default(now()) @db.Timestamptz
-  updatedAt        DateTime         @updatedAt @db.Timestamptz
+  id                String               @id @default(cuid())
+  kind              StreamRevocationKind @default(ERASURE_REVOKE)
+  erasureRequest    ErasureRequest?      @relation(fields: [erasureRequestId], references: [id], onDelete: Cascade)
+  /// Set exactly on ERASURE_REVOKE rows, which read the user from the request.
+  erasureRequestId  String?
+  /// The user losing access; every kind except ERASURE_REVOKE carries it.
+  userId            String?
+  /// DM_REMOVE only: the other member of the pair, needed to re-check eligibility.
+  counterpartUserId String?
+  planType          CollaboratorType?
+  planId            String
+  status            RetryStatus          @default(PENDING)
+  attempts          Int                  @default(0)
+  nextRetryAt       DateTime?            @db.Timestamptz
+  lastError         String?              @db.Text
+  completedAt       DateTime?            @db.Timestamptz
+  createdAt         DateTime             @default(now()) @db.Timestamptz
+  updatedAt         DateTime             @updatedAt @db.Timestamptz
 
   @@unique([erasureRequestId, planType, planId])
   @@index([status, nextRetryAt])
+}
+
+enum StreamRevocationKind {
+  ERASURE_REVOKE
+  COLLAB_REVOKE
+  EVENT_CHANNEL_REMOVE
+  DM_REMOVE
+  ORG_REVOKE
 }
 
 enum ErasureVendor {

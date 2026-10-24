@@ -20,11 +20,13 @@ import {
 } from "@/lib/stream/batch";
 import prisma from "@/lib/prisma";
 import { notifyMaintenanceStarted } from "@/lib/novu/service";
+import type { MeetingEndReason } from "@/lib/meetings/end-reasons";
 
 const LIVE_SESSION_WINDOW_MS = 6 * 60 * 60 * 1000;
 const MAX_DRAIN_BATCH = 200;
 const VENDOR_TIMEOUT_MS = 3_000;
 const WORK_BUDGET_MS = 12_000;
+const DRAIN_END_REASON: MeetingEndReason = "maintenance";
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -137,7 +139,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
           where: { id: session.id },
           data: {
             endedAt,
-            endedReason: "maintenance",
+            endedReason: DRAIN_END_REASON,
             maintenanceWindowId: window.id,
             maintenanceChannelRecoveredAt: null,
           },

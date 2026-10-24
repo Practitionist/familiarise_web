@@ -3,7 +3,7 @@
 > **Target Environment:** Live **Netlify Deploy Previews** (`https://deploy-preview-<PR>--familiarise.netlify.app` or `https://dev--familiarise.netlify.app`) — **NEVER `localhost` (`next dev`)**.
 > **MCP Tool Stack:**
 > - **Chrome DevTools MCP** (`mcp__chrome-devtools__*`) — Real browser session injection (`__Secure-better-auth.session_token`), dashboard clicks, backstage/room verification, network/console inspection, screenshots.
-> - **Supabase MCP** (`mcp__supabase__execute_sql` on project `pzmbxqdgibfkhjwzeprf`) — Mock data CRUD, sequential non-overlapping live window shifting, `BEGIN ... ROLLBACK` kernel constraint probes (`23P01`, `23514`), and post-action DB assertions.
+> - **Supabase MCP** (read-only `mcp__supabase__execute_sql` on project `pzmbxqdgibfkhjwzeprf`) — Post-action DB assertions and `SELECT` probes. Fixture and session writes are operator-run SQL, not MCP calls.
 > - **Stream IO MCP** (`mcp__stream-io__*` on App `1366319`) — Live inspection of `default:occurrence-<slotId>` calls, `settings_override`, `co_presenter` / `call_member` grants, and `messaging` / `team` chat channels.
 > - **Sentry MCP** (`mcp__sentry__*`) — Unhandled error sweep across server, edge, and browser runtimes.
 

@@ -15,7 +15,7 @@
  * against the route's source text — would all still pass.
  */
 
-jest.mock("@sentry/nextjs", () => ({
+jest.mock("@sentry/core", () => ({
   captureException: jest.fn(),
   captureMessage: jest.fn(),
   flush: jest.fn().mockResolvedValue(true),
@@ -52,7 +52,7 @@ jest.mock("../../lib/maintenance-cron", () => ({
 }));
 
 import type { NextRequest } from "next/server";
-import * as Sentry from "@sentry/nextjs";
+import * as Sentry from "@sentry/core";
 
 import {
   cleanupRoute,

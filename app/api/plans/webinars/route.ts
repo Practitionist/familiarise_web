@@ -20,7 +20,7 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
-import { WebinarPlanSchema } from "@/schemas/plans";
+import { WebinarPlanSchema, maxParticipantsSchema } from "@/schemas/plans";
 
 const WebinarRecordingFlagsSchema = WebinarPlanSchema.pick({
   recordingEnabled: true,
@@ -161,6 +161,14 @@ export async function POST(request: NextRequest) {
     if (durationInHours <= 0 || price <= 0 || maxParticipants <= 0) {
       return NextResponse.json(
         { error: "Invalid numeric values" },
+        { status: 400 },
+      );
+    }
+
+    const capacity = maxParticipantsSchema.safeParse(maxParticipants);
+    if (!capacity.success) {
+      return NextResponse.json(
+        { error: capacity.error.issues[0]?.message ?? "Invalid capacity" },
         { status: 400 },
       );
     }
