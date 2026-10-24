@@ -4,7 +4,13 @@
  * and in a DM it is never the user that "Report" or "Block" targets.
  */
 import * as React from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 import {
   SUPPORT_STREAM_USER_ID,
@@ -26,6 +32,11 @@ jest.mock("next/image", () => ({
 }));
 jest.mock("../../actions/stream/chat/member.action", () => ({
   addMemberToChannel: jest.fn(),
+}));
+const removeUserFromEventChannel = jest.fn();
+jest.mock("../../actions/stream/chat/event-channel.action", () => ({
+  removeUserFromEventChannel: (...args: unknown[]) =>
+    removeUserFromEventChannel(...args),
 }));
 jest.mock("../../components/ui/use-toast", () => ({
   useToast: () => ({ toast: jest.fn() }),
@@ -92,6 +103,37 @@ describe("event channel member list", () => {
         name: "Remove Asha from this channel",
       }).length,
     ).toBeGreaterThan(0);
+  });
+
+  it("removes an attendee through the server action, not the Stream client", async () => {
+    removeUserFromEventChannel.mockResolvedValue({ success: true });
+    const channel = fakeChannel(
+      "team",
+      "webinar-abc",
+      [
+        { id: "host", name: "Host" },
+        { id: "attendee", name: "Asha" },
+      ],
+      "host",
+    );
+    render(<ChannelInfoAndManageDialog channel={channel} />);
+    openDialog();
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /Members/ }), {
+      button: 0,
+    });
+    fireEvent.click(
+      within(screen.getByRole("tabpanel")).getAllByRole("button", {
+        name: "Remove Asha from this channel",
+      })[0],
+    );
+    await waitFor(() =>
+      expect(removeUserFromEventChannel).toHaveBeenCalledWith(
+        "webinar",
+        "abc",
+        "attendee",
+      ),
+    );
+    expect(channel.removeMembers).not.toHaveBeenCalled();
   });
 
   it("hides every remove control while support is in the channel", () => {

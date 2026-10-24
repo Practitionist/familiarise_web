@@ -25,7 +25,6 @@ const mockLogger = {
 const mockCache = {
   isChannelCached: jest.fn(() => false),
   markChannelExists: jest.fn(),
-  initialSyncCompletedUsers: new Set<string>(),
 };
 const calls: string[] = [];
 
@@ -106,6 +105,21 @@ describe("createCollaboratorChannel", () => {
       unknown
     >;
     expect(createPayload.organization_id).toBeUndefined();
+  });
+
+  it("never lifts a wind-down freeze and reports it to the opener", async () => {
+    const { createCollaboratorChannel } =
+      await import("../../actions/stream/chat/channel.action");
+    mockChannel.create.mockResolvedValue({});
+    mockChannel.query.mockResolvedValue({
+      channel: { frozen: true },
+      members: [{ user_id: "host-user" }, { user_id: "collab-user" }],
+    });
+
+    const result = await createCollaboratorChannel("webinar", "plan-1");
+
+    expect(mockChannel.updatePartial).not.toHaveBeenCalled();
+    expect(result?.frozen).toBe(true);
   });
 
   it("stamps organization_id when plan.organizationId is set", async () => {

@@ -28,6 +28,8 @@ export interface StreamConnectionSnapshot {
   clients: StreamClients | null;
   chatConnected: boolean;
   videoConnected: boolean;
+  /** The chat socket dropped and is inside its grace window; keep the layout mounted. */
+  chatReconnecting: boolean;
   isConnecting: boolean;
   error: string | null;
   failure: ConnectFailure | null;
@@ -37,6 +39,7 @@ const INITIAL: StreamConnectionSnapshot = {
   clients: null,
   chatConnected: false,
   videoConnected: false,
+  chatReconnecting: false,
   isConnecting: false,
   error: null,
   failure: null,

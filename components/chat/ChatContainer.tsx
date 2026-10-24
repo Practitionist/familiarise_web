@@ -12,6 +12,7 @@ import {
   useChatContext,
 } from "stream-chat-react";
 import { AlertTriangle } from "lucide-react";
+import { AppointmentDocumentsHint } from "./AppointmentDocumentsHint";
 import { CustomChannelHeader } from "./CustomChannelHeader";
 import { CustomMessage } from "./CustomMessage";
 import { SupportInterventionBanner } from "./SupportInterventionBanner";
@@ -35,7 +36,12 @@ const EmptyChannelState = () => (
 );
 
 // System messages bypass `Message` and render through `MessageSystem`.
-const MESSAGE_LIST_OVERRIDES = { MessageSystem: SystemMessage };
+// `uploads: false` still leaves the selector for commands/polls/location.
+const AttachmentSelectorOff = () => null;
+const CHAT_COMPONENT_OVERRIDES = {
+  MessageSystem: SystemMessage,
+  AttachmentSelector: AttachmentSelectorOff,
+};
 
 export const ChatContainer = () => {
   const { channel } = useChatContext();
@@ -93,16 +99,12 @@ export const ChatContainer = () => {
     : { Message: CustomMessage };
 
   // Threads stay off: no `<Thread>` is mounted and `CustomMessage` replaces the
-  // SDK message UI, so neither the thread panel nor its reply-count button is
-  // ever rendered. Inline quote-reply covers the need. The CSS that used to
-  // `display: none` those elements is gone — it hid them while leaving them in
-  // the tab order. Turning `replies` off on the channel type in the Stream
-  // dashboard is the server-side half of this and is not code in this repo.
+  // SDK message UI.
   return (
     <StreamChatErrorBoundary>
       <div className="flex-1 flex flex-col h-full">
         <Channel>
-          <WithComponents overrides={MESSAGE_LIST_OVERRIDES}>
+          <WithComponents overrides={CHAT_COMPONENT_OVERRIDES}>
             <Window>
               <CustomChannelHeader />
               <SupportInterventionBanner />
@@ -113,7 +115,10 @@ export const ChatContainer = () => {
                   <span>Chat is temporarily read-only during maintenance.</span>
                 </div>
               ) : (
-                <MessageComposer focus />
+                <>
+                  <AppointmentDocumentsHint />
+                  <MessageComposer focus />
+                </>
               )}
             </Window>
           </WithComponents>

@@ -5,8 +5,12 @@
 const mockEnsureAppSettings = jest.fn();
 const mockEnsureCallTypeGrants = jest.fn();
 const mockHardenUnusedCallTypes = jest.fn();
+const mockEnsureMessagingGrants = jest.fn();
 const mockGetCallType = jest.fn();
 const mockUpdateCallType = jest.fn();
+const mockGetAppSettings = jest.fn();
+const mockUpdateChannelType = jest.fn();
+const mockUpdateAppSettings = jest.fn();
 
 jest.mock("../../scripts/stream/ensure-app-settings", () => ({
   ensureAppSettings: (...a: unknown[]) => mockEnsureAppSettings(...a),
@@ -16,12 +20,21 @@ jest.mock("../../scripts/stream/ensure-call-type-grants", () => ({
   ensureCallTypeGrants: (...a: unknown[]) => mockEnsureCallTypeGrants(...a),
 }));
 
+jest.mock("../../scripts/stream/ensure-messaging-grants", () => ({
+  ensureMessagingGrants: (...a: unknown[]) => mockEnsureMessagingGrants(...a),
+}));
+
 jest.mock("../../scripts/stream/harden-unused-call-types", () => ({
   hardenUnusedCallTypes: (...a: unknown[]) => mockHardenUnusedCallTypes(...a),
 }));
 
 jest.mock("../../lib/stream-client", () => ({
   isStreamConfigured: jest.fn(() => true),
+  getStreamChatClient: jest.fn(() => ({
+    getAppSettings: (...a: unknown[]) => mockGetAppSettings(...a),
+    updateChannelType: (...a: unknown[]) => mockUpdateChannelType(...a),
+    updateAppSettings: (...a: unknown[]) => mockUpdateAppSettings(...a),
+  })),
   getStreamVideoClient: jest.fn(() => ({
     listRoles: async () => ({ roles: [{ name: "co_presenter" }] }),
     video: {
@@ -33,9 +46,11 @@ jest.mock("../../lib/stream-client", () => ({
 
 import {
   CO_PRESENTER_GRANTS,
+  TARGET_INACTIVITY_TIMEOUT_SECONDS,
+} from "../../lib/stream/control-plane-contract";
+import {
   ensureDefaultCallTypeSettings,
   ensureStreamConfig,
-  TARGET_INACTIVITY_TIMEOUT_SECONDS,
 } from "../../scripts/stream/ensure";
 
 beforeEach(() => {
@@ -43,6 +58,7 @@ beforeEach(() => {
   mockEnsureAppSettings.mockResolvedValue(0);
   mockEnsureCallTypeGrants.mockResolvedValue(0);
   mockHardenUnusedCallTypes.mockResolvedValue(0);
+  mockEnsureMessagingGrants.mockResolvedValue(0);
   mockGetCallType
     .mockResolvedValue({
       name: "default",
@@ -61,10 +77,19 @@ beforeEach(() => {
       },
     });
   mockUpdateCallType.mockResolvedValue({});
+  const reminders = (on: boolean, interval: number) => ({
+    app: {
+      reminders_interval: interval,
+      channel_configs: { messaging: { reminders: on, read_events: true } },
+    },
+  });
+  mockGetAppSettings
+    .mockResolvedValueOnce(reminders(false, 300))
+    .mockResolvedValue(reminders(true, 1800));
 });
 
 describe("scripts/stream/ensure", () => {
-  it("runs all five ensure steps in sequence", async () => {
+  it("runs all six ensure steps in sequence", async () => {
     const code = await ensureStreamConfig({
       apply: true,
       deployConfirmed: true,
@@ -78,6 +103,7 @@ describe("scripts/stream/ensure", () => {
       deployConfirmed: true,
     });
     expect(mockHardenUnusedCallTypes).toHaveBeenCalledWith({ apply: true });
+    expect(mockEnsureMessagingGrants).toHaveBeenCalledWith({ apply: true });
     expect(mockUpdateCallType).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "default",
@@ -87,6 +113,13 @@ describe("scripts/stream/ensure", () => {
       }),
     );
     expect(mockUpdateCallType).toHaveBeenCalledTimes(1);
+    expect(mockUpdateChannelType).toHaveBeenCalledWith("messaging", {
+      reminders: true,
+      read_events: true,
+    });
+    expect(mockUpdateAppSettings).toHaveBeenCalledWith({
+      reminders_interval: 1800,
+    });
   });
 
   it("is a no-op when session.inactivity_timeout_seconds is already 300", async () => {

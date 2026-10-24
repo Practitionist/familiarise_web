@@ -7,7 +7,10 @@ import {
 } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
-import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
+import {
+  isFullyRefundedPurchase,
+  isPaymentEntitled,
+} from "@/lib/payments/utils/refund-balance";
 import {
   recordingRetentionLabels,
   type RecordingRetentionLabel,
@@ -1157,13 +1160,8 @@ export async function loadRecordingViews(
     const holdsSeat =
       ENTITLED_SEAT.some((status) => status === seat?.status) ||
       payments.some(isPaymentEntitled);
-    // Only a buyer can be refunded out of access. A free 1:1 booking has no
-    // payment row, and a zero-amount SUCCEEDED row never bought access.
-    const paymentRevoked =
-      payments.some((payment) => payment.amount > 0) &&
-      payments.every(
-        (payment) => payment.amount === 0 || !isPaymentEntitled(payment),
-      );
+    // A 1:1 learner refunded in full loses the replay; a partial refund keeps it.
+    const paymentRevoked = isFullyRefundedPurchase(payments);
     const booking: BookingRow = {
       id: row.id,
       appointmentType: row.appointmentType,

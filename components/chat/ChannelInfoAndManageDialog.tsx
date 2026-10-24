@@ -49,9 +49,14 @@ import {
   viewerOwnsChannel,
 } from "./utils/channelUtils";
 import { AddMembersDialog } from "./AddMembersDialog";
-import { isEventChannel } from "@/lib/stream-channel-ids";
+import {
+  isEventChannel,
+  isManagedChannel,
+  parseEventChannelId,
+} from "@/lib/stream-channel-ids";
 import { isSupportStreamUser } from "@/lib/stream/support-user";
 import { addMemberToChannel } from "@/actions/stream/chat/member.action";
+import { removeUserFromEventChannel } from "@/actions/stream/chat/event-channel.action";
 
 interface ChannelMember {
   id: string;
@@ -192,11 +197,20 @@ export const ChannelInfoAndManageDialog = ({
         ),
       );
 
-      const added = results.filter((r) => r.status === "fulfilled").length;
+      const added = results.filter(
+        (r) => r.status === "fulfilled" && r.value.success,
+      ).length;
       const failed = results.length - added;
+      const refusal = results.find(
+        (r) => r.status === "fulfilled" && !r.value.success,
+      );
 
       if (added === 0) {
-        throw new Error("Could not add anyone to this channel");
+        throw new Error(
+          refusal?.status === "fulfilled" && !refusal.value.success
+            ? refusal.value.refusal.message
+            : "Could not add anyone to this channel",
+        );
       }
 
       toast({
@@ -221,9 +235,18 @@ export const ChannelInfoAndManageDialog = ({
       return;
     }
 
+    const eventChannel = parseEventChannelId(channel.id);
+    if (!eventChannel) return;
+
     setIsLoading(true);
     try {
-      await channel.removeMembers([memberId]);
+      // Stream denies channel owners removeMembers; the server action authorises the host.
+      const result = await removeUserFromEventChannel(
+        eventChannel.eventType,
+        eventChannel.eventId,
+        memberId,
+      );
+      if (!result.success) throw new Error("Member removal was refused");
       toast({
         title: "Success",
         description: "Member removed successfully",
@@ -298,16 +321,14 @@ export const ChannelInfoAndManageDialog = ({
     }
   };
 
-  // Permission check for clear chat (truncate)
-  const canTruncateChannel = (() => {
-    // Truncate is channel-wide, so it would erase the thread Support is reviewing.
-    if (displayInfo.hasSupport) return false;
-    // In 1-on-1 DMs, both users can clear their view
-    if (isDirectMessage && !displayInfo.isGroupDM) return true;
-    // Elsewhere only the creator: truncate runs client-side, and only the creator's
-    // channel-scoped `channel_moderator` passes Stream (operators are plain `user`s).
-    return viewerOwnsChannel(creatorId, client?.userID);
-  })();
+  // Truncate wipes the thread for every member, so no user may run it on a DM or a
+  // Postgres-derived channel; it would also erase a thread Support is reviewing.
+  const canTruncateChannel =
+    !displayInfo.hasSupport &&
+    !isManagedChannel(channel.id) &&
+    viewerOwnsChannel(creatorId, client?.userID);
+  // Derived-channel membership comes only from bookings and roles.
+  const canAddMembers = !isManagedChannel(channel.id);
 
   // Report the other user in a 1-on-1 DM (flags in Stream + persists to DB)
   const handleReportUser = async () => {
@@ -508,16 +529,18 @@ export const ChannelInfoAndManageDialog = ({
                           )}
                         </Button>
 
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full flex items-center justify-center gap-2"
-                          onClick={handleAddMember}
-                          disabled={isLoading}
-                        >
-                          <UserPlusIcon className="h-4 w-4" />
-                          Add Members
-                        </Button>
+                        {canAddMembers && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full flex items-center justify-center gap-2"
+                            onClick={handleAddMember}
+                            disabled={isLoading}
+                          >
+                            <UserPlusIcon className="h-4 w-4" />
+                            Add Members
+                          </Button>
+                        )}
 
                         {canTruncateChannel && (
                           <Button
@@ -738,7 +761,7 @@ export const ChannelInfoAndManageDialog = ({
                 />
               )}
 
-              {isTeamChannel && (
+              {isTeamChannel && canAddMembers && (
                 <div className="pt-4">
                   <Button
                     variant="outline"

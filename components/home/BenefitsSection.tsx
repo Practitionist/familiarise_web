@@ -36,12 +36,12 @@ export function BenefitsSection({ images }: BenefitsSectionProps) {
               Why Familiarise?
             </Badge>
             <h2 className="text-fluid-4xl font-bold text-foreground mb-6 tracking-tight">
-              Transform your career with{" "}
-              <span className="text-muted-foreground">expert guidance</span>
+              Learn live from{" "}
+              <span className="text-muted-foreground">verified experts</span>
             </h2>
             <p className="text-lg text-muted-foreground mb-8">
-              Join thousands of professionals who have accelerated their careers
-              through personalized mentorship and expert guidance.
+              Join live classes, webinars and sessions taught by working
+              professionals, and learn at the pace that suits you.
             </p>
 
             <div className="space-y-6">

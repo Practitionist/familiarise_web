@@ -787,9 +787,9 @@ export async function createCollaboratorChannel(
     ...(organizationId ? { organization_id: organizationId } : {}),
   } as Record<string, unknown>);
 
+  // Get-or-create only: an existing channel keeps its data, including a wind-down or moderation freeze.
   await channel.create();
   await addRemainingMembers(channel, roster);
-  await channel.updatePartial?.({ set: { frozen: false } }).catch(() => {});
   markChannelExists("messaging", channelId);
 
   await grantChannelModerator(channel, creatorUserId, channelId);
@@ -837,5 +837,6 @@ export async function createCollaboratorChannel(
     channelId,
     members: roster,
     channelData,
+    frozen: channelData.channel?.frozen === true,
   };
 }
