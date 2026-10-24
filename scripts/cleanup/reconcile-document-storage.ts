@@ -22,6 +22,7 @@ import { DOCUMENT_DELETE_GRACE_DAYS } from "@/lib/documents/document-dates";
 
 // Grace period before deleting orphaned files (days)
 const ORPHAN_GRACE_PERIOD_DAYS = 7;
+const PENDING_ATTACHMENT_PROTECTION_MS = 86_400_000;
 
 // Buckets to check
 const BUCKETS_TO_CHECK = ["documents", "support-attachments"];
@@ -188,7 +189,9 @@ async function supportAttachmentPaths(): Promise<Set<string>> {
         {
           completedAt: null,
           deletedAt: null,
-          createdAt: { gte: new Date(Date.now() - 86_400_000) },
+          createdAt: {
+            gte: new Date(Date.now() - PENDING_ATTACHMENT_PROTECTION_MS),
+          },
         },
       ],
     },
@@ -270,6 +273,35 @@ async function persistMissingState(
   return newlyMissingIds.length;
 }
 
+/** Claims expired pending rows before deletion; tombstones cannot be finalised. */
+async function claimSupportOrphanPaths(paths: string[]): Promise<string[]> {
+  const pendingWhere = {
+    storagePath: { in: paths },
+    completedAt: null,
+    deletedAt: null,
+    createdAt: {
+      lt: new Date(Date.now() - PENDING_ATTACHMENT_PROTECTION_MS),
+    },
+  };
+  const pending = await prisma.supportCaseAttachment.findMany({
+    where: pendingWhere,
+    select: { id: true },
+  });
+  if (pending.length > 0) {
+    await prisma.supportCaseAttachment.updateMany({
+      where: { ...pendingWhere, id: { in: pending.map((row) => row.id) } },
+      data: { deletedAt: new Date() },
+    });
+  }
+  // Paths are server-generated before upload; retained tombstones prevent reuse.
+  const live = await prisma.supportCaseAttachment.findMany({
+    where: { storagePath: { in: paths }, deletedAt: null },
+    select: { storagePath: true },
+  });
+  const protectedPaths = new Set(live.map((row) => row.storagePath));
+  return paths.filter((path) => !protectedPaths.has(path));
+}
+
 /**
  * Delete orphaned files older than grace period. Counts only what Storage
  * reports as removed; any shortfall is added to `errors` once per bucket.
@@ -316,7 +348,12 @@ async function deleteOrphanedFiles(
     const batchSize = 100;
     let notRemoved = 0;
     for (let i = 0; i < paths.length; i += batchSize) {
-      const batch = paths.slice(i, i + batchSize);
+      const candidates = paths.slice(i, i + batchSize);
+      const batch =
+        bucket === "support-attachments"
+          ? await claimSupportOrphanPaths(candidates)
+          : candidates;
+      if (batch.length === 0) continue;
       const { data, error } = await supabase.storage.from(bucket).remove(batch);
 
       if (error) {

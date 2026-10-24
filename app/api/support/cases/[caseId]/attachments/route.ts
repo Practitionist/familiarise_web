@@ -302,20 +302,34 @@ export async function PUT(req: NextRequest, context: Context) {
       });
       if (!request || request.respondedAt || request.cancelledAt) return null;
     }
-    return tx.supportCaseAttachment.updateMany({
+    const moved = await tx.supportCaseAttachment.updateMany({
       where: { id: attachment.id, completedAt: null, deletedAt: null },
       data: { completedAt: new Date() },
     });
+    return moved.count > 0;
   });
-  if (!completed)
-    return NextResponse.json(
-      {
-        error:
-          "The case or evidence request changed. Refresh before confirming the file.",
+  if (!completed) {
+    // Completed live evidence remains an idempotent replay after case/request closure.
+    const replayed = await prisma.supportCaseAttachment.findFirst({
+      where: {
+        id: attachment.id,
+        caseId,
+        uploadedById: auth.session.user.id,
+        completedAt: { not: null },
+        deletedAt: null,
       },
-      { status: 409 },
-    );
+      select: { id: true },
+    });
+    if (!replayed)
+      return NextResponse.json(
+        {
+          error:
+            "The case, evidence request or upload changed. Refresh before confirming the file.",
+        },
+        { status: 409 },
+      );
+  }
   return NextResponse.json({
-    data: { id: attachment.id, completed: completed.count > 0 },
+    data: { id: attachment.id, completed: true },
   });
 }

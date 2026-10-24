@@ -157,7 +157,12 @@ describe("PUT completes an upload only when its bytes match", () => {
       "support-cases/case-1/file-1",
     ]);
     expect(db.supportCaseAttachment.updateMany).toHaveBeenCalledWith({
-      where: { id: "file-1", completedAt: null, deletedAt: null },
+      where: {
+        id: "file-1",
+        storagePath: "support-cases/case-1/file-1",
+        completedAt: null,
+        deletedAt: null,
+      },
       data: { deletedAt: expect.any(Date) },
     });
   });
