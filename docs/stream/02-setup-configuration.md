@@ -151,18 +151,33 @@ npx tsx scripts/stream/ensure.ts
 npx tsx scripts/stream/ensure.ts --apply --routes-are-deployed
 # (Also accepts --confirm-join-route-deployed on ensure.ts / ensure-call-type-grants.ts)
 
-# Step 1c: Verify and widen webhook event subscriptions for all handled chat & video events
+# Step 1c: Verify and reconcile the webhook hook (enabled, URL, event list)
 npx tsx scripts/stream/ensure-webhook-subscription.ts --check
 npx tsx scripts/stream/ensure-webhook-subscription.ts --apply
 ```
+
+The intended state lives in one module, `lib/stream/control-plane-contract.ts`. The ensure scripts write it and the daily drift detector (below) reads it, so the two cannot disagree about what "correct" means.
 
 What the orchestrator enforces:
 
 - **App-Level Settings (`ensure-app-settings.ts`)**: Configures `webhook_url` (`https://<origin>/api/stream/webhooks`), `AsyncModerationConfiguration`, `guest_user_creation_disabled: true`, and `enable_hook_payload_compression: false` after running a no-op fingerprint probe (`lib/stream/config-fingerprint.ts`) to guarantee `updateApp` merges rather than replaces unrelated app fields.
 - **Billable Permissions + Scope Suffix Stripping (`ensure-call-type-grants.ts` & `harden-unused-call-types.ts`)**: Strips all billable permissions (`BILLABLE_PERMISSIONS`: `start-recording`, `stop-recording`, `start-frame-recording`, `stop-frame-recording`, `start-raw-recording`, `stop-raw-recording`, `start-individual-recording`, `stop-individual-recording`, `start-transcription`, `stop-transcription`, `start-closed-captions`, `stop-closed-captions`, `start-broadcasting`, `stop-broadcasting`, `start-rtmp-broadcasts`, `stop-rtmp-broadcast`, `stop-all-rtmp-broadcasts`, `use-noise-cancellation`, `enable-noise-cancellation`) **including their `-owner` and `-any-team` scoped suffixes** (`matchesPermissionWithScope`) across all four built-in call types (`default`, `livestream`, `audio_room`, and `development`).
-- **Least-Privilege Call Admission on `default`**: Revokes `create-call`, `join-call`, `join-ended-call`, and `update-call-permissions` from `user` and `guest`, and revokes `create-call` and `end-call` from `user`, `guest`, and `call_member`. Only `call_member` and `co_presenter` (both assigned server-side after `resolveMeetingAccess`) and `admin` can join an active room. The `call_member` role holds only the `-owner` variants of `update-call-permissions`, `mute-users` and `pin-call-track`. The custom `co_presenter` role adds `mute-users`, `pin-call-track` and `join-backstage` for accepted presenter collaborators, and the script leaves that role untouched.
+- **Least-Privilege Call Admission on `default`**: Revokes `create-call`, `join-call`, `join-ended-call`, and `update-call-permissions` from `user` and `guest`, and revokes `create-call` and `end-call` from `user`, `guest`, and `call_member`. Only `call_member` and `co_presenter` (both assigned server-side after `resolveMeetingAccess`) and `admin` can join an active room. The `call_member` role holds only the `-owner` variants of `update-call-permissions`, `mute-users` and `pin-call-track`. Both `user` and `call_member` also hold only `remove-call-member-owner` and `update-call-member-owner`: every member add, update and removal runs server-side as admin (`app/api/meetings/[meetingId]/join/route.ts`, `lib/collaborators/service.ts`), and no client code calls `updateCallMembers`, so the unscoped variants grant nothing the app uses. The custom `co_presenter` role adds `mute-users`, `pin-call-track` and `join-backstage` for accepted presenter collaborators, and the script leaves that role untouched.
 - **Unused Call-Type Reach Lockdown**: Strips `REACH_PERMISSIONS` (`create-call`, `join-call`, `join-backstage`, `join-ended-call` and `-any-team` variants) from `livestream`, `audio_room`, and `development` across all end-user roles (`user`, `guest`, `anonymous`, `speaker`, `host`, `call_member`).
 - **Empty Room Auto-Close**: Enforces `session.inactivity_timeout_seconds = 300` (5 minutes) on the `default` call type.
+
+### 1a. Daily Control-Plane Drift Detector (`stream-control-plane-drift`)
+
+Because the Stream app is configured outside this repository, narrowing a grant or disabling the hook leaves no commit and no failing test. The cleanup job `stream-control-plane-drift` (`lib/stream/control-plane-drift.ts`, registered in `lib/cron/cleanup-registry.ts` and reachable at `/api/cleanup/stream-control-plane-drift`) reads the live app once a day and compares it with the contract. The Netlify ticker fires it in a single slot at 01:15 UTC; there is no GitHub Actions workflow for it.
+
+It checks, and never writes:
+
+- the webhook hook: enabled, `webhook_url` equal to `<NEXT_PUBLIC_APP_URL>/api/stream/webhooks`, the exact event list, no wildcard, and no active legacy V1 wildcard;
+- the `default` call type: the least-privilege grants above, the owner-scoped member grants, the `co_presenter` role and its exact grant set, and the 300 second inactivity timeout;
+- `livestream`, `audio_room` and `development`: no reach or billable permission on any end-user role, so `user` holds neither `create-call` nor `join-call`;
+- `guest_user_creation_disabled: true`. `enable_hook_payload_compression` is write-only on Stream and is reported as unverified.
+
+On drift the run sends one Sentry message listing finding keys (for example `webhook:<hookId>:disabled` or `call_type:livestream:grant:user:create-call`), never URLs or secrets, and answers 207. Fix drift by running the ensure scripts above; the detector stays quiet again on the next run.
 
 ### 2. Cloudflare R2 Recording Storage
 
@@ -1072,6 +1087,7 @@ railway variables set STREAM_API_SECRET=xxx
 ## Deprecated & Superseded Approaches
 
 - **`NEXTAUTH_SECRET` / `NEXTAUTH_URL`**: Replaced by `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL`.
+- **`.github/workflows/stream-webhook-drift.yml`**: it compared only the event list, never the hook's enabled flag or URL, and ran on budget-blocked GitHub Actions. Superseded by the ticker job `stream-control-plane-drift`, which covers the whole contract.
 - **Manual dashboard clicks for call-type grants and app settings**: Superseded by `scripts/stream/ensure.ts` (`ensure-app-settings.ts` and `harden-unused-call-types.ts` write pre-image backups to `.stream-backups/`, while `ensure-call-type-grants.ts` writes a drift snapshot to `os.tmpdir()` when settings drift is detected and verifies post-write state).
 
 ---

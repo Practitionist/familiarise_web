@@ -1,6 +1,6 @@
 # Cron Jobs Reference
 
-The platform runs **seven GitHub Actions workflows that declare a `cron:` schedule**, plus one Netlify scheduled function. The seven are the three job fleets (`cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`), the dead-man watchdog (`cron-heartbeat.yml`), and three read-only monitors (`db-live-drift.yml`, `stream-webhook-drift.yml`, `security-audit.yml`). Between them they run **70 background jobs** against the Netlify ticker's **28 targets**.
+The platform runs **six GitHub Actions workflows that declare a `cron:` schedule**, plus one Netlify scheduled function. The six are the three job fleets (`cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`), the dead-man watchdog (`cron-heartbeat.yml`), and two read-only monitors (`db-live-drift.yml`, `security-audit.yml`). The Stream control-plane drift check used to be a seventh workflow; it now runs as the ticker target `stream-control-plane-drift`.
 
 Every CLI job boots a bare Node process with `tsx`, connects straight to PostgreSQL through Prisma, acquires a distributed lock via `withCronLock`, checks `abortIfMaintenance()`, and exits.
 
@@ -119,15 +119,15 @@ These jobs exist because a statute or a regulator says they must, and their dead
 
 Chat channels, video sessions and the recordings they produce all live in Stream's systems as well as ours, so these jobs reconcile two sources of truth and move recording files into our own storage before Stream expires them.
 
-| Job                                                                  | Schedule       | Entrypoint                                              | Lock   | Financial | Mutates                                                                                                                                       | During maintenance |
-| -------------------------------------------------------------------- | -------------- | ------------------------------------------------------- | ------ | --------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| **Expire recordings**<br>`expire-recordings`                         | `0 3 * * *`    | `lib/stream/recording-retention.ts`                     | open   | no        | `Recording` → EXPIRED past retention, or READY whose Stream copy lapsed uncopied; R2 and preview objects deleted                              | Skips: OFFLINE     |
-| **Transfer recordings**<br>`transfer-recordings`                     | `33 */6 * * *` | `lib/stream/recording-transfer-service.ts`              | open   | no        | `Recording` storage path; copies READY Stream recordings into R2, twelve attempts on a backoff ladder                                         | Skips: OFFLINE     |
-| **Reconcile orphaned recordings**<br>`reconcile-orphaned-recordings` | `0 3 * * *`    | `scripts/stream/reconcile-orphaned-recordings.ts`       | open   | no        | Re-syncs meetings aged two hours to fourteen days against Stream; past Stream retention the row is reported unrecoverable rather than retried | Skips: OFFLINE     |
-| **Stream user sync**<br>`stream-sync`                                | `0 3 * * *`    | `scripts/stream/stream-sync.ts`                         | closed | no        | Stream Chat users soft-deleted when absent from the database; supports `?dry-run=true`                                                        | Skips: OFFLINE     |
-| **Expire event chat channels**<br>`expire-event-channels`            | `35 4 * * *`   | `jobs/stream/expire-event-channels.ts`                  | open   | no        | Stream channels frozen then deleted; no database writes                                                                                       | Skips: OFFLINE     |
-| **Wind down deactivated orgs**<br>`wind-down-deactivated-orgs`       | `0 3 * * *`    | `jobs/stream/wind-down-deactivated-orgs.ts`             | open   | no        | Ends calls, freezes event and DM channels, revokes tokens, unpublishes recordings for deactivated organisations                               | Skips: OFFLINE     |
-| **Stream webhook drift**<br>`stream-webhook-drift`                   | `15 5 * * *`   | `scripts/stream/ensure-webhook-subscription.ts --check` | none   | no        | Nothing. Reads Stream's app settings and fails on drift; exit 2 means real drift, exit 1 means the check could not run                        | **Runs anyway**    |
+| Job                                                                  | Schedule                 | Entrypoint                                        | Lock   | Financial | Mutates                                                                                                                                                                                                       | During maintenance |
+| -------------------------------------------------------------------- | ------------------------ | ------------------------------------------------- | ------ | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| **Expire recordings**<br>`expire-recordings`                         | `0 3 * * *`              | `lib/stream/recording-retention.ts`               | open   | no        | `Recording` → EXPIRED past retention, or READY whose Stream copy lapsed uncopied; R2 and preview objects deleted                                                                                              | Skips: OFFLINE     |
+| **Transfer recordings**<br>`transfer-recordings`                     | `33 */6 * * *`           | `lib/stream/recording-transfer-service.ts`        | open   | no        | `Recording` storage path; copies READY Stream recordings into R2, twelve attempts on a backoff ladder                                                                                                         | Skips: OFFLINE     |
+| **Reconcile orphaned recordings**<br>`reconcile-orphaned-recordings` | `0 3 * * *`              | `scripts/stream/reconcile-orphaned-recordings.ts` | open   | no        | Re-syncs meetings aged two hours to fourteen days against Stream; past Stream retention the row is reported unrecoverable rather than retried                                                                 | Skips: OFFLINE     |
+| **Stream user sync**<br>`stream-sync`                                | `0 3 * * *`              | `scripts/stream/stream-sync.ts`                   | closed | no        | Stream Chat users soft-deleted when absent from the database; supports `?dry-run=true`                                                                                                                        | Skips: OFFLINE     |
+| **Expire event chat channels**<br>`expire-event-channels`            | `35 4 * * *`             | `jobs/stream/expire-event-channels.ts`            | open   | no        | Stream channels frozen then deleted; no database writes                                                                                                                                                       | Skips: OFFLINE     |
+| **Wind down deactivated orgs**<br>`wind-down-deactivated-orgs`       | `0 3 * * *`              | `jobs/stream/wind-down-deactivated-orgs.ts`       | open   | no        | Ends calls, freezes event and DM channels, revokes tokens, unpublishes recordings for deactivated organisations                                                                                               | Skips: OFFLINE     |
+| **Stream control-plane drift**<br>`stream-control-plane-drift`       | ticker, daily at `01:15` | `lib/stream/control-plane-drift.ts`               | none   | no        | Nothing. Reads the Stream app (webhook hook, `default` and unused call-type grants, `co_presenter`, inactivity timeout, app settings) and sends one Sentry message listing drifted keys; answers 207 on drift | **Held (503)**     |
 
 The recording transfer matters more than its cadence suggests. Stream's copy expires after fourteen days, so a transfer that has been failing persistently alerts only around day ten to twelve, and the loss is irreversible by the time it does. **The `--apply` path is deliberately never automated**, because it calls `updateAppSettings` on a shared production Stream application with no rehearsal environment.
 
@@ -160,10 +160,9 @@ The long tail: janitors, sweepers, retry drains and the watchdogs. Individually 
 
 ## Jobs that run regardless of maintenance mode
 
-Two scheduled workflows intentionally do not call `abortIfMaintenance()`, because both are read-only external watchdogs rather than work that touches the database:
+One scheduled workflow intentionally does not call `abortIfMaintenance()`, because it is a read-only external watchdog rather than work that touches the database:
 
 - **`cron-heartbeat`** — `scripts/ci/check-cron-heartbeat.ts`. The dead-man switch itself. Silencing the watchdog during maintenance would blind operational monitoring during the exact window when schedules are most critical. It is also deliberately **not** in `withCronLock`: a watchdog must not depend on the resource it is monitoring.
-- **`stream-webhook-drift`** — `scripts/stream/ensure-webhook-subscription.ts`. Read-only drift verification against Stream's application settings.
 
 Every HTTP cleanup twin dispatched through `app/api/cleanup/[job]/route.ts` calls `assertNotInMaintenance()`, returning HTTP `503` during active windows rather than terminating the serverless process via `process.exit(0)`. The phase travels in the response body, which is how the ticker distinguishes a healthy hold from a broken target.
 
@@ -177,12 +176,12 @@ Every job can be entered via cron schedule, manual `workflow_dispatch`, or authe
 
 Four jobs sit outside the standard wrapper:
 
-| Job                    | Mechanism                    | Reason                                                                                                                     |
-| ---------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `process-payouts`      | `lock:payout_processing`     | Guards both scheduled runs and interactive HTTP batch approval across batches that exceed the default cron lease duration. |
-| `create-payout-batch`  | `lock:payout_batch_creation` | Shares the payout batch lock family across multi-step batch creation.                                                      |
-| `cron-heartbeat`       | None, deliberately           | Read-only dead-man watchdog over GitHub Actions and Upstash usage; must never depend on lock acquisition to alert.         |
-| `stream-webhook-drift` | None, deliberately           | Read-only single-request drift check against Stream application settings.                                                  |
+| Job                          | Mechanism                    | Reason                                                                                                                     |
+| ---------------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `process-payouts`            | `lock:payout_processing`     | Guards both scheduled runs and interactive HTTP batch approval across batches that exceed the default cron lease duration. |
+| `create-payout-batch`        | `lock:payout_batch_creation` | Shares the payout batch lock family across multi-step batch creation.                                                      |
+| `cron-heartbeat`             | None, deliberately           | Read-only dead-man watchdog over GitHub Actions and Upstash usage; must never depend on lock acquisition to alert.         |
+| `stream-control-plane-drift` | None, deliberately           | Read-only Stream reads (app, roles, four call types); a double run costs a few extra API calls.                            |
 
 Two further jobs hold no lock because they touch nothing durable: `expire-onboarding-drafts`, which wraps its own inline `withCronLock`, and `sentry-ingest-canary`, which only posts a probe event.
 
