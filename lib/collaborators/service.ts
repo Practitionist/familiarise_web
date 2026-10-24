@@ -16,6 +16,7 @@ import {
 import { CALL_MEMBER_ROLE, STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
 import { MAX_CALL_DURATION_MS } from "@/lib/meetings/duration-cap";
 import { enqueueCollaboratorRevocationRetry } from "@/lib/stream/access-revocation";
+import { getPlatformVideoConfig } from "@/lib/stream/video-config";
 import type { RevenueSplit } from "@/types/collaborators";
 import {
   WEBINAR_COLLABORATOR_ROLES,
@@ -499,6 +500,7 @@ async function syncOpenCallPresenterRole(
     const appointmentType = planType === "webinar" ? "WEBINAR" : "CLASS";
     const { buildCallSettingsOverride } =
       await import("@/lib/meetings/room-ready");
+    const videoConfig = await getPlatformVideoConfig();
     const video = getStreamVideoClient().video;
 
     const results = await Promise.allSettled(
@@ -511,6 +513,8 @@ async function syncOpenCallPresenterRole(
         const settingsOverride = buildCallSettingsOverride(
           appointmentType,
           maxDurationSeconds,
+          undefined,
+          videoConfig,
         );
         const call = video.call(STREAM_CALL_TYPE, meeting.streamCallId);
         return [
@@ -519,9 +523,7 @@ async function syncOpenCallPresenterRole(
               data: {
                 created_by_id: hostUserId,
                 members: [{ user_id: userId, role: callRole }],
-                ...(settingsOverride
-                  ? { settings_override: settingsOverride }
-                  : {}),
+                settings_override: settingsOverride,
               },
             });
             await call.updateCallMembers({

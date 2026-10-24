@@ -12,6 +12,7 @@
 - [Algorithm 5: Unified Call Exit UX (`CallExitButton`) & Lobby Gate Backoff (`MeetingLobbyGateCard`)](#algorithm-5-unified-call-exit-ux-callexitbutton--lobby-gate-backoff-meetinglobbygatecard)
 - [Algorithm 6: Hybrid In-Room Chat, Persistent Q&A, Stage Spotlight & Reactions](#algorithm-6-hybrid-in-room-chat-persistent-qa-stage-spotlight--reactions)
 - [Algorithm 7: Join Failures, Lobby Ended State & Room Client Robustness](#algorithm-7-join-failures-lobby-ended-state--room-client-robustness)
+- [Video, Screen-Share & Recording Quality](#video-screen-share--recording-quality)
 - [End Reasons: The Decision Table](#end-reasons-the-decision-table)
 - [Deprecated & Superseded Approaches](#deprecated--superseded-approaches)
 
@@ -277,6 +278,20 @@ Hosts holding the `mute-users` capability (`useHasPermissions(OwnCapability.MUTE
 `useMeetingRecording` keeps the last known meeting and flag through a 5xx, a 429, a timeout or a network error and retries with `min(1 s * 2^n, 30 s)` backoff until it succeeds or the room unmounts. A 404 or an auth refusal is a verdict and clears the flag. In `RecordingControls`, a start or stop that succeeds leaves the button loading until Stream's recording event arrives; the `RECORDING_ACK_TIMEOUT_MS = 15 s` wait starts only once the POST is accepted, and after it the control re-reads the call state and releases the button. A failed re-read keeps the button pending and re-reads again, so the control never shows a cached state as confirmed.
 
 ---
+
+## Video, Screen-Share & Recording Quality
+
+Call, screen-share and recording quality is a platform setting that staff and admin edit on the back-office "Video quality" page (`/dashboard/{admin|staff}/video-config`). It is stored as one `PlatformVideoConfig` row (`id = "singleton"`) and read by `getPlatformVideoConfig` in `lib/stream/video-config.ts`. A missing row reads as the defaults: 720p calls, 720p recordings and 1080p screen share. The allowed keys, their Stream values and the cost hints live in one module, `lib/stream/video-quality.ts`, and the `platform_video_config_values` CHECK in `prisma/sql/check-constraints.sql` mirrors the same keys.
+
+| Setting      | Allowed keys            | Stream field it sets                                                                                                        |
+| ------------ | ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Call video   | `480p`, `720p`, `1080p` | `settings_override.video.target_resolution` (720p is 1280x720 at 1.5 Mbps, 1080p is 1920x1080 at 3 Mbps)                    |
+| Screen share | `720p`, `1080p`         | `settings_override.screensharing.target_resolution`                                                                         |
+| Recording    | `720p`, `1080p`         | `settings_override.recording.quality`, sent with `mode: "available"` because Stream requires `mode` in a recording override |
+
+`buildCallSettingsOverride` in `lib/meetings/room-ready.ts` is the one builder, so provisioning, host reopen (both through `buildRoomCallPlan`), the `+15m` extension mirror and the presenter-role call sync all carry the same values. A 1:1 room now sends a complete `video` block (camera on by default, front camera, access requests on) because Stream rejects a partial video override; those values copy the `default` call type. A change applies to calls created or reopened afterwards; a call already running keeps its quality until it is extended, reopened or recreated. Stream documents that call settings can be overridden when a call is created or updated ([call type settings](https://getstream.io/video/docs/api/call-types/settings/)), and `RecordSettingsRequest.quality` accepts `360p` through `1440p` in the installed `@stream-io/node-sdk`; the page offers only the options above because 4K does not exist for recording and 1440p is not worth its price for a consultation. Every change writes one `OpsActionLog` row with the actor, the reason and the before and after values.
+
+Receive-side cost also depends on what each participant subscribes to, which `lib/stream/incoming-video.ts` lets a participant lower; see `14-pricing-and-cost-model.md` for the dollar figures.
 
 ## End Reasons: The Decision Table
 
