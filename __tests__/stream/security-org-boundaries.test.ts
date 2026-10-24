@@ -10,6 +10,7 @@ const mockUpsertUsers = jest.fn();
 const mockQueryChannels = jest.fn();
 const mockDeleteChannels = jest.fn();
 const mockChannelRemoveMembers = jest.fn();
+const mockUpdateCallMembers = jest.fn().mockResolvedValue({});
 
 const mockPrisma = {
   user: {
@@ -88,6 +89,14 @@ jest.mock("../../lib/stream-client", () => ({
   withStreamCircuitBreaker: <T>(fn: () => Promise<T>) => fn(),
   StreamUnavailableError: class StreamUnavailableError extends Error {},
   isExpectedStreamError: () => false,
+  getStreamVideoClient: () => ({
+    video: {
+      call: () => ({
+        updateCallMembers: (...args: unknown[]) =>
+          mockUpdateCallMembers(...args),
+      }),
+    },
+  }),
   getStreamChatClient: () => ({
     upsertUser: (...args: unknown[]) => mockUpsertUser(...args),
     upsertUsers: (...args: unknown[]) => mockUpsertUsers(...args),
@@ -358,6 +367,27 @@ describe("Stream security, consent gates, and organization boundaries", () => {
       expect(res.channelsRemoved).toBe(1);
       expect(mockChannelRemoveMembers).toHaveBeenCalledWith(["u1"]);
       expect(mockRevokeUserToken).toHaveBeenCalledWith("u1", expect.any(Date));
+    });
+
+    it("reports removal incomplete when the member sits in more open org calls than one pass covers", async () => {
+      const page = (offset: number) =>
+        Array.from({ length: 50 }, (_, i) => ({
+          id: `occ-${String(offset + i).padStart(4, "0")}`,
+          meeting: { streamCallId: `occurrence-${offset + i}` },
+        }));
+      mockPrisma.appointmentOccurrence.findMany
+        .mockResolvedValueOnce(page(0))
+        .mockResolvedValueOnce(page(50));
+
+      const { revokeMemberStreamAccess } =
+        await import("../../lib/enterprise/member-removal");
+      const res = await revokeMemberStreamAccess({
+        orgId: "org123456789",
+        userId: "u1",
+      });
+
+      expect(mockUpdateCallMembers).toHaveBeenCalledTimes(100);
+      expect(res.complete).toBe(false);
     });
 
     it("winds down deactivated organizations and freezes event channels without revoking member global tokens", async () => {

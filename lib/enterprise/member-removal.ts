@@ -712,41 +712,49 @@ async function removeMemberFromOrgCalls(
   failures: string[],
 ): Promise<void> {
   try {
-    const occurrences = await prisma.appointmentOccurrence.findMany({
-      where: {
-        deletedAt: null,
-        endsAt: { gt: new Date(Date.now() - MAX_CALL_DURATION_MS) },
-        meeting: { is: { endedAt: null } },
-        appointment: {
-          deletedAt: null,
-          participants: { some: { userId } },
-          OR: [
-            { organizationId: orgId },
-            { webinar: { webinarPlan: { organizationId: orgId } } },
-            { class: { classPlan: { organizationId: orgId } } },
-            { consultation: { consultationPlan: { organizationId: orgId } } },
-            { subscription: { subscriptionPlan: { organizationId: orgId } } },
-          ],
-        },
-      },
-      select: { meeting: { select: { streamCallId: true } } },
-      take: MAX_ORG_CALLS_PER_REVOCATION,
-    });
-    if (occurrences.length === 0) return;
     const video = getStreamVideoClient().video;
-    for (const { meeting } of occurrences) {
-      if (!meeting) continue;
-      try {
-        await video
-          .call(STREAM_CALL_TYPE, toCallId(meeting.streamCallId))
-          .updateCallMembers({ remove_members: [userId] });
-      } catch (err) {
-        if (isExpectedStreamError(err)) continue;
-        failures.push(
-          `removeCallMember:${meeting.streamCallId}:${err instanceof Error ? err.message : String(err)}`,
-        );
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_ORG_CALL_PAGES; page++) {
+      const occurrences = await prisma.appointmentOccurrence.findMany({
+        where: {
+          deletedAt: null,
+          endsAt: { gt: new Date(Date.now() - MAX_CALL_DURATION_MS) },
+          meeting: { is: { endedAt: null } },
+          appointment: {
+            deletedAt: null,
+            participants: { some: { userId } },
+            OR: [
+              { organizationId: orgId },
+              { webinar: { webinarPlan: { organizationId: orgId } } },
+              { class: { classPlan: { organizationId: orgId } } },
+              { consultation: { consultationPlan: { organizationId: orgId } } },
+              { subscription: { subscriptionPlan: { organizationId: orgId } } },
+            ],
+          },
+        },
+        select: { id: true, meeting: { select: { streamCallId: true } } },
+        orderBy: { id: "asc" },
+        take: MAX_ORG_CALLS_PER_REVOCATION,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      });
+      for (const { meeting } of occurrences) {
+        if (!meeting) continue;
+        try {
+          await video
+            .call(STREAM_CALL_TYPE, toCallId(meeting.streamCallId))
+            .updateCallMembers({ remove_members: [userId] });
+        } catch (err) {
+          if (isExpectedStreamError(err)) continue;
+          failures.push(
+            `removeCallMember:${meeting.streamCallId}:${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
+      if (occurrences.length < MAX_ORG_CALLS_PER_REVOCATION) return;
+      cursor = occurrences.at(-1)?.id;
     }
+    // More open org calls than one pass covers: report incomplete so the retry sweep re-drives it.
+    failures.push(`removeCallMember:truncated:${userId}`);
   } catch (err) {
     failures.push(
       `loadOrgCalls:${err instanceof Error ? err.message : String(err)}`,
@@ -754,6 +762,8 @@ async function removeMemberFromOrgCalls(
   }
 }
 
+/** Pages of open org calls one revocation pass walks before reporting incomplete. */
+const MAX_ORG_CALL_PAGES = 2;
 const MAX_ORG_CALLS_PER_REVOCATION = 50;
 
 /**
