@@ -558,7 +558,7 @@ describe("the call describes the session it belongs to", () => {
     expect(Object.keys(settingsOverride ?? {})).toEqual(["limits"]);
     expect(
       Object.keys((settingsOverride?.limits as Record<string, unknown>) ?? {}),
-    ).toEqual(["max_duration_seconds"]);
+    ).toEqual(["max_duration_seconds", "max_participants"]);
 
     // Adding a field at the top level still fails here. `created_by_id` joined
     // this set in #1270 — a server-side getOrCreate carries no user context, so
@@ -611,7 +611,9 @@ describe("the call describes the session it belongs to", () => {
     // hours in. With no resolved run there is no safe number, and omitting the
     // field is exactly the behaviour before the backstop existed: the call type
     // carries no limit of its own.
-    expect(mockCallPayloads[0].data?.settings_override).toBeUndefined();
+    expect(mockCallPayloads[0].data?.settings_override).toEqual({
+      limits: { max_participants: 6 },
+    });
   });
 
   it("creates nothing at all when the slot resolves to no appointment", async () => {

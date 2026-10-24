@@ -404,6 +404,10 @@ Must be explicitly applied for in the Stream dashboard. Availability is limited 
 | 200         | 240,000 | $360.00   | **$260.00**       | ₹23,582 |
 | 500         | 600,000 | $900.00   | **$800.00**       | ₹72,560 |
 
+### 8.4 The 200-participant cap
+
+Webinars and classes are capped at 200 participants at launch ([ADR-07](./18-architecture-decision-records.md#adr-07-interactive-webrtc-with-a-200-participant-cap-not-hls-at-launch)), enforced when a plan is authored, when a seat is sold and by Stream `limits.max_participants` on the call. The cap exists so that the largest room Familiarise can sell has a known cost. At the HD rate used in 8.2 ($1.50 per 1,000 participant minutes), a full 200-attendee webinar of 90 minutes is 18,000 participant minutes, about $27 (roughly ₹2,450), and a full 200-student class of 60 minutes is 12,000 participant minutes, about $18 (roughly ₹1,630). Live Streaming with HLS (section 2.3) would cost more per viewer-minute and add 10 to 30 seconds of delay, which is why audiences above the cap are not routed to it. The cap can be lifted after a load test.
+
 ---
 
 ## 9. The Stream.io Cost Cliff

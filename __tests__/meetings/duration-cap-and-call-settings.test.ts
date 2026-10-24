@@ -254,7 +254,82 @@ describe("provisionAppointmentMeeting", () => {
         data: expect.objectContaining({
           members: [{ user_id: "host-1", role: "call_member" }],
           settings_override: expect.objectContaining({
-            limits: { max_duration_seconds: 4500 },
+            limits: { max_duration_seconds: 4500, max_participants: 6 },
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("caps a webinar room at the instance override plus headroom, excluding owner and presenter roles", async () => {
+    const startsAt = new Date(Date.now() + 5 * 60 * 1000);
+    const endsAt = new Date(startsAt.getTime() + 60 * 60 * 1000);
+
+    mockGetSession.mockResolvedValue({
+      user: {
+        id: "host-1",
+        role: "CONSULTANT",
+        consultantProfileId: "cp-host",
+        banned: false,
+      },
+    });
+    mockMeetingFindUnique.mockResolvedValue(null);
+    mockAppointmentFindUnique.mockResolvedValue({ organizationId: null });
+    mockMeetingCreate.mockResolvedValue({ id: "m", streamCallId: "c" });
+    mockSlotFindUnique.mockResolvedValue({
+      id: "slot-w",
+      startsAt,
+      endsAt,
+      isTentative: false,
+      completionStatus: "SCHEDULED",
+      deletedAt: null,
+      appointmentId: "appt-w",
+      consultantProfileId: "cp-host",
+      appointment: {
+        appointmentType: "WEBINAR",
+        organizationId: null,
+        deletedAt: null,
+        participants: [],
+        consultation: null,
+        subscription: null,
+        class: null,
+        trial: null,
+        webinar: {
+          maxParticipants: 150,
+          webinarPlan: {
+            maxParticipants: 100,
+            title: "Launch webinar",
+            collaborators: [],
+            consultantProfile: {
+              id: "cp-host",
+              userId: "host-1",
+              user: { name: "Host" },
+            },
+          },
+        },
+      },
+    });
+    mockUpsertUsersToStream.mockResolvedValue({ droppedIds: [] });
+    mockGetOrCreate.mockResolvedValue({});
+
+    await provisionAppointmentMeeting({
+      id: "slot-w",
+      startsAt,
+      endsAt,
+      isTentative: false,
+      appointmentId: "appt-w",
+    });
+
+    expect(mockGetOrCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          settings_override: expect.objectContaining({
+            limits: {
+              max_duration_seconds: 6300,
+              max_participants: 155,
+              max_participants_exclude_owner: true,
+              max_participants_exclude_roles: ["co_presenter", "admin"],
+            },
           }),
         }),
       }),

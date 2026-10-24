@@ -16,7 +16,11 @@ import {
   resolveRoomCapSeconds,
   roomTimeCustom,
 } from "@/lib/meetings/duration-cap";
-import { buildCallSettingsOverride } from "@/lib/meetings/room-ready";
+import {
+  buildCallSettingsOverride,
+  resolveCallParticipantLimits,
+} from "@/lib/meetings/room-ready";
+import { effectiveMaxParticipants } from "@/lib/events/capacity";
 
 /** Callers here are already entitled via readSlotForCaller, so syncing the session's other members is allowed. */
 export const STREAM_SERVER_TRUSTED = Symbol.for(
@@ -84,8 +88,10 @@ const appointmentAccessSelect = (userId: string) =>
     },
     webinar: {
       select: {
+        maxParticipants: true,
         webinarPlan: {
           select: {
+            maxParticipants: true,
             title: true,
             organizationId: true,
             consultantProfile: ownerProfileSelect,
@@ -96,8 +102,10 @@ const appointmentAccessSelect = (userId: string) =>
     },
     class: {
       select: {
+        maxParticipants: true,
         classPlan: {
           select: {
+            maxParticipants: true,
             title: true,
             organizationId: true,
             consultantProfile: ownerProfileSelect,
@@ -568,6 +576,18 @@ type AuthorizedSlot = NonNullable<
   Awaited<ReturnType<typeof readSlotForCaller>>
 >;
 
+/** Seats sold for a webinar or class instance; null for a 1:1 session. */
+function resolveEventCapacity(
+  appointment: AuthorizedAppointment,
+): number | null {
+  const { webinar, class: classEvent } = appointment;
+  if (webinar) return effectiveMaxParticipants(webinar, webinar.webinarPlan);
+  if (classEvent) {
+    return effectiveMaxParticipants(classEvent, classEvent.classPlan);
+  }
+  return null;
+}
+
 /** The one getOrCreate payload a room is created with, whether provisioned or reopened. */
 export async function buildRoomCallPlan(
   authorized: AuthorizedSlot,
@@ -594,6 +614,10 @@ export async function buildRoomCallPlan(
           extension.extendedSeconds,
         )
       : null,
+    resolveCallParticipantLimits(
+      appointmentType,
+      resolveEventCapacity(authorized.appointment),
+    ),
   );
   const payload = {
     data: {

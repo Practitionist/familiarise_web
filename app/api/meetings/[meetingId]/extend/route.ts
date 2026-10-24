@@ -9,7 +9,10 @@ import {
   resolveRoomEndsAt,
   roomTimeCustom,
 } from "@/lib/meetings/duration-cap";
-import { buildCallSettingsOverride } from "@/lib/meetings/room-ready";
+import {
+  buildCallSettingsOverride,
+  participantLimitsFromStream,
+} from "@/lib/meetings/room-ready";
 import { meetingControlLimiter } from "@/lib/rate-limit";
 import {
   getStreamVideoClient,
@@ -271,6 +274,7 @@ async function mirrorExtensionToStream(args: {
       settings_override: buildCallSettingsOverride(
         args.appointmentType,
         capSeconds,
+        participantLimitsFromStream(current.call.settings?.limits),
       ) ?? { limits: { max_duration_seconds: capSeconds } },
       custom: { ...existingCustom, ...timeCustom },
     });

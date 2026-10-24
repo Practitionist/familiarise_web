@@ -28,6 +28,28 @@ import { reportSentryError } from "@/lib/observability/report";
 const PUBLISH_PERMISSIONS = STREAM_PUBLISH_PERMISSIONS;
 
 /**
+ * True only when Stream reports the user already holds `role`; any read failure answers false
+ * so the membership write still runs.
+ */
+async function holdsCallRole(
+  call: ReturnType<ReturnType<typeof getStreamVideoClient>["video"]["call"]>,
+  userId: string,
+  role: string,
+): Promise<boolean> {
+  try {
+    const { members } = await call.queryMembers({
+      filter_conditions: { user_id: userId },
+      limit: 1,
+    });
+    return members.some(
+      (member) => member.user_id === userId && member.role === role,
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * POST /api/meetings/[meetingId]/join
  * Verifies meeting access and DPDP consent, upserts the caller on Stream, and grants call membership
  * (`co_presenter` for accepted presenter collaborators, else `call_member`). It never creates the call;
@@ -47,6 +69,14 @@ export async function POST(
     const role = access.coPresenter ? CO_PRESENTER_CALL_ROLE : CALL_MEMBER_ROLE;
     const resolvedCallId = toCallId(access.streamCallId ?? meetingId);
 
+    const appointmentType =
+      access.appointment?.appointmentType ??
+      (access.appointment?.webinar
+        ? "WEBINAR"
+        : access.appointment?.class
+          ? "CLASS"
+          : null);
+
     await upsertUsersToStream([userId]);
     const admitted = await withStreamCircuitBreaker(async () => {
       const call = getStreamVideoClient().video.call(
@@ -61,21 +91,27 @@ export async function POST(
         assertValidUpdateCallMembers(memberPayload);
         return call.updateCallMembers(memberPayload);
       };
+      // A 1-to-Many membership write is broadcast to the whole room, so a rejoin with the right role skips it.
+      const alreadyMember = isOneToManyAppointmentType(appointmentType)
+        ? await holdsCallRole(call, userId, role)
+        : false;
       try {
-        await addMember(role).catch(async (error: unknown) => {
-          // An app missing the custom role still admits the presenter as a plain member.
-          if (
-            role !== CO_PRESENTER_CALL_ROLE ||
-            streamHttpStatus(error) !== 400
-          )
-            throw error;
-          reportSentryError(error, {
-            subsystem: "stream",
-            op: "meetings.join.coPresenterRole",
-            extra: { meetingId: resolvedCallId },
+        if (!alreadyMember) {
+          await addMember(role).catch(async (error: unknown) => {
+            // An app missing the custom role still admits the presenter as a plain member.
+            if (
+              role !== CO_PRESENTER_CALL_ROLE ||
+              streamHttpStatus(error) !== 400
+            )
+              throw error;
+            reportSentryError(error, {
+              subsystem: "stream",
+              op: "meetings.join.coPresenterRole",
+              extra: { meetingId: resolvedCallId },
+            });
+            await addMember(CALL_MEMBER_ROLE);
           });
-          await addMember(CALL_MEMBER_ROLE);
-        });
+        }
       } catch (error) {
         // Only Stream's not-found (HTTP 404 with code 16) on the membership write proves the call is missing.
         if (streamHttpStatus(error) === 404 && streamErrorCode(error) === 16)
@@ -83,13 +119,6 @@ export async function POST(
         throw error;
       }
 
-      const appointmentType =
-        access.appointment?.appointmentType ??
-        (access.appointment?.webinar
-          ? "WEBINAR"
-          : access.appointment?.class
-            ? "CLASS"
-            : null);
       const isOneToMany = isOneToManyAppointmentType(appointmentType);
 
       if (isOneToMany && access.role === "host") {
