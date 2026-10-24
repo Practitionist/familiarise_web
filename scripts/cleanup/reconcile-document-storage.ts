@@ -302,6 +302,33 @@ async function claimSupportOrphanPaths(paths: string[]): Promise<string[]> {
   return paths.filter((path) => !protectedPaths.has(path));
 }
 
+async function deleteOrphanedBucketPaths(
+  supabase: SupabaseClient,
+  bucket: string,
+  paths: string[],
+): Promise<{ deleted: number; notRemoved: number }> {
+  const batchSize = 100;
+  let deleted = 0;
+  let notRemoved = 0;
+  // Keep ownership claims and vendor removals sequential to bound storage pressure.
+  for (let i = 0; i < paths.length; i += batchSize) {
+    const candidates = paths.slice(i, i + batchSize);
+    const batch =
+      bucket === "support-attachments"
+        ? await claimSupportOrphanPaths(candidates)
+        : candidates;
+    if (batch.length === 0) continue;
+    const { data, error } = await supabase.storage.from(bucket).remove(batch);
+    if (error) {
+      console.error(`   Error deleting batch from ${bucket}:`, error);
+    }
+    const removed = error ? 0 : (data?.length ?? 0);
+    deleted += removed;
+    notRemoved += batch.length - removed;
+  }
+  return { deleted, notRemoved };
+}
+
 /**
  * Delete orphaned files older than grace period. Counts only what Storage
  * reports as removed; any shortfall is added to `errors` once per bucket.
@@ -344,25 +371,9 @@ async function deleteOrphanedFiles(
 
     const paths = filesToDelete.map((f) => f.path);
 
-    // Delete in batches
-    const batchSize = 100;
-    let notRemoved = 0;
-    for (let i = 0; i < paths.length; i += batchSize) {
-      const candidates = paths.slice(i, i + batchSize);
-      const batch =
-        bucket === "support-attachments"
-          ? await claimSupportOrphanPaths(candidates)
-          : candidates;
-      if (batch.length === 0) continue;
-      const { data, error } = await supabase.storage.from(bucket).remove(batch);
-
-      if (error) {
-        console.error(`   Error deleting batch from ${bucket}:`, error);
-      }
-      const removed = error ? 0 : (data?.length ?? 0);
-      deleted += removed;
-      notRemoved += batch.length - removed;
-    }
+    const removed = await deleteOrphanedBucketPaths(supabase, bucket, paths);
+    deleted += removed.deleted;
+    const notRemoved = removed.notRemoved;
     if (notRemoved > 0) {
       errors.push(`${notRemoved} orphaned files in ${bucket} were not removed`);
     }

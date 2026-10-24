@@ -43,7 +43,10 @@ the same attachment cannot be finalised again, and the user must upload a new fi
 If immediate removal of a fresh rejected upload fails, its tombstoned object
 still waits for the existing seven-day object grace before the crawler retries.
 Server-generated unique paths and retained tombstones prevent path reuse. Storage
-requests run outside the finalisation transaction. The crawler still lists whole
+requests run outside the finalisation transaction. The evidence-response preflight
+is a separate read helper; finalisation repeats that check on its transaction
+client. Cleanup processes ownership and removal batches sequentially, preserving
+the claim-before-remove order and bounding concurrent storage pressure. The crawler still lists whole
 buckets; its 100-path ownership batches do not bound the complete invocation.
 
 Staff send neutral evidence prompts to the delivering consultant, presenter-tier

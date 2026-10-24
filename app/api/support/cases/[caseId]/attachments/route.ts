@@ -208,6 +208,17 @@ export async function POST(req: NextRequest, context: Context) {
   }
 }
 
+async function evidenceResponseClosed(
+  evidenceRequestId: string | null,
+): Promise<boolean> {
+  if (!evidenceRequestId) return false;
+  const request = await prisma.supportCaseEvidenceRequest.findUnique({
+    where: { id: evidenceRequestId },
+    select: { respondedAt: true, cancelledAt: true },
+  });
+  return !request || !!request.respondedAt || !!request.cancelledAt;
+}
+
 export async function PUT(req: NextRequest, context: Context) {
   const id = await parseRouteParams(CaseIdParams, context.params, {
     route: ROUTE,
@@ -243,17 +254,11 @@ export async function PUT(req: NextRequest, context: Context) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (attachment.completedAt)
     return NextResponse.json({ data: { id: attachment.id } });
-  if (attachment.evidenceRequestId) {
-    const request = await prisma.supportCaseEvidenceRequest.findUnique({
-      where: { id: attachment.evidenceRequestId },
-      select: { respondedAt: true, cancelledAt: true },
-    });
-    if (!request || request.respondedAt || request.cancelledAt)
-      return NextResponse.json(
-        { error: "This evidence response is already final" },
-        { status: 409 },
-      );
-  }
+  if (await evidenceResponseClosed(attachment.evidenceRequestId))
+    return NextResponse.json(
+      { error: "This evidence response is already final" },
+      { status: 409 },
+    );
   const info = await adminStorage()
     .from(SUPPORT_EVIDENCE_BUCKET)
     .info(attachment.storagePath);

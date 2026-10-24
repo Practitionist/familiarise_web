@@ -36,6 +36,9 @@ conditionally tombstone expired pending rows, reread live references, then remov
 unprotected objects outside a transaction. Never delete from an orphan snapshot
 alone or revive a tombstone after an ambiguous storage failure. A later sweep
 retries grace-eligible bytes; fresh rejected objects retain their seven-day grace.
+Process ownership and removal batches sequentially to bound vendor pressure.
+Keep finalisation's in-transaction evidence-response recheck even when preflight
+validation is extracted into a helper; transaction reads must use its tx client.
 This fence does not bound whole-bucket listing; see
 `docs/support/08-intake-callbacks-attachments-and-limits.md` for the current flow.
 
