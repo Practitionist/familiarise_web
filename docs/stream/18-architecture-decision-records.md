@@ -1,6 +1,6 @@
 # 18. Architecture Decision Records (ADRs)
 
-> Authoritative architecture decision records governing Stream Video call lifecycle isolation, call-ID rotation, synchronous CAS state convergence, the immutable booked end with extension state on `Meeting`, meeting exit controls, the attendance witness behind session outcomes, the launch participant cap, and staff-editable video quality.
+> Authoritative architecture decision records governing Stream Video call lifecycle isolation, call-ID rotation, synchronous CAS state convergence, the immutable booked end with extension state on `Meeting`, meeting exit controls, the attendance witness behind session outcomes, the launch participant cap, staff-editable video quality, the unread digest, synchronous access revocation, and the recording copy and Stream-copy deletion.
 
 ## Table of Contents
 
@@ -14,6 +14,8 @@
 - [ADR-07: Interactive WebRTC with a 200-participant cap, not HLS, at launch](#adr-07-interactive-webrtc-with-a-200-participant-cap-not-hls-at-launch)
 - [ADR-08: Staff-editable platform video quality, 720p default](#adr-08-staff-editable-platform-video-quality-720p-default)
 - [ADR-09: Unread Digest via Stream Unread Reminders](#adr-09-unread-digest-via-stream-unread-reminders)
+- [ADR-10: Synchronous Server-Side Revocation with a Durable Retry and a Daily Reconciler](#adr-10-synchronous-server-side-revocation-with-a-durable-retry-and-a-daily-reconciler)
+- [ADR-11: Recordings Are Pulled into R2, Stream's Copy Is Deleted After a Verified Copy, and There Is No Second Store](#adr-11-recordings-are-pulled-into-r2-streams-copy-is-deleted-after-a-verified-copy-and-there-is-no-second-store)
 - [Deprecated & Superseded Approaches](#deprecated--superseded-approaches)
 
 ---
@@ -22,17 +24,19 @@
 
 Stream Video SFU and PostgreSQL (`PG_POOL_MAX=1`) enforce distinct operational constraints across real-time media sessions and durable relational billing records:
 
-| ADR        | Core Architectural Decision                                              | Primary Enforcing Modules                                                                                                        | Invariant Protected                                                                                                               |
-| ---------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| **ADR-01** | `1 AppointmentOccurrence = 1 active Stream Call ID`                      | `actions/stream/meetings/meeting.action.ts`, `lib/stream/call-cid.ts`, `lib/meetings/access.ts`                                  | Prevents cross-session attendance contamination, recording mix-ups, and stale room admission across series                        |
-| **ADR-02** | Rotate `streamCallId` (`occurrence-<id>-r<base36>`) + asymmetric lookup  | `app/api/meetings/[meetingId]/{end,reopen}/route.ts`, `lib/stream/{session-handlers,recording-handlers}.ts`                      | Bypasses Stream's permanent `ended_at` seal without losing prior recording egress or dying from late webhooks                     |
-| **ADR-03** | Synchronous CAS end stamp + monotonic `supersedesRecordedEnd`            | `app/api/meetings/[meetingId]/end/route.ts`, `lib/stream/session-handlers.ts`                                                    | Eliminates webhook lag on dashboard cards while preventing out-of-order webhooks from rewinding terminal state                    |
-| **ADR-04** | Immutable booked `endsAt`; `+15m` extension on `Meeting.extendedSeconds` | `app/api/meetings/[meetingId]/extend/route.ts`, `lib/meetings/duration-cap.ts`, `app/meetings/[id]/components/OverrunBanner.tsx` | Keeps the sold end intact for outcome and money, while the Stream cap, banner and conflict horizon derive from one Postgres value |
-| **ADR-05** | Unified `<CallExitButton />` (participant leave vs host 2-way popover)   | `app/meetings/[id]/components/EndCallButton.tsx`, `app/meetings/[id]/components/MeetingRoom.tsx`                                 | Prevents accidental room termination when a host leaves early while keeping room closure one deliberate choice                    |
-| **ADR-06** | Stream participant sessions resolve every assumed or missing interval    | `lib/booking/session-outcome-sweep.ts`, `lib/stream/{call-presence,session-handlers}.ts`, `lib/meetings/segment-presence.ts`     | A lost webhook can neither stretch a host's presence into a `HELD` verdict nor turn a delivered session into `NOBODY_JOINED`      |
-| **ADR-07** | Interactive WebRTC with a 200-participant cap, no HLS at launch          | `lib/events/capacity.ts`, `schemas/plans.ts`, `lib/meetings/room-ready.ts`, `lib/meetings/call-provisioning.ts`                  | Keeps every attendee able to ask a question or be brought on stage, and bounds the per-room cost and SFU load                     |
-| **ADR-08** | Staff-editable `PlatformVideoConfig`, 720p default                       | `lib/stream/{video-quality,video-config}.ts`, `lib/meetings/room-ready.ts`, `app/api/admin/video-config/route.ts`                | Keeps video and recording quality a priced, audited staff decision instead of a constant in code or an environment variable       |
-| **ADR-09** | Chat unread digest from Stream's `user.unread_message_reminder`          | `lib/stream/chat/unread-digest.ts`, `lib/stream/control-plane-contract.ts`                                                       | One durable email and bell per user per 30-minute window, never quoting message text                                              |
+| ADR        | Core Architectural Decision                                                                   | Primary Enforcing Modules                                                                                                        | Invariant Protected                                                                                                                  |
+| ---------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **ADR-01** | `1 AppointmentOccurrence = 1 active Stream Call ID`                                           | `actions/stream/meetings/meeting.action.ts`, `lib/stream/call-cid.ts`, `lib/meetings/access.ts`                                  | Prevents cross-session attendance contamination, recording mix-ups, and stale room admission across series                           |
+| **ADR-02** | Rotate `streamCallId` (`occurrence-<id>-r<base36>`) + asymmetric lookup                       | `app/api/meetings/[meetingId]/{end,reopen}/route.ts`, `lib/stream/{session-handlers,recording-handlers}.ts`                      | Bypasses Stream's permanent `ended_at` seal without losing prior recording egress or dying from late webhooks                        |
+| **ADR-03** | Synchronous CAS end stamp + monotonic `supersedesRecordedEnd`                                 | `app/api/meetings/[meetingId]/end/route.ts`, `lib/stream/session-handlers.ts`                                                    | Eliminates webhook lag on dashboard cards while preventing out-of-order webhooks from rewinding terminal state                       |
+| **ADR-04** | Immutable booked `endsAt`; `+15m` extension on `Meeting.extendedSeconds`                      | `app/api/meetings/[meetingId]/extend/route.ts`, `lib/meetings/duration-cap.ts`, `app/meetings/[id]/components/OverrunBanner.tsx` | Keeps the sold end intact for outcome and money, while the Stream cap, banner and conflict horizon derive from one Postgres value    |
+| **ADR-05** | Unified `<CallExitButton />` (participant leave vs host 2-way popover)                        | `app/meetings/[id]/components/EndCallButton.tsx`, `app/meetings/[id]/components/MeetingRoom.tsx`                                 | Prevents accidental room termination when a host leaves early while keeping room closure one deliberate choice                       |
+| **ADR-06** | Stream participant sessions resolve every assumed or missing interval                         | `lib/booking/session-outcome-sweep.ts`, `lib/stream/{call-presence,session-handlers}.ts`, `lib/meetings/segment-presence.ts`     | A lost webhook can neither stretch a host's presence into a `HELD` verdict nor turn a delivered session into `NOBODY_JOINED`         |
+| **ADR-07** | Interactive WebRTC with a 200-participant cap, no HLS at launch                               | `lib/events/capacity.ts`, `schemas/plans.ts`, `lib/meetings/room-ready.ts`, `lib/meetings/call-provisioning.ts`                  | Keeps every attendee able to ask a question or be brought on stage, and bounds the per-room cost and SFU load                        |
+| **ADR-08** | Staff-editable `PlatformVideoConfig`, 720p default                                            | `lib/stream/{video-quality,video-config}.ts`, `lib/meetings/room-ready.ts`, `app/api/admin/video-config/route.ts`                | Keeps video and recording quality a priced, audited staff decision instead of a constant in code or an environment variable          |
+| **ADR-09** | Chat unread digest from Stream's `user.unread_message_reminder`                               | `lib/stream/chat/unread-digest.ts`, `lib/stream/control-plane-contract.ts`                                                       | One durable email and bell per user per 30-minute window, never quoting message text                                                 |
+| **ADR-10** | Remove access synchronously on the action, queue failures, reconcile daily                    | `lib/stream/access-revocation.ts`, `scripts/cleanup/retry-moderation-enforcement.ts`, `lib/stream/membership-reconciler.ts`      | A cancelled or removed user loses chat access without waiting for their own browser, and a Stream failure cannot lose the revocation |
+| **ADR-11** | Pull recordings into R2, delete Stream's copy 24 hours after a verified copy, no second store | `lib/stream/recording-transfer-service.ts`, `lib/stream/recording-retention.ts`, `lib/stream/recording-stream-delete.ts`         | A recording is never lost to a failed push, and Stream does not keep a playable copy after we hold a verified one                    |
 
 ---
 
@@ -327,6 +331,54 @@ The fallback, a ticker job calling `unread_counts_batch` for users with recent b
 
 ---
 
+## ADR-10: Synchronous Server-Side Revocation with a Durable Retry and a Daily Reconciler
+
+### Context & Problem Statement
+
+Stream keeps a user in a channel or call until something removes them. Revocation was once client-cooperative: it ran only when the affected user's own browser performed a channel sync, behind a server-side "already synced" set and a per-tab session flag. A cancelled booking, a removed organisation member or a removed collaborator therefore kept chat access until, and unless, that person's browser happened to run the sync. Booking cancellation removed no one at all. Postgres knows who is entitled, so the system needs a way to push that fact to Stream that does not depend on the revoked user.
+
+### Decision
+
+Revoke on the server, in the action that ends the entitlement, and back it with two repair layers.
+
+1. **Synchronous removal after the commit.** The cancel route and the seat-leave path call `revokeEndedBookingChatAccess` or `revokeEndedEventChatAccess` (`lib/stream/access-revocation.ts`). They remove the user from the event channel and from each direct-message channel the ended booking no longer justifies, after `isDmContextEligible` confirms that no other booking still justifies it. Up to `SYNC_DM_PAIR_LIMIT = 10` pairs are handled inside the request. Collaborator removal and organisation-member removal follow the same pattern.
+2. **Durable retry.** A removal Stream refuses, or a request that has more pairs than the limit, becomes a `StreamRevocationRetry` row (kinds `COLLAB_REVOKE`, `EVENT_CHANNEL_REMOVE`, `DM_REMOVE`, `ORG_REVOKE`). The `retry-moderation-enforcement` job drains the queue every 30 minutes, re-checks Postgres eligibility before acting, waits 1 minute, 5 minutes, 30 minutes, 2 hours and 8 hours between attempts, and stops after `MAX_ATTEMPTS = 6` with one Sentry error. A new revocation for the same target re-arms a capped row.
+3. **Daily reconciler.** `reconcile-stream-memberships` (`lib/stream/membership-reconciler.ts`) walks webinar, class and collaborator channels by `created_at` from a persisted checkpoint and removes members the channel's own access predicate no longer admits. It skips direct messages, refuses to act on a channel where more than half the members would go, and never removes the support user, `system-` users or staff.
+
+The enforcement of "who may be here" stays a Postgres predicate in every layer; Stream is only told the answer.
+
+### Consequences
+
+- A user can keep access for the time between a failed removal and its retry, at most hours in the normal case, but the cancellation itself is never blocked by a Stream outage.
+- A direct message has no daily reconciler. Its backstops are the synchronous removal and the retry queue, because whether a finished relationship keeps its thread is a policy question.
+- The client no longer takes part. The browser sync gates, the process-local set and the session flag are deleted.
+- The retry sweep runs on the Netlify ticker. The reconciler runs on the ticker in a 00:00 to 03:00 UTC window.
+
+---
+
+## ADR-11: Recordings Are Pulled into R2, Stream's Copy Is Deleted After a Verified Copy, and There Is No Second Store
+
+### Context & Problem Statement
+
+Stream records a call and keeps its own copy for 14 days. The platform needs the file for far longer (90 days for a 1:1, 365 days for a group session), so it must move the file somewhere it controls. Three questions came up: who moves it (Stream pushing to our bucket, or us pulling), where it lands (one store or a fallback), and what happens to Stream's copy afterwards. The [storage, retention and visibility ADR](../decisions/2026-10-09-recording-storage-retention-visibility.md) chose the pull model and R2. This record adds the decisions about the second store and about Stream's copy, which that ADR did not settle.
+
+### Decision
+
+1. **The platform pulls; Stream does not push.** `transfer-recordings` (`lib/stream/recording-transfer-service.ts`) streams Stream's CDN copy into R2. Stream's external-storage feature is not used: it documents no retry for a failed push and a failed push loses the recording. With a pull, Stream's own copy stays as the retry source for the whole 14 days.
+2. **R2 is the only store.** There is no Supabase or other fallback copy. The danger to a recording is that the copy job does not run or is not watched, not that R2 loses an object, and a second copy path would double the failure surface. Supabase's Free plan also caps objects at 50 MB.
+3. **A copy is verified before it counts.** The object is written under an attempt-scoped key (`recordings/<id>/attempt-<n>.mp4`), its stored size is compared with the streamed bytes and the source length, and only then does a compare-and-set move the row from `TRANSFERRING` to `AVAILABLE`. A failure returns the row to `READY` and is retried up to `MAX_TRANSFER_ATTEMPTS = 12` while the Stream copy lives.
+4. **Stream's copy is deleted a day after the verified copy.** `deleteTransferredStreamCopies` in `lib/stream/recording-retention.ts`, part of the daily `expire-recordings` job, deletes Stream's copy of any `AVAILABLE` row copied at least 24 hours earlier, through `deleteStreamRecordingCopy`, and then clears `recordingUrl`. The day is the window in which a bad R2 object can still be re-pulled. Retention expiry, a host delete and DPDP erasure delete Stream's copy too, and keep the Stream pointer on the row until Stream confirms.
+
+Example. Grace's session ends at 17:12 IST on Tuesday 3 November 2026 and the recording is copied at 00:03 IST on Wednesday. Stream's copy would live until 17 November. The expiry run on Thursday 5 November 08:30 IST deletes it, 12 days earlier.
+
+### Consequences
+
+- Personal data does not sit in Stream for up to 14 days after we hold our own copy.
+- If the expiry job does not run, Stream's copy simply lapses on its own at 14 days; nothing is lost, but the earlier deletion is.
+- A recording whose copy never succeeds is lost when Stream's copy lapses. The only protections are the retries, the one Sentry message per run for exhausted attempts, and the schedule; there is no fallback store. Until the Stream jobs move to the ticker (slice S1, pending) the schedule is a manual trigger.
+
+---
+
 ## Deprecated & Superseded Approaches
 
 - **Permanent Per-Appointment / Per-Consultant Stream Call IDs**: Superseded by strict `1 AppointmentOccurrence = 1 active Stream Call ID` isolation (`occurrence-<uuid>`) so recurring `SUBSCRIPTION` and `CLASS` sessions never bleed attendance, duration caps, or recording state across occurrences.
@@ -337,3 +389,5 @@ The fallback, a ticker job calling `unread_counts_batch` for users with recent b
 - **Dual Red Hangup Buttons in `MeetingRoom.tsx`**: Superseded by the single Zoom/Meet-style `<CallExitButton />` with role-aware direct leave vs host two-action popover and `< 10m` remaining caution banner.
 - **End Stamps Closing Every Open Presence Row as Fact**: Superseded by ADR-06. `stampEnd` and the outcome sweep's `capOpenSlotPresences` closed every open row at the room end before classification, so a lost leave read as presence until the end. Delete any code that closes `MeetingPresence` at an end stamp without `closedByEnd = true`, or that classifies an assumed close without first asking Stream.
 - **Hard-coded 720p in the 1-to-Many builder and quality left on the call type**: Superseded by `PlatformVideoConfig` (ADR-08). Delete any literal `target_resolution` in `lib/meetings/**` and any environment variable that tunes video quality.
+- **Client-cooperative revocation (browser sync gates and a session flag):** Superseded by ADR-10. Delete any residue of the `initialSyncCompletedUsers` set and the `stream_sync_<id>` flag.
+- **Leaving Stream's copy of a recording until its 14-day expiry, and Supabase or a push to our bucket as recording stores:** Superseded by ADR-11. Delete any code that treats Stream's copy as permanent or adds a second recording destination.

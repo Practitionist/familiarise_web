@@ -35,7 +35,7 @@ The real-time collaboration platform integrates six core subsystems across synch
    - PostgreSQL (`PG_POOL_MAX=1`) stores authoritative appointment schedules (`AppointmentOccurrence`), room metadata (`Meeting`), device stay intervals (`MeetingPresence`), user attendance ledgers (`MeetingAttendance`), recording lifecycles (`Recording`), webhook deduplication receipts (`WebhookEvent`), and DPDP revocation queues (`StreamRevocationRetry`).
    - Upstash Redis (`lib/redis.ts`) stores ephemeral session Q&A question payloads (`stage-qa:<callId>:<questionId>`, 6-hour TTL) and rate-limit sliding windows.
 6. **Cloudflare R2 Durable Storage & Background Cron Fleet**:
-   - Scheduled GitHub Actions / Netlify background sweeps (`transfer-recordings`, `expire-recordings`, `reconcile-orphaned-sessions`, `reconcile-orphaned-recordings`, `expire-event-channels`, `stream-sync`, `wind-down-deactivated-orgs`) reconcile vendor state against PostgreSQL under `withCronLock`.
+   - Scheduled sweeps. Revocation retry, membership reconcile, webhook sweep and control-plane drift run on the Netlify ticker; the recording, session, channel and sync jobs are written for GitHub Actions, which is budget-blocked, so they do not run until moved to the ticker (see the [chat and video HLD](../start-here/06-chat-and-video-system-hld.md#10-scheduling-truth)). The sweeps are `transfer-recordings`, `expire-recordings`, `reconcile-orphaned-sessions`, `reconcile-orphaned-recordings`, `expire-event-channels`, `stream-sync`, `wind-down-deactivated-orgs`; they reconcile vendor state against PostgreSQL under `withCronLock`.
 
 ```mermaid
 flowchart TB
@@ -234,10 +234,10 @@ All periodic background jobs acquire an exclusive PostgreSQL lease via `withCron
 | ----------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`reconcile-orphaned-sessions`**   | Intra-day cleanup sweep   | Stamps `Meeting` rows whose end webhook dropped and closes that segment's open `MeetingPresence` intervals (`leftAt = endedAt`, `closedByEnd`). |
 | **`transfer-recordings`**           | Every 6 hours (`:33` UTC) | Reclaims `TRANSFERRING` claims older than 15m, copies `READY` recordings from Stream CDN to Cloudflare R2 (10 MB parts), and marks `AVAILABLE`. |
-| **`reconcile-orphaned-recordings`** | Daily (`05:00` UTC)       | Polls Stream `listRecordings` for recent sessions (2h–14d) to back-fill any missed `call.recording_ready` webhooks.                             |
-| **`expire-recordings`**             | Daily (`03:00` UTC)       | Enforces retention rules (1:1/sub +90d, webinar/class +365d, org override), deleting R2 objects while sparing purchased/listed replays.         |
-| **`expire-event-channels`**         | Daily batch sweep         | Freezes event channels 7 days post-end and deletes dormant channels 90 days post-end in 100-item chunks (`RATE_LIMIT_DELAY_MS = 10_000`).       |
-| **`stream-sync`**                   | Daily (`03:30` UTC)       | Reaps orphaned/soft-deleted Stream principals past the 30-day grace window and validates channel rosters.                                       |
+| **`reconcile-orphaned-recordings`** | Daily 03:00 UTC batch     | Polls Stream `listRecordings` for recent sessions (2h–14d) to back-fill any missed `call.recording_ready` webhooks.                             |
+| **`expire-recordings`**             | Daily 03:00 UTC batch     | Enforces retention rules (1:1/sub +90d, webinar/class +365d, org override), deleting R2 objects while sparing purchased/listed replays.         |
+| **`expire-event-channels`**         | Daily 03:00 UTC batch     | Freezes event channels 7 days post-end and deletes dormant channels 90 days post-end in 100-item chunks (`RATE_LIMIT_DELAY_MS = 10_000`).       |
+| **`stream-sync`**                   | Daily 03:00 UTC batch     | Reaps orphaned/soft-deleted Stream principals past the 30-day grace window and validates channel rosters.                                       |
 | **`wind-down-deactivated-orgs`**    | Event + periodic sweep    | Ends open Stream video calls and freezes channels tagged with `custom.organization_id` when an enterprise tenant is deactivated.                |
 
 ---
