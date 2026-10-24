@@ -44,6 +44,10 @@ function compliantState() {
   return {
     app: { guest_user_creation_disabled: true, event_hooks: [hook] },
     roles: [{ name: "co_presenter" }],
+    messaging: {
+      user: ["read-channel", "remove-own-channel-membership-owner"],
+      admin: ["truncate-channel", "update-channel-members-owner"],
+    } as Grants,
     types: {
       default: {
         grants: {
@@ -76,6 +80,7 @@ function readerFor(
     video: {
       getCallType: async ({ name }) => state.types[name],
     },
+    getMessagingGrants: async () => state.messaging,
   };
 }
 
@@ -125,6 +130,14 @@ describe("detectStreamControlPlaneDrift", () => {
     expect((await detect(state)).findings).toContain(
       "call_type:livestream:grant:user:create-call",
     );
+  });
+
+  it("flags a user role still holding an owner-scoped member or history grant on messaging", async () => {
+    const state = compliantState();
+    state.messaging.user.push("update-channel-members-owner");
+    expect((await detect(state)).findings).toEqual([
+      "channel_type:messaging:grant:user:update-channel-members-owner",
+    ]);
   });
 
   it("flags a missing co_presenter grant and a missing role", async () => {

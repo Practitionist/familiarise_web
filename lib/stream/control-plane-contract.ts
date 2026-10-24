@@ -321,6 +321,37 @@ export function matchesCoPresenterGrants(
 }
 
 // ---------------------------------------------------------------------------
+// The `messaging` chat channel type
+// ---------------------------------------------------------------------------
+
+export const MESSAGING_CHANNEL_TYPE = "messaging";
+
+/**
+ * Owner-scoped grants a channel's `created_by` must not hold. Membership and history
+ * change only through server actions that authorise against Postgres.
+ */
+export const MESSAGING_USER_REVOKED_GRANTS = [
+  "truncate-channel-owner",
+  "delete-channel-owner",
+  "update-channel-members-owner",
+  "recreate-channel-owner",
+  "update-channel-owner",
+];
+
+/** The `messaging` grants it must hold: the `user` role loses the owner grants above, every other grant is kept. */
+export function intendedMessagingGrants(
+  existing: Record<string, string[]>,
+): Record<string, string[]> {
+  const grants: Record<string, string[]> = { ...existing };
+  if (grants.user) {
+    grants.user = grants.user.filter(
+      (perm) => !MESSAGING_USER_REVOKED_GRANTS.includes(perm),
+    );
+  }
+  return grants;
+}
+
+// ---------------------------------------------------------------------------
 // Grant diffing
 // ---------------------------------------------------------------------------
 

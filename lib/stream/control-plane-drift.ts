@@ -18,11 +18,17 @@ import {
   hardenedUnusedTypeGrants,
   hookAccepts,
   intendedDefaultCallTypeGrants,
+  intendedMessagingGrants,
+  MESSAGING_CHANNEL_TYPE,
   matchesCoPresenterGrants,
   productFor,
   type HookLike,
 } from "@/lib/stream/control-plane-contract";
-import { getStreamVideoClient, isStreamConfigured } from "@/lib/stream-client";
+import {
+  getStreamChatClient,
+  getStreamVideoClient,
+  isStreamConfigured,
+} from "@/lib/stream-client";
 import { reportSentryMessage } from "@/lib/observability/report";
 
 interface CallTypeSnapshot {
@@ -44,6 +50,7 @@ export interface ControlPlaneReader {
   video: {
     getCallType(req: { name: string }): Promise<CallTypeSnapshot>;
   };
+  getMessagingGrants(): Promise<Record<string, string[]>>;
 }
 
 export interface ControlPlaneDriftResult {
@@ -127,12 +134,14 @@ export async function detectStreamControlPlaneDrift(
   const unverified = ["app:enable_hook_payload_compression"];
   if (!appUrl) unverified.push("webhook:url");
 
-  const [{ app }, { roles }, defaultType, ...unusedTypes] = await Promise.all([
-    client.getApp(),
-    client.listRoles(),
-    client.video.getCallType({ name: STREAM_CALL_TYPE }),
-    ...UNUSED_CALL_TYPES.map((name) => client.video.getCallType({ name })),
-  ]);
+  const [{ app }, { roles }, defaultType, messagingGrants, ...unusedTypes] =
+    await Promise.all([
+      client.getApp(),
+      client.listRoles(),
+      client.video.getCallType({ name: STREAM_CALL_TYPE }),
+      client.getMessagingGrants(),
+      ...UNUSED_CALL_TYPES.map((name) => client.video.getCallType({ name })),
+    ]);
 
   const findings = [
     ...webhookFindings(app, appUrl ? expectedWebhookUrl(appUrl) : undefined),
@@ -141,6 +150,10 @@ export async function detectStreamControlPlaneDrift(
       ? []
       : ["app:guest_user_creation_disabled"]),
     ...defaultCallTypeFindings(defaultType, new Set(roles.map((r) => r.name))),
+    ...grantDifferences(
+      messagingGrants,
+      intendedMessagingGrants(messagingGrants),
+    ).map((d) => `channel_type:${MESSAGING_CHANNEL_TYPE}:grant:${d}`),
     ...unusedTypes.flatMap((callType, i) =>
       grantDifferences(
         callType.grants,
@@ -169,5 +182,13 @@ function configuredClient(): ControlPlaneReader {
   if (!isStreamConfigured()) {
     throw new Error("Stream is not configured: STREAM_API_KEY/SECRET missing");
   }
-  return getStreamVideoClient();
+  const video = getStreamVideoClient();
+  return {
+    getApp: () => video.getApp(),
+    listRoles: () => video.listRoles(),
+    video: { getCallType: (req) => video.video.getCallType(req) },
+    getMessagingGrants: async () =>
+      (await getStreamChatClient().getChannelType(MESSAGING_CHANNEL_TYPE))
+        .grants,
+  };
 }

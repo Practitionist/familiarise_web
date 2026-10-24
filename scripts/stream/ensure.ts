@@ -7,6 +7,7 @@
  *   3. hardenUnusedCallTypes (`audio_room`, `livestream`, `development` reach & billable strip)
  *   4. ensureDefaultCallTypeSettings (`session.inactivity_timeout_seconds: 300` on `default`)
  *   5. ensureCoPresenterRole (custom `co_presenter` role and its grants on `default`)
+ *   6. ensureMessagingGrants (`user` loses the owner truncate/delete/update grants on `messaging`)
  *
  * Usage:
  *   npx tsx scripts/stream/ensure.ts
@@ -25,6 +26,7 @@ import {
 } from "@/lib/stream/control-plane-contract";
 import { ensureAppSettings } from "./ensure-app-settings";
 import { ensureCallTypeGrants } from "./ensure-call-type-grants";
+import { ensureMessagingGrants } from "./ensure-messaging-grants";
 import { hardenUnusedCallTypes } from "./harden-unused-call-types";
 
 export interface EnsureOptions {
@@ -162,11 +164,11 @@ export async function ensureCoPresenterRole(opts: {
 }
 
 export async function ensureStreamConfig(opts: EnsureOptions): Promise<number> {
-  console.log("=== [1/5] App Settings ===");
+  console.log("=== [1/6] App Settings ===");
   const appCode = await ensureAppSettings({ apply: opts.apply });
   if (appCode !== 0) return appCode;
 
-  console.log("\n=== [2/5] Default Call Type Grants ===");
+  console.log("\n=== [2/6] Default Call Type Grants ===");
   const grantsCode = await ensureCallTypeGrants({
     apply: opts.apply,
     restore: false,
@@ -174,18 +176,22 @@ export async function ensureStreamConfig(opts: EnsureOptions): Promise<number> {
   });
   if (grantsCode !== 0) return grantsCode;
 
-  console.log("\n=== [3/5] Unused Call Types Hardening ===");
+  console.log("\n=== [3/6] Unused Call Types Hardening ===");
   const hardenCode = await hardenUnusedCallTypes({ apply: opts.apply });
   if (hardenCode !== 0) return hardenCode;
 
-  console.log("\n=== [4/5] Default Call Type Session Settings ===");
+  console.log("\n=== [4/6] Default Call Type Session Settings ===");
   const settingsCode = await ensureDefaultCallTypeSettings({
     apply: opts.apply,
   });
   if (settingsCode !== 0) return settingsCode;
 
-  console.log("\n=== [5/5] Co-presenter Role ===");
-  return ensureCoPresenterRole({ apply: opts.apply });
+  console.log("\n=== [5/6] Co-presenter Role ===");
+  const coPresenterCode = await ensureCoPresenterRole({ apply: opts.apply });
+  if (coPresenterCode !== 0) return coPresenterCode;
+
+  console.log("\n=== [6/6] Messaging Channel Type Grants ===");
+  return ensureMessagingGrants({ apply: opts.apply });
 }
 
 if (require.main === module) {

@@ -5,6 +5,7 @@
 const mockEnsureAppSettings = jest.fn();
 const mockEnsureCallTypeGrants = jest.fn();
 const mockHardenUnusedCallTypes = jest.fn();
+const mockEnsureMessagingGrants = jest.fn();
 const mockGetCallType = jest.fn();
 const mockUpdateCallType = jest.fn();
 
@@ -14,6 +15,10 @@ jest.mock("../../scripts/stream/ensure-app-settings", () => ({
 
 jest.mock("../../scripts/stream/ensure-call-type-grants", () => ({
   ensureCallTypeGrants: (...a: unknown[]) => mockEnsureCallTypeGrants(...a),
+}));
+
+jest.mock("../../scripts/stream/ensure-messaging-grants", () => ({
+  ensureMessagingGrants: (...a: unknown[]) => mockEnsureMessagingGrants(...a),
 }));
 
 jest.mock("../../scripts/stream/harden-unused-call-types", () => ({
@@ -45,6 +50,7 @@ beforeEach(() => {
   mockEnsureAppSettings.mockResolvedValue(0);
   mockEnsureCallTypeGrants.mockResolvedValue(0);
   mockHardenUnusedCallTypes.mockResolvedValue(0);
+  mockEnsureMessagingGrants.mockResolvedValue(0);
   mockGetCallType
     .mockResolvedValue({
       name: "default",
@@ -66,7 +72,7 @@ beforeEach(() => {
 });
 
 describe("scripts/stream/ensure", () => {
-  it("runs all five ensure steps in sequence", async () => {
+  it("runs all six ensure steps in sequence", async () => {
     const code = await ensureStreamConfig({
       apply: true,
       deployConfirmed: true,
@@ -80,6 +86,7 @@ describe("scripts/stream/ensure", () => {
       deployConfirmed: true,
     });
     expect(mockHardenUnusedCallTypes).toHaveBeenCalledWith({ apply: true });
+    expect(mockEnsureMessagingGrants).toHaveBeenCalledWith({ apply: true });
     expect(mockUpdateCallType).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "default",
