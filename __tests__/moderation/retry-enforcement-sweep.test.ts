@@ -393,6 +393,9 @@ describe("retryModerationEnforcement", () => {
     findMany.mockResolvedValue([]);
     const capped = {
       id: "retry-1",
+      kind: "ERASURE_REVOKE",
+      userId: null,
+      counterpartUserId: null,
       erasureRequestId: "er-1",
       planType: "CLASS",
       planId: "cp-9",
@@ -446,6 +449,9 @@ describe("retryModerationEnforcement", () => {
     outboxFindMany.mockResolvedValue([
       {
         id: "retry-ok",
+        kind: "ERASURE_REVOKE",
+        userId: null,
+        counterpartUserId: null,
         erasureRequestId: "er-1",
         planType: "CLASS",
         planId: "cp-1",
