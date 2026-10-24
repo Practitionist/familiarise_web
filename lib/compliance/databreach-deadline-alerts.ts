@@ -19,6 +19,15 @@ const recipientSchema = z.array(
   z.object({ id: z.string(), email: z.string().min(1) }),
 );
 
+type BreachDigest = {
+  ref: string;
+  title: string;
+  reason: string;
+  dueDate: Date;
+  dashboardUrl: string;
+  officer: string | undefined;
+};
+
 function hourWindow(now: Date): string {
   return new Date(
     Math.floor(now.getTime() / 3_600_000) * 3_600_000,
@@ -46,14 +55,7 @@ async function pendingRecipients(
 async function stageRecipient(
   tx: Tx,
   recipient: { id: string; email: string },
-  digest: {
-    ref: string;
-    title: string;
-    reason: string;
-    dueDate: Date;
-    dashboardUrl: string;
-    officer: string | undefined;
-  },
+  digest: BreachDigest,
 ) {
   const { ref, title, reason, dueDate, dashboardUrl, officer } = digest;
   const current = await tx.user.findFirst({
@@ -94,6 +96,112 @@ async function stageRecipient(
   if (!staged)
     throw new Error("Compliance email staging did not persist an obligation");
   return true;
+}
+
+function configuredOfficer(errors: string[]): string | undefined {
+  const rawOfficer = process.env.DATABREACH_ALERT_EMAIL?.trim();
+  if (!rawOfficer) return undefined;
+  const parsed = z.string().email().safeParse(rawOfficer);
+  if (parsed.success) return parsed.data;
+  errors.push("DATABREACH_ALERT_EMAIL is not a valid email address");
+  return undefined;
+}
+
+async function stageRecipients(
+  recipients: z.infer<typeof recipientSchema>,
+  digest: BreachDigest,
+  timedOut: () => boolean,
+  errors: string[],
+): Promise<number> {
+  let staged = 0;
+  // Complete each recipient's atomic outbox transaction before starting another.
+  for (const recipient of recipients) {
+    if (timedOut()) break;
+    try {
+      if (
+        await prisma.$transaction((tx) => stageRecipient(tx, recipient, digest))
+      )
+        staged++;
+    } catch (error) {
+      errors.push(
+        error instanceof Error ? error.message : "Recipient staging failed",
+      );
+    }
+  }
+  return staged;
+}
+
+async function stageOfficer(
+  digest: BreachDigest,
+  errors: string[],
+): Promise<boolean> {
+  const { officer, ref, title, reason, dashboardUrl } = digest;
+  if (!officer) return false;
+  try {
+    const user = await prisma.user.findFirst({
+      where: { email: { equals: officer, mode: "insensitive" } },
+      select: { id: true },
+    });
+    if (
+      user ||
+      (await prisma.failedEmail.findFirst({
+        where: { entityRef: ref, recipient: officer },
+        select: { id: true },
+      }))
+    )
+      return false;
+    const staged = await prisma.$transaction((tx) =>
+      stage(
+        {
+          from: SENDERS.ops,
+          to: officer,
+          replyTo: OPS_EMAIL,
+          subject: title,
+          html: `<p>${reason}</p><p><a href="${dashboardUrl}">Open compliance dashboard</a></p>`,
+        },
+        "DATABREACH_DEADLINE_ALERT",
+        { tx, entityRef: ref },
+      ),
+    );
+    if (!staged)
+      throw new Error("Officer email staging did not persist an obligation");
+    return true;
+  } catch (error) {
+    errors.push(
+      error instanceof Error ? error.message : "Officer staging failed",
+    );
+    return false;
+  }
+}
+
+async function completeDigest(
+  progress: { success: boolean; hasMore: boolean; errors: string[] },
+  digest: BreachDigest,
+  startedAt: number,
+  timedOut: () => boolean,
+) {
+  const window = digest.ref.slice(ACTIVE_PREFIX.length);
+  if (progress.errors.length > 0) {
+    progress.success = false;
+    progress.hasMore = true;
+    reportSentryMessage(
+      "Data-breach alert staging left unfinished obligations",
+      {
+        subsystem: "compliance",
+        op: "databreach-deadline-alerts",
+        level: "error",
+        extra: { errors: progress.errors, windowStart: window },
+      },
+    );
+  }
+  if (!progress.hasMore && progress.success && !timedOut()) {
+    if (Date.now() - startedAt < START_BUDGET_MS - 5_000)
+      await postOpsChat(`${digest.title}. ${digest.dashboardUrl}`);
+    await prisma.failedEmail.updateMany({
+      where: { entityRef: digest.ref },
+      data: { entityRef: `${COMPLETE_PREFIX}${window}` },
+    });
+  }
 }
 
 /** Stages bounded slices of the oldest unfinished hourly alert digest. */
@@ -181,15 +289,7 @@ export async function runDataBreachDeadlineAlerts(
         return result;
       }
       if (timedOut()) return result;
-      const rawOfficer = process.env.DATABREACH_ALERT_EMAIL?.trim();
-      const officerResult = rawOfficer
-        ? z.string().email().safeParse(rawOfficer)
-        : undefined;
-      const officer = officerResult?.success ? officerResult.data : undefined;
-      if (officerResult && !officerResult.success)
-        result.errors.push(
-          "DATABREACH_ALERT_EMAIL is not a valid email address",
-        );
+      const officer = configuredOfficer(result.errors);
       const recipients = await pendingRecipients(ref, officer, limit + 1);
       result.hasMore = recipients.length > limit;
       const dueDate = new Date(
@@ -209,92 +309,20 @@ export async function runDataBreachDeadlineAlerts(
         overdue: result.overdue,
         windowStart: window,
       });
-      for (const recipient of recipients.slice(0, limit)) {
-        if (timedOut()) break;
-        try {
-          if (
-            await prisma.$transaction((tx) =>
-              stageRecipient(tx, recipient, {
-                ref,
-                title,
-                reason,
-                dueDate,
-                dashboardUrl,
-                officer,
-              }),
-            )
-          )
-            result.recipientsStaged++;
-        } catch (error) {
-          result.errors.push(
-            error instanceof Error ? error.message : "Recipient staging failed",
-          );
-        }
-      }
+      const digest = { ref, title, reason, dueDate, dashboardUrl, officer };
+      result.recipientsStaged = await stageRecipients(
+        recipients.slice(0, limit),
+        digest,
+        timedOut,
+        result.errors,
+      );
       if (timedOut()) return result;
-      if (officer) {
-        try {
-          const user = await prisma.user.findFirst({
-            where: { email: { equals: officer, mode: "insensitive" } },
-            select: { id: true },
-          });
-          if (
-            !user &&
-            !(await prisma.failedEmail.findFirst({
-              where: { entityRef: ref, recipient: officer },
-              select: { id: true },
-            }))
-          ) {
-            const staged = await prisma.$transaction((tx) =>
-              stage(
-                {
-                  from: SENDERS.ops,
-                  to: officer,
-                  replyTo: OPS_EMAIL,
-                  subject: title,
-                  html: `<p>${reason}</p><p><a href="${dashboardUrl}">Open compliance dashboard</a></p>`,
-                },
-                "DATABREACH_DEADLINE_ALERT",
-                { tx, entityRef: ref },
-              ),
-            );
-            if (!staged)
-              throw new Error(
-                "Officer email staging did not persist an obligation",
-              );
-            result.officerStaged = true;
-          }
-        } catch (error) {
-          result.errors.push(
-            error instanceof Error ? error.message : "Officer staging failed",
-          );
-        }
-      }
+      result.officerStaged = await stageOfficer(digest, result.errors);
       if (!active && recipients.length === 0 && !officer)
         result.errors.push(
           "No eligible admin email or configured officer mailbox",
         );
-      if (result.errors.length > 0) {
-        result.success = false;
-        result.hasMore = true;
-        reportSentryMessage(
-          "Data-breach alert staging left unfinished obligations",
-          {
-            subsystem: "compliance",
-            op: "databreach-deadline-alerts",
-            level: "error",
-            extra: { errors: result.errors, windowStart: window },
-          },
-        );
-      }
-      if (!result.hasMore && result.success && !timedOut()) {
-        if (Date.now() - startedAt < START_BUDGET_MS - 5_000)
-          await postOpsChat(`${title}. ${dashboardUrl}`);
-        await prisma.failedEmail.updateMany({
-          where: { entityRef: ref },
-          data: { entityRef: completeRef },
-        });
-      }
+      await completeDigest(result, digest, startedAt, timedOut);
       return result;
     },
   );
