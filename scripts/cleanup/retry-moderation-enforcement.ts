@@ -349,6 +349,9 @@ async function drainErasureRevocations(
   const rows = await prisma.streamRevocationRetry.findMany({
     where: {
       status: { in: ["PENDING", "FAILED"] },
+      // A row past the attempt budget is terminal: the give-up was already
+      // written, so the selector must not re-drive it.
+      attempts: { lt: MAX_ATTEMPTS },
       OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
     },
     select: {
