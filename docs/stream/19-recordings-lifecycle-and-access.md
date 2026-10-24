@@ -4,7 +4,7 @@
 
 ## Lifecycle
 
-A recording is a `Recording` row hanging off a `Meeting`, which hangs off one `AppointmentOccurrence`. The host starts it by hand after the consent gate. Stream stores the file for 14 days and the platform copies it into R2 before that copy lapses.
+A recording is a `Recording` row hanging off a `Meeting`, which hangs off one `AppointmentOccurrence`. The host starts it by hand after the consent gate. Stream stores the file for 14 days, and the platform keeps it only if `transfer-recordings` copies it into R2 before that copy lapses. That job is not on any running schedule today and runs only when an operator triggers it (see the transfer notes below), so a recording nobody copies within 14 days is lost, and the next `expire-recordings` run marks it `COPY_LAPSED`.
 
 ```mermaid
 stateDiagram-v2
@@ -115,7 +115,7 @@ sequenceDiagram
     PB-->>V: playbackUrl, never stored
 ```
 
-- The transfer job runs in GitHub Actions and is registered in `lib/cron/cleanup-registry.ts`, so the HTTP twin and the back-office runner can dispatch it. A failed copy aborts the multipart upload, leaves the row `READY` (still playable from Stream's link) and retries up to the attempt limit. Exhausted rows are reported to Sentry once per run.
+- The transfer job is written for GitHub Actions (budget-blocked, so it runs only on an operator trigger until it moves to the ticker) and is registered in `lib/cron/cleanup-registry.ts`, so the HTTP twin and the back-office runner can dispatch it. A failed copy aborts the multipart upload, leaves the row `READY` (still playable from Stream's link) and retries up to the attempt limit. Exhausted rows are reported to Sentry once per run.
 - A host may record a session nobody booked, and a call can produce several recordings (a restarted recording, a dropped and rejoined call, a 2-hour split), so one session can have several `Recording` rows.
 - In a 1:1 session, a participant's decline before the recording's end discards the recording from Stream and expires any row, so no playable copy exists.
 
