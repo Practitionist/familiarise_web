@@ -8,7 +8,11 @@ import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { applyRateLimit, documentUploadLimiter } from "@/lib/rate-limit";
+import {
+  applyRateLimit,
+  documentCommitLimiter,
+  documentUploadLimiter,
+} from "@/lib/rate-limit";
 import { deletePlanMaterial, type PlanType } from "@/lib/supabase";
 import {
   generateStorageFileName,
@@ -486,6 +490,25 @@ export function handleMaterialUploadUrl(
   }, "plans");
 }
 
+/**
+ * Deletes an object only when no row still points at it. Returns true when the
+ * path is free (deleted now or unreferenced and already gone).
+ */
+async function discardUnreferencedMaterial(
+  storagePath: string,
+): Promise<boolean> {
+  try {
+    const referenced = await prisma.planMaterial.count({
+      where: { storagePath },
+    });
+    if (referenced > 0) return false;
+    return await deletePlanMaterial(storagePath).catch(() => false);
+  } catch {
+    // Best-effort: the orphan sweep owns anything left here.
+    return false;
+  }
+}
+
 /** POST: commits an uploaded object as the plan's next material. */
 export function handleUploadMaterial(
   request: Request,
@@ -494,6 +517,8 @@ export function handleUploadMaterial(
 ): Promise<Response> {
   return answerFileRoute(async () => {
     const userId = await requireSessionUser();
+    const limited = await applyRateLimit(documentCommitLimiter, userId);
+    if (limited) return limited;
     const access = await requirePlanManager(userId, planId, config);
     const body = await parseJsonBody(request, MaterialCommitSchema);
     const stored = await verifyMaterialObject(config.planType, planId, body);
@@ -502,8 +527,15 @@ export function handleUploadMaterial(
     };
 
     try {
-      const created = await prisma.$transaction(async (tx) => {
+      const outcome = await prisma.$transaction(async (tx) => {
         await lockPlanRowForUpdate(tx, config.planModel, planId);
+        // A replay of a commit whose response was lost returns the row the
+        // first attempt wrote, instead of a duplicate or a deleted object.
+        const replayed = await tx.planMaterial.findFirst({
+          where: { ...whereClause, storagePath: body.storagePath },
+          select: MATERIAL_PUBLIC_SELECT,
+        });
+        if (replayed) return { row: replayed, created: false };
         const existing = await tx.planMaterial.count({ where: whereClause });
         if (existing >= MAX_MATERIALS_PER_PLAN) {
           throw new FileRouteError("MATERIAL_LIMIT_REACHED");
@@ -536,11 +568,14 @@ export function handleUploadMaterial(
             fileName: row.originalName,
           });
         }
-        return row;
+        return { row, created: true };
       });
-      return NextResponse.json({ data: created }, { status: 201 });
+      return NextResponse.json(
+        { data: outcome.row },
+        { status: outcome.created ? 201 : 200 },
+      );
     } catch (error) {
-      await deletePlanMaterial(body.storagePath).catch(() => false);
+      await discardUnreferencedMaterial(body.storagePath);
       throw error;
     }
   }, "plans");
@@ -668,6 +703,15 @@ export function handleReplaceMaterial(
     const userId = await requireSessionUser();
     const access = await requireMaterialManager(userId, materialId);
     const body = await parseJsonBody(request, MaterialFileSchema);
+    // A retry of a replace whose response was lost names the path the row now
+    // holds. It is already the live object, so this is a no-op, not a swap.
+    if (body.storagePath === access.storagePath) {
+      const row = await prisma.planMaterial.findUniqueOrThrow({
+        where: { id: materialId },
+        select: MATERIAL_PUBLIC_SELECT,
+      });
+      return NextResponse.json({ data: row });
+    }
     const stored = await verifyMaterialObject(
       access.planType,
       access.planId,
@@ -693,12 +737,10 @@ export function handleReplaceMaterial(
       return result.count === 1;
     });
     if (!swapped) {
-      await deletePlanMaterial(body.storagePath).catch(() => false);
+      await discardUnreferencedMaterial(body.storagePath);
       return fileApiError("SUPERSEDED");
     }
-    const oldDeleted = await deletePlanMaterial(access.storagePath).catch(
-      () => false,
-    );
+    const oldDeleted = await discardUnreferencedMaterial(access.storagePath);
     if (!oldDeleted) {
       reportSentryError(
         new Error("Replaced plan material object not deleted"),
