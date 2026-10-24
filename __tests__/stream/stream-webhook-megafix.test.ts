@@ -547,7 +547,7 @@ describe("Stream Webhook Megafix Regression Suite", () => {
       expect(hostEnded.hostAttributed).toBe(true);
     });
 
-    it("preserves non-deliberate reason on handleCallEnded when no user actor clicked End", async () => {
+    it("maps a Stream-side end with no user actor to stream_ended, never the raw reason", async () => {
       (prisma.meeting.findUnique as jest.Mock).mockResolvedValue({
         id: "mtg-1",
         endedAt: null,
@@ -571,9 +571,7 @@ describe("Stream Webhook Megafix Regression Suite", () => {
 
       expect(prisma.meeting.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({
-            endedReason: "session_inactivity_timeout",
-          }),
+          data: expect.objectContaining({ endedReason: "stream_ended" }),
         }),
       );
     });

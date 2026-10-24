@@ -5,15 +5,24 @@ import { requireApiAuth } from "@/lib/auth-helpers";
 import {
   REJOIN_GRACE_MS,
   isDeadOccurrence,
-  isDeliberateEnd,
 } from "@/lib/appointments/occurrences";
 import { isCancelledLikeStatus } from "@/lib/appointments/status";
 import { isPresenterRole } from "@/lib/collaborators/roles";
+import { upsertUsersToStream } from "@/actions/stream/chat/user.action";
 import { hasStreamConsent } from "@/lib/meetings/access";
+import {
+  buildRoomCallPlan,
+  readSlotForCaller,
+  STREAM_SERVER_TRUSTED,
+} from "@/lib/meetings/call-provisioning";
+import { resolveRoomEndsAt } from "@/lib/meetings/duration-cap";
+import { endAllowsHostReopen } from "@/lib/meetings/end-reasons";
 import { meetingIdParamSchema } from "@/lib/meetings/route-guard";
+import { applyRateLimit, meetingControlLimiter } from "@/lib/rate-limit";
 import {
   getStreamVideoClient,
   isStreamConfigured,
+  StreamUnavailableError,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
@@ -22,7 +31,59 @@ import {
   parseOccurrenceIdFromCallId,
   toCallId,
 } from "@/lib/stream/call-cid";
+import { assertValidGetOrCreateCall } from "@/lib/stream/video-contracts";
 import { reportSentryError } from "@/lib/observability/report";
+
+const PLAN_OWNER_SELECT = { select: { consultantProfileId: true } } as const;
+
+const REOPEN_SELECT = {
+  id: true,
+  streamCallId: true,
+  endedAt: true,
+  endedReason: true,
+  extendedSeconds: true,
+  extensionsUsed: true,
+  occurrence: {
+    select: {
+      id: true,
+      startsAt: true,
+      endsAt: true,
+      completionStatus: true,
+      deletedAt: true,
+      consultantProfileId: true,
+      appointment: {
+        select: {
+          deletedAt: true,
+          consultation: {
+            select: { status: true, consultationPlan: PLAN_OWNER_SELECT },
+          },
+          subscription: {
+            select: { status: true, subscriptionPlan: PLAN_OWNER_SELECT },
+          },
+          webinar: {
+            select: {
+              status: true,
+              webinarPlan: { select: { id: true, consultantProfileId: true } },
+            },
+          },
+          class: {
+            select: {
+              status: true,
+              classPlan: { select: { id: true, consultantProfileId: true } },
+            },
+          },
+          trial: {
+            select: {
+              status: true,
+              consultantProfileId: true,
+              subscriptionPlan: PLAN_OWNER_SELECT,
+            },
+          },
+        },
+      },
+    },
+  },
+} as const;
 
 async function isAuthorizedReopenHost(
   userId: string,
@@ -110,11 +171,30 @@ function isAppointmentInactiveForReopen(appt: {
   return Boolean(bookingStatus && isCancelledLikeStatus(bookingStatus));
 }
 
+async function findMeetingForReopen(callId: string) {
+  const occurrenceId = parseOccurrenceIdFromCallId(callId);
+  return (
+    (await prisma.meeting.findUnique({
+      where: { streamCallId: callId },
+      select: REOPEN_SELECT,
+    })) ??
+    (await prisma.meeting.findUnique({
+      where: { id: callId },
+      select: REOPEN_SELECT,
+    })) ??
+    (occurrenceId
+      ? await prisma.meeting.findUnique({
+          where: { appointmentOccurrenceId: occurrenceId },
+          select: REOPEN_SELECT,
+        })
+      : null)
+  );
+}
+
 /**
  * POST /api/meetings/[meetingId]/reopen
- * Safety-valve endpoint allowing a session host to mint a fresh Stream call ID
- * (`occurrence-<id>-r<base36>`) and reopen a deliberately ended room while the
- * occurrence is still within its active `[startsAt - 15m, endsAt + 30m]` window.
+ * Lets a host reopen a room whose end allows it, inside `[startsAt - 15m, roomEndsAt + 30m]`.
+ * The fresh Stream call is created first; the Meeting rotates to it only once it exists.
  */
 export async function POST(
   _req: NextRequest,
@@ -125,6 +205,13 @@ export async function POST(
     const authResult = await requireApiAuth();
     if (authResult.error) return authResult.error;
     const { user } = authResult.session;
+
+    const limited = await applyRateLimit(
+      meetingControlLimiter,
+      `user:${user.id}`,
+      "meetings",
+    );
+    if (limited) return limited;
 
     const { meetingId: rawMeetingId } = await params;
     const parsed = meetingIdParamSchema.safeParse(rawMeetingId);
@@ -153,112 +240,7 @@ export async function POST(
       );
     }
 
-    const reopenInclude = {
-      occurrence: {
-        include: {
-          appointment: {
-            include: {
-              consultation: {
-                select: {
-                  status: true,
-                  requestedBy: { select: { user: { select: { name: true } } } },
-                  consultationPlan: {
-                    select: {
-                      title: true,
-                      consultantProfileId: true,
-                      consultantProfile: {
-                        select: { user: { select: { name: true } } },
-                      },
-                    },
-                  },
-                },
-              },
-              subscription: {
-                select: {
-                  status: true,
-                  requestedBy: { select: { user: { select: { name: true } } } },
-                  subscriptionPlan: {
-                    select: {
-                      title: true,
-                      consultantProfileId: true,
-                      consultantProfile: {
-                        select: { user: { select: { name: true } } },
-                      },
-                    },
-                  },
-                },
-              },
-              webinar: {
-                select: {
-                  status: true,
-                  webinarPlan: {
-                    select: {
-                      id: true,
-                      title: true,
-                      consultantProfileId: true,
-                      consultantProfile: {
-                        select: { user: { select: { name: true } } },
-                      },
-                    },
-                  },
-                },
-              },
-              class: {
-                select: {
-                  status: true,
-                  classPlan: {
-                    select: {
-                      id: true,
-                      title: true,
-                      consultantProfileId: true,
-                      consultantProfile: {
-                        select: { user: { select: { name: true } } },
-                      },
-                    },
-                  },
-                },
-              },
-              trial: {
-                select: {
-                  status: true,
-                  consultantProfileId: true,
-                  consulteeProfile: {
-                    select: { user: { select: { name: true } } },
-                  },
-                  subscriptionPlan: {
-                    select: {
-                      title: true,
-                      consultantProfileId: true,
-                      consultantProfile: {
-                        select: { user: { select: { name: true } } },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    } as const;
-
-    const occurrenceIdFallback = parseOccurrenceIdFromCallId(callId);
-    const meeting =
-      (await prisma.meeting.findUnique({
-        where: { streamCallId: callId },
-        include: reopenInclude,
-      })) ??
-      (await prisma.meeting.findUnique({
-        where: { id: callId },
-        include: reopenInclude,
-      })) ??
-      (occurrenceIdFallback
-        ? await prisma.meeting.findUnique({
-            where: { appointmentOccurrenceId: occurrenceIdFallback },
-            include: reopenInclude,
-          })
-        : null);
-
+    const meeting = await findMeetingForReopen(callId);
     if (!meeting) {
       return NextResponse.json(
         { error: "Meeting not found." },
@@ -289,11 +271,11 @@ export async function POST(
       );
     }
 
-    const startsAt = new Date(meeting.occurrence.startsAt);
-    const endsAt = meeting.occurrence.endsAt
-      ? new Date(meeting.occurrence.endsAt)
-      : new Date(startsAt.getTime() + 60 * 60 * 1000);
-    if (Date.now() > endsAt.getTime() + REJOIN_GRACE_MS) {
+    const roomEndsAt = resolveRoomEndsAt(
+      meeting.occurrence.endsAt,
+      meeting.extendedSeconds,
+    );
+    if (Date.now() > roomEndsAt.getTime() + REJOIN_GRACE_MS) {
       return NextResponse.json(
         { error: "The rejoin grace window for this session has passed." },
         { status: 409 },
@@ -307,21 +289,42 @@ export async function POST(
       });
     }
 
-    if (
-      !isDeliberateEnd({
-        endedAt: meeting.endedAt,
-        endedReason: meeting.endedReason,
-      })
-    ) {
+    if (!endAllowsHostReopen(meeting)) {
       return NextResponse.json(
         { error: "This session is not eligible for reopening." },
         { status: 409 },
       );
     }
 
+    const authorized = await readSlotForCaller(meeting.occurrence.id);
+    if (!authorized) {
+      return NextResponse.json(
+        { error: "Only the session host can reopen a closed room." },
+        { status: 403 },
+      );
+    }
+    const { authorUserId, payload } = await buildRoomCallPlan(authorized, {
+      extendedSeconds: meeting.extendedSeconds,
+      extensionsUsed: meeting.extensionsUsed,
+    });
+
     const nextCallId = `occurrence-${meeting.occurrence.id}-r${Date.now().toString(36)}`;
+    await withStreamCircuitBreaker(async () => {
+      await upsertUsersToStream([authorUserId], {
+        serverTrusted: STREAM_SERVER_TRUSTED,
+      });
+      assertValidGetOrCreateCall(payload);
+      await getStreamVideoClient()
+        .video.call(STREAM_CALL_TYPE, nextCallId)
+        .getOrCreate(payload);
+    });
+
     const updated = await prisma.meeting.updateMany({
-      where: { id: meeting.id, endedAt: { not: null } },
+      where: {
+        id: meeting.id,
+        streamCallId: meeting.streamCallId,
+        endedAt: meeting.endedAt,
+      },
       data: {
         streamCallId: nextCallId,
         endedAt: null,
@@ -335,62 +338,15 @@ export async function POST(
         where: { id: meeting.id },
         select: { streamCallId: true },
       });
+      streamLogger.info("Reopen lost the race; the fresh call stays unused", {
+        meetingId: meeting.id,
+        unusedCallId: nextCallId,
+      });
       return NextResponse.json({
         reopened: false,
         streamCallId: current?.streamCallId ?? meeting.streamCallId,
       });
     }
-
-    const appt = meeting.occurrence.appointment;
-    const planTitle =
-      appt.consultation?.consultationPlan?.title ??
-      appt.subscription?.subscriptionPlan?.title ??
-      appt.webinar?.webinarPlan?.title ??
-      appt.class?.classPlan?.title ??
-      appt.trial?.subscriptionPlan?.title;
-    const consultantName =
-      appt.consultation?.consultationPlan?.consultantProfile?.user?.name ??
-      appt.subscription?.subscriptionPlan?.consultantProfile?.user?.name ??
-      appt.webinar?.webinarPlan?.consultantProfile?.user?.name ??
-      appt.class?.classPlan?.consultantProfile?.user?.name ??
-      appt.trial?.subscriptionPlan?.consultantProfile?.user?.name;
-    const consulteeName =
-      appt.consultation?.requestedBy?.user?.name ??
-      appt.subscription?.requestedBy?.user?.name ??
-      appt.trial?.consulteeProfile?.user?.name;
-    const maxDurationSeconds = Math.max(
-      300,
-      Math.ceil((endsAt.getTime() - startsAt.getTime()) / 1000),
-    );
-
-    await withStreamCircuitBreaker(() =>
-      getStreamVideoClient()
-        .video.call(STREAM_CALL_TYPE, nextCallId)
-        .getOrCreate({
-          data: {
-            created_by_id: user.id,
-            starts_at: startsAt,
-            settings_override: {
-              limits: {
-                max_duration_seconds: maxDurationSeconds,
-              },
-            },
-            custom: {
-              appointmentId: appt.id,
-              appointmentType: appt.appointmentType,
-              ...(planTitle ? { planTitle, offeringTitle: planTitle } : {}),
-              ...(consultantName
-                ? { consultantName, hostName: consultantName }
-                : {}),
-              ...(consulteeName
-                ? { consulteeName, guestName: consulteeName }
-                : {}),
-              sessionStartsAt: startsAt.toISOString(),
-              sessionEndsAt: endsAt.toISOString(),
-            },
-          },
-        }),
-    );
 
     streamLogger.info("Closed meeting room reopened by host", {
       userId: user.id,
@@ -404,6 +360,12 @@ export async function POST(
       streamCallId: nextCallId,
     });
   } catch (error) {
+    if (error instanceof StreamUnavailableError) {
+      return NextResponse.json(
+        { error: "Video is temporarily unavailable. Please try again." },
+        { status: 503 },
+      );
+    }
     reportSentryError(error, { subsystem: "stream", op: "meetings.reopen" });
     streamLogger.error("Failed to reopen meeting room", {
       meetingId: meetingIdForLog,

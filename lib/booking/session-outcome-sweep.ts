@@ -28,6 +28,9 @@ import {
   getCallPresenceEvidence,
 } from "@/lib/stream/call-presence";
 import { getAppUrl } from "@/lib/url";
+import { REJOIN_GRACE_MS } from "@/lib/appointments/occurrences";
+import { resolveRoomEndsAt } from "@/lib/meetings/duration-cap";
+import type { MeetingEndReason } from "@/lib/meetings/end-reasons";
 import { isPastNoShowHandoff } from "./attendance";
 import {
   classifySessionOutcome,
@@ -44,7 +47,10 @@ import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { onClassSessionVoided } from "./class-sessions";
 
 /** Ends after which Stream must have sent participant events (#1543 watchdog). */
-const FEED_EXPECTED_REASONS = new Set(["call_ended", "session_timeout"]);
+const FEED_EXPECTED_REASONS = new Set<string>([
+  "call_ended",
+  "session_timeout",
+] satisfies MeetingEndReason[]);
 
 export const OUTCOME_SLOT_SELECT = {
   id: true,
@@ -52,7 +58,12 @@ export const OUTCOME_SLOT_SELECT = {
   startsAt: true,
   endsAt: true,
   meeting: {
-    select: { streamCallId: true, endedAt: true, endedReason: true },
+    select: {
+      streamCallId: true,
+      endedAt: true,
+      endedReason: true,
+      extendedSeconds: true,
+    },
   },
   presences: { select: { userId: true, joinedAt: true, leftAt: true } },
   appointment: {
@@ -399,8 +410,15 @@ export async function decideSlotOutcome(
   ctx: OutcomeContext,
 ): Promise<SlotDecision> {
   const { meeting } = slot;
-  // #1607 item 4 — a call still running past end + 1 h is an overrun, not a verdict.
-  if (meeting && !meeting.endedAt && slot.presences.some((p) => !p.leftAt)) {
+  // An unended room someone is still in, or still inside its room-time grace, is an overrun, not a verdict.
+  if (
+    meeting &&
+    !meeting.endedAt &&
+    (slot.presences.some((p) => !p.leftAt) ||
+      ctx.now.getTime() <
+        resolveRoomEndsAt(slot.endsAt, meeting.extendedSeconds).getTime() +
+          REJOIN_GRACE_MS)
+  ) {
     return { kind: "deferred", reason: "live-overrun" };
   }
 

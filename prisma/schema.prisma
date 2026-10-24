@@ -5492,7 +5492,11 @@ model Meeting {
 
   // Session lifecycle
   endedAt     DateTime? // When session actually ended
-  endedReason String? // "call_ended", "session_timeout", "error"
+  endedReason String? // One of MEETING_END_REASONS (lib/meetings/end-reasons.ts); sidecar CHECK meeting_ended_reason_known
+
+  // Room time: the booked end is AppointmentOccurrence.endsAt; the room closes at endsAt + extendedSeconds
+  extendedSeconds Int @default(0)
+  extensionsUsed  Int @default(0)
 
   recordings        Recording[]
   attendances       MeetingAttendance[] // STR-4 (#689) — per-participant join/leave audit
