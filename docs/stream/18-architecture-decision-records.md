@@ -10,6 +10,7 @@
 - [ADR-03: Synchronous CAS Termination Stamp (`recordMeetingEndedSynchronously`) + Monotonic Webhook Convergence (`supersedesRecordedEnd`)](#adr-03-synchronous-cas-termination-stamp-recordmeetingendedsynchronously--monotonic-webhook-convergence-supersedesrecordedend)
 - [ADR-04: Dual-Synced Extension State (Postgres `AppointmentOccurrence.endsAt` + Stream `custom.sessionEndsAt`)](#adr-04-dual-synced-extension-state-postgres-appointmentoccurrenceendsat--stream-customsessionendsat)
 - [ADR-05: Single Exit Control (`CallExitButton`) over Dual Hangup Buttons](#adr-05-single-exit-control-callexitbutton-over-dual-hangup-buttons)
+- [ADR-06: Unread Digest via Stream Unread Reminders](#adr-06-unread-digest-via-stream-unread-reminders)
 - [Deprecated & Superseded Approaches](#deprecated--superseded-approaches)
 
 ---
@@ -25,6 +26,7 @@ Stream Video SFU and PostgreSQL (`PG_POOL_MAX=1`) enforce distinct operational c
 | **ADR-03** | Synchronous CAS end stamp + monotonic `supersedesRecordedEnd`           | `app/api/meetings/[meetingId]/end/route.ts`, `lib/stream/session-handlers.ts`                               | Eliminates webhook lag on dashboard cards while preventing out-of-order webhooks from rewinding terminal state |
 | **ADR-04** | Dual-synced `+15m` extension (`endsAt` + `custom.sessionEndsAt`)        | `app/api/meetings/[meetingId]/extend/route.ts`, `app/meetings/[id]/components/OverrunBanner.tsx`            | Keeps Stream SFU hard cutoff, client countdown banners, and Postgres schedule conflict horizon identical       |
 | **ADR-05** | Unified `<CallExitButton />` (participant leave vs host 2-way popover)  | `app/meetings/[id]/components/EndCallButton.tsx`, `app/meetings/[id]/components/MeetingRoom.tsx`            | Prevents accidental room termination when a host leaves early while keeping room closure one deliberate choice |
+| **ADR-06** | Chat unread digest from Stream's `user.unread_message_reminder`         | `lib/stream/chat/unread-digest.ts`, `lib/stream/control-plane-contract.ts`                                  | One durable email and bell per user per 30-minute window, never quoting message text                           |
 
 ---
 
@@ -214,9 +216,35 @@ Standardize all meeting rooms on a single primary red exit control (`CallExitBut
 
 ---
 
+## ADR-06: Unread Digest via Stream Unread Reminders
+
+### Context & Problem Statement
+
+Chat is a booking-scoped, text-only thread and is pull-only: every Stream push provider is disabled and the only event hook carried video events. A consultee's question before a session went unseen until the consultant happened to open the dashboard. The owner chose one durable unread digest, an email plus an in-app bell, deduplicated per user per window and respecting opt-out, rather than a full messenger.
+
+### Decision
+
+The digest is driven by Stream's built-in [unread reminders](https://getstream.io/chat/docs/node/unread-reminders/) rather than by a polling job:
+
+- The contract (`TARGET_CHAT_REMINDERS`) turns on `reminders` and `read_events` for the `messaging` channel type and sets `reminders_interval` to 1800 seconds. Stream then emits `user.unread_message_reminder` for channels with ten or fewer members, which covers every DM, and the event already names the user, the channels and their members, so the handler makes no Stream API call.
+- A second V2 event hook with `product: "chat"` delivers that one event to the existing `/api/stream/webhooks` route, which verifies chat and video deliveries with the same `X-Signature` HMAC and keeps the durable receipt-then-process pattern. The drift detector requires one hook per product.
+- `handleUnreadMessageReminder` (`lib/stream/chat/unread-digest.ts`) maps the Stream id to our user, skips the support user, unknown ids, banned and erased users, and stages one bell and one email in a transaction guarded by an `IdempotencyRecord` claim on `(stream.chat-digest, <windowStart>, <userId>)`. The opt-out switch is the `appointments` category, and the bell reuses the `appointment` Novu family, so no Novu workflow is added.
+- Message text is never read: the Zod schema does not declare it, so it is neither parsed nor stored, and the digest names only counterparts, counts and session dates.
+
+The fallback, a ticker job calling `unread_counts_batch` for users with recent bookings, was not needed: the live app already exposes `reminders` on the `messaging` channel type and a `reminders_interval` setting (300 seconds by default), no plan restriction is documented below the ten-member limit, and the event carries everything the digest needs.
+
+### Consequences
+
+- The unread count is derived from the last five messages (new messages since the recipient's own latest one), because the event carries no unread count; the digest shows "5+" when all five are new.
+- A user who wants appointment notices but no chat digest cannot separate the two until a dedicated preference column exists.
+- Turning the feature on is an owner action: `npx tsx scripts/stream/ensure.ts --apply --routes-are-deployed` for the reminder settings and `NEXT_PUBLIC_APP_URL=https://familiarisenow.com npx tsx scripts/stream/ensure-webhook-subscription.ts --apply` for the chat hook, after the handler is deployed.
+
+---
+
 ## Deprecated & Superseded Approaches
 
 - **Permanent Per-Appointment / Per-Consultant Stream Call IDs**: Superseded by strict `1 AppointmentOccurrence = 1 active Stream Call ID` isolation (`occurrence-<uuid>`) so recurring `SUBSCRIPTION` and `CLASS` sessions never bleed attendance, duration caps, or recording state across occurrences.
 - **Uniform `where: { streamCallId }` Webhook Lookup Across All Events**: Superseded by asymmetric webhook lookup (`ADR-02`) so recordings and presence from pre-reopen segments attach via `parseOccurrenceIdFromCallId`, while late `call.ended` / `call.session_ended` webhooks strictly check `where: { streamCallId }`.
 - **Fire-and-Forget End Endpoint Swallowing DB Errors as HTTP 200**: Superseded by `recordMeetingEndedSynchronously` CAS dual-write that rotates pre-start `"ended_early"` rooms and returns HTTP `500` on database failure.
+- **Pull-Only Chat With No Unread Notification**: Superseded by the unread digest (`ADR-06`), one email and bell per user per 30-minute window from Stream's unread reminders.
 - **Dual Red Hangup Buttons in `MeetingRoom.tsx`**: Superseded by the single Zoom/Meet-style `<CallExitButton />` with role-aware direct leave vs host two-action popover and `< 10m` remaining caution banner.
