@@ -151,14 +151,21 @@ export async function POST(
       );
     }
 
+    // A Stream 5xx or rate limit is the provider's outage; the client retries it.
+    const upstream = streamHttpStatus(error);
+    const providerOutage =
+      upstream !== null && (upstream >= 500 || upstream === 429);
+
     reportSentryError(error, {
       subsystem: "stream",
       op: "meetings.join",
     });
     streamLogger.error("Failed to admit to meeting", error);
     return NextResponse.json(
-      { error: "Could not join this meeting. Please try again." },
-      { status: 500 },
+      providerOutage
+        ? { error: "Video is temporarily unavailable. Please try again." }
+        : { error: "Could not join this meeting. Please try again." },
+      { status: providerOutage ? 503 : 500 },
     );
   }
 }

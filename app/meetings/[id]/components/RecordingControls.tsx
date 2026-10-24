@@ -22,6 +22,9 @@ interface RecordingControlsProps {
   isHost?: boolean;
 }
 
+/** How long a start/stop waits for Stream's recording event before re-reading the call. */
+export const RECORDING_ACK_TIMEOUT_MS = 15_000;
+
 const RecordingControls = ({
   meetingId,
   recordingEnabled: _recordingEnabled,
@@ -109,6 +112,27 @@ const RecordingControls = ({
       unsubscribeUpdated();
     };
   }, [call, toast, announces]);
+
+  // The start/stop request succeeding does not clear `isLoading`; the socket event does. If that
+  // event never arrives, re-read the call and release the button.
+  useEffect(() => {
+    if (!isLoading || !call) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void call
+        .get()
+        .catch(() => undefined)
+        .finally(() => {
+          if (cancelled) return;
+          setIsRecording(Boolean(call.state.recording));
+          setIsLoading(false);
+        });
+    }, RECORDING_ACK_TIMEOUT_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [isLoading, call]);
 
   // Recording duration timer
   useEffect(() => {
