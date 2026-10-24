@@ -1,6 +1,6 @@
 # Recording transfer background worker
 
-`netlify/functions/recording-transfer-background.mts` provides an authenticated, unscheduled Netlify background adapter for the existing `transfer-recordings` core. POST `/.netlify/functions/recording-transfer-background` with the `CRON_SECRET` bearer. The adapter uses `cleanupRoute`, so authentication, maintenance admission and failure handling share the HTTP cleanup boundary. It calls the core in-process rather than waiting on a Next.js HTTP request, and uses the existing job Sentry bootstrap/flush for the standalone function runtime.
+`netlify/functions/recording-transfer-background.mts` provides an authenticated, unscheduled Netlify background adapter for the existing `transfer-recordings` core. POST `/.netlify/functions/recording-transfer-background` with the `CRON_SECRET` bearer. The adapter resolves `getCleanupJobHandlers("transfer-recordings")` and invokes its POST handler, so authentication, maintenance admission, limit validation, summaries and failure mapping share the canonical HTTP cleanup configuration. A missing registration fails loudly and still runs the final telemetry flush. It calls the core in-process rather than waiting on a Next.js HTTP request, and uses the existing job Sentry bootstrap/flush for the standalone function runtime.
 
 Each core invocation examines one retry-eligible READY recording, ordered by source expiry and ID. The query excludes rows in backoff, missing expiry metadata and expired sources. A copy still streams up to 20 GiB with the existing 12-minute abort signal. One stale claim and 100 newly exhausted alerts are the maximum ancillary rows selected per run. The same abort signal stops stalled source reads and all multipart operations. Canceling a source cannot hold cleanup open indefinitely. R2 cleanup requests have independent 15-second deadlines, and prior-attempt cleanup is awaited before the worker exits.
 
@@ -33,6 +33,13 @@ Shared worker logging, capture and transport draining use `@sentry/core`; initia
 CLI 26.0.2's installed `zip-it-and-ship-it` 14.7.0 produced an API-v2/background artifact. In a local process with networking denied and a disposable invalid database target, the original compiled application failed with `ERR_MODULE_NOT_FOUND` for `next/server`. A fresh bundle from the corrected source loaded and rejected an unauthenticated POST with zero fetch attempts; an earlier diagnostic changed only the two compiled specifiers and reproduced the same result. This verifies the compiled application/authentication path with canonical local dependencies.
 
 The worktree's default NFT artifact retained its external `node_modules` symlink without its dependencies. It is not a self-contained deployment artifact and must not be uploaded as proof of packaging. Preserve the canonical dependency symlink in worktrees; verify the actual CI/CLI artifact's dependency contents and deployed loading separately. No application build, database operation or recording copy was part of this check.
+
+After the adapter switched to the registry handler, a local esbuild native-ESM
+bundle resolved the registry's `@/` aliases and loaded the actual adapter with
+canonical dependencies. An unauthenticated POST was rejected and the final flush
+completed under OS network denial, with zero fetch/socket/TLS/HTTP attempts. This
+checks the shared-handler import and rejection path; it does not establish a
+self-contained Netlify artifact, authenticated work or recording-copy completion.
 
 ## Deployed runtime evidence
 

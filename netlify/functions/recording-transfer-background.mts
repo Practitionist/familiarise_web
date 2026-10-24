@@ -1,6 +1,5 @@
 import { NextRequest } from "next/server.js";
-import { cleanupRoute } from "../../lib/cron/cleanup-route";
-import { transferRecordings } from "../../lib/stream/recording-transfer-service";
+import { getCleanupJobHandlers } from "../../lib/cron/cleanup-registry";
 import {
   initJobSentry,
   flushJobSentry,
@@ -8,17 +7,14 @@ import {
 
 export const config = { background: true };
 
-const handlers = cleanupRoute({
-  job: "transfer-recordings",
-  run: transferRecordings,
-  failureMessage: "Recording copy sweep failed",
-});
-
 /** Netlify's 202 acknowledges invocation; execution history records the eventual result. */
 export default async function recordingTransfer(req: Request): Promise<void> {
   if (req.method !== "POST") return;
   initJobSentry();
   try {
+    const handlers = getCleanupJobHandlers("transfer-recordings");
+    if (!handlers)
+      throw new Error("Recording transfer cleanup handler is not registered");
     const response = await handlers.POST(new NextRequest(req));
     if (response.status >= 500) {
       throw new Error(
