@@ -15,9 +15,9 @@ transitions. Verify live control-plane settings when diagnosing environment
 behavior:
 
 ```text
-mcp__stream-io__video_query_calls    {"filter_conditions": {"ended_at": {"$exists": false}}}
-mcp__stream-io__chat_query_channels  {"filter_conditions": {"type": {"$eq": "messaging"}}}
-mcp__stream-io__video_get_call_type  {"name": "default"}
+mcp__streamio__video_query_calls    {"filter_conditions": {"ended_at": {"$exists": false}}}
+mcp__streamio__chat_query_channels  {"filter_conditions": {"type": {"$eq": "messaging"}}}
+mcp__streamio__video_get_call_type  {"name": "default"}
 netlify env:list --json
 ```
 

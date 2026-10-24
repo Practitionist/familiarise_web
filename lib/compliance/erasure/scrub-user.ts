@@ -209,8 +209,6 @@ export async function offboardNotificationVendor(
 }
 
 export const STREAM_PRINCIPAL_PLAN_ID_PREFIX = "principal:";
-const RECORDING_PREVIEWS_BUCKET = "recordings-previews";
-
 export function principalStreamPlanId(userId: string): string {
   return `${STREAM_PRINCIPAL_PLAN_ID_PREFIX}${userId}`;
 }
@@ -240,41 +238,56 @@ export async function eraseStreamPrincipalFootprint(
   }
 }
 
+async function deleteStreamRecordingCopy(rec: {
+  streamCallId: string | null;
+  streamRecordingId: string | null;
+}): Promise<boolean> {
+  const { deleteStreamRecordingCopy: remove } =
+    await import("@/lib/stream/recording-stream-delete");
+  const result = await remove(rec);
+  return result.success;
+}
+
 async function purgeSingleUserRecordingOnErasure(
   db: Db,
   rec: {
     id: string;
     storagePath: string | null;
     previewClipStoragePath: string | null;
+    thumbnailUrl: string | null;
+    streamCallId: string | null;
+    streamRecordingId: string | null;
   },
+  now: Date,
 ): Promise<void> {
-  const { deleteRecordingObject } =
+  const { deleteRecordingAssets } =
     await import("@/lib/stream/recording-storage");
-  const { removeObjects } = await import("@/lib/supabase-storage-core");
-  if (rec.storagePath) {
-    const deleted = await deleteRecordingObject(rec.storagePath);
-    if (!deleted.success) {
-      throw new Error(
-        deleted.error ?? "Failed to delete recording object from storage",
-      );
-    }
+  const streamCopyGone = await deleteStreamRecordingCopy(rec);
+  const assets = await deleteRecordingAssets({
+    id: rec.id,
+    storagePath: rec.storagePath,
+  });
+  if (!assets.success) {
+    throw new Error(
+      assets.error ?? "Failed to delete recording object from storage",
+    );
   }
-  if (rec.previewClipStoragePath) {
-    if (
-      !(await removeObjects(RECORDING_PREVIEWS_BUCKET, [
-        rec.previewClipStoragePath,
-      ]))
-    ) {
-      throw new Error("Recording preview clip was not removed from storage");
-    }
+  // A failed Stream delete keeps the row's identifiers and leaves it live, so
+  // the erasure retry can address it again.
+  if (!streamCopyGone) {
+    throw new Error("Stream copy of the recording was not confirmed deleted");
   }
-
   const expiredData = {
     status: "EXPIRED" as const,
     recordingUrl: "",
     storagePath: null,
     previewClipUrl: null,
     previewClipStoragePath: null,
+    previewClipDuration: null,
+    previewTranscript: null,
+    thumbnailUrl: null,
+    streamRecordingId: null,
+    removedAt: now,
   };
   if (db.recording.update) {
     await db.recording.update({
@@ -398,13 +411,16 @@ async function cleanupUserRecordingsOnErasure(
           id: true,
           storagePath: true,
           previewClipStoragePath: true,
+          thumbnailUrl: true,
+          streamCallId: true,
+          streamRecordingId: true,
         },
       });
 
       if (Array.isArray(oneToOneRecordings)) {
         for (const rec of oneToOneRecordings) {
           try {
-            await purgeSingleUserRecordingOnErasure(db, rec);
+            await purgeSingleUserRecordingOnErasure(db, rec, now);
           } catch (error_) {
             failures.push(
               `recording_storage:${rec.id}: deletion not confirmed — re-run required`,

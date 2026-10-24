@@ -58,6 +58,8 @@ const MAX_STUCK_PAYOUT_POLLS = 5;
 const MAX_PAYOUT_STATUS_POLLS = 8;
 /** Consumer invoices the GST register healer may mint per run; one transaction each. */
 const MAX_GST_HEALER_MINTS = 25;
+/** Document rows a single purge run may process; each costs one storage delete. */
+const MAX_DOCUMENT_PURGE_ROWS = 200;
 
 /**
  * Registry of `/api/cleanup/[job]` HTTP twins.
@@ -755,16 +757,20 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "purge-deleted-documents": () =>
       cleanupRoute({
         job: "purge-deleted-documents",
-        run: async () => {
+        run: async (req) => {
           const { purgeDeletedDocuments } =
             await import("@/lib/documents/document-purge");
-          return purgeDeletedDocuments();
+          return purgeDeletedDocuments(new Date(), {
+            limit: parseLimitParamOrDefault(req, MAX_DOCUMENT_PURGE_ROWS),
+          });
         },
         summarize: (r) => ({
           tombstoned: r.tombstoned,
+          failedTombstones: r.failedTombstones,
           purged: r.purged,
           failedStorage: r.failedStorage,
           failedRows: r.failedRows,
+          remaining: r.remaining,
           byReason: r.byReason,
         }),
         status: (r) => statusFor(r),
@@ -1292,6 +1298,25 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         }),
         status: (r) => statusFor({}, r.failed > 0),
         failureMessage: "Failed to settle invoice accruals",
+      }),
+
+    // @cleanup-twin stream-control-plane-drift
+    "stream-control-plane-drift": () =>
+      cleanupRoute({
+        job: "stream-control-plane-drift",
+        run: async () => {
+          const { detectStreamControlPlaneDrift } =
+            await import("@/lib/stream/control-plane-drift");
+          return detectStreamControlPlaneDrift();
+        },
+        summarize: (r) => ({
+          drifted: r.drifted,
+          findings: r.findings.length,
+          unverified: r.unverified.length,
+        }),
+        // Drift is already reported once to Sentry by the detector; 207 only marks the run.
+        status: (r) => statusFor(r, r.drifted),
+        failureMessage: "Failed to check the Stream control plane for drift",
       }),
 
     // @cleanup-twin stream-sync

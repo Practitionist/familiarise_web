@@ -69,7 +69,11 @@ function appWith(hooks: unknown[]) {
 }
 
 /** The event_hooks array actually submitted to Stream. */
-function submitted(): { id: string; event_types?: string[] }[] {
+function submitted(): {
+  id: string;
+  event_types?: string[];
+  webhook_url?: string;
+}[] {
   const call = mockUpdateAppSettings.mock.calls.at(-1);
   if (!call) throw new Error("updateAppSettings was never called");
   return call[0].event_hooks;
@@ -99,6 +103,36 @@ describe("ensure-webhook-subscription", () => {
     for (const t of HANDLED_EVENT_TYPES) {
       expect(hook?.event_types).toContain(t);
     }
+  });
+
+  describe("URL rewrite guard", () => {
+    const original = process.env.NEXT_PUBLIC_APP_URL;
+    afterEach(() => {
+      if (original === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+      else process.env.NEXT_PUBLIC_APP_URL = original;
+    });
+
+    it("keeps the hook URL on --apply when the local origin differs", async () => {
+      process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3000";
+      mockGetAppSettings.mockResolvedValue(appWith([liveWebhook]));
+
+      await ensureWebhookSubscription("apply");
+
+      const hook = submitted().find((h) => h.id === "hook_live");
+      expect(hook?.webhook_url).toBe(liveWebhook.webhook_url);
+    });
+
+    it("rewrites the URL only when the rewrite flag is passed", async () => {
+      process.env.NEXT_PUBLIC_APP_URL = "https://example.test";
+      mockGetAppSettings.mockResolvedValue(appWith([liveWebhook]));
+
+      await ensureWebhookSubscription("apply", true);
+
+      const hook = submitted().find((h) => h.id === "hook_live");
+      expect(hook?.webhook_url).toBe(
+        "https://example.test/api/stream/webhooks",
+      );
+    });
   });
 
   it("PRESERVES a hook it does not own", async () => {

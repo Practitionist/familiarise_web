@@ -49,6 +49,7 @@ jest.mock("../../lib/prisma", () => {
         updateMany: jest.fn(),
         updateManyAndReturn: jest.fn(),
       },
+      webhookEvent: { create: jest.fn() },
       $transaction: jest.fn((fn: (tx: typeof txMock) => unknown) => fn(txMock)),
       __tx: txMock,
     },
@@ -59,7 +60,6 @@ jest.mock("../../lib/webhooks/event-log", () => {
   const actual = jest.requireActual("../../lib/webhooks/event-log");
   return {
     ...actual,
-    logWebhookEvent: jest.fn(),
     markWebhookEventProcessed: jest.fn(),
     isDbHealthy: jest.fn().mockResolvedValue(true),
   };
@@ -109,7 +109,6 @@ jest.mock("../../lib/stream/call-presence", () => ({
 import prisma from "../../lib/prisma";
 import {
   isDbHealthy,
-  logWebhookEvent,
   markWebhookEventProcessed,
 } from "../../lib/webhooks/event-log";
 import { streamLogger } from "../../lib/stream-logger";
@@ -128,10 +127,10 @@ import {
   DESIRED_EVENT_TYPES,
   HANDLED_EVENT_TYPES,
 } from "../../lib/stream/webhook-events";
+import { evaluateHookDrift } from "../../lib/stream/control-plane-contract";
 import {
   DRIFT_EXIT_CODE,
   ensureWebhookSubscription,
-  evaluateHookDrift,
 } from "../../scripts/stream/ensure-webhook-subscription";
 import { classifySessionOutcome } from "../../lib/booking/session-outcome";
 import {
@@ -301,7 +300,7 @@ describe("Stream Webhook Megafix Regression Suite", () => {
         }),
       );
       expect(res.status).toBe(413);
-      expect(logWebhookEvent).not.toHaveBeenCalled();
+      expect(prisma.webhookEvent.create).not.toHaveBeenCalled();
     });
   });
 
@@ -318,7 +317,7 @@ describe("Stream Webhook Megafix Regression Suite", () => {
         ignored: true,
         accepted: false,
       });
-      expect(logWebhookEvent).not.toHaveBeenCalled();
+      expect(prisma.webhookEvent.create).not.toHaveBeenCalled();
 
       const futureRes = await postSignedJsonWebhook({
         type: "call.recording_stopped",
@@ -331,12 +330,9 @@ describe("Stream Webhook Megafix Regression Suite", () => {
         ignored: true,
         accepted: false,
       });
-      expect(logWebhookEvent).not.toHaveBeenCalled();
+      expect(prisma.webhookEvent.create).not.toHaveBeenCalled();
 
-      (logWebhookEvent as jest.Mock).mockResolvedValue({
-        isNew: true,
-        claim: { claimedAt: new Date() },
-      });
+      (prisma.webhookEvent.create as jest.Mock).mockResolvedValue({});
       (markWebhookEventProcessed as jest.Mock).mockResolvedValue(undefined);
       (prisma.meeting.findUnique as jest.Mock).mockResolvedValue(null);
 
@@ -352,15 +348,11 @@ describe("Stream Webhook Megafix Regression Suite", () => {
           accepted: true,
         });
       }
-      expect(logWebhookEvent).toHaveBeenCalledTimes(2);
+      expect(prisma.webhookEvent.create).toHaveBeenCalledTimes(2);
     });
 
     it("uses stream_${X-Webhook-Id} and skips redundant isDbHealthy() inside dispatch", async () => {
-      const claimedAt = new Date();
-      (logWebhookEvent as jest.Mock).mockResolvedValue({
-        isNew: true,
-        claim: { claimedAt },
-      });
+      (prisma.webhookEvent.create as jest.Mock).mockResolvedValue({});
       (markWebhookEventProcessed as jest.Mock).mockResolvedValue(undefined);
       (prisma.meeting.findUnique as jest.Mock).mockResolvedValue(null);
 
@@ -382,13 +374,14 @@ describe("Stream Webhook Megafix Regression Suite", () => {
         }),
       );
       expect(res.status).toBe(200);
-      expect(logWebhookEvent).toHaveBeenCalledWith(
-        "stream",
-        "stream_wh-uuid-12345",
-        "call.recording_stopped",
-        expect.any(Object),
-        expect.any(String),
-      );
+      expect(prisma.webhookEvent.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          provider: "stream",
+          eventId: "stream_wh-uuid-12345",
+          eventType: "call.recording_stopped",
+          signature: expect.any(String),
+        }),
+      });
       expect(isDbHealthy).not.toHaveBeenCalled();
       expect(markWebhookEventProcessed).toHaveBeenCalledTimes(1);
     });

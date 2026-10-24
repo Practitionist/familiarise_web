@@ -71,11 +71,18 @@ export async function discardDeclinedRecording(args: {
       storagePath: true,
       previewClipStoragePath: true,
       thumbnailUrl: true,
+      streamCallId: true,
+      streamRecordingId: true,
     },
   });
 
   for (const row of expired) {
-    if (!row.storagePath && !row.previewClipStoragePath && !row.thumbnailUrl) {
+    if (
+      !row.storagePath &&
+      !row.previewClipStoragePath &&
+      !row.thumbnailUrl &&
+      !row.streamRecordingId
+    ) {
       continue;
     }
     const purged = await purgeExpiredRecordingAssets(row);

@@ -35,6 +35,10 @@ export const HANDLED_EVENT_TYPES = [
 
 export type HandledEventType = (typeof HANDLED_EVENT_TYPES)[number];
 
+export function isHandledEventType(t: string): t is HandledEventType {
+  return (HANDLED_EVENT_TYPES as readonly string[]).includes(t);
+}
+
 export const DESIRED_EVENT_TYPES = [...HANDLED_EVENT_TYPES] as const;
 
 export type DesiredEventType = (typeof DESIRED_EVENT_TYPES)[number];

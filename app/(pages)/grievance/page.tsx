@@ -3,9 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ShieldAlert } from "lucide-react";
+import { COMPANY_INFO } from "@/lib/company";
 import {
   ANTI_SCAM_NOTICE,
-  COMPANY_INFO,
   GRIEVANCE_OFFICER,
   POLICY_DATES,
   getMailtoLink,
@@ -49,11 +49,21 @@ export default function GrievanceRedressalPage() {
             </CardHeader>
             <CardContent className="prose prose-slate max-w-none">
               <div className="bg-muted p-4 rounded-lg not-prose space-y-1.5 text-sm">
-                <p>
-                  <strong>Officer:</strong> {GRIEVANCE_OFFICER.name}
-                </p>
+                {GRIEVANCE_OFFICER.name ? (
+                  <p>
+                    <strong>Officer:</strong> {GRIEVANCE_OFFICER.name}
+                  </p>
+                ) : null}
                 <p>
                   <strong>Designation:</strong> {GRIEVANCE_OFFICER.designation}
+                </p>
+                <p>
+                  <strong>Company:</strong> {COMPANY_INFO.name} (CIN{" "}
+                  {COMPANY_INFO.cin})
+                </p>
+                <p>
+                  <strong>Registered Office:</strong>{" "}
+                  {COMPANY_INFO.registeredAddress}
                 </p>
                 <p>
                   <strong>Email:</strong>{" "}
