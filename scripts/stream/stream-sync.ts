@@ -22,6 +22,8 @@ import { StreamChat, UserResponse } from "stream-chat";
 import prisma from "../../lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { SUPPORT_STREAM_USER_ID } from "@/lib/stream/support-user";
+import { assertStreamKeyAllowedHere } from "@/lib/stream/environment-guard";
+import { scriptClientOptions } from "./target";
 
 // Types
 interface FailedDeletionFromSDK {
@@ -131,6 +133,8 @@ function getStreamClient(): StreamChat {
       "Stream API Key or Secret not configured. Set STREAM_API_KEY and STREAM_API_SECRET environment variables.",
     );
   }
+
+  assertStreamKeyAllowedHere(streamApiKey, scriptClientOptions());
 
   return StreamChat.getInstance(streamApiKey, streamApiSecret, {
     timeout: 30000, // 30 seconds timeout

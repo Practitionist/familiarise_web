@@ -15,6 +15,7 @@ import {
 } from "../../lib/stream-client";
 import { compareStringsByCodeUnit } from "../../lib/stream/config-fingerprint";
 import { DESIRED_EVENT_TYPES } from "../../lib/stream/webhook-events";
+import { scriptClientOptions } from "./target";
 
 const SORTED_DESIRED_EVENT_TYPES = Array.from(
   new Set(DESIRED_EVENT_TYPES),
@@ -153,14 +154,14 @@ export async function ensureWebhookSubscription(
   mode: EnsureMode,
 ): Promise<number> {
   const apply = mode === "apply";
-  if (!isStreamConfigured()) {
+  if (!isStreamConfigured(scriptClientOptions())) {
     console.error(
       "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
     );
     return 1;
   }
 
-  const client = getStreamChatClient();
+  const client = getStreamChatClient(scriptClientOptions());
   const app = await client.getAppSettings();
   const allHooks = app.app?.event_hooks ?? [];
   const hooks = allHooks.filter(

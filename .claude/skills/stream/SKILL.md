@@ -11,7 +11,7 @@ Two products under one API key: **Stream Chat** (`stream-chat`, `stream-chat-rea
 
 ## 1. Live Verification Before Believing Code
 
-Always verify control-plane state and database rows before assuming code changes are active in production. Keep `STREAM_MCP_READ_ONLY: "true"` in `.mcp.json` because dev, preview, and production share one Stream app (`app_id: 1366319`, `placement: "gcp-us-east5.c1"`):
+Always verify control-plane state and database rows before assuming code changes are active in production. Keep `STREAM_MCP_READ_ONLY: "true"` in `.mcp.json` because the MCP key points at the production app (`app_id: 1366319`, `placement: "gcp-us-east5.c1"`); dev, previews and local use the separate Familiarise-dev app (`ADR-06`):
 
 ```text
 mcp__stream-io__app_get_settings
@@ -25,7 +25,7 @@ mcp__stream-io__app_get_rate_limits   {}
 
 | Subsystem / Concern                    | Primary Files                                                                                                                                                                                                                        |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Server Clients, Tokens & Breaker**   | `lib/stream-client.ts`, `lib/stream/token-ttl.ts`, `lib/stream/initial-tokens.ts`, `lib/stream/seed-token-cache.ts`, `actions/stream/chat/stream.action.ts`                                                                          |
+| **Server Clients, Tokens & Breaker**   | `lib/stream-client.ts`, `lib/stream/environment-guard.ts`, `scripts/stream/target.ts`, `lib/stream/token-ttl.ts`, `lib/stream/initial-tokens.ts`, `lib/stream/seed-token-cache.ts`, `actions/stream/chat/stream.action.ts`           |
 | **Client Connection Store (SSR-Safe)** | `providers/StreamProvider.tsx` (SDK-free shell), `providers/StreamProviderImpl.tsx` (lazy SDK chunk, gates prefetch on `!isSessionPending && !!sessionUserId`), `lib/stream/connection-store.ts`, `lib/stream/disconnect.ts`         |
 | **Channel IDs, Batch & Call CID**      | `lib/stream-channel-ids.ts`, `lib/stream-utils.ts`, `lib/stream/batch.ts` (`queryChannelsPaged` 30-cap, `createMemberChunk` 100-cap), `lib/stream/call-cid.ts` (`STREAM_CALL_TYPE = "default"`, `parseSlotIdFromCallId`)             |
 | **Chat & Event Channel Services**      | `actions/stream/chat/channel.action.ts`, `lib/stream/event-channel-service.ts`, `actions/stream/chat/event-channel.action.ts`, `actions/stream/chat/user.action.ts`, `app/api/stream/channels/open/route.ts`                         |
@@ -36,7 +36,7 @@ mcp__stream-io__app_get_rate_limits   {}
 | **Webhooks & Attendance Settlement**   | `app/api/stream/webhooks/route.ts`, `lib/stream/{webhook-signature,webhook-receipt,webhook-dispatch,session-handlers,recording-handlers,call-presence}.ts`, `lib/booking/{session-outcome,session-outcome-sweep}.ts`                 |
 | **Recordings & R2 Multipart Storage**  | `lib/storage/r2-client.ts`, `lib/stream/{recording-storage,recording-transfer-service,recording-service,recording-consent,recording-retention}.ts`, `app/api/stream/recordings/[recordingId]/{route,publish,preview}/route.ts`       |
 | **DPDP Privacy & Control-Plane Crons** | `lib/compliance/erasure/scrub-user.ts`, `scripts/stream/{ensure,ensure-webhook-subscription,stream-sync}.ts`, `jobs/stream/{expire-event-channels,transfer-recordings,expire-recordings,wind-down-deactivated-orgs}.ts`              |
-| **Architecture Docs & ADRs**           | `docs/stream/README.md`, `docs/stream/01-architecture.md`, `docs/stream/05-video-implementation.md`, `docs/stream/18-architecture-decision-records.md` (`ADR-01`..`ADR-05`)                                                          |
+| **Architecture Docs & ADRs**           | `docs/stream/README.md`, `docs/stream/01-architecture.md`, `docs/stream/05-video-implementation.md`, `docs/stream/18-architecture-decision-records.md` (`ADR-01`..`ADR-06`)                                                          |
 
 ---
 
@@ -54,6 +54,10 @@ mcp__stream-io__app_get_rate_limits   {}
    - `default` call-type grants strip `join-call` from `user`/`guest`, grant `call_member` only `join-call`, `join-ended-call`, `create-call-reaction`, and creator `-owner` moderation grants, and assign accepted presenter collaborators `co_presenter` (mute, pin, backstage, publish; never `end-call`).
 4. **Webhook Ingress, Decompression Guard & Subscription Parity**:
    - `/api/stream/webhooks` is exempt from `MAINTENANCE_MODE`, verifies `X-Signature` (HMAC-SHA256 with `STREAM_WEBHOOK_SECRET` + `STREAM_WEBHOOK_SECRET_PREVIOUS` fallback) and `X-Api-Key`, enforces `MAX_WEBHOOK_COMPRESSED_BYTES = 512 KiB` and `MAX_WEBHOOK_DECOMPRESSED_BYTES = 2 MiB`, ignores deliveries outside `[-10m, +2m]` skew without DB bloat, deduplicates on `stream_${X-Webhook-Id}` (`stream_${eventType}_${sha256(rawBody)}` fallback), and enforces exact subscription parity (`DESIRED_EVENT_TYPES`, 8 Video events) via `scripts/stream/ensure-webhook-subscription.ts`.
+
+5. **Production Stream Key Never Runs Outside Production (`ADR-06`)**:
+   - `assertStreamKeyAllowedHere` (`lib/stream/environment-guard.ts`) refuses key `k4n5crxtstrx` unless Netlify `CONTEXT === "production"`, Vercel `VERCEL_ENV === "production"`, or elsewhere `NEXT_PUBLIC_SENTRY_ENVIRONMENT === "production"`. It runs lazily inside `isStreamConfigured()` (returns `false`) and the client getters (throw `StreamEnvironmentError`); never call it at module load.
+   - Owner CLIs pass `scriptClientOptions()` (`scripts/stream/target.ts`) to those functions and reach production from a laptop only with `--target=production`. Add no env-var bypass. Environment matrix and activation runbook: `docs/stream/02-setup-configuration.md`.
 
 ---
 

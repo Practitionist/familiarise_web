@@ -95,7 +95,7 @@ jobs:
       - name: Check webhook subscription against the handled event list
         # Exit 2 means real drift, exit 1 means the check could not run at all
         # (missing credential). Both fail the job; the log says which.
-        run: node_modules/.bin/tsx scripts/stream/ensure-webhook-subscription.ts --check
+        run: node_modules/.bin/tsx scripts/stream/ensure-webhook-subscription.ts --check --target=production
 
       - name: Notify on failure
         # Only on the scheduled leg: a pull-request failure is already visible

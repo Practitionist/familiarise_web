@@ -24,6 +24,7 @@ import {
   BILLABLE_PERMISSIONS,
   matchesPermissionWithScope,
 } from "./harden-unused-call-types";
+import { scriptClientOptions } from "./target";
 
 const CREATE_CALL = "create-call";
 const JOIN_CALL = "join-call";
@@ -288,14 +289,14 @@ export async function ensureCallTypeGrants(
 ): Promise<number> {
   if (!requireDeployConfirmation(opts)) return 1;
 
-  if (!isStreamConfigured()) {
+  if (!isStreamConfigured(scriptClientOptions())) {
     console.error(
       "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
     );
     return 1;
   }
 
-  const client = getStreamVideoClient();
+  const client = getStreamVideoClient(scriptClientOptions());
 
   if (!(await requireSomeoneHoldsMemberRole(client, opts))) return 1;
   const existing = await client.video.getCallType({ name: STREAM_CALL_TYPE });

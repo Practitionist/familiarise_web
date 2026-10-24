@@ -9,6 +9,7 @@ import "dotenv/config";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { getStreamVideoClient } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE } from "../../lib/stream/call-cid";
+import { scriptClientOptions } from "./target";
 
 const BACKUP_DIR = ".stream-backups";
 
@@ -144,7 +145,7 @@ async function hardenOne(
 export async function hardenUnusedCallTypes(
   opts: HardenUnusedOptions,
 ): Promise<number> {
-  const client = getStreamVideoClient();
+  const client = getStreamVideoClient(scriptClientOptions());
 
   if ((UNUSED_TYPES as readonly string[]).includes(STREAM_CALL_TYPE)) {
     console.error(

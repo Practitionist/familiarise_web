@@ -10,6 +10,7 @@
 - [ADR-03: Synchronous CAS Termination Stamp (`recordMeetingEndedSynchronously`) + Monotonic Webhook Convergence (`supersedesRecordedEnd`)](#adr-03-synchronous-cas-termination-stamp-recordmeetingendedsynchronously--monotonic-webhook-convergence-supersedesrecordedend)
 - [ADR-04: Dual-Synced Extension State (Postgres `AppointmentOccurrence.endsAt` + Stream `custom.sessionEndsAt`)](#adr-04-dual-synced-extension-state-postgres-appointmentoccurrenceendsat--stream-customsessionendsat)
 - [ADR-05: Single Exit Control (`CallExitButton`) over Dual Hangup Buttons](#adr-05-single-exit-control-callexitbutton-over-dual-hangup-buttons)
+- [ADR-06: Separate Stream App for Non-Production, Enforced by a Prod-Key Guard](#adr-06-separate-stream-app-for-non-production-enforced-by-a-prod-key-guard)
 - [Deprecated & Superseded Approaches](#deprecated--superseded-approaches)
 
 ---
@@ -25,6 +26,7 @@ Stream Video SFU and PostgreSQL (`PG_POOL_MAX=1`) enforce distinct operational c
 | **ADR-03** | Synchronous CAS end stamp + monotonic `supersedesRecordedEnd`           | `app/api/meetings/[meetingId]/end/route.ts`, `lib/stream/session-handlers.ts`                               | Eliminates webhook lag on dashboard cards while preventing out-of-order webhooks from rewinding terminal state |
 | **ADR-04** | Dual-synced `+15m` extension (`endsAt` + `custom.sessionEndsAt`)        | `app/api/meetings/[meetingId]/extend/route.ts`, `app/meetings/[id]/components/OverrunBanner.tsx`            | Keeps Stream SFU hard cutoff, client countdown banners, and Postgres schedule conflict horizon identical       |
 | **ADR-05** | Unified `<CallExitButton />` (participant leave vs host 2-way popover)  | `app/meetings/[id]/components/EndCallButton.tsx`, `app/meetings/[id]/components/MeetingRoom.tsx`            | Prevents accidental room termination when a host leaves early while keeping room closure one deliberate choice |
+| **ADR-06** | Separate Stream app for non-production, enforced by a prod-key guard    | `lib/stream/environment-guard.ts`, `lib/stream-client.ts`, `scripts/stream/target.ts`                       | A preview or local server can never mint tokens for real users or open billable calls on the production app    |
 
 ---
 
@@ -214,9 +216,32 @@ Standardize all meeting rooms on a single primary red exit control (`CallExitBut
 
 ---
 
+## ADR-06: Separate Stream App for Non-Production, Enforced by a Prod-Key Guard
+
+### Context & Problem Statement
+
+One Stream app served local development, deploy previews and production. The API key is public, so any preview build or laptop holding the app secret could mint tokens for real production users and create billable calls and channels in the production app.
+
+### Decision
+
+Production keeps its own Stream app; a free "Familiarise-dev" app serves every other environment (matrix and activation runbook in `docs/stream/02-setup-configuration.md`). The boundary is enforced in code, not by convention:
+
+- `lib/stream/environment-guard.ts` decides whether the deployment is production (Netlify `CONTEXT`, Vercel `VERCEL_ENV`, otherwise `NEXT_PUBLIC_SENTRY_ENVIRONMENT === "production"`) and `assertStreamKeyAllowedHere` throws `StreamEnvironmentError` when the production key is configured anywhere else.
+- The check is lazy, at the first server client or `isStreamConfigured()` call, so builds and prerenders never fail. `isStreamConfigured()` returns `false` instead of throwing, which routes every caller, including both token-mint paths, to its existing "Stream not configured" behaviour, with one log line and one throttled Sentry event.
+- Owner CLIs under `scripts/stream/` may use the production key from a laptop only with `--target=production`. No environment variable bypasses the guard.
+
+### Consequences
+
+- A misconfigured preview degrades to "Stream unavailable" instead of touching production data.
+- A new non-Netlify, non-Vercel production host must set `NEXT_PUBLIC_SENTRY_ENVIRONMENT=production`, or the guard treats it as non-production and disables Stream there.
+- `NEXT_PUBLIC_STREAM_API_KEY` is baked at build time, so rotating a context's key needs a rebuild.
+
+---
+
 ## Deprecated & Superseded Approaches
 
 - **Permanent Per-Appointment / Per-Consultant Stream Call IDs**: Superseded by strict `1 AppointmentOccurrence = 1 active Stream Call ID` isolation (`occurrence-<uuid>`) so recurring `SUBSCRIPTION` and `CLASS` sessions never bleed attendance, duration caps, or recording state across occurrences.
 - **Uniform `where: { streamCallId }` Webhook Lookup Across All Events**: Superseded by asymmetric webhook lookup (`ADR-02`) so recordings and presence from pre-reopen segments attach via `parseOccurrenceIdFromCallId`, while late `call.ended` / `call.session_ended` webhooks strictly check `where: { streamCallId }`.
 - **Fire-and-Forget End Endpoint Swallowing DB Errors as HTTP 200**: Superseded by `recordMeetingEndedSynchronously` CAS dual-write that rotates pre-start `"ended_early"` rooms and returns HTTP `500` on database failure.
 - **Dual Red Hangup Buttons in `MeetingRoom.tsx`**: Superseded by the single Zoom/Meet-style `<CallExitButton />` with role-aware direct leave vs host two-action popover and `< 10m` remaining caution banner.
+- **One Stream App Shared by Dev, Preview and Production**: Superseded by the Familiarise-dev app plus the prod-key guard (`ADR-06`); delete any assumption that previews may use the production key.

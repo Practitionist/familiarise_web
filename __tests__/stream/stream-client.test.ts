@@ -149,6 +149,19 @@ describe("Stream Client Module", () => {
     });
   });
 
+  it("treats the production key outside production as unconfigured and refuses to build a client", async () => {
+    process.env.NEXT_PUBLIC_STREAM_API_KEY = "k4n5crxtstrx";
+    delete process.env.NETLIFY;
+    delete process.env.VERCEL;
+    delete process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT;
+    jest.resetModules();
+    const { isStreamConfigured, getStreamChatClient } =
+      await import("@/lib/stream-client");
+    expect(isStreamConfigured()).toBe(false);
+    expect(() => getStreamChatClient()).toThrow("production Stream API key");
+    expect(mockStreamChatGetInstance).not.toHaveBeenCalled();
+  });
+
   describe("getStreamChatClient", () => {
     it("should create a singleton StreamChat instance", async () => {
       const mockInstance = {

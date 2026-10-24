@@ -21,6 +21,7 @@ import {
 import { ensureAppSettings } from "./ensure-app-settings";
 import { ensureCallTypeGrants } from "./ensure-call-type-grants";
 import { hardenUnusedCallTypes } from "./harden-unused-call-types";
+import { scriptClientOptions } from "./target";
 
 export const TARGET_INACTIVITY_TIMEOUT_SECONDS = 300;
 
@@ -60,14 +61,14 @@ function parseArgs(argv: string[]): EnsureOptions {
 export async function ensureDefaultCallTypeSettings(opts: {
   apply: boolean;
 }): Promise<number> {
-  if (!isStreamConfigured()) {
+  if (!isStreamConfigured(scriptClientOptions())) {
     console.error(
       "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
     );
     return 1;
   }
 
-  const client = getStreamVideoClient();
+  const client = getStreamVideoClient(scriptClientOptions());
   const before = await client.video.getCallType({ name: STREAM_CALL_TYPE });
   const currentTimeout = before.settings?.session?.inactivity_timeout_seconds;
 
@@ -130,14 +131,14 @@ function matchesCoPresenterGrants(grants: string[] | undefined): boolean {
 export async function ensureCoPresenterRole(opts: {
   apply: boolean;
 }): Promise<number> {
-  if (!isStreamConfigured()) {
+  if (!isStreamConfigured(scriptClientOptions())) {
     console.error(
       "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
     );
     return 1;
   }
 
-  const client = getStreamVideoClient();
+  const client = getStreamVideoClient(scriptClientOptions());
   const { roles } = await client.listRoles();
   const roleExists = roles.some((r) => r.name === CO_PRESENTER_CALL_ROLE);
   const before = await client.video.getCallType({ name: STREAM_CALL_TYPE });
