@@ -12,7 +12,7 @@
 - [ADR-05: Single Exit Control (`CallExitButton`) over Dual Hangup Buttons](#adr-05-single-exit-control-callexitbutton-over-dual-hangup-buttons)
 - [ADR-06: Stream Participant Sessions Are the Attendance Witness](#adr-06-stream-participant-sessions-are-the-attendance-witness)
 - [ADR-07: Interactive WebRTC with a 200-participant cap, not HLS, at launch](#adr-07-interactive-webrtc-with-a-200-participant-cap-not-hls-at-launch)
-- [ADR-07: Staff-editable platform video quality, 720p default](#adr-07-staff-editable-platform-video-quality-720p-default)
+- [ADR-08: Staff-editable platform video quality, 720p default](#adr-08-staff-editable-platform-video-quality-720p-default)
 - [Deprecated & Superseded Approaches](#deprecated--superseded-approaches)
 
 ---
@@ -30,7 +30,7 @@ Stream Video SFU and PostgreSQL (`PG_POOL_MAX=1`) enforce distinct operational c
 | **ADR-05** | Unified `<CallExitButton />` (participant leave vs host 2-way popover)   | `app/meetings/[id]/components/EndCallButton.tsx`, `app/meetings/[id]/components/MeetingRoom.tsx`                                 | Prevents accidental room termination when a host leaves early while keeping room closure one deliberate choice                    |
 | **ADR-06** | Stream participant sessions resolve every assumed or missing interval    | `lib/booking/session-outcome-sweep.ts`, `lib/stream/{call-presence,session-handlers}.ts`, `lib/meetings/segment-presence.ts`     | A lost webhook can neither stretch a host's presence into a `HELD` verdict nor turn a delivered session into `NOBODY_JOINED`      |
 | **ADR-07** | Interactive WebRTC with a 200-participant cap, no HLS at launch          | `lib/events/capacity.ts`, `schemas/plans.ts`, `lib/meetings/room-ready.ts`, `lib/meetings/call-provisioning.ts`                  | Keeps every attendee able to ask a question or be brought on stage, and bounds the per-room cost and SFU load                     |
-| **ADR-07** | Staff-editable `PlatformVideoConfig`, 720p default                       | `lib/stream/{video-quality,video-config}.ts`, `lib/meetings/room-ready.ts`, `app/api/admin/video-config/route.ts`                | Keeps video and recording quality a priced, audited staff decision instead of a constant in code or an environment variable       |
+| **ADR-08** | Staff-editable `PlatformVideoConfig`, 720p default                       | `lib/stream/{video-quality,video-config}.ts`, `lib/meetings/room-ready.ts`, `app/api/admin/video-config/route.ts`                | Keeps video and recording quality a priced, audited staff decision instead of a constant in code or an environment variable       |
 
 ---
 
@@ -279,7 +279,7 @@ We stay on interactive WebRTC and do not add HLS. Stream delivers WebRTC through
 
 ---
 
-## ADR-07: Staff-editable platform video quality, 720p default
+## ADR-08: Staff-editable platform video quality, 720p default
 
 ### Context & Problem Statement
 
@@ -308,4 +308,4 @@ The values are strings guarded by a CHECK, and `lib/stream/video-quality.ts` is 
 - **Fire-and-Forget End Endpoint Swallowing DB Errors as HTTP 200**: Superseded by `recordMeetingEndedSynchronously` CAS dual-write that rotates pre-start `"ended_early"` rooms and returns HTTP `500` on database failure.
 - **Dual Red Hangup Buttons in `MeetingRoom.tsx`**: Superseded by the single Zoom/Meet-style `<CallExitButton />` with role-aware direct leave vs host two-action popover and `< 10m` remaining caution banner.
 - **End Stamps Closing Every Open Presence Row as Fact**: Superseded by ADR-06. `stampEnd` and the outcome sweep's `capOpenSlotPresences` closed every open row at the room end before classification, so a lost leave read as presence until the end. Delete any code that closes `MeetingPresence` at an end stamp without `closedByEnd = true`, or that classifies an assumed close without first asking Stream.
-- **Hard-coded 720p in the 1-to-Many builder and quality left on the call type**: Superseded by `PlatformVideoConfig` (ADR-07). Delete any literal `target_resolution` in `lib/meetings/**` and any environment variable that tunes video quality.
+- **Hard-coded 720p in the 1-to-Many builder and quality left on the call type**: Superseded by `PlatformVideoConfig` (ADR-08). Delete any literal `target_resolution` in `lib/meetings/**` and any environment variable that tunes video quality.
