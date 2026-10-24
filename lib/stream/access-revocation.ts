@@ -122,74 +122,79 @@ export async function revokeEndedBookingChatAccess(
   if (userIds.length === 0) return;
   const retries: AccessRevocationTarget[] = [];
 
-  try {
-    if (input.event) {
-      const { type, id } = input.event;
-      const { failedUserIds } = await removeUsersFromEventChannel(
+  if (input.event) {
+    const { type, id } = input.event;
+    const planType = type === "webinar" ? "WEBINAR" : "CLASS";
+    let failedUserIds: string[];
+    try {
+      ({ failedUserIds } = await removeUsersFromEventChannel(
         type,
         id,
         userIds,
+      ));
+    } catch (error) {
+      streamLogger.warn(
+        "Event channel revocation interrupted; queued for retry",
+        {
+          users: userIds.length,
+          error: error instanceof Error ? error.message : String(error),
+        },
       );
-      for (const userId of failedUserIds) {
-        retries.push({
-          kind: "EVENT_CHANNEL_REMOVE",
-          userId,
-          planId: id,
-          planType: type === "webinar" ? "WEBINAR" : "CLASS",
-        });
-      }
+      failedUserIds = userIds;
     }
+    for (const userId of failedUserIds) {
+      retries.push({
+        kind: "EVENT_CHANNEL_REMOVE",
+        userId,
+        planId: id,
+        planType,
+      });
+    }
+  }
 
-    const counterparts = Array.from(new Set(input.dmCounterpartUserIds));
-    const pairs = userIds.flatMap((userId) =>
-      counterparts
-        .filter((c) => c && c !== userId)
-        .map((counterpartUserId) => ({
-          userId,
+  const counterparts = Array.from(new Set(input.dmCounterpartUserIds));
+  const pairs = userIds.flatMap((userId) =>
+    counterparts
+      .filter((c) => c && c !== userId)
+      .map((counterpartUserId) => ({
+        userId,
+        counterpartUserId,
+        channelId: getDmChannelId(
           counterpartUserId,
-          channelId: getDmChannelId(
-            counterpartUserId,
-            userId,
-            input.dmOrganizationId,
-          ),
-        })),
-    );
-    for (const [index, pair] of pairs.entries()) {
-      const dmRetry: AccessRevocationTarget = {
-        kind: "DM_REMOVE",
-        userId: pair.userId,
-        planId: pair.channelId,
-        counterpartUserId: pair.counterpartUserId,
-      };
-      if (index >= SYNC_DM_PAIR_LIMIT) {
-        retries.push(dmRetry);
-        continue;
-      }
+          userId,
+          input.dmOrganizationId,
+        ),
+      })),
+  );
+  for (const [index, pair] of pairs.entries()) {
+    const dmRetry: AccessRevocationTarget = {
+      kind: "DM_REMOVE",
+      userId: pair.userId,
+      planId: pair.channelId,
+      counterpartUserId: pair.counterpartUserId,
+    };
+    if (index >= SYNC_DM_PAIR_LIMIT) {
+      retries.push(dmRetry);
+      continue;
+    }
+    // A failed check queues the pair; the sweep re-checks eligibility before removing.
+    try {
       const eligible = await isDmContextEligible(
         pair.counterpartUserId,
         pair.userId,
         input.dmOrganizationId,
       );
       if (eligible) continue;
-      if (!(await removeFromDm(pair.channelId, pair.userId))) {
-        retries.push(dmRetry);
-      }
+    } catch (error) {
+      streamLogger.warn("DM eligibility check failed; queued for retry", {
+        channelId: pair.channelId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      retries.push(dmRetry);
+      continue;
     }
-  } catch (error) {
-    streamLogger.warn("Booking chat revocation interrupted; queued for retry", {
-      users: userIds.length,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    if (input.event) {
-      const { type, id } = input.event;
-      for (const userId of userIds) {
-        retries.push({
-          kind: "EVENT_CHANNEL_REMOVE",
-          userId,
-          planId: id,
-          planType: type === "webinar" ? "WEBINAR" : "CLASS",
-        });
-      }
+    if (!(await removeFromDm(pair.channelId, pair.userId))) {
+      retries.push(dmRetry);
     }
   }
 

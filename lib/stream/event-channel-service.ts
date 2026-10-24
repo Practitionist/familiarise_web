@@ -602,9 +602,8 @@ export async function isEventParticipant(
   eventId: string,
   userId: string,
 ): Promise<boolean> {
-  return (await eventParticipantsAmong(eventType, eventId, [userId])).has(
-    userId,
-  );
+  const admitted = await eventParticipantsAmong(eventType, eventId, [userId]);
+  return admitted?.has(userId) ?? false;
 }
 
 const retentionOrgSelect = {
@@ -615,12 +614,13 @@ const retentionOrgSelect = {
  * The subset of `userIds` with access to an openable, in-retention event's
  * channel: the host (profile not deleted), an ACCEPTED collaborator, or a live
  * seat on a live appointment. `isEventParticipant` is this for one user.
+ * Null means the event is missing, not openable or past retention: closed to everyone.
  */
 export async function eventParticipantsAmong(
   eventType: "webinar" | "class",
   eventId: string,
   userIds: string[],
-): Promise<Set<string>> {
+): Promise<Set<string> | null> {
   const ids = Array.from(new Set(userIds));
   const admitted = new Set<string>();
   if (ids.length === 0) return admitted;
@@ -672,7 +672,7 @@ export async function eventParticipantsAmong(
             appointment: appointmentSelect,
           },
         });
-  if (!hit) return admitted;
+  if (!hit) return null;
 
   const plan = "webinarPlan" in hit ? hit.webinarPlan : hit.classPlan;
   const appointment = hit.appointment;
@@ -684,7 +684,7 @@ export async function eventParticipantsAmong(
       resolveEventRetentionDays(plan?.organization, appointment?.organization),
     )
   ) {
-    return admitted;
+    return null;
   }
 
   const host = plan?.consultantProfile;

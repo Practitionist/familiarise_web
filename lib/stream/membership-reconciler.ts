@@ -49,6 +49,13 @@ function isExemptStreamUser(userId: string): boolean {
   return isSupportStreamUser(userId) || userId.startsWith("system-");
 }
 
+/** Only event and collaboration channels have a membership predicate to reconcile against. */
+function isReconcilableChannel(channelId: string): boolean {
+  return [WEBINAR_PREFIX, CLASS_PREFIX, COLLAB_PREFIX].some((prefix) =>
+    channelId.startsWith(prefix),
+  );
+}
+
 /**
  * The members the channel's own access predicate no longer admits, or null to
  * leave the channel alone. DMs are skipped: their revocation is the synchronous
@@ -74,6 +81,8 @@ async function ineligibleMembers(
       : null;
   if (event) {
     const admitted = await eventParticipantsAmong(event.type, event.id, humans);
+    // A missing, closed or expired event belongs to the lifecycle jobs, not here.
+    if (admitted === null) return null;
     // Staff join derived channels only through the audited add, which this honours.
     return humans.filter(
       (id) => !admitted.has(id) && !isPrivileged(roles.get(id)),
@@ -233,6 +242,11 @@ async function reconcileUnlocked(opts: {
         if (typeof createdAt !== "string") continue;
         after = createdAt;
         if (!isManagedChannel(channel.id)) continue;
+        // DMs and org channels skip before any read so they never spend the scan budget.
+        if (!isReconcilableChannel(channel.id ?? "")) {
+          result.channelsSkipped++;
+          continue;
+        }
         result.channelsScanned++;
         try {
           await reconcileChannel(channel, result, failureSample);

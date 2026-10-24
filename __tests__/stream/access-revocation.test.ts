@@ -122,6 +122,35 @@ describe("revocation on booking cancellation", () => {
       skipDuplicates: true,
     });
   });
+
+  it("queues the DM pair whose eligibility check throws and still checks the next pair", async () => {
+    mockIsDmContextEligible
+      .mockRejectedValueOnce(new Error("db timeout"))
+      .mockResolvedValueOnce(false);
+    const { revokeEndedBookingChatAccess } =
+      await import("../../lib/stream/access-revocation");
+
+    await revokeEndedBookingChatAccess({
+      userIds: ["client-1"],
+      dmCounterpartUserIds: ["host-1", "host-2"],
+      dmOrganizationId: null,
+    });
+
+    expect(mockIsDmContextEligible).toHaveBeenCalledTimes(2);
+    expect(mockRemoveMembers).toHaveBeenCalledTimes(1);
+    expect(
+      mockRevocationPrisma.streamRevocationRetry.createMany,
+    ).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          kind: "DM_REMOVE",
+          userId: "client-1",
+          counterpartUserId: "host-1",
+        }),
+      ],
+      skipDuplicates: true,
+    });
+  });
 });
 
 // An openable webinar whose live seats are attendee-keep and attendee-2.
@@ -156,7 +185,7 @@ describe("event access predicate", () => {
       users.map((u) => isEventParticipant("webinar", "w1", u)),
     );
 
-    expect(users.map((u) => batched.has(u))).toEqual(single);
+    expect(users.map((u) => batched?.has(u))).toEqual(single);
     expect(single).toEqual([true, true, false]);
   });
 });
@@ -203,6 +232,7 @@ describe("daily membership reconciler", () => {
       channel("dm-a-b", "2026-10-04T00:00:00Z", ["a", "b"]),
       channel("webinar-w2", "2026-10-05T00:00:00Z", ["host-1", "x", "y"]),
       channel("webinar-w3", "2026-10-06T00:00:00Z", ["host-1", "z"]),
+      channel("webinar-w4", "2026-10-07T00:00:00Z", ["host-1", "q"]),
     ]);
     const { reconcileStreamMemberships } =
       await import("../../lib/stream/membership-reconciler");
@@ -212,17 +242,42 @@ describe("daily membership reconciler", () => {
     expect(mockRemoveMembers.mock.calls).toEqual([
       ["team", "webinar-w1", ["attendee-gone"]],
       ["team", "collab-webinar-plan-1", ["stranger"]],
+      ["team", "webinar-w3", ["z"]],
     ]);
     expect(result).toMatchObject({
       channelsScanned: 4,
       channelsSkipped: 1,
       channelsSkippedSuspicious: 1,
-      membersRemoved: 2,
-      checkpoint: "2026-10-05T00:00:00Z",
+      membersRemoved: 3,
+      checkpoint: "2026-10-06T00:00:00Z",
     });
+    expect(mockRevocationPrisma.user.findMany).toHaveBeenCalledTimes(4);
     expect(mockRevocationQueryChannels.mock.calls[0][0]).not.toHaveProperty(
       "created_at",
     );
     expect(mockReport).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a cancelled or expired event's channel to the lifecycle jobs", async () => {
+    mockRevocationPrisma.webinar.findFirst.mockResolvedValue(null);
+    mockRevocationQueryChannels.mockResolvedValueOnce([
+      channel("webinar-w9", "2026-10-01T00:00:00Z", ["host-1", "staff-1"]),
+    ]);
+    mockRevocationPrisma.user.findMany.mockResolvedValueOnce([
+      { id: "host-1", role: "CONSULTANT" },
+      { id: "staff-1", role: "STAFF" },
+    ] as never);
+    const { reconcileStreamMemberships } =
+      await import("../../lib/stream/membership-reconciler");
+
+    const result = await reconcileStreamMemberships();
+
+    expect(mockRemoveMembers).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      channelsScanned: 1,
+      channelsSkipped: 1,
+      channelsSkippedSuspicious: 0,
+      membersRemoved: 0,
+    });
   });
 });
