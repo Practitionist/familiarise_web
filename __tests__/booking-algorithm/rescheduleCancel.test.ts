@@ -52,6 +52,11 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+// The sweep's lease is covered by the with-cron-lock suite; run the core unlocked here.
+jest.mock("../../lib/cron/with-cron-lock", () => ({
+  withCronLock: (_job: string, _opts: unknown, fn: () => unknown) => fn(),
+}));
+
 // Mock auth-server (better-auth)
 jest.mock("../../lib/rate-limit", () => ({
   __esModule: true,
@@ -92,6 +97,7 @@ jest.mock("../../lib/payments/operations/event-refunds", () => ({
 
 // ─── Imports ────────────────────────────────────────────────────────────────
 
+import type { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { notifyAppointmentCancelled } from "@/lib/novu";
@@ -110,7 +116,7 @@ import { cleanupTentativeOccurrences } from "../../scripts/appointments/cleanup-
 function makeRescheduleRequest(
   appointmentId: string,
   type: string,
-  body?: Record<string, any>,
+  body?: Record<string, unknown>,
 ) {
   const url = `http://localhost/api/appointments/${appointmentId}/reschedule?type=${type}`;
   return new Request(url, {
@@ -121,11 +127,14 @@ function makeRescheduleRequest(
           headers: { "Content-Type": "application/json" },
         }
       : {}),
-  }) as any;
+  }) as unknown as NextRequest;
 }
 
 /** Create a Request for the cancel endpoint */
-function makeCancelRequest(appointmentId: string, body?: Record<string, any>) {
+function makeCancelRequest(
+  appointmentId: string,
+  body?: Record<string, unknown>,
+) {
   const url = `http://localhost/api/appointments/${appointmentId}/cancel`;
   return new Request(url, {
     method: "POST",
@@ -135,7 +144,7 @@ function makeCancelRequest(appointmentId: string, body?: Record<string, any>) {
           headers: { "Content-Type": "application/json" },
         }
       : {}),
-  }) as any;
+  }) as unknown as NextRequest;
 }
 
 /** Create params promise (Next.js 15 async params pattern) */
@@ -150,7 +159,11 @@ const NEAR_DATE = new Date(Date.now() + 12 * 60 * 60 * 1000); // 12h ahead
 
 // ─── Slot & Appointment Factories ───────────────────────────────────────────
 
-function makeSlot(id: string, startsAt: Date, overrides: any = {}) {
+function makeSlot(
+  id: string,
+  startsAt: Date,
+  overrides: Record<string, unknown> = {},
+) {
   return {
     id,
     startsAt,
@@ -166,7 +179,7 @@ function makeSlot(id: string, startsAt: Date, overrides: any = {}) {
   };
 }
 
-function makeConsultationAppointment(overrides: any = {}) {
+function makeConsultationAppointment(overrides: Record<string, unknown> = {}) {
   return {
     id: "apt-1",
     appointmentType: "CONSULTATION",
@@ -195,7 +208,7 @@ function makeConsultationAppointment(overrides: any = {}) {
   };
 }
 
-function makeSubscriptionAppointment(overrides: any = {}) {
+function makeSubscriptionAppointment(overrides: Record<string, unknown> = {}) {
   return {
     id: "apt-1",
     appointmentType: "SUBSCRIPTION",
@@ -224,7 +237,7 @@ function makeSubscriptionAppointment(overrides: any = {}) {
   };
 }
 
-function makeWebinarAppointment(overrides: any = {}) {
+function makeWebinarAppointment(overrides: Record<string, unknown> = {}) {
   return {
     id: "apt-1",
     appointmentType: "WEBINAR",
@@ -241,7 +254,7 @@ function makeWebinarAppointment(overrides: any = {}) {
   };
 }
 
-function makeClassAppointment(overrides: any = {}) {
+function makeClassAppointment(overrides: Record<string, unknown> = {}) {
   return {
     id: "apt-1",
     appointmentType: "CLASS",
@@ -499,7 +512,7 @@ describe("Reschedule Route Handler - POST", () => {
 
     // Default: transaction passes callback through to mock tx
     (prisma.$transaction as jest.Mock).mockImplementation(
-      async (callback: any) => callback(mockTx),
+      async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
     );
   });
 
@@ -958,7 +971,7 @@ describe("Reschedule Route Handler - POST", () => {
     const req = new Request(
       "http://localhost/api/appointments/apt-1/reschedule?type=CONSULTATION",
       { method: "POST" },
-    ) as any;
+    ) as unknown as NextRequest;
     const res = await rescheduleHandler(req, makeParams("apt-1"));
 
     expect(res.status).toBe(200);
@@ -1035,7 +1048,7 @@ describe("Cancel Route Handler - POST", () => {
 
     // Default: transaction passes callback through
     (prisma.$transaction as jest.Mock).mockImplementation(
-      async (callback: any) => callback(mockTx),
+      async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
     );
   });
 
@@ -1246,7 +1259,7 @@ describe("Cancel Route Handler - POST", () => {
 
     const req = new Request("http://localhost/api/appointments/apt-1/cancel", {
       method: "POST",
-    }) as any;
+    }) as unknown as NextRequest;
     const res = await cancelHandler(req, makeParams("apt-1"));
 
     expect(res.status).toBe(200);
@@ -1493,7 +1506,7 @@ describe("cleanupTentativeOccurrences", () => {
   });
 
   it("should return success with 0 slots when none are stale", async () => {
-    (prisma.appointmentOccurrence as any).findMany.mockResolvedValue([]);
+    (prisma.appointmentOccurrence.findMany as jest.Mock).mockResolvedValue([]);
 
     const result = await cleanupTentativeOccurrences();
 
@@ -1527,7 +1540,7 @@ describe("cleanupTentativeOccurrences", () => {
       },
     ];
 
-    (prisma.appointmentOccurrence as any).findMany.mockResolvedValue(
+    (prisma.appointmentOccurrence.findMany as jest.Mock).mockResolvedValue(
       staleSlots,
     );
     (
@@ -1577,7 +1590,7 @@ describe("cleanupTentativeOccurrences", () => {
       },
     ];
 
-    (prisma.appointmentOccurrence as any).findMany.mockResolvedValue(
+    (prisma.appointmentOccurrence.findMany as jest.Mock).mockResolvedValue(
       staleSlots,
     );
     (
@@ -1597,7 +1610,7 @@ describe("cleanupTentativeOccurrences", () => {
   });
 
   it("should handle database errors gracefully", async () => {
-    (prisma.appointmentOccurrence as any).findMany.mockRejectedValue(
+    (prisma.appointmentOccurrence.findMany as jest.Mock).mockRejectedValue(
       new Error("Connection lost"),
     );
 
@@ -1610,7 +1623,7 @@ describe("cleanupTentativeOccurrences", () => {
   });
 
   it("should include timestamp in result", async () => {
-    (prisma.appointmentOccurrence as any).findMany.mockResolvedValue([]);
+    (prisma.appointmentOccurrence.findMany as jest.Mock).mockResolvedValue([]);
 
     const before = new Date().toISOString();
     const result = await cleanupTentativeOccurrences();
@@ -1622,11 +1635,13 @@ describe("cleanupTentativeOccurrences", () => {
   });
 
   it("should query for tentative slots with no successful payment", async () => {
-    (prisma.appointmentOccurrence as any).findMany.mockResolvedValue([]);
+    (prisma.appointmentOccurrence.findMany as jest.Mock).mockResolvedValue([]);
 
     await cleanupTentativeOccurrences();
 
-    expect((prisma.appointmentOccurrence as any).findMany).toHaveBeenCalledWith(
+    expect(
+      prisma.appointmentOccurrence.findMany as jest.Mock,
+    ).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           isTentative: true,
@@ -1648,7 +1663,7 @@ describe("cleanupTentativeOccurrences", () => {
   });
 
   it("should not write when no stale slots found", async () => {
-    (prisma.appointmentOccurrence as any).findMany.mockResolvedValue([]);
+    (prisma.appointmentOccurrence.findMany as jest.Mock).mockResolvedValue([]);
 
     await cleanupTentativeOccurrences();
 

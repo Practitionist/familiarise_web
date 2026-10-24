@@ -76,3 +76,41 @@ export const PatchFeedbackSchema = z.object({
 });
 
 export type PatchFeedbackInput = z.infer<typeof PatchFeedbackSchema>;
+
+/** The categories staff may open a support case under from a moderation report. */
+export const ReportCaseCategorySchema = z.enum([
+  "SAFETY_CONCERN",
+  "QUALITY_COMPLAINT",
+  "OTHER",
+]);
+
+export type ReportCaseCategory = z.infer<typeof ReportCaseCategorySchema>;
+
+/** Body of the open-case door; the ops shell adds the required `reason`. */
+export const OpenReportCaseShape = {
+  appointmentId: z.string().trim().min(1).max(64),
+  category: ReportCaseCategorySchema,
+};
+
+/** A booking both the reporter and the reported user are parties to. */
+export const ReportCaseCandidateSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  title: z.string().nullable(),
+  startsAt: z.string().nullable(),
+  /** False when the report names a chat and this booking's chat is another one. */
+  chatMatchesReport: z.boolean().nullable(),
+});
+
+export const LinkedReportCaseSchema = z.object({
+  id: z.string(),
+  referenceNumber: z.string(),
+});
+
+export const ReportCaseOptionsSchema = z.object({
+  linkedCase: LinkedReportCaseSchema.nullable(),
+  candidates: z.array(ReportCaseCandidateSchema),
+});
+
+export type ReportCaseOptions = z.infer<typeof ReportCaseOptionsSchema>;
+export type LinkedReportCase = z.infer<typeof LinkedReportCaseSchema>;

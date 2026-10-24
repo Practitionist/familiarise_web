@@ -1,28 +1,6 @@
-/**
- * #771 / #749 — monthly consolidated rollup cron: roll each org's unbilled
- * INVOICE_ACCRUAL / OVERAGE_INVOICE_ACCRUAL bookings into one
- * OrganizationInvoice per org. Thin wrapper over `rollupOrgInvoiceAccruals`,
- * run by the ticker in a monthly window from the 1st, 04:00 UTC.
- *
- * E2E-audit P0 fix — this job is now ENABLED BY DEFAULT (opt-out via
- * ENABLE_CONSOLIDATED_INVOICE="false"). It shipped default-off while being
- * the ONLY path from INVOICE_ACCRUAL legs to an actual invoice, so with the
- * shipped config org INVOICE-rail bookings and CHARGE_ORG overages accrued
- * forever, grew unbounded credit-limit exposure in checkout, and produced no
- * GST document — a money black hole.
- *
- * Two defences against double-billing: (1) the `withCronLock` lease
- * serialises runs, and (2) `rollupOrgInvoiceAccruals` reads the unstamped set
- * inside a Serializable tx, so overlapping per-org runs either abort (P2034)
- * or see the empty set.
- *
- * #1347 — the rollup now retries a P2034 itself. One reaching this job means
- * the retries were exhausted, which is no longer a benign skip: the org goes
- * unbilled for the cycle, so it is recorded as a SystemEvent (and thereby
- * Sentry) rather than logged. The job still continues to the next org — one
- * contended org must not strand every other org's invoice.
- */
+/** Monthly invoice rollup; the lease and Serializable invoice writer prevent double billing. */
 import prisma from "@/lib/prisma";
+import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import {
   rollupOrgInvoiceAccruals,
@@ -33,12 +11,12 @@ import {
   recordSystemEvent,
 } from "@/lib/enterprise/system-events";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
-import * as Sentry from "@sentry/nextjs";
 
 export interface SettleInvoiceAccrualsResult {
   orgsProcessed: number;
   invoicesCreated: number;
   failed: number;
+  /** Lower bound from the extra organization peek, not a full backlog count. */
   remaining: number;
 }
 
@@ -64,33 +42,41 @@ function noteRollupResult(
   return true;
 }
 
-/**
- * #1347 — a P2034 that survived the rollup's bounded retries leaves the org
- * unbilled this cycle, so it is recorded; the next org still runs.
- */
-async function reportRollupFailure(
-  organizationId: string,
-  err: unknown,
-): Promise<void> {
-  if (
-    err instanceof Prisma.PrismaClientKnownRequestError &&
-    err.code === "P2034"
-  ) {
-    await recordSystemError({
-      organizationId,
-      category: "INVOICE",
-      summary: `Consolidated invoice rollup exhausted its serialization retries for org ${organizationId} — its unbilled accruals were NOT invoiced this cycle and will be retried on the next run`,
-      err,
-      context: { organizationId, prismaCode: "P2034" },
-    });
-    return;
-  }
-  console.error(
-    `[settle-invoice-accruals] org ${organizationId} failed:`,
-    err instanceof Error ? err.message : err,
-  );
-  Sentry.captureException(err, {
-    tags: { subsystem: "jobs", job: "settle-invoice-accruals" },
+type RollupFailure = {
+  organizationId: string;
+  phase: "rollup" | "cursor";
+  error: unknown;
+};
+
+/** Collect failures into one event so a cohort outage cannot exhaust telemetry quota. */
+async function reportRollupFailures(failures: RollupFailure[]): Promise<void> {
+  if (failures.length === 0) return;
+  const organizations = [
+    ...new Set(failures.map((failure) => failure.organizationId)),
+  ];
+  await recordSystemError({
+    ...(organizations.length === 1 ? { organizationId: organizations[0] } : {}),
+    category: "INVOICE",
+    summary: `Invoice rollup or polling cursor failed for ${organizations.length} organization(s); inspect the failed cohort before the next window`,
+    err: new AggregateError(
+      failures.map((failure) => failure.error),
+      "Invoice rollup failures",
+    ),
+    context: {
+      organizations,
+      failures: failures.slice(0, 50).map((failure) => ({
+        organizationId: failure.organizationId,
+        phase: failure.phase,
+        message: (failure.error instanceof Error
+          ? failure.error.message
+          : String(failure.error)
+        ).slice(0, 500),
+        code:
+          failure.error instanceof Prisma.PrismaClientKnownRequestError
+            ? failure.error.code
+            : null,
+      })),
+    },
   });
 }
 
@@ -115,8 +101,7 @@ async function reportRollupGaps(gaps: RollupGaps): Promise<void> {
 }
 
 /**
- * `limit` caps the invoices issued plus failures per run; an org the rollup
- * skips does not count. With `windowStart`, only orgs holding an accrual from
+ * `limit` caps all examined organizations, including skipped rollups. With `windowStart`, only orgs holding an accrual from
  * before it are selected, so a later slice never re-invoices a billed org.
  */
 export async function settleInvoiceAccruals(
@@ -139,50 +124,71 @@ export async function settleInvoiceAccruals(
     return { orgsProcessed: 0, invoicesCreated: 0, failed: 0, remaining: 0 };
   }
 
-  // Distinct orgs with at least one unbilled accrual. Include
-  // OVERAGE_INVOICE_ACCRUAL: an org whose base bookings are all LICENSE-covered
-  // (₹0 legs) but has CHARGE_ORG overage would otherwise be skipped here and
-  // never billed for the overage (the rollup itself already bills both sources).
-  const rows = await prisma.payment.findMany({
+  const limit = z.number().int().min(1).max(500).default(10).parse(opts.limit);
+  const rows = await prisma.organization.findMany({
     where: {
-      billableToOrgInvoiceId: null,
-      paymentStatus: "SUCCEEDED",
-      organizationId: { not: null },
-      ...(opts.windowStart ? { createdAt: { lt: opts.windowStart } } : {}),
-      // #1744 row 6 — a wound-down org is never billed again.
-      organization: { status: { not: "DEACTIVATED" }, deletedAt: null },
-      legs: {
+      status: { not: "DEACTIVATED" },
+      deletedAt: null,
+      payments: {
         some: {
-          source: { in: ["INVOICE_ACCRUAL", "OVERAGE_INVOICE_ACCRUAL"] },
+          billableToOrgInvoiceId: null,
+          paymentStatus: "SUCCEEDED",
+          ...(opts.windowStart ? { createdAt: { lt: opts.windowStart } } : {}),
+          legs: {
+            some: {
+              source: { in: ["INVOICE_ACCRUAL", "OVERAGE_INVOICE_ACCRUAL"] },
+            },
+          },
         },
       },
     },
-    select: { organizationId: true },
-    distinct: ["organizationId"],
-    orderBy: { organizationId: "asc" },
+    select: { id: true },
+    orderBy: [
+      { lastAccrualRollupAt: { sort: "asc", nulls: "first" } },
+      { id: "asc" },
+    ],
+    take: limit + 1,
   });
 
   let invoicesCreated = 0;
   let failed = 0;
   let visited = 0;
   const gaps: RollupGaps = { heldForPo: [], noGstState: [] };
+  const failures: RollupFailure[] = [];
   for (const row of rows) {
-    if (opts.limit !== undefined && invoicesCreated + failed >= opts.limit) {
+    if (visited >= limit) {
       break;
     }
     visited += 1;
-    if (!row.organizationId) continue;
+    let orgFailed = false;
     try {
       const r = await rollupOrgInvoiceAccruals({
-        organizationId: row.organizationId,
+        organizationId: row.id,
         issueImmediately: true,
       });
-      if (noteRollupResult(row.organizationId, r, gaps)) invoicesCreated++;
-    } catch (err) {
-      failed++;
-      await reportRollupFailure(row.organizationId, err);
+      if (noteRollupResult(row.id, r, gaps)) invoicesCreated++;
+    } catch (error) {
+      orgFailed = true;
+      failures.push({
+        organizationId: row.id,
+        phase: "rollup",
+        error,
+      });
+    } finally {
+      try {
+        await prisma.$executeRaw`UPDATE "organizations" SET "lastAccrualRollupAt" = now() WHERE id = ${row.id}`;
+      } catch (error) {
+        orgFailed = true;
+        failures.push({
+          organizationId: row.id,
+          phase: "cursor",
+          error,
+        });
+      }
     }
+    if (orgFailed) failed++;
   }
+  await reportRollupFailures(failures);
   await reportRollupGaps(gaps);
 
   return {

@@ -10,7 +10,8 @@
  * A funding-source change switches which flow runs at checkout
  * (WALLET→wallet debit, INVOICE→accrual, LICENSE→no charge). It needs
  * `billing.fundingSource.switch`, writes its own audit row, and is refused
- * while a wallet balance or outstanding invoices would be orphaned.
+ * while a wallet balance, a wallet shortfall, an unpaid member overage on a
+ * wallet-funded booking, or outstanding invoices would be orphaned.
  *
  * Only the platform extends credit: a tenant may lower its credit limit but
  * not raise or remove it, nor switch to INVOICE funding. Ops do both through
@@ -23,6 +24,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
+import { assertWalletFundingSwitchable } from "@/lib/api/organizations/wallet";
 import { recordBillingAccountUpdate } from "@/lib/enterprise/billing-account-audit";
 
 // PROJECT is reserved in the Prisma enum for v2 project-billing; the
@@ -187,6 +189,9 @@ export async function PATCH(
             ),
             { httpStatus: 409 },
           );
+        }
+        if (ba.fundingSource === "WALLET") {
+          await assertWalletFundingSwitchable(tx, ba.id);
         }
         if (ba.fundingSource === "INVOICE") {
           const outstanding = await tx.organizationInvoice.count({

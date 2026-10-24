@@ -87,15 +87,14 @@ A payment whose only non-reversal legs are zero-value `LICENSE` legs skips the s
 
 **Reversal legs.** A refund never edits an original leg. It adds or grows a negative `*_REVERSAL` sibling, so the original legs always still sum to `Payment.amount`. A reversal leg must be negative, and its magnitude may never exceed the sum of its original sibling.
 
-| Rule                                                      | Enforcer                                                                                                                         | Test                                                 | Repair                        |
-| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ----------------------------- |
-| Legs sum to `Payment.amount` (with the carve-outs)        | `payment_legs_sum_to_amount` constraint trigger, deferred to `COMMIT`; also `payment_amount_vs_legs` on `Payment.amount` updates | `__tests__/enterprise/payment-leg-invariant.test.ts` | None; uncommittable           |
-| A reversal leg is negative and no larger than its sibling | The same trigger (`assert_payment_legs_ok`)                                                                                      | `__tests__/enterprise/payment-leg-invariant.test.ts` | None; uncommittable           |
-| A non-reversal leg is not negative                        | `payment_leg_nonreversal_nonnegative` CHECK                                                                                      | none (database)                                      | None                          |
-| One leg per source per payment                            | `@@unique([paymentId, source])`                                                                                                  | none (database)                                      | None                          |
-| Checkout reports drift without failing the sale           | `checkPaymentLegsSumToAmount` logs `payment_leg_sum_mismatch` in `settleCheckoutLegs`                                            | `__tests__/payments/checkout-price-parity.test.ts`   | The trigger is the hard guard |
+| Rule                                                      | Enforcer                                                                                                                         | Test                                                                | Repair              |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------- |
+| Legs sum to `Payment.amount` (with the carve-outs)        | `payment_legs_sum_to_amount` constraint trigger, deferred to `COMMIT`; also `payment_amount_vs_legs` on `Payment.amount` updates | `__tests__/payments/dispute-payout-block.test.ts` (source contract) | None; uncommittable |
+| A reversal leg is negative and no larger than its sibling | The same trigger (`assert_payment_legs_ok`)                                                                                      | `__tests__/payments/dispute-payout-block.test.ts` (source contract) | None; uncommittable |
+| A non-reversal leg is not negative                        | `payment_leg_nonreversal_nonnegative` CHECK                                                                                      | none (database)                                                     | None                |
+| One leg per source per payment                            | `@@unique([paymentId, source])`                                                                                                  | none (database)                                                     | None                |
 
-The trigger fires on `PaymentLeg` writes and on `Payment.amount` updates, validates both payments when a leg is re-parented, and re-checks the whole payment each time, which is idempotent when several rows commit together. Because it is a database guarantee, no application sweep re-verifies the identity and the ledger auditor carries no leg-sum check. The TypeScript twin, `checkPaymentLegsSumToAmount` in `lib/payments/payment-legs.ts`, serves checkout logging and tests.
+The trigger fires on `PaymentLeg` writes and on `Payment.amount` updates, validates both payments when a leg is re-parented, and re-checks the whole payment each time, which is idempotent when several rows commit together. Because it is a database guarantee, no application sweep re-verifies the identity and the ledger auditor carries no leg-sum check. Checkout does not re-read the legs after writing them; the trigger is the only check.
 
 ## 4. Worked examples
 
@@ -145,7 +144,7 @@ When a payment's legs sum to more than its amount, the cascade leaves `REFERRAL_
 
 - `prisma/schema.prisma`: `PaymentLeg`, `PaymentLegSource`.
 - `prisma/sql/payment-legs-triggers.sql`: `assert_payment_legs_ok` and the three triggers.
-- `lib/payments/payment-legs.ts`: `checkPaymentLegsSumToAmount`, `sourceRefKindFor`.
+- `lib/payments/payment-legs.ts`: `sourceRefKindFor`, `makeLeg`.
 - `lib/payments/checkout/commit/payment-legs.ts`, `org-utilization.ts`: the checkout writers.
 
 ## Related
@@ -155,4 +154,4 @@ When a payment's legs sum to more than its amount, the cascade leaves `REFERRAL_
 
 ## Deprecated & Superseded Approaches
 
-An earlier definition of the identity summed every non-reversal leg including `REFERRAL_CREDIT`. Because `Payment.amount` already excludes the credit, the trigger rejected every checkout that spent credit, so the identity was narrowed and the credit leg kept for the journal; delete any checker or doc that adds the credit leg back into the sum. A refund once edited the original accrual leg; it now nets through a negative sibling. `WalletEntry` no longer records wallet movement: the authoritative movement is the journal's `Dr WALLET` line, and the cache write is `walletDebit`. `lib/payments/payment-legs.ts` describes the `CARD` `sourceRef` as a gateway payment id and mentions Stripe and a `WalletEntry` row; the code stores the order id and neither of those exists.
+An earlier definition of the identity summed every non-reversal leg including `REFERRAL_CREDIT`. Because `Payment.amount` already excludes the credit, the trigger rejected every checkout that spent credit, so the identity was narrowed and the credit leg kept for the journal; delete any checker or doc that adds the credit leg back into the sum. A refund once edited the original accrual leg; it now nets through a negative sibling. `WalletEntry` no longer records wallet movement: the authoritative movement is the journal's `Dr WALLET` line, and the cache write is `walletDebit`. `lib/payments/payment-legs.ts` describes the `CARD` `sourceRef` as a gateway payment id and mentions Stripe and a `WalletEntry` row; the code stores the order id and neither of those exists. A TypeScript twin of the trigger (`checkPaymentLegsSumToAmount` and its throwing sibling) once logged drift warn-only after checkout; it was deleted because the trigger already makes drift uncommittable, so recreate neither.

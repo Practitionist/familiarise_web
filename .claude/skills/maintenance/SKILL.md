@@ -17,14 +17,33 @@ This is the index for operational and deployment plumbing that is not specific t
 
 ## Non-negotiables
 
-Use one canonical implementation per registry job. Cleanup and admin routes dispatch that core; existing CLI owners must call the same core and lease. The active platform ticker owns latency-sensitive recovery and money work, while configured Actions clocks retain non-money batch work and CI/CD. Do not add an automatic fallback clock. Read executable schedules for ownership; a configured schedule is not live completion evidence.
+Use one registered implementation per job and keep the required Netlify standby.
+Scheduling metadata currently lives in `netlify/functions/cron-tick.mts`; do not
+claim the registry defines phase or timeout fields. Count executable builder keys,
+not documentation examples. Operational Actions jobs remain migration work until
+bounded replacements have actually run.
+
+Cron leases are Postgres-backed. Closed jobs never run when acquisition fails,
+including Prisma import failures. Completion is conditional on the same execution
+still being RUNNING; only successful owned completion advances freshness. Typed
+outcomes and `X-Job-Outcome` distinguish partial failure and intentional holds.
+Different jobs can still touch the same row: preserve CAS, transactional staging
+and vendor idempotency, and test cross-job races and sequential replay.
+
+The scheduled ticker has a 30-second budget, distinct from its HTTP workers.
+A timeout or expired lease does not cancel vendor effects. Fleet selection fails
+open on absent/unreadable `ops:active_cron_platform`, so it is not an exactly-once
+guarantee. Verify accepted Sentry check-ins and independent per-capability absence
+alerts; the shared heartbeat and HTTP200 alone do not prove complete health.
+
+Maintenance bypass cookies remain short-lived HMAC-SHA256 tokens verified via Web
+Crypto. Follow the active maintenance implementation and recovery instructions;
+never infer that a cached phase quiesces work already in flight. See the linked
+references for transaction-client, deployed-runtime and environment constraints.
 
 Auth tokens/invitations, webhook archive, onboarding drafts and audit retention have bounded canonical defaults and a shared 16-second admission budget per invocation. Every destructive write repeats current age/status eligibility. Read `docs/maintenance/housekeeping-bounds.md` for per-phase versus global limits, continuation and the existing bounded audit CLI. Preserve category retention and expiry policy; a work bound is not permission to shorten retention. Failures or time-budget holds retain `hasMore`; a failed oldest page needs repair rather than silent skipping.
-
-Cron leases are Postgres-backed. They do not cancel an in-flight database/vendor request, guard a different job’s writes, or deduplicate sequential invocations. Preserve domain conditional updates, vendor operation identities and atomic audit/outbox staging. Inside a Prisma transaction, every helper must use `tx`; a local single-connection pool can test this discipline. Verify deployed packaging and runtime behavior separately.
-
-Maintenance bypass tokens remain short-lived HMAC-SHA256 values checked with Web Crypto. The `ops:active_cron_platform` preference fails open when absent or unreachable; it does not guarantee exactly-once dispatch. Monitor completed capabilities and oldest eligible work, not only the shared heartbeat.
 
 ## Deprecated & Superseded Approaches
 
 Older guidance copied registry counts and claimed every job had a twin, money used an unbounded Actions backstop, or only a deploy preview could reproduce pool starvation. Use the current registry/inventory, bounded cores and separate disposable-database versus deployed-runtime evidence instead.
+

@@ -24,10 +24,14 @@ describe("support history routes an erasure to the scrub path", () => {
       supportCaseAttachment: count(0),
       supportCaseDecision: count(0),
       supportFinancialRecommendation: count(0),
+      supportCaseChatAccess: count(4),
     };
     await expect(supportRetainedHistoryCount(db as never, "u1")).resolves.toBe(
-      3,
+      7,
     );
+    expect(db.supportCaseChatAccess.count).toHaveBeenCalledWith({
+      where: { grantedById: "u1" },
+    });
     expect(db.supportCase.count).toHaveBeenCalledWith({
       where: {
         OR: [{ requesterUserId: "u1" }, { submitterUserId: "u1" }],
@@ -36,6 +40,7 @@ describe("support history routes an erasure to the scrub path", () => {
             { decisions: { some: {} } },
             { evidenceRequests: { some: {} } },
             { attachments: { some: {} } },
+            { chatAccess: { some: {} } },
           ]),
         },
       },
@@ -49,6 +54,7 @@ describe("support history routes an erasure to the scrub path", () => {
       supportCaseAttachment: count(0),
       supportCaseDecision: count(0),
       supportFinancialRecommendation: count(0),
+      supportCaseChatAccess: count(0),
     };
     await expect(supportRetainedHistoryCount(db as never, "u1")).resolves.toBe(
       0,

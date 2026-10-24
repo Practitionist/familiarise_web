@@ -69,7 +69,12 @@ exports neutralize spreadsheet formula prefixes.
 The registered `support-sla-sweep` runs through the existing scheduler and Postgres
 job lease. It does not add another scheduler or Redis cron lock. Its bounded work
 covers acknowledgement/resolution notices, 28-day resolved-case auto-close,
-provider dispute deadlines, overdue evidence and moderation deadlines.
+the resolved-problem cascade, the 180-day evidence purge, provider dispute
+deadlines, overdue evidence and moderation deadlines. Its chat-access arm
+(`lib/support/chat-sweep.ts`) ends expired grants and grants on cases resolved
+outside the staff funnel, retries the Familiarise Support join and leave in
+Stream, and sends or records withholding of the post-decision "our team
+reviewed messages" bell through the outbox.
 
 Provider dispute reminders scan `now - 24h <= dueBy <= now + 72h`. Threshold
 identities (`dispute-due:{id}:{72|24}`) are stored as outbox `entityRef`s so

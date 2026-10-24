@@ -1,4 +1,4 @@
-import type { AppointmentStatus, Prisma } from "@prisma/client";
+import type { AppointmentStatus, Prisma, TrialStatus } from "@prisma/client";
 
 /**
  * Who may open a plan material: the plan's owner, its accepted co-hosts, org
@@ -15,6 +15,13 @@ export const PAID_REQUEST_STATUSES: AppointmentStatus[] = [
 ];
 
 const LIVE_SEAT_STATUSES = ["CONFIRMED", "ATTENDED"] as const;
+
+/** Trial states that follow a confirmed booking; PENDING and AWAITING_PAYMENT are not buyers yet. */
+const TRIAL_ACCESS_STATUSES: TrialStatus[] = [
+  "SCHEDULED",
+  "COMPLETED",
+  "CONVERTED",
+];
 
 /** Materials a learner reaches through their own paid bookings. */
 export function learnerMaterialWhere(
@@ -36,10 +43,18 @@ export function learnerMaterialWhere(
       },
     },
   };
+  // A trial is the plan's front door: once its call is confirmed or held, the
+  // consultee reads the same materials a subscriber does.
+  const heldTrial = {
+    consulteeProfile: { userId },
+    status: { in: TRIAL_ACCESS_STATUSES },
+    appointment: { is: { deletedAt: null } },
+  };
   return {
     OR: [
       { consultationPlan: { consultations: { some: paidRequest } } },
       { subscriptionPlan: { subscriptions: { some: paidRequest } } },
+      { subscriptionPlan: { trials: { some: heldTrial } } },
       { webinarPlan: { webinars: { some: paidSeat } } },
       { classPlan: { classes: { some: paidSeat } } },
     ],
