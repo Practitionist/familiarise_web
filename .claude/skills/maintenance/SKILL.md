@@ -40,3 +40,15 @@ Maintenance bypass cookies remain short-lived HMAC-SHA256 tokens verified via We
 Crypto. Follow the active maintenance implementation and recovery instructions;
 never infer that a cached phase quiesces work already in flight. See the linked
 references for transaction-client, deployed-runtime and environment constraints.
+
+## Support auto-close progress
+
+For `lib/support/sla-sweep.ts`, preserve refusal, payout-release and chat-ending
+transactions. Keep open-recommendation and intentional-maintenance auto-close holds separate
+from errors and report a bounded reason sample; unreadable maintenance state remains
+a failure. Rotate attempts through `SupportCase.autoCloseLastAttemptAt`
+with an eligibility/prior-attempt conditional raw SQL stamp before the transaction;
+never mutate `resolvedAt` or `updatedAt` to poll. Keep the existing candidate cap
+and the auto-close-only 16-second admission budget. Apply the operator SQL before
+deploying readers; generate test clients in isolation, never into shared dependencies.
+See `docs/support/09-support-case-and-sla-sweep.md` for rollout and result semantics.

@@ -91,6 +91,47 @@ produce a later breach notice. The case's customer-wait state does not suppress
 its absolute deadline. Personal-case organization tagging does not email private
 case details to an organization escalation contact.
 
+The auto-close arm examines at most `limit * HELD_OPEN_SCAN_FACTOR` candidates and
+closes at most `limit` cases. It selects never-attempted cases first, then the
+oldest `autoCloseLastAttemptAt`, with `resolvedAt` and ID as stable tie breakers.
+A conditional database stamp commits before each closing transaction, so a held
+case or failed transaction rotates across later runs and process restarts. A
+stale claim, reopened case or tombstone cannot take that attempt. The stamp changes
+only polling metadata; `resolvedAt` and `updatedAt` retain their business meaning.
+
+The existing payout-hold and recommendation checks still decide whether closing
+is allowed. An open recommendation or intentional maintenance leaves the case
+resolved and appears in
+`autoCloseHeldOpen` with at most ten `{ caseId, reason }` samples in
+`autoCloseHolds`; these holds do not make the run fail or send a Sentry error.
+Unreadable maintenance (`MAINTENANCE_UNKNOWN`), unexpected refusal codes and genuine
+exceptions still enter `errors` and the single aggregated error report.
+`autoClosedCount` remains the number closed. `autoCloseHasMore` conservatively
+reports holds, failures, unstarted selected rows or a cap-sized sample, so a
+successful sweep does not mean the resolved backlog is drained.
+
+Auto-close admits no new attempt after 16 seconds from the invocation's start.
+It checks before reading candidates and before each progress stamp; reaching the
+close limit also leaves later candidates unstamped. This is a start budget for
+this arm, not cancellation of in-flight work or a deadline for the complete SLA
+sweep. Other arms retain their existing bounds.
+
+### Auto-close schema rollout
+
+Before deploying these readers, an operator must apply
+`prisma/sql/support-auto-close-progress.sql` to add the nullable polling column
+and its compound index. No backfill is needed: existing rows start unattempted.
+Run it with `psql -v ON_ERROR_STOP=1 -f prisma/sql/support-auto-close-progress.sql`
+using the operator's configured direct/session connection. The script sets a
+five-second lock timeout, commits the column addition, then builds the index
+concurrently outside a transaction. A final catalog gate rejects an invalid or
+unready index, including an invalid prior build skipped by `IF NOT EXISTS`.
+If a build or gate fails, inspect `pg_index.indisvalid`; use `DROP INDEX CONCURRENTLY`
+on that invalid index outside a transaction, rerun the file, and verify the gate
+passes before deploying. Do not wrap the complete script in a transaction. This
+artifact has not been applied to the shared database.
+The compound index is not a measured guarantee for the null-first sort or runtime.
+
 Individual failures are accumulated and reported once per run. Notifications use
 the universal authorized case resolver; neutral evidence notices link directly
 to the recipient's evidence workspace. Submitted storage evidence is retained by
@@ -102,3 +143,10 @@ Separate live ticket and appointment-thread queues, legacy CSAT fallbacks and
 mixed-table monthly reporting and migration aliases are removed. A universal 15-day clock with customer-wait extensions is replaced by fixed
 category deadlines. Backoffice canonical case reads are active; there is no
 future cutover flag or dual-read fallback.
+
+The fixed oldest-resolution sample could repeatedly examine held cases while
+never reaching later closable ones. Durable attempt ordering replaces that
+prefix retry; deeper paging confined to one invocation cannot retain progress
+after interruption. Expected money-door and recommendation refusals previously
+entered the error collection and triggered failure pages. They now appear as
+held-open outcomes while genuine transaction failures retain their error path.
