@@ -22,6 +22,7 @@ jest.mock("../../jobs/stream/expire-event-channels", () => ({
 jest.mock("../../lib/maintenance-cron", () => ({
   assertNotInMaintenance: jest.fn(),
   MaintenanceActiveError: class extends Error {},
+  MaintenanceUnavailableError: class extends Error {},
 }));
 jest.mock("../../lib/observability/throttled-capture", () => ({
   captureThrottled: jest.fn(),

@@ -57,6 +57,14 @@ jest.mock("../../components/chat/AppointmentDocumentsHint", () => {
   };
 });
 
+jest.mock("../../components/chat/ComposerDraftPersistence", () => {
+  const react = jest.requireActual<typeof import("react")>("react");
+  return {
+    ComposerDraftPersistence: () =>
+      react.createElement("div", { "data-testid": "composer-draft" }),
+  };
+});
+
 jest.mock("../../components/chat/CustomChannelHeader", () => ({
   CustomChannelHeader: () => null,
 }));
@@ -113,6 +121,16 @@ describe("ChatContainer", () => {
     expect(
       hint.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  it("persists the composer draft only while the composer is live", () => {
+    const view = render(<ChatContainer />);
+    expect(screen.getByTestId("composer-draft")).toBeInTheDocument();
+    view.unmount();
+
+    mockPhase = "OFFLINE";
+    render(<ChatContainer />);
+    expect(screen.queryByTestId("composer-draft")).not.toBeInTheDocument();
   });
 
   it("hides the composer and hint while chat is read-only", () => {

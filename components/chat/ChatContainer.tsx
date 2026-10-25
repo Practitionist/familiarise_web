@@ -13,6 +13,7 @@ import {
 } from "stream-chat-react";
 import { AlertTriangle } from "lucide-react";
 import { AppointmentDocumentsHint } from "./AppointmentDocumentsHint";
+import { ComposerDraftPersistence } from "./ComposerDraftPersistence";
 import { CustomChannelHeader } from "./CustomChannelHeader";
 import { CustomMessage } from "./CustomMessage";
 import { SupportInterventionBanner } from "./SupportInterventionBanner";
@@ -117,6 +118,7 @@ export const ChatContainer = () => {
               ) : (
                 <>
                   <AppointmentDocumentsHint />
+                  <ComposerDraftPersistence />
                   <MessageComposer focus />
                 </>
               )}
