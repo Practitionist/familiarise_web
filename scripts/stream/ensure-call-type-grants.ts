@@ -68,6 +68,14 @@ function formatAffectedCallsSuffix(calls: string[]): string {
   return `\n\nAffected calls: ${listed}${overflow}`;
 }
 
+/**
+ * Rooms are created on demand inside the join window, one call per occurrence and
+ * per reopen, so a call still open 14 days after creation is an abandoned room no
+ * one is scheduled into (Stream also drops its media then). Scanning only newer
+ * calls keeps the lock-out check inside Stream's one-page queryCalls limit.
+ */
+const LOCKOUT_SCAN_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+
 async function requireSomeoneHoldsMemberRole(
   client: ReturnType<typeof getStreamVideoClient>,
   opts: EnsureCallTypeGrantsOptions,
@@ -76,7 +84,9 @@ async function requireSomeoneHoldsMemberRole(
 
   let scan: Awaited<ReturnType<typeof anyOpenCallMemberHolds>>;
   try {
-    scan = await anyOpenCallMemberHolds(client, CALL_MEMBER_ROLE);
+    scan = await anyOpenCallMemberHolds(client, CALL_MEMBER_ROLE, {
+      createdSince: new Date(Date.now() - LOCKOUT_SCAN_WINDOW_MS),
+    });
   } catch (err) {
     console.error(
       `\n🛑 Refusing to apply — could not read call members from Stream.\n`,
