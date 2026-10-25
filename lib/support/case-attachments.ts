@@ -19,7 +19,6 @@ import {
 
 /** Storage enforces these on signed uploads too, so a token cannot exceed them. */
 export const SUPPORT_EVIDENCE_BUCKET_OPTIONS = {
-  public: false,
   fileSizeLimit: SUPPORT_ATTACHMENT_MAX_BYTES,
   allowedMimeTypes: [...SUPPORT_ATTACHMENT_MIME_TYPES],
 } satisfies BucketOptions;

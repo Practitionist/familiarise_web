@@ -216,7 +216,14 @@ jest.mock("../../lib/payments/operations/refund", () => {
   }
   return {
     RefundValidationError,
-    RefundGatewayError: class extends Error {},
+    RefundGatewayError: class extends Error {
+      constructor(
+        message: string,
+        readonly gatewayCode?: string,
+      ) {
+        super(message);
+      }
+    },
     findDedupedRefund: async (key: string) => {
       const r = mockRefunds.find(
         (x) => x.dedupeKey === key && x.status !== "FAILED",
@@ -451,6 +458,51 @@ function failsOnce(status: "FAILED" | "PENDING") {
     },
   );
 }
+
+/** Each drive writes one FAILED refund row, as the front door does on a definitive refusal. */
+function gatewayFails(gatewayCode: string | undefined) {
+  const { RefundGatewayError } = jest.requireMock<{
+    RefundGatewayError: new (message: string, gatewayCode?: string) => Error;
+  }>("../../lib/payments/operations/refund");
+  mockRefundBookingPayment.mockImplementation(
+    async (input: { paymentId: string; dedupeKey: string }) => {
+      mockRefunds.push({
+        id: `rf_${mockRefunds.length + 1}`,
+        paymentId: input.paymentId,
+        dedupeKey: input.dedupeKey,
+        amountPaise: 5_000,
+        status: "FAILED",
+      });
+      throw new RefundGatewayError("gateway refund failed", gatewayCode);
+    },
+  );
+}
+
+describe("a gateway that does not know the payment", () => {
+  it("retires a 404 on its first attempt with one FAILED refund and one page", async () => {
+    seat("p1", 10_000);
+    marker("p1", 5_000);
+    gatewayFails("GATEWAY_NOT_FOUND");
+
+    const first = await retryAutoRefunds();
+    expect(first.owed.stuck).toEqual(["p1"]);
+    expect((await retryAutoRefunds()).owed.scanned).toBe(0);
+    expect(mockRows.get("p1")!.refundOwedAttempts).toBe(3);
+    expect(mockRefunds.filter((r) => r.status === "FAILED")).toHaveLength(1);
+    expect(mockRecordSystemError).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps retrying a 5xx until the attempt budget is spent", async () => {
+    seat("p1", 10_000);
+    marker("p1", 5_000);
+    gatewayFails("SERVER_ERROR");
+
+    expect((await retryAutoRefunds()).owed.stuck).toEqual([]);
+    expect(mockRows.get("p1")!.refundOwedAttempts).toBe(1);
+    expect((await retryAutoRefunds()).owed.scanned).toBe(1);
+    expect(mockRecordSystemError).not.toHaveBeenCalled();
+  });
+});
 
 describe("a failed gateway attempt", () => {
   it("re-drives a definitive refusal on the next sweep and clears on success", async () => {
