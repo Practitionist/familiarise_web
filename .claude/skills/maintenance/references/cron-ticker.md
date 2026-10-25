@@ -17,6 +17,12 @@ Migration of an operational workflow requires bounded work and observed replacem
 progress before deleting its old schedule. Never run shared-database load tests
 on a production schedule.
 
+## Shared schedule catalog
+
+`lib/cron/schedule.ts` owns target names, cadence, offsets, calendar windows, row limits and request timeouts. `JOB_SCHEDULES` exposes their effective values and `scheduleFor(name)` supports lookup. Dispatchers and generated schedule metadata consume this catalog instead of copying maps or scraping the Netlify adapter. Completion SLOs remain separate from configured cadence. The catalog has no database, vendor client or environment reads. `npm run cron:reference` generates `docs/maintenance/04-cron-jobs-reference.md` from this catalog, executable registry AST properties, worker lease declarations and operational workflow steps. `npm run cron:reference:check` detects stale output; it does not verify deployed execution. Import schedule helpers directly from the catalog; the Netlify adapter contains platform dispatch and failure reporting.
+
+Document retention (`purge-deleted-documents`) runs hourly at `:35`, with a 100-row request limit and 20-second HTTP timeout. Keep these values in the shared catalog when merging worker changes. The ten-target bound and ledger yielding must match the current cadence/collision test.
+
 ## Lease, replay and failure
 
 `withCronLock` uses a Postgres `SystemJobExecution` lease and its partial unique
@@ -49,7 +55,7 @@ callback gets `statusFor` and the inferred outcome. A lease-held 409 is an
 attempted run, never fresh successful work.
 
 `reconcile-ledgers` runs as an hourly `:55` bounded slice whose cursor persists on
-its report, so a tick that would exceed `MAX_TARGETS_PER_TICK` drops it first
+its report, so a tick that reaches `MAX_TARGETS_PER_TICK` drops it first
 without losing coverage. It answers 200 with summary status RUNNING while work
 remains and 207 once a completed audit has discrepancies; it is listed in
 `PARTIAL_FAILURE_TARGETS`, so that 207 counts as failed.
@@ -107,9 +113,10 @@ Never create 3-layer wrappers. A job has one implementation, registered in
 4. Stage delivery obligations atomically with the state claim using the supplied tx.
 5. Test same-job overlap, cross-job races, sequential replay and missed schedules.
 6. Update the generated job reference and operational recovery instructions.
-7. Put a ticker job in `TARGETS` with an offset or a `TARGET_WINDOWS` slot so
-   that no tick fires more than `MAX_TARGETS_PER_TICK` (9) targets; the cadence
-   test pins it.
+7. Put a ticker job in `lib/cron/schedule.ts` (`TARGETS` with an offset or a `TARGET_WINDOWS` slot) so
+   the cadence/collision tests preserve the ten-target design bound.
+   Only the resumable ledger target yields when the due roster reaches this bound;
+   the dispatcher does not truncate other due work.
 8. If the job moves money or payouts, add its slug to `FINANCIAL_JOB_NAMES`
    (`lib/cron/financial-jobs.ts`). The maintenance gate then also stops it in
    `DEGRADED`, and the lock-registry test requires a fail-closed lock.
@@ -118,18 +125,15 @@ Some existing jobs intentionally take no row limit. That is not evidence that
 an unbounded implementation fits a function envelope; inspect its actual work.
 Calendar-window schedules also require explicit missed-window recovery.
 
+## Source-only verification
+
+Generator changes must preserve output for unchanged executable inputs, including blank workflow-name fallback, Markdown pipe escaping and unresolved lease labels. Run `cron:reference:check` and the inventory/catalog/ticker Jest suites through the repository configuration. These checks parse source and mock runtime dependencies; they require no live database or vendor calls. The canonical `node_modules` symlink supplies tools in worktrees, but generated Prisma types must match the worktree schema for checks that include workers. Use an isolated matching client for focused typechecks rather than replacing the shared generated client.
+
 ## Recording background packaging
 
 The recording background entry is `netlify/functions/recording-transfer-background.mts`. Preserve the supported filename suffix as well as its background config when packaging with the CLI. A dependency-free CLI 26.0.2 branch probe completed after 75 seconds on this account; the temporary drafts were removed. This proves the isolated runtime path, while the application bundle and actual copy handoff still require verification. HTTP 202 is admission only. For unpublished alias logs, use the deployment branch and ID when function metadata omits its branch. See `docs/stream/recording-background-worker.md` and [Netlify background functions](https://docs.netlify.com/build/functions/background-functions/).
 
 The native entry and shared cleanup factory need the explicit `next/server.js` package subpath. A network-denied compiled-module check catches the extensionless ESM import failure that CommonJS Jest loading misses. The worktree's default NFT archive can retain the external dependency symlink without its target; inspect dependency contents before treating a local archive as deployable. Keep the required canonical worktree dependency symlink.
-
-## Deprecated & Superseded Approaches
-
-Redis cron locks, production fallbacks for incomplete unit-test mocks, and shared
-heartbeats described as proof of complete fleet health are superseded. Recovery
-is not guaranteed by a parallel Actions workflow or by making every HTTP result 200. Keep the required Netlify standby; platform moves change adapters, not
-transaction or replay guarantees.
 
 ## Stream organisation wind-down
 
@@ -143,6 +147,13 @@ the filter, but an unchanged prefix does not guarantee tail progress. Do not add
 ticker target or second automatic clock on the strength of these marker checks.
 Shared Stream/R2 helpers receive the invocation reporter so row failures produce one final event with a bounded sample, highest severity and a retained billing classification. Other callers retain their existing reporting.
 See `docs/stream/17-channel-lifecycle.md#organisation-wind-down-completion`.
+
+## Deprecated & Superseded Approaches
+
+Redis cron locks, production fallbacks for incomplete unit-test mocks, and shared
+heartbeats described as proof of complete fleet health are superseded. Recovery
+is not guaranteed by a parallel Actions workflow or by making every HTTP result 200. Keep the required Netlify standby; platform moves change adapters, not
+transaction or replay guarantees.
 
 ## Sources
 

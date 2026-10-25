@@ -269,6 +269,8 @@ export default async (): Promise<Config> => {
       "(?:^|/)lib/redis-edge$": "<rootDir>/__mocks__/redis-edge.ts",
       "^\\./redis-edge$": "<rootDir>/__mocks__/redis-edge.ts",
       ...resolved.moduleNameMapper,
+      // Worktrees share dependencies; resolve source aliases in the current checkout.
+      "^@/(.*)$": "<rootDir>/$1",
     },
     transformIgnorePatterns: patterns.map((p) =>
       p.startsWith(NODE_MODULES_LOOKAHEAD)

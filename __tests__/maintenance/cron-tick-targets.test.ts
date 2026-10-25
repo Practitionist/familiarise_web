@@ -4,9 +4,8 @@
 
 /**
  * The ticker's per-target request shape, cadence, calendar windows and fleet
- * gate. Jest has no transform for `.mts`, so the function file is transpiled
- * here and its exports called directly, rather than pinned by grepping source
- * text.
+ * gate. Schedule helpers are imported from the shared catalog. Jest has no
+ * transform for `.mts`, so only the platform adapter is transpiled here.
  */
 
 import fs from "node:fs";
@@ -15,24 +14,27 @@ import vm from "node:vm";
 import ts from "typescript";
 
 import {
+  dueTargets,
+  targetRequest,
+  windowStartFor,
+  isFirstDueTickOfHour,
+  MAX_TARGETS_PER_TICK,
+  type Target,
+} from "@/lib/cron/schedule";
+
+import {
   applyErrorBudget,
   resetSentryBudgetState,
 } from "../../sentry.shared.config";
 
 type Ticker = Pick<
   typeof import("../../netlify/functions/cron-tick.mjs"),
-  | "targetRequest"
-  | "dueTargets"
   | "statusFor"
   | "reportableToSentry"
-  | "isFirstDueTickOfHour"
   | "bucketFor"
   | "buildFailedTargetEvent"
-  | "windowStartFor"
   | "otherActivePlatform"
-  | "MAX_TARGETS_PER_TICK"
 >;
-type Target = ReturnType<Ticker["dueTargets"]>[number];
 
 function loadTicker(): Ticker {
   const file = path.join(
@@ -63,7 +65,6 @@ function loadTicker(): Ticker {
 }
 
 describe("cron-tick targetRequest", () => {
-  const { targetRequest } = loadTicker();
   const base = "https://site.test";
 
   it("leaves release-earnings on the fifteen-second default and gives abandoned-payments 20 s", () => {
@@ -184,7 +185,6 @@ describe("cron-tick targetRequest", () => {
 // #1926 — phase-stagger 15-minute targets across offsets 0, 5, and 10 so every
 // 5-minute tick fires 6–7 targets instead of 19 simultaneous targets at :00/:15/:30/:45.
 describe("cron-tick dueTargets cadence", () => {
-  const { dueTargets } = loadTicker();
   const at = (minute: number) => new Date(Date.UTC(2026, 8, 17, 10, minute));
 
   it("staggers fifteen-minute sweeps across offsets 0, 5, and 10 so each fires once per 15 minutes", () => {
@@ -236,7 +236,6 @@ describe("cron-tick dueTargets cadence", () => {
   });
 
   it("never fires more than MAX_TARGETS_PER_TICK on any tick of 400 days, windows included", () => {
-    const { MAX_TARGETS_PER_TICK } = loadTicker();
     expect(MAX_TARGETS_PER_TICK).toBe(10);
     // 400 days from 2026-11-01 cover every month start, every weekday and every quarter start.
     const start = Date.UTC(2026, 10, 1);
@@ -284,7 +283,6 @@ describe("cron-tick dueTargets cadence", () => {
   });
 
   it("fires the Stream control-plane drift check once a day at 01:15 UTC, without a limit", () => {
-    const { targetRequest } = loadTicker();
     const name = "stream-control-plane-drift";
     const firing = Array.from({ length: 24 * 12 }, (_, i) => i * 5).filter(
       (minuteOfDay) =>
@@ -404,7 +402,6 @@ describe("cron-tick bucketFor", () => {
 });
 
 describe("cron-tick calendar windows", () => {
-  const { dueTargets, windowStartFor, targetRequest } = loadTicker();
   const utc = (d: number, h: number, m: number) =>
     new Date(Date.UTC(2026, 10, d, h, m));
 
@@ -565,7 +562,6 @@ describe("cron-tick failed-target reporting", () => {
 });
 
 describe("cron-tick drain targets and failure reporting", () => {
-  const { dueTargets, isFirstDueTickOfHour } = loadTicker();
   const at = (m: number) => new Date(Date.UTC(2026, 9, 4, 12, m, 0));
 
   it("runs process-data-exports every 10 minutes and retry-moderation-enforcement every 30", () => {
