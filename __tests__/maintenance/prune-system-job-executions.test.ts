@@ -14,13 +14,13 @@ const deleteEvents = jest.fn();
 const executeRaw = jest.fn();
 const acquire = jest.fn();
 
-jest.mock("@/lib/cron/with-cron-lock", () => ({
+jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (key: string, opts: unknown, fn: () => Promise<unknown>) => {
     acquire(key, opts);
     return fn();
   },
 }));
-jest.mock("@/lib/prisma", () => ({
+jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     systemJobExecution: {
@@ -60,7 +60,7 @@ import {
   STRANDED_ERROR,
   pruneMessagingRetentionTables,
   pruneSystemJobExecutions,
-} from "@/scripts/cleanup/prune-system-job-executions";
+} from "../../scripts/cleanup/prune-system-job-executions";
 
 const NOW = new Date("2026-10-23T03:26:00.000Z");
 const DAY = 86_400_000;
