@@ -21,8 +21,6 @@ const getBucket = jest.fn();
 const updateBucket = jest.fn().mockResolvedValue({ error: null });
 const list = jest.fn().mockResolvedValue({ data: [], error: null });
 
-jest.mock("@/lib/supabase-config", () => ({}), { virtual: true });
-
 jest.mock("../../lib/supabase-storage-core", () => {
   const actual = jest.requireActual("../../lib/supabase-storage-core");
   return actual;
