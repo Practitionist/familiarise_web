@@ -510,7 +510,7 @@ as pending work; a saved alert cannot compensate for a disabled monitor.
 2. Use an authenticated cron-monitor API session for a controlled expectation
    drill. Save the normal monitor and alert configuration in a protected local
    artifact and prepare restoration before changing it. Include monitor status,
-   mute state, project, slug and scheduling fields, plus alert status, connected
+   mute state, project, name, slug and scheduling fields, plus alert status, connected
    source IDs, environment, recipient action and repeat interval. Keep the existing
    monitor and route. Do not stop jobs or change the active cron host.
    Arrange an exclusive configuration window with the other operators: the
@@ -539,7 +539,10 @@ as pending work; a saved alert cannot compensate for a disabled monitor.
 6. On success, failure or timeout, the restoration owner first reads both current
    configurations. If they already match the saved normal settings, make no
    write. If they match the drill state with all other saved fields unchanged,
-   restore only the changed schedule, margin and thresholds, using a conditional
+   send a writable monitor payload containing its current project identifier,
+   name and complete `config`, replacing only the changed schedule, margin and
+   thresholds with their saved values. Preserve other writable fields from the
+   verified read-back and omit read-only response metadata. Use a conditional
    write if the API supports one or the exclusive configuration window otherwise.
    Any other drift must stop automatic restoration and be escalated to the
    operator; never replay the full saved snapshot over an unexpected state.

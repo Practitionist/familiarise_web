@@ -123,6 +123,8 @@ create another paid monitor, or disable another project's monitor for the drill.
 Serialize the watchdog and `finally` cleanup through one restoration routine;
 compare current state before writing and escalate unexpected drift. Without
 verified conditional updates, arrange exclusive operator configuration access.
+Preserve the required monitor identity fields and complete configuration in the
+update payload, changing only the drill settings back to their saved values.
 Record unavailable cron-update access as pending; alert-write access alone does
 not enable the cron source. See the
 [ticker missed-run runbook](../../../docs/maintenance/00-betterstack-setup.md#ticker-missed-run-alerts).
