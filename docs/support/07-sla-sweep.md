@@ -88,7 +88,7 @@ Closed cases 180 days past `closedAt` have their evidence deleted and their free
 
 ### 5. Chat-access backstop
 
-On the intervention branch, `sweepSupportChatAccess()` (`lib/support/chat-sweep.ts`) runs five bounded steps, 10 rows each: end grants that expired or whose case is resolved, closed or deleted; retry Stream leaves for ended interventions still seated; re-sync the channel lock for channels whose grants started or ended in the last hour; retry joins for live interventions unseated after 2 minutes (ending them `CHANNEL_GONE` if the channel is gone); and send the post-decision "we reviewed messages" notice once per case. See [chat access](06-chat-access-and-intervention.md#ending-the-sweep-and-the-review-notice).
+`sweepSupportChatAccess()` (`lib/support/chat-sweep.ts`) runs five bounded steps, 10 rows each: end grants that expired or whose case is resolved, closed or deleted; retry Stream leaves for ended interventions still seated; re-sync the channel lock for channels whose grants started or ended in the last hour; retry joins for live interventions unseated after 2 minutes (ending them `CHANNEL_GONE` if the channel is gone); and send the post-decision "we reviewed messages" notice once per case. See [chat access](06-chat-access-and-intervention.md#ending-the-sweep-and-the-review-notice).
 
 ### 6. Chargeback deadline alerts
 
@@ -126,7 +126,7 @@ The auto-close, moderation-deadline and overdue-evidence arms have no dedicated 
 ## Where in code
 
 - `lib/support/sla-sweep.ts`: `runSupportSlaSweep()`, `fetchSlaSweepCandidates()`, `autoCloseResolvedRows()`, `processDisputeDeadlineAlerts()`, `pageCriticalDisputeDeadlines()`.
-- `lib/support/problem-cascade.ts`, `lib/support/evidence-retention.ts`, `lib/support/chat-sweep.ts` (intervention branch).
+- `lib/support/problem-cascade.ts`, `lib/support/evidence-retention.ts`, `lib/support/chat-sweep.ts`.
 - `lib/cron/cleanup-registry.ts`, `lib/cron/with-cron-lock.ts`, `netlify/functions/cron-tick.mts`.
 
 ## Deprecated & Superseded Approaches

@@ -109,7 +109,7 @@ These are short records of the owner decisions that shaped the support system: t
 
 ## SD-14: Staff read chats only through case-linked, audited, time-boxed grants
 
-- **Status:** Accepted, on the `feat/support-chat-intervention` branch (merges before these docs).
+- **Status:** Accepted, implemented (#2343).
 - **Context.** Operators held Stream global admin and could mint tokens for any user, so chat reads were silent and contradicted the privacy copy. That was fixed first; staff still needed a sanctioned way to read a chat for a case.
 - **Decision.** Only open human cases with a linked booking qualify. A READ grant lasts 24 hours; an INTERVENE grant lasts 24, 72 or 168 hours (default 72) and needs an overdue-evidence, safety or fraud basis, either verified or asserted with a reason. DM grants cover both members from seven days before the booking; group grants cover the reporter and picked targets. Every grant is an append-only access-log row with an ops-log reason, organization audit rows without content, and a `SystemEvent` per transcript page. Familiarise Support joins visibly, posts through an audited route, and leaves at resolution; parties are told after the decision unless telling would create risk. A moderation report never unlocks a chat; staff open a case from it first.
 - **Planned (P2).** Privileged-access approval tiers and recording dual control.

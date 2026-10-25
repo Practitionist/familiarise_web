@@ -53,7 +53,7 @@ flowchart TD
 | Organization views count sensitive personal complaints but never show who raised them.                                      | App: `ORG_SENSITIVE_PERSONAL_CATEGORIES` and the triage feed's `withheld.sensitivePersonal` count. | `__tests__/security/org-support-threads-sensitive.test.ts`                         |
 | Organization feeds return metadata only, never message bodies.                                                              | App: `THREAD_METADATA_SELECT` in `app/api/organizations/[orgId]/support-threads/route.ts`.         | `__tests__/security/org-scope-payload-allowlist.test.ts`                           |
 | Evidence recipients see their own prompt and answer, never the case transcript.                                             | App: `GET /api/support/evidence/[requestId]`.                                                      | `__tests__/support/evidence-route-authz.test.ts`                                   |
-| Organization admins never read booking chats.                                                                               | App: chat routes need `supportChat.read`, a platform-operator surface (intervention branch).       | `__tests__/support/route-authz-matrix.test.ts`                                     |
+| Organization admins never read booking chats.                                                                               | App: chat routes need `supportChat.read`, a platform-operator surface.                             | `__tests__/support/route-authz-matrix.test.ts`                                     |
 
 ## Filing for an organization
 
@@ -77,7 +77,7 @@ Staff file a PERSONAL case for a customer with the customer as submitter, so it 
 | Org-workspace Support pages                                             | Workspace member      | The viewer's personal and workspace requests only; organization-owned cases stay in the organization dashboard.                                                            |
 | Back-office inbox and workspace                                         | `tickets.manage`      | Every case; contact details need `users.read`, payment subjects need `payments.read`, recommendations and holds need `payments.read`.                                      |
 
-`ORG_SENSITIVE_PERSONAL_CATEGORIES` lists the personal categories an organization may count but not see: ORG_ADMIN_DISPUTE, QUALITY_COMPLAINT, GRIEVANCE, CONSULTANT_NO_SHOW, CONSULTANT_LATE, SESSION_ENDED_EARLY, SESSION_QUALITY_POOR and WRONG_CONSULTANT. The intervention branch adds SAFETY_CONCERN. Non-sensitive personal cases on the organization's bookings do appear in the activity feed as metadata, including the requester's name.
+`ORG_SENSITIVE_PERSONAL_CATEGORIES` lists the personal categories an organization may count but not see: ORG_ADMIN_DISPUTE, QUALITY_COMPLAINT, GRIEVANCE, CONSULTANT_NO_SHOW, CONSULTANT_LATE, SESSION_ENDED_EARLY, SESSION_QUALITY_POOR and WRONG_CONSULTANT and SAFETY_CONCERN. Non-sensitive personal cases on the organization's bookings do appear in the activity feed as metadata, including the requester's name.
 
 ## Evidence parties
 

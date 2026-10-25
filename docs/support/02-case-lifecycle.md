@@ -131,7 +131,7 @@ Status notifications for a PATCH are staged after the transaction commits, unlik
 
 ## Resolve, reopen and close
 
-**Resolving** (by PATCH or by a DECIDE action) sets `resolvedAt`, releases every payout hold on the case with one `support.case.release-holds` ops-log row, ends every live chat-access grant as `CASE_RESOLVED` (on the intervention branch), and stages a CSAT bell keyed `csat:<caseId>:<resolvedAt>` that is delivered no earlier than 24 hours later. Anonymous grievance cases get no CSAT prompt.
+**Resolving** (by PATCH or by a DECIDE action) sets `resolvedAt`, releases every payout hold on the case with one `support.case.release-holds` ops-log row, ends every live chat-access grant as `CASE_RESOLVED`, and stages a CSAT bell keyed `csat:<caseId>:<resolvedAt>` that is delivered no earlier than 24 hours later. Anonymous grievance cases get no CSAT prompt.
 
 **A customer reply on a RESOLVED case** is a follow-up: it is stored and the status does not change. To reopen, the customer must ask explicitly ("This didn't fix it" in the UI, `reopen: true` on the API). The reopen is refused, in order:
 

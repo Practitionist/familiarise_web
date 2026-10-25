@@ -87,7 +87,37 @@ WHERE a."deletedAt" IS NULL AND c."closedAt" <= now() - interval '180 days';
 
 ## Intervention seat stuck
 
-Applies once the `feat/support-chat-intervention` branch is merged.
+**Symptom.** Posting as Familiarise Support returns 409 `NOT_JOINED` on a live intervention; or the grant has ended and Familiarise Support is still a member of the booking chat; or the sweep's `errors` list `chat-access join <grantId>`, `chat-access leave <grantId>` or `chat-access boundary <channelType>:<channelId>`.
+
+**Confirm.**
+
+```sql
+-- Live interventions not seated (the sweep retries these once they are 2+ minutes old)
+SELECT id, "caseId", "channelType", "channelId", "createdAt", "expiresAt"
+FROM "SupportCaseChatAccess"
+WHERE kind = 'INTERVENE' AND "endedAt" IS NULL AND "streamJoinedAt" IS NULL
+ORDER BY "createdAt";
+
+-- Ended interventions whose seat was never cleared (the sweep retries the leave)
+SELECT id, "caseId", "channelType", "channelId", "endedAt", "endReason"
+FROM "SupportCaseChatAccess"
+WHERE kind = 'INTERVENE' AND "endedAt" IS NOT NULL
+  AND "streamJoinedAt" IS NOT NULL AND "streamLeftAt" IS NULL
+ORDER BY "endedAt";
+```
+
+**Impact.** An unseated grant means staff cannot post, although the parties may already have the "Support joined" bell. A seat left after the grant ended keeps a visible Familiarise Support member, and possibly the channel lock, in a chat staff no longer have a basis to be in.
+
+**Fix.**
+
+1. **Not seated.** `retryJoins()` in `lib/support/chat-sweep.ts` calls `joinIntervention()` (`lib/stream/support-intervention.ts`) on every run for live, unexpired grants older than 2 minutes. A channel that no longer exists ends the grant as `CHANNEL_GONE`. A frozen channel is left alone and retried, because it may thaw. Any other error, such as an open Stream circuit breaker, is listed in `errors` and retried next run. If the case no longer needs the seat, end the intervention (`END_INTERVENTION` on `POST /api/support/cases/[caseId]/chat`).
+2. **Not cleared.** `leaveEndedInterventions()` calls `leaveIntervention()`. That sends `fs-leave-<grantId>`, removes `familiarise-support` and stamps `streamLeftAt`. If another live, seated intervention holds the same channel, it only stamps (`handed-over`) and the seat stays. A missing channel counts as left, and a duplicate leave message is ignored, so re-running is safe ([re-run the sweep](#re-running-the-support-sweep)).
+3. **Member present, no row matches.** If `addMembers` succeeded but the `streamJoinedAt` stamp failed, and the grant then ended, neither query finds it and nothing reconciles it. Remove `familiarise-support` from the channel by hand in Stream.
+4. **Boundary.** `syncRecentBoundaries()` re-applies or lifts the channel lock (`syncSupportBoundary()`) only for channels whose interventions started or ended in the last hour. After that window nothing re-syncs it until an intervention on the channel starts or ends again.
+
+**Verify.** The first query no longer returns the grant: `streamJoinedAt` is set and the chat shows the `fs-join-<grantId>` line, or the grant ended as `CHANNEL_GONE`. For a stuck leave, the second query no longer returns the grant: `streamLeftAt` is set and Familiarise Support is not a member, unless a successor grant holds the seat. The next sweep has no `chat-access` errors for these ids.
+
+**Prevention.** [Chat access and intervention](06-chat-access-and-intervention.md#intervention-join-post-leave).
 
 **Symptom.** Staff cannot post as Familiarise Support (409 `NOT_JOINED`), or Familiarise Support is still in a chat after the case was resolved.
 
@@ -176,7 +206,7 @@ The support PRs left schema and sidecar changes for the owner to apply at the en
 
 1. **Stop the bleeding first.** Confirm production no longer queries the dropped legacy support tables (the stop-gap or promotion tracked in #2271). A failing `support-sla-sweep` with "table SupportTicket does not exist" means this step is not done.
 2. **Drift check, read-only.** `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`. Review every statement; nothing should drop a sidecar index.
-3. **Apply the schema** for the support columns and tables: recommendation `releaseSeat`, `voidedAt`, `voidedById`; `EarningsHoldReason.SUPPORT_CASE`; `SupportCase.legalHoldAt`; `SupportCaseDecision.supersedesDecisionId`; the event kinds `CHANNEL_CHANGED`, `LEGAL_HOLD_CHANGED`, `EVIDENCE_PURGED`; the tax issue types; and, from the intervention branch, `SupportCaseChatAccess`, its enums, the four chat event kinds, `SAFETY_CONCERN` and `SupportCase.moderationReportId`. Use the exact SQL listed in each PR body.
+3. **Apply the schema** for the support columns and tables: recommendation `releaseSeat`, `voidedAt`, `voidedById`; `EarningsHoldReason.SUPPORT_CASE`; `SupportCase.legalHoldAt`; `SupportCaseDecision.supersedesDecisionId`; the event kinds `CHANNEL_CHANGED`, `LEGAL_HOLD_CHANGED`, `EVIDENCE_PURGED`; the tax issue types; and, from #2343, `SupportCaseChatAccess`, its enums, the four chat event kinds, `SAFETY_CONCERN` and `SupportCase.moderationReportId`. Use the exact SQL listed in each PR body.
 4. **Apply the sidecar** (`npm run db:sidecars`, which runs `scripts/db/apply-sidecars.ts --all` over `prisma/sql/*.sql`): the support constraints, indexes and triggers in [the schema reference](11-schema-and-invariants.md#sidecar-objects).
 5. **Verify the sidecar.** `npx tsx scripts/ci/check-db-sidecars.ts` with `DATABASE_URL` pointing at the target (it checks that every named sidecar object is in the live catalog), then rerun the drift check and expect no support statements.
 6. **Bucket check.** The private `support-attachments` bucket exists with the 20 MiB limit and the allowed types (`ensureSupportEvidenceBucket()` in `lib/support/case-attachments.ts` re-applies them).

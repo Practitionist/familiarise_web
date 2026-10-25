@@ -11,7 +11,7 @@
   - access and routes: `npx jest __tests__/support/case-access.test.ts __tests__/support/route-authz-matrix.test.ts __tests__/support/evidence-route-authz.test.ts __tests__/security/org-support-threads-sensitive.test.ts`
   - privacy: `npx jest __tests__/compliance/support-privacy-export.test.ts __tests__/compliance/support-erasure.test.ts`
   - intake: `npx jest __tests__/support/service.test.ts __tests__/support/platform-route.test.ts __tests__/support/case-intake-scope.test.ts __tests__/support/flow-walk.test.ts`
-  - chat access (intervention branch): `npx jest __tests__/support/chat-doors.test.ts __tests__/support/chat-transcript.test.ts __tests__/support/chat-access-eligibility.test.ts __tests__/support/sla-sweep-chat-arm.test.ts __tests__/stream/support-intervention.test.ts`
+  - chat access: `npx jest __tests__/support/chat-doors.test.ts __tests__/support/chat-transcript.test.ts __tests__/support/chat-access-eligibility.test.ts __tests__/support/sla-sweep-chat-arm.test.ts __tests__/stream/support-intervention.test.ts`
 - A new route belongs in `__tests__/support/route-authz-matrix.test.ts`.
 
 ## Database race tier

@@ -17,16 +17,16 @@ Decision records (with their explanation), refund and payment-hold reasons, and 
 
 `GET /api/user/privacy/export` (`app/api/user/privacy/export/route.ts`) returns a JSON file (`schemaVersion: "dpdp-2023-s11-v1"`, `Cache-Control: no-store`). `readSupportExport()` in `lib/support/privacy-export.ts` adds the support part:
 
-| Key                       | Contents                                                                                                                                                                                                              |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `supportTickets`          | The person's cases. An organization-filed case about them appears only as a summary (`filedByOrganization`). The callback phone appears only if they filed the case.                                                  |
-| `supportGrievances`       | Their cases with category GRIEVANCE.                                                                                                                                                                                  |
-| `supportMessages`         | Their own non-internal messages. Staff internal notes are never exported.                                                                                                                                             |
-| `supportEvidenceRequests` | Evidence they were asked for and what they answered.                                                                                                                                                                  |
-| `supportAttachments`      | Metadata of files they uploaded; no file contents or URLs.                                                                                                                                                            |
-| `supportRatings`          | Their CSAT scores.                                                                                                                                                                                                    |
-| `supportChatAccess`       | (Intervention branch.) Staff chat-access grants on their booking chats: date, kind, expiry and end, plus the basis and case reference only if they filed the case. Never the operator's identity or any chat content. |
-| `supportExportComplete`   | False if any collection hit the 20,000-row stop (`EXPORT_MAX_ROWS`; pages of 500).                                                                                                                                    |
+| Key                       | Contents                                                                                                                                                                                       |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `supportTickets`          | The person's cases. An organization-filed case about them appears only as a summary (`filedByOrganization`). The callback phone appears only if they filed the case.                           |
+| `supportGrievances`       | Their cases with category GRIEVANCE.                                                                                                                                                           |
+| `supportMessages`         | Their own non-internal messages. Staff internal notes are never exported.                                                                                                                      |
+| `supportEvidenceRequests` | Evidence they were asked for and what they answered.                                                                                                                                           |
+| `supportAttachments`      | Metadata of files they uploaded; no file contents or URLs.                                                                                                                                     |
+| `supportRatings`          | Their CSAT scores.                                                                                                                                                                             |
+| `supportChatAccess`       | Staff chat-access grants on their booking chats: date, kind, expiry and end, plus the basis and case reference only if they filed the case. Never the operator's identity or any chat content. |
+| `supportExportComplete`   | False if any collection hit the 20,000-row stop (`EXPORT_MAX_ROWS`; pages of 500).                                                                                                             |
 
 A chat-access grant is exported only after its post-decision "we reviewed messages" notice went out: `reviewNoticeAt` is set, neither it nor any other grant on the case was withheld, the case is not deleted, and the person is in the grant's scope or is the case's requester or submitter. A withheld grant therefore never appears, which keeps the export consistent with what the person was told. A party who did not file the case, such as the reported user, sees that access happened but not whose case it was or why: `basis` and `caseReferenceNumber` are null for them.
 
@@ -34,7 +34,7 @@ The export has no rate limit.
 
 ## Erasure
 
-When an account is deleted, `supportRetainedHistoryCount()` (`lib/support/erasure.ts`) counts support rows that a hard delete cannot remove because other people's records reference them: the person's cases that have decisions, evidence, attachments or recommendations; evidence requests they received or sent; attachments they uploaded; decisions they made; recommendations they proposed or decided; and, on the intervention branch, chat-access grants they opened and their cases with chat access. Any non-zero count sends the account down the scrub path.
+When an account is deleted, `supportRetainedHistoryCount()` (`lib/support/erasure.ts`) counts support rows that a hard delete cannot remove because other people's records reference them: the person's cases that have decisions, evidence, attachments or recommendations; evidence requests they received or sent; attachments they uploaded; decisions they made; recommendations they proposed or decided; and chat-access grants they opened and their cases with chat access. Any non-zero count sends the account down the scrub path.
 
 `scrubSupportPiiTx()` then, in the erasure transaction:
 
@@ -43,7 +43,7 @@ When an account is deleted, `supportRetainedHistoryCount()` (`lib/support/erasur
 - replaces their evidence answers and the prompts they wrote with "[erased]";
 - renames their attachments "[erased]" and tombstones them (`deletedAt`).
 
-After commit, `removeSupportAttachmentObjects()` deletes the files with verified deletes. A failure reports to Sentry and returns "support_attachments: N file(s) not confirmed deleted — re-run required"; the daily storage reconciliation later removes tombstoned objects older than 7 days. Decision explanations stay. On the intervention branch, an erased user's id remains in `SupportCaseChatAccess.scopeUserIds`, because the append-only access log cannot be changed.
+After commit, `removeSupportAttachmentObjects()` deletes the files with verified deletes. A failure reports to Sentry and returns "support_attachments: N file(s) not confirmed deleted — re-run required"; the daily storage reconciliation later removes tombstoned objects older than 7 days. Decision explanations stay. An erased user's id remains in `SupportCaseChatAccess.scopeUserIds`, because the append-only access log cannot be changed.
 
 ## The 180-day evidence purge
 
@@ -78,7 +78,7 @@ sequenceDiagram
     end
 ```
 
-**Scrubbed:** the case title becomes "Support request" and its description "[deleted after the retention period]"; callback and external-requester fields are cleared; every message body (internal notes included) and message metadata; evidence prompts and answers; attachment names (rows tombstoned, files deleted); and event notes, except on record kinds (holds, recommendations, decisions, legal hold, purge, and on the intervention branch the chat-access events, which follow the security-log period).
+**Scrubbed:** the case title becomes "Support request" and its description "[deleted after the retention period]"; callback and external-requester fields are cleared; every message body (internal notes included) and message metadata; evidence prompts and answers; attachment names (rows tombstoned, files deleted); and event notes, except on record kinds (holds, recommendations, decisions, legal hold, purge, and the chat-access events, which follow the security-log period).
 
 **Kept:** the case skeleton (reference, status, dates, category, ids), decisions, recommendations, holds, subjects and payment links, attachment rows with their storage path, and the CSAT score.
 

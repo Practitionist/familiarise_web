@@ -44,14 +44,14 @@ Agents should read [`.claude/skills/support/SKILL.md`](../../.claude/skills/supp
 | Attachments                | `lib/support/attachment-policy.ts`, `lib/support/case-attachments.ts`                                                                                                                  |
 | Background job             | `lib/support/sla-sweep.ts`, `lib/support/problem-cascade.ts`, `lib/support/evidence-retention.ts`                                                                                      |
 | Privacy                    | `lib/support/privacy-export.ts`, `lib/support/erasure.ts`                                                                                                                              |
-| Chat access                | `lib/support/chat-access.ts`, `lib/support/chat-doors.ts`, `lib/support/chat-sweep.ts`, `lib/stream/support-intervention.ts` (intervention branch)                                     |
+| Chat access                | `lib/support/chat-access.ts`, `lib/support/chat-doors.ts`, `lib/support/chat-sweep.ts`, `lib/stream/support-intervention.ts`                                                           |
 | Routes                     | `app/api/support/**`, `app/api/appointments/[appointmentId]/support/route.ts`, `app/api/staff/appointments/[appointmentId]/cancel/route.ts`                                            |
 | Schema                     | `prisma/schema.prisma` (`SupportCase*`, `SupportFinancialRecommendation`, `SupportFlowOutcome`), `prisma/sql/check-constraints.sql`                                                    |
 | Tests                      | `__tests__/support/`, `__tests__/db/support/`, `__tests__/backoffice/support-*`, `__tests__/compliance/support-*`                                                                      |
 
 ## Status vocabulary
 
-Pages mark behaviour that is not on `dev` as **planned** with a priority from the support tracker (#2293): **P0** live breakage, a security hole or data loss now; **P1** a launch blocker; **P2** within about 30 days after launch (#2270); **P3** backlog; **P4** deferred by decision. Content from the `feat/support-chat-intervention` branch is described as current because it merges before these docs; the platform reschedule door is on `dev`.
+Pages mark behaviour that is not on `dev` as **planned** with a priority from the support tracker (#2293): **P0** live breakage, a security hole or data loss now; **P1** a launch blocker; **P2** within about 30 days after launch (#2270); **P3** backlog; **P4** deferred by decision. Case-linked chat access and intervention (#2343) and the platform reschedule door are on `dev`.
 
 ## Deprecated & Superseded Approaches
 

@@ -11,9 +11,6 @@ last-reviewed: 2026-10-23
 
 Booking chats are private between the parties. Operators cannot read them by default: operators are plain Stream `user`s, and no account can mint a Stream token for another user (`mapRoleToStream()` in `lib/user.ts`, `assertCanMintToken()` in `actions/stream/chat/stream.action.ts`). When a support case needs the chat, staff open a **chat-access grant** on that case. A **READ** grant opens an audited, time-boxed transcript viewer. An **INTERVENE** grant also seats a visible "Familiarise Support" member in the channel, so staff can post there. Every grant is written to an append-only access log, and once the case is decided the parties get a "we reviewed messages from your booking chat" notice.
 
-> [!NOTE]
-> Everything on this page except the Stream role and token rules above lives on the `feat/support-chat-intervention` branch, which merges before this documentation lands. Paths such as `lib/support/chat-access.ts` exist on that branch.
-
 ## Who can do what
 
 | Action                         | Route                                                | Surface                 | Step-up            | Ops-log action                 |

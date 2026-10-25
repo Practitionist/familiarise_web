@@ -35,7 +35,7 @@ erDiagram
     SupportCase ||--o{ EarningsHold : "holds via sourceRef"
 ```
 
-`SupportCaseChatAccess` exists on the intervention branch. `EarningsHold` is not a foreign key: a support hold is an `EarningsHold` row with `reason = SUPPORT_CASE` and `sourceRef = caseId`.
+`EarningsHold` is not a foreign key: a support hold is an `EarningsHold` row with `reason = SUPPORT_CASE` and `sourceRef = caseId`.
 
 ## Tables
 
@@ -58,7 +58,7 @@ erDiagram
 | `legalHoldAt`                                                                                                                                                | Admin legal hold; blocks the 180-day purge.                                                      |
 | `externalRequesterEmail`, `externalRequesterName`                                                                                                            | Anonymous grievance contact.                                                                     |
 | `appealOfDecisionId`, `appealOfModerationActionId`                                                                                                           | Set on appeal cases.                                                                             |
-| `moderationReportId`                                                                                                                                         | (Intervention branch.) The report a case was opened from; unique.                                |
+| `moderationReportId`                                                                                                                                         | The report a case was opened from; unique.                                                       |
 
 ### Related tables
 
@@ -72,7 +72,7 @@ erDiagram
 | `SupportCaseDecision`            | Outcome, explanation, private rationale, `appealUntil`, `supersedesDecisionId`.                                                                                               | `(caseId, clientActionId)`, `supersedesDecisionId` |
 | `SupportFinancialRecommendation` | Payment, amount in paise, reason, `releaseSeat` (marks the funded seat REFUNDED when the refund is sent; never cancels the booking), review verdict, void stamps, `refundId`. | `(caseId, clientActionId)`, `refundId`             |
 | `SupportCaseAttachment`          | Private file metadata; `storagePath`, `completedAt`, `deletedAt`.                                                                                                             | `storagePath`                                      |
-| `SupportCaseChatAccess`          | (Intervention branch.) Append-only log of staff chat grants.                                                                                                                  | `opsActionId`                                      |
+| `SupportCaseChatAccess`          | Append-only log of staff chat grants.                                                                                                                                         | `opsActionId`                                      |
 | `SupportFlowOutcome`             | One row per terminal guided turn; counts, no message bodies.                                                                                                                  | none                                               |
 | `EarningsHold`                   | Shared payout hold; support rows use `reason = SUPPORT_CASE`, `sourceRef = caseId`.                                                                                           | see sidecar                                        |
 
@@ -80,26 +80,26 @@ Most foreign keys from evidence, decisions, recommendations, attachments and cha
 
 ## Sidecar objects
 
-| Object                                                                                   | Kind                                       | Rule                                                                                                                                      |
-| ---------------------------------------------------------------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `support_case_open_scope_key`                                                            | Partial unique index                       | One open, undeleted case per (scope, organization, scope key, requester, submitter, category), NULLS NOT DISTINCT.                        |
-| `support_case_subject_primary_key`                                                       | Partial unique index                       | At most one primary subject per case.                                                                                                     |
-| `support_case_scope_and_shape_chk`                                                       | CHECK                                      | A category or flow key; an occurrence implies an appointment; only incidents link to a problem; CSAT 1–5.                                 |
-| `support_case_ownership_and_appeal_shape`                                                | CHECK                                      | Non-personal cases name an organization; at most one appeal target.                                                                       |
-| `support_case_attachment_shape`                                                          | CHECK                                      | At most one of message or evidence request; size not negative.                                                                            |
-| `support_recommendation_shape`                                                           | CHECK                                      | Decided fields all set or all null; a void needs a decided, now unapproved row; amount not negative.                                      |
-| `support_recommendation_one_open_per_payment`                                            | Partial unique index                       | One undecided recommendation per payment.                                                                                                 |
-| `support_case_decision_immutable`                                                        | Trigger                                    | Decisions are never updated or deleted.                                                                                                   |
-| `support_decision_one_original_per_case`                                                 | Partial unique index                       | One decision per case that supersedes nothing.                                                                                            |
-| `support_case_closed_at_idx`                                                             | Partial index                              | Keeps the purge scan cheap.                                                                                                               |
-| `earnings_hold_one_earning`                                                              | CHECK                                      | A hold freezes exactly one consultant or organization earning.                                                                            |
-| `earnings_hold_active_consultant_key`, `earnings_hold_active_org_key`                    | Partial unique indexes                     | One active hold per (earning, reason, source).                                                                                            |
-| `ops_action_proposal_one_open_key`                                                       | Partial unique index                       | One open second-admin proposal per (action, target).                                                                                      |
-| `support_chat_access_shape`                                                              | CHECK (intervention branch)                | Ended grants name a reason; only interventions carry Stream stamps; `OPEN_CASE` is READ-only; notice after end; at least one scoped user. |
-| `support_chat_one_live_intervention_per_channel`                                         | Partial unique index (intervention branch) | One live Familiarise Support seat per channel.                                                                                            |
-| `support_chat_one_live_read_per_operator`                                                | Partial unique index (intervention branch) | One live READ grant per operator per case.                                                                                                |
-| `support_chat_access_append_only`                                                        | Trigger (intervention branch)              | Grants are never deleted; only end, Stream and notice stamps may be set, once.                                                            |
-| `support_chat_access_live_expiry_idx`, `..._pending_leave_idx`, `..._pending_notice_idx` | Partial indexes (intervention branch)      | Keep the sweep's chat scans cheap.                                                                                                        |
+| Object                                                                                   | Kind                   | Rule                                                                                                                                      |
+| ---------------------------------------------------------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `support_case_open_scope_key`                                                            | Partial unique index   | One open, undeleted case per (scope, organization, scope key, requester, submitter, category), NULLS NOT DISTINCT.                        |
+| `support_case_subject_primary_key`                                                       | Partial unique index   | At most one primary subject per case.                                                                                                     |
+| `support_case_scope_and_shape_chk`                                                       | CHECK                  | A category or flow key; an occurrence implies an appointment; only incidents link to a problem; CSAT 1–5.                                 |
+| `support_case_ownership_and_appeal_shape`                                                | CHECK                  | Non-personal cases name an organization; at most one appeal target.                                                                       |
+| `support_case_attachment_shape`                                                          | CHECK                  | At most one of message or evidence request; size not negative.                                                                            |
+| `support_recommendation_shape`                                                           | CHECK                  | Decided fields all set or all null; a void needs a decided, now unapproved row; amount not negative.                                      |
+| `support_recommendation_one_open_per_payment`                                            | Partial unique index   | One undecided recommendation per payment.                                                                                                 |
+| `support_case_decision_immutable`                                                        | Trigger                | Decisions are never updated or deleted.                                                                                                   |
+| `support_decision_one_original_per_case`                                                 | Partial unique index   | One decision per case that supersedes nothing.                                                                                            |
+| `support_case_closed_at_idx`                                                             | Partial index          | Keeps the purge scan cheap.                                                                                                               |
+| `earnings_hold_one_earning`                                                              | CHECK                  | A hold freezes exactly one consultant or organization earning.                                                                            |
+| `earnings_hold_active_consultant_key`, `earnings_hold_active_org_key`                    | Partial unique indexes | One active hold per (earning, reason, source).                                                                                            |
+| `ops_action_proposal_one_open_key`                                                       | Partial unique index   | One open second-admin proposal per (action, target).                                                                                      |
+| `support_chat_access_shape`                                                              | CHECK                  | Ended grants name a reason; only interventions carry Stream stamps; `OPEN_CASE` is READ-only; notice after end; at least one scoped user. |
+| `support_chat_one_live_intervention_per_channel`                                         | Partial unique index   | One live Familiarise Support seat per channel.                                                                                            |
+| `support_chat_one_live_read_per_operator`                                                | Partial unique index   | One live READ grant per operator per case.                                                                                                |
+| `support_chat_access_append_only`                                                        | Trigger                | Grants are never deleted; only end, Stream and notice stamps may be set, once.                                                            |
+| `support_chat_access_live_expiry_idx`, `..._pending_leave_idx`, `..._pending_notice_idx` | Partial indexes        | Keep the sweep's chat scans cheap.                                                                                                        |
 
 ## Invariants by enforcer
 
