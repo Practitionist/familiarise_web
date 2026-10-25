@@ -35,10 +35,12 @@ The Stream user background sync job maintains data consistency between your Pris
 
 ### Schedule
 
-The sweep runs daily at 03:40 UTC, which is 09:10 IST. That minute is not
-arbitrary: `scripts/ci/check-workflow-hygiene.ts` costs every shared cron start
-minute against a connection-pool budget, so moving it means checking that guard
-rather than picking a number.
+The sweep is written as a step of the daily 03:00 UTC batch in
+`.github/workflows/cron-daily.yml` (08:30 IST). That batch runs on GitHub
+Actions, which is budget-blocked, so the schedule is not firing today; the
+sweep runs when an operator starts it. Moving it to the Netlify ticker is
+planned. Start minutes are costed by `scripts/ci/check-workflow-hygiene.ts`
+against a connection-pool budget, so check that guard before moving one.
 
 There are three ways to start it. The GitHub Actions schedule is the normal one;
 `workflow_dispatch` on the same workflow is the manual one; and an administrator
@@ -48,7 +50,7 @@ cannot diverge.
 
 ### Where the definition actually lives
 
-The workflow is `.github/workflows/stream-sync.yml`, the Actions wrapper is
+The workflow step is `stream-sync` in `.github/workflows/cron-daily.yml`, the Actions wrapper is
 `jobs/stream/stream-sync.ts`, and the core is `scripts/stream/stream-sync.ts`.
 Read those rather than a copy pasted here — an earlier version of this document
 carried an inline copy of the workflow, and every field in it had drifted: the
@@ -639,16 +641,17 @@ async function deleteUsersWithRetry(
 
 ## Background Sync Flow
 
-The following flowchart illustrates the complete background sync process.
+The following flowchart illustrates the complete background sync process. Today only the operator-triggered entry runs it, because the scheduled entry is not firing.
 
 ```mermaid
 flowchart TD
-    Start([GitHub Actions Trigger · Daily at 03:30 UTC]) --> CheckEnv{Environment · Variables Set?}
+    Sched(["Scheduled · Daily 03:00 UTC Actions batch · not firing while Actions is budget-blocked"]) --> CheckEnv{Environment · Variables Set?}
+    Operator(["Operator-triggered · staff Jobs page or /api/admin/system-jobs/run"]) --> CheckEnv
 
     CheckEnv -->|No| ErrorExit1[Exit with Error Code 1]
     CheckEnv -->|Yes| InitClient["Initialize Stream Client · timeout: 30s"]
 
-    InitClient --> InitVars["Initialize Variables · - totalProcessed = 0 · - totalStale = 0 · - totalDeleted = 0 · - failedDeletions = ["]]
+    InitClient --> InitVars["Initialize Variables · - totalProcessed = 0 · - totalStale = 0 · - totalDeleted = 0 · - failedDeletions = empty list"]
 
     InitVars --> StartLoop{More Stream · Users?}
 
@@ -663,7 +666,7 @@ flowchart TD
     ExtractIDs --> QueryPrisma["Query Prisma for Active Users · WHERE id IN ..."]
 
     QueryPrisma --> CreateSet[Create Set of Active User IDs]
-    CreateSet --> InitStale[Initialize staleUsersInPage = []]
+    CreateSet --> InitStale["Initialize staleUsersInPage as an empty list"]
 
     InitStale --> LoopUsers[For Each Stream User ID]
 

@@ -156,8 +156,9 @@ The thresholds are defined in `lib/stream/channel-lifecycle.ts` —
 `isPastRetention()` — and shared between the expiry job and the dashboard sync
 so the two never drift apart.
 
-The daily job `jobs/stream/expire-event-channels.ts` (scheduled in
-`.github/workflows/expire-event-channels.yml`) applies two stages:
+The daily job `jobs/stream/expire-event-channels.ts` (an `expire-event-channels`
+step in `.github/workflows/cron-daily.yml`; it has no entry in
+`lib/cron/cleanup-registry.ts` and Actions is budget-blocked, so it does not run on a schedule today) applies two stages:
 
 - **Freeze (+7d after the last slot ends).** `updatePartial({ set: { frozen:
 true } })`: history stays readable, nobody can post. After a successful
