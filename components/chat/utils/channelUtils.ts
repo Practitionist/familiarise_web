@@ -228,3 +228,23 @@ export function buildOrgChannelFilter(scope: Scope): Record<string, unknown> {
   const pinnedOrgId = scopeOrgId(scope);
   return pinnedOrgId ? { organization_id: { $eq: pinnedOrgId } } : {};
 }
+
+/** The class or webinar channel subtitle: who hosts it, how many others, and who can read it. */
+export function eventChannelSubtitle({
+  eventType,
+  hostName,
+  memberCount,
+}: {
+  eventType: "webinar" | "class";
+  hostName: string | null;
+  memberCount: number;
+}): string {
+  const noun = eventType === "class" ? "classmate" : "attendee";
+  const count = hostName ? Math.max(0, memberCount - 1) : memberCount;
+  const people = `${count} ${noun}${count === 1 ? "" : "s"}`;
+  return [
+    "group chat",
+    hostName ? `${hostName} (host) + ${people}` : people,
+    `Everyone in this ${eventType} can read this`,
+  ].join(" · ");
+}

@@ -329,10 +329,6 @@ export const ChatSidebar = () => {
     scopeRef.current = scope;
   }, [scope]);
   const searchParams = useSearchParams();
-  const contextAppointmentId =
-    searchParams?.get("contextAppointmentId") ??
-    searchParams?.get("appointmentId") ??
-    null;
   const counterpartyUserId =
     searchParams?.get("counterpartyUserId") ??
     searchParams?.get("peerUserId") ??
@@ -857,7 +853,7 @@ export const ChatSidebar = () => {
   useEffect(() => {
     if (!client?.userID || !hasDeepLink) return;
     const pinnedOrgId = scopeOrgId(scope);
-    const deepLinkKey = `${client.userID}::${counterpartyUserId ?? ""}::${contextAppointmentId ?? ""}::${deepLinkEventType ?? ""}::${deepLinkEventId ?? ""}::${deepLinkChannelId ?? ""}::${pinnedOrgId ?? "personal"}`;
+    const deepLinkKey = `${client.userID}::${counterpartyUserId ?? ""}::${deepLinkEventType ?? ""}::${deepLinkEventId ?? ""}::${deepLinkChannelId ?? ""}::${pinnedOrgId ?? "personal"}`;
     if (deepLinkHandledRef.current === deepLinkKey) return;
     deepLinkHandledRef.current = deepLinkKey;
     initialSelectionDoneRef.current = true;
@@ -952,7 +948,6 @@ export const ChatSidebar = () => {
               kind: "dm",
               counterpartyUserId,
               peerUserId: counterpartyUserId,
-              ...(contextAppointmentId ? { contextAppointmentId } : {}),
               organizationId: pinnedOrgId ?? null,
             },
             "dm",
@@ -996,7 +991,6 @@ export const ChatSidebar = () => {
     client,
     hasDeepLink,
     counterpartyUserId,
-    contextAppointmentId,
     deepLinkEventType,
     deepLinkEventId,
     deepLinkChannelId,

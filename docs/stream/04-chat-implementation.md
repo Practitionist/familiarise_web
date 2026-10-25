@@ -10,6 +10,7 @@
 - [Member Management](#member-management)
 - [Channel Creation Flow](#channel-creation-flow)
 - [Code Examples](#code-examples)
+- [Appointment Chat Sheet and Booking Tag](#appointment-chat-sheet-and-booking-tag)
 - [Best Practices](#best-practices)
 - [Unread Message Digest](#unread-message-digest)
 
@@ -605,6 +606,44 @@ The personal navigation badge (`hooks/useChatUnreadCount.ts`) starts from Stream
 
 ---
 
+## Appointment Chat Sheet and Booking Tag
+
+### The side sheet
+
+On an appointment's detail page (consultee, consultant and the organisation views, which all render `AppointmentDetailClient`), the chat actions open a right-side sheet instead of leaving the page. The sheet is full screen on a phone.
+
+- `chatAffordancesForVm` (`components/appointments/consultee/ConsulteeAppointmentsAdapter.tsx`) gives each chat action a `chat` target (`AppointmentChatTarget` in `lib/appointments/adapter.ts`) as well as its Messages `href`. The detail page opens the target in `AppointmentChatSheet`; the appointment lists still navigate to Messages.
+- The labels are **Message Consultant** / **Message Consultee** for the DM and **Class chat** / **Webinar chat** for the group channel.
+- `AppointmentChatSheet` (`components/appointments/detail/AppointmentChatSheet.tsx`) is loaded with `next/dynamic` on first open, so the chat SDK stays off the detail page bundle. It renders `ChatSurface` with the sheet's own children, so the app's one Stream client, `ChatUnavailable` and the "Reconnecting…" banner behave as they do on the Messages page.
+- Inside the surface the sheet calls `POST /api/stream/channels/open` with the same body the Messages deep link sends (including the org scope from `useOrgScope`), watches the returned channel, sets it active, and mounts `ChatContainer`. A refusal from the route is shown in the sheet.
+- `ChatPaneContext` is provided with `backToList` bound to closing the sheet, so the channel header's back arrow on a phone closes the sheet.
+- The sheet header links **Open in Messages** to the full deep link. That link, and the deep links in notifications and emails, keep working unchanged.
+
+### The booking tag
+
+Opening a DM with an appointment context posts nothing. Instead the composer offers a removable chip above the message box:
+
+> About: Career coaching · next session Tue, 3 Nov, 4:00 PM
+
+- `ChatContainer` takes `contextAppointmentId`. The Messages page passes the `contextAppointmentId` URL parameter (through `ChatLayout`); the sheet passes the appointment it was opened from.
+- `BookingTagComposer` (`components/chat/BookingTag.tsx`) asks the server for the tag. The chip shows only when the server answers. If every session is over it reads "last session" instead of "next session".
+- The chip uses `MessageComposer`'s `overrideSubmitHandler` to add `booking_appointment_id` to the **next** message the user sends, on both the optimistic copy and the request, so a retried send keeps it. The chip then disappears. Removing it, or sending nothing, writes nothing.
+
+### Why a rendered tag cannot be forged
+
+Message custom fields are written by the sender's browser, so a member could put any title or date on a message. The tag therefore never reads them.
+
+- `GET /api/stream/booking-tag?appointmentId=…&cid=messaging:…` (`app/api/stream/booking-tag/route.ts`) parses its query with `bookingTagQuerySchema` and returns `{ title, kind, nextSessionAt, lastSessionAt }` or 404.
+- It answers only when the DM's two human members (Familiarise Support and the retired booking-card user are ignored) are the caller and one other person, `resolveVerifiedBookingContextTitle` confirms both are parties to the appointment (consultee, consultant, or an accepted presenter collaborator on a webinar or class), and `isDmChannelIdEligible` confirms the DM is one the pair may open under the open route's org-scope rules.
+- The next session is the earliest live, non-tentative occurrence that has not ended (`pickSessionAnchor` in `lib/stream/booking-tag.ts`); with none left it is the latest one.
+- `MessageBookingTag` renders a message's tag only from that response, through react-query keyed on `(appointmentId, cid)`. It reads nothing else from the message and has no Get help link. Old server-posted cards are not rendered.
+
+### Group channel header and empty state
+
+For a `webinar-` or `class-` channel, `CustomChannelHeader` shows the title and then `eventChannelSubtitle` (`components/chat/utils/channelUtils.ts`), for example "group chat · Asha (host) + 4 classmates · Everyone in this class can read this". The host is the channel's `created_by`, and the count is the channel's `member_count` minus the host. An empty class channel says "Say hello to your class"; an empty webinar channel says "Say hello to everyone in this webinar". DMs keep the SDK's empty state.
+
+---
+
 ## Best Practices
 
 ### 1. Always Use Server-Side Creation
@@ -760,8 +799,9 @@ The window is the 30-minute slot that contains the event's `created_at`, so a re
 
 ## Deprecated & Superseded Approaches
 
-- **Separate `consultation-{id}` and `subscription-{id}` Channels**: Superseded by one canonical `messaging` DM per human pair (`dm-<a>-<b>` for personal scope, `dmo-<orgHash>-<pairHash>` for enterprise scope) with `booking-ctx-` receipt cards.
+- **Separate `consultation-{id}` and `subscription-{id}` Channels**: Superseded by one canonical `messaging` DM per human pair (`dm-<a>-<b>` for personal scope, `dmo-<orgHash>-<pairHash>` for enterprise scope) and a verified booking tag on the message that refers to a booking.
 - **Locale-Dependent `localeCompare` ID Sorting**: Superseded by UTF-16 code-unit sorting (`a < b ? [a, b] : [b, a]`) capped at 64 characters (`lib/stream-channel-ids.ts`).
+- **Server-Posted Booking Cards (`booking-ctx-`, `system-booking-context`)**: Opening a DM from an appointment used to post a receipt card as a server user named "Familiarise". People read it as a support message, it showed a Get help link and a duplicate title line, its date was the first session rather than the next, and it was written for both people even when nobody replied. Replaced by the booking tag on the sender's next message. Old cards in Stream are hidden by `CustomMessage`, and `LEGACY_BOOKING_CONTEXT_USER_ID` survives only for that and to keep the user out of DM member counts.
 - **Unmoderated Consultant-Consultee Threads**: Superseded by explicit `channel_moderator` assignment to `dm_consultant_user_id` at channel creation.
 
 ---

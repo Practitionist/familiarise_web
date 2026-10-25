@@ -6,9 +6,11 @@ import { useChatContext } from "stream-chat-react";
 import { ChannelInfoAndManageDialog } from "./ChannelInfoAndManageDialog";
 import { useChatPane } from "./ChatPaneContext";
 import {
+  eventChannelSubtitle,
   getChannelDisplayInfo,
   getTruncatedDisplayName,
 } from "./utils/channelUtils";
+import { parseEventChannelId } from "@/lib/stream-channel-ids";
 
 /**
  * The only way back to the channel list below `md`, where the conversation
@@ -50,7 +52,9 @@ export const CustomChannelHeader = () => {
           </Avatar>
           {displayInfo.isGroupDM && (
             <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-primary rounded-full border border-card flex items-center justify-center">
-              <span className="text-[8px] text-primary-foreground font-bold">G</span>
+              <span className="text-[8px] text-primary-foreground font-bold">
+                G
+              </span>
             </div>
           )}
         </div>
@@ -76,9 +80,18 @@ export const CustomChannelHeader = () => {
     );
   }
 
-  // For team channels, use the default display
   const displayName = channel.data?.name || channel.id || "";
-  const memberCount = Object.keys(channel.state.members || {}).length;
+  const memberCount =
+    channel.data?.member_count ??
+    Object.keys(channel.state.members || {}).length;
+  const event = parseEventChannelId(channel.id);
+  const subtitle = event
+    ? eventChannelSubtitle({
+        eventType: event.eventType,
+        hostName: channel.data?.created_by?.name ?? null,
+        memberCount,
+      })
+    : `${memberCount} ${memberCount === 1 ? "member" : "members"}`;
 
   return (
     <div className="flex items-center px-4 py-2 border-b border-border bg-card">
@@ -87,11 +100,9 @@ export const CustomChannelHeader = () => {
         <span className="text-muted-foreground mr-2">#</span>
       </div>
 
-      <div className="flex-1">
-        <div className="font-medium">{displayName}</div>
-        <div className="text-xs text-muted-foreground">
-          {memberCount} {memberCount === 1 ? "member" : "members"}
-        </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-medium">{displayName}</div>
+        <div className="text-xs text-muted-foreground">{subtitle}</div>
       </div>
 
       <ChannelInfoAndManageDialog channel={channel} />

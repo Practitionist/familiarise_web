@@ -4,15 +4,18 @@ import { MessageSquareIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   Channel,
-  MessageComposer,
+  EmptyStateIndicator,
   MessageList,
   VirtualizedMessageList,
   Window,
   WithComponents,
+  useChannelStateContext,
   useChatContext,
+  type EmptyStateIndicatorProps,
 } from "stream-chat-react";
 import { AlertTriangle } from "lucide-react";
 import { AppointmentDocumentsHint } from "./AppointmentDocumentsHint";
+import { BookingTagComposer } from "./BookingTag";
 import { ComposerDraftPersistence } from "./ComposerDraftPersistence";
 import { CustomChannelHeader } from "./CustomChannelHeader";
 import { CustomMessage } from "./CustomMessage";
@@ -20,7 +23,7 @@ import { SupportInterventionBanner } from "./SupportInterventionBanner";
 import { SystemMessage } from "./SystemMessage";
 import { StreamChatErrorBoundary } from "@/components/stream/StreamErrorBoundary";
 import { useMaintenanceState } from "@/providers/MaintenanceProvider";
-import { isEventChannel } from "@/lib/stream-channel-ids";
+import { isEventChannel, parseEventChannelId } from "@/lib/stream-channel-ids";
 import { EmptyState } from "@/components/dashboard/DataCard";
 
 // Was a hand-rolled near-copy of EmptyState with different dimensions, on a
@@ -36,15 +39,35 @@ const EmptyChannelState = () => (
   </div>
 );
 
+// An empty class or webinar channel invites the first message; DMs keep the SDK default.
+const ChannelEmptyState = (props: EmptyStateIndicatorProps) => {
+  const { channel } = useChannelStateContext();
+  const event = parseEventChannelId(channel.id);
+  if (!event || props.listType !== "message") {
+    return <EmptyStateIndicator {...props} />;
+  }
+  return (
+    <div className="flex h-full items-center justify-center p-8 text-sm text-muted-foreground">
+      {event.eventType === "class"
+        ? "Say hello to your class"
+        : "Say hello to everyone in this webinar"}
+    </div>
+  );
+};
+
 // System messages bypass `Message` and render through `MessageSystem`.
 // `uploads: false` still leaves the selector for commands/polls/location.
 const AttachmentSelectorOff = () => null;
 const CHAT_COMPONENT_OVERRIDES = {
   MessageSystem: SystemMessage,
   AttachmentSelector: AttachmentSelectorOff,
+  EmptyStateIndicator: ChannelEmptyState,
 };
 
-export const ChatContainer = () => {
+/** `contextAppointmentId` offers the booking chip in a DM both people are parties to. */
+export const ChatContainer = ({
+  contextAppointmentId = null,
+}: Readonly<{ contextAppointmentId?: string | null }>) => {
   const { channel } = useChatContext();
   const { phase } = useMaintenanceState();
   const [hasChannel, setHasChannel] = useState(false);
@@ -119,7 +142,9 @@ export const ChatContainer = () => {
                 <>
                   <AppointmentDocumentsHint />
                   <ComposerDraftPersistence />
-                  <MessageComposer focus />
+                  <BookingTagComposer
+                    contextAppointmentId={contextAppointmentId}
+                  />
                 </>
               )}
             </Window>

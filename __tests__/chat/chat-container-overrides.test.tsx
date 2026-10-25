@@ -57,6 +57,14 @@ jest.mock("../../components/chat/AppointmentDocumentsHint", () => {
   };
 });
 
+jest.mock("../../components/chat/BookingTag", () => {
+  const react = jest.requireActual<typeof import("react")>("react");
+  return {
+    BookingTagComposer: () =>
+      react.createElement("div", { "data-testid": "message-composer" }),
+  };
+});
+
 jest.mock("../../components/chat/ComposerDraftPersistence", () => {
   const react = jest.requireActual<typeof import("react")>("react");
   return {

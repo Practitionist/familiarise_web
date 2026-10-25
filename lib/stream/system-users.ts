@@ -1,13 +1,5 @@
 /**
- * The Stream user that posts booking-context cards. It has no Postgres row and
- * no token is ever minted for it, so only the server can author its messages.
- * The `system-` prefix keeps `stream-sync` from deleting it. Safe to import from client components.
+ * Author of the retired server-posted booking cards. Nothing posts as it any more;
+ * its old messages are hidden in chat and it never counts as a DM member.
  */
-export const BOOKING_CONTEXT_STREAM_USER = {
-  id: "system-booking-context",
-  name: "Familiarise",
-} as const;
-
-export function isBookingContextAuthor(userId: string | null | undefined) {
-  return userId === BOOKING_CONTEXT_STREAM_USER.id;
-}
+export const LEGACY_BOOKING_CONTEXT_USER_ID = "system-booking-context";

@@ -210,12 +210,21 @@ export function chatAffordancesForVm(options: {
   ) {
     const eventId = eventChannelIdOf(vm);
     if (eventId) {
-      const eventChatHref = `${messagesBasePath}?eventType=${vm.kind.toLowerCase()}&eventId=${encodeURIComponent(eventId)}`;
+      const eventType = vm.kind === "CLASS" ? "class" : "webinar";
+      const eventChatHref = `${messagesBasePath}?eventType=${eventType}&eventId=${encodeURIComponent(eventId)}`;
+      const label = eventType === "class" ? "Class chat" : "Webinar chat";
       chatItems.push({
         key: "event-chat",
-        label: "Open Event Chat",
+        label,
         href: eventChatHref,
         onClick: () => push(eventChatHref),
+        chat: {
+          kind: "event",
+          title: label,
+          messagesHref: eventChatHref,
+          eventType,
+          eventId,
+        },
       });
     }
   }
@@ -225,12 +234,20 @@ export function chatAffordancesForVm(options: {
       role === "consultant" ? consulteeUserIdOf(vm) : consultantUserIdOf(vm);
     if (counterpartyUserId) {
       const dmHref = `${messagesBasePath}?contextAppointmentId=${encodeURIComponent(vm.appointmentId)}&counterpartyUserId=${encodeURIComponent(counterpartyUserId)}`;
+      const label =
+        role === "consultant" ? "Message Consultee" : "Message Consultant";
       chatItems.push({
         key: "message",
-        label:
-          role === "consultant" ? "Message Consultee" : "Message Consultant",
+        label,
         href: dmHref,
         onClick: () => push(dmHref),
+        chat: {
+          kind: "dm",
+          title: label,
+          messagesHref: dmHref,
+          counterpartyUserId,
+          appointmentId: vm.appointmentId,
+        },
       });
     }
   }
