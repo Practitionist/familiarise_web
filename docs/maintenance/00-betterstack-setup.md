@@ -381,10 +381,10 @@ The required capabilities and completion SLOs live in
 `lib/cron/operational-health.ts`. These are monitoring budgets, not a second
 scheduler. Fifteen-minute recovery/delivery loops have 45 minutes to accommodate a
 missed tick and lease recovery; thirty-minute session-outcome loops have 90 minutes;
-support SLA scanning has 1 hour. Only ticker targets are required. Recording
-transfer, breach-deadline alerts and execution-history pruning run only from
-GitHub Actions workflows, which are budget-blocked, so they join the list when they
-move to the ticker.
+support SLA scanning has 1 hour. The required set follows the current entries in
+`lib/cron/operational-health.ts`, including longer budgets for daily jobs. Check
+the schedule catalog before enabling a capability's absence monitor; remaining
+Actions-only jobs need an observed replacement before becoming required here.
 
 The probe queries recent COMPLETED executions by their actual core job names,
 including `reconcile-pending-refunds` and `send-appointment-reminders`, whose HTTP
@@ -440,8 +440,9 @@ are observed.
 
 A tick's HTTP200 is not a health assertion. Workers return `X-Job-Outcome`, and
 execution history distinguishes successful completion, partial failure, failure
-and hold. Only an owned successful finish advances the shared heartbeat. Monitor
-individual capabilities and oldest outstanding work so a healthy email drain
+and hold. Owned successful finishes advance the shared heartbeat, which the daily
+Actions watchdog also writes. Treat it as an activity hint. Monitor individual
+capabilities and oldest outstanding work so a healthy email drain
 cannot mask stopped recording copies or compliance alerts.
 
 Sentry's `cron-tick` monitor must be active and accept check-ins. Rejected check-ins
