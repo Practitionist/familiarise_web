@@ -45,6 +45,23 @@ Crypto. Follow the active maintenance implementation and recovery instructions;
 never infer that a cached phase quiesces work already in flight. See the linked
 references for transaction-client, deployed-runtime and environment constraints.
 
+The 48-hour paid-unallocated arm of `expire-stale-requests` commits EXPIRED,
+history, `sub-unalloc:<paymentId>` full-refund markers and its bell together.
+Its legacy recovery filters eligible payments before LIMIT with no liability
+lookback. Keep existing markers/attempts, hold an oversized payment envelope
+without partially expiring its liabilities, and preserve visible backlog on
+errors or deadline truncation. Exhausting only the remaining invocation allowance
+is a deferral, not an envelope error; stop the ordered page for the next run. Its shared 16-second admission budget covers
+only this family; earlier expiry arms and nudge fairness remain separate work.
+Do not describe the entire worker as deadline-bounded or its backlog as drained. `unallocatedHasMore` includes retired/foreign-owned obligations needing operator review; it is not a signal to keep automatically driving retries.
+When extracting these phases, retain the same deadline closure and ordered fresh
+payment allowance; keep earlier staged markers available for the delivery phase.
+
+Raw SQL must follow Prisma's physical `@map`/`@@map` identifiers; the subscription
+status column is `requestStatus`. Derive disposable SQL fixture identifiers from
+the generated schema metadata, and verify query planning read-only before making
+production capacity claims.
+
 ## Worktree verification
 
 The Jest configuration keeps an explicit `@/` source mapping while retaining Next.js’s default mocks and transforms. Run targeted suites through the repository config. A CLI `--moduleNameMapper` replaces the entire map and can discard `server-only`, asset and Redis-edge mocks; do not use it as a shortcut for alias resolution.

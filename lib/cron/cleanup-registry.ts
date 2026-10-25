@@ -520,6 +520,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           subscriptionsExpired: r.subscriptionsExpired,
           subscriptionNudgesSent: r.subscriptionNudgesSent,
           paymentPendingExpired: r.paymentPendingExpired,
+          unallocatedHasMore: r.unallocatedHasMore,
+          unallocatedRefundsDeferred: r.unallocatedRefundsDeferred,
         }),
         failureMessage: "Failed to expire stale requests",
       }),
