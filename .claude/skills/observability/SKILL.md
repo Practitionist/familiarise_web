@@ -120,6 +120,9 @@ delivery proof. Read back both configurations, observe an accepted normal
 check-in, then prove one controlled missed-check-in notification reaches the
 operator and restore the normal configuration. Do not stop production jobs,
 create another paid monitor, or disable another project's monitor for the drill.
+Serialize the watchdog and `finally` cleanup through one restoration routine;
+compare current state before writing and escalate unexpected drift. Without
+verified conditional updates, arrange exclusive operator configuration access.
 Record unavailable cron-update access as pending; alert-write access alone does
 not enable the cron source. See the
 [ticker missed-run runbook](../../../docs/maintenance/00-betterstack-setup.md#ticker-missed-run-alerts).

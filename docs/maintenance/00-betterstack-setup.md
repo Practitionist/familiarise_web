@@ -513,13 +513,18 @@ as pending work; a saved alert cannot compensate for a disabled monitor.
    mute state, project, slug and scheduling fields, plus alert status, connected
    source IDs, environment, recipient action and repeat interval. Keep the existing
    monitor and route. Do not stop jobs or change the active cron host.
+   Arrange an exclusive configuration window with the other operators: the
+   documented cron update API does not specify compare-and-set support, and a
+   pre-write read alone cannot prevent a concurrent operator write. Do not start
+   without that window or verified conditional-update support in the chosen API.
 3. Immediately after a fresh ordinary check-in, temporarily set only the monitor's
    expectation to `* * * * *`, `checkin_margin: 1` and
    `failure_issue_threshold: 1`, preserving its other settings. The actual ticker
    continues every five minutes. Read the temporary configuration back. Start an
    independent 180-second restoration watchdog before applying it, and restore
-   in the controlling operation's `finally` path as well. Do not start without
-   functioning restoration access.
+   in the controlling operation's `finally` path as well. Both must call one
+   restoration routine with a shared cross-process lock so only one restorer
+   writes at a time. Do not start without functioning restoration access.
 4. Allow the one-minute expectation to miss its check-in and margin. This
    exercises Sentry's real missing-check-in detection and the **production**
    notification route; it does not mean an ordinary five-minute ticker run was
@@ -531,8 +536,14 @@ as pending work; a saved alert cannot compensate for a disabled monitor.
    operator actually receives its notification. Save sanitized incident/alert
    links, UTC timestamps and the recipient's confirmation. An incident visible
    only in Sentry or an alert's `lastTriggered` timestamp is not a delivery receipt.
-6. Restore the changed schedule, margin and thresholds on success, failure or
-   timeout. Read back both configurations and compare every saved configuration
+6. On success, failure or timeout, the restoration owner first reads both current
+   configurations. If they already match the saved normal settings, make no
+   write. If they match the drill state with all other saved fields unchanged,
+   restore only the changed schedule, margin and thresholds, using a conditional
+   write if the API supports one or the exclusive configuration window otherwise.
+   Any other drift must stop automatic restoration and be escalated to the
+   operator; never replay the full saved snapshot over an unexpected state.
+   Read back both configurations and compare every saved configuration
    field, including the unchanged monitor identity/status/mute state and alert
    connection/recipient, before declaring restoration complete. Runtime timestamps
    and check-in counters naturally change. Resolve any mismatch with the operator;
