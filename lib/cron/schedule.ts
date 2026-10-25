@@ -392,8 +392,8 @@ export function dueTargets(now: Date): Target[] {
     const offset = TARGET_OFFSET_MINUTES[name] ?? 0;
     return (((minuteOfDay - offset) % every) + every) % every < 5;
   });
-  // The ledger report persists its cursor and yields at the cap; other jobs keep their slots.
-  return due.length >= MAX_TARGETS_PER_TICK
+  // The ledger report persists its cursor and yields past the cap; other jobs keep their slots.
+  return due.length > MAX_TARGETS_PER_TICK
     ? due.filter((name) => name !== "reconcile-ledgers")
     : due;
 }
