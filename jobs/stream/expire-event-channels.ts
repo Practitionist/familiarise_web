@@ -1,36 +1,13 @@
-/**
- * Post-event chat channel lifecycle (#1134 P1-17).
- *
- * Nothing ever ended a webinar or class chat. `getWebinarIdsForUser` and
- * `getClassIdsForUser` have no date or status filter, so the reconcile pass
- * could never mark a finished event stale and attendees stayed members forever.
- * Channel count and membership grew without bound on a product billed per MAU,
- * and there was no retention answer for a compliance review.
- *
- * Two stages, decided in #1134:
- *   +7 days after the session ends  → FREEZE. History stays readable, nobody can
- *      post. Long enough for the real follow-up Q&A, which for a class or cohort
- *      is often where the value lands; short enough to bound membership.
- *   +retention days                 → DELETE, hard. Reuses the org's existing
- *      `streamRecordingRetentionDays` dial (default 90) rather than inventing a
- *      second number to explain.
- *
- * Both stages are idempotent: deleting a deleted channel is a no-op, and since
- * 2026-08-23 freezing is LEDGERED — `Webinar.chatFrozenAt` / `Class.chatFrozenAt`
- * records that a channel was frozen, so already-frozen channels are filtered out
- * before any Stream call is made. Before the ledger every daily run re-issued
- * `updatePartial({frozen:true})` for every channel in the 7–90d age band:
- * value-idempotent, but each no-op burned an UpdateChannelPartial call until
- * ~300 of them tripped Stream's per-minute cap (the 2026-08-23 10:36 IST alert)
- * and the resulting 429s opened the circuit breaker and starved the delete stage.
- */
-import "dotenv/config";
+/** Freeze ended event channels and dormant DMs, then request retention deletion. */
+import { z } from "zod";
 
 import prisma from "../../lib/prisma";
-import { createRunFailureReporter } from "../../lib/observability/run-failures";
+import type { RunFailureReporter } from "../../lib/observability/run-failures";
+import { reportSentryError } from "../../lib/observability/report";
 import {
   getStreamChatClient,
   isStreamConfigured,
+  isExpectedStreamError,
   withStreamCircuitBreaker,
 } from "../../lib/stream-client";
 import {
@@ -49,9 +26,7 @@ import {
   STREAM_BATCH_PAUSE_MS,
   STREAM_CONCURRENCY_LIMIT,
 } from "../../lib/stream/batch";
-import { withCronLock } from "../../lib/cron/with-cron-lock";
-import { abortIfMaintenance } from "../../lib/maintenance-cron";
-import { runJob } from "../../lib/observability/job-sentry";
+import { readJobCheckpoint, withCronLock } from "../../lib/cron/with-cron-lock";
 import {
   DAY_MS,
   DEFAULT_RETENTION_DAYS,
@@ -62,7 +37,9 @@ export { DEFAULT_RETENTION_DAYS, FREEZE_AFTER_DAYS };
 
 const MAX_RETENTION_DAYS = 365;
 const LOOKBACK_MARGIN_DAYS = 60;
-const MAX_EVENTS_PER_RUN = 5_000;
+const MAX_EVENTS_PER_RUN = 25;
+const MAX_DM_CHANNELS_PER_RUN = 10;
+const MAX_DM_UNFREEZES_PER_RUN = 100;
 
 const PARSED_PACING_MS = Number(process.env.STREAM_FREEZE_PACING_MS);
 const FREEZE_PACING_MS =
@@ -85,6 +62,9 @@ export interface ExpireEventChannelsResult {
   dmDeleteRequests: number;
   errors: string[];
   success: boolean;
+  missingChannels: number;
+  checkpoint: string | null;
+  deferred: number;
 }
 
 interface DmPairRow {
@@ -94,6 +74,8 @@ interface DmPairRow {
   chatFrozenAt: Date | null;
   consultationIds: string[];
   subscriptionIds: string[];
+  organizationId: string | null;
+  inactiveOrganization: boolean;
 }
 
 interface EventRow {
@@ -107,8 +89,7 @@ interface EventRow {
     | { kind: "collab"; id: string };
 }
 
-async function loadEndedEvents(): Promise<EventRow[]> {
-  const now = new Date();
+function readEndedAppointments(after: string | null, now: Date) {
   const lookbackFrom = new Date(
     now.getTime() - (MAX_RETENTION_DAYS + LOOKBACK_MARGIN_DAYS) * DAY_MS,
   );
@@ -119,17 +100,19 @@ async function loadEndedEvents(): Promise<EventRow[]> {
     },
     select: { id: true },
   };
-  const appointments = await prisma.appointment.findMany({
+  return prisma.appointment.findMany({
     where: {
       deletedAt: null,
+      ...(after ? { id: { gt: after } } : {}),
       OR: [{ webinar: { isNot: null } }, { class: { isNot: null } }],
       occurrences: {
         some: { deletedAt: null, endsAt: { lt: now, gte: lookbackFrom } },
       },
     },
     take: MAX_EVENTS_PER_RUN,
-    orderBy: { createdAt: "desc" },
+    orderBy: { id: "asc" },
     select: {
+      id: true,
       webinar: {
         select: {
           id: true,
@@ -180,127 +163,125 @@ async function loadEndedEvents(): Promise<EventRow[]> {
       },
     },
   });
-
-  const byChannel = new Map<string, EventRow>();
-  const collabByPlanKey = new Map<
-    string,
-    {
-      planType: "webinar" | "class";
-      planId: string;
-      channelId: string;
-      endsAt: Date;
-      retentionDays: number;
-      allEventsFrozen: boolean;
-      latestFrozenAt: Date | null;
-    }
-  >();
-
-  for (const appointment of appointments) {
-    const endsAt = appointment.occurrences[0]?.endsAt;
-    if (!endsAt) continue;
-
-    const channelId = appointment.webinar
-      ? `${WEBINAR_PREFIX}${appointment.webinar.id}`
-      : appointment.class
-        ? `${CLASS_PREFIX}${appointment.class.id}`
-        : null;
-    if (!channelId) continue;
-
-    let entity: EventRow["entity"];
-    let chatFrozenAt: Date | null;
-    if (appointment.webinar) {
-      entity = { kind: "webinar", id: appointment.webinar.id };
-      chatFrozenAt = appointment.webinar.chatFrozenAt;
-    } else if (appointment.class) {
-      entity = { kind: "class", id: appointment.class.id };
-      chatFrozenAt = appointment.class.chatFrozenAt;
-    } else {
-      continue;
-    }
-
-    const planOrg =
-      appointment.webinar?.webinarPlan?.organization ??
-      appointment.class?.classPlan?.organization ??
-      null;
-    const retentionDays =
+}
+type EndedAppointment = Awaited<
+  ReturnType<typeof readEndedAppointments>
+>[number];
+interface CollaboratorCandidate {
+  planType: "webinar" | "class";
+  planId: string;
+  channelId: string;
+  endsAt: Date;
+  retentionDays: number;
+}
+function eventCandidate(appointment: EndedAppointment) {
+  const endsAt = appointment.occurrences[0]?.endsAt;
+  const booking = appointment.webinar
+    ? {
+        entity: { kind: "webinar" as const, id: appointment.webinar.id },
+        frozenAt: appointment.webinar.chatFrozenAt,
+        plan: appointment.webinar.webinarPlan,
+        prefix: WEBINAR_PREFIX,
+      }
+    : appointment.class
+      ? {
+          entity: { kind: "class" as const, id: appointment.class.id },
+          frozenAt: appointment.class.chatFrozenAt,
+          plan: appointment.class.classPlan,
+          prefix: CLASS_PREFIX,
+        }
+      : null;
+  if (!endsAt || !booking) return null;
+  const planOrg = booking.plan?.organization;
+  const event: EventRow = {
+    channelId: `${booking.prefix}${booking.entity.id}`,
+    endsAt,
+    retentionDays:
       planOrg?.chatRetentionDays ??
       appointment.organization?.chatRetentionDays ??
       planOrg?.streamRecordingRetentionDays ??
       appointment.organization?.streamRecordingRetentionDays ??
-      DEFAULT_RETENTION_DAYS;
-
-    const existing = byChannel.get(channelId);
-    if (!existing || existing.endsAt < endsAt) {
-      byChannel.set(channelId, {
-        channelId,
-        endsAt,
-        retentionDays,
-        chatFrozenAt,
-        entity,
-      });
-    } else if (existing.chatFrozenAt === null && chatFrozenAt !== null) {
-      existing.chatFrozenAt = chatFrozenAt;
-      existing.entity = entity;
-    }
-
-    const planType = appointment.webinar ? "webinar" : "class";
-    const plan =
-      appointment.webinar?.webinarPlan ?? appointment.class?.classPlan;
-    if (plan?.id && (plan.collaborators?.length ?? 0) > 0) {
-      const planKey = `${planType}:${plan.id}`;
-      const prev = collabByPlanKey.get(planKey);
-      const isFrozen = chatFrozenAt !== null;
-      if (!prev) {
-        collabByPlanKey.set(planKey, {
-          planType,
-          planId: plan.id,
-          channelId: collabChannelId(planType, plan.id),
-          endsAt,
-          retentionDays,
-          allEventsFrozen: isFrozen,
-          latestFrozenAt: chatFrozenAt,
-        });
-      } else {
-        if (prev.endsAt < endsAt) prev.endsAt = endsAt;
-        prev.allEventsFrozen = prev.allEventsFrozen && isFrozen;
-        if (
-          chatFrozenAt &&
-          (!prev.latestFrozenAt || prev.latestFrozenAt < chatFrozenAt)
-        ) {
-          prev.latestFrozenAt = chatFrozenAt;
-        }
-      }
-    }
+      DEFAULT_RETENTION_DAYS,
+    chatFrozenAt: booking.frozenAt,
+    entity: booking.entity,
+  };
+  return { event, plan: booking.plan, planType: booking.entity.kind };
+}
+function mergeEvent(byChannel: Map<string, EventRow>, event: EventRow): void {
+  const existing = byChannel.get(event.channelId);
+  if (!existing || existing.endsAt < event.endsAt)
+    byChannel.set(event.channelId, event);
+  else if (existing.chatFrozenAt === null && event.chatFrozenAt !== null) {
+    existing.chatFrozenAt = event.chatFrozenAt;
+    existing.entity = event.entity;
   }
-
-  for (const cand of collabByPlanKey.values()) {
-    if (cand.endsAt >= now) continue;
-    const hasFutureOccurrence =
-      prisma.appointmentOccurrence?.findFirst &&
-      (await prisma.appointmentOccurrence.findFirst({
-        where: {
-          deletedAt: null,
-          completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
-          endsAt: { gt: now },
-          appointment:
-            cand.planType === "webinar"
-              ? { deletedAt: null, webinar: { webinarPlanId: cand.planId } }
-              : { deletedAt: null, class: { classPlanId: cand.planId } },
-        },
-        select: { id: true },
-      }));
-    if (hasFutureOccurrence) continue;
-
-    byChannel.set(cand.channelId, {
-      channelId: cand.channelId,
-      endsAt: cand.endsAt,
-      retentionDays: cand.retentionDays,
-      chatFrozenAt: cand.allEventsFrozen ? cand.latestFrozenAt : null,
-      entity: { kind: "collab", id: cand.planId },
+}
+function mergeCollaborator(
+  candidates: Map<string, CollaboratorCandidate>,
+  candidate: NonNullable<ReturnType<typeof eventCandidate>>,
+): void {
+  const { event, plan, planType } = candidate;
+  if (!plan?.id || !plan.collaborators.length) return;
+  const key = `${planType}:${plan.id}`;
+  const previous = candidates.get(key);
+  if (!previous)
+    candidates.set(key, {
+      planType,
+      planId: plan.id,
+      channelId: collabChannelId(planType, plan.id),
+      endsAt: event.endsAt,
+      retentionDays: event.retentionDays,
     });
+  else if (previous.endsAt < event.endsAt) previous.endsAt = event.endsAt;
+}
+async function collaboratorEvent(
+  candidate: CollaboratorCandidate,
+  now: Date,
+): Promise<EventRow | null> {
+  if (candidate.endsAt >= now) return null;
+  const latest = await prisma.appointmentOccurrence.findFirst({
+    where: {
+      deletedAt: null,
+      completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+      appointment:
+        candidate.planType === "webinar"
+          ? { deletedAt: null, webinar: { webinarPlanId: candidate.planId } }
+          : { deletedAt: null, class: { classPlanId: candidate.planId } },
+    },
+    orderBy: { endsAt: "desc" },
+    select: { endsAt: true },
+  });
+  if (!latest || latest.endsAt >= now) return null;
+  return {
+    channelId: candidate.channelId,
+    endsAt: latest.endsAt,
+    retentionDays: candidate.retentionDays,
+    chatFrozenAt: null,
+    entity: { kind: "collab", id: candidate.planId },
+  };
+}
+async function loadEndedEvents(
+  after: string | null,
+): Promise<{ events: EventRow[]; after: string | null }> {
+  const now = new Date();
+  const appointments = await readEndedAppointments(after, now);
+  if (!appointments.length && after) return loadEndedEvents(null);
+  const byChannel = new Map<string, EventRow>();
+  const collaborators = new Map<string, CollaboratorCandidate>();
+  for (const appointment of appointments) {
+    const candidate = eventCandidate(appointment);
+    if (!candidate) continue;
+    mergeEvent(byChannel, candidate.event);
+    mergeCollaborator(collaborators, candidate);
   }
-
-  return Array.from(byChannel.values()).filter((row) => row.endsAt < now);
+  for (const candidate of collaborators.values()) {
+    const event = await collaboratorEvent(candidate, now);
+    if (event) byChannel.set(event.channelId, event);
+  }
+  return {
+    events: [...byChannel.values()].filter((event) => event.endsAt < now),
+    after: appointments.at(-1)?.id ?? null,
+  };
 }
 
 /**
@@ -327,7 +308,7 @@ async function loadDmPairs(): Promise<{
   truncated: boolean;
 }> {
   const now = new Date();
-  const orgRetention = await loadOrgChatRetention();
+  const { retention: orgRetention, inactive } = await loadOrgChatRetention();
 
   // The scan window has to cover the LONGEST retention any org has actually
   // configured, not the constant. `MAX_RETENTION_DAYS` is 365; an org that sets
@@ -411,23 +392,19 @@ async function loadDmPairs(): Promise<{
     lastActivityAt: Date | null,
     chatFrozenAt: Date | null,
   ) => {
-    if (!consultantUserId || !consulteeUserId || !lastActivityAt) return;
-    // Older than the longest retention we honour: the channel is already gone,
-    // and re-deriving its id every night costs a Stream call for nothing.
-    if (lastActivityAt < lookbackFrom) return;
-
-    let channelId: string;
-    try {
-      channelId = getDmChannelId(
-        consultantUserId,
-        consulteeUserId,
-        orgId ?? undefined,
-      );
-    } catch {
-      // `getDmChannelId` throws on a self-pair. Seed data has produced those;
-      // they have no channel to expire.
+    if (
+      !consultantUserId ||
+      !consulteeUserId ||
+      !lastActivityAt ||
+      lastActivityAt < lookbackFrom ||
+      consultantUserId === consulteeUserId
+    )
       return;
-    }
+    const channelId = getDmChannelId(
+      consultantUserId,
+      consulteeUserId,
+      orgId ?? undefined,
+    );
 
     const existing = byChannel.get(channelId);
     if (!existing) {
@@ -440,6 +417,8 @@ async function loadDmPairs(): Promise<{
         chatFrozenAt,
         consultationIds: kind === "consultation" ? [bookingId] : [],
         subscriptionIds: kind === "subscription" ? [bookingId] : [],
+        organizationId: orgId,
+        inactiveOrganization: orgId !== null && inactive.has(orgId),
       });
       return;
     }
@@ -504,11 +483,27 @@ async function loadDmPairs(): Promise<{
  * incomplete-input-drives-a-destructive-decision shape the truncation guard
  * exists to prevent. Two columns across a table with tens of rows.
  */
-async function loadOrgChatRetention(): Promise<Map<string, number>> {
+async function loadOrgChatRetention() {
   const orgs = await prisma.organization.findMany({
-    select: { id: true, chatRetentionDays: true },
+    select: {
+      id: true,
+      chatRetentionDays: true,
+      status: true,
+      deletedAt: true,
+    },
   });
-  return new Map(orgs.map((o) => [o.id, o.chatRetentionDays]));
+  return {
+    retention: new Map(orgs.map((o) => [o.id, o.chatRetentionDays])),
+    inactive: new Set(
+      orgs
+        .filter(
+          (o) =>
+            o.status === "DEACTIVATED" ||
+            (o.deletedAt !== null && o.deletedAt !== undefined),
+        )
+        .map((o) => o.id),
+    ),
+  };
 }
 
 /**
@@ -544,7 +539,7 @@ function classifyDmPairs(
       // which is how the 2026-08-23 burst happened.
       if (pair.chatFrozenAt) alreadyFrozen++;
       else toFreeze.push(pair);
-    } else if (pair.chatFrozenAt) {
+    } else if (pair.chatFrozenAt && !pair.inactiveOrganization) {
       // Active again, and the ledger says we froze them. This is the branch the
       // whole design turns on.
       toUnfreeze.push(pair);
@@ -594,29 +589,41 @@ async function runDmStage(
   result: ExpireEventChannelsResult,
   freezeBudget: number,
   deletePacing: DeletePacingState,
+  streamFailures: RunFailureReporter,
+  progress: { events: string | null; dm: string | null },
 ): Promise<void> {
-  const { pairs, truncated } = await loadDmPairs();
+  const { pairs: allPairs, truncated } = await loadDmPairs();
+  const now = Date.now();
+
+  // Unfreeze FIRST, across every pair rather than the cursor slice: this sweep
+  // is the only path that reopens a returning pair's DM, so it must not wait
+  // for the cursor to come round.
+  const { toUnfreeze } = classifyDmPairs(allPairs, now);
+  const unfreezeBatch = toUnfreeze.slice(0, MAX_DM_UNFREEZES_PER_RUN);
+  result.deferred += toUnfreeze.length - unfreezeBatch.length;
+  await applyDmFrozen(chat, unfreezeBatch, false, result, streamFailures);
+
+  const ordered = [...allPairs];
+  ordered.sort((a, b) =>
+    a.channelId < b.channelId ? -1 : Number(a.channelId > b.channelId),
+  );
+  const after = progress.dm;
+  const tail = after ? ordered.filter((p) => p.channelId > after) : ordered;
+  const pairs = (tail.length ? tail : ordered).slice(
+    0,
+    MAX_DM_CHANNELS_PER_RUN,
+  );
+  result.deferred += allPairs.length - pairs.length;
   if (pairs.length === 0) return;
 
-  const { toFreeze, toUnfreeze, toDelete, alreadyFrozen } = classifyDmPairs(
-    pairs,
-    Date.now(),
-  );
+  const { toFreeze, toDelete, alreadyFrozen } = classifyDmPairs(pairs, now);
   result.skippedAlreadyFrozen += alreadyFrozen;
-
-  // Unfreeze FIRST, and outside the budget. A frozen channel belonging to an
-  // active pair is a live user-facing fault; a dormant pair staying unfrozen
-  // one more day is not. Spending the run's remaining calls on freezes while a
-  // returning consultee cannot message their consultant would be the wrong way
-  // round.
-  await applyDmFrozen(chat, toUnfreeze, false, result);
+  progress.dm = pairs.at(-1)?.channelId ?? null;
 
   const freezeBatch = toFreeze.slice(0, Math.max(freezeBudget, 0));
-  await applyDmFrozen(chat, freezeBatch, true, result);
+  await applyDmFrozen(chat, freezeBatch, true, result, streamFailures);
   if (toFreeze.length > freezeBatch.length) {
-    result.errors.push(
-      `dm freeze cap: deferred ${toFreeze.length - freezeBatch.length} channels to the next run`,
-    );
+    result.deferred += toFreeze.length - freezeBatch.length;
   }
 
   // Delete — but NEVER from a page that may be incomplete.
@@ -650,8 +657,10 @@ async function runDmStage(
       (pair) => `${getChannelTypeFromId(pair.channelId)}:${pair.channelId}`,
     );
     try {
-      await withStreamCircuitBreaker(() =>
-        chat.deleteChannels(cids, { hard_delete: true }),
+      await withStreamCircuitBreaker(
+        () => chat.deleteChannels(cids, { hard_delete: true }),
+        undefined,
+        streamFailures,
       );
       // Counts channels SENT for deletion, not channels that existed to delete.
       // `deleteChannels` is idempotent and returns a task id rather than a
@@ -687,6 +696,7 @@ async function applyDmFrozen(
   pairs: DmPairRow[],
   frozen: boolean,
   result: ExpireEventChannelsResult,
+  streamFailures: RunFailureReporter,
 ): Promise<void> {
   if (pairs.length === 0) return;
   const verb = frozen ? "freeze" : "unfreeze";
@@ -701,26 +711,58 @@ async function applyDmFrozen(
 
     const outcomes = await Promise.allSettled(
       batch.map((pair) =>
-        withStreamCircuitBreaker(() =>
-          chat
-            .channel(getChannelTypeFromId(pair.channelId), pair.channelId)
-            .updatePartial({ set: { frozen } }),
+        withStreamCircuitBreaker(
+          () =>
+            chat
+              .channel(getChannelTypeFromId(pair.channelId), pair.channelId)
+              .updatePartial({ set: { frozen } }),
+          undefined,
+          streamFailures,
         ),
       ),
     );
 
     const consultationIds: string[] = [];
     const subscriptionIds: string[] = [];
+    const orgIds = frozen
+      ? []
+      : batch.flatMap((pair) =>
+          pair.organizationId ? [pair.organizationId] : [],
+        );
+    const inactiveAfter = new Set(
+      orgIds.length
+        ? (
+            await prisma.organization.findMany({
+              where: {
+                id: { in: orgIds },
+                OR: [{ status: "DEACTIVATED" }, { deletedAt: { not: null } }],
+              },
+              select: { id: true },
+            })
+          ).map((org) => org.id)
+        : [],
+    );
+    const refreeze: DmPairRow[] = [];
     outcomes.forEach((outcome, i) => {
       const pair = batch[i];
       if (outcome.status === "fulfilled") {
+        if (
+          !frozen &&
+          pair.organizationId &&
+          inactiveAfter.has(pair.organizationId)
+        ) {
+          refreeze.push(pair);
+          return;
+        }
         if (frozen) result.dmFrozen++;
         else result.dmUnfrozen++;
         consultationIds.push(...pair.consultationIds);
         subscriptionIds.push(...pair.subscriptionIds);
+      } else if (isExpectedStreamError(outcome.reason)) {
+        result.missingChannels++;
       } else {
-        // A DM that was never created is the common case — channels are minted
-        // lazily on first message — not a failure worth failing the run over.
+        result.success = false;
+        streamFailures.add("dm-freeze", outcome.reason);
         result.errors.push(
           `dm ${verb} ${pair.channelId}: ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
         );
@@ -728,6 +770,9 @@ async function applyDmFrozen(
     });
 
     await writeDmLedger(consultationIds, subscriptionIds, frozen, verb, result);
+    // A concurrent wind-down must win over an unfreeze based on an earlier booking snapshot.
+    if (refreeze.length)
+      await applyDmFrozen(chat, refreeze, true, result, streamFailures);
   }
 }
 
@@ -788,6 +833,7 @@ async function writeDmLedger(
         }),
     ]);
   } catch (err) {
+    result.success = false;
     result.errors.push(
       `dm ${verb} ledger: ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -795,17 +841,41 @@ async function writeDmLedger(
 }
 
 // Per-batch Stream failures collapse to one event per op per run.
-const streamFailures = createRunFailureReporter("stream");
+function channelExpiryFailures(): RunFailureReporter {
+  let count = 0;
+  let first: unknown;
+  const seen = new Set<unknown>();
+  const sample: Array<Record<string, unknown>> = [];
+  return {
+    add(operation, error, context = {}) {
+      if (seen.has(error)) return;
+      seen.add(error);
+      if (count++ === 0 || context.reason === "stream.billing") first = error;
+      if (sample.length < 10) sample.push({ operation, ...context });
+    },
+    flush() {
+      if (count === 0) return;
+      reportSentryError(first, {
+        subsystem: "stream",
+        op: "expire-event-channels",
+        level: "error",
+        fingerprint: ["stream", "expire-event-channels"],
+        extra: { count, sample },
+      });
+    },
+  };
+}
 
 export async function expireEventChannels(): Promise<ExpireEventChannelsResult> {
   // Flush inside the lock: a call refused by the lock never flushes the
   // running sweep's failures.
   return withCronLock(
     "expire-event-channels",
-    { failMode: "open" },
+    { failMode: "closed" },
     async () => {
+      const streamFailures = channelExpiryFailures();
       try {
-        return await expireEventChannelsUnlocked();
+        return await expireEventChannelsUnlocked(streamFailures);
       } finally {
         streamFailures.flush();
       }
@@ -813,31 +883,11 @@ export async function expireEventChannels(): Promise<ExpireEventChannelsResult> 
   );
 }
 
-async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult> {
-  const result: ExpireEventChannelsResult = {
-    frozen: 0,
-    deleted: 0,
-    skippedAlreadyFrozen: 0,
-    dmFrozen: 0,
-    dmUnfrozen: 0,
-    dmDeleteRequests: 0,
-    errors: [],
-    success: true,
-  };
-
-  if (!isStreamConfigured()) {
-    // Not a no-op success. The cron reports `success` and exits 0 on it, so a
-    // Stream config that silently went missing — the exact failure #1134 found
-    // in production, where the webhook secret was simply unset on Netlify —
-    // would show up as a green nightly run for as long as it lasted.
-    result.errors.push("Stream is not configured — nothing to do");
-    result.success = false;
-    return result;
-  }
-
-  const now = Date.now();
-  const events = await loadEndedEvents();
-
+function classifyEvents(
+  events: EventRow[],
+  now: number,
+  result: ExpireEventChannelsResult,
+) {
   const toFreeze: EventRow[] = [];
   const toDelete: string[] = [];
 
@@ -859,15 +909,14 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
     }
   }
 
-  const chat = getStreamChatClient();
-
-  // Freeze. Per-channel rather than bulk because Stream has no batch freeze, so
-  // the chunk size here is a CONCURRENCY width and not a payload ceiling —
-  // chunking by STREAM_BATCH_LIMIT fired a hundred simultaneous requests at an
-  // app that also serves live user traffic. allSettled so one missing channel
-  // cannot abort the run. Paced (see FREEZE_PACING_MS) so even a full backlog
-  // cannot breach Stream's app-wide 300/min cap for this endpoint, and capped
-  // per run so the workflow timeout is never at risk.
+  return { toFreeze, toDelete };
+}
+async function freezeEvents(
+  chat: ReturnType<typeof getStreamChatClient>,
+  toFreeze: EventRow[],
+  result: ExpireEventChannelsResult,
+  streamFailures: RunFailureReporter,
+) {
   const freezeBatch = toFreeze.slice(0, MAX_FREEZE_PER_RUN);
   for (const [batchIdx, batch] of chunk(
     freezeBatch,
@@ -878,10 +927,13 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
     }
     const outcomes = await Promise.allSettled(
       batch.map((event) =>
-        withStreamCircuitBreaker(() =>
-          chat
-            .channel(getChannelTypeFromId(event.channelId), event.channelId)
-            .updatePartial({ set: { frozen: true } }),
+        withStreamCircuitBreaker(
+          () =>
+            chat
+              .channel(getChannelTypeFromId(event.channelId), event.channelId)
+              .updatePartial({ set: { frozen: true } }),
+          undefined,
+          streamFailures,
         ),
       ),
     );
@@ -898,10 +950,11 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
         } else if (event.entity.kind === "class") {
           stamped.classIds.push(event.entity.id);
         }
+      } else if (isExpectedStreamError(outcome.reason)) {
+        result.missingChannels++;
       } else {
-        // A channel that was never created is the common case (chat is lazy),
-        // not a failure worth failing the run over. A 429 is quota, not an
-        // outage — pacing should make it rare, and it must not fail the run.
+        result.success = false;
+        streamFailures.add("event-freeze", outcome.reason);
         result.errors.push(
           `freeze ${event.channelId}: ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
         );
@@ -925,30 +978,33 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
           }),
       ]);
     } catch (err) {
+      result.success = false;
       result.errors.push(
         `ledger stamp: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
   if (toFreeze.length > freezeBatch.length) {
-    result.errors.push(
-      `freeze cap: deferred ${toFreeze.length - freezeBatch.length} channels to the next run`,
-    );
+    result.deferred += toFreeze.length - freezeBatch.length;
   }
-
-  // Delete. `deleteChannels` takes cids and caps at 100 per request; it is
-  // async server-side (it returns a task id), which is fine — we are not
-  // waiting on the outcome, and a re-run of an already-deleted channel is a
-  // no-op.
-  const deletePacing: DeletePacingState = { lastCallAt: null };
+}
+async function deleteEvents(
+  chat: ReturnType<typeof getStreamChatClient>,
+  toDelete: string[],
+  result: ExpireEventChannelsResult,
+  deletePacing: DeletePacingState,
+  streamFailures: RunFailureReporter,
+) {
   for (const batch of chunk(toDelete, STREAM_BATCH_LIMIT)) {
     await paceDeleteChannelsBatch(deletePacing);
     const cids = batch.map(
       (channelId) => `${getChannelTypeFromId(channelId)}:${channelId}`,
     );
     try {
-      await withStreamCircuitBreaker(() =>
-        chat.deleteChannels(cids, { hard_delete: true }),
+      await withStreamCircuitBreaker(
+        () => chat.deleteChannels(cids, { hard_delete: true }),
+        undefined,
+        streamFailures,
       );
       result.deleted += cids.length;
     } catch (error) {
@@ -959,6 +1015,52 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
       streamFailures.add("event-delete-batch", error);
     }
   }
+}
+
+async function expireEventChannelsUnlocked(
+  streamFailures: RunFailureReporter,
+): Promise<ExpireEventChannelsResult> {
+  const result: ExpireEventChannelsResult = {
+    frozen: 0,
+    deleted: 0,
+    skippedAlreadyFrozen: 0,
+    dmFrozen: 0,
+    dmUnfrozen: 0,
+    dmDeleteRequests: 0,
+    missingChannels: 0,
+    checkpoint: null,
+    deferred: 0,
+    errors: [],
+    success: true,
+  };
+
+  if (!isStreamConfigured()) {
+    // Not a no-op success. The cron reports `success` and exits 0 on it, so a
+    // Stream config that silently went missing — the exact failure #1134 found
+    // in production, where the webhook secret was simply unset on Netlify —
+    // would show up as a green nightly run for as long as it lasted.
+    result.errors.push("Stream is not configured — nothing to do");
+    result.success = false;
+    return result;
+  }
+
+  const now = Date.now();
+  const saved = await readJobCheckpoint("expire-event-channels");
+  const progressSchema = z.object({
+    events: z.string().nullable(),
+    dm: z.string().nullable(),
+  });
+  const progress = saved
+    ? progressSchema.parse(JSON.parse(saved))
+    : { events: null, dm: null };
+  const page = await loadEndedEvents(progress.events);
+  const events = page.events;
+
+  const { toFreeze, toDelete } = classifyEvents(events, now, result);
+  const chat = getStreamChatClient();
+  await freezeEvents(chat, toFreeze, result, streamFailures);
+  const deletePacing: DeletePacingState = { lastCallAt: null };
+  await deleteEvents(chat, toDelete, result, deletePacing, streamFailures);
 
   // #1280 PR F — direct messages, keyed on pair dormancy.
   //
@@ -977,6 +1079,8 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
       result,
       MAX_FREEZE_PER_RUN - result.frozen,
       deletePacing,
+      streamFailures,
+      progress,
     );
   } catch (error) {
     result.success = false;
@@ -986,6 +1090,8 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
     streamFailures.add("dm-stage", error);
   }
 
+  progress.events = page.after;
+  result.checkpoint = JSON.stringify(progress);
   console.log(
     JSON.stringify({
       event: "expire_event_channels",
@@ -996,28 +1102,13 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
       dmUnfrozen: result.dmUnfrozen,
       dmDeleteRequests: result.dmDeleteRequests,
       errorCount: result.errors.length,
+      errorSamples: result.errors
+        .slice(0, 5)
+        .map((message) => message.slice(0, 1000)),
+      missingChannels: result.missingChannels,
       timestamp: new Date().toISOString(),
     }),
   );
 
   return result;
-}
-
-if (require.main === module) {
-  runJob("expire-event-channels", async () => {
-    await abortIfMaintenance("expire-event-channels");
-    try {
-      const result = await expireEventChannels();
-      console.log(
-        `Events — frozen: ${result.frozen}  deleted: ${result.deleted}\n` +
-          `DMs    — frozen: ${result.dmFrozen}  unfrozen: ${result.dmUnfrozen}  delete-requests: ${result.dmDeleteRequests}\n` +
-          `Errors: ${result.errors.length}`,
-      );
-      if (!result.success) process.exitCode = 1;
-    } finally {
-      // In a `finally` so a throw cannot leak the pool. `runJob` reports the
-      // error and lets it propagate, which skipped this line entirely.
-      await prisma.$disconnect();
-    }
-  });
 }

@@ -26,6 +26,7 @@ const mockConsultationFindMany = jest.fn();
 const mockSubscriptionFindMany = jest.fn();
 const mockOrganizationFindMany = jest.fn();
 const mockAppointmentFindMany = jest.fn();
+const mockLatestOccurrence = jest.fn();
 const mockConsultationUpdateMany = jest.fn();
 const mockSubscriptionUpdateMany = jest.fn();
 const mockUpdatePartial = jest.fn();
@@ -59,13 +60,23 @@ jest.mock("../../lib/prisma", () => ({
     appointment: {
       findMany: (...a: unknown[]) => mockAppointmentFindMany(...a),
     },
+    appointmentOccurrence: {
+      findFirst: (...args: unknown[]) => mockLatestOccurrence(...args),
+    },
     webinar: { updateMany: jest.fn() },
     class: { updateMany: jest.fn() },
     $disconnect: jest.fn(),
   },
 }));
 
+jest.mock("../../lib/redis", () => ({
+  createCircuitBreaker: () => ({ run: (run: () => Promise<unknown>) => run() }),
+}));
+
 jest.mock("../../lib/stream-client", () => ({
+  isExpectedStreamError: jest.requireActual<
+    typeof import("../../lib/stream-client")
+  >("../../lib/stream-client").isExpectedStreamError,
   isStreamConfigured: () => true,
   getStreamChatClient: () => ({
     channel: (...args: unknown[]) => {
@@ -77,10 +88,13 @@ jest.mock("../../lib/stream-client", () => ({
     },
     deleteChannels: (...a: unknown[]) => mockDeleteChannels(...a),
   }),
-  withStreamCircuitBreaker: async (op: () => unknown) => op(),
+  withStreamCircuitBreaker: jest.requireActual<
+    typeof import("../../lib/stream-client")
+  >("../../lib/stream-client").withStreamCircuitBreaker,
 }));
 
 jest.mock("../../lib/cron/with-cron-lock", () => ({
+  readJobCheckpoint: jest.fn().mockResolvedValue(null),
   withCronLock: (_n: string, _o: unknown, fn: () => unknown) => fn(),
 }));
 
@@ -94,6 +108,10 @@ jest.mock("@sentry/nextjs", () => ({
   logger: { warn: jest.fn(), info: jest.fn(), fmt: (s: unknown) => s },
 }));
 
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
+
+import * as Sentry from "@sentry/nextjs";
+import { readJobCheckpoint } from "../../lib/cron/with-cron-lock";
 import { expireEventChannels } from "../../jobs/stream/expire-event-channels";
 import { getDmChannelId } from "../../lib/stream-utils";
 
@@ -129,10 +147,12 @@ function consultation(
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(readJobCheckpoint).mockResolvedValue(null);
   mockConsultationFindMany.mockResolvedValue([]);
   mockSubscriptionFindMany.mockResolvedValue([]);
   mockOrganizationFindMany.mockResolvedValue([]);
   mockAppointmentFindMany.mockResolvedValue([]);
+  mockLatestOccurrence.mockResolvedValue(null);
   mockConsultationUpdateMany.mockResolvedValue({ count: 1 });
   mockSubscriptionUpdateMany.mockResolvedValue({ count: 1 });
   mockUpdatePartial.mockResolvedValue(undefined);
@@ -368,4 +388,190 @@ describe("DM dormancy — identity and retention", () => {
     // The event stage's own counters survive; the caller reports them.
     expect(result.frozen).toBe(0);
   });
+});
+
+describe("channel expiry provider outcomes", () => {
+  it("treats confirmed missing lazy event and DM channels as absence without stamping their ledgers", async () => {
+    mockAppointmentFindMany.mockResolvedValue([
+      {
+        webinar: {
+          id: "lazy-event",
+          chatFrozenAt: null,
+          webinarPlan: { id: "plan", collaborators: [], organization: null },
+        },
+        class: null,
+        organization: null,
+        occurrences: [{ endsAt: daysAgo(14) }],
+      },
+    ]);
+    mockConsultationFindMany.mockResolvedValue([consultation("lazy-dm", 120)]);
+    mockUpdatePartial.mockRejectedValue(
+      Object.assign(new Error("Resource not found"), { status: 404, code: 16 }),
+    );
+    const result = await expireEventChannels();
+    expect(result).toMatchObject({
+      success: true,
+      missingChannels: 2,
+      frozen: 0,
+      dmFrozen: 0,
+      errors: [],
+    });
+    expect(mockConsultationUpdateMany).not.toHaveBeenCalled();
+    expect(mockSubscriptionUpdateMany).not.toHaveBeenCalled();
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
+  it.each([429, 500])(
+    "fails truthfully for HTTP %i and captures once across both vendor and sweep catches",
+    async (status) => {
+      mockConsultationFindMany.mockResolvedValue(
+        ["a", "b", "c"].map((id) => ({
+          ...consultation(id, 120),
+          requestedBy: { user: { id: `client-${id}` } },
+        })),
+      );
+      mockUpdatePartial.mockImplementation(async () => {
+        throw Object.assign(new Error("provider refused update"), { status });
+      });
+      const result = await expireEventChannels();
+      expect(result.success).toBe(false);
+      expect(result.errors).toHaveLength(3);
+      expect(result.missingChannels).toBe(0);
+      expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+      expect(Sentry.captureException).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({
+          extra: expect.objectContaining({ count: 3 }),
+        }),
+      );
+    },
+  );
+});
+
+it("does not lift the freeze of a deactivated organization", async () => {
+  mockOrganizationFindMany.mockResolvedValue([
+    {
+      id: "org-1",
+      chatRetentionDays: 365,
+      status: "DEACTIVATED",
+      deletedAt: null,
+    },
+  ]);
+  mockConsultationFindMany.mockResolvedValue([
+    consultation("c", 3, daysAgo(100), "org-1"),
+  ]);
+  expect((await expireEventChannels()).dmUnfrozen).toBe(0);
+  expect(mockUpdatePartial).not.toHaveBeenCalled();
+});
+
+it("re-freezes instead of clearing the ledger when wind-down commits during unfreeze", async () => {
+  mockOrganizationFindMany
+    .mockResolvedValueOnce([
+      {
+        id: "org-1",
+        chatRetentionDays: 365,
+        status: "ACTIVE",
+        deletedAt: null,
+      },
+    ])
+    .mockResolvedValueOnce([{ id: "org-1" }]);
+  mockConsultationFindMany.mockResolvedValue([
+    consultation("c", 3, daysAgo(100), "org-1"),
+  ]);
+  const result = await expireEventChannels();
+  expect(result).toMatchObject({ success: true, dmUnfrozen: 0, dmFrozen: 1 });
+  expect(mockUpdatePartial.mock.calls.map(([arg]) => arg.set.frozen)).toEqual([
+    false,
+    true,
+  ]);
+  expect(
+    mockConsultationUpdateMany.mock.calls.every(
+      ([arg]) => arg.data.chatFrozenAt !== null,
+    ),
+  ).toBe(true);
+});
+
+it("pages mixed-case channel identities in code-unit order without losing the tail", async () => {
+  const ids = [
+    ...Array.from({ length: 12 }, (_, i) => `a${i}`),
+    ...Array.from({ length: 12 }, (_, i) => `Z${i}`),
+  ];
+  mockConsultationFindMany.mockResolvedValue(
+    ids.map((id) => {
+      const row = consultation(id, 120);
+      row.consultationPlan.consultantProfile.user.id = id;
+      return row;
+    }),
+  );
+  let total = 0;
+  for (let run = 0; run < 3; run++) {
+    const result = await expireEventChannels();
+    total += result.dmFrozen;
+    jest.mocked(readJobCheckpoint).mockResolvedValue(result.checkpoint);
+  }
+  expect(total).toBe(24);
+  expect(new Set(mockChannel.mock.calls.map((call) => call[1])).size).toBe(24);
+});
+
+it("unfreezes every returning pair in one run, beyond the freeze cursor slice", async () => {
+  const ids = Array.from({ length: 12 }, (_, i) => `back${i}`);
+  mockConsultationFindMany.mockResolvedValue(
+    ids.map((id) => {
+      const row = consultation(id, 3, daysAgo(30));
+      row.consultationPlan.consultantProfile.user.id = id;
+      return row;
+    }),
+  );
+  const result = await expireEventChannels();
+  expect(result.dmUnfrozen).toBe(12);
+  expect(mockUpdatePartial).toHaveBeenCalledTimes(12);
+  expect(mockUpdatePartial).toHaveBeenCalledWith({ set: { frozen: false } });
+});
+
+function endedWebinarPage(frozen: boolean) {
+  return [
+    {
+      id: "appointment-old",
+      webinar: {
+        id: "old",
+        chatFrozenAt: frozen ? daysAgo(1) : null,
+        webinarPlan: {
+          id: "plan",
+          collaborators: [{ id: "presenter" }],
+          organization: null,
+        },
+      },
+      class: null,
+      organization: null,
+      occurrences: [{ endsAt: daysAgo(100) }],
+    },
+  ];
+}
+it("uses a newer past event outside the appointment page to protect the shared collaborator channel", async () => {
+  mockAppointmentFindMany.mockResolvedValue(endedWebinarPage(true));
+  mockLatestOccurrence.mockResolvedValue({ endsAt: daysAgo(2) });
+  await expireEventChannels();
+  expect(mockLatestOccurrence.mock.calls[0][0]).toMatchObject({
+    orderBy: { endsAt: "desc" },
+    select: { endsAt: true },
+  });
+  expect(mockLatestOccurrence.mock.calls[0][0].where.endsAt).toBeUndefined();
+  expect(mockDeleteChannels).toHaveBeenCalledTimes(1);
+  expect(mockDeleteChannels.mock.calls[0][0]).toEqual(["team:webinar-old"]);
+  expect(
+    mockChannel.mock.calls.some((call) =>
+      String(call[1]).startsWith("collab-"),
+    ),
+  ).toBe(false);
+});
+it("does not infer collaborator freeze success from frozen event ledgers", async () => {
+  mockAppointmentFindMany.mockResolvedValue(endedWebinarPage(true));
+  mockLatestOccurrence.mockResolvedValue({ endsAt: daysAgo(10) });
+  await expireEventChannels();
+  expect(mockUpdatePartial).toHaveBeenCalledWith({ set: { frozen: true } });
+  expect(
+    mockChannel.mock.calls.some((call) =>
+      String(call[1]).startsWith("collab-"),
+    ),
+  ).toBe(true);
 });

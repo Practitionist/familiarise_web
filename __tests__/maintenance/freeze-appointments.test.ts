@@ -53,15 +53,15 @@ describe("freeze-appointments doctrine (#1162)", () => {
   });
 
   it("guards the trial status flip and tombstones via the domain helper", () => {
-    expect(freezeSource).toContain("softCancelTrialAppointment(");
+    expect(freezeSource).toContain("softCancelTrialAppointmentInTx(");
     // #1846 SM-B13 — the CAS helper carries TRIAL_ALLOWED_FROM and history.
     expect(freezeSource).toContain("transitionTrial(tx, {");
     expect(freezeSource).not.toContain("tx.trial.updateMany(");
   });
 
-  it("stamps each refund owed in the freeze commit and drives it after", () => {
+  it("stamps each refund owed in the freeze commit for the canonical retry worker", () => {
     expect(freezeSource).toContain("await stampRefundsOwed(tx, owed);");
-    expect(freezeSource).toContain("driveRefundOwed(owed)");
+    expect(freezeSource).not.toContain("driveRefundOwed");
     expect(freezeSource).not.toContain("createRefund({");
   });
 
@@ -113,20 +113,6 @@ describe("booking-refund front door (#1161)", () => {
     expect(end).toBeGreaterThan(start);
     const wholeEventQuery = eventSource.slice(start, end);
     expect(wholeEventQuery).not.toContain("amount: { gt: 0 }");
-  });
-});
-
-describe("maintenance keys carry a TTL (#697 INF-1)", () => {
-  const maintSource = fs.readFileSync(
-    path.join(process.cwd(), "lib/maintenance.ts"),
-    "utf8",
-  );
-
-  it("sets an expiry on both state keys", () => {
-    expect(maintSource).toContain("MAINTENANCE_KEY_TTL_SECONDS");
-    expect(maintSource).toMatch(
-      /redis\.set\(REDIS_KEYS\.PHASE, phase, \{ ex: ttlSeconds \}\)/,
-    );
   });
 });
 

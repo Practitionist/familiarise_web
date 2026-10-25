@@ -15,17 +15,18 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 jest.mock("../../lib/maintenance-cron", () => ({
   assertNotInMaintenance: jest.fn(),
   MaintenanceActiveError: class MaintenanceActiveError extends Error {},
+  MaintenanceUnavailableError: class MaintenanceUnavailableError extends Error {},
 }));
 jest.mock("../../jobs/notifications/drain-notification-outbox", () => ({
   drainNotificationOutbox: jest.fn(),
 }));
-jest.mock("../../lib/stream/recording-transfer-service", () => ({
-  transferRecordings: jest.fn(),
+jest.mock("../../lib/cron/dispatch-background", () => ({
+  dispatchBackgroundJob: jest.fn(),
 }));
 
 import { getCleanupJobHandlers } from "../../lib/cron/cleanup-registry";
 import { drainNotificationOutbox } from "../../jobs/notifications/drain-notification-outbox";
-import { transferRecordings } from "../../lib/stream/recording-transfer-service";
+import { dispatchBackgroundJob } from "../../lib/cron/dispatch-background";
 
 const SECRET = "test-cron-secret";
 
@@ -77,16 +78,18 @@ describe("cleanup registry status callbacks are authoritative", () => {
     });
   });
 
-  it("transfer-recordings reports unsuccessful copies as a failed execution", async () => {
-    jest.mocked(transferRecordings).mockResolvedValue({
-      success: false,
-      reclaimedStale: 0,
-      processed: 3,
-      succeeded: 1,
-      failed: 2,
-      exhaustedReported: 1,
-      errors: ["Recording r1: timeout", "Recording r2: timeout"],
+  it("transfer-recordings acknowledges dispatch without running a synchronous copy", async () => {
+    jest
+      .mocked(dispatchBackgroundJob)
+      .mockResolvedValue({ accepted: true, job: "transfer-recordings" });
+    await expect(hit("transfer-recordings")).resolves.toEqual({
+      status: 202,
+      outcome: "success",
     });
+    expect(dispatchBackgroundJob).toHaveBeenCalledWith("transfer-recordings");
+  });
+  it("does not acknowledge failed worker admission", async () => {
+    jest.mocked(dispatchBackgroundJob).mockRejectedValue(new Error("HTTP 503"));
     await expect(hit("transfer-recordings")).resolves.toEqual({
       status: 500,
       outcome: "failure",

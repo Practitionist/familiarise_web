@@ -11,6 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { TARGETS } from "@/lib/cron/schedule";
 import { MANUAL_ONLY } from "@/lib/cron/manual-only";
 
 const ROOT = path.join(__dirname, "..", "..");
@@ -38,16 +39,7 @@ function registryJobs(): { slug: string; names: string[] }[] {
 }
 
 function tickerTargets(): Set<string> {
-  const src = fs.readFileSync(
-    path.join(ROOT, "netlify", "functions", "cron-tick.mts"),
-    "utf8",
-  );
-  const body = src.match(/const TARGETS = \[([\s\S]*?)\] as const;/)?.[1] ?? "";
-  const code = body
-    .split("\n")
-    .filter((l) => !l.trim().startsWith("//"))
-    .join("\n");
-  return new Set([...code.matchAll(/"([a-z0-9-]+)"/g)].map((m) => m[1]));
+  return new Set(TARGETS);
 }
 
 function workflowText(): string {

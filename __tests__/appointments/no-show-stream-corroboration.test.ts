@@ -47,6 +47,7 @@ jest.mock("../../lib/observability/standing-finding", () => ({
 }));
 
 const mockCapture = jest.fn();
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({
   captureMessage: (...a: unknown[]) => mockCapture(...a),
 }));

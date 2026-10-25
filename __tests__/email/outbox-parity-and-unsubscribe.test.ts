@@ -9,8 +9,9 @@ const mockMetricsCount = jest.fn();
 const mockPostOpsChat = jest.fn();
 const mockWaitlistUnsubscribe = jest.fn();
 
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({
-  ...jest.requireActual("@sentry/nextjs"),
+  ...jest.requireActual<typeof import("@sentry/core")>("@sentry/core"),
   captureMessage: (...args: unknown[]) => mockCaptureMessage(...args),
   captureException: (...args: unknown[]) => mockCaptureException(...args),
   metrics: {

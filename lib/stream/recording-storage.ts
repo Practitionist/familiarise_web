@@ -144,15 +144,21 @@ export async function deleteRecordingObject(
 }
 
 /** Remove the recording's preview folder (clip and thumbnail); false means objects may survive. */
-async function deleteRecordingPreviews(recordingId: string): Promise<boolean> {
+async function deleteRecordingPreviews(
+  recordingId: string,
+  failures?: RunFailureReporter,
+): Promise<boolean> {
   try {
     const { data, error } = await adminStorage()
       .from(RECORDING_PREVIEWS_BUCKET)
       .list(recordingId);
     if (error) {
-      streamLogger.error("Failed to list recording previews", error, {
-        recordingId,
-      });
+      if (failures)
+        failures.add("recording-preview-list", error, { recordingId });
+      else
+        streamLogger.error("Failed to list recording previews", error, {
+          recordingId,
+        });
       return false;
     }
     return removeObjects(
@@ -160,23 +166,29 @@ async function deleteRecordingPreviews(recordingId: string): Promise<boolean> {
       (data ?? []).map((file) => `${recordingId}/${file.name}`),
     );
   } catch (error) {
-    streamLogger.error("Failed to delete recording previews", error, {
-      recordingId,
-    });
+    if (failures)
+      failures.add("recording-preview-delete", error, { recordingId });
+    else
+      streamLogger.error("Failed to delete recording previews", error, {
+        recordingId,
+      });
     return false;
   }
 }
 
 /** Delete every stored asset of a recording: the R2 copy plus its preview clip and thumbnail. */
-export async function deleteRecordingAssets(recording: {
-  id: string;
-  storagePath: string | null;
-}): Promise<{ success: boolean; error?: string }> {
+export async function deleteRecordingAssets(
+  recording: {
+    id: string;
+    storagePath: string | null;
+  },
+  failures?: RunFailureReporter,
+): Promise<{ success: boolean; error?: string }> {
   if (recording.storagePath) {
-    const main = await deleteRecordingObject(recording.storagePath);
+    const main = await deleteRecordingObject(recording.storagePath, failures);
     if (!main.success) return main;
   }
-  if (!(await deleteRecordingPreviews(recording.id))) {
+  if (!(await deleteRecordingPreviews(recording.id, failures))) {
     return { success: false, error: "Recording previews were not removed" };
   }
   return { success: true };

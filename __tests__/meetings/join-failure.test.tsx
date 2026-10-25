@@ -34,6 +34,12 @@ describe("classifyJoinFailure", () => {
     expect(classifyJoinFailure(new Error("Network Error"))).toBe(
       "provider_unavailable",
     );
+    // A join retried while the network is still coming back cannot open the SFU socket.
+    expect(
+      classifyJoinFailure(
+        new Error("SFU WS connection failed to open after 5000ms"),
+      ),
+    ).toBe("provider_unavailable");
     expect(classifyJoinFailure(new VideoClientTimeoutError())).toBe(
       "provider_unavailable",
     );

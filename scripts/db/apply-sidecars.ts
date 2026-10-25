@@ -6,7 +6,7 @@
  *
  * `prisma db push` / `prisma migrate` do NOT manage CHECK constraints,
  * partial unique indexes, or constraint triggers, so this must run after every
- * push/reset. Each statement executes in its own short transaction with
+ * push/reset. Each sidecar file executes in one atomic transaction with
  * `SET LOCAL lock_timeout = '3s'` so an unobtainable ACCESS EXCLUSIVE lock
  * fails fast instead of queueing behind an open transaction and blocking the
  * table in FIFO order.
@@ -23,6 +23,7 @@ import { join } from "path";
 
 import prisma from "../../lib/prisma";
 import { splitSqlStatements } from "./sql-chunks";
+import { applySidecarStatements } from "./apply-sidecar-statements";
 
 type SidecarTarget = {
   flag: string;
@@ -63,15 +64,11 @@ async function main(): Promise<void> {
     const raw = readFileSync(sqlPath, "utf8");
     const statements = splitSqlStatements(raw);
 
-    for (const stmt of statements) {
-      if (dryRun) {
+    if (dryRun) {
+      for (const stmt of statements)
         console.log(stmt.replace(/^(--.*\n)+/, "").trim());
-        continue;
-      }
-      await prisma.$transaction([
-        prisma.$executeRawUnsafe("SET LOCAL lock_timeout = '3s'"),
-        prisma.$executeRawUnsafe(stmt),
-      ]);
+    } else {
+      await applySidecarStatements(prisma, statements);
     }
 
     console.log(

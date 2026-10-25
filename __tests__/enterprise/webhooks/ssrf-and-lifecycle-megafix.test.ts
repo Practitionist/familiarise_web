@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import * as Sentry from "@sentry/nextjs";
 
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({
   captureException: jest.fn(),
   logger: {
@@ -345,7 +346,7 @@ describe("Outbound webhook worker security, backoff, Sentry & OrgAuditLog", () =
 
   it("caps dispatch-outbound-webhooks batch limit at 15 in Netlify cron-tick", () => {
     const cronTickSrc = readFileSync(
-      path.resolve(process.cwd(), "netlify/functions/cron-tick.mts"),
+      path.resolve(process.cwd(), "lib/cron/schedule.ts"),
       "utf8",
     );
     expect(cronTickSrc).toContain('"dispatch-outbound-webhooks": 15');
