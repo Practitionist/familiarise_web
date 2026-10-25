@@ -202,7 +202,7 @@ ORDER BY "startedAt" DESC LIMIT 50;
 
 ## DDL end-phase checklist
 
-The support PRs left schema and sidecar changes for the owner to apply at the end, in one controlled window. This checklist is for that window. Do not run it from an agent.
+The support PRs left schema and sidecar changes for the owner to apply at the end, in one controlled window. This checklist is for that window. Do not run it from an agent, and never run schema changes through an MCP server. The legacy support tables were dropped by ad-hoc DDL through the Supabase MCP while production still read them, which broke the SLA sweep, the privacy export and the staff support metrics (#2271). The Supabase MCP entry in `.mcp.json.example` is now `--read-only` and project-scoped. The only schema write path is `prisma/schema.prisma`, the human-run `db:push` preflight and the sidecars ([`docs/prisma/README.md`](../prisma/README.md)).
 
 1. **Stop the bleeding first.** Confirm production no longer queries the dropped legacy support tables (the stop-gap or promotion tracked in #2271). A failing `support-sla-sweep` with "table SupportTicket does not exist" means this step is not done.
 2. **Drift check, read-only.** `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`. Review every statement; nothing should drop a sidecar index.

@@ -148,6 +148,14 @@ case-linked intervention adds it as a visible member of the booking chat with a
 message) when the grant ends or the case resolves. The chat banner reads its
 membership, so there is no channel extra data to keep in sync.
 
+### Server-only system users
+
+`system-booking-context` (`BOOKING_CONTEXT_STREAM_USER` in `lib/stream/system-users.ts`) is a second Stream user with no `User` row. It holds `user` and never gets a token, so only the server can author its messages. `POST /api/stream/channels/open` posts the booking-context receipt card as this user, and `components/chat/CustomMessage.tsx` renders the card layout only for that author (`isBookingContextAuthor`). The `system-` prefix is load-bearing: the `stream-sync` user deletion and the daily membership reconciler (`lib/stream/membership-reconciler.ts`) both leave `system-` users and the Familiarise Support user alone.
+
+### Revoking a removed member's access
+
+When an organization removes a member, `revokeMemberStreamAccess` (`lib/enterprise/member-removal.ts`) calls `revokeUserToken` with a cutoff, so every Stream token issued before the removal stops working. The wind-down drain (`jobs/stream/wind-down-deactivated-orgs.ts`) passes the membership's `updatedAt` as the cutoff, so a re-run never revokes a token minted after the member rejoined. The result's `tokenRevoked` flag now reflects whether the call succeeded, and an incomplete revocation queues an `ORG_REVOKE` row for the `retry-moderation-enforcement` sweep. The member's own browser recovers by itself: the SDK asks its token provider again only to replace a token Stream refused, and `sdkTokenProvider` in `providers/StreamProviderImpl.tsx` skips the token cache on every such re-request after the first, so a user Postgres still admits gets a fresh token and a removed user does not.
+
 ### Rollout: downgrade existing operator roles
 
 **Owner end-phase step, run by hand once after deploy. It is not a script.** An
@@ -341,356 +349,32 @@ console.log(`Found ${users.length} users`);
 
 ## Background Sync Job
 
-The background sync job maintains synchronization between your Prisma database and Stream Chat by identifying and removing stale users.
-
-### Job Overview
-
-**Schedule:** Daily at 03:40 UTC (9:10 AM IST)
-
-**Execution:** GitHub Actions workflow
-
-**Location:**
-
-- Job logic: `/jobs/stream/stream-sync.ts` (implementation in
-  `/scripts/stream/stream-sync.ts`)
-- Workflow: `/.github/workflows/stream-sync.yml`
-
-**Purpose:**
-
-- Remove users from Stream Chat who no longer exist in the Prisma database
-- Prevent orphaned users and maintain data consistency
-- Clean up test accounts and deleted users
-
-### Workflow Configuration
-
-```yaml
-name: Sync Stale Stream Users
-
-on:
-  schedule:
-    # Runs at 03:30 UTC (9:00 AM IST) every day
-    - cron: "30 3 * * *"
-  workflow_dispatch: # Allows manual triggering
-
-jobs:
-  sync_stream_users:
-    runs-on: ubuntu-latest
-    env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      NEXT_PUBLIC_STREAM_API_KEY: ${{ secrets.NEXT_PUBLIC_STREAM_API_KEY }}
-      STREAM_API_SECRET: ${{ secrets.STREAM_API_SECRET }}
-```
-
-**Required Secrets:**
-
-- `DATABASE_URL`: Prisma database connection string
-- `NEXT_PUBLIC_STREAM_API_KEY`: Stream Chat API key
-- `STREAM_API_SECRET`: Stream Chat API secret
-
-### Sync Logic
-
-The `performStreamUserSync` function implements the core synchronization logic.
-
-**Location:** `/jobs/stream-sync.ts` (lines 42-175)
-
-**Function Signature:**
-
-```typescript
-export async function performStreamUserSync(): Promise<SyncSummary>;
-```
-
-**Returns:**
-
-```typescript
-interface SyncSummary {
-  totalStreamUsersProcessed: number;
-  totalStaleUsersIdentified: number;
-  totalStaleUsersDeleted: number;
-  totalFailedDeletions: number;
-  failedDeletionDetails: FailedDeletionEntry[];
-}
-```
-
-**Example Output:**
-
-```
---- Summary ---
-Total Stream Users Processed: 1,247
-Total Stale Users Identified: 23
-Total Stale Users Deleted:    22
-Total Failed Deletions:       1
-
---- Failed Deletion Details ---
-  User ID: user-xyz, Error: User is channel owner
-```
-
-### Step-by-Step Process
-
-1. **Initialize Stream Client**
-
-   ```typescript
-   const serverStreamClient = StreamChat.getInstance(apiKey, apiSecret, {
-     timeout: 30000,
-   });
-   ```
-
-2. **Paginate Through Stream Users**
-
-   ```typescript
-   // Fetch 100 users per page, sorted by ID
-   const streamUsersResponse = await serverStreamClient.queryUsers(
-     lastStreamUserId ? { id: { $gt: lastStreamUserId } } : {},
-     { id: 1 },
-     { limit: 100, presence: false },
-   );
-   ```
-
-3. **Check Against Prisma Database**
-
-   ```typescript
-   // Get active users from Prisma for current page
-   const activePrismaUsersOnPage = await prisma.user.findMany({
-     where: { id: { in: currentStreamUserIdsOnPage } },
-     select: { id: true },
-   });
-   ```
-
-4. **Identify Stale Users**
-
-   ```typescript
-   for (const streamUserId of currentStreamUserIdsOnPage) {
-     if (!activePrismaUserIdsOnPageSet.has(streamUserId)) {
-       // Check exclusion rules
-       if (
-         !streamUserId.startsWith("system-") &&
-         !streamUserId.startsWith("recording-egress-") &&
-         !EXCLUDED_USER_IDS.has(streamUserId)
-       ) {
-         staleUsersInPage.push(streamUserId);
-       }
-     }
-   }
-   ```
-
-5. **Delete Stale Users** — soft, matching the job.
-   ```typescript
-   const deleteResponse = await serverStreamClient.deleteUsers(
-     staleUsersInPage,
-     { user: "soft", messages: "soft" },
-   );
-   ```
-
-### Exclusion Rules
-
-The following users are NEVER deleted:
-
-**Pattern-Based Exclusions:**
-
-- `system-*`: System-generated accounts
-- `recording-egress-*`: Stream recording service accounts
-
-**Hardcoded Exclusions:**
-
-```typescript
-const EXCLUDED_USER_IDS = new Set(["system"]);
-```
-
-Plus anything listed in the `STREAM_SYNC_EXCLUDED_USERS` environment variable.
-This document previously showed a personal account hardcoded alongside
-`"system"`; it is not in the code and must not be — an operator's own account
-being un-reapable is a footgun, and the env var is the supported way to add one
-temporarily.
-
-**Reason for Exclusions:**
-
-- System accounts are required for Stream functionality
-- Recording egress users handle video recording and storage
-
-### Deletion Strategy
-
-**Soft delete.** This section used to document hard delete as the strategy and
-soft as the alternative. The code does the opposite:
-
-```typescript
-{
-  user: "soft",      // Intended 30-day grace period; expiry is NOT enforced yet
-  messages: "soft"
-}
-```
-
-There is no hard-delete follow-up job yet — the `TODO` in
-`scripts/stream/stream-sync.ts` runs daily.
-
-**What that means concretely, for a DPDP §12 erasure request.**
-`lib/compliance/erasure/scrub-user.ts` pseudonymises the local `User` row and
-makes no Stream call at all. Stream-side removal is therefore incidental: the
-nightly reaper notices the local row is gone and issues a _soft_ delete, which
-is the state the data then stays in.
-
-- **Retention window:** the soft delete is described in the code as a 30-day
-  grace period before scheduled hard deletion runs. In
-  practice the retention is indefinite.
-- **Who can still read it:** nobody through the app — a soft-deleted Stream user
-  cannot connect, and their messages are hidden from clients. It remains
-  readable by anything holding the API secret: the Stream dashboard, a data
-  export, and our own server-side clients.
-- **Should erasure trigger a hard delete?** Yes, and it does not today. The
-  correct shape is for the erasure path to call Stream directly with
-  `{ user: "hard", messages: "hard" }` rather than waiting for a reaper whose
-  input is "absent from Postgres" — an erasure is a specific, authorised
-  instruction about one identified person, which is exactly the case where hard
-  delete is safe and the reaper's inference is not. Until scheduled reaping
-  lands, an erasure request that must be provably complete has to be finished by
-  hand in the Stream dashboard.
-
-**Alternative Options:**
-
-```typescript
-{
-  user: "hard",      // Irreversible; purges the user and their data
-  messages: "hard"
-}
-```
-
-Hard delete runs as a second pass over rows the soft
-delete has already aged out. It is deliberately not what the nightly reaper does:
-the reaper's input is "present in Stream, absent from Postgres", and that set
-includes anyone the local database has merely failed to return — a bad migration,
-a partial restore, a query bug. Soft-deleting that is a bad day; hard-deleting it
-is unrecoverable.
-
-### Error Handling
-
-**Failed Deletions:**
-
-```typescript
-const sdkFailedDeletions = deleteResponse.failed_delete_users || [];
-
-if (sdkFailedDeletions.length > 0) {
-  const failures = sdkFailedDeletions.map((f) => ({
-    id: f.user_id,
-    error: f.message || "Unknown error",
-  }));
-  allFailedDeletions.push(...failures);
-}
-```
-
-**Common Failure Reasons:**
-
-- User is the owner of channels (must transfer ownership first)
-- User has active sessions or connections
-- Network timeouts for specific users
-- Rate limiting from Stream API
-
-**Batch Failure Handling:**
-
-```typescript
-catch (error) {
-  // If entire batch fails, mark all as failed
-  const failures = staleUsersInPage.map(id => ({
-    id,
-    error: error.message || "Batch deletion API call failed"
-  }));
-  allFailedDeletions.push(...failures);
-}
-```
-
-### Monitoring and Reporting
-
-**Console Output:**
-
-```
-[Stream Sync Job] Starting Stream user synchronization...
-[Stream Sync Job] Fetching next page of Stream users (after ID: start)...
-[Stream Sync Job] Fetched 100 users in this page. Total processed so far: 100.
-[Stream Sync Job] Found 95 active Prisma users among the current Stream page.
-[Stream Sync Job] Identified 5 stale users in this page. Attempting deletion...
-[Stream Sync Job] Deletion task for batch completed. Targeted: 5, Successful: 5, Failed: 0
-```
-
-**Exit Codes:**
-
-- `0`: Success (no errors)
-- `1`: Fatal error (sync failed)
-- `2`: Partial success (optional, if some deletions failed)
-
-**GitHub Actions Integration:**
-
-```yaml
-- name: Sync Complete
-  if: success()
-  run: echo "Stream user sync script completed successfully."
-
-- name: Sync Failed
-  if: failure()
-  run: echo "Stream user sync script failed."
-```
-
-### Manual Triggering
-
-You can manually trigger the sync job:
-
-**Via GitHub Actions UI:**
-
-1. Navigate to Actions tab
-2. Select "Sync Stale Stream Users" workflow
-3. Click "Run workflow"
-4. Select branch and confirm
-
-**Via API Endpoint:**
-See [API Endpoints - Manual Sync](./10-api-endpoints.md#post-apistreamsyncmanual)
-
-### Performance Considerations
-
-**Pagination:**
-
-- Processes 100 users per page
-- Continues until all Stream users are checked
-- Prevents memory issues with large user bases
-
-**Timeout Settings:**
-
-- Stream Client timeout: 30 seconds
-- Allows for slower network conditions
-- Prevents hanging on failed requests
-
-**Database Queries:**
-
-- Batched per page (100 users at a time)
-- Uses indexed `id` field for fast lookups
-- Minimal data selected (`select: { id: true }`)
-
-### Best Practices
-
-1. **Monitor Logs:** Review GitHub Actions logs regularly for failed deletions
-2. **Update Exclusions:** Add critical user IDs to `EXCLUDED_USER_IDS` set
-3. **Test Before Production:** Use workflow_dispatch to manually test changes
-4. **Set Alerts:** Configure GitHub Actions notifications for failures
-5. **Review Failed Deletions:** Investigate and manually handle persistent failures
-
-### Troubleshooting
-
-**Problem:** Sync job times out
-
-- **Solution:** Reduce page size from 100 to 50 users
-- **Solution:** Increase timeout from 30s to 60s
-
-**Problem:** Too many failed deletions
-
-- **Solution:** Check if users are channel owners
-- **Solution:** Transfer channel ownership before deletion
-- **Solution:** Review Stream API rate limits
-
-**Problem:** DATABASE_URL not found
-
-- **Solution:** Ensure secret is set in GitHub repository settings
-- **Solution:** Check secret name matches exactly (case-sensitive)
-
-**Problem:** Users being deleted incorrectly
-
-- **Solution:** Verify Prisma database connection
-- **Solution:** Check exclusion rules are properly applied
-- **Solution:** Add temporary logging to identify issues
+`performStreamUserSync` in `scripts/stream/stream-sync.ts` compares up to five
+100-user Stream pages against database ownership. The ticker queues its native
+background worker at 08:50, 09:50 and 10:50 UTC. Cleanup and staff recovery queue
+the same worker; 202 proves admission, while execution history records completion.
+The former Actions wrapper and schedule are removed. Automatic background
+execution currently requires Netlify as active cron host.
+
+The core uses a fail-closed 15-minute Postgres lease, retains an ID checkpoint,
+and wraps at the end of the provider roster. Dry runs preserve the starting
+checkpoint. Active database users are retained; absent users receive soft-delete
+requests; erased users receive hard-delete requests. Support/system principals,
+reserved prefixes and the configured exclusion list remain exempt. There is no
+additional 30-day grace rule in this core.
+
+`SyncSummary` exposes processed/identified counts, accepted deletion-request
+counts, failed entries, asynchronous task IDs, `checkpoint` and `hasMore`.
+Accepted requests do not prove asynchronous hard-delete completion. Dedicated
+erasure obligations retain their own retry owner. DeleteUsers requests remain
+paced at least ten seconds apart by default, including across soft/hard modes;
+a five-page slice is not full-roster coverage.
+
+Use authenticated `POST /api/cleanup/stream-sync` (optional `?dry-run=true`) or
+the staff system-jobs door. The worker needs database, Stream and cron-auth
+configuration in the deployment environment; Redis is not its mutual-exclusion
+store. See [background recovery](./09-background-sync.md) for failure semantics,
+completion health, limits, host portability and deployment verification.
 
 ---
 
@@ -706,4 +390,5 @@ See [API Endpoints - Manual Sync](./10-api-endpoints.md#post-apistreamsyncmanual
 
 - **Global `admin` Role Mapping**: Every account once mapped to Stream `admin`, later only `ADMIN`/`STAFF` did, alongside an operator bypass for minting tokens for other users. Superseded by mapping every account to `user` and self-only minting, because both paths gave operators silent, unaudited browser reads of any chat.
 - **Uncensored Email PII in Stream User Metadata**: Superseded by `stripStreamUserEmails` and DPDP `STREAM_DATA_PROCESSING` filtering (`droppedIds`) prior to `upsertUsers`.
+- **Token Revocation Reported but Never Performed**: `revokeMemberStreamAccess` once returned `tokenRevoked: false` without revoking anything, so a removed member's token lived until it expired. It now revokes tokens issued before the removal.
 - **Ad-Hoc Account Scrubbing**: Superseded by `eraseStreamPrincipalFootprint` (`lib/compliance/erasure/scrub-user.ts`) with retry persistence (`StreamRevocationRetry`).

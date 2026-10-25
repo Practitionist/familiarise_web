@@ -243,20 +243,21 @@ jest.mock("../../lib/observability/report", () => ({
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_k: string, _o: unknown, fn: () => unknown) => fn(),
 }));
-const mockSendRefundFailedEmail = jest.fn(async () => undefined);
+const mockSendRefundFailedEmail = jest.fn(async () => []);
 jest.mock("../../lib/payments", () => ({
   getRefund: jest.fn(),
   listRefunds: jest.fn(),
 }));
-jest.mock("../../lib/novu", () => ({
+jest.mock("../../lib/novu/service", () => ({
   notifyRefundFailed: jest.fn(async () => undefined),
   notifyRefundProcessed: jest.fn(async () => undefined),
 }));
 jest.mock("../../lib/email", () => ({
-  sendRefundFailedEmail: (...a: unknown[]) =>
+  stageRefundFailedEmail: (...a: unknown[]) =>
     mockSendRefundFailedEmail(...(a as [])),
   stageRefundProcessedEmail: jest.fn(async () => []),
   EMAIL_BUDGET_MS: { JOB: 1, REQUEST: 1 },
+  MONEY_EMAIL_TYPES: { REFUND_FAILED: "REFUND_FAILED" },
 }));
 jest.mock("../../lib/payments/webhooks/handlers", () => ({
   releaseBlockedBookingHold: jest.fn(),
@@ -501,6 +502,7 @@ describe("a failed gateway attempt", () => {
     expect(result.notified).toBe(1);
     expect(mockSendRefundFailedEmail).toHaveBeenCalledTimes(1);
     expect(mockSendRefundFailedEmail).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({ amountPaise: 1_000 }),
     );
     // Claimed silently, so a later success never sends a stale failure email.

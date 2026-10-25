@@ -8,6 +8,7 @@
  */
 
 const captureException = jest.fn();
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({
   captureException: (...a: unknown[]) => captureException(...a),
 }));
@@ -38,7 +39,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 import {
-  freezeDriftingWallets,
+  reportWalletDriftFreeze,
   respondToLedgerDrift,
 } from "../../scripts/reconcile/ledger-drift-response";
 import type { ReconcileReport } from "../../scripts/reconcile/reconcile-ledgers";
@@ -94,42 +95,53 @@ describe("respondToLedgerDrift", () => {
   });
 });
 
-describe("freezeDriftingWallets", () => {
-  it("freezes each drifting wallet and pages fatal once", async () => {
-    await freezeDriftingWallets("rep_1", [walletDrift, seatDrift]);
+describe("reportWalletDriftFreeze", () => {
+  it("pages fatal once for all wallet pages under the logical report identity", async () => {
+    await reportWalletDriftFreeze(
+      "rep_1",
+      [walletDrift, seatDrift],
+      [
+        {
+          billingAccountId: "ba_1",
+          organizationId: "org_1",
+          deltaPaise: -10,
+          newlyFrozen: true,
+        },
+      ],
+    );
 
-    expect(createFreezeEvent).toHaveBeenCalledTimes(1);
-    expect(createFreezeEvent).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        correlationId: "wallet-freeze:ba_1",
-        organizationId: "org_1",
-        message: expect.stringContaining("rep_1"),
+    expect(createFreezeEvent).not.toHaveBeenCalled();
+    expect(reportStandingFinding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: "reconcile-ledgers:wallet-drift:rep_1",
+        ids: ["rep_1"],
       }),
-    });
+      expect.any(Function),
+    );
     const levels = captureException.mock.calls.map((c) => c[1]?.level);
     expect(levels).toEqual(["fatal"]);
   });
 
-  it("pages for the frozen wallets already done when a freeze throws", async () => {
-    createFreezeEvent.mockRejectedValueOnce(new Error("db down"));
-
-    await expect(freezeDriftingWallets("rep_1", [walletDrift])).rejects.toThrow(
-      "db down",
-    );
+  it("still pages when every freeze failed", async () => {
+    await reportWalletDriftFreeze("rep_1", [walletDrift], []);
     expect(captureException.mock.calls.at(-1)?.[1]?.level).toBe("fatal");
   });
 
-  it("still freezes later wallets when one freeze throws, then rejects", async () => {
-    createFreezeEvent.mockRejectedValueOnce(new Error("db down"));
+  it("includes partial freeze evidence in one alert", async () => {
     const second = { ...walletDrift, billingAccountId: "ba_2" };
 
-    await expect(
-      freezeDriftingWallets("rep_1", [walletDrift, second]),
-    ).rejects.toBeInstanceOf(AggregateError);
-    expect(createFreezeEvent).toHaveBeenCalledTimes(2);
-    expect(createFreezeEvent.mock.calls[1]?.[0]).toMatchObject({
-      data: { correlationId: "wallet-freeze:ba_2" },
-    });
+    await reportWalletDriftFreeze(
+      "rep_1",
+      [walletDrift, second],
+      [
+        {
+          billingAccountId: "ba_2",
+          organizationId: "org_1",
+          deltaPaise: -10,
+          newlyFrozen: true,
+        },
+      ],
+    );
     expect(captureException).toHaveBeenCalledTimes(1);
     expect(captureException.mock.calls[0]?.[1]?.contexts.wallet).toMatchObject({
       driftingWallets: 2,
@@ -138,15 +150,19 @@ describe("freezeDriftingWallets", () => {
   });
 
   it("does not freeze or page for non-wallet drift", async () => {
-    await freezeDriftingWallets("rep_1", [
-      {
-        kind: "SPLIT_SUM_MISMATCH",
-        paymentId: "p1",
-        expectedPaise: 1,
-        actualPaise: 2,
-        deltaPaise: 1,
-      },
-    ]);
+    await reportWalletDriftFreeze(
+      "rep_1",
+      [
+        {
+          kind: "SPLIT_SUM_MISMATCH",
+          paymentId: "p1",
+          expectedPaise: 1,
+          actualPaise: 2,
+          deltaPaise: 1,
+        },
+      ],
+      [],
+    );
 
     expect(createFreezeEvent).not.toHaveBeenCalled();
     expect(captureException).not.toHaveBeenCalled();

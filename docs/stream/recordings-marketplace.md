@@ -19,6 +19,10 @@ Replay sales go live once the copy pipeline has been proven on real recordings. 
 4. **Metadata-only public reads.** `/api/explore/recordings` (a public prefix in middleware) returns listing metadata only. Playback URLs come exclusively from the authenticated `GET /api/stream/recordings/[recordingId]` route, after the visibility check described in [Visibility](./13-recording-webhooks.md#visibility): owner, accepted co-presenter, attendee or enrollee per plan rules, platform ADMIN, or a buyer holding a `SUCCEEDED`, non-refunded `RecordingPurchase`.
 5. **Sold replays are never auto-deleted.** A published replay, and any recording with a `PENDING` or `SUCCEEDED` purchase, is exempt from the platform retention schedule, and from an organization's cap. Deleting a recording that has buyers is refused.
 
+Publication commits with a conditional update requiring the recording to remain `AVAILABLE` on `PLATFORM`, with the same storage pointer, listing status and preview fields that were validated. If retention, removal, unpublish or preview editing changes those fields first, the publish request returns `409 RECORDING_CHANGED` and does not invalidate the public cache. An unchanged published listing can still be edited or re-published. If publication wins first, retention's write predicate excludes the published row.
+
+The storage/listing database check requires a published row to retain its path, price and consent, but permits `EXPIRED` with `PUBLISHED` while the path remains. The conditional publish write closes that expiry race; the database check alone does not. This guard does not resolve erasure's separate copy-publication and asset-cleanup ownership window, which remains a recovery activation prerequisite.
+
 ## Purchase flow
 
 ```

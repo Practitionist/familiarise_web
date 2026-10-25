@@ -28,6 +28,7 @@ import {
   Star,
   UserPlus,
   Users,
+  Video,
   Wrench,
   Target,
 } from "lucide-react";
@@ -278,6 +279,12 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           icon: Wrench,
           path: "maintenance",
           surface: "maintenance.manage",
+        },
+        {
+          name: "Video quality",
+          icon: Video,
+          path: "video-config",
+          surface: "videoConfig.manage",
         },
       ],
     },

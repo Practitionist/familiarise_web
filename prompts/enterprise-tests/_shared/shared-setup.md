@@ -4,6 +4,10 @@
 > Single source of truth for prerequisites, glossary, schema reference,
 > seed cohort, mock-data strategy, and immutable invariants. If a case
 > file disagrees with this, this file wins.
+>
+> **Supabase MCP is read-only.** `mcp__supabase__execute_sql` is for SELECTs
+> and assertions only. Direct INSERT/UPDATE/DELETE and DDL are operator-run:
+> prepare the SQL, record it in the report, and wait for an operator.
 
 For MCP-command idioms (Supabase queries, Chrome DevTools navigation,
 cross-tool assertions), see [`mcp-recipes.md`](./mcp-recipes.md).
@@ -79,11 +83,13 @@ Tour-owner login (operator dashboard, OWNER of Wipro):
 Use the seed cohort. No setup, no cleanup.
 
 ### State-mutating / destructive cases
-Spawn fresh orgs via Supabase MCP. Use the prefix `test-2026-{YYYYMMDD}-{slug}`
-so cleanup is one line.
+The Supabase MCP is read-only, so fixture writes cannot run through it. Prepare
+the SQL below and hand it to an operator to run in the Supabase SQL editor (or an
+approved psql session); the QA agent must not run it. Use the prefix
+`test-2026-{YYYYMMDD}-{slug}` so cleanup is one line.
 
 ```sql
--- via mcp__supabase__execute_sql, project_id='pzmbxqdgibfkhjwzeprf'
+-- operator-run in the Supabase SQL editor; project pzmbxqdgibfkhjwzeprf
 WITH new_org AS (
   INSERT INTO "organizations"
     (id, slug, name, status, "canSponsor", "canHost", "rootId", "createdAt", "updatedAt")

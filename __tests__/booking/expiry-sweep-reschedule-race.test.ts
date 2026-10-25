@@ -48,6 +48,7 @@ jest.mock("../../lib/prisma", () => {
     },
     bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
     appointment: { findMany: jest.fn() },
+    $queryRaw: jest.fn(async () => []),
     $disconnect: jest.fn(),
   };
   // The payment-pending arm now expires each request in its own transaction.

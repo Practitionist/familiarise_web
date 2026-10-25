@@ -22,11 +22,15 @@ jest.mock("@sentry/nextjs", () => ({
     callback({ setTag: jest.fn(), setTags: jest.fn() }),
   ),
   getCurrentScope: jest.fn(() => ({ setTag: jest.fn(), setTags: jest.fn() })),
+  flush: jest.fn(async () => true),
 }));
+// reportSentryError and the shared loggers capture through @sentry/core; share the one mock.
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    $executeRaw: jest.fn().mockResolvedValue(1),
     payment: {
       findMany: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -53,6 +57,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 
 jest.mock("../../lib/maintenance-cron", () => ({
   assertNotInMaintenance: jest.fn(),
+  MaintenanceUnavailableError: class MaintenanceUnavailableError extends Error {},
   MaintenanceActiveError: class MaintenanceActiveError extends Error {},
 }));
 
@@ -77,6 +82,7 @@ jest.mock("../../lib/enterprise/system-events", () => {
   };
 });
 
+import { reconcilePaymentStatus } from "../../scripts/payments/reconcile-payment-status";
 import type { NextRequest } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "../../lib/prisma";
@@ -522,5 +528,179 @@ describe("reconcile-payment-status — permanent rows and pre-mint rows", () => 
     }
     expect(findMany).toHaveBeenCalledTimes(2);
     expect(updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("payment polling progress after interrupted runs", () => {
+  it("rotates unchanged pending records so all 25 are polled in three bounded runs", async () => {
+    setRazorpayEnv();
+    const rows = Array.from({ length: 25 }, (_, i) => ({
+      ...pendingRow,
+      id: `p_${String(i).padStart(2, "0")}`,
+      paymentIntent: `order_${i}`,
+      lastReconciledAt: null as Date | null,
+    }));
+    const findMany = prisma.payment.findMany as jest.Mock;
+    findMany
+      .mockReset()
+      .mockImplementation(
+        async (q: { where: { paymentGateway?: string }; take: number }) =>
+          q.where.paymentGateway
+            ? [...rows]
+                .sort(
+                  (a, b) =>
+                    (a.lastReconciledAt?.getTime() ?? 0) -
+                      (b.lastReconciledAt?.getTime() ?? 0) ||
+                    (a.id < b.id ? -1 : 1),
+                )
+                .slice(0, q.take)
+            : [],
+      );
+    const stamp = prisma.$executeRaw as jest.Mock;
+    stamp
+      .mockClear()
+      .mockImplementation(async (_sql: TemplateStringsArray, id: string) => {
+        const row = rows.find((r) => r.id === id);
+        if (row) row.lastReconciledAt = new Date();
+        return 1;
+      });
+    mockFetch.mockReset().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "created" }),
+    });
+    for (let i = 0; i < 3; i++) await reconcilePaymentStatus({ limit: 10 });
+    expect(new Set(mockFetch.mock.calls.map(([url]) => url)).size).toBe(25);
+    expect(stamp).toHaveBeenCalledTimes(30);
+    stamp.mockResolvedValue(1);
+  });
+
+  it("does not poll or rotate candidates when the execution budget was already exhausted", async () => {
+    (prisma.payment.findMany as jest.Mock)
+      .mockReset()
+      .mockResolvedValueOnce([pendingRow])
+      .mockResolvedValueOnce([]);
+    mockFetch.mockClear();
+    (prisma.$executeRaw as jest.Mock).mockClear();
+    await reconcilePaymentStatus({ startedAt: Date.now() - 20_000 });
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it("does not start a gateway read with under 3 s of budget left, leaving the row unstamped", async () => {
+    setRazorpayEnv();
+    (prisma.payment.findMany as jest.Mock)
+      .mockReset()
+      .mockResolvedValueOnce([pendingRow])
+      .mockResolvedValueOnce([]);
+    mockFetch.mockReset().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "created" }),
+    });
+    (prisma.$executeRaw as jest.Mock).mockClear();
+    const result = await reconcilePaymentStatus({
+      startedAt: Date.now() - 14_000,
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+    expect(result.totalProcessed).toBe(0);
+  });
+
+  it("rotates attempted timeouts and ordinary gateway errors", async () => {
+    setRazorpayEnv();
+    const timedOut = {
+      ...pendingRow,
+      id: "pay-a-timeout",
+      paymentIntent: "o1",
+    };
+    const failed = { ...pendingRow, id: "pay-b-500", paymentIntent: "o2" };
+    (prisma.payment.findMany as jest.Mock)
+      .mockReset()
+      .mockResolvedValueOnce([timedOut, failed])
+      .mockResolvedValueOnce([]);
+    mockFetch
+      .mockReset()
+      .mockRejectedValueOnce(
+        Object.assign(new Error("The operation was aborted due to timeout"), {
+          name: "TimeoutError",
+        }),
+      )
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: { description: "server error" } }),
+      });
+    const stamp = (prisma.$executeRaw as jest.Mock).mockClear();
+    const result = await reconcilePaymentStatus();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(stamp.mock.calls.map((c) => c[1])).toEqual([
+      "pay-a-timeout",
+      "pay-b-500",
+    ]);
+    expect(result.errors).toEqual([
+      expect.stringContaining("pay-a-timeout"),
+      expect.stringContaining("pay-b-500"),
+    ]);
+  });
+
+  it("reaches later payments when each attempted lookup consumes the entire run budget", async () => {
+    setRazorpayEnv();
+    let now = Date.now();
+    const clock = jest.spyOn(Date, "now").mockImplementation(() => now);
+    const rows = Array.from({ length: 3 }, (_, i) => ({
+      ...pendingRow,
+      id: `slow-${i}`,
+      paymentIntent: `order_slow_${i}`,
+      lastReconciledAt: null as Date | null,
+    }));
+    const findMany = prisma.payment.findMany as jest.Mock;
+    const stamp = prisma.$executeRaw as jest.Mock;
+    try {
+      findMany
+        .mockReset()
+        .mockImplementation(
+          async (query: {
+            where: { paymentGateway?: string };
+            take: number;
+          }) =>
+            query.where.paymentGateway
+              ? [...rows]
+                  .sort(
+                    (a, b) =>
+                      (a.lastReconciledAt?.getTime() ?? 0) -
+                        (b.lastReconciledAt?.getTime() ?? 0) ||
+                      (a.id < b.id ? -1 : 1),
+                  )
+                  .slice(0, query.take)
+              : [],
+        );
+      stamp
+        .mockClear()
+        .mockImplementation(async (_sql: TemplateStringsArray, id: string) => {
+          const row = rows.find((candidate) => candidate.id === id);
+          if (row) row.lastReconciledAt = new Date(now);
+          return 1;
+        });
+      mockFetch.mockReset().mockImplementation(async () => {
+        now += 16_000;
+        throw Object.assign(new Error("gateway lookup timed out"), {
+          name: "TimeoutError",
+        });
+      });
+      for (let run = 0; run < 3; run++) {
+        const result = await reconcilePaymentStatus({ limit: 1 });
+        expect(result.success).toBe(false);
+        expect(result.totalProcessed).toBe(1);
+        now += 15 * 60 * 1000;
+      }
+      expect(new Set(mockFetch.mock.calls.map(([url]) => url)).size).toBe(3);
+      expect(stamp.mock.calls.map((call) => call[1])).toEqual([
+        "slow-0",
+        "slow-1",
+        "slow-2",
+      ]);
+    } finally {
+      clock.mockRestore();
+      stamp.mockReset().mockResolvedValue(1);
+    }
   });
 });

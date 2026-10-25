@@ -309,9 +309,7 @@ Prisma operations and migration documentation.
 - [prisma/README.md](./prisma/README.md) - **Full index**, and which document applies to the current posture
 - [00-schema-map.md](./prisma/00-schema-map.md) - Domain diagrams of the Prisma schema
 - [01-migrations-guide.md](./prisma/01-migrations-guide.md) - General-purpose Prisma Migrate reference
-- [02-pre-mvp-reset-runbook.md](./prisma/02-pre-mvp-reset-runbook.md) - The one-time reset that finalises the launch schema
-- [03-cutover-to-migrations.md](./prisma/03-cutover-to-migrations.md) - Launch-day runbook: `db push` to versioned migrations
-- [04-prisma-7-migration.md](./prisma/04-prisma-7-migration.md) - Record of the Prisma 6 to 7 upgrade
+- [02-schema-freeze-and-migration-cutover.md](./prisma/02-schema-freeze-and-migration-cutover.md) - Pre-launch shape freeze and the `db push` to versioned-migrations cutover plan
 
 ---
 

@@ -11,6 +11,21 @@ const mockMeetingFindUnique = jest.fn();
 const mockMeetingCreate = jest.fn();
 const mockParticipantFindMany = jest.fn();
 const mockAppointmentFindUnique = jest.fn();
+const mockVideoConfigFindUnique = jest.fn();
+const configuredQuality = {
+  callTargetResolution: "1080p",
+  recordingQuality: "1080p",
+  screenshareTargetResolution: "720p",
+};
+const configuredSettings = {
+  video: expect.objectContaining({
+    target_resolution: { width: 1920, height: 1080, bitrate: 3000000 },
+  }),
+  screensharing: {
+    target_resolution: { width: 1280, height: 720, bitrate: 1500000 },
+  },
+  recording: { mode: "available", quality: "1080p" },
+};
 
 jest.mock("../../lib/auth-server", () => ({
   getSession: (...a: unknown[]) => mockGetSession(...a),
@@ -53,6 +68,9 @@ jest.mock("../../lib/prisma", () => ({
     appointmentParticipant: {
       findMany: (...a: unknown[]) => mockParticipantFindMany(...a),
     },
+    platformVideoConfig: {
+      findUnique: (...a: unknown[]) => mockVideoConfigFindUnique(...a),
+    },
   },
 }));
 
@@ -75,11 +93,13 @@ import {
   buildCallSettingsOverride,
   isAwaitingHostGoLive,
 } from "../../lib/meetings/room-ready";
+import { DEFAULT_VIDEO_CONFIG } from "../../lib/stream/video-quality";
 import { provisionAppointmentMeeting } from "../../actions/stream/meetings/meeting.action";
 
 beforeEach(() => {
   jest.clearAllMocks();
   mockCallIds.length = 0;
+  mockVideoConfigFindUnique.mockResolvedValue(null);
 });
 
 describe("lib/meetings/duration-cap", () => {
@@ -103,12 +123,38 @@ describe("lib/meetings/duration-cap", () => {
 });
 
 describe("buildCallSettingsOverride & isAwaitingHostGoLive", () => {
-  it("configures limits.max_duration_seconds for 1:1 session types and returns undefined when null", () => {
+  const build = (appointmentType: string, maxDurationSeconds: number | null) =>
+    buildCallSettingsOverride(
+      appointmentType,
+      maxDurationSeconds,
+      undefined,
+      DEFAULT_VIDEO_CONFIG,
+    );
+  const qualitySettings = {
+    screensharing: {
+      target_resolution: { width: 1920, height: 1080, bitrate: 3000000 },
+    },
+    recording: { mode: "available", quality: "720p" },
+  };
+  const targetResolution720 = { width: 1280, height: 720, bitrate: 1500000 };
+
+  it("gives 1:1 session types the configured video quality and limits.max_duration_seconds only when set", () => {
+    const pairSettings = {
+      video: {
+        enabled: true,
+        camera_default_on: true,
+        camera_facing: "front",
+        access_request_enabled: true,
+        target_resolution: targetResolution720,
+      },
+      ...qualitySettings,
+    };
     for (const appointmentType of ["CONSULTATION", "SUBSCRIPTION", "TRIAL"]) {
-      expect(buildCallSettingsOverride(appointmentType, 4500)).toEqual({
+      expect(build(appointmentType, 4500)).toEqual({
+        ...pairSettings,
         limits: { max_duration_seconds: 4500 },
       });
-      expect(buildCallSettingsOverride(appointmentType, null)).toBeUndefined();
+      expect(build(appointmentType, null)).toEqual(pairSettings);
     }
   });
 
@@ -131,22 +177,36 @@ describe("buildCallSettingsOverride & isAwaitingHostGoLive", () => {
         camera_default_on: false,
         camera_facing: "front",
         access_request_enabled: true,
-        target_resolution: {
-          width: 1280,
-          height: 720,
-          bitrate: 1500000,
-        },
+        target_resolution: targetResolution720,
       },
+      ...qualitySettings,
     };
 
     for (const appointmentType of ["WEBINAR", "CLASS"]) {
-      expect(buildCallSettingsOverride(appointmentType, 4500)).toEqual({
+      expect(build(appointmentType, 4500)).toEqual({
         ...expectedOneToManySettings,
         limits: { max_duration_seconds: 4500 },
       });
-      expect(buildCallSettingsOverride(appointmentType, null)).toEqual(
-        expectedOneToManySettings,
-      );
+      expect(build(appointmentType, null)).toEqual(expectedOneToManySettings);
+    }
+  });
+
+  it("carries staff-chosen quality into 1:1 and 1:N payloads", () => {
+    const chosen = {
+      callTargetResolution: "1080p",
+      recordingQuality: "1080p",
+      screenshareTargetResolution: "720p",
+    } as const;
+    for (const appointmentType of ["CONSULTATION", "WEBINAR"]) {
+      expect(
+        buildCallSettingsOverride(appointmentType, null, undefined, chosen),
+      ).toMatchObject({
+        video: {
+          target_resolution: { width: 1920, height: 1080, bitrate: 3000000 },
+        },
+        screensharing: { target_resolution: targetResolution720 },
+        recording: { quality: "1080p" },
+      });
     }
   });
 
@@ -239,6 +299,7 @@ describe("provisionAppointmentMeeting", () => {
       droppedIds: ["consultee-no-consent"],
     });
     mockGetOrCreate.mockResolvedValue({});
+    mockVideoConfigFindUnique.mockResolvedValue(configuredQuality);
 
     const res = await provisionAppointmentMeeting({
       id: "slot-1",
@@ -254,7 +315,85 @@ describe("provisionAppointmentMeeting", () => {
         data: expect.objectContaining({
           members: [{ user_id: "host-1", role: "call_member" }],
           settings_override: expect.objectContaining({
-            limits: { max_duration_seconds: 4500 },
+            ...configuredSettings,
+            limits: { max_duration_seconds: 4500, max_participants: 6 },
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("caps a webinar room at the instance override plus headroom, excluding owner and presenter roles", async () => {
+    const startsAt = new Date(Date.now() + 5 * 60 * 1000);
+    const endsAt = new Date(startsAt.getTime() + 60 * 60 * 1000);
+
+    mockGetSession.mockResolvedValue({
+      user: {
+        id: "host-1",
+        role: "CONSULTANT",
+        consultantProfileId: "cp-host",
+        banned: false,
+      },
+    });
+    mockMeetingFindUnique.mockResolvedValue(null);
+    mockAppointmentFindUnique.mockResolvedValue({ organizationId: null });
+    mockMeetingCreate.mockResolvedValue({ id: "m", streamCallId: "c" });
+    mockSlotFindUnique.mockResolvedValue({
+      id: "slot-w",
+      startsAt,
+      endsAt,
+      isTentative: false,
+      completionStatus: "SCHEDULED",
+      deletedAt: null,
+      appointmentId: "appt-w",
+      consultantProfileId: "cp-host",
+      appointment: {
+        appointmentType: "WEBINAR",
+        organizationId: null,
+        deletedAt: null,
+        participants: [],
+        consultation: null,
+        subscription: null,
+        class: null,
+        trial: null,
+        webinar: {
+          maxParticipants: 150,
+          webinarPlan: {
+            maxParticipants: 100,
+            title: "Launch webinar",
+            collaborators: [],
+            consultantProfile: {
+              id: "cp-host",
+              userId: "host-1",
+              user: { name: "Host" },
+            },
+          },
+        },
+      },
+    });
+    mockUpsertUsersToStream.mockResolvedValue({ droppedIds: [] });
+    mockGetOrCreate.mockResolvedValue({});
+    mockVideoConfigFindUnique.mockResolvedValue(configuredQuality);
+
+    await provisionAppointmentMeeting({
+      id: "slot-w",
+      startsAt,
+      endsAt,
+      isTentative: false,
+      appointmentId: "appt-w",
+    });
+
+    expect(mockGetOrCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          settings_override: expect.objectContaining({
+            ...configuredSettings,
+            limits: {
+              max_duration_seconds: 6300,
+              max_participants: 155,
+              max_participants_exclude_owner: true,
+              max_participants_exclude_roles: ["co_presenter", "admin"],
+            },
           }),
         }),
       }),

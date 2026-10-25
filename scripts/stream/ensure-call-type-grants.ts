@@ -3,7 +3,8 @@
  * revoking unguarded join (`join-call`, `join-ended-call`, `update-call-permissions`)
  * from `user`/`guest`, and `end-call`, `list-recordings` plus every billable
  * permission (with `-owner` / `-any-team` variants) from `user`, `guest` and
- * `call_member`. Recordings reach clients only through our API.
+ * `call_member`. Recordings reach clients only through our API. `user` and
+ * `call_member` keep `remove-call-member` / `update-call-member` only as `-owner`.
  *
  *   npx tsx scripts/stream/ensure-call-type-grants.ts
  *   npx tsx scripts/stream/ensure-call-type-grants.ts --apply --routes-are-deployed
@@ -21,41 +22,13 @@ import { CALL_MEMBER_ROLE, STREAM_CALL_TYPE } from "../../lib/stream/call-cid";
 import { canonical } from "../../lib/stream/config-fingerprint";
 import { anyOpenCallMemberHolds } from "./backfill-call-member-role";
 import {
-  BILLABLE_PERMISSIONS,
-  matchesPermissionWithScope,
-} from "./harden-unused-call-types";
-
-const CREATE_CALL = "create-call";
-const JOIN_CALL = "join-call";
-const JOIN_REVOKED_ROLES = ["user", "guest"];
-const END_CALL = "end-call";
-const LIST_RECORDINGS = "list-recordings";
-const NON_MEMBER_REVOKED_PERMISSIONS = [
-  JOIN_CALL,
-  "join-ended-call",
-  "update-call-permissions",
-];
-export const DEFAULT_CALL_TYPE_REVOKED_PERMISSIONS = [
-  ...BILLABLE_PERMISSIONS,
-  CREATE_CALL,
   END_CALL,
-  LIST_RECORDINGS,
-];
-const RECORDING_REVOKED_ROLES = [...JOIN_REVOKED_ROLES, CALL_MEMBER_ROLE];
-
-export function isRevokedClientPermission(perm: string): boolean {
-  return matchesPermissionWithScope(
-    perm,
-    DEFAULT_CALL_TYPE_REVOKED_PERMISSIONS,
-  );
-}
-
-function isRevokedNonMemberPermission(perm: string): boolean {
-  return (
-    matchesPermissionWithScope(perm, NON_MEMBER_REVOKED_PERMISSIONS) ||
-    isRevokedClientPermission(perm)
-  );
-}
+  JOIN_CALL,
+  JOIN_REVOKED_ROLES,
+  RECORDING_REVOKED_ROLES,
+  intendedDefaultCallTypeGrants,
+  isRevokedClientPermission,
+} from "../../lib/stream/control-plane-contract";
 
 export interface EnsureCallTypeGrantsOptions {
   apply: boolean;
@@ -95,6 +68,14 @@ function formatAffectedCallsSuffix(calls: string[]): string {
   return `\n\nAffected calls: ${listed}${overflow}`;
 }
 
+/**
+ * Rooms are created on demand inside the join window, one call per occurrence and
+ * per reopen, so a call still open 14 days after creation is an abandoned room no
+ * one is scheduled into (Stream also drops its media then). Scanning only newer
+ * calls keeps the lock-out check inside Stream's one-page queryCalls limit.
+ */
+const LOCKOUT_SCAN_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+
 async function requireSomeoneHoldsMemberRole(
   client: ReturnType<typeof getStreamVideoClient>,
   opts: EnsureCallTypeGrantsOptions,
@@ -103,7 +84,9 @@ async function requireSomeoneHoldsMemberRole(
 
   let scan: Awaited<ReturnType<typeof anyOpenCallMemberHolds>>;
   try {
-    scan = await anyOpenCallMemberHolds(client, CALL_MEMBER_ROLE);
+    scan = await anyOpenCallMemberHolds(client, CALL_MEMBER_ROLE, {
+      createdSince: new Date(Date.now() - LOCKOUT_SCAN_WINDOW_MS),
+    });
   } catch (err) {
     console.error(
       `\n🛑 Refusing to apply — could not read call members from Stream.\n`,
@@ -153,32 +136,9 @@ function computeUpdatedGrants(
   existingGrants: Record<string, string[]>,
   restore: boolean,
 ): Record<string, string[]> {
-  if (restore) {
-    return computeRestoredGrants(existingGrants);
-  }
-
-  const grants: Record<string, string[]> = { ...existingGrants };
-
-  for (const role of JOIN_REVOKED_ROLES) {
-    const roleGrants = grants[role];
-    if (roleGrants) {
-      grants[role] = roleGrants.filter((g) => !isRevokedNonMemberPermission(g));
-    }
-  }
-
-  for (const role of RECORDING_REVOKED_ROLES) {
-    const roleGrants = grants[role];
-    if (roleGrants) {
-      grants[role] = roleGrants.filter((g) => !isRevokedClientPermission(g));
-    }
-  }
-
-  const memberGrants = grants[CALL_MEMBER_ROLE] ?? [];
-  if (!memberGrants.includes(JOIN_CALL)) {
-    grants[CALL_MEMBER_ROLE] = [...memberGrants, JOIN_CALL];
-  }
-
-  return grants;
+  return restore
+    ? computeRestoredGrants(existingGrants)
+    : intendedDefaultCallTypeGrants(existingGrants);
 }
 
 function logGrantChanges(

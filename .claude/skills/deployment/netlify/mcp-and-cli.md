@@ -4,7 +4,7 @@ Verified on 2026-09-12. This file records how to get a fact about the live Netli
 
 ## The Netlify MCP server
 
-Netlify's official server is `@netlify/mcp` (version 1.15.1 at the time of writing). The block below is what `.mcp.json.example` carries; a teammate copies it into their gitignored `.mcp.json`.
+Netlify's official server is `@netlify/mcp` (pinned at 1.15.1). The block below is what `.mcp.json.example` carries; a teammate copies it into their gitignored `.mcp.json`.
 
 ```json
 "netlify": {
@@ -17,16 +17,16 @@ Authentication comes from the logged-in Netlify CLI session (`netlify status` sh
 
 ### The first-connect trap
 
-A cold `npx -y @netlify/mcp@latest` takes about 28 seconds on an M-series laptop, which sits at Claude Code's 30-second MCP connect timeout. When the timeout wins, `npx` is killed mid-extraction and leaves a torn entry under `~/.npm/_npx/<hash>/` — observed as `node_modules/ajv/` containing `dist/` and `lib/` but no `package.json`, so every later start dies with `ERR_MODULE_NOT_FOUND` and looks like a broken dependency rather than a timeout. Warm the cache by hand before the first `/mcp` connect:
+A cold `npx -y @netlify/mcp@1.15.1` takes about 28 seconds on an M-series laptop, which sits at Claude Code's 30-second MCP connect timeout. When the timeout wins, `npx` is killed mid-extraction and leaves a torn entry under `~/.npm/_npx/<hash>/` — observed as `node_modules/ajv/` containing `dist/` and `lib/` but no `package.json`, so every later start dies with `ERR_MODULE_NOT_FOUND` and looks like a broken dependency rather than a timeout. Warm the cache by hand before the first `/mcp` connect:
 
 ```sh
-npx -y @netlify/mcp@latest </dev/null
+npx -y @netlify/mcp@1.15.1 </dev/null
 ```
 
 If the timeout has already struck, read the log at `~/Library/Caches/claude-cli-nodejs/<project>/mcp-logs-netlify/`, take the `<hash>` from the `ERR_MODULE_NOT_FOUND` path, `rm -rf ~/.npm/_npx/<hash>`, and run the warm-up. A warm start takes about two seconds. Piping an `initialize` JSON-RPC line into the server proves it answers without Claude Code in the loop:
 
 ```sh
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}' | npx -y @netlify/mcp@latest
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}' | npx -y @netlify/mcp@1.15.1
 ```
 
 ### What the nine tools do
@@ -112,18 +112,20 @@ Netlify's build can fail at "preparing repo" with `Host key verification failed`
 
 ## The other MCP servers in a deployment session
 
-The table below lists the servers in `.mcp.json.example` that deployment work reaches for, and the one caution each carries.
+The table below lists the MCP servers deployment work reaches for, and the one caution each carries.
 
-| Server            | Use in deployment work                                                        | Caution                                                                                    |
-| ----------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `netlify`         | Site, deploy, team, and env-var facts as above                                | No logs, no limits, no billing                                                             |
-| `supabase`        | `execute_sql`, `get_logs`, `get_advisors`, `list_tables` against the database | One Supabase project serves dev and prod, so every mutating call is a production operation |
-| `sentry`          | `search_issues`, `search_events` to confirm a platform failure reached users  | Read-only by habit; `update_issue` exists                                                  |
-| `chrome-devtools` | Driving a deploy preview for logged-in end-to-end checks, Lighthouse runs     | Point it at `deploy-preview-N--familiarise.netlify.app`, never at a local dev server       |
-| `sonarqube`       | Quality-gate status for a PR before merge                                     | Runs in Docker with `--pull=always`; the first start downloads the image                   |
-| `streamio`        | Chat, video, and moderation state on the Stream app                           | Production app keys; reads are safe, writes are live                                       |
+| Server            | Use in deployment work                                                                                             | Caution                                                                                                                                                                                               |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `netlify`         | Site, deploy, team, and env-var facts as above                                                                     | No logs, no limits, no billing                                                                                                                                                                        |
+| `supabase`        | Read-only `execute_sql` (SELECT), `get_logs`, `get_advisors`, `list_tables` against project `pzmbxqdgibfkhjwzeprf` | Started with `--read-only --project-ref`; direct DDL and DML are refused. Read-only is defense-in-depth, not a hard boundary. One project serves dev and prod, so even reads spend production compute |
+| `sentry`          | `search_issues`, `search_events` to confirm a platform failure reached users                                       | Read-only by habit; `update_issue` exists                                                                                                                                                             |
+| `chrome-devtools` | Driving a deploy preview for logged-in end-to-end checks, Lighthouse runs                                          | Point it at `deploy-preview-N--familiarise.netlify.app`, never at a local dev server                                                                                                                  |
+| `sonarqube`       | Quality-gate status for a PR before merge                                                                          | Runs in Docker with `--pull=always`; the first start downloads the image                                                                                                                              |
+| `streamio`        | Chat, video, and moderation state on the Stream app                                                                | Production app keys; reads are safe, writes are live                                                                                                                                                  |
 
-Setup gotchas for the whole file: `.mcp.json` is gitignored because it holds live secrets and only `.mcp.json.example` is tracked; project-scoped stdio servers show `⏸ Pending approval` in `claude mcp list` until the session approves them, which is not a failure; and the `.coderabbit.yaml`-style fail-closed behaviour does not apply here — a malformed `.mcp.json` is reported at startup.
+`sentry` and `betterstack` are remote HTTP endpoints, so there is no package version to pin. `rzp-mcp-server` is deliberately absent from the default example: it lives in `.mcp.razorpay.example.json`, is write-capable, and must use a test-mode key.
+
+Setup gotchas for the whole file: `.mcp.json` is gitignored because it holds live secrets and only the example files are tracked, so pulling a change to the example does not update an existing local copy — re-copy or merge it; project-scoped stdio servers show `⏸ Pending approval` in `claude mcp list` until the session approves them, which is not a failure; and the `.coderabbit.yaml`-style fail-closed behaviour does not apply here — a malformed `.mcp.json` is reported at startup.
 
 ## Sources
 

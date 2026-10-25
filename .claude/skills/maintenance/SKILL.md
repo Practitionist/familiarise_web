@@ -17,4 +17,66 @@ This is the index for operational and deployment plumbing that is not specific t
 
 ## Non-negotiables
 
-No generic outbox table exists in this repo; the domain rows already carry every pending obligation, and an idempotent sweep re-drives whatever a crashed `after()` callback missed. All scheduled jobs are registered in the consolidated 48-slug `lib/cron/cleanup-registry.ts` and exposed through the single dynamic HTTP twin `app/api/cleanup/[job]/route.ts` (gated by `CRON_SECRET` and wrapped in `withCronLock` with fail-closed semantics on money/mutation jobs). The five-minute Netlify scheduled function (`netlify/functions/cron-tick.mts`) dispatches due jobs in phase-staggered waves (`phase` / `maxDurationMs` in `lib/cron/cleanup-registry.ts`) so high-frequency sweeps never pile up on the single-connection pool (`PG_POOL_MAX=1`), gated by the `ops:active_cron_platform` fleet switch; GitHub Actions keeps only the jobs that cannot run bounded on the ticker. Maintenance bypass cookies (`maintenance_bypass`) in `lib/maintenance-edge.ts` must always use short-lived HMAC-SHA256 signed tokens (`<expiryTimestamp>.<hmac>`) verified via Web Crypto `crypto.subtle`, never the raw `MAINTENANCE_BYPASS_SECRET` (`#1487`). A deploy preview, not a local dev server, is the only place that reproduces the `PG_POOL_MAX=1` single-connection deadlock, because a local pool has more than one connection. Full detail and sources live in the references above.
+Use one registered implementation per job and keep the required Netlify standby.
+`lib/cron/schedule.ts` owns configured cadence, windows and HTTP request bounds;
+the registry does not define phase or timeout fields. Regenerate the AST-derived
+inventory with `npm run cron:reference` and verify `npm run cron:reference:check`.
+The catalog has no worker, database or environment imports. Its ten-target figure
+is a tested design bound, not a runtime dispatch cap. Configured Actions ownership
+remains migration work until bounded replacements have actually run.
+
+Recording transfer is ticker-owned every 15 minutes through its existing background adapter. Keep 202 admission separate from successful core completion and retain its fail-closed 15-minute lease. Session recovery runs via HTTP at :10/:40. The five daily lifecycle targets queue the narrow `stream-maintenance-background` worker in staggered daily windows; their Actions steps are removed. All six migrated cores fail closed, and daily completion health has a 27-hour budget. See `docs/stream/09-background-sync.md` for slice bounds and continuation.
+
+Cron leases are Postgres-backed. Closed jobs never run when acquisition fails,
+including Prisma import failures. Completion is conditional on the same execution
+still being RUNNING; only successful owned completion advances freshness. Typed
+outcomes and `X-Job-Outcome` distinguish partial failure and intentional holds.
+Different jobs can still touch the same row: preserve CAS, transactional staging
+and vendor idempotency, and test cross-job races and sequential replay.
+
+The scheduled ticker has a 30-second budget, distinct from its HTTP workers.
+A timeout or expired lease does not cancel vendor effects. Fleet selection fails
+open on absent/unreadable `ops:active_cron_platform`, so it is not an exactly-once
+guarantee. Verify accepted Sentry check-ins and independent per-capability absence
+alerts; the shared heartbeat and HTTP200 alone do not prove complete health.
+
+Maintenance bypass cookies remain short-lived HMAC-SHA256 tokens verified via Web
+Crypto. Follow the active maintenance implementation and recovery instructions;
+never infer that a cached phase quiesces work already in flight. See the linked
+references for transaction-client, deployed-runtime and environment constraints.
+
+PATCH updates require a validated non-empty reason, including ETA-only changes; use that value for incident and audit text. Maintenance retries preserve the active window's configuration and repeat OFFLINE setup until its completion stamp exists. Recovery checks database, Redis and chat before incident resolution and phase change. Preserve sequential session and channel-batch admission checks, paced vendor batches, transaction-client writes and ordered sidecar statements; a loop await is required when the next step depends on its predecessor or remaining budget.
+
+Mocks of `maintenance-cron` must provide both exported error constructors: cleanup error mapping uses `instanceof` to distinguish unreadable state from planned holds.
+
+Capture assertions that mock `@sentry/nextjs` must alias `@sentry/core` to the same mock, so native-worker helpers and Next.js routes share the asserted capture functions. Partial mocks spread the actual Core module, avoiding a circular import through the actual Next.js SDK.
+
+Revalidate a confirmed booking’s live overlap inside the cancellation transaction before loading its full graph. Bootstrap missing maintenance edge state from the durable platform state before deploying fail-closed readers; never overwrite an active window with OFF. The release owner applies the exact reviewed SQL and performs the conditional no-TTL edge bootstrap immediately before merge; coding agents do not perform either operation. Unreadable-state GET protection on checkout verify applies only to `sync=true`, because the plain status poll is read-only.
+
+The 48-hour paid-unallocated arm of `expire-stale-requests` commits EXPIRED,
+history, `sub-unalloc:<paymentId>` full-refund markers and its bell together.
+Its legacy recovery filters eligible payments before LIMIT with no liability
+lookback. Keep existing markers/attempts, hold an oversized payment envelope
+without partially expiring its liabilities, and preserve visible backlog on
+errors or deadline truncation. Exhausting only the remaining invocation allowance
+is a deferral, not an envelope error; stop the ordered page for the next run. Its shared 16-second admission budget covers
+only this family; earlier expiry arms and nudge fairness remain separate work.
+Do not describe the entire worker as deadline-bounded or its backlog as drained. `unallocatedHasMore` includes retired/foreign-owned obligations needing operator review; it is not a signal to keep automatically driving retries.
+When extracting these phases, retain the same deadline closure and ordered fresh
+payment allowance; keep earlier staged markers available for the delivery phase.
+
+Raw SQL must follow Prisma's physical `@map`/`@@map` identifiers; the subscription
+status column is `requestStatus`. Derive disposable SQL fixture identifiers from
+the generated schema metadata, and verify query planning read-only before making
+production capacity claims.
+
+## Worktree verification
+
+The Jest configuration keeps an explicit `@/` source mapping while retaining Next.js’s default mocks and transforms. Run targeted suites through the repository config. A CLI `--moduleNameMapper` replaces the entire map and can discard `server-only`, asset and Redis-edge mocks; do not use it as a shortcut for alias resolution.
+
+When merging a worker migration, port its roster, limit, timeout and ledger-yield changes into the shared catalog; do not restore the adapter’s former inline schedule. Check generated output against the same inputs before and after generator refactors. Keep blank workflow names within their own source block and preserve escaped Markdown pipes. See `references/cron-ticker.md` for the current document-purge schedule and mocked verification boundary.
+
+Stream background adapters currently target Netlify function URLs. Automatic
+execution requires Netlify as active cron host; a host switch needs an equivalent
+execution target. Keep lifecycle worker imports free of request authentication
+and check actual native packaging, including CLI guards, before scheduling.

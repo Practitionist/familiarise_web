@@ -1,17 +1,22 @@
-"use client";
-
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Shield } from "lucide-react";
 import { MESSAGE_REVIEW_ARTICLE_HREF } from "@/lib/compliance/purpose-codes";
+import { CompanyDetails } from "../CompanyDetails";
+import { COMPANY_INFO } from "@/lib/company";
 import {
-  COMPANY_INFO,
   GRIEVANCE_OFFICER,
   PAGE_META,
   POLICY_DATES,
   getMailtoLink,
 } from "../constants";
+
+export const metadata: Metadata = {
+  title: `${PAGE_META.privacy.title} | Familiarise`,
+  description: PAGE_META.privacy.description,
+};
 
 export default function PrivacyPolicyPage() {
   return (
@@ -863,19 +868,7 @@ export default function PrivacyPolicyPage() {
                 If you have any questions, concerns, or requests regarding this
                 Privacy Policy or our data practices, please contact us:
               </p>
-              <div className="bg-muted p-4 rounded-lg mt-4">
-                <p>
-                  <strong>Company Name:</strong> {COMPANY_INFO.name}
-                </p>
-                <p>
-                  <strong>Email:</strong>{" "}
-                  <a
-                    href={getMailtoLink()}
-                    className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
-                  >
-                    {COMPANY_INFO.email}
-                  </a>
-                </p>
+              <CompanyDetails>
                 <p>
                   <strong>Contact Form:</strong>{" "}
                   <a
@@ -885,7 +878,7 @@ export default function PrivacyPolicyPage() {
                     Contact Us
                   </a>
                 </p>
-              </div>
+              </CompanyDetails>
 
               <Separator className="my-6" />
 

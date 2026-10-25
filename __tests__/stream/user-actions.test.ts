@@ -37,6 +37,7 @@ jest.mock("../../lib/stream-client", () => ({
       (error as { status?: number }).status === 404),
 }));
 
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 jest.mock("../../lib/stream-logger", () => ({

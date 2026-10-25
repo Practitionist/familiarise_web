@@ -139,7 +139,7 @@ Do not write application reconcilers for the database-enforced rows (AGENTS.md Â
 
 ## Deprecated & Superseded Approaches
 
-- **Removed tables.** `SupportTicket`, `SupportResponse`, `SupportTicketAttachment`, `AppointmentSupportThread`, `SupportMessage`, `SupportTicketCounter` and `SupportCaseLegacyAlias` were dropped in the pre-MVP cleanup, together with import aliases and dual-parent events. The data was disposable; seed canonical cases directly (`prisma/seedFiles/9b-create-support-cases.ts`).
+- **Removed tables.** `SupportTicket`, `SupportResponse`, `SupportTicketAttachment`, `AppointmentSupportThread`, `SupportMessage`, `SupportTicketCounter` and `SupportCaseLegacyAlias` were dropped in the pre-MVP cleanup (by ad-hoc DDL while production still read them; see the [DDL end-phase checklist](12-runbooks.md#ddl-end-phase-checklist)), together with import aliases and dual-parent events. The data was disposable; seed canonical cases directly (`prisma/seedFiles/9b-create-support-cases.ts`).
 - **`SupportPaymentHold`.** Replaced by `EarningsHold` with reason `SUPPORT_CASE`.
 - **Mutable decisions.** Decisions are now protected by a trigger; a correction is a new superseding row.
 - **ON_HOLD status and thread/ticket status mirroring.** Gone; the five statuses above are the whole set.

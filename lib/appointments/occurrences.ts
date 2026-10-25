@@ -6,6 +6,7 @@
 import type { PrismaLike } from "@/lib/prisma";
 import type { OccurrenceCompletionStatus, Prisma } from "@prisma/client";
 import { recomputeEarningsHold } from "@/lib/payments/payouts/earnings-hold";
+import { endReasonPolicy } from "@/lib/meetings/end-reasons";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
 import {
   ScheduleLockedError,
@@ -313,9 +314,7 @@ function occurrenceTimes(occurrence: JoinableOccurrence): {
   };
 }
 
-/** Terminal reasons that permanently close a room without allowing rejoin. */
-const DELIBERATE_END_REASONS = new Set(["call_ended", "maintenance"]);
-
+/** True when a person or ops closed the room on purpose (`END_REASON_POLICY.deliberate`). */
 export function isDeliberateEnd(
   session?: {
     endedAt: Date | string | null;
@@ -323,9 +322,7 @@ export function isDeliberateEnd(
   } | null,
 ): boolean {
   if (!session?.endedAt) return false;
-  return session.endedReason
-    ? DELIBERATE_END_REASONS.has(session.endedReason)
-    : true;
+  return endReasonPolicy(session.endedReason).deliberate;
 }
 
 /** Join state of one occurrence over [startsAt - joinWindowMs, endsAt + rejoinGraceMs). */

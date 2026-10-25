@@ -43,6 +43,8 @@ declare module "stream-chat" {
     // DM pair channel linking
     dm_consultant_user_id?: string;
     dm_consultee_user_id?: string;
+    // Org scope stamped on org-context channels
+    organization_id?: string;
   }
 
   /**

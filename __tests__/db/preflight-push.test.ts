@@ -23,6 +23,7 @@ import {
   sidecarOwnedUniqueIndexes,
   droppedIndexName,
 } from "@/scripts/db/preflight-push";
+import { parseSidecarDirectory } from "@/scripts/db/sidecar-objects";
 
 /** Verbatim output of
  *  `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`
@@ -159,6 +160,19 @@ describe("sidecar-owned unique indexes", () => {
     expect(owned.has("appointment_feedback_level_key")).toBe(true);
     expect(owned.has("consultant_earnings_occurrence_key")).toBe(true);
     expect(owned.has("Payment_pkey")).toBe(false);
+  });
+
+  it("does not treat schema-declared indexes from a one-off rollout file as sidecar-owned", () => {
+    const dir = path.join(process.cwd(), "prisma/sql");
+    const cursorIndexes = [
+      "organizations_lastAccrualRollupAt_id_idx",
+      "Payment_paymentStatus_lastReconciledAt_id_idx",
+      "Refund_status_lastReconciledAt_id_idx",
+      "WalletTopUp_status_lastReconciledAt_id_idx",
+    ];
+    const parsed = new Set(parseSidecarDirectory(dir).map((o) => o.name));
+    for (const name of cursorIndexes) expect(parsed.has(name)).toBe(false);
+    expect(parsed.has("payment_legs_sum_to_amount")).toBe(true);
   });
 
   it("#1766 — the earnings unique carries the cycle ordinal and keeps NULLS NOT DISTINCT", () => {

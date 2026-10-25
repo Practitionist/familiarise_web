@@ -17,6 +17,7 @@ import {
   MessageSquareQuote,
   Video,
 } from "lucide-react";
+import { MAX_GROUP_SESSION_PARTICIPANTS } from "@/lib/events/capacity";
 import type { FieldSpec, OfferingManifest, SectionSpec } from "./manifest";
 
 /** Identity and framing. Identical for all four types. */
@@ -231,8 +232,9 @@ const maxParticipantsField: FieldSpec = {
   kind: "number",
   label: "Max participants",
   min: 1,
+  max: MAX_GROUP_SESSION_PARTICIPANTS,
   step: 1,
-  description: "From 1 to 10,000 people.",
+  description: `From 1 to ${MAX_GROUP_SESSION_PARTICIPANTS} people.`,
   required: true,
   span: 2,
 };
