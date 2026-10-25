@@ -76,72 +76,56 @@ beforeAll(async () => {
   await mockClient.connect();
   // Derive physical identifiers from Prisma's schema metadata. A fixture using
   // logical field names would hide raw SQL mistakes on @map/@@map fields.
-  const fixtures: { model: string; columns: [string, string][] }[] = [
-    {
-      model: "Subscription",
-      columns: [
-        ["id", "text PRIMARY KEY"],
-        ["status", "text"],
-      ],
+  const fixtures: Record<string, Record<string, string>> = {
+    Subscription: {
+      id: "text PRIMARY KEY",
+      status: "text",
     },
-    {
-      model: "Appointment",
-      columns: [
-        ["id", "text PRIMARY KEY"],
-        ["subscriptionId", "text"],
-      ],
+    Appointment: {
+      id: "text PRIMARY KEY",
+      subscriptionId: "text",
     },
-    {
-      model: "BookingStatusHistory",
-      columns: [
-        ["entityId", "text"],
-        ["entity", "text"],
-        ["reason", "text"],
-        ["toStatus", "text"],
-        ["createdAt", "timestamptz"],
-      ],
+    BookingStatusHistory: {
+      entityId: "text",
+      entity: "text",
+      reason: "text",
+      toStatus: "text",
+      createdAt: "timestamptz",
     },
-    {
-      model: "Payment",
-      columns: [
-        ["id", "text PRIMARY KEY"],
-        ["amount", "bigint"],
-        ["paymentIntent", "text"],
-        ["paymentStatus", "text DEFAULT 'SUCCEEDED'"],
-        ["appointmentId", "text"],
-        ["deletedAt", "timestamptz"],
-        ["createdAt", "timestamptz DEFAULT now()"],
-        ["updatedAt", "timestamptz DEFAULT now()"],
-        ["refundOwedKey", "text UNIQUE"],
-        ["refundOwedPaise", "bigint"],
-        ["refundOwedReason", "text"],
-        ["refundOwedAt", "timestamptz"],
-        ["refundOwedAttempts", "int DEFAULT 0"],
-      ],
+    Payment: {
+      id: "text PRIMARY KEY",
+      amount: "bigint",
+      paymentIntent: "text",
+      paymentStatus: "text DEFAULT 'SUCCEEDED'",
+      appointmentId: "text",
+      deletedAt: "timestamptz",
+      createdAt: "timestamptz DEFAULT now()",
+      updatedAt: "timestamptz DEFAULT now()",
+      refundOwedKey: "text UNIQUE",
+      refundOwedPaise: "bigint",
+      refundOwedReason: "text",
+      refundOwedAt: "timestamptz",
+      refundOwedAttempts: "int DEFAULT 0",
     },
-    {
-      model: "Refund",
-      columns: [
-        ["paymentId", "text"],
-        ["dedupeKey", "text"],
-        ["amountPaise", "bigint"],
-        ["status", "text"],
-      ],
+    Refund: {
+      paymentId: "text",
+      dedupeKey: "text",
+      amountPaise: "bigint",
+      status: "text",
     },
-    {
-      model: "Dispute",
-      columns: [
-        ["paymentId", "text"],
-        ["amountPaise", "bigint"],
-        ["status", "text"],
-      ],
+    Dispute: {
+      paymentId: "text",
+      amountPaise: "bigint",
+      status: "text",
     },
-  ];
+  };
   await mockClient.query(
-    fixtures
+    Object.entries(fixtures)
       .map(
-        ({ model, columns }) =>
-          `CREATE TEMP TABLE ${physicalName(model)} (${columns.map(([field, ddl]) => `${physicalName(model, field)} ${ddl}`).join(", ")})`,
+        ([model, columns]) =>
+          `CREATE TEMP TABLE ${physicalName(model)} (${Object.entries(columns)
+            .map(([field, ddl]) => `${physicalName(model, field)} ${ddl}`)
+            .join(", ")})`,
       )
       .join(";"),
   );
