@@ -350,42 +350,64 @@ export async function transferRecording(
   }
 }
 
-/** Report rows that hit the attempt cap once per run, then stamp them so later runs stay quiet. */
-async function reportExhaustedTransfers(): Promise<number> {
-  const exhausted = await prisma.recording.findMany({
+/** One bounded alarm covers source expiry, repeated failures and newly exhausted attempts. */
+async function reportTransferRisks(): Promise<number> {
+  const atRisk = await prisma.recording.findMany({
     where: {
       storageType: RecordingStorageType.STREAM_S3,
       status: RecordingStatus.READY,
-      transferAttempts: { gte: MAX_TRANSFER_ATTEMPTS },
-      transferFailureAlertedAt: null,
+      OR: [
+        {
+          streamUrlExpiresAt: {
+            lte: new Date(Date.now() + 72 * 60 * 60 * 1000),
+          },
+        },
+        { transferAttempts: { gte: 3 } },
+      ],
     },
-    select: { id: true, lastTransferError: true },
+    select: {
+      id: true,
+      transferAttempts: true,
+      transferFailureAlertedAt: true,
+      streamUrlExpiresAt: true,
+      lastTransferError: true,
+    },
+    orderBy: [
+      { transferAttempts: "desc" },
+      { streamUrlExpiresAt: "asc" },
+      { id: "asc" },
+    ],
     take: 100,
   });
-  if (exhausted.length === 0) return 0;
+  if (atRisk.length === 0) return 0;
 
   reportSentryMessage(
-    `${exhausted.length} recording(s) exhausted copy attempts; Stream's copy will lapse`,
+    "Recording copies at risk: source expires within 72 hours or at least 3 attempts consumed",
     {
       subsystem: "stream",
       op: "transfer-recordings",
       level: "error",
-      fingerprint: ["transfer-recordings", "exhausted"],
-      extra: {
-        recordings: exhausted.map((r) => ({
-          id: r.id,
-          lastTransferError: r.lastTransferError,
-        })),
-      },
+      fingerprint: ["transfer-recordings", "source-expiry-risk"],
+      extra: { recordings: atRisk, sampleLimit: 100 },
     },
   );
-  await prisma.recording.updateMany({
-    where: {
-      id: { in: exhausted.map((r) => r.id) },
-      transferFailureAlertedAt: null,
-    },
-    data: { transferFailureAlertedAt: new Date() },
-  });
+  const exhausted = atRisk.filter(
+    (row) =>
+      row.transferAttempts >= MAX_TRANSFER_ATTEMPTS &&
+      !row.transferFailureAlertedAt,
+  );
+  if (exhausted.length > 0) {
+    await prisma.recording.updateMany({
+      where: {
+        id: { in: exhausted.map((row) => row.id) },
+        status: RecordingStatus.READY,
+        storageType: RecordingStorageType.STREAM_S3,
+        transferAttempts: { gte: MAX_TRANSFER_ATTEMPTS },
+        transferFailureAlertedAt: null,
+      },
+      data: { transferFailureAlertedAt: new Date() },
+    });
+  }
   return exhausted.length;
 }
 
@@ -449,7 +471,7 @@ async function transferRecordingsUnlocked(): Promise<TransferRunResult> {
     }
   }
 
-  result.exhaustedReported = await reportExhaustedTransfers();
+  result.exhaustedReported = await reportTransferRisks();
   result.success = result.failed === 0 && result.exhaustedReported === 0;
   streamLogger.info("transfer-recordings finished", {
     reclaimedStale: result.reclaimedStale,

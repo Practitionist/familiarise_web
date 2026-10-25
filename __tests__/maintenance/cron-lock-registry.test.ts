@@ -25,6 +25,7 @@ jest.mock("../../lib/observability/job-sentry", () => ({
 }));
 
 import fs from "node:fs";
+import { TARGETS, TARGET_BACKGROUND_FUNCTIONS } from "@/lib/cron/schedule";
 import path from "node:path";
 
 import { FINANCIAL_JOB_NAMES } from "../../lib/maintenance-cron";
@@ -160,13 +161,7 @@ function lockFor(
 
 /** The `/api/cleanup/<target>` routes netlify/functions/cron-tick.mts POSTs. */
 function tickerTargets(): string[] {
-  const src = read(path.join(ROOT, "netlify", "functions", "cron-tick.mts"));
-  const block =
-    src?.match(/const TARGETS = \[([\s\S]*?)\] as const/)?.[1] ?? "";
-  return Array.from(
-    block.replace(/\/\/.*$/gm, "").matchAll(/["']([a-z0-9-]+)["']/g),
-    (m) => m[1],
-  );
+  return [...TARGETS];
 }
 
 /** Scheduled workflow steps that POST `/api/cleanup/<slug>` instead of running a tsx entrypoint. */
@@ -243,14 +238,20 @@ function buildRegistry(): Row[] {
     ...workflowTwinCalls(),
   ];
   for (const [workflow, target] of twinCallers) {
-    const entrySrc = twinBlocks.get(target) ?? null;
-    const jobName =
-      entrySrc?.match(/job:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? target;
+    const twinSrc = twinBlocks.get(target) ?? null;
+    const background = Object.entries(TARGET_BACKGROUND_FUNCTIONS).find(
+      ([name]) => name === target,
+    )?.[1];
+    const entrypoint = background
+      ? `netlify/functions/${background}.mts`
+      : `${registryRel}#${target}`;
+    const entryFile = background ? path.join(ROOT, entrypoint) : registryFile;
+    const entrySrc = background ? read(entryFile) : twinSrc;
+    const jobName = twinSrc?.match(/job:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? target;
     if (viaYaml.has(jobName)) continue;
-    const entrypoint = `${registryRel}#${target}`;
     const { lock, lockedIn } = lockFor(
       entrypoint,
-      registryFile,
+      entryFile,
       entrySrc,
       /^(scripts|lib|jobs)\//,
     );

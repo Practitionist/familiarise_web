@@ -62,7 +62,7 @@ import { alertOrphanedPayments } from "@/scripts/alerts/alert-orphaned-payments"
 // way to run the repair was to dispatch a GitHub workflow.
 import { performStreamUserSync } from "@/scripts/stream/stream-sync";
 import { reconcileOrphanedRecordings } from "@/scripts/stream/reconcile-orphaned-recordings";
-import { transferRecordings } from "@/lib/stream/recording-transfer-service";
+import { dispatchRecordingTransfer } from "@/lib/stream/dispatch-recording-transfer";
 import { expireRecordings } from "@/lib/stream/recording-retention";
 import { expireEventChannels } from "@/jobs/stream/expire-event-channels";
 import { reconcileOrphanedSessions } from "@/jobs/meetings/reconcile-orphaned-sessions";
@@ -326,16 +326,6 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       errorCount: result.totalFailedDeletions,
     };
   },
-  "transfer-recordings": async () => {
-    const result = await transferRecordings();
-    return {
-      success: result.success,
-      totalProcessed: result.processed,
-      succeededCount: result.succeeded,
-      failedCount: result.failed,
-      errorCount: result.errors.length,
-    };
-  },
   "expire-recordings": async () => {
     const result = await expireRecordings();
     return {
@@ -400,6 +390,27 @@ const runJobSchema = z.object({
   reason: opsReasonSchema,
 });
 
+async function queueRecordingTransfer(
+  logRun: (status: "ACCEPTED" | "FAILED") => Promise<unknown>,
+): Promise<NextResponse> {
+  try {
+    const admission = await dispatchRecordingTransfer();
+    await logRun("ACCEPTED");
+    return NextResponse.json(
+      {
+        ...admission,
+        dispatched: true,
+        message:
+          "Queued for processing. Check execution history for completion.",
+      },
+      { status: 202 },
+    );
+  } catch (error) {
+    await logRun("FAILED");
+    throw new Error("Recording transfer dispatch failed", { cause: error });
+  }
+}
+
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     // 1. Verify admin auth
@@ -421,7 +432,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // 4. Find and execute the job
     const jobFunction = JOB_FUNCTIONS[jobId];
 
-    if (!jobFunction) {
+    if (!jobFunction && jobId !== "transfer-recordings") {
       return NextResponse.json(
         { error: `Unknown job ID: ${jobId}` },
         { status: 400 },
@@ -453,9 +464,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       `[System Jobs] ${user.name || user.email} (${user.role}) running job: ${jobId}`,
     );
 
-    // 6. Execute the job; one ops-log row per run, whatever the outcome
-    // (#1527 Q10 — the gateway-door shape of lib/backoffice/ops-action-log.ts).
-    const logRun = (status: "SUCCEEDED" | "FAILED") =>
+    const logRun = (status: "ACCEPTED" | "SUCCEEDED" | "FAILED") =>
       recordOpsAction(prisma, {
         actorUserId: user.id,
         actorRole: String(user.role ?? "UNKNOWN"),
@@ -468,6 +477,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       }).catch((logErr: unknown) =>
         reportSentryError(logErr, { subsystem: "admin", op: "ops-log" }),
       );
+    if (jobId === "transfer-recordings")
+      return await queueRecordingTransfer(logRun);
+
     if (BACKGROUND_JOBS.has(jobId)) {
       scheduleAfter(async () => {
         try {
@@ -509,15 +521,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(result);
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "admin" } },
-    );
+    const runtimeError =
+      error instanceof Error ? error : new Error(String(error));
+    Sentry.captureException(runtimeError, { tags: { subsystem: "admin" } });
     console.error("[System Jobs] Error running job:", error);
     return NextResponse.json(
       {
         error: "Failed to run job",
-        details: error instanceof Error ? error.message : String(error),
       },
       { status: 500 },
     );
