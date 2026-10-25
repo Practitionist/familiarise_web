@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { z } from "zod";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { deleteBoundedPage } from "@/lib/cron/run-deadline";
 
 export interface AuthTokenCleanupResult {
   success: boolean;
@@ -65,26 +66,17 @@ async function cleanupAuthTokensUnlocked(
     remove: (ids: string[]) => Promise<{ count: number }>,
     remains: () => Promise<{ id: string } | null>,
   ): Promise<number> => {
-    if (outOfTime()) {
-      hasMore = true;
-      return 0;
-    }
-    let deleted = 0;
-    try {
-      const rows = await pick();
-      if (rows.length > 0) {
-        if (outOfTime()) {
-          hasMore = true;
-          return 0;
-        }
-        deleted = (await remove(rows.map((row) => row.id))).count;
-      }
-      if (outOfTime() || (await remains())) hasMore = true;
-    } catch (error) {
-      hasMore = true;
-      errors.push(`${label} cleanup: ${messageOf(error)}`);
-    }
-    return deleted;
+    const page = await deleteBoundedPage({
+      outOfTime,
+      pick,
+      remove,
+      remains,
+      onError: (error) => {
+        errors.push(`${label} cleanup: ${messageOf(error)}`);
+      },
+    });
+    hasMore ||= page.hasMore;
+    return page.deleted;
   };
   verificationTokensDeleted = await prune(
     "Verification",

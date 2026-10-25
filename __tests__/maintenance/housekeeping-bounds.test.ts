@@ -367,3 +367,16 @@ it("does not start audit transactions once selection exhausts the shared budget"
   });
   expect(db.$transaction).not.toHaveBeenCalled();
 });
+
+it("retains committed auth deletes when the continuation probe fails", async () => {
+  db.verification.findMany.mockResolvedValue([{ id: "expired" }]);
+  db.verification.deleteMany.mockResolvedValue({ count: 1 });
+  db.verification.findFirst.mockRejectedValue(new Error("probe unavailable"));
+  expect(await cleanupAuthTokens()).toMatchObject({
+    success: false,
+    verificationTokensDeleted: 1,
+    totalCleaned: 1,
+    hasMore: true,
+    errors: [expect.stringContaining("probe unavailable")],
+  });
+});

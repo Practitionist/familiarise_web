@@ -27,6 +27,8 @@ A persistent failure in the oldest page can hold later work beyond that page. Th
 
 Tests cover selected-page bounds, refreshed-row preservation, replay eligibility, shared deadlines, isolated failures and committed summary counters with mocked database boundaries. They do not establish deployed throughput, live deletion, or provider effects. No shared-data retention run is part of validation.
 
+The auth-token and webhook phases share the bounded delete-page executor in `lib/cron/run-deadline.ts`. Callers retain their eligibility predicates and error labels. A continuation-probe failure preserves committed deletion counts and visible remaining work.
+
 ## Deprecated & Superseded Approaches
 
 These workers formerly used unbounded deleteMany/groupBy scans, and onboarding expiry lived inline in the registry. The canonical onboarding core now owns both its bound and lease. Omitting a limit no longer requests an unlimited backlog. An execution lease alone was never a substitute for the final eligibility predicate or atomic audit evidence.

@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { deleteBoundedPage } from "@/lib/cron/run-deadline";
 import { TERMINAL_ERROR_PREFIXES } from "@/lib/webhooks/event-log";
 
 const PROCESSED_RETENTION_DAYS = 30;
@@ -70,28 +71,19 @@ async function archiveWebhookEventsUnlocked(
     remove: (ids: string[]) => Promise<{ count: number }>,
     remains: () => Promise<{ id: string } | null>,
   ): Promise<number> => {
-    if (outOfTime()) {
-      hasMore = true;
-      return 0;
-    }
-    let deleted = 0;
-    try {
-      const rows = await pick();
-      if (rows.length > 0) {
-        if (outOfTime()) {
-          hasMore = true;
-          return 0;
-        }
-        deleted = (await remove(rows.map((row) => row.id))).count;
-      }
-      if (outOfTime() || (await remains())) hasMore = true;
-    } catch (error) {
-      hasMore = true;
-      const msg = `Failed to archive ${label}: ${formatArchiveError(error)}`;
-      console.error(`❌ ${msg}`);
-      errors.push(msg);
-    }
-    return deleted;
+    const page = await deleteBoundedPage({
+      outOfTime,
+      pick,
+      remove,
+      remains,
+      onError: (error) => {
+        const msg = `Failed to archive ${label}: ${formatArchiveError(error)}`;
+        console.error(`❌ ${msg}`);
+        errors.push(msg);
+      },
+    });
+    hasMore ||= page.hasMore;
+    return page.deleted;
   };
   const archiveEvents = (label: string, where: Prisma.WebhookEventWhereInput) =>
     runStep(

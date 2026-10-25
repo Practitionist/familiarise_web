@@ -46,3 +46,5 @@ Auth tokens/invitations, webhook archive, onboarding drafts and audit retention 
 ## Deprecated & Superseded Approaches
 
 Older guidance copied registry counts and claimed every job had a twin, money used an unbounded Actions backstop, or only a deploy preview could reproduce pool starvation. Use the current registry/inventory, bounded cores and separate disposable-database versus deployed-runtime evidence instead.
+
+Auth-token and webhook page execution share `deleteBoundedPage`: preserve the shared start budget, caller-owned eligibility predicates and committed counts when the continuation probe fails.
