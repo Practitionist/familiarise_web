@@ -38,7 +38,7 @@ const statusErrorSchema = z.object({ status: z.number() });
 const ROOM_FULL_MESSAGE_PATTERN =
   /participant limit|max(imum)? participants|call is full|room is full/i;
 const NETWORK_MESSAGE_PATTERN =
-  /failed to fetch|networkerror|network request failed|load failed|timed? ?out/i;
+  /failed to fetch|network ?error|network request failed|load failed|timed? ?out|connection failed to open/i;
 
 /** Retryable server states: bad gateway, unavailable, gateway timeout and rate limiting. */
 function isTransientStatus(status: number): boolean {

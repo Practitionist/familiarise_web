@@ -64,13 +64,14 @@ export const streamCallEndedSchema = streamCallBaseEventSchema.extend({
     .object({
       id: z.string(),
       type: z.string(),
-      created_by_user_id: z.string().optional(),
-      ended_by_user_id: z.string().optional(),
+      created_by_user_id: z.string().nullish(),
+      ended_by_user_id: z.string().nullish(),
     })
     .optional(),
-  user: z.object({ id: z.string() }).optional(),
-  reason: z.string().optional(),
-  ended_by_user_id: z.string().optional(),
+  // Stream sends `user: null` when the call ends without an acting user (server end, timeout).
+  user: z.object({ id: z.string() }).nullish(),
+  reason: z.string().nullish(),
+  ended_by_user_id: z.string().nullish(),
 });
 
 // Handlers need only the app user id (participant.user.id) and the session id.
