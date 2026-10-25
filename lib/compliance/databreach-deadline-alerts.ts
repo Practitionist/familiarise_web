@@ -40,7 +40,7 @@ async function pendingRecipients(
   limit: number,
 ) {
   const rows: unknown = await prisma.$queryRaw(Prisma.sql`
-    SELECT u.id, u.email FROM "User" u
+    SELECT u.id, u.email FROM "users" u
     WHERE (u.role = ${UserRole.ADMIN}::"UserRole" OR lower(u.email) = lower(${officer ?? null}))
       AND btrim(u.email) <> ''
       AND NOT EXISTS (

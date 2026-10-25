@@ -1,4 +1,7 @@
 /** @jest-environment node */
+import { Prisma } from "@prisma/client";
+
+const recipientQueries: Prisma.Sql[] = [];
 type Recipient = { id: string; email: string };
 type EmailRow = {
   id: string;
@@ -42,7 +45,8 @@ const firstEmail = async (q: {
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    $queryRaw: async (q: { values: unknown[] }) => {
+    $queryRaw: async (q: Prisma.Sql) => {
+      recipientQueries.push(q);
       const ref = q.values.find(
         (v) =>
           typeof v === "string" &&
@@ -115,6 +119,7 @@ import { runDataBreachDeadlineAlerts } from "../../lib/compliance/databreach-dea
 const original = process.env.DATABREACH_ALERT_EMAIL;
 beforeEach(() => {
   jest.clearAllMocks();
+  recipientQueries.length = 0;
   jest.useFakeTimers();
   jest.setSystemTime(new Date("2026-10-23T01:00:00Z"));
   delete process.env.DATABREACH_ALERT_EMAIL;
@@ -265,4 +270,17 @@ it("stages a configured officer mailbox without a user and detects empty persist
     hasMore: true,
     officerStaged: false,
   });
+});
+
+it("queries the physical user table declared by Prisma when selecting breach recipients", async () => {
+  users = users.slice(0, 1);
+  await runDataBreachDeadlineAlerts();
+  const userModel = Prisma.dmmf.datamodel.models.find(
+    (model) => model.name === Prisma.ModelName.User,
+  );
+  expect(userModel).toBeDefined();
+  expect(recipientQueries.length).toBeGreaterThan(0);
+  expect(
+    recipientQueries.map((query) => query.text.match(/FROM "([^"]+)" u/)?.[1]),
+  ).toEqual(recipientQueries.map(() => userModel?.dbName ?? userModel?.name));
 });
