@@ -485,6 +485,7 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
         id: "rec-copied",
         storagePath: "recordings/rec-copied/a.mp4",
       }),
+      undefined,
     );
     expect(mockDeleteStreamRecordingCopy).toHaveBeenCalledWith(
       expect.objectContaining({

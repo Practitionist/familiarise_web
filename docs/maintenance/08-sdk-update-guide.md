@@ -166,7 +166,7 @@ For every major dependency, this document covers: current version, what it's use
 | ----------------------------- | -------------------------------------------------------------------------- |
 | **Current Version**           | ^0.7.36 (`@stream-io/node-sdk`)                                            |
 | **Used For**                  | Server-side token generation, user creation/deletion, admin operations     |
-| **Key Files**                 | `lib/stream.ts`, `jobs/stream/stream-sync.ts`                              |
+| **Key Files**                 | `lib/stream.ts`, `scripts/stream/stream-sync.ts`                           |
 | **Minor Update**              | Needs Testing -- token format or user API changes                          |
 | **Major Update**              | **Needs Testing** -- 0.x to 1.x may have significant changes               |
 | **How to Test**               | 1. Test user token generation 2. Test user creation 3. Run Stream sync job |
@@ -179,16 +179,16 @@ For every major dependency, this document covers: current version, what it's use
 
 ### Supabase JS + Storage JS
 
-| Field                         | Value                                                                                                      |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Field                         | Value                                                                                                                           |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | **Current Version**           | ^2.93.1 (`@supabase/supabase-js`; storage types derived from its client surface — direct `@supabase/storage-js` removed, #1804) |
-| **Used For**                  | File storage: documents, profile images, support attachments                                               |
-| **Key Files**                 | `lib/supabase.ts`, document upload/download routes, storage reconciliation job                             |
-| **Minor Update**              | Safe -- storage API is stable                                                                              |
-| **Major Update**              | Needs Testing -- storage bucket API or auth changes                                                        |
-| **How to Test**               | 1. Test file upload 2. Test file download 3. Test signed URL generation 4. Run document reconciliation job |
-| **Breaking Changes to Watch** | Storage API, bucket policies, signed URL format                                                            |
-| **Estimated Time**            | Minor: 30 min. Major: 2-4 hours.                                                                           |
+| **Used For**                  | File storage: documents, profile images, support attachments                                                                    |
+| **Key Files**                 | `lib/supabase.ts`, document upload/download routes, storage reconciliation job                                                  |
+| **Minor Update**              | Safe -- storage API is stable                                                                                                   |
+| **Major Update**              | Needs Testing -- storage bucket API or auth changes                                                                             |
+| **How to Test**               | 1. Test file upload 2. Test file download 3. Test signed URL generation 4. Run document reconciliation job                      |
+| **Breaking Changes to Watch** | Storage API, bucket policies, signed URL format                                                                                 |
+| **Estimated Time**            | Minor: 30 min. Major: 2-4 hours.                                                                                                |
 
 ---
 
@@ -225,16 +225,16 @@ For every major dependency, this document covers: current version, what it's use
 
 ### Novu
 
-| Field                         | Value                                                                                     |
-| ----------------------------- | ----------------------------------------------------------------------------------------- |
+| Field                         | Value                                                                                                               |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | **Current Version**           | ^3.13.0 (`@novu/api`, `@novu/nextjs`; `@novu/react` transitive-only via `@novu/nextjs` — direct dep removed, #1804) |
-| **Used For**                  | Notification workflows: email, in-app, push notifications                                 |
-| **Key Files**                 | `lib/novu.ts`, Novu provider setup, notification components                               |
-| **Minor Update**              | Needs Testing -- notification delivery changes                                            |
-| **Major Update**              | Needs Testing -- API or React component changes                                           |
-| **How to Test**               | 1. Trigger a test notification 2. Check in-app notification bell 3. Verify email delivery |
-| **Breaking Changes to Watch** | Workflow API, subscriber API, React component changes                                     |
-| **Estimated Time**            | Minor: 30 min. Major: 2-4 hours.                                                          |
+| **Used For**                  | Notification workflows: email, in-app, push notifications                                                           |
+| **Key Files**                 | `lib/novu.ts`, Novu provider setup, notification components                                                         |
+| **Minor Update**              | Needs Testing -- notification delivery changes                                                                      |
+| **Major Update**              | Needs Testing -- API or React component changes                                                                     |
+| **How to Test**               | 1. Trigger a test notification 2. Check in-app notification bell 3. Verify email delivery                           |
+| **Breaking Changes to Watch** | Workflow API, subscriber API, React component changes                                                               |
+| **Estimated Time**            | Minor: 30 min. Major: 2-4 hours.                                                                                    |
 
 ### Resend
 
