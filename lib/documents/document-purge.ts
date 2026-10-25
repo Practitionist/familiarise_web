@@ -143,7 +143,7 @@ interface PurgeCounts {
 }
 
 export interface PurgeOptions {
-  /** Stop after this many rows have been purged. */
+  /** Stop after this many rows have been attempted, purged or failed. */
   limit?: number;
 }
 
@@ -189,10 +189,10 @@ export async function purgeTombstonedDocuments(
   const attempted = new Set<string>();
 
   for (let batch = 0; batch < MAX_BATCHES_PER_RUN; batch += 1) {
-    if (counts.purged >= limit) break;
+    if (attempted.size >= limit) break;
     const take = Math.min(
       BATCH_SIZE,
-      Number.isFinite(limit) ? Math.max(1, limit - counts.purged) : BATCH_SIZE,
+      Number.isFinite(limit) ? limit - attempted.size : BATCH_SIZE,
     );
     const candidates = await db.appointmentDocument.findMany({
       where: {
@@ -213,10 +213,14 @@ export async function purgeTombstonedDocuments(
     if (candidates.length === 0) break;
 
     for (const doc of candidates) {
-      if (counts.purged >= limit) break;
+      if (attempted.size >= limit) break;
       attempted.add(doc.id);
+      // Only live rows are unique on a path; a sibling row still owns the object.
       const storageCleared =
         doc.isStorageMissing ||
+        (await db.appointmentDocument.count({
+          where: { storagePath: doc.storagePath, id: { not: doc.id } },
+        })) > 0 ||
         (await deleteAppointmentDocument(doc.storagePath).catch(() => false));
       if (!storageCleared) {
         counts.failedStorage += 1;

@@ -283,4 +283,29 @@ describe("purge-deleted-documents", () => {
     });
     expect(reportSentryMessage).toHaveBeenCalledTimes(1);
   });
+
+  it("caps on attempts and keeps an object another row still references", async () => {
+    (prisma.appointmentDocument.findMany as jest.Mock)
+      .mockReset()
+      .mockResolvedValue([])
+      .mockResolvedValueOnce([
+        { id: "d1", storagePath: "a/shared.pdf", isStorageMissing: false },
+        { id: "d2", storagePath: "a/down.pdf", isStorageMissing: false },
+        { id: "d3", storagePath: "a/never.pdf", isStorageMissing: false },
+      ]);
+    (prisma.appointmentDocument.count as jest.Mock).mockImplementation(
+      async ({ where }: { where: { storagePath?: string } }) =>
+        where.storagePath === "a/shared.pdf" ? 1 : 0,
+    );
+    (deleteAppointmentDocument as jest.Mock).mockResolvedValue(false);
+
+    const result = await purgeDeletedDocuments(now, { limit: 2 });
+
+    expect(deleteAppointmentDocument).toHaveBeenCalledTimes(1);
+    expect(deleteAppointmentDocument).toHaveBeenCalledWith("a/down.pdf");
+    expect(prisma.appointmentDocument.deleteMany).toHaveBeenCalledWith({
+      where: { id: "d1" },
+    });
+    expect(result).toMatchObject({ purged: 1, failedStorage: 1 });
+  });
 });
