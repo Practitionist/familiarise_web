@@ -415,6 +415,14 @@ export async function generateCronReference(root = ROOT): Promise<string> {
     if (MANUAL_ONLY[job.slug]) owners.push(`Manual: ${MANUAL_ONLY[job.slug]}`);
     return owners.join("<br>") || "No configured owner found";
   }
+  function selectedBackgroundCores(file: string, job: string): Core[] {
+    const cores: Core[] = [];
+    for (const clause of descendants(read(file))) {
+      if (ts.isCaseClause(clause) && text(clause.expression) === job)
+        cores.push(...importedCores(clause, root, file));
+    }
+    return cores;
+  }
   const rows = jobs.map((job) => {
     const schedule = JOB_SCHEDULES.find((item) => item.name === job.slug);
     const cores = [...job.cores];
@@ -429,12 +437,8 @@ export async function generateCronReference(root = ROOT): Promise<string> {
       throw new Error(
         `Missing background entry ${schedule.backgroundFunction}`,
       );
-    if (backgroundFile) {
-      for (const clause of descendants(read(backgroundFile))) {
-        if (ts.isCaseClause(clause) && text(clause.expression) === job.job)
-          cores.push(...importedCores(clause, root, backgroundFile));
-      }
-    }
+    if (backgroundFile)
+      cores.push(...selectedBackgroundCores(backgroundFile, job.job));
     const calls = [...new Set(cores.flatMap((core) => core.calls))];
     const workflowBounds = workflows
       .filter((step) => matched(step, job) && step.timeout)
