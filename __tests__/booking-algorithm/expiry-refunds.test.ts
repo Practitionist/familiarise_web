@@ -14,6 +14,7 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
 }));
 
 jest.mock("../../lib/prisma", () => {
+  const paymentRows = jest.fn(async (): Promise<{ id: string }[]> => []);
   const db: Record<string, unknown> = {
     consultation: {
       findMany: jest.fn(),
@@ -35,8 +36,14 @@ jest.mock("../../lib/prisma", () => {
       findMany: jest.fn().mockResolvedValue([]),
     },
     appointment: { findMany: jest.fn() },
-    payment: { findMany: jest.fn().mockResolvedValue([]) },
-    refund: { findMany: jest.fn().mockResolvedValue([]) },
+    payment: {
+      findMany: paymentRows,
+      updateMany: jest.fn(async () => ({ count: 1 })),
+    },
+    refund: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findUnique: jest.fn(async () => null),
+    },
     // #1775 C-6 — an upsert keyed on transactionId, as the outbox is.
     notificationOutbox: {
       rows: new Map<string, unknown>(),
@@ -50,6 +57,14 @@ jest.mock("../../lib/prisma", () => {
         },
       ),
     },
+    $queryRaw: jest.fn(async (query: { text: string }) =>
+      query.text.includes('JOIN "Subscription"') ? [] : paymentRows(),
+    ),
+    $executeRaw: jest.fn(async (query: { values: unknown[] }) => {
+      const ids = query.values[0];
+      if (!Array.isArray(ids)) throw new Error("missing marker ids");
+      return ids.length;
+    }),
     $disconnect: jest.fn(),
   };
   // The payment-pending arm now expires each request in its own transaction.

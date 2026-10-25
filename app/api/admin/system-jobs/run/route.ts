@@ -60,12 +60,12 @@ import { alertOrphanedPayments } from "@/scripts/alerts/alert-orphaned-payments"
 // and the staff catalogue listed nine, and no Stream job appeared in either.
 // When recordings stop transferring or event channels stop expiring, the only
 // way to run the repair was to dispatch a GitHub workflow.
-import { performStreamUserSync } from "@/scripts/stream/stream-sync";
-import { reconcileOrphanedRecordings } from "@/scripts/stream/reconcile-orphaned-recordings";
-import { dispatchRecordingTransfer } from "@/lib/stream/dispatch-recording-transfer";
-import { expireRecordings } from "@/lib/stream/recording-retention";
-import { expireEventChannels } from "@/jobs/stream/expire-event-channels";
-import { reconcileOrphanedSessions } from "@/jobs/meetings/reconcile-orphaned-sessions";
+import {
+  backgroundJobSchema,
+  dispatchBackgroundJob,
+  type BackgroundJob,
+} from "@/lib/cron/dispatch-background";
+import { reconcileOrphanedSessions } from "@/lib/meetings/reconcile-orphaned-sessions";
 
 import { z } from "zod";
 import { runMaintenanceRemediationSlice } from "@/lib/maintenance-remediation";
@@ -318,37 +318,6 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
   },
   // Stream (#1270). Each of these delegates to the SAME core the scheduled
   // workflow runs, so an operator-triggered run and a cron run cannot diverge.
-  "stream-sync": async () => {
-    const result = await performStreamUserSync();
-    return {
-      success: result.success,
-      totalProcessed: result.totalStreamUsersProcessed,
-      staleIdentified: result.totalStaleUsersIdentified,
-      usersDeleted: result.totalStaleUsersDeleted,
-      errorCount: result.totalFailedDeletions,
-    };
-  },
-  "expire-recordings": async () => {
-    const result = await expireRecordings();
-    return {
-      success: result.success,
-      totalProcessed: result.scanned,
-      expiredCount: result.expired + result.lapsed,
-      cleanedCount: result.cleaned,
-      errorCount: result.errors.length,
-    };
-  },
-  "expire-event-channels": async () => {
-    const result = await expireEventChannels();
-    return {
-      success: result.success,
-      totalProcessed: result.frozen + result.deleted,
-      frozenCount: result.frozen,
-      deletedCount: result.deleted,
-      skippedAlreadyFrozen: result.skippedAlreadyFrozen,
-      errorCount: result.errors.length,
-    };
-  },
   "reconcile-orphaned-sessions": async () => {
     const result = await reconcileOrphanedSessions();
     return {
@@ -357,17 +326,6 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       reconciledCount: result.reconciled,
       streamNotFoundCount: result.streamNotFound,
       errorCount: result.errors,
-    };
-  },
-  "reconcile-orphaned-recordings": async () => {
-    const result = await reconcileOrphanedRecordings();
-    return {
-      success: result.success,
-      totalProcessed: result.scanned,
-      recoveredCount: result.recovered,
-      stillMissingCount: result.stillMissing,
-      unrecoverableCount: result.unrecoverable,
-      errorCount: result.errors.length,
     };
   },
 };
@@ -392,11 +350,12 @@ const runJobSchema = z.object({
   reason: opsReasonSchema,
 });
 
-async function queueRecordingTransfer(
+async function queueStreamJob(
+  job: BackgroundJob,
   logRun: (status: "ACCEPTED" | "FAILED") => Promise<unknown>,
 ): Promise<NextResponse> {
   try {
-    const admission = await dispatchRecordingTransfer();
+    const admission = await dispatchBackgroundJob(job);
     await logRun("ACCEPTED");
     return NextResponse.json(
       {
@@ -409,7 +368,7 @@ async function queueRecordingTransfer(
     );
   } catch (error) {
     await logRun("FAILED");
-    throw new Error("Recording transfer dispatch failed", { cause: error });
+    throw new Error("Stream background dispatch failed", { cause: error });
   }
 }
 
@@ -434,7 +393,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // 4. Find and execute the job
     const jobFunction = JOB_FUNCTIONS[jobId];
 
-    if (!jobFunction && jobId !== "transfer-recordings") {
+    const backgroundJob = backgroundJobSchema.safeParse(jobId);
+    if (!jobFunction && !backgroundJob.success) {
       return NextResponse.json(
         { error: `Unknown job ID: ${jobId}` },
         { status: 400 },
@@ -479,8 +439,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       }).catch((logErr: unknown) =>
         reportSentryError(logErr, { subsystem: "admin", op: "ops-log" }),
       );
-    if (jobId === "transfer-recordings")
-      return await queueRecordingTransfer(logRun);
+    if (backgroundJob.success)
+      return await queueStreamJob(backgroundJob.data, logRun);
 
     if (BACKGROUND_JOBS.has(jobId)) {
       scheduleAfter(async () => {

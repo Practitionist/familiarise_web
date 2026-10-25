@@ -25,7 +25,7 @@ The catalog has no worker, database or environment imports. Its ten-target figur
 is a tested design bound, not a runtime dispatch cap. Configured Actions ownership
 remains migration work until bounded replacements have actually run.
 
-Recording transfer is ticker-owned every 15 minutes through its existing background adapter. Keep 202 admission separate from successful core completion and retain its fail-closed 15-minute lease. Remaining Actions-only Stream lifecycle jobs are still migration work.
+Recording transfer is ticker-owned every 15 minutes through its existing background adapter. Keep 202 admission separate from successful core completion and retain its fail-closed 15-minute lease. Session recovery runs via HTTP at :10/:40. The five daily lifecycle targets queue the narrow `stream-maintenance-background` worker in staggered daily windows; their Actions steps are removed. All six migrated cores fail closed, and daily completion health has a 27-hour budget. See `docs/stream/09-background-sync.md` for slice bounds and continuation.
 
 Cron leases are Postgres-backed. Closed jobs never run when acquisition fails,
 including Prisma import failures. Completion is conditional on the same execution
@@ -53,8 +53,30 @@ Capture assertions that mock `@sentry/nextjs` must alias `@sentry/core` to the s
 
 Revalidate a confirmed booking’s live overlap inside the cancellation transaction before loading its full graph. Bootstrap missing maintenance edge state from the durable platform state before deploying fail-closed readers; never overwrite an active window with OFF. The release owner applies the exact reviewed SQL and performs the conditional no-TTL edge bootstrap immediately before merge; coding agents do not perform either operation. Unreadable-state GET protection on checkout verify applies only to `sync=true`, because the plain status poll is read-only.
 
+The 48-hour paid-unallocated arm of `expire-stale-requests` commits EXPIRED,
+history, `sub-unalloc:<paymentId>` full-refund markers and its bell together.
+Its legacy recovery filters eligible payments before LIMIT with no liability
+lookback. Keep existing markers/attempts, hold an oversized payment envelope
+without partially expiring its liabilities, and preserve visible backlog on
+errors or deadline truncation. Exhausting only the remaining invocation allowance
+is a deferral, not an envelope error; stop the ordered page for the next run. Its shared 16-second admission budget covers
+only this family; earlier expiry arms and nudge fairness remain separate work.
+Do not describe the entire worker as deadline-bounded or its backlog as drained. `unallocatedHasMore` includes retired/foreign-owned obligations needing operator review; it is not a signal to keep automatically driving retries.
+When extracting these phases, retain the same deadline closure and ordered fresh
+payment allowance; keep earlier staged markers available for the delivery phase.
+
+Raw SQL must follow Prisma's physical `@map`/`@@map` identifiers; the subscription
+status column is `requestStatus`. Derive disposable SQL fixture identifiers from
+the generated schema metadata, and verify query planning read-only before making
+production capacity claims.
+
 ## Worktree verification
 
 The Jest configuration keeps an explicit `@/` source mapping while retaining Next.js’s default mocks and transforms. Run targeted suites through the repository config. A CLI `--moduleNameMapper` replaces the entire map and can discard `server-only`, asset and Redis-edge mocks; do not use it as a shortcut for alias resolution.
 
 When merging a worker migration, port its roster, limit, timeout and ledger-yield changes into the shared catalog; do not restore the adapter’s former inline schedule. Check generated output against the same inputs before and after generator refactors. Keep blank workflow names within their own source block and preserve escaped Markdown pipes. See `references/cron-ticker.md` for the current document-purge schedule and mocked verification boundary.
+
+Stream background adapters currently target Netlify function URLs. Automatic
+execution requires Netlify as active cron host; a host switch needs an equivalent
+execution target. Keep lifecycle worker imports free of request authentication
+and check actual native packaging, including CLI guards, before scheduling.

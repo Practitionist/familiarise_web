@@ -77,7 +77,7 @@ describe("slot completion writers use transitionOccurrenceCompletion", () => {
   // room now; the end + 1 h slot pass is the one writer of the outcome.
   for (const file of [
     "lib/stream/session-handlers.ts",
-    "jobs/meetings/reconcile-orphaned-sessions.ts",
+    "lib/meetings/reconcile-orphaned-sessions.ts",
   ]) {
     it(`${file} never writes completion`, () => {
       expect(read(file)).not.toMatch(

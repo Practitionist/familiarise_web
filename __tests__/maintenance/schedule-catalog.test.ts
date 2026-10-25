@@ -7,6 +7,7 @@ import {
   targetRequest,
   dueTargets,
   MAX_TARGETS_PER_TICK,
+  STREAM_LIFECYCLE_JOBS,
 } from "@/lib/cron/schedule";
 
 describe("shared capability schedule catalog", () => {
@@ -16,9 +17,20 @@ describe("shared capability schedule catalog", () => {
     for (let tick = 0; tick < 7 * 24 * 12; tick++) {
       const due = dueTargets(new Date(start + tick * 5 * 60_000));
       expect(due.length).toBeLessThanOrEqual(MAX_TARGETS_PER_TICK);
+      const reservedMaintenanceSlot = (tick * 5) % 15 === 0 ? 1 : 0;
+      expect(due.length + reservedMaintenanceSlot).toBeLessThanOrEqual(
+        MAX_TARGETS_PER_TICK,
+      );
       for (const name of due) counts.set(name, (counts.get(name) ?? 0) + 1);
     }
     expect(counts.get("transfer-recordings")).toBe(7 * 96);
+    expect(counts.get("reconcile-sessions")).toBe(7 * 48);
+    for (const job of STREAM_LIFECYCLE_JOBS) {
+      expect(counts.get(job)).toBe(7 * 3);
+      expect(targetRequest("https://site.test", job).url).toContain(
+        `/.netlify/functions/stream-maintenance-background?job=${job}`,
+      );
+    }
     expect(counts.get("stream-control-plane-drift")).toBe(7);
     expect(counts.get("reconcile-stream-memberships")).toBe(7 * 3);
     expect(counts.get("reconcile-ledgers")).toBeGreaterThan(0);
