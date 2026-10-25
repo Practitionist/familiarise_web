@@ -262,18 +262,27 @@ async function purgeSingleUserRecordingOnErasure(
   vendorFailures: RunFailureReporter,
 ): Promise<void> {
   // Stop transfer publication and capture the assets from the same row version.
-  const [rec] = await db.recording.updateManyAndReturn({
-    where: { ...eligible, id: recordingId },
-    data: { status: "EXPIRED", recordingUrl: "" },
-    select: {
-      id: true,
-      storagePath: true,
-      previewClipStoragePath: true,
-      streamCallId: true,
-      streamRecordingId: true,
-      removedAt: true,
-    },
+  const claimSelect = {
+    id: true,
+    storagePath: true,
+    previewClipStoragePath: true,
+    streamCallId: true,
+    streamRecordingId: true,
+    removedAt: true,
+  } satisfies Prisma.RecordingSelect;
+  // A live row is stamped removed at the claim, so a recording_ready racing the vendor deletes is absorbed.
+  const [live] = await db.recording.updateManyAndReturn({
+    where: { ...eligible, id: recordingId, status: { not: "EXPIRED" } },
+    data: { status: "EXPIRED", recordingUrl: "", removedAt: now },
+    select: claimSelect,
   });
+  const [rec] = live
+    ? [live]
+    : await db.recording.updateManyAndReturn({
+        where: { ...eligible, id: recordingId, status: "EXPIRED" },
+        data: { recordingUrl: "" },
+        select: claimSelect,
+      });
   if (!rec) return;
 
   const { deleteRecordingAssets } =

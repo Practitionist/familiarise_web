@@ -200,6 +200,7 @@ describe("DPDP erasure Stream principal leg", () => {
     expect(mockRecordingClaim).toHaveBeenCalledWith({
       where: expect.objectContaining({
         id: "rec-1on1",
+        status: { not: "EXPIRED" },
         OR: [
           { status: { not: "EXPIRED" } },
           {
@@ -216,6 +217,7 @@ describe("DPDP erasure Stream principal leg", () => {
       data: {
         status: "EXPIRED",
         recordingUrl: "",
+        removedAt: expect.any(Date),
       },
       select: {
         id: true,

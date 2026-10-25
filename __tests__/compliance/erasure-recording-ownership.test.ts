@@ -189,6 +189,12 @@ function matches(where: Prisma.RecordingWhereInput = {}) {
     where.status.notIn.includes(row.status)
   )
     return false;
+  if (
+    typeof where.status === "object" &&
+    typeof where.status.not === "string" &&
+    where.status.not === row.status
+  )
+    return false;
   if (where.purchases && row.purchased) return false;
   if (
     typeof where.storagePath === "object" &&
@@ -429,7 +435,8 @@ it("keeps the admin request open until a failed expired asset is deleted on retr
   expect(objects.size).toBe(0);
   expect(deleteR2Object).toHaveBeenCalledTimes(3);
   expect(mockUpdateManyAndReturn).toHaveBeenLastCalledWith(
-    expect.objectContaining({ data: { status: "EXPIRED", recordingUrl: "" } }),
+    // The row was already EXPIRED, so the retry claim re-captures it without restamping removal.
+    expect.objectContaining({ data: { recordingUrl: "" } }),
   );
 });
 
