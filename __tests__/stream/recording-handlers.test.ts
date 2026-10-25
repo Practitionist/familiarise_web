@@ -1027,11 +1027,20 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
       mockRecordingFindFirst.mockImplementation(
         async (args: {
           where: {
-            streamRecordingId?: string;
-            status?: { in?: string[] };
+            streamRecordingId?: string | null;
+            status?: string | { in?: string[] };
           };
         }) => {
           const { where } = args;
+          // The erased-before-ready lookup: only a filename-less row in that exact status matches.
+          if (where.streamRecordingId === null) {
+            return (
+              rows.find(
+                (row) =>
+                  row.streamRecordingId == null && row.status === where.status,
+              ) ?? null
+            );
+          }
           if (where.streamRecordingId) {
             return (
               rows.find(
@@ -1039,7 +1048,7 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
               ) ?? null
             );
           }
-          if (where.status?.in) {
+          if (typeof where.status === "object" && where.status.in) {
             const statuses = where.status.in;
             return rows.find((row) => statuses.includes(row.status)) ?? null;
           }
