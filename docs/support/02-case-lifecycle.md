@@ -47,7 +47,7 @@ stateDiagram-v2
     CLOSED --> IN_PROGRESS: staff (undecided only)
 ```
 
-`caseTransitionRefusal()` returns 409 `CASE_DECIDED` (with the decision id and `appealUntil`) for an undecided-only move on a decided case, and 409 `INVALID_TRANSITION` otherwise. A same-status write is not a move and is never refused. Callers keep their own compare-and-set; the table only says whether the move is legal.
+`caseTransitionRefusal()` returns `{ status, code, error }`: 409 `CASE_DECIDED` for an undecided-only move on a decided case, and 409 `INVALID_TRANSITION` otherwise. It carries no decision detail: `reopenRefusalTx()` and `patchTransitionRefusalTx()` add the decision id and `appealUntil` with `caseDecidedDetail()`, while `assertCaseTransition()` throws the bare body as a `CaseConflictError`. A same-status write is not a move and is never refused. Callers keep their own compare-and-set; the table only says whether the move is legal.
 
 Who calls the table, and as which actor:
 

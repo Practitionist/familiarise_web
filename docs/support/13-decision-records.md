@@ -41,7 +41,7 @@ These are short records of the owner decisions that shaped the support system: t
 
 - **Status:** Accepted, implemented.
 - **Context.** `SupportPaymentHold` duplicated `EarningsHold`, the single writer of the HELD earning status, with no ops log, no budget and no release. Payouts stayed stuck while dashboards showed the money as ready.
-- **Decision.** A support hold is `EarningsHold` rows with reason `SUPPORT_CASE` and the case id as source, placed and released through ops doors, and released automatically when the case resolves or closes, behind step-up and the maintenance gate.
+- **Decision.** A support hold is `EarningsHold` rows with reason `SUPPORT_CASE` and the case id as source, placed and released through ops doors behind step-up and the maintenance gate, and released automatically when the case resolves or closes. A staff resolve or close needs step-up and open money doors; the 28-day auto-close releases as the system with no step-up, and still waits for open money doors and no open recommendation.
 - **Consequences.** Payout batching ignores held earnings with no support-specific code. Releasing a support hold never releases a chargeback hold. A hold applied after resolution is released by the 28-day auto-close, as the system.
 - **See** [money remedies](05-money-remedies.md#payout-holds).
 

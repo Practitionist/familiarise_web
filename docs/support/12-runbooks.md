@@ -48,7 +48,10 @@ Also look for a refund keyed to the recommendation that is not yet linked: `SELE
 **Confirm.**
 
 ```sql
--- Closed 180+ days, not purged, not on legal hold, no recent appeal
+-- Broad candidates: closed 180+ days, not purged, not on legal hold, no recent appeal.
+-- purgeEligibleWhere() also skips cases linked to a live dispute (next query) and
+-- appeal cases whose appealed case closed under 180 days ago, so a row here is not
+-- by itself a purge failure.
 SELECT c.id, c."referenceNumber", c."closedAt", c."legalHoldAt"
 FROM "SupportCase" c
 WHERE c."closedAt" <= now() - interval '180 days'
@@ -63,7 +66,8 @@ ORDER BY c."closedAt";
 SELECT "paymentId", status FROM "Dispute"
 WHERE status NOT IN ('WON', 'LOST', 'CHARGE_REFUNDED', 'CLOSED', 'WARNING_CLOSED');
 
--- Attachment rows still live on a case the purge should have cleared
+-- Broad: attachment rows still live on a case closed 180+ days. Rows on a case that is
+-- on legal hold, recently appealed or linked to a live dispute are retained, not failed.
 SELECT a.id, a."caseId", a."storagePath" FROM "SupportCaseAttachment" a
 JOIN "SupportCase" c ON c.id = a."caseId"
 WHERE a."deletedAt" IS NULL AND c."closedAt" <= now() - interval '180 days';
@@ -77,7 +81,7 @@ WHERE a."deletedAt" IS NULL AND c."closedAt" <= now() - interval '180 days';
 2. If the case must be kept (a dispute or legal claim), an admin places a [legal hold](#placing-or-lifting-a-legal-hold); the purge then skips it.
 3. For "2000+ live disputes": the arm stays off until fewer disputes are live; there is no override.
 
-**Verify.** The case has an `EVIDENCE_PURGED` event whose `toValue` is the file count, its attachment rows are tombstoned, and the next sweep run returns 200.
+**Verify.** The case has an `EVIDENCE_PURGED` event whose `toValue` is the file count, its attachment rows are tombstoned, and it no longer appears in the candidate query. A 500 from the next run is a separate run-level failure if its `errors` name another case or arm.
 
 **Prevention.** [Privacy and retention](08-privacy-and-retention.md#the-180-day-evidence-purge).
 
@@ -164,7 +168,7 @@ FROM "SystemJobExecution" WHERE "jobName" = 'support-sla-sweep'
 ORDER BY "startedAt" DESC LIMIT 50;
 ```
 
-A RUNNING row older than 15 minutes is a crashed run; the next run marks it FAILED.
+`startedAt` is the lease heartbeat: a live run renews it every 5 minutes (`startLeaseRenewal()` in `lib/cron/with-cron-lock.ts`). A RUNNING row whose `startedAt` is older than 15 minutes has an expired lease (lost heartbeat or ownership, not proof of a crash); the next run marks it FAILED with "Lease expired (stale RUNNING row swept)".
 
 ## DDL end-phase checklist
 

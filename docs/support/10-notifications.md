@@ -9,7 +9,7 @@ last-reviewed: 2026-10-23
 
 # Support notifications
 
-Support never calls Novu or the email provider inside a business transaction. It **stages** a row in a durable outbox inside the same transaction as the change it announces, so a notice exists if and only if the change committed. After the response, the row is attempted once inline; a ticker job then retries anything that did not go out. Every support notice has a stable identity (its dedupe key and `entityRef`), so a retry, a double submit or a second sweep never sends it twice.
+Support never calls Novu or the email provider inside a business transaction. It **stages** a row in a durable outbox inside the same transaction as the change it announces, so a change that rolls back sends nothing. A committed change can still have no row: `stageBell()` stages nothing when the bell policy leaves no recipient, and staff-status notices are staged right after the PATCH commits (see below). After the response, the row is attempted once inline; a ticker job then retries anything that did not go out. Each support notice carries a dedupe key and an `entityRef`. A bell row upserts on `transactionId`, so a retry or double submit with the same recipients returns the existing row; a recipient-policy change in between derives a new `transactionId`, which is why the SLA and chargeback sweep alerts also match prior sends on `entityRef`.
 
 ## The two outboxes
 

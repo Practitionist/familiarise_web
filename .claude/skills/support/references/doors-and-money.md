@@ -14,7 +14,7 @@ Rules for any support change that moves money or freezes earnings. Human referen
 | `POST /api/staff/appointments/[appointmentId]/cancel`                                    | `withOpsAction`                                   | `appointments.cancelForPlatform` | `appointment.cancel.platform`     | Budget, money doors, staff lock, `platformCancelCharges` + `assertBoundedRefund`. No second approver.                                        |
 | `POST /api/staff/appointments/[appointmentId]/reschedule`                                | `withOpsAction`                                   | `appointments.manage`            | `appointment.reschedule.platform` | `assertBookingDoorsOpen`. No money moves.                                                                                                    |
 
-All doors: step-up (15 min), reason 5–1,000 chars, one `OpsActionLog` row, `correlationId` `support-case:<caseId>` where a case exists.
+All doors: step-up (15 min), reason 5–1,000 chars, one `OpsActionLog` row, `correlationId` `support-case:<caseId>` where a case exists. Two rows differ: `RECOMMEND_REFUND` is not a door (no step-up, no `OpsActionLog` row), and the SYSTEM auto-close release skips step-up but still writes its `support.case.release-holds` row (`releaseAutoClosedCaseTx()` in `lib/support/sla-sweep.ts`).
 
 ## Numbers (grep before changing)
 

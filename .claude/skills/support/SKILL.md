@@ -39,7 +39,7 @@ Terse rules for agents. The human explanation is in `docs/support/` (start at `d
 ## Never
 
 - Never write another domain's tables from support code (refunds, earnings, bookings, payouts). Call the domain's door or service.
-- Never reopen a decided case, and never reopen on a plain reply. Only `reopen: true` from the requester or submitter, undecided, within `REOPEN_WINDOW_MS` (14 days).
+- Never reopen a decided case, and never reopen on a plain reply. A customer reopens only with `reopen: true` from the requester or submitter, undecided, within `REOPEN_WINDOW_MS` (14 days). Staff reopen an undecided RESOLVED or CLOSED case through PATCH (`CASE_TRANSITIONS` in `lib/support/case-transitions.ts`), with no 14-day window.
 - Never set `activeChannel` to anything but HUMAN after creation.
 - Never update or delete a `SupportCaseDecision` (trigger `support_case_decision_immutable`). Corrections are a new row with `supersedesDecisionId`, admin-only, before `appealUntil`, with no appeal filed.
 - Never decide a PROBLEM case, and never link an incident to a RESOLVED or CLOSED problem.

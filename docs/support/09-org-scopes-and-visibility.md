@@ -9,7 +9,7 @@ last-reviewed: 2026-10-23
 
 # Organization scopes and visibility
 
-Every case has an **ownership scope** that decides who may read and write it. A PERSONAL case belongs to the person who filed it. An ORG_OPERATIONS or ORG_BILLING case belongs to an organization, and whoever currently holds the matching organization permission may work on it, not the individual who happened to file it. A booking's organization tag never grants access to a personal case. This page is the "who can see what" grid for support, and it ends with how support sits beside the private feedback and public review rails.
+Every case has an **ownership scope** that decides who may read and write it. A PERSONAL case belongs to its submitter (`submitterUserId`), which is the customer even when staff file it for them. An ORG_OPERATIONS or ORG_BILLING case belongs to an organization, and whoever currently holds the matching organization permission may work on it, not the individual who happened to file it. A booking's organization tag never grants access to a personal case. This page is the "who can see what" grid for support, and it ends with how support sits beside the private feedback and public review rails.
 
 ## Scopes
 

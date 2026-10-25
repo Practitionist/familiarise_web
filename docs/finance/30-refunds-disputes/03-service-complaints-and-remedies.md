@@ -8,7 +8,7 @@ last-reviewed: 2026-10-23
 
 # Service complaints and remedies
 
-A service complaint is a `SupportCase` a person files about a booking. It is not a chargeback and it moves no money by itself. Money enters only at two seams: a staff member can recommend a refund, which another operator reviews and which then runs through the ordinary refund door, and an operator can freeze the payee's unpaid earnings while the case is worked. This page covers those two seams. Everything else about cases (queues, SLA, evidence requests, decisions, appeals) is in [support money remedies](../../support/05-money-remedies.md) and is not repeated here.
+A service complaint is a `SupportCase` a person files about a booking. It is not a chargeback and it moves no money by itself. Money enters only at two seams: a staff member can recommend a refund, which another operator reviews and which then runs through the ordinary refund door, and an operator can freeze the payee's unpaid earnings while the case is worked. This page covers those two seams. Everything else about cases (queues, SLA, evidence requests, decisions, appeals) is in [the support docs](../../support/README.md) and is not repeated here.
 
 ## 1. The refund seam
 

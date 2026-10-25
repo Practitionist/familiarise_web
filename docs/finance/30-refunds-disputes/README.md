@@ -42,7 +42,7 @@ flowchart LR
 - **Hard limits that apply to all three.** A payment can never have more refunded and charged back than it was paid: the `payment_refunds_within_amount` trigger refuses a `Refund` write that would exceed `Payment.amount` once chargebacks lost are counted. A live dispute blocks a new refund, and an uncascaded or pending refund blocks a payout.
 - **Money in integer paise, INR only, with balanced immutable journals.** See [the double-entry model](../20-ledger/01-double-entry-model.md).
 
-Legal credit-note and GST treatment is in [GST invoices and credit notes](../60-tax/02-gst-invoices-and-credit-notes.md). The support product that owns a complaint end to end is in [support money remedies](../../support/05-money-remedies.md).
+Legal credit-note and GST treatment is in [GST invoices and credit notes](../60-tax/02-gst-invoices-and-credit-notes.md). The support product that owns a complaint end to end is in [the support docs](../../support/README.md); its refund and hold doors are in [support money remedies](../../support/05-money-remedies.md).
 
 ## Where in code
 
