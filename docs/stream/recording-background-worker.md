@@ -67,11 +67,11 @@ to another host requires a supported background execution target there first.
 Keeping Netlify as a standby does not make its background worker portable.
 
 The ticker also queues the five daily Stream lifecycle jobs through
-`stream-maintenance-background` at staggered minutes in 00:00–03:00 UTC. These
+`stream-maintenance-background` in staggered daily UTC windows. These
 background workers currently run automatically only while Netlify is the active
 cron host. Their
 native adapter imports domain cores directly, without the cleanup registry or
 request-authentication graph. Channel administration and organization access
 revocation live in `lib/stream/channel-administration.ts` and
 `lib/stream/org-access-revocation.ts`; interactive services call those same
-implementations. CLI entry guards must tolerate native Node ESM loading.
+implementations. Lifecycle cores export functions without Actions CLI side effects.

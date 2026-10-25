@@ -27,8 +27,6 @@ import {
   STREAM_CONCURRENCY_LIMIT,
 } from "../../lib/stream/batch";
 import { readJobCheckpoint, withCronLock } from "../../lib/cron/with-cron-lock";
-import { abortIfMaintenance } from "../../lib/maintenance-cron";
-import { runJob } from "../../lib/observability/job-sentry";
 import {
   DAY_MS,
   DEFAULT_RETENTION_DAYS,
@@ -90,10 +88,7 @@ interface EventRow {
     | { kind: "collab"; id: string };
 }
 
-async function loadEndedEvents(
-  after: string | null,
-): Promise<{ events: EventRow[]; after: string | null }> {
-  const now = new Date();
+function readEndedAppointments(after: string | null, now: Date) {
   const lookbackFrom = new Date(
     now.getTime() - (MAX_RETENTION_DAYS + LOOKBACK_MARGIN_DAYS) * DAY_MS,
   );
@@ -104,7 +99,7 @@ async function loadEndedEvents(
     },
     select: { id: true },
   };
-  const appointments = await prisma.appointment.findMany({
+  return prisma.appointment.findMany({
     where: {
       deletedAt: null,
       ...(after ? { id: { gt: after } } : {}),
@@ -167,117 +162,123 @@ async function loadEndedEvents(
       },
     },
   });
-
-  if (appointments.length === 0 && after) return loadEndedEvents(null);
-  const byChannel = new Map<string, EventRow>();
-  const collabByPlanKey = new Map<
-    string,
-    {
-      planType: "webinar" | "class";
-      planId: string;
-      channelId: string;
-      endsAt: Date;
-      retentionDays: number;
-    }
-  >();
-
-  for (const appointment of appointments) {
-    const endsAt = appointment.occurrences[0]?.endsAt;
-    if (!endsAt) continue;
-
-    const channelId = appointment.webinar
-      ? `${WEBINAR_PREFIX}${appointment.webinar.id}`
-      : appointment.class
-        ? `${CLASS_PREFIX}${appointment.class.id}`
-        : null;
-    if (!channelId) continue;
-
-    let entity: EventRow["entity"];
-    let chatFrozenAt: Date | null;
-    if (appointment.webinar) {
-      entity = { kind: "webinar", id: appointment.webinar.id };
-      chatFrozenAt = appointment.webinar.chatFrozenAt;
-    } else if (appointment.class) {
-      entity = { kind: "class", id: appointment.class.id };
-      chatFrozenAt = appointment.class.chatFrozenAt;
-    } else {
-      continue;
-    }
-
-    const planOrg =
-      appointment.webinar?.webinarPlan?.organization ??
-      appointment.class?.classPlan?.organization ??
-      null;
-    const retentionDays =
+}
+type EndedAppointment = Awaited<
+  ReturnType<typeof readEndedAppointments>
+>[number];
+interface CollaboratorCandidate {
+  planType: "webinar" | "class";
+  planId: string;
+  channelId: string;
+  endsAt: Date;
+  retentionDays: number;
+}
+function eventCandidate(appointment: EndedAppointment) {
+  const endsAt = appointment.occurrences[0]?.endsAt;
+  const booking = appointment.webinar
+    ? {
+        entity: { kind: "webinar" as const, id: appointment.webinar.id },
+        frozenAt: appointment.webinar.chatFrozenAt,
+        plan: appointment.webinar.webinarPlan,
+        prefix: WEBINAR_PREFIX,
+      }
+    : appointment.class
+      ? {
+          entity: { kind: "class" as const, id: appointment.class.id },
+          frozenAt: appointment.class.chatFrozenAt,
+          plan: appointment.class.classPlan,
+          prefix: CLASS_PREFIX,
+        }
+      : null;
+  if (!endsAt || !booking) return null;
+  const planOrg = booking.plan?.organization;
+  const event: EventRow = {
+    channelId: `${booking.prefix}${booking.entity.id}`,
+    endsAt,
+    retentionDays:
       planOrg?.chatRetentionDays ??
       appointment.organization?.chatRetentionDays ??
       planOrg?.streamRecordingRetentionDays ??
       appointment.organization?.streamRecordingRetentionDays ??
-      DEFAULT_RETENTION_DAYS;
-
-    const existing = byChannel.get(channelId);
-    if (!existing || existing.endsAt < endsAt) {
-      byChannel.set(channelId, {
-        channelId,
-        endsAt,
-        retentionDays,
-        chatFrozenAt,
-        entity,
-      });
-    } else if (existing.chatFrozenAt === null && chatFrozenAt !== null) {
-      existing.chatFrozenAt = chatFrozenAt;
-      existing.entity = entity;
-    }
-
-    const planType = appointment.webinar ? "webinar" : "class";
-    const plan =
-      appointment.webinar?.webinarPlan ?? appointment.class?.classPlan;
-    if (plan?.id && (plan.collaborators?.length ?? 0) > 0) {
-      const planKey = `${planType}:${plan.id}`;
-      const prev = collabByPlanKey.get(planKey);
-      if (!prev) {
-        collabByPlanKey.set(planKey, {
-          planType,
-          planId: plan.id,
-          channelId: collabChannelId(planType, plan.id),
-          endsAt,
-          retentionDays,
-        });
-      } else {
-        if (prev.endsAt < endsAt) prev.endsAt = endsAt;
-      }
-    }
+      DEFAULT_RETENTION_DAYS,
+    chatFrozenAt: booking.frozenAt,
+    entity: booking.entity,
+  };
+  return { event, plan: booking.plan, planType: booking.entity.kind };
+}
+function mergeEvent(byChannel: Map<string, EventRow>, event: EventRow): void {
+  const existing = byChannel.get(event.channelId);
+  if (!existing || existing.endsAt < event.endsAt)
+    byChannel.set(event.channelId, event);
+  else if (existing.chatFrozenAt === null && event.chatFrozenAt !== null) {
+    existing.chatFrozenAt = event.chatFrozenAt;
+    existing.entity = event.entity;
   }
-
-  for (const cand of collabByPlanKey.values()) {
-    if (cand.endsAt >= now) continue;
-    const latest = await prisma.appointmentOccurrence.findFirst({
-      where: {
-        deletedAt: null,
-        completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
-        appointment:
-          cand.planType === "webinar"
-            ? { deletedAt: null, webinar: { webinarPlanId: cand.planId } }
-            : { deletedAt: null, class: { classPlanId: cand.planId } },
-      },
-      orderBy: { endsAt: "desc" },
-      select: { endsAt: true },
+}
+function mergeCollaborator(
+  candidates: Map<string, CollaboratorCandidate>,
+  candidate: NonNullable<ReturnType<typeof eventCandidate>>,
+): void {
+  const { event, plan, planType } = candidate;
+  if (!plan?.id || !plan.collaborators.length) return;
+  const key = `${planType}:${plan.id}`;
+  const previous = candidates.get(key);
+  if (!previous)
+    candidates.set(key, {
+      planType,
+      planId: plan.id,
+      channelId: collabChannelId(planType, plan.id),
+      endsAt: event.endsAt,
+      retentionDays: event.retentionDays,
     });
-    // A page is not the plan's lifetime: future-only events must protect its shared channel.
-    if (!latest || latest.endsAt >= now) continue;
-    cand.endsAt = latest.endsAt;
-
-    byChannel.set(cand.channelId, {
-      channelId: cand.channelId,
-      endsAt: cand.endsAt,
-      retentionDays: cand.retentionDays,
-      chatFrozenAt: null,
-      entity: { kind: "collab", id: cand.planId },
-    });
-  }
-
+  else if (previous.endsAt < event.endsAt) previous.endsAt = event.endsAt;
+}
+async function collaboratorEvent(
+  candidate: CollaboratorCandidate,
+  now: Date,
+): Promise<EventRow | null> {
+  if (candidate.endsAt >= now) return null;
+  const latest = await prisma.appointmentOccurrence.findFirst({
+    where: {
+      deletedAt: null,
+      completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+      appointment:
+        candidate.planType === "webinar"
+          ? { deletedAt: null, webinar: { webinarPlanId: candidate.planId } }
+          : { deletedAt: null, class: { classPlanId: candidate.planId } },
+    },
+    orderBy: { endsAt: "desc" },
+    select: { endsAt: true },
+  });
+  if (!latest || latest.endsAt >= now) return null;
   return {
-    events: Array.from(byChannel.values()).filter((row) => row.endsAt < now),
+    channelId: candidate.channelId,
+    endsAt: latest.endsAt,
+    retentionDays: candidate.retentionDays,
+    chatFrozenAt: null,
+    entity: { kind: "collab", id: candidate.planId },
+  };
+}
+async function loadEndedEvents(
+  after: string | null,
+): Promise<{ events: EventRow[]; after: string | null }> {
+  const now = new Date();
+  const appointments = await readEndedAppointments(after, now);
+  if (!appointments.length && after) return loadEndedEvents(null);
+  const byChannel = new Map<string, EventRow>();
+  const collaborators = new Map<string, CollaboratorCandidate>();
+  for (const appointment of appointments) {
+    const candidate = eventCandidate(appointment);
+    if (!candidate) continue;
+    mergeEvent(byChannel, candidate.event);
+    mergeCollaborator(collaborators, candidate);
+  }
+  for (const candidate of collaborators.values()) {
+    const event = await collaboratorEvent(candidate, now);
+    if (event) byChannel.set(event.channelId, event);
+  }
+  return {
+    events: [...byChannel.values()].filter((event) => event.endsAt < now),
     after: appointments.at(-1)?.id ?? null,
   };
 }
@@ -390,23 +391,19 @@ async function loadDmPairs(): Promise<{
     lastActivityAt: Date | null,
     chatFrozenAt: Date | null,
   ) => {
-    if (!consultantUserId || !consulteeUserId || !lastActivityAt) return;
-    // Older than the longest retention we honour: the channel is already gone,
-    // and re-deriving its id every night costs a Stream call for nothing.
-    if (lastActivityAt < lookbackFrom) return;
-
-    let channelId: string;
-    try {
-      channelId = getDmChannelId(
-        consultantUserId,
-        consulteeUserId,
-        orgId ?? undefined,
-      );
-    } catch {
-      // `getDmChannelId` throws on a self-pair. Seed data has produced those;
-      // they have no channel to expire.
+    if (
+      !consultantUserId ||
+      !consulteeUserId ||
+      !lastActivityAt ||
+      lastActivityAt < lookbackFrom ||
+      consultantUserId === consulteeUserId
+    )
       return;
-    }
+    const channelId = getDmChannelId(
+      consultantUserId,
+      consulteeUserId,
+      orgId ?? undefined,
+    );
 
     const existing = byChannel.get(channelId);
     if (!existing) {
@@ -595,7 +592,8 @@ async function runDmStage(
   progress: { events: string | null; dm: string | null },
 ): Promise<void> {
   const { pairs: allPairs, truncated } = await loadDmPairs();
-  const ordered = allPairs.sort((a, b) =>
+  const ordered = [...allPairs];
+  ordered.sort((a, b) =>
     a.channelId < b.channelId ? -1 : Number(a.channelId > b.channelId),
   );
   const after = progress.dm;
@@ -884,45 +882,11 @@ export async function expireEventChannels(): Promise<ExpireEventChannelsResult> 
   );
 }
 
-async function expireEventChannelsUnlocked(
-  streamFailures: RunFailureReporter,
-): Promise<ExpireEventChannelsResult> {
-  const result: ExpireEventChannelsResult = {
-    frozen: 0,
-    deleted: 0,
-    skippedAlreadyFrozen: 0,
-    dmFrozen: 0,
-    dmUnfrozen: 0,
-    dmDeleteRequests: 0,
-    missingChannels: 0,
-    checkpoint: null,
-    deferred: 0,
-    errors: [],
-    success: true,
-  };
-
-  if (!isStreamConfigured()) {
-    // Not a no-op success. The cron reports `success` and exits 0 on it, so a
-    // Stream config that silently went missing — the exact failure #1134 found
-    // in production, where the webhook secret was simply unset on Netlify —
-    // would show up as a green nightly run for as long as it lasted.
-    result.errors.push("Stream is not configured — nothing to do");
-    result.success = false;
-    return result;
-  }
-
-  const now = Date.now();
-  const saved = await readJobCheckpoint("expire-event-channels");
-  const progressSchema = z.object({
-    events: z.string().nullable(),
-    dm: z.string().nullable(),
-  });
-  const progress = saved
-    ? progressSchema.parse(JSON.parse(saved))
-    : { events: null, dm: null };
-  const page = await loadEndedEvents(progress.events);
-  const events = page.events;
-
+function classifyEvents(
+  events: EventRow[],
+  now: number,
+  result: ExpireEventChannelsResult,
+) {
   const toFreeze: EventRow[] = [];
   const toDelete: string[] = [];
 
@@ -944,15 +908,14 @@ async function expireEventChannelsUnlocked(
     }
   }
 
-  const chat = getStreamChatClient();
-
-  // Freeze. Per-channel rather than bulk because Stream has no batch freeze, so
-  // the chunk size here is a CONCURRENCY width and not a payload ceiling —
-  // chunking by STREAM_BATCH_LIMIT fired a hundred simultaneous requests at an
-  // app that also serves live user traffic. allSettled so one missing channel
-  // cannot abort the run. Paced (see FREEZE_PACING_MS) so even a full backlog
-  // cannot breach Stream's app-wide 300/min cap for this endpoint, and capped
-  // per run so the workflow timeout is never at risk.
+  return { toFreeze, toDelete };
+}
+async function freezeEvents(
+  chat: ReturnType<typeof getStreamChatClient>,
+  toFreeze: EventRow[],
+  result: ExpireEventChannelsResult,
+  streamFailures: RunFailureReporter,
+) {
   const freezeBatch = toFreeze.slice(0, MAX_FREEZE_PER_RUN);
   for (const [batchIdx, batch] of chunk(
     freezeBatch,
@@ -1023,12 +986,14 @@ async function expireEventChannelsUnlocked(
   if (toFreeze.length > freezeBatch.length) {
     result.deferred += toFreeze.length - freezeBatch.length;
   }
-
-  // Delete. `deleteChannels` takes cids and caps at 100 per request; it is
-  // async server-side (it returns a task id), which is fine — we are not
-  // waiting on the outcome, and a re-run of an already-deleted channel is a
-  // no-op.
-  const deletePacing: DeletePacingState = { lastCallAt: null };
+}
+async function deleteEvents(
+  chat: ReturnType<typeof getStreamChatClient>,
+  toDelete: string[],
+  result: ExpireEventChannelsResult,
+  deletePacing: DeletePacingState,
+  streamFailures: RunFailureReporter,
+) {
   for (const batch of chunk(toDelete, STREAM_BATCH_LIMIT)) {
     await paceDeleteChannelsBatch(deletePacing);
     const cids = batch.map(
@@ -1049,6 +1014,52 @@ async function expireEventChannelsUnlocked(
       streamFailures.add("event-delete-batch", error);
     }
   }
+}
+
+async function expireEventChannelsUnlocked(
+  streamFailures: RunFailureReporter,
+): Promise<ExpireEventChannelsResult> {
+  const result: ExpireEventChannelsResult = {
+    frozen: 0,
+    deleted: 0,
+    skippedAlreadyFrozen: 0,
+    dmFrozen: 0,
+    dmUnfrozen: 0,
+    dmDeleteRequests: 0,
+    missingChannels: 0,
+    checkpoint: null,
+    deferred: 0,
+    errors: [],
+    success: true,
+  };
+
+  if (!isStreamConfigured()) {
+    // Not a no-op success. The cron reports `success` and exits 0 on it, so a
+    // Stream config that silently went missing — the exact failure #1134 found
+    // in production, where the webhook secret was simply unset on Netlify —
+    // would show up as a green nightly run for as long as it lasted.
+    result.errors.push("Stream is not configured — nothing to do");
+    result.success = false;
+    return result;
+  }
+
+  const now = Date.now();
+  const saved = await readJobCheckpoint("expire-event-channels");
+  const progressSchema = z.object({
+    events: z.string().nullable(),
+    dm: z.string().nullable(),
+  });
+  const progress = saved
+    ? progressSchema.parse(JSON.parse(saved))
+    : { events: null, dm: null };
+  const page = await loadEndedEvents(progress.events);
+  const events = page.events;
+
+  const { toFreeze, toDelete } = classifyEvents(events, now, result);
+  const chat = getStreamChatClient();
+  await freezeEvents(chat, toFreeze, result, streamFailures);
+  const deletePacing: DeletePacingState = { lastCallAt: null };
+  await deleteEvents(chat, toDelete, result, deletePacing, streamFailures);
 
   // #1280 PR F — direct messages, keyed on pair dormancy.
   //
@@ -1099,27 +1110,4 @@ async function expireEventChannelsUnlocked(
   );
 
   return result;
-}
-
-if (
-  typeof module !== "undefined" &&
-  typeof require !== "undefined" &&
-  require.main === module
-) {
-  runJob("expire-event-channels", async () => {
-    await abortIfMaintenance("expire-event-channels");
-    try {
-      const result = await expireEventChannels();
-      console.log(
-        `Events — frozen: ${result.frozen}  deleted: ${result.deleted}\n` +
-          `DMs    — frozen: ${result.dmFrozen}  unfrozen: ${result.dmUnfrozen}  delete-requests: ${result.dmDeleteRequests}\n` +
-          `Errors: ${result.errors.length}`,
-      );
-      if (!result.success) process.exitCode = 1;
-    } finally {
-      // In a `finally` so a throw cannot leak the pool. `runJob` reports the
-      // error and lets it propagate, which skipped this line entirely.
-      await prisma.$disconnect();
-    }
-  });
 }

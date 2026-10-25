@@ -1,4 +1,3 @@
-import "dotenv/config";
 import { z } from "zod";
 
 import prisma from "../../lib/prisma";
@@ -39,8 +38,6 @@ import {
   ORG_STREAM_SURFACE_LIMIT,
 } from "../../lib/stream/org-access-revocation";
 import { readJobCheckpoint, withCronLock } from "../../lib/cron/with-cron-lock";
-import { abortIfMaintenance } from "../../lib/maintenance-cron";
-import { runJob } from "../../lib/observability/job-sentry";
 import { purgeExpiredRecordingAssets } from "../../lib/stream/recording-retention";
 
 const MAX_ORGS_PER_RUN = 2;
@@ -830,21 +827,4 @@ async function drainPendingMemberRemovals(
       await drainSingleRemovedMember(row, result, failures);
     progress.membership = row.id;
   }
-}
-
-if (
-  typeof module !== "undefined" &&
-  typeof require !== "undefined" &&
-  require.main === module
-) {
-  runJob("wind-down-deactivated-orgs", async () => {
-    await abortIfMaintenance("wind-down-deactivated-orgs");
-    try {
-      const result = await windDownDeactivatedOrgs();
-      console.log(JSON.stringify(result));
-      if (!result.success) process.exitCode = 1;
-    } finally {
-      await prisma.$disconnect();
-    }
-  });
 }

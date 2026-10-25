@@ -351,7 +351,7 @@ console.log(`Found ${users.length} users`);
 
 `performStreamUserSync` in `scripts/stream/stream-sync.ts` compares up to five
 100-user Stream pages against database ownership. The ticker queues its native
-background worker at 00:50, 01:50 and 02:50 UTC. Cleanup and staff recovery queue
+background worker at 08:50, 09:50 and 10:50 UTC. Cleanup and staff recovery queue
 the same worker; 202 proves admission, while execution history records completion.
 The former Actions wrapper and schedule are removed. Automatic background
 execution currently requires Netlify as active cron host.

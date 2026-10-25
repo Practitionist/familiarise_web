@@ -45,7 +45,8 @@ standby alone does not supply those adapters. Keep the standby configuration.
 
 ## Cadence and capacity
 
-The daily window is 00:00 inclusive to 03:00 exclusive UTC. Each daily job runs
+Daily windows are 00:00–03:00 UTC for retention/orphan recovery, 03:00–06:00
+for wind-down, and 08:00–11:00 for principal/channel lifecycle. Each daily job runs
 three bounded slices. These are dispatch cadences, not a guarantee that a backlog
 has drained. The catalog is shared with documentation and tested over every tick
 of a week and 400 days, including monthly/quarterly collisions; no tick exceeds
@@ -56,10 +57,10 @@ ten targets. Existing Stream membership and control-plane checks remain schedule
 | `lib/meetings/reconcile-orphaned-sessions.ts`     | :10/:40             | At most five rooms; stop starting work after six seconds; persist an ID bound across successes, active rooms and failures.                                                                                                                                      |
 | `lib/stream/recording-transfer-service.ts`        | :00/:15/:30/:45     | One stale claim, one eligible copy, at most 100 risk candidates; 12-minute copy deadline.                                                                                                                                                                       |
 | `lib/stream/recording-retention.ts`               | 00:05, 01:05, 02:05 | Default ten lapsed rows, ten due expiries, ten asset cleanups and ten transferred-source deletes; scan at most 25 retention candidates. Separate ID cursors for lapsed, due and source-copy stages. Explicit limits clamp to 1–25.                              |
-| `scripts/stream/reconcile-orphaned-recordings.ts` | 00:20, 01:20, 02:20 | At most 25 meetings aged 2h–14d with a durable recording-start witness, including both zero-row and partial deliveries; five-minute start budget; ID continuation.                                                                                              |
-| `jobs/stream/wind-down-deactivated-orgs.ts`       | 00:25, 01:25, 02:25 | At most two organizations and ten removed memberships with separate ID cursors; related database scans cap at 5,000 plus one sentinel; five-minute start budget through vendor loops; ten recording purges per organization; incomplete markers stay unwritten. |
-| `scripts/stream/stream-sync.ts`                   | 00:50, 01:50, 02:50 | At most five pages of 100 principals; persist the last ID; wrap at the end; preserve the starting cursor on dry runs.                                                                                                                                           |
-| `jobs/stream/expire-event-channels.ts`            | 00:55, 01:55, 02:55 | At most 25 event appointments plus shared collaborator channels and ten DM channels per slice; separate appointment-ID and DM-channel continuation.                                                                                                             |
+| `scripts/stream/reconcile-orphaned-recordings.ts` | 00:25, 01:25, 02:25 | At most 25 meetings aged 2h–14d with a durable recording-start witness, including both zero-row and partial deliveries; five-minute start budget; ID continuation.                                                                                              |
+| `jobs/stream/wind-down-deactivated-orgs.ts`       | 03:55, 04:55, 05:55 | At most two organizations and ten removed memberships with separate ID cursors; related database scans cap at 5,000 plus one sentinel; five-minute start budget through vendor loops; ten recording purges per organization; incomplete markers stay unwritten. |
+| `scripts/stream/stream-sync.ts`                   | 08:50, 09:50, 10:50 | At most five pages of 100 principals; persist the last ID; wrap at the end; preserve the starting cursor on dry runs.                                                                                                                                           |
+| `jobs/stream/expire-event-channels.ts`            | 08:55, 09:55, 10:55 | At most 25 event appointments plus shared collaborator channels and ten DM channels per slice; separate appointment-ID and DM-channel continuation.                                                                                                             |
 
 ID bounds use `id > checkpoint`, so deleting the last processed row does not break
 continuation. A finished failed slice can still save its progress. Retried rows
@@ -158,6 +159,13 @@ Inspect history before retrying an ambiguous admission timeout. For recording
 transfer gates and manual recovery of failed unpublished attempt-object cleanup,
 follow [the worker runbook](./recording-background-worker.md). No SQL or Redis
 state apply is part of this code migration.
+
+Persisted lifecycle checkpoints are validated before vendor work. Malformed JSON
+or invalid cursor fields fail the run and require inspection of the execution
+trail. Restore a reviewed valid checkpoint or authorize a bounded restart through
+the database recovery procedure; never reinterpret arbitrary JSON as an
+organization ID. The deployed baseline did not write lifecycle cursors, so no
+legacy cursor-format fallback is required by this migration.
 
 ## Deprecated & Superseded Approaches
 

@@ -205,7 +205,7 @@ Postgres decides who may be in a channel, and Stream obeys. Revocation is theref
 
 ## Organisation wind-down completion
 
-The ticker queues this background core at 00:25, 01:25 and 02:25 UTC. Each slice
+The ticker queues this background core at 03:55, 04:55 and 05:55 UTC. Each slice
 rotates across at most two organizations and ten removed memberships using
 separate persisted ID bounds. Related database scans select at most 5,001 rows
 and withhold completion when truncated; vendor loops share a five-minute start

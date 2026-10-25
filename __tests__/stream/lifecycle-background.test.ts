@@ -1,8 +1,4 @@
 /** @jest-environment node */
-import fs from "node:fs";
-import path from "node:path";
-import vm from "node:vm";
-import ts from "typescript";
 const mockExpire = jest.fn();
 const mockRecover = jest.fn();
 const mockWindDown = jest.fn();
@@ -40,6 +36,9 @@ jest.mock("@sentry/nextjs", () => ({
   logger: { info: jest.fn() },
 }));
 jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
+import streamMaintenance, {
+  config as workerConfig,
+} from "../../netlify/functions/stream-maintenance-background";
 import { STREAM_LIFECYCLE_JOBS } from "../../lib/cron/schedule";
 import { assertNotInMaintenance } from "../../lib/maintenance-cron";
 import { flushJobSentry } from "../../lib/observability/job-sentry";
@@ -50,35 +49,7 @@ const mocks = new Map([
   ["stream-sync", mockSync],
   ["expire-event-channels", mockChannels],
 ]);
-function loadWorker() {
-  const source = fs.readFileSync(
-    path.join(
-      __dirname,
-      "../../netlify/functions/stream-maintenance-background.mts",
-    ),
-    "utf8",
-  );
-  const { outputText } = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2022,
-    },
-  });
-  const exports: Partial<
-    typeof import("../../netlify/functions/stream-maintenance-background.mjs")
-  > = {};
-  vm.runInNewContext(outputText, {
-    module: { exports },
-    exports,
-    require,
-    process,
-    URL,
-  });
-  if (!exports.default || !exports.config)
-    throw new Error("Missing lifecycle worker exports");
-  return { run: exports.default, config: exports.config };
-}
-const worker = loadWorker();
+const worker = { run: streamMaintenance, config: workerConfig };
 const priorSecret = process.env.CRON_SECRET;
 beforeEach(() => {
   jest.clearAllMocks();

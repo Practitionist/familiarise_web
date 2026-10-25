@@ -17,6 +17,10 @@ describe("shared capability schedule catalog", () => {
     for (let tick = 0; tick < 7 * 24 * 12; tick++) {
       const due = dueTargets(new Date(start + tick * 5 * 60_000));
       expect(due.length).toBeLessThanOrEqual(MAX_TARGETS_PER_TICK);
+      const reservedMaintenanceSlot = (tick * 5) % 15 === 0 ? 1 : 0;
+      expect(due.length + reservedMaintenanceSlot).toBeLessThanOrEqual(
+        MAX_TARGETS_PER_TICK,
+      );
       for (const name of due) counts.set(name, (counts.get(name) ?? 0) + 1);
     }
     expect(counts.get("transfer-recordings")).toBe(7 * 96);
@@ -58,7 +62,7 @@ describe("shared capability schedule catalog", () => {
   it("preserves the hourly document purge request bounds and phase", () => {
     expect(scheduleFor("purge-deleted-documents")).toMatchObject({
       everyMinutes: 60,
-      offsetMinutes: 35,
+      offsetMinutes: 25,
       limit: 100,
       timeoutMs: 20_000,
       window: null,
@@ -73,7 +77,7 @@ describe("shared capability schedule catalog", () => {
       ),
     );
     expect(dueMinutes).toEqual(
-      Array.from({ length: 24 }, (_, hour) => hour * 60 + 35),
+      Array.from({ length: 24 }, (_, hour) => hour * 60 + 25),
     );
     expect(
       targetRequest("https://site.test", "purge-deleted-documents"),

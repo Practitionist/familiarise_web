@@ -496,3 +496,14 @@ it("withholds completion after a bounded database surface scan is truncated", as
   expect((await windDownDeactivatedOrgs()).success).toBe(false);
   expect(mockAudit).not.toHaveBeenCalled();
 });
+
+it.each(["legacy-bare-id", '{"organization":17,"membership":null}'])(
+  "refuses malformed checkpoint %s before vendor work",
+  async (checkpoint) => {
+    jest.mocked(readJobCheckpoint).mockResolvedValue(checkpoint);
+    await expect(windDownDeactivatedOrgs()).rejects.toThrow();
+    expect(mockQueryTaggedChannels).not.toHaveBeenCalled();
+    expect(mockFreeze).not.toHaveBeenCalled();
+    expect(mockAudit).not.toHaveBeenCalled();
+  },
+);

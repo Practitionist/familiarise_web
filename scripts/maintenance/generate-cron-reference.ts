@@ -86,6 +86,7 @@ function resolveModule(
   return [
     relative,
     `${relative}.ts`,
+    `${relative}.mts`,
     `${relative}.tsx`,
     `${relative}/index.ts`,
   ].find(
@@ -418,8 +419,16 @@ export async function generateCronReference(root = ROOT): Promise<string> {
     const schedule = JOB_SCHEDULES.find((item) => item.name === job.slug);
     const cores = [...job.cores];
     const backgroundFile = schedule?.backgroundFunction
-      ? `netlify/functions/${schedule.backgroundFunction}.mts`
+      ? resolveModule(
+          REGISTRY,
+          `@/netlify/functions/${schedule.backgroundFunction}`,
+          root,
+        )
       : null;
+    if (schedule?.backgroundFunction && !backgroundFile)
+      throw new Error(
+        `Missing background entry ${schedule.backgroundFunction}`,
+      );
     if (backgroundFile) {
       for (const clause of descendants(read(backgroundFile))) {
         if (ts.isCaseClause(clause) && text(clause.expression) === job.job)

@@ -25,7 +25,7 @@ The catalog has no worker, database or environment imports. Its ten-target figur
 is a tested design bound, not a runtime dispatch cap. Configured Actions ownership
 remains migration work until bounded replacements have actually run.
 
-Recording transfer is ticker-owned every 15 minutes through its existing background adapter. Keep 202 admission separate from successful core completion and retain its fail-closed 15-minute lease. Session recovery runs via HTTP at :10/:40. The five daily lifecycle targets queue the narrow `stream-maintenance-background` worker in 00:00–03:00 UTC; their Actions steps are removed. All six migrated cores fail closed, and daily completion health has a 27-hour budget. See `docs/stream/09-background-sync.md` for slice bounds and continuation.
+Recording transfer is ticker-owned every 15 minutes through its existing background adapter. Keep 202 admission separate from successful core completion and retain its fail-closed 15-minute lease. Session recovery runs via HTTP at :10/:40. The five daily lifecycle targets queue the narrow `stream-maintenance-background` worker in staggered daily windows; their Actions steps are removed. All six migrated cores fail closed, and daily completion health has a 27-hour budget. See `docs/stream/09-background-sync.md` for slice bounds and continuation.
 
 Cron leases are Postgres-backed. Closed jobs never run when acquisition fails,
 including Prisma import failures. Completion is conditional on the same execution

@@ -183,7 +183,7 @@ const SYSTEM_JOBS: SystemJob[] = [
     id: "expire-event-channels",
     name: "Expire Event Channels",
     description: "Queue ended event and dormant conversation cleanup",
-    schedule: "Daily, 00:00–03:00 UTC",
+    schedule: "Daily, 08:00–11:00 UTC",
     category: "Cleanup",
   },
   {
@@ -191,7 +191,7 @@ const SYSTEM_JOBS: SystemJob[] = [
     name: "Sync Stream Users",
     description:
       "Queue a comparison of Stream principals against database ownership",
-    schedule: "Daily, 00:00–03:00 UTC",
+    schedule: "Daily, 08:00–11:00 UTC",
     category: "Cleanup",
   },
   {
@@ -199,7 +199,7 @@ const SYSTEM_JOBS: SystemJob[] = [
     name: "Wind Down Organizations",
     description:
       "Queue Stream access and recording cleanup for deactivated organizations",
-    schedule: "Daily, 00:00–03:00 UTC",
+    schedule: "Daily, 03:00–06:00 UTC",
     category: "Cleanup",
   },
   {

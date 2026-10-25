@@ -341,6 +341,61 @@ async function removeMemberFromTargetChannels(
   return channelsRemoved;
 }
 
+function readMemberCallPage(
+  orgId: string,
+  userId: string,
+  cursor: string | undefined,
+) {
+  return prisma.appointmentOccurrence.findMany({
+    where: {
+      deletedAt: null,
+      endsAt: { gt: new Date(Date.now() - MAX_CALL_DURATION_MS) },
+      meeting: { is: { endedAt: null } },
+      appointment: {
+        deletedAt: null,
+        participants: { some: { userId } },
+        OR: [
+          { organizationId: orgId },
+          { webinar: { webinarPlan: { organizationId: orgId } } },
+          { class: { classPlan: { organizationId: orgId } } },
+          { consultation: { consultationPlan: { organizationId: orgId } } },
+          { subscription: { subscriptionPlan: { organizationId: orgId } } },
+        ],
+      },
+    },
+    select: { id: true, meeting: { select: { streamCallId: true } } },
+    orderBy: { id: "asc" },
+    take: MAX_ORG_CALLS_PER_REVOCATION,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  });
+}
+async function removeMemberCallPage(
+  video: ReturnType<typeof getStreamVideoClient>["video"],
+  occurrences: Awaited<ReturnType<typeof readMemberCallPage>>,
+  userId: string,
+  failures: string[],
+  deadlineMs: number,
+): Promise<boolean> {
+  for (const { meeting } of occurrences) {
+    if (Date.now() >= deadlineMs) {
+      failures.push("removeCallMember:time-budget");
+      return false;
+    }
+    if (!meeting) continue;
+    try {
+      await video
+        .call(STREAM_CALL_TYPE, toCallId(meeting.streamCallId))
+        .updateCallMembers({ remove_members: [userId] });
+    } catch (err) {
+      if (isExpectedStreamError(err)) continue;
+      failures.push(
+        `removeCallMember:${meeting.streamCallId}:${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  return true;
+}
+
 /** Drops the removed member from the org's live and upcoming calls; `/join` re-adds anyone Postgres still admits. */
 async function removeMemberFromOrgCalls(
   orgId: string,
@@ -352,45 +407,17 @@ async function removeMemberFromOrgCalls(
     const video = getStreamVideoClient().video;
     let cursor: string | undefined;
     for (let page = 0; page < MAX_ORG_CALL_PAGES; page++) {
-      const occurrences = await prisma.appointmentOccurrence.findMany({
-        where: {
-          deletedAt: null,
-          endsAt: { gt: new Date(Date.now() - MAX_CALL_DURATION_MS) },
-          meeting: { is: { endedAt: null } },
-          appointment: {
-            deletedAt: null,
-            participants: { some: { userId } },
-            OR: [
-              { organizationId: orgId },
-              { webinar: { webinarPlan: { organizationId: orgId } } },
-              { class: { classPlan: { organizationId: orgId } } },
-              { consultation: { consultationPlan: { organizationId: orgId } } },
-              { subscription: { subscriptionPlan: { organizationId: orgId } } },
-            ],
-          },
-        },
-        select: { id: true, meeting: { select: { streamCallId: true } } },
-        orderBy: { id: "asc" },
-        take: MAX_ORG_CALLS_PER_REVOCATION,
-        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      });
-      for (const { meeting } of occurrences) {
-        if (Date.now() >= deadlineMs) {
-          failures.push("removeCallMember:time-budget");
-          return;
-        }
-        if (!meeting) continue;
-        try {
-          await video
-            .call(STREAM_CALL_TYPE, toCallId(meeting.streamCallId))
-            .updateCallMembers({ remove_members: [userId] });
-        } catch (err) {
-          if (isExpectedStreamError(err)) continue;
-          failures.push(
-            `removeCallMember:${meeting.streamCallId}:${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      }
+      const occurrences = await readMemberCallPage(orgId, userId, cursor);
+      if (
+        !(await removeMemberCallPage(
+          video,
+          occurrences,
+          userId,
+          failures,
+          deadlineMs,
+        ))
+      )
+        return;
       if (occurrences.length < MAX_ORG_CALLS_PER_REVOCATION) return;
       cursor = occurrences.at(-1)?.id;
     }

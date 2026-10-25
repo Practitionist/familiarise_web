@@ -5,7 +5,10 @@
 
 import prisma from "../../lib/prisma";
 import { readJobCheckpoint, withCronLock } from "@/lib/cron/with-cron-lock";
-import { RecordingService } from "@/lib/stream/recording-service";
+import {
+  RecordingService,
+  type SyncableSession,
+} from "@/lib/stream/recording-service";
 import { isStreamConfigured } from "@/lib/stream-client";
 import type { RecordingRow } from "@/lib/stream/recording-types";
 
@@ -87,6 +90,34 @@ export async function reconcileOrphanedRecordings(): Promise<OrphanedRecordingRe
   );
 }
 
+async function recoverSession(
+  session: SyncableSession & { recordings: readonly { id: string }[] },
+  result: OrphanedRecordingResult,
+): Promise<void> {
+  const partial = session.recordings.length > 0;
+  if (partial) result.partialScanned++;
+  else result.scanned++;
+  const recovered: RecordingRow[] = [];
+  try {
+    const outcome = await RecordingService.syncSessionRecordings(
+      session,
+      recovered,
+      { notify: true },
+    );
+    if (!outcome.ok) throw new Error(`sync failed (${outcome.reason})`);
+    if (partial) result.partialRecovered += recovered.length;
+    else {
+      result.recovered += recovered.length;
+      if (!recovered.length) result.stillMissing++;
+    }
+  } catch (error) {
+    result.success = false;
+    result.errors.push(
+      `session ${session.id}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 async function reconcileOrphanedRecordingsUnlocked(): Promise<OrphanedRecordingResult> {
   const result: OrphanedRecordingResult = {
     scanned: 0,
@@ -146,28 +177,7 @@ async function reconcileOrphanedRecordingsUnlocked(): Promise<OrphanedRecordingR
       result.hasMore = true;
       break;
     }
-    const partial = session.recordings.length > 0;
-    if (partial) result.partialScanned++;
-    else result.scanned++;
-    const recovered: RecordingRow[] = [];
-    try {
-      const outcome = await RecordingService.syncSessionRecordings(
-        session,
-        recovered,
-        { notify: true },
-      );
-      if (!outcome.ok) throw new Error(`sync failed (${outcome.reason})`);
-      if (partial) result.partialRecovered += recovered.length;
-      else {
-        result.recovered += recovered.length;
-        if (!recovered.length) result.stillMissing++;
-      }
-    } catch (error) {
-      result.success = false;
-      result.errors.push(
-        `session ${session.id}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    await recoverSession(session, result);
     // Rotate even failures and empty sources so they cannot pin the partial-delivery tail.
     result.checkpoint = session.id;
   }

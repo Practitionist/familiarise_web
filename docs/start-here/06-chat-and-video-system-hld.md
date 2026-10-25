@@ -341,10 +341,10 @@ must still be verified on the published deployment.
 | `transfer-recordings`                                             | :00/:15/:30/:45          | Recording background worker; one copy      |
 | `reconcile-orphaned-sessions` (`reconcile-sessions` cleanup slug) | :10/:40                  | At most five rooms; rotating ID checkpoint |
 | `expire-recordings`                                               | 00:05, 01:05, 02:05      | Lifecycle background worker                |
-| `reconcile-orphaned-recordings`                                   | 00:20, 01:20, 02:20      | Lifecycle background worker                |
-| `wind-down-deactivated-orgs`                                      | 00:25, 01:25, 02:25      | Lifecycle background worker                |
-| `stream-sync`                                                     | 00:50, 01:50, 02:50      | Lifecycle background worker                |
-| `expire-event-channels`                                           | 00:55, 01:55, 02:55      | Registered lifecycle background worker     |
+| `reconcile-orphaned-recordings`                                   | 00:25, 01:25, 02:25      | Lifecycle background worker                |
+| `wind-down-deactivated-orgs`                                      | 03:55, 04:55, 05:55      | Lifecycle background worker                |
+| `stream-sync`                                                     | 08:50, 09:50, 10:50      | Lifecycle background worker                |
+| `expire-event-channels`                                           | 08:55, 09:55, 10:55      | Registered lifecycle background worker     |
 
 The week and 400-day calendar tests enforce at most ten targets on every tick,
 including monthly/quarterly collisions. The resumable ledger job retains its

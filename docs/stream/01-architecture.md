@@ -35,7 +35,7 @@ The real-time collaboration platform integrates six core subsystems across synch
    - PostgreSQL (`PG_POOL_MAX=1`) stores authoritative appointment schedules (`AppointmentOccurrence`), room metadata (`Meeting`), device stay intervals (`MeetingPresence`), user attendance ledgers (`MeetingAttendance`), recording lifecycles (`Recording`), webhook deduplication receipts (`WebhookEvent`), and DPDP revocation queues (`StreamRevocationRetry`).
    - Upstash Redis (`lib/redis.ts`) stores ephemeral session Q&A question payloads (`stage-qa:<callId>:<questionId>`, 6-hour TTL) and rate-limit sliding windows.
 6. **Cloudflare R2 Durable Storage & Background Cron Fleet**:
-   - Scheduled sweeps. Stream recovery and lifecycle jobs run through the active Netlify ticker. Session recovery runs every 30 minutes; recording transfer queues a background worker every 15 minutes; the five daily lifecycle jobs queue bounded background slices in the 00:00–03:00 UTC window. Their Actions steps are removed. PostgreSQL leases and row ownership fences protect execution; deployment and completed-work evidence remain separate. See the [scheduling map](../start-here/06-chat-and-video-system-hld.md#10-scheduling-truth) and [background sync architecture](./09-background-sync.md).
+   - Scheduled sweeps. Stream recovery and lifecycle jobs run through the active Netlify ticker. Session recovery runs every 30 minutes; recording transfer queues a background worker every 15 minutes; the five daily lifecycle jobs queue bounded background slices in staggered daily UTC windows. Their Actions steps are removed. PostgreSQL leases and row ownership fences protect execution; deployment and completed-work evidence remain separate. See the [scheduling map](../start-here/06-chat-and-video-system-hld.md#10-scheduling-truth) and [background sync architecture](./09-background-sync.md).
 
 ```mermaid
 flowchart TB
@@ -239,11 +239,11 @@ have no independent schedules and currently require Netlify as active cron host.
 | ------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `reconcile-orphaned-sessions`   | :10/:40 every hour  | Rotate across at most five overdue rooms; CAS the end and close presence in the same transaction.               |
 | `transfer-recordings`           | :00/:15/:30/:45     | One attempt-fenced copy under a fail-closed 15-minute lease and 12-minute copy deadline.                        |
-| `reconcile-orphaned-recordings` | 00:20, 01:20, 02:20 | Up to 25 recent recorded sessions per slice, including partial delivery; persist ID progress.                   |
+| `reconcile-orphaned-recordings` | 00:25, 01:25, 02:25 | Up to 25 recent recorded sessions per slice, including partial delivery; persist ID progress.                   |
 | `expire-recordings`             | 00:05, 01:05, 02:05 | Bounded lapsed-source recovery, retention, asset cleanup and transferred-source deletion with separate cursors. |
-| `expire-event-channels`         | 00:55, 01:55, 02:55 | Event/DM freeze and retention deletion requests, with confirmed absence separated from provider failure.        |
-| `stream-sync`                   | 00:50, 01:50, 02:50 | Up to five principal pages; request soft deletion for absent users and hard deletion for erased users.          |
-| `wind-down-deactivated-orgs`    | 00:25, 01:25, 02:25 | End tenant calls, freeze channels, unpublish and claim recordings before deletion; withhold incomplete markers. |
+| `expire-event-channels`         | 08:55, 09:55, 10:55 | Event/DM freeze and retention deletion requests, with confirmed absence separated from provider failure.        |
+| `stream-sync`                   | 08:50, 09:50, 10:50 | Up to five principal pages; request soft deletion for absent users and hard deletion for erased users.          |
+| `wind-down-deactivated-orgs`    | 03:55, 04:55, 05:55 | End tenant calls, freeze channels, unpublish and claim recordings before deletion; withhold incomplete markers. |
 
 All these cores use fail-closed PostgreSQL leases. Completion health requires
 successful owned executions, with 45-minute transfer, 90-minute session and
