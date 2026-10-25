@@ -116,9 +116,15 @@ export interface OpenCall {
  */
 export async function* iterateOpenCalls(
   client: StreamVideoClient,
+  opts: { createdSince?: Date } = {},
 ): AsyncGenerator<OpenCall> {
   const page = await client.video.queryCalls({
-    filter_conditions: { ended_at: null },
+    filter_conditions: {
+      ended_at: null,
+      ...(opts.createdSince
+        ? { created_at: { $gte: opts.createdSince.toISOString() } }
+        : {}),
+    },
     limit: CALL_PAGE_SIZE,
   });
 
@@ -209,6 +215,7 @@ async function readAllMembers(
 export async function anyOpenCallMemberHolds(
   client: StreamVideoClient,
   role: string = CALL_MEMBER_ROLE,
+  opts: { createdSince?: Date } = {},
 ): Promise<{
   found: boolean;
   callsScanned: number;
@@ -221,7 +228,7 @@ export async function anyOpenCallMemberHolds(
   let membersMissingRole = 0;
   const callsWithUncoveredMembers: string[] = [];
 
-  for await (const call of iterateOpenCalls(client)) {
+  for await (const call of iterateOpenCalls(client, opts)) {
     callsScanned++;
     const missing = call.members.filter(
       (member) => !holdsJoinRole(member.role, role),
