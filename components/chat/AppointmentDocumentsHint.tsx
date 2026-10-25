@@ -7,16 +7,11 @@ import type { LocalMessage } from "stream-chat";
 import { useChannelStateContext } from "stream-chat-react";
 import { goHref } from "@/lib/dashboard/go";
 
-// Booking context fields ride either on the message root or under `custom`.
-function readMessageString(message: LocalMessage, key: string): string | null {
-  const record = message as unknown as Record<string, unknown>;
-  const direct = record[key];
+// Message fields are user-writable, so the receipt id is checked at runtime.
+function bookingAppointmentIdOf(message: LocalMessage): string | null {
+  const direct: unknown = message.booking_appointment_id;
   if (typeof direct === "string") return direct;
-  const custom =
-    typeof record.custom === "object" && record.custom !== null
-      ? (record.custom as Record<string, unknown>)
-      : undefined;
-  const nested = custom?.[key];
+  const nested: unknown = message.custom?.booking_appointment_id;
   return typeof nested === "string" ? nested : null;
 }
 
@@ -35,8 +30,7 @@ export const AppointmentDocumentsHint = () => {
 
   const loadedMessages = messages ?? channel.state.messages ?? [];
   const hasReceipt = loadedMessages.some(
-    (message) =>
-      readMessageString(message, "booking_appointment_id") === appointmentId,
+    (message) => bookingAppointmentIdOf(message) === appointmentId,
   );
   if (!hasReceipt) return null;
 
