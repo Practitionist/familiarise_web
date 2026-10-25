@@ -68,6 +68,7 @@ import {
 import { reconcileOrphanedSessions } from "@/lib/meetings/reconcile-orphaned-sessions";
 
 import { z } from "zod";
+import { runMaintenanceRemediationSlice } from "@/lib/maintenance-remediation";
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import {
@@ -90,6 +91,7 @@ type JobResult = {
 type JobFunction = (actorUserId?: string) => Promise<JobResult>;
 
 const JOB_FUNCTIONS: Record<string, JobFunction> = {
+  "maintenance-booking-remediation": runMaintenanceRemediationSlice,
   "cleanup-abandoned-payments": async () => {
     const result = await cleanupAbandonedPayments();
     return {

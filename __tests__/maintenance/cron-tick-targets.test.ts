@@ -235,25 +235,28 @@ describe("cron-tick dueTargets cadence", () => {
     }
   });
 
+  it("runs confirmed maintenance remediation every fifteen minutes at offset zero", () => {
+    for (const minute of [0, 15, 30, 45])
+      expect(dueTargets(at(minute))).toContain(
+        "maintenance-booking-remediation",
+      );
+    for (const minute of [5, 10, 20, 25, 35, 40, 50, 55])
+      expect(dueTargets(at(minute))).not.toContain(
+        "maintenance-booking-remediation",
+      );
+  });
+
   it("never fires more than MAX_TARGETS_PER_TICK on any tick of 400 days, windows included", () => {
     expect(MAX_TARGETS_PER_TICK).toBe(10);
     // 400 days from 2026-11-01 cover every month start, every weekday and every quarter start.
     const start = Date.UTC(2026, 10, 1);
     let min = Infinity;
     let max = 0;
-    let maxWithReservedMaintenance = 0;
     for (let m = 0; m < 400 * 24 * 60; m += 5) {
       const n = dueTargets(new Date(start + m * 60_000)).length;
       min = Math.min(min, n);
       max = Math.max(max, n);
-      maxWithReservedMaintenance = Math.max(
-        maxWithReservedMaintenance,
-        n + (m % 15 === 0 ? 1 : 0),
-      );
     }
-    expect(maxWithReservedMaintenance).toBeLessThanOrEqual(
-      MAX_TARGETS_PER_TICK,
-    );
     expect(min).toBeGreaterThanOrEqual(5);
     expect(max).toBeLessThanOrEqual(MAX_TARGETS_PER_TICK);
   });

@@ -27,6 +27,7 @@ jest.mock("next/server", () => ({
   },
 }));
 
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({
   setTag: jest.fn(),
   captureException: jest.fn(),

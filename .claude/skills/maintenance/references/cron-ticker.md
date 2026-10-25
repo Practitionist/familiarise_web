@@ -31,6 +31,8 @@ imports. Tests must supply a faithful delegate instead of relying on an unlocked
 production fallback. Fail-open jobs may continue after a non-connection acquisition
 error only when the operation tolerates replay.
 
+`withCronLock` (`lib/cron/with-cron-lock.ts`) provides distributed mutual exclusion backed by a **Postgres lease on `SystemJobExecution`** (`status = 'RUNNING'` with a 15-minute default TTL and 35 minutes for payout/reconcile jobs), keeping Upstash Redis off the cron path. A financial job (`lib/cron/financial-jobs.ts`) additionally checks `abortIfMaintenance()` / `assertNotInMaintenance()` and exits during a `DEGRADED` or `OFFLINE` maintenance phase; a non-financial job exits only on `OFFLINE`. Unreadable or missing phase state refuses guarded work with `MAINTENANCE_STATE_UNREADABLE` and HTTP 503 without a `phase` marker, so the ticker records an operational failure rather than a planned hold.
+
 Completion uses `updateMany` with the execution id and `status: RUNNING`; a worker
 whose execution was expired cannot overwrite that history. Only an owned,
 successful finish refreshes `cron:heartbeat:last`. This shared timestamp is a
@@ -55,10 +57,13 @@ callback gets `statusFor` and the inferred outcome. A lease-held 409 is an
 attempted run, never fresh successful work.
 
 `reconcile-ledgers` runs as an hourly `:55` bounded slice whose cursor persists on
-its report, so a tick that reaches `MAX_TARGETS_PER_TICK` drops it first
-without losing coverage. It answers 200 with summary status RUNNING while work
+its report. When the due cohort reaches `MAX_TARGETS_PER_TICK`, the ledger
+yields before dispatch so statutory and settlement slots keep priority; later
+admitted slices resume the report. It answers 200 with summary status RUNNING while work
 remains and 207 once a completed audit has discrepancies; it is listed in
 `PARTIAL_FAILURE_TARGETS`, so that 207 counts as failed.
+
+GitHub Actions is retained only for non-money batch crons, plus manual `workflow_dispatch` runs; GitHub Actions is currently budget-blocked, so those jobs are not running. When a job is already running, `withCronLock` returns `409`, which the ticker records as `lockHeld` rather than `failed`. A 503 carrying an explicit `DEGRADED`/`OFFLINE` phase is a planned maintenance hold; an unreadable-state 503 remains `failed`.
 
 A per-job lease does not serialize different jobs touching the same payment or
 payout. Conditional state transitions, transactionally staged obligations and
@@ -88,6 +93,12 @@ disabled Sentry monitor accepts no check-ins: verify the monitor is active and
 that accepted check-ins and missed-run alerts actually arrive. Independent
 absence monitoring must inspect completed capabilities and oldest outstanding
 obligations, not the ticker's always-200 response or `/api/health` alone.
+
+## Explicit maintenance booking remediation
+
+Selecting OFFLINE never cancels bookings. Maintenance-control lease results carry the HTTP command outcome; rejected or incomplete commands must not refresh successful execution evidence. ADMINs preview at most 20 whole bookings in an explicit interval up to 24 hours, then confirm a signed five-minute preview with a fresh session and an audit reason. `MaintenanceRemediation` and its items persist the confirmed request; `maintenance-booking-remediation` processes one item per fifteen-minute ticker slice. It belongs to `FINANCIAL_JOB_NAMES` and resumes only after maintenance ends. Cancellation stages refund-owed and notification obligations in its domain transaction; canonical relays deliver them. Item and request completion commit together, so a lost completion transaction replays safely. Preview, confirmation and execution also reject bookings beyond the conservative per-booking recipient/session/payment envelope; do not truncate obligations or claim large-roster remediation is supported.
+
+Maintenance ETA is informational, and active Redis keys do not expire into an automatic reopening. ADMIN recovery must succeed before OFF is published. OFFLINE setup and recovery are serialized with the Postgres `maintenance-control` lease. `Meeting.maintenanceWindowId` preserves the exact operation scope even if later webhooks change the end reason. `maintenanceChannelFrozenAt` records acknowledged freezes; recovery includes all linked group meetings lacking `maintenanceChannelRecoveredAt`, including uncertain freeze outcomes, and advances only acknowledged unfreezes. Partial setup must be acknowledged through Retry Offline Setup before OFFLINE can end or downgrade. Partial drain or channel batches remain retryable and cannot complete setup/recovery.
 
 ## `?limit=` semantics
 

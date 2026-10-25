@@ -15,6 +15,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 jest.mock("../../lib/maintenance-cron", () => ({
   assertNotInMaintenance: jest.fn(),
   MaintenanceActiveError: class MaintenanceActiveError extends Error {},
+  MaintenanceUnavailableError: class MaintenanceUnavailableError extends Error {},
 }));
 jest.mock("../../jobs/notifications/drain-notification-outbox", () => ({
   drainNotificationOutbox: jest.fn(),

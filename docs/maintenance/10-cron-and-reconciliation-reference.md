@@ -46,7 +46,7 @@ The cleanup route calls `assertNotInMaintenance(job)` from `lib/maintenance-cron
 | `DEGRADED` | Names in `FINANCIAL_JOB_NAMES` (`lib/cron/financial-jobs.ts`) are held |
 | `OFFLINE`  | All jobs passing through this gate are held                            |
 
-A hold raises `MaintenanceActiveError`; the route returns `503` with the phase, and the ticker records a hold. An unreadable Redis phase fails open. Neither a cached phase nor a later maintenance change cancels work already in flight.
+A hold raises `MaintenanceActiveError`; the route returns `503` with the phase, and the ticker records a hold. An absent or unreadable Redis phase refuses guarded work with an operational `503`; it is an availability failure, not evidence of planned maintenance. Neither a cached phase nor a later maintenance change cancels work already in flight.
 
 ## Response codes
 
