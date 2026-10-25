@@ -953,6 +953,307 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
     });
   });
 
+  describe("out-of-order ready and call ended", () => {
+    const meeting = (
+      overrides: { isRecording?: boolean; endedAt?: Date | null } = {},
+    ) => ({
+      id: "m-ooo",
+      streamCallId: "slot-ooo",
+      isRecording: false,
+      endedAt: null as Date | null,
+      occurrence: {
+        appointment: {
+          id: "appt-ooo",
+          organizationId: null,
+          consultation: { consultationPlan: { consultantProfile: null } },
+          subscription: null,
+          trial: null,
+          webinar: null,
+          class: null,
+        },
+      },
+      ...overrides,
+    });
+
+    const readyEvent = (
+      filename: string,
+      startTime: string,
+      endTime: string,
+    ) => ({
+      type: "call.recording_ready" as const,
+      call_cid: "default:slot-ooo",
+      call_recording: {
+        filename,
+        url: `https://us-east.stream-io-cdn.com/${filename}`,
+        start_time: startTime,
+        end_time: endTime,
+      },
+      created_at: endTime,
+    });
+
+    type StoredRecording = {
+      id: string;
+      status: string;
+      streamRecordingId: string;
+      recordingUrl?: string;
+    } & Record<string, unknown>;
+
+    const createdRecording = (
+      filename: string,
+      startTime: string,
+      endTime: string,
+    ) => {
+      const start = new Date(startTime);
+      const end = new Date(endTime);
+      return {
+        title: "Session Recording",
+        recordingUrl: `https://us-east.stream-io-cdn.com/${filename}`,
+        durationInMinutes: Math.round(
+          (end.getTime() - start.getTime()) / (1000 * 60),
+        ),
+        recordedAt: start,
+        streamRecordingId: filename,
+        streamCallId: "slot-ooo",
+        storageType: "STREAM_S3",
+        status: "READY",
+        streamUrlExpiresAt: new Date(end.getTime() + FOURTEEN_DAYS_MS),
+        meetingId: "m-ooo",
+        organizationId: null,
+      };
+    };
+
+    const useRecordingRows = () => {
+      const rows: StoredRecording[] = [];
+      mockRecordingFindFirst.mockImplementation(
+        async (args: {
+          where: {
+            streamRecordingId?: string | null;
+            status?: string | { in?: string[] };
+          };
+        }) => {
+          const { where } = args;
+          // The erased-before-ready lookup: only a filename-less row in that exact status matches.
+          if (where.streamRecordingId === null) {
+            return (
+              rows.find(
+                (row) =>
+                  row.streamRecordingId == null && row.status === where.status,
+              ) ?? null
+            );
+          }
+          if (where.streamRecordingId) {
+            return (
+              rows.find(
+                (row) => row.streamRecordingId === where.streamRecordingId,
+              ) ?? null
+            );
+          }
+          if (typeof where.status === "object" && where.status.in) {
+            const statuses = where.status.in;
+            return rows.find((row) => statuses.includes(row.status)) ?? null;
+          }
+          return rows[rows.length - 1] ?? null;
+        },
+      );
+      mockRecordingCreate.mockImplementation(
+        async (args: { data: Record<string, unknown> }) => {
+          const row = {
+            id: `rec-${String(args.data.streamRecordingId)}`,
+            ...args.data,
+          } as unknown as StoredRecording;
+          rows.push(row);
+          return row;
+        },
+      );
+      return rows;
+    };
+
+    afterEach(() => {
+      mockMeetingFindUnique.mockReset();
+      mockRecordingFindFirst.mockReset();
+      mockRecordingCreate.mockReset();
+    });
+
+    it("creates a READY row when the ready event arrives before call.ended", async () => {
+      mockMeetingFindUnique.mockResolvedValue(
+        meeting({ isRecording: true, endedAt: null }),
+      );
+      const rows = useRecordingRows();
+
+      await handleRecordingReady(
+        readyEvent(
+          "seg-before-end.mp4",
+          "2026-10-03T10:00:00.000Z",
+          "2026-10-03T10:30:00.000Z",
+        ),
+      );
+
+      expect(mockRecordingCreate).toHaveBeenCalledTimes(1);
+      expect(mockRecordingCreate).toHaveBeenCalledWith({
+        data: createdRecording(
+          "seg-before-end.mp4",
+          "2026-10-03T10:00:00.000Z",
+          "2026-10-03T10:30:00.000Z",
+        ),
+      });
+      expect(rows).toHaveLength(1);
+      expect(mockRecordingUpdateManyAndReturn).not.toHaveBeenCalled();
+      expect(mockMeetingUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { isRecording: false } }),
+      );
+    });
+
+    it("still creates a READY row when call.ended arrived first", async () => {
+      mockMeetingFindUnique.mockResolvedValue(
+        meeting({
+          isRecording: false,
+          endedAt: new Date("2026-10-03T10:45:00.000Z"),
+        }),
+      );
+      useRecordingRows();
+      mockGetEventAttendeeIds.mockResolvedValue(["u-att-1"]);
+
+      await handleRecordingReady(
+        readyEvent(
+          "seg-after-end.mp4",
+          "2026-10-03T10:00:00.000Z",
+          "2026-10-03T10:30:00.000Z",
+        ),
+      );
+
+      expect(mockRecordingCreate).toHaveBeenCalledTimes(1);
+      expect(mockRecordingCreate).toHaveBeenCalledWith({
+        data: createdRecording(
+          "seg-after-end.mp4",
+          "2026-10-03T10:00:00.000Z",
+          "2026-10-03T10:30:00.000Z",
+        ),
+      });
+      expect(mockRecordingUpdateManyAndReturn).not.toHaveBeenCalled();
+      expect(mockMeetingUpdateMany).not.toHaveBeenCalled();
+      expect(mockNotifyRecordingAvailable).toHaveBeenCalledWith(
+        ["u-att-1"],
+        expect.any(Object),
+        "recording.ready:rec-seg-after-end.mp4",
+        expect.objectContaining({
+          entityRef: "recording:rec-seg-after-end.mp4",
+        }),
+      );
+      expect(mockStageEmailOnce).toHaveBeenCalledWith(
+        expect.objectContaining({
+          entityId: "rec-seg-after-end.mp4",
+          userIds: ["u-att-1"],
+          kind: "RECORDING_READY",
+        }),
+        expect.objectContaining({ scope: "stream.recording-ready" }),
+      );
+    });
+
+    it("adopts a duplicate ready for the same filename instead of creating a second row", async () => {
+      mockMeetingFindUnique.mockResolvedValue(
+        meeting({ endedAt: new Date("2026-10-03T10:45:00.000Z") }),
+      );
+      const rows = useRecordingRows();
+      mockGetEventAttendeeIds.mockResolvedValue(["u-att-1"]);
+
+      const event = readyEvent(
+        "seg-dup.mp4",
+        "2026-10-03T10:00:00.000Z",
+        "2026-10-03T10:30:00.000Z",
+      );
+      await handleRecordingReady(event);
+      await handleRecordingReady(event);
+
+      expect(mockRecordingCreate).toHaveBeenCalledTimes(1);
+      expect(mockRecordingCreate).toHaveBeenCalledWith({
+        data: createdRecording(
+          "seg-dup.mp4",
+          "2026-10-03T10:00:00.000Z",
+          "2026-10-03T10:30:00.000Z",
+        ),
+      });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        id: "rec-seg-dup.mp4",
+        status: "READY",
+        recordingUrl: "https://us-east.stream-io-cdn.com/seg-dup.mp4",
+      });
+      expect(mockRecordingUpdateManyAndReturn).not.toHaveBeenCalled();
+      expect(mockRecordingFindFirst).toHaveBeenCalledWith({
+        where: { meetingId: "m-ooo", streamRecordingId: "seg-dup.mp4" },
+      });
+      const bellKeys = mockNotifyRecordingAvailable.mock.calls.map(
+        (call) => call[2],
+      );
+      expect(bellKeys.length).toBeGreaterThan(0);
+      expect(new Set(bellKeys)).toEqual(
+        new Set(["recording.ready:rec-seg-dup.mp4"]),
+      );
+      const emailKeys = mockStageEmailOnce.mock.calls.map((call) =>
+        (call[1] as { key: (userId: string) => string }).key("u-att-1"),
+      );
+      expect(emailKeys.length).toBeGreaterThan(0);
+      expect(new Set(emailKeys)).toEqual(
+        new Set(["recording-ready:rec-seg-dup.mp4:u-att-1"]),
+      );
+    });
+
+    it("stores both segments when the later segment is delivered first", async () => {
+      mockMeetingFindUnique.mockResolvedValue(
+        meeting({ endedAt: new Date("2026-10-03T12:05:00.000Z") }),
+      );
+      useRecordingRows();
+      mockGetEventAttendeeIds.mockResolvedValue(["u-att-1"]);
+
+      await handleRecordingReady(
+        readyEvent(
+          "seg-2.mp4",
+          "2026-10-03T11:05:00.000Z",
+          "2026-10-03T12:00:00.000Z",
+        ),
+      );
+      await handleRecordingReady(
+        readyEvent(
+          "seg-1.mp4",
+          "2026-10-03T10:00:00.000Z",
+          "2026-10-03T11:00:00.000Z",
+        ),
+      );
+
+      expect(mockRecordingCreate).toHaveBeenCalledTimes(2);
+      const created = new Map(
+        mockRecordingCreate.mock.calls.map(([args]) => [
+          args.data.streamRecordingId as string,
+          args.data as ReturnType<typeof createdRecording>,
+        ]),
+      );
+      expect(created.get("seg-2.mp4")).toEqual(
+        createdRecording(
+          "seg-2.mp4",
+          "2026-10-03T11:05:00.000Z",
+          "2026-10-03T12:00:00.000Z",
+        ),
+      );
+      expect(created.get("seg-1.mp4")).toEqual(
+        createdRecording(
+          "seg-1.mp4",
+          "2026-10-03T10:00:00.000Z",
+          "2026-10-03T11:00:00.000Z",
+        ),
+      );
+      expect(mockRecordingUpdateManyAndReturn).not.toHaveBeenCalled();
+      const bellKeys = mockNotifyRecordingAvailable.mock.calls.map(
+        (call) => call[2],
+      );
+      expect(new Set(bellKeys)).toEqual(
+        new Set([
+          "recording.ready:rec-seg-2.mp4",
+          "recording.ready:rec-seg-1.mp4",
+        ]),
+      );
+    });
+  });
+
   it("never announces a ready event for an EXPIRED recording", async () => {
     mockMeetingFindUnique.mockResolvedValue({
       id: "m-exp",
