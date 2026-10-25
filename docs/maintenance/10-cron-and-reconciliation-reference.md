@@ -4,7 +4,7 @@ type: reference
 band: maintenance
 audience: sde2
 status: live
-last-reviewed: 2026-10-24
+last-reviewed: 2026-10-25
 ---
 
 # Cron, Sidecars and Reconciliation — Operational Reference
@@ -46,12 +46,13 @@ The cleanup route calls `assertNotInMaintenance(job)` from `lib/maintenance-cron
 | `DEGRADED` | Names in `FINANCIAL_JOB_NAMES` (`lib/cron/financial-jobs.ts`) are held |
 | `OFFLINE`  | All jobs passing through this gate are held                            |
 
-A hold raises `MaintenanceActiveError`; the route returns `503` with the phase, and the ticker records a hold. An unreadable Redis phase fails open. Neither a cached phase nor a later maintenance change cancels work already in flight.
+A hold raises `MaintenanceActiveError`; the route returns `503` with the phase, and the ticker records a hold. An absent or unreadable Redis phase refuses guarded work with an operational `503`; it is an availability failure, not evidence of planned maintenance. Neither a cached phase nor a later maintenance change cancels work already in flight.
 
 ## Response codes
 
 | Code  | Condition                                                 | Operator action                         |
 | ----- | --------------------------------------------------------- | --------------------------------------- |
+| `202` | Background execution was admitted; completion is separate | Inspect the core execution and effects  |
 | `200` | The handler reports success                               | Check completion/effect evidence too    |
 | `207` | A job-specific needs-attention result                     | Inspect the result and target policy    |
 | `400` | Malformed `limit` or `windowStart`                        | Fix the caller                          |
@@ -83,7 +84,7 @@ Before deploying this code, an operator must apply the additive columns/indexes 
 
 `netlify/functions/cron-tick.mts` retains the `*/5 * * * *` schedule. Once per tick it reads `ops:active_cron_platform` through Upstash REST and skips dispatch when another platform is selected. An absent key, missing credentials, unreadable response or timeout permits Netlify dispatch. This fail-open preference is not an exactly-once mechanism; verify standby ownership and in-flight work during failback.
 
-`lib/cron/schedule.ts` owns the target roster, cadence, offsets, UTC calendar windows, row limits and HTTP timeouts. `JOB_SCHEDULES` and `scheduleFor()` expose effective metadata; `dueTargets()`, `windowStartFor()` and `targetRequest()` provide pure scheduling helpers. The adapter supplies authentication and dispatches `/api/cleanup/<slug>` requests. Document retention runs hourly at `:35`, requesting at most 100 rows with a 20-second HTTP timeout. The resumable ledger target yields when the due roster reaches the ten-target bound; statutory and settlement work keeps its slots.
+`lib/cron/schedule.ts` owns the target roster, cadence, offsets, UTC calendar windows, row limits and HTTP timeouts. `JOB_SCHEDULES` and `scheduleFor()` expose effective metadata; `dueTargets()`, `windowStartFor()` and `targetRequest()` provide pure scheduling helpers. The adapter supplies authentication and uses the catalog’s background destination for background targets, including `transfer-recordings`; other targets use `/api/cleanup/<slug>`. Document retention runs hourly at `:25`, requesting at most 100 rows with a 20-second HTTP timeout. The resumable ledger target yields when the due roster reaches the ten-target bound; statutory and settlement work keeps its slots.
 
 For targets with a configured cadence, the slot check is:
 
