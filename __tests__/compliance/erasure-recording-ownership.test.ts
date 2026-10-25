@@ -72,6 +72,7 @@ jest.mock("../../lib/observability/report", () => ({
 }));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_job: string, _opts: unknown, run: () => unknown) => run(),
+  readJobCheckpoint: () => Promise.resolve(null),
 }));
 jest.mock("../../lib/storage/r2-client", () => ({
   deleteR2Object: jest.fn(),
