@@ -5,6 +5,7 @@ const updateMeetings = jest.fn();
 const updateChannel = jest.fn();
 const stopRecording = jest.fn();
 const endCall = jest.fn();
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,

@@ -34,6 +34,8 @@ The automatic whole-booking cancellation path currently supports at most eight l
 
 Larger bookings remain unsupported by this maintenance action and require a separately reviewed cancellation procedure. No ready large-roster procedure is implied. An oversized queued booking remains pending with a visible error while other items can rotate; it must not be marked completed, partially cancelled or silently dropped. Verify supported-size execution against the deployed runtime before using this action operationally.
 
+Tests that mock `@sentry/nextjs` and assert captures also mock `@sentry/core` with `jest.requireMock("@sentry/nextjs")`. Native workers and framework handlers then use the same asserted telemetry functions.
+
 ## Deprecated & Superseded Approaches
 
 OFFLINE previously cancelled overlapping bookings implicitly and guessed a four-hour horizon when no ETA was supplied. Explicit preview and durable confirmation replace that coupling. ETA-based Redis expiry previously reopened an unattended maintenance window; active state now requires explicit recovery. Recovery previously launched six reconciliation jobs in parallel inside the request; scheduled bounded jobs own those obligations instead.
