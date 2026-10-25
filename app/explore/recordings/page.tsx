@@ -7,14 +7,13 @@ import { withBuildTimeRetry } from "@/lib/data/fail-open";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 // ISR — same rationale as /explore/experts: anonymous, session-free listing;
-// prerendered HTML off the CDN. Publish/unpublish purge on demand at the
-// write sites (see publish route follow-up).
+// prerendered HTML off the CDN. Unpublish purges on demand at its write site.
 export const revalidate = 300;
 
 export const metadata = {
   title: "Recordings Library | Familiarise",
   description:
-    "Buy recorded webinars and classes from verified consultants — learn on your schedule.",
+    "Recorded webinars and classes from verified consultants. Replays are not on sale yet; attendees watch their sessions from their dashboard.",
 };
 
 function formatPrice(paise: number): string {
