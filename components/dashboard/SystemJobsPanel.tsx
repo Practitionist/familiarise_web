@@ -144,6 +144,13 @@ const SYSTEM_JOBS: SystemJob[] = [
   },
   // Cleanup
   {
+    id: "transfer-recordings",
+    name: "Copy Recordings",
+    description: "Queue the next session recording for permanent storage",
+    schedule: "Every 15 minutes",
+    category: "Cleanup",
+  },
+  {
     id: "auth-tokens",
     name: "Auth Token Cleanup",
     description:
@@ -394,7 +401,7 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
       // #1846 N6 — the payout jobs answer 202 and finish after the response.
       if (result.dispatched) {
         toast({
-          title: `${job.name} started`,
+          title: `${job.name} ${result.accepted ? "queued" : "started"}`,
           description: result.message,
           variant: "default",
         });

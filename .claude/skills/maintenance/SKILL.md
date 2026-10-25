@@ -18,10 +18,14 @@ This is the index for operational and deployment plumbing that is not specific t
 ## Non-negotiables
 
 Use one registered implementation per job and keep the required Netlify standby.
-Scheduling metadata currently lives in `netlify/functions/cron-tick.mts`; do not
-claim the registry defines phase or timeout fields. Count executable builder keys,
-not documentation examples. Operational Actions jobs remain migration work until
-bounded replacements have actually run.
+`lib/cron/schedule.ts` owns configured cadence, windows and HTTP request bounds;
+the registry does not define phase or timeout fields. Regenerate the AST-derived
+inventory with `npm run cron:reference` and verify `npm run cron:reference:check`.
+The catalog has no worker, database or environment imports. Its ten-target figure
+is a tested design bound, not a runtime dispatch cap. Configured Actions ownership
+remains migration work until bounded replacements have actually run.
+
+Recording transfer is ticker-owned every 15 minutes through its existing background adapter. Keep 202 admission separate from successful core completion and retain its fail-closed 15-minute lease. Remaining Actions-only Stream lifecycle jobs are still migration work.
 
 Cron leases are Postgres-backed. Closed jobs never run when acquisition fails,
 including Prisma import failures. Completion is conditional on the same execution
@@ -48,3 +52,9 @@ Mocks of `maintenance-cron` must provide both exported error constructors: clean
 Capture assertions that mock `@sentry/nextjs` must alias `@sentry/core` to the same mock, so native-worker helpers and Next.js routes share the asserted capture functions. Partial mocks spread the actual Core module, avoiding a circular import through the actual Next.js SDK.
 
 Revalidate a confirmed booking’s live overlap inside the cancellation transaction before loading its full graph. Bootstrap missing maintenance edge state from the durable platform state before deploying fail-closed readers; never overwrite an active window with OFF.
+
+## Worktree verification
+
+The Jest configuration keeps an explicit `@/` source mapping while retaining Next.js’s default mocks and transforms. Run targeted suites through the repository config. A CLI `--moduleNameMapper` replaces the entire map and can discard `server-only`, asset and Redis-edge mocks; do not use it as a shortcut for alias resolution.
+
+When merging a worker migration, port its roster, limit, timeout and ledger-yield changes into the shared catalog; do not restore the adapter’s former inline schedule. Check generated output against the same inputs before and after generator refactors. Keep blank workflow names within their own source block and preserve escaped Markdown pipes. See `references/cron-ticker.md` for the current document-purge schedule and mocked verification boundary.
