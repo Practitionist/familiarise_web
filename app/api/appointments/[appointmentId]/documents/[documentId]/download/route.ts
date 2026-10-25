@@ -1,4 +1,4 @@
-import { getSession } from "@/lib/auth-server";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { answerFileRoute, fileApiError } from "@/lib/documents/api-error";
 import { authorizeAppointmentDocument } from "@/lib/documents/file-access";
 import { serveAuthorizedFile } from "@/lib/documents/file-download";
@@ -11,11 +11,19 @@ export async function GET(
   }: { params: Promise<{ appointmentId: string; documentId: string }> },
 ) {
   return answerFileRoute(async () => {
-    const session = await getSession();
-    if (!session?.user?.id) return fileApiError("UNAUTHORIZED");
+    const auth = await requireApiAuth();
+    if (auth.error) {
+      const code =
+        auth.error.status === 401
+          ? "UNAUTHORIZED"
+          : auth.error.status === 403 || auth.error.status === 428
+            ? "FORBIDDEN"
+            : "SERVER_ERROR";
+      return fileApiError(code, { headers: auth.error.headers });
+    }
     const { appointmentId, documentId } = await params;
     const access = await authorizeAppointmentDocument(
-      session.user.id,
+      auth.session.user.id,
       documentId,
       appointmentId,
     );

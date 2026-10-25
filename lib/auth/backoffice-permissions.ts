@@ -41,6 +41,9 @@ export type BackofficeSurface =
   | "threads.manage"
   | "feedback.manage"
   | "moderation.manage"
+  // Case-linked booking chat access: the audited transcript read and the visible intervention.
+  | "supportChat.read"
+  | "supportChat.intervene"
   | "engineering.escalate"
   // Operations — booking-side triage and user verification.
   | "appointments.manage"
@@ -90,6 +93,8 @@ export type BackofficeSurface =
   | "analytics.read"
   | "systemJobs.manage"
   | "maintenance.manage"
+  // Call, screen-share and recording quality: a cost lever staff and admin both own.
+  | "videoConfig.manage"
   // Erasure requests, data breaches and failed emails.
   | "compliance.manage"
   // The newsletter mass send, split from triaging the list.
@@ -112,6 +117,10 @@ export const BACKOFFICE_PERMISSIONS: Record<
   "threads.manage": OPERATORS,
   "feedback.manage": OPERATORS,
   "moderation.manage": OPERATORS,
+  // Both need a HUMAN case with a linked booking, a reason and step-up; every read is logged.
+  "supportChat.read": OPERATORS,
+  // Seats a visible "Familiarise Support" member; never silent, removed at resolution.
+  "supportChat.intervene": OPERATORS,
   "engineering.escalate": ADMIN_ONLY,
 
   // Operations — staff triage bookings and clear the verification queue.
@@ -180,6 +189,7 @@ export const BACKOFFICE_PERMISSIONS: Record<
   "analytics.read": OPERATORS,
   "systemJobs.manage": ADMIN_ONLY,
   "maintenance.manage": ADMIN_ONLY,
+  "videoConfig.manage": OPERATORS,
   // #1527 Q5 — personal-data obligations (DPDP erasure, breach notices) and
   // the failed-email retry queue are admin's; staff read none of it.
   "compliance.manage": ADMIN_ONLY,

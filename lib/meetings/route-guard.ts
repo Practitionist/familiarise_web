@@ -1,9 +1,11 @@
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { NextResponse } from "next/server";
+import type { Ratelimit } from "@upstash/ratelimit";
 import { z } from "zod";
 
 import { resolveMeetingAccess } from "@/lib/meetings/access";
 import type { MeetingAccess } from "@/lib/meetings/access";
+import { applyRateLimit } from "@/lib/rate-limit";
 import { isStreamConfigured } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 
@@ -58,6 +60,8 @@ export async function guardMeetingRoute(
   params: Promise<{ meetingId: string }>,
   /** Named in the two log lines this emits, so a refusal says which route. */
   op: "admit to" | "end",
+  /** A mutating route's per-user limiter; it fails open when Redis is unreachable. */
+  limiter?: Ratelimit,
 ): Promise<MeetingRouteGrant | MeetingRouteRefusal> {
   const refuse = (body: Record<string, unknown>, status: number) => ({
     ok: false as const,
@@ -69,6 +73,15 @@ export async function guardMeetingRoute(
     return { ok: false, response: authResult.error };
   }
   const { session } = authResult;
+
+  if (limiter) {
+    const limited = await applyRateLimit(
+      limiter,
+      `user:${session.user.id}`,
+      "meetings",
+    );
+    if (limited) return { ok: false, response: limited };
+  }
 
   const { meetingId: rawMeetingId } = await params;
   const parsedMeetingId = meetingIdParamSchema.safeParse(rawMeetingId);

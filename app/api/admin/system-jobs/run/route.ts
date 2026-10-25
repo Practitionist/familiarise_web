@@ -296,9 +296,11 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
     return {
       success: result.success,
       tombstoned: result.tombstoned,
+      failedTombstones: result.failedTombstones,
       purged: result.purged,
       cleanedCount: result.purged,
-      errorCount: result.failedStorage + result.failedRows,
+      errorCount:
+        result.failedTombstones + result.failedStorage + result.failedRows,
     };
   },
   "reconcile-document-storage": async () => {
@@ -327,7 +329,7 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
   "transfer-recordings": async () => {
     const result = await transferRecordings();
     return {
-      success: result.failed === 0,
+      success: result.success,
       totalProcessed: result.processed,
       succeededCount: result.succeeded,
       failedCount: result.failed,

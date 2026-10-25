@@ -32,10 +32,12 @@ type ReasonKey = DocumentRemovalReason | "UNRECORDED";
 export interface PurgeDeletedDocumentsResult {
   success: boolean;
   tombstoned: number;
+  failedTombstones: number;
   purged: number;
   failedStorage: number;
   failedRows: number;
   byReason: Partial<Record<ReasonKey, number>>;
+  remaining: number;
 }
 
 /** Bookings that may be past retention; the pure date rule makes the final call. */
@@ -68,11 +70,22 @@ function retentionCandidateWhere(cutoff: Date): Prisma.AppointmentWhereInput {
 }
 
 /** Arm 1: tombstone every live document of bookings whose retention date has passed. */
-async function tombstoneExpiredBookings(now: Date): Promise<number> {
+async function tombstoneExpiredBookings(
+  now: Date,
+  options: PurgeOptions,
+): Promise<{ tombstoned: number; failed: number }> {
   const cutoff = new Date(now.getTime() - DOCUMENT_RETENTION_DAYS * DAY_MS);
+  // The caller's limit budgets rows to purge; each due booking here costs a
+  // lock and a write, so cap this arm at the same number. Counting only due
+  // bookings keeps a run with few expiries from spending its whole budget on
+  // cheap candidate scans.
+  const maxBookings = options.limit ?? Number.POSITIVE_INFINITY;
+  let attempted = 0;
   let tombstoned = 0;
+  let failed = 0;
   let afterId: string | undefined;
   for (let batch = 0; batch < MAX_BATCHES_PER_RUN; batch += 1) {
+    if (attempted >= maxBookings) break;
     const rows = await prisma.appointment.findMany({
       where: {
         ...retentionCandidateWhere(cutoff),
@@ -86,16 +99,38 @@ async function tombstoneExpiredBookings(now: Date): Promise<number> {
     afterId = rows.at(-1)!.id;
 
     for (const row of rows) {
+      if (attempted >= maxBookings) break;
       const booking = toDocumentBooking(row, now);
       if (!booking?.keptUntil || booking.keptUntil > now) continue;
-      const result = await prisma.appointmentDocument.updateMany({
-        where: { appointmentId: row.id, deletedAt: null },
-        data: { deletedAt: now, removalReason: "RETENTION_EXPIRY" },
-      });
-      tombstoned += result.count;
+      attempted += 1;
+      // Re-read under the booking lock: a reschedule or a subscription
+      // extension between the candidate scan and the write moves `keptUntil`
+      // into the future, and the tombstone must not outrun it. One contended
+      // booking must not stop the others or the purge that follows.
+      try {
+        const count = await prisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT 1 FROM "Appointment" WHERE id = ${row.id} FOR UPDATE`;
+          const fresh = await tx.appointment.findUnique({
+            where: { id: row.id },
+            select: documentBookingSelect,
+          });
+          const freshBooking = fresh ? toDocumentBooking(fresh, now) : null;
+          if (!freshBooking?.keptUntil || freshBooking.keptUntil > now)
+            return 0;
+          const result = await tx.appointmentDocument.updateMany({
+            where: { appointmentId: row.id, deletedAt: null },
+            data: { deletedAt: now, removalReason: "RETENTION_EXPIRY" },
+          });
+          return result.count;
+        });
+        tombstoned += count;
+      } catch (error) {
+        failed += 1;
+        console.error(`[purge-deleted-documents] tombstone ${row.id}:`, error);
+      }
     }
   }
-  return tombstoned;
+  return { tombstoned, failed };
 }
 
 interface PurgeCounts {
@@ -103,37 +138,66 @@ interface PurgeCounts {
   failedStorage: number;
   failedRows: number;
   byReason: Partial<Record<ReasonKey, number>>;
+  /** Eligible tombstones still present after this run; retried next run. */
+  remaining: number;
+}
+
+export interface PurgeOptions {
+  /** Stop after this many rows have been purged. */
+  limit?: number;
+}
+
+/** Rows this call may delete: versions first, a root only once its thread is empty. */
+function purgeableWhere(
+  where: Prisma.AppointmentDocumentWhereInput,
+): Prisma.AppointmentDocumentWhereInput {
+  return {
+    AND: [
+      where,
+      { deletedAt: { not: null } },
+      {
+        OR: [
+          { rootDocumentId: { not: null } },
+          { threadVersions: { none: {} } },
+        ],
+      },
+    ],
+  };
 }
 
 /**
  * Deletes tombstoned rows matching `where`: versions first, a root only once
- * no row of its thread remains, and each object before its row.
+ * no row of its thread remains, and each object before its row. `remaining`
+ * is the count the caller could not finish, so a capped run never reports a
+ * complete erasure.
  */
 export async function purgeTombstonedDocuments(
   where: Prisma.AppointmentDocumentWhereInput,
   db: Pick<Db, "appointmentDocument"> = prisma,
+  options: PurgeOptions = {},
 ): Promise<PurgeCounts> {
+  const limit = options.limit ?? Number.POSITIVE_INFINITY;
+  const purgeable = purgeableWhere(where);
   const counts: PurgeCounts = {
     purged: 0,
     failedStorage: 0,
     failedRows: 0,
     byReason: {},
+    remaining: 0,
   };
   // Rows attempted this run are excluded so a failing row cannot spin the loop.
   const attempted = new Set<string>();
 
   for (let batch = 0; batch < MAX_BATCHES_PER_RUN; batch += 1) {
+    if (counts.purged >= limit) break;
+    const take = Math.min(
+      BATCH_SIZE,
+      Number.isFinite(limit) ? Math.max(1, limit - counts.purged) : BATCH_SIZE,
+    );
     const candidates = await db.appointmentDocument.findMany({
       where: {
         AND: [
-          where,
-          { deletedAt: { not: null } },
-          {
-            OR: [
-              { rootDocumentId: { not: null } },
-              { threadVersions: { none: {} } },
-            ],
-          },
+          purgeable,
           ...(attempted.size > 0 ? [{ id: { notIn: [...attempted] } }] : []),
         ],
       },
@@ -144,11 +208,12 @@ export async function purgeTombstonedDocuments(
         removalReason: true,
       },
       orderBy: { deletedAt: "asc" },
-      take: BATCH_SIZE,
+      take,
     });
     if (candidates.length === 0) break;
 
     for (const doc of candidates) {
+      if (counts.purged >= limit) break;
       attempted.add(doc.id);
       const storageCleared =
         doc.isStorageMissing ||
@@ -167,39 +232,51 @@ export async function purgeTombstonedDocuments(
         counts.failedRows += 1;
       }
     }
+    if (candidates.length < take) break;
   }
+  counts.remaining = await db.appointmentDocument.count({
+    where: purgeable,
+  });
   return counts;
 }
 
 async function purgeDeletedDocumentsUnlocked(
   now: Date,
+  options: PurgeOptions,
 ): Promise<PurgeDeletedDocumentsResult> {
-  const tombstoned = await tombstoneExpiredBookings(now);
+  const { tombstoned, failed: failedTombstones } =
+    await tombstoneExpiredBookings(now, options);
   const graceCutoff = new Date(
     now.getTime() - DOCUMENT_DELETE_GRACE_DAYS * DAY_MS,
   );
-  const counts = await purgeTombstonedDocuments({
-    deletedAt: { lt: graceCutoff },
-  });
+  const counts = await purgeTombstonedDocuments(
+    { deletedAt: { lt: graceCutoff } },
+    prisma,
+    options,
+  );
 
-  const failed = counts.failedStorage + counts.failedRows;
-  if (failed > 0) {
+  const failed = failedTombstones + counts.failedStorage + counts.failedRows;
+  // A capped run is expected to leave rows; only an uncapped run that still
+  // has work after its ceiling is a backlog worth a page.
+  const backlog = counts.remaining > 0 && options.limit === undefined;
+  if (failed > 0 || backlog) {
     reportSentryMessage("purge-deleted-documents left rows for the next run", {
       subsystem: "documents",
       op: "purge-deleted-documents",
       level: "warning",
-      extra: { tombstoned, ...counts },
+      extra: { tombstoned, failedTombstones, ...counts },
       fingerprint: ["purge-deleted-documents", "failures"],
     });
   }
-  return { success: failed === 0, tombstoned, ...counts };
+  return { success: failed === 0, tombstoned, failedTombstones, ...counts };
 }
 
-/** Daily: retention tombstones, then the grace-window purge. */
+/** Hourly: retention tombstones, then the grace-window purge. */
 export function purgeDeletedDocuments(
   now: Date = new Date(),
+  options: PurgeOptions = {},
 ): Promise<PurgeDeletedDocumentsResult> {
   return withCronLock("purge-deleted-documents", { failMode: "open" }, () =>
-    purgeDeletedDocumentsUnlocked(now),
+    purgeDeletedDocumentsUnlocked(now, options),
   );
 }

@@ -1,6 +1,7 @@
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
+  type Tx,
 } from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { stageBell } from "@/lib/novu/stage-bell";
@@ -15,8 +16,19 @@ import {
 } from "@/lib/observability/report";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { slaStateOf } from "./sla";
-import { cascadeResolvedProblems } from "./problem-cascade";
+import {
+  cascadeResolvedProblems,
+  HELD_OPEN_SCAN_FACTOR,
+} from "./problem-cascade";
 import { purgeExpiredSupportEvidence } from "./evidence-retention";
+import { sweepSupportChatAccess } from "./chat-sweep";
+import { activeHolds, caseHoldEvents, releaseAllCaseHolds } from "./case-holds";
+import { endCaseChatAccessTx } from "./chat-access-end";
+import {
+  moneyDoorsRefusal,
+  openRecommendationTx,
+  recordLifecycleHoldReleaseTx,
+} from "./case-service";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -33,6 +45,8 @@ const DISPUTE_WINDOW_CAP = 500;
 const PROBLEM_CASCADE_CAP = 10;
 // Each purged case is a storage round trip plus a transaction.
 const EVIDENCE_PURGE_CAP = 5;
+// Each chat-access step is a Stream round trip or a short transaction per row.
+const CHAT_ACCESS_CAP = 10;
 
 type SlaNoticeKind = "ack" | "res";
 type SlaNoticeLevel = "warn" | "breach";
@@ -80,6 +94,12 @@ export interface SupportSlaSweepResult {
   incidentsHeldOpen: number;
   evidenceCasesPurged: number;
   evidenceFilesDeleted: number;
+  chatAccessEnded: number;
+  chatInterventionsJoined: number;
+  chatInterventionsLeft: number;
+  /** Channels whose support lock was re-applied or cleared. */
+  chatBoundariesSynced: number;
+  chatReviewNotices: number;
   disputeNoticesStaged: number;
   errors: string[];
 }
@@ -504,64 +524,112 @@ async function processCandidateSlaNotices(
   );
 }
 
+/** No human acts on an auto-close, so the system releases the case's payout holds and ends its chat grants without step-up. */
+async function releaseAutoClosedCaseTx(tx: Tx, caseId: string, now: Date) {
+  const note = "Released when the case was auto-closed";
+  await recordLifecycleHoldReleaseTx(tx, {
+    caseId,
+    actorId: null,
+    actorRole: "SYSTEM",
+    status: "CLOSED",
+    reason: note,
+    released: await releaseAllCaseHolds(tx, { caseId, actorId: null, note }),
+  });
+  // The chat arm later in this run clears Familiarise Support from any grant still seated.
+  await endCaseChatAccessTx(tx, {
+    caseId,
+    actorId: null,
+    reason: "CASE_RESOLVED",
+    now,
+  });
+}
+
+/**
+ * Why a case holding payouts may not auto-close yet: an undecided refund
+ * recommendation or closed money doors. The doors gate is read lazily.
+ */
+async function autoCloseRefusalTx(
+  tx: Tx,
+  caseId: string,
+  doors: () => Promise<string | null>,
+): Promise<string | null> {
+  const held = activeHolds(await caseHoldEvents(tx, [caseId]));
+  if (held.length === 0) return null;
+  if (await openRecommendationTx(tx, caseId)) return "RECOMMENDATION_OPEN";
+  return doors();
+}
+
 async function autoCloseResolvedRows(
   now: Date,
   limit: number,
   errors: string[],
 ): Promise<number> {
   const autoCloseCutoff = new Date(now.getTime() - AUTO_CLOSE_DAYS_MS);
+  let gate: Promise<string | null> | undefined;
+  const doors = () =>
+    (gate ??= moneyDoorsRefusal().then((refusal) => refusal?.code ?? null));
   const staleResolvedCases = await prisma.supportCase.findMany({
     where: {
       status: "RESOLVED",
       resolvedAt: { lte: autoCloseCutoff },
       deletedAt: null,
     },
+    orderBy: { resolvedAt: "asc" },
     select: { id: true },
-    take: limit,
+    take: limit * HELD_OPEN_SCAN_FACTOR,
   });
 
-  const caseResults = await runSequential(
-    staleResolvedCases ?? [],
-    async (c) => {
-      try {
-        return await prisma.$transaction(
-          async (tx) => {
-            const res = await tx.supportCase.updateMany({
-              where: {
-                id: c.id,
-                status: "RESOLVED",
-                resolvedAt: { lte: autoCloseCutoff },
+  const closeOne = async (c: { id: string }): Promise<number> => {
+    try {
+      const closed = await prisma.$transaction(
+        async (tx) => {
+          const refused = await autoCloseRefusalTx(tx, c.id, doors);
+          if (refused) return refused;
+          const res = await tx.supportCase.updateMany({
+            where: {
+              id: c.id,
+              status: "RESOLVED",
+              resolvedAt: { lte: autoCloseCutoff },
+            },
+            data: { status: "CLOSED", closedAt: now },
+          });
+          if (res.count > 0) {
+            await tx.supportCaseEvent.create({
+              data: {
+                caseId: c.id,
+                kind: "AUTO_CLOSED",
+                fromValue: "RESOLVED",
+                toValue: "CLOSED",
+                createdAt: now,
               },
-              data: { status: "CLOSED", closedAt: now },
             });
-            if (res.count > 0) {
-              await tx.supportCaseEvent.create({
-                data: {
-                  caseId: c.id,
-                  kind: "AUTO_CLOSED",
-                  fromValue: "RESOLVED",
-                  toValue: "CLOSED",
-                  createdAt: now,
-                },
-              });
-            }
-            return res.count;
-          },
-          {
-            maxWait: ALLOCATION_TX_MAX_WAIT_MS,
-            timeout: ALLOCATION_TX_TIMEOUT_MS,
-          },
-        );
-      } catch (err) {
-        errors.push(
-          `auto-close case ${c.id}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        return 0;
-      }
-    },
-  );
+            await releaseAutoClosedCaseTx(tx, c.id, now);
+          }
+          return res.count;
+        },
+        {
+          maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+          timeout: ALLOCATION_TX_TIMEOUT_MS,
+        },
+      );
+      if (typeof closed === "number") return closed;
+      errors.push(`auto-close case ${c.id}: left RESOLVED (${closed})`);
+      return 0;
+    } catch (err) {
+      errors.push(
+        `auto-close case ${c.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 0;
+    }
+  };
 
-  return caseResults.reduce((sum, n) => sum + n, 0);
+  // Sequential, and stops at `limit` closes: refused held cases never crowd out closable ones.
+  let closedCount = 0;
+  for (const c of staleResolvedCases ?? []) {
+    if (closedCount >= limit) break;
+    closedCount += await closeOne(c);
+  }
+  return closedCount;
 }
 
 /** One page per run for disputes due within 12 h or already past due; new ids re-page, repeats stay quiet for 24 h. */
@@ -795,7 +863,8 @@ function moderationDeadlineIds(
 
 /**
  * Single background sweep for support SLA warnings/breaches, 28-day RESOLVED auto-close,
- * resolved-problem incident cascade, 180-day evidence purge,
+ * resolved-problem incident cascade, 180-day evidence purge, chat-access expiry,
+ * Stream join/leave retries and post-decision review notices,
  * T-72h / T-24h dispute deadlines and one page for disputes due within 12 h or past due.
  * Collects row errors and reports to Sentry at most once.
  */
@@ -872,6 +941,12 @@ export async function runSupportSlaSweep(opts?: {
       limit: Math.min(limit, EVIDENCE_PURGE_CAP),
       now,
       errors,
+    });
+    const chatAccess = await sweepSupportChatAccess({
+      limit: Math.min(limit, CHAT_ACCESS_CAP),
+      now,
+      errors,
+      stagedBells,
     });
     const admins = operators.filter((o) => o.role === "ADMIN");
     const disputeNoticesStaged = await processDisputeDeadlineAlerts(
@@ -1025,6 +1100,11 @@ export async function runSupportSlaSweep(opts?: {
       incidentsHeldOpen: cascade.heldOpen.length,
       evidenceCasesPurged: evidencePurge.casesPurged,
       evidenceFilesDeleted: evidencePurge.filesDeleted,
+      chatAccessEnded: chatAccess.ended,
+      chatInterventionsJoined: chatAccess.joined,
+      chatInterventionsLeft: chatAccess.left,
+      chatBoundariesSynced: chatAccess.boundaries,
+      chatReviewNotices: chatAccess.notices,
       disputeNoticesStaged,
       errors,
     };

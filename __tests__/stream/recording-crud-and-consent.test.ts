@@ -5,7 +5,6 @@
 import { NextRequest } from "next/server";
 
 const mockGetSession = jest.fn();
-const mockRequireApiAuth = jest.fn();
 const mockResolveMeetingAccess = jest.fn();
 const mockGetRecordingNotice = jest.fn();
 const mockRecordRecordingConsent = jest.fn();
@@ -24,7 +23,9 @@ jest.mock("../../lib/auth-server", () => ({
 }));
 
 jest.mock("../../lib/auth-helpers", () => ({
-  requireApiAuth: (...args: unknown[]) => mockRequireApiAuth(...args),
+  // The route now authenticates through the banned-user-aware helper; this
+  // suite's session fixtures still drive it.
+  requireApiAuth: async () => ({ session: await mockGetSession() }),
 }));
 
 jest.mock("../../lib/meetings/access", () => ({
@@ -427,9 +428,8 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
 
   describe("POST /api/meetings/[meetingId]/recording-consent", () => {
     it("immediately stops an active recording when a 1:1 participant withdraws consent", async () => {
-      mockRequireApiAuth.mockResolvedValue({
-        ok: true,
-        session: { user: { id: "consultee-user-1", role: "CONSULTEE" } },
+      mockGetSession.mockResolvedValue({
+        user: { id: "consultee-user-1", role: "CONSULTEE" },
       });
       mockResolveMeetingAccess.mockResolvedValue({
         hasAccess: true,
@@ -476,9 +476,8 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
     });
 
     it("never asks or stores a decision for the host", async () => {
-      mockRequireApiAuth.mockResolvedValue({
-        ok: true,
-        session: { user: { id: "consultant-user-1" } },
+      mockGetSession.mockResolvedValue({
+        user: { id: "consultant-user-1" },
       });
       mockResolveMeetingAccess.mockResolvedValue({
         hasAccess: true,

@@ -4,16 +4,18 @@
 
 import { STREAM_CALL_TYPE } from "../../lib/stream/call-cid";
 import {
-  UNUSED_TYPES,
+  UNUSED_CALL_TYPES,
   END_USER_ROLES,
   REACH_PERMISSIONS,
   BILLABLE_PERMISSIONS,
   matchesPermissionWithScope,
-} from "../../scripts/stream/harden-unused-call-types";
+} from "../../lib/stream/control-plane-contract";
 
 describe("harden-unused-call-types", () => {
   it("never targets the call type the app actually uses", () => {
-    expect(UNUSED_TYPES as readonly string[]).not.toContain(STREAM_CALL_TYPE);
+    expect(UNUSED_CALL_TYPES as readonly string[]).not.toContain(
+      STREAM_CALL_TYPE,
+    );
   });
 
   it("leaves platform-staff roles alone", () => {

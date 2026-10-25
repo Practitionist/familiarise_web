@@ -36,7 +36,10 @@ The case links the service investigation to its payment and refund.
 Platform mediation is explicit: a participant selects Get help, staff request
 neutral evidence from the other relevant party, then record a decision. Ordinary
 chat remains participant messaging, with abuse reports routed to moderation.
-Staff do not automatically join private chats or monitor disagreements. Evidence
+Staff do not automatically join private chats or monitor disagreements: they
+read a booking chat only through a reasoned, case-linked and audited grant on
+an escalated case, and join it only visibly as "Familiarise Support"
+(`lib/support/chat-access.ts`, `lib/stream/support-intervention.ts`). Evidence
 recipients see the prompt, their response and the permitted decision outcome;
 they do not receive the complainant’s private correspondence or full explanation.
 
@@ -241,14 +244,17 @@ phase `9b-create-support-cases.ts` creates canonical cases with ordered messages
 reference allocation, receipt deadlines and audit events. There is no import,
 backfill, alias registry or dual-write phase.
 
-For the authorized pre-MVP cleanup, Supabase migrations removed obsolete mock
-support tables and added the case evidence, decision, recommendation and hold
-schema. Schema changes were restricted to support and related moderation fields;
-unrelated money tables and their sidecar invariants were preserved. Generate the
-Prisma client after schema edits. CI recreates the schema and sidecars in a
-throwaway database; local servers, builds, lint and test runs are not required for
-this change. Once customer data exists, destructive changes need a reviewed
-migration and deployment sequence.
+For the authorized pre-MVP cleanup, an ad-hoc DDL run through the Supabase MCP
+dropped five legacy support tables while the deployed production code still read
+them, so the SLA sweep failed and the privacy export and staff support metrics
+returned 500s. The case evidence, decision, recommendation and hold schema now
+lives in `prisma/schema.prisma` and its SQL sidecars. The reviewed Supabase MCP
+config is read-only and project-scoped, and schema changes never run through any
+MCP: they go through `prisma/schema.prisma`, the human-run `db:push` preflight,
+and the sidecars. Generate the Prisma client after schema edits. CI recreates the
+schema and sidecars in a throwaway database; local servers, builds, lint and test
+runs are not required for this change. Once customer data exists, destructive
+changes need a reviewed migration and deployment sequence.
 
 ## Release evidence
 

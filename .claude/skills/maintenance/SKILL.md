@@ -17,8 +17,28 @@ This is the index for operational and deployment plumbing that is not specific t
 
 ## Non-negotiables
 
-Domain state and the explicit messaging/webhook outboxes carry pending obligations; sweeps resume them after interrupted requests. Each background job has one registered implementation in `lib/cron/cleanup-registry.ts`, shared by the cleanup HTTP and admin doors. Existing CLI entrypoints must call that core; do not add new wrapper layers. The five-minute Netlify ticker owns recovery and money slices, while the remaining non-money batch workflows retain their configured ownership until a reviewed cutover. Runtime cadence, windows and limits are defined in the ticker; do not invent registry fields or rely on a hard-coded roster count. The `ops:active_cron_platform` preference is read once per tick and fails open when absent or unreachable; a valid Postgres lease and per-write predicates still matter.
+Use one registered implementation per job and keep the required Netlify standby.
+Scheduling metadata currently lives in `netlify/functions/cron-tick.mts`; do not
+claim the registry defines phase or timeout fields. Count executable builder keys,
+not documentation examples. Operational Actions jobs remain migration work until
+bounded replacements have actually run.
+
+Cron leases are Postgres-backed. Closed jobs never run when acquisition fails,
+including Prisma import failures. Completion is conditional on the same execution
+still being RUNNING; only successful owned completion advances freshness. Typed
+outcomes and `X-Job-Outcome` distinguish partial failure and intentional holds.
+Different jobs can still touch the same row: preserve CAS, transactional staging
+and vendor idempotency, and test cross-job races and sequential replay.
+
+The scheduled ticker has a 30-second budget, distinct from its HTTP workers.
+A timeout or expired lease does not cancel vendor effects. Fleet selection fails
+open on absent/unreadable `ops:active_cron_platform`, so it is not an exactly-once
+guarantee. Verify accepted Sentry check-ins and independent per-capability absence
+alerts; the shared heartbeat and HTTP200 alone do not prove complete health.
+
+Maintenance bypass cookies remain short-lived HMAC-SHA256 tokens verified via Web
+Crypto. Follow the active maintenance implementation and recovery instructions;
+never infer that a cached phase quiesces work already in flight. See the linked
+references for transaction-client, deployed-runtime and environment constraints.
 
 Destructive retention must be bounded for every caller, repeat eligibility in the final write, and preserve active obligations and retention timestamps. See [job history and messaging retention](../../../docs/maintenance/messaging-retention.md): eight pages per call, at most 500 rows per phase, a 16-second start budget, and explicit `hasMore`. A missing heartbeat is not proof that an old process has stopped. Verify concurrency with the guarded disposable database tier; never run it against the shared database.
-
-Maintenance bypass cookies (`maintenance_bypass`) use short-lived HMAC-SHA256 signed tokens (`<expiryTimestamp>.<hmac>`) verified through Web Crypto, never the raw bypass secret. Test transaction helpers with a one-connection pool and pass the transaction client through every helper. Deployed previews remain necessary for host-specific runtime behavior; a successful mock or local database test is not deployed verification.

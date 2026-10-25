@@ -8,11 +8,15 @@ import {
   MessageList,
   VirtualizedMessageList,
   Window,
+  WithComponents,
   useChatContext,
 } from "stream-chat-react";
 import { AlertTriangle } from "lucide-react";
+import { AppointmentDocumentsHint } from "./AppointmentDocumentsHint";
 import { CustomChannelHeader } from "./CustomChannelHeader";
 import { CustomMessage } from "./CustomMessage";
+import { SupportInterventionBanner } from "./SupportInterventionBanner";
+import { SystemMessage } from "./SystemMessage";
 import { StreamChatErrorBoundary } from "@/components/stream/StreamErrorBoundary";
 import { useMaintenanceState } from "@/providers/MaintenanceProvider";
 import { isEventChannel } from "@/lib/stream-channel-ids";
@@ -30,6 +34,14 @@ const EmptyChannelState = () => (
     />
   </div>
 );
+
+// System messages bypass `Message` and render through `MessageSystem`.
+// `uploads: false` still leaves the selector for commands/polls/location.
+const AttachmentSelectorOff = () => null;
+const CHAT_COMPONENT_OVERRIDES = {
+  MessageSystem: SystemMessage,
+  AttachmentSelector: AttachmentSelectorOff,
+};
 
 export const ChatContainer = () => {
   const { channel } = useChatContext();
@@ -87,27 +99,29 @@ export const ChatContainer = () => {
     : { Message: CustomMessage };
 
   // Threads stay off: no `<Thread>` is mounted and `CustomMessage` replaces the
-  // SDK message UI, so neither the thread panel nor its reply-count button is
-  // ever rendered. Inline quote-reply covers the need. The CSS that used to
-  // `display: none` those elements is gone — it hid them while leaving them in
-  // the tab order. Turning `replies` off on the channel type in the Stream
-  // dashboard is the server-side half of this and is not code in this repo.
+  // SDK message UI.
   return (
     <StreamChatErrorBoundary>
       <div className="flex-1 flex flex-col h-full">
         <Channel>
-          <Window>
-            <CustomChannelHeader />
-            <MessageListComponent {...messageListProps} />
-            {isChatReadOnly ? (
-              <div className="flex items-center justify-center gap-2 border-t border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning-foreground">
-                <AlertTriangle className="h-4 w-4 shrink-0" />
-                <span>Chat is temporarily read-only during maintenance.</span>
-              </div>
-            ) : (
-              <MessageComposer focus />
-            )}
-          </Window>
+          <WithComponents overrides={CHAT_COMPONENT_OVERRIDES}>
+            <Window>
+              <CustomChannelHeader />
+              <SupportInterventionBanner />
+              <MessageListComponent {...messageListProps} />
+              {isChatReadOnly ? (
+                <div className="flex items-center justify-center gap-2 border-t border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning-foreground">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  <span>Chat is temporarily read-only during maintenance.</span>
+                </div>
+              ) : (
+                <>
+                  <AppointmentDocumentsHint />
+                  <MessageComposer focus />
+                </>
+              )}
+            </Window>
+          </WithComponents>
         </Channel>
       </div>
     </StreamChatErrorBoundary>

@@ -98,38 +98,38 @@ For example, with three active admins, Olivia Brown asks to refund ₹40,000 (4,
 
 Every route below is a `withOpsAction` door unless marked a read. `2nd` marks a door that takes a second admin above ₹25,000. Reads do not go through the shell, so they need no step-up or reason and write no ops-log row.
 
-| Route                                                        | Verb      | Surface                              | Purpose                                                                                                   | 2nd |
-| ------------------------------------------------------------ | --------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------- | --- |
-| `/api/admin/refunds/issue`                                   | POST      | `refunds.manage`                     | Issue a refund, or a ladder override with `tierOverridePct`, through `refundBookingPayment`               | yes |
-| `/api/admin/refunds`                                         | POST      | `refunds.manage`                     | Legacy refund door (payment or whole event); needs `Idempotency-Key`                                      | yes |
-| `/api/admin/refunds/credits`                                 | POST      | `refunds.manage`                     | Return N sessions of credits to a credit-funded seat                                                      | no  |
-| `/api/admin/payouts`                                         | POST      | `payouts.manage`                     | Create a consultant payout batch                                                                          | no  |
-| `/api/admin/payouts/[id]`                                    | POST      | `payouts.manage`                     | Approve or reject a consultant payout                                                                     | no  |
-| `/api/admin/payouts/process`                                 | POST      | `payouts.manage`                     | Disburse approved payouts now                                                                             | no  |
-| `/api/admin/org-payouts/[id]/approve`                        | POST      | `payouts.manage`                     | Platform co-approval of an organisation payout; refuses the batch creator and the organisation's approver | yes |
-| `/api/admin/org-payouts/[id]/hold`, `.../release`            | POST      | `payouts.manage`                     | Place or clear a platform hold on a `PENDING` or `APPROVED` organisation payout                           | no  |
-| `/api/admin/org-payouts`                                     | GET       | `payouts.read`                       | List organisation payouts with `platformApprovalRequiredAt` and `platformHeldAt` (read)                   | n/a |
-| `/api/admin/payout-accounts/unfreeze`                        | POST      | `payouts.manage`                     | Lift a payee's payout freeze                                                                              | no  |
-| `/api/admin/earnings/[id]/hold`, `.../release`               | POST      | `payouts.manage`                     | Operator hold or release of one earning (no step-up)                                                      | no  |
-| `/api/admin/disputes/[disputeId]`                            | PATCH     | `disputes.manage`                    | Assign or update a dispute                                                                                | no  |
-| `/api/admin/billing-accounts/[id]/wallet-adjustment`         | POST      | `payments.manage`                    | Signed wallet correction                                                                                  | yes |
-| `/api/admin/billing-accounts/[id]/refund-remaining`          | POST      | `payments.manage`                    | Return the wallet balance to the card                                                                     | yes |
-| `/api/admin/billing-accounts/[id]/unfreeze`                  | POST      | `payments.manage`                    | Lift a wallet-spend freeze after the drift is repaired                                                    | no  |
-| `/api/admin/organizations/[orgId]/billing-account`           | PATCH     | `invoices.manage`                    | Set `creditLimit` and switch to `INVOICE` funding behind the verified-domain gate                         | yes |
-| `/api/admin/organizations/[orgId]/invoices`                  | POST      | `invoices.manage`                    | Raise a manual invoice                                                                                    | no  |
-| `.../invoices/[invoiceId]/issue`, `.../void`, `.../payments` | POST      | `invoices.manage`                    | Issue a draft, void as a credit note, record a bank-transfer receipt                                      | yes |
-| `.../overages/[overageEventId]/settle-to-org`                | POST      | `invoices.manage`                    | Settle an unpaid member overage to the organisation                                                       | yes |
-| `/api/admin/reconcile/[job]`                                 | POST      | `payouts.manage`                     | Run one of the four reconcile jobs                                                                        | no  |
-| `/api/admin/reconcile-ledgers`                               | POST, GET | `payouts.manage`                     | Run the ledger audit now, or list reports                                                                 | no  |
-| `/api/admin/ops-proposals`                                   | GET       | `payments.manage`                    | List second-approval proposals by effective status (read)                                                 | n/a |
-| `/api/admin/ops-proposals/[id]/approve`, `.../reject`        | POST      | `payments.manage`                    | Approve (replays the stored request) or close a proposal                                                  | n/a |
-| `/api/admin/incidents`, `.../[incidentId]/settle`            | POST      | `incidents.declare`                  | Declare a platform incident, or settle one now                                                            | no  |
-| `/api/payments/[paymentId]/recover`                          | POST      | `payments.manage`                    | Build the booking for a captured payment whose metadata failed validation, from corrected metadata        | no  |
-| `/api/payments/disputes`                                     | POST      | `disputes.manage`                    | Draft or submit dispute evidence (no step-up); the multipart file upload on this route is not a door      | no  |
-| `/api/admin/fee-schedules`, `.../[scheduleId]/approve`       | POST      | `payments.manage`                    | Propose or approve a platform fee schedule (its own maker-checker rule, no step-up)                       | no  |
-| `/api/admin/referrals/credits`, `.../[creditId]/reverse`     | POST      | `referrals.manage`                   | Grant or reverse a referral credit (no step-up)                                                           | no  |
-| `/api/admin/settlements/lines`                               | GET       | `requirePrivilegedAuth` (no surface) | Settlement reconciliation lines, filterable by status (read)                                              | n/a |
-| `/api/admin/support-spend`                                   | GET       | `opsLog.read`                        | Per-operator refund and hold spend (read)                                                                 | n/a |
+| Route                                                        | Verb      | Surface                              | Purpose                                                                                                     | 2nd |
+| ------------------------------------------------------------ | --------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------- | --- |
+| `/api/admin/refunds/issue`                                   | POST      | `refunds.manage`                     | Issue a refund, or a ladder override with `tierOverridePct`, through `refundBookingPayment`                 | yes |
+| `/api/admin/refunds`                                         | POST      | `refunds.manage`                     | Legacy refund door (payment or whole event); needs `Idempotency-Key`                                        | yes |
+| `/api/admin/refunds/credits`                                 | POST      | `refunds.manage`                     | Return N sessions of credits to a credit-funded seat                                                        | no  |
+| `/api/admin/payouts`                                         | POST      | `payouts.manage`                     | Create a consultant payout batch                                                                            | no  |
+| `/api/admin/payouts/[id]`                                    | POST      | `payouts.manage`                     | Approve or reject a consultant payout                                                                       | no  |
+| `/api/admin/payouts/process`                                 | POST      | `payouts.manage`                     | Disburse approved payouts now                                                                               | no  |
+| `/api/admin/org-payouts/[id]/approve`                        | POST      | `payouts.manage`                     | Platform co-approval of an organisation payout; refuses the batch creator and the organisation's approver   | yes |
+| `/api/admin/org-payouts/[id]/hold`, `.../release`            | POST      | `payouts.manage`                     | Place or clear a platform hold on a `PENDING` or `APPROVED` organisation payout                             | no  |
+| `/api/admin/org-payouts`                                     | GET       | `payouts.read`                       | List organisation payouts with `platformApprovalRequiredAt` and `platformHeldAt` (read)                     | n/a |
+| `/api/admin/payout-accounts/unfreeze`                        | POST      | `payouts.manage`                     | Lift a payee's payout freeze                                                                                | no  |
+| `/api/admin/earnings/[id]/hold`, `.../release`               | POST      | `payouts.manage`                     | Operator hold or release of one earning (no step-up)                                                        | no  |
+| `/api/admin/disputes/[disputeId]`                            | PATCH     | `disputes.manage`                    | Assign or update a dispute                                                                                  | no  |
+| `/api/admin/billing-accounts/[id]/wallet-adjustment`         | POST      | `payments.manage`                    | Signed wallet correction                                                                                    | yes |
+| `/api/admin/billing-accounts/[id]/refund-remaining`          | POST      | `payments.manage`                    | Return the wallet balance to the card                                                                       | yes |
+| `/api/admin/billing-accounts/[id]/unfreeze`                  | POST      | `payments.manage`                    | Lift a wallet-spend freeze after the drift is repaired                                                      | no  |
+| `/api/admin/organizations/[orgId]/billing-account`           | PATCH     | `invoices.manage`                    | Set `creditLimit` and switch to `INVOICE` funding behind the verified-domain gate and the wallet-exit guard | yes |
+| `/api/admin/organizations/[orgId]/invoices`                  | POST      | `invoices.manage`                    | Raise a manual invoice                                                                                      | no  |
+| `.../invoices/[invoiceId]/issue`, `.../void`, `.../payments` | POST      | `invoices.manage`                    | Issue a draft, void as a credit note, record a bank-transfer receipt                                        | yes |
+| `.../overages/[overageEventId]/settle-to-org`                | POST      | `invoices.manage`                    | Settle an unpaid member overage to the organisation                                                         | yes |
+| `/api/admin/reconcile/[job]`                                 | POST      | `payouts.manage`                     | Run one of the four reconcile jobs                                                                          | no  |
+| `/api/admin/reconcile-ledgers`                               | POST, GET | `payouts.manage`                     | Run the ledger audit now, or list reports                                                                   | no  |
+| `/api/admin/ops-proposals`                                   | GET       | `payments.manage`                    | List second-approval proposals by effective status (read)                                                   | n/a |
+| `/api/admin/ops-proposals/[id]/approve`, `.../reject`        | POST      | `payments.manage`                    | Approve (replays the stored request) or close a proposal                                                    | n/a |
+| `/api/admin/incidents`, `.../[incidentId]/settle`            | POST      | `incidents.declare`                  | Declare a platform incident, or settle one now                                                              | no  |
+| `/api/payments/[paymentId]/recover`                          | POST      | `payments.manage`                    | Build the booking for a captured payment whose metadata failed validation, from corrected metadata          | no  |
+| `/api/payments/disputes`                                     | POST      | `disputes.manage`                    | Draft or submit dispute evidence (no step-up); the multipart file upload on this route is not a door        | no  |
+| `/api/admin/fee-schedules`, `.../[scheduleId]/approve`       | POST      | `payments.manage`                    | Propose or approve a platform fee schedule (its own maker-checker rule, no step-up)                         | no  |
+| `/api/admin/referrals/credits`, `.../[creditId]/reverse`     | POST      | `referrals.manage`                   | Grant or reverse a referral credit (no step-up)                                                             | no  |
+| `/api/admin/settlements/lines`                               | GET       | `requirePrivilegedAuth` (no surface) | Settlement reconciliation lines, filterable by status (read)                                                | n/a |
+| `/api/admin/support-spend`                                   | GET       | `opsLog.read`                        | Per-operator refund and hold spend (read)                                                                   | n/a |
 
 ## Staff caps on support money
 
@@ -152,14 +152,14 @@ The same panel carries the booking-level platform doors. "Reschedule booking" (a
 
 The Reconcile section starts four jobs without exposing the `CRON_SECRET`, through `POST /api/admin/reconcile/[job]` (surface `payouts.manage`, step-up, reason, one ops-log row). `RECONCILE_JOBS` (`lib/backoffice/reconcile-jobs.ts`) names them:
 
-| Job id           | Lock name                   | What it does                                                                |
-| ---------------- | --------------------------- | --------------------------------------------------------------------------- |
-| `ledgers`        | `reconcile-ledgers`         | Re-checks every cached balance against its journal; runs in the background. |
-| `refunds`        | `reconcile-pending-refunds` | Asks the gateway about every refund still pending.                          |
-| `payment-status` | `reconcile-payment-status`  | Asks the gateway about every payment still pending.                         |
-| `earnings`       | `sync-payment-earnings`     | Writes the earnings rows a captured payment is missing.                     |
+| Job id           | Lock name                   | What it does                                                        |
+| ---------------- | --------------------------- | ------------------------------------------------------------------- |
+| `ledgers`        | `reconcile-ledgers`         | Advances a persisted audit page; repeat until the report completes. |
+| `refunds`        | `reconcile-pending-refunds` | Asks the gateway about every refund still pending.                  |
+| `payment-status` | `reconcile-payment-status`  | Asks the gateway about every payment still pending.                 |
+| `earnings`       | `sync-payment-earnings`     | Writes the earnings rows a captured payment is missing.             |
 
-Each job runs in-process under its own `withCronLock` lease, so a job already running answers 409 `ALREADY_RUNNING`. For refunds, payment status and earnings a click takes one bounded batch of 25 rows, and the scheduled runs drain the rest; the ledger job starts one full background run. The route refuses with 503 `MAINTENANCE` in DEGRADED and OFFLINE. The full ledger run is also exposed as `POST /api/admin/reconcile-ledgers`. Any other registered job can be run from `POST /api/admin/system-jobs/run`; see [scheduled money jobs](01-scheduled-jobs.md).
+Each job runs in-process under its own `withCronLock` lease, so a job already running answers 409 `ALREADY_RUNNING`. For refunds, payment status and earnings a click takes one bounded batch of 25 rows. The ledger job advances the same bounded core used by scheduled cleanup, with at most 100 primary entities per comparison and a six-second page-start budget. RUNNING means continue, completed discrepancies return 207, and failures return 500. The console distinguishes unfinished reports from completed drift; authenticated manual requests can start a fresh audit after completion. The route refuses with 503 `MAINTENANCE` in DEGRADED and OFFLINE. A bounded, optionally organisation-scoped ledger slice is also exposed as `POST /api/admin/reconcile-ledgers`. Any other registered job can be run from `POST /api/admin/system-jobs/run`; see [scheduled money jobs](01-scheduled-jobs.md).
 
 ## Declaring a platform incident
 

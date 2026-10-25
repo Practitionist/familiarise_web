@@ -110,7 +110,7 @@ Money jobs that were held resume on their own next slot, and webhook handlers th
 6. **`reconcile-refunds`** and **`retry-auto-refunds`** settle refunds that were pending or owed when the window opened.
 7. **`reconcile-disputes`** syncs dispute status changes missed during the window.
 8. **`reconcile-payout-status`** and **`handle-stuck-payouts`**, only if the window overlapped the Monday 20:00 to 23:00 UTC payout batch or the hourly disbursement.
-9. **`reconcile-gateway-settlements`** and **`reconcile-ledgers`** run in their own morning windows; run them by hand only if you need the answer before then. A clean `reconcile-ledgers` run is the final check that the window left no drift.
+9. **`reconcile-gateway-settlements`** runs in its morning window; **`reconcile-ledgers`** advances hourly at `:55` when ticker capacity permits. Use an authenticated manual slice when an answer is needed sooner; ledger progress does not wait until morning. The ledger cleanup door advances bounded pages; wait for a COMPLETED report before reading its clean/discrepant verdict. RUNNING is continuation. The authenticated admin door advances bounded slices too; it can start a fresh audit after a completed verdict.
 
 Then read [the money runbooks](05-money-runbooks.md) for any symptom that remains.
 

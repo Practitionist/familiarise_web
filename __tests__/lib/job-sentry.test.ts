@@ -17,6 +17,9 @@ const loggerInfo = jest.fn();
 jest.mock("@sentry/nextjs", () => ({
   __esModule: true,
   init: (options: unknown) => init(options),
+}));
+jest.mock("@sentry/core", () => ({
+  __esModule: true,
   flush: (timeoutMs?: number) => flush(timeoutMs),
   captureException: (...args: unknown[]) => captureException(...args),
   logger: { info: (...args: unknown[]) => loggerInfo(...args) },

@@ -124,7 +124,7 @@ Familiarise's maintenance mode system provides two-tier protection (DEGRADED and
 +===================================================================================================+
   Netlify `cron-tick.mts` (Every 5m, Phase-Staggered):
   - Slot `:00, :15, :30, :45` (6 targets) | Slot `:05, :20, :35, :50` (6 targets) | Slot `:10, :25, :40, :55` (6 targets)
-  - Max 6–7 concurrent targets per tick (matches warm pool + PgBouncer budget); 0% idle ticks!
+  - Max 10 concurrent targets per tick (pinned by `__tests__/maintenance/cron-tick-targets.test.ts`); 0% idle ticks!
   - Per-target timeout raised from 6s -> 15s; `tracePropagationTargets: []` prevents warm container fetch pollution.
   - Atomic Postgres lock: `CREATE UNIQUE INDEX "SystemJobExecution_running_jobName_key" ON "SystemJobExecution"("jobName") WHERE status = 'RUNNING'`
   - `/api/health` queries `pickFresherTimestamp(redisHeartbeat, SystemJobExecution.startedAt)` -> 0% false-stale rate!

@@ -25,19 +25,20 @@ export const viewport: Viewport = {
 
 const SITE_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 const SITE_DESCRIPTION =
-  "Connect with world-class experts for 1-on-1 sessions, classes, webinars, and personalized career guidance. Transform your career with Familiarise.";
-const SITE_TITLE = "Familiarise | Expert Consultations & Career Mentorship";
+  "Learn from verified experts through live classes, webinars, tutoring and one-on-one sessions. Book, pay in INR and join over built-in video on Familiarise.";
+const SITE_TITLE =
+  "Familiarise | Live Classes, Webinars & 1-on-1 Sessions with Verified Experts";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: SITE_TITLE,
   description: SITE_DESCRIPTION,
   keywords: [
-    "consulting",
-    "mentorship",
-    "career guidance",
-    "expert sessions",
+    "live classes",
     "webinars",
+    "tutoring",
+    "1-on-1 sessions",
+    "expert sessions",
     "professional development",
   ],
   openGraph: {
@@ -46,7 +47,7 @@ export const metadata: Metadata = {
     type: "website",
     url: "/",
     siteName: "Familiarise",
-    locale: "en_US",
+    locale: "en_IN",
   },
   twitter: {
     card: "summary_large_image",

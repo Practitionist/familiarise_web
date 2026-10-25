@@ -8,6 +8,8 @@ export class OpsRefusal extends Error {
     readonly code: string,
     message: string,
     readonly httpStatus = 409,
+    /** Extra fields merged into the refusal body, e.g. the row that blocked the door. */
+    readonly detail?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "OpsRefusal";

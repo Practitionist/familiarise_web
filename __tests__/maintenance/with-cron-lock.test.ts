@@ -87,8 +87,8 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
       }),
       select: { id: true },
     });
-    expect(delegate.update).toHaveBeenCalledWith({
-      where: { id: "exec-1" },
+    expect(delegate.updateMany).toHaveBeenCalledWith({
+      where: { id: "exec-1", status: "RUNNING" },
       data: expect.objectContaining({
         status: "COMPLETED",
         endedAt: expect.any(Date),
@@ -171,7 +171,9 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
       expect(delegate.updateMany).toHaveBeenCalledTimes(renewals);
 
       // Total elapsed time is ~15 minutes (900_000 ms), not ~5 minutes since the 10-min renewal.
-      const finishArgs = delegate.update.mock.calls[0][0];
+      const finishArgs = delegate.updateMany.mock.calls.find(
+        ([args]) => args.data.endedAt && args.where.id,
+      )[0];
       expect(finishArgs.data.durationMs).toBeGreaterThanOrEqual(15 * 60 * 1000);
     } finally {
       jest.useRealTimers();
@@ -186,8 +188,10 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
       }),
     ).rejects.toBe(huge);
 
-    const finish = delegate.update.mock.calls[0][0];
-    expect(finish.where).toEqual({ id: "exec-1" });
+    const finish = delegate.updateMany.mock.calls.find(
+      ([args]) => args.data.endedAt && args.where.id,
+    )[0];
+    expect(finish.where).toEqual({ id: "exec-1", status: "RUNNING" });
     expect(finish.data.status).toBe("FAILED");
     expect(finish.data.errorLog).toHaveLength(8_000);
   });
@@ -255,5 +259,52 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
         process.env.GITHUB_ACTIONS = prev;
       }
     }
+  });
+});
+
+describe("execution outcomes", () => {
+  it.each([
+    {
+      result: { failed: 2, remaining: 0 },
+      outcome: "partial_failure",
+      status: "FAILED",
+    },
+    { result: { success: false }, outcome: "failure", status: "FAILED" },
+    { result: { skipped: true }, outcome: "held", status: "CANCELLED" },
+  ])(
+    "records $outcome without advancing success freshness",
+    async ({ result, outcome, status }) => {
+      await withCronLock("job", { failMode: "closed" }, async () => result);
+      expect(delegate.updateMany).toHaveBeenCalledWith({
+        where: { id: "exec-1", status: "RUNNING" },
+        data: expect.objectContaining({
+          status,
+          result: expect.objectContaining({ outcome }),
+        }),
+      });
+      expect(mockRedisSet).not.toHaveBeenCalled();
+    },
+  );
+
+  it("cannot finish or refresh freshness after another runner expired the lease", async () => {
+    delegate.updateMany.mockResolvedValue({ count: 0 });
+    await withCronLock("job", { failMode: "closed" }, async () => ({
+      success: true,
+    }));
+    expect(mockRedisSet).not.toHaveBeenCalled();
+    expect(delegate.update).not.toHaveBeenCalled();
+  });
+
+  it("does not invoke a closed job when importing the lock delegate fails", async () => {
+    jest.resetModules();
+    jest.doMock("../../lib/prisma", () => {
+      throw new Error("Prisma unavailable");
+    });
+    const isolated = await import("../../lib/cron/with-cron-lock");
+    const fn = jest.fn();
+    await expect(
+      isolated.withCronLock("money", { failMode: "closed" }, fn),
+    ).rejects.toMatchObject({ code: "CRON_LOCK_UNAVAILABLE" });
+    expect(fn).not.toHaveBeenCalled();
   });
 });

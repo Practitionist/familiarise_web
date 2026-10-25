@@ -10,18 +10,18 @@ There is no `prisma/migrations` directory. The schema is managed with
 `prisma db push`, which reconciles the database to the schema file and writes no
 migration history, and there is therefore no `_prisma_migrations` table, no
 baseline, and nothing for `prisma migrate deploy` to apply. This is a deliberate
-pre-launch choice rather than an oversight: the data is seed data, a full reset
-is scheduled before launch, and versioned migrations over data that is about to
-be discarded would be maintenance with no payoff.
+pre-launch choice rather than an oversight: the shape is still being finalised,
+the live database is baselined at the freeze rather than reset, and versioned
+migrations before the shape settles would be maintenance with no payoff.
 
 Three consequences follow, and they are the reason this file exists.
 
 The first is that **`npm run db:push` is a production operation**. One Postgres
 project serves both development and production, and every `fw-*` worktree's
-environment points at it. A push, a seed, a reset and the data scripts all write
+environment points at it. A push, a seed and the data scripts all write
 rows that production reads. Pushes happen once per merged pull request, run by
 the orchestrator, never for two schema-bearing pull requests at once, and never
-to make a local test pass.
+to make a local test pass. Nothing here runs through an MCP server: the Supabase MCP is read-only and project-scoped, so DDL reaches the database only through the human-run push above.
 
 The second is that **`db push` drops whatever the schema file does not mention**.
 It has already removed capture tables that were created to survive it. Anything
@@ -32,7 +32,7 @@ The third is that **the schema is frozen**. The banner at the top of
 `prisma/schema.prisma` records the freeze from #705: additive changes are
 allowed, so new nullable columns and new models are fine, while renames, drops
 of live columns and type changes are not. A change that needs one of those is a
-reset-day decision, not a pull request.
+freeze-table decision for the owner, not a pull request.
 
 ## The sidecars
 
@@ -41,12 +41,12 @@ every trigger, `CHECK` constraint and partial index in this database is applied
 separately and would otherwise be silently dropped by the next push. Those
 objects live in checked-in SQL and are applied and asserted by scripts.
 
-| File                                   | Contents                                                                                                                                                                       |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `prisma/sql/check-constraints.sql`     | Every `CHECK` constraint and partial index, including `occurrence_no_confirmed_overlap` and the money invariants. Its final section is the block staged for the pre-MVP reset. |
-| `prisma/sql/ledger-triggers.sql`       | The double-entry ledger constraint triggers.                                                                                                                                   |
-| `prisma/sql/payment-legs-triggers.sql` | The trigger asserting that payment legs sum to the payment amount.                                                                                                             |
-| `prisma/sql/known-drift.json`          | The reviewed allowlist of divergences the drift guard tolerates. Every entry carries an owner, a reason and an expiry.                                                         |
+| File                                   | Contents                                                                                                                                                                                                                                                                              |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prisma/sql/check-constraints.sql`     | Every `CHECK` constraint and partial index, including `occurrence_no_confirmed_overlap` and the money invariants. Its final section mixes applied statements with commented-out staged ones; a staged statement needs review and is never applied by `db push` or the sidecar replay. |
+| `prisma/sql/ledger-triggers.sql`       | The double-entry ledger constraint triggers.                                                                                                                                                                                                                                          |
+| `prisma/sql/payment-legs-triggers.sql` | The trigger asserting that payment legs sum to the payment amount.                                                                                                                                                                                                                    |
+| `prisma/sql/known-drift.json`          | The reviewed allowlist of divergences the drift guard tolerates. Every entry carries an owner, a reason and an expiry.                                                                                                                                                                |
 
 The push command chains all of this together, so the schema and the sidecars can
 no longer separate:
@@ -85,8 +85,8 @@ Worth knowing precisely: `DIRECT_URL` here is the provider's **session-mode**
 pooler on port 5432, not an unmediated connection to the database host. Session
 mode is sufficient for DDL, which transaction mode is not, so the arrangement is
 correct — but it is a pooler, and a long-running single session such as a
-whole-column `\copy` is exactly what it is worst at. The reset runbook uses
-`psql "$DIRECT_URL"` for that reason and says so.
+whole-column `\copy` is exactly what it is worst at. Use
+`psql "$DIRECT_URL"` for that reason.
 
 The runtime also runs with `PG_POOL_MAX=1` in the deployed environment, which
 serialises Prisma queries. That has no bearing on DDL, but it does mean a
@@ -94,29 +94,75 @@ migration-adjacent script that assumes concurrency will not get it.
 
 ## Making a schema change today
 
-The procedure until the reset is short, and the ordering is what matters.
+The procedure until the cutover is short, and the ordering is what matters.
 
 Edit `prisma/schema.prisma`, keeping to the freeze: additive only, money columns
 as `BigInt` paise, and enums declared below the models that use them. Add any
 constraint or trigger the change needs to the appropriate file in `prisma/sql/`
 rather than assuming `db push` will carry it. Update the seed suite so it
-populates the new shape from the first day, because the doctrine here is to
-write new tables from every code path rather than to backfill — the reasoning is
-in `docs/prisma/02-pre-mvp-reset-runbook.md`. Run the type-check and the affected
+populates the new shape from the first day, because new tables are written from every code path rather than backfilled. Run the type-check and the affected
 jest suites locally. Then let the orchestrator run `npm run db:push` once, at
 merge, and confirm `npm run db:assert-sidecars` passes afterwards.
 
-Do not write a data migration for pre-reset rows. Do not push from a worktree to
+Until the cutover, do not write a data migration for existing rows. Do not push from a worktree to
 prove a test passes. If a change genuinely requires a rename, a drop or a type
-change, say so and stop; that is a reset-day decision.
+change, say so and stop; that is a freeze-table decision.
 
 ## Live-database drift (2026-10-02)
 
-On 2026-10-02 the Subscriptions tab of the Requests inbox returned 500 on production and on previews, because the live enum `RescheduleRequestStatus` lacked the value `COUNTERED`, which has been in the schema since #1060. It was fixed with `ALTER TYPE "RescheduleRequestStatus" ADD VALUE IF NOT EXISTS 'COUNTERED' AFTER 'PENDING_REVIEW'`. The additive auth columns from #1878 were applied the same day: `twoFactor` `failedVerificationCount`, `lockedUntil` and `verified`, `ssoProvider` `createdAt`, `domainVerified` and `updatedAt`, and the unique index `twoFactor_userId_key`. The rest of the drift waits for the planned reset tracked in #1934, and `check-db-drift` has been non-required since `ed876981e`, so CI will not flag it.
+On 2026-10-02 the Subscriptions tab of the Requests inbox returned 500 on production and on previews, because the live enum `RescheduleRequestStatus` lacked the value `COUNTERED`, which has been in the schema since #1060. It was fixed with `ALTER TYPE "RescheduleRequestStatus" ADD VALUE IF NOT EXISTS 'COUNTERED' AFTER 'PENDING_REVIEW'`. The additive auth columns from #1878 were applied the same day: `twoFactor` `failedVerificationCount`, `lockedUntil` and `verified`, `ssoProvider` `createdAt`, `domainVerified` and `updatedAt`, and the unique index `twoFactor_userId_key`. The rest of the drift waits for the freeze-table push in the cutover plan, and `check-db-drift` has been non-required since `ed876981e`, so CI will not flag it.
 
-A read-only drift check with Prisma 7 is `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`, because `--from-url` no longer exists. That diff proposes dropping the hand-applied sidecar partial uniques `appointment_feedback_level_key` and `consultant_earnings_occurrence_key`, so never fix drift with a plain `db push`, and run `npm run db:sidecars` after any reset.
+A read-only drift check with Prisma 7 is `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`, because `--from-url` no longer exists. That diff proposes dropping the three hand-applied sidecar unique indexes `appointment_feedback_level_key`, `consultant_earnings_occurrence_key` and `organization_earnings_split_key`, so never fix drift with a plain `db push`, and run `npm run db:sidecars` after any push.
 
 To reproduce a `lib/data` reader locally and see the real Prisma error, run `NODE_OPTIONS="--conditions=react-server" npx tsx --env-file=.env --tsconfig tsconfig.json <script>`. Without `--env-file`, Prisma silently connects to localhost.
+
+## The deploy preview runs the branch's code (2026-10-22)
+
+The Netlify deploy preview for a pull request serves that branch's code from the
+shared Postgres, so a branch's schema is not a proposal for the database — it is
+a claim about what the database already contains. A column the branch declares
+and the database lacks is a 500 on every read of that model, and the preview
+BUILD still passes, because the build only runs `prisma generate`.
+
+This has now happened three times: the #1997 columns (#2027), the
+`RescheduleRequestStatus.COUNTERED` enum value (2026-10-02), and
+`ConsultationPlan.sortOrder` (#2229, Sentry `FAMILIARISE_WEB-7A`).
+
+So the rule from `docs/prisma/README.md` — _push before, or together with, the
+deploy that reads the column_ — has a precedent rather than a procedure: the
+2026-10-02 enum value and the #1878 columns were applied directly with
+`ALTER TYPE … ADD VALUE` and `ALTER TABLE … ADD COLUMN` rather than through a
+push. An additive change is safe to apply before the deploy that reads it,
+because the running code ignores a column it does not know about.
+
+`scripts/ci/check-db-schema-required.ts` enforces it on pull requests, from
+`.github/workflows/schema-required.yml` — a workflow of its own, because
+`ci.yaml` is disabled while the Actions minutes are exhausted and a gate in a
+disabled workflow never appears. It diffs the branch's MERGE BASE schema
+against the branch's own schema — schema to schema, so a branch behind its base
+is not judged on objects it never touched — and then asks the live catalog
+whether each of those objects is there. Only objects whose absence makes a
+query fail are checked: a column, a table, an enum type, an enum value. A
+recreated enum is checked label by label, because the plan that replaces an
+enum carries no `ADD VALUE` of its own.
+
+Two things it deliberately does NOT do. It does not read the other direction of
+the drift (the database carrying objects the schema does not want): that is the
+reconcile push's business, and reading it is what made the earlier
+`check-db-drift.ts` block every schema-bearing pull request until it was
+removed from PR CI. And it does not run on pushes, because a push to `dev`
+legitimately leads the live database until the orchestrator pushes the merge;
+`db-live-drift.yml` covers the merged state.
+
+The live drift carried today is in `prisma/sql/known-drift.json`, in two
+lists. `destructiveStatementsAllowed` is what a push MAY run, and
+`knownDivergences` is what the daily drift check tolerates but a push must NOT
+remove yet — tolerating a divergence and permitting its removal are not the
+same decision. The legacy support-ticket tables are in the second list: NOT
+dead, because `origin/prod` does not carry #2257 yet and still queries them,
+so they are re-created empty as a stop-gap and the reconcile push waits for
+`dev` to be promoted to `prod`. The pre-#2041 recording-storage columns and the
+six orphan indexes ARE dead, and a push may remove them.
 
 ## The cutover to versioned migrations
 
@@ -132,9 +178,9 @@ and a database rebuilt from that baseline would come up without the money
 invariants or the overlap constraint. The three SQL files must be appended to
 the baseline migration, or committed as a migration that immediately follows it.
 
-The full ordered runbook, including the reset it depends on, is
-`docs/prisma/03-cutover-to-migrations.md`. It is the file to open on launch day,
-not this one.
+The full ordered plan, including the freeze table it depends on, is
+`docs/prisma/02-schema-freeze-and-migration-cutover.md`. It is the file to open
+on launch day, not this one.
 
 ## Related skills and documents
 
@@ -145,7 +191,6 @@ recipes to use instead. `/finance` covers the money invariants that the sidecars
 enforce, which is the reason those invariants are not expressible in the Prisma
 schema in the first place.
 
-Under `docs/prisma/`, the general reference is `01-migrations-guide.md`, the reset
-procedure is `02-pre-mvp-reset-runbook.md`, the launch cutover is
-`03-cutover-to-migrations.md`, the completed Prisma 6 to 7 upgrade is recorded in
-`04-prisma-7-migration.md`, and the model-by-model diagrams are in `00-schema-map.md`.
+Under `docs/prisma/`, the general reference is `01-migrations-guide.md`, the
+freeze and cutover plan is `02-schema-freeze-and-migration-cutover.md`, and the
+model-by-model diagrams are in `00-schema-map.md`.

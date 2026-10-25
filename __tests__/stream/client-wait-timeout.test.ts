@@ -69,10 +69,13 @@ describe("the bounded wait for the video client", () => {
     const block = /CLIENT_WAIT_TIMEOUT_MS\);/.exec(hook);
     expect(block).not.toBeNull();
     const timeoutBody = hook.slice(
-      hook.indexOf("const timer = setTimeout"),
+      hook.indexOf(
+        "const timer = setTimeout",
+        hook.indexOf("if (client || !callId) return;"),
+      ),
       hook.indexOf("CLIENT_WAIT_TIMEOUT_MS);"),
     );
-    expect(timeoutBody).toContain("setError(");
+    expect(timeoutBody).toContain("setFailure(");
     expect(timeoutBody).toContain("setIsCallLoading(false)");
   });
 
@@ -102,7 +105,7 @@ describe("the bounded wait for the video client", () => {
     // The guard is the first statement, so a mounted-with-client render never
     // schedules anything.
     const effectStart = hook.indexOf("if (client || !callId) return;");
-    const timerStart = hook.indexOf("const timer = setTimeout");
+    const timerStart = hook.indexOf("const timer = setTimeout", effectStart);
     expect(effectStart).toBeGreaterThan(-1);
     expect(timerStart).toBeGreaterThan(effectStart);
   });

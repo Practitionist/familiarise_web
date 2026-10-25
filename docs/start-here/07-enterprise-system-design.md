@@ -1375,7 +1375,7 @@ walletDebit() and walletCredit() in `lib/api/organizations/wallet.ts` seed NULL 
 
 A confirmed top-up is represented by WalletTopUp and journal transaction Dr CASH / Cr WALLET(org). The gateway capture timestamp is preserved separately so a failed journal transaction can be recovered by the orphaned-capture reconciler. A booking debit posts Dr WALLET in the booking journal. A refund or member-overage carve credits the wallet cache and is mirrored by the appropriate WALLET ledger credit.
 
-The ledger is the balance source; a nightly reconciler compares the wallet cache with the journal. This is a legitimate derived-cache reconciliation because the database cannot express equality to an aggregate of ledger rows as a simple CHECK.
+The ledger is the balance source; a resumable scheduled auditor compares the wallet cache with the journal. This is a legitimate derived-cache reconciliation because the database cannot express equality to an aggregate of ledger rows as a simple CHECK.
 
 IIT Madras seeded values provide a concrete arithmetic check: three ₹5,00,000 top-ups add ₹15,00,000; five ₹5,000 debits consume ₹25,000; wallet balance is ₹14,75,000. Those seed transactions exist in `prisma/seedFiles/14a-create-organizations.ts`. They are seed definitions and do not prove the current database contains those rows.
 
@@ -2279,17 +2279,17 @@ The ticker always responds successfully after target execution and reports failu
 
 #### 8.2.2. Batch schedules
 
-GitHub Actions run daily and weekly operations such as audit pruning, consent retention, tax drafts, payouts, and compliance deadline reminders. Some additional jobs run hourly. Read the current `.github/workflows/*.yml`, not only `docs/enterprise/50-operations/02-runbooks.md`: the runbook catalog contains old wrappers/cadences and need a separate refresh against the current registry and schedules.
+GitHub Actions retains non-money batch schedules such as audit pruning, consent retention and breach deadline alerts, plus CI/CD. Money reconciliation, payouts and statutory exports are owned by the active platform ticker in bounded slices. A configured workflow does not prove a recent successful run. Read the executable schedules and the [job inventory](../maintenance/04-cron-jobs-reference.md) before changing ownership; a lease does not prevent sequential duplicate executions.
 
-| Work category            | Examples                                                        | Current scheduling shape                   | Recovery signal                             |
-| ------------------------ | --------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------- |
-| Latency-sensitive repair | payment confirmation, refund/status reconcile, earnings release | Netlify 5m tick, selected 10–30m cadence   | target status, row backlog, system event    |
-| Delivery outbox          | outbound webhooks, Resend, Novu                                 | Netlify ticker with target limits          | pending/retry/dead-letter counts            |
-| User lifecycle sweeps    | booking reminders/expiry, Stream erasure                        | Netlify ticker at configured interval      | summary counts and retry rows               |
-| Data export              | `process-data-exports`                                          | 10m ticker target                          | `OrgDataExportJob` state and summary        |
-| Statutory monitoring     | breach deadline, MSME risk                                      | hourly/daily GitHub Actions                | structured alert + admin queue              |
-| Long-running batch       | ledger, payout, tax/accounting exports                          | GitHub Actions or controlled admin trigger | `SystemJobExecution`, job summary, runbook  |
-| Retention                | audit and consent records                                       | daily or weekly Actions schedule           | deleted/count summary and retention backlog |
+| Work category            | Examples                                                        | Current scheduling shape                              | Recovery signal                                  |
+| ------------------------ | --------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------ |
+| Latency-sensitive repair | payment confirmation, refund/status reconcile, earnings release | Netlify 5m tick, selected 10–30m cadence              | target status, row backlog, system event         |
+| Delivery outbox          | outbound webhooks, Resend, Novu                                 | Netlify ticker with target limits                     | pending/retry/dead-letter counts                 |
+| User lifecycle sweeps    | booking reminders/expiry, Stream erasure                        | Netlify ticker at configured interval                 | summary counts and retry rows                    |
+| Data export              | `process-data-exports`                                          | 10m ticker target                                     | `OrgDataExportJob` state and summary             |
+| Statutory monitoring     | breach deadline, MSME risk                                      | breach alerts: Actions; MSME risk: ticker             | structured alert + admin queue                   |
+| Money batch              | ledger, payout, tax/accounting exports                          | bounded ticker slices or authenticated manual batches | completed report, execution evidence and backlog |
+| Retention                | audit and consent records                                       | daily or weekly Actions schedule                      | deleted/count summary and retention backlog      |
 
 #### 8.2.3. Cron lease and job execution
 
