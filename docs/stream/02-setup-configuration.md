@@ -76,7 +76,7 @@ R2_SECRET_ACCESS_KEY=your_r2_secret_access_key
 1. Navigate to **Dashboard** → **Create New App**
 2. Choose app name (e.g., "Familiarise Dev")
 3. Select region closest to your users
-   - 🇺🇸 US East (Virginia / `gcp-us-east5`)
+   - 🇺🇸 US East (Virginia; the production app runs in region `gcp-us-east4`, placement `gcp-us-east4.vega`)
    - 🇪🇺 EU West (Ireland)
    - 🇸🇬 Singapore
    - 🇦🇺 Australia

@@ -353,15 +353,15 @@ The background sync job maintains synchronization between your Prisma database a
 
 ### Job Overview
 
-**Schedule:** Daily at 03:40 UTC (9:10 AM IST)
+**Schedule:** Written as part of the daily 03:00 UTC batch (08:30 IST). That batch is a GitHub Actions workflow, and Actions is budget-blocked, so it is not running until the Stream jobs move to the Netlify ticker.
 
-**Execution:** GitHub Actions workflow
+**Execution:** the `stream-sync` step of `.github/workflows/cron-daily.yml`, or the staff Jobs page
 
 **Location:**
 
 - Job logic: `/jobs/stream/stream-sync.ts` (implementation in
   `/scripts/stream/stream-sync.ts`)
-- Workflow: `/.github/workflows/stream-sync.yml`
+- Workflow: the `stream-sync` step in `/.github/workflows/cron-daily.yml`
 
 **Purpose:**
 
@@ -371,40 +371,20 @@ The background sync job maintains synchronization between your Prisma database a
 
 ### Workflow Configuration
 
-```yaml
-name: Sync Stale Stream Users
-
-on:
-  schedule:
-    # Runs at 03:30 UTC (9:00 AM IST) every day
-    - cron: "30 3 * * *"
-  workflow_dispatch: # Allows manual triggering
-
-jobs:
-  sync_stream_users:
-    runs-on: ubuntu-latest
-    env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      NEXT_PUBLIC_STREAM_API_KEY: ${{ secrets.NEXT_PUBLIC_STREAM_API_KEY }}
-      STREAM_API_SECRET: ${{ secrets.STREAM_API_SECRET }}
-```
-
-**Required Secrets:**
-
-- `DATABASE_URL`: Prisma database connection string
-- `NEXT_PUBLIC_STREAM_API_KEY`: Stream Chat API key
-- `STREAM_API_SECRET`: Stream Chat API secret
+The step, its environment and its secrets are defined in `.github/workflows/cron-daily.yml`; read that file rather than a copy here. It needs `DATABASE_URL`, `STREAM_API_KEY`, `STREAM_API_SECRET` and the cron-lock Redis credentials.
 
 ### Sync Logic
 
 The `performStreamUserSync` function implements the core synchronization logic.
 
-**Location:** `/jobs/stream-sync.ts` (lines 42-175)
+**Location:** `performStreamUserSync` in `/scripts/stream/stream-sync.ts`, which the `/jobs/stream/stream-sync.ts` wrapper calls
 
 **Function Signature:**
 
 ```typescript
-export async function performStreamUserSync(): Promise<SyncSummary>;
+export async function performStreamUserSync(
+  options?: SyncOptions,
+): Promise<SyncSummary>;
 ```
 
 **Returns:**
@@ -641,9 +621,11 @@ You can manually trigger the sync job:
 **Via GitHub Actions UI:**
 
 1. Navigate to Actions tab
-2. Select "Sync Stale Stream Users" workflow
-3. Click "Run workflow"
+2. Select the "Cron — Daily Fleet" workflow (`cron-daily.yml`)
+3. Click "Run workflow" and enter the job slug `stream-sync`
 4. Select branch and confirm
+
+Or run it from the staff Jobs page, which posts `stream-sync` to `/api/admin/system-jobs/run`.
 
 **Via API Endpoint:**
 See [API Endpoints - Manual Sync](./10-api-endpoints.md#post-apistreamsyncmanual)

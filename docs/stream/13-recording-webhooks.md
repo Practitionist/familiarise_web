@@ -978,13 +978,13 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 
 ### The scheduled fleet behind recordings
 
-Three scheduled jobs keep the recording pipeline honest under GitHub Actions, acquiring the Postgres cron lock (`withCronLock`) and recording `SystemJobExecution` runs:
+Three jobs keep the recording pipeline honest. They are written for GitHub Actions, which is budget-blocked, so they run only when an operator triggers them until they move to the Netlify ticker. Each acquires the Postgres cron lock (`withCronLock`) and recording `SystemJobExecution` runs:
 
-| Workflow                                 | Schedule (UTC)         | What it does                                                                                                                                                      |
-| ---------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cron-intra-day.yml#transfer-recordings` | Every six hours at :33 | Copies `READY` recordings into R2 before Stream's 14-day copy lapses, reporting exhausted transfer attempts once per run.                                         |
-| `cron-daily.yml#expire-recordings`       | Daily at 03:00         | Expires lapsed Stream copies and recordings past retention, deletes R2 and preview objects, writes org audit rows, and deletes Stream's copy of transferred rows. |
-| `reconcile-orphaned-recordings.yml`      | Daily at 05:00         | Recovers recordings whose `call.recording_ready` webhook never arrived by polling Stream for sessions 2 hours to 14 days old.                                     |
+| Workflow                                       | Schedule (UTC)         | What it does                                                                                                                                                      |
+| ---------------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cron-intra-day.yml#transfer-recordings`       | Every six hours at :33 | Copies `READY` recordings into R2 before Stream's 14-day copy lapses, reporting exhausted transfer attempts once per run.                                         |
+| `cron-daily.yml#expire-recordings`             | Daily at 03:00         | Expires lapsed Stream copies and recordings past retention, deletes R2 and preview objects, writes org audit rows, and deletes Stream's copy of transferred rows. |
+| `cron-daily.yml#reconcile-orphaned-recordings` | Daily at 03:00         | Recovers recordings whose `call.recording_ready` webhook never arrived by polling Stream for sessions 2 hours to 14 days old.                                     |
 
 ### The video client's timeout
 
