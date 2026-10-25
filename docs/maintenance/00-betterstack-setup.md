@@ -507,9 +507,11 @@ as pending work; a saved alert cannot compensate for a disabled monitor.
 1. Observe an ordinary production check-in accepted by Sentry. Record its time,
    environment and configured cadence without invoking the production job.
 2. Use an authenticated cron-monitor API session for a controlled expectation
-   drill. Save the normal configuration in a protected local artifact and prepare
-   restoration before changing it. Keep the existing monitor, source, production
-   environment and recipient. Do not stop jobs or change the active cron host.
+   drill. Save the normal monitor and alert configuration in a protected local
+   artifact and prepare restoration before changing it. Include monitor status,
+   mute state, project, slug and scheduling fields, plus alert status, connected
+   source IDs, environment, recipient action and repeat interval. Keep the existing
+   monitor and route. Do not stop jobs or change the active cron host.
 3. Immediately after a fresh ordinary check-in, temporarily set only the monitor's
    expectation to `* * * * *`, `checkin_margin: 1` and
    `failure_issue_threshold: 1`, preserving its other settings. The actual ticker
@@ -528,12 +530,16 @@ as pending work; a saved alert cannot compensate for a disabled monitor.
    operator actually receives its notification. Save sanitized incident/alert
    links, UTC timestamps and the recipient's confirmation. An incident visible
    only in Sentry or an alert's `lastTriggered` timestamp is not a delivery receipt.
-6. Restore and read back the saved normal schedule, margin and thresholds on
-   success, failure or timeout, then observe the next ordinary check-in and
-   recovery. If restoration fails, alert the operator immediately and keep the
-   task open. This drill creates no temporary environment; a separate environment
-   would not prove the production-filtered route and would keep missing after
-   its sender stopped.
+6. Restore the changed schedule, margin and thresholds on success, failure or
+   timeout. Read back both configurations and compare every saved configuration
+   field, including the unchanged monitor identity/status/mute state and alert
+   connection/recipient, before declaring restoration complete. Runtime timestamps
+   and check-in counters naturally change. Resolve any mismatch with the operator;
+   do not overwrite another operator's concurrent configuration change. Then
+   observe the next ordinary check-in and recovery. If restoration fails, alert
+   the operator immediately and keep the task open. This drill creates no
+   temporary environment; a separate environment would not prove the
+   production-filtered route and would keep missing after its sender stopped.
 
 This evidence closes the ticker missed-run gate only. Keep the ingest canary's
 independent email path and the per-capability completion probe: a Sentry outage
