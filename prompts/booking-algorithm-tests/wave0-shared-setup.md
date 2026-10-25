@@ -3,8 +3,12 @@
 **Supabase Project ID:** `pzmbxqdgibfkhjwzeprf`
 **App URL:** `http://localhost:3000` (or the Netlify deploy preview under test)
 
+> **Supabase MCP is read-only.** `execute_sql` is for SELECTs and assertions.
+> Phase 0 seeds, fixture mutations and cleanup below are operator-run: prepare
+> the SQL and wait for an operator.
+
 Read this file first. **One Supabase project serves both development and
-production**, so every write below is a production operation on prefixed fixtures:
+production**, so every operator-run write below is a production operation on prefixed fixtures:
 touch only rows your run created, never run a seed, reset or `db push`, and never
 point a case at a customer account. If you cannot confirm that the fixtures are
 prefixed and the cleanup phase will run, stop before the first write. Agents 013–020 exercise the hard cases the earlier cases

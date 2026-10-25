@@ -66,7 +66,7 @@ This path adds the _why_ behind the design and the integrity machinery you must 
 1. Everything in the SDE2 path.
 2. All of [`70-design-decisions/`](70-design-decisions/00-README.md) — the ADRs; read these before proposing structural changes.
 3. [cross-cutting-integrations](40-compliance-and-data/06-cross-cutting-integrations.md) — the wired/partial/skipped map of all eight subsystems.
-4. [ledger-integrity](../finance/20-ledger/06-integrity-and-reconciliation.md) — the nightly reconciler and the invariants your change must not break.
+4. [ledger-integrity](../finance/20-ledger/06-integrity-and-reconciliation.md) — the scheduled reconciler and the invariants your change must not break.
 5. [monitoring](50-operations/03-monitoring.md) and [system-events](50-operations/04-system-events.md) — how a change announces itself in production.
 
 ### SDE4 — architecture and regulatory sign-off

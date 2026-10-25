@@ -55,6 +55,8 @@ export interface ModerationRetryResult {
   collaboratorRecovered: number;
   /** #1593 — erasure requests whose owed Stream revocations were re-driven. */
   erasureRevocationsRecovered: number;
+  /** Queued cancellation, collaborator and org-removal revocations that landed. */
+  accessRevocationsRecovered: number;
   errors: string[];
 }
 
@@ -220,6 +222,7 @@ async function retryModerationEnforcementUnlocked(
     skipped: 0,
     collaboratorRecovered: 0,
     erasureRevocationsRecovered: 0,
+    accessRevocationsRecovered: 0,
     errors: [],
   };
 
@@ -250,7 +253,7 @@ async function retryModerationEnforcementUnlocked(
 
 async function executeErasureRevocationRow(
   row: {
-    planType: string;
+    planType: string | null;
     planId: string;
     erasureRequest: { userId: string };
   },
@@ -273,6 +276,7 @@ async function executeErasureRevocationRow(
       return errMsg(error_);
     }
   }
+  if (!row.planType) return "Erasure retry has no plan type";
   const planType = row.planType === "WEBINAR" ? "webinar" : "class";
   try {
     const { success } = await deps.revokeCollaboratorAccess(
@@ -300,9 +304,11 @@ async function recordErasureOutboxOutcome(params: {
   now: Date;
   result: ModerationRetryResult;
   settledRequestIds: Set<string>;
+  recovered?: "erasureRevocationsRecovered" | "accessRevocationsRecovered";
 }): Promise<void> {
   const { delegate, row, error, errorLabel, now, result, settledRequestIds } =
     params;
+  const recovered = params.recovered ?? "erasureRevocationsRecovered";
   const attempts = row.attempts + 1;
   const gaveUp = Boolean(error) && attempts >= MAX_ATTEMPTS;
   await delegate.update({
@@ -330,7 +336,7 @@ async function recordErasureOutboxOutcome(params: {
     }
     result.errors.push(`${errorLabel} ${row.id}: ${error}`);
   } else {
-    result.erasureRevocationsRecovered++;
+    result[recovered]++;
     if (row.erasureRequestId) {
       settledRequestIds.add(row.erasureRequestId);
     }
@@ -349,14 +355,21 @@ async function drainErasureRevocations(
   const rows = await prisma.streamRevocationRetry.findMany({
     where: {
       status: { in: ["PENDING", "FAILED"] },
+      // A row past the attempt budget is terminal: the give-up was already
+      // written, so the selector must not re-drive it.
+      attempts: { lt: MAX_ATTEMPTS },
       OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
     },
     select: {
       id: true,
+      kind: true,
       erasureRequestId: true,
+      userId: true,
+      counterpartUserId: true,
       planType: true,
       planId: true,
       attempts: true,
+      createdAt: true,
       erasureRequest: { select: { userId: true } },
     },
     orderBy: { createdAt: "asc" },
@@ -368,20 +381,44 @@ async function drainErasureRevocations(
     await import("@/lib/compliance/erasure/scrub-user");
   const { revokeCollaboratorAccess } =
     await import("@/lib/collaborators/service");
+  const { redriveAccessRevocation } =
+    await import("@/lib/stream/access-revocation");
   for (const row of rows) {
-    const error = await executeErasureRevocationRow(row, {
-      principalPrefix: STREAM_PRINCIPAL_PLAN_ID_PREFIX,
-      eraseStreamPrincipalFootprint,
-      revokeCollaboratorAccess,
-    });
+    const { kind } = row;
+    let error: string | null;
+    if (kind === "ERASURE_REVOKE") {
+      error = row.erasureRequest
+        ? await executeErasureRevocationRow(
+            { ...row, erasureRequest: row.erasureRequest },
+            {
+              principalPrefix: STREAM_PRINCIPAL_PLAN_ID_PREFIX,
+              eraseStreamPrincipalFootprint,
+              revokeCollaboratorAccess,
+            },
+          )
+        : "Erasure retry has no erasure request";
+    } else if (row.userId) {
+      error = await redriveAccessRevocation({
+        ...row,
+        kind,
+        userId: row.userId,
+      }).catch((error_: unknown) => errMsg(error_));
+    } else {
+      error = `${kind} retry has no user`;
+    }
     await recordErasureOutboxOutcome({
       delegate: prisma.streamRevocationRetry,
       row,
       error,
-      errorLabel: "erasure-revoke",
+      errorLabel:
+        kind === "ERASURE_REVOKE" ? "erasure-revoke" : "access-revoke",
       now,
       result,
       settledRequestIds,
+      recovered:
+        kind === "ERASURE_REVOKE"
+          ? "erasureRevocationsRecovered"
+          : "accessRevocationsRecovered",
     });
   }
 }

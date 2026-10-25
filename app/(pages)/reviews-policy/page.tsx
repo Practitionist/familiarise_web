@@ -2,7 +2,8 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Scale } from "lucide-react";
-import { COMPANY_INFO, POLICY_DATES } from "../constants";
+import { COMPANY_INFO } from "@/lib/company";
+import { POLICY_DATES } from "../constants";
 
 export const metadata = {
   title: `How Reviews & Ratings Work | ${COMPANY_INFO.name}`,

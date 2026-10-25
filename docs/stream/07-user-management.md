@@ -148,6 +148,14 @@ case-linked intervention adds it as a visible member of the booking chat with a
 message) when the grant ends or the case resolves. The chat banner reads its
 membership, so there is no channel extra data to keep in sync.
 
+### Server-only system users
+
+`system-booking-context` (`BOOKING_CONTEXT_STREAM_USER` in `lib/stream/system-users.ts`) is a second Stream user with no `User` row. It holds `user` and never gets a token, so only the server can author its messages. `POST /api/stream/channels/open` posts the booking-context receipt card as this user, and `components/chat/CustomMessage.tsx` renders the card layout only for that author (`isBookingContextAuthor`). The `system-` prefix is load-bearing: the `stream-sync` user deletion and the daily membership reconciler (`lib/stream/membership-reconciler.ts`) both leave `system-` users and the Familiarise Support user alone.
+
+### Revoking a removed member's access
+
+When an organization removes a member, `revokeMemberStreamAccess` (`lib/enterprise/member-removal.ts`) calls `revokeUserToken` with a cutoff, so every Stream token issued before the removal stops working. The wind-down drain (`jobs/stream/wind-down-deactivated-orgs.ts`) passes the membership's `updatedAt` as the cutoff, so a re-run never revokes a token minted after the member rejoined. The result's `tokenRevoked` flag now reflects whether the call succeeded, and an incomplete revocation queues an `ORG_REVOKE` row for the `retry-moderation-enforcement` sweep. The member's own browser recovers by itself: the SDK asks its token provider again only to replace a token Stream refused, and `sdkTokenProvider` in `providers/StreamProviderImpl.tsx` skips the token cache on every such re-request after the first, so a user Postgres still admits gets a fresh token and a removed user does not.
+
 ### Rollout: downgrade existing operator roles
 
 **Owner end-phase step, run by hand once after deploy. It is not a script.** An
@@ -345,15 +353,15 @@ The background sync job maintains synchronization between your Prisma database a
 
 ### Job Overview
 
-**Schedule:** Daily at 03:40 UTC (9:10 AM IST)
+**Schedule:** Written as part of the daily 03:00 UTC batch (08:30 IST). That batch is a GitHub Actions workflow, and Actions is budget-blocked, so it is not running until the Stream jobs move to the Netlify ticker.
 
-**Execution:** GitHub Actions workflow
+**Execution:** the `stream-sync` step of `.github/workflows/cron-daily.yml`, or the staff Jobs page
 
 **Location:**
 
 - Job logic: `/jobs/stream/stream-sync.ts` (implementation in
   `/scripts/stream/stream-sync.ts`)
-- Workflow: `/.github/workflows/stream-sync.yml`
+- Workflow: the `stream-sync` step in `/.github/workflows/cron-daily.yml`
 
 **Purpose:**
 
@@ -363,40 +371,20 @@ The background sync job maintains synchronization between your Prisma database a
 
 ### Workflow Configuration
 
-```yaml
-name: Sync Stale Stream Users
-
-on:
-  schedule:
-    # Runs at 03:30 UTC (9:00 AM IST) every day
-    - cron: "30 3 * * *"
-  workflow_dispatch: # Allows manual triggering
-
-jobs:
-  sync_stream_users:
-    runs-on: ubuntu-latest
-    env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      NEXT_PUBLIC_STREAM_API_KEY: ${{ secrets.NEXT_PUBLIC_STREAM_API_KEY }}
-      STREAM_API_SECRET: ${{ secrets.STREAM_API_SECRET }}
-```
-
-**Required Secrets:**
-
-- `DATABASE_URL`: Prisma database connection string
-- `NEXT_PUBLIC_STREAM_API_KEY`: Stream Chat API key
-- `STREAM_API_SECRET`: Stream Chat API secret
+The step, its environment and its secrets are defined in `.github/workflows/cron-daily.yml`; read that file rather than a copy here. It needs `DATABASE_URL`, `STREAM_API_KEY`, `STREAM_API_SECRET` and the cron-lock Redis credentials.
 
 ### Sync Logic
 
 The `performStreamUserSync` function implements the core synchronization logic.
 
-**Location:** `/jobs/stream-sync.ts` (lines 42-175)
+**Location:** `performStreamUserSync` in `/scripts/stream/stream-sync.ts`, which the `/jobs/stream/stream-sync.ts` wrapper calls
 
 **Function Signature:**
 
 ```typescript
-export async function performStreamUserSync(): Promise<SyncSummary>;
+export async function performStreamUserSync(
+  options?: SyncOptions,
+): Promise<SyncSummary>;
 ```
 
 **Returns:**
@@ -633,9 +621,11 @@ You can manually trigger the sync job:
 **Via GitHub Actions UI:**
 
 1. Navigate to Actions tab
-2. Select "Sync Stale Stream Users" workflow
-3. Click "Run workflow"
+2. Select the "Cron — Daily Fleet" workflow (`cron-daily.yml`)
+3. Click "Run workflow" and enter the job slug `stream-sync`
 4. Select branch and confirm
+
+Or run it from the staff Jobs page, which posts `stream-sync` to `/api/admin/system-jobs/run`.
 
 **Via API Endpoint:**
 See [API Endpoints - Manual Sync](./10-api-endpoints.md#post-apistreamsyncmanual)
@@ -706,4 +696,5 @@ See [API Endpoints - Manual Sync](./10-api-endpoints.md#post-apistreamsyncmanual
 
 - **Global `admin` Role Mapping**: Every account once mapped to Stream `admin`, later only `ADMIN`/`STAFF` did, alongside an operator bypass for minting tokens for other users. Superseded by mapping every account to `user` and self-only minting, because both paths gave operators silent, unaudited browser reads of any chat.
 - **Uncensored Email PII in Stream User Metadata**: Superseded by `stripStreamUserEmails` and DPDP `STREAM_DATA_PROCESSING` filtering (`droppedIds`) prior to `upsertUsers`.
+- **Token Revocation Reported but Never Performed**: `revokeMemberStreamAccess` once returned `tokenRevoked: false` without revoking anything, so a removed member's token lived until it expired. It now revokes tokens issued before the removal.
 - **Ad-Hoc Account Scrubbing**: Superseded by `eraseStreamPrincipalFootprint` (`lib/compliance/erasure/scrub-user.ts`) with retry persistence (`StreamRevocationRetry`).

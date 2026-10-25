@@ -152,14 +152,14 @@ The same panel carries the booking-level platform doors. "Reschedule booking" (a
 
 The Reconcile section starts four jobs without exposing the `CRON_SECRET`, through `POST /api/admin/reconcile/[job]` (surface `payouts.manage`, step-up, reason, one ops-log row). `RECONCILE_JOBS` (`lib/backoffice/reconcile-jobs.ts`) names them:
 
-| Job id           | Lock name                   | What it does                                                                |
-| ---------------- | --------------------------- | --------------------------------------------------------------------------- |
-| `ledgers`        | `reconcile-ledgers`         | Re-checks every cached balance against its journal; runs in the background. |
-| `refunds`        | `reconcile-pending-refunds` | Asks the gateway about every refund still pending.                          |
-| `payment-status` | `reconcile-payment-status`  | Asks the gateway about every payment still pending.                         |
-| `earnings`       | `sync-payment-earnings`     | Writes the earnings rows a captured payment is missing.                     |
+| Job id           | Lock name                   | What it does                                                        |
+| ---------------- | --------------------------- | ------------------------------------------------------------------- |
+| `ledgers`        | `reconcile-ledgers`         | Advances a persisted audit page; repeat until the report completes. |
+| `refunds`        | `reconcile-pending-refunds` | Asks the gateway about every refund still pending.                  |
+| `payment-status` | `reconcile-payment-status`  | Asks the gateway about every payment still pending.                 |
+| `earnings`       | `sync-payment-earnings`     | Writes the earnings rows a captured payment is missing.             |
 
-Each job runs in-process under its own `withCronLock` lease, so a job already running answers 409 `ALREADY_RUNNING`. For refunds, payment status and earnings a click takes one bounded batch of 25 rows, and the scheduled runs drain the rest; the ledger job starts one full background run. The route refuses with 503 `MAINTENANCE` in DEGRADED and OFFLINE. The full ledger run is also exposed as `POST /api/admin/reconcile-ledgers`. Any other registered job can be run from `POST /api/admin/system-jobs/run`; see [scheduled money jobs](01-scheduled-jobs.md).
+Each job runs in-process under its own `withCronLock` lease, so a job already running answers 409 `ALREADY_RUNNING`. For refunds, payment status and earnings a click takes one bounded batch of 25 rows. The ledger job advances the same bounded core used by scheduled cleanup, with at most 100 primary entities per comparison and a six-second page-start budget. RUNNING means continue, completed discrepancies return 207, and failures return 500. The console distinguishes unfinished reports from completed drift; authenticated manual requests can start a fresh audit after completion. The route refuses with 503 `MAINTENANCE` in DEGRADED and OFFLINE. A bounded, optionally organisation-scoped ledger slice is also exposed as `POST /api/admin/reconcile-ledgers`. Any other registered job can be run from `POST /api/admin/system-jobs/run`; see [scheduled money jobs](01-scheduled-jobs.md).
 
 ## Declaring a platform incident
 

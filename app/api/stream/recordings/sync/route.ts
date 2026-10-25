@@ -2,18 +2,32 @@
  * Sync Recordings API Route
  * POST /api/stream/recordings/sync
  *
- * Syncs recordings from Stream API for a user's sessions.
- * Creates Recording records for any recordings not already in DB.
- * Consultants sync their own sessions, consultees sync their enrolled sessions.
+ * Mirrors Stream's recordings for the caller's sessions of the last 30 days,
+ * 25 meetings per identity per call, and never sends a notification.
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { RecordingService } from "@/lib/stream/recording-service";
 import { applyRateLimit, streamRecordingSyncLimiter } from "@/lib/rate-limit";
-import { answerFileRoute, fileApiError } from "@/lib/documents/api-error";
+import {
+  answerFileRoute,
+  fileApiError,
+  parseJsonBody,
+} from "@/lib/documents/api-error";
 
 import { getSession } from "@/lib/auth-server";
-export async function POST(_req: NextRequest) {
+
+/** Each identity pages independently; omit a cursor to start from the newest meeting. */
+const syncBodySchema = z
+  .object({
+    consultantCursor: z.string().min(1).optional(),
+    consulteeCursor: z.string().min(1).optional(),
+  })
+  .strict()
+  .optional();
+
+export async function POST(req: NextRequest) {
   return answerFileRoute(async () => {
     const session = await getSession();
     if (!session?.user) return fileApiError("UNAUTHORIZED");
@@ -30,48 +44,41 @@ export async function POST(_req: NextRequest) {
     );
     if (limited) return limited;
 
-    type SyncResult = {
-      synced: number;
-      recordings: {
-        id: string;
-        title: string;
-        durationInMinutes: number;
-        recordedAt: Date;
-        status: string;
-      }[];
-    };
+    const { consultantCursor, consulteeCursor } =
+      (await parseJsonBody(req, syncBodySchema)) ?? {};
 
     // Capability, not UserRole (#org-appts): an org EXPERT whose top-level role is CONSULTEE still owns recordings they delivered.
-    // Sync whichever identities the user actually owns — a dual-identity user
-    // syncs both provider and attendee sessions.
-    const results: SyncResult[] = [];
-
-    if (session.user.consultantProfileId) {
-      // Provider syncs their own sessions
-      results.push(
-        await RecordingService.syncRecordingsForConsultant(
+    const consultant = session.user.consultantProfileId
+      ? await RecordingService.syncRecordingsForConsultant(
           session.user.consultantProfileId,
-        ),
-      );
-    }
+          { cursor: consultantCursor },
+        )
+      : null;
+    const consultee = session.user.consulteeProfileId
+      ? await RecordingService.syncRecordingsForConsultee(session.user.id, {
+          cursor: consulteeCursor,
+        })
+      : null;
 
-    if (session.user.consulteeProfileId) {
-      // Attendee syncs their enrolled sessions
-      results.push(
-        await RecordingService.syncRecordingsForConsultee(
-          session.user.consulteeProfileId,
-          session.user.id,
-        ),
-      );
-    }
+    if (!consultant && !consultee) return fileApiError("FORBIDDEN");
 
-    if (results.length === 0) return fileApiError("FORBIDDEN");
-
-    const recordings = results.flatMap((r) => r.recordings);
+    const recordings = [
+      ...(consultant?.recordings ?? []),
+      ...(consultee?.recordings ?? []),
+    ];
+    const nextCursors = {
+      consultantCursor: consultant?.nextCursor ?? null,
+      consulteeCursor: consultee?.nextCursor ?? null,
+    };
 
     return NextResponse.json({
       success: true,
-      synced: results.reduce((sum, r) => sum + r.synced, 0),
+      synced: recordings.length,
+      failed: (consultant?.failed ?? 0) + (consultee?.failed ?? 0),
+      more: Boolean(
+        nextCursors.consultantCursor || nextCursors.consulteeCursor,
+      ),
+      ...nextCursors,
       recordings: recordings.map((r) => ({
         id: r.id,
         title: r.title,

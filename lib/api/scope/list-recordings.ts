@@ -7,7 +7,8 @@
  */
 
 import prisma from "@/lib/prisma";
-import type { Prisma, RecordingStatus } from "@prisma/client";
+import type { AppointmentsType, Prisma, RecordingStatus } from "@prisma/client";
+import { isFullyRefundedPurchase } from "@/lib/payments/utils/refund-balance";
 import { liveParticipant } from "@/lib/booking/participants";
 import type { Scope } from "./parse";
 import { assertNeverScope, ORG_SCOPE_READABLE_STATUSES } from "./parse";
@@ -214,5 +215,69 @@ export async function listRecordingsScoped(
     }),
   ]);
 
-  return { items, total, page, perPage };
+  if (!isParticipantScope) return { items, total, page, perPage };
+  const revoked = await refundRevokedAppointmentIds(items, params.userId);
+  return {
+    items:
+      revoked.size === 0
+        ? items
+        : items.map((item) =>
+            revoked.has(item.meeting.occurrence.appointment.id)
+              ? stripMedia(item)
+              : item,
+          ),
+    total,
+    page,
+    perPage,
+  };
+}
+
+const GROUP_TYPES = new Set<AppointmentsType>(["WEBINAR", "CLASS"]);
+
+/**
+ * 1:1 appointments the caller bought and was refunded out of in full: the same
+ * predicate `loadRecordingViews` applies, so the list shows no preview the
+ * player would refuse.
+ */
+async function refundRevokedAppointmentIds(
+  items: ScopedRecording[],
+  userId: string,
+): Promise<Set<string>> {
+  const oneToOneIds = [
+    ...new Set(
+      items
+        .map((item) => item.meeting.occurrence.appointment)
+        .filter((a) => !GROUP_TYPES.has(a.appointmentType))
+        .map((a) => a.id),
+    ),
+  ];
+  if (oneToOneIds.length === 0) return new Set();
+  const payments = await prisma.payment.findMany({
+    where: {
+      appointmentId: { in: oneToOneIds },
+      userId,
+      paymentStatus: "SUCCEEDED",
+      deletedAt: null,
+    },
+    select: {
+      appointmentId: true,
+      amount: true,
+      refunds: { select: { amountPaise: true, status: true } },
+    },
+  });
+  const byAppointment = Map.groupBy(payments, (p) => p.appointmentId);
+  return new Set(
+    oneToOneIds.filter((id) =>
+      isFullyRefundedPurchase(byAppointment.get(id) ?? []),
+    ),
+  );
+}
+
+function stripMedia(item: ScopedRecording): ScopedRecording {
+  return {
+    ...item,
+    thumbnailUrl: null,
+    previewClipUrl: null,
+    previewClipDuration: null,
+  };
 }

@@ -95,6 +95,26 @@ jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
 }));
 
+jest.mock("../../lib/rate-limit", () => ({
+  meetingControlLimiter: {},
+  applyRateLimit: async () => null,
+}));
+
+jest.mock("../../actions/stream/chat/user.action", () => ({
+  upsertUsersToStream: jest.fn().mockResolvedValue({}),
+}));
+
+jest.mock("../../lib/meetings/call-provisioning", () => ({
+  STREAM_SERVER_TRUSTED: Symbol.for("familiarise.stream.serverTrusted"),
+  readSlotForCaller: jest
+    .fn()
+    .mockResolvedValue({ slot: { id: "occ-perm-1" } }),
+  buildRoomCallPlan: jest.fn().mockResolvedValue({
+    authorUserId: "host-user-1",
+    payload: { data: { created_by_id: "host-user-1" } },
+  }),
+}));
+
 import { NextRequest } from "next/server";
 import { toOccurrenceLike } from "../../lib/appointments/view-model";
 import { deriveBookingPresentation } from "../../lib/dashboard/money-state";
@@ -374,7 +394,11 @@ describe("Meeting lifecycle & timezone P&C unification (#2080)", () => {
       expect(body.reopened).toBe(true);
       expect(body.streamCallId).toMatch(/^occurrence-occ-perm-1-r[a-z0-9]+$/);
       expect(mockMeetingUpdateMany).toHaveBeenCalledWith({
-        where: { id: "mtg-perm-1", endedAt: { not: null } },
+        where: {
+          id: "mtg-perm-1",
+          streamCallId: "occurrence-occ-perm-1",
+          endedAt: expect.any(Date),
+        },
         data: {
           streamCallId: body.streamCallId,
           endedAt: null,

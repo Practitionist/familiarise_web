@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import prisma from "@/lib/prisma";
-import { getSession } from "@/lib/auth-server";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { reportSentryMessage } from "@/lib/observability/report";
 import {
   FileRouteError,
@@ -28,9 +28,9 @@ const RemovalRequestSchema = z.object({
  */
 export async function POST(request: Request, { params }: RouteContext) {
   return answerFileRoute(async () => {
-    const session = await getSession();
-    if (!session?.user?.id) return fileApiError("UNAUTHORIZED");
-    const userId = session.user.id;
+    const auth = await requireApiAuth();
+    if (auth.error) return auth.error;
+    const userId = auth.session.user.id;
     const { appointmentId, documentId } = await params;
     const { note } = await parseJsonBody(request, RemovalRequestSchema);
 

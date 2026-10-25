@@ -187,22 +187,34 @@ documents/                                              # Private bucket (signed
 
 ### 1. Bucket Management
 
-The `documents` bucket is configured as **private** (`public: false`). All file access requires signed URLs generated via `supabaseAdmin` (service role).
+Every bucket the app provisions has one explicit policy in `lib/storage/bucket-policies.ts`: visibility, object-size limit and MIME allowlist. `ensureBucketExists(bucket, overrides?)` merges the caller's overrides over that policy, creates the bucket if missing and reconciles the settings of an existing one. A bucket with no policy entry is **refused**, never created with a fallback.
+
+| Bucket                | Visibility | Limit | MIME source                                                     |
+| --------------------- | ---------- | ----- | --------------------------------------------------------------- |
+| `documents`           | private    | 10 MB | `lib/documents/file-policy.ts` (PDF, Office, images, text, CSV) |
+| `plan-images`         | public     | 5 MB  | JPEG, PNG, WebP                                                 |
+| `profile-images`      | public     | 2 MB  | JPEG, PNG, WebP                                                 |
+| `organization-images` | public     | 5 MB  | JPEG, PNG, WebP, SVG                                            |
+| `recordings-previews` | public     | 50 MB | MP4, WebM, JPEG, PNG, WebP                                      |
+| `support-attachments` | private    | 20 MB | `lib/support/attachment-policy.ts`                              |
 
 ```typescript
-// Automatically creates bucket if it doesn't exist
-const ensureBucketExists = async (bucketName: string): Promise<boolean> => {
-  // Check existence → Create if missing → Configure as private
-};
+// One registry; an unlisted bucket is refused rather than made public.
+const policy = bucketPolicyFor(bucketName, overrides);
+if (!policy) return false;
+await storage.createBucket(bucketName, {
+  public: policy.public,
+  fileSizeLimit: policy.fileSizeLimit,
+  allowedMimeTypes: policy.allowedMimeTypes,
+});
 ```
 
 **Features:**
 
 - **Auto-Detection**: Checks bucket existence before operations
-- **Auto-Creation**: Creates bucket with `public: false` configuration if missing
-- **Private by default**: No public URLs; all access via signed URLs
-- **Signed URL generation**: Uses `supabaseAdmin.storage.from('documents').createSignedUrl()` with service role
-- **Size Limits**: Enforces 10MB file size limit
+- **Explicit policy**: Visibility, size and MIME come from the registry; there is no public-by-default
+- **MIME reconciliation**: An existing bucket is updated when its allowlist drifts, so a video preview is not rejected by a document-only list
+- **Signed URL generation**: Uses `supabaseAdmin.storage.from(bucket).createSignedUrl()` with service role
 - **Service role required**: Every storage call (upload, list, signed URL, delete, bucket create and reconcile) runs on the server's service-role client through `adminStorage()` in `lib/supabase-storage-core.ts`. There is no anon storage client. If `SUPABASE_SERVICE_ROLE_KEY` is missing, storage operations fail with an explicit error.
 - **Verified deletes**: `removeObjects()` confirms every requested path through a deletion receipt or explicit missing-key metadata. Storage's batch delete returns only the objects it removed, so a path missing from that answer is checked with `info()`. Only an explicit `NoSuchKey` error confirms absence; a remaining object or ambiguous response leaves the deletion unconfirmed. Profile-image deletion returns `502` and preserves the stored image pointer when confirmation fails; appointment-document purge retains its tombstoned row for retry. Plan-material deletion commits removal of its database row first, then attempts storage cleanup, reporting failures to Sentry while returning success. That path does not restore the row; vendor cleanup can remain outstanding.
 
@@ -355,7 +367,7 @@ See [support attachments](../support/08-intake-callbacks-attachments-and-limits.
 
 Session documents and plan materials live in the private Supabase `documents` bucket: small files (up to 10 MB), opened rarely, uploaded straight from the browser and signed on demand. Recordings live in the private Cloudflare R2 recordings bucket: hundreds of MB to several GB, streamed repeatedly, pulled in server-side by `transfer-recordings`. The split follows object size and read pattern. R2 charges no egress and has no per-plan upload cap, while Supabase Storage caps a single upload by plan. Each store has one signing helper. Public preview clips stay in the Supabase `recordings-previews` bucket. See [session documents](../documents/README.md#storage-supabase-for-documents-r2-for-recordings) and [recordings](../stream/19-recordings-lifecycle-and-access.md).
 
-Session documents are tombstoned 90 days after the booking ends (or is cancelled) and purged 7 days later by the registered `purge-deleted-documents` job (`lib/documents/document-purge.ts`). A tombstoned row keeps its object until the purge, and `reconcile-document-storage` imports the same `DOCUMENT_DELETE_GRACE_DAYS` constant so it never sweeps an object the purge still owns. The 10 MB limit and the allowed types come from one policy, `lib/documents/file-policy.ts`. See [session documents](../documents/README.md#retention-and-the-purge).
+Session documents are tombstoned 90 days after the booking ends (or is cancelled) and purged 7 days later by the registered `purge-deleted-documents` job (`lib/documents/document-purge.ts`), which runs hourly on the Netlify ticker with `limit=100` (the route still accepts up to 200 for a manual drain). A tombstoned row keeps its object until the purge, and `reconcile-document-storage` imports the same `DOCUMENT_DELETE_GRACE_DAYS` constant so it never sweeps an object the purge still owns. The 10 MB limit and the allowed types come from one policy, `lib/documents/file-policy.ts`. See [session documents](../documents/README.md#retention-and-the-purge).
 
 ## Cleanup Strategy
 
@@ -652,3 +664,6 @@ This comprehensive strategy ensures reliable, efficient, and secure document sto
 5. **Unprobed Orphan Sweeps During Storage Outages**:
    - Running `reconcile-document-storage` without first probing bucket connectivity risked interpreting empty list responses during transient storage outages as zero storage objects or failing partway through.
    - `reconcileDocumentStorage` probes bucket readability up front, aborts on any directory listing error (`throw error`), and honors a 30-day soft-delete retention window alongside the 7-day orphan grace period.
+6. **A public bucket created from an implicit default**:
+   - `ensureBucketExists` used to create any unlisted bucket with `public: true` and a document allowlist no caller had chosen, so one forgotten option could expose a new bucket and reject a valid video upload.
+   - Visibility, size and MIME now come from `lib/storage/bucket-policies.ts`; provisioning refuses a bucket with no policy entry and reconciles an existing bucket's drifting allowlist.

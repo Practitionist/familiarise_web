@@ -22,6 +22,9 @@ interface RecordingControlsProps {
   isHost?: boolean;
 }
 
+/** How long a start/stop waits for Stream's recording event before re-reading the call. */
+export const RECORDING_ACK_TIMEOUT_MS = 15_000;
+
 const RecordingControls = ({
   meetingId,
   recordingEnabled: _recordingEnabled,
@@ -34,6 +37,9 @@ const RecordingControls = ({
   const { isHost: sessionIsHost, appointmentType } = useSessionInfo();
   const [isRecording, setIsRecording] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  // Set once a start/stop POST succeeded; the ack fallback re-reads only then.
+  const [awaitingAck, setAwaitingAck] = useState(false);
+  const [ackAttempt, setAckAttempt] = useState(0);
   const [recordingDuration, setRecordingDuration] = useState(0);
 
   // Derive host control from call metadata (`useSessionInfo`) so org experts and co-presenters can record.
@@ -110,6 +116,29 @@ const RecordingControls = ({
     };
   }, [call, toast, announces]);
 
+  // An accepted start/stop waits for the socket event; if none arrives, re-read the call, and
+  // keep the button pending (re-reading again) while that read fails.
+  useEffect(() => {
+    if (!isLoading || !awaitingAck || !call) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      call.get().then(
+        () => {
+          if (cancelled) return;
+          setIsRecording(Boolean(call.state.recording));
+          setIsLoading(false);
+        },
+        () => {
+          if (!cancelled) setAckAttempt((n) => n + 1);
+        },
+      );
+    }, RECORDING_ACK_TIMEOUT_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [isLoading, awaitingAck, ackAttempt, call]);
+
   // Recording duration timer
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined;
@@ -140,6 +169,7 @@ const RecordingControls = ({
     if (!call || isLoading) return;
 
     setIsLoading(true);
+    setAwaitingAck(false);
 
     try {
       const response = await fetch("/api/stream/recordings/start", {
@@ -155,6 +185,7 @@ const RecordingControls = ({
       if (!response.ok) {
         throw new FileActionError(await friendlyErrorFromResponse(response));
       }
+      setAwaitingAck(true);
     } catch (error) {
       setIsLoading(false);
       const friendly =
@@ -173,6 +204,7 @@ const RecordingControls = ({
     if (!call || isLoading) return;
 
     setIsLoading(true);
+    setAwaitingAck(false);
 
     try {
       const response = await fetch("/api/stream/recordings/stop", {
@@ -188,6 +220,7 @@ const RecordingControls = ({
       if (!response.ok) {
         throw new FileActionError(await friendlyErrorFromResponse(response));
       }
+      setAwaitingAck(true);
     } catch (error) {
       setIsLoading(false);
       const friendly =

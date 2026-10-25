@@ -139,9 +139,9 @@ All background work in this system comes from exactly one of two schedulers. Kno
    └──────────────────────────────────────────────────────────────────┘
 
    ┌──────────────────────────────────────────────────────────────────┐
-   │  SCHEDULER B — GitHub Actions           7 cron-declaring files  │
+   │  SCHEDULER B — GitHub Actions           6 cron-declaring files  │
    │  cron-intra-day · cron-daily · cron-weekly                       │
-   │  + cron-heartbeat · db-live-drift · stream-webhook-drift        │
+   │  + cron-heartbeat · db-live-drift                                │
    │  + security-audit                                                │
    │  · daily / weekly / statutory batch work                         │
    │  · 29 registry jobs + 13 jobs with no HTTP twin                  │

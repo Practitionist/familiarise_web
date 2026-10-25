@@ -21,6 +21,12 @@ jest.mock("../../lib/novu/client", () => ({
 jest.mock("../../lib/novu/subscriber", () => ({
   deleteSubscriber: jest.fn(async () => true),
 }));
+jest.mock("../../lib/stream/recording-storage", () => ({
+  deleteRecordingAssets: jest.fn(async () => ({ success: true })),
+}));
+jest.mock("../../lib/stream/recording-stream-delete", () => ({
+  deleteStreamRecordingCopy: jest.fn(async () => ({ success: true })),
+}));
 
 const mockRevokeUserToken = jest.fn(async () => ({}));
 const mockDeleteUsers = jest.fn(async () => ({}));
@@ -162,14 +168,17 @@ describe("DPDP erasure Stream principal leg", () => {
   });
 
   it("purges 1:1 recordings, unpublishes host group recordings, and withdraws RecordingConsent on scrubUser", async () => {
-    const mockRecordingFindMany = jest.fn(async () => [
+    const mockRecordingFindMany = jest.fn(async () => [{ id: "rec-1on1" }]);
+    const mockRecordingClaim = jest.fn(async () => [
       {
         id: "rec-1on1",
         storagePath: null,
         previewClipStoragePath: null,
+        streamCallId: null,
+        streamRecordingId: null,
+        removedAt: null,
       },
     ]);
-    const mockRecordingUpdate = jest.fn(async () => ({}));
     const mockRecordingUpdateMany = jest.fn(async () => ({ count: 1 }));
     const mockRecordingConsentUpdateMany = jest.fn(async () => ({ count: 1 }));
 
@@ -177,7 +186,7 @@ describe("DPDP erasure Stream principal leg", () => {
       ...db,
       recording: {
         findMany: mockRecordingFindMany,
-        update: mockRecordingUpdate,
+        updateManyAndReturn: mockRecordingClaim,
         updateMany: mockRecordingUpdateMany,
       },
       recordingConsent: {
@@ -188,14 +197,52 @@ describe("DPDP erasure Stream principal leg", () => {
     await scrubUser(dbWithRecordings as never, "u-erased-1");
 
     expect(mockRecordingFindMany).toHaveBeenCalled();
-    expect(mockRecordingUpdate).toHaveBeenCalledWith({
-      where: { id: "rec-1on1" },
+    expect(mockRecordingClaim).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: "rec-1on1",
+        OR: [
+          { status: { notIn: ["EXPIRED", "FAILED"] } },
+          {
+            status: "EXPIRED",
+            OR: [
+              { storagePath: { not: null } },
+              { previewClipStoragePath: { not: null } },
+              { streamRecordingId: { not: null } },
+            ],
+          },
+        ],
+        purchases: { none: {} },
+      }),
       data: {
         status: "EXPIRED",
         recordingUrl: "",
+      },
+      select: {
+        id: true,
+        storagePath: true,
+        previewClipStoragePath: true,
+        streamCallId: true,
+        streamRecordingId: true,
+        removedAt: true,
+      },
+    });
+    expect(mockRecordingUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "rec-1on1",
+        status: "EXPIRED",
+        storagePath: null,
+        previewClipStoragePath: null,
+        streamRecordingId: null,
+      },
+      data: {
         storagePath: null,
         previewClipUrl: null,
         previewClipStoragePath: null,
+        previewClipDuration: null,
+        previewTranscript: null,
+        thumbnailUrl: null,
+        streamRecordingId: null,
+        removedAt: expect.any(Date),
       },
     });
     expect(mockRecordingUpdateMany).toHaveBeenCalledWith(

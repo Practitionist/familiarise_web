@@ -35,11 +35,11 @@ const mockParityState = {
   captureException: jest.fn((..._a: unknown[]): unknown => undefined),
   captureMessage: jest.fn((..._a: unknown[]): unknown => undefined),
   paymentUpdateMany: jest.fn(async (_args: PaymentStampArgs) => ({ count: 1 })),
-  paymentFindUnique: jest.fn(
-    (..._a: unknown[]): Promise<unknown> => Promise.resolve(undefined),
+  paymentFindUnique: jest.fn((..._a: unknown[]): Promise<unknown> =>
+    Promise.resolve(undefined),
   ),
-  appointmentFindUnique: jest.fn(
-    (..._a: unknown[]): Promise<unknown> => Promise.resolve(undefined),
+  appointmentFindUnique: jest.fn((..._a: unknown[]): Promise<unknown> =>
+    Promise.resolve(undefined),
   ),
   txPaymentUpdate: jest.fn(async (..._a: unknown[]) => ({})),
   trialUpdateMany: jest.fn(async (..._a: unknown[]) => ({ count: 1 })),
@@ -47,8 +47,8 @@ const mockParityState = {
   occurrenceFindMany: jest.fn(),
   prismaPaymentUpdate: jest.fn(async (..._a: unknown[]) => ({})),
   createEarningsFromPayment: jest.fn(),
-  refundPayment: jest.fn(
-    (..._a: unknown[]): Promise<unknown> => Promise.resolve(undefined),
+  refundPayment: jest.fn((..._a: unknown[]): Promise<unknown> =>
+    Promise.resolve(undefined),
   ),
   refundBookingPayment: jest.fn((..._a: unknown[]): unknown => undefined),
   recordSystemEvent: jest.fn(async (..._a: unknown[]) => undefined),
@@ -72,8 +72,7 @@ const mockParityTx = {
 jest.mock("@sentry/nextjs", () => ({
   __esModule: true,
   setTag: jest.fn(),
-  captureException: (...a: unknown[]) =>
-    mockParityState.captureException(...a),
+  captureException: (...a: unknown[]) => mockParityState.captureException(...a),
   captureMessage: (...a: unknown[]) => mockParityState.captureMessage(...a),
   logger: {
     info: jest.fn(),
@@ -83,6 +82,8 @@ jest.mock("@sentry/nextjs", () => ({
   },
   getCurrentScope: () => ({ setTag: jest.fn() }),
 }));
+// reportSentryError and the shared loggers capture through @sentry/core; share the one mock.
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 
 jest.mock("../../lib/db/serializable-retry", () => ({
   __esModule: true,
@@ -123,8 +124,7 @@ jest.mock("../../lib/novu", () => ({
   notifyPaymentFailed: jest.fn(),
   notifyAppointmentBooked: jest.fn(),
 }));
-jest.mock("../../lib/referrals/service", () => ({
-}));
+jest.mock("../../lib/referrals/service", () => ({}));
 jest.mock("../../actions/stream/chat/event-channel.action", () => ({
   addUserToEventChannel: jest.fn(),
 }));
@@ -158,7 +158,9 @@ jest.mock("../../lib/payments/webhooks/recording-purchase", () => ({
 }));
 
 jest.mock("../../app/api/webhooks/utils", () => {
-  const realHandlers = jest.requireActual("../../lib/payments/webhooks/handlers");
+  const realHandlers = jest.requireActual(
+    "../../lib/payments/webhooks/handlers",
+  );
   const noopAsync = () => jest.fn(async () => undefined);
   return {
     __esModule: true,
