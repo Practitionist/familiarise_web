@@ -145,9 +145,13 @@ export async function POST(req: NextRequest) {
     if (!isOwner) return fileApiError("FORBIDDEN");
     if (!meeting.isRecording) return fileApiError("RECORDING_NOT_IN_PROGRESS");
 
-    // Atomically claim the stop operation (prevents concurrent stop requests)
+    // Atomically claim the stop of the segment this request read.
+    const segment = {
+      streamCallId: meeting.streamCallId,
+      recordingStartedAt: meeting.recordingStartedAt,
+    };
     const claimed = await prisma.meeting.updateMany({
-      where: { id: meetingId, isRecording: true },
+      where: { id: meetingId, isRecording: true, ...segment },
       data: { isRecording: false },
     });
 
@@ -158,9 +162,9 @@ export async function POST(req: NextRequest) {
     const result = await RecordingService.stopRecording(meeting.streamCallId);
 
     if (!result.success) {
-      // Rollback: restore isRecording=true since Stream stop failed
-      await prisma.meeting.update({
-        where: { id: meetingId },
+      // Restore only the segment this request stopped, and never on an ended meeting.
+      await prisma.meeting.updateMany({
+        where: { id: meetingId, isRecording: false, endedAt: null, ...segment },
         data: { isRecording: true },
       });
       streamLogger.error("Stream stop failed, rolled back DB state", null, {

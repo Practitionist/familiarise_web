@@ -3,7 +3,7 @@
  * Provides conditional logging based on environment and structured output
  */
 
-import * as Sentry from "@sentry/nextjs";
+import * as Sentry from "@sentry/core";
 
 type LogLevel = "debug" | "info" | "warn" | "error";
 

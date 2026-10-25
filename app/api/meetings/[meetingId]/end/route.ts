@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { guardMeetingRoute } from "@/lib/meetings/route-guard";
+import { meetingControlLimiter } from "@/lib/rate-limit";
 import {
   getStreamVideoClient,
   StreamUnavailableError,
@@ -22,7 +23,7 @@ export async function POST(
 ) {
   let meetingIdForLog: string | undefined;
   try {
-    const guard = await guardMeetingRoute(params, "end");
+    const guard = await guardMeetingRoute(params, "end", meetingControlLimiter);
     if (!guard.ok) return guard.response;
     const { userId, meetingId, access } = guard;
     meetingIdForLog = meetingId;
@@ -61,13 +62,28 @@ export async function POST(
       throw err;
     });
 
+    if (recorded.kind === "not_found") {
+      streamLogger.warn("Meeting end found no Meeting row for the call", {
+        userId,
+        meetingId,
+        streamCallId: resolvedCallId,
+      });
+      return NextResponse.json(
+        {
+          error: "This session's room no longer exists.",
+          code: "MEETING_NOT_FOUND",
+        },
+        { status: 404 },
+      );
+    }
+
     streamLogger.info("Meeting ended by host", {
       userId,
       meetingId,
-      endedReason: recorded?.endedReason ?? null,
+      endedReason: recorded.kind === "recorded" ? recorded.endedReason : null,
     });
 
-    return NextResponse.json({ ended: true, callId: meetingId });
+    return NextResponse.json({ ended: true, callId: recorded.streamCallId });
   } catch (error) {
     if (error instanceof StreamUnavailableError) {
       streamLogger.warn("Meeting end unavailable — Stream circuit open", {

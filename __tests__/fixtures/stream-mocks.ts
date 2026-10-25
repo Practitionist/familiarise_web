@@ -87,7 +87,6 @@ export const createMockChannelCache = () => ({
   isChannelCached: jest.fn(),
   getMembershipCached: jest.fn(),
   markMembership: jest.fn(),
-  initialSyncCompletedUsers: new Set<string>(),
 });
 
 // Stream cache mock for users

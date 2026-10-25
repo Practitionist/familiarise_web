@@ -86,7 +86,7 @@ export function HowItWorksSection() {
                 size="lg"
                 className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-elevation-2"
               >
-                Start Your Journey
+                Find an Expert
                 <ArrowRight className="ml-2 w-5 h-5" />
               </Button>
             </Link>

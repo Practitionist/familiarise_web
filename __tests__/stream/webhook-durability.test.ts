@@ -28,6 +28,18 @@ const mockLogWebhookEvent = jest.fn();
 const mockMarkProcessed = jest.fn();
 const mockIsDbHealthy = jest.fn();
 const mockHandleRecordingReady = jest.fn();
+const mockCreate = jest.fn();
+const mockUpdateMany = jest.fn();
+
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    webhookEvent: {
+      create: (...a: unknown[]) => mockCreate(...a),
+      updateMany: (...a: unknown[]) => mockUpdateMany(...a),
+    },
+  },
+}));
 
 /** Ordered trace, so we can assert sequence rather than mere occurrence. */
 let sequence: string[] = [];
@@ -38,6 +50,7 @@ jest.mock("../../lib/webhooks/event-log", () => ({
   // duplicate here would assert the two agree while guaranteeing they cannot.
   TERMINAL_ERROR_PREFIXES: jest.requireActual("../../lib/webhooks/event-log")
     .TERMINAL_ERROR_PREFIXES,
+  toInputJson: jest.requireActual("../../lib/webhooks/event-log").toInputJson,
   logWebhookEvent: (...a: unknown[]) => {
     sequence.push("persist");
     return mockLogWebhookEvent(...a);
@@ -105,23 +118,78 @@ beforeEach(() => {
 });
 
 describe("recordStreamEventReceipt — the durable half", () => {
-  it("writes the delivery down and nothing else", async () => {
-    await recordStreamEventReceipt("stream_abc", "call.ended", { a: 1 }, "sig");
+  beforeEach(() => {
+    mockCreate.mockResolvedValue({ id: "r1" });
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+  });
 
-    expect(mockLogWebhookEvent).toHaveBeenCalledWith(
-      "stream",
+  it("writes the delivery down with exactly one create and nothing else", async () => {
+    const res = await recordStreamEventReceipt(
       "stream_abc",
-      "call.ended",
-      { a: 1 },
+      "call.recording_stopped",
+      {
+        type: "call.recording_stopped",
+        call_cid: "default:x",
+        created_at: "t",
+      },
       "sig",
     );
+
+    expect(res).toEqual({ isNew: true, claim: { claimedAt: null } });
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(mockCreate.mock.calls[0][0].data).toMatchObject({
+      provider: "stream",
+      eventId: "stream_abc",
+      eventType: "call.recording_stopped",
+      signature: "sig",
+      processed: false,
+    });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
     // No health probe on the request path — that is the whole point of the
     // split. A probe is another round-trip inside a six-second budget.
     expect(mockIsDbHealthy).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["classic", { code: "P2002", meta: { target: ["eventId"] } }],
+    [
+      "Prisma 7 adapter",
+      {
+        code: "P2002",
+        meta: { driverAdapterError: { cause: { originalCode: "23505" } } },
+      },
+    ],
+  ])("treats a %s unique violation as a duplicate", async (_shape, error) => {
+    mockCreate.mockRejectedValue(error);
+
+    const res = await recordStreamEventReceipt(
+      "stream_abc",
+      "call.ended",
+      {},
+      undefined,
+    );
+
+    expect(res).toEqual({ isNew: false, claim: { claimedAt: null } });
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-claims a duplicate whose in-progress lease went stale", async () => {
+    mockCreate.mockRejectedValue({ code: "P2002" });
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+
+    const res = await recordStreamEventReceipt(
+      "stream_abc",
+      "call.ended",
+      {},
+      undefined,
+    );
+
+    expect(res.isNew).toBe(true);
+    expect(res.claim.claimedAt).toBeInstanceOf(Date);
+  });
+
   it("propagates a write failure so the caller can refuse the ack", async () => {
-    mockLogWebhookEvent.mockRejectedValue(new Error("db down"));
+    mockCreate.mockRejectedValue(new Error("db down"));
 
     // Nothing was recorded, so Stream's redelivery is the only remaining
     // chance. Swallowing this is what made the loss silent.

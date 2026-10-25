@@ -77,17 +77,19 @@ describe("cleanup registry status callbacks are authoritative", () => {
     });
   });
 
-  it("transfer-recordings keeps its deliberate 200 when copies failed", async () => {
+  it("transfer-recordings reports unsuccessful copies as a failed execution", async () => {
     jest.mocked(transferRecordings).mockResolvedValue({
+      success: false,
+      reclaimedStale: 0,
       processed: 3,
       succeeded: 1,
       failed: 2,
       exhaustedReported: 1,
       errors: ["Recording r1: timeout", "Recording r2: timeout"],
-    } as never);
+    });
     await expect(hit("transfer-recordings")).resolves.toEqual({
-      status: 200,
-      outcome: "success",
+      status: 500,
+      outcome: "failure",
     });
   });
 });

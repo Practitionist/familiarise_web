@@ -7,7 +7,10 @@ import {
 } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
-import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
+import {
+  isFullyRefundedPurchase,
+  isPaymentEntitled,
+} from "@/lib/payments/utils/refund-balance";
 import {
   recordingRetentionLabels,
   type RecordingRetentionLabel,
@@ -361,11 +364,17 @@ export interface RecordingIdentity {
   consulteeProfileId: string | null;
 }
 
-/** The caller's side of a booking, or null when they are neither host nor entitled learner. */
+/**
+ * The caller's side of a booking, or null when they are neither host nor
+ * entitled learner. `paymentRevoked` is set when the viewer's only succeeded
+ * payment for the booking has been fully refunded: a 1:1 learner then loses
+ * replay access, while a partial refund keeps it.
+ */
 export function recordingViewerOf(
   booking: BookingRow,
   identity: RecordingIdentity,
   holdsSeat: boolean,
+  paymentRevoked = false,
 ): RecordingViewer | null {
   const groupPlan = groupPlanOf(booking);
   const { consultantProfileId, consulteeProfileId } = identity;
@@ -378,7 +387,10 @@ export function recordingViewerOf(
   const oneToOneLearner =
     consulteeProfileId !== null &&
     learnerProfileId(booking) === consulteeProfileId;
-  if (oneToOneLearner || (groupPlan && holdsSeat)) {
+  if (oneToOneLearner) {
+    return paymentRevoked ? null : { role: "learner", booking, groupPlan };
+  }
+  if (groupPlan && holdsSeat) {
     return { role: "learner", booking, groupPlan };
   }
   return null;
@@ -925,7 +937,8 @@ function unusedRelations(
     .filter(([kind]) => !kinds.has(kind))
     .map(([, relation]) => [relation]);
   if (!kinds.has("WEBINAR") && !kinds.has("CLASS")) {
-    paths.push(["participants"], ["payment"]);
+    // A 1:1 has no seat, but its refund revocation still reads the payment rows.
+    paths.push(["participants"]);
   }
   if (!canHost) {
     // Co-hosts and replay buyers only matter on the host side.
@@ -1143,9 +1156,12 @@ export async function loadRecordingViews(
   });
   const drafts = rows.flatMap((row) => {
     const seat = row.participants?.[0];
+    const payments = row.payment ?? [];
     const holdsSeat =
       ENTITLED_SEAT.some((status) => status === seat?.status) ||
-      (row.payment ?? []).some(isPaymentEntitled);
+      payments.some(isPaymentEntitled);
+    // A 1:1 learner refunded in full loses the replay; a partial refund keeps it.
+    const paymentRevoked = isFullyRefundedPurchase(payments);
     const booking: BookingRow = {
       id: row.id,
       appointmentType: row.appointmentType,
@@ -1155,7 +1171,12 @@ export async function loadRecordingViews(
       webinar: row.webinar ?? null,
       class: row.class ?? null,
     };
-    const viewer = recordingViewerOf(booking, identity, holdsSeat);
+    const viewer = recordingViewerOf(
+      booking,
+      identity,
+      holdsSeat,
+      paymentRevoked,
+    );
     if (!viewer) return [];
     const sessions = row.occurrences;
     const floor = hidesEarlierSessions(viewer) ? seatFloor(seat) : null;

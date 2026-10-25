@@ -2,7 +2,7 @@
   "mcpServers": {
     "chrome-devtools": {
       "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp@latest"]
+      "args": ["-y", "chrome-devtools-mcp@1.12.0"]
     },
     "netlify": {
       "command": "npx",
@@ -13,52 +13,35 @@
       "args": [
         "-y",
         "-p",
-        "@modelcontextprotocol/sdk",
+        "@modelcontextprotocol/sdk@1.32.1",
         "-p",
-        "zod",
+        "zod@3.25.76",
         "-p",
         "@supabase/mcp-server-supabase@0.8.1",
-        "mcp-server-supabase"
+        "mcp-server-supabase",
+        "--read-only",
+        "--project-ref",
+        "pzmbxqdgibfkhjwzeprf"
       ],
       "env": {
         "SUPABASE_ACCESS_TOKEN": "<SUPABASE_ACCESS_TOKEN>"
-      }
-    },
-    "rzp-mcp-server": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://mcp.razorpay.com/mcp",
-        "--header",
-        "Authorization: Basic <RZP_MCP_SERVER_BASIC_AUTH_TOKEN>"
-      ]
-    },
-    "stripe": {
-      "command": "npx",
-      "args": ["-y", "@stripe/mcp", "--tools=all"],
-      "env": {
-        "STRIPE_SECRET_KEY": "<STRIPE_SECRET_KEY>"
       }
     },
     "serena": {
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/oraios/serena",
-        "serena-mcp-server"
+        "git+https://github.com/oraios/serena@v2.1.0",
+        "serena",
+        "start-mcp-server",
+        "--context",
+        "claude-code",
+        "--project-from-cwd"
       ]
-    },
-    "directus": {
-      "command": "npx",
-      "args": ["-y", "@directus/content-mcp@latest"],
-      "env": {
-        "DIRECTUS_URL": "https://your-project.directus.app",
-        "DIRECTUS_TOKEN": "your-directus-admin-token"
-      }
     },
     "streamio": {
       "command": "npx",
-      "args": ["-y", "unofficial-streamio-mcp-server@latest"],
+      "args": ["-y", "unofficial-streamio-mcp-server@0.4.2"],
       "env": {
         "STREAM_API_KEY": "${STREAM_API_KEY}",
         "STREAM_API_SECRET": "${STREAM_API_SECRET}",
