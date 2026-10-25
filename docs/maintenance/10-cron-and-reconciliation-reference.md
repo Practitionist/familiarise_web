@@ -4,7 +4,7 @@ type: reference
 band: maintenance
 audience: sde2
 status: live
-last-reviewed: 2026-10-24
+last-reviewed: 2026-10-25
 ---
 
 # Cron, Sidecars and Reconciliation — Operational Reference
@@ -32,7 +32,7 @@ Actions-owned jobs → existing CLI → the same canonical core where registered
 Admin run door    → explicit mapped canonical core (recording copies use async admission)
 ```
 
-Recording transfer uses a separate execution path: the same catalog's background destination → authenticated narrow adapter → canonical transfer core. The ticker dispatches every 15 minutes, accepts only 202, and lists that receipt in `accepted`. Cleanup and staff run doors queue that adapter using a server-configured HTTPS origin. They do not claim a successful copy. Only the core's owned successful execution satisfies its 45-minute completion SLO. See the [recording worker runbook](../stream/recording-background-worker.md) for the 72-hour/three-attempt alarm, source classification and orphan-object recovery.
+Recording transfer and the five daily Stream lifecycle targets use a separate execution path: the same catalog's background destination → authenticated narrow adapter → canonical transfer core. The ticker dispatches recording copies every 15 minutes and daily lifecycle slices in staggered windows, accepts only 202, and lists that receipt in `accepted`. Cleanup and staff run doors queue that adapter using a server-configured HTTPS origin. They do not claim a successful copy. Only an owned successful core execution refreshes completion health: 45 minutes for copy, 90 minutes for synchronous session recovery, and 27 hours for the daily lifecycle jobs. See [Stream lifecycle operations](../stream/09-background-sync.md) for slice bounds and continuation. See the [recording worker runbook](../stream/recording-background-worker.md) for the 72-hour/three-attempt alarm, source classification and orphan-object recovery.
 
 Do not add per-job cleanup route files, parallel implementations or new `GITHUB_OUTPUT` wrappers. Keep one automatic owner per job. A lease reduces overlap; it does not make sequential external effects safe to repeat.
 
@@ -52,6 +52,7 @@ A hold raises `MaintenanceActiveError`; the route returns `503` with the phase, 
 
 | Code  | Condition                                                 | Operator action                         |
 | ----- | --------------------------------------------------------- | --------------------------------------- |
+| `202` | Background execution was admitted; completion is separate | Inspect the core execution and effects  |
 | `200` | The handler reports success                               | Check completion/effect evidence too    |
 | `207` | A job-specific needs-attention result                     | Inspect the result and target policy    |
 | `400` | Malformed `limit` or `windowStart`                        | Fix the caller                          |
@@ -83,7 +84,7 @@ Before deploying this code, an operator must apply the additive columns/indexes 
 
 `netlify/functions/cron-tick.mts` retains the `*/5 * * * *` schedule. Once per tick it reads `ops:active_cron_platform` through Upstash REST and skips dispatch when another platform is selected. An absent key, missing credentials, unreadable response or timeout permits Netlify dispatch. This fail-open preference is not an exactly-once mechanism; verify standby ownership and in-flight work during failback.
 
-`lib/cron/schedule.ts` owns the target roster, cadence, offsets, UTC calendar windows, row limits and HTTP timeouts. `JOB_SCHEDULES` and `scheduleFor()` expose effective metadata; `dueTargets()`, `windowStartFor()` and `targetRequest()` provide pure scheduling helpers. The adapter supplies authentication and dispatches `/api/cleanup/<slug>` requests. Document retention runs hourly at `:35`, requesting at most 100 rows with a 20-second HTTP timeout. The resumable ledger target yields when the due roster reaches the ten-target bound; statutory and settlement work keeps its slots.
+`lib/cron/schedule.ts` owns the target roster, cadence, offsets, UTC calendar windows, row limits and HTTP timeouts. `JOB_SCHEDULES` and `scheduleFor()` expose effective metadata; `dueTargets()`, `windowStartFor()` and `targetRequest()` provide pure scheduling helpers. The adapter supplies authentication and uses the catalog’s background destination for background targets, including `transfer-recordings`; other targets use `/api/cleanup/<slug>`. Document retention runs hourly at `:25`, requesting at most 100 rows with a 20-second HTTP timeout. The resumable ledger target yields when the due roster reaches the ten-target bound; statutory and settlement work keeps its slots.
 
 For targets with a configured cadence, the slot check is:
 

@@ -255,7 +255,7 @@ Those five steps — `auth-tokens`, `expire-stale-collaborator-invites`,
 `purge-unverified-users`, `archive-webhook-events` and `expire-onboarding-drafts` —
 are outside the ticker roster, so Actions is their configured automatic scheduler. They still do not run while org-level Actions usage is blocked; the secret was the
 second blocker, not the only one. `expire-referral-credits` is a windowed ticker target;
-`purge-deleted-documents` runs on the ticker hourly at `:35`, so retention does not depend
+`purge-deleted-documents` runs on the ticker hourly at `:25`, so retention does not depend
 on the blocked Actions fleet.
 
 **3. Take the GST zero-rating evidence gap to a CA.** Buyer-country detection
