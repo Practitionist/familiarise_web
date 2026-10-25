@@ -411,28 +411,31 @@ export async function generateCronReference(root = ROOT): Promise<string> {
     const workflowBounds = workflows
       .filter((step) => matched(step, job) && step.timeout)
       .map((step) => `${step.timeout} min Actions step timeout`);
+    const coreFiles = job.cores.map((core) => core.file);
+    if (schedule?.backgroundFunction)
+      coreFiles.push(`netlify/functions/${schedule.backgroundFunction}.mts`);
+    let requestBounds =
+      workflowBounds.join("; ") || "Core bounds not statically resolved";
+    if (schedule) {
+      const execution = schedule.backgroundFunction
+        ? "; background admission only; 15 min worker ceiling"
+        : "";
+      requestBounds = `limit ${schedule.limit ?? "not sent"}; HTTP abort ${schedule.timeoutMs} ms${execution}`;
+    }
     return [
       code(job.slug),
       calls.length
         ? calls.map(humanize).join("; ")
         : humanize(job.slug) + " (inline registry implementation)",
-      job.cores.length
-        ? job.cores.map((core) => link(core.file)).join("<br>")
+      coreFiles.length
+        ? coreFiles.map((file) => link(file)).join("<br>")
         : link(REGISTRY, job.line),
       scheduleLabel(job),
-      leaseLabel(
-        leases(
-          job.cores.map((core) => core.file),
-          job.job,
-          job.node,
-        ),
-      ),
+      leaseLabel(leases(coreFiles, job.job, job.node)),
       FINANCIAL_JOB_NAMES.has(job.job)
         ? "Blocked OFFLINE and DEGRADED"
         : "Blocked OFFLINE",
-      schedule
-        ? `limit ${schedule.limit ?? "not sent"}; HTTP abort ${schedule.timeoutMs} ms`
-        : workflowBounds.join("; ") || "Core bounds not statically resolved",
+      requestBounds,
     ];
   });
   const missing = workflows.filter(

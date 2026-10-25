@@ -4,7 +4,7 @@
 
 ## Lifecycle
 
-A recording is a `Recording` row hanging off a `Meeting`, which hangs off one `AppointmentOccurrence`. The host starts it by hand after the consent gate. Stream stores the file for 14 days, and the platform keeps it only if `transfer-recordings` copies it into R2 before that copy lapses. That job is not on any running schedule today and runs only when an operator triggers it (see the transfer notes below), so a recording nobody copies within 14 days is lost, and the next `expire-recordings` run marks it `COPY_LAPSED`.
+A recording is a `Recording` row hanging off a `Meeting`, which hangs off one `AppointmentOccurrence`. The host starts it by hand after the consent gate. Stream stores the file for 14 days, and the platform keeps it only if `transfer-recordings` copies it into R2 before that copy lapses. The Netlify ticker dispatches the existing background worker every 15 minutes, with one eligible copy per invocation. A copy that remains blocked or fails through its source deadline is still lost after 14 days; `expire-recordings` marks `COPY_LAPSED` only after confirmed absence under its retention rules. See the transfer notes below for the separate admission, completion and expiry-risk signals.
 
 ```mermaid
 stateDiagram-v2
@@ -82,7 +82,7 @@ failure keeps the admin request `IN_PROGRESS` with HTTP 202; the request can com
 are cleared. These retries preserve removal timestamps. The existing
 `expire-recordings` entry also selects expired rows with asset pointers
 independently of the normal retention deadline, providing a fallback when
-that entry runs. This change does not enable a scheduler.
+that entry runs. The `expire-recordings` fallback remains on the blocked Actions schedule pending the daily lifecycle handoff; recording transfer is independently ticker-owned.
 
 An unpublished attempt whose transfer cleanup fails has no recorded storage
 pointer. That separate orphan-cleanup gap remains open; the erasure claim and
@@ -115,7 +115,8 @@ sequenceDiagram
     PB-->>V: playbackUrl, never stored
 ```
 
-- The transfer job is written for GitHub Actions (budget-blocked, so it runs only on an operator trigger until it moves to the ticker) and is registered in `lib/cron/cleanup-registry.ts`, so the HTTP twin and the back-office runner can dispatch it. A failed copy aborts the multipart upload, leaves the row `READY` (still playable from Stream's link) and retries up to the attempt limit. Exhausted rows are reported to Sentry once per run.
+`transfer-recordings` is configured on the Netlify ticker every 15 minutes (:00/:15/:30/:45 UTC), dispatching `recording-transfer-background.mts`. The six-hour Actions step is removed. The cleanup route and staff run door queue the same worker and return 202 for admission only; successful environment-scoped `SystemJobExecution` completion is the health evidence (45-minute absence budget). The fail-closed 15-minute lease admits one copy at a time. Every claim consumes an attempt, including a later crash; stale reclaim preserves it. Exact claim CAS and attempt-specific R2 keys prevent a late worker from publishing or deleting a newer copy. Remaining READY Stream sources within 72 hours of expiry or with at least three attempts produce one bounded Sentry alarm per invocation. Retryable copy failure leaves READY and retains backoff. See the [background worker runbook](recording-background-worker.md) for deployment evidence and recovery; configured cadence is not proof of deployed progress.
+
 - A host may record a session nobody booked, and a call can produce several recordings (a restarted recording, a dropped and rejoined call, a 2-hour split), so one session can have several `Recording` rows.
 - In a 1:1 session, a participant's decline before the recording's end discards the recording from Stream and expires any row, so no playable copy exists.
 

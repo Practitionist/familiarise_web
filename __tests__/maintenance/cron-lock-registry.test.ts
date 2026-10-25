@@ -25,7 +25,7 @@ jest.mock("../../lib/observability/job-sentry", () => ({
 }));
 
 import fs from "node:fs";
-import { TARGETS } from "@/lib/cron/schedule";
+import { TARGETS, TARGET_BACKGROUND_FUNCTIONS } from "@/lib/cron/schedule";
 import path from "node:path";
 
 import { FINANCIAL_JOB_NAMES } from "../../lib/maintenance-cron";
@@ -238,14 +238,20 @@ function buildRegistry(): Row[] {
     ...workflowTwinCalls(),
   ];
   for (const [workflow, target] of twinCallers) {
-    const entrySrc = twinBlocks.get(target) ?? null;
-    const jobName =
-      entrySrc?.match(/job:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? target;
+    const twinSrc = twinBlocks.get(target) ?? null;
+    const background = Object.entries(TARGET_BACKGROUND_FUNCTIONS).find(
+      ([name]) => name === target,
+    )?.[1];
+    const entrypoint = background
+      ? `netlify/functions/${background}.mts`
+      : `${registryRel}#${target}`;
+    const entryFile = background ? path.join(ROOT, entrypoint) : registryFile;
+    const entrySrc = background ? read(entryFile) : twinSrc;
+    const jobName = twinSrc?.match(/job:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? target;
     if (viaYaml.has(jobName)) continue;
-    const entrypoint = `${registryRel}#${target}`;
     const { lock, lockedIn } = lockFor(
       entrypoint,
-      registryFile,
+      entryFile,
       entrySrc,
       /^(scripts|lib|jobs)\//,
     );

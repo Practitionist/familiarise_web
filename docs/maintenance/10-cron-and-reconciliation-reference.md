@@ -29,8 +29,10 @@ lib/cron/cleanup-route.ts             bearer authentication and maintenance gate
 canonical core module               job-specific lease and bounded work
 
 Actions-owned jobs → existing CLI → the same canonical core where registered
-Admin run door    → explicit mapped canonical core
+Admin run door    → explicit mapped canonical core (recording copies use async admission)
 ```
+
+Recording transfer uses a separate execution path: the same catalog's background destination → authenticated narrow adapter → canonical transfer core. The ticker dispatches every 15 minutes, accepts only 202, and lists that receipt in `accepted`. Cleanup and staff run doors queue that adapter using a server-configured HTTPS origin. They do not claim a successful copy. Only the core's owned successful execution satisfies its 45-minute completion SLO. See the [recording worker runbook](../stream/recording-background-worker.md) for the 72-hour/three-attempt alarm, source classification and orphan-object recovery.
 
 Do not add per-job cleanup route files, parallel implementations or new `GITHUB_OUTPUT` wrappers. Keep one automatic owner per job. A lease reduces overlap; it does not make sequential external effects safe to repeat.
 
