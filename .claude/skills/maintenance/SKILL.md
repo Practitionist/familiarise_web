@@ -53,7 +53,7 @@ without partially expiring its liabilities, and preserve visible backlog on
 errors or deadline truncation. Exhausting only the remaining invocation allowance
 is a deferral, not an envelope error; stop the ordered page for the next run. Its shared 16-second admission budget covers
 only this family; earlier expiry arms and nudge fairness remain separate work.
-Do not describe the entire worker as deadline-bounded or its backlog as drained.
+Do not describe the entire worker as deadline-bounded or its backlog as drained. `unallocatedHasMore` includes retired/foreign-owned obligations needing operator review; it is not a signal to keep automatically driving retries.
 When extracting these phases, retain the same deadline closure and ordered fresh
 payment allowance; keep earlier staged markers available for the delivery phase.
 

@@ -947,7 +947,8 @@ async function stageLegacyUnallocatedRefunds(
   });
 }
 
-async function unallocatedMarkersRemain(
+/** Retained obligations remain visible even when retired or owned by another refund door. */
+async function unallocatedObligationsRemain(
   subscriptionId?: string,
 ): Promise<boolean> {
   const rows = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
@@ -1220,7 +1221,7 @@ export async function expireUnallocatedPaidSubscriptionForOne(
           refunds.failures > 0 ||
           persisted.length > DEFAULT_RUN_LIMITS.maxRequests ||
           pastDeadline() ||
-          (await unallocatedMarkersRemain(subscriptionId)),
+          (await unallocatedObligationsRemain(subscriptionId)),
       };
     },
   );
@@ -1333,7 +1334,7 @@ async function expireUnallocatedPaidSubscriptions(
     refunds.deferred > 0 || refunds.failures > 0 || pastDeadline();
   if (!out.hasMore) {
     try {
-      out.hasMore = await unallocatedMarkersRemain();
+      out.hasMore = await unallocatedObligationsRemain();
     } catch (error) {
       out.errors.push(`Failed to check unallocated refund backlog: ${error}`);
       out.hasMore = true;

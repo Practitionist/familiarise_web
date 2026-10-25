@@ -311,3 +311,24 @@ it("the admin door reads and drives an already-persisted marker without restampi
     }),
   );
 });
+
+it("keeps retained obligations visible without driving or replacing another door's marker", async () => {
+  mockFresh = [];
+  mockLegacy = [];
+  mockDue.clear();
+  mockMarkers.set("foreign", "other-door");
+  mockMarkers.set("retained", "sub-unalloc:retained");
+  const result = await expireStaleRequests({ limits: { maxRequests: 1 } });
+  expect(result).toMatchObject({
+    success: true,
+    unallocatedHasMore: true,
+    refundsIssued: 0,
+  });
+  expect(mockDrive).not.toHaveBeenCalled();
+  expect(mockMarkers).toEqual(
+    new Map([
+      ["foreign", "other-door"],
+      ["retained", "sub-unalloc:retained"],
+    ]),
+  );
+});
