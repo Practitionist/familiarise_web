@@ -621,7 +621,7 @@ A person joining a session never lands on a generic error. The join flow splits 
 | Server 500, 409 `ROOM_NOT_PROVISIONED`, any unrecognised error                              | `unknown`              | "Couldn't join the session" with the error text                                                                                  | Retry button                                                                |
 | The call ends while waiting in the lobby                                                    | Ended panel            | "This room has closed", with Check again and, for the host, Reopen Session Room                                                  | The join route applies the end-reason policy on the check                   |
 
-Provider outages are logged as warnings so the automatic retries stay out of Sentry. The join route returns 503 for an open circuit and for a Stream 5xx or 429, and 500 only for faults that are not the provider's.
+The first `ROOM_NOT_PROVISIONED` refusal for a meeting is only logged, because the client self-heals it by provisioning the room and retrying; a second refusal for the same meeting within two minutes means the room is not coming and is reported at error level through `captureThrottled`. Provider outages are logged as warnings so the automatic retries stay out of Sentry. The join route returns 503 for an open circuit and for a Stream 5xx or 429, and 500 only for faults that are not the provider's.
 
 ---
 
