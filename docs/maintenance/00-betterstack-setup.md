@@ -455,3 +455,70 @@ in addition to the per-job lease race. Never acknowledge all outstanding work as
 healthy merely because another invocation holds the lease.
 
 Execution history records the existing Sentry deployment environment in each completed result. Preview completions in the shared database must not establish production freshness; verify environment configuration as well as completion status.
+
+## Ticker missed-run alerts
+
+The ticker sends a Sentry HTTP check-in after dispatch. Its normal monitor config
+is a five-minute schedule, three-minute check-in margin, three consecutive
+failures before creating an issue and one success to recover. The HTTP integration
+defaults an omitted environment to `production`; inspect accepted check-ins to
+confirm the deployed behavior. The monitor detects ticker absence and reported
+tick failures. `/api/health/jobs` separately detects missing successful worker
+completions; neither establishes that vendor effects or all backlogs are complete.
+
+### Configure the monitor and its notification route
+
+1. Locate the existing `cron-tick` monitor in the project identified by the
+   configured Sentry coordinates. Inspect its status, muted state, schedule,
+   environments and recent check-ins. A disabled monitor rejects check-ins;
+   an unmuted monitor with no alert route cannot establish notification delivery.
+2. Check the organization's active-monitor allowance before enabling it. An
+   active monitor in another project may already consume the included slot.
+   Preserve that project's monitoring; do not create an extra monitor for a drill
+   or change the subscription as part of this procedure.
+3. Enable and unmute the existing monitor through an authenticated operator
+   session or the documented cron-monitor API. A source `monitor_config` upsert
+   configures the schedule; it does not prove the monitor is enabled. A generic
+   metric-monitor API is not a substitute for the cron API.
+4. Connect an enabled alert to this specific cron monitor's source. Filter it to
+   `production`, trigger on its incident events, and route email directly to a
+   verified operator account. Use a 30-minute repeat-notification interval to
+   bound incident noise. The general high-priority issue alert is separate and
+   must not be assumed to cover every missed check-in.
+5. Read the configuration back: verify the connected source is the intended cron
+   monitor, the source and alert are enabled, the environment matches, and the
+   notification action is active with the correct recipient. Keep credentials in
+   protected configuration. Never put tokens, DSNs or signed URLs in evidence.
+
+The Sentry connector may expose alert writes without exposing cron-monitor
+updates. If that operation is unavailable, use the documented API with a valid
+scoped credential or an authenticated operator session. Record an access failure
+as pending work; a saved alert cannot compensate for a disabled monitor.
+
+### Prove a missed-run alert reaches a human
+
+1. Observe an ordinary production check-in accepted by Sentry. Record its time,
+   environment and configured cadence without invoking the production job.
+2. Plan a controlled missed-check-in drill with a named operator. Save the normal
+   monitor configuration and a bounded restoration procedure first. Do not stop
+   production jobs or change the active cron host to manufacture silence.
+3. Exercise a real monitor absence condition, explicitly labeling any temporary
+   expectation change as a drill. Do not send a fabricated application exception
+   or an `error` check-in and call it a missed run. The ticker resubmits its normal
+   monitor configuration on every check-in, so account for that during the drill.
+4. Verify Sentry creates the missed-check-in incident and that the configured
+   operator actually receives its notification. Save sanitized incident/alert
+   links, UTC timestamps and the recipient's confirmation. An incident visible
+   only in Sentry or an alert's `lastTriggered` timestamp is not a delivery receipt.
+5. Restore and read back the normal monitor configuration, then observe the next
+   ordinary production check-in and recovery. Remove any temporary drill
+   environment; an environment that stops checking in continues to miss its
+   schedule. Keep restoration work outstanding if any of these steps fails.
+
+This evidence closes the ticker missed-run gate only. Keep the ingest canary's
+independent email path and the per-capability completion probe: a Sentry outage
+and an individual stopped worker have different detection requirements.
+
+References: [Sentry HTTP check-ins and alert routing](https://docs.sentry.io/product/monitors-and-alerts/monitors/crons/getting-started/http/),
+[cron-monitor update API](https://docs.sentry.io/api/crons/update-a-monitor/),
+and [the independent ingest canary](../observability/sentry/06-ingest-canary.md).

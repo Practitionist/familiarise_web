@@ -113,6 +113,17 @@ For the email map, the pre-launch delivery guard and ops alert routing, see [doc
 
 ## Operational job absence checks
 
+Ticker liveness needs an enabled, unmuted `cron-tick` monitor and an enabled
+notification alert connected to that exact monitor source. Verify the operator
+recipient and production environment; a general high-priority issue rule is not
+delivery proof. Read back both configurations, observe an accepted normal
+check-in, then prove one controlled missed-check-in notification reaches the
+operator and restore the normal configuration. Do not stop production jobs,
+create another paid monitor, or disable another project's monitor for the drill.
+Record unavailable cron-update access as pending; alert-write access alone does
+not enable the cron source. See the ticker missed-run runbook in
+`docs/maintenance/00-betterstack-setup.md`.
+
 `GET /api/health/jobs` is a bearer-protected read-only capability freshness probe.
 It returns 503 for missing/overdue COMPLETED evidence or an unreadable history,
 using `endedAt` and actual core job names. Required capabilities/SLOs live in
