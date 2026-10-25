@@ -22,7 +22,11 @@ import {
 import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { softCancelTrialAppointmentInTx } from "@/lib/trials/cancellation";
-import prisma, { type Tx } from "@/lib/prisma";
+import prisma, {
+  type Tx,
+  ALLOCATION_TX_MAX_WAIT_MS,
+  ALLOCATION_TX_TIMEOUT_MS,
+} from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import {
   assertRemediationCounts,
@@ -601,7 +605,11 @@ export async function freezeAppointments(
         maintenanceEnd.getTime() - maintenanceStart.getTime(),
       );
     },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+      timeout: ALLOCATION_TX_TIMEOUT_MS,
+    },
   );
   const effects = outcome && !outcome.skipped ? outcome : null;
   const result = {

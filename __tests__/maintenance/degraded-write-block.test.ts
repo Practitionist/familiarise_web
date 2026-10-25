@@ -221,6 +221,30 @@ describe("unreadable maintenance state", () => {
     }
   });
 
+  it("permits a plain checkout status poll while keeping capture synchronization fail closed", () => {
+    expect(
+      isFailClosedWhenUnreadable(
+        "/api/checkout/verify",
+        "GET",
+        new URLSearchParams(),
+      ),
+    ).toBe(false);
+    expect(
+      isFailClosedWhenUnreadable(
+        "/api/checkout/verify",
+        "GET",
+        new URLSearchParams("sync=false"),
+      ),
+    ).toBe(false);
+    expect(
+      isFailClosedWhenUnreadable(
+        "/api/checkout/verify",
+        "GET",
+        new URLSearchParams("sync=true"),
+      ),
+    ).toBe(true);
+  });
+
   it("fails closed for non-exempt mutations and permits ordinary reads", () => {
     expect(
       isFailClosedWhenUnreadable("/api/bookings/booking_1/abandon", "POST"),

@@ -12,7 +12,9 @@
 
 ## First deployment prerequisites
 
-Apply the reviewed additive maintenance schema before deploying readers. With an operator holding maintenance changes quiet, read the platform window and Redis phase together. If there is no active platform window and `maintenance:phase` is absent, initialize it to `OFF` without an expiry before enabling the readers. If a window is active, publish its actual phase and configuration instead; never overwrite it with `OFF`. Verify the key has no TTL. Missing or unreadable edge state deliberately blocks writes.
+The release owner applies the exact additive transaction retained on [the SQL preflight](https://github.com/Practitionist/familiarise_web/issues/2308#issuecomment-6394302500), immediately before the maintenance PR merges. Run `check-db-schema-required` and read the relevant catalog entries back; exclude all unrelated drift SQL. This remains a release gate, not an operation performed by the coding agent.
+
+Before deploying fail-closed readers, the same owner holds maintenance changes quiet and reads the durable platform window and Redis phase together. With no active platform window and an absent `maintenance:phase`, initialize `OFF` using `SET ... NX` without an expiry, then read back the value and confirm TTL `-1`. A lost NX race requires re-reading state, never an unconditional overwrite. If a window is active, publish its actual phase and configuration through the maintenance writer instead. Never default missing/unreadable state to OFF in the readers. SQL and Redis remain unapplied until the owner's immediate pre-merge procedure.
 
 ## Bounded booking remediation capacity
 

@@ -263,8 +263,13 @@ export function isWriteBlockedInDegraded(
 export function isFailClosedWhenUnreadable(
   pathname: string,
   method: string,
+  searchParams?: URLSearchParams,
 ): boolean {
-  if (pathname === "/api/checkout/verify" && method.toUpperCase() === "GET")
+  if (
+    pathname === "/api/checkout/verify" &&
+    method.toUpperCase() === "GET" &&
+    searchParams?.get("sync") === "true"
+  )
     return true;
   return (
     !READ_ONLY_METHODS.has(method.toUpperCase()) &&

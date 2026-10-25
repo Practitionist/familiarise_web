@@ -4,6 +4,8 @@ const findOverlap = jest.fn();
 const transaction = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
+  ALLOCATION_TX_MAX_WAIT_MS: 8_000,
+  ALLOCATION_TX_TIMEOUT_MS: 30_000,
   default: {
     appointmentOccurrence: {
       findMany: () => {
@@ -74,6 +76,8 @@ it("reads and rejects oversized worker input inside its serializable transaction
   ).rejects.toThrow("exceeds automatic maintenance remediation capacity");
   expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
     isolationLevel: "Serializable",
+    maxWait: 8_000,
+    timeout: 30_000,
   });
   expect(findSlots).toHaveBeenCalledWith(
     expect.objectContaining({
