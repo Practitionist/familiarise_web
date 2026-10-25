@@ -35,7 +35,7 @@ The real-time collaboration platform integrates six core subsystems across synch
    - PostgreSQL (`PG_POOL_MAX=1`) stores authoritative appointment schedules (`AppointmentOccurrence`), room metadata (`Meeting`), device stay intervals (`MeetingPresence`), user attendance ledgers (`MeetingAttendance`), recording lifecycles (`Recording`), webhook deduplication receipts (`WebhookEvent`), and DPDP revocation queues (`StreamRevocationRetry`).
    - Upstash Redis (`lib/redis.ts`) stores ephemeral session Q&A question payloads (`stage-qa:<callId>:<questionId>`, 6-hour TTL) and rate-limit sliding windows.
 6. **Cloudflare R2 Durable Storage & Background Cron Fleet**:
-   - Scheduled sweeps. Revocation retry, membership reconcile, webhook sweep and control-plane drift run on the Netlify ticker; recording transfer dispatches the existing background adapter every 15 minutes. The remaining session, channel, retention and sync jobs are written for GitHub Actions, which is budget-blocked, so those jobs do not run automatically until their handoff lands (see the [chat and video HLD](../start-here/06-chat-and-video-system-hld.md#10-scheduling-truth)). The sweeps are `transfer-recordings`, `expire-recordings`, `reconcile-orphaned-sessions`, `reconcile-orphaned-recordings`, `expire-event-channels`, `stream-sync`, `wind-down-deactivated-orgs`; they reconcile vendor state against PostgreSQL under `withCronLock`.
+   - Scheduled sweeps. Stream recovery and lifecycle jobs run through the active Netlify ticker. Session recovery runs every 30 minutes; recording transfer queues a background worker every 15 minutes; the five daily lifecycle jobs queue bounded background slices in the 00:00–03:00 UTC window. Their Actions steps are removed. PostgreSQL leases and row ownership fences protect execution; deployment and completed-work evidence remain separate. See the [scheduling map](../start-here/06-chat-and-video-system-hld.md#10-scheduling-truth) and [background sync architecture](./09-background-sync.md).
 
 ```mermaid
 flowchart TB
@@ -230,17 +230,27 @@ Serverless invocations run with a strict 1-connection pool (`PG_POOL_MAX=1`). Ev
 
 All periodic background jobs acquire an exclusive PostgreSQL lease via `withCronLock` (`SystemJobExecution` table) rather than Redis locks:
 
-Every job below except `expire-event-channels` has a `lib/cron/cleanup-registry.ts` entry. Recording transfer is configured on the ticker; its cleanup and staff run doors dispatch the same Netlify background adapter. Other rows still show the blocked Actions schedule. Configuration alone does not verify a published deployment or successful completion.
+Every job below has a `lib/cron/cleanup-registry.ts` entry. Cleanup and staff
+recovery dispatch the same background adapters used by the ticker. HTTP 202 means
+admission only. The shared catalog owns the following UTC schedule; the adapters
+have no independent schedules and currently require Netlify as active cron host.
 
-| Background Job                      | Status today                                                                     | Written schedule                       | Responsibility & Invariant                                                                                                                      |
-| ----------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`reconcile-orphaned-sessions`**   | Not running; operator-triggered only                                             | Every 30 minutes (`:25` and `:55` UTC) | Stamps `Meeting` rows whose end webhook dropped and closes that segment's open `MeetingPresence` intervals (`leftAt = endedAt`, `closedByEnd`). |
-| **`transfer-recordings`**           | Netlify ticker → background adapter; deployment progress requires verification   | Every 15 minutes (:00/:15/:30/:45 UTC) | One copy per run, a fail-closed 15-minute lease, 12-minute copy abort and attempt-fenced publication.                                           |
-| **`reconcile-orphaned-recordings`** | Not running; operator-triggered only                                             | Daily 03:00 UTC batch                  | Polls Stream `listRecordings` for recent sessions (2h–14d) to back-fill any missed `call.recording_ready` webhooks.                             |
-| **`expire-recordings`**             | Not running; operator-triggered only                                             | Daily 03:00 UTC batch                  | Enforces retention rules (1:1/sub +90d, webinar/class +365d, org override), deleting R2 objects while sparing purchased/listed replays.         |
-| **`expire-event-channels`**         | Not running; no `cleanup-registry` entry, so it cannot be run from the Jobs page | Daily 03:00 UTC batch                  | Freezes event channels 7 days post-end and deletes dormant channels 90 days post-end in 100-item chunks (`RATE_LIMIT_DELAY_MS = 10_000`).       |
-| **`stream-sync`**                   | Not running; operator-triggered only                                             | Daily 03:00 UTC batch                  | Reaps orphaned/soft-deleted Stream principals past the 30-day grace window and validates channel rosters.                                       |
-| **`wind-down-deactivated-orgs`**    | Not running; operator-triggered only                                             | Daily 03:00 UTC batch                  | Ends open Stream video calls and freezes channels tagged with `custom.organization_id` when an enterprise tenant is deactivated.                |
+| Job                             | Cadence             | Responsibility                                                                                                  |
+| ------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `reconcile-orphaned-sessions`   | :10/:40 every hour  | Rotate across at most five overdue rooms; CAS the end and close presence in the same transaction.               |
+| `transfer-recordings`           | :00/:15/:30/:45     | One attempt-fenced copy under a fail-closed 15-minute lease and 12-minute copy deadline.                        |
+| `reconcile-orphaned-recordings` | 00:20, 01:20, 02:20 | Up to 25 recent recorded sessions per slice, including partial delivery; persist ID progress.                   |
+| `expire-recordings`             | 00:05, 01:05, 02:05 | Bounded lapsed-source recovery, retention, asset cleanup and transferred-source deletion with separate cursors. |
+| `expire-event-channels`         | 00:55, 01:55, 02:55 | Event/DM freeze and retention deletion requests, with confirmed absence separated from provider failure.        |
+| `stream-sync`                   | 00:50, 01:50, 02:50 | Up to five principal pages; request soft deletion for absent users and hard deletion for erased users.          |
+| `wind-down-deactivated-orgs`    | 00:25, 01:25, 02:25 | End tenant calls, freeze channels, unpublish and claim recordings before deletion; withhold incomplete markers. |
+
+All these cores use fail-closed PostgreSQL leases. Completion health requires
+successful owned executions, with 45-minute transfer, 90-minute session and
+27-hour daily budgets. See [background sync](./09-background-sync.md) for capacity,
+replay and cross-job limits. The recording alarm excludes expired sources and
+conditionally throttles each recording to once per six hours without changing its
+retry timestamp.
 
 ---
 

@@ -1,6 +1,14 @@
 /** Pure schedule catalog shared by runtime dispatch, health checks and operational documentation. */
 
 /** Relative to `/api/cleanup/`. Order is cosmetic — every request fires in parallel. */
+export const STREAM_LIFECYCLE_JOBS = [
+  "expire-recordings",
+  "reconcile-orphaned-recordings",
+  "wind-down-deactivated-orgs",
+  "stream-sync",
+  "expire-event-channels",
+] as const;
+
 export const TARGETS = [
   "sweep-stuck-webhook-events",
   "reconcile-refunds",
@@ -56,6 +64,8 @@ export const TARGETS = [
   "tds-return-draft",
   "stream-control-plane-drift",
   "transfer-recordings",
+  "reconcile-sessions",
+  ...STREAM_LIFECYCLE_JOBS,
 ] as const;
 
 export type Target = (typeof TARGETS)[number];
@@ -63,6 +73,11 @@ export type Target = (typeof TARGETS)[number];
 /** Background targets acknowledge admission; their cores record eventual completion. */
 export const TARGET_BACKGROUND_FUNCTIONS: Partial<Record<Target, string>> = {
   "transfer-recordings": "recording-transfer-background",
+  "expire-recordings": "stream-maintenance-background",
+  "reconcile-orphaned-recordings": "stream-maintenance-background",
+  "wind-down-deactivated-orgs": "stream-maintenance-background",
+  "stream-sync": "stream-maintenance-background",
+  "expire-event-channels": "stream-maintenance-background",
 };
 
 /** The batch size a target gets when it is not listed in {@link TARGET_LIMITS}. */
@@ -116,6 +131,12 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "reconcile-stream-memberships": 50,
   "stream-control-plane-drift": null,
   "transfer-recordings": null,
+  "reconcile-sessions": 5,
+  "expire-recordings": null,
+  "reconcile-orphaned-recordings": null,
+  "wind-down-deactivated-orgs": null,
+  "stream-sync": null,
+  "expire-event-channels": null,
 };
 
 /**
@@ -179,6 +200,12 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-stream-memberships": 60,
   "stream-control-plane-drift": 60,
   "transfer-recordings": 15,
+  "reconcile-sessions": 30,
+  "expire-recordings": 60,
+  "reconcile-orphaned-recordings": 60,
+  "wind-down-deactivated-orgs": 60,
+  "stream-sync": 60,
+  "expire-event-channels": 60,
 };
 
 /**
@@ -242,6 +269,12 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-stream-memberships": 20,
   "stream-control-plane-drift": 15,
   "transfer-recordings": 0,
+  "reconcile-sessions": 10,
+  "expire-recordings": 5,
+  "reconcile-orphaned-recordings": 20,
+  "wind-down-deactivated-orgs": 25,
+  "stream-sync": 50,
+  "expire-event-channels": 55,
 };
 
 /** Regression ceiling for due work, enforced by the calendar test. */
@@ -265,6 +298,11 @@ const DAILY_2330: CalendarWindow = { startMinuteUtc: 1410, windowMinutes: 180 };
 
 /** Every windowed target re-runs on its slots until the window closes; each run is a bounded, claim-based slice. */
 export const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
+  "expire-recordings": { startMinuteUtc: 0, windowMinutes: 180 },
+  "reconcile-orphaned-recordings": { startMinuteUtc: 0, windowMinutes: 180 },
+  "wind-down-deactivated-orgs": { startMinuteUtc: 0, windowMinutes: 180 },
+  "stream-sync": { startMinuteUtc: 0, windowMinutes: 180 },
+  "expire-event-channels": { startMinuteUtc: 0, windowMinutes: 180 },
   "create-payout-batch": {
     weekdayUtc: 1,
     startMinuteUtc: 1200,
@@ -402,6 +440,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "reconcile-ledgers": 20_000,
   "tds-return-draft": 20_000,
   "reconcile-stream-memberships": 24_000,
+  "reconcile-sessions": 24_000,
 };
 
 /**
@@ -415,17 +454,20 @@ export function targetRequest(
 ): { url: string; timeoutMs: number } {
   const limit = name in TARGET_LIMITS ? TARGET_LIMITS[name] : DEFAULT_LIMIT;
   const windowStart = now ? windowStartFor(name, now) : null;
+  const backgroundFunction = TARGET_BACKGROUND_FUNCTIONS[name];
   const query = [
+    backgroundFunction === "stream-maintenance-background"
+      ? `job=${name}`
+      : null,
     limit === null || limit === undefined ? null : `limit=${limit}`,
     windowStart ? `windowStart=${windowStart.toISOString()}` : null,
   ]
     .filter((q): q is string => q !== null)
     .join("&");
   const querySuffix = query ? "?" + query : "";
-  const backgroundFunction = TARGET_BACKGROUND_FUNCTIONS[name];
   return {
     url: backgroundFunction
-      ? `${baseUrl}/.netlify/functions/${backgroundFunction}`
+      ? `${baseUrl}/.netlify/functions/${backgroundFunction}${querySuffix}`
       : `${baseUrl}/api/cleanup/${name}${querySuffix}`,
     timeoutMs: TARGET_TIMEOUTS_MS[name] ?? PER_TARGET_TIMEOUT_MS,
   };

@@ -10,6 +10,7 @@ jest.mock("stream-chat", () => ({
   },
 }));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
+  readJobCheckpoint: jest.fn().mockResolvedValue(null),
   withCronLock: jest.fn(
     async (_job: string, _opts: unknown, fn: () => Promise<unknown>) => fn(),
   ),

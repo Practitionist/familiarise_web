@@ -4,6 +4,8 @@ const mockOrganizations = jest.fn();
 const mockMemberships = jest.fn();
 const mockAudit = jest.fn();
 const mockRecordings = jest.fn();
+const mockClaimRecording = jest.fn();
+const mockActiveTransfer = jest.fn();
 const mockQueryTaggedChannels = jest.fn();
 const mockLoadSurfaces = jest.fn();
 const mockRevokeMember = jest.fn();
@@ -25,7 +27,11 @@ jest.mock("../../lib/prisma", () => ({
     meeting: { findMany: jest.fn().mockResolvedValue([]) },
     webinarPlan: { findMany: jest.fn().mockResolvedValue([]) },
     classPlan: { findMany: jest.fn().mockResolvedValue([]) },
-    recording: { findMany: (...args: unknown[]) => mockRecordings(...args) },
+    recording: {
+      findMany: (...args: unknown[]) => mockRecordings(...args),
+      findFirst: (...args: unknown[]) => mockActiveTransfer(...args),
+      updateManyAndReturn: (...args: unknown[]) => mockClaimRecording(...args),
+    },
   },
 }));
 jest.mock("../../lib/redis", () => ({
@@ -68,12 +74,19 @@ jest.mock("../../lib/stream/batch", () => ({
   pause: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
+  readJobCheckpoint: jest.fn().mockResolvedValue(null),
   withCronLock: (_job: string, _opts: unknown, run: () => Promise<unknown>) =>
     run(),
 }));
 jest.mock("../../lib/stream/recording-storage", () => ({
   deleteRecordingObject: (...args: unknown[]) =>
     mockDeleteRecordingObject(...args),
+}));
+jest.mock("../../lib/stream/recording-retention", () => ({
+  purgeExpiredRecordingAssets: (
+    row: { storagePath: string | null },
+    reporter: unknown,
+  ) => mockDeleteRecordingObject(row.storagePath, reporter),
 }));
 jest.mock("../../lib/supabase-storage-core", () => ({
   removeObjects: jest.fn().mockResolvedValue(true),
@@ -106,6 +119,15 @@ beforeEach(() => {
   mockMemberships.mockResolvedValue([]);
   mockAudit.mockResolvedValue({});
   mockRecordings.mockResolvedValue([]);
+  mockActiveTransfer.mockResolvedValue(null);
+  mockClaimRecording.mockImplementation(async ({ where }) => [
+    {
+      id: where.id,
+      storagePath: where.storagePath,
+      streamCallId: null,
+      streamRecordingId: null,
+    },
+  ]);
   mockDeleteRecordingObject.mockResolvedValue({ success: true });
   mockLoadSurfaces.mockResolvedValue({
     webinarIds: [],
@@ -138,6 +160,7 @@ it("withholds both completion markers on truncation, then progresses when frozen
     expect.anything(),
     org.id,
     { frozen: false },
+    { deadlineMs: expect.any(Number) },
   );
 
   selectFreshOrgs();
@@ -340,4 +363,96 @@ it("preserves billing classification after earlier failures fill the bounded sam
     }),
   );
   expect(mockReportSentryError.mock.calls[0][1].extra.sample).toHaveLength(10);
+});
+
+it("claims EXPIRED before vendor deletion and never admits an active copy", async () => {
+  selectFreshOrgs();
+  mockRecordings.mockResolvedValueOnce([
+    {
+      id: "r",
+      status: "READY",
+      storagePath: "old-key",
+      previewClipStoragePath: null,
+    },
+  ]);
+  const order: string[] = [];
+  mockClaimRecording.mockImplementationOnce(async () => {
+    order.push("claim");
+    return [
+      {
+        id: "r",
+        storagePath: "old-key",
+        streamCallId: null,
+        streamRecordingId: null,
+      },
+    ];
+  });
+  mockDeleteRecordingObject.mockImplementationOnce(async () => {
+    order.push("delete");
+    return { success: true };
+  });
+  expect((await windDownDeactivatedOrgs()).recordingsPurged).toBe(1);
+  expect(order).toEqual(["claim", "delete"]);
+  expect(mockClaimRecording.mock.calls[0][0]).toMatchObject({
+    where: {
+      id: "r",
+      storagePath: "old-key",
+      purchases: { none: {} },
+      status: { in: ["READY", "AVAILABLE", "EXPIRED"] },
+    },
+    data: { status: "EXPIRED" },
+  });
+});
+
+it("performs no vendor deletion after a lost expiry claim and withholds retention completion", async () => {
+  selectFreshOrgs();
+  mockRecordings.mockResolvedValueOnce([
+    {
+      id: "r",
+      status: "READY",
+      storagePath: "old-key",
+      previewClipStoragePath: null,
+    },
+  ]);
+  mockClaimRecording.mockResolvedValueOnce([]);
+  expect((await windDownDeactivatedOrgs()).success).toBe(false);
+  expect(mockDeleteRecordingObject).not.toHaveBeenCalled();
+  expect(
+    mockAudit.mock.calls.some(
+      ([arg]) => arg.data.action === "STREAM_ORG_RETENTION_COMPLETE",
+    ),
+  ).toBe(false);
+});
+
+it("does not certify retention while a recording transfer remains active", async () => {
+  selectFreshOrgs();
+  mockActiveTransfer.mockResolvedValueOnce({ id: "copy-in-flight" });
+  expect((await windDownDeactivatedOrgs()).success).toBe(false);
+  expect(
+    mockAudit.mock.calls.some(
+      ([arg]) => arg.data.action === "STREAM_ORG_RETENTION_COMPLETE",
+    ),
+  ).toBe(false);
+});
+
+it("stops starting channel batches after its run budget and leaves completion unwritten", async () => {
+  let now = Date.now();
+  const clock = jest.spyOn(Date, "now").mockImplementation(() => now);
+  try {
+    selectFreshOrgs();
+    channels = Array.from({ length: 20 }, (_, i) => ({
+      id: `dm-${i}`,
+      type: "messaging",
+      frozen: false,
+    }));
+    mockFreeze.mockImplementationOnce(() => {
+      now += 6 * 60_000;
+    });
+    const result = await windDownDeactivatedOrgs();
+    expect(result.success).toBe(false);
+    expect(mockFreeze).toHaveBeenCalledTimes(10);
+    expect(mockAudit).not.toHaveBeenCalled();
+  } finally {
+    clock.mockRestore();
+  }
 });

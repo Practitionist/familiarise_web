@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server.js";
 import { z } from "zod";
+import { STREAM_LIFECYCLE_JOBS } from "../../lib/cron/schedule";
 import { cleanupRoute } from "../../lib/cron/cleanup-route";
 import {
   initJobSentry,
@@ -7,13 +8,7 @@ import {
 } from "../../lib/observability/job-sentry";
 
 export const config = { background: true };
-const jobSchema = z.enum([
-  "expire-recordings",
-  "reconcile-orphaned-recordings",
-  "wind-down-deactivated-orgs",
-  "stream-sync",
-  "expire-event-channels",
-]);
+const jobSchema = z.enum(STREAM_LIFECYCLE_JOBS);
 
 /** The ticker owns scheduling; this narrow adapter executes one selected Stream core. */
 export default async function streamMaintenance(req: Request): Promise<void> {
@@ -43,7 +38,9 @@ export default async function streamMaintenance(req: Request): Promise<void> {
           case "stream-sync": {
             const { performStreamUserSync } =
               await import("../../scripts/stream/stream-sync");
-            return performStreamUserSync();
+            return performStreamUserSync({
+              dryRun: new URL(req.url).searchParams.get("dry-run") === "true",
+            });
           }
           case "expire-event-channels": {
             const { expireEventChannels } =

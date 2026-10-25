@@ -40,7 +40,6 @@
     "scripts:release-earnings": "npx tsx scripts/earnings/release-earnings.ts",
     "test:race": "npx tsx tests/typescript/race-conditions/master-runner.ts",
     "test:race:parallel": "npx tsx tests/typescript/race-conditions/master-runner.ts parallel",
-    "scripts:stream-sync": "npx tsx jobs/stream/stream-sync.ts",
     "start": "next start",
     "start-watch": "WATCHPACK_POLLING=true next start",
     "test": "jest",

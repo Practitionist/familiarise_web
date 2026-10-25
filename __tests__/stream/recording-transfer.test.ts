@@ -493,6 +493,15 @@ describe("transferRecordings", () => {
       where: {
         status: "READY",
         storageType: "STREAM_S3",
+        streamUrlExpiresAt: { gt: expect.any(Date) },
+        AND: [
+          {
+            OR: [
+              { transferFailureAlertedAt: null },
+              { transferFailureAlertedAt: { lte: expect.any(Date) } },
+            ],
+          },
+        ],
         OR: [
           { streamUrlExpiresAt: { lte: expect.any(Date) } },
           { transferAttempts: { gte: 3 } },
@@ -505,7 +514,38 @@ describe("transferRecordings", () => {
     expect(horizon.getTime() - Date.now()).toBeGreaterThan(
       72 * 60 * 60 * 1000 - 1000,
     );
-    expect(recording.updateMany).not.toHaveBeenCalled();
+    expect(recording.updateMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("conditionally claims each alarm without changing retry time and suppresses a lost claim", async () => {
+    const updatedAt = new Date("2026-10-25T00:00:00Z");
+    const candidates = [{ id: "risk", transferAttempts: 3, updatedAt }];
+    recording.findMany.mockImplementation(async ({ select }) =>
+      select?.lastTransferError ? candidates : [],
+    );
+    await transferRecordings();
+    const claim = dataOf(0);
+    expect(claim.where).toMatchObject({
+      id: "risk",
+      status: "READY",
+      storageType: "STREAM_S3",
+      updatedAt,
+      streamUrlExpiresAt: { gt: expect.any(Date) },
+      OR: [
+        { transferFailureAlertedAt: null },
+        { transferFailureAlertedAt: { lte: expect.any(Date) } },
+      ],
+    });
+    expect(claim.data.updatedAt).toEqual(updatedAt);
+    const stamp =
+      recording.updateMany.mock.calls[0][0].data.transferFailureAlertedAt;
+    const cooldown =
+      recording.updateMany.mock.calls[0][0].where.OR[1].transferFailureAlertedAt
+        .lte;
+    expect(stamp.getTime() - cooldown.getTime()).toBe(6 * 60 * 60 * 1000);
+    recording.updateMany.mockResolvedValueOnce({ count: 0 });
+    await transferRecordings();
+    expect(reportSentryMessage).toHaveBeenCalledTimes(1);
   });
   it("drains 25 obligations across 25 one-copy invocations", async () => {
     (headR2Object as jest.Mock).mockResolvedValue({ contentLength: 100 });
@@ -584,7 +624,8 @@ describe("transferRecordings", () => {
     const result = await transferRecordings();
     expect(result).toMatchObject({ success: false, exhaustedReported: 2 });
     expect(reportSentryMessage).toHaveBeenCalledTimes(1);
-    expect(dataOf(0).where).toMatchObject({ id: { in: ["a", "b"] } });
+    expect(dataOf(0).where).toMatchObject({ id: "a" });
+    expect(dataOf(1).where).toMatchObject({ id: "b" });
   });
 });
 

@@ -28,8 +28,11 @@ beforeAll(async () => {
     ["@/lib/maintenance-edge", { getMaintenanceState: maintenance }],
     ["@/lib/maintenance-cron", { isFinancialJob: () => false }],
     [
-      "@/lib/stream/dispatch-recording-transfer",
-      { dispatchRecordingTransfer: dispatch },
+      "@/lib/cron/dispatch-background",
+      {
+        ...jest.requireActual("@/lib/cron/dispatch-background"),
+        dispatchBackgroundJob: dispatch,
+      },
     ],
     ["@/lib/observability/report", { reportSentryError: diagnostics }],
     ["@/lib/api/after-safe", { scheduleAfter: after }],
@@ -60,7 +63,7 @@ beforeAll(async () => {
     "@/scripts/stream/reconcile-orphaned-recordings",
     "@/lib/stream/recording-retention",
     "@/jobs/stream/expire-event-channels",
-    "@/jobs/meetings/reconcile-orphaned-sessions",
+    "@/lib/meetings/reconcile-orphaned-sessions",
   ];
   for (const name of unselectedModules)
     jest.doMock(name, () => new Proxy({}, { get: () => unexpectedJob }));
@@ -97,7 +100,7 @@ it("records ACCEPTED, never SUCCEEDED, without starting synchronous or after wor
     dispatched: true,
     message: "Queued for processing. Check execution history for completion.",
   });
-  expect(dispatch).toHaveBeenCalledWith();
+  expect(dispatch).toHaveBeenCalledWith("transfer-recordings");
   expect(audit).toHaveBeenCalledTimes(1);
   expect(audit).toHaveBeenCalledWith(
     {},

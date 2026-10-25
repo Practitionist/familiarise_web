@@ -790,249 +790,30 @@ console.log(result);
 
 ## Synchronization
 
-### POST /api/stream/sync/manual
+### POST /api/cleanup/stream-sync
 
-Manually triggers Stream user synchronization (same logic as background job).
+Authenticated with the server cron bearer. Optional `?dry-run=true` queues a
+read-only comparison without provider deletion or cursor advancement. The
+registered handler queues `stream-maintenance-background?job=stream-sync` using
+the configured HTTPS origin and returns 202 for admission. The staff
+`POST /api/admin/system-jobs/run` door accepts `jobId: "stream-sync"` with an
+audited reason and queues the same adapter.
 
-**Location:** `/app/api/stream/sync/manual/route.ts`
+The core processes at most five pages of 100 principals under a fail-closed
+Postgres lease. Completion belongs in `SystemJobExecution`, not the admission
+body. See [background sync](./09-background-sync.md). The former
+`/api/stream/sync/manual` and `/api/stream/sync/background` examples do not name
+current routes; do not use query-string synchronization secrets or the removed
+Actions wrapper.
 
-**Authentication:** Secret-based (query parameter)
+### POST /api/stream/recordings/sync
 
-**Query Parameters:**
-
-- `secret` (required): Must match `STREAM_SYNC_SECRET` environment variable
-
-**Response (Success - 200):**
-
-```typescript
-{
-  message: string,
-  activePrismaUsers: number,
-  totalStreamUsers: number,
-  staleUsersIdentified: number,
-  staleUsersTargetedForDeletion: number,
-  failedDeletionAttempts: Array<{
-    id: string,
-    error: string
-  }>,
-  details: {
-    staleUserIdsAttempted: string[]
-  }
-}
-```
-
-**Response (Error - 401/500):**
-
-```typescript
-{
-  error: string,
-  details?: string
-}
-```
-
-#### Example Request
-
-**Request:**
-
-```bash
-curl -X POST "https://your-domain.com/api/stream/sync/manual?secret=your-sync-secret"
-```
-
-**Request (JavaScript):**
-
-```typescript
-const secret = process.env.STREAM_SYNC_SECRET;
-
-const response = await fetch(`/api/stream/sync/manual?secret=${secret}`, {
-  method: "POST",
-});
-
-const result = await response.json();
-console.log(result);
-```
-
-**Response:**
-
-```json
-{
-  "message": "Stream user synchronization process initiated.",
-  "activePrismaUsers": 1247,
-  "totalStreamUsers": 1270,
-  "staleUsersIdentified": 23,
-  "staleUsersTargetedForDeletion": 22,
-  "failedDeletionAttempts": [
-    {
-      "id": "user-xyz",
-      "error": "User is owner of channel 'room-123'"
-    }
-  ],
-  "details": {
-    "staleUserIdsAttempted": [
-      "deleted-user-1",
-      "deleted-user-2",
-      "test-user-123",
-      "user-xyz"
-    ]
-  }
-}
-```
-
-#### Error Cases
-
-**Unauthorized:**
-
-```json
-{
-  "error": "Unauthorized"
-}
-```
-
-**Internal Error:**
-
-```json
-{
-  "error": "Internal Server Error",
-  "details": "Database connection failed"
-}
-```
-
-#### Differences from Background Sync
-
-**Manual Sync (`/api/stream/sync/manual`):**
-
-- Fetches ALL users at once (not paginated)
-- Faster for small user bases
-- May timeout on large datasets
-- Returns detailed results immediately
-
-**Background Sync (`/api/stream/sync/background`):**
-
-- Uses pagination (100 users per page)
-- Scalable for large user bases
-- More robust error handling
-- Suitable for cron jobs
-
-### POST /api/stream/sync/background
-
-Triggers the paginated background sync process (used by GitHub Actions cron job).
-
-**Location:** `/app/api/stream/sync/background/route.ts`
-
-**Authentication:** Secret-based (query parameter)
-
-**Query Parameters:**
-
-- `secret` (required): Must match `STREAM_SYNC_SECRET` environment variable
-
-**Response (Success - 200):**
-
-```typescript
-{
-  message: string,
-  summary: {
-    totalStreamUsersProcessed: number,
-    totalStaleUsersIdentified: number,
-    totalStaleUsersDeleted: number,
-    totalFailedDeletions: number,
-    failedDeletionDetails: Array<{
-      id: string,
-      error: string
-    }>
-  }
-}
-```
-
-**Response (Error - 401/500):**
-
-```typescript
-{
-  error: string,
-  details?: string
-}
-```
-
-#### Example Request
-
-**Request:**
-
-```bash
-curl -X POST "https://your-domain.com/api/stream/sync/background?secret=your-sync-secret"
-```
-
-**Request (JavaScript):**
-
-```typescript
-const secret = process.env.STREAM_SYNC_SECRET;
-
-const response = await fetch(`/api/stream/sync/background?secret=${secret}`, {
-  method: "POST",
-});
-
-const result = await response.json();
-console.log(result);
-```
-
-**Response:**
-
-```json
-{
-  "message": "Stream user background synchronization triggered and completed.",
-  "summary": {
-    "totalStreamUsersProcessed": 5247,
-    "totalStaleUsersIdentified": 87,
-    "totalStaleUsersDeleted": 85,
-    "totalFailedDeletions": 2,
-    "failedDeletionDetails": [
-      {
-        "id": "user-abc",
-        "error": "User is owner of channel 'consulting-room-xyz'"
-      },
-      {
-        "id": "user-def",
-        "error": "User has active session"
-      }
-    ]
-  }
-}
-```
-
-#### Error Cases
-
-**Unauthorized:**
-
-```json
-{
-  "error": "Unauthorized"
-}
-```
-
-**Internal Error:**
-
-```json
-{
-  "error": "Internal Server Error during background sync via API call",
-  "details": "Stream API timeout"
-}
-```
-
-#### GitHub Actions Integration
-
-**Workflow File:** `/.github/workflows/stream_sync.yml`
-
-```yaml
-- name: Run Stream User Sync Script
-  run: |
-    echo "Running Stream user sync script..."
-    npm run scripts:stream-sync
-```
-
-**The script directly executes `/jobs/stream-sync.ts`, not the API endpoint.**
-
-**API Endpoint Use Case:**
-
-- External cron services (Vercel Cron, AWS EventBridge)
-- Manual triggering from external systems
-- Monitoring/alerting integrations
+This separate, session-authenticated recovery endpoint mirrors recordings for
+the caller's recent sessions. It accepts optional `consultantCursor` and
+`consulteeCursor`, pages 25 meetings per identity, applies request rate limiting,
+and sends no recording-ready notices. It returns rows and per-identity next
+cursors. It does not run the principal-deletion job. Automatic missed-webhook
+recovery belongs to `reconcile-orphaned-recordings` in the daily window.
 
 ---
 

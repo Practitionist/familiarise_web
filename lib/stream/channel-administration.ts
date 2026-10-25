@@ -14,14 +14,21 @@ export async function queryOrgTaggedChannels(
   chat: StreamChat,
   organizationId: string,
   extraFilter?: ChannelFilters,
+  options: { deadlineMs?: number } = {},
 ) {
   const filter: ChannelFilters = {
     ...extraFilter,
     organization_id: { $eq: organizationId },
   };
-  return queryChannelsPaged((opts) =>
-    chat.queryChannels(filter, [{ last_message_at: -1 }], opts),
-  );
+  return queryChannelsPaged((opts) => {
+    if (Date.now() >= (options.deadlineMs ?? Infinity))
+      throw new Error("Channel enumeration time budget exhausted");
+    return chat.queryChannels(filter, [{ last_message_at: -1 }], {
+      ...opts,
+      state: false,
+      watch: false,
+    });
+  });
 }
 
 async function endSingleStreamVideoCall(
@@ -33,6 +40,7 @@ async function endSingleStreamVideoCall(
     errorPrefix: string;
     useCircuitBreaker?: boolean;
     failures?: RunFailureReporter;
+    deadlineMs?: number;
   },
   errors: string[],
 ): Promise<boolean> {
@@ -78,6 +86,7 @@ export async function endActiveStreamVideoCalls(
     errorPrefix: string;
     useCircuitBreaker?: boolean;
     failures?: RunFailureReporter;
+    deadlineMs?: number;
   },
 ): Promise<{ callsEnded: number; errors: string[] }> {
   let callsEnded = 0;
@@ -87,6 +96,10 @@ export async function endActiveStreamVideoCalls(
   try {
     const video = getStreamVideoClient().video;
     for (const call of calls) {
+      if (Date.now() >= (options.deadlineMs ?? Infinity)) {
+        errors.push(`${options.errorPrefix} call slice time budget exhausted`);
+        break;
+      }
       const counted = await endSingleStreamVideoCall(
         video,
         call,

@@ -325,25 +325,57 @@ There is no stated service-level number for how quickly any of these recover. Th
 
 ## 10. Scheduling truth
 
-The active Netlify five-minute ticker dispatches bounded HTTP sweeps and the long-running recording background adapter. The schedule catalog is `lib/cron/schedule.ts`. Remaining operational Actions workflows are budget-blocked; their configured schedules do not establish execution. The table describes repository configuration, not deployment or completed-work evidence.
+`lib/cron/schedule.ts` owns the five-minute ticker's roster, UTC phases, daily
+windows and admission timeouts. Stream's jobs have one automatic owner: the active
+Netlify ticker. Their former GitHub Actions steps and manual dispatch allowlists
+are removed. Other non-money Actions jobs remain budget-blocked. Configuration
+must still be verified on the published deployment.
 
-| Job                                                                                                         | Where it is scheduled today                                                                        | Cadence in code                                                          |
-| :---------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------- |
-| `sweep-stuck-webhook-events`                                                                                | Netlify ticker                                                                                     | Every 15 minutes                                                         |
-| `retry-moderation-enforcement` (drains `StreamRevocationRetry`)                                             | Netlify ticker                                                                                     | Every 30 minutes                                                         |
-| `reconcile-stream-memberships`                                                                              | Netlify ticker                                                                                     | Hourly slices in a 00:00 to 03:00 UTC window                             |
-| `stream-control-plane-drift`                                                                                | Netlify ticker                                                                                     | Daily at 01:15 UTC                                                       |
-| `auto-complete-appointments`, `detect-consultant-no-shows` (the outcome sweep)                              | Netlify ticker                                                                                     | Every 30 minutes                                                         |
-| `transfer-recordings`                                                                                       | Netlify ticker → recording background adapter                                                      | Every 15 minutes, at :00/:15/:30/:45 UTC                                 |
-| `expire-recordings` (retention, and deletion of Stream's copy)                                              | GitHub Actions only (not running)                                                                  | Written as daily in the 03:00 UTC batch                                  |
-| `reconcile-orphaned-recordings`, `reconcile-orphaned-sessions`, `stream-sync`, `wind-down-deactivated-orgs` | GitHub Actions only (not running)                                                                  | Daily 03:00 UTC batch, and every 30 minutes for the orphaned-session job |
-| `expire-event-channels`                                                                                     | GitHub Actions only, and it has no entry in `lib/cron/cleanup-registry.ts`, so it has no HTTP twin | Written as daily in the 03:00 UTC batch                                  |
+| Job                                                               | Configured cadence (UTC) | Execution                                  |
+| ----------------------------------------------------------------- | ------------------------ | ------------------------------------------ |
+| `sweep-stuck-webhook-events`                                      | Every 15 minutes         | Bounded HTTP sweep                         |
+| `retry-moderation-enforcement`                                    | Every 30 minutes         | Revocation retry queue                     |
+| `reconcile-stream-memberships`                                    | 00:20, 01:20, 02:20      | Bounded HTTP sweep                         |
+| `stream-control-plane-drift`                                      | 01:15 daily              | Read-only HTTP check                       |
+| `auto-complete-appointments`, `detect-consultant-no-shows`        | Every 30 minutes         | Outcome sweeps                             |
+| `transfer-recordings`                                             | :00/:15/:30/:45          | Recording background worker; one copy      |
+| `reconcile-orphaned-sessions` (`reconcile-sessions` cleanup slug) | :10/:40                  | At most five rooms; rotating ID checkpoint |
+| `expire-recordings`                                               | 00:05, 01:05, 02:05      | Lifecycle background worker                |
+| `reconcile-orphaned-recordings`                                   | 00:20, 01:20, 02:20      | Lifecycle background worker                |
+| `wind-down-deactivated-orgs`                                      | 00:25, 01:25, 02:25      | Lifecycle background worker                |
+| `stream-sync`                                                     | 00:50, 01:50, 02:50      | Lifecycle background worker                |
+| `expire-event-channels`                                           | 00:55, 01:55, 02:55      | Registered lifecycle background worker     |
 
-Recording transfer has one automatic owner: the ticker. The old six-hour Actions step is removed. Each dispatch accepts only HTTP 202 and appears in the ticker's `accepted` list, separately from completed HTTP targets. The background core admits one copy under a fail-closed 15-minute Postgres lease. Claim-time attempts, exact claim ownership and attempt-specific object keys fence overlapping dispatches, retries and stale workers. The copy aborts after 12 minutes; a stale reclaim preserves its consumed attempt rather than refunding it.
+The week and 400-day calendar tests enforce at most ten targets on every tick,
+including monthly/quarterly collisions. The resumable ledger job retains its
+crowded-slot yield. Existing Stream membership and control-plane coverage stays
+in the roster. Daily windows run bounded slices rather than an unbounded nightly
+fleet. See [background sync](../stream/09-background-sync.md) for limits, progress,
+failure handling and the distinction between slices and complete backlog coverage.
 
-`/api/health/jobs` requires a successful, environment-scoped transfer completion within 45 minutes. Queue admission cannot satisfy this requirement. Each transfer invocation emits at most one recording-risk message for remaining READY Stream sources expiring within 72 hours (including already-lapsed sources) or with at least three attempts. Its sample is bounded to 100 and prioritizes the highest attempts; it is not an exact backlog count. A recent successful slice alone cannot prove backlog capacity. At one copy per invocation the theoretical ceiling is 96 copies/day, before failures, backoff and lease refusals.
+Background dispatch accepts only HTTP 202 and appears in `accepted`, separately
+from completed HTTP targets. Cleanup and staff recovery queue the same adapters.
+The recording core retains a fail-closed 15-minute Postgres lease, a 12-minute
+copy abort, claim-time attempt consumption and attempt-specific R2 keys. Reclaiming
+a stale claim preserves its consumed attempt. All five lifecycle cores also fail
+closed on unavailable ownership. The adapters have no independent schedules.
 
-The remaining S1 work is the half-hour session sweep, daily lifecycle windows, channel-expiry registration/failure diagnosis and their health checks. Their Actions-only status above remains accurate until that separate handoff lands. See the [worker runbook](../stream/recording-background-worker.md) for deployment verification, manual recovery and failed orphan-object cleanup. The cleanup route and staff run door now dispatch the same background worker rather than attempting a 12-minute copy inside a short HTTP request.
+`/api/health/jobs` requires a successful environment-scoped transfer completion
+within 45 minutes, session recovery within 90 minutes, and each daily lifecycle
+capability within 27 hours. Admission cannot satisfy completion health. The risk
+alarm samples at most 100 READY Stream sources with a future expiry that is within
+72 hours or with at least three attempts. Each recording is conditionally claimed
+for an alarm at most once per six hours; expired sources are excluded. Alert
+bookkeeping preserves `updatedAt`, so it does not postpone transfer retry backoff.
+A crash between claim and telemetry can defer that recording's next alert by six
+hours. The sample is not a backlog count; one successful slice cannot prove
+capacity. One copy every 15 minutes has a theoretical ceiling of 96 copies/day.
+
+Current background destinations are Netlify function URLs. Automatic background
+work requires Netlify as the active cron host; switching hosts requires equivalent
+worker adapters. Retain Netlify standby configuration. The [worker runbook](../stream/recording-background-worker.md)
+contains deployment verification and manual orphan-object recovery gates. No
+configuration change proves a real source was copied or authorizes fixture copies.
 
 ## 11. Worked example: one 60-minute session with an extension and a recording
 

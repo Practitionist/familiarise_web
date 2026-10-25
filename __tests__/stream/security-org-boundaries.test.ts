@@ -54,6 +54,7 @@ const mockPrisma = {
     findMany: jest.fn(),
   },
   recording: {
+    findFirst: jest.fn().mockResolvedValue(null),
     findMany: jest.fn(),
   },
   orgAuditLog: {
@@ -113,6 +114,7 @@ jest.mock("../../lib/stream-client", () => ({
 }));
 
 jest.mock("../../lib/cron/with-cron-lock", () => ({
+  readJobCheckpoint: jest.fn().mockResolvedValue(null),
   withCronLock: (_name: string, _opts: unknown, fn: () => unknown) => fn(),
 }));
 

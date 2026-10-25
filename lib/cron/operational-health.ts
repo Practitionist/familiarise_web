@@ -13,6 +13,12 @@ export const OPERATIONAL_COMPLETION_REQUIREMENTS = [
   { jobName: "detect-consultant-no-shows", maxAgeMinutes: 90 },
   { jobName: "support-sla-sweep", maxAgeMinutes: 60 },
   { jobName: "transfer-recordings", maxAgeMinutes: 45 },
+  { jobName: "reconcile-orphaned-sessions", maxAgeMinutes: 90 },
+  { jobName: "expire-recordings", maxAgeMinutes: 27 * 60 },
+  { jobName: "reconcile-orphaned-recordings", maxAgeMinutes: 27 * 60 },
+  { jobName: "wind-down-deactivated-orgs", maxAgeMinutes: 27 * 60 },
+  { jobName: "stream-sync", maxAgeMinutes: 27 * 60 },
+  { jobName: "expire-event-channels", maxAgeMinutes: 27 * 60 },
 ] as const;
 
 export interface JobCompletion {

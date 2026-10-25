@@ -95,7 +95,11 @@ function resolveModule(
   );
 }
 
-function importedCores(initializer: ts.Expression, root: string): Core[] {
+function importedCores(
+  initializer: ts.Node,
+  root: string,
+  from = REGISTRY,
+): Core[] {
   const cores: Core[] = [];
   for (const node of descendants(initializer)) {
     if (!ts.isVariableDeclaration(node) || !node.initializer) continue;
@@ -108,7 +112,7 @@ function importedCores(initializer: ts.Expression, root: string): Core[] {
     )
       continue;
     const spec = text(value.arguments[0]);
-    const target = resolveModule(REGISTRY, spec ?? "", root);
+    const target = resolveModule(from, spec ?? "", root);
     if (
       !target ||
       /^(lib\/(cron|observability)\/|lib\/prisma\.ts$)/.test(target)
@@ -353,7 +357,12 @@ export async function generateCronReference(root = ROOT): Promise<string> {
     const file = `.github/workflows/${name}`;
     return workflowJobs(fs.readFileSync(path.join(root, file), "utf8"), file);
   });
-  function leases(files: string[], name: string, inline?: ts.Node): Lease[] {
+  function leases(
+    files: string[],
+    name: string,
+    inline?: ts.Node,
+    strict = false,
+  ): Lease[] {
     const found = inline
       ? leaseCalls(inline, REGISTRY, constants).filter(
           (lease) => lease.name === name,
@@ -375,7 +384,7 @@ export async function generateCronReference(root = ROOT): Promise<string> {
       const declared = leaseCalls(parsed, file, localConstants);
       const matching = declared.filter((lease) => lease.name === name);
       let local = matching;
-      if (!local.length && declared.length === 1) local = declared;
+      if (!strict && !local.length && declared.length === 1) local = declared;
       found.push(...local);
       if (local.length) return;
       for (const target of importedWorkerFiles(parsed, file, root)) {
@@ -407,13 +416,22 @@ export async function generateCronReference(root = ROOT): Promise<string> {
   }
   const rows = jobs.map((job) => {
     const schedule = JOB_SCHEDULES.find((item) => item.name === job.slug);
-    const calls = [...new Set(job.cores.flatMap((core) => core.calls))];
+    const cores = [...job.cores];
+    const backgroundFile = schedule?.backgroundFunction
+      ? `netlify/functions/${schedule.backgroundFunction}.mts`
+      : null;
+    if (backgroundFile) {
+      for (const clause of descendants(read(backgroundFile))) {
+        if (ts.isCaseClause(clause) && text(clause.expression) === job.job)
+          cores.push(...importedCores(clause, root, backgroundFile));
+      }
+    }
+    const calls = [...new Set(cores.flatMap((core) => core.calls))];
     const workflowBounds = workflows
       .filter((step) => matched(step, job) && step.timeout)
       .map((step) => `${step.timeout} min Actions step timeout`);
-    const coreFiles = job.cores.map((core) => core.file);
-    if (schedule?.backgroundFunction)
-      coreFiles.push(`netlify/functions/${schedule.backgroundFunction}.mts`);
+    const coreFiles = cores.map((core) => core.file);
+    if (backgroundFile) coreFiles.push(backgroundFile);
     let requestBounds =
       workflowBounds.join("; ") || "Core bounds not statically resolved";
     if (schedule) {
@@ -431,7 +449,7 @@ export async function generateCronReference(root = ROOT): Promise<string> {
         ? coreFiles.map((file) => link(file)).join("<br>")
         : link(REGISTRY, job.line),
       scheduleLabel(job),
-      leaseLabel(leases(coreFiles, job.job, job.node)),
+      leaseLabel(leases(coreFiles, job.job, job.node, Boolean(backgroundFile))),
       FINANCIAL_JOB_NAMES.has(job.job)
         ? "Blocked OFFLINE and DEGRADED"
         : "Blocked OFFLINE",

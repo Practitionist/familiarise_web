@@ -1,30 +1,5 @@
-/**
- * Post-event chat channel lifecycle (#1134 P1-17).
- *
- * Nothing ever ended a webinar or class chat. `getWebinarIdsForUser` and
- * `getClassIdsForUser` have no date or status filter, so the reconcile pass
- * could never mark a finished event stale and attendees stayed members forever.
- * Channel count and membership grew without bound on a product billed per MAU,
- * and there was no retention answer for a compliance review.
- *
- * Two stages, decided in #1134:
- *   +7 days after the session ends  → FREEZE. History stays readable, nobody can
- *      post. Long enough for the real follow-up Q&A, which for a class or cohort
- *      is often where the value lands; short enough to bound membership.
- *   +retention days                 → DELETE, hard. Reuses the org's existing
- *      `streamRecordingRetentionDays` dial (default 90) rather than inventing a
- *      second number to explain.
- *
- * Both stages are idempotent: deleting a deleted channel is a no-op, and since
- * 2026-08-23 freezing is LEDGERED — `Webinar.chatFrozenAt` / `Class.chatFrozenAt`
- * records that a channel was frozen, so already-frozen channels are filtered out
- * before any Stream call is made. Before the ledger every daily run re-issued
- * `updatePartial({frozen:true})` for every channel in the 7–90d age band:
- * value-idempotent, but each no-op burned an UpdateChannelPartial call until
- * ~300 of them tripped Stream's per-minute cap (the 2026-08-23 10:36 IST alert)
- * and the resulting 429s opened the circuit breaker and starved the delete stage.
- */
-import "dotenv/config";
+/** Freeze ended event channels and dormant DMs, then request retention deletion. */
+import { z } from "zod";
 
 import prisma from "../../lib/prisma";
 import type { RunFailureReporter } from "../../lib/observability/run-failures";
@@ -51,7 +26,7 @@ import {
   STREAM_BATCH_PAUSE_MS,
   STREAM_CONCURRENCY_LIMIT,
 } from "../../lib/stream/batch";
-import { withCronLock } from "../../lib/cron/with-cron-lock";
+import { readJobCheckpoint, withCronLock } from "../../lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { runJob } from "../../lib/observability/job-sentry";
 import {
@@ -64,7 +39,8 @@ export { DEFAULT_RETENTION_DAYS, FREEZE_AFTER_DAYS };
 
 const MAX_RETENTION_DAYS = 365;
 const LOOKBACK_MARGIN_DAYS = 60;
-const MAX_EVENTS_PER_RUN = 5_000;
+const MAX_EVENTS_PER_RUN = 25;
+const MAX_DM_CHANNELS_PER_RUN = 10;
 
 const PARSED_PACING_MS = Number(process.env.STREAM_FREEZE_PACING_MS);
 const FREEZE_PACING_MS =
@@ -88,6 +64,8 @@ export interface ExpireEventChannelsResult {
   errors: string[];
   success: boolean;
   missingChannels: number;
+  checkpoint: string | null;
+  deferred: number;
 }
 
 interface DmPairRow {
@@ -97,6 +75,8 @@ interface DmPairRow {
   chatFrozenAt: Date | null;
   consultationIds: string[];
   subscriptionIds: string[];
+  organizationId: string | null;
+  inactiveOrganization: boolean;
 }
 
 interface EventRow {
@@ -110,7 +90,9 @@ interface EventRow {
     | { kind: "collab"; id: string };
 }
 
-async function loadEndedEvents(): Promise<EventRow[]> {
+async function loadEndedEvents(
+  after: string | null,
+): Promise<{ events: EventRow[]; after: string | null }> {
   const now = new Date();
   const lookbackFrom = new Date(
     now.getTime() - (MAX_RETENTION_DAYS + LOOKBACK_MARGIN_DAYS) * DAY_MS,
@@ -125,14 +107,16 @@ async function loadEndedEvents(): Promise<EventRow[]> {
   const appointments = await prisma.appointment.findMany({
     where: {
       deletedAt: null,
+      ...(after ? { id: { gt: after } } : {}),
       OR: [{ webinar: { isNot: null } }, { class: { isNot: null } }],
       occurrences: {
         some: { deletedAt: null, endsAt: { lt: now, gte: lookbackFrom } },
       },
     },
     take: MAX_EVENTS_PER_RUN,
-    orderBy: { createdAt: "desc" },
+    orderBy: { id: "asc" },
     select: {
+      id: true,
       webinar: {
         select: {
           id: true,
@@ -184,6 +168,7 @@ async function loadEndedEvents(): Promise<EventRow[]> {
     },
   });
 
+  if (appointments.length === 0 && after) return loadEndedEvents(null);
   const byChannel = new Map<string, EventRow>();
   const collabByPlanKey = new Map<
     string,
@@ -278,21 +263,21 @@ async function loadEndedEvents(): Promise<EventRow[]> {
 
   for (const cand of collabByPlanKey.values()) {
     if (cand.endsAt >= now) continue;
-    const hasFutureOccurrence =
-      prisma.appointmentOccurrence?.findFirst &&
-      (await prisma.appointmentOccurrence.findFirst({
-        where: {
-          deletedAt: null,
-          completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
-          endsAt: { gt: now },
-          appointment:
-            cand.planType === "webinar"
-              ? { deletedAt: null, webinar: { webinarPlanId: cand.planId } }
-              : { deletedAt: null, class: { classPlanId: cand.planId } },
-        },
-        select: { id: true },
-      }));
-    if (hasFutureOccurrence) continue;
+    const latest = await prisma.appointmentOccurrence.findFirst({
+      where: {
+        deletedAt: null,
+        completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+        appointment:
+          cand.planType === "webinar"
+            ? { deletedAt: null, webinar: { webinarPlanId: cand.planId } }
+            : { deletedAt: null, class: { classPlanId: cand.planId } },
+      },
+      orderBy: { endsAt: "desc" },
+      select: { endsAt: true },
+    });
+    // A page is not the plan's lifetime: future-only events must protect its shared channel.
+    if (!latest || latest.endsAt >= now) continue;
+    cand.endsAt = latest.endsAt;
 
     byChannel.set(cand.channelId, {
       channelId: cand.channelId,
@@ -303,7 +288,10 @@ async function loadEndedEvents(): Promise<EventRow[]> {
     });
   }
 
-  return Array.from(byChannel.values()).filter((row) => row.endsAt < now);
+  return {
+    events: Array.from(byChannel.values()).filter((row) => row.endsAt < now),
+    after: appointments.at(-1)?.id ?? null,
+  };
 }
 
 /**
@@ -330,7 +318,7 @@ async function loadDmPairs(): Promise<{
   truncated: boolean;
 }> {
   const now = new Date();
-  const orgRetention = await loadOrgChatRetention();
+  const { retention: orgRetention, inactive } = await loadOrgChatRetention();
 
   // The scan window has to cover the LONGEST retention any org has actually
   // configured, not the constant. `MAX_RETENTION_DAYS` is 365; an org that sets
@@ -443,6 +431,8 @@ async function loadDmPairs(): Promise<{
         chatFrozenAt,
         consultationIds: kind === "consultation" ? [bookingId] : [],
         subscriptionIds: kind === "subscription" ? [bookingId] : [],
+        organizationId: orgId,
+        inactiveOrganization: orgId !== null && inactive.has(orgId),
       });
       return;
     }
@@ -507,11 +497,27 @@ async function loadDmPairs(): Promise<{
  * incomplete-input-drives-a-destructive-decision shape the truncation guard
  * exists to prevent. Two columns across a table with tens of rows.
  */
-async function loadOrgChatRetention(): Promise<Map<string, number>> {
+async function loadOrgChatRetention() {
   const orgs = await prisma.organization.findMany({
-    select: { id: true, chatRetentionDays: true },
+    select: {
+      id: true,
+      chatRetentionDays: true,
+      status: true,
+      deletedAt: true,
+    },
   });
-  return new Map(orgs.map((o) => [o.id, o.chatRetentionDays]));
+  return {
+    retention: new Map(orgs.map((o) => [o.id, o.chatRetentionDays])),
+    inactive: new Set(
+      orgs
+        .filter(
+          (o) =>
+            o.status === "DEACTIVATED" ||
+            (o.deletedAt !== null && o.deletedAt !== undefined),
+        )
+        .map((o) => o.id),
+    ),
+  };
 }
 
 /**
@@ -547,7 +553,7 @@ function classifyDmPairs(
       // which is how the 2026-08-23 burst happened.
       if (pair.chatFrozenAt) alreadyFrozen++;
       else toFreeze.push(pair);
-    } else if (pair.chatFrozenAt) {
+    } else if (pair.chatFrozenAt && !pair.inactiveOrganization) {
       // Active again, and the ledger says we froze them. This is the branch the
       // whole design turns on.
       toUnfreeze.push(pair);
@@ -598,8 +604,19 @@ async function runDmStage(
   freezeBudget: number,
   deletePacing: DeletePacingState,
   streamFailures: RunFailureReporter,
+  progress: { events: string | null; dm: string | null },
 ): Promise<void> {
-  const { pairs, truncated } = await loadDmPairs();
+  const { pairs: allPairs, truncated } = await loadDmPairs();
+  const ordered = allPairs.sort((a, b) =>
+    a.channelId < b.channelId ? -1 : Number(a.channelId > b.channelId),
+  );
+  const after = progress.dm;
+  const tail = after ? ordered.filter((p) => p.channelId > after) : ordered;
+  const pairs = (tail.length ? tail : ordered).slice(
+    0,
+    MAX_DM_CHANNELS_PER_RUN,
+  );
+  result.deferred += allPairs.length - pairs.length;
   if (pairs.length === 0) return;
 
   const { toFreeze, toUnfreeze, toDelete, alreadyFrozen } = classifyDmPairs(
@@ -607,6 +624,7 @@ async function runDmStage(
     Date.now(),
   );
   result.skippedAlreadyFrozen += alreadyFrozen;
+  progress.dm = pairs.at(-1)?.channelId ?? null;
 
   // Unfreeze FIRST, and outside the budget. A frozen channel belonging to an
   // active pair is a live user-facing fault; a dormant pair staying unfrozen
@@ -618,9 +636,7 @@ async function runDmStage(
   const freezeBatch = toFreeze.slice(0, Math.max(freezeBudget, 0));
   await applyDmFrozen(chat, freezeBatch, true, result, streamFailures);
   if (toFreeze.length > freezeBatch.length) {
-    result.errors.push(
-      `dm freeze cap: deferred ${toFreeze.length - freezeBatch.length} channels to the next run`,
-    );
+    result.deferred += toFreeze.length - freezeBatch.length;
   }
 
   // Delete — but NEVER from a page that may be incomplete.
@@ -721,9 +737,36 @@ async function applyDmFrozen(
 
     const consultationIds: string[] = [];
     const subscriptionIds: string[] = [];
+    const orgIds = frozen
+      ? []
+      : batch.flatMap((pair) =>
+          pair.organizationId ? [pair.organizationId] : [],
+        );
+    const inactiveAfter = new Set(
+      orgIds.length
+        ? (
+            await prisma.organization.findMany({
+              where: {
+                id: { in: orgIds },
+                OR: [{ status: "DEACTIVATED" }, { deletedAt: { not: null } }],
+              },
+              select: { id: true },
+            })
+          ).map((org) => org.id)
+        : [],
+    );
+    const refreeze: DmPairRow[] = [];
     outcomes.forEach((outcome, i) => {
       const pair = batch[i];
       if (outcome.status === "fulfilled") {
+        if (
+          !frozen &&
+          pair.organizationId &&
+          inactiveAfter.has(pair.organizationId)
+        ) {
+          refreeze.push(pair);
+          return;
+        }
         if (frozen) result.dmFrozen++;
         else result.dmUnfrozen++;
         consultationIds.push(...pair.consultationIds);
@@ -740,6 +783,9 @@ async function applyDmFrozen(
     });
 
     await writeDmLedger(consultationIds, subscriptionIds, frozen, verb, result);
+    // A concurrent wind-down must win over an unfreeze based on an earlier booking snapshot.
+    if (refreeze.length)
+      await applyDmFrozen(chat, refreeze, true, result, streamFailures);
   }
 }
 
@@ -800,6 +846,7 @@ async function writeDmLedger(
         }),
     ]);
   } catch (err) {
+    result.success = false;
     result.errors.push(
       `dm ${verb} ledger: ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -860,6 +907,8 @@ async function expireEventChannelsUnlocked(
     dmUnfrozen: 0,
     dmDeleteRequests: 0,
     missingChannels: 0,
+    checkpoint: null,
+    deferred: 0,
     errors: [],
     success: true,
   };
@@ -875,7 +924,16 @@ async function expireEventChannelsUnlocked(
   }
 
   const now = Date.now();
-  const events = await loadEndedEvents();
+  const saved = await readJobCheckpoint("expire-event-channels");
+  const progressSchema = z.object({
+    events: z.string().nullable(),
+    dm: z.string().nullable(),
+  });
+  const progress = saved
+    ? progressSchema.parse(JSON.parse(saved))
+    : { events: null, dm: null };
+  const page = await loadEndedEvents(progress.events);
+  const events = page.events;
 
   const toFreeze: EventRow[] = [];
   const toDelete: string[] = [];
@@ -968,15 +1026,14 @@ async function expireEventChannelsUnlocked(
           }),
       ]);
     } catch (err) {
+      result.success = false;
       result.errors.push(
         `ledger stamp: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
   if (toFreeze.length > freezeBatch.length) {
-    result.errors.push(
-      `freeze cap: deferred ${toFreeze.length - freezeBatch.length} channels to the next run`,
-    );
+    result.deferred += toFreeze.length - freezeBatch.length;
   }
 
   // Delete. `deleteChannels` takes cids and caps at 100 per request; it is
@@ -1023,6 +1080,7 @@ async function expireEventChannelsUnlocked(
       MAX_FREEZE_PER_RUN - result.frozen,
       deletePacing,
       streamFailures,
+      progress,
     );
   } catch (error) {
     result.success = false;
@@ -1032,6 +1090,8 @@ async function expireEventChannelsUnlocked(
     streamFailures.add("dm-stage", error);
   }
 
+  progress.events = page.after;
+  result.checkpoint = JSON.stringify(progress);
   console.log(
     JSON.stringify({
       event: "expire_event_channels",

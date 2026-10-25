@@ -258,12 +258,18 @@ async function populateOrgTaggedMemberTargets(
   userId: string,
   targets: Map<string, "team" | "messaging">,
   failures: string[],
+  deadlineMs: number,
 ): Promise<void> {
   try {
     const { channels: taggedChannels, truncated } =
-      await queryOrgTaggedChannels(chat, orgId, {
-        members: { $in: [userId] },
-      });
+      await queryOrgTaggedChannels(
+        chat,
+        orgId,
+        {
+          members: { $in: [userId] },
+        },
+        { deadlineMs },
+      );
     if (truncated) {
       failures.push("queryChannels:truncated");
       streamLogger.warn(
@@ -298,9 +304,14 @@ async function removeMemberFromTargetChannels(
   userId: string,
   targets: Map<string, "team" | "messaging">,
   failures: string[],
+  deadlineMs: number,
 ): Promise<number> {
   let channelsRemoved = 0;
   for (const [cid, type] of targets) {
+    if (Date.now() >= deadlineMs) {
+      failures.push("removeMembers:time-budget");
+      break;
+    }
     try {
       await chat.channel(type, cid).removeMembers([userId]);
       markMembership(cid, userId, false);
@@ -326,6 +337,7 @@ async function removeMemberFromOrgCalls(
   orgId: string,
   userId: string,
   failures: string[],
+  deadlineMs: number,
 ): Promise<void> {
   try {
     const video = getStreamVideoClient().video;
@@ -354,6 +366,10 @@ async function removeMemberFromOrgCalls(
         ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       });
       for (const { meeting } of occurrences) {
+        if (Date.now() >= deadlineMs) {
+          failures.push("removeCallMember:time-budget");
+          return;
+        }
         if (!meeting) continue;
         try {
           await video
@@ -391,8 +407,10 @@ export async function revokeMemberStreamAccess(input: {
   orgId: string;
   failureReporter?: RunFailureReporter;
   revokeTokensIssuedBefore?: Date;
+  deadlineMs?: number;
 }): Promise<RevokeMemberStreamResult> {
   const { userId, orgId } = input;
+  const deadlineMs = input.deadlineMs ?? Infinity;
   if (!isStreamConfigured()) {
     return {
       channelsRemoved: 0,
@@ -454,15 +472,23 @@ export async function revokeMemberStreamAccess(input: {
     targets.set(cid, "messaging");
   }
 
-  await populateOrgTaggedMemberTargets(chat, orgId, userId, targets, failures);
+  await populateOrgTaggedMemberTargets(
+    chat,
+    orgId,
+    userId,
+    targets,
+    failures,
+    deadlineMs,
+  );
   const channelsRemoved = await removeMemberFromTargetChannels(
     chat,
     orgId,
     userId,
     targets,
     failures,
+    deadlineMs,
   );
-  await removeMemberFromOrgCalls(orgId, userId, failures);
+  await removeMemberFromOrgCalls(orgId, userId, failures, deadlineMs);
 
   return {
     channelsRemoved,

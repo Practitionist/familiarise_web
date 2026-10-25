@@ -90,6 +90,7 @@ jest.mock("../../lib/stream-client", () => ({
 }));
 
 jest.mock("../../lib/cron/with-cron-lock", () => ({
+  readJobCheckpoint: jest.fn().mockResolvedValue(null),
   withCronLock: (_n: string, _o: unknown, fn: () => unknown) => fn(),
 }));
 
@@ -106,6 +107,7 @@ jest.mock("@sentry/nextjs", () => ({
 jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 
 import * as Sentry from "@sentry/nextjs";
+import { readJobCheckpoint } from "../../lib/cron/with-cron-lock";
 import { expireEventChannels } from "../../jobs/stream/expire-event-channels";
 import { getDmChannelId } from "../../lib/stream-utils";
 
@@ -141,6 +143,7 @@ function consultation(
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(readJobCheckpoint).mockResolvedValue(null);
   mockConsultationFindMany.mockResolvedValue([]);
   mockSubscriptionFindMany.mockResolvedValue([]);
   mockOrganizationFindMany.mockResolvedValue([]);
@@ -438,4 +441,69 @@ describe("channel expiry provider outcomes", () => {
       );
     },
   );
+});
+
+it("does not lift the freeze of a deactivated organization", async () => {
+  mockOrganizationFindMany.mockResolvedValue([
+    {
+      id: "org-1",
+      chatRetentionDays: 365,
+      status: "DEACTIVATED",
+      deletedAt: null,
+    },
+  ]);
+  mockConsultationFindMany.mockResolvedValue([
+    consultation("c", 3, daysAgo(100), "org-1"),
+  ]);
+  expect((await expireEventChannels()).dmUnfrozen).toBe(0);
+  expect(mockUpdatePartial).not.toHaveBeenCalled();
+});
+
+it("re-freezes instead of clearing the ledger when wind-down commits during unfreeze", async () => {
+  mockOrganizationFindMany
+    .mockResolvedValueOnce([
+      {
+        id: "org-1",
+        chatRetentionDays: 365,
+        status: "ACTIVE",
+        deletedAt: null,
+      },
+    ])
+    .mockResolvedValueOnce([{ id: "org-1" }]);
+  mockConsultationFindMany.mockResolvedValue([
+    consultation("c", 3, daysAgo(100), "org-1"),
+  ]);
+  const result = await expireEventChannels();
+  expect(result).toMatchObject({ success: true, dmUnfrozen: 0, dmFrozen: 1 });
+  expect(mockUpdatePartial.mock.calls.map(([arg]) => arg.set.frozen)).toEqual([
+    false,
+    true,
+  ]);
+  expect(
+    mockConsultationUpdateMany.mock.calls.every(
+      ([arg]) => arg.data.chatFrozenAt !== null,
+    ),
+  ).toBe(true);
+});
+
+it("pages mixed-case channel identities in code-unit order without losing the tail", async () => {
+  const ids = [
+    ...Array.from({ length: 12 }, (_, i) => `a${i}`),
+    ...Array.from({ length: 12 }, (_, i) => `Z${i}`),
+  ];
+  mockConsultationFindMany.mockResolvedValue(
+    ids.map((id) => {
+      const row = consultation(id, 120);
+      row.consultationPlan.consultantProfile.user.id = id;
+      return row;
+    }),
+  );
+  let total = 0;
+  for (let run = 0; run < 3; run++) {
+    const result = await expireEventChannels();
+    total += result.dmFrozen;
+    jest.mocked(readJobCheckpoint).mockResolvedValue(result.checkpoint);
+  }
+  expect(total).toBe(24);
+  expect(new Set(mockChannel.mock.calls.map((call) => call[1])).size).toBe(24);
 });

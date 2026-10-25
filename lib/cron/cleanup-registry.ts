@@ -428,22 +428,30 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to expire contracts",
       }),
 
+    // @cleanup-twin expire-event-channels
+    "expire-event-channels": () =>
+      cleanupRoute({
+        job: "expire-event-channels",
+        run: async () => {
+          const { dispatchBackgroundJob } =
+            await import("@/lib/cron/dispatch-background");
+          return dispatchBackgroundJob("expire-event-channels");
+        },
+        status: () => 202,
+        failureMessage: "Stream lifecycle dispatch failed",
+      }),
+
     // @cleanup-twin expire-recordings
     "expire-recordings": () =>
       cleanupRoute({
         job: "expire-recordings",
-        run: async (req) => {
-          const { expireRecordings } =
-            await import("@/lib/stream/recording-retention");
-          return expireRecordings({ limit: parseLimitParam(req) });
+        run: async () => {
+          const { dispatchBackgroundJob } =
+            await import("@/lib/cron/dispatch-background");
+          return dispatchBackgroundJob("expire-recordings");
         },
-        summarize: (r) => ({
-          scanned: r.scanned,
-          expired: r.expired,
-          failed: r.failed,
-        }),
-        status: (r) => statusFor(r),
-        failureMessage: "Recording retention sweep failed",
+        status: () => 202,
+        failureMessage: "Stream lifecycle dispatch failed",
       }),
 
     // @cleanup-twin expire-onboarding-drafts
@@ -960,25 +968,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "reconcile-orphaned-recordings",
         run: async () => {
-          const { reconcileOrphanedRecordings } =
-            await import("@/scripts/stream/reconcile-orphaned-recordings");
-          return reconcileOrphanedRecordings();
+          const { dispatchBackgroundJob } =
+            await import("@/lib/cron/dispatch-background");
+          return dispatchBackgroundJob("reconcile-orphaned-recordings");
         },
-        summarize: (r) => ({
-          scanned: r.scanned,
-          recovered: r.recovered,
-          stillMissing: r.stillMissing,
-          unrecoverable: r.unrecoverable,
-          partialScanned: r.partialScanned,
-          partialRecovered: r.partialRecovered,
-          errors: r.errors.slice(0, 5),
-        }),
-        status: (r) =>
-          statusFor(
-            r,
-            r.recovered > 0 || r.partialRecovered > 0 || r.unrecoverable > 0,
-          ),
-        failureMessage: "Failed to reconcile orphaned recordings",
+        status: () => 202,
+        failureMessage: "Stream lifecycle dispatch failed",
       }),
 
     // @cleanup-twin reconcile-payment-status
@@ -1348,21 +1343,14 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "stream-sync",
         run: async (req) => {
-          const { performStreamUserSync } =
-            await import("@/scripts/stream/stream-sync");
-          const dryRun = req.nextUrl.searchParams.get("dry-run") === "true";
-          if (dryRun) {
-            console.log("Stream user sync: DRY RUN");
-          }
-          return performStreamUserSync({ dryRun });
+          const { dispatchBackgroundJob } =
+            await import("@/lib/cron/dispatch-background");
+          return dispatchBackgroundJob("stream-sync", {
+            dryRun: req.nextUrl.searchParams.get("dry-run") === "true",
+          });
         },
-        summarize: (r) => ({
-          usersProcessed: r.totalStreamUsersProcessed,
-          staleIdentified: r.totalStaleUsersIdentified,
-          usersDeleted: r.totalStaleUsersDeleted,
-          failedDeletions: r.totalFailedDeletions,
-        }),
-        failureMessage: "Failed to sync Stream users",
+        status: () => 202,
+        failureMessage: "Stream lifecycle dispatch failed",
       }),
 
     // @cleanup-twin support-sla-sweep
@@ -1541,9 +1529,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         job: "transfer-recordings",
         run: async (req) => {
           parseLimitParam(req);
-          const { dispatchRecordingTransfer } =
-            await import("@/lib/stream/dispatch-recording-transfer");
-          return dispatchRecordingTransfer();
+          const { dispatchBackgroundJob } =
+            await import("@/lib/cron/dispatch-background");
+          return dispatchBackgroundJob("transfer-recordings");
         },
         status: () => 202,
         failureMessage: "Recording copy sweep failed",
@@ -1590,21 +1578,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "wind-down-deactivated-orgs",
         run: async () => {
-          const { windDownDeactivatedOrgs } =
-            await import("@/jobs/stream/wind-down-deactivated-orgs");
-          return windDownDeactivatedOrgs();
+          const { dispatchBackgroundJob } =
+            await import("@/lib/cron/dispatch-background");
+          return dispatchBackgroundJob("wind-down-deactivated-orgs");
         },
-        summarize: (r) => ({
-          orgsScanned: r.orgsScanned,
-          callsEnded: r.callsEnded,
-          eventChannelsFrozen: r.eventChannelsFrozen,
-          dmChannelsFrozen: r.dmChannelsFrozen,
-          tokensRevoked: r.tokensRevoked,
-          recordingsUnpublished: r.recordingsUnpublished,
-          recordingsPurged: r.recordingsPurged,
-          removedMembersDrained: r.removedMembersDrained,
-        }),
-        failureMessage: "Failed to wind down deactivated organizations",
+        status: () => 202,
+        failureMessage: "Stream lifecycle dispatch failed",
       }),
   };
 
