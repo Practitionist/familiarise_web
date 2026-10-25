@@ -7,7 +7,7 @@ import { StateStore } from "stream-chat";
 
 type FakeComposer = ReturnType<typeof makeComposer>;
 
-function makeComposer(cid: string) {
+function makeComposer(cid: string, userID: string | undefined = "user-a") {
   const state = new StateStore({ text: "" });
   const textComposer = {
     state,
@@ -17,7 +17,7 @@ function makeComposer(cid: string) {
     setText: (text: string) => state.partialNext({ text }),
   };
   return {
-    channel: { cid },
+    channel: { cid, getClient: () => ({ userID }) },
     editedMessage: null as { id: string } | null,
     textComposer,
   };
@@ -29,6 +29,7 @@ jest.mock("stream-chat-react", () => ({
 }));
 
 import { ComposerDraftPersistence } from "@/components/chat/ComposerDraftPersistence";
+import { disconnectStreamClients } from "@/lib/stream/disconnect";
 
 beforeEach(() => {
   window.sessionStorage.clear();
@@ -58,6 +59,29 @@ describe("ComposerDraftPersistence", () => {
     render(<ComposerDraftPersistence />);
 
     expect(composer.textComposer.text).toBe("");
+  });
+
+  it("never restores another user's draft on the same channel", () => {
+    const first = render(<ComposerDraftPersistence />);
+    composer.textComposer.setText("user-a private draft");
+    first.unmount();
+
+    composer = makeComposer("messaging:dm-1", "user-b");
+    render(<ComposerDraftPersistence />);
+
+    expect(composer.textComposer.text).toBe("");
+  });
+
+  it("removes every draft on sign-out and keeps unrelated keys", async () => {
+    const first = render(<ComposerDraftPersistence />);
+    composer.textComposer.setText("unsent");
+    first.unmount();
+    window.sessionStorage.setItem("unrelated", "kept");
+
+    await disconnectStreamClients();
+
+    expect(window.sessionStorage.getItem("unrelated")).toBe("kept");
+    expect(window.sessionStorage.length).toBe(1);
   });
 
   it("drops the draft once the composer is emptied by a send", () => {
