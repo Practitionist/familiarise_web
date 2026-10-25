@@ -205,6 +205,12 @@ Postgres decides who may be in a channel, and Stream obeys. Revocation is theref
 
 ## Organisation wind-down completion
 
+The ticker queues this background core at 03:55, 04:55 and 05:55 UTC. Each slice
+rotates across at most two organizations and ten removed memberships using
+separate persisted ID bounds. Related database scans select at most 5,001 rows
+and withhold completion when truncated; vendor loops share a five-minute start
+budget. These bounds do not establish complete vendor discovery.
+
 `wind-down-deactivated-orgs` records `STREAM_ORG_WOUND_DOWN` only after the
 organisation's call/channel work completes without errors. The tagged-channel
 query uses `frozen: false`; a truncated vendor page is unfinished work, even if
@@ -228,7 +234,13 @@ prefix leaves the `frozen: false` query, so a retry can reach its tail. This is 
 general continuation: an unchanged prefix of non-messaging channels or persistent
 failures can keep hiding that tail. Those workloads remain unsupported until a
 reviewed bounded progress repair exists. Existing completion markers are not
-re-audited or backfilled by this change.
+re-audited or backfilled by this change. Organization/member cursors do not
+provide per-channel continuation through a permanently unchanged vendor prefix.
+
+Recording purge claims EXPIRED with status, pointer and purchase guards before
+vendor deletion, then uses the shared asset-cleanup implementation. A lost claim,
+active transfer, full ten-recording purge slice or failed pointer cleanup prevents
+retention completion. Failed known pointers remain available to later cleanup.
 
 The 100-organisation and 250-removed-member outer caps do not bound their related
 surface, recording or vendor work. Keep the current scheduling owner and require a

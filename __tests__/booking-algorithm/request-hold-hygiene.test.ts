@@ -42,6 +42,7 @@ jest.mock("../../lib/prisma", () => {
   };
   // The payment-pending arm now expires each request in its own transaction.
   db.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(db));
+  db.$queryRaw = jest.fn().mockResolvedValue([]);
   return { __esModule: true, default: db };
 });
 

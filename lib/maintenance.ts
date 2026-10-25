@@ -3,21 +3,16 @@
  */
 
 import { MaintenancePhase } from "@prisma/client";
+import {
+  notifyMaintenanceEnded,
+  notifyMaintenanceScheduled,
+} from "@/lib/novu/service";
 
 import prisma from "@/lib/prisma";
-import redis, { withCircuitBreaker } from "@/lib/redis";
+import redis from "@/lib/redis";
+import { recordOpsAction } from "@/lib/backoffice/ops-action-log";
 import { REDIS_KEYS } from "@/lib/maintenance-keys";
-import {
-  invalidateMaintenancePhaseCache,
-  readMaintenancePhase,
-  resetMaintenancePhaseCacheForTesting,
-} from "@/lib/maintenance-cron";
-
-export {
-  invalidateMaintenancePhaseCache,
-  readMaintenancePhase,
-  resetMaintenancePhaseCacheForTesting,
-};
+import { invalidateMaintenancePhaseCache } from "@/lib/maintenance-cron";
 
 export interface MaintenanceState {
   phase: MaintenancePhase;
@@ -25,6 +20,7 @@ export interface MaintenanceState {
   estimatedEnd: string | null;
   bypassSecret: string | null;
   betterstackIncidentId: string | null;
+  offlineActivatedAt: string | null;
 }
 
 const OFF_STATE: MaintenanceState = {
@@ -33,85 +29,24 @@ const OFF_STATE: MaintenanceState = {
   estimatedEnd: null,
   bypassSecret: null,
   betterstackIncidentId: null,
+  offlineActivatedAt: null,
 };
 
-/** Upper bound on the Redis key TTL; a window with no planned end expires after this. */
-const MAINTENANCE_KEY_TTL_SECONDS = 24 * 60 * 60;
-/** How long past its planned end an untended window stays up before the keys expire. */
-const MAINTENANCE_GRACE_MS = 60 * 60 * 1000;
-
-/** TTL capped at the planned end plus grace; null once that deadline has passed. */
-function maintenanceKeyTtlSeconds(
-  estimatedEnd: Date | null | undefined,
-  now: number,
-): number | null {
-  if (!estimatedEnd) return MAINTENANCE_KEY_TTL_SECONDS;
-  const remainingMs = estimatedEnd.getTime() + MAINTENANCE_GRACE_MS - now;
-  if (remainingMs <= 0) return null;
-  return Math.min(MAINTENANCE_KEY_TTL_SECONDS, Math.ceil(remainingMs / 1000));
-}
-
-/**
- * The DB row is the source of truth: Redis keys are re-armed only while the
- * platform window is open and its planned end plus grace is still ahead.
- */
-async function refreshMaintenanceKeysFromWindow(): Promise<void> {
+/** The database owns the window; ETA is informational and never reopens traffic. */
+export async function getMaintenanceState(): Promise<MaintenanceState> {
   const row = await prisma.maintenanceWindow.findFirst({
     where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
     orderBy: { createdAt: "desc" },
-    select: { estimatedEnd: true },
   });
-  if (!row?.estimatedEnd) return;
-  const ttlSeconds = maintenanceKeyTtlSeconds(row.estimatedEnd, Date.now());
-  if (ttlSeconds === null) return;
-  await Promise.all([
-    redis.pexpire(REDIS_KEYS.PHASE, ttlSeconds * 1000),
-    redis.pexpire(REDIS_KEYS.CONFIG, ttlSeconds * 1000),
-  ]);
-}
-
-/**
- * Read current maintenance state directly from Redis (uncached on entry so
- * cross-instance admin/money-gate reads never observe a stale 60s cached OFF).
- * Fail-open: returns OFF if Redis is unreachable.
- */
-export async function getMaintenanceState(): Promise<MaintenanceState> {
-  return withCircuitBreaker(
-    async () => {
-      const phase = await readMaintenancePhase("maintenance", {
-        bypassCache: true,
-      });
-      if (!phase || phase === "OFF") return OFF_STATE;
-
-      // A failed refresh must not turn an active window into OFF_STATE.
-      await refreshMaintenanceKeysFromWindow().catch((error: unknown) => {
-        console.warn(
-          "[maintenance] TTL refresh failed:",
-          error instanceof Error ? error.message : String(error),
-        );
-      });
-
-      const configRaw = await redis.get<string>(REDIS_KEYS.CONFIG);
-      let config: Partial<MaintenanceState> = {};
-      if (configRaw) {
-        try {
-          config =
-            typeof configRaw === "string" ? JSON.parse(configRaw) : configRaw;
-        } catch {
-          // Malformed config — treat as no config
-        }
-      }
-
-      return {
-        phase: phase as MaintenancePhase,
-        reason: config.reason ?? null,
-        estimatedEnd: config.estimatedEnd ?? null,
-        bypassSecret: config.bypassSecret ?? null,
-        betterstackIncidentId: config.betterstackIncidentId ?? null,
-      };
-    },
-    () => OFF_STATE,
-  );
+  if (!row) return OFF_STATE;
+  return {
+    phase: row.phase,
+    reason: row.reason,
+    estimatedEnd: row.estimatedEnd?.toISOString() ?? null,
+    bypassSecret: row.bypassSecret,
+    betterstackIncidentId: row.betterstackIncidentId,
+    offlineActivatedAt: row.offlineActivatedAt?.toISOString() ?? null,
+  };
 }
 
 /**
@@ -125,26 +60,22 @@ export async function setMaintenanceState(
     bypassSecret?: string;
     startedBy?: string;
     endedBy?: string;
-    betterstackIncidentId?: string;
+    betterstackIncidentId?: string | null;
+    auditReason?: string;
   } = {},
 ): Promise<void> {
   const estimatedEndDate =
     config.estimatedEnd && !isNaN(new Date(config.estimatedEnd).getTime())
       ? new Date(config.estimatedEnd)
       : undefined;
-  // A planned end already past its grace still gets one grace period to be tended.
-  const ttlSeconds =
-    phase === MaintenancePhase.OFF
-      ? MAINTENANCE_KEY_TTL_SECONDS
-      : (maintenanceKeyTtlSeconds(estimatedEndDate, Date.now()) ??
-        MAINTENANCE_GRACE_MS / 1000);
-
-  await prisma.$transaction(async (tx) => {
+  const window = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('platform-maintenance'))`;
     const activeWindow = await tx.maintenanceWindow.findFirst({
       where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
       orderBy: { createdAt: "desc" },
     });
 
+    let row = activeWindow;
     if (phase === MaintenancePhase.OFF) {
       await tx.maintenanceWindow.updateMany({
         where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
@@ -155,16 +86,18 @@ export async function setMaintenanceState(
         },
       });
     } else if (activeWindow) {
-      await tx.maintenanceWindow.update({
+      row = await tx.maintenanceWindow.update({
         where: { id: activeWindow.id },
         data: {
           phase,
           reason: config.reason,
           estimatedEnd: estimatedEndDate,
+          betterstackIncidentId: config.betterstackIncidentId,
+          ...(phase !== "OFFLINE" ? { offlineActivatedAt: null } : {}),
         },
       });
     } else {
-      await tx.maintenanceWindow.create({
+      row = await tx.maintenanceWindow.create({
         data: {
           phase,
           reason: config.reason,
@@ -172,25 +105,61 @@ export async function setMaintenanceState(
           startedBy: config.startedBy,
           estimatedEnd: estimatedEndDate,
           bypassSecret: config.bypassSecret,
+          betterstackIncidentId: config.betterstackIncidentId,
         },
       });
     }
+    if (phase === MaintenancePhase.OFF && activeWindow) {
+      await notifyMaintenanceEnded(
+        { phase: "OFF", reason: "Maintenance completed" },
+        {
+          tx,
+          deferAttempt: true,
+          dedupeKey: `maintenance-ended:${activeWindow.id}`,
+        },
+      );
+    } else if (phase !== MaintenancePhase.OFF && !activeWindow && row) {
+      await notifyMaintenanceScheduled(
+        {
+          phase,
+          ...(config.reason ? { reason: config.reason } : {}),
+          ...(config.estimatedEnd ? { estimatedEnd: config.estimatedEnd } : {}),
+        },
+        {
+          tx,
+          deferAttempt: true,
+          dedupeKey: `maintenance-scheduled:${row.id}`,
+        },
+      );
+    }
+    const actor = config.startedBy ?? config.endedBy;
+    if (actor && row) {
+      await recordOpsAction(tx, {
+        actorUserId: actor,
+        actorRole: "ADMIN",
+        surface: "maintenance.manage",
+        action: "maintenance.transition",
+        targetKind: "MaintenanceWindow",
+        targetId: row.id,
+        reason: config.auditReason ?? config.reason ?? "Maintenance recovery",
+        before: { phase: activeWindow?.phase ?? "OFF" },
+        after: { phase },
+      });
+    }
+    return row;
   });
 
   try {
-    await Promise.all([
-      redis.set(REDIS_KEYS.PHASE, phase, { ex: ttlSeconds }),
-      redis.set(
-        REDIS_KEYS.CONFIG,
-        JSON.stringify({
-          reason: config.reason ?? null,
-          estimatedEnd: config.estimatedEnd ?? null,
-          bypassSecret: config.bypassSecret ?? null,
-          betterstackIncidentId: config.betterstackIncidentId ?? null,
-        }),
-        { ex: ttlSeconds },
-      ),
-    ]);
+    await redis.set(
+      REDIS_KEYS.CONFIG,
+      JSON.stringify({
+        reason: window?.reason ?? null,
+        estimatedEnd: window?.estimatedEnd?.toISOString() ?? null,
+        bypassSecret: window?.bypassSecret ?? null,
+        betterstackIncidentId: window?.betterstackIncidentId ?? null,
+      }),
+    );
+    await redis.set(REDIS_KEYS.PHASE, phase);
   } finally {
     invalidateMaintenancePhaseCache();
   }

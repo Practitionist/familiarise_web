@@ -10,6 +10,7 @@
  * somebody else's register.
  */
 
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({
   __esModule: true,
   captureException: jest.fn(),

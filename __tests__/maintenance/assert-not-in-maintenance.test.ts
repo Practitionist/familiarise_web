@@ -10,8 +10,7 @@
  * phase rule and surface it as a 503-carrying error.
  *
  * These cases pin that rule: OFFLINE stops every job, DEGRADED stops only the
- * jobs on FINANCIAL_JOB_NAMES, and an unreachable Redis fails open so a Redis
- * outage never becomes a cleanup outage.
+ * jobs on FINANCIAL_JOB_NAMES, and unreadable state refuses mutation.
  */
 
 const mockGet = jest.fn();
@@ -38,6 +37,7 @@ jest.mock("../../lib/observability/job-sentry", () => ({
 import {
   assertNotInMaintenance,
   MaintenanceActiveError,
+  MaintenanceUnavailableError,
   FINANCIAL_JOB_NAMES,
   resetMaintenancePhaseCacheForTesting,
 } from "../../lib/maintenance-cron";
@@ -91,7 +91,7 @@ describe("assertNotInMaintenance", () => {
   });
 
   it("lets every job through when maintenance is off", async () => {
-    for (const phase of [null, "OFF"]) {
+    for (const phase of ["OFF"]) {
       mockGet.mockResolvedValue(phase);
       await expect(
         assertNotInMaintenance(FINANCIAL_JOB),
@@ -100,24 +100,20 @@ describe("assertNotInMaintenance", () => {
     }
   });
 
-  it("fails open when the Redis probe throws", async () => {
+  it("fails closed when the Redis probe throws", async () => {
     mockGet.mockRejectedValue(new Error("upstash unreachable"));
 
-    await expect(
-      assertNotInMaintenance(FINANCIAL_JOB),
-    ).resolves.toBeUndefined();
+    await expect(assertNotInMaintenance(FINANCIAL_JOB)).rejects.toBeInstanceOf(
+      MaintenanceUnavailableError,
+    );
   });
 
-  // #1822 Q-5 — the env-var presence check used to live in this module and
-  // skip the read entirely when unset; that responsibility now lives in
-  // lib/redis.ts's own module-level guard (it throws at import instead), so
-  // this only re-pins that a null/no-record phase still fails open.
-  it("fails open when the shared client has no phase recorded", async () => {
+  it("fails closed when no explicit phase is recorded", async () => {
     mockGet.mockResolvedValue(null);
 
-    await expect(
-      assertNotInMaintenance(FINANCIAL_JOB),
-    ).resolves.toBeUndefined();
+    await expect(assertNotInMaintenance(FINANCIAL_JOB)).rejects.toBeInstanceOf(
+      MaintenanceUnavailableError,
+    );
   });
 
   it("shares one Redis read across two jobs within the 60s phase cache window", async () => {
@@ -134,13 +130,19 @@ describe("assertNotInMaintenance", () => {
     const now = jest.spyOn(Date, "now").mockReturnValue(1_000_000);
     mockGet.mockRejectedValue(new Error("upstash unreachable"));
 
-    await assertNotInMaintenance(FINANCIAL_JOB);
+    await expect(assertNotInMaintenance(FINANCIAL_JOB)).rejects.toBeInstanceOf(
+      MaintenanceUnavailableError,
+    );
     now.mockReturnValue(1_004_000);
-    await assertNotInMaintenance(PLAIN_JOB);
+    await expect(assertNotInMaintenance(PLAIN_JOB)).rejects.toBeInstanceOf(
+      MaintenanceUnavailableError,
+    );
     expect(mockGet).toHaveBeenCalledTimes(1);
 
     now.mockReturnValue(1_010_000);
-    await assertNotInMaintenance(FINANCIAL_JOB);
+    await expect(assertNotInMaintenance(FINANCIAL_JOB)).rejects.toBeInstanceOf(
+      MaintenanceUnavailableError,
+    );
     expect(mockGet).toHaveBeenCalledTimes(2);
     now.mockRestore();
   });
