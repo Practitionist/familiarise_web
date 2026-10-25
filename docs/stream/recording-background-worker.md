@@ -2,7 +2,7 @@
 
 `netlify/functions/recording-transfer-background.mts` provides an authenticated, unscheduled Netlify background adapter for the existing `transfer-recordings` core. POST `/.netlify/functions/recording-transfer-background` with the `CRON_SECRET` bearer. The adapter uses `cleanupRoute`, so authentication, maintenance admission and failure handling share the HTTP cleanup boundary. It calls the core in-process rather than waiting on a Next.js HTTP request, and uses the existing job Sentry bootstrap/flush for the standalone function runtime.
 
-Each core invocation examines one retry-eligible READY recording, ordered by source expiry and ID. The query excludes rows in backoff, missing expiry metadata and expired sources. A copy still streams up to 20 GiB with the existing 12-minute abort signal. One stale claim and a 100-row risk sample are the maximum ancillary rows selected per run. The sample includes READY Stream sources expiring within 72 hours or with at least three attempts, ordered by attempts, expiry and ID. One Sentry message covers that sample, including exhausted attempts; newly exhausted rows retain their alert stamp. Already-lapsed sources still qualify. This is an alarm sample, not a complete backlog count. The same abort signal stops stalled source reads and all multipart operations. Canceling a source cannot hold cleanup open indefinitely. R2 cleanup requests have independent 15-second deadlines, and prior-attempt cleanup is awaited before the worker exits.
+Each core invocation examines one retry-eligible READY recording, ordered by source expiry and ID. The query excludes rows in backoff, missing expiry metadata and expired sources. A copy still streams up to 20 GiB with the existing 12-minute abort signal. One stale claim and a 100-row risk sample are the maximum ancillary rows selected per run. The sample includes READY Stream sources expiring within 72 hours or with at least three attempts, ordered by attempts, expiry and ID. One Sentry message covers that sample, including exhausted attempts; each row is conditionally claimed for an alert no more than once every six hours, using `transferFailureAlertedAt`. Already-expired sources are excluded. The stamp preserves `updatedAt`, so it cannot postpone copy retry backoff. A lost claim suppresses duplicate reporting. A crash between stamping and capture can defer the next alarm until the cooldown elapses. This is an alarm sample, not a complete backlog count. The same abort signal stops stalled source reads and all multipart operations. Canceling a source cannot hold cleanup open indefinitely. R2 cleanup requests have independent 15-second deadlines, and prior-attempt cleanup is awaited before the worker exits.
 
 The Postgres cron lease is fail-closed and lasts 15 minutes. The 15-minute stale-claim threshold exceeds the copy deadline. An atomic claim increments `transferAttempts` and returns the source plus an ownership stamp. Completion and failure updates require the same attempt and `updatedAt`, so a late worker cannot publish over, release, or delete the object belonging to a later attempt. Retention skips active TRANSFERRING rows and can expire a completed copy on a later pass. Removal or erasure that changes the row's status prevents publication; a losing copy attempts deletion of only its own attempt object. A rejected delete or `success: false` fails the transfer result without releasing or modifying the row now owned by another operation. Confirmed deletion, including an absent key, returns `skipped`.
 
@@ -57,3 +57,21 @@ Sources: [Netlify background execution and retries](https://docs.netlify.com/bui
 ## Deprecated & Superseded Approaches
 
 The core previously admitted multiple concurrent copies over a 25-minute run budget and counted attempts only on handled failure. An interrupted run could therefore reuse an attempt object key. The one-copy envelope and atomic attempt ownership replace those assumptions. The former six-hour Actions clock is superseded by the 15-minute ticker dispatch. A queue admission receipt remains distinct from a completed copy.
+
+## Scheduler host and lifecycle worker boundary
+
+Automatic recording copies currently depend on Netlify being the active cron
+host. The ticker, cleanup dispatch and staff recovery door target
+`/.netlify/functions/recording-transfer-background`; moving the active scheduler
+to another host requires a supported background execution target there first.
+Keeping Netlify as a standby does not make its background worker portable.
+
+The ticker also queues the five daily Stream lifecycle jobs through
+`stream-maintenance-background` in staggered daily UTC windows. These
+background workers currently run automatically only while Netlify is the active
+cron host. Their
+native adapter imports domain cores directly, without the cleanup registry or
+request-authentication graph. Channel administration and organization access
+revocation live in `lib/stream/channel-administration.ts` and
+`lib/stream/org-access-revocation.ts`; interactive services call those same
+implementations. Lifecycle cores export functions without Actions CLI side effects.

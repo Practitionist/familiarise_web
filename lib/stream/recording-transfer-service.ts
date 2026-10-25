@@ -8,6 +8,7 @@ import { RecordingStatus, RecordingStorageType } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { reportSentryMessage } from "@/lib/observability/report";
+import { mapBounded } from "@/lib/stream/batch";
 import {
   deleteR2Object,
   headR2Object,
@@ -350,12 +351,25 @@ export async function transferRecording(
   }
 }
 
-/** One bounded alarm covers source expiry, repeated failures and newly exhausted attempts. */
+/** Claims throttle each live source to one alarm per six hours, including manual replays. */
 async function reportTransferRisks(): Promise<number> {
+  const now = new Date();
+  const alertDue = {
+    OR: [
+      { transferFailureAlertedAt: null },
+      {
+        transferFailureAlertedAt: {
+          lte: new Date(now.getTime() - 6 * 60 * 60 * 1000),
+        },
+      },
+    ],
+  };
   const atRisk = await prisma.recording.findMany({
     where: {
       storageType: RecordingStorageType.STREAM_S3,
       status: RecordingStatus.READY,
+      streamUrlExpiresAt: { gt: now },
+      AND: [alertDue],
       OR: [
         {
           streamUrlExpiresAt: {
@@ -371,6 +385,7 @@ async function reportTransferRisks(): Promise<number> {
       transferFailureAlertedAt: true,
       streamUrlExpiresAt: true,
       lastTransferError: true,
+      updatedAt: true,
     },
     orderBy: [
       { transferAttempts: "desc" },
@@ -381,6 +396,24 @@ async function reportTransferRisks(): Promise<number> {
   });
   if (atRisk.length === 0) return 0;
 
+  const claims = await mapBounded(atRisk, async (row) => {
+    const claimed = await prisma.recording.updateMany({
+      where: {
+        id: row.id,
+        status: RecordingStatus.READY,
+        storageType: RecordingStorageType.STREAM_S3,
+        streamUrlExpiresAt: { gt: now },
+        updatedAt: row.updatedAt,
+        ...alertDue,
+      },
+      // Alert bookkeeping must not postpone the copy's retry backoff.
+      data: { transferFailureAlertedAt: now, updatedAt: row.updatedAt },
+    });
+    return claimed.count === 1 ? row : null;
+  });
+  const alerted = claims.filter((row) => row !== null);
+  if (alerted.length === 0) return 0;
+
   reportSentryMessage(
     "Recording copies at risk: source expires within 72 hours or at least 3 attempts consumed",
     {
@@ -388,27 +421,11 @@ async function reportTransferRisks(): Promise<number> {
       op: "transfer-recordings",
       level: "error",
       fingerprint: ["transfer-recordings", "source-expiry-risk"],
-      extra: { recordings: atRisk, sampleLimit: 100 },
+      extra: { recordings: alerted, sampleLimit: 100, cooldownHours: 6 },
     },
   );
-  const exhausted = atRisk.filter(
-    (row) =>
-      row.transferAttempts >= MAX_TRANSFER_ATTEMPTS &&
-      !row.transferFailureAlertedAt,
-  );
-  if (exhausted.length > 0) {
-    await prisma.recording.updateMany({
-      where: {
-        id: { in: exhausted.map((row) => row.id) },
-        status: RecordingStatus.READY,
-        storageType: RecordingStorageType.STREAM_S3,
-        transferAttempts: { gte: MAX_TRANSFER_ATTEMPTS },
-        transferFailureAlertedAt: null,
-      },
-      data: { transferFailureAlertedAt: new Date() },
-    });
-  }
-  return exhausted.length;
+  return alerted.filter((row) => row.transferAttempts >= MAX_TRANSFER_ATTEMPTS)
+    .length;
 }
 
 async function transferRecordingsUnlocked(): Promise<TransferRunResult> {

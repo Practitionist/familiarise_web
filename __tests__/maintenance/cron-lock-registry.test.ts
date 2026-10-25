@@ -243,7 +243,10 @@ function buildRegistry(): Row[] {
       ([name]) => name === target,
     )?.[1];
     const entrypoint = background
-      ? `netlify/functions/${background}.mts`
+      ? (["mts", "ts"]
+          .map((ext) => `netlify/functions/${background}.${ext}`)
+          .find((file) => fs.existsSync(path.join(ROOT, file))) ??
+        `netlify/functions/${background}.mts`)
       : `${registryRel}#${target}`;
     const entryFile = background ? path.join(ROOT, entrypoint) : registryFile;
     const entrySrc = background ? read(entryFile) : twinSrc;

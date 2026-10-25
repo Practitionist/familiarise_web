@@ -1,5 +1,5 @@
 /** @jest-environment node */
-import { dispatchRecordingTransfer } from "../../lib/stream/dispatch-recording-transfer";
+import { dispatchBackgroundJob } from "../../lib/cron/dispatch-background";
 
 const originalEnv = process.env;
 const originalFetch = global.fetch;
@@ -20,7 +20,7 @@ it("accepts only background queue admission and passes the bearer without follow
     .fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>()
     .mockResolvedValue(new Response(null, { status: 202 }));
   global.fetch = fetchMock;
-  await expect(dispatchRecordingTransfer()).resolves.toEqual({
+  await expect(dispatchBackgroundJob("transfer-recordings")).resolves.toEqual({
     accepted: true,
     job: "transfer-recordings",
   });
@@ -43,7 +43,9 @@ it.each([200, 301, 401, 404, 500, 503])(
     global.fetch = jest
       .fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>()
       .mockResolvedValue(new Response(null, { status }));
-    await expect(dispatchRecordingTransfer()).rejects.toThrow(`HTTP ${status}`);
+    await expect(dispatchBackgroundJob("transfer-recordings")).rejects.toThrow(
+      `HTTP ${status}`,
+    );
   },
 );
 
@@ -53,7 +55,9 @@ it.each(["http://app.test", "https://user:pass@app.test", "invalid"])(
     const fetchMock = jest.fn();
     global.fetch = fetchMock;
     process.env.CRON_TICK_BASE_URL = origin;
-    await expect(dispatchRecordingTransfer()).rejects.toThrow();
+    await expect(
+      dispatchBackgroundJob("transfer-recordings"),
+    ).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
   },
 );
