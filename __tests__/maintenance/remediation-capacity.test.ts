@@ -1,5 +1,6 @@
 /** @jest-environment node */
 const findSlots = jest.fn();
+const findOverlap = jest.fn();
 const transaction = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -46,9 +47,11 @@ import { freezeAppointments } from "../../actions/maintenance/freeze-appointment
 import { assertMaintenanceRemediationCapacity } from "../../lib/maintenance-remediation-capacity";
 beforeEach(() => {
   jest.clearAllMocks();
+  findOverlap.mockResolvedValue({ id: "overlap" });
   transaction.mockImplementation((run: (tx: unknown) => Promise<unknown>) =>
     run({
       appointmentOccurrence: {
+        findFirst: (...args: unknown[]) => findOverlap(...args),
         findMany: (...args: unknown[]) => findSlots(...args),
       },
     }),
@@ -148,4 +151,53 @@ it("stages a payment present in the cancellation snapshot through the same trans
       deferAttempt: true,
     }),
   );
+});
+
+it("skips a confirmed booking rescheduled outside the maintenance interval before execution", async () => {
+  const startsAt = new Date("2026-10-23T01:00Z");
+  const endsAt = new Date("2026-10-23T02:00Z");
+  findOverlap.mockResolvedValue(null);
+  findSlots.mockResolvedValue([
+    {
+      id: "moved-slot",
+      startsAt: new Date("2026-10-23T03:00Z"),
+      appointment: {
+        id: "rescheduled",
+        organizationId: null,
+        participants: [],
+        payment: [
+          { id: "moved-payment", paymentStatus: "SUCCEEDED", deletedAt: null },
+        ],
+        consultation: {
+          id: "moved-consultation",
+          consultationPlan: {
+            title: "Consultation",
+            consultantProfile: { user: { id: "host", name: "Host" } },
+          },
+          requestedBy: { user: { id: "client", name: "Client" } },
+        },
+      },
+    },
+  ]);
+  const result = await freezeAppointments(startsAt, endsAt, "rescheduled");
+  expect(result).toMatchObject({
+    cancelled: 0,
+    skippedAlreadyTerminal: 1,
+    refundsQueued: 0,
+  });
+  expect(findOverlap).toHaveBeenCalledWith({
+    where: {
+      appointmentId: "rescheduled",
+      appointment: { deletedAt: null },
+      isTentative: false,
+      deletedAt: null,
+      completionStatus: { in: ["SCHEDULED"] },
+      startsAt: { lt: endsAt },
+      endsAt: { gt: startsAt },
+    },
+    select: { id: true },
+  });
+  expect(findSlots).not.toHaveBeenCalled();
+  expect(stampRefundsOwed).not.toHaveBeenCalled();
+  expect(notifyAppointmentCancelled).not.toHaveBeenCalled();
 });

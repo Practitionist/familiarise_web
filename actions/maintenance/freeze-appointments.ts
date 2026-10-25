@@ -570,6 +570,19 @@ export async function freezeAppointments(
 ) {
   const outcome = await prisma.$transaction(
     async (tx) => {
+      const overlapping = await tx.appointmentOccurrence.findFirst({
+        where: {
+          appointmentId,
+          appointment: { deletedAt: null },
+          isTentative: false,
+          deletedAt: null,
+          completionStatus: { in: SLOT_RESCHEDULABLE_FROM },
+          startsAt: { lt: maintenanceEnd },
+          endsAt: { gt: maintenanceStart },
+        },
+        select: { id: true },
+      });
+      if (!overlapping) return { skipped: true } as const;
       const slots = await findAffectedSlots(tx, appointmentId);
       if (!slots.length) return null;
       const appointment = slots[0].appointment;
