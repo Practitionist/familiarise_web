@@ -121,8 +121,8 @@ check-in, then prove one controlled missed-check-in notification reaches the
 operator and restore the normal configuration. Do not stop production jobs,
 create another paid monitor, or disable another project's monitor for the drill.
 Record unavailable cron-update access as pending; alert-write access alone does
-not enable the cron source. See the ticker missed-run runbook in
-`docs/maintenance/00-betterstack-setup.md`.
+not enable the cron source. See the
+[ticker missed-run runbook](../../../docs/maintenance/00-betterstack-setup.md#ticker-missed-run-alerts).
 
 `GET /api/health/jobs` is a bearer-protected read-only capability freshness probe.
 It returns 503 for missing/overdue COMPLETED evidence or an unreadable history,

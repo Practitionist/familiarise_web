@@ -490,6 +490,13 @@ completions; neither establishes that vendor effects or all backlogs are complet
    notification action is active with the correct recipient. Keep credentials in
    protected configuration. Never put tokens, DSNs or signed URLs in evidence.
 
+For connector setup, obtain the numeric source ID with
+`get_alert_options(section: "sources")`, matching the project's `cron-tick` source
+of type `monitor_check_in_failure`. Pass that ID in `detectorIds`; the native alert
+API calls this field `detector_ids`. Read back the connected source and its nested
+cron-monitor slug/project. The cron monitor's UUID from the older cron endpoint is
+a different identifier and must not be passed as a detector ID.
+
 The Sentry connector may expose alert writes without exposing cron-monitor
 updates. If that operation is unavailable, use the documented API with a valid
 scoped credential or an authenticated operator session. Record an access failure
@@ -499,21 +506,34 @@ as pending work; a saved alert cannot compensate for a disabled monitor.
 
 1. Observe an ordinary production check-in accepted by Sentry. Record its time,
    environment and configured cadence without invoking the production job.
-2. Plan a controlled missed-check-in drill with a named operator. Save the normal
-   monitor configuration and a bounded restoration procedure first. Do not stop
-   production jobs or change the active cron host to manufacture silence.
-3. Exercise a real monitor absence condition, explicitly labeling any temporary
-   expectation change as a drill. Do not send a fabricated application exception
-   or an `error` check-in and call it a missed run. The ticker resubmits its normal
-   monitor configuration on every check-in, so account for that during the drill.
-4. Verify Sentry creates the missed-check-in incident and that the configured
+2. Use an authenticated cron-monitor API session for a controlled expectation
+   drill. Save the normal configuration in a protected local artifact and prepare
+   restoration before changing it. Keep the existing monitor, source, production
+   environment and recipient. Do not stop jobs or change the active cron host.
+3. Immediately after a fresh ordinary check-in, temporarily set only the monitor's
+   expectation to `* * * * *`, `checkin_margin: 1` and
+   `failure_issue_threshold: 1`, preserving its other settings. The actual ticker
+   continues every five minutes. Read the temporary configuration back. Start an
+   independent 180-second restoration watchdog before applying it, and restore
+   in the controlling operation's `finally` path as well. Do not start without
+   functioning restoration access.
+4. Allow the one-minute expectation to miss its check-in and margin. This
+   exercises Sentry's real missing-check-in detection and the **production**
+   notification route; it does not mean an ordinary five-minute ticker run was
+   missed. Do not fabricate an application exception or an `error` check-in.
+   The ticker resubmits normal settings on every check-in. If it restores them
+   before an incident appears, or the watchdog deadline arrives first, record
+   the drill as inconclusive and restore rather than extending it silently.
+5. Verify Sentry creates the missed-check-in incident and that the configured
    operator actually receives its notification. Save sanitized incident/alert
    links, UTC timestamps and the recipient's confirmation. An incident visible
    only in Sentry or an alert's `lastTriggered` timestamp is not a delivery receipt.
-5. Restore and read back the normal monitor configuration, then observe the next
-   ordinary production check-in and recovery. Remove any temporary drill
-   environment; an environment that stops checking in continues to miss its
-   schedule. Keep restoration work outstanding if any of these steps fails.
+6. Restore and read back the saved normal schedule, margin and thresholds on
+   success, failure or timeout, then observe the next ordinary check-in and
+   recovery. If restoration fails, alert the operator immediately and keep the
+   task open. This drill creates no temporary environment; a separate environment
+   would not prove the production-filtered route and would keep missing after
+   its sender stopped.
 
 This evidence closes the ticker missed-run gate only. Keep the ingest canary's
 independent email path and the per-capability completion probe: a Sentry outage
