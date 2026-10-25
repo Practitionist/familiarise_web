@@ -187,13 +187,13 @@ documents/                                              # Private bucket (signed
 
 ### 1. Bucket Management
 
-Every bucket the app provisions has one explicit policy in `lib/storage/bucket-policies.ts`: visibility, object-size limit and MIME allowlist. `ensureBucketExists(bucket, overrides?)` merges the caller's overrides over that policy, creates the bucket if missing and reconciles the settings of an existing one. A bucket with no policy entry is **refused**, never created with a fallback.
+Every bucket the app provisions has one explicit policy in `lib/storage/bucket-policies.ts`: visibility, object-size limit and MIME allowlist. `ensureBucketExists(bucket, overrides?)` merges the caller's size and MIME overrides over that policy, creates the bucket if missing (a lost concurrent create counts as success once the bucket exists) and reconciles the settings of an existing one. Visibility is never a caller override; it comes only from the registry. A bucket with no policy entry is **refused**, never created with a fallback.
 
 | Bucket                | Visibility | Limit | MIME source                                                     |
 | --------------------- | ---------- | ----- | --------------------------------------------------------------- |
 | `documents`           | private    | 10 MB | `lib/documents/file-policy.ts` (PDF, Office, images, text, CSV) |
-| `plan-images`         | public     | 5 MB  | JPEG, PNG, WebP                                                 |
-| `profile-images`      | public     | 2 MB  | JPEG, PNG, WebP                                                 |
+| `plan-images`         | public     | 5 MB  | JPEG (`image/jpeg`, `image/jpg`), PNG, WebP                     |
+| `profile-images`      | public     | 2 MB  | JPEG (`image/jpeg`, `image/jpg`), PNG, WebP                     |
 | `organization-images` | public     | 5 MB  | JPEG, PNG, WebP, SVG                                            |
 | `recordings-previews` | public     | 50 MB | MP4, WebM, JPEG, PNG, WebP                                      |
 | `support-attachments` | private    | 20 MB | `lib/support/attachment-policy.ts`                              |

@@ -26,6 +26,7 @@ import {
   wasDeclinedDuringRecording,
 } from "@/lib/stream/recording-decline";
 import {
+  absorbIntoErasedRecording,
   createReadyRecordingOrAdoptRace,
   stageAndSendRecordingReadyNotifications,
 } from "@/lib/stream/recording-handlers";
@@ -462,7 +463,6 @@ export class RecordingService {
       await discardDeclinedRecording({
         meetingId: sessionId,
         streamCallId,
-        sessionId: streamRec.session_id,
         filename: streamRec.filename,
       });
       return;
@@ -473,15 +473,24 @@ export class RecordingService {
         meetingId: sessionId,
         streamRecordingId: streamRec.filename,
       },
-      select: { id: true },
+      select: { id: true, status: true },
     });
 
     let recordingId: string;
     if (existingRecording) {
+      // A removed recording never sends a ready notice.
+      if (existingRecording.status === RecordingStatus.EXPIRED) return;
       recordingId = existingRecording.id;
     } else {
       const startDate = new Date(streamRec.start_time);
       const endDate = new Date(streamRec.end_time);
+      const absorbed = await absorbIntoErasedRecording({
+        meetingId: sessionId,
+        streamCallId,
+        filename: streamRec.filename,
+        streamUrlExpiresAt: streamCopyExpiresAt(endDate),
+      });
+      if (absorbed) return;
       const rawDurationMs = endDate.getTime() - startDate.getTime();
       const durationInMinutes = Number.isFinite(rawDurationMs)
         ? Math.max(0, Math.round(rawDurationMs / (1000 * 60)))

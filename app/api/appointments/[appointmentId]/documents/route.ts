@@ -5,14 +5,12 @@ import { applyRateLimit, documentCommitLimiter } from "@/lib/rate-limit";
 import {
   FileRouteError,
   answerFileRoute,
-  fileApiError,
   parseJsonBody,
 } from "@/lib/documents/api-error";
 import { notifyDocumentAdded } from "@/lib/documents/document-notify";
 import {
   DocumentCommitSchema,
   commitDocumentUpload,
-  discardRefusedUpload,
 } from "@/lib/documents/upload-pipeline";
 import { readDocumentWorkspace } from "@/lib/documents/workspace";
 
@@ -45,20 +43,9 @@ export async function POST(request: Request, { params }: RouteContext) {
       documentCommitLimiter,
       auth.session.user.id,
     );
-    if (limited) {
-      // The object is already uploaded; without a row it would be orphaned.
-      const refused = DocumentCommitSchema.safeParse(
-        await request.json().catch(() => null),
-      );
-      if (refused.success) {
-        await discardRefusedUpload({
-          appointmentId,
-          userId: auth.session.user.id,
-          storagePath: refused.data.storagePath,
-        });
-      }
-      return limited;
-    }
+    // A rate-limited commit keeps its object: the client retries the same path,
+    // and a delete here could race a concurrent commit of that path.
+    if (limited) return limited;
 
     const input = await parseJsonBody(request, DocumentCommitSchema);
     const { document, party, replayed } = await commitDocumentUpload({
