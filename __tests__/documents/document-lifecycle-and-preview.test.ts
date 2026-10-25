@@ -294,17 +294,44 @@ describe("review", () => {
     (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
       booking("SCHEDULED"),
     );
+    (prisma.appointmentDocument.findFirst as jest.Mock).mockImplementation(
+      async ({ where }: { where: { reviewStatus?: string } }) =>
+        where.reviewStatus && where.reviewStatus !== "PENDING"
+          ? null
+          : {
+              id: "doc-1",
+              originalName: "cv.pdf",
+              rootDocumentId: null,
+              versionNo: 1,
+              reviewStatus: "PENDING",
+            },
+    );
+    (prisma.appointmentDocument.count as jest.Mock).mockResolvedValue(1);
+    const res = await post({ reviewStatus: "APPROVED" });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "SUPERSEDED" });
+    expect(prisma.appointmentDocument.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("answers a retried approval as the first write did, without a second write", async () => {
+    signedIn("e");
+    (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
+      booking("SCHEDULED"),
+    );
     (prisma.appointmentDocument.findFirst as jest.Mock).mockResolvedValue({
       id: "doc-1",
       originalName: "cv.pdf",
       rootDocumentId: null,
       versionNo: 1,
-      reviewStatus: "PENDING",
+      reviewStatus: "APPROVED",
+      reviewNotes: null,
     });
-    (prisma.appointmentDocument.count as jest.Mock).mockResolvedValue(1);
     const res = await post({ reviewStatus: "APPROVED" });
-    expect(res.status).toBe(409);
-    expect(await res.json()).toMatchObject({ code: "SUPERSEDED" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      document: { id: "doc-1", reviewStatus: "APPROVED" },
+      reply: null,
+    });
     expect(prisma.appointmentDocument.updateMany).not.toHaveBeenCalled();
   });
 
