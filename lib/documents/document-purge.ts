@@ -165,6 +165,15 @@ function purgeableWhere(
   };
 }
 
+function siblingsOnPath(
+  db: Pick<Db, "appointmentDocument">,
+  doc: { id: string; storagePath: string },
+): Promise<number> {
+  return db.appointmentDocument.count({
+    where: { storagePath: doc.storagePath, id: { not: doc.id } },
+  });
+}
+
 /**
  * Deletes tombstoned rows matching `where`: versions first, a root only once
  * no row of its thread remains, and each object before its row. `remaining`
@@ -216,11 +225,11 @@ export async function purgeTombstonedDocuments(
       if (attempted.size >= limit) break;
       attempted.add(doc.id);
       // Only live rows are unique on a path; a sibling row still owns the object.
+      const shared =
+        !doc.isStorageMissing && (await siblingsOnPath(db, doc)) > 0;
       const storageCleared =
         doc.isStorageMissing ||
-        (await db.appointmentDocument.count({
-          where: { storagePath: doc.storagePath, id: { not: doc.id } },
-        })) > 0 ||
+        shared ||
         (await deleteAppointmentDocument(doc.storagePath).catch(() => false));
       if (!storageCleared) {
         counts.failedStorage += 1;
@@ -234,6 +243,15 @@ export async function purgeTombstonedDocuments(
       } catch (error) {
         console.error(`[purge-deleted-documents] row ${doc.id}:`, error);
         counts.failedRows += 1;
+        continue;
+      }
+      // A concurrent purge may have removed the sibling meanwhile; the last row out deletes the object.
+      if (
+        shared &&
+        (await siblingsOnPath(db, doc)) === 0 &&
+        !(await deleteAppointmentDocument(doc.storagePath).catch(() => false))
+      ) {
+        counts.failedStorage += 1;
       }
     }
     if (candidates.length < take) break;

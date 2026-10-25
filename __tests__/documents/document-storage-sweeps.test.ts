@@ -308,4 +308,27 @@ describe("purge-deleted-documents", () => {
     });
     expect(result).toMatchObject({ purged: 1, failedStorage: 1 });
   });
+
+  it("deletes a shared object when a concurrent purge removed its sibling", async () => {
+    (prisma.appointmentDocument.findMany as jest.Mock)
+      .mockReset()
+      .mockResolvedValue([])
+      .mockResolvedValueOnce([
+        { id: "d1", storagePath: "a/shared.pdf", isStorageMissing: false },
+      ]);
+    // The sibling exists when d1 is checked, and is gone once d1's row is deleted.
+    (prisma.appointmentDocument.count as jest.Mock)
+      .mockReset()
+      .mockResolvedValue(0)
+      .mockResolvedValueOnce(1);
+    (deleteAppointmentDocument as jest.Mock).mockResolvedValue(true);
+
+    const result = await purgeDeletedDocuments(now, { limit: 10 });
+
+    expect(prisma.appointmentDocument.deleteMany).toHaveBeenCalledWith({
+      where: { id: "d1" },
+    });
+    expect(deleteAppointmentDocument).toHaveBeenCalledWith("a/shared.pdf");
+    expect(result).toMatchObject({ purged: 1, failedStorage: 0 });
+  });
 });

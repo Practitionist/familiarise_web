@@ -186,6 +186,35 @@ async function reconcileBucketOptions(
   return true;
 }
 
+/** Creates a bucket from its policy; a concurrent first create that won is adopted. */
+async function createBucketFromPolicy(
+  storage: ReturnType<typeof adminStorage>,
+  bucketName: string,
+  policy: BucketPolicy,
+): Promise<boolean> {
+  console.log(`Creating bucket: ${bucketName}`);
+  const { error: createError } = await storage.createBucket(bucketName, {
+    public: policy.public,
+    fileSizeLimit: policy.fileSizeLimit,
+    ...(policy.allowedMimeTypes
+      ? { allowedMimeTypes: [...policy.allowedMimeTypes] }
+      : {}),
+  });
+  if (createError) {
+    const { data: raced } = await storage.getBucket(bucketName);
+    if (!raced) {
+      console.error(`Failed to create bucket ${bucketName}:`, createError);
+      return false;
+    }
+    // The winner may have created it from another caller's options.
+    if (!(await reconcileBucketOptions(bucketName, policy))) return false;
+  } else {
+    console.log(`Successfully created bucket: ${bucketName}`);
+  }
+  knownBuckets.add(bucketName);
+  return true;
+}
+
 /**
  * Ensure a storage bucket exists, create it if it doesn't.
  * Existence is memoized per process; a later call that passes options
@@ -232,31 +261,7 @@ export const ensureBucketExists = async (
       listError.message.includes("Bucket not found") ||
       listError.message.includes("not found")
     ) {
-      console.log(`Creating bucket: ${bucketName}`);
-
-      const { data: _createData, error: createError } =
-        await storage.createBucket(bucketName, {
-          public: policy.public,
-          fileSizeLimit: policy.fileSizeLimit,
-          ...(policy.allowedMimeTypes
-            ? { allowedMimeTypes: [...policy.allowedMimeTypes] }
-            : {}),
-        });
-
-      if (createError) {
-        // A concurrent first create may have won; its bucket is the one we wanted.
-        const { data: raced } = await storage.getBucket(bucketName);
-        if (!raced) {
-          console.error(`Failed to create bucket ${bucketName}:`, createError);
-          return false;
-        }
-        knownBuckets.add(bucketName);
-        return true;
-      }
-
-      console.log(`Successfully created bucket: ${bucketName}`);
-      knownBuckets.add(bucketName);
-      return true;
+      return await createBucketFromPolicy(storage, bucketName, policy);
     }
 
     // Other errors

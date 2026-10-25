@@ -164,8 +164,23 @@ export async function POST(request: Request, { params }: RouteContext) {
                 reviewNotes: true,
               },
             });
+            // A newer learner version supersedes the close; the main path answers SUPERSEDED.
+            const superseded =
+              closed !== null &&
+              (await tx.appointmentDocument.count({
+                where: {
+                  deletedAt: null,
+                  uploadedByRole: "CONSULTEE",
+                  versionNo: { gt: closed.versionNo },
+                  OR: [
+                    { id: closed.rootDocumentId ?? closed.id },
+                    { rootDocumentId: closed.rootDocumentId ?? closed.id },
+                  ],
+                },
+              })) > 0;
             if (
               closed &&
+              !superseded &&
               (body.reviewNotes === undefined ||
                 (body.reviewNotes || null) === closed.reviewNotes)
             ) {

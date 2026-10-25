@@ -532,23 +532,8 @@ export function handleUploadMaterial(
   return answerFileRoute(async () => {
     const userId = await requireSessionUser();
     const limited = await applyRateLimit(documentCommitLimiter, userId);
-    if (limited) {
-      // The object is already uploaded; without a row it would be orphaned.
-      const refused = MaterialCommitSchema.safeParse(
-        await request.json().catch(() => null),
-      );
-      if (
-        refused.success &&
-        (await verifyMaterialManageAccess(userId, planId, config)).allowed
-      ) {
-        await discardRefusedMaterial(
-          config.planType,
-          planId,
-          refused.data.storagePath,
-        );
-      }
-      return limited;
-    }
+    // A rate-limited commit keeps its object: the client retries the same path.
+    if (limited) return limited;
     const access = await requirePlanManager(userId, planId, config);
     const body = await parseJsonBody(request, MaterialCommitSchema);
     const whereClause: Prisma.PlanMaterialWhereInput = {
