@@ -390,6 +390,27 @@ const runJobSchema = z.object({
   reason: opsReasonSchema,
 });
 
+async function queueRecordingTransfer(
+  logRun: (status: "ACCEPTED" | "FAILED") => Promise<unknown>,
+): Promise<NextResponse> {
+  try {
+    const admission = await dispatchRecordingTransfer();
+    await logRun("ACCEPTED");
+    return NextResponse.json(
+      {
+        ...admission,
+        dispatched: true,
+        message:
+          "Queued for processing. Check execution history for completion.",
+      },
+      { status: 202 },
+    );
+  } catch (error) {
+    await logRun("FAILED");
+    throw new Error("Recording transfer dispatch failed", { cause: error });
+  }
+}
+
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     // 1. Verify admin auth
@@ -456,24 +477,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       }).catch((logErr: unknown) =>
         reportSentryError(logErr, { subsystem: "admin", op: "ops-log" }),
       );
-    if (jobId === "transfer-recordings") {
-      try {
-        const admission = await dispatchRecordingTransfer();
-        await logRun("ACCEPTED");
-        return NextResponse.json(
-          {
-            ...admission,
-            dispatched: true,
-            message:
-              "Queued for processing. Check execution history for completion.",
-          },
-          { status: 202 },
-        );
-      } catch (error) {
-        await logRun("FAILED");
-        throw new Error("Recording transfer dispatch failed", { cause: error });
-      }
-    }
+    if (jobId === "transfer-recordings")
+      return await queueRecordingTransfer(logRun);
 
     if (BACKGROUND_JOBS.has(jobId)) {
       scheduleAfter(async () => {
@@ -516,15 +521,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(result);
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "admin" } },
-    );
+    const runtimeError =
+      error instanceof Error ? error : new Error(String(error));
+    Sentry.captureException(runtimeError, { tags: { subsystem: "admin" } });
     console.error("[System Jobs] Error running job:", error);
     return NextResponse.json(
       {
         error: "Failed to run job",
-        details: error instanceof Error ? error.message : String(error),
+        details: runtimeError.message,
       },
       { status: 500 },
     );

@@ -4,7 +4,7 @@
 
 ## Lifecycle
 
-A recording is a `Recording` row hanging off a `Meeting`, which hangs off one `AppointmentOccurrence`. The host starts it by hand after the consent gate. Stream stores the file for 14 days, and the platform keeps it only if `transfer-recordings` copies it into R2 before that copy lapses. That job is not on any running schedule today and runs only when an operator triggers it (see the transfer notes below), so a recording nobody copies within 14 days is lost, and the next `expire-recordings` run marks it `COPY_LAPSED`.
+A recording is a `Recording` row hanging off a `Meeting`, which hangs off one `AppointmentOccurrence`. The host starts it by hand after the consent gate. Stream stores the file for 14 days, and the platform keeps it only if `transfer-recordings` copies it into R2 before that copy lapses. The Netlify ticker dispatches the existing background worker every 15 minutes, with one eligible copy per invocation. A copy that remains blocked or fails through its source deadline is still lost after 14 days; `expire-recordings` marks `COPY_LAPSED` only after confirmed absence under its retention rules. See the transfer notes below for the separate admission, completion and expiry-risk signals.
 
 ```mermaid
 stateDiagram-v2

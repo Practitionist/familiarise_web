@@ -2,10 +2,6 @@
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 
-import fs from "node:fs";
-import path from "node:path";
-import vm from "node:vm";
-import ts from "typescript";
 import { NextRequest, NextResponse } from "next/server";
 import * as zod from "zod";
 import * as Sentry from "@sentry/nextjs";
@@ -19,22 +15,10 @@ const after = jest.fn();
 const unexpectedJob = jest.fn(() => {
   throw new Error("Unexpected synchronous job execution");
 });
+let post: typeof import("../../app/api/admin/system-jobs/run/route").POST;
 
-function loadRoute() {
-  const file = path.join(
-    __dirname,
-    "../../app/api/admin/system-jobs/run/route.ts",
-  );
-  const { outputText } = ts.transpileModule(fs.readFileSync(file, "utf8"), {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2022,
-    },
-  });
+beforeAll(async () => {
   const dependencies = new Map<string, unknown>([
-    ["next/server", { NextRequest, NextResponse }],
-    ["zod", zod],
-    ["@sentry/nextjs", Sentry],
     ["@/lib/prisma", { __esModule: true, default: {} }],
     ["@/lib/auth-helpers", { requireBackofficeSurface: authorize }],
     [
@@ -50,33 +34,39 @@ function loadRoute() {
     ["@/lib/observability/report", { reportSentryError: diagnostics }],
     ["@/lib/api/after-safe", { scheduleAfter: after }],
   ]);
+  for (const [name, mock] of dependencies) jest.doMock(name, () => mock);
   // Unselected jobs must never execute through this dispatch door.
-  const otherJobs = new Proxy({}, { get: () => unexpectedJob });
-  const exports: Partial<
-    typeof import("../../app/api/admin/system-jobs/run/route")
-  > = {};
-  vm.runInNewContext(outputText, {
-    exports,
-    module: { exports },
-    process,
-    console,
-    Error,
-    require: (name: string) => {
-      if (dependencies.has(name)) return dependencies.get(name);
-      if (
-        name.startsWith("@/scripts/") ||
-        name.startsWith("@/jobs/") ||
-        name.startsWith("@/lib/")
-      )
-        return otherJobs;
-      throw new Error(`Unexpected dependency ${name}`);
-    },
-  });
-  if (!exports.POST) throw new Error("Missing route POST export");
-  return exports.POST;
-}
+  const unselectedModules = [
+    "@/scripts/payments/cleanup-abandoned-payments",
+    "@/scripts/payments/reconcile-payment-status",
+    "@/scripts/payments/reconcile-orphaned-confirmations",
+    "@/scripts/refunds/reconcile-pending-refunds",
+    "@/scripts/disputes/reconcile-disputes",
+    "@/scripts/earnings/sync-payment-earnings",
+    "@/scripts/earnings/release-earnings",
+    "@/scripts/appointments/auto-complete-appointments",
+    "@/scripts/appointments/expire-stale-requests",
+    "@/scripts/appointments/cleanup-tentative-occurrences",
+    "@/scripts/appointments/reconcile-occurrence-availability",
+    "@/lib/payments/payouts",
+    "@/scripts/payouts/handle-stuck-payouts",
+    "@/scripts/payouts/reconcile-payout-status",
+    "@/lib/auth/cleanup-auth-tokens",
+    "@/scripts/cleanup/archive-webhook-events",
+    "@/scripts/cleanup/reconcile-document-storage",
+    "@/lib/documents/document-purge",
+    "@/scripts/alerts/alert-orphaned-payments",
+    "@/scripts/stream/stream-sync",
+    "@/scripts/stream/reconcile-orphaned-recordings",
+    "@/lib/stream/recording-retention",
+    "@/jobs/stream/expire-event-channels",
+    "@/jobs/meetings/reconcile-orphaned-sessions",
+  ];
+  for (const name of unselectedModules)
+    jest.doMock(name, () => new Proxy({}, { get: () => unexpectedJob }));
+  post = (await import("../../app/api/admin/system-jobs/run/route")).POST;
+});
 
-const post = loadRoute();
 beforeEach(() => {
   jest.clearAllMocks();
   authorize.mockResolvedValue({
