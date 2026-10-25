@@ -66,6 +66,10 @@ import {
   type CollaborationRef,
 } from "@/lib/collaborators/standing";
 import { reportSentryError } from "@/lib/observability/report";
+import {
+  createRunFailureReporter,
+  type RunFailureReporter,
+} from "@/lib/observability/run-failures";
 import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
@@ -255,6 +259,7 @@ async function purgeSingleUserRecordingOnErasure(
   recordingId: string,
   eligible: Prisma.RecordingWhereInput,
   now: Date,
+  vendorFailures: RunFailureReporter,
 ): Promise<void> {
   // Stop transfer publication and capture the assets from the same row version.
   const [rec] = await db.recording.updateManyAndReturn({
@@ -274,10 +279,10 @@ async function purgeSingleUserRecordingOnErasure(
   const { deleteRecordingAssets } =
     await import("@/lib/stream/recording-storage");
   const streamCopyGone = await deleteStreamRecordingCopy(rec);
-  const assets = await deleteRecordingAssets({
-    id: rec.id,
-    storagePath: rec.storagePath,
-  });
+  const assets = await deleteRecordingAssets(
+    { id: rec.id, storagePath: rec.storagePath },
+    vendorFailures,
+  );
   // Any vendor failure throws with the pointers still on the row for the retry.
   if (!assets.success) {
     throw new Error(
@@ -379,11 +384,14 @@ async function cleanupUserRecordingsOnErasure(
 ): Promise<string[]> {
   const failures: string[] = [];
   const errors: unknown[] = [];
+  // Storage-vendor failures report once per erasure run, not once per object.
+  const vendorFailures = createRunFailureReporter("compliance");
   try {
     if (db.recording?.findMany) {
       const eligible: Prisma.RecordingWhereInput = {
         OR: [
-          { status: { notIn: ["EXPIRED", "FAILED"] } },
+          // FAILED rows are claimed too: a later recording_ready could promote one.
+          { status: { not: "EXPIRED" } },
           {
             status: "EXPIRED",
             OR: [
@@ -452,7 +460,13 @@ async function cleanupUserRecordingsOnErasure(
       if (Array.isArray(oneToOneRecordings)) {
         for (const rec of oneToOneRecordings) {
           try {
-            await purgeSingleUserRecordingOnErasure(db, rec.id, eligible, now);
+            await purgeSingleUserRecordingOnErasure(
+              db,
+              rec.id,
+              eligible,
+              now,
+              vendorFailures,
+            );
           } catch (error_) {
             failures.push(
               `recording_storage:${rec.id}: deletion not confirmed — re-run required`,
@@ -470,6 +484,7 @@ async function cleanupUserRecordingsOnErasure(
     );
     errors.push(error_);
   }
+  vendorFailures.flush();
   if (errors.length > 0) {
     reportSentryError(errors[0], {
       subsystem: "compliance",

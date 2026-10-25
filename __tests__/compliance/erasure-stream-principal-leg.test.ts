@@ -201,7 +201,7 @@ describe("DPDP erasure Stream principal leg", () => {
       where: expect.objectContaining({
         id: "rec-1on1",
         OR: [
-          { status: { notIn: ["EXPIRED", "FAILED"] } },
+          { status: { not: "EXPIRED" } },
           {
             status: "EXPIRED",
             OR: [

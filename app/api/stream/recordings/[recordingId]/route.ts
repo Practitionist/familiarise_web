@@ -319,6 +319,10 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
       writeTarget(recording),
     );
     if (!access.allowed) return fileApiError("FORBIDDEN");
+    // Already removed: a repeat must not re-stamp the removal or re-notify.
+    if (recording.status === RecordingStatus.EXPIRED) {
+      return recordingGoneResponse(recording);
+    }
 
     // Always block deletion when any PENDING or SUCCEEDED purchase exists,
     // regardless of current listingStatus (prevents unpublish-then-delete bypass).

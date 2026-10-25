@@ -873,7 +873,9 @@ describe("Stream Webhook Megafix Regression Suite", () => {
           isRecording: true,
           occurrence: { appointment: { organizationId: "org-1" } },
         });
+      // By filename, then the erased-row lookup, then the FAILED placeholder.
       (prisma.recording.findFirst as jest.Mock)
+        .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce({
           id: "rec-failed-placeholder",

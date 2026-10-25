@@ -5,7 +5,11 @@
 
 import type { z } from "zod";
 import prisma from "@/lib/prisma";
-import { RecordingStatus, RecordingStorageType } from "@prisma/client";
+import {
+  type Prisma,
+  RecordingStatus,
+  RecordingStorageType,
+} from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
 import { errorMessageOf } from "@/lib/observability/report";
 import { EMAIL_BUDGET_MS } from "@/lib/email";
@@ -29,6 +33,7 @@ import {
   discardDeclinedRecording,
   wasDeclinedDuringRecording,
 } from "@/lib/stream/recording-decline";
+import { purgeExpiredRecordingAssets } from "@/lib/stream/recording-retention";
 import type {
   streamRecordingFailedSchema,
   streamRecordingReadySchema,
@@ -543,6 +548,83 @@ export type ReadyRecordingParams = {
   organizationId: string | null;
 };
 
+function isUniqueConflict(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "P2002"
+  );
+}
+
+/** A row erased or deleted before Stream named its file; it must never come back READY. */
+const ERASED_BEFORE_READY = {
+  status: RecordingStatus.EXPIRED,
+  removedAt: { not: null },
+  streamRecordingId: null,
+  streamUrlExpiresAt: null,
+  transferredAt: null,
+} satisfies Prisma.RecordingWhereInput;
+
+/**
+ * Stamps a ready file onto one erased pre-ready row of the meeting, which
+ * stays EXPIRED, then deletes Stream's copy. A failed delete leaves the
+ * filename on the row for expire-recordings. Null when no such row is left.
+ */
+export async function absorbIntoErasedRecording(params: {
+  meetingId: string;
+  streamCallId: string;
+  filename: string;
+  streamUrlExpiresAt: Date;
+}): Promise<{ id: string; status: RecordingStatus } | null> {
+  const { meetingId, filename } = params;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const candidate = await prisma.recording.findFirst({
+      where: { meetingId, ...ERASED_BEFORE_READY },
+      orderBy: { createdAt: "asc" },
+      select: { id: true },
+    });
+    if (!candidate) return null;
+    let absorbed;
+    try {
+      // The stamped expiry keeps one erased row from absorbing a second file.
+      [absorbed] = await prisma.recording.updateManyAndReturn({
+        where: { id: candidate.id, ...ERASED_BEFORE_READY },
+        data: {
+          streamRecordingId: filename,
+          streamCallId: params.streamCallId,
+          streamUrlExpiresAt: params.streamUrlExpiresAt,
+        },
+        select: {
+          id: true,
+          storagePath: true,
+          streamCallId: true,
+          streamRecordingId: true,
+        },
+      });
+    } catch (error) {
+      if (!isUniqueConflict(error)) throw error;
+      // A concurrent delivery of this file stamped it onto a row first.
+      const raced = await prisma.recording.findFirst({
+        where: { meetingId, streamRecordingId: filename },
+        select: { id: true, status: true },
+      });
+      if (!raced) throw error;
+      return raced;
+    }
+    if (!absorbed) continue;
+    const purged = await purgeExpiredRecordingAssets(absorbed);
+    if (!purged.success) {
+      streamLogger.warn("Erased recording's Stream copy left for expiry", {
+        recordingId: absorbed.id,
+        error: purged.error,
+      });
+    }
+    return { id: absorbed.id, status: RecordingStatus.EXPIRED };
+  }
+  return null;
+}
+
 export async function createReadyRecordingOrAdoptRace(
   params: ReadyRecordingParams,
 ) {
@@ -563,12 +645,7 @@ export async function createReadyRecordingOrAdoptRace(
       },
     });
   } catch (createError) {
-    const isUniqueConflict =
-      typeof createError === "object" &&
-      createError !== null &&
-      "code" in createError &&
-      createError.code === "P2002";
-    if (!isUniqueConflict) throw createError;
+    if (!isUniqueConflict(createError)) throw createError;
 
     const racedRecording = await prisma.recording.findFirst({
       where: {
@@ -591,14 +668,19 @@ export async function createReadyRecordingOrAdoptRace(
 
 async function resolveReadyRecordingRecord(
   params: ReadyRecordingParams,
-): Promise<{ id: string }> {
+): Promise<{ id: string; status: RecordingStatus }> {
+  const byFilename = await prisma.recording.findFirst({
+    where: {
+      meetingId: params.meetingId,
+      streamRecordingId: params.filename,
+    },
+  });
+  if (!byFilename) {
+    const absorbed = await absorbIntoErasedRecording(params);
+    if (absorbed) return absorbed;
+  }
   const existingRecording =
-    (await prisma.recording.findFirst({
-      where: {
-        meetingId: params.meetingId,
-        streamRecordingId: params.filename,
-      },
-    })) ??
+    byFilename ??
     (await prisma.recording.findFirst({
       where: {
         meetingId: params.meetingId,
@@ -659,7 +741,7 @@ export async function handleRecordingReady(
   const { call_cid, call_recording } = event;
 
   const streamCallId = toCallId(call_cid);
-  const { filename, url, start_time, end_time, session_id } = call_recording;
+  const { filename, url, start_time, end_time } = call_recording;
 
   streamLogger.info("Recording ready", {
     streamCallId,
@@ -695,7 +777,6 @@ export async function handleRecordingReady(
       await discardDeclinedRecording({
         meetingId: meeting.id,
         streamCallId,
-        sessionId: session_id,
         filename,
       });
       await clearRecordingFlag(meeting.id, streamCallId, endDate);
@@ -720,6 +801,16 @@ export async function handleRecordingReady(
     }
 
     const recordingId = recording.id;
+    if (recording.status === RecordingStatus.EXPIRED) {
+      streamLogger.info(
+        "Recording ready for a removed recording; kept removed",
+        {
+          recordingId,
+          sessionId: meeting.id,
+        },
+      );
+      return;
+    }
     streamLogger.info("Recording ready processed", {
       recordingId,
       sessionId: meeting.id,
