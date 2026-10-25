@@ -67,12 +67,12 @@ An expert's reply file takes the same first two steps, but its row is written by
 
 1. **`PG_POOL_MAX=1` Transaction Discipline**:
    - Every database query inside `commitDocumentUpload` (`lib/documents/upload-pipeline.ts`) and `resolveDocumentThreadSlot` (`lib/documents/document-review.ts`) uses the transaction client `tx` exclusively.
-   - A commit replayed after a lost response finds the first attempt's row by `storagePath` inside the locked transaction and returns it with 200; it never inserts a duplicate. A failed commit deletes the object only when no row references it (`discardRefusedUpload`).
+   - A commit replayed after a lost response finds the first attempt's row by `storagePath` inside the locked transaction and returns it with 200; it never inserts a duplicate. A refused commit or review reply deletes the object only when no row references it (`discardRefusedUpload`), except on `STORAGE_UNAVAILABLE`, where the object is kept for the retry. A retried approve or reject with no reply file replays 200 instead of conflicting.
    - A unique-violation on `(thread, versionNo)` is retried up to twice by `withVersionConflictRetry`. Storage-path conflicts are never retried: they mean another writer already committed that object.
-   - Reads enforce `keptUntil` (`file-access.ts`, `workspace.ts`); a tombstoned-but-not-yet-purged file answers `NOT_FOUND` instead of surfacing.
+   - Reads enforce `keptUntil` (`file-access.ts`, `workspace.ts`); a tombstoned-but-not-yet-purged file answers `NOT_FOUND` instead of surfacing, and the Documents library hides threads past `keptUntil` through the shared `isPastRetention` (`document-dates.ts`).
 2. **Compare-and-Swap (`CAS-in-WHERE`) State Transitions**:
    - The review route (`POST .../:docId/review`) and soft deletion (`DELETE`) execute atomic `updateMany` transitions whose `WHERE` carries the expected prior state and the "no newer live learner version" guard.
-   - Soft deletion sets `deletedAt`, `deletedById` and `removalReason = USER_REQUEST` (a learner may withdraw only while `reviewStatus = PENDING` and no newer version exists; an expert may delete only an own shared root). Physical object cleanup occurs after the grace window in `purge-deleted-documents`.
+   - Soft deletion sets `deletedAt`, `deletedById` and `removalReason = USER_REQUEST` (a learner may withdraw only while `reviewStatus = PENDING` and no newer version exists; an expert may delete only an own shared root). Physical object cleanup occurs after the grace window in `purge-deleted-documents`, whose run cap counts attempts rather than successes and which keeps an object while another row references its path.
 3. **Magic-Byte Inspection (`lib/documents/storage-verify.ts`)**:
    - Inspects the first 4,096 bytes of every uploaded object via HTTP `Range: bytes=0-4095`.
    - Unconditionally rejects binary executables (`MZ` PE, `\x7FELF`, shebang) even if renamed to `.pdf` or `.png`.
