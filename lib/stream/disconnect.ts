@@ -13,6 +13,9 @@ import { clearAllStreamCaches } from "@/lib/stream-cache";
 // Type-only SDK imports there too, so this stays SDK-free — see the note above.
 import { resetStreamConnection } from "@/lib/stream/connection-store";
 
+/** Unsent chat drafts in sessionStorage are keyed `chat-draft:<userId>:<cid>`; sign-out removes them all. */
+export const CHAT_DRAFT_KEY_PREFIX = "chat-draft:";
+
 // Module-level client instances to avoid re-creating on remount.
 // Owned here (not in StreamProvider) so the disconnect helper and the provider
 // share one source of truth without the helper dragging in the SDK.
@@ -174,10 +177,13 @@ export async function disconnectStreamClients(): Promise<void> {
   // opposite: a correct helper nobody had wired up.
   resetStreamConnection();
 
-  // Clear sessionStorage sync flags so a re-login triggers a fresh sync
+  // Clear sync flags so a re-login triggers a fresh sync, and unsent chat drafts so the next user on this tab never sees them.
   if (typeof sessionStorage !== "undefined") {
     Object.keys(sessionStorage)
-      .filter((k) => k.startsWith("stream_sync_"))
+      .filter(
+        (k) =>
+          k.startsWith("stream_sync_") || k.startsWith(CHAT_DRAFT_KEY_PREFIX),
+      )
       .forEach((k) => sessionStorage.removeItem(k));
   }
 }

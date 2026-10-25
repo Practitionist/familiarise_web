@@ -75,6 +75,7 @@ import {
 // barrel is imported at the single gateway call below instead.
 import type { createRefund as createGatewayRefund } from "@/lib/payments";
 import {
+  GATEWAY_NOT_FOUND,
   isDefinitiveRefundRefusal,
   RefundError,
 } from "@/lib/payments/core/types";
@@ -629,6 +630,8 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       subsystem: "payments",
       tags: { feature: "refund" },
       extra: { paymentId: input.paymentId, refundRowId: reserved.id },
+      // A permanent unknown payment is reported once, by the caller's stuck alert.
+      expected: err instanceof RefundError && err.code === GATEWAY_NOT_FOUND,
     });
     const gatewayError = err instanceof Error ? err.message : String(err);
     const metadata = {

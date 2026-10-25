@@ -55,6 +55,9 @@ declare module "stream-chat" {
     support_message?: boolean;
     /** Names a support system message: `support_joined` / `support_left`. */
     support_event?: "support_joined" | "support_left";
+    /** The booking receipt's appointment, on the message root or under `custom`. */
+    booking_appointment_id?: string;
+    custom?: { booking_appointment_id?: string };
   }
 
   /**

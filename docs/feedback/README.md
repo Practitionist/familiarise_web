@@ -1,6 +1,6 @@
 # Feedback
 
-Feedback is the private per-call CSAT rail: one rating, and an optional note, per person per session, stored in `AppointmentFeedback`. It is private by construction. The rater sees their own score and note, the rated party sees the score only, and an organisation sees an aggregate above a cohort floor and nothing else ([ADR 20](../enterprise/70-design-decisions/20-org-visibility-into-member-sessions.md)). It is the sibling of two other subsystems, support and reviews, and the [grid](../support/02-the-grid.md) says how the three relate: a rating is about a conversation, a review is about a person, a case is about a problem.
+Feedback is the private per-call CSAT rail: one rating, and an optional note, per person per session, stored in `AppointmentFeedback`. It is private by construction. The rater sees their own score and note, the rated party sees the score only, and an organisation sees an aggregate above a cohort floor and nothing else ([ADR 20](../enterprise/70-design-decisions/20-org-visibility-into-member-sessions.md)). It is the sibling of two other subsystems, support and reviews, and the [grid](../support/09-org-scopes-and-visibility.md) says how the three relate: a rating is about a conversation, a review is about a person, a case is about a problem.
 
 ## Recommended reading order
 

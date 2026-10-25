@@ -51,6 +51,7 @@ import { cleanupAuthTokens } from "@/lib/auth/cleanup-auth-tokens";
 import { archiveWebhookEvents } from "@/scripts/cleanup/archive-webhook-events";
 import { reconcileDocumentStorage } from "@/scripts/cleanup/reconcile-document-storage";
 import { purgeDeletedDocuments } from "@/lib/documents/document-purge";
+import { scheduleFor } from "@/lib/cron/schedule";
 
 // Alerts
 import { alertOrphanedPayments } from "@/scripts/alerts/alert-orphaned-payments";
@@ -294,7 +295,9 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
     };
   },
   "purge-deleted-documents": async () => {
-    const result = await purgeDeletedDocuments();
+    const result = await purgeDeletedDocuments(new Date(), {
+      limit: scheduleFor("purge-deleted-documents")?.limit ?? undefined,
+    });
     return {
       success: result.success,
       tombstoned: result.tombstoned,
