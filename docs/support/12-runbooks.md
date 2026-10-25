@@ -112,7 +112,16 @@ ORDER BY "endedAt";
 
 1. **Not seated.** `retryJoins()` in `lib/support/chat-sweep.ts` calls `joinIntervention()` (`lib/stream/support-intervention.ts`) on every run for live, unexpired grants older than 2 minutes. A channel that no longer exists ends the grant as `CHANNEL_GONE`. A frozen channel is left alone and retried, because it may thaw. Any other error, such as an open Stream circuit breaker, is listed in `errors` and retried next run. If the case no longer needs the seat, end the intervention (`END_INTERVENTION` on `POST /api/support/cases/[caseId]/chat`).
 2. **Not cleared.** `leaveEndedInterventions()` calls `leaveIntervention()`. That sends `fs-leave-<grantId>`, removes `familiarise-support` and stamps `streamLeftAt`. If another live, seated intervention holds the same channel, it only stamps (`handed-over`) and the seat stays. A missing channel counts as left, and a duplicate leave message is ignored, so re-running is safe ([re-run the sweep](#re-running-the-support-sweep)).
-3. **Member present, no row matches.** If `addMembers` succeeded but the `streamJoinedAt` stamp failed, and the grant then ended, neither query finds it and nothing reconciles it. Remove `familiarise-support` from the channel by hand in Stream.
+3. **Member present, no row matches.** If `addMembers` succeeded but the `streamJoinedAt` stamp failed, and the grant then ended, neither query finds it and nothing reconciles it. First check that no other intervention holds the seat, the same successor check `leaveIntervention()` makes:
+
+   ```sql
+   SELECT id, "caseId" FROM "SupportCaseChatAccess"
+   WHERE kind = 'INTERVENE' AND "channelType" = '<channelType>' AND "channelId" = '<channelId>'
+     AND "endedAt" IS NULL AND "streamJoinedAt" IS NOT NULL AND "expiresAt" > now();
+   ```
+
+   Only if it returns no row, remove `familiarise-support` from the channel by hand in Stream. If it returns a row, that grant owns the seat; leave the member in place.
+
 4. **Boundary.** `syncRecentBoundaries()` re-applies or lifts the channel lock (`syncSupportBoundary()`) only for channels whose interventions started or ended in the last hour. After that window nothing re-syncs it until an intervention on the channel starts or ends again.
 
 **Verify.** The first query no longer returns the grant: `streamJoinedAt` is set and the chat shows the `fs-join-<grantId>` line, or the grant ended as `CHANNEL_GONE`. For a stuck leave, the second query no longer returns the grant: `streamLeftAt` is set and Familiarise Support is not a member, unless a successor grant holds the seat. The next sweep has no `chat-access` errors for these ids.
