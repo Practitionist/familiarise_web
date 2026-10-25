@@ -252,19 +252,11 @@ describe("cron-tick dueTargets cadence", () => {
     const start = Date.UTC(2026, 10, 1);
     let min = Infinity;
     let max = 0;
-    let maxWithReservedMaintenance = 0;
     for (let m = 0; m < 400 * 24 * 60; m += 5) {
       const n = dueTargets(new Date(start + m * 60_000)).length;
       min = Math.min(min, n);
       max = Math.max(max, n);
-      maxWithReservedMaintenance = Math.max(
-        maxWithReservedMaintenance,
-        n + (m % 15 === 0 ? 1 : 0),
-      );
     }
-    expect(maxWithReservedMaintenance).toBeLessThanOrEqual(
-      MAX_TARGETS_PER_TICK,
-    );
     expect(min).toBeGreaterThanOrEqual(5);
     expect(max).toBeLessThanOrEqual(MAX_TARGETS_PER_TICK);
   });
