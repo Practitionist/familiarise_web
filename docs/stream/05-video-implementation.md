@@ -343,5 +343,5 @@ Two fallbacks cover legacy and unexpected rows. An ended row with a NULL reason 
 
 - [Previous: 04. Chat Implementation](./04-chat-implementation.md)
 - [Next: 06. Channel Management](./06-channel-management.md)
-- [Architecture Decision Records (ADR-01..ADR-05)](./18-architecture-decision-records.md)
+- [Architecture Decision Records (ADR-01..ADR-11)](./18-architecture-decision-records.md)
 - [Back to Index](./README.md)
