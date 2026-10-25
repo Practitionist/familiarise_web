@@ -82,7 +82,7 @@ failure keeps the admin request `IN_PROGRESS` with HTTP 202; the request can com
 are cleared. These retries preserve removal timestamps. The existing
 `expire-recordings` entry also selects expired rows with asset pointers
 independently of the normal retention deadline, providing a fallback when
-that entry runs. This change does not enable a scheduler.
+that entry runs. The `expire-recordings` fallback remains on the blocked Actions schedule pending the daily lifecycle handoff; recording transfer is independently ticker-owned.
 
 An unpublished attempt whose transfer cleanup fails has no recorded storage
 pointer. That separate orphan-cleanup gap remains open; the erasure claim and
