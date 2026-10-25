@@ -57,3 +57,18 @@ Sources: [Netlify background execution and retries](https://docs.netlify.com/bui
 ## Deprecated & Superseded Approaches
 
 The core previously admitted multiple concurrent copies over a 25-minute run budget and counted attempts only on handled failure. An interrupted run could therefore reuse an attempt object key. The one-copy envelope and atomic attempt ownership replace those assumptions. The former six-hour Actions clock is superseded by the 15-minute ticker dispatch. A queue admission receipt remains distinct from a completed copy.
+
+## Scheduler host and lifecycle worker boundary
+
+Automatic recording copies currently depend on Netlify being the active cron
+host. The ticker, cleanup dispatch and staff recovery door target
+`/.netlify/functions/recording-transfer-background`; moving the active scheduler
+to another host requires a supported background execution target there first.
+Keeping Netlify as a standby does not make its background worker portable.
+
+The remaining Stream lifecycle migration is being prepared separately. Its
+native adapter imports domain cores directly, without the cleanup registry or
+request-authentication graph. Channel administration and organization access
+revocation live in `lib/stream/channel-administration.ts` and
+`lib/stream/org-access-revocation.ts`; interactive services call those same
+implementations. CLI entry guards must tolerate native Node ESM loading.

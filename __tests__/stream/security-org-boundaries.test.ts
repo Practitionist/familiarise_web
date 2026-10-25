@@ -356,7 +356,7 @@ describe("Stream security, consent gates, and organization boundaries", () => {
       const error = new Error("surface lookup failed");
       mockPrisma.webinar.findMany.mockRejectedValueOnce(error);
       const { revokeMemberStreamAccess } =
-        await import("../../lib/enterprise/member-removal");
+        await import("../../lib/stream/org-access-revocation");
       const failureReporter = { add: jest.fn(), flush: jest.fn() };
       const result = await revokeMemberStreamAccess({
         orgId: "org-a",
@@ -379,7 +379,7 @@ describe("Stream security, consent gates, and organization boundaries", () => {
       mockPrisma.webinar.findMany.mockResolvedValueOnce([{ id: "web-org-1" }]);
 
       const { revokeMemberStreamAccess } =
-        await import("../../lib/enterprise/member-removal");
+        await import("../../lib/stream/org-access-revocation");
 
       const res = await revokeMemberStreamAccess({
         orgId: "org123456789",
@@ -403,7 +403,7 @@ describe("Stream security, consent gates, and organization boundaries", () => {
         .mockResolvedValueOnce(page(50));
 
       const { revokeMemberStreamAccess } =
-        await import("../../lib/enterprise/member-removal");
+        await import("../../lib/stream/org-access-revocation");
       const res = await revokeMemberStreamAccess({
         orgId: "org123456789",
         userId: "u1",

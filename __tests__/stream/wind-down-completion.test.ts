@@ -48,7 +48,7 @@ jest.mock("../../lib/stream-client", () => ({
     }),
   }),
 }));
-jest.mock("../../lib/stream/event-channel-service", () => ({
+jest.mock("../../lib/stream/channel-administration", () => ({
   queryOrgTaggedChannels: (...args: unknown[]) =>
     mockQueryTaggedChannels(...args),
   endActiveStreamVideoCalls: jest.fn().mockResolvedValue({
@@ -56,7 +56,7 @@ jest.mock("../../lib/stream/event-channel-service", () => ({
     errors: [],
   }),
 }));
-jest.mock("../../lib/enterprise/member-removal", () => ({
+jest.mock("../../lib/stream/org-access-revocation", () => ({
   loadOrgStreamSurfaces: (...args: unknown[]) => mockLoadSurfaces(...args),
   revokeMemberStreamAccess: (...args: unknown[]) => mockRevokeMember(...args),
   STREAM_REVOCATION_RETRY_WINDOW_HOURS: 72,

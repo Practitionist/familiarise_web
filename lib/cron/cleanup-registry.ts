@@ -1060,12 +1060,11 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "reconcile-sessions": () =>
       cleanupRoute({
         job: "reconcile-orphaned-sessions",
-        run: async () => {
+        run: async (req) => {
           const { reconcileOrphanedSessions } =
-            await import("@/jobs/meetings/reconcile-orphaned-sessions");
-          return reconcileOrphanedSessions();
+            await import("@/lib/meetings/reconcile-orphaned-sessions");
+          return reconcileOrphanedSessions({ limit: parseLimitParam(req) });
         },
-        status: () => 200,
         unauthorizedMessage:
           "Please provide a valid authorization header with the CRON_SECRET",
         failureMessage: "Reconciliation job failed",

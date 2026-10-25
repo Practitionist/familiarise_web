@@ -65,7 +65,14 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+jest.mock("../../lib/redis", () => ({
+  createCircuitBreaker: () => ({ run: (run: () => Promise<unknown>) => run() }),
+}));
+
 jest.mock("../../lib/stream-client", () => ({
+  isExpectedStreamError: jest.requireActual<
+    typeof import("../../lib/stream-client")
+  >("../../lib/stream-client").isExpectedStreamError,
   isStreamConfigured: () => true,
   getStreamChatClient: () => ({
     channel: (...args: unknown[]) => {
@@ -77,7 +84,9 @@ jest.mock("../../lib/stream-client", () => ({
     },
     deleteChannels: (...a: unknown[]) => mockDeleteChannels(...a),
   }),
-  withStreamCircuitBreaker: async (op: () => unknown) => op(),
+  withStreamCircuitBreaker: jest.requireActual<
+    typeof import("../../lib/stream-client")
+  >("../../lib/stream-client").withStreamCircuitBreaker,
 }));
 
 jest.mock("../../lib/cron/with-cron-lock", () => ({
@@ -94,6 +103,9 @@ jest.mock("@sentry/nextjs", () => ({
   logger: { warn: jest.fn(), info: jest.fn(), fmt: (s: unknown) => s },
 }));
 
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
+
+import * as Sentry from "@sentry/nextjs";
 import { expireEventChannels } from "../../jobs/stream/expire-event-channels";
 import { getDmChannelId } from "../../lib/stream-utils";
 
@@ -368,4 +380,62 @@ describe("DM dormancy — identity and retention", () => {
     // The event stage's own counters survive; the caller reports them.
     expect(result.frozen).toBe(0);
   });
+});
+
+describe("channel expiry provider outcomes", () => {
+  it("treats confirmed missing lazy event and DM channels as absence without stamping their ledgers", async () => {
+    mockAppointmentFindMany.mockResolvedValue([
+      {
+        webinar: {
+          id: "lazy-event",
+          chatFrozenAt: null,
+          webinarPlan: { id: "plan", collaborators: [], organization: null },
+        },
+        class: null,
+        organization: null,
+        occurrences: [{ endsAt: daysAgo(14) }],
+      },
+    ]);
+    mockConsultationFindMany.mockResolvedValue([consultation("lazy-dm", 120)]);
+    mockUpdatePartial.mockRejectedValue(
+      Object.assign(new Error("Resource not found"), { status: 404, code: 16 }),
+    );
+    const result = await expireEventChannels();
+    expect(result).toMatchObject({
+      success: true,
+      missingChannels: 2,
+      frozen: 0,
+      dmFrozen: 0,
+      errors: [],
+    });
+    expect(mockConsultationUpdateMany).not.toHaveBeenCalled();
+    expect(mockSubscriptionUpdateMany).not.toHaveBeenCalled();
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
+  it.each([429, 500])(
+    "fails truthfully for HTTP %i and captures once across both vendor and sweep catches",
+    async (status) => {
+      mockConsultationFindMany.mockResolvedValue(
+        ["a", "b", "c"].map((id) => ({
+          ...consultation(id, 120),
+          requestedBy: { user: { id: `client-${id}` } },
+        })),
+      );
+      mockUpdatePartial.mockImplementation(async () => {
+        throw Object.assign(new Error("provider refused update"), { status });
+      });
+      const result = await expireEventChannels();
+      expect(result.success).toBe(false);
+      expect(result.errors).toHaveLength(3);
+      expect(result.missingChannels).toBe(0);
+      expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+      expect(Sentry.captureException).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({
+          extra: expect.objectContaining({ count: 3 }),
+        }),
+      );
+    },
+  );
 });

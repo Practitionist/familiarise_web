@@ -50,3 +50,8 @@ references for transaction-client, deployed-runtime and environment constraints.
 The Jest configuration keeps an explicit `@/` source mapping while retaining Next.js’s default mocks and transforms. Run targeted suites through the repository config. A CLI `--moduleNameMapper` replaces the entire map and can discard `server-only`, asset and Redis-edge mocks; do not use it as a shortcut for alias resolution.
 
 When merging a worker migration, port its roster, limit, timeout and ledger-yield changes into the shared catalog; do not restore the adapter’s former inline schedule. Check generated output against the same inputs before and after generator refactors. Keep blank workflow names within their own source block and preserve escaped Markdown pipes. See `references/cron-ticker.md` for the current document-purge schedule and mocked verification boundary.
+
+Stream background adapters currently target Netlify function URLs. Automatic
+execution requires Netlify as active cron host; a host switch needs an equivalent
+execution target. Keep lifecycle worker imports free of request authentication
+and check actual native packaging, including CLI guards, before scheduling.

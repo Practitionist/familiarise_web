@@ -173,3 +173,8 @@ mcp__streamio__app_get_rate_limits   {}
 - **Chat file and image uploads**: The channel types allowed `upload-file`, but there was no storage or moderation story and the community page advertising it did not exist. Superseded by `uploads: false`, every attachment-upload grant stripped by the script, and the deleted page.
 - **Instant skeleton on a socket blip, a badge summed over the loaded page, and a `null` client committed by an overlapping connect**: Superseded by the reconnect grace window, `total_unread_count` minus org-tagged unread, and single-flight connects with a generation token.
 - **Client-cooperative revocation (sync gates), unfreeze-on-open, caller-authored booking cards, DM Clear chat**: Superseded by synchronous revocation plus the retry queue and daily reconciler, get-or-create collaborator channels, `system-booking-context` authorship, and hiding truncate on managed channels.
+
+Organization channel administration and member revocation cores are in
+`lib/stream/channel-administration.ts` and `lib/stream/org-access-revocation.ts`.
+Keep background imports on these domain modules rather than interactive services
+that load request authentication. Current background dispatch is Netlify-specific.

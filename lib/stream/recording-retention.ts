@@ -798,7 +798,7 @@ async function expireRecordingsUnlocked(
 export async function expireRecordings(
   opts: { limit?: number } = {},
 ): Promise<ExpireRecordingsResult> {
-  return withCronLock("expire-recordings", { failMode: "open" }, () =>
+  return withCronLock("expire-recordings", { failMode: "closed" }, () =>
     expireRecordingsUnlocked(opts.limit ?? DEFAULT_EXPIRE_LIMIT),
   );
 }

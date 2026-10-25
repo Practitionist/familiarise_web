@@ -27,10 +27,12 @@
 import "dotenv/config";
 
 import prisma from "../../lib/prisma";
-import { createRunFailureReporter } from "../../lib/observability/run-failures";
+import type { RunFailureReporter } from "../../lib/observability/run-failures";
+import { reportSentryError } from "../../lib/observability/report";
 import {
   getStreamChatClient,
   isStreamConfigured,
+  isExpectedStreamError,
   withStreamCircuitBreaker,
 } from "../../lib/stream-client";
 import {
@@ -85,6 +87,7 @@ export interface ExpireEventChannelsResult {
   dmDeleteRequests: number;
   errors: string[];
   success: boolean;
+  missingChannels: number;
 }
 
 interface DmPairRow {
@@ -594,6 +597,7 @@ async function runDmStage(
   result: ExpireEventChannelsResult,
   freezeBudget: number,
   deletePacing: DeletePacingState,
+  streamFailures: RunFailureReporter,
 ): Promise<void> {
   const { pairs, truncated } = await loadDmPairs();
   if (pairs.length === 0) return;
@@ -609,10 +613,10 @@ async function runDmStage(
   // one more day is not. Spending the run's remaining calls on freezes while a
   // returning consultee cannot message their consultant would be the wrong way
   // round.
-  await applyDmFrozen(chat, toUnfreeze, false, result);
+  await applyDmFrozen(chat, toUnfreeze, false, result, streamFailures);
 
   const freezeBatch = toFreeze.slice(0, Math.max(freezeBudget, 0));
-  await applyDmFrozen(chat, freezeBatch, true, result);
+  await applyDmFrozen(chat, freezeBatch, true, result, streamFailures);
   if (toFreeze.length > freezeBatch.length) {
     result.errors.push(
       `dm freeze cap: deferred ${toFreeze.length - freezeBatch.length} channels to the next run`,
@@ -650,8 +654,10 @@ async function runDmStage(
       (pair) => `${getChannelTypeFromId(pair.channelId)}:${pair.channelId}`,
     );
     try {
-      await withStreamCircuitBreaker(() =>
-        chat.deleteChannels(cids, { hard_delete: true }),
+      await withStreamCircuitBreaker(
+        () => chat.deleteChannels(cids, { hard_delete: true }),
+        undefined,
+        streamFailures,
       );
       // Counts channels SENT for deletion, not channels that existed to delete.
       // `deleteChannels` is idempotent and returns a task id rather than a
@@ -687,6 +693,7 @@ async function applyDmFrozen(
   pairs: DmPairRow[],
   frozen: boolean,
   result: ExpireEventChannelsResult,
+  streamFailures: RunFailureReporter,
 ): Promise<void> {
   if (pairs.length === 0) return;
   const verb = frozen ? "freeze" : "unfreeze";
@@ -701,10 +708,13 @@ async function applyDmFrozen(
 
     const outcomes = await Promise.allSettled(
       batch.map((pair) =>
-        withStreamCircuitBreaker(() =>
-          chat
-            .channel(getChannelTypeFromId(pair.channelId), pair.channelId)
-            .updatePartial({ set: { frozen } }),
+        withStreamCircuitBreaker(
+          () =>
+            chat
+              .channel(getChannelTypeFromId(pair.channelId), pair.channelId)
+              .updatePartial({ set: { frozen } }),
+          undefined,
+          streamFailures,
         ),
       ),
     );
@@ -718,9 +728,11 @@ async function applyDmFrozen(
         else result.dmUnfrozen++;
         consultationIds.push(...pair.consultationIds);
         subscriptionIds.push(...pair.subscriptionIds);
+      } else if (isExpectedStreamError(outcome.reason)) {
+        result.missingChannels++;
       } else {
-        // A DM that was never created is the common case — channels are minted
-        // lazily on first message — not a failure worth failing the run over.
+        result.success = false;
+        streamFailures.add("dm-freeze", outcome.reason);
         result.errors.push(
           `dm ${verb} ${pair.channelId}: ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
         );
@@ -795,17 +807,41 @@ async function writeDmLedger(
 }
 
 // Per-batch Stream failures collapse to one event per op per run.
-const streamFailures = createRunFailureReporter("stream");
+function channelExpiryFailures(): RunFailureReporter {
+  let count = 0;
+  let first: unknown;
+  const seen = new Set<unknown>();
+  const sample: Array<Record<string, unknown>> = [];
+  return {
+    add(operation, error, context = {}) {
+      if (seen.has(error)) return;
+      seen.add(error);
+      if (count++ === 0 || context.reason === "stream.billing") first = error;
+      if (sample.length < 10) sample.push({ operation, ...context });
+    },
+    flush() {
+      if (count === 0) return;
+      reportSentryError(first, {
+        subsystem: "stream",
+        op: "expire-event-channels",
+        level: "error",
+        fingerprint: ["stream", "expire-event-channels"],
+        extra: { count, sample },
+      });
+    },
+  };
+}
 
 export async function expireEventChannels(): Promise<ExpireEventChannelsResult> {
   // Flush inside the lock: a call refused by the lock never flushes the
   // running sweep's failures.
   return withCronLock(
     "expire-event-channels",
-    { failMode: "open" },
+    { failMode: "closed" },
     async () => {
+      const streamFailures = channelExpiryFailures();
       try {
-        return await expireEventChannelsUnlocked();
+        return await expireEventChannelsUnlocked(streamFailures);
       } finally {
         streamFailures.flush();
       }
@@ -813,7 +849,9 @@ export async function expireEventChannels(): Promise<ExpireEventChannelsResult> 
   );
 }
 
-async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult> {
+async function expireEventChannelsUnlocked(
+  streamFailures: RunFailureReporter,
+): Promise<ExpireEventChannelsResult> {
   const result: ExpireEventChannelsResult = {
     frozen: 0,
     deleted: 0,
@@ -821,6 +859,7 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
     dmFrozen: 0,
     dmUnfrozen: 0,
     dmDeleteRequests: 0,
+    missingChannels: 0,
     errors: [],
     success: true,
   };
@@ -878,10 +917,13 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
     }
     const outcomes = await Promise.allSettled(
       batch.map((event) =>
-        withStreamCircuitBreaker(() =>
-          chat
-            .channel(getChannelTypeFromId(event.channelId), event.channelId)
-            .updatePartial({ set: { frozen: true } }),
+        withStreamCircuitBreaker(
+          () =>
+            chat
+              .channel(getChannelTypeFromId(event.channelId), event.channelId)
+              .updatePartial({ set: { frozen: true } }),
+          undefined,
+          streamFailures,
         ),
       ),
     );
@@ -898,10 +940,11 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
         } else if (event.entity.kind === "class") {
           stamped.classIds.push(event.entity.id);
         }
+      } else if (isExpectedStreamError(outcome.reason)) {
+        result.missingChannels++;
       } else {
-        // A channel that was never created is the common case (chat is lazy),
-        // not a failure worth failing the run over. A 429 is quota, not an
-        // outage — pacing should make it rare, and it must not fail the run.
+        result.success = false;
+        streamFailures.add("event-freeze", outcome.reason);
         result.errors.push(
           `freeze ${event.channelId}: ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
         );
@@ -947,8 +990,10 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
       (channelId) => `${getChannelTypeFromId(channelId)}:${channelId}`,
     );
     try {
-      await withStreamCircuitBreaker(() =>
-        chat.deleteChannels(cids, { hard_delete: true }),
+      await withStreamCircuitBreaker(
+        () => chat.deleteChannels(cids, { hard_delete: true }),
+        undefined,
+        streamFailures,
       );
       result.deleted += cids.length;
     } catch (error) {
@@ -977,6 +1022,7 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
       result,
       MAX_FREEZE_PER_RUN - result.frozen,
       deletePacing,
+      streamFailures,
     );
   } catch (error) {
     result.success = false;
@@ -996,6 +1042,10 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
       dmUnfrozen: result.dmUnfrozen,
       dmDeleteRequests: result.dmDeleteRequests,
       errorCount: result.errors.length,
+      errorSamples: result.errors
+        .slice(0, 5)
+        .map((message) => message.slice(0, 1000)),
+      missingChannels: result.missingChannels,
       timestamp: new Date().toISOString(),
     }),
   );
@@ -1003,7 +1053,11 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
   return result;
 }
 
-if (require.main === module) {
+if (
+  typeof module !== "undefined" &&
+  typeof require !== "undefined" &&
+  require.main === module
+) {
   runJob("expire-event-channels", async () => {
     await abortIfMaintenance("expire-event-channels");
     try {

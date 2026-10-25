@@ -30,12 +30,12 @@ import {
 import {
   endActiveStreamVideoCalls,
   queryOrgTaggedChannels,
-} from "../../lib/stream/event-channel-service";
+} from "../../lib/stream/channel-administration";
 import {
   loadOrgStreamSurfaces,
   revokeMemberStreamAccess,
   STREAM_REVOCATION_RETRY_WINDOW_HOURS,
-} from "../../lib/enterprise/member-removal";
+} from "../../lib/stream/org-access-revocation";
 import { withCronLock } from "../../lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { runJob } from "../../lib/observability/job-sentry";
@@ -72,7 +72,7 @@ type DeactivatedOrgRow = {
 export async function windDownDeactivatedOrgs(): Promise<WindDownDeactivatedOrgsResult> {
   return withCronLock(
     "wind-down-deactivated-orgs",
-    { failMode: "open" },
+    { failMode: "closed" },
     async () => {
       const failures = windDownFailureReporter();
       try {
@@ -738,7 +738,11 @@ async function drainPendingMemberRemovals(
   }
 }
 
-if (require.main === module) {
+if (
+  typeof module !== "undefined" &&
+  typeof require !== "undefined" &&
+  require.main === module
+) {
   runJob("wind-down-deactivated-orgs", async () => {
     await abortIfMaintenance("wind-down-deactivated-orgs");
     try {

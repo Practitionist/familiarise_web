@@ -141,7 +141,7 @@ export async function reconcileOrphanedRecordings(): Promise<OrphanedRecordingRe
   // Postgres-backed fail-open cron lock prevents concurrent scheduler/manual sweeps.
   return withCronLock(
     "reconcile-orphaned-recordings",
-    { failMode: "open" },
+    { failMode: "closed" },
     () => reconcileOrphanedRecordingsUnlocked(),
   );
 }
