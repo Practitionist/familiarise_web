@@ -65,16 +65,19 @@ function metadataOnlyResponse(
   metadata: Record<string, unknown>,
   reason: string,
 ) {
-  return NextResponse.json({
-    recording: {
-      ...metadata,
-      playbackUrl: null,
-      thumbnailUrl: null,
-      previewClipUrl: null,
-      previewTranscript: null,
+  return NextResponse.json(
+    {
+      recording: {
+        ...metadata,
+        playbackUrl: null,
+        thumbnailUrl: null,
+        previewClipUrl: null,
+        previewTranscript: null,
+      },
+      access: { level: "METADATA_ONLY" as const, reason },
     },
-    access: { level: "METADATA_ONLY" as const, reason },
-  });
+    { headers: { "Cache-Control": "private, no-store" } },
+  );
 }
 
 /** Org members with operations or catalog roles see the recording's metadata, never the media. */
