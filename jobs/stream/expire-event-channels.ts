@@ -178,8 +178,6 @@ async function loadEndedEvents(
       channelId: string;
       endsAt: Date;
       retentionDays: number;
-      allEventsFrozen: boolean;
-      latestFrozenAt: Date | null;
     }
   >();
 
@@ -237,7 +235,6 @@ async function loadEndedEvents(
     if (plan?.id && (plan.collaborators?.length ?? 0) > 0) {
       const planKey = `${planType}:${plan.id}`;
       const prev = collabByPlanKey.get(planKey);
-      const isFrozen = chatFrozenAt !== null;
       if (!prev) {
         collabByPlanKey.set(planKey, {
           planType,
@@ -245,18 +242,9 @@ async function loadEndedEvents(
           channelId: collabChannelId(planType, plan.id),
           endsAt,
           retentionDays,
-          allEventsFrozen: isFrozen,
-          latestFrozenAt: chatFrozenAt,
         });
       } else {
         if (prev.endsAt < endsAt) prev.endsAt = endsAt;
-        prev.allEventsFrozen = prev.allEventsFrozen && isFrozen;
-        if (
-          chatFrozenAt &&
-          (!prev.latestFrozenAt || prev.latestFrozenAt < chatFrozenAt)
-        ) {
-          prev.latestFrozenAt = chatFrozenAt;
-        }
       }
     }
   }
@@ -283,7 +271,7 @@ async function loadEndedEvents(
       channelId: cand.channelId,
       endsAt: cand.endsAt,
       retentionDays: cand.retentionDays,
-      chatFrozenAt: cand.allEventsFrozen ? cand.latestFrozenAt : null,
+      chatFrozenAt: null,
       entity: { kind: "collab", id: cand.planId },
     });
   }

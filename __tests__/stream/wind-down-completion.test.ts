@@ -66,6 +66,7 @@ jest.mock("../../lib/stream/org-access-revocation", () => ({
   loadOrgStreamSurfaces: (...args: unknown[]) => mockLoadSurfaces(...args),
   revokeMemberStreamAccess: (...args: unknown[]) => mockRevokeMember(...args),
   STREAM_REVOCATION_RETRY_WINDOW_HOURS: 72,
+  ORG_STREAM_SURFACE_LIMIT: 5000,
 }));
 jest.mock("../../lib/stream/batch", () => ({
   ...jest.requireActual<typeof import("../../lib/stream/batch")>(
@@ -96,6 +97,7 @@ jest.mock("../../lib/observability/report", () => ({
 }));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
+import { readJobCheckpoint } from "../../lib/cron/with-cron-lock";
 import { queryChannelsPaged } from "../../lib/stream/batch";
 import { windDownDeactivatedOrgs } from "../../jobs/stream/wind-down-deactivated-orgs";
 
@@ -114,6 +116,7 @@ function selectFreshOrgs(rows = [org]) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(readJobCheckpoint).mockResolvedValue(null);
   channels = [];
   mockOrganizations.mockResolvedValue([]);
   mockMemberships.mockResolvedValue([]);
@@ -455,4 +458,41 @@ it("stops starting channel batches after its run budget and leaves completion un
   } finally {
     clock.mockRestore();
   }
+});
+
+it("rotates removed-membership recovery past a persistent processed prefix", async () => {
+  const rows = Array.from({ length: 11 }, (_, i) => ({
+    id: String(i).padStart(3, "0"),
+    userId: `user-${i}`,
+    organizationId: org.id,
+    updatedAt: new Date(),
+  }));
+  mockMemberships.mockImplementation(async ({ where, take }) =>
+    where.status === "REMOVED"
+      ? rows.filter((row) => !where.id || row.id > where.id.gt).slice(0, take)
+      : [],
+  );
+  const first = await windDownDeactivatedOrgs();
+  jest.mocked(readJobCheckpoint).mockResolvedValue(first.checkpoint);
+  const second = await windDownDeactivatedOrgs();
+  expect(first.removedMembersDrained).toBe(10);
+  expect(second.removedMembersDrained).toBe(1);
+  expect(mockRevokeMember).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      userId: "user-10",
+      revokeTokensIssuedBefore: rows[10].updatedAt,
+    }),
+  );
+});
+
+it("withholds completion after a bounded database surface scan is truncated", async () => {
+  selectFreshOrgs();
+  mockLoadSurfaces.mockResolvedValueOnce({
+    webinarIds: [],
+    classIds: [],
+    dmChannelIds: [],
+    truncated: true,
+  });
+  expect((await windDownDeactivatedOrgs()).success).toBe(false);
+  expect(mockAudit).not.toHaveBeenCalled();
 });

@@ -26,6 +26,7 @@ const mockConsultationFindMany = jest.fn();
 const mockSubscriptionFindMany = jest.fn();
 const mockOrganizationFindMany = jest.fn();
 const mockAppointmentFindMany = jest.fn();
+const mockLatestOccurrence = jest.fn();
 const mockConsultationUpdateMany = jest.fn();
 const mockSubscriptionUpdateMany = jest.fn();
 const mockUpdatePartial = jest.fn();
@@ -58,6 +59,9 @@ jest.mock("../../lib/prisma", () => ({
     },
     appointment: {
       findMany: (...a: unknown[]) => mockAppointmentFindMany(...a),
+    },
+    appointmentOccurrence: {
+      findFirst: (...args: unknown[]) => mockLatestOccurrence(...args),
     },
     webinar: { updateMany: jest.fn() },
     class: { updateMany: jest.fn() },
@@ -148,6 +152,7 @@ beforeEach(() => {
   mockSubscriptionFindMany.mockResolvedValue([]);
   mockOrganizationFindMany.mockResolvedValue([]);
   mockAppointmentFindMany.mockResolvedValue([]);
+  mockLatestOccurrence.mockResolvedValue(null);
   mockConsultationUpdateMany.mockResolvedValue({ count: 1 });
   mockSubscriptionUpdateMany.mockResolvedValue({ count: 1 });
   mockUpdatePartial.mockResolvedValue(undefined);
@@ -506,4 +511,52 @@ it("pages mixed-case channel identities in code-unit order without losing the ta
   }
   expect(total).toBe(24);
   expect(new Set(mockChannel.mock.calls.map((call) => call[1])).size).toBe(24);
+});
+
+function endedWebinarPage(frozen: boolean) {
+  return [
+    {
+      id: "appointment-old",
+      webinar: {
+        id: "old",
+        chatFrozenAt: frozen ? daysAgo(1) : null,
+        webinarPlan: {
+          id: "plan",
+          collaborators: [{ id: "presenter" }],
+          organization: null,
+        },
+      },
+      class: null,
+      organization: null,
+      occurrences: [{ endsAt: daysAgo(100) }],
+    },
+  ];
+}
+it("uses a newer past event outside the appointment page to protect the shared collaborator channel", async () => {
+  mockAppointmentFindMany.mockResolvedValue(endedWebinarPage(true));
+  mockLatestOccurrence.mockResolvedValue({ endsAt: daysAgo(2) });
+  await expireEventChannels();
+  expect(mockLatestOccurrence.mock.calls[0][0]).toMatchObject({
+    orderBy: { endsAt: "desc" },
+    select: { endsAt: true },
+  });
+  expect(mockLatestOccurrence.mock.calls[0][0].where.endsAt).toBeUndefined();
+  expect(mockDeleteChannels).toHaveBeenCalledTimes(1);
+  expect(mockDeleteChannels.mock.calls[0][0]).toEqual(["team:webinar-old"]);
+  expect(
+    mockChannel.mock.calls.some((call) =>
+      String(call[1]).startsWith("collab-"),
+    ),
+  ).toBe(false);
+});
+it("does not infer collaborator freeze success from frozen event ledgers", async () => {
+  mockAppointmentFindMany.mockResolvedValue(endedWebinarPage(true));
+  mockLatestOccurrence.mockResolvedValue({ endsAt: daysAgo(10) });
+  await expireEventChannels();
+  expect(mockUpdatePartial).toHaveBeenCalledWith({ set: { frozen: true } });
+  expect(
+    mockChannel.mock.calls.some((call) =>
+      String(call[1]).startsWith("collab-"),
+    ),
+  ).toBe(true);
 });

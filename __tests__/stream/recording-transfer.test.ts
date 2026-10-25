@@ -722,3 +722,37 @@ it("uses attempt-scoped R2 keys (attempt-N.mp4), cleans up prior attempts on suc
   expect(transferRetryBackoffMs(4)).toBe(24 * 60 * 60 * 1000);
   expect(transferRetryBackoffMs(11)).toBe(24 * 60 * 60 * 1000);
 });
+
+it("keeps a stuck source quiet until its six-hour alarm cooldown elapses", async () => {
+  jest.useFakeTimers({ doNotFake: ["setTimeout", "clearTimeout"] });
+  jest.setSystemTime(new Date("2026-10-25T00:00:00Z"));
+  let alertedAt: Date | null = null;
+  const updatedAt = new Date("2026-10-24T00:00:00Z");
+  try {
+    recording.findMany.mockImplementation(async ({ select }) =>
+      select?.lastTransferError
+        ? [{ id: "stuck", transferAttempts: 3, updatedAt }]
+        : [],
+    );
+    recording.updateMany.mockImplementation(async ({ where, data }) => {
+      const cooldown = where.OR[1].transferFailureAlertedAt.lte;
+      if (alertedAt && alertedAt > cooldown) return { count: 0 };
+      alertedAt = data.transferFailureAlertedAt;
+      return { count: 1 };
+    });
+    await transferRecordings();
+    jest.setSystemTime(new Date("2026-10-25T05:59:59Z"));
+    await transferRecordings();
+    expect(reportSentryMessage).toHaveBeenCalledTimes(1);
+    jest.setSystemTime(new Date("2026-10-25T06:00:00Z"));
+    await transferRecordings();
+    expect(reportSentryMessage).toHaveBeenCalledTimes(2);
+    for (const [arg] of recording.updateMany.mock.calls)
+      expect(arg.data.updatedAt).toEqual(updatedAt);
+    expect(
+      recording.findMany.mock.calls[8][0].where.streamUrlExpiresAt.gt,
+    ).toEqual(new Date("2026-10-25T06:00:00Z"));
+  } finally {
+    jest.useRealTimers();
+  }
+});

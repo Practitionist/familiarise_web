@@ -18,11 +18,13 @@ import { queryOrgTaggedChannels } from "@/lib/stream/channel-administration";
 import { liveParticipant } from "@/lib/booking/participants";
 
 export const STREAM_REVOCATION_RETRY_WINDOW_HOURS = 72;
+export const ORG_STREAM_SURFACE_LIMIT = 5_000;
 
 export interface OrgStreamSurfaces {
   webinarIds: string[];
   classIds: string[];
   dmChannelIds: string[];
+  truncated: boolean;
 }
 
 function buildOrgWebinarSurfaceWhere(
@@ -147,11 +149,13 @@ export async function loadOrgStreamSurfaces(
   const webinars = await prisma.webinar.findMany({
     where: buildOrgWebinarSurfaceWhere(orgId, userId, onlyUnfrozen),
     select: { id: true },
+    take: ORG_STREAM_SURFACE_LIMIT + 1,
   });
 
   const classes = await prisma.class.findMany({
     where: buildOrgClassSurfaceWhere(orgId, userId, onlyUnfrozen),
     select: { id: true },
+    take: ORG_STREAM_SURFACE_LIMIT + 1,
   });
 
   const consultations = await prisma.consultation.findMany({
@@ -174,6 +178,7 @@ export async function loadOrgStreamSurfaces(
         },
       ],
     },
+    take: ORG_STREAM_SURFACE_LIMIT + 1,
     select: {
       consultationPlan: {
         select: {
@@ -206,6 +211,7 @@ export async function loadOrgStreamSurfaces(
         },
       ],
     },
+    take: ORG_STREAM_SURFACE_LIMIT + 1,
     select: {
       subscriptionPlan: {
         select: {
@@ -222,7 +228,7 @@ export async function loadOrgStreamSurfaces(
   addOneToOneOrgDmChannels(
     dmChannelIds,
     orgId,
-    consultations.map((c) => ({
+    consultations.slice(0, ORG_STREAM_SURFACE_LIMIT).map((c) => ({
       plan: c.consultationPlan,
       requestedBy: c.requestedBy,
       appointment: c.appointment,
@@ -231,7 +237,7 @@ export async function loadOrgStreamSurfaces(
   addOneToOneOrgDmChannels(
     dmChannelIds,
     orgId,
-    subscriptions.map((s) => ({
+    subscriptions.slice(0, ORG_STREAM_SURFACE_LIMIT).map((s) => ({
       plan: s.subscriptionPlan,
       requestedBy: s.requestedBy,
       appointment: s.appointment,
@@ -239,9 +245,12 @@ export async function loadOrgStreamSurfaces(
   );
 
   return {
-    webinarIds: webinars.map((w) => w.id),
-    classIds: classes.map((c) => c.id),
+    webinarIds: webinars.slice(0, ORG_STREAM_SURFACE_LIMIT).map((w) => w.id),
+    classIds: classes.slice(0, ORG_STREAM_SURFACE_LIMIT).map((c) => c.id),
     dmChannelIds: Array.from(dmChannelIds),
+    truncated: [webinars, classes, consultations, subscriptions].some(
+      (rows) => rows.length > ORG_STREAM_SURFACE_LIMIT,
+    ),
   };
 }
 
@@ -461,6 +470,7 @@ export async function revokeMemberStreamAccess(input: {
     };
   }
 
+  if (surfaces.truncated) failures.push("loadOrgStreamSurfaces:truncated");
   const targets = new Map<string, "team" | "messaging">();
   for (const id of surfaces.webinarIds) {
     targets.set(`${WEBINAR_PREFIX}${id}`, "team");

@@ -51,15 +51,15 @@ has drained. The catalog is shared with documentation and tested over every tick
 of a week and 400 days, including monthly/quarterly collisions; no tick exceeds
 ten targets. Existing Stream membership and control-plane checks remain scheduled.
 
-| Core / entry                                      | UTC slots           | Work bound and continuation                                                                                                                                                                                                        |
-| ------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib/meetings/reconcile-orphaned-sessions.ts`     | :10/:40             | At most five rooms; stop starting work after six seconds; persist an ID bound across successes, active rooms and failures.                                                                                                         |
-| `lib/stream/recording-transfer-service.ts`        | :00/:15/:30/:45     | One stale claim, one eligible copy, at most 100 risk candidates; 12-minute copy deadline.                                                                                                                                          |
-| `lib/stream/recording-retention.ts`               | 00:05, 01:05, 02:05 | Default ten lapsed rows, ten due expiries, ten asset cleanups and ten transferred-source deletes; scan at most 25 retention candidates. Separate ID cursors for lapsed, due and source-copy stages. Explicit limits clamp to 1–25. |
-| `scripts/stream/reconcile-orphaned-recordings.ts` | 00:20, 01:20, 02:20 | At most 25 meetings aged 2h–14d with a durable recording-start witness, including both zero-row and partial deliveries; five-minute start budget; ID continuation.                                                                 |
-| `jobs/stream/wind-down-deactivated-orgs.ts`       | 00:25, 01:25, 02:25 | At most two organizations and ten removed memberships; five-minute start budget through vendor loops; ten recording purges per organization; incomplete markers stay unwritten.                                                    |
-| `scripts/stream/stream-sync.ts`                   | 00:50, 01:50, 02:50 | At most five pages of 100 principals; persist the last ID; wrap at the end; preserve the starting cursor on dry runs.                                                                                                              |
-| `jobs/stream/expire-event-channels.ts`            | 00:55, 01:55, 02:55 | At most 25 event appointments plus shared collaborator channels and ten DM channels per slice; separate appointment-ID and DM-channel continuation.                                                                                |
+| Core / entry                                      | UTC slots           | Work bound and continuation                                                                                                                                                                                                                                     |
+| ------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/meetings/reconcile-orphaned-sessions.ts`     | :10/:40             | At most five rooms; stop starting work after six seconds; persist an ID bound across successes, active rooms and failures.                                                                                                                                      |
+| `lib/stream/recording-transfer-service.ts`        | :00/:15/:30/:45     | One stale claim, one eligible copy, at most 100 risk candidates; 12-minute copy deadline.                                                                                                                                                                       |
+| `lib/stream/recording-retention.ts`               | 00:05, 01:05, 02:05 | Default ten lapsed rows, ten due expiries, ten asset cleanups and ten transferred-source deletes; scan at most 25 retention candidates. Separate ID cursors for lapsed, due and source-copy stages. Explicit limits clamp to 1–25.                              |
+| `scripts/stream/reconcile-orphaned-recordings.ts` | 00:20, 01:20, 02:20 | At most 25 meetings aged 2h–14d with a durable recording-start witness, including both zero-row and partial deliveries; five-minute start budget; ID continuation.                                                                                              |
+| `jobs/stream/wind-down-deactivated-orgs.ts`       | 00:25, 01:25, 02:25 | At most two organizations and ten removed memberships with separate ID cursors; related database scans cap at 5,000 plus one sentinel; five-minute start budget through vendor loops; ten recording purges per organization; incomplete markers stay unwritten. |
+| `scripts/stream/stream-sync.ts`                   | 00:50, 01:50, 02:50 | At most five pages of 100 principals; persist the last ID; wrap at the end; preserve the starting cursor on dry runs.                                                                                                                                           |
+| `jobs/stream/expire-event-channels.ts`            | 00:55, 01:55, 02:55 | At most 25 event appointments plus shared collaborator channels and ten DM channels per slice; separate appointment-ID and DM-channel continuation.                                                                                                             |
 
 ID bounds use `id > checkpoint`, so deleting the last processed row does not break
 continuation. A finished failed slice can still save its progress. Retried rows
@@ -71,7 +71,9 @@ monitor age and backlog independently of successful slice completion.
 
 Channel expiry derives each collaborator channel's lifetime from the latest live
 occurrence across its whole plan, including future-only event appointments. A
-page-local maximum is insufficient. DM dormancy uses the latest booking across
+page-local maximum is insufficient. Event freeze stamps do not prove that a
+shared collaborator channel was frozen: its bounded idempotent freeze is retried
+independently, including after an earlier collaborator freeze failed. DM dormancy uses the latest booking across
 its funding context. The DM discovery scans cap at 5,000 consultations and 5,000
 subscriptions; deletion is withheld and the run fails if either input is
 truncated, because incomplete aggregation can misclassify an active relationship.

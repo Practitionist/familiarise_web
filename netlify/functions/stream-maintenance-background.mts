@@ -13,9 +13,13 @@ const jobSchema = z.enum(STREAM_LIFECYCLE_JOBS);
 /** The ticker owns scheduling; this narrow adapter executes one selected Stream core. */
 export default async function streamMaintenance(req: Request): Promise<void> {
   if (req.method !== "POST") return;
+  const selected = jobSchema.safeParse(
+    new URL(req.url).searchParams.get("job"),
+  );
+  if (!selected.success) return;
   initJobSentry();
   try {
-    const job = jobSchema.parse(new URL(req.url).searchParams.get("job"));
+    const job = selected.data;
     const handlers = cleanupRoute({
       job,
       run: async () => {

@@ -793,7 +793,8 @@ console.log(result);
 ### POST /api/cleanup/stream-sync
 
 Authenticated with the server cron bearer. Optional `?dry-run=true` queues a
-read-only comparison without provider deletion or cursor advancement. The
+comparison without provider deletion or cursor advancement. Lease and execution
+history are still written. The
 registered handler queues `stream-maintenance-background?job=stream-sync` using
 the configured HTTPS origin and returns 202 for admission. The staff
 `POST /api/admin/system-jobs/run` door accepts `jobId: "stream-sync"` with an
