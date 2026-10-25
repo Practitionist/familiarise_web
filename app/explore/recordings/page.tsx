@@ -32,10 +32,9 @@ async function RecordingsGrid() {
     return (
       <div className="py-24 text-center text-muted-foreground">
         <PlayCircle className="mx-auto mb-4 h-12 w-12 opacity-40" />
-        <p className="text-lg font-medium">No published recordings yet</p>
+        <p className="text-lg font-medium">Replays aren&apos;t on sale yet</p>
         <p className="mt-1 text-sm">
-          Consultants can publish webinar and class replays from their
-          dashboard.
+          Attendees can watch their session recordings from their dashboard.
         </p>
       </div>
     );
