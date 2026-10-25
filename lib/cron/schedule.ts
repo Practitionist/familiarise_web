@@ -55,9 +55,15 @@ export const TARGETS = [
   "reconcile-ledgers",
   "tds-return-draft",
   "stream-control-plane-drift",
+  "transfer-recordings",
 ] as const;
 
 export type Target = (typeof TARGETS)[number];
+
+/** Background targets acknowledge admission; their cores record eventual completion. */
+export const TARGET_BACKGROUND_FUNCTIONS: Partial<Record<Target, string>> = {
+  "transfer-recordings": "recording-transfer-background",
+};
 
 /** The batch size a target gets when it is not listed in {@link TARGET_LIMITS}. */
 const DEFAULT_LIMIT = 50;
@@ -109,6 +115,7 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "tds-return-draft": null,
   "reconcile-stream-memberships": 50,
   "stream-control-plane-drift": null,
+  "transfer-recordings": null,
 };
 
 /**
@@ -171,6 +178,7 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "tds-return-draft": 60,
   "reconcile-stream-memberships": 60,
   "stream-control-plane-drift": 60,
+  "transfer-recordings": 15,
 };
 
 /**
@@ -233,6 +241,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "tds-return-draft": 55,
   "reconcile-stream-memberships": 20,
   "stream-control-plane-drift": 15,
+  "transfer-recordings": 0,
 };
 
 /** Regression ceiling for due work, enforced by the calendar test. */
@@ -413,8 +422,11 @@ export function targetRequest(
     .filter((q): q is string => q !== null)
     .join("&");
   const querySuffix = query ? "?" + query : "";
+  const backgroundFunction = TARGET_BACKGROUND_FUNCTIONS[name];
   return {
-    url: `${baseUrl}/api/cleanup/${name}${querySuffix}`,
+    url: backgroundFunction
+      ? `${baseUrl}/.netlify/functions/${backgroundFunction}`
+      : `${baseUrl}/api/cleanup/${name}${querySuffix}`,
     timeoutMs: TARGET_TIMEOUTS_MS[name] ?? PER_TARGET_TIMEOUT_MS,
   };
 }
@@ -441,6 +453,7 @@ export const JOB_SCHEDULES = TARGETS.map((name) => ({
   window: TARGET_WINDOWS[name] ?? null,
   limit: name in TARGET_LIMITS ? (TARGET_LIMITS[name] ?? null) : DEFAULT_LIMIT,
   timeoutMs: TARGET_TIMEOUTS_MS[name] ?? PER_TARGET_TIMEOUT_MS,
+  backgroundFunction: TARGET_BACKGROUND_FUNCTIONS[name] ?? null,
 }));
 
 export type JobSchedule = (typeof JOB_SCHEDULES)[number];

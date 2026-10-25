@@ -422,7 +422,12 @@ export async function generateCronReference(root = ROOT): Promise<string> {
       scheduleLabel(job),
       leaseLabel(
         leases(
-          job.cores.map((core) => core.file),
+          [
+            ...job.cores.map((core) => core.file),
+            ...(schedule?.backgroundFunction
+              ? [`netlify/functions/${schedule.backgroundFunction}.mts`]
+              : []),
+          ],
           job.job,
           job.node,
         ),
@@ -431,7 +436,7 @@ export async function generateCronReference(root = ROOT): Promise<string> {
         ? "Blocked OFFLINE and DEGRADED"
         : "Blocked OFFLINE",
       schedule
-        ? `limit ${schedule.limit ?? "not sent"}; HTTP abort ${schedule.timeoutMs} ms`
+        ? `limit ${schedule.limit ?? "not sent"}; HTTP abort ${schedule.timeoutMs} ms${schedule.backgroundFunction ? "; background admission only; 15 min worker ceiling" : ""}`
         : workflowBounds.join("; ") || "Core bounds not statically resolved",
     ];
   });

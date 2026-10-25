@@ -70,6 +70,24 @@ describe("ticker execution outcomes", () => {
     ).toBe("failed");
   });
 
+  it("separates background admission from completed targets and never admits an ordinary 202", async () => {
+    const fetchImpl = jest.fn(
+      async (input: string | URL | Request) =>
+        new Response("{}", {
+          status: String(input).includes("recording-transfer-background")
+            ? 202
+            : 200,
+        }),
+    );
+    const ticker = load(fetchImpl);
+    const response = await ticker.default(new Request("https://tick.test"));
+    const body = await response.json();
+    expect(body.accepted).toEqual(["transfer-recordings"]);
+    expect(body.ok).not.toContain("transfer-recordings");
+    expect(body.failed).toEqual([]);
+    expect(ticker.bucketFor(202, false, "release-earnings")).toBe("failed");
+  });
+
   it("reports rejected check-ins without re-firing completed targets", async () => {
     const error = jest.spyOn(console, "error").mockImplementation(() => {});
     const fetchImpl = jest.fn(async (input: string | URL | Request) => {
@@ -77,7 +95,7 @@ describe("ticker execution outcomes", () => {
       return url.includes("sentry.test")
         ? new Response("rejected", { status: 403 })
         : new Response("{}", {
-            status: 200,
+            status: url.includes("recording-transfer-background") ? 202 : 200,
             headers: { "X-Job-Outcome": "success" },
           });
     });

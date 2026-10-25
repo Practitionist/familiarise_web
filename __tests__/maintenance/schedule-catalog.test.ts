@@ -6,9 +6,29 @@ import {
   scheduleFor,
   targetRequest,
   dueTargets,
+  MAX_TARGETS_PER_TICK,
 } from "@/lib/cron/schedule";
 
 describe("shared capability schedule catalog", () => {
+  it("dispatches one background copy every 15 minutes and preserves the ten-target cap for every tick of a week", () => {
+    const counts = new Map<string, number>();
+    const start = Date.UTC(2027, 0, 1);
+    for (let tick = 0; tick < 7 * 24 * 12; tick++) {
+      const due = dueTargets(new Date(start + tick * 5 * 60_000));
+      expect(due.length).toBeLessThanOrEqual(MAX_TARGETS_PER_TICK);
+      for (const name of due) counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    expect(counts.get("transfer-recordings")).toBe(7 * 96);
+    expect(counts.get("stream-control-plane-drift")).toBe(7);
+    expect(counts.get("reconcile-stream-memberships")).toBe(7 * 3);
+    expect(counts.get("reconcile-ledgers")).toBeGreaterThan(0);
+    expect(targetRequest("https://site.test", "transfer-recordings").url).toBe(
+      "https://site.test/.netlify/functions/recording-transfer-background",
+    );
+    expect(scheduleFor("transfer-recordings")?.backgroundFunction).toBe(
+      "recording-transfer-background",
+    );
+  });
   it("exposes one effective descriptor per scheduled capability", () => {
     expect(JOB_SCHEDULES.map((job) => job.name)).toEqual([...TARGETS]);
     expect(new Set(JOB_SCHEDULES.map((job) => job.name)).size).toBe(

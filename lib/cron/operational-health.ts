@@ -12,6 +12,7 @@ export const OPERATIONAL_COMPLETION_REQUIREMENTS = [
   { jobName: "auto-complete-appointments", maxAgeMinutes: 90 },
   { jobName: "detect-consultant-no-shows", maxAgeMinutes: 90 },
   { jobName: "support-sla-sweep", maxAgeMinutes: 60 },
+  { jobName: "transfer-recordings", maxAgeMinutes: 45 },
 ] as const;
 
 export interface JobCompletion {

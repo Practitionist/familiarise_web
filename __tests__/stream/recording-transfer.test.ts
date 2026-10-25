@@ -34,6 +34,7 @@ jest.mock("../../lib/storage/r2-client", () => ({
 }));
 
 import prisma from "../../lib/prisma";
+import { RecordingStatus, RecordingStorageType } from "@prisma/client";
 import { runJob } from "../../lib/observability/job-sentry";
 import { reportSentryMessage } from "../../lib/observability/report";
 import {
@@ -381,6 +382,131 @@ describe("recording claim ownership", () => {
 });
 
 describe("transferRecordings", () => {
+  it.each([0, 11])(
+    "keeps a crashed claim consumed through stale reclaim from %i prior attempts",
+    async (priorAttempts) => {
+      jest.useFakeTimers({ doNotFake: ["setTimeout", "clearTimeout"] });
+      jest.setSystemTime(new Date("2026-10-25T00:00:00Z"));
+      const row = {
+        id: "crashed",
+        status: RecordingStatus.READY,
+        storageType: RecordingStorageType.STREAM_S3,
+        transferAttempts: priorAttempts,
+        updatedAt: new Date(),
+        recordingUrl: STREAM_URL,
+      };
+      let databaseUnavailable = true;
+      const claimedAttempts: number[] = [];
+      recording.updateManyAndReturn.mockImplementation(async ({ data }) => {
+        if (row.status !== RecordingStatus.READY) return [];
+        row.status = data.status;
+        row.transferAttempts += data.transferAttempts.increment;
+        claimedAttempts.push(row.transferAttempts);
+        row.updatedAt = new Date();
+        return [{ ...row }];
+      });
+      recording.updateMany.mockImplementation(async ({ where, data }) => {
+        if (databaseUnavailable)
+          throw new Error("process lost database connection");
+        if (
+          where.status !== row.status ||
+          (where.updatedAt &&
+            where.updatedAt.getTime() !== row.updatedAt.getTime())
+        )
+          return { count: 0 };
+        Object.assign(row, data);
+        return { count: 1 };
+      });
+      recording.findMany.mockImplementation(async ({ where, take }) => {
+        if (where.status !== row.status) return [];
+        if (take === 100) return row.transferAttempts >= 3 ? [{ ...row }] : [];
+        if (
+          where.status === RecordingStatus.READY &&
+          row.transferAttempts >= MAX_TRANSFER_ATTEMPTS
+        )
+          return [];
+        return [{ ...row }];
+      });
+      jest.mocked(headR2Object).mockResolvedValue({ contentLength: 100 });
+      try {
+        await expect(transferRecording(row.id)).rejects.toThrow(
+          "lost database connection",
+        );
+        expect(row.status).toBe(RecordingStatus.TRANSFERRING);
+        expect(row.transferAttempts).toBe(priorAttempts + 1);
+        const firstClaimAt = row.updatedAt;
+        databaseUnavailable = false;
+        jest.setSystemTime(new Date(Date.now() + 20 * 60 * 1000));
+        const result = await transferRecordings();
+        expect(result).toMatchObject({
+          reclaimedStale: 1,
+          succeeded: priorAttempts === 0 ? 1 : 0,
+        });
+        expect(recording.updateMany.mock.calls[2][0].data).toEqual({
+          status: RecordingStatus.READY,
+          updatedAt: firstClaimAt,
+        });
+        expect(claimedAttempts).toEqual(priorAttempts === 0 ? [1, 2] : [12]);
+        const expectedKeys =
+          priorAttempts === 0
+            ? [
+                "recordings/crashed/attempt-1.mp4",
+                "recordings/crashed/attempt-2.mp4",
+              ]
+            : ["recordings/crashed/attempt-12.mp4"];
+        expect(
+          jest
+            .mocked(streamMultipartToR2)
+            .mock.calls.map(([input]) => input.key),
+        ).toEqual(expectedKeys);
+        expect(row.status).toBe(
+          priorAttempts === 0
+            ? RecordingStatus.AVAILABLE
+            : RecordingStatus.READY,
+        );
+        expect(result.exhaustedReported).toBe(priorAttempts === 11 ? 1 : 0);
+        expect(recording.updateManyAndReturn).toHaveBeenCalledTimes(
+          priorAttempts === 11 ? 1 : 2,
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    },
+  );
+
+  it("alarms once for near-expiry and repeated-attempt READY sources even when the copy slice is empty", async () => {
+    recording.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { id: "near-expiry", transferAttempts: 0 },
+        { id: "repeated", transferAttempts: 3 },
+      ]);
+    const result = await transferRecordings();
+    expect(result).toMatchObject({
+      success: true,
+      processed: 0,
+      exhaustedReported: 0,
+    });
+    expect(reportSentryMessage).toHaveBeenCalledTimes(1);
+    expect(recording.findMany.mock.calls[2][0]).toMatchObject({
+      where: {
+        status: "READY",
+        storageType: "STREAM_S3",
+        OR: [
+          { streamUrlExpiresAt: { lte: expect.any(Date) } },
+          { transferAttempts: { gte: 3 } },
+        ],
+      },
+      take: 100,
+    });
+    const horizon =
+      recording.findMany.mock.calls[2][0].where.OR[0].streamUrlExpiresAt.lte;
+    expect(horizon.getTime() - Date.now()).toBeGreaterThan(
+      72 * 60 * 60 * 1000 - 1000,
+    );
+    expect(recording.updateMany).not.toHaveBeenCalled();
+  });
   it("drains 25 obligations across 25 one-copy invocations", async () => {
     (headR2Object as jest.Mock).mockResolvedValue({ contentLength: 100 });
     for (let index = 0; index < 25; index++) {
@@ -442,8 +568,18 @@ describe("transferRecordings", () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
-        { id: "a", lastTransferError: "x" },
-        { id: "b", lastTransferError: "y" },
+        {
+          id: "a",
+          transferAttempts: 12,
+          transferFailureAlertedAt: null,
+          lastTransferError: "x",
+        },
+        {
+          id: "b",
+          transferAttempts: 12,
+          transferFailureAlertedAt: null,
+          lastTransferError: "y",
+        },
       ]);
     const result = await transferRecordings();
     expect(result).toMatchObject({ success: false, exhaustedReported: 2 });
@@ -473,7 +609,14 @@ describe("transfer-recordings job", () => {
       recording.findMany
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([{ id: "a", lastTransferError: "x" }]);
+        .mockResolvedValueOnce([
+          {
+            id: "a",
+            transferAttempts: 12,
+            transferFailureAlertedAt: null,
+            lastTransferError: "x",
+          },
+        ]);
       await job();
       expect(process.exitCode).toBe(1);
     } finally {

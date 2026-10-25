@@ -1,7 +1,7 @@
 /**
  * Netlify scheduled ticker — ADR 27 (docs/enterprise/70-design-decisions/27-state-as-outbox-and-scheduled-ticker.md).
  *
- * Every five minutes this POSTs the `/api/cleanup/*` routes listed in
+ * Every five minutes this POSTs the cleanup routes and background destinations in
  * {@link TARGETS}: the money sweeps, the Novu and email outbox relays, the
  * booking sweeps, the session-outcome jobs, the drains, hourly payout
  * processing, the dispute and payout reconcilers, and the money batch jobs,
@@ -30,6 +30,7 @@ import {
   targetRequest,
   isFirstDueTickOfHour,
   TARGET_WINDOWS,
+  TARGET_BACKGROUND_FUNCTIONS,
   type Target,
 } from "../../lib/cron/schedule";
 import { jobOutcomeSchema, type JobOutcome } from "../../lib/cron/job-outcome";
@@ -39,6 +40,7 @@ export const config = { schedule: "*/5 * * * *" };
 interface TickBody {
   event: "cron-tick";
   ok: string[];
+  accepted: string[];
   lockHeld: string[];
   failed: { name: string; status: number }[];
   durationMs: number;
@@ -140,11 +142,14 @@ async function hitTarget(
       const parsed = await parse503Response(res);
       maintenance = parsed.maintenance;
       errorBody = parsed.errorBody;
-    } else if (bucketFor(res.status, false) === "failed") {
+    } else if (bucketFor(res.status, false, name, outcome) === "failed") {
       const rawText = await readResponseText(res);
       if (rawText) errorBody = rawText.slice(0, 500);
     }
-    if (bucketFor(res.status, maintenance) === "failed" && errorBody) {
+    if (
+      bucketFor(res.status, maintenance, name, outcome) === "failed" &&
+      errorBody
+    ) {
       console.error(
         JSON.stringify({
           event: "cron-tick-target-failed",
@@ -189,9 +194,13 @@ export function bucketFor(
   maintenance = false,
   name = "",
   outcome?: JobOutcome,
-): "ok" | "held" | "failed" {
+): "ok" | "accepted" | "held" | "failed" {
   if (outcome === "failure" || outcome === "partial_failure") return "failed";
   if (outcome === "held") return "held";
+  const backgroundTarget = Object.entries(TARGET_BACKGROUND_FUNCTIONS).some(
+    ([target]) => target === name,
+  );
+  if (backgroundTarget) return status === 202 ? "accepted" : "failed";
   if (outcome === "success" && status === 200) return "ok";
   if (status === 200) return "ok";
   if (status === 207) {
@@ -484,6 +493,7 @@ export default async function cronTick(_req: Request): Promise<Response> {
   );
 
   const ok: string[] = [];
+  const accepted: string[] = [];
   const lockHeld: string[] = [];
   const failed: { name: string; status: number }[] = [];
   const failedForAlert: { name: string; status: number; errorBody?: string }[] =
@@ -502,6 +512,7 @@ export default async function cronTick(_req: Request): Promise<Response> {
       result.status === "fulfilled" ? result.value.outcome : undefined;
     const bucket = bucketFor(status, maintenance, name, outcome);
     if (bucket === "ok") ok.push(name);
+    else if (bucket === "accepted") accepted.push(name);
     else if (bucket === "held") lockHeld.push(name);
     else {
       failed.push({ name, status });
@@ -517,6 +528,7 @@ export default async function cronTick(_req: Request): Promise<Response> {
   const body: TickBody = {
     event: "cron-tick",
     ok,
+    accepted,
     lockHeld,
     failed,
     durationMs,

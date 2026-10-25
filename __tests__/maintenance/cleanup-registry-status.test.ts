@@ -19,13 +19,13 @@ jest.mock("../../lib/maintenance-cron", () => ({
 jest.mock("../../jobs/notifications/drain-notification-outbox", () => ({
   drainNotificationOutbox: jest.fn(),
 }));
-jest.mock("../../lib/stream/recording-transfer-service", () => ({
-  transferRecordings: jest.fn(),
+jest.mock("../../lib/stream/dispatch-recording-transfer", () => ({
+  dispatchRecordingTransfer: jest.fn(),
 }));
 
 import { getCleanupJobHandlers } from "../../lib/cron/cleanup-registry";
 import { drainNotificationOutbox } from "../../jobs/notifications/drain-notification-outbox";
-import { transferRecordings } from "../../lib/stream/recording-transfer-service";
+import { dispatchRecordingTransfer } from "../../lib/stream/dispatch-recording-transfer";
 
 const SECRET = "test-cron-secret";
 
@@ -77,16 +77,20 @@ describe("cleanup registry status callbacks are authoritative", () => {
     });
   });
 
-  it("transfer-recordings reports unsuccessful copies as a failed execution", async () => {
-    jest.mocked(transferRecordings).mockResolvedValue({
-      success: false,
-      reclaimedStale: 0,
-      processed: 3,
-      succeeded: 1,
-      failed: 2,
-      exhaustedReported: 1,
-      errors: ["Recording r1: timeout", "Recording r2: timeout"],
+  it("transfer-recordings acknowledges dispatch without running a synchronous copy", async () => {
+    jest
+      .mocked(dispatchRecordingTransfer)
+      .mockResolvedValue({ accepted: true, job: "transfer-recordings" });
+    await expect(hit("transfer-recordings")).resolves.toEqual({
+      status: 202,
+      outcome: "success",
     });
+    expect(dispatchRecordingTransfer).toHaveBeenCalledWith();
+  });
+  it("does not acknowledge failed worker admission", async () => {
+    jest
+      .mocked(dispatchRecordingTransfer)
+      .mockRejectedValue(new Error("HTTP 503"));
     await expect(hit("transfer-recordings")).resolves.toEqual({
       status: 500,
       outcome: "failure",

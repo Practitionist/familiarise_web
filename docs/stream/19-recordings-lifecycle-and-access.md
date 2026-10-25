@@ -115,7 +115,8 @@ sequenceDiagram
     PB-->>V: playbackUrl, never stored
 ```
 
-- The transfer job is written for GitHub Actions (budget-blocked, so it runs only on an operator trigger until it moves to the ticker) and is registered in `lib/cron/cleanup-registry.ts`, so the HTTP twin and the back-office runner can dispatch it. A failed copy aborts the multipart upload, leaves the row `READY` (still playable from Stream's link) and retries up to the attempt limit. Exhausted rows are reported to Sentry once per run.
+`transfer-recordings` is configured on the Netlify ticker every 15 minutes (:00/:15/:30/:45 UTC), dispatching `recording-transfer-background.mts`. The six-hour Actions step is removed. The cleanup route and staff run door queue the same worker and return 202 for admission only; successful environment-scoped `SystemJobExecution` completion is the health evidence (45-minute absence budget). The fail-closed 15-minute lease admits one copy at a time. Every claim consumes an attempt, including a later crash; stale reclaim preserves it. Exact claim CAS and attempt-specific R2 keys prevent a late worker from publishing or deleting a newer copy. Remaining READY Stream sources within 72 hours of expiry or with at least three attempts produce one bounded Sentry alarm per invocation. Retryable copy failure leaves READY and retains backoff. See the [background worker runbook](recording-background-worker.md) for deployment evidence and recovery; configured cadence is not proof of deployed progress.
+
 - A host may record a session nobody booked, and a call can produce several recordings (a restarted recording, a dropped and rejoined call, a 2-hour split), so one session can have several `Recording` rows.
 - In a 1:1 session, a participant's decline before the recording's end discards the recording from Stream and expires any row, so no playable copy exists.
 

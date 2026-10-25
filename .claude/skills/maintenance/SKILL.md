@@ -25,6 +25,8 @@ The catalog has no worker, database or environment imports. Its ten-target figur
 is a tested design bound, not a runtime dispatch cap. Configured Actions ownership
 remains migration work until bounded replacements have actually run.
 
+Recording transfer is ticker-owned every 15 minutes through its existing background adapter. Keep 202 admission separate from successful core completion and retain its fail-closed 15-minute lease. Remaining Actions-only Stream lifecycle jobs are still migration work.
+
 Cron leases are Postgres-backed. Closed jobs never run when acquisition fails,
 including Prisma import failures. Completion is conditional on the same execution
 still being RUNNING; only successful owned completion advances freshness. Typed
