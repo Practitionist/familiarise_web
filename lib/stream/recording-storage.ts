@@ -13,6 +13,8 @@ import type { RunFailureReporter } from "@/lib/observability/run-failures";
 import {
   createR2PresignedGetUrl,
   deleteR2Object,
+  isR2Configured,
+  listR2Keys,
 } from "@/lib/storage/r2-client";
 // The leaf module: `@/lib/supabase` is server-only and throws in cron processes.
 import { adminStorage, removeObjects } from "@/lib/supabase-storage-core";
@@ -176,7 +178,40 @@ async function deleteRecordingPreviews(
   }
 }
 
-/** Delete every stored asset of a recording: the R2 copy plus its preview clip and thumbnail. */
+/** One recording's transfer attempts are few; a longer listing is retried next run. */
+const MAX_ATTEMPT_KEYS = 100;
+
+/** Remove every R2 object under `recordings/<id>/`, including abandoned transfer attempts. */
+async function deleteRecordingAttemptObjects(
+  recordingId: string,
+  failures?: RunFailureReporter,
+): Promise<boolean> {
+  try {
+    const { keys, truncated } = await listR2Keys({
+      prefix: `recordings/${recordingId}/`,
+      maxKeys: MAX_ATTEMPT_KEYS,
+      signal: AbortSignal.timeout(15_000),
+    });
+    const results = await Promise.all(
+      keys.map((key) => deleteR2Object({ key })),
+    );
+    const failed = results.filter((r) => !r.success);
+    if (failed.length > 0) {
+      throw new Error(failed[0]?.error ?? "R2 delete failed");
+    }
+    return !truncated;
+  } catch (error) {
+    if (failures)
+      failures.add("recording-attempt-delete", error, { recordingId });
+    else
+      streamLogger.error("Failed to delete recording transfer objects", error, {
+        recordingId,
+      });
+    return false;
+  }
+}
+
+/** Delete every stored asset of a recording: its R2 objects plus its preview clip and thumbnail. */
 export async function deleteRecordingAssets(
   recording: {
     id: string;
@@ -187,6 +222,16 @@ export async function deleteRecordingAssets(
   if (recording.storagePath) {
     const main = await deleteRecordingObject(recording.storagePath, failures);
     if (!main.success) return main;
+  }
+  // An environment without R2 credentials has written nothing under the prefix.
+  if (
+    isR2Configured() &&
+    !(await deleteRecordingAttemptObjects(recording.id, failures))
+  ) {
+    return {
+      success: false,
+      error: "Recording transfer objects were not removed",
+    };
   }
   if (!(await deleteRecordingPreviews(recording.id, failures))) {
     return { success: false, error: "Recording previews were not removed" };

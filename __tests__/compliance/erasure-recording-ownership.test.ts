@@ -77,6 +77,7 @@ jest.mock("../../lib/storage/r2-client", () => ({
   deleteR2Object: jest.fn(),
   streamMultipartToR2: jest.fn(),
   headR2Object: jest.fn(),
+  isR2Configured: () => false,
 }));
 jest.mock("../../lib/stream/recording-stream-delete", () => ({
   deleteStreamRecordingCopy: (...args: unknown[]) =>

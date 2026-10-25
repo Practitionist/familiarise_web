@@ -61,13 +61,14 @@ function encodeObjectKey(key: string): string {
     .join("/");
 }
 
-/** Path-style object URI under the endpoint's own path prefix, if any. */
-function objectUri(config: R2Config, key: string): string {
+/** Path-style object URI under the endpoint's own path prefix; a null key is the bucket itself. */
+function objectUri(config: R2Config, key: string | null): string {
   const path = config.endpoint.pathname;
   let end = path.length;
   while (end > 0 && path[end - 1] === "/") end--;
   const prefix = path.slice(0, end);
-  return `${prefix}/${encodeRfc3986(config.bucket)}/${encodeObjectKey(key)}`;
+  const bucketUri = `${prefix}/${encodeRfc3986(config.bucket)}`;
+  return key === null ? bucketUri : `${bucketUri}/${encodeObjectKey(key)}`;
 }
 
 function formatAmzTimestamps(now: Date): {
@@ -111,6 +112,15 @@ function escapeXml(value: string): string {
     .replaceAll("'", "&apos;");
 }
 
+function unescapeXml(value: string): string {
+  return value
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&amp;", "&");
+}
+
 /** Zero-copy fetch body over the Buffer's own bytes. */
 function bodyView(buf: Buffer): Uint8Array<ArrayBuffer> {
   return buf.buffer instanceof ArrayBuffer
@@ -138,7 +148,7 @@ function buildCanonicalQueryString(
 
 function signR2Request(opts: {
   method: "GET" | "HEAD" | "PUT" | "POST" | "DELETE";
-  key: string;
+  key: string | null;
   query?: Record<string, string | undefined>;
   headers?: Record<string, string>;
   payloadHash?: string;
@@ -584,6 +594,41 @@ export async function headR2Object(opts: {
     throw new Error("R2 HEAD response missing a valid Content-Length");
   }
   return { contentLength };
+}
+
+/** One ListObjectsV2 page of keys under `prefix`; `truncated` means more keys remain. */
+export async function listR2Keys(opts: {
+  prefix: string;
+  maxKeys: number;
+  signal?: AbortSignal;
+}): Promise<{ keys: string[]; truncated: boolean }> {
+  const signed = signR2Request({
+    method: "GET",
+    key: null,
+    query: {
+      "list-type": "2",
+      prefix: opts.prefix,
+      "max-keys": String(opts.maxKeys),
+    },
+  });
+  const response = await fetch(signed.url, {
+    method: "GET",
+    headers: signed.headers,
+    signal: opts.signal,
+  });
+  if (!response.ok) {
+    const detail = formatR2ErrorDetail(await response.text().catch(() => ""));
+    throw new Error(
+      `R2 ListObjectsV2 failed (${response.status} ${response.statusText})${detail}`,
+    );
+  }
+  const xml = await response.text();
+  return {
+    keys: Array.from(xml.matchAll(/<Key>([^<]*)<\/Key>/g), (m) =>
+      unescapeXml(m[1] ?? ""),
+    ),
+    truncated: /<IsTruncated>true<\/IsTruncated>/.test(xml),
+  };
 }
 
 /** Delete an object, treating 404 Not Found as success. */
