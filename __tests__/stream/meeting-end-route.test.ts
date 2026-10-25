@@ -77,6 +77,12 @@ jest.mock("../../lib/stream/session-handlers", () => ({
     mockRecordEndedSync(...a),
 }));
 
+jest.mock("../../lib/rate-limit", () => ({
+  meetingControlLimiter: {},
+  meetingQaLimiter: {},
+  applyRateLimit: async () => null,
+}));
+
 import { POST } from "../../app/api/meetings/[meetingId]/end/route";
 import { StreamUnavailableError } from "../../lib/stream-client";
 
@@ -99,8 +105,9 @@ beforeEach(() => {
   mockResolveMeetingAccess.mockResolvedValue(granted("host"));
   mockEnd.mockResolvedValue({});
   mockRecordEndedSync.mockResolvedValue({
+    kind: "recorded",
     endedReason: "call_ended",
-    nextStreamCallId: "slot-abc",
+    streamCallId: "slot-abc",
   });
 });
 
@@ -187,6 +194,24 @@ describe("POST /api/meetings/[meetingId]/end", () => {
     // The whole point of the test: the id came from the session row, not the
     // route param. `params` resolves to `slot-abc`.
     expect(mockVideoCall).toHaveBeenCalledWith("default", "legacy-uuid");
+  });
+
+  it("answers with the id that now represents the room, and 404s when no Meeting matched", async () => {
+    mockRecordEndedSync.mockResolvedValueOnce({
+      kind: "recorded",
+      endedReason: "ended_early",
+      streamCallId: "occurrence-slot-r1",
+    });
+    const rotated = await POST(req, { params });
+    expect(await rotated.json()).toEqual({
+      ended: true,
+      callId: "occurrence-slot-r1",
+    });
+
+    mockRecordEndedSync.mockResolvedValueOnce({ kind: "not_found" });
+    const missing = await POST(req, { params });
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toMatchObject({ code: "MEETING_NOT_FOUND" });
   });
 
   it("reports a Stream outage as 503, not 500", async () => {

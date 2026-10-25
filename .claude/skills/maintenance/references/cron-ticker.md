@@ -48,6 +48,12 @@ list still decides whether a 207 counts as failed. Only an entry without a
 callback gets `statusFor` and the inferred outcome. A lease-held 409 is an
 attempted run, never fresh successful work.
 
+`reconcile-ledgers` runs as an hourly `:55` bounded slice whose cursor persists on
+its report, so a tick that would exceed `MAX_TARGETS_PER_TICK` drops it first
+without losing coverage. It answers 200 with summary status RUNNING while work
+remains and 207 once a completed audit has discrepancies; it is listed in
+`PARTIAL_FAILURE_TARGETS`, so that 207 counts as failed.
+
 A per-job lease does not serialize different jobs touching the same payment or
 payout. Conditional state transitions, transactionally staged obligations and
 vendor idempotency keys protect those boundaries. A lease renewal failure or
@@ -62,6 +68,10 @@ separate functions. The ticker starts its budget before the fleet-owner read,
 stops waiting for targets by 24 seconds, and reserves bounded telemetry waiting
 through 27 seconds. Worker-side deadlines must stop new work independently; a
 fetch abort only makes that target's outcome ambiguous.
+
+The ticker returns HTTP `200` after reporting individual target failures on the
+structured `{"event":"cron-tick",...}` line. Do not infer a scheduled retry contract
+from the documented background-function retries; observe target completion independently.
 
 Each tick reads `ops:active_cron_platform` once. Missing/unreadable state fails
 open as required by AGENTS.md. The switch cannot stop already-running work or
@@ -108,12 +118,31 @@ Some existing jobs intentionally take no row limit. That is not evidence that
 an unbounded implementation fits a function envelope; inspect its actual work.
 Calendar-window schedules also require explicit missed-window recovery.
 
+## Recording background packaging
+
+The recording background entry is `netlify/functions/recording-transfer-background.mts`. Preserve the supported filename suffix as well as its background config when packaging with the CLI. A dependency-free CLI 26.0.2 branch probe completed after 75 seconds on this account; the temporary drafts were removed. This proves the isolated runtime path, while the application bundle and actual copy handoff still require verification. HTTP 202 is admission only. For unpublished alias logs, use the deployment branch and ID when function metadata omits its branch. See `docs/stream/recording-background-worker.md` and [Netlify background functions](https://docs.netlify.com/build/functions/background-functions/).
+
+The native entry and shared cleanup factory need the explicit `next/server.js` package subpath. A network-denied compiled-module check catches the extensionless ESM import failure that CommonJS Jest loading misses. The worktree's default NFT archive can retain the external dependency symlink without its target; inspect dependency contents before treating a local archive as deployable. Keep the required canonical worktree dependency symlink.
+
 ## Deprecated & Superseded Approaches
 
 Redis cron locks, production fallbacks for incomplete unit-test mocks, and shared
 heartbeats described as proof of complete fleet health are superseded. Recovery
 is not guaranteed by a parallel Actions workflow or by making every HTTP result 200. Keep the required Netlify standby; platform moves change adapters, not
 transaction or replay guarantees.
+
+## Stream organisation wind-down
+
+`wind-down-deactivated-orgs` must not record either organisation completion marker
+after a truncated/failed tagged-channel scan or channel failure in that pass. Its
+retention marker uses the organisation's pre-wind-down error count, not a fresh
+post-error baseline. Other organisations can finish independently while the run
+still reports failure. The pager's offset ceiling and the unbounded related
+surface/recording work remain capacity gates: a frozen messaging prefix can leave
+the filter, but an unchanged prefix does not guarantee tail progress. Do not add a
+ticker target or second automatic clock on the strength of these marker checks.
+Shared Stream/R2 helpers receive the invocation reporter so row failures produce one final event with a bounded sample, highest severity and a retained billing classification. Other callers retain their existing reporting.
+See `docs/stream/17-channel-lifecycle.md#organisation-wind-down-completion`.
 
 ## Sources
 

@@ -38,6 +38,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { SIDECAR_FILES } from "./sidecar-objects";
 
 const ROOT = path.join(__dirname, "..", "..");
 const SCHEMA = path.join(ROOT, "prisma", "schema.prisma");
@@ -55,9 +56,10 @@ export function sidecarOwnedUniqueIndexes(
 ): Set<string> {
   const names = new Set<string>();
   if (!fs.existsSync(dir)) return names;
-  for (const file of fs.readdirSync(dir)) {
-    if (!file.endsWith(".sql")) continue;
-    const sql = fs.readFileSync(path.join(dir, file), "utf8");
+  for (const file of SIDECAR_FILES) {
+    const filePath = path.join(dir, file);
+    if (!fs.existsSync(filePath)) continue;
+    const sql = fs.readFileSync(filePath, "utf8");
     for (const m of sql.matchAll(
       /CREATE\s+UNIQUE\s+INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?"([^"]+)"/gi,
     )) {
@@ -75,34 +77,60 @@ export function droppedIndexName(statement: string): string | null {
   );
 }
 
-/** `prisma/sql/known-drift.json`, shared with the live drift check so one entry satisfies both gates. */
+/**
+ * `prisma/sql/known-drift.json`, shared with the live drift check.
+ *
+ * Two lists, because two different questions are being answered:
+ *
+ *   `destructiveStatementsAllowed` — a statement a reconcile push MAY run.
+ *     `db:preflight` refuses a plan containing anything else that destroys or
+ *     re-points an existing object.
+ *   `knownDivergences` — a divergence the live database carries that the
+ *     schema does not want, and that must NOT be dropped yet. The drift check
+ *     tolerates these; the preflight does NOT, because tolerating a divergence
+ *     and permitting its removal are not the same decision.
+ *
+ * The support-ticket tables are in the second list: `origin/prod` still
+ * queries them, so a push that dropped them would break production.
+ */
+const KnownDriftEntry = z.object({
+  statement: z.string(),
+  reason: z.string(),
+  trackedBy: z.string(),
+  expires: z.string().date(),
+});
+
 export const KnownDriftSchema = z.object({
-  destructiveStatementsAllowed: z
-    .array(
-      z.object({
-        statement: z.string(),
-        reason: z.string(),
-        trackedBy: z.string(),
-        expires: z.string().date(),
-      }),
-    )
-    .default([]),
+  destructiveStatementsAllowed: z.array(KnownDriftEntry).default([]),
+  knownDivergences: z.array(KnownDriftEntry).default([]),
 });
 type AllowedEntry = z.infer<
   typeof KnownDriftSchema
 >["destructiveStatementsAllowed"][number];
 
 /** Parse known-drift.json; a malformed entry throws instead of silently allowing nothing. */
-export function parseKnownDrift(file: string): AllowedEntry[] {
+export function parseKnownDriftFile(
+  file: string,
+): z.infer<typeof KnownDriftSchema> {
   const parsed = KnownDriftSchema.safeParse(
     JSON.parse(fs.readFileSync(file, "utf8")),
   );
   if (!parsed.success) {
     throw new Error(
-      `${path.relative(ROOT, file)}: invalid destructiveStatementsAllowed: ${parsed.error.message}`,
+      `${path.relative(ROOT, file)}: invalid known-drift entry: ${parsed.error.message}`,
     );
   }
-  return parsed.data.destructiveStatementsAllowed;
+  return parsed.data;
+}
+
+/** The statements a push may run. */
+export function parseKnownDrift(file: string): AllowedEntry[] {
+  return parseKnownDriftFile(file).destructiveStatementsAllowed;
+}
+
+/** The divergences the live database carries that must not be dropped yet. */
+export function parseKnownDivergences(file: string): AllowedEntry[] {
+  return parseKnownDriftFile(file).knownDivergences;
 }
 
 /**

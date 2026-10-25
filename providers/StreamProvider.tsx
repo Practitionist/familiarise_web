@@ -22,6 +22,8 @@ export { disconnectStreamClients } from "@/lib/stream/disconnect";
 export interface StreamConnectionState {
   chatConnected: boolean;
   videoConnected: boolean;
+  /** Chat socket dropped, still inside its grace window: keep the chat layout mounted. */
+  chatReconnecting: boolean;
   isConnecting: boolean;
   /** Raw SDK message — for the debug dialog. Surfaces render `failure`. */
   error: string | null;
@@ -32,6 +34,7 @@ export interface StreamConnectionState {
 const DEFAULT_CONNECTION_STATE: StreamConnectionState = {
   chatConnected: false,
   videoConnected: false,
+  chatReconnecting: false,
   isConnecting: false,
   error: null,
   failure: null,
@@ -94,6 +97,7 @@ const StreamProvider = ({ children, ...connectorProps }: StreamProviderProps) =>
   const value: StreamConnectionState = {
     chatConnected: snapshot.chatConnected,
     videoConnected: snapshot.videoConnected,
+    chatReconnecting: snapshot.chatReconnecting,
     isConnecting: snapshot.isConnecting,
     error: snapshot.error,
     failure: snapshot.failure,

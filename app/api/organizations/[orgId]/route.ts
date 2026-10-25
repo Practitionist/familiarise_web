@@ -33,10 +33,11 @@ import { numericStateCode } from "@/lib/compliance/state-codes";
 import { isHostOrgsEnabled } from "@/lib/enterprise/feature-flag";
 import { isStreamConfigured } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
+import type { MeetingEndReason } from "@/lib/meetings/end-reasons";
 import { endActiveStreamVideoCalls } from "@/lib/stream/event-channel-service";
 import { MIN_ORG_RETENTION_DAYS } from "@/lib/stream/recording-retention";
 
-const ORG_DELETED_CALL_REASON = "org_deleted";
+const ORG_DELETED_CALL_REASON: MeetingEndReason = "org_deleted";
 
 const SizeBucketSchema = z.enum([
   "SMALL_1_50",

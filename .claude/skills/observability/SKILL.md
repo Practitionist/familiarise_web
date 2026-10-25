@@ -5,6 +5,18 @@ description: Work on this repo's error-tracking and telemetry subsystem — the 
 
 # Observability
 
+## Native worker SDK imports
+
+Shared capture, logger and flush helpers used by standalone Node ESM workers import
+`@sentry/core`; initialization remains in `sentry.shared.config.ts`. Keep Core and
+the Next SDK at matching pinned versions and update them together. The Next SDK's
+10.76.0 Node export is CommonJS, and its dynamic generic re-exports do not appear
+in a native ESM namespace. Do not add runtime duck-typing or a second telemetry
+policy to hide that failure. Run `native-sentry-runtime.test.ts` with the real SDK
+and an in-memory transport; a mocked SDK cannot establish export interoperability,
+privacy scrubbing or draining. A 202 response and invocation receipt do not prove
+either worker completion or a successful telemetry flush.
+
 The index for the error-tracking domain: how an event leaves a route, how it comes to name a person and an organisation, and how any of that is proven rather than assumed. The facts live in `docs/observability/sentry/`; this skill holds the doctrine and the decision procedure, and the money-adjacent consequences live under `/finance`.
 
 | Reference                                                 | Purpose                                                                                                                                                                                                                                                | Read it when                                                                                  |

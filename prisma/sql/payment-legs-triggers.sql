@@ -1,27 +1,20 @@
--- #1020-4 / C-02 — PaymentLeg funding-sum invariant, enforced by the DATABASE.
+-- PaymentLeg funding-sum invariant, enforced only by the database: the sum of
+-- non-reversal, non-REFERRAL_CREDIT legs equals Payment.amount, and every
+-- *_REVERSAL leg is negative and never exceeds its original sibling in
+-- magnitude. A drifted write is uncommittable for every writer, so no
+-- application code re-checks it.
 --
--- `lib/payments/payment-legs.ts::checkPaymentLegsSumToAmount` defines the
--- invariant: sum of non-reversal, non-REFERRAL_CREDIT legs === Payment.amount,
--- and every *_REVERSAL leg is negative and never exceeds its original sibling
--- in magnitude. Checkout logs drift warn-only (a surprise 500 on the hot path
--- blocks real bookings); reconcilers assert it after the fact. Both are
--- detection. This trigger makes the imbalance UNCOMMITTABLE — the same
--- posture ledger-triggers.sql already gives the journal — so no writer
--- (app code, raw SQL, a future script) can persist drifted legs.
---
--- Semantics mirror checkPaymentLegsSumToAmount:
+-- Semantics:
 --   * funding sum  = Σ amountPaise over legs whose source does not end in
 --     `_REVERSAL`
 --   * a payment whose non-reversal legs are ALL 0-value LICENSE legs skips the
 --     sum comparison outright: the licence is absorbed at contract time, so the
 --     leg is deliberately 0 while Payment.amount stays at full price and the
---     comparison is structurally false for every one of them. The checker
---     carves the same shape out; without it here the trigger would reject at
---     COMMIT the very checkout the checker waves through. The carve suppresses
---     the sum comparison ONLY — both sides still run their reversal-pair loop
+--     comparison is structurally false for every one of them. The carve
+--     suppresses the sum comparison ONLY — the reversal-pair loop still runs
 --     over a licence-only payment, because a reversal with no original sibling
---     is corrupt under either reading.
---   * REFERRAL_CREDIT is EXCLUDED from that sum (#1347): Payment.amount is the
+--     is corrupt.
+--   * REFERRAL_CREDIT is EXCLUDED from that sum: Payment.amount is the
 --     gateway charge and the credit is already netted out of it, so counting
 --     the leg would demand the credit twice and fail every credit checkout
 --   * reversal leg = must be negative; |reversal| ≤ Σ its original siblings

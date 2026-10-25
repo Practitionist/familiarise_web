@@ -14,6 +14,7 @@ const mockResolveMeetingAccess = jest.fn();
 const mockGetOrCreate = jest.fn();
 const mockUpdateCallMembers = jest.fn();
 const mockUpdateUserPermissions = jest.fn();
+const mockQueryMembers = jest.fn();
 const mockUpsertUsersToStream = jest.fn();
 
 /** Ordered log of what the route did, so we can assert sequence, not just calls. */
@@ -68,6 +69,7 @@ jest.mock("../../lib/stream-client", () => ({
           sequence.push("updateCallMembers");
           return mockUpdateCallMembers(...a);
         },
+        queryMembers: (...a: unknown[]) => mockQueryMembers(...a),
         updateUserPermissions: (...a: unknown[]) => {
           const { assertValidUpdateUserPermissions } =
             require("../../lib/stream/video-contracts") as typeof import("../../lib/stream/video-contracts");
@@ -131,6 +133,7 @@ beforeEach(() => {
   mockGetOrCreate.mockResolvedValue({});
   mockUpdateCallMembers.mockResolvedValue({});
   mockUpdateUserPermissions.mockResolvedValue({});
+  mockQueryMembers.mockResolvedValue({ members: [] });
   mockUpsertUsersToStream.mockResolvedValue({ users: {} });
 });
 
@@ -140,6 +143,75 @@ describe("POST /api/meetings/[meetingId]/join", () => {
 
     expect(sequence).toEqual(["resolveMeetingAccess", "updateCallMembers"]);
     expect(mockGetOrCreate).not.toHaveBeenCalled();
+  });
+
+  it("skips the membership write when a webinar attendee already holds the role", async () => {
+    mockResolveMeetingAccess.mockResolvedValue({
+      hasAccess: true,
+      role: "participant",
+      reason: "granted",
+      streamCallId: "slot-abc",
+      appointment: { appointmentType: "WEBINAR" },
+    });
+    mockQueryMembers.mockResolvedValue({
+      members: [{ user_id: "user_1", role: "call_member" }],
+    });
+
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateCallMembers).not.toHaveBeenCalled();
+    expect(mockUpdateUserPermissions).toHaveBeenCalled();
+  });
+
+  it("writes the membership when a webinar attendee is not yet a member", async () => {
+    mockResolveMeetingAccess.mockResolvedValue({
+      hasAccess: true,
+      role: "participant",
+      reason: "granted",
+      streamCallId: "slot-abc",
+      appointment: { appointmentType: "WEBINAR" },
+    });
+
+    await POST(req, { params });
+
+    expect(mockUpdateCallMembers).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the membership write when the member read fails", async () => {
+    mockResolveMeetingAccess.mockResolvedValue({
+      hasAccess: true,
+      role: "participant",
+      reason: "granted",
+      streamCallId: "slot-abc",
+      appointment: { appointmentType: "WEBINAR" },
+    });
+    mockQueryMembers.mockRejectedValue(new Error("stream down"));
+
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateCallMembers).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes when an existing member holds a different role", async () => {
+    mockResolveMeetingAccess.mockResolvedValue({
+      hasAccess: true,
+      role: "host",
+      coPresenter: true,
+      reason: "granted",
+      streamCallId: "slot-abc",
+      appointment: { appointmentType: "WEBINAR" },
+    });
+    mockQueryMembers.mockResolvedValue({
+      members: [{ user_id: "user_1", role: "call_member" }],
+    });
+
+    await POST(req, { params });
+
+    expect(mockUpdateCallMembers).toHaveBeenCalledWith({
+      update_members: [{ user_id: "user_1", role: "co_presenter" }],
+    });
   });
 
   it("refuses a Meeting row whose Stream call is missing with a typed 409", async () => {
@@ -272,6 +344,17 @@ describe("POST /api/meetings/[meetingId]/join", () => {
     expect(body.error).toMatch(/temporarily unavailable/i);
     // No `reason` — that field marks an authorization verdict, and this is not one.
     expect(body.reason).toBeUndefined();
+  });
+
+  it("keeps a Stream 5xx out of Sentry, because the client retries it", async () => {
+    mockUpdateCallMembers.mockRejectedValue(
+      Object.assign(new Error("upstream"), { status: 502 }),
+    );
+
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(503);
+    expect(reportSentryError).not.toHaveBeenCalled();
   });
 
   it("still reports a genuine fault as 500", async () => {

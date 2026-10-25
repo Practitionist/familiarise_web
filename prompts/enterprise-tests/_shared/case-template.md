@@ -31,11 +31,11 @@
 ## Case <ID>: <one-line scope>
 
 ### Preconditions
-<Supabase MCP SELECTs that confirm the starting state, OR an INSERT
-sequence that seeds a fresh test org. Cite the seed cohort by slug.>
+<Supabase MCP SELECTs that confirm the starting state. An INSERT sequence
+that seeds a fresh test org is operator-run; cite the seed cohort by slug.>
 
 ### Steps
-1. <Chrome DevTools MCP step OR Supabase MCP write>
+1. <Chrome DevTools MCP step OR operator-run SQL write>
 2. <…>
 3. <take_snapshot at boundary>
 
@@ -48,7 +48,7 @@ sequence that seeds a fresh test org. Cite the seed cohort by slug.>
 - **UI** — <visible-text or state, captured via take_snapshot>
 
 ### Cleanup (only if the case spawned a fresh org)
-<DELETE FROM ... WHERE slug LIKE 'test-2026-%' ...>
+<Operator-run DELETE FROM ... WHERE slug LIKE 'test-2026-%' ...>
 
 ### Done when
 - [ ] All assertions pass

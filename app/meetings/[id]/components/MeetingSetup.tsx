@@ -47,7 +47,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { toJoinFailure, type JoinFailure } from "../join-failure";
 import { ExitMeetingButton } from "./ExitMeetingButton";
+import { JoinFailureCard } from "./JoinFailureCard";
+import { LobbyEndedPanel } from "./LobbyEndedPanel";
 import { useRecordingConsent } from "./RecordingConsentNotice";
 
 interface MeetingSetupProps {
@@ -55,6 +58,8 @@ interface MeetingSetupProps {
   /** Stream call id, so the lobby can fetch this session's recording notice. */
   meetingId: string;
   role?: "host" | "participant" | null;
+  /** Re-runs the join flow; the server's end-reason policy decides what an ended room offers. */
+  onCallEnded: () => void;
 }
 
 const DeviceSelector = () => {
@@ -170,9 +175,12 @@ const MeetingSetup = ({
   setIsSetupComplete,
   meetingId,
   role,
+  onCallEnded,
 }: MeetingSetupProps) => {
   const call = useCall();
-  const { useMicrophoneState, useCameraState } = useCallStateHooks();
+  const { useMicrophoneState, useCameraState, useCallEndedAt } =
+    useCallStateHooks();
+  const callEndedAt = useCallEndedAt();
   const micState = useMicrophoneState();
   const camState = useCameraState();
 
@@ -190,6 +198,9 @@ const MeetingSetup = ({
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [joinFailure, setJoinFailure] = useState<JoinFailure | null>(null);
+  // One automatic check per ended call id, so a room the server still admits cannot loop.
+  const checkedEndedCid = useRef<string | null>(null);
 
   // #1134 P1-7 — nobody reaches the call before seeing the recording notice.
   const consent = useRecordingConsent(meetingId);
@@ -234,9 +245,17 @@ const MeetingSetup = ({
     });
   }, [isMicOn, micStream]);
 
+  useEffect(() => {
+    if (!callEndedAt || !call || checkedEndedCid.current === call.cid) return;
+    checkedEndedCid.current = call.cid;
+    onCallEnded();
+  }, [callEndedAt, call, onCallEnded]);
+
   const handleJoinMeeting = async () => {
+    if (callEndedAt) return;
     try {
       setIsJoining(true);
+      setJoinFailure(null);
       if (call) {
         switch (call.state.callingState) {
           case CallingState.JOINED:
@@ -274,12 +293,8 @@ const MeetingSetup = ({
       }
     } catch (error) {
       console.error("Error joining meeting:", error);
-      toast({
-        title: "Failed to join meeting",
-        description:
-          "There was an error joining the meeting. Please try again.",
-        variant: "destructive",
-      });
+      // A call that ended mid-join shows the ended panel instead.
+      if (!call?.state.endedAt) setJoinFailure(toJoinFailure(error));
     } finally {
       setIsJoining(false);
     }
@@ -368,7 +383,7 @@ const MeetingSetup = ({
   );
 
   return (
-    <div className="relative min-h-screen bg-gradient-to-br from-zinc-900 via-zinc-800 to-zinc-900 px-4 py-6 sm:px-6 lg:px-8">
+    <div className="relative min-h-dvh bg-gradient-to-br from-zinc-900 via-zinc-800 to-zinc-900 px-4 py-6 sm:px-6 lg:px-8">
       {/* Background pattern */}
       <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiMyMjIiIGZpbGwtb3BhY2l0eT0iMC4wNSI+PGNpcmNsZSBjeD0iMzAiIGN5PSIzMCIgcj0iMiIvPjwvZz48L2c+PC9zdmc+')] opacity-50" />
 
@@ -377,7 +392,7 @@ const MeetingSetup = ({
         <ExitMeetingButton className="-ml-3" />
       </div>
 
-      <div className="relative z-10 mx-auto flex min-h-[calc(100vh-6rem)] w-full max-w-6xl items-center">
+      <div className="relative z-10 mx-auto flex min-h-[calc(100dvh-6rem)] w-full max-w-6xl items-center">
         {/*
           The preview used to sit in a narrow max-w-lg column, so it was small
           and cropped. It is now the subject: a full-width 16:9 frame in the
@@ -488,20 +503,38 @@ const MeetingSetup = ({
 
             {consent.node && <div className="mt-4">{consent.node}</div>}
 
-            <Button
-              onClick={handleJoinMeeting}
-              disabled={isJoining || !consent.satisfied}
-              className="mt-6 h-12 w-full rounded-xl bg-primary text-base font-semibold text-primary-foreground shadow-lg transition-colors hover:bg-primary/90 disabled:opacity-70"
-            >
-              {isJoining ? (
-                <>
-                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  Joining...
-                </>
-              ) : (
-                joinLabel
-              )}
-            </Button>
+            {callEndedAt ? (
+              <LobbyEndedPanel
+                meetingId={meetingId}
+                isHost={role === "host"}
+                onCheckAgain={onCallEnded}
+              />
+            ) : joinFailure ? (
+              <div className="mt-6">
+                <JoinFailureCard
+                  variant="inline"
+                  kind={joinFailure.kind}
+                  detail={joinFailure.message}
+                  isRetrying={isJoining}
+                  onRetry={handleJoinMeeting}
+                />
+              </div>
+            ) : (
+              <Button
+                onClick={handleJoinMeeting}
+                disabled={isJoining || !consent.satisfied}
+                className="mt-6 h-12 w-full rounded-xl bg-primary text-base font-semibold text-primary-foreground shadow-lg transition-colors hover:bg-primary/90 disabled:opacity-70"
+              >
+                {isJoining ? (
+                  <>
+                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                    Joining...
+                  </>
+                ) : (
+                  joinLabel
+                )}
+              </Button>
+            )}
 
             {/* Replaces "Tip: test your mic and camera before joining", which
                 restated the screen. This only appears when there is something

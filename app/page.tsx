@@ -1,21 +1,17 @@
 import { Suspense } from "react";
 
 import { HeroSection } from "@/components/home/HeroSection";
-import { TrustedBySection } from "@/components/home/TrustedBySection";
 import { FeaturesSection } from "@/components/home/FeaturesSection";
 import { CategoriesSection } from "@/components/home/CategoriesSection";
 import { BenefitsSection } from "@/components/home/BenefitsSection";
-import { SuccessStoriesSection } from "@/components/home/SuccessStoriesSection";
 import { FeaturedExpertsSection } from "@/components/home/FeaturedExpertsSection";
 import { PlatformFeaturesSection } from "@/components/home/PlatformFeaturesSection";
 import { TestimonialsSection } from "@/components/home/TestimonialsSection";
-import { UpcomingEventsSection } from "@/components/home/UpcomingEventsSection";
 import { TrustBadgesSection } from "@/components/home/TrustBadgesSection";
 import { HowItWorksSection } from "@/components/home/HowItWorksSection";
 import { BecomeExpertSection } from "@/components/home/BecomeExpertSection";
 import { EnterpriseSection } from "@/components/home/EnterpriseSection";
 import { FAQSection } from "@/components/home/FAQSection";
-import { SatisfiedTestimonial } from "@/app/explore/experts/components/SatisfiedTestimonial";
 import {
   getHomeExperts,
   getHomeReviews,
@@ -82,12 +78,7 @@ async function FeaturedExpertsLoader() {
 async function ReviewsLoader() {
   const reviews = await withBuildTimeRetry(getHomeReviews);
   if (reviews.length === 0) return null;
-  return (
-    <>
-      <TestimonialsSection reviews={reviews} isLoading={false} />
-      <UpcomingEventsSection reviews={reviews} />
-    </>
-  );
+  return <TestimonialsSection reviews={reviews} isLoading={false} />;
 }
 
 // #1490 — the hero and the category cards render real figures now, so the page
@@ -104,9 +95,6 @@ export default async function Home() {
     <main className="flex-1 w-full overflow-hidden">
       {/* Hero - Black with animated orbs */}
       <HeroSection stats={buildExpertHeroStats(stats)} />
-
-      {/* Trusted By / Logo Cloud - Dark */}
-      <TrustedBySection />
 
       {/* Our Offerings - Dark charcoal with dot pattern */}
       <div className="cv-auto">
@@ -125,11 +113,6 @@ export default async function Home() {
         </Suspense>
       </div>
 
-      {/* Success Stories - Dark gradient */}
-      <div className="cv-auto">
-        <SuccessStoriesSection />
-      </div>
-
       {/* Featured Experts Marquee - White with dot pattern */}
       <div className="cv-auto">
         <Suspense fallback={<FeaturedExpertsSkeleton />}>
@@ -142,7 +125,7 @@ export default async function Home() {
         <PlatformFeaturesSection />
       </div>
 
-      {/* Testimonials Marquee + Upcoming Events - Dark */}
+      {/* Reviews Marquee - Dark */}
       <div className="cv-auto">
         <Suspense fallback={<TestimonialsSkeleton />}>
           <ReviewsLoader />
@@ -168,11 +151,6 @@ export default async function Home() {
       {/* Become an Expert CTA - Light mesh gradient */}
       <div className="cv-auto">
         <BecomeExpertSection />
-      </div>
-
-      {/* Explore Testimonials - Dark */}
-      <div className="cv-auto">
-        <SatisfiedTestimonial />
       </div>
 
       {/* FAQ - Clean white */}
