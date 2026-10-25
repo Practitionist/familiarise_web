@@ -39,6 +39,7 @@ const MAX_RETENTION_DAYS = 365;
 const LOOKBACK_MARGIN_DAYS = 60;
 const MAX_EVENTS_PER_RUN = 25;
 const MAX_DM_CHANNELS_PER_RUN = 10;
+const MAX_DM_UNFREEZES_PER_RUN = 100;
 
 const PARSED_PACING_MS = Number(process.env.STREAM_FREEZE_PACING_MS);
 const FREEZE_PACING_MS =
@@ -592,6 +593,16 @@ async function runDmStage(
   progress: { events: string | null; dm: string | null },
 ): Promise<void> {
   const { pairs: allPairs, truncated } = await loadDmPairs();
+  const now = Date.now();
+
+  // Unfreeze FIRST, across every pair rather than the cursor slice: this sweep
+  // is the only path that reopens a returning pair's DM, so it must not wait
+  // for the cursor to come round.
+  const { toUnfreeze } = classifyDmPairs(allPairs, now);
+  const unfreezeBatch = toUnfreeze.slice(0, MAX_DM_UNFREEZES_PER_RUN);
+  result.deferred += toUnfreeze.length - unfreezeBatch.length;
+  await applyDmFrozen(chat, unfreezeBatch, false, result, streamFailures);
+
   const ordered = [...allPairs];
   ordered.sort((a, b) =>
     a.channelId < b.channelId ? -1 : Number(a.channelId > b.channelId),
@@ -605,19 +616,9 @@ async function runDmStage(
   result.deferred += allPairs.length - pairs.length;
   if (pairs.length === 0) return;
 
-  const { toFreeze, toUnfreeze, toDelete, alreadyFrozen } = classifyDmPairs(
-    pairs,
-    Date.now(),
-  );
+  const { toFreeze, toDelete, alreadyFrozen } = classifyDmPairs(pairs, now);
   result.skippedAlreadyFrozen += alreadyFrozen;
   progress.dm = pairs.at(-1)?.channelId ?? null;
-
-  // Unfreeze FIRST, and outside the budget. A frozen channel belonging to an
-  // active pair is a live user-facing fault; a dormant pair staying unfrozen
-  // one more day is not. Spending the run's remaining calls on freezes while a
-  // returning consultee cannot message their consultant would be the wrong way
-  // round.
-  await applyDmFrozen(chat, toUnfreeze, false, result, streamFailures);
 
   const freezeBatch = toFreeze.slice(0, Math.max(freezeBudget, 0));
   await applyDmFrozen(chat, freezeBatch, true, result, streamFailures);

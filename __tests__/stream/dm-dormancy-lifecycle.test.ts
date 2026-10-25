@@ -513,6 +513,21 @@ it("pages mixed-case channel identities in code-unit order without losing the ta
   expect(new Set(mockChannel.mock.calls.map((call) => call[1])).size).toBe(24);
 });
 
+it("unfreezes every returning pair in one run, beyond the freeze cursor slice", async () => {
+  const ids = Array.from({ length: 12 }, (_, i) => `back${i}`);
+  mockConsultationFindMany.mockResolvedValue(
+    ids.map((id) => {
+      const row = consultation(id, 3, daysAgo(30));
+      row.consultationPlan.consultantProfile.user.id = id;
+      return row;
+    }),
+  );
+  const result = await expireEventChannels();
+  expect(result.dmUnfrozen).toBe(12);
+  expect(mockUpdatePartial).toHaveBeenCalledTimes(12);
+  expect(mockUpdatePartial).toHaveBeenCalledWith({ set: { frozen: false } });
+});
+
 function endedWebinarPage(frozen: boolean) {
   return [
     {
