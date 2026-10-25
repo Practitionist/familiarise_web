@@ -4,7 +4,7 @@
 
 ## The unit is the appointment occurrence, or the whole appointment
 
-The table below maps the words people use to the canonical names in [the glossary](../enterprise/00-foundations/06-scheduling-glossary.md); the feedback row hangs off the third line. For every booking shape and organisation relationship multiplied out, see [grid F](../support/02-the-grid.md#f--the-grid-multiplied-out-feedback-and-review-by-shape-and-organisation).
+The table below maps the words people use to the canonical names in [the glossary](../enterprise/00-foundations/06-scheduling-glossary.md); the feedback row hangs off the third line. For every booking shape and organisation relationship multiplied out, see [grid F](../support/09-org-scopes-and-visibility.md#support-beside-feedback-and-reviews).
 
 | What people say           | Canonical name         | Model                                    | What it is                                                                                  |
 | ------------------------- | ---------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------- |
@@ -60,4 +60,4 @@ Two things are honest to state about the current tree. Nothing writes `deletedAt
 
 - [02-org-quality-signal.md](02-org-quality-signal.md) — what an organisation is shown from these rows.
 - [03-schema-reference.md](03-schema-reference.md) — the column list.
-- [The grid](../support/02-the-grid.md) — where the private rating sits beside the public review and the support thread.
+- [The grid](../support/09-org-scopes-and-visibility.md) — where the private rating sits beside the public review and the support thread.

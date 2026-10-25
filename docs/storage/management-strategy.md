@@ -360,7 +360,7 @@ Every storage write, delete and signing call runs on the server-side client, nev
 - **Public buckets stay public deliberately.** Avatars, organisation logos and landing assets are served from their public endpoint; they hold nothing that needs an access check.
 - **Orphans are swept by reconciliation.** `scripts/cleanup/reconcile-document-storage.ts` treats every path referenced by a database row as live and removes unreferenced objects after a grace period, and it aborts on a listing error rather than deleting on partial information.
 
-See [support attachments](../support/08-intake-callbacks-attachments-and-limits.md#attachments) for the worked example.
+See [support attachments](../support/04-evidence-and-attachments.md#attachments) for the support bucket, its checks and its signed downloads.
 
 ## Supabase for documents, R2 for recordings
 
