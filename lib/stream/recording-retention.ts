@@ -13,7 +13,10 @@ import {
 } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { z } from "zod";
-import type { RunFailureReporter } from "@/lib/observability/run-failures";
+import {
+  createRunFailureReporter,
+  type RunFailureReporter,
+} from "@/lib/observability/run-failures";
 const retentionProgressSchema = z.object({
   due: z.string().nullable(),
   lapsed: z.string().nullable(),
@@ -646,6 +649,7 @@ async function cleanExpiredAssets(
   limit: number,
   result: ExpireRecordingsResult,
   failedIds: string[],
+  failures: RunFailureReporter,
 ): Promise<void> {
   const rows = await prisma.recording.findMany({
     where: {
@@ -667,7 +671,7 @@ async function cleanExpiredAssets(
     take: limit,
   });
   for (const row of rows) {
-    const deleted = await purgeExpiredRecordingAssets(row);
+    const deleted = await purgeExpiredRecordingAssets(row, failures);
     if (!deleted.success) {
       result.failed++;
       failedIds.push(row.id);
@@ -800,7 +804,10 @@ async function expireRecordingsUnlocked(
     }
   }
 
-  await cleanExpiredAssets(limit, result, failedIds);
+  // Vendor failures from the asset purge report once per op for the run.
+  const vendorFailures = createRunFailureReporter("stream");
+  await cleanExpiredAssets(limit, result, failedIds, vendorFailures);
+  vendorFailures.flush();
   await deleteTransferredStreamCopies(now, result, failedIds, limit, progress);
   result.checkpoint = JSON.stringify(progress);
 

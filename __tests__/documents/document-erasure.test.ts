@@ -23,6 +23,7 @@ const db = {
     updateMany: jest.fn(),
     findMany: jest.fn(),
     deleteMany: jest.fn(),
+    count: jest.fn(),
   },
 };
 
@@ -30,7 +31,13 @@ describe("erasure covers session documents", () => {
   it("tombstones the user's threads, deletes their files at once and reports a failure once", async () => {
     db.appointmentDocument.updateMany.mockResolvedValue({ count: 2 });
     db.appointmentDocument.deleteMany.mockResolvedValue({ count: 1 });
+    // No sibling shares a path; the failed object leaves one row behind.
+    db.appointmentDocument.count.mockImplementation(
+      async ({ where }: { where: { storagePath?: string } }) =>
+        where.storagePath ? 0 : 1,
+    );
     db.appointmentDocument.findMany
+      .mockResolvedValue([])
       .mockResolvedValueOnce([
         {
           id: "v2",

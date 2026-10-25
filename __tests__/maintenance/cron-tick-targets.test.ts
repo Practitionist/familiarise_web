@@ -503,10 +503,11 @@ describe("cron-tick calendar windows", () => {
     expect(ledgers.length).toBeGreaterThan(12);
     expect(ledgers.every((t) => t.getUTCMinutes() === 55)).toBe(true);
     expect(ledgers.some((t) => t.getUTCHours() === 23)).toBe(true);
-    expect(dueTargets(utc(4, 6, 55))).toContain(
-      "reconcile-gateway-settlements",
-    );
-    expect(dueTargets(utc(4, 6, 55))).not.toContain("reconcile-ledgers");
+    // A tick exactly at the cap keeps the ledger slice.
+    const full = dueTargets(utc(4, 6, 55));
+    expect(full).toContain("reconcile-gateway-settlements");
+    expect(full).toContain("reconcile-ledgers");
+    expect(full).toHaveLength(MAX_TARGETS_PER_TICK);
   });
 
   it("runs the TDS draft only on the 5th of January, April, July and October", () => {

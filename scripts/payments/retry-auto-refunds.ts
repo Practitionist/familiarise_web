@@ -236,8 +236,11 @@ async function retryRefundsOwed(
       result.owed.settled += 1;
     } else if (outcome.kind === "failed") {
       result.owed.failed += 1;
-      firstError ??= outcome.error;
-      failedIds.push(marker.paymentId);
+      // A permanent failure already paged once through its stuck alert.
+      if (!outcome.permanent) {
+        firstError ??= outcome.error;
+        failedIds.push(marker.paymentId);
+      }
       if (outcome.stuck) result.owed.stuck.push(marker.paymentId);
     }
   }
