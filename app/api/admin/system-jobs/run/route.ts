@@ -528,7 +528,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json(
       {
         error: "Failed to run job",
-        details: runtimeError.message,
       },
       { status: 500 },
     );

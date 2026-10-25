@@ -75,13 +75,13 @@ beforeEach(() => {
   maintenance.mockResolvedValue({ phase: "OFF" });
   dispatch.mockResolvedValue({ accepted: true, job: "transfer-recordings" });
 });
-function request() {
+function request(jobId = "transfer-recordings") {
   return new NextRequest(
     "https://untrusted-request-host.test/api/admin/system-jobs/run",
     {
       method: "POST",
       body: JSON.stringify({
-        jobId: "transfer-recordings",
+        jobId,
         reason: "Recover verified recording",
       }),
     },
@@ -116,9 +116,18 @@ it("records FAILED and returns a generic error when worker admission fails", asy
   );
   const response = await post(request());
   expect(response.status).toBe(500);
-  expect(JSON.stringify(await response.json())).not.toContain(
-    "private worker configuration",
+  expect(await response.json()).toEqual({ error: "Failed to run job" });
+  expect(audit).toHaveBeenCalledWith(
+    {},
+    expect.objectContaining({ after: { status: "FAILED" } }),
   );
+  expect(diagnostics).toHaveBeenCalledTimes(1);
+});
+
+it("keeps another job's runtime diagnostic out of the staff response while auditing failure", async () => {
+  const response = await post(request("cleanup-abandoned-payments"));
+  expect(response.status).toBe(500);
+  expect(await response.json()).toEqual({ error: "Failed to run job" });
   expect(audit).toHaveBeenCalledWith(
     {},
     expect.objectContaining({ after: { status: "FAILED" } }),
