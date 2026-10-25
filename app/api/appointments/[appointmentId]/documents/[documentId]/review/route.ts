@@ -8,7 +8,6 @@ import { applyRateLimit, documentReviewLimiter } from "@/lib/rate-limit";
 import {
   FileRouteError,
   answerFileRoute,
-  fileApiError,
   parseJsonBody,
 } from "@/lib/documents/api-error";
 import { resolveDocumentParty } from "@/lib/documents/document-party";
