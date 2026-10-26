@@ -2,7 +2,7 @@
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { format } from "date-fns";
-import { useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import {
   Attachment,
   useChatContext,
@@ -82,6 +82,22 @@ export const CustomMessage = () => {
     "(hover: hover) and (pointer: fine)",
     true,
   );
+  // Touch shows a bubble's actions only after a tap on it; a tap elsewhere hides them.
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!actionsOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !rowRef.current?.contains(event.target)
+      ) {
+        setActionsOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    return () => document.removeEventListener("pointerdown", closeOutside);
+  }, [actionsOpen]);
 
   // Map Stream reaction types to actual emoji characters
   const reactionTypeToEmoji: Record<string, string> = {
@@ -224,6 +240,20 @@ export const CustomMessage = () => {
   const handleReplyClick = () => {
     // Use Stream Chat's MessageComposer controller API to set quoted message
     messageComposer.setQuotedMessage(message);
+    setActionsOpen(false);
+  };
+
+  const touchActionsVisible =
+    !isFinePointer && (actionsOpen || showEmojiPicker || showMoreOptions);
+  const handleBubbleTap = (event: MouseEvent<HTMLDivElement>) => {
+    if (isFinePointer) return;
+    if (
+      event.target instanceof Element &&
+      event.target.closest("a, button, input, textarea")
+    ) {
+      return;
+    }
+    setActionsOpen((open) => !open);
   };
 
   // Report a message (flags in Stream + persists to DB)
@@ -268,8 +298,8 @@ export const CustomMessage = () => {
     }
   };
 
-  // One toolbar, two placements: floating on hover for a mouse, inline and
-  // permanent for touch. Both are Radix now, which brings Escape, a focus trap
+  // One toolbar, two placements: floating on hover for a mouse, inline after a
+  // tap on the bubble for touch. Both are Radix now, which brings Escape, a focus trap
   // and focus return that the hand-rolled mousedown-only dropdowns never had.
   const actionToolbar = (
     <div className="flex items-center gap-0.5 rounded-lg border border-border bg-popover shadow-lg">
@@ -369,6 +399,7 @@ export const CustomMessage = () => {
 
   return (
     <div
+      ref={rowRef}
       className={`flex items-end ${isMyMessage ? "justify-end" : "justify-start"} mb-4 group relative`}
     >
       {/* Avatar for other users' messages */}
@@ -391,7 +422,7 @@ export const CustomMessage = () => {
       )}
 
       {/* Touch placement: outside the bubble, on the side away from the edge. */}
-      {!isFinePointer && isMyMessage && (
+      {touchActionsVisible && isMyMessage && (
         <div className="mr-1 shrink-0">{actionToolbar}</div>
       )}
 
@@ -421,6 +452,8 @@ export const CustomMessage = () => {
 
         {/* Message Bubble */}
         <div
+          data-testid="message-bubble"
+          onClick={handleBubbleTap}
           className={cn(
             "rounded-lg px-3 py-2",
             isMyMessage
@@ -599,7 +632,7 @@ export const CustomMessage = () => {
         </div>
       </div>
 
-      {!isFinePointer && !isMyMessage && (
+      {touchActionsVisible && !isMyMessage && (
         <div className="ml-1 shrink-0">{actionToolbar}</div>
       )}
 

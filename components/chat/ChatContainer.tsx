@@ -4,6 +4,7 @@ import { MessageSquareIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   Channel,
+  DateSeparator,
   EmptyStateIndicator,
   MessageList,
   VirtualizedMessageList,
@@ -11,6 +12,7 @@ import {
   WithComponents,
   useChannelStateContext,
   useChatContext,
+  type DateSeparatorProps,
   type EmptyStateIndicatorProps,
 } from "stream-chat-react";
 import { AlertTriangle } from "lucide-react";
@@ -26,6 +28,7 @@ import { useMaintenanceState } from "@/providers/MaintenanceProvider";
 import { isEventChannel, parseEventChannelId } from "@/lib/stream-channel-ids";
 import { EmptyState } from "@/components/dashboard/DataCard";
 import { withoutLegacyBookingCards } from "@/lib/stream/system-users";
+import { useMediaQuery } from "@/hooks/use-media-query";
 
 // Was a hand-rolled near-copy of EmptyState with different dimensions, on a
 // `bg-zinc-50` slab pressed against the sidebar's blue. ChatUnavailable already
@@ -56,6 +59,13 @@ const ChannelEmptyState = (props: EmptyStateIndicatorProps) => {
   );
 };
 
+// On a phone the floating "Today" pill sits over the top bubble; the in-list separators stay.
+const ChatDateSeparator = (props: DateSeparatorProps) => {
+  const narrow = useMediaQuery("(max-width: 640px)");
+  if (props.floating && narrow) return null;
+  return <DateSeparator {...props} />;
+};
+
 // System messages bypass `Message` and render through `MessageSystem`.
 // `uploads: false` still leaves the selector for commands/polls/location.
 const AttachmentSelectorOff = () => null;
@@ -63,6 +73,7 @@ const CHAT_COMPONENT_OVERRIDES = {
   MessageSystem: SystemMessage,
   AttachmentSelector: AttachmentSelectorOff,
   EmptyStateIndicator: ChannelEmptyState,
+  DateSeparator: ChatDateSeparator,
 };
 
 /** The loaded messages minus the retired booking cards, so a DM holding only those shows the empty state. */

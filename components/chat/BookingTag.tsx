@@ -18,6 +18,12 @@ import {
   type BookingTag,
 } from "@/lib/stream/booking-tag";
 import { cn } from "@/utils/tailwind";
+import { Skeleton } from "@/components/ui/skeleton";
+
+const CHIP_ROW =
+  "flex items-center gap-2 border-t border-border bg-muted/40 px-4 py-2 text-xs";
+const CHIP =
+  "inline-flex min-w-0 max-w-full items-start gap-1.5 rounded-2xl border border-border bg-background px-2.5 py-1";
 
 type SubmitParams = Parameters<
   NonNullable<ComponentProps<typeof MessageComposer>["overrideSubmitHandler"]>
@@ -87,8 +93,10 @@ export function BookingTagComposer({
   const tagKey =
     contextAppointmentId && cid ? `${cid}:${contextAppointmentId}` : null;
   const [doneKey, setDoneKey] = useState<string | null>(null);
-  const { data: tag } = useBookingTag(contextAppointmentId, cid);
+  const { data: tag, isLoading } = useBookingTag(contextAppointmentId, cid);
   const active = Boolean(tag && tagKey && doneKey !== tagKey);
+  // Holds the chip's row while the lookup runs, so the list does not jump when it lands.
+  const reserving = Boolean(isLoading && tagKey && doneKey !== tagKey);
 
   const submit = useCallback(
     async (params: SubmitParams) => {
@@ -108,12 +116,20 @@ export function BookingTagComposer({
 
   return (
     <>
+      {reserving && (
+        <div
+          data-testid="booking-tag-reserve"
+          aria-hidden="true"
+          className={CHIP_ROW}
+        >
+          <span className={CHIP}>
+            <Skeleton className="h-4 w-48" />
+          </span>
+        </div>
+      )}
       {active && tag && (
-        <div className="flex items-center gap-2 border-t border-border bg-muted/40 px-4 py-2 text-xs">
-          <span
-            data-testid="booking-tag-chip"
-            className="inline-flex min-w-0 max-w-full items-start gap-1.5 rounded-2xl border border-border bg-background px-2.5 py-1"
-          >
+        <div className={CHIP_ROW}>
+          <span data-testid="booking-tag-chip" className={CHIP}>
             <CalendarIcon
               className="mt-0.5 h-3.5 w-3.5 shrink-0"
               aria-hidden="true"

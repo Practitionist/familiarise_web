@@ -44,6 +44,31 @@ function SheetChatLoading() {
   );
 }
 
+type OpenedChannel = z.infer<typeof openResponseSchema>;
+
+class OpenRefused extends Error {}
+
+/** Server-resolved channels per user and request for this page session, so a reopen skips the route. */
+const openedChannels = new Map<string, OpenedChannel>();
+
+async function openChannel(key: string, body: string): Promise<OpenedChannel> {
+  const cached = openedChannels.get(key);
+  if (cached) return cached;
+  const res = await fetch("/api/stream/channels/open", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+  });
+  const json: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    const refusal = errorBodySchema.safeParse(json);
+    throw new OpenRefused(refusal.success ? refusal.data.error : OPEN_FAILED);
+  }
+  const opened = openResponseSchema.parse(json);
+  openedChannels.set(key, opened);
+  return opened;
+}
+
 /** Opens the target through the same server route as the Messages deep link, then mounts that one channel. */
 function AppointmentChatPane({
   target,
@@ -71,25 +96,10 @@ function AppointmentChatPane({
   useEffect(() => {
     if (!client?.userID) return;
     let cancelled = false;
+    const key = `${client.userID}:${body}`;
     const open = async () => {
       try {
-        const res = await fetch("/api/stream/channels/open", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body,
-        });
-        const json: unknown = await res.json().catch(() => null);
-        if (!res.ok) {
-          const refusal = errorBodySchema.safeParse(json);
-          if (!cancelled) {
-            setResult({
-              body,
-              error: refusal.success ? refusal.data.error : OPEN_FAILED,
-            });
-          }
-          return;
-        }
-        const { channelType, channelId } = openResponseSchema.parse(json);
+        const { channelType, channelId } = await openChannel(key, body);
         // The tag lookup runs alongside `watch`, so the chip is ready with the composer.
         if (tagAppointmentId) {
           void queryClient.prefetchQuery(
@@ -104,8 +114,14 @@ function AppointmentChatPane({
         if (cancelled) return;
         await setActiveChannel(opened);
         setResult({ body, cid: opened.cid });
-      } catch {
-        if (!cancelled) setResult({ body, error: OPEN_FAILED });
+      } catch (error) {
+        openedChannels.delete(key);
+        if (!cancelled) {
+          setResult({
+            body,
+            error: error instanceof OpenRefused ? error.message : OPEN_FAILED,
+          });
+        }
       }
     };
     void open();

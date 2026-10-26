@@ -61,6 +61,8 @@ import {
   isEventParticipant,
 } from "@/lib/stream/event-channel-service";
 import { getStreamChatClient } from "@/lib/stream-client";
+import { getDmChannelId } from "@/lib/stream-utils";
+import { readDmChannel } from "@/lib/stream/dm-channel-read";
 import { streamLogger } from "@/lib/stream-logger";
 import { collabChannelAccess } from "@/lib/stream/channel-access";
 import { Refusal } from "@/lib/errors/refusal";
@@ -188,6 +190,20 @@ function resolveDmOrganizationId(
   };
 }
 
+/** Whether the DM already holds both people under this org stamp, so nothing needs creating. */
+async function isDmReady(
+  userId: string,
+  counterpartyUserId: string,
+  organizationId: string | null,
+): Promise<boolean> {
+  const channelId = getDmChannelId(userId, counterpartyUserId, organizationId);
+  const dm = await readDmChannel(channelId, userId);
+  return Boolean(
+    dm?.humans.includes(counterpartyUserId) &&
+    dm.organizationId === organizationId,
+  );
+}
+
 async function handleDmChannelOpen(
   userId: string,
   body: Extract<z.infer<typeof bodySchema>, { kind: "dm" }>,
@@ -195,8 +211,18 @@ async function handleDmChannelOpen(
   const { counterpartyUserId } = body;
   const requestedOrgId = body.organizationId ?? null;
 
-  // The pair's booking scopes answer the same question as `canDirectMessage`, in one lookup.
-  const contexts = await pairBookingContexts(userId, counterpartyUserId);
+  // The pair's booking scopes answer the same question as `canDirectMessage`, in one
+  // lookup; the requested scope's DM is read alongside and only used once that passes.
+  const speculativeReady =
+    userId === counterpartyUserId
+      ? Promise.resolve(false)
+      : isDmReady(userId, counterpartyUserId, requestedOrgId).catch(
+          () => false,
+        );
+  const [contexts, readyForRequested] = await Promise.all([
+    pairBookingContexts(userId, counterpartyUserId),
+    speculativeReady,
+  ]);
   if (!contexts.personalAllowed && contexts.organizations.length === 0) {
     streamLogger.warn("Refused DM open — no booking link", {
       userId,
@@ -214,11 +240,26 @@ async function handleDmChannelOpen(
 
   const resolvedOrg = resolveDmOrganizationId(requestedOrgId, contexts);
   if ("error" in resolvedOrg) return resolvedOrg.error;
+  const { organizationId } = resolvedOrg;
+
+  // An existing DM with both people needs no user upserts or create call.
+  const ready =
+    organizationId === requestedOrgId
+      ? readyForRequested
+      : await isDmReady(userId, counterpartyUserId, organizationId).catch(
+          () => false,
+        );
+  if (ready) {
+    return NextResponse.json({
+      channelType: "messaging",
+      channelId: getDmChannelId(userId, counterpartyUserId, organizationId),
+    });
+  }
 
   const { channelId } = await createDirectMessageChannel(
     userId,
     counterpartyUserId,
-    resolvedOrg.organizationId,
+    organizationId,
   );
 
   return NextResponse.json({ channelType: "messaging", channelId });

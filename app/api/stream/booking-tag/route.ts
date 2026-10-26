@@ -13,13 +13,8 @@ import {
   bookingTagQuerySchema,
   pickSessionAnchor,
 } from "@/lib/stream/booking-tag";
-import {
-  getStreamChatClient,
-  withStreamCircuitBreaker,
-} from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
-import { isSupportStreamUser } from "@/lib/stream/support-user";
-import { LEGACY_BOOKING_CONTEXT_USER_ID } from "@/lib/stream/system-users";
+import { readDmChannel } from "@/lib/stream/dm-channel-read";
 
 const collaboratorSelect = {
   where: {
@@ -86,22 +81,12 @@ const notFound = () =>
 
 /** The other human in a DM the caller belongs to; null unless it holds exactly the two of them. */
 async function dmCounterparty(
-  cid: string,
+  channelId: string,
   userId: string,
 ): Promise<string | null> {
-  const client = getStreamChatClient();
-  const [channel] = await withStreamCircuitBreaker(() =>
-    client.queryChannels(
-      { cid: { $eq: cid }, members: { $in: [userId] } },
-      {},
-      { limit: 1, state: true, watch: false, presence: false },
-    ),
-  );
-  const humans = Object.keys(channel?.state.members ?? {}).filter(
-    (id) => !isSupportStreamUser(id) && id !== LEGACY_BOOKING_CONTEXT_USER_ID,
-  );
-  if (humans.length !== 2 || !humans.includes(userId)) return null;
-  return humans.find((id) => id !== userId) ?? null;
+  const dm = await readDmChannel(channelId, userId);
+  if (dm?.humans.length !== 2 || !dm.humans.includes(userId)) return null;
+  return dm.humans.find((id) => id !== userId) ?? null;
 }
 
 /**
@@ -126,6 +111,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Invalid query" }, { status: 400 });
   }
   const { appointmentId, cid } = parsed.data;
+  const channelId = cid.slice(cid.indexOf(":") + 1);
 
   try {
     // Independent reads: the appointment in one joined query, the DM's members from Stream.
@@ -135,7 +121,7 @@ export async function GET(request: NextRequest) {
         select: tagAppointmentSelect,
         relationLoadStrategy: "join",
       }),
-      dmCounterparty(cid, userId),
+      dmCounterparty(channelId, userId),
     ]);
     if (!appt || !counterpartyUserId) return notFound();
 
@@ -145,7 +131,6 @@ export async function GET(request: NextRequest) {
       counterpartyUserId,
     );
     if (!title) return notFound();
-    const channelId = cid.slice(cid.indexOf(":") + 1);
     if (!(await isDmChannelIdEligible(userId, counterpartyUserId, channelId))) {
       return notFound();
     }

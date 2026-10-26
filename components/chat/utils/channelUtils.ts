@@ -2,6 +2,7 @@ import type { Channel, ChannelState } from "stream-chat";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeOrgId } from "@/lib/api/scope/parse";
 import { isSupportStreamUser } from "@/lib/stream/support-user";
+import { withoutLegacyBookingCards } from "@/lib/stream/system-users";
 
 export interface ChannelDisplayInfo {
   displayName: string;
@@ -247,4 +248,11 @@ export function eventChannelSubtitle({
     hostName ? `${hostName} (host) + ${people}` : people,
     `Everyone in this ${eventType} can read this`,
   ].join(" · ");
+}
+
+/** The latest message a channel row previews; retired booking cards never count. */
+export function lastVisibleMessage<T extends { user?: { id?: string } | null }>(
+  messages: T[],
+): T | null {
+  return withoutLegacyBookingCards(messages).at(-1) ?? null;
 }

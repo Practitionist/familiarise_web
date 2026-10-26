@@ -14,6 +14,8 @@ const mockFindFirst = jest.fn();
 const mockEligible = jest.fn<Promise<boolean>, [string, string, string]>();
 const mockSendMessage = jest.fn(async () => ({}));
 const mockContexts = jest.fn();
+const mockCreateDm = jest.fn();
+let mockChannelExists = true;
 
 jest.mock("../../lib/auth-helpers", () => ({
   requireApiAuth: async () => ({
@@ -41,9 +43,7 @@ jest.mock("../../lib/stream/dm-eligibility", () => ({
 }));
 jest.mock("../../actions/stream/chat/channel.action", () => ({
   createCollaboratorChannel: jest.fn(),
-  createDirectMessageChannel: async () => ({
-    channelId: "dm-consultee-u-expert-u",
-  }),
+  createDirectMessageChannel: (...args: unknown[]) => mockCreateDm(...args),
 }));
 jest.mock("../../actions/stream/chat/user.action", () => ({
   upsertUsersToStream: jest.fn(async () => ({})),
@@ -51,13 +51,17 @@ jest.mock("../../actions/stream/chat/user.action", () => ({
 }));
 jest.mock("../../lib/stream-client", () => ({
   getStreamChatClient: () => ({
-    queryChannels: async () => [
-      {
-        state: {
-          members: Object.fromEntries(mockMembers.map((id) => [id, {}])),
-        },
-      },
-    ],
+    queryChannels: async () =>
+      mockChannelExists
+        ? [
+            {
+              data: {},
+              state: {
+                members: Object.fromEntries(mockMembers.map((id) => [id, {}])),
+              },
+            },
+          ]
+        : [],
     channel: () => ({ sendMessage: mockSendMessage }),
     upsertUser: jest.fn(),
   }),
@@ -110,6 +114,8 @@ beforeEach(() => {
   mockFindFirst.mockResolvedValue(consultation);
   mockEligible.mockResolvedValue(true);
   mockContexts.mockResolvedValue({ personalAllowed: true, organizations: [] });
+  mockChannelExists = true;
+  mockCreateDm.mockResolvedValue({ channelId: "dm-consultee-u-expert-u" });
 });
 
 describe("GET /api/stream/booking-tag", () => {
@@ -219,7 +225,26 @@ it("opening a DM with an appointment context posts nothing", async () => {
   expect(mockFindFirst).not.toHaveBeenCalled();
 });
 
-it("refuses a DM open when the pair shares no booking scope", async () => {
+it("refuses a DM open when the pair shares no booking scope, even if the DM exists", async () => {
   mockContexts.mockResolvedValue({ personalAllowed: false, organizations: [] });
   expect((await openDm({})).status).toBe(403);
+  expect(mockCreateDm).not.toHaveBeenCalled();
+});
+
+it("returns an existing DM holding both people without upserting or creating", async () => {
+  const res = await openDm({});
+  expect(res.status).toBe(200);
+  const { channelId } = (await res.json()) as { channelId: string };
+  expect(channelId).toMatch(/^dm-/);
+  expect(mockCreateDm).not.toHaveBeenCalled();
+});
+
+it("creates the DM when it is missing or lacks the other person", async () => {
+  mockChannelExists = false;
+  expect((await openDm({})).status).toBe(200);
+  mockChannelExists = true;
+  mockMembers = ["consultee-u"];
+  expect((await openDm({})).status).toBe(200);
+  expect(mockCreateDm).toHaveBeenCalledTimes(2);
+  expect(mockCreateDm).toHaveBeenCalledWith("consultee-u", "expert-u", null);
 });

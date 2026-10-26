@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowUpRight, CreditCard } from "lucide-react";
+import { ArrowUpRight, CreditCard, MessageSquare } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -267,7 +267,8 @@ export function AppointmentSheet({
                             disabled={item.disabled}
                             onClick={() => onOpenChat(chat)}
                           >
-                            {item.label}
+                            <MessageSquare className="mr-1.5 h-4 w-4 shrink-0" />
+                            <span className="truncate">{item.label}</span>
                           </Button>
                         );
                       }

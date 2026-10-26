@@ -31,6 +31,7 @@ import {
   channelHasSupportMember,
   getChannelDisplayInfo,
   isUsableDmChannel,
+  lastVisibleMessage,
 } from "./utils/channelUtils";
 import { appendUniqueChannels, insertChannelAtTop } from "./utils/channelList";
 import { useChatPane } from "./ChatPaneContext";
@@ -79,9 +80,7 @@ const ChannelItem = memo(
     const hasUnread = unreadCount > 0;
 
     // Last message preview and timestamp
-    const messages = channel.state.messages;
-    const lastMessage =
-      messages.length > 0 ? messages[messages.length - 1] : null;
+    const lastMessage = lastVisibleMessage(channel.state.messages);
     const lastMessageText = lastMessage?.text
       ? lastMessage.text.length > 30
         ? lastMessage.text.substring(0, 30) + "..."

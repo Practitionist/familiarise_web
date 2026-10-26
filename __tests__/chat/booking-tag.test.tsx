@@ -32,8 +32,9 @@ let mockMessage: Record<string, unknown>;
 jest.mock("../../hooks/use-toast", () => ({
   useToast: () => ({ toast: jest.fn() }),
 }));
+let mockFinePointer = true;
 jest.mock("../../hooks/use-media-query", () => ({
-  useMediaQuery: () => true,
+  useMediaQuery: () => mockFinePointer,
 }));
 jest.mock("../../components/chat/ChannelInfoAndManageDialog", () => ({
   ChannelInfoAndManageDialog: () => null,
@@ -69,6 +70,7 @@ jest.mock("stream-chat-react", () => ({
 import { BookingTagComposer } from "@/components/chat/BookingTag";
 import { CustomMessage } from "@/components/chat/CustomMessage";
 import { CustomChannelHeader } from "@/components/chat/CustomChannelHeader";
+import { lastVisibleMessage } from "@/components/chat/utils/channelUtils";
 
 const NEXT = "2099-01-02T10:00:00.000Z";
 const verified = {
@@ -98,6 +100,7 @@ function answer(status: number, body: unknown) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockFinePointer = true;
   global.fetch = fetchMock;
   mockChannel = { cid: "messaging:dm-1", type: "messaging", id: "dm-1" };
 });
@@ -149,6 +152,21 @@ describe("BookingTagComposer", () => {
       id: "local",
       booking_appointment_id: "apt-1",
     });
+  });
+
+  it("reserves the chip row while the lookup runs and collapses it on a 404", async () => {
+    let settle: (value: unknown) => void = () => {};
+    fetchMock.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+    renderWithQuery(<BookingTagComposer contextAppointmentId="apt-1" />);
+    expect(screen.getByTestId("booking-tag-reserve")).toBeInTheDocument();
+
+    settle({ ok: false, status: 404, json: async () => ({}) });
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("booking-tag-reserve"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("booking-tag-chip")).not.toBeInTheDocument();
   });
 
   it("sends untagged once the chip is removed, or when the server refuses it", async () => {
@@ -203,6 +221,25 @@ describe("CustomMessage booking tag", () => {
     expect(screen.queryByText("Get help")).not.toBeInTheDocument();
   });
 
+  it("on touch, shows a bubble's actions only after a tap on it", () => {
+    mockFinePointer = false;
+    mockMessage = { ...forged, booking_appointment_id: undefined };
+    renderWithQuery(<CustomMessage />);
+    expect(
+      screen.queryByRole("button", { name: "Reply to message" }),
+    ).toBeNull();
+
+    fireEvent.click(screen.getByTestId("message-bubble"));
+    expect(
+      screen.getByRole("button", { name: "Reply to message" }),
+    ).toBeInTheDocument();
+
+    fireEvent.pointerDown(document.body);
+    expect(
+      screen.queryByRole("button", { name: "Reply to message" }),
+    ).toBeNull();
+  });
+
   it("hides the retired server-posted booking cards", () => {
     mockMessage = {
       ...forged,
@@ -237,4 +274,11 @@ it("labels an event channel with its host, headcount and audience", () => {
       "group chat · Asha (host) + 4 classmates · Everyone in this class can read this",
     ),
   ).toBeInTheDocument();
+});
+
+it("previews the latest message that is not a retired booking card", () => {
+  const card = { id: "c", user: { id: "system-booking-context" } };
+  const hello = { id: "h", user: { id: "them" } };
+  expect(lastVisibleMessage([hello, card])).toBe(hello);
+  expect(lastVisibleMessage([card])).toBeNull();
 });

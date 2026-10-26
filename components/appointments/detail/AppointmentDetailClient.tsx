@@ -10,6 +10,7 @@ import {
   CalendarX,
   CreditCard,
   LifeBuoy,
+  MessageSquare,
   Users,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -650,6 +651,7 @@ export function AppointmentDetailClient({
                 disabled={item.disabled}
                 onClick={clickOf(item)}
               >
+                {item.chat && <MessageSquare className="mr-1.5 h-4 w-4" />}
                 {item.label}
               </Button>
             ))}
