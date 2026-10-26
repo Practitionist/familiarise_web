@@ -109,6 +109,12 @@ rails, attempt ceilings or operator handoff. The already hardened 48-hour paid
 unallocated arm keeps its existing contract. The unpaid pending-subscription
 cohort continues to exclude successful payments in both selection and mutation.
 
+Legacy approved-unallocated recovery requires the exact automated transition
+reason and no actor, positive refundable balance, no existing owed marker and
+no live or successful refund under the original key, all before the page limit.
+Legacy consultation expiry history is shared with abandoned-payment cleanup;
+those ambiguous rows require owner review instead of automatic new refunds.
+
 ## Failure boundaries and review evidence
 
 | Interruption or race                          | Durable fact / recovery                                                       |

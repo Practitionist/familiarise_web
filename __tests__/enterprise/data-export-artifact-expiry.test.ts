@@ -15,6 +15,7 @@ const mockStageReadyEmail = jest.fn();
 const mockAttemptStaged = jest.fn();
 const mockStageReadyNotification = jest.fn();
 const mockAttemptNotification = jest.fn();
+const mockStorageUpload = jest.fn();
 
 jest.mock("../../lib/prisma", () => {
   const db = {
@@ -89,7 +90,11 @@ jest.mock("../../lib/novu/outbox", () => ({
 
 jest.mock("@supabase/supabase-js", () => ({
   createClient: () => ({
-    storage: { from: () => ({ upload: async () => ({ error: null }) }) },
+    storage: {
+      from: () => ({
+        upload: (...args: unknown[]) => mockStorageUpload(...args),
+      }),
+    },
   }),
 }));
 
@@ -120,6 +125,7 @@ beforeEach(() => {
   mockAttemptStaged.mockResolvedValue(undefined);
   mockStageReadyNotification.mockResolvedValue([]);
   mockAttemptNotification.mockResolvedValue({ success: true });
+  mockStorageUpload.mockResolvedValue({ error: null });
   mockRemoveObjects.mockResolvedValue(true);
   mockExists.mockResolvedValue({ data: false, error: null });
 });
@@ -170,7 +176,9 @@ describe("export artifact expiry", () => {
 
     expect(result).toMatchObject({ picked: 0, superseded: 1 });
     expect(mockArtifactUpdateMany).not.toHaveBeenCalled();
+    expect(mockArtifactCreate).not.toHaveBeenCalled();
     expect(mockRemoveObjects).not.toHaveBeenCalled();
+    expect(mockStorageUpload).not.toHaveBeenCalled();
   });
 
   it("reclaims a stale PROCESSING attempt with a newer token and stores only a safe failure", async () => {
@@ -264,5 +272,54 @@ describe("export artifact expiry", () => {
         delete process.env.SUPABASE_SERVICE_ROLE_KEY;
       else process.env.SUPABASE_SERVICE_ROLE_KEY = originalServiceKey;
     }
+  });
+
+  it("does not publish or stage from an attempt whose finalization CAS lost", async () => {
+    const oldToken = new Date("2026-10-01T00:00:00.000Z");
+    mockArtifactFindMany.mockResolvedValue([]);
+    mockJobFindFirst.mockResolvedValue({
+      id: "export-raced",
+      status: "PROCESSING",
+      startedAt: oldToken,
+      organizationId: "org-1",
+      requestedByMembershipId: "membership-1",
+      kind: "PEOPLE",
+    });
+    mockJobUpdateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+    mockMembershipFindUnique.mockResolvedValue({
+      status: "ACTIVE",
+      role: "OWNER",
+    });
+
+    const result = await processDataExports();
+
+    const claimedAttempt = mockArtifactCreate.mock.calls[0][0].data;
+    expect(claimedAttempt.attemptStartedAt.getTime()).toBeGreaterThan(
+      oldToken.getTime(),
+    );
+    expect(claimedAttempt.storagePath).not.toBe(
+      `org-1/export-raced/${oldToken.getTime()}.json`,
+    );
+    expect(result).toMatchObject({
+      succeeded: 0,
+      superseded: 1,
+      success: true,
+    });
+    expect(mockJobUpdateMany).toHaveBeenCalledTimes(2);
+    expect(mockJobUpdateMany.mock.calls[1][0].where).toMatchObject({
+      status: "PROCESSING",
+      startedAt: claimedAttempt.attemptStartedAt,
+    });
+    expect(
+      mockJobUpdateMany.mock.calls.some(
+        (call) => call[0].data.status === "FAILED",
+      ),
+    ).toBe(false);
+    expect(mockAuditCreate).not.toHaveBeenCalled();
+    expect(mockStageReadyEmail).not.toHaveBeenCalled();
+    expect(mockStageReadyNotification).not.toHaveBeenCalled();
+    expect(mockRecordSystemError).not.toHaveBeenCalled();
   });
 });

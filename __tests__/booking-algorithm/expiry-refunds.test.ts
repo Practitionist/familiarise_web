@@ -7,10 +7,41 @@
 import "./setup";
 
 const refundBookingPayment = jest.fn();
+const mockDriveRefundOwed = jest.fn();
+const mockApprovedPaymentIds: string[] = [];
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   __esModule: true,
   refundBookingPayment: (...a: unknown[]) =>
     refundBookingPayment(...(a as [never])),
+}));
+
+jest.mock("../../lib/payments/operations/refund-owed", () => ({
+  MAX_REFUND_OWED_ATTEMPTS: 3,
+  REFUND_OWED_SELECT: {
+    id: true,
+    refundOwedKey: true,
+    refundOwedPaise: true,
+    refundOwedReason: true,
+    refundOwedAttempts: true,
+  },
+  markerFromRow: (row: {
+    id: string;
+    refundOwedKey: string | null;
+    refundOwedPaise: number | null;
+    refundOwedReason: string | null;
+    refundOwedAttempts: number;
+  }) =>
+    row.refundOwedKey
+      ? {
+          paymentId: row.id,
+          amountPaise: row.refundOwedPaise,
+          key: row.refundOwedKey,
+          reason: row.refundOwedReason ?? "refund owed",
+          attempts: row.refundOwedAttempts,
+        }
+      : null,
+  stampRefundsOwed: async (_tx: unknown, markers: unknown[]) => markers.length,
+  driveRefundOwed: (...args: unknown[]) => mockDriveRefundOwed(...args),
 }));
 
 jest.mock("../../lib/prisma", () => {
@@ -57,9 +88,14 @@ jest.mock("../../lib/prisma", () => {
         },
       ),
     },
-    $queryRaw: jest.fn(async (query: { text: string }) =>
-      query.text.includes('JOIN "Subscription"') ? [] : paymentRows(),
-    ),
+    $queryRaw: jest.fn(async (query: { text: string }) => {
+      if (
+        query.text.includes('WHERE a."subscriptionId" =') &&
+        !query.text.includes("refundOwedKey")
+      )
+        return mockApprovedPaymentIds.map((id) => ({ id }));
+      return query.text.includes('JOIN "Subscription"') ? [] : paymentRows();
+    }),
     $executeRaw: jest.fn(async (query: { values: unknown[] }) => {
       const ids = query.values[0];
       if (!Array.isArray(ids)) throw new Error("missing marker ids");
@@ -114,6 +150,11 @@ import { AppointmentStatus } from "@prisma/client";
 describe("expiry sweep refunds (PR 2c)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockApprovedPaymentIds.length = 0;
+    mockDriveRefundOwed.mockResolvedValue({
+      kind: "refunded",
+      refund: { refundId: "refund-1", amountRefundedPaise: 100 },
+    });
     (prisma.consultation.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.subscription.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.appointment.findMany as jest.Mock).mockResolvedValue([]);
@@ -143,8 +184,6 @@ describe("expiry sweep refunds (PR 2c)", () => {
         ],
       },
     ]);
-    refundBookingPayment.mockResolvedValue({ status: "SUCCEEDED" });
-
     const result = await expireStaleRequests();
 
     expect(refundBookingPayment).toHaveBeenCalledTimes(1);
@@ -203,7 +242,7 @@ describe("expiry sweep refunds (PR 2c)", () => {
         payment: [{ id: "pay-paid", paymentStatus: "SUCCEEDED" }],
       },
     ]);
-    refundBookingPayment.mockResolvedValue({ status: "SUCCEEDED" });
+    mockApprovedPaymentIds.push("pay-paid");
 
     const result = await expireStaleRequests();
 
@@ -226,6 +265,13 @@ describe("expiry sweep refunds (PR 2c)", () => {
     );
     expect(result.subscriptionsExpired).toBe(1);
     expect(result.refundsIssued).toBe(1);
+    expect(mockDriveRefundOwed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "pay-paid",
+        amountPaise: null,
+        key: expect.stringContaining("approved-unallocated"),
+      }),
+    );
   });
 
   /**
@@ -353,11 +399,19 @@ describe("paid plan unallocated for 48 h (#1775 C-3)", () => {
     ]);
     (
       prisma as unknown as { payment: { findMany: jest.Mock } }
-    ).payment.findMany.mockResolvedValue([{ id: "pay-1" }]);
-    refundBookingPayment.mockResolvedValue({ status: "SUCCEEDED" });
+    ).payment.findMany.mockResolvedValue([
+      {
+        id: "pay-1",
+        refundOwedKey: "sub-unalloc:pay-1",
+        refundOwedPaise: null,
+        refundOwedReason: "UNALLOCATED_48H",
+        refundOwedAttempts: 0,
+      },
+    ]);
   });
 
   it("expires with the money predicate in the CAS and refunds in full", async () => {
+    mockApprovedPaymentIds.push("pay-1");
     (prisma.subscription.findMany as jest.Mock).mockImplementation(
       readCohort([paidRow(0)]),
     );
@@ -368,9 +422,11 @@ describe("paid plan unallocated for 48 h (#1775 C-3)", () => {
       .find((args) => args.where.id === "sub-paid");
     expect(cas.where.status).toEqual({ in: [AppointmentStatus.PENDING] });
     expect(JSON.stringify(cas.where)).toContain('"paymentStatus":"SUCCEEDED"');
-    expect(refundBookingPayment).toHaveBeenCalledTimes(1);
-    expect(refundBookingPayment.mock.calls[0][0]).not.toHaveProperty(
-      "amountPaise",
+    expect(mockDriveRefundOwed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "pay-1",
+        key: "sub-unalloc:pay-1",
+      }),
     );
   });
 

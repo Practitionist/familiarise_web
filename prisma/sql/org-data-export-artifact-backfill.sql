@@ -1,7 +1,8 @@
 -- Backfill legacy Supabase export URLs into exact object owners before deploying
 -- the reader/worker that no longer consults OrgDataExportJob.fileUrl.
 -- Apply only after the additive OrgDataExportArtifact table exists and the
--- export worker is quiesced. This script never assumes a bucket name.
+-- export worker is quiesced. Verify the reviewed project origin below against
+-- the deployment before applying; bucket/path come from each exact old URL.
 BEGIN;
 SET LOCAL lock_timeout = '3s';
 SET LOCAL TIME ZONE 'UTC';
@@ -12,6 +13,7 @@ DO $$
 DECLARE
   legacy RECORD;
   parts TEXT[];
+  expected_origin CONSTANT TEXT := 'https://pzmbxqdgibfkhjwzeprf.supabase.co';
   expected_path TEXT;
   attempt_token TIMESTAMPTZ;
   artifact_expiry TIMESTAMPTZ;
@@ -37,7 +39,11 @@ BEGIN
     );
     expected_path := legacy."organizationId" || '/' || legacy."id" || '.json';
 
-    IF parts IS NULL OR parts[1] = '' OR parts[2] <> expected_path THEN
+    IF parts IS NULL
+      OR split_part(legacy."fileUrl", '/storage/v1/object/sign/', 1) <> expected_origin
+      OR parts[1] = ''
+      OR parts[2] <> expected_path
+    THEN
       RAISE EXCEPTION
         'Unrecognized legacy data-export storage URL for job %; inspect its exact bucket/path before continuing',
         legacy."id";
