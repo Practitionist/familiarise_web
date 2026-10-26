@@ -2207,6 +2207,16 @@ export async function mintRefundCreditNote(
     },
     select: { id: true },
   });
+  // The invoice row is locked; a positive credit invalidates its old checkout amount.
+  if (
+    cnTotal > 0 &&
+    (invoice.status === "ISSUED" || invoice.status === "OVERDUE")
+  ) {
+    await tx.organizationInvoice.updateMany({
+      where: { id: invoice.id, status: { in: ["ISSUED", "OVERDUE"] } },
+      data: { providerPaymentOrderId: null },
+    });
+  }
   await restorePurchaseOrderForCredit(tx, {
     invoice,
     credit: {

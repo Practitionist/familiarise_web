@@ -109,6 +109,10 @@ set rolls back that transition. Notification errors or process death after
 commit cannot remove the owed refund.
 A concurrent marker-count mismatch rolls back and skips only that request,
 preserving the other writer's key and retry state while later requests proceed.
+An existing partial marker also holds only its own request, including when its
+retry attempts are exhausted. Preserve its amount, key, reason and attempts;
+continue later requests and report one aggregate hold error per arm so an
+unresolved obligation does not produce a successful completion.
 Other staging failures still fail the arm. A skipped request is not proof that
 its obligation has completed; the existing marker owner and later sweeps retain
 responsibility.
@@ -171,6 +175,12 @@ under a twenty-second request budget. Failed attachment never hands out an
 unowned order. The final invoice/order/outstanding check fences local races;
 it cannot prevent an external capture after that check.
 
+When a booking refund issues a positive credit note, its transaction already
+locks the invoice for the cumulative credit cap. It clears the checkout reference
+only on ISSUED/OVERDUE invoices so the next Pay request uses the reduced balance.
+Payment-attempt failure callbacks retain the current reference: the same order
+can be retried, and a delayed failure must not erase a newer checkout.
+
 This healer covers retained order pointers. Existing bank-receipt and credit
 flows can clear a pointer while a previous checkout tab remains open. Finding
 an unlogged later capture against such a lost pointer is still a separate
@@ -207,6 +217,15 @@ throughput, storage permissions, backlog drain or actual gateway behavior.
 3. Deploy through the existing release flow. The old application must not resume
    writing legacy unowned artifacts during a rollback; reconcile that boundary
    before reverting code. Preserve artifact rows and bytes while investigating.
+   Before enabling this version's legacy refund recovery, run the read-only
+   [cohort preflight](refund-recovery-preflight.sql). It uses the worker's exact
+   eligibility predicates without LIMIT and groups counts by gateway and
+   `isMockPayment`, including missing gateway-payment IDs. Dev/prod share this
+   database: a non-mock flag alone does not prove live origin. The owner must
+   review seed/test exposure and approve the eligible cohort before deployment;
+   this query stages no marker and drives no refund. Zero rows mean an empty
+   current snapshot, not a future guarantee. Timeout or missing catalog data is
+   unavailable evidence and must be resolved before rollout.
 4. Verify actual worker completion and a bounded representative export on the
    deployed host, then inspect expiry retries, oldest eligible work and refund
    obligations. Whole-bundle size and outage catch-up need measured evidence.

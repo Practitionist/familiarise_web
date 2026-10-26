@@ -105,7 +105,11 @@ Pending-consultation and approved-unallocated expiry commit full-remaining owed-
 
 Keep a short marker-count race local to its request: roll back its transition and
 history, preserve the competing writer's marker/retry state, and continue later
-requests. Do not turn unrelated staging failures into successful skips. Export
+requests. Existing partial markers also hold only their own request; retain
+their fields and exhausted retries, and report the aggregate hold as unsuccessful
+completion while later requests proceed. Do not turn unrelated staging failures
+into successful skips. Run the documented read-only legacy-refund cohort count
+and obtain owner review of shared seed/test exposure before rollout. Export
 expiry requires exact metadata `NoSuchKey` after removal; a generic 404 or an
 `exists()` false value with an error is insufficient. Download lifetimes use a
 fresh post-lookup clock and must be rechecked after signing and audit latency.

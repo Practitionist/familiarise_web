@@ -44,4 +44,10 @@ gateway capture. Park an amount mismatch without clearing a newer checkout;
 successful PAID settlement clears the reference. Keep bank/credit invalidation
 semantics separate from the capture lock.
 
+A positive booking-refund credit clears a payable invoice's checkout reference
+under its existing credit-cap row lock. Failed payment attempts retain references
+because their orders remain retryable. Clearing a local pointer does not revoke
+a provider order: late mismatched captures stay operator-reviewed liabilities,
+and the retained-pointer healer cannot discover every superseded order.
+
 Use `applyOrgInvoiceCapture` with the transaction client for webhook, checkout read-back and scheduled recovery. Keep receipt, ledger, PAID audit and notification staging atomic. The registered invoice healer rotates retained order IDs through its existing execution checkpoint; it never creates another charge or auto-refunds an unapplied capture. An empty payment list does not close a created/attempted order: checkout must not replace an open stale-amount order. Keep provider waits inside the caller's remaining budget; an SDK timeout does not cancel a gateway effect. Bank receipts and credits can clear an old order reference, so do not claim the healer discovers every historical capture. Read `docs/maintenance/11-worker-recovery.md` for cadence, bounded rotation and remaining operating gates.

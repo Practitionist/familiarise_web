@@ -236,6 +236,12 @@ class ExpiredRefundMarkerRaceError extends Error {
   }
 }
 
+class ExpiredRefundPartialMarkerError extends Error {
+  constructor(arm: ExpiredRefundArm) {
+    super(`${arm} payment has a partial refund marker; expiry was rolled back`);
+  }
+}
+
 const ARM_WRAPPER: Record<ExpiredRefundArm, "consultation" | "subscription"> = {
   "pending-consultation": "consultation",
   "pending-subscription": "subscription",
@@ -348,7 +354,7 @@ async function stageExpiredRefunds(
     // A null amount means full balance; preserve that marker's owner and retry state.
     // Hold expiry when an existing partial marker cannot cover this obligation.
     if (payment.refundOwedPaise === null) return [];
-    throw new Error(`${arm} payment has a partial refund marker`);
+    throw new ExpiredRefundPartialMarkerError(arm);
   });
   const stamped = await stampRefundsOwed(tx, markers);
   if (stamped !== markers.length) {
@@ -504,6 +510,7 @@ async function expirePendingConsultations(
     const markers: RefundOwedMarker[] = [];
     let slotsReleased = 0;
     let skipped = 0;
+    let partialMarkerHolds = 0;
     for (const stale of staleConsultations) {
       try {
         const stagedForOne = await withSerializableRetry(() =>
@@ -572,17 +579,26 @@ async function expirePendingConsultations(
       } catch (error) {
         if (
           !(error instanceof IllegalTransitionError) &&
-          !(error instanceof ExpiredRefundMarkerRaceError)
+          !(error instanceof ExpiredRefundMarkerRaceError) &&
+          !(error instanceof ExpiredRefundPartialMarkerError)
         ) {
           throw error;
+        }
+        if (error instanceof ExpiredRefundPartialMarkerError) {
+          partialMarkerHolds++;
         }
         skipped++;
       }
     }
     console.log(
-      `✅ Expired ${expiredIds.length} PENDING consultations (${skipped} moved on before the write)`,
+      `✅ Expired ${expiredIds.length} PENDING consultations (${skipped} skipped)`,
     );
     console.log(`✅ Released ${slotsReleased} tentative slots from them`);
+    if (partialMarkerHolds > 0) {
+      errors.push(
+        `${partialMarkerHolds} pending-consultation expiry request(s) held by an existing partial refund marker`,
+      );
+    }
     const refunds = await driveExpiredRefunds(markers);
     errors.push(...refunds.failureMsgs);
 
@@ -916,6 +932,7 @@ async function expireApprovedUnallocatedSubscriptions(
     const expiredIds: string[] = [];
     const markers = [...legacy];
     let skipped = 0;
+    let partialMarkerHolds = 0;
     for (const subscription of stale) {
       try {
         const stagedForOne = await withSerializableRetry(() =>
@@ -957,17 +974,26 @@ async function expireApprovedUnallocatedSubscriptions(
       } catch (error) {
         if (
           !(error instanceof IllegalTransitionError) &&
-          !(error instanceof ExpiredRefundMarkerRaceError)
+          !(error instanceof ExpiredRefundMarkerRaceError) &&
+          !(error instanceof ExpiredRefundPartialMarkerError)
         ) {
           throw error;
+        }
+        if (error instanceof ExpiredRefundPartialMarkerError) {
+          partialMarkerHolds++;
         }
         skipped++;
       }
     }
 
+    if (partialMarkerHolds > 0) {
+      errors.push(
+        `${partialMarkerHolds} approved-unallocated expiry request(s) held by an existing partial refund marker`,
+      );
+    }
     console.log(
       `✅ Expired ${expiredIds.length} APPROVED-unallocated subscriptions` +
-        (skipped > 0 ? ` (${skipped} moved on before the write)` : ""),
+        (skipped > 0 ? ` (${skipped} skipped)` : ""),
     );
 
     const refunds = await driveExpiredRefunds(markers);

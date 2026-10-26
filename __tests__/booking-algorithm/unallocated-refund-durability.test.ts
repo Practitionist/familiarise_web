@@ -20,6 +20,7 @@ let mockLegacyApproved: string[] = [];
 let mockDue = new Map<string, string[]>();
 let mockMarkers = new Map<string, string>();
 let mockMarkerPaise = new Map<string, number | null>();
+let mockMarkerReasons = new Map<string, string>();
 let mockMarkerAttempts = new Map<string, number>();
 let mockExpired = new Set<string>();
 let mockHistory: string[] = [];
@@ -103,7 +104,7 @@ jest.mock("../../lib/prisma", () => {
           id,
           refundOwedKey: key,
           refundOwedPaise: null,
-          refundOwedReason: "owed",
+          refundOwedReason: mockMarkerReasons.get(id) ?? "owed",
           refundOwedAttempts: 0,
         })),
       ),
@@ -153,7 +154,13 @@ jest.mock("../../lib/prisma", () => {
       const ids = query.values[0];
       const keys = query.values[1];
       const owed = query.values[2];
-      if (!Array.isArray(ids) || !Array.isArray(keys) || !Array.isArray(owed))
+      const reasons = query.values[3];
+      if (
+        !Array.isArray(ids) ||
+        !Array.isArray(keys) ||
+        !Array.isArray(owed) ||
+        !Array.isArray(reasons)
+      )
         throw new Error("missing marker ids or keys");
       if (
         mockMarkerRacePaymentId &&
@@ -163,6 +170,7 @@ jest.mock("../../lib/prisma", () => {
         mockMarkerRaceObserved = true;
         mockMarkers.set(mockMarkerRacePaymentId, "other-door:concurrent");
         mockMarkerPaise.set(mockMarkerRacePaymentId, null);
+        mockMarkerReasons.set(mockMarkerRacePaymentId, "concurrent reason");
         mockMarkerAttempts.set(mockMarkerRacePaymentId, 4);
         return Number(ids.length) - 1;
       }
@@ -173,6 +181,7 @@ jest.mock("../../lib/prisma", () => {
           paymentId,
           owed[index] === null ? null : Number(owed[index]),
         );
+        mockMarkerReasons.set(paymentId, String(reasons[index]));
         mockMarkerAttempts.set(paymentId, 0);
       });
       return ids.length;
@@ -182,6 +191,7 @@ jest.mock("../../lib/prisma", () => {
         const before = {
           markers: new Map(mockMarkers),
           markerPaise: new Map(mockMarkerPaise),
+          markerReasons: new Map(mockMarkerReasons),
           markerAttempts: new Map(mockMarkerAttempts),
           expired: new Set(mockExpired),
           history: [...mockHistory],
@@ -195,17 +205,20 @@ jest.mock("../../lib/prisma", () => {
                   id: mockMarkerRacePaymentId,
                   key: mockMarkers.get(mockMarkerRacePaymentId),
                   paise: mockMarkerPaise.get(mockMarkerRacePaymentId),
+                  reason: mockMarkerReasons.get(mockMarkerRacePaymentId),
                   attempts: mockMarkerAttempts.get(mockMarkerRacePaymentId),
                 }
               : null;
           mockMarkers = before.markers;
           mockMarkerPaise = before.markerPaise;
+          mockMarkerReasons = before.markerReasons;
           mockMarkerAttempts = before.markerAttempts;
           mockExpired = before.expired;
           mockHistory = before.history;
           if (racedMarker?.key !== undefined) {
             mockMarkers.set(racedMarker.id, racedMarker.key);
             mockMarkerPaise.set(racedMarker.id, racedMarker.paise ?? null);
+            mockMarkerReasons.set(racedMarker.id, racedMarker.reason ?? "");
             mockMarkerAttempts.set(racedMarker.id, racedMarker.attempts ?? 0);
           }
           throw error;
@@ -265,6 +278,7 @@ beforeEach(() => {
   mockDue = new Map([["sub-1", ["pay-1"]]]);
   mockMarkers = new Map();
   mockMarkerPaise = new Map();
+  mockMarkerReasons = new Map();
   mockMarkerAttempts = new Map();
   mockExpired = new Set();
   mockHistory = [];
@@ -356,8 +370,10 @@ it.each(expiryArms)(
   async ({ prepare, expiredId, paymentId }) => {
     prepare();
     const key = "other-door:partial";
+    const reason = "owner's partial-refund reason";
     mockMarkers.set(paymentId, key);
     mockMarkerPaise.set(paymentId, 500);
+    mockMarkerReasons.set(paymentId, reason);
     mockMarkerAttempts.set(paymentId, 1);
 
     await expireStaleRequests({ limits: { maxRequests: 2 } });
@@ -365,8 +381,64 @@ it.each(expiryArms)(
     expect(mockExpired.has(expiredId)).toBe(false);
     expect(mockMarkers.get(paymentId)).toBe(key);
     expect(mockMarkerPaise.get(paymentId)).toBe(500);
+    expect(mockMarkerReasons.get(paymentId)).toBe(reason);
     expect(mockMarkerAttempts.get(paymentId)).toBe(1);
     expect(mockDrive).not.toHaveBeenCalled();
+  },
+);
+
+it.each(expiryArms)(
+  "holds $arm with a partial marker and continues to the next request",
+  async ({ arm, entityId, expiredId, paymentId, prepare }) => {
+    prepare();
+    const laterId =
+      arm === "pending consultation" ? "consult-later" : "approved-later";
+    const laterExpiredId =
+      arm === "pending consultation" ? `consultation:${laterId}` : laterId;
+    const laterPaymentId = `pay-${laterId}`;
+    if (arm === "pending consultation") {
+      mockPendingConsultations = [entityId, laterId];
+    } else {
+      mockApprovedUnallocated = [entityId, laterId];
+    }
+    mockDue.set(laterId, [laterPaymentId]);
+    const key = "other-door:partial-at-retry-limit";
+    const reason = "owner's partial-refund reason";
+    mockMarkers.set(paymentId, key);
+    mockMarkerPaise.set(paymentId, 500);
+    mockMarkerReasons.set(paymentId, reason);
+    mockMarkerAttempts.set(paymentId, 3);
+
+    const result = await expireStaleRequests({ limits: { maxRequests: 2 } });
+
+    expect(result.success).toBe(false);
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          `${arm === "pending consultation" ? "1 pending-consultation" : "1 approved-unallocated"} expiry request(s) held by an existing partial refund marker`,
+        ),
+      ]),
+    );
+    expect(mockExpired.has(expiredId)).toBe(false);
+    expect(mockMarkers.get(paymentId)).toBe(key);
+    expect(mockMarkerPaise.get(paymentId)).toBe(500);
+    expect(mockMarkerReasons.get(paymentId)).toBe(reason);
+    expect(mockMarkerAttempts.get(paymentId)).toBe(3);
+    expect(mockExpired.has(laterExpiredId)).toBe(true);
+    expect(mockHistory).toEqual([laterId]);
+    expect(mockMarkers.get(laterPaymentId)).toBe(
+      arm === "pending consultation"
+        ? `pending-consultation:${laterPaymentId}`
+        : `approved-unallocated:${laterPaymentId}`,
+    );
+    expect(mockDrive).toHaveBeenCalledTimes(1);
+    expect(mockDrive).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: laterPaymentId, amountPaise: null }),
+    );
+    expect(mockExpiredNotice).toHaveBeenCalledTimes(1);
+    expect(mockExpiredNotice).toHaveBeenCalledWith(
+      expect.objectContaining({ appointmentId: `a-${laterId}` }),
+    );
   },
 );
 

@@ -62,6 +62,13 @@ do not establish the age of an individual queued obligation. Invoice recovery
 reads at most five candidates per slot, so cohort size and lost order pointers
 remain explicit capacity and coverage concerns.
 
+At the current limit this is at most thirty order reads per day; abandoned
+orders consume those reads too. Dunning does not synchronously verify the
+gateway before suspension. Retain this as a known operating gap: measure cohort
+rotation and missed-capture age against dunning deadlines before relying on the
+healer for suspension safety. A most-recent-first scan alone would starve older
+orders rather than establish complete coverage.
+
 The public dependency health endpoint and shared heartbeat remain useful
 activity signals. One healthy job can refresh activity while another stops.
 Configure an independent per-capability absence probe and ensure the alert path
