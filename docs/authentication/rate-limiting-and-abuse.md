@@ -168,7 +168,7 @@ nothing until the password has matched, and it is the main conversion path.
   `NEXT_PUBLIC_TURNSTILE_SITE_KEY` must be set. With either one unset the
   plugin is not installed and the widget is not rendered, so the two halves
   can never disagree. A production runtime without both keys boots with one
-  `console.error` and one `AUTH_CAPTCHA_DISABLED` Sentry warning, rather than
+  `console.error` and one `AUTH_CAPTCHA_DISABLED` Sentry Logs warning (`Sentry.logger.warn`, which does not draw on the error quota and never opens an issue), rather than
   failing at boot: a throw in `lib/auth.ts` would take down every auth route,
   sign-in and session reads included.
 - **CSP.** `https://challenges.cloudflare.com` is in `script-src` and

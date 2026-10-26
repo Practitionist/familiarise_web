@@ -1,5 +1,5 @@
 import { captcha } from "better-auth/plugins";
-import { reportSentryMessage } from "@/lib/observability/report";
+import * as Sentry from "@sentry/nextjs";
 import type { RuntimeEnv } from "@/lib/request-ip";
 
 /**
@@ -15,7 +15,7 @@ export const CAPTCHA_PROTECTED_PATHS = [
 /**
  * Cloudflare Turnstile on the mail-sending endpoints, or nothing when either
  * key is unset (the browser needs the site key to mint the token the server
- * checks). Production without both keys boots with one loud warning.
+ * checks). Production without both keys boots with one loud log line.
  */
 export function turnstileCaptcha(keys: {
   secretKey: string | undefined;
@@ -45,12 +45,9 @@ export function turnstileCaptcha(keys: {
     console.error(
       `[auth] Turnstile is off: ${missing.join(" and ")} unset. Sign-up, password reset and code resend run without a captcha.`,
     );
-    reportSentryMessage("AUTH_CAPTCHA_DISABLED", {
-      subsystem: "auth",
-      op: "captcha.boot",
-      level: "warning",
-      extra: { missing },
-    });
+    // A log, not an issue event: it fires on every cold start, and Sentry Logs
+    // do not draw on the error quota.
+    Sentry.logger.warn("AUTH_CAPTCHA_DISABLED", { missing: missing.join(",") });
   }
   return [];
 }

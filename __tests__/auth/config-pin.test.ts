@@ -10,7 +10,17 @@
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 jest.mock("../../lib/email", () => ({}));
 jest.mock("../../lib/novu/subscriber", () => ({ syncSubscriber: jest.fn() }));
+jest.mock("@sentry/nextjs", () => {
+  const actual = jest.requireActual("@sentry/nextjs");
+  return {
+    ...actual,
+    captureMessage: jest.fn(),
+    captureException: jest.fn(),
+    logger: { ...actual.logger, warn: jest.fn() },
+  };
+});
 
+import * as Sentry from "@sentry/nextjs";
 import type { BetterAuthOptions } from "better-auth";
 import { auth } from "../../lib/auth";
 import {
@@ -138,5 +148,32 @@ describe("lib/auth.ts config pin", () => {
         BETTER_AUTH_URL: "https://familiarisenow.com",
       }),
     ).toBeUndefined();
+  });
+
+  it("boots a production runtime without keys with a log line, never a Sentry issue", () => {
+    const nodeEnv = process.env.NODE_ENV;
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    Object.defineProperty(process.env, "NODE_ENV", {
+      value: "production",
+      configurable: true,
+      writable: true,
+    });
+    try {
+      expect(
+        turnstileCaptcha({ secretKey: undefined, siteKey: undefined }),
+      ).toEqual([]);
+    } finally {
+      Object.defineProperty(process.env, "NODE_ENV", {
+        value: nodeEnv,
+        configurable: true,
+        writable: true,
+      });
+      error.mockRestore();
+    }
+    expect(Sentry.logger.warn).toHaveBeenCalledWith("AUTH_CAPTCHA_DISABLED", {
+      missing: "TURNSTILE_SECRET_KEY,NEXT_PUBLIC_TURNSTILE_SITE_KEY",
+    });
+    expect(Sentry.captureMessage).not.toHaveBeenCalled();
+    expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 });
