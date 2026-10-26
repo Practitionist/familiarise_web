@@ -12,6 +12,8 @@ All permutations: platform roles × enterprise org roles × org types.
 
 Non-operator users seeded via `prisma/seedFiles/1a-create-users.ts` share the seed default password (see that file). ADMIN and STAFF accounts use the `SEED_OPERATOR_PASSWORD` value from your local `.env`; ask the lead.
 
+On deploy previews and local development, the QA operators marked below sign in with the password alone and need no authenticator; production asks every operator for TOTP. The rule and the list live in `lib/auth/qa-accounts.ts` ([staff-onboarding.md §9](../authentication/staff-onboarding.md#9-two-factor-policy-seeds-and-qa-operators)).
+
 Three manually-created test accounts (`owner-test`, `learner-test`, `a@gmail.com`) and the five `tour-2026-04-26-*` accounts were created outside the seed script — their passwords are **unknown**. Reset them via `/auth/forgot-password` or the Supabase Auth dashboard if needed.
 
 **Sign-in URL:** `/auth/signin`
@@ -32,22 +34,22 @@ Three manually-created test accounts (`owner-test`, `learner-test`, `a@gmail.com
 
 ### ADMIN accounts
 
-| Name          | Email                       | Password                 |
-| ------------- | --------------------------- | ------------------------ |
-| Olivia Brown  | olivia.brown@protonmail.com | `SEED_OPERATOR_PASSWORD` |
-| Patrick Brown | patrick.brown@gmail.com     | `SEED_OPERATOR_PASSWORD` |
-| Priya Brown   | priya.brown@outlook.com     | `SEED_OPERATOR_PASSWORD` |
+| Name          | Email                       | Password                 | 2FA off production |
+| ------------- | --------------------------- | ------------------------ | ------------------ |
+| Olivia Brown  | olivia.brown@protonmail.com | `SEED_OPERATOR_PASSWORD` | TOTP (enrolled)    |
+| Patrick Brown | patrick.brown@gmail.com     | `SEED_OPERATOR_PASSWORD` | None (QA operator) |
+| Priya Brown   | priya.brown@outlook.com     | `SEED_OPERATOR_PASSWORD` | TOTP (enrolled)    |
 
 ---
 
 ### STAFF accounts
 
-| Name          | Email                     | Password                 |
-| ------------- | ------------------------- | ------------------------ |
-| Maria Brown   | maria.brown@gmail.com     | `SEED_OPERATOR_PASSWORD` |
-| Michael Brown | michael.brown@outlook.com | `SEED_OPERATOR_PASSWORD` |
-| Natalie Brown | natalie.brown@yahoo.com   | `SEED_OPERATOR_PASSWORD` |
-| Nathan Brown  | nathan.brown@hotmail.com  | `SEED_OPERATOR_PASSWORD` |
+| Name          | Email                     | Password                 | 2FA off production |
+| ------------- | ------------------------- | ------------------------ | ------------------ |
+| Maria Brown   | maria.brown@gmail.com     | `SEED_OPERATOR_PASSWORD` | None (QA operator) |
+| Michael Brown | michael.brown@outlook.com | `SEED_OPERATOR_PASSWORD` | TOTP (enrolled)    |
+| Natalie Brown | natalie.brown@yahoo.com   | `SEED_OPERATOR_PASSWORD` | None (QA operator) |
+| Nathan Brown  | nathan.brown@hotmail.com  | `SEED_OPERATOR_PASSWORD` | None (QA operator) |
 
 ---
 

@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { forgetAuthState } from "@/lib/auth-remembered";
-import { isOperatorRole } from "@/lib/auth/operator-session-policy";
+import { needsOperatorTwoFactor } from "@/lib/auth/qa-accounts";
 
 type SignedInUser = NonNullable<
   ReturnType<typeof authClient.useSession>["data"]
@@ -36,7 +36,7 @@ export function useSignedInRedirect(
       }
       // Server pages treat an operator without 2FA as signed out.
       router.replace(
-        isOperatorRole(user.role) && user.twoFactorEnabled !== true
+        needsOperatorTwoFactor(user)
           ? "/auth/two-factor/setup"
           : targetFor(user),
       );
