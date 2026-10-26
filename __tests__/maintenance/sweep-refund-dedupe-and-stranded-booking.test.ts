@@ -70,32 +70,8 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
 }));
 
 jest.mock("../../lib/payments/operations/refund-owed", () => ({
-  MAX_REFUND_OWED_ATTEMPTS: 3,
-  REFUND_OWED_SELECT: {
-    id: true,
-    refundOwedKey: true,
-    refundOwedPaise: true,
-    refundOwedReason: true,
-    refundOwedAttempts: true,
-  },
-  markerFromRow: (row: {
-    id: string;
-    refundOwedKey: string | null;
-    refundOwedPaise: number | null;
-    refundOwedReason: string | null;
-    refundOwedAttempts: number;
-  }) =>
-    row.refundOwedKey
-      ? {
-          paymentId: row.id,
-          amountPaise: row.refundOwedPaise,
-          key: row.refundOwedKey,
-          reason: row.refundOwedReason ?? "refund owed",
-          attempts: row.refundOwedAttempts,
-        }
-      : null,
-  stampRefundOwed: async () => true,
-  stampRefundsOwed: async (_tx: unknown, markers: unknown[]) => markers.length,
+  ...jest.requireActual("../helpers/booking-expiry-test-doubles")
+    .refundOwedTestModule,
   driveRefundOwed: (...args: unknown[]) => mockDriveRefundOwed(...args),
 }));
 
@@ -159,23 +135,14 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 
 jest.mock("../../lib/prisma", () => {
+  const {
+    bookingExpiryPrismaModels,
+    withNoRefundOwedMarker,
+    countRefundOwedBatch,
+  } = jest.requireActual("../helpers/booking-expiry-test-doubles");
   const paymentRows = jest.fn(async (): Promise<{ id: string }[]> => []);
   const db: Record<string, unknown> = {
-    consultation: {
-      findMany: jest.fn().mockResolvedValue([]),
-      findUnique: jest.fn().mockResolvedValue(null),
-      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-    },
-    subscription: {
-      findMany: jest.fn().mockResolvedValue([]),
-      findUnique: jest.fn().mockResolvedValue(null),
-      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-    },
-    appointment: { findMany: jest.fn().mockResolvedValue([]) },
-    appointmentOccurrence: {
-      findMany: jest.fn().mockResolvedValue([]),
-      updateManyAndReturn: jest.fn().mockResolvedValue([]),
-    },
+    ...bookingExpiryPrismaModels(),
     payment: {
       findMany: paymentRows,
       updateMany: async () => ({ count: 1 }),
@@ -193,27 +160,17 @@ jest.mock("../../lib/prisma", () => {
     windowBackupInterest: {
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
-    bookingStatusHistory: {
-      create: jest.fn().mockResolvedValue({}),
-      findMany: jest.fn().mockResolvedValue([]),
-    },
     notificationOutbox: {
       upsert: jest.fn(async () => ({})),
       findMany: jest.fn().mockResolvedValue([]),
     },
     $queryRaw: jest.fn(async (query: { text: string }) => {
       if (query.text.includes('JOIN "Subscription"')) return [];
-      return (await paymentRows()).map((row) => ({
-        ...row,
-        refundOwedKey: null,
-        refundOwedPaise: null,
-      }));
+      return withNoRefundOwedMarker(await paymentRows());
     }),
-    $executeRaw: jest.fn(async (query: { values: unknown[] }) => {
-      const ids = query.values[0];
-      if (!Array.isArray(ids)) throw new Error("missing marker ids");
-      return ids.length;
-    }),
+    $executeRaw: jest.fn((query: { values: unknown[] }) =>
+      countRefundOwedBatch(query),
+    ),
     $disconnect: jest.fn(),
   };
   // Every arm runs its CAS callback against this same client.

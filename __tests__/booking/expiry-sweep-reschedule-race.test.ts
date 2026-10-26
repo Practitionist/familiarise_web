@@ -30,24 +30,11 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
 }));
 
 jest.mock("../../lib/prisma", () => {
+  const { bookingExpiryPrismaModels } = jest.requireActual(
+    "../helpers/booking-expiry-test-doubles",
+  );
   const db: Record<string, unknown> = {
-    consultation: {
-      findMany: jest.fn(),
-      findUnique: jest.fn().mockResolvedValue(null),
-      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-    },
-    subscription: {
-      findMany: jest.fn(),
-      findUnique: jest.fn().mockResolvedValue(null),
-      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-    },
-    appointmentOccurrence: {
-      findMany: jest.fn().mockResolvedValue([]),
-      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-      updateManyAndReturn: jest.fn().mockResolvedValue([]),
-    },
-    bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
-    appointment: { findMany: jest.fn() },
+    ...bookingExpiryPrismaModels(),
     $queryRaw: jest.fn(async () => []),
     $disconnect: jest.fn(),
   };

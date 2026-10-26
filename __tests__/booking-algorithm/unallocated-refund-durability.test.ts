@@ -249,10 +249,11 @@ beforeEach(() => {
 });
 afterEach(() => jest.restoreAllMocks());
 
-it.each([
+const expiryArms = [
   {
     arm: "pending consultation",
     entityId: "consult-1",
+    expiredId: "consultation:consult-1",
     paymentId: "pay-consult-1",
     key: "pending-consultation:pay-consult-1",
     prepare: () => {
@@ -265,6 +266,7 @@ it.each([
   {
     arm: "approved unallocated subscription",
     entityId: "approved-1",
+    expiredId: "approved-1",
     paymentId: "pay-approved-1",
     key: "approved-unallocated:pay-approved-1",
     prepare: () => {
@@ -274,16 +276,14 @@ it.each([
       mockDue.set("approved-1", ["pay-approved-1"]);
     },
   },
-])(
+];
+
+it.each(expiryArms)(
   "stages $arm refund debt atomically before driving",
-  async ({ prepare, entityId, paymentId, key }) => {
+  async ({ prepare, expiredId, paymentId, key }) => {
     prepare();
     mockDrive.mockImplementation(async () => {
-      expect(
-        mockExpired.has(
-          entityId === "consult-1" ? `consultation:${entityId}` : entityId,
-        ),
-      ).toBe(true);
+      expect(mockExpired.has(expiredId)).toBe(true);
       expect(mockMarkers.get(paymentId)).toBe(key);
       return { kind: "settled" };
     });
@@ -303,32 +303,9 @@ it.each([
   },
 );
 
-it.each([
-  {
-    arm: "pending consultation",
-    entityId: "consult-1",
-    paymentId: "pay-consult-1",
-    prepare: () => {
-      mockFresh = [];
-      mockDue.clear();
-      mockPendingConsultations = ["consult-1"];
-      mockDue.set("consult-1", ["pay-consult-1"]);
-    },
-  },
-  {
-    arm: "approved unallocated subscription",
-    entityId: "approved-1",
-    paymentId: "pay-approved-1",
-    prepare: () => {
-      mockFresh = [];
-      mockDue.clear();
-      mockApprovedUnallocated = ["approved-1"];
-      mockDue.set("approved-1", ["pay-approved-1"]);
-    },
-  },
-])(
+it.each(expiryArms)(
   "expires $arm without replacing an existing full-balance marker",
-  async ({ prepare, entityId, paymentId }) => {
+  async ({ prepare, expiredId, paymentId }) => {
     prepare();
     const key = "other-door:full-balance";
     mockMarkers.set(paymentId, key);
@@ -337,11 +314,7 @@ it.each([
 
     await expireStaleRequests({ limits: { maxRequests: 2 } });
 
-    expect(
-      mockExpired.has(
-        entityId === "consult-1" ? `consultation:${entityId}` : entityId,
-      ),
-    ).toBe(true);
+    expect(mockExpired.has(expiredId)).toBe(true);
     expect(mockMarkers.get(paymentId)).toBe(key);
     expect(mockMarkerPaise.get(paymentId)).toBeNull();
     expect(mockMarkerAttempts.get(paymentId)).toBe(2);
@@ -349,32 +322,9 @@ it.each([
   },
 );
 
-it.each([
-  {
-    arm: "pending consultation",
-    entityId: "consult-1",
-    paymentId: "pay-consult-1",
-    prepare: () => {
-      mockFresh = [];
-      mockDue.clear();
-      mockPendingConsultations = ["consult-1"];
-      mockDue.set("consult-1", ["pay-consult-1"]);
-    },
-  },
-  {
-    arm: "approved unallocated subscription",
-    entityId: "approved-1",
-    paymentId: "pay-approved-1",
-    prepare: () => {
-      mockFresh = [];
-      mockDue.clear();
-      mockApprovedUnallocated = ["approved-1"];
-      mockDue.set("approved-1", ["pay-approved-1"]);
-    },
-  },
-])(
+it.each(expiryArms)(
   "holds $arm when an existing marker only covers a partial amount",
-  async ({ prepare, entityId, paymentId }) => {
+  async ({ prepare, expiredId, paymentId }) => {
     prepare();
     const key = "other-door:partial";
     mockMarkers.set(paymentId, key);
@@ -383,11 +333,7 @@ it.each([
 
     await expireStaleRequests({ limits: { maxRequests: 2 } });
 
-    expect(
-      mockExpired.has(
-        entityId === "consult-1" ? `consultation:${entityId}` : entityId,
-      ),
-    ).toBe(false);
+    expect(mockExpired.has(expiredId)).toBe(false);
     expect(mockMarkers.get(paymentId)).toBe(key);
     expect(mockMarkerPaise.get(paymentId)).toBe(500);
     expect(mockMarkerAttempts.get(paymentId)).toBe(1);
@@ -395,28 +341,7 @@ it.each([
   },
 );
 
-it.each([
-  {
-    arm: "pending consultation",
-    prepare: () => {
-      mockFresh = [];
-      mockDue.clear();
-      mockPendingConsultations = ["consult-1"];
-      mockDue.set("consult-1", ["pay-consult-1"]);
-    },
-    paymentId: "pay-consult-1",
-  },
-  {
-    arm: "approved unallocated subscription",
-    prepare: () => {
-      mockFresh = [];
-      mockDue.clear();
-      mockApprovedUnallocated = ["approved-1"];
-      mockDue.set("approved-1", ["pay-approved-1"]);
-    },
-    paymentId: "pay-approved-1",
-  },
-])(
+it.each(expiryArms)(
   "rolls back $arm expiry when owed-marker staging fails",
   async ({ prepare, paymentId }) => {
     prepare();
@@ -431,34 +356,18 @@ it.each([
   },
 );
 
-it.each([
-  {
-    arm: "pending consultation",
-    prepare: () => {
-      mockFresh = [];
-      mockDue.clear();
-      mockPendingConsultations = ["consult-1"];
-      mockDue.set("consult-1", ["pay-consult-1"]);
-    },
-  },
-  {
-    arm: "approved unallocated subscription",
-    prepare: () => {
-      mockFresh = [];
-      mockDue.clear();
-      mockApprovedUnallocated = ["approved-1"];
-      mockDue.set("approved-1", ["pay-approved-1"]);
-    },
-  },
-])("stages no $arm marker when the status CAS loses", async ({ prepare }) => {
-  prepare();
-  mockCasWins = false;
+it.each(expiryArms)(
+  "stages no $arm marker when the status CAS loses",
+  async ({ prepare }) => {
+    prepare();
+    mockCasWins = false;
 
-  await expireStaleRequests({ limits: { maxRequests: 2 } });
+    await expireStaleRequests({ limits: { maxRequests: 2 } });
 
-  expect(mockMarkers.size).toBe(0);
-  expect(mockDrive).not.toHaveBeenCalled();
-});
+    expect(mockMarkers.size).toBe(0);
+    expect(mockDrive).not.toHaveBeenCalled();
+  },
+);
 
 it("leaves the committed consultation refund marker durable if notification fails", async () => {
   mockPendingConsultations = ["consult-1"];

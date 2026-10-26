@@ -16,57 +16,20 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
 }));
 
 jest.mock("../../lib/payments/operations/refund-owed", () => ({
-  MAX_REFUND_OWED_ATTEMPTS: 3,
-  REFUND_OWED_SELECT: {
-    id: true,
-    refundOwedKey: true,
-    refundOwedPaise: true,
-    refundOwedReason: true,
-    refundOwedAttempts: true,
-  },
-  markerFromRow: (row: {
-    id: string;
-    refundOwedKey: string | null;
-    refundOwedPaise: number | null;
-    refundOwedReason: string | null;
-    refundOwedAttempts: number;
-  }) =>
-    row.refundOwedKey
-      ? {
-          paymentId: row.id,
-          amountPaise: row.refundOwedPaise,
-          key: row.refundOwedKey,
-          reason: row.refundOwedReason ?? "refund owed",
-          attempts: row.refundOwedAttempts,
-        }
-      : null,
-  stampRefundsOwed: async (_tx: unknown, markers: unknown[]) => markers.length,
+  ...jest.requireActual("../helpers/booking-expiry-test-doubles")
+    .refundOwedTestModule,
   driveRefundOwed: (...args: unknown[]) => mockDriveRefundOwed(...args),
 }));
 
 jest.mock("../../lib/prisma", () => {
   const paymentRows = jest.fn(async (): Promise<{ id: string }[]> => []);
+  const {
+    bookingExpiryPrismaModels,
+    withNoRefundOwedMarker,
+    countRefundOwedBatch,
+  } = jest.requireActual("../helpers/booking-expiry-test-doubles");
   const db: Record<string, unknown> = {
-    consultation: {
-      findMany: jest.fn(),
-      findUnique: jest.fn().mockResolvedValue(null),
-      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-    },
-    subscription: {
-      findMany: jest.fn(),
-      findUnique: jest.fn().mockResolvedValue(null),
-      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-    },
-    appointmentOccurrence: {
-      findMany: jest.fn().mockResolvedValue([]),
-      updateManyAndReturn: jest.fn().mockResolvedValue([]),
-    },
-    bookingStatusHistory: {
-      create: jest.fn().mockResolvedValue({}),
-      // #1775 C-3 — the retry cohort read; none by default.
-      findMany: jest.fn().mockResolvedValue([]),
-    },
-    appointment: { findMany: jest.fn() },
+    ...bookingExpiryPrismaModels(),
     payment: {
       findMany: paymentRows,
       updateMany: jest.fn(async () => ({ count: 1 })),
@@ -93,18 +56,15 @@ jest.mock("../../lib/prisma", () => {
         query.text.includes('WHERE a."subscriptionId" =') &&
         !query.text.includes('p."refundOwedKey" IS NULL')
       )
-        return mockApprovedPaymentIds.map((id) => ({
-          id,
-          refundOwedKey: null,
-          refundOwedPaise: null,
-        }));
-      return query.text.includes('JOIN "Subscription"') ? [] : paymentRows();
+        return withNoRefundOwedMarker(
+          mockApprovedPaymentIds.map((id) => ({ id })),
+        );
+      if (query.text.includes('JOIN "Subscription"')) return [];
+      return withNoRefundOwedMarker(await paymentRows());
     }),
-    $executeRaw: jest.fn(async (query: { values: unknown[] }) => {
-      const ids = query.values[0];
-      if (!Array.isArray(ids)) throw new Error("missing marker ids");
-      return ids.length;
-    }),
+    $executeRaw: jest.fn((query: { values: unknown[] }) =>
+      countRefundOwedBatch(query),
+    ),
     $disconnect: jest.fn(),
   };
   // The payment-pending arm now expires each request in its own transaction.
