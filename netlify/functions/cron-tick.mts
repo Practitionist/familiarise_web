@@ -230,6 +230,11 @@ export function reportableToSentry(name: string): boolean {
   return name !== "sentry-ingest-canary";
 }
 
+/** Netlify may carry only the public DSN name, so the ticker accepts either. */
+function tickerSentryDsn(): string | undefined {
+  return process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN;
+}
+
 /** A missing secret is a silent fleet outage; page Sentry, not just the log. */
 async function alertMissingSecret(error: string): Promise<void> {
   try {
@@ -238,7 +243,7 @@ async function alertMissingSecret(error: string): Promise<void> {
     const { scrubSentryEvent } =
       await import("../../lib/observability/sentry-scrubber");
     Sentry.init({
-      dsn: process.env.SENTRY_DSN,
+      dsn: tickerSentryDsn(),
       tracesSampleRate: 0,
       tracePropagationTargets: [],
       registerEsmLoaderHooks: false,
@@ -298,7 +303,7 @@ async function alertFailedTargets(
     const { scrubSentryEvent } =
       await import("../../lib/observability/sentry-scrubber");
     Sentry.init({
-      dsn: process.env.SENTRY_DSN,
+      dsn: tickerSentryDsn(),
       tracesSampleRate: 0,
       tracePropagationTargets: [],
       registerEsmLoaderHooks: false,
@@ -347,7 +352,7 @@ const CRON_MONITOR_SLUG = "cron-tick";
 const CRON_CHECKIN_TIMEOUT_MS = 2_000;
 
 function cronCheckInUrl(): string | null {
-  const dsn = process.env.SENTRY_DSN;
+  const dsn = tickerSentryDsn();
   if (!dsn) return null;
   try {
     const parsed = new URL(dsn);
@@ -537,6 +542,7 @@ export default async function cronTick(_req: Request): Promise<Response> {
   // Check-in and alert waiting share the remaining ticker budget; aborts do not cancel target work.
   await Promise.all([
     sendCheckIn(failed.length > 0 ? "error" : "ok", durationMs),
+    emitTickSummary(body),
     boundedAlert(
       failedForAlert.filter((f) => reportableToSentry(f.name)),
       tickDate,
@@ -546,6 +552,46 @@ export default async function cronTick(_req: Request): Promise<Response> {
 
   // #1686 — 200 even with a non-empty `failed`; see statusFor.
   return jsonResponse(body, statusFor(failed));
+}
+
+/**
+ * One Better Stack Telemetry line per tick, independent of Sentry. Inline
+ * because `lib/observability/betterstack-telemetry` pulls `@sentry/nextjs`
+ * into the function bundle; same env contract, never throws.
+ */
+async function emitTickSummary(body: TickBody): Promise<void> {
+  const token = process.env.BETTERSTACK_SOURCE_TOKEN;
+  const url = process.env.BETTERSTACK_INGEST_URL;
+  if (process.env.ENABLE_BETTERSTACK_TELEMETRY !== "true" || !token || !url) {
+    return;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2_000);
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        dt: new Date().toISOString(),
+        level: body.failed.length > 0 ? "error" : "info",
+        message: "cron-tick summary",
+        category: "CRON",
+        durationMs: body.durationMs,
+        okCount: body.ok.length,
+        acceptedCount: body.accepted.length,
+        lockHeld: body.lockHeld,
+        failed: body.failed,
+      }),
+      signal: controller.signal,
+    });
+  } catch {
+    // Telemetry is best effort.
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function boundedAlert(
