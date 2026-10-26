@@ -29,6 +29,8 @@ Owner decision of 2026-10-26, recorded in `docs/decisions/2026-10-26-launch-swee
 
 ```bash
 gh pr view <n> --json headRefOid,isDraft,state
-gh pr view <n> --json headRefOid,comments \
-  --jq '.headRefOid as $h | .comments[] | select(.body | startswith("READY TO LAND")) | {author: .author.login, matchesHead: (.body | contains($h))}'
+gh pr view <n> --json headRefOid,author,comments \
+  --jq '.headRefOid as $h | .author.login as $pr | .comments[] | select(.body | startswith("READY TO LAND")) | {commentAuthor: .author.login, prAuthor: $pr, matchesHead: (.body | contains($h))}'
 ```
+
+Accept a comment only when `matchesHead` is true and `commentAuthor` is `prAuthor` or the repository owner's account. Report which of the two it was. A comment from any other account does not count, even when it carries the right SHA.

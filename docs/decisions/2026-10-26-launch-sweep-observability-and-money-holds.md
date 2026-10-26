@@ -1,11 +1,11 @@
 # ADR: Launch sweep decisions — money holds, tax identity, abuse controls and operational visibility
 
-- **Status**: Accepted. Eleven decisions are recorded in full below, and the implementation of most is in pull requests that are still open, labelled on each decision. ADR-12 is a pointer: its rules live in the workflow skill.
+- **Status**: Accepted. Thirteen decisions are recorded in full below, and the implementation of most is in pull requests that are still open, labelled on each decision. ADR-12 is a pointer: its rules live in the workflow skill.
 - **Date**: 2026-10-26
 - **Author**: teetangh
 - **Related**: [Job machinery catalog and dashboard spec](../maintenance/11-job-machinery-catalog.md), [Session outcomes](2026-09-25-session-outcomes.md), [Ingest canary and the 2026-09-22 quota outage](../observability/sentry/06-ingest-canary.md), [Cron, sidecars and reconciliation reference](../maintenance/10-cron-and-reconciliation-reference.md)
 
-The owner took these decisions on 2026-10-26 while sweeping the launch-blocking infrastructure issues. They fall into four groups: what the platform does with money when it cannot tell what happened (decisions 1 to 3), who the platform is on a tax document and how it defends its sign-up and sign-in (4 and 5), how an operator learns what the platform did and did not do (6 to 9), and how the code reaches production safely (10 to 12). Each decision has its own Status, Context, Decision, Alternatives and Consequences. Where the code is not on `dev` yet, the Status says which open pull request carries it, and the Decision describes the accepted behaviour, not the behaviour of `dev` today. Each claim about a pull request was checked against its diff at the head commit named in the References.
+The owner took these decisions on 2026-10-26 while sweeping the launch-blocking infrastructure issues. They fall into four groups: what the platform does with money when it cannot tell what happened (decisions 1 to 3), who the platform is on a tax document and how it defends its sign-up and sign-in (4 and 5), how an operator learns what the platform did and did not do (6 to 9, plus 13, which the owner added on 2026-10-27), and how the code reaches production safely (10 to 12). Each decision has its own Status, Context, Decision, Alternatives and Consequences. Where the code is not on `dev` yet, the Status says which open pull request carries it, and the Decision describes the accepted behaviour, not the behaviour of `dev` today. Each claim about a pull request was checked against its diff at the head commit named in the References.
 
 ## Decisions
 
@@ -152,7 +152,7 @@ The owner took these decisions on 2026-10-26 while sweeping the launch-blocking 
 
 ### ADR-10. The apex `netlify.app` host redirects to `familiarisenow.com`
 
-- **Status:** Accepted — implementation in PR #2420 (open).
+- **Status:** Accepted — implemented and merged to `dev` in PR #2420.
 - **Context:** The apex `familiarise.netlify.app` host is not a trusted authentication origin, so Better Auth answers `Invalid origin` there.
 - **Decision:**
   - `netlify.toml` redirects that single host to `https://familiarisenow.com` with a forced 301. Deploy-preview and branch-deploy hosts are different hostnames and are unaffected.
