@@ -44,7 +44,7 @@ const PRISMA_CONNECTION_ERROR_CODES = new Set([
   "P2024",
 ]);
 
-function isDbConnectionOrPoolError(error: unknown): boolean {
+export function isDbConnectionOrPoolError(error: unknown): boolean {
   if (isPoolExhaustion(error)) return true;
   if (!error || typeof error !== "object") return false;
   const code = (error as { code?: unknown }).code;
@@ -57,6 +57,21 @@ function isDbConnectionOrPoolError(error: unknown): boolean {
     /connection|pool|timeout|unreachable|ECONNREFUSED|ECONNRESET|terminating connection/i.test(
       msg,
     )
+  );
+}
+
+/** The same fault, raised by Prisma itself, so a vendor timeout in a mixed path is not mistaken for one. */
+export function isPrismaConnectionOrPoolError(error: unknown): boolean {
+  if (!isDbConnectionOrPoolError(error) || typeof error !== "object") {
+    return false;
+  }
+  const { code, name } = error as { code?: unknown; name?: unknown };
+  if (typeof code === "string" && PRISMA_CONNECTION_ERROR_CODES.has(code)) {
+    return true;
+  }
+  return (
+    typeof name === "string" &&
+    (name.startsWith("PrismaClient") || name === "DriverAdapterError")
   );
 }
 
@@ -146,12 +161,22 @@ async function recordJobFinish(
   }
 }
 
+// Renewal refreshes a live run every ttl/3 (background functions included), so a
+// short lease only shortens how long a killed Netlify run's row blocks the next tick.
+const NETLIFY_MAX_LEASE_MS = 90_000;
+
+export function effectiveLeaseTtlMs(ttlMs: number): number {
+  return process.env.NETLIFY === "true"
+    ? Math.min(ttlMs, NETLIFY_MAX_LEASE_MS)
+    : ttlMs;
+}
+
 export async function withCronLock<T>(
   jobName: string,
   opts: CronLockOpts,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
+  const ttlMs = effectiveLeaseTtlMs(opts.ttlMs ?? DEFAULT_TTL_MS);
   let delegate: SystemJobExecutionDelegate;
 
   let executionId: string | null = null;
