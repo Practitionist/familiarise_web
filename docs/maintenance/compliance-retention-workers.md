@@ -30,6 +30,8 @@ Mocked tests exercise actual registered HTTP handlers and existing CLI entrypoin
 
 Before replacing an Actions step, verify deployed fail-closed lease behavior, bounded progress, appropriate repeat cadence and backlog capacity. Disable the old automatic trigger in the same controlled handoff; a shared lease does not justify dual clocks. Keep remaining fleet steps intact. The native Stream channel-expiry job remains separate and is not migrated here.
 
+Candidate row limits do not bound database scan/sort work. The live catalog read on 27 October 2026 (IST) has no index ordered by `(auditRetainedUntil, id)` for consent or `(createdAt, id)` for system events. Read-only `EXPLAIN`, without `ANALYZE`, chose a consent sequential scan plus sort and an existing severity/time index scan plus sort for events. These plans are not measured latency or a production incident. Before increasing traffic or changing the scheduler, measure backlog/capacity and review suitable retention-order indexes if warranted; an index change needs its own reviewed schema rollout. Do not apply speculative DDL as part of a retention run.
+
 Regenerate the shared cron inventory after integrating registry changes. Do not infer live execution from a YAML file, a manual staging success or an HTTP 200. Use an independent completion/absence monitor plus obligation/backlog checks, including actual deadline alert delivery.
 
 ## Deprecated & Superseded Approaches
