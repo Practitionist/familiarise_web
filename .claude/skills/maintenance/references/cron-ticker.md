@@ -126,7 +126,7 @@ Never create 3-layer wrappers. A job has one implementation, registered in
 6. Update the generated job reference and operational recovery instructions.
 7. Put a ticker job in `lib/cron/schedule.ts` (`TARGETS` with an offset or a `TARGET_WINDOWS` slot) so
    the cadence/collision tests preserve the ten-target design bound.
-   Only the resumable ledger target yields when the due roster reaches this bound;
+   Only the resumable ledger target yields when the due roster exceeds this bound;
    the dispatcher does not truncate other due work.
 8. If the job moves money or payouts, add its slug to `FINANCIAL_JOB_NAMES`
    (`lib/cron/financial-jobs.ts`). The maintenance gate then also stops it in
