@@ -139,7 +139,7 @@ function world(balances: Record<string, number>) {
         return { id: data.idempotencyKey };
       },
     },
-    ledgerAccount: { upsert: async () => ({}) },
+    ledgerAccount: { createMany: async () => ({ count: 0 }) },
     consultantEarnings: { findMany: async () => [] },
     organizationEarnings: { findMany: async () => [] },
   };

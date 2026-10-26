@@ -66,7 +66,7 @@ const db = {
   },
   organizationEarnings: { updateMany: jest.fn(async () => ({ count: 1 })) },
   orgAuditLog: { create: jest.fn(async () => ({})) },
-  ledgerAccount: { upsert: jest.fn(async () => ({})) },
+  ledgerAccount: { createMany: jest.fn(async () => ({ count: 0 })) },
   ledgerTransaction: {
     findUnique: jest.fn(
       async ({ where }: { where: { idempotencyKey: string } }) =>
