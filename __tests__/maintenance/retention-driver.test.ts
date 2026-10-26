@@ -53,7 +53,7 @@ function loadDriver(dependencies: {
   const runJob = jest.fn((_name: string, callback: () => Promise<unknown>) => {
     run = callback;
   });
-  const module: { exports: Record<string, unknown> } = { exports: {} };
+  const driverModule: { exports: Record<string, unknown> } = { exports: {} };
   const requireStub = Object.assign(
     (specifier: string) => {
       if (specifier === "dotenv/config") return {};
@@ -69,12 +69,12 @@ function loadDriver(dependencies: {
       if (specifier === "../../lib/observability/job-sentry") return { runJob };
       throw new Error(`Unexpected driver import: ${specifier}`);
     },
-    { main: module },
+    { main: driverModule },
   );
 
   vm.runInNewContext(outputText, {
-    module,
-    exports: module.exports,
+    module: driverModule,
+    exports: driverModule.exports,
     require: requireStub,
     process: { env: {}, exitCode: 0 },
     console: { log: jest.fn(), warn: jest.fn(), error: jest.fn() },

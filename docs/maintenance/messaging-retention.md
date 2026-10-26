@@ -38,7 +38,7 @@ The six-hour check detects a missing lease heartbeat. Marking an execution `FAIL
 
 ## Ownership and validation
 
-The configured automatic owner remains `.github/workflows/cron-daily.yml`; no ticker target is enabled by this change. Confirm actual workflow availability separately. A later transfer to the ticker must remove the old automatic owner in the same reviewed cutover and verify completion and backlog age after deployment. CI/CD remains a separate responsibility from runtime maintenance scheduling.
+The configured automatic owner remains `.github/workflows/cron-daily.yml`; no ticker target is enabled by this change. Non-money Actions jobs are currently budget-blocked and not running; the cron expression is not evidence of execution. Use the existing authenticated operator door until workflow capacity is restored or a scheduler cutover is reviewed. A later transfer to the ticker must remove the old automatic owner in the same reviewed cutover and verify completion and backlog age after deployment. CI/CD remains a separate responsibility from runtime maintenance scheduling.
 
 Mock tests cover row bounds, invalid limits, unchanged retention windows, eligibility in final writes, heartbeat renewal, and retry after a later-phase failure. `__tests__/db/messaging-retention.db.test.ts` exercises a real blocked-delete/replay interleaving, legacy timestamp preservation, and multi-slice progress. Its guard permits only a disposable localhost `/ci` database with `CI=true`; never point it at the shared database.
 
