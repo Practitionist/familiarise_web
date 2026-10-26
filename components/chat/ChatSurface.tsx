@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { ChatLayout } from "@/components/chat/ChatLayout";
 import { ChatUnavailable } from "@/components/chat/ChatUnavailable";
 import { ChatSkeletonPanes } from "@/components/dashboard/DashboardSkeletons";
@@ -7,14 +8,17 @@ import { StreamChatScope } from "@/components/stream/StreamChatScope";
 import { useStreamConnection } from "@/providers/StreamProvider";
 
 /**
- * The chat surface shared by the consultant, consultee and organisation
- * Messages pages: failure first, then the live layout, else the skeleton.
+ * The chat surface shared by the Messages pages and the appointment chat sheet:
+ * failure first, then the live layout (or `children`), else the loading state.
  *
  * The layout stays mounted while the SDK reconnects a dropped socket, so a
  * Wi-Fi blip keeps the draft, scroll position and active channel; only a
  * non-blocking banner appears.
  */
-export function ChatSurface() {
+export function ChatSurface({
+  children,
+  loading,
+}: Readonly<{ children?: ReactNode; loading?: ReactNode }>) {
   const { chatConnected, chatReconnecting, failure, retryConnection } =
     useStreamConnection();
 
@@ -23,7 +27,7 @@ export function ChatSurface() {
   }
 
   if (!chatConnected && !chatReconnecting) {
-    return <ChatSkeletonPanes />;
+    return loading ?? <ChatSkeletonPanes />;
   }
 
   return (
@@ -38,9 +42,7 @@ export function ChatSurface() {
           </span>
         </div>
       )}
-      <StreamChatScope>
-        <ChatLayout />
-      </StreamChatScope>
+      <StreamChatScope>{children ?? <ChatLayout />}</StreamChatScope>
     </div>
   );
 }
