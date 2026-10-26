@@ -145,6 +145,8 @@ export async function recordSystemError(params: {
   db?: Tx | typeof prisma;
   /** Internal — see RecordSystemEvent's flag of the same name. */
   __reportInsertFailureToCaller?: boolean;
+  /** Per-row sweep callers keep the audit row and report once per run themselves. */
+  skipSentry?: boolean;
 }): Promise<void> {
   const errorMessage =
     params.err instanceof Error ? params.err.message : String(params.err);
@@ -164,6 +166,8 @@ export async function recordSystemError(params: {
     db: params.db,
     __reportInsertFailureToCaller: params.__reportInsertFailureToCaller,
   });
+
+  if (params.skipSentry) return;
 
   // Escalate to Sentry so engineers see it without querying the DB.
   // Best-effort: never throw. Callers of recordSystemError already swallow

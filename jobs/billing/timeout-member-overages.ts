@@ -23,6 +23,7 @@ import { sendOrgOperationalEmail } from "@/lib/email/senders/money";
 import { notifyMemberOverageTimedOut } from "@/lib/novu/org-workflows";
 import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-carve";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
@@ -51,6 +52,7 @@ async function timeoutMemberOverages(opts: {
   windowStart?: Date;
 }): Promise<TimeoutStats> {
   const stats: TimeoutStats = { scanned: 0, timedOut: 0, errored: 0 };
+  const failures = createRunFailureReporter("jobs");
   const receivables: string[] = [];
   const errors: Array<{ overageEventId: string; error: string }> = [];
   const now = new Date();
@@ -134,12 +136,17 @@ async function timeoutMemberOverages(opts: {
       // the org's billing by hand, and the job can exit immediately after the
       // loop — fire-and-forget here is a coin flip on whether the row lands at
       // all. The line below already awaits, so this costs nothing.
+      const invoicedErr = new Error("OVERAGE_BASE_RESTORE_AFTER_INVOICE");
+      failures.add("timeout-member-overages.invoiced-skip", invoicedErr, {
+        overageEventId: ev.id,
+      });
       await recordSystemErrorSafe({
         organizationId: null,
         category: "OVERAGE",
         summary: `Timed-out overage ${ev.id}: basePaise not restorable — parent already invoiced; settle it to the org with POST /api/admin/organizations/<orgId>/overages/${ev.id}/settle-to-org`,
-        err: new Error("OVERAGE_BASE_RESTORE_AFTER_INVOICE"),
+        err: invoicedErr,
         context: { overageEventId: ev.id },
+        skipSentry: true,
       });
     }
 
@@ -180,5 +187,6 @@ async function timeoutMemberOverages(opts: {
     });
   }
 
+  failures.flush();
   return stats;
 }

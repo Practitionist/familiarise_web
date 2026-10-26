@@ -36,7 +36,7 @@ import {
 import { Prisma } from "@prisma/client";
 import { BILLABLE_ORG_STATUSES, isBillable } from "@/lib/enterprise/org-status";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
-import * as Sentry from "@sentry/nextjs";
+import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { EMAIL_BUDGET_MS } from "@/lib/email/config";
 import type { StagedRecipientEmail as StagedEmail } from "@/lib/email/send-to-recipients";
@@ -208,6 +208,7 @@ async function advanceProgramCycles(opts: {
   limit?: number;
   windowStart?: Date;
 }): Promise<AdvanceStats> {
+  const failures = createRunFailureReporter("jobs");
   const stats: AdvanceStats = {
     scanned: 0,
     rolled: 0,
@@ -437,13 +438,12 @@ async function advanceProgramCycles(opts: {
         `[advance-program-cycles] Failed for assignment ${a.id}:`,
         err,
       );
-      Sentry.captureException(err, {
-        tags: { subsystem: "jobs", job: "advance-program-cycles" },
-      });
+      failures.add("advance-program-cycles", err, { assignmentId: a.id });
       stats.failed += 1;
     }
   }
 
+  failures.flush();
   stats.remaining = due.length - visited;
   return stats;
 }
