@@ -58,6 +58,8 @@ const MAX_STUCK_PAYOUT_POLLS = 5;
 const MAX_PAYOUT_STATUS_POLLS = 8;
 /** Consumer invoices the GST register healer may mint per run; one transaction each. */
 const MAX_GST_HEALER_MINTS = 25;
+/** Un-invoiced consumer payments minted per run; one transaction each. */
+const MAX_CONSUMER_INVOICE_HEALS = 25;
 /** Document rows a single purge run may process; each costs one storage delete. */
 const MAX_DOCUMENT_PURGE_ROWS = 200;
 
@@ -612,6 +614,23 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           failedCount: r.failedCount,
         }),
         failureMessage: "Failed to handle stuck payouts",
+      }),
+
+    // @cleanup-twin heal-consumer-invoices
+    "heal-consumer-invoices": () =>
+      cleanupRoute({
+        job: "heal-consumer-invoices",
+        run: async (req, { startedAt }) => {
+          const { healConsumerInvoices } =
+            await import("@/lib/payments/billing/consumer-invoice-healer");
+          return healConsumerInvoices({
+            limit: parseLimitParamOrDefault(req, MAX_CONSUMER_INVOICE_HEALS),
+            windowStart: parseWindowStartParam(req),
+            startedAt,
+          });
+        },
+        status: (r) => statusFor({}, r.failed > 0),
+        failureMessage: "Failed to heal consumer tax invoices",
       }),
 
     // @cleanup-twin irp-uploader
