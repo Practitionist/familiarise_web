@@ -146,7 +146,8 @@ async function recordJobFinish(
   }
 }
 
-// A Netlify invocation cannot outlive 60 s, so a longer lease only strands a killed run's row.
+// Renewal refreshes a live run every ttl/3 (background functions included), so a
+// short lease only shortens how long a killed Netlify run's row blocks the next tick.
 const NETLIFY_MAX_LEASE_MS = 90_000;
 
 export function effectiveLeaseTtlMs(ttlMs: number): number {
