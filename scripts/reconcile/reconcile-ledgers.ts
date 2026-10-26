@@ -7,6 +7,7 @@ import { sumPaise } from "@/lib/payments/utils/money";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { ledgerAccountId } from "@/lib/payments/ledger/post";
 import {
+  latestDriftFreezeIds,
   releaseReconciledWalletFreezes,
   type WalletAccountRef,
 } from "@/lib/payments/wallet-freeze";
@@ -281,6 +282,7 @@ export function walletDriftFindings(scope: {
           inSync.push({
             billingAccountId: acct.id,
             organizationId: acct.ownerOrgId,
+            driftFreezeId: null,
           });
         } else {
           findings.push({
@@ -292,6 +294,14 @@ export function walletDriftFindings(scope: {
             deltaPaise: bal - walletTotal,
           });
         }
+      }
+      // Read in this snapshot, so a freeze written after it is never released.
+      const driftFreezes = await latestDriftFreezeIds(
+        tx,
+        inSync.map((a) => a.billingAccountId),
+      );
+      for (const a of inSync) {
+        a.driftFreezeId = driftFreezes.get(a.billingAccountId) ?? null;
       }
       return {
         findings,

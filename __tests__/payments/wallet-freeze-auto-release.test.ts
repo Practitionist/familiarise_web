@@ -2,9 +2,15 @@
  * @jest-environment node
  */
 
-// Invariant: a reconcile snapshot that finds a frozen wallet back in sync lifts the freeze once, as SYSTEM, through the CAS unfreeze.
+// Invariant: the reconciler lifts only its own drift FREEZE, and only while the event its snapshot saw is still the latest.
 
-type Event = { correlationId: string; category: string; createdAt: number };
+type Event = {
+  id: string;
+  correlationId: string;
+  category: string;
+  context: Record<string, unknown>;
+  createdAt: number;
+};
 let events: Event[] = [];
 const created: Array<{ data: Record<string, unknown> }> = [];
 
@@ -25,9 +31,13 @@ jest.mock("../../lib/prisma", () => {
       latestFirst(
         events.filter((e) => e.correlationId === where.correlationId),
       )[0] ?? null,
-    create: async (args: { data: Event & Record<string, unknown> }) => {
+    create: async (args: { data: Omit<Event, "id" | "createdAt"> }) => {
       created.push(args);
-      events.push({ ...args.data, createdAt: Date.now() + created.length });
+      events.push({
+        ...args.data,
+        id: `ev_${events.length + 1}`,
+        createdAt: 100 + events.length,
+      });
       return {};
     },
   };
@@ -40,39 +50,68 @@ jest.mock("../../lib/prisma", () => {
   };
 });
 
-import { releaseReconciledWalletFreezes } from "@/lib/payments/wallet-freeze";
+import {
+  latestDriftFreezeIds,
+  releaseReconciledWalletFreezes,
+} from "@/lib/payments/wallet-freeze";
 
-const at = (correlationId: string, category: string, createdAt: number) => ({
-  correlationId,
-  category,
-  createdAt,
+const freeze = (id: string, ba: string, at: number, source?: string) => ({
+  id,
+  correlationId: `wallet-freeze:${ba}`,
+  category: "WALLET_FREEZE",
+  context: source ? { source } : {},
+  createdAt: at,
 });
+
+/** What the reconcile snapshot hands the release: its view of each account's drift freeze. */
+async function snapshot(ids: string[]) {
+  const seen = await latestDriftFreezeIds(
+    jest.requireMock("../../lib/prisma").default,
+    ids,
+  );
+  return ids.map((id) => ({
+    billingAccountId: id,
+    organizationId: "org_1",
+    driftFreezeId: seen.get(id) ?? null,
+  }));
+}
 
 beforeEach(() => {
   created.length = 0;
   events = [
-    at("wallet-freeze:ba_frozen", "WALLET_FREEZE", 1),
-    at("wallet-freeze:ba_cleared", "WALLET_FREEZE", 1),
-    at("wallet-freeze:ba_cleared", "WALLET_UNFREEZE", 2),
+    freeze("ev_drift", "ba_drift", 1, "reconcile-drift"),
+    freeze("ev_ops", "ba_ops", 1),
   ];
 });
 
-it("unfreezes only the in-sync accounts still frozen, as SYSTEM, and only once", async () => {
-  const inSync = ["ba_frozen", "ba_cleared", "ba_never"].map((id) => ({
-    billingAccountId: id,
-    organizationId: "org_1",
-  }));
+it("lifts a drift freeze once, as SYSTEM, and never an ops freeze", async () => {
+  const inSync = await snapshot(["ba_drift", "ba_ops", "ba_never"]);
 
   expect(await releaseReconciledWalletFreezes("rep_9", inSync)).toEqual([
-    "ba_frozen",
+    "ba_drift",
   ]);
   expect(created).toHaveLength(1);
   expect(created[0].data).toMatchObject({
     category: "WALLET_UNFREEZE",
-    correlationId: "wallet-freeze:ba_frozen",
+    correlationId: "wallet-freeze:ba_drift",
     context: { unfrozenBy: "SYSTEM" },
   });
+  expect(
+    await releaseReconciledWalletFreezes(
+      "rep_10",
+      await snapshot(["ba_drift"]),
+    ),
+  ).toEqual([]);
+});
 
-  expect(await releaseReconciledWalletFreezes("rep_10", inSync)).toEqual([]);
-  expect(created).toHaveLength(1);
+it("keeps a freeze written after the snapshot", async () => {
+  const inSync = await snapshot(["ba_drift"]);
+  // Ops refund-remaining freezes again after the snapshot was read.
+  events.push(
+    { ...freeze("ev_unfreeze", "ba_drift", 2), category: "WALLET_UNFREEZE" },
+    freeze("ev_ops_later", "ba_drift", 3),
+  );
+
+  expect(await releaseReconciledWalletFreezes("rep_9", inSync)).toEqual([]);
+  expect(created).toHaveLength(0);
 });

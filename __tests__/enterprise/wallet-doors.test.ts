@@ -111,7 +111,9 @@ const drift = {
 const clean = {
   findings: [],
   accountsChecked: 1,
-  inSync: [{ billingAccountId: "ba_1", organizationId: "org_1" }],
+  inSync: [
+    { billingAccountId: "ba_1", organizationId: "org_1", driftFreezeId: null },
+  ],
 };
 
 beforeEach(() => {
