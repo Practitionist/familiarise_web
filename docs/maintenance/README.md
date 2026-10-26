@@ -18,13 +18,14 @@ Familiarise's maintenance mode system provides two-tier protection (DEGRADED and
 1. [Architecture](./01-architecture.md) -- System design, data flow, key files
 2. [DEGRADED vs OFFLINE](./02-degraded-vs-offline.md) -- What each phase blocks (with tables)
 3. [Business Risks](./03-business-risks.md) -- Money-at-stake analysis
-4. [Cron Jobs Reference](./04-cron-jobs-reference.md) -- Job catalogue: all 73 scheduled jobs, entrypoints, lock modes, schedules, what each mutates
+4. [Cron Jobs Reference](./04-cron-jobs-reference.md) -- Generated job inventory: entrypoints, lock modes, schedules and request bounds for every registered job
 5. [Webhook Behavior](./05-webhook-behavior.md) -- Payment webhook handling during downtime
 6. [Pre-Maintenance Checklist](./06-pre-maintenance-checklist.md) -- Step-by-step operational checklist
 7. [Post-Maintenance Recovery](./07-post-maintenance-recovery.md) -- Verification and reconciliation steps
 8. [SDK Update Guide](./08-sdk-update-guide.md) -- Detailed per-package update guide
 9. [Future Improvements](./09-future-improvements.md) -- Planned code changes for better protection
 10. [Cron, Sidecars and Reconciliation Reference](./10-cron-and-reconciliation-reference.md) -- Scheduling mechanics: response codes, `?limit=`, lease durations, phase staggering, the Postgres sidecars, reconciler rules, known doc-vs-code drift. Pairs with [04](./04-cron-jobs-reference.md)
+11. [Job Machinery Catalog and Dashboard Spec](./11-job-machinery-catalog.md) -- How every job really runs: the tick lifecycle, per-job lease, retry, outcome and Sentry behaviour, the observability gaps, and the specification for the operations dashboard
 
 ---
 
