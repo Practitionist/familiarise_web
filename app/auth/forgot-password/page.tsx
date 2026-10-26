@@ -14,6 +14,12 @@ import {
   type AuthActionTarget,
 } from "@/components/auth/AuthErrorAffordance";
 import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
+import {
+  TurnstileWidget,
+  awaitingCaptcha,
+  captchaHeaders,
+  useTurnstile,
+} from "@/components/auth/Turnstile";
 import { authClient, useSession } from "@/lib/auth-client";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import Link from "next/link";
@@ -36,6 +42,7 @@ export default function ForgotPassword() {
   // The catalog's "what to do next" for the last failure.
   const [errorAction, setErrorAction] = useState<AuthErrorAction | null>(null);
   const retryAfter = useRetryAfterCapture();
+  const captcha = useTurnstile();
 
   // Redirect authenticated users away from forgot-password. `replace` (not
   // push) so /auth/* never lands in history — Back from the dashboard used to
@@ -51,9 +58,15 @@ export default function ForgotPassword() {
 
   const handleRequestReset = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
     setMessage(null); // Clear previous messages
     setErrorAction(null);
+    if (awaitingCaptcha(captcha)) {
+      const copy = humanizeAuthError("forgot", { code: "MISSING_RESPONSE" });
+      setErrorAction(copy.action ?? null);
+      setMessage({ kind: "error", text: copy.description });
+      return;
+    }
+    setIsLoading(true);
     retryAfter.clear();
     const settle = pendingToast({ title: "Sending reset link..." });
 
@@ -62,7 +75,10 @@ export default function ForgotPassword() {
         email,
         redirectTo: "/auth/reset-password",
         // Reads `Retry-After` off the 429 (components/auth/useRetryAfterCapture.ts).
-        fetchOptions: retryAfter.fetchOptions,
+        fetchOptions: {
+          ...retryAfter.fetchOptions,
+          headers: captchaHeaders(captcha),
+        },
       });
       if (error) {
         const copy = humanizeAuthError("forgot", error, {
@@ -96,6 +112,7 @@ export default function ForgotPassword() {
         variant: "destructive",
       });
     } finally {
+      captcha.reset();
       setIsLoading(false);
     }
   };
@@ -144,6 +161,8 @@ export default function ForgotPassword() {
               disabled={isLoading}
             />
           </div>
+
+          <TurnstileWidget handle={captcha} />
 
           {message && (
             <p

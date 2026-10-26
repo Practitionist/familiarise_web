@@ -158,6 +158,15 @@ stateDiagram-v2
 
 `EMAIL_VERIFICATION` (the 6-digit code) and `PASSWORD_RESET` (the reset link) are credential email types (`carriesCredential` in `lib/email/classify.ts`). `deliver()` stages their outbox row with `htmlBody: REDACTED_CREDENTIAL_BODY` and `textBody: null`, so a live code or link never reaches the `FailedEmail` table. If the first delivery attempt fails, the retry relay dead-letters the row without sending (`lastError = "not replayed: <type> carried a single-use credential"`); the user requests a fresh code or link directly from the auth page.
 
+### Per-Recipient Daily Cap on Auth Mail
+
+Three email types can be aimed at any inbox by a stranger who types an address into a public auth form: `EMAIL_VERIFICATION`, `PASSWORD_RESET` and `EXISTING_ACCOUNT_SIGN_UP`. `deliver()` sends at most **5 of each type per recipient per rolling 24 hours** (`lib/email/recipient-cap.ts`). The check runs before staging, so a capped send writes no outbox row, never reaches Resend, logs one `email_recipient_capped` line with the email type only, and returns `{ success: false, error: EmailRecipientCappedError }`. The auth endpoints answer exactly as they would have, because they already answer the same way whether or not a mail went out.
+
+- **Example.** Someone requests a password reset for `asha@example.com` six times in an hour from six different IP addresses. The first five reset emails go out; the sixth is dropped. A verification code for the same address still goes out, because each type has its own bucket, so a flood of one kind of mail cannot block another.
+- **Key.** `@upstash/ratelimit` sliding window via `makeLimiter` (`lib/rate-limit.ts`), prefix `rl:mail-recipient`, identifier `<emailType>:<sha256(lower(trim(address)))>`. Redis holds only the digest, never the address.
+- **Fails open.** A Redis error sends the mail and reports a throttled Sentry warning (`email:recipient-cap`), at most one per minute per instance, never one per send. A Redis reply slower than the limiter's 500 ms timeout also lets the send through.
+- **Not capped.** Money receipts, booking mail, org invitations (an authenticated org admin sends them, under the per-org `orgInviteLimiter`) and every other type. Staff setup links are `PASSWORD_RESET`, so an ADMIN who resends one more than 5 times a day to the same address sees the later sends dropped.
+
 ### Operational & Compliance Alerts (`Familiarise Ops <system@mail.familiarisenow.com>`)
 
 All ops alerts set `Reply-To: ops@familiarisenow.com` (`OPS_EMAIL` in `lib/email/config.ts`) so replies route to operations rather than looping back to the sender.
@@ -243,6 +252,8 @@ Enforced in `lib/email/delivery-guard.ts` across `stage()`, `attempt()`, `retry-
 ---
 
 ## Deprecated & Superseded Approaches
+
+- **Per-kind hourly caps in `lib/auth.ts`** (`rl:mail:{reset|verify}`, 3 per hour) and the 2-per-hour `existingAccountNoticeLimiter`: replaced by the one daily cap inside `deliver()`, so every auth send meets the same check.
 
 ```text
 Legacy Asymmetric Dual-Path (Superseded):

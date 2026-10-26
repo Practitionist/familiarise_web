@@ -19,6 +19,10 @@ import {
   withRetryAfter,
   type RateLimitRedis,
 } from "../../lib/auth/rate-limit";
+import {
+  createSignInThrottle,
+  signInWaitSeconds,
+} from "../../lib/auth/account-throttle";
 
 jest.mock("../../lib/observability/throttled-capture", () => ({
   captureThrottled: jest.fn(),
@@ -182,5 +186,51 @@ describe("withRetryAfter", () => {
   it("leaves other responses alone", () => {
     const ok = new Response("{}", { status: 200 });
     expect(withRetryAfter(ok)).toBe(ok);
+  });
+});
+
+describe("per-account sign-in throttle", () => {
+  const signIn = (email: string) =>
+    new Request("https://app.test/api/auth/sign-in/email", {
+      method: "POST",
+      body: JSON.stringify({ email, password: "wrong" }),
+    });
+  const ctx = { options: {} } as unknown as Parameters<
+    NonNullable<ReturnType<typeof createSignInThrottle>["plugin"]["onRequest"]>
+  >[1];
+
+  it("escalates 30 s, 2 min, 15 min and never refuses below ten failures", () => {
+    expect(signInWaitSeconds(9)).toBe(0);
+    expect(signInWaitSeconds(10)).toBe(30);
+    expect(signInWaitSeconds(20)).toBe(120);
+    expect(signInWaitSeconds(400)).toBe(900);
+  });
+
+  it("answers BetterAuth's own 429 for the address, whatever its case, until cleared", async () => {
+    const redis = new MockRedis();
+    const throttle = createSignInThrottle(async () => redis);
+    for (let i = 0; i < 9; i++) await throttle.recordFailure("a@b.test");
+    await expect(
+      throttle.plugin.onRequest(signIn("a@b.test"), ctx),
+    ).resolves.toBeUndefined();
+
+    await throttle.recordFailure("A@B.test ");
+    const refused = await throttle.plugin.onRequest(signIn("a@b.test"), ctx);
+    expect(refused?.response.status).toBe(429);
+    expect(Number(refused?.response.headers.get("X-Retry-After"))).toBe(30);
+
+    await throttle.clear("a@b.test");
+    await expect(
+      throttle.plugin.onRequest(signIn("a@b.test"), ctx),
+    ).resolves.toBeUndefined();
+  });
+
+  it("fails open when Redis is down", async () => {
+    const throttle = createSignInThrottle(async () => {
+      throw new Error("upstash down");
+    });
+    await expect(
+      throttle.plugin.onRequest(signIn("a@b.test"), ctx),
+    ).resolves.toBeUndefined();
   });
 });

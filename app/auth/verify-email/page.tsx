@@ -15,6 +15,12 @@ import {
   type AuthActionTarget,
 } from "@/components/auth/AuthErrorAffordance";
 import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
+import {
+  TurnstileWidget,
+  awaitingCaptcha,
+  captchaHeaders,
+  useTurnstile,
+} from "@/components/auth/Turnstile";
 import { emailOtp, useSession } from "@/lib/auth-client";
 import {
   clearPendingVerificationEmail,
@@ -68,6 +74,7 @@ function VerifyEmailContent() {
   const [errorCopy, setErrorCopy] = useState<AuthErrorCopy | null>(null);
   const verifyRetryAfter = useRetryAfterCapture();
   const resendRetryAfter = useRetryAfterCapture();
+  const captcha = useTurnstile();
 
   useEffect(() => {
     const stashed = EmailSchema.safeParse(readPendingVerificationEmail() ?? "");
@@ -104,6 +111,10 @@ function VerifyEmailContent() {
     if (cooldown > 0 || resending) return;
     const target = parsedEmail();
     if (!target) return;
+    if (awaitingCaptcha(captcha)) {
+      setErrorCopy(humanizeAuthError("verify", { code: "MISSING_RESPONSE" }));
+      return;
+    }
     setResending(true);
     setErrorCopy(null);
     resendRetryAfter.clear();
@@ -111,7 +122,10 @@ function VerifyEmailContent() {
       const { error } = await emailOtp.sendVerificationOtp({
         email: target,
         type: "email-verification",
-        fetchOptions: resendRetryAfter.fetchOptions,
+        fetchOptions: {
+          ...resendRetryAfter.fetchOptions,
+          headers: captchaHeaders(captcha),
+        },
       });
       if (error) {
         const wait = resendRetryAfter.take();
@@ -130,6 +144,7 @@ function VerifyEmailContent() {
     } catch {
       setErrorCopy(humanizeAuthError("verify", { status: 0 }));
     } finally {
+      captcha.reset();
       setResending(false);
     }
   };
@@ -285,6 +300,8 @@ function VerifyEmailContent() {
               ? `Resend code in ${cooldown}s`
               : "Resend code"}
         </Button>
+
+        <TurnstileWidget handle={captcha} />
 
         <AuthErrorAffordance action={errorCopy?.action} target={errorTarget} />
 

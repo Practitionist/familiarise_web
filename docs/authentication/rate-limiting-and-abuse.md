@@ -4,8 +4,9 @@
 | ------------- | --------------------------------------------------------------------------------------------- |
 | Status        | Live                                                                                          |
 | Audience      | Engineers, on-call                                                                            |
-| Last reviewed | 2026-10-10                                                                                    |
+| Last reviewed | 2026-10-26                                                                                    |
 | Source        | `lib/auth/rate-limit.ts`, `lib/auth/password-policy.ts`, `lib/rate-limit.ts`, `middleware.ts` |
+| Also          | `lib/auth/captcha.ts`, `lib/auth/account-throttle.ts`, `lib/email/recipient-cap.ts`           |
 
 ## 1. Two limiters, no overlap
 
@@ -15,7 +16,9 @@
 | Edge and handler limiters | App routes on the auth path that BetterAuth never sees | Upstash (`@upstash/ratelimit`) | IP, account digest or token      |
 
 `middleware.ts` does **not** limit BetterAuth paths, so nothing is counted
-twice. Running the auth limiter inside BetterAuth covers `/two-factor/*` and
+twice. Three controls are keyed on something other than the IP, so a proxy
+pool gets no fresh budget from them: Turnstile on the mail-sending endpoints,
+the per-account sign-in throttle and the per-recipient mail cap (§5). Running the auth limiter inside BetterAuth covers `/two-factor/*` and
 any future plugin endpoint automatically, and matches the router's own path
 normalisation.
 
@@ -68,16 +71,15 @@ paths are disabled.
 
 ## 3. Edge and handler limiters
 
-| Scope                         | Route                                            | Budget                 | Where   |
-| ----------------------------- | ------------------------------------------------ | ---------------------- | ------- |
-| `enterprise.sso-domain-check` | `GET /api/auth/sso/domain-check`                 | 1000 / hour per IP     | Edge    |
-| `enterprise.invite-accept`    | `POST /api/organizations/invitations/accept`     | 60 / hour per IP       | Edge    |
-| session management            | `/api/user/sessions*` except `/current`          | 120 / 15 min per IP    | Edge    |
-| session management, per user  | same                                             | 60 / 15 min per user   | Handler |
-| `platform.staff-create`       | `POST /api/admin/team/members`, `.../setup-link` | 20 / hour per ADMIN    | Handler |
-| re-authentication             | `POST /api/user/reauthenticate`                  | 5 / 15 min per user    | Handler |
-| referral check                | `GET /api/referrals/code/check/[code]`           | 10 / min per IP        | Handler |
-| existing-account notice       | sent from `onExistingUserSignUp`                 | 2 / hour per recipient | Handler |
+| Scope                         | Route                                            | Budget               | Where   |
+| ----------------------------- | ------------------------------------------------ | -------------------- | ------- |
+| `enterprise.sso-domain-check` | `GET /api/auth/sso/domain-check`                 | 1000 / hour per IP   | Edge    |
+| `enterprise.invite-accept`    | `POST /api/organizations/invitations/accept`     | 60 / hour per IP     | Edge    |
+| session management            | `/api/user/sessions*` except `/current`          | 120 / 15 min per IP  | Edge    |
+| session management, per user  | same                                             | 60 / 15 min per user | Handler |
+| `platform.staff-create`       | `POST /api/admin/team/members`, `.../setup-link` | 20 / hour per ADMIN  | Handler |
+| re-authentication             | `POST /api/user/reauthenticate`                  | 5 / 15 min per user  | Handler |
+| referral check                | `GET /api/referrals/code/check/[code]`           | 10 / min per IP      | Handler |
 
 The referral check keys on `getClientIp` (`x-nf-client-connection-ip`) and
 answers only `valid` and the referrer's first name, so it cannot be used to
@@ -120,6 +122,96 @@ Our own BetterAuth plugin, `breachedPasswordCheck`, wraps password hashing on
 | Step-up                                        | Credential, factor, payout, refund and IAM changes need a proof from the last 15 minutes                |
 | Hashed tokens at rest                          | Reset and verification identifiers stored as SHA-256                                                    |
 | CSP                                            | Report-only to Sentry, see [security headers](../enterprise/20-iam-and-security/04-security-headers.md) |
+| Turnstile on mail-sending endpoints            | See below                                                                                               |
+| Per-account sign-in throttle                   | See below                                                                                               |
+| Per-recipient mail cap                         | See below                                                                                               |
+
+### Turnstile on the mail-sending endpoints
+
+Cloudflare Turnstile guards the three endpoints that send mail to an address
+the caller types in: `/sign-up/email`, `/request-password-reset` and
+`/email-otp/send-verification-otp`. Sign-in has no captcha, because it sends
+nothing until the password has matched, and it is the main conversion path.
+
+- **Server.** Better Auth's own `captcha` plugin with provider
+  `cloudflare-turnstile` (`lib/auth/captcha.ts`). Its `endpoints` option is
+  overridden, because the plugin's default list includes `/sign-in/email`. The
+  plugin runs in `onRequest`, so it applies to HTTP calls only; server-side
+  `auth.api.*` calls such as the operator setup link are not affected.
+- **Client.** `components/auth/Turnstile.tsx` loads
+  `https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit`
+  and renders one managed widget with `appearance: "interaction-only"`, so
+  most visitors see nothing. The sign-up form, the forgot-password form and
+  the resend button on the verify-email page send the token in the
+  `x-captcha-response` header, which is the header the plugin reads. A token
+  is single-use and lives 300 seconds, so the widget is reset after every
+  submit, failed ones included, and `refresh-expired: "auto"` renews an idle
+  one. A form with no token yet shows `MISSING_RESPONSE` copy instead of
+  sending, so it does not spend a per-IP budget slot.
+- **Errors.** A missing token answers 400 `MISSING_RESPONSE`, and a rejected
+  one 403 `VERIFICATION_FAILED`. Both are catalogued in
+  `lib/labels/auth-errors.ts` with copy that names the usual cause (a privacy
+  extension or a network filter blocking `challenges.cloudflare.com`) and
+  links to support. A live region under the widget announces "Checking your
+  browser…" and failures.
+- **Outage behaviour: fails closed.** The plugin waits up to 10 seconds for
+  Cloudflare's siteverify and then answers 500. During a Cloudflare outage,
+  sign-up, password-reset requests and code resends stop; sign-in keeps
+  working. The auth logger sends at most one Sentry event per message per 5
+  minutes per instance.
+- **Configuration.** Both `TURNSTILE_SECRET_KEY` and
+  `NEXT_PUBLIC_TURNSTILE_SITE_KEY` must be set. With either one unset the
+  plugin is not installed and the widget is not rendered, so the two halves
+  can never disagree. A production runtime without both keys boots with one
+  `console.error` and one `AUTH_CAPTCHA_DISABLED` Sentry warning, rather than
+  failing at boot: a throw in `lib/auth.ts` would take down every auth route,
+  sign-in and session reads included.
+- **CSP.** `https://challenges.cloudflare.com` is in `script-src` and
+  `frame-src` (`next.config.mjs`). The widget talks to Cloudflare from inside
+  its own iframe, so `connect-src` needs nothing.
+
+Cloudflare publishes test keys that work on any hostname. Use them locally and
+on deploy previews:
+
+| Key    | Value                                 | Behaviour                     |
+| ------ | ------------------------------------- | ----------------------------- |
+| Site   | `1x00000000000000000000AA`            | Always passes (visible)       |
+| Site   | `2x00000000000000000000AB`            | Always fails (visible)        |
+| Site   | `3x00000000000000000000FF`            | Forces an interactive check   |
+| Secret | `1x0000000000000000000000000000000AA` | Always passes validation      |
+| Secret | `2x0000000000000000000000000000000AA` | Always fails validation       |
+| Secret | `3x0000000000000000000000000000000AA` | Answers "token already spent" |
+
+### Per-account sign-in throttle
+
+`lib/auth/account-throttle.ts` counts wrong passwords per submitted address,
+whichever IP sends them, so distributed credential stuffing against one
+account is bounded by time rather than by the attacker's IP count.
+
+- **Counting.** An `INVALID_EMAIL_OR_PASSWORD` answer on `/sign-in/email`
+  increments `rl:acct:signin:<sha256(lower(trim(email)))>` in a fixed
+  15-minute window. A successful sign-in, a pending 2FA challenge (the
+  password matched) or a completed password reset deletes the counter.
+- **Escalation.** At 10 failures the next attempt waits 30 seconds, at 20 it
+  waits 2 minutes, and from 40 on it waits 15 minutes. These are growing
+  `Retry-After` windows, never a server-side sleep and never a permanent lock,
+  and password reset keeps working throughout.
+- **The answer.** While a wait is pending, the plugin's `onRequest` answers
+  before the password is hashed, with a 429 that is byte-for-byte BetterAuth's
+  own per-IP 429 (`X-Retry-After`, mirrored into `Retry-After`). The key is the
+  submitted address whether or not an account exists, so the 429 is not an
+  enumeration oracle.
+- **Fails open.** A Redis error or a reply slower than 500 ms lets the attempt
+  through and sends a throttled Sentry event (`auth:account-throttle`).
+
+### Per-recipient mail cap
+
+`deliver()` refuses a send when the recipient has already had 5 mails of the
+same type in the last 24 hours, for the types a stranger can aim at any
+address: `EMAIL_VERIFICATION`, `PASSWORD_RESET` and
+`EXISTING_ACCOUNT_SIGN_UP` (`lib/email/recipient-cap.ts`). The HTTP answer
+does not change, because the auth endpoints already answer the same way
+whether or not a mail went out. See [the email README](../email/README.md).
 
 ### Enumeration safety
 
@@ -128,9 +220,8 @@ Our own BetterAuth plugin, `breachedPasswordCheck`, wraps password hashing on
   with the same keys (`canonicalSignUpUser` in `lib/auth/core-policy.ts`).
 - **The existing owner is told, not the caller.** `onExistingUserSignUp` sends
   the "someone tried to sign up with your address" notice
-  (`EXISTING_ACCOUNT_SIGN_UP`), throttled to 2 per hour per recipient by
-  `existingAccountNoticeLimiter` keyed on `sha256(lower(email))`. The limiter
-  fails open: a Redis error sends the notice.
+  (`EXISTING_ACCOUNT_SIGN_UP`), which the per-recipient mail cap limits to 5
+  per address per day.
 - **Timing does not leak.** All auth mail runs in BetterAuth's
   `advanced.backgroundTasks`, whose handler is `scheduleAfter` (Netlify
   `waitUntil`), so the response returns before any mail is rendered or sent.
@@ -149,17 +240,17 @@ attacker's account. Mitigations:
   revokes every session and deletes outstanding tokens (`onPasswordReset`).
 - `purge-unverified-users` deletes never-verified, credential-only consumer
   accounts with nothing attached after 7 days, freeing the address.
-- Turnstile on sign-up and per-account throttles are a later change.
+- Turnstile on sign-up makes scripted pre-registration expensive.
 
 ## 6. Deliberately absent
 
-| Not built           | Why                                                                                                                  |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Captcha             | Rate limits and HIBP cover the launch threat. Add it when bot traffic shows up, and test every gated flow end to end |
-| Password lockout    | Lets anyone lock out any victim. Per-IP limits plus the 2FA lockout for operators instead                            |
-| Email codes as 2FA  | Shares a channel with password reset, so it adds little as a second factor                                           |
-| Break-glass account | A standing bypass is a standing target. Operator recovery is the ADMIN 2FA reset                                     |
-| Account-state hints | Graded disclosure is an enumeration oracle                                                                           |
+| Not built           | Why                                                                                                                 |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Captcha on sign-in  | Sign-in sends no mail and is the main conversion path; the per-account throttle covers credential stuffing          |
+| Password lockout    | Lets anyone lock out any victim. Growing per-account waits capped at 15 minutes, plus the 2FA lockout for operators |
+| Email codes as 2FA  | Shares a channel with password reset, so it adds little as a second factor                                          |
+| Break-glass account | A standing bypass is a standing target. Operator recovery is the ADMIN 2FA reset                                    |
+| Account-state hints | Graded disclosure is an enumeration oracle                                                                          |
 
 ## 7. Accepted risks
 
@@ -188,3 +279,9 @@ attacker's account. Mitigations:
   whole office behind one NAT address could exhaust; raised to 300 and 1000.
 - **First-hop `x-forwarded-for` keys** on the referral check: client-controlled
   on Netlify, so the limit was bypassable. Use `getClientIp`.
+- **Per-IP-only auth limits:** every auth budget was keyed on the client IP, so
+  a proxy pool got a fresh budget per address. Turnstile, the per-account
+  throttle and the per-recipient cap now key on something else.
+- **Hourly mail caps in `lib/auth.ts`** (`rl:mail:{reset|verify}`, 3 per hour)
+  and the `existingAccountNoticeLimiter` (2 per hour): replaced by the one
+  daily cap inside `deliver()`.
