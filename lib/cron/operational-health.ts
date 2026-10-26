@@ -9,6 +9,8 @@ export const OPERATIONAL_COMPLETION_REQUIREMENTS = [
   { jobName: "retry-failed-emails", maxAgeMinutes: 45 },
   { jobName: "drain-notification-outbox", maxAgeMinutes: 45 },
   { jobName: "send-appointment-reminders", maxAgeMinutes: 45 },
+  { jobName: "process-data-exports", maxAgeMinutes: 45 },
+  { jobName: "expire-stale-requests", maxAgeMinutes: 45 },
   { jobName: "auto-complete-appointments", maxAgeMinutes: 90 },
   { jobName: "detect-consultant-no-shows", maxAgeMinutes: 90 },
   { jobName: "support-sla-sweep", maxAgeMinutes: 60 },

@@ -7,10 +7,16 @@ const mockDrive = jest.fn<Promise<RefundOwedOutcome>, unknown[]>(async () => ({
 }));
 const mockFlush = jest.fn<Promise<void>, unknown[]>(async () => undefined);
 const mockBell = jest.fn<Promise<void>, unknown[]>(async () => undefined);
+const mockExpiredNotice = jest.fn<Promise<void>, unknown[]>(
+  async () => undefined,
+);
 let mockNow = 0;
 let mockFailStamp = false;
 let mockFresh: string[] = [];
+let mockPendingConsultations: string[] = [];
+let mockApprovedUnallocated: string[] = [];
 let mockLegacy: string[] = [];
+let mockLegacyApproved: string[] = [];
 let mockDue = new Map<string, string[]>();
 let mockMarkers = new Map<string, string>();
 let mockExpired = new Set<string>();
@@ -25,6 +31,10 @@ const row = (id: string) => ({
     title: "Plan",
     consultantProfile: { id: "expert", user: { id: "expert", name: "Expert" } },
   },
+  consultationPlan: {
+    title: "Plan",
+    consultantProfile: { user: { name: "Expert" } },
+  },
 });
 
 jest.mock("../../lib/cron/with-cron-lock", () => ({
@@ -32,13 +42,29 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 jest.mock("../../lib/prisma", () => {
   const db = {
-    consultation: { findMany: jest.fn(async () => []) },
+    consultation: {
+      findMany: jest.fn(
+        async ({ where }: { where: Prisma.ConsultationWhereInput }) =>
+          where.status === "PENDING" ? mockPendingConsultations.map(row) : [],
+      ),
+      findUnique: jest.fn(async ({ where }: { where: { id: string } }) => ({
+        status: "PENDING",
+        appointment: { id: `a-${where.id}` },
+      })),
+      updateMany: jest.fn(async ({ where }: { where: { id: string } }) => {
+        if (!mockCasWins) return { count: 0 };
+        mockExpired.add(`consultation:${where.id}`);
+        return { count: 1 };
+      }),
+    },
     subscription: {
       findMany: jest.fn(
         async ({ where }: { where: Prisma.SubscriptionWhereInput }) =>
-          where.AND && JSON.stringify(where.AND).includes("RESCHEDULED")
-            ? mockFresh.map(row)
-            : [],
+          where.status === "APPROVED"
+            ? mockApprovedUnallocated.map(row)
+            : where.AND && JSON.stringify(where.AND).includes("RESCHEDULED")
+              ? mockFresh.map(row)
+              : [],
       ),
       findFirst: jest.fn(async () => (mockFresh[0] ? row(mockFresh[0]) : null)),
       findUnique: jest.fn(async () => ({
@@ -72,14 +98,39 @@ jest.mock("../../lib/prisma", () => {
     },
     refund: { findMany: jest.fn(async () => []) },
     appointment: { findMany: jest.fn(async () => []) },
-    appointmentOccurrence: { findMany: jest.fn(async () => []) },
+    appointmentOccurrence: {
+      findMany: jest.fn(async () => []),
+      updateManyAndReturn: jest.fn(async () => []),
+    },
     windowBackupInterest: { updateMany: jest.fn(async () => ({ count: 0 })) },
     $queryRaw: jest.fn(async (query: Prisma.Sql) => {
       const limit = query.values.at(-1);
-      if (typeof limit !== "number") throw new Error("missing query bound");
-      if (query.text.includes('p."refundOwedKey" IS NOT NULL')) {
-        return [...mockMarkers.keys()].slice(0, limit).map((id) => ({ id }));
+      if (
+        query.text.includes('"Subscription"') &&
+        query.text.includes('h."fromStatus"')
+      ) {
+        return mockLegacyApproved
+          .filter((id) => !mockMarkers.has(id))
+          .slice(0, Number(limit))
+          .map((id) => ({ id }));
       }
+      if (query.text.includes('p."refundOwedKey" IS NOT NULL')) {
+        return [...mockMarkers.keys()]
+          .slice(0, Number(limit))
+          .map((id) => ({ id }));
+      }
+      if (query.text.includes('a."consultationId"')) {
+        const ids = mockDue.get(String(query.values[0])) ?? [];
+        return ids.map((id) => ({ id }));
+      }
+      if (
+        query.text.includes('a."subscriptionId"') &&
+        !query.text.includes('p."refundOwedKey" IS NULL')
+      ) {
+        const ids = mockDue.get(String(query.values[0])) ?? [];
+        return ids.map((id) => ({ id }));
+      }
+      if (typeof limit !== "number") throw new Error("missing query bound");
       const ids = query.text.includes('JOIN "Subscription"')
         ? mockLegacy.filter((id) => !mockMarkers.has(id))
         : (mockDue.get(String(query.values[0])) ?? []);
@@ -88,8 +139,12 @@ jest.mock("../../lib/prisma", () => {
     $executeRaw: jest.fn(async (query: Prisma.Sql) => {
       if (mockFailStamp) throw new Error("stamp failed");
       const ids = query.values[0];
-      if (!Array.isArray(ids)) throw new Error("missing marker ids");
-      for (const id of ids) mockMarkers.set(String(id), `sub-unalloc:${id}`);
+      const keys = query.values[1];
+      if (!Array.isArray(ids) || !Array.isArray(keys))
+        throw new Error("missing marker ids or keys");
+      ids.forEach((id, index) =>
+        mockMarkers.set(String(id), String(keys[index])),
+      );
       return ids.length;
     }),
     $transaction: jest.fn(
@@ -123,7 +178,8 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: jest.fn(),
 }));
 jest.mock("../../lib/booking/expiry-notices", () => ({
-  notifyConsulteeRequestExpired: jest.fn(),
+  notifyConsulteeRequestExpired: (...args: unknown[]) =>
+    mockExpiredNotice(...args),
 }));
 jest.mock("../../lib/booking/backup-interest", () => ({
   expireBackupInterest: jest.fn(async () => ({ count: 0 })),
@@ -154,7 +210,10 @@ beforeEach(() => {
   mockNow = Date.parse("2026-10-24T10:00:00Z");
   jest.spyOn(Date, "now").mockImplementation(() => mockNow);
   mockFresh = ["sub-1"];
+  mockPendingConsultations = [];
+  mockApprovedUnallocated = [];
   mockLegacy = [];
+  mockLegacyApproved = [];
   mockDue = new Map([["sub-1", ["pay-1"]]]);
   mockMarkers = new Map();
   mockExpired = new Set();
@@ -163,8 +222,173 @@ beforeEach(() => {
   mockCasWins = true;
   mockDrive.mockResolvedValue({ kind: "settled" });
   mockFlush.mockResolvedValue(undefined);
+  mockExpiredNotice.mockResolvedValue(undefined);
 });
 afterEach(() => jest.restoreAllMocks());
+
+it.each([
+  {
+    arm: "pending consultation",
+    entityId: "consult-1",
+    paymentId: "pay-consult-1",
+    key: "pending-consultation:pay-consult-1",
+    prepare: () => {
+      mockFresh = [];
+      mockDue.clear();
+      mockPendingConsultations = ["consult-1"];
+      mockDue.set("consult-1", ["pay-consult-1"]);
+    },
+  },
+  {
+    arm: "approved unallocated subscription",
+    entityId: "approved-1",
+    paymentId: "pay-approved-1",
+    key: "approved-unallocated:pay-approved-1",
+    prepare: () => {
+      mockFresh = [];
+      mockDue.clear();
+      mockApprovedUnallocated = ["approved-1"];
+      mockDue.set("approved-1", ["pay-approved-1"]);
+    },
+  },
+])(
+  "stages $arm refund debt atomically before driving",
+  async ({ prepare, entityId, paymentId, key }) => {
+    prepare();
+    mockDrive.mockImplementation(async () => {
+      expect(
+        mockExpired.has(
+          entityId === "consult-1" ? `consultation:${entityId}` : entityId,
+        ),
+      ).toBe(true);
+      expect(mockMarkers.get(paymentId)).toBe(key);
+      return { kind: "settled" };
+    });
+
+    const result = await expireStaleRequests({ limits: { maxRequests: 2 } });
+
+    expect(mockDrive).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId,
+        amountPaise: null,
+        key,
+        reason: expect.stringContaining("automatic full refund"),
+      }),
+    );
+    expect(result.refundsIssued).toBe(0);
+    expect(result.success).toBe(true);
+  },
+);
+
+it.each([
+  {
+    arm: "pending consultation",
+    prepare: () => {
+      mockFresh = [];
+      mockDue.clear();
+      mockPendingConsultations = ["consult-1"];
+      mockDue.set("consult-1", ["pay-consult-1"]);
+    },
+    paymentId: "pay-consult-1",
+  },
+  {
+    arm: "approved unallocated subscription",
+    prepare: () => {
+      mockFresh = [];
+      mockDue.clear();
+      mockApprovedUnallocated = ["approved-1"];
+      mockDue.set("approved-1", ["pay-approved-1"]);
+    },
+    paymentId: "pay-approved-1",
+  },
+])(
+  "rolls back $arm expiry when owed-marker staging fails",
+  async ({ prepare, paymentId }) => {
+    prepare();
+    mockFailStamp = true;
+
+    const result = await expireStaleRequests({ limits: { maxRequests: 2 } });
+
+    expect(mockExpired.size).toBe(0);
+    expect(mockMarkers.has(paymentId)).toBe(false);
+    expect(result.success).toBe(false);
+    expect(mockDrive).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  {
+    arm: "pending consultation",
+    prepare: () => {
+      mockFresh = [];
+      mockDue.clear();
+      mockPendingConsultations = ["consult-1"];
+      mockDue.set("consult-1", ["pay-consult-1"]);
+    },
+  },
+  {
+    arm: "approved unallocated subscription",
+    prepare: () => {
+      mockFresh = [];
+      mockDue.clear();
+      mockApprovedUnallocated = ["approved-1"];
+      mockDue.set("approved-1", ["pay-approved-1"]);
+    },
+  },
+])("stages no $arm marker when the status CAS loses", async ({ prepare }) => {
+  prepare();
+  mockCasWins = false;
+
+  await expireStaleRequests({ limits: { maxRequests: 2 } });
+
+  expect(mockMarkers.size).toBe(0);
+  expect(mockDrive).not.toHaveBeenCalled();
+});
+
+it("leaves the committed consultation refund marker durable if notification fails", async () => {
+  mockPendingConsultations = ["consult-1"];
+  mockFresh = [];
+  mockDue.clear();
+  mockDue.set("consult-1", ["pay-consult-1"]);
+  mockExpiredNotice.mockRejectedValue(new Error("notice failed"));
+
+  await expireStaleRequests({ limits: { maxRequests: 2 } });
+
+  expect(mockExpired.has("consultation:consult-1")).toBe(true);
+  expect(mockMarkers.get("pay-consult-1")).toBe(
+    "pending-consultation:pay-consult-1",
+  );
+  expect(mockDrive).not.toHaveBeenCalled();
+});
+
+it("boundedly backfills exact historical approved-expiry transitions under the stable refund key", async () => {
+  mockLegacyApproved = ["legacy-approved-pay-1", "legacy-approved-pay-2"];
+  mockFresh = [];
+  mockDue.clear();
+
+  await expireStaleRequests({ limits: { maxRequests: 1 } });
+
+  expect([...mockMarkers]).toEqual([
+    ["legacy-approved-pay-1", "approved-unallocated:legacy-approved-pay-1"],
+  ]);
+  await expireStaleRequests({ limits: { maxRequests: 1 } });
+  expect(mockMarkers.get("legacy-approved-pay-2")).toBe(
+    "approved-unallocated:legacy-approved-pay-2",
+  );
+  const scans = (prisma.$queryRaw as jest.Mock).mock.calls.map(
+    ([query]) => query as Prisma.Sql,
+  );
+  const legacyScan = scans.find(
+    (query) =>
+      query.text.includes('"Subscription"') &&
+      query.text.includes('h."fromStatus"'),
+  );
+  expect(legacyScan).toBeDefined();
+  expect(legacyScan?.text).toContain('h."actorUserId" IS NULL');
+  expect(legacyScan?.text.indexOf("GREATEST")).toBeLessThan(
+    legacyScan?.text.indexOf("LIMIT") ?? -1,
+  );
+});
 
 it("commits expiry/history/bell and full-balance marker before any drive", async () => {
   mockDrive.mockImplementation(async () => {

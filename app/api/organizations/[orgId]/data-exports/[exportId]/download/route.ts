@@ -15,6 +15,20 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { canHandleExportKind } from "@/lib/enterprise/data-export-kinds";
+import { adminStorage } from "@/lib/supabase-storage-core";
+
+function privateJson(data: unknown, init?: ResponseInit): NextResponse {
+  const response = NextResponse.json(data, init);
+  response.headers.set("Cache-Control", "private, no-store");
+  response.headers.set("Vary", "Cookie");
+  return response;
+}
+
+function privateResponse(response: NextResponse): NextResponse {
+  response.headers.set("Cache-Control", "private, no-store");
+  response.headers.set("Vary", "Cookie");
+  return response;
+}
 
 export async function GET(
   _req: NextRequest,
@@ -29,20 +43,17 @@ export async function GET(
     readOnly: true,
     permission: ["dataExports.people", "dataExports.finance"],
   });
-  if (access.error) return access.error;
+  if (access.error) return privateResponse(access.error);
 
   const job = await prisma.orgDataExportJob.findFirst({
     where: { id: exportId, organizationId: orgId },
   });
   // A kind the caller can't export reads as absent, not forbidden.
   if (!job || !canHandleExportKind(access.member.role, job.kind)) {
-    return NextResponse.json(
-      { error: "Export job not found" },
-      { status: 404 },
-    );
+    return privateJson({ error: "Export job not found" }, { status: 404 });
   }
-  if (job.status !== "READY" || !job.fileUrl) {
-    return NextResponse.json(
+  if (job.status !== "READY" || !job.startedAt || !job.expiresAt) {
+    return privateJson(
       {
         error: `Export is ${job.status}; download unavailable`,
         code: "EXPORT_NOT_READY",
@@ -50,13 +61,55 @@ export async function GET(
       { status: 409 },
     );
   }
-  if (job.expiresAt && job.expiresAt < new Date()) {
-    return NextResponse.json(
+  const now = new Date();
+  if (job.expiresAt <= now) {
+    return privateJson(
       {
         error: "Export bundle has expired; request a fresh one",
         code: "EXPORT_EXPIRED",
       },
       { status: 410 },
+    );
+  }
+
+  const artifact = await prisma.orgDataExportArtifact.findUnique({
+    where: {
+      exportJobId_attemptStartedAt: {
+        exportJobId: job.id,
+        attemptStartedAt: job.startedAt,
+      },
+    },
+    select: { bucket: true, storagePath: true, expiresAt: true },
+  });
+  if (!artifact || artifact.expiresAt.getTime() !== job.expiresAt.getTime()) {
+    return privateJson(
+      { error: "Export bundle is unavailable", code: "EXPORT_UNAVAILABLE" },
+      { status: 410 },
+    );
+  }
+  const expiresIn = Math.min(
+    60,
+    Math.floor((artifact.expiresAt.getTime() - now.getTime()) / 1000),
+  );
+  if (expiresIn < 1) {
+    return privateJson(
+      {
+        error: "Export bundle has expired; request a fresh one",
+        code: "EXPORT_EXPIRED",
+      },
+      { status: 410 },
+    );
+  }
+  const { data: signed, error: signError } = await adminStorage()
+    .from(artifact.bucket)
+    .createSignedUrl(artifact.storagePath, expiresIn);
+  if (signError || !signed) {
+    return privateJson(
+      {
+        error: "Export bundle is temporarily unavailable",
+        code: "EXPORT_UNAVAILABLE",
+      },
+      { status: 503 },
     );
   }
 
@@ -74,5 +127,5 @@ export async function GET(
     },
   });
 
-  return NextResponse.json({ url: job.fileUrl, expiresAt: job.expiresAt });
+  return privateJson({ url: signed.signedUrl, expiresAt: job.expiresAt });
 }

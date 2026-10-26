@@ -80,3 +80,9 @@ Stream background adapters currently target Netlify function URLs. Automatic
 execution requires Netlify as active cron host; a host switch needs an equivalent
 execution target. Keep lifecycle worker imports free of request authentication
 and check actual native packaging, including CLI guards, before scheduling.
+
+## Worker recovery contracts
+
+Read [worker recovery](../../../docs/maintenance/11-worker-recovery.md) before changing export claims, artifact expiry or booking-expiry refunds. Export attempts use the exact `startedAt` token for claim and finalization CAS, an independently retained exact storage owner before upload, and immutable paths. Preserve READY with its audit and existing notification outboxes; never let postcommit delivery write FAILED or expose raw errors. Expiry requires successful exact remote absence evidence before retiring the owner. The operator applies the reviewed additive schema and legacy backfill before deploying the new reader.
+
+Pending-consultation and approved-unallocated expiry commit full-remaining owed-refund markers in the same transaction as the winning EXPIRED transition. Reuse existing arm keys and refund retry ownership. Unpaid pending-subscriptions still exclude successful payments; do not broaden money eligibility. Completion freshness for these workers is not proof of backlog drain or actual alert receipt.

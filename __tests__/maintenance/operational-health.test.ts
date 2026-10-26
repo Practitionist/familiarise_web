@@ -52,6 +52,18 @@ describe("operational absence checks", () => {
       report.jobs.find((job) => job.jobName === "transfer-recordings"),
     ).toMatchObject({ overdue: true, maxAgeMinutes: 45 });
   });
+  it.each(["process-data-exports", "expire-stale-requests"])(
+    "reports a stopped %s worker even when the rest of the fleet completes",
+    (jobName) => {
+      const rows = fresh().filter((row) => row.jobName !== jobName);
+      const report = assessOperationalCompletions(rows, now);
+      expect(report.healthy).toBe(false);
+      expect(report.jobs.find((job) => job.jobName === jobName)).toMatchObject({
+        overdue: true,
+        maxAgeMinutes: 45,
+      });
+    },
+  );
   it("one healthy job cannot conceal stopped required capabilities", () => {
     const report = assessOperationalCompletions(
       [{ jobName: "retry-failed-emails", endedAt: now }],

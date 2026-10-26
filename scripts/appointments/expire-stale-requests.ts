@@ -299,6 +299,110 @@ async function refundPaymentsForExpired(
   return { issued, failures, failureMsgs };
 }
 
+function expiredRefundMarker(
+  arm: ExpiredRefundArm,
+  paymentId: string,
+): RefundOwedMarker {
+  const kind = ARM_WRAPPER[arm];
+  return {
+    paymentId,
+    amountPaise: null,
+    key: expiredRefundKey(arm, paymentId),
+    reason: `${kind} expired unallocated/unanswered — automatic full refund`,
+  };
+}
+
+/** Stage an expiry arm's full-balance obligations in the winning CAS transaction. */
+async function stageExpiredRefunds(
+  tx: Tx,
+  arm: ExpiredRefundArm,
+  entityId: string,
+): Promise<RefundOwedMarker[]> {
+  const kind = ARM_WRAPPER[arm];
+  const relation =
+    kind === "consultation" ? "consultationId" : "subscriptionId";
+  const payments = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+    SELECT p.id
+    FROM "Payment" p
+    JOIN "Appointment" a ON a.id = p."appointmentId"
+    WHERE a.${Prisma.raw(`"${relation}"`)} = ${entityId}
+      AND p."paymentStatus" = 'SUCCEEDED'
+      AND p."deletedAt" IS NULL
+    ORDER BY p."createdAt" ASC, p.id ASC
+  `);
+  const markers = payments.map(({ id }) => expiredRefundMarker(arm, id));
+  const stamped = await stampRefundsOwed(tx, markers);
+  if (stamped !== markers.length) {
+    throw new Error(`${arm} refund marker changed; expiry was rolled back`);
+  }
+  return markers;
+}
+
+/** Recover paid approved-subscription expiries whose exact history reason identifies this arm. */
+async function stageLegacyApprovedUnallocatedRefunds(
+  limit: number,
+): Promise<RefundOwedMarker[]> {
+  return withSerializableRetry(async () =>
+    prisma.$transaction(
+      async (tx) => {
+        const reason = `Auto-expired: APPROVED with zero allocated sessions for more than ${PENDING_EXPIRATION_DAYS} days`;
+        const rows = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+          SELECT p.id
+          FROM "Payment" p
+          JOIN "Appointment" a ON a.id = p."appointmentId"
+          JOIN "Subscription" request ON request.id = a."subscriptionId"
+          WHERE request."requestStatus" = 'EXPIRED'
+            AND p."paymentStatus" = 'SUCCEEDED'
+            AND p."deletedAt" IS NULL
+            AND p."refundOwedKey" IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM "Refund" prior
+              WHERE prior."dedupeKey" = ${expiredRefundKey("approved-unallocated", "")} || p.id
+                AND prior.status IN ('SUCCEEDED', 'PENDING')
+            )
+            AND ${refundableBalancePaiseSql(Prisma.sql`p.id`, Prisma.sql`p.amount`)} > 0
+            AND EXISTS (
+              SELECT 1 FROM "BookingStatusHistory" h
+              WHERE h."entityId" = request.id
+                AND h.entity = 'SUBSCRIPTION'
+                AND h."fromStatus" = 'APPROVED'
+                AND h."toStatus" = 'EXPIRED'
+                AND h."actorUserId" IS NULL
+                AND h.reason = ${reason}
+            )
+          ORDER BY p."createdAt" ASC, p.id ASC
+          LIMIT ${limit + 1}
+        `);
+        const eligible = rows.slice(0, limit);
+        const markers = eligible.map(({ id }) =>
+          expiredRefundMarker("approved-unallocated", id),
+        );
+        const stamped = await stampRefundsOwed(tx, markers);
+        if (stamped !== markers.length) {
+          throw new Error("approved-unallocated legacy refund marker changed");
+        }
+        return markers;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
+  );
+}
+
+async function driveExpiredRefunds(markers: readonly RefundOwedMarker[]) {
+  const out = { issued: 0, failures: 0, failureMsgs: [] as string[] };
+  for (const marker of markers) {
+    const outcome = await driveRefundOwed(marker);
+    if (outcome.kind === "refunded") out.issued += 1;
+    else if (outcome.kind === "failed") {
+      out.failures += 1;
+      out.failureMsgs.push(
+        `Refund failed for payment ${marker.paymentId}: ${outcome.error}`,
+      );
+    }
+  }
+  return out;
+}
+
 /**
  * Expire stale PENDING consultations and release the tentative slots they
  * pinned. The slot release happens HERE rather than waiting for the
@@ -378,42 +482,58 @@ async function expirePendingConsultations(
     // leave an EXPIRED request still holding the consultant's calendar. A
     // lost CAS (approved between the read and the write) is skipped, not fatal.
     const expiredIds: string[] = [];
+    const markers: RefundOwedMarker[] = [];
     let slotsReleased = 0;
     let skipped = 0;
     for (const stale of staleConsultations) {
       try {
-        const releasedForOne = await prisma.$transaction(async (tx) => {
-          await transitionConsultationRequest(tx, {
-            where: {
-              id: stale.id,
-              // Repeat the cohort read's age predicate inside the CAS WHERE so
-              // a reschedule-refreshed requestedAt between read and write
-              // matches zero rows instead of expiring a live request.
-              requestedAt: { lt: expirationDate },
-              ...NO_UNPLACED_SLOT,
-              appointment: {
-                rescheduleRequests: {
-                  none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
+        const stagedForOne = await withSerializableRetry(() =>
+          prisma.$transaction(
+            async (tx) => {
+              await transitionConsultationRequest(tx, {
+                where: {
+                  id: stale.id,
+                  // Repeat the cohort read's age predicate inside the CAS WHERE so
+                  // a reschedule-refreshed requestedAt between read and write
+                  // matches zero rows instead of expiring a live request.
+                  requestedAt: { lt: expirationDate },
+                  ...NO_UNPLACED_SLOT,
+                  appointment: {
+                    rescheduleRequests: {
+                      none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
+                    },
+                  },
                 },
-              },
+                to: AppointmentStatus.EXPIRED,
+                fromIn: [AppointmentStatus.PENDING],
+              });
+              const owed = await stageExpiredRefunds(
+                tx,
+                "pending-consultation",
+                stale.id,
+              );
+              if (!stale.appointment) return { released: 0, markers: owed };
+              const released = await transitionOccurrenceCompletion(tx, {
+                where: {
+                  appointmentId: stale.appointment.id,
+                  isTentative: true,
+                  deletedAt: null,
+                },
+                to: OccurrenceCompletionStatus.CANCELLED,
+                data: { deletedAt: new Date() },
+                allowZero: true,
+              });
+              return { released, markers: owed };
             },
-            to: AppointmentStatus.EXPIRED,
-            fromIn: [AppointmentStatus.PENDING],
-          });
-          if (!stale.appointment) return 0;
-          return transitionOccurrenceCompletion(tx, {
-            where: {
-              appointmentId: stale.appointment.id,
-              isTentative: true,
-              deletedAt: null,
+            {
+              ...SLOT_TRANSITION_TX_OPTIONS,
+              isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
             },
-            to: OccurrenceCompletionStatus.CANCELLED,
-            data: { deletedAt: new Date() },
-            allowZero: true,
-          });
-        }, SLOT_TRANSITION_TX_OPTIONS);
+          ),
+        );
         expiredIds.push(stale.id);
-        slotsReleased += releasedForOne;
+        slotsReleased += stagedForOne.released;
+        markers.push(...stagedForOne.markers);
         // #1703 D2 — after the commit: the consultee learns nobody answered.
         if (stale.appointment && stale.requestedBy?.user) {
           await notifyConsulteeRequestExpired({
@@ -439,10 +559,7 @@ async function expirePendingConsultations(
       `✅ Expired ${expiredIds.length} PENDING consultations (${skipped} moved on before the write)`,
     );
     console.log(`✅ Released ${slotsReleased} tentative slots from them`);
-    const refunds = await refundPaymentsForExpired(
-      "pending-consultation",
-      expiredIds,
-    );
+    const refunds = await driveExpiredRefunds(markers);
     errors.push(...refunds.failureMsgs);
 
     return { expired: expiredIds.length, slotsReleased, ...refunds, errors };
@@ -721,6 +838,14 @@ async function expireApprovedUnallocatedSubscriptions(
   errors: string[];
 }> {
   const errors: string[] = [];
+  let legacy: RefundOwedMarker[] = [];
+  try {
+    legacy = await stageLegacyApprovedUnallocatedRefunds(limits.maxRequests);
+  } catch (error) {
+    errors.push(
+      `Failed to stage legacy approved-unallocated refunds: ${error}`,
+    );
+  }
   const cutoff = new Date(
     Date.now() - PENDING_EXPIRATION_DAYS * 24 * 60 * 60 * 1000,
   );
@@ -743,8 +868,16 @@ async function expireApprovedUnallocatedSubscriptions(
     });
     warnIfCapped("subscription", stale.length, limits);
 
-    if (stale.length === 0)
-      return { expired: 0, issued: 0, failures: 0, errors };
+    if (stale.length === 0) {
+      const refunds = await driveExpiredRefunds(legacy);
+      errors.push(...refunds.failureMsgs);
+      return {
+        expired: 0,
+        issued: refunds.issued,
+        failures: refunds.failures,
+        errors,
+      };
+    }
 
     console.log(
       `Found ${stale.length} APPROVED subscriptions with zero allocated sessions for >${PENDING_EXPIRATION_DAYS} days`,
@@ -757,25 +890,37 @@ async function expireApprovedUnallocatedSubscriptions(
     // moves through the CAS helper, and the refund is handed exactly the ids
     // the helper transitioned.
     const expiredIds: string[] = [];
+    const markers = [...legacy];
     let skipped = 0;
     for (const subscription of stale) {
       try {
-        await prisma.$transaction((tx) =>
-          transitionSubscriptionRequest(tx, {
-            where: {
-              id: subscription.id,
-              updatedAt: { lt: cutoff },
-              ...NO_LIVE_SESSION,
+        const stagedForOne = await withSerializableRetry(() =>
+          prisma.$transaction(
+            async (tx) => {
+              await transitionSubscriptionRequest(tx, {
+                where: {
+                  id: subscription.id,
+                  updatedAt: { lt: cutoff },
+                  ...NO_LIVE_SESSION,
+                },
+                to: AppointmentStatus.EXPIRED,
+                // Deliberate subset of REQUEST_ALLOWED_FROM.EXPIRED: this cohort
+                // is the abandoned-APPROVED shape only.
+                fromIn: [AppointmentStatus.APPROVED],
+                actorUserId: null,
+                reason: `Auto-expired: APPROVED with zero allocated sessions for more than ${PENDING_EXPIRATION_DAYS} days`,
+              });
+              return stageExpiredRefunds(
+                tx,
+                "approved-unallocated",
+                subscription.id,
+              );
             },
-            to: AppointmentStatus.EXPIRED,
-            // Deliberate subset of REQUEST_ALLOWED_FROM.EXPIRED: this cohort
-            // is the abandoned-APPROVED shape only.
-            fromIn: [AppointmentStatus.APPROVED],
-            actorUserId: null,
-            reason: `Auto-expired: APPROVED with zero allocated sessions for more than ${PENDING_EXPIRATION_DAYS} days`,
-          }),
+            { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          ),
         );
         expiredIds.push(subscription.id);
+        markers.push(...stagedForOne);
         // #1589 N-P0-03 — after the commit: the consultee learns why, and
         // that the refund below follows.
         const notice = expiryNoticeFor(
@@ -796,10 +941,7 @@ async function expireApprovedUnallocatedSubscriptions(
         (skipped > 0 ? ` (${skipped} moved on before the write)` : ""),
     );
 
-    const refunds = await refundPaymentsForExpired(
-      "approved-unallocated",
-      expiredIds,
-    );
+    const refunds = await driveExpiredRefunds(markers);
     errors.push(...refunds.failureMsgs);
 
     return {

@@ -8111,6 +8111,23 @@ model OrgDataExportJob {
   @@index([organizationId, createdAt(sort: Desc)])
 }
 
+/// Exact vendor object ownership for a single immutable export attempt.
+/// Deliberately has no parent FK so erasing an org/job cannot erase deletion work.
+model OrgDataExportArtifact {
+  exportJobId      String
+  attemptStartedAt DateTime @db.Timestamptz(3)
+  bucket           String
+  storagePath      String
+  expiresAt        DateTime @db.Timestamptz(3)
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+  lastDeleteAttemptedAt DateTime? @db.Timestamptz(3)
+  fileSizeBytes    BigInt?
+
+  @@id([exportJobId, attemptStartedAt])
+  @@unique([bucket, storagePath])
+  @@index([lastDeleteAttemptedAt, expiresAt, createdAt])
+}
+
 enum OrgDataExportStatus {
   PENDING
   PROCESSING
