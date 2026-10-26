@@ -113,14 +113,32 @@ For the email map, the pre-launch delivery guard and ops alert routing, see [doc
 
 ## Operational job absence checks
 
-When documenting or verifying cron alerts, include provider delivery timing and
-repeat throttling. Familiarise's approved project-wide email digest policy is
-60/60 seconds; the cron alert repeats at most every 30 minutes. A resolved issue
-can be excluded before a digest is sent, so a successful test email or an
-unrelated error email does not close the missed-run receipt gate. Verify the
-actual issue in the received message and follow the
-[operator runbook](../../../docs/maintenance/00-betterstack-setup.md) for reserved
-configuration access, bounded restoration and the next ordinary recovery tick.
+Ticker liveness needs an enabled, unmuted `cron-tick` monitor and an enabled
+notification alert connected to that exact monitor source. Verify the operator
+recipient and production environment; a general high-priority issue rule is not
+delivery proof. Read back both configurations, observe an accepted normal
+check-in, then prove one controlled missed-check-in notification reaches the
+operator and restore the normal configuration. Do not stop production jobs,
+create another paid monitor, or disable another project's monitor for the drill.
+Serialize the watchdog and `finally` cleanup through one restoration routine;
+compare current state before writing and escalate unexpected drift. Without
+verified conditional updates, arrange exclusive operator configuration access.
+Preserve the required monitor identity fields and complete configuration in the
+update payload, changing only the drill settings back to their saved values.
+Record unavailable cron-update access as pending; alert-write access alone does
+not enable the cron source. See the
+[ticker missed-run runbook](../../../docs/maintenance/00-betterstack-setup.md#ticker-missed-run-alerts).
+
+Check project email digest timing as well as the alert route. Familiarise's
+owner-approved minimum/maximum is 60/60 seconds; these are project-wide email
+settings, separate from the cron alert's 30-minute repeat throttle. Sentry's
+published digest path excludes resolved issues, so a brief incident can disappear
+before an email is built. A successful test notification proves only that test
+path. Verify receipt of the actual missed-check-in issue, wait out its repeat
+interval before another drill, and keep the watchdog deadline inside the reserved
+operator window. Treat `isUpserting` as runtime metadata; do not send it as a
+restoration field or mistake its manual-edit transition for configuration drift.
+
 
 `GET /api/health/jobs` is a bearer-protected read-only capability freshness probe.
 It returns 503 for missing/overdue COMPLETED evidence or an unreadable history,
