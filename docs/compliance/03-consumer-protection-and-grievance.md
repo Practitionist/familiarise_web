@@ -4,7 +4,7 @@
 
 ## 1. Corporate Identity, Live-MX Mailbox & Statutory SLA Standard
 
-Familiarise publishes verified corporate registry disclosures from `lib/company.ts` (`COMPANY_INFO`, rendered by the footer, `/about`, `/contactus`, `/grievance` and the contact block of `/terms`, `/privacy` and `/refund`) and binds consumer support, grievance redressal, and content/review moderation SLAs to the strictest applicable Indian statutory ceiling:
+Familiarise publishes verified corporate registry disclosures from `lib/company.ts` (`COMPANY_INFO`, rendered by the footer, `/about`, `/contactus`, `/grievance` and the contact block of `/terms`, `/privacy` and `/refund`, and printed as the supplier on tax invoices, credit notes and IRP payloads) and binds consumer support, grievance redressal, and content/review moderation SLAs to the strictest applicable Indian statutory ceiling:
 
 - **Registered Entity, CIN & Registered Office:** `Practitionist (OPC) Private Limited`, `CIN: U62012HR2026OPC146217`, the mailing address on record at the ROC (M3M Merlin, Sector 67, Gurgaon 122018, Haryana), and registered jurisdiction `Haryana, India` (`process.env.NEXT_PUBLIC_COMPANY_JURISDICTION?.trim() || "Haryana, India"`). PAN and TAN are never published.
 - **Live-MX Public Mailbox:** `COMPANY_INFO.email` is the literal `support@practitionist.com`, shared by `GRIEVANCE_OFFICER.email`. It deliberately does not read `CONTACT_INBOX_ADDRESS`, which is the private delivery inbox for contact-form submissions and may be a personal address; a non-public env value also rendered differently on the server and in the client bundle. `practitionist.com` holds live MX records, whereas `familiarisenow.com` has none and is never advertised as a mailbox address.

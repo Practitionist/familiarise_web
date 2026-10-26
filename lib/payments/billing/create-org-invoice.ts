@@ -166,7 +166,7 @@ export async function createOrgInvoice(
     supplierState = supplierStateCode();
   } catch (err) {
     if (!(err instanceof SupplierStateMismatchError)) throw err;
-    // The mismatch names the GSTIN and env value — ops detail, not caller copy.
+    // The mismatch names the GSTIN and registered state: ops detail, not caller copy.
     reportSentryError(err, { subsystem: "billing", op: "createOrgInvoice" });
     throw new OpsRefusal(
       "INVOICE_SERVICE_UNAVAILABLE",

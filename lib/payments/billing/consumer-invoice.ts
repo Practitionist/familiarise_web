@@ -38,6 +38,7 @@ import {
   COMMERCIAL_CREDIT_NOTE_REASON_PREFIX,
   isPastGstCreditNoteCutoff,
 } from "@/lib/compliance/gst-credit-note-cutoff";
+import { REGISTERED_OFFICE } from "@/lib/company";
 import { getPlatformSupplier } from "@/lib/pdf/supplier";
 import { generateConsumerInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { generateConsumerCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
@@ -176,48 +177,50 @@ export function deriveConsumerInvoiceTax(params: {
  * Resolve the platform's OWN state for a statutory document.
  *
  * PURE. The first two digits of a GSTIN are the state of registration by law,
- * so the GSTIN is authoritative and `SUPPLIER_STATE_CODE` is only the fallback
- * for a GSTIN that carries none. A disagreement between the two is a
- * configuration fault, never a fact about the supply, and it decides CGST+SGST
- * against IGST on a gapless Rule 46 number that cannot be corrected in place —
- * so the caller must fail closed rather than pick one (#1365).
+ * so the GSTIN is authoritative; the registered office's state is the
+ * fallback while no GSTIN is set. A disagreement means the GSTIN belongs to
+ * another registration than the address the documents print, and it decides
+ * CGST+SGST against IGST on a gapless Rule 46 number that cannot be corrected
+ * in place, so the caller fails closed rather than pick one.
  */
 export function resolveSupplierStateCode(
   gstin: string | null | undefined,
-  envStateCode: string | null | undefined,
+  registeredStateCode: string,
 ): {
   stateCode: string | null;
-  mismatch: { fromGstin: string; fromEnv: string } | null;
+  mismatch: { fromGstin: string; registered: string } | null;
 } {
   const fromGstin = numericStateCode(gstin, null);
-  const fromEnv = numericStateCode(null, envStateCode);
-  if (fromGstin && fromEnv && fromGstin !== fromEnv) {
-    return { stateCode: null, mismatch: { fromGstin, fromEnv } };
+  const registered = numericStateCode(null, registeredStateCode);
+  if (fromGstin && registered && fromGstin !== registered) {
+    return { stateCode: null, mismatch: { fromGstin, registered } };
   }
-  return { stateCode: fromGstin ?? fromEnv, mismatch: null };
+  return { stateCode: fromGstin ?? registered, mismatch: null };
 }
 
-/** #1447 — GSTIN and SUPPLIER_STATE_CODE disagree; the caller refuses, it never picks one. */
+function mismatchMessage(mismatch: {
+  fromGstin: string;
+  registered: string;
+}): string {
+  return `Supplier state is ambiguous: PLATFORM_GSTIN says "${mismatch.fromGstin}", the registered office in lib/company.ts says "${mismatch.registered}".`;
+}
+
+/** The GSTIN and the registered office disagree; the caller refuses, it never picks one. */
 export class SupplierStateMismatchError extends Error {
-  constructor(readonly mismatch: { fromGstin: string; fromEnv: string }) {
-    super(
-      `Supplier state is ambiguous: PLATFORM_GSTIN says "${mismatch.fromGstin}", SUPPLIER_STATE_CODE says "${mismatch.fromEnv}".`,
-    );
+  constructor(readonly mismatch: { fromGstin: string; registered: string }) {
+    super(mismatchMessage(mismatch));
     this.name = "SupplierStateMismatchError";
   }
 }
 
-/**
- * #1447 — the platform's own numeric state for the org rails, GSTIN-first
- * like the B2C mint; "29" is the historical default when neither source is set.
- */
+/** The platform's own numeric state for the org rails, GSTIN-first like the B2C mint. */
 export function supplierStateCode(): string {
   const { stateCode, mismatch } = resolveSupplierStateCode(
     getPlatformSupplier()?.gstin,
-    process.env.SUPPLIER_STATE_CODE,
+    REGISTERED_OFFICE.stateCode,
   );
   if (mismatch) throw new SupplierStateMismatchError(mismatch);
-  return stateCode ?? "29";
+  return stateCode ?? REGISTERED_OFFICE.stateCode;
 }
 
 /** Funding sources that make a payment ORG-funded. Those supplies are invoiced
@@ -376,15 +379,13 @@ export async function mintConsumerInvoice(
 
   const { stateCode: supplierStateCode, mismatch } = resolveSupplierStateCode(
     supplier.gstin,
-    process.env.SUPPLIER_STATE_CODE,
+    REGISTERED_OFFICE.stateCode,
   );
   if (mismatch) {
     // Fail closed exactly like a missing PLATFORM_GSTIN: minting under the
     // wrong state puts IGST on an intra-state supply (or the reverse) and the
     // document then contradicts the GST_PAYABLE credit settlement posted.
-    const ambiguous = new Error(
-      `Supplier state is ambiguous: PLATFORM_GSTIN says "${mismatch.fromGstin}", SUPPLIER_STATE_CODE says "${mismatch.fromEnv}".`,
-    );
+    const ambiguous = new Error(mismatchMessage(mismatch));
     reportSentryError(ambiguous, {
       subsystem: "payments",
       level: "warning",

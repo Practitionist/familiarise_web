@@ -55,6 +55,7 @@ import {
   type ConsumerCreditNoteAmounts,
 } from "../../lib/payments/billing/consumer-invoice";
 import { getPlatformSupplier } from "../../lib/pdf/supplier";
+import { REGISTERED_OFFICE } from "../../lib/company";
 import { recordSystemError } from "../../lib/enterprise/system-events";
 
 // The mint's fail-closed branch is the only I/O-bearing path pinned here; the
@@ -293,53 +294,54 @@ describe("B2C place of supply (s.12(2)(b))", () => {
 });
 
 /**
- * 4. The platform's own state (#1365). The first two digits of a GSTIN are the
- *    state of registration by law, so the GSTIN is authoritative and
- *    `SUPPLIER_STATE_CODE` is only the fallback. Reading the env var alone put
- *    IGST on an intra-state supply whenever it was unset, and picking either
- *    one when they disagree burns a gapless Rule 46 number on a document that
- *    cannot be corrected in place.
+ * 4. The platform's own state. The first two digits of a GSTIN are the state
+ *    of registration by law, so the GSTIN is authoritative and the registered
+ *    office in lib/company.ts is only the fallback; a disagreement refuses.
  */
 describe("the supplier's own state", () => {
+  const HARYANA_GSTIN = "06AABCU9603R1ZM";
   const KARNATAKA_GSTIN = "29AABCU9603R1ZM";
 
-  it("comes from the GSTIN when the env code is unset, and keeps the supply intra-state", () => {
+  it("comes from the GSTIN and keeps a same-state supply intra-state", () => {
     const { stateCode, mismatch } = resolveSupplierStateCode(
-      KARNATAKA_GSTIN,
-      undefined,
+      HARYANA_GSTIN,
+      REGISTERED_OFFICE.stateCode,
     );
     expect(mismatch).toBeNull();
-    expect(stateCode).toBe("29");
+    expect(stateCode).toBe("06");
 
     const tax = deriveConsumerInvoiceTax({
       totalPaise: 118_000,
       taxAmountPaise: 18_000,
-      buyerStateCode: "29",
+      buyerStateCode: "06",
       supplierStateCode: stateCode,
       buyerCountry: "IN",
     });
     expect(tax.igstPaise).toBe(0);
     expect(tax.cgstPaise + tax.sgstPaise).toBe(18_000);
-    expect(tax.placeOfSupply).toBe("29");
+    expect(tax.placeOfSupply).toBe("06");
   });
 
-  it("falls back to the env code only when the GSTIN carries no state", () => {
-    expect(resolveSupplierStateCode(null, "KA").stateCode).toBe("29");
+  it("falls back to the registered office while no GSTIN is set", () => {
+    expect(
+      resolveSupplierStateCode(null, REGISTERED_OFFICE.stateCode).stateCode,
+    ).toBe("06");
   });
 
-  it("refuses to choose when the two disagree", () => {
-    const resolved = resolveSupplierStateCode(KARNATAKA_GSTIN, "MH");
+  it("refuses to choose when the GSTIN contradicts the registered office", () => {
+    const resolved = resolveSupplierStateCode(
+      KARNATAKA_GSTIN,
+      REGISTERED_OFFICE.stateCode,
+    );
     expect(resolved.stateCode).toBeNull();
-    expect(resolved.mismatch).toEqual({ fromGstin: "29", fromEnv: "27" });
+    expect(resolved.mismatch).toEqual({ fromGstin: "29", registered: "06" });
   });
 
   it("mints nothing and records the fault when the two disagree", async () => {
-    const previousEnv = process.env.SUPPLIER_STATE_CODE;
-    process.env.SUPPLIER_STATE_CODE = "MH";
     (getPlatformSupplier as jest.Mock).mockReturnValue({
-      name: "Familiarise",
+      name: "Practitionist (OPC) Private Limited",
       gstin: KARNATAKA_GSTIN,
-      address: "Bengaluru, Karnataka",
+      address: "Gurgaon, Haryana",
     });
     const create = jest.fn();
     const tx = {
@@ -374,27 +376,23 @@ describe("the supplier's own state", () => {
       },
     } as unknown as Parameters<typeof mintConsumerInvoice>[0];
 
-    try {
-      const result = await mintConsumerInvoice(tx, { paymentId: "pay_1" });
-      expect(result.consumerInvoiceId).toBeNull();
-      expect(create).not.toHaveBeenCalled();
-      expect(recordSystemError).toHaveBeenCalledWith(
-        expect.objectContaining({
-          summary: expect.stringMatching(/supplier state is ambiguous/i),
-        }),
-      );
-    } finally {
-      process.env.SUPPLIER_STATE_CODE = previousEnv;
-    }
+    const result = await mintConsumerInvoice(tx, { paymentId: "pay_1" });
+    expect(result.consumerInvoiceId).toBeNull();
+    expect(create).not.toHaveBeenCalled();
+    expect(recordSystemError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        summary: expect.stringMatching(/supplier state is ambiguous/i),
+      }),
+    );
   });
 });
 
 describe("a payment with no declared state", () => {
   it("is invoiced on the buyer's profile state, recorded as PROFILE_ON_RECORD", async () => {
     (getPlatformSupplier as jest.Mock).mockReturnValue({
-      name: "Familiarise",
-      gstin: "29AABCU9603R1ZM",
-      address: "Bengaluru, Karnataka",
+      name: "Practitionist (OPC) Private Limited",
+      gstin: "06AABCU9603R1ZM",
+      address: "Gurgaon, Haryana",
     });
     const create = jest.fn(async () => ({ id: "inv_1" }));
     const tx = {

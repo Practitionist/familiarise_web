@@ -34,25 +34,18 @@ import { reportConfigSkip, type ConfigSkip } from "@/lib/cron/config-skip";
 import * as Sentry from "@sentry/nextjs";
 import { isValidGstin } from "@/lib/compliance/gst";
 import { supplierStateCode } from "@/lib/payments/billing/consumer-invoice";
+import { COMPANY_INFO, REGISTERED_OFFICE } from "@/lib/company";
 
-// #703 — platform-side seller constants. GSTIN mirrors the invoice-PDF
-// route (PLATFORM_GSTIN); the rest are env-overridable for a future
-// per-region supplier. Seller state code is derived from the GSTIN prefix
-// inside the mapper, SUPPLIER_STATE_CODE is the fallback.
-// CR #1234 — the dummy-GSTIN fallback is gone: an unset or malformed
-// PLATFORM_GSTIN yields null, the uploader skips the batch item with a
-// logged reason, and buildIrpPayload's own missing-GSTIN guard stays the
-// second net. No statutory payload may carry a fabricated identity.
+// The legal entity and registered office come from lib/company.ts; only the
+// GSTIN is env. A malformed or unset PLATFORM_GSTIN skips the run.
 const SELLER = (() => {
   const gstin = process.env.PLATFORM_GSTIN?.trim();
   return {
     gstin: gstin && isValidGstin(gstin) ? gstin : null,
-    legalName:
-      process.env.SUPPLIER_LEGAL_NAME ??
-      "Familiarise Technologies Private Limited",
-    address1: process.env.SUPPLIER_ADDR1 ?? "Koramangala 1st Block",
-    location: process.env.SUPPLIER_LOCATION ?? "Bangalore",
-    pincode: process.env.SUPPLIER_PINCODE ?? "560034",
+    legalName: COMPANY_INFO.name,
+    address1: REGISTERED_OFFICE.line1,
+    location: REGISTERED_OFFICE.city,
+    pincode: REGISTERED_OFFICE.pincode,
   };
 })();
 
@@ -278,8 +271,8 @@ async function runIrpUploaderUnlocked(opts: {
   if (!sellerGstin) {
     return configSkip("PLATFORM_GSTIN not configured", opts.windowStart);
   }
-  // #1447 — GSTIN-first seller state; a GSTIN/env mismatch is the same ENV
-  // outage as a missing GSTIN, so the run is skipped and every row stays PENDING.
+  // GSTIN-first seller state; a GSTIN that contradicts the registered office is
+  // the same config outage as a missing GSTIN, so every row stays PENDING.
   let seller: SellerIdentity;
   try {
     seller = { gstin: sellerGstin, stateCode: supplierStateCode() };
