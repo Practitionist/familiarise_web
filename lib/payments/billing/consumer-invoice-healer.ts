@@ -5,7 +5,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import type { Prisma } from "@prisma/client";
+import type { Prisma, RefundStatus } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 import { reportConfigSkip, type ConfigSkip } from "@/lib/cron/config-skip";
@@ -22,6 +22,9 @@ import { getPlatformSupplier } from "@/lib/pdf/supplier";
 
 /** Payments created before this lookback are not healed automatically. */
 export const CONSUMER_INVOICE_LOOKBACK_DAYS = 90;
+
+/** A refund in these states needs a credit note, so its supply is left to ops. */
+const OPEN_OR_DONE_REFUND: RefundStatus[] = ["PENDING", "SUCCEEDED"];
 
 /** Leaves the capture path's own post-commit mint time to land first. */
 const CAPTURE_GRACE_MS = 15 * 60 * 1000;
@@ -77,8 +80,15 @@ export async function healConsumerInvoices(opts: {
       for (const paymentId of ids) {
         if (pastDeadline()) break;
         try {
-          const { consumerInvoiceId } = await prisma.$transaction((tx) =>
-            mintConsumerInvoice(tx, { paymentId }),
+          const { consumerInvoiceId } = await prisma.$transaction(
+            async (tx) => {
+              // The cohort's refund predicate, repeated where the number is taken.
+              const refunded = await tx.refund.count({
+                where: { paymentId, status: { in: OPEN_OR_DONE_REFUND } },
+              });
+              if (refunded > 0) return { consumerInvoiceId: null };
+              return mintConsumerInvoice(tx, { paymentId });
+            },
           );
           if (consumerInvoiceId) result.minted += 1;
           else result.declined += 1;
@@ -106,7 +116,7 @@ async function readCohort(
     deletedAt: null,
     consumerInvoice: null,
     // A refunded supply needs its invoice and credit note together; ops mint those.
-    refunds: { none: { status: { in: ["PENDING", "SUCCEEDED"] } } },
+    refunds: { none: { status: { in: OPEN_OR_DONE_REFUND } } },
     createdAt: {
       gte: new Date(
         now.getTime() - CONSUMER_INVOICE_LOOKBACK_DAYS * 86_400_000,
