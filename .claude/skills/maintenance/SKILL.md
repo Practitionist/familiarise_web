@@ -82,6 +82,12 @@ production capacity claims.
 
 ## Worktree verification
 
+Every infrastructure, maintenance or observability PR updates its applicable
+domain docs and skill in the same change. Document triggers, ownership/leases,
+failure and recovery behavior, operational prerequisites, verification and
+rollback where developers will find them. Keep the current index and links
+accurate; GitHub comments supplement the runbook rather than replacing it.
+
 The Jest configuration keeps an explicit `@/` source mapping while retaining Next.js’s default mocks and transforms. Run targeted suites through the repository config. A CLI `--moduleNameMapper` replaces the entire map and can discard `server-only`, asset and Redis-edge mocks; do not use it as a shortcut for alias resolution.
 
 When merging a worker migration, port its roster, limit, timeout and ledger-yield changes into the shared catalog; do not restore the adapter’s former inline schedule. Check generated output against the same inputs before and after generator refactors. Keep blank workflow names within their own source block and preserve escaped Markdown pipes. See `references/cron-ticker.md` for the current document-purge schedule and mocked verification boundary.
