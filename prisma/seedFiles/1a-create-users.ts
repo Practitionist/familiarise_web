@@ -671,12 +671,12 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
           create: createConsulteeProfileData(),
         };
       } else if (userRole === "STAFF") {
-        userData.twoFactorEnabled = true;
+        userData.twoFactorEnabled = !isQaOperatorEmail(userData.email);
         userData.staffProfile = {
           create: createStaffProfileData(),
         };
       } else if (userRole === "ADMIN") {
-        userData.twoFactorEnabled = true;
+        userData.twoFactorEnabled = !isQaOperatorEmail(userData.email);
         userData.adminProfile = {
           create: createAdminProfileData(adminIndex - 1),
         };
