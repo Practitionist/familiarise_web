@@ -20,7 +20,9 @@ Every call has a positive integer row limit: default 100, maximum 500. The HTTP 
 
 There are eight phases: stale-heartbeat closure, history deletion, two payload scrubs, three outbox deletions, and email-event deletion. Each reads at most `limit + 1` IDs and mutates at most `limit` selected rows. Results include each mutation count and `hasMore`. The extra row detects another page; it is never mutated by that slice. A successful slice with `hasMore: true` does not establish a drained backlog.
 
-A fixed 16-second start budget covers the core, including lease admission. Before starting a read or write, the worker checks the deadline. Unattempted phases report continuation. An already-running SQL statement can outlive that deadline; database query/connection timeouts and runtime limits still apply. Row bounds and a start budget are not a measured latency guarantee.
+A fixed 16-second start budget is passed from the HTTP request or batch driver
+through the core, including setup and lease admission. Every batch slice reuses
+the original start time rather than starting a new budget. Before starting a read or write, the worker checks the deadline. Unattempted phases report continuation. An already-running SQL statement can outlive that deadline; database query/connection timeouts and runtime limits still apply. Row bounds and a start budget are not a measured latency guarantee.
 
 The existing Actions entrypoint requests up to 40 slices of 500 within its own 16-second start budget, stopping when drained or when a slice makes no progress. It logs each slice. It does not sleep, spawn another worker, or silently drain forever. A SQL failure propagates to the route/runner; an incomplete cohort remains discoverable on a later invocation. Repeated daily throughput and oldest-eligible age still need deployment observation before a scheduler handoff.
 

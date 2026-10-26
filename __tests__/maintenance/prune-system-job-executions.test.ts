@@ -264,6 +264,26 @@ it("does not swallow a database error or continue to later destructive phases", 
   expect(deleteJobs).not.toHaveBeenCalled();
 });
 
+it("does not restart an already elapsed caller budget", async () => {
+  const result = await pruneSystemJobExecutions({
+    limit: 1,
+    startedAt: NOW.getTime() - 16_000,
+  });
+  expect(result).toMatchObject({ hasMore: true, stranded: 0, pruned: 0 });
+  for (const find of [
+    findJobs,
+    findEmails,
+    findBatches,
+    findNotifications,
+    findEvents,
+  ]) {
+    expect(find).not.toHaveBeenCalled();
+  }
+  expect(updateJobs).not.toHaveBeenCalled();
+  expect(deleteJobs).not.toHaveBeenCalled();
+  expect(executeRaw).not.toHaveBeenCalled();
+});
+
 it("stops admitting reads and writes when the shared start budget expires", async () => {
   findJobs.mockImplementationOnce(async () => {
     jest.advanceTimersByTime(16_000);

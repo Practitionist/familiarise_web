@@ -11,6 +11,7 @@ jest.mock("@sentry/nextjs", () => ({
 jest.mock("../../lib/maintenance-cron", () => ({
   assertNotInMaintenance: jest.fn(),
   MaintenanceActiveError: class MaintenanceActiveError extends Error {},
+  MaintenanceUnavailableError: class MaintenanceUnavailableError extends Error {},
 }));
 jest.mock("../../lib/observability/throttled-capture", () => ({
   captureThrottled: jest.fn(),
@@ -23,6 +24,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   process.env.CRON_SECRET = "test-cron-secret";
 });
+afterEach(() => jest.restoreAllMocks());
 afterAll(() => {
   if (original === undefined) delete process.env.CRON_SECRET;
   else process.env.CRON_SECRET = original;
@@ -42,10 +44,19 @@ function handlers() {
   if (!value) throw new Error("Missing retention registry entry");
   return value;
 }
-it("forwards a clamped row limit and exposes continuation", async () => {
+it("forwards the request start budget and clamped row limit through guard delay", async () => {
+  const startedAt = 123_456;
+  let now = startedAt;
+  jest.spyOn(Date, "now").mockImplementation(() => now);
+  const { assertNotInMaintenance } = jest.requireMock<{
+    assertNotInMaintenance: jest.Mock;
+  }>("../../lib/maintenance-cron");
+  assertNotInMaintenance.mockImplementationOnce(async () => {
+    now += 16_000;
+  });
   prune.mockResolvedValue({ success: true, hasMore: true });
   const response = await handlers().POST(request("?limit=900"));
-  expect(prune).toHaveBeenCalledWith({ limit: 500 });
+  expect(prune).toHaveBeenCalledWith({ limit: 500, startedAt });
   expect(response.status).toBe(200);
   expect(await response.json()).toEqual({ success: true, hasMore: true });
 });

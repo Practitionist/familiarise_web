@@ -253,10 +253,10 @@ async function pruneMessagingRetentionPages(
 
 /** Eight pages in total; an interrupted run resumes from remaining eligible rows. */
 export async function pruneSystemJobExecutions(
-  opts: { limit?: number } = {},
+  opts: { limit?: number; startedAt?: number } = {},
 ): Promise<SystemJobExecutionPruneResult> {
   const limit = limitSchema.parse(opts.limit);
-  const deadline = Date.now() + WORK_BUDGET_MS;
+  const deadline = (opts.startedAt ?? Date.now()) + WORK_BUDGET_MS;
   return withCronLock(
     "prune-system-job-executions",
     { failMode: "closed" },

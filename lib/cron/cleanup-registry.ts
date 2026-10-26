@@ -699,10 +699,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "prune-system-job-executions": () =>
       cleanupRoute({
         job: "prune-system-job-executions",
-        run: async (req) => {
+        run: async (req, { startedAt }) => {
           const { pruneSystemJobExecutions } =
             await import("@/scripts/cleanup/prune-system-job-executions");
-          return pruneSystemJobExecutions({ limit: parseLimitParam(req) });
+          return pruneSystemJobExecutions({
+            limit: parseLimitParam(req),
+            startedAt,
+          });
         },
         summarize: (r) => ({
           pruned: r.pruned,
