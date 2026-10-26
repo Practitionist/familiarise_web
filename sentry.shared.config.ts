@@ -6,6 +6,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { isExpectedError } from "@/lib/observability/expected";
+import { isTranslateDomMutationNoise } from "@/lib/observability/translate-dom-noise";
 import {
   scrubSentryBreadcrumb,
   scrubSentryEvent,
@@ -483,6 +484,7 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     // re-levels one. (FAMILIARISE_WEB-10)
     beforeSend(event, hint) {
       stripUngatedPII(event);
+      if (isTranslateDomMutationNoise(event)) return null;
       if (isExpectedError(hint?.originalException)) {
         event.level = "warning";
         event.tags = { ...event.tags, expected: "true" };
