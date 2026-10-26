@@ -61,7 +61,7 @@ describe("reconcile-orphaned-confirmations — DM not permitted (#1708)", () => 
   beforeEach(() => {
     jest.clearAllMocks();
     (prisma.appointment.findMany as jest.Mock).mockResolvedValue([
-      { id: "appt-1", _count: { payment: 1 } },
+      { id: "appt-1", appointmentType: "WEBINAR", _count: { payment: 1 } },
     ]);
   });
 
@@ -82,7 +82,41 @@ describe("reconcile-orphaned-confirmations — DM not permitted (#1708)", () => 
       expect.objectContaining({
         level: "warning",
         fingerprint: ["reconcile-orphaned-confirmations", "dm_not_permitted"],
-        extra: { appointmentIds: ["appt-1"] },
+        extra: {
+          appointmentIds: ["appt-1"],
+          skipped: [
+            {
+              appointmentId: "appt-1",
+              appointmentType: "WEBINAR",
+              reason: "dm_not_permitted",
+            },
+          ],
+        },
+      }),
+    );
+  });
+
+  it("reports the no-channel-branch reason and appointment type", async () => {
+    mockEnsure.mockResolvedValue({
+      ensured: false,
+      reason: "no_channel_branch_for_appointment",
+    });
+
+    const result = await reconcileOrphanedConfirmations({ limit: 10 });
+
+    expect(result.channelsSkipped).toBe(1);
+    expect(mockCaptureMessage).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        fingerprint: ["reconcile-orphaned-confirmations", "dm_not_permitted"],
+        extra: expect.objectContaining({
+          skipped: [
+            expect.objectContaining({
+              reason: "no_channel_branch_for_appointment",
+              appointmentType: "WEBINAR",
+            }),
+          ],
+        }),
       }),
     );
   });
