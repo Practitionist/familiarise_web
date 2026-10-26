@@ -71,6 +71,8 @@ it("mints from the pivot, wraps around, and treats a lost mint race as done", as
   expect(head.where).toMatchObject({
     paymentStatus: "SUCCEEDED",
     consumerInvoice: null,
+    // A refunded supply is left to ops: an invoice alone would overstate output tax.
+    refunds: { none: { status: { in: ["PENDING", "SUCCEEDED"] } } },
     id: { gte: "p-m" },
     createdAt: { gte: new Date("2026-07-28T01:50:00.000Z") },
   });

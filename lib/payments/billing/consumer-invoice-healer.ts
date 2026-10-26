@@ -56,7 +56,7 @@ export async function healConsumerInvoices(opts: {
     );
     return { scanned: 0, minted: 0, declined: 0, failed: 0, skipped };
   }
-  // A GSTIN that contradicts SUPPLIER_STATE_CODE throws once here, not per payment.
+  // A GSTIN whose state contradicts the registered office throws once here, not per payment.
   supplierStateCode();
 
   // Fail-closed: every mint takes a number from the gapless Rule 46 series.
@@ -105,6 +105,8 @@ async function readCohort(
     paymentStatus: "SUCCEEDED",
     deletedAt: null,
     consumerInvoice: null,
+    // A refunded supply needs its invoice and credit note together; ops mint those.
+    refunds: { none: { status: { in: ["PENDING", "SUCCEEDED"] } } },
     createdAt: {
       gte: new Date(
         now.getTime() - CONSUMER_INVOICE_LOOKBACK_DAYS * 86_400_000,
