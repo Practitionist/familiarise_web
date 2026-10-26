@@ -41,11 +41,11 @@ selection limit does not prove a byte-size, snapshot-isolation or runtime bound.
 
 ## Routes and user workflow
 
-| Verb | Path under `/api/organizations/[orgId]` | Behavior                                                                                                                        |
-| ---- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| POST | `/data-exports`                         | Validates requested kind, applies the per-organization request limiter, commits PENDING plus request audit and returns 202      |
-| GET  | `/data-exports`                         | Lists at most 50 jobs from the last 30 days, newest first, filtered by grants; failed rows expose fixed safe error text         |
-| GET  | `/data-exports/[exportId]/download`     | Requires READY, current grants, unexpired job and matching exact artifact owner; audits issuance and returns `{url, expiresAt}` |
+| Verb | Path under `/api/organizations/[orgId]` | Behavior                                                                                                                                              |
+| ---- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST | `/data-exports`                         | Validates requested kind, applies the per-organization request limiter, commits PENDING plus request audit and returns 202                            |
+| GET  | `/data-exports`                         | Lists at most 50 jobs from the last 30 days, newest first, filtered by grants; failed rows expose fixed safe error text                               |
+| GET  | `/data-exports/[exportId]/download`     | Requires READY, current grants, unexpired job and matching exact artifact owner; audits the authorized signing attempt and returns `{url, expiresAt}` |
 
 A request is limited to one export per organization per 24 hours through
 `orgDataExportLimiter`; this is a rate limiter, not a database uniqueness
@@ -61,6 +61,10 @@ exact owned bucket/path, for at most 60 seconds and capped by the remaining
 artifact lifetime using a fresh clock after the owner lookup. If signing or
 audit latency crosses the artifact deadline, the route returns `EXPORT_EXPIRED`
 without returning the URL.
+
+`DATA_EXPORT_DOWNLOAD_REQUESTED` records the authorized signing attempt, including
+an attempt whose audit latency later crosses the expiry deadline. It does not
+assert that the URL was returned or that the recipient read any bytes.
 
 An issued signed URL remains a bearer capability under the provider's contract.
 Changing a member's role prevents a new authorized download but does not
@@ -175,3 +179,6 @@ Transactional outbox staging and safe read responses replace that coupling.
 A local `/tmp` export fallback and the old per-job Actions schedule are no longer
 the runtime contract. The bundle remains JSON-only; no CSV/ZIP generation is
 implemented.
+
+Historical `DATA_EXPORT_DOWNLOADED` audit rows are retained as recorded; the new
+request action makes the observed attempt explicit without claiming delivery.

@@ -257,13 +257,11 @@ export const AUDIT_ACTIONS = {
     USER_ERASURE_PROCESSED: "USER_ERASURE_PROCESSED",
     USER_ERASURE_REJECTED: "USER_ERASURE_REJECTED",
     USER_ERASURE_SLA_WARNING: "USER_ERASURE_SLA_WARNING",
-    // PR #655 Batch 6.5 — DPDP §11 right-to-access export bundle
-    // lifecycle. Logged per state so an operator can reconstruct
-    // "who pulled what bundle when" without grepping worker logs.
+    // Export audits record authorized requests and worker outcomes, not reads of bytes.
     DATA_EXPORT_REQUESTED: "DATA_EXPORT_REQUESTED",
     DATA_EXPORT_GENERATED: "DATA_EXPORT_GENERATED",
     DATA_EXPORT_FAILED: "DATA_EXPORT_FAILED",
-    DATA_EXPORT_DOWNLOADED: "DATA_EXPORT_DOWNLOADED",
+    DATA_EXPORT_DOWNLOAD_REQUESTED: "DATA_EXPORT_DOWNLOAD_REQUESTED",
   },
   // PR #655 Batch 3 — outbound webhook subsystem audit trail. One
   // category for both endpoint configuration (CRUD) and delivery

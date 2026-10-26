@@ -93,6 +93,11 @@ describe("data export download route", () => {
     });
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     expect(response.headers.get("Vary")).toBe("Cookie");
+    expect(mockAuditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "DATA_EXPORT_DOWNLOAD_REQUESTED",
+      }),
+    });
   });
 
   it("never serves the legacy bearer URL when the attempt owner is missing", async () => {
@@ -163,8 +168,9 @@ describe("data export download route", () => {
         code: "EXPORT_EXPIRED",
         error: "Export bundle has expired; request a fresh one",
       });
-      if (slowStep === "signing")
-        expect(mockAuditCreate).not.toHaveBeenCalled();
+      expect(mockAuditCreate).toHaveBeenCalledTimes(
+        slowStep === "signing" ? 0 : 1,
+      );
     },
   );
 });

@@ -3,7 +3,7 @@
  *
  * Returns a Supabase Storage signed URL for the export bundle when
  * status=READY and the bundle hasn't expired. The route writes a
- * `DATA_EXPORT_DOWNLOADED` audit row before returning the URL.
+ * `DATA_EXPORT_DOWNLOAD_REQUESTED` audit row for the authorized signing attempt.
  *
  * Gate: an export grant, and the job's kind must be one the caller holds
  * A MAINTAINER cannot pull a finance bundle.
@@ -117,8 +117,8 @@ export async function GET(
       organizationId: orgId,
       actorMembershipId: access.member.id,
       category: "SYSTEM",
-      action: AUDIT_ACTIONS.SYSTEM.DATA_EXPORT_DOWNLOADED,
-      description: `Downloaded export bundle ${exportId}`,
+      action: AUDIT_ACTIONS.SYSTEM.DATA_EXPORT_DOWNLOAD_REQUESTED,
+      description: `Requested a signed URL for export bundle ${exportId}`,
       details: {
         exportId,
         fileSizeBytes: job.fileSizeBytes?.toString() ?? null,
