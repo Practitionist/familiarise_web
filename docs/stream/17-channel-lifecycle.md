@@ -59,14 +59,9 @@ Channel provisioning and eligibility follow a strict **4-Part DM & Trial Policy*
    - **No DM eligibility.** `canDirectMessage` and `pairBookingContexts` exclude any consultation or subscription whose appointment is a `TRIAL` (`excludeTrialBooking` in `lib/stream/dm-eligibility-statuses.ts`), whatever status the booking row carries. A relationship that consists only of a trial therefore never opens a DM, and a trial never keeps an existing DM alive.
    - **No in-call chat.** `isInCallChatAllowed("TRIAL")` is false (`lib/meetings/room-ready.ts`). `app/meetings/[id]/components/MeetingRoom.tsx` hides the chat and Q&A tabs, and the stage Q&A route (`app/api/meetings/[meetingId]/qa/route.ts`) answers 403 with `trial_chat_disabled`.
 
-## Contextual booking receipt cards
+## Booking context in a shared DM
 
-Because all consultations, subscriptions, webinars, and classes between a given `(consultant, consultee, orgScope)` pair share one canonical 1:1 DM thread, `POST /api/stream/channels/open` accepts an optional `contextAppointmentId` to anchor conversation context when a user clicks **"Message"** from an appointment card (`chatAffordancesForVm`):
-
-- The route verifies that `contextAppointmentId` is non-deleted, in an eligible status, and links `(userId, counterpartyUserId)` (either directly on a consultation/subscription or as host + live participant on a webinar/class).
-- It then sends an idempotent message into the shared DM with deterministic ID (`id: booking-ctx-${appointmentId}-${eventType}` / `buildBookingContextMessageId(channelId, appointmentId)`) and custom `booking_context` fields (`booking_appointment_id`, `booking_type`, `booking_title`, `booking_starts_at`).
-- The route posts the card as the server-only Stream user `system-booking-context` (`BOOKING_CONTEXT_STREAM_USER` in `lib/stream/system-users.ts`), never as the caller. No token is ever minted for that user, so no browser can author a card, and `components/chat/CustomMessage.tsx` renders the receipt layout only when the message author is that user (`isBookingContextAuthor`). The `system-` prefix also keeps `stream-sync` and the membership reconciler from touching it.
-- Re-opening the same appointment's chat hits Stream's duplicate-message-ID check and is ignored cleanly without posting duplicate receipt cards.
+All bookings between a `(consultant, consultee, orgScope)` pair share one DM, and opening it from an appointment posts nothing. The composer offers a removable booking chip that tags the sender's next message with `booking_appointment_id`; the tag is rendered only from the server-verified `GET /api/stream/booking-tag` answer. See [04. Chat Implementation](./04-chat-implementation.md#appointment-chat-sheet-and-booking-tag).
 
 ## How a channel comes into existence
 
@@ -170,6 +165,7 @@ true } })`: history stays readable, nobody can post. After a successful
   request and paced with a `10_000ms` delay between 100-CID chunks to stay well
   under Stream's `60/min` `DeleteChannels` rate limit. The retention window uses
   `resolveEventRetentionDays` (`organization.chatRetentionDays ?? organization.streamRecordingRetentionDays ?? 90`).
+  Nothing records that a channel was already deleted, so later runs send the same CIDs again. Stream refuses a batch that names a channel it no longer has, with a 404 "channels not found" (code 16), so `deleteChannelBatch` treats that refusal as a cue: it looks up which CIDs still exist (`queryChannels`, 30 per page), deletes only those, and counts the rest in `missingChannels`. The run stays successful. Any other error still fails the batch and is reported once per run.
 
 A webinar or class may span multiple appointments across cohorts but owns
 **one** event channel, so its age is computed from the **latest** slot `endsAt`
@@ -205,6 +201,12 @@ Postgres decides who may be in a channel, and Stream obeys. Revocation is theref
 
 ## Organisation wind-down completion
 
+The ticker queues this background core at 03:55, 04:55 and 05:55 UTC. Each slice
+rotates across at most two organizations and ten removed memberships using
+separate persisted ID bounds. Related database scans select at most 5,001 rows
+and withhold completion when truncated; vendor loops share a five-minute start
+budget. These bounds do not establish complete vendor discovery.
+
 `wind-down-deactivated-orgs` records `STREAM_ORG_WOUND_DOWN` only after the
 organisation's call/channel work completes without errors. The tagged-channel
 query uses `frozen: false`; a truncated vendor page is unfinished work, even if
@@ -228,7 +230,13 @@ prefix leaves the `frozen: false` query, so a retry can reach its tail. This is 
 general continuation: an unchanged prefix of non-messaging channels or persistent
 failures can keep hiding that tail. Those workloads remain unsupported until a
 reviewed bounded progress repair exists. Existing completion markers are not
-re-audited or backfilled by this change.
+re-audited or backfilled by this change. Organization/member cursors do not
+provide per-channel continuation through a permanently unchanged vendor prefix.
+
+Recording purge claims EXPIRED with status, pointer and purchase guards before
+vendor deletion, then uses the shared asset-cleanup implementation. A lost claim,
+active transfer, full ten-recording purge slice or failed pointer cleanup prevents
+retention completion. Failed known pointers remain available to later cleanup.
 
 The 100-organisation and 250-removed-member outer caps do not bound their related
 surface, recording or vendor work. Keep the current scheduling owner and require a
@@ -312,10 +320,10 @@ must appear in neither the cron's freeze queue nor the sync's expected-set.**
 
 ## Deprecated & Superseded Approaches
 
-- **Per-Booking `consultation-*` and `subscription-*` Channels**: Retired in favor of one canonical 1:1 DM channel per `(consultant, consultee, orgScope)` pair (`dm-<a>-<b>` / `dmo-<orgHash>-<pairHash>`), with per-booking context injected via idempotent `booking-ctx-` receipt cards on `POST /api/stream/channels/open`. The legacy `consultation-` and `subscription-` prefixes are no longer in `MANAGED_CHANNEL_PREFIXES`; nothing sweeps them.
+- **Per-Booking `consultation-*` and `subscription-*` Channels**: Retired in favor of one canonical 1:1 DM channel per `(consultant, consultee, orgScope)` pair (`dm-<a>-<b>` / `dmo-<orgHash>-<pairHash>`), with per-booking context carried by the verified booking tag on a message. The legacy `consultation-` and `subscription-` prefixes are no longer in `MANAGED_CHANNEL_PREFIXES`; nothing sweeps them.
 - **Client-Cooperative Revocation via the Sync Gates**: Revocation once depended on the affected user's browser running `syncUserEventChannels`, behind a server `initialSyncCompletedUsers` set, a `stream_sync_<id>` session flag and a `force` parameter. Replaced by synchronous revocation on the mutating action, the `StreamRevocationRetry` queue and the daily membership reconciler. Delete any residue of those gates.
 - **Unfreeze-on-Open for Collaborator Channels**: `createCollaboratorChannel` used to set `frozen: false` on every open, which undid wind-down and moderation freezes. It is now get-or-create only, and the open route refuses a frozen channel.
-- **Caller-Authored Booking Cards**: Cards were posted as the opening user and recognised by their custom fields, which any member could forge. They are now posted as `system-booking-context` and rendered only for that author.
+- **Server-Posted Booking Cards (`booking-ctx-`, `system-booking-context`)**: Opening a DM from an appointment used to post a receipt card as a server user named "Familiarise". People read it as a support message, it showed a Get help link and a duplicate title line, its date was the first session rather than the next, and it was written for both people even when nobody replied. Replaced by the booking tag on the sender's next message. Old cards in Stream are hidden by `CustomMessage`, and `LEGACY_BOOKING_CONTEXT_USER_ID` survives only for that and to keep the user out of DM member counts.
 - **DM "Clear chat" for the Consultant**: Truncate on a 1:1 DM wiped the thread for both sides. It is no longer offered on any managed channel.
 - **Trial Session (`TRIAL`) Chat Channels & DMs**: Retired (`skipped: "trial_chat_blocked"` in `lib/payments/webhooks/ensure-channels.ts`). Free trials no longer provision channels or unlock DMs, and the DM gate excludes trial-backed bookings.
 - **Unpaid (`APPROVED_PENDING_PAYMENT`) DM Provisioning**: Removed from `DM_ELIGIBLE_STATUSES` so chat opens strictly after payment confirmation (`APPROVED`, `SCHEDULED`, `COMPLETED`).

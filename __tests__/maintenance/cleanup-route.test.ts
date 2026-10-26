@@ -40,6 +40,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 
 jest.mock("../../lib/maintenance-cron", () => ({
   assertNotInMaintenance: jest.fn(),
+  MaintenanceUnavailableError: class MaintenanceUnavailableError extends Error {},
   MaintenanceActiveError: class MaintenanceActiveError extends Error {
     httpStatus = 503;
     phase: string;
@@ -67,6 +68,7 @@ import { resetThrottledCaptureForTesting } from "../../lib/observability/throttl
 import {
   assertNotInMaintenance,
   MaintenanceActiveError,
+  MaintenanceUnavailableError,
 } from "../../lib/maintenance-cron";
 
 const guard = assertNotInMaintenance as jest.Mock;
@@ -241,6 +243,21 @@ describe("cleanupRoute", () => {
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ phase: "DEGRADED" });
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("reports unreadable state as an operational failure without a planned phase", async () => {
+    guard.mockRejectedValue(new MaintenanceUnavailableError());
+    const run = jest.fn();
+    const { POST } = cleanupRoute({ job: "test-job", run });
+
+    const response = await POST(request());
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: "",
+      code: "MAINTENANCE_STATE_UNREADABLE",
+    });
+    expect(run).not.toHaveBeenCalled();
+    expect(Sentry.flush).toHaveBeenCalled();
   });
 
   it("passes the job name to the maintenance guard, since DEGRADED keys on it", async () => {

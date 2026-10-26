@@ -11,6 +11,7 @@
 
 import { RefundStatus } from "@prisma/client";
 import {
+  isFullyRefundedPurchase,
   isPaymentEntitled,
   refundedPaise,
 } from "@/lib/payments/utils/refund-balance";
@@ -71,5 +72,59 @@ describe("isPaymentEntitled", () => {
         refunds: [{ amountPaise: 1000, status: RefundStatus.FAILED }],
       }),
     ).toBe(true);
+  });
+});
+
+describe("isFullyRefundedPurchase", () => {
+  const cash = (refunds: { amountPaise: number; status: RefundStatus }[]) => ({
+    amount: 1000,
+    paymentIntent: "order_1",
+    refunds,
+  });
+  const credit = (status?: RefundStatus) => ({
+    amount: 0,
+    paymentIntent: "free_1",
+    refunds: status ? [{ amountPaise: 0, status }] : [],
+  });
+
+  it("revokes a cash purchase refunded in full", () => {
+    expect(
+      isFullyRefundedPurchase([
+        cash([{ amountPaise: 1000, status: RefundStatus.SUCCEEDED }]),
+      ]),
+    ).toBe(true);
+  });
+
+  it("keeps a cash purchase refunded in part", () => {
+    expect(
+      isFullyRefundedPurchase([
+        cash([{ amountPaise: 400, status: RefundStatus.SUCCEEDED }]),
+      ]),
+    ).toBe(false);
+  });
+
+  it("revokes a cash purchase whose full refund is still PENDING", () => {
+    expect(
+      isFullyRefundedPurchase([
+        cash([{ amountPaise: 1000, status: RefundStatus.PENDING }]),
+      ]),
+    ).toBe(true);
+  });
+
+  it("revokes a credit-funded purchase once its credits are restored, not on a FAILED one", () => {
+    expect(isFullyRefundedPurchase([credit(RefundStatus.SUCCEEDED)])).toBe(
+      true,
+    );
+    expect(isFullyRefundedPurchase([credit(RefundStatus.FAILED)])).toBe(false);
+    expect(isFullyRefundedPurchase([credit()])).toBe(false);
+  });
+
+  it("never revokes a free booking", () => {
+    expect(isFullyRefundedPurchase([])).toBe(false);
+    expect(
+      isFullyRefundedPurchase([
+        { amount: 0, paymentIntent: "trial_free", refunds: [] },
+      ]),
+    ).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import "dotenv/config";
+import { z } from "zod";
 
 import prisma from "../../lib/prisma";
 import type { RunFailureReporter } from "../../lib/observability/run-failures";
@@ -30,21 +30,24 @@ import {
 import {
   endActiveStreamVideoCalls,
   queryOrgTaggedChannels,
-} from "../../lib/stream/event-channel-service";
+} from "../../lib/stream/channel-administration";
 import {
   loadOrgStreamSurfaces,
   revokeMemberStreamAccess,
   STREAM_REVOCATION_RETRY_WINDOW_HOURS,
-} from "../../lib/enterprise/member-removal";
-import { withCronLock } from "../../lib/cron/with-cron-lock";
-import { abortIfMaintenance } from "../../lib/maintenance-cron";
-import { runJob } from "../../lib/observability/job-sentry";
-import { deleteRecordingObject } from "../../lib/stream/recording-storage";
-import { removeObjects } from "../../lib/supabase-storage-core";
+  ORG_STREAM_SURFACE_LIMIT,
+} from "../../lib/stream/org-access-revocation";
+import { readJobCheckpoint, withCronLock } from "../../lib/cron/with-cron-lock";
+import { purgeExpiredRecordingAssets } from "../../lib/stream/recording-retention";
 
-const MAX_ORGS_PER_RUN = 100;
-const MAX_REMOVED_MEMBERS_PER_RUN = 250;
-const RECORDING_PREVIEWS_BUCKET = "recordings-previews";
+const MAX_ORGS_PER_RUN = 2;
+const MAX_REMOVED_MEMBERS_PER_RUN = 10;
+const MAX_RECORDINGS_PER_ORG = 10;
+const progressSchema = z.object({
+  organization: z.string().nullable(),
+  membership: z.string().nullable(),
+});
+type WindDownProgress = z.infer<typeof progressSchema>;
 const STREAM_ORG_WOUND_DOWN_ACTION = "STREAM_ORG_WOUND_DOWN";
 const STREAM_ORG_RETENTION_COMPLETE_ACTION = "STREAM_ORG_RETENTION_COMPLETE";
 
@@ -59,6 +62,7 @@ export interface WindDownDeactivatedOrgsResult {
   removedMembersDrained: number;
   errors: string[];
   success: boolean;
+  checkpoint: string | null;
 }
 
 type DeactivatedOrgRow = {
@@ -72,7 +76,7 @@ type DeactivatedOrgRow = {
 export async function windDownDeactivatedOrgs(): Promise<WindDownDeactivatedOrgsResult> {
   return withCronLock(
     "wind-down-deactivated-orgs",
-    { failMode: "open" },
+    { failMode: "closed" },
     async () => {
       const failures = windDownFailureReporter();
       try {
@@ -84,7 +88,16 @@ export async function windDownDeactivatedOrgs(): Promise<WindDownDeactivatedOrgs
   );
 }
 
-function windDownFailureReporter(): RunFailureReporter {
+interface WindDownFailureReporter extends RunFailureReporter {
+  deadlineMs: number;
+}
+function assertRunBudget(failures: WindDownFailureReporter): void {
+  if (Date.now() >= failures.deadlineMs)
+    throw new Error(
+      "Stream wind-down time budget exhausted; unfinished work remains retryable",
+    );
+}
+function windDownFailureReporter(): WindDownFailureReporter {
   let count = 0;
   let first: unknown;
   let billing = false;
@@ -93,6 +106,7 @@ function windDownFailureReporter(): RunFailureReporter {
   const levels = ["debug", "log", "info", "warning", "error", "fatal"];
   const sample: Record<string, unknown>[] = [];
   return {
+    deadlineMs: Date.now() + 5 * 60 * 1000,
     add(operation, error, context, opts) {
       count++;
       if (count === 1 || (!billing && context?.reason === "stream.billing"))
@@ -148,10 +162,12 @@ const DEACTIVATED_ORG_SELECT = {
 
 async function loadCandidateDeactivatedOrgs(
   now: Date,
+  after: string | null,
 ): Promise<DeactivatedOrgRow[]> {
   const freshOrgs =
     ((await prisma.organization.findMany({
       where: {
+        ...(after ? { id: { gt: after } } : {}),
         AND: [
           { OR: [{ status: "DEACTIVATED" }, { deletedAt: { not: null } }] },
           {
@@ -184,6 +200,7 @@ async function loadCandidateDeactivatedOrgs(
   const woundDownOrgs =
     ((await prisma.organization.findMany({
       where: {
+        ...(after ? { id: { gt: after } } : {}),
         AND: [
           { OR: [{ status: "DEACTIVATED" }, { deletedAt: { not: null } }] },
           {
@@ -206,19 +223,19 @@ async function loadCandidateDeactivatedOrgs(
       orderBy: { id: "asc" },
     })) as DeactivatedOrgRow[]) ?? [];
 
-  const retentionReadyOrgs = woundDownOrgs.filter((org) => {
-    const retentionDays =
-      org.streamRecordingRetentionDays ?? DEFAULT_RETENTION_DAYS;
-    const cutoff = new Date(now.getTime() - retentionDays * DAY_MS);
-    return resolveDeactivatedAnchor(org) <= cutoff;
-  });
-
-  return [...freshOrgs, ...retentionReadyOrgs];
+  const rows = [...freshOrgs, ...woundDownOrgs];
+  return rows.length === 0 && after
+    ? loadCandidateDeactivatedOrgs(now, null)
+    : rows;
 }
 
 async function windDownDeactivatedOrgsUnlocked(
-  failures: RunFailureReporter,
+  failures: WindDownFailureReporter,
 ): Promise<WindDownDeactivatedOrgsResult> {
+  const saved = await readJobCheckpoint("wind-down-deactivated-orgs");
+  const progress = saved
+    ? progressSchema.parse(JSON.parse(saved))
+    : { organization: null, membership: null };
   const result: WindDownDeactivatedOrgsResult = {
     orgsScanned: 0,
     callsEnded: 0,
@@ -230,6 +247,7 @@ async function windDownDeactivatedOrgsUnlocked(
     removedMembersDrained: 0,
     errors: [],
     success: true,
+    checkpoint: saved,
   };
 
   if (!isStreamConfigured()) {
@@ -240,11 +258,14 @@ async function windDownDeactivatedOrgsUnlocked(
 
   const now = new Date();
   const chat = getStreamChatClient();
-  const orgs = await loadCandidateDeactivatedOrgs(now);
-
-  result.orgsScanned = orgs.length;
+  const orgs = await loadCandidateDeactivatedOrgs(now, progress.organization);
 
   for (const org of orgs) {
+    if (Date.now() >= failures.deadlineMs) {
+      result.errors.push("Organization slice deferred after time budget");
+      break;
+    }
+    result.orgsScanned++;
     try {
       await windDownSingleOrg(chat, org, now, result, failures);
     } catch (err) {
@@ -252,14 +273,20 @@ async function windDownDeactivatedOrgsUnlocked(
         `org ${org.id}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+    progress.organization = org.id;
   }
 
-  await drainPendingMemberRemovals(now, result, failures);
+  try {
+    await drainPendingMemberRemovals(now, result, failures, progress);
+  } catch (error) {
+    result.errors.push(error instanceof Error ? error.message : String(error));
+  }
 
   if (result.errors.length > 0) {
     result.success = false;
   }
 
+  result.checkpoint = JSON.stringify(progress);
   return result;
 }
 
@@ -279,21 +306,28 @@ async function endOrgActiveVideoCalls(
   orgId: string,
   now: Date,
   result: WindDownDeactivatedOrgsResult,
-  failures: RunFailureReporter,
+  failures: WindDownFailureReporter,
 ): Promise<void> {
   if (!prisma.meeting?.findMany) return;
   const activeCalls = await prisma.meeting.findMany({
     where: { organizationId: orgId, endedAt: null },
     select: { id: true, streamCallId: true },
+    take: ORG_STREAM_SURFACE_LIMIT + 1,
   });
+  if (activeCalls.length > ORG_STREAM_SURFACE_LIMIT)
+    result.errors.push(`org ${orgId} active call scan truncated`);
 
-  const callsRes = await endActiveStreamVideoCalls(activeCalls, {
-    now,
-    endedReason: "org_deactivated",
-    errorPrefix: `org ${orgId}`,
-    useCircuitBreaker: true,
-    failures,
-  });
+  const callsRes = await endActiveStreamVideoCalls(
+    activeCalls.slice(0, ORG_STREAM_SURFACE_LIMIT),
+    {
+      now,
+      endedReason: "org_deactivated",
+      errorPrefix: `org ${orgId}`,
+      useCircuitBreaker: true,
+      failures,
+      deadlineMs: failures.deadlineMs,
+    },
+  );
   result.callsEnded += callsRes.callsEnded;
   result.errors.push(...callsRes.errors);
 }
@@ -311,7 +345,7 @@ async function freezeSingleEventTarget(
   stampedWebinarIds: string[],
   stampedClassIds: string[],
   result: WindDownDeactivatedOrgsResult,
-  failures: RunFailureReporter,
+  failures: WindDownFailureReporter,
 ): Promise<void> {
   try {
     await withStreamCircuitBreaker(
@@ -344,7 +378,7 @@ async function freezeOrgEventChannels(
   classIds: string[],
   now: Date,
   result: WindDownDeactivatedOrgsResult,
-  failures: RunFailureReporter,
+  failures: WindDownFailureReporter,
 ): Promise<void> {
   const eventTargets: EventFreezeTarget[] = [
     ...webinarIds.map((id) => ({
@@ -363,6 +397,7 @@ async function freezeOrgEventChannels(
     eventTargets,
     STREAM_CONCURRENCY_LIMIT,
   ).entries()) {
+    assertRunBudget(failures);
     if (batchIdx > 0) await pause(STREAM_BATCH_PAUSE_MS);
     const stampedWebinarIds: string[] = [];
     const stampedClassIds: string[] = [];
@@ -401,6 +436,7 @@ async function collectAllOrgDmChannelIds(
   orgId: string,
   initialDmChannelIds: string[],
   result: WindDownDeactivatedOrgsResult,
+  failures: WindDownFailureReporter,
 ): Promise<string[]> {
   const dmChannelIds = new Set<string>(initialDmChannelIds);
 
@@ -412,6 +448,7 @@ async function collectAllOrgDmChannelIds(
             collaborators: { some: { status: "ACCEPTED" } },
           },
           select: { id: true },
+          take: ORG_STREAM_SURFACE_LIMIT + 1,
         })
       : Promise.resolve([]),
     prisma.classPlan?.findMany
@@ -421,20 +458,31 @@ async function collectAllOrgDmChannelIds(
             collaborators: { some: { status: "ACCEPTED" } },
           },
           select: { id: true },
+          take: ORG_STREAM_SURFACE_LIMIT + 1,
         })
       : Promise.resolve([]),
   ]);
 
-  for (const plan of orgWebinarPlans) {
+  if (
+    orgWebinarPlans.length > ORG_STREAM_SURFACE_LIMIT ||
+    orgClassPlans.length > ORG_STREAM_SURFACE_LIMIT
+  )
+    result.errors.push(`org ${orgId} collaborator-plan scan truncated`);
+  for (const plan of orgWebinarPlans.slice(0, ORG_STREAM_SURFACE_LIMIT)) {
     dmChannelIds.add(collabChannelId("webinar", plan.id));
   }
-  for (const plan of orgClassPlans) {
+  for (const plan of orgClassPlans.slice(0, ORG_STREAM_SURFACE_LIMIT)) {
     dmChannelIds.add(collabChannelId("class", plan.id));
   }
 
   try {
     const { channels: taggedChannels, truncated } =
-      await queryOrgTaggedChannels(chat, orgId, { frozen: false });
+      await queryOrgTaggedChannels(
+        chat,
+        orgId,
+        { frozen: false },
+        { deadlineMs: failures.deadlineMs },
+      );
     if (truncated) {
       result.errors.push(
         `org ${orgId} queryChannelsPaged: truncated after ${taggedChannels.length} channels; wind-down remains incomplete`,
@@ -458,12 +506,13 @@ async function freezeOrgDmChannels(
   orgId: string,
   dmChannelIds: string[],
   result: WindDownDeactivatedOrgsResult,
-  failures: RunFailureReporter,
+  failures: WindDownFailureReporter,
 ): Promise<void> {
   for (const [batchIdx, batch] of chunk(
     dmChannelIds,
     STREAM_CONCURRENCY_LIMIT,
   ).entries()) {
+    assertRunBudget(failures);
     if (batchIdx > 0) await pause(STREAM_BATCH_PAUSE_MS);
     await Promise.all(
       batch.map(async (channelId) => {
@@ -493,50 +542,53 @@ async function purgeSingleOrgRecording(
   orgId: string,
   rec: {
     id: string;
+    status: string;
     storagePath: string | null;
     previewClipStoragePath: string | null;
   },
   now: Date,
   result: WindDownDeactivatedOrgsResult,
-  failures: RunFailureReporter,
+  failures: WindDownFailureReporter,
 ): Promise<void> {
+  assertRunBudget(failures);
   try {
-    if (rec.previewClipStoragePath) {
-      if (
-        !(await removeObjects(RECORDING_PREVIEWS_BUCKET, [
-          rec.previewClipStoragePath,
-        ]))
-      ) {
-        throw new Error("Recording preview clip was not removed from storage");
-      }
-    }
-    const del = rec.storagePath
-      ? await deleteRecordingObject(rec.storagePath, failures)
-      : { success: true };
-    if (!del.success) {
+    const [owned] = await prisma.recording.updateManyAndReturn({
+      where: {
+        id: rec.id,
+        organizationId: orgId,
+        status: { in: ["READY", "AVAILABLE", "EXPIRED"] },
+        storagePath: rec.storagePath,
+        previewClipStoragePath: rec.previewClipStoragePath,
+        listingStatus: { not: "PUBLISHED" },
+        purchases: { none: {} },
+      },
+      data: {
+        status: "EXPIRED",
+        recordingUrl: "",
+        ...(rec.status === "EXPIRED"
+          ? {}
+          : { removedAt: now, removalReason: "RETENTION" }),
+      },
+      select: {
+        id: true,
+        storagePath: true,
+        streamCallId: true,
+        streamRecordingId: true,
+      },
+    });
+    if (!owned) {
       result.errors.push(
-        `org ${orgId} deleteRecordingObject ${rec.id}: ${del.error ?? "storage delete failed"}`,
+        `org ${orgId} recording ${rec.id} changed before expiry claim; completion deferred`,
       );
       return;
     }
-    await prisma.recording.update({
-      where: { id: rec.id },
-      data: {
-        status: "EXPIRED",
-        storagePath: null,
-        storageType: "STREAM_S3",
-        previewClipUrl: null,
-        previewClipStoragePath: null,
-        previewClipDuration: null,
-        thumbnailUrl: null,
-        listingStatus: "UNPUBLISHED",
-        unpublishedAt: now,
-      },
-    });
+    const deleted = await purgeExpiredRecordingAssets(owned, failures);
+    if (!deleted.success)
+      throw new Error(deleted.error ?? "Recording assets remain retryable");
     result.recordingsPurged++;
-  } catch (err) {
+  } catch (error) {
     result.errors.push(
-      `org ${orgId} purge recording ${rec.id}: ${err instanceof Error ? err.message : String(err)}`,
+      `org ${orgId} purge recording ${rec.id}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }
@@ -546,7 +598,7 @@ async function purgeExpiredOrgRecordings(
   now: Date,
   result: WindDownDeactivatedOrgsResult,
   orgErrorsBefore: number,
-  failures: RunFailureReporter,
+  failures: WindDownFailureReporter,
 ): Promise<void> {
   if (!prisma.recording?.findMany) return;
   const retentionDays =
@@ -554,10 +606,34 @@ async function purgeExpiredOrgRecordings(
   const deactivatedAnchor = resolveDeactivatedAnchor(org);
   const retentionCutoff = new Date(now.getTime() - retentionDays * DAY_MS);
 
+  const activeTransfer = await prisma.recording.findFirst({
+    where: {
+      organizationId: org.id,
+      status: "TRANSFERRING",
+      purchases: { none: {} },
+    },
+    select: { id: true },
+  });
+  if (activeTransfer)
+    result.errors.push(
+      `org ${org.id} has an active recording transfer; retention completion deferred`,
+    );
+
   const expiredRecordings = await prisma.recording.findMany({
     where: {
       organizationId: org.id,
-      status: { notIn: ["EXPIRED", "FAILED"] },
+      OR: [
+        { status: { in: ["READY", "AVAILABLE"] } },
+        {
+          status: "EXPIRED",
+          OR: [
+            { storagePath: { not: null } },
+            { previewClipStoragePath: { not: null } },
+            { streamRecordingId: { not: null } },
+            { thumbnailUrl: { not: null } },
+          ],
+        },
+      ],
       purchases: { none: {} },
       ...(deactivatedAnchor <= retentionCutoff
         ? {}
@@ -565,10 +641,18 @@ async function purgeExpiredOrgRecordings(
     },
     select: {
       id: true,
+      status: true,
       storagePath: true,
       previewClipStoragePath: true,
     },
+    orderBy: { updatedAt: "asc" },
+    take: MAX_RECORDINGS_PER_ORG,
   });
+  const purgeFull = expiredRecordings.length === MAX_RECORDINGS_PER_ORG;
+  if (purgeFull)
+    result.errors.push(
+      `org ${org.id} recording purge slice full; retention completion deferred`,
+    );
 
   for (const rec of expiredRecordings) {
     await purgeSingleOrgRecording(org.id, rec, now, result, failures);
@@ -597,7 +681,7 @@ async function windDownSingleOrg(
   org: DeactivatedOrgRow,
   now: Date,
   result: WindDownDeactivatedOrgsResult,
-  failures: RunFailureReporter,
+  failures: WindDownFailureReporter,
 ): Promise<void> {
   const alreadyWoundDown = (org.auditLogs ?? []).some(
     (log) => log.action === STREAM_ORG_WOUND_DOWN_ACTION,
@@ -610,6 +694,10 @@ async function windDownSingleOrg(
     const surfaces = await loadOrgStreamSurfaces(org.id, {
       onlyUnfrozen: true,
     });
+    if (surfaces.truncated)
+      result.errors.push(
+        `org ${org.id} database surface scan truncated; completion deferred`,
+      );
     await freezeOrgEventChannels(
       chat,
       org.id,
@@ -625,6 +713,7 @@ async function windDownSingleOrg(
       org.id,
       surfaces.dmChannelIds,
       result,
+      failures,
     );
     await freezeOrgDmChannels(chat, org.id, dmChannelIds, result, failures);
 
@@ -673,7 +762,7 @@ async function loadRejoinedMemberKeys(
 async function drainSingleRemovedMember(
   row: { userId: string; organizationId: string; updatedAt: Date },
   result: WindDownDeactivatedOrgsResult,
-  failures: RunFailureReporter,
+  failures: WindDownFailureReporter,
 ): Promise<void> {
   try {
     // Cut at the removal, so a re-run never revokes a token minted after it.
@@ -682,6 +771,7 @@ async function drainSingleRemovedMember(
       orgId: row.organizationId,
       failureReporter: failures,
       revokeTokensIssuedBefore: row.updatedAt,
+      deadlineMs: failures.deadlineMs,
     });
     if (outcome.complete) {
       result.removedMembersDrained++;
@@ -704,49 +794,37 @@ async function drainSingleRemovedMember(
 async function drainPendingMemberRemovals(
   now: Date,
   result: WindDownDeactivatedOrgsResult,
-  failures: RunFailureReporter,
+  failures: WindDownFailureReporter,
+  progress: WindDownProgress,
 ): Promise<void> {
-  if (!prisma.membership?.findMany) return;
   const windowFrom = new Date(
     now.getTime() - STREAM_REVOCATION_RETRY_WINDOW_HOURS * 3_600_000,
   );
-  const removedRows = await prisma.membership.findMany({
-    where: {
-      status: "REMOVED",
-      updatedAt: { gte: windowFrom },
-    },
-    select: { userId: true, organizationId: true, updatedAt: true },
-    take: MAX_REMOVED_MEMBERS_PER_RUN,
-    orderBy: { updatedAt: "desc" },
-  });
-  if (!removedRows || removedRows.length === 0) return;
-
-  const uniqueByKey = new Map<
-    string,
-    { userId: string; organizationId: string; updatedAt: Date }
-  >();
+  const readPage = (after: string | null) =>
+    prisma.membership.findMany({
+      where: {
+        status: "REMOVED",
+        updatedAt: { gte: windowFrom },
+        ...(after ? { id: { gt: after } } : {}),
+      },
+      select: { id: true, userId: true, organizationId: true, updatedAt: true },
+      take: MAX_REMOVED_MEMBERS_PER_RUN,
+      orderBy: { id: "asc" },
+    });
+  let removedRows = await readPage(progress.membership);
+  if (!removedRows.length && progress.membership) {
+    progress.membership = null;
+    removedRows = await readPage(null);
+  }
+  if (!removedRows.length) {
+    progress.membership = null;
+    return;
+  }
+  const rejoinedKeys = await loadRejoinedMemberKeys(removedRows);
   for (const row of removedRows) {
-    const key = `${row.userId}:${row.organizationId}`;
-    if (!uniqueByKey.has(key)) uniqueByKey.set(key, row);
+    assertRunBudget(failures);
+    if (!rejoinedKeys.has(`${row.userId}:${row.organizationId}`))
+      await drainSingleRemovedMember(row, result, failures);
+    progress.membership = row.id;
   }
-  const uniquePairs = Array.from(uniqueByKey.values());
-  const rejoinedKeys = await loadRejoinedMemberKeys(uniquePairs);
-
-  for (const row of uniquePairs) {
-    if (rejoinedKeys.has(`${row.userId}:${row.organizationId}`)) continue;
-    await drainSingleRemovedMember(row, result, failures);
-  }
-}
-
-if (require.main === module) {
-  runJob("wind-down-deactivated-orgs", async () => {
-    await abortIfMaintenance("wind-down-deactivated-orgs");
-    try {
-      const result = await windDownDeactivatedOrgs();
-      console.log(JSON.stringify(result));
-      if (!result.success) process.exitCode = 1;
-    } finally {
-      await prisma.$disconnect();
-    }
-  });
 }

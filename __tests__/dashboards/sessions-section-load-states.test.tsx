@@ -13,6 +13,7 @@
  * blanking the section.
  */
 
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({
   captureException: jest.fn(),
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },

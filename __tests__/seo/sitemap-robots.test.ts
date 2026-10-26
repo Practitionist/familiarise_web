@@ -6,7 +6,6 @@ import path from "node:path";
 import sitemap from "@/app/sitemap";
 import robots from "@/app/robots";
 import { metadata as blogMetadata } from "@/app/blog/layout";
-import { metadata as communityMetadata } from "@/app/explore/community/layout";
 
 const entries = sitemap();
 const pathnameOf = (url: string) => new URL(url).pathname;
@@ -94,7 +93,6 @@ describe("sitemap", () => {
   it("omits private, authenticated, and placeholder routes", () => {
     const blocked = [
       "/blog",
-      "/explore/community",
       "/api",
       "/dashboard",
       "/checkout",
@@ -186,9 +184,7 @@ describe("robots", () => {
 
 describe("placeholder pages and outbound links", () => {
   it("noindexes placeholder pages", () => {
-    for (const metadata of [blogMetadata, communityMetadata]) {
-      expect(metadata.robots).toEqual({ index: false, follow: false });
-    }
+    expect(blogMetadata.robots).toEqual({ index: false, follow: false });
   });
 
   it("encodes every domain query value", () => {

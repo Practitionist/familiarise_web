@@ -78,6 +78,7 @@ jest.mock("../../lib/payments/operations/refund", () => ({
   RefundValidationError: class extends Error {},
 }));
 
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({
   captureException: (...a: unknown[]) => mockCaptureException(...a),
 }));

@@ -49,5 +49,5 @@ This round covers text-based tickets and conversations only. Escalating a case i
 - PR #1842 — the implementation, landed across `dec787d1e`, `2be8c69fd`, `54cbabb31` and `f4b5d9117`.
 - `lib/support/case-key.ts` — the `t_`/`s_`/`b_` case-key format.
 - `lib/backoffice/legacy-routes.ts` — the redirect mapping for the retired Tickets and Conversations URLs.
-- [docs/support/01-architecture.md](../support/01-architecture.md) — the underlying two-scope, one-engine support architecture this ADR builds a workspace on top of.
+- [docs/support/README.md](../support/README.md) — the underlying two-scope, one-engine support architecture this ADR builds a workspace on top of.
 - [Engineering log: the dashboard overhaul](../dashboard/engineering-log-2026-09-27-dashboard-overhaul.md) — Round 5.
