@@ -115,7 +115,7 @@ Familiarise's maintenance mode system provides two-tier protection (DEGRADED and
 |  * Bounded concurrency (`CONCURRENCY = 5`) + multi-recipient `resend.batch.send` (up to 100/call) |
 |  * Outbox-row-scoped `Idempotency-Key: <EMAIL_TYPE>/<row.id>` (never drops legitimate repeats)    |
 |  * Automated retention pruning in `prune-system-job-executions`:                                  |
-|    - Null `htmlBody`/`textBody` on `SENT` emails after 7d; delete terminal outbox rows after 30d  |
+|    - Scrub `SENT` payloads after 7d; delete `SENT` rows after 30d and `DEAD_LETTER` after 90d  |
 +---------------------------------------------------------------------------------------------------+
    |
    v

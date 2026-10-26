@@ -115,6 +115,8 @@ Acquisition sweeps expired rows and inserts a `RUNNING` execution; a concurrent 
 
 The requested `closed` policy refuses work when acquisition is unavailable; `open` permits an unlocked path. Verify the active implementation and actual acquisition result before relying on either declaration. Connection/pool exhaustion is treated as closed. Renewals occur approximately every third of the lease TTL. Renewal failure and lease expiry do not cancel existing work, so row-level claims, compare-and-set transitions and vendor idempotency remain necessary. Lease TTL, HTTP abort and worker execution deadline are different bounds.
 
+`expire-onboarding-drafts` owns its open-mode Postgres lease in its canonical core, rather than inline in the registry. Use the actual core when checking lease policy and bounds. See [bounded housekeeping](./housekeeping-bounds.md) for all four cleanup families.
+
 ## The Actions-scheduled jobs
 
 The generated inventory lists registered jobs outside the ticker and operational Actions steps missing registry coverage, with their configured owners and entrypoints. Actions workflows remain the configured automatic owner for their remaining jobs; enablement, budget availability and successful effects require separate verification.

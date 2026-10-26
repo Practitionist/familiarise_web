@@ -158,6 +158,8 @@ held outcomes cannot record COMPLETED evidence before activation. The probe keep
 reading during maintenance; suppress notifications externally without advancing
 successful-work freshness.
 
+`SystemEvent` history retention has one bounded core in `lib/observability/system-event-retention.ts`. Preserve its existing 400-day cutoff, repeat eligibility during deletion and carry the caller deadline through lease admission and CLI slices. Its Actions owner is currently budget-blocked; a configured cadence does not prove execution. See [compliance and event-retention workers](../../../docs/maintenance/compliance-retention-workers.md) for operator recovery and the scheduler cutover gate.
+
 ## Entity trace and job run metrics
 
 Sentry answers "what failed", and Better Stack together with the ticker check-in answers "what did not run". The question "what happened to this payment or booking" belongs to the read-only entity trace at `/dashboard/<tree>/trace` (`lib/backoffice/entity-trace.ts`). The trace merges every timestamped write across the money, booking, support and audit tables into one timeline, with a Sentry search link for each row's id. Its sibling is the Run metrics card on the System Jobs page (`lib/backoffice/job-run-metrics.ts`), which judges each job's missed window from `lib/cron/schedule.ts` and `lib/cron/operational-health.ts` and never from cadence data of its own. Keep both read-only, with one bounded query per source run in sequence. When a source cannot be linked without an unindexed JSON scan, skip it and list it in the Sources table rather than adding a slow query. Read `docs/observability/three-layers.md` before extending either one.

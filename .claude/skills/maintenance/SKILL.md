@@ -34,6 +34,19 @@ outcomes and `X-Job-Outcome` distinguish partial failure and intentional holds.
 Different jobs can still touch the same row: preserve CAS, transactional staging
 and vendor idempotency, and test cross-job races and sequential replay.
 
+Support attachment cleanup shares the existing row with upload finalisation.
+Only already grace-eligible objects enter its at-most-100-path ownership batches:
+conditionally tombstone expired pending rows, reread live references, then remove
+unprotected objects outside a transaction. Never delete from an orphan snapshot
+alone or revive a tombstone after an ambiguous storage failure. A later sweep
+retries grace-eligible bytes; fresh rejected objects retain their seven-day grace.
+Process ownership and removal batches sequentially to bound vendor pressure.
+Keep finalisation's in-transaction evidence-response recheck even when preflight
+validation is extracted into a helper; transaction reads must use its tx client.
+This fence does not bound whole-bucket listing; see
+[attachment ownership](../../../docs/support/04-evidence-and-attachments.md#finalisation-and-cleanup-ownership)
+for the current flow.
+
 The scheduled ticker has a 30-second budget, distinct from its HTTP workers.
 A timeout or expired lease does not cancel vendor effects. Fleet selection fails
 open on absent/unreadable `ops:active_cron_platform`, so it is not an exactly-once
@@ -88,6 +101,11 @@ failure and recovery behavior, operational prerequisites, verification and
 rollback where developers will find them. Keep the current index and links
 accurate; GitHub comments supplement the runbook rather than replacing it.
 
+Worktrees share the generated Prisma client through canonical `node_modules`.
+Before typechecking a branch with different models, regenerate from that branch’s
+schema and coordinate with other compilers. Generation does not apply DDL; a
+missing generated model and a missing live table are different failures.
+
 The Jest configuration keeps an explicit `@/` source mapping while retaining Next.js’s default mocks and transforms. Run targeted suites through the repository config. A CLI `--moduleNameMapper` replaces the entire map and can discard `server-only`, asset and Redis-edge mocks; do not use it as a shortcut for alias resolution.
 
 When merging a worker migration, port its roster, limit, timeout and ledger-yield changes into the shared catalog; do not restore the adapter’s former inline schedule. Check generated output against the same inputs before and after generator refactors. Keep blank workflow names within their own source block and preserve escaped Markdown pipes. See `references/cron-ticker.md` for the current document-purge schedule and mocked verification boundary.
@@ -96,3 +114,9 @@ Stream background adapters currently target Netlify function URLs. Automatic
 execution requires Netlify as active cron host; a host switch needs an equivalent
 execution target. Keep lifecycle worker imports free of request authentication
 and check actual native packaging, including CLI guards, before scheduling.
+
+Destructive retention must be bounded for every caller, repeat eligibility in the final write, and preserve active obligations and retention timestamps. See [job history and messaging retention](../../../docs/maintenance/messaging-retention.md): eight pages per call, at most 500 rows per phase, a shared 16-second caller start budget across driver slices and lease admission, and explicit `hasMore`. A missing heartbeat is not proof that an old process has stopped. Verify concurrency with the guarded disposable database tier; never run it against the shared database.
+
+Auth tokens/invitations, webhook archive, onboarding drafts and audit retention have bounded canonical defaults and a shared 16-second admission budget per invocation. Every destructive write repeats current age/status eligibility. Read `docs/maintenance/housekeeping-bounds.md` for per-phase versus global limits, continuation and the existing bounded audit CLI. Keep deadline checks before continuation probes and process organisation transactions sequentially so the next admission check includes prior commit time. Preserve category retention and expiry policy; a work bound is not permission to shorten retention. Failures or time-budget holds retain `hasMore`; a failed oldest page needs repair rather than silent skipping.
+
+Auth-token and webhook page executions share `deleteBoundedPage`: preserve the shared start budget, caller-owned eligibility predicates and committed counts when the continuation probe fails.

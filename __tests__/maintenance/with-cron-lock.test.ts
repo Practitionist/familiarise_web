@@ -7,6 +7,8 @@ import {
   CronLockHeldError,
   CronLockUnavailableError,
   LONG_JOB_TTL_MS,
+  effectiveLeaseTtlMs,
+  isPrismaConnectionOrPoolError,
 } from "../../lib/cron/with-cron-lock";
 import prisma from "../../lib/prisma";
 import redis from "../../lib/redis";
@@ -147,6 +149,20 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
     expect(before - cutoff.getTime()).toBeGreaterThanOrEqual(
       LONG_JOB_TTL_MS - 1_000,
     );
+  });
+
+  it("caps the lease to 90 s on Netlify and leaves other hosts alone", () => {
+    const prev = process.env.NETLIFY;
+    try {
+      process.env.NETLIFY = "true";
+      expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(90_000);
+      expect(effectiveLeaseTtlMs(30_000)).toBe(30_000);
+      delete process.env.NETLIFY;
+      expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(LONG_JOB_TTL_MS);
+    } finally {
+      if (prev === undefined) delete process.env.NETLIFY;
+      else process.env.NETLIFY = prev;
+    }
   });
 
   it("re-arms the lease every third of the TTL while the job runs and computes durationMs from initial acquisition", async () => {
@@ -306,5 +322,29 @@ describe("execution outcomes", () => {
       isolated.withCronLock("money", { failMode: "closed" }, fn),
     ).rejects.toMatchObject({ code: "CRON_LOCK_UNAVAILABLE" });
     expect(fn).not.toHaveBeenCalled();
+  });
+});
+
+describe("isPrismaConnectionOrPoolError", () => {
+  it("matches Prisma-raised pool and connection faults only", () => {
+    expect(isPrismaConnectionOrPoolError({ code: "P2024", message: "x" })).toBe(
+      true,
+    );
+    const txTimeout = Object.assign(
+      new Error("Unable to start a transaction in the given time."),
+      { name: "PrismaClientKnownRequestError" },
+    );
+    expect(isPrismaConnectionOrPoolError(txTimeout)).toBe(true);
+    expect(
+      isPrismaConnectionOrPoolError(new Error("timeout of 3000ms exceeded")),
+    ).toBe(false);
+    expect(
+      isPrismaConnectionOrPoolError(
+        Object.assign(new Error("Unique constraint failed"), {
+          name: "PrismaClientKnownRequestError",
+          code: "P2002",
+        }),
+      ),
+    ).toBe(false);
   });
 });

@@ -24,7 +24,7 @@ jest.mock("../../lib/maintenance-cron", () => ({
 
 const cleanupAuthTokens = jest.fn();
 jest.mock("../../lib/auth/cleanup-auth-tokens", () => ({
-  cleanupAuthTokens: () => cleanupAuthTokens(),
+  cleanupAuthTokens: (...args: unknown[]) => cleanupAuthTokens(...args),
 }));
 
 import type { NextRequest } from "next/server";
@@ -32,11 +32,11 @@ import { getCleanupJobHandlers } from "../../lib/cron/cleanup-registry";
 
 const SECRET = "test-cron-secret";
 
-function request(authorization?: string): NextRequest {
+function request(authorization?: string, query = ""): NextRequest {
   const headers = new Headers(authorization ? { authorization } : {});
   return {
     headers,
-    nextUrl: { searchParams: new URLSearchParams() },
+    nextUrl: { searchParams: new URLSearchParams(query) },
   } as unknown as NextRequest;
 }
 
@@ -71,7 +71,31 @@ describe("/api/cleanup/auth-tokens registry entry", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(result);
     expect(cleanupAuthTokens).toHaveBeenCalledTimes(1);
+    expect(cleanupAuthTokens).toHaveBeenCalledWith({
+      limit: undefined,
+      startedAt: expect.any(Number),
+    });
     expect(assertNotInMaintenance).toHaveBeenCalledWith("cleanup-auth-tokens");
+  });
+
+  it("passes a validated limit to the canonical core", async () => {
+    cleanupAuthTokens.mockResolvedValue({ success: true, hasMore: true });
+    const { POST } = getCleanupJobHandlers("auth-tokens")!;
+    expect((await POST(request(`Bearer ${SECRET}`, "limit=3"))).status).toBe(
+      200,
+    );
+    expect(cleanupAuthTokens).toHaveBeenCalledWith({
+      limit: 3,
+      startedAt: expect.any(Number),
+    });
+  });
+
+  it("rejects an invalid limit before invoking the core", async () => {
+    const { POST } = getCleanupJobHandlers("auth-tokens")!;
+    expect((await POST(request(`Bearer ${SECRET}`, "limit=0"))).status).toBe(
+      400,
+    );
+    expect(cleanupAuthTokens).not.toHaveBeenCalled();
   });
 
   it("answers 500 when the sweep reports errors", async () => {

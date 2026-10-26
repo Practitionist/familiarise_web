@@ -6,6 +6,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { isExpectedError } from "@/lib/observability/expected";
+import { isTranslateDomMutationNoise } from "@/lib/observability/translate-dom-noise";
 import {
   scrubSentryBreadcrumb,
   scrubSentryEvent,
@@ -274,6 +275,14 @@ export function isThinnedOnPreview(
   );
 }
 
+/** Previews send errors only; warnings and info stay local. Production is unchanged. */
+export function isBelowErrorOnPreview(event: Sentry.Event): boolean {
+  return (
+    process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT === "preview" &&
+    (event.level === "warning" || event.level === "info")
+  );
+}
+
 /** The `beforeSend` budget stage, exported so a test can drive it directly. */
 export function applyErrorBudget<E extends Sentry.Event>(event: E): E | null {
   // An expected outcome at info level is an ANSWER, not a fault.
@@ -483,6 +492,7 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     // re-levels one. (FAMILIARISE_WEB-10)
     beforeSend(event, hint) {
       stripUngatedPII(event);
+      if (isTranslateDomMutationNoise(event)) return null;
       if (isExpectedError(hint?.originalException)) {
         event.level = "warning";
         event.tags = { ...event.tags, expected: "true" };
@@ -492,6 +502,7 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
       // Returning null drops before transport, so dropped events never consume
       // quota. Keyed on "preview", not "not production", so an unset
       // environment (a bare job runner, a test) fails open.
+      if (isBelowErrorOnPreview(event)) return null;
       if (isThinnedOnPreview(event)) return null;
       if (applyErrorBudget(event) === null) return null;
       // #1861 S4 — scrub AFTER the relabel/throttle above: this pass only
