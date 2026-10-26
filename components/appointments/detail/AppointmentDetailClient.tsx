@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useZonedFormat } from "@/lib/time/zoned-format";
@@ -10,6 +10,7 @@ import {
   CalendarX,
   CreditCard,
   LifeBuoy,
+  MessageSquare,
   Users,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -22,7 +23,11 @@ import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { throwSupportError } from "@/lib/support/error-copy";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
-import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
+import type {
+  AppointmentActionAdapter,
+  AppointmentChatTarget,
+  OverflowItem,
+} from "@/lib/appointments/adapter";
 import { mapAppointmentDetail } from "@/lib/appointments/map-detail";
 import {
   presentationNames,
@@ -78,6 +83,7 @@ import { ClassSessionControls } from "./ClassSessionControls";
 import { SubscriptionReturnControls } from "./SubscriptionReturnControls";
 import { SessionAttendance } from "./SessionAttendance";
 import { RescheduleProposalCard } from "./RescheduleProposalCard";
+import { LazyAppointmentChatSheet } from "../LazyAppointmentChatSheet";
 import { caseKeyOf } from "@/lib/support/case-key";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
 import { SessionRatingRow } from "@/components/reviews/SessionRatingRow";
@@ -225,7 +231,10 @@ interface AppointmentDetailClientProps {
   /** Consultant-only: the dashboard whose Requests/allocate pages answer a request. */
   consultantId?: string;
   /** Extra buttons for the header action bar, e.g. the consultee's Book again / Add to calendar (#1527). */
-  renderExtraActions?: (vm: AppointmentVM) => ReactNode;
+  renderExtraActions?: (
+    vm: AppointmentVM,
+    actions: { openChat: (target: AppointmentChatTarget) => void },
+  ) => ReactNode;
   /** `<tree>/support/requests` — "Get help" opens this booking's request page (#1527). */
   supportRequestsBase: string;
 }
@@ -246,6 +255,14 @@ export function AppointmentDetailClient({
   const { data: session } = useSession();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const [chatTarget, setChatTarget] = useState<AppointmentChatTarget | null>(
+    null,
+  );
+  const closeChat = useCallback(() => setChatTarget(null), []);
+  const clickOf = (item: OverflowItem) => {
+    const { chat } = item;
+    return chat ? () => setChatTarget(chat) : item.onClick;
+  };
   const {
     data: detail,
     isLoading,
@@ -632,12 +649,13 @@ export function AppointmentDetailClient({
                 variant="outline"
                 size="sm"
                 disabled={item.disabled}
-                onClick={item.onClick}
+                onClick={clickOf(item)}
               >
+                {item.chat && <MessageSquare className="mr-1.5 h-4 w-4" />}
                 {item.label}
               </Button>
             ))}
-            {renderExtraActions?.(vm)}
+            {renderExtraActions?.(vm, { openChat: setChatTarget })}
             <Button variant="outline" size="sm" onClick={() => openHelp()}>
               <LifeBuoy className="mr-1.5 h-4 w-4" />
               Get help
@@ -1114,6 +1132,7 @@ export function AppointmentDetailClient({
           and was: the consultee's detail page never did, leaving Reschedule,
           Cancel and Report issue setting state nothing was listening for. */}
       {adapter.renderDialogs()}
+      <LazyAppointmentChatSheet target={chatTarget} onClose={closeChat} />
     </DashboardErrorBoundary>
   );
 }

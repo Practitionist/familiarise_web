@@ -21,6 +21,7 @@ import {
 } from "@/lib/appointments/occurrences";
 import { buildIcs } from "@/lib/appointments/ics";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
+import type { AppointmentChatTarget } from "@/lib/appointments/adapter";
 import {
   consultantUserIdOf,
   useConsulteeAppointmentsAdapter,
@@ -292,11 +293,13 @@ function ConsulteeExtraActions({
   consulteeId,
   appointmentId,
   hasOverflowMessageAction,
+  openChat,
 }: Readonly<{
   vm: AppointmentVM;
   consulteeId: string;
   appointmentId: string;
   hasOverflowMessageAction: boolean;
+  openChat: (target: AppointmentChatTarget) => void;
 }>) {
   const {
     canRebook,
@@ -327,13 +330,21 @@ function ConsulteeExtraActions({
         </Button>
       )}
       {expertUserId && !hasOverflowMessageAction && (
-        <Button variant="outline" size="sm" asChild>
-          <Link
-            href={`/dashboard/consultee/${consulteeId}/messages?contextAppointmentId=${encodeURIComponent(appointmentId)}&counterpartyUserId=${encodeURIComponent(expertUserId)}`}
-          >
-            <MessageSquare className="mr-1.5 h-4 w-4" />
-            Message {expertName}
-          </Link>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() =>
+            openChat({
+              kind: "dm",
+              title: `Message ${expertName}`,
+              messagesHref: `/dashboard/consultee/${consulteeId}/messages?contextAppointmentId=${encodeURIComponent(appointmentId)}&counterpartyUserId=${encodeURIComponent(expertUserId)}`,
+              counterpartyUserId: expertUserId,
+              appointmentId,
+            })
+          }
+        >
+          <MessageSquare className="mr-1.5 h-4 w-4" />
+          Message {expertName}
         </Button>
       )}
       {canRenewSubscription && !showLowSessionRenewalNudge && (
@@ -429,7 +440,7 @@ export default function DetailPageClient({
         backHref={`/dashboard/consultee/${consulteeId}/appointments`}
         supportRequestsBase={`/dashboard/consultee/${consulteeId}/support/requests`}
         joinWindowMs={CONSULTEE_JOIN_WINDOW_MS}
-        renderExtraActions={(vm) => {
+        renderExtraActions={(vm, { openChat }) => {
           const hasOverflowMessageAction = adapter
             .overflowItems(vm)
             .some((item) => item.key === "message");
@@ -440,6 +451,7 @@ export default function DetailPageClient({
                 consulteeId={consulteeId}
                 appointmentId={appointmentId}
                 hasOverflowMessageAction={hasOverflowMessageAction}
+                openChat={openChat}
               />
               <IncidentRemedyBanner
                 consulteeId={consulteeId}
